@@ -857,6 +857,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"unnamed Boss Chat helper",
 		"the user is the boss",
 		"engineer threads",
+		"ordinary coworker coordination",
 		"Boss Chat is the top-level conversation",
 		"linked task/thread records",
 		"Open agent tasks are delegated engineer work items",
@@ -872,6 +873,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Be proactive about finding facts",
 		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone",
 		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff",
+		"Cached engineer transcripts and Boss Chat recall are for context, not fresh evidence",
 		"propose sending the same named engineer back with that specific question",
 		"ongoing coworker chat",
 		"skip onboarding",
@@ -912,8 +914,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"do not imply a fresh unrelated session",
 		"Do not explain a missing task detail as the engineer having no persistent memory",
 		"Be proactive about finding facts",
+		"routine coworker coordination",
 		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone",
 		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff",
+		"fresh external research",
 		"propose_control",
 		"agent_task.create",
 		"scratch_task.archive",
@@ -933,6 +937,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"The host will steer the active Codex turn when possible",
 		"Active work alone is not enough reason to resume",
 		"Use agent_task.create for temporary delegated work",
+		"external web/product/market research",
 		"do not encode special domains as task kinds",
 		"Use scratch_task.archive when project metadata identifies kind=scratch_task",
 		"task_close_status=archived",
@@ -947,7 +952,9 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue",
 		"user confirmation",
 		"context_command",
+		"recall/context, not fresh research",
 		"ctx search engineer",
+		"current product, market, web, or source question",
 		"ctx show",
 		"ctx show agent_task",
 		"output or result of an open agent task",
@@ -997,12 +1004,47 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	for _, want := range []string{
 		"fast read-only query router",
 		"Choose pass for requests to change state",
+		"fresh/current external or web research",
+		"Cached engineer snippets are not fresh evidence",
 		"Use goal_run_report when the user asks what Boss goal runs happened",
 		"put only that id in query",
 		"Do not answer the user",
 	} {
 		if !strings.Contains(routerPrompt, want) {
 			t.Fatalf("read-only router prompt missing %q:\n%s", want, routerPrompt)
+		}
+	}
+}
+
+func TestAssistantPlannerUserTextSteersFreshExternalResearchToEngineer(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Open delegated agent tasks (separate from project TODOs):\n- Research Garmin 3 used watch status (agt_garmin); kind/status: agent/review; show: agent_task:agt_garmin",
+		Messages: []ChatMessage{
+			{Role: "assistant", Content: "The older notes say the used-market picture was unclear."},
+			{Role: "user", Content: "Can you ask the engineer to check the current used status for the Garmin 3 watch again?"},
+		},
+	}
+	normal := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionContextCommand,
+		Text: "Task output: Prior notes mention used status but did not run a fresh web search today.",
+	}}, false)
+	forced := bossActionPlannerUserText(req, []bossToolResult{{
+		Name: bossActionContextCommand,
+		Text: "Task output: Prior notes mention used status but did not run a fresh web search today.",
+	}}, true)
+	for _, got := range []string{normal, forced} {
+		for _, want := range []string{
+			"fresh/current external web, product, market, or source research",
+			"needs an engineer to newly search",
+			`control_capability="agent_task.continue"`,
+			`control_capability="agent_task.create"`,
+			"cached transcript snippets are not enough",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("planner user text missing fresh-research handoff guidance %q:\n%s", want, got)
+			}
 		}
 	}
 }
@@ -1339,7 +1381,7 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 	if !strings.Contains(resp.Content, "Send this to OpenCode") ||
 		!strings.Contains(resp.Content, "start a fresh session") ||
-		!strings.Contains(resp.Content, "Enter confirms") {
+		!strings.Contains(resp.Content, "Enter sends") {
 		t.Fatalf("proposal content = %q, want confirmation preview", resp.Content)
 	}
 	var input control.EngineerSendPromptInput
@@ -1736,7 +1778,7 @@ func TestAssistantReplyCanProposeAgentTaskContinueControl(t *testing.T) {
 	if resp.ControlInvocation.Capability != control.CapabilityAgentTaskContinue {
 		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
 	}
-	if !strings.Contains(resp.Content, "Continue agent task agt_roguellm?") || !strings.Contains(resp.Content, "Enter confirms") {
+	if !strings.Contains(resp.Content, "Continue agent task agt_roguellm.") || !strings.Contains(resp.Content, "Enter sends") {
 		t.Fatalf("proposal content = %q, want agent task continuation confirmation", resp.Content)
 	}
 	var input control.AgentTaskContinueInput

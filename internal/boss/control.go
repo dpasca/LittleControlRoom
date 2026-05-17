@@ -215,7 +215,7 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		if input.Reveal {
 			visibility = "show it afterward"
 		}
-		lines := []string{fmt.Sprintf("Send this to %s for %s?", provider, target)}
+		lines := []string{fmt.Sprintf("Send this to %s for %s.", provider, target)}
 		if input.TodoID > 0 {
 			lines = append(lines, "", "Tracked TODO: "+controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText))
 		}
@@ -223,7 +223,7 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			"",
 			strings.TrimSpace(input.Prompt),
 			"",
-			fmt.Sprintf("I will %s session and %s. Enter confirms; Esc cancels.", mode, visibility),
+			fmt.Sprintf("I will %s session and %s. Enter sends; Esc cancels.", mode, visibility),
 		)
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityAgentTaskCreate:
@@ -242,7 +242,7 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			"",
 			fmt.Sprintf("Capabilities: %s", strings.Join(input.Capabilities, ", ")),
 			fmt.Sprintf("Resources: %s", controlResourceSummary(input.Resources)),
-			"Enter confirms; Esc cancels.",
+			"Enter runs; Esc cancels.",
 		}
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityAgentTaskContinue:
@@ -255,11 +255,11 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			mode = "start fresh"
 		}
 		lines := []string{
-			fmt.Sprintf("Continue agent task %s?", input.TaskID),
+			fmt.Sprintf("Continue agent task %s.", input.TaskID),
 			"",
 			strings.TrimSpace(input.Prompt),
 			"",
-			fmt.Sprintf("I will %s the task's engineer session. Enter confirms; Esc cancels.", mode),
+			fmt.Sprintf("I will %s the task's engineer session. Enter sends; Esc cancels.", mode),
 		}
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityAgentTaskClose:
@@ -402,6 +402,44 @@ func copyControlInvocation(inv control.Invocation) control.Invocation {
 	return out
 }
 
+func controlProposalIsEngineerHandoff(inv control.Invocation) bool {
+	switch inv.Capability {
+	case control.CapabilityEngineerSendPrompt, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+		return true
+	default:
+		return false
+	}
+}
+
+func controlProposalStatus(inv control.Invocation) string {
+	switch inv.Capability {
+	case control.CapabilityEngineerSendPrompt:
+		return "Ready to send to engineer with Enter, or Esc to cancel"
+	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+		return "Ready to run engineer task with Enter, or Esc to cancel"
+	default:
+		return "Confirm control action with Enter, or Esc to cancel"
+	}
+}
+
+func controlProposalFooterHint(inv control.Invocation) string {
+	if controlProposalIsEngineerHandoff(inv) {
+		return "Enter sends to engineer | Esc cancels"
+	}
+	return "Enter confirms action | Esc cancels"
+}
+
+func controlProposalSubmittingStatus(inv control.Invocation) string {
+	switch inv.Capability {
+	case control.CapabilityEngineerSendPrompt:
+		return "Sending request to engineer session..."
+	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+		return "Sending request to engineer task..."
+	default:
+		return "Running control action..."
+	}
+}
+
 func (m Model) ControlConfirmationActive() bool {
 	return m.pendingControl != nil || m.pendingGoal != nil
 }
@@ -418,7 +456,7 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		inv := copyControlInvocation(m.pendingControl.Invocation)
 		m.pendingControl = nil
-		m.status = "Sending request to engineer session..."
+		m.status = controlProposalSubmittingStatus(inv)
 		return m, func() tea.Msg {
 			return ControlInvocationConfirmedMsg{Invocation: inv}
 		}
@@ -430,7 +468,7 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.syncLayout(false)
 		return m, nil
 	default:
-		m.status = "Confirm control action with Enter, or Esc to cancel"
+		m.status = controlProposalStatus(m.pendingControl.Invocation)
 		return m, nil
 	}
 }
