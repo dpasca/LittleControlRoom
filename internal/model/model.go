@@ -469,7 +469,30 @@ type TodoItem struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 	CompletedAt        time.Time
+	WorkProvider       SessionSource
+	WorkSessionID      string
+	WorkClaimedAt      time.Time
+	WorkState          TodoWorkState
+	WorkStateAt        time.Time
 	WorktreeSuggestion *TodoWorktreeSuggestion
+}
+
+type TodoWorkState string
+
+const (
+	TodoWorkStateIdle    TodoWorkState = "idle"
+	TodoWorkStateWorking TodoWorkState = "working"
+	TodoWorkStateWaiting TodoWorkState = "waiting"
+	TodoWorkStateBlocked TodoWorkState = "blocked"
+)
+
+func NormalizeTodoWorkState(state TodoWorkState) TodoWorkState {
+	switch state {
+	case TodoWorkStateIdle, TodoWorkStateWorking, TodoWorkStateWaiting, TodoWorkStateBlocked:
+		return state
+	default:
+		return ""
+	}
 }
 
 func NormalizeSessionSource(source SessionSource) SessionSource {

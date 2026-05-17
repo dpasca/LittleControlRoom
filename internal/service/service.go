@@ -2585,6 +2585,27 @@ func (s *Service) ToggleTodoDone(ctx context.Context, projectPath string, id int
 	return nil
 }
 
+func (s *Service) MarkTodoWorkStarted(ctx context.Context, projectPath string, id int64, provider model.SessionSource, sessionID string, at time.Time) error {
+	if s == nil || s.store == nil {
+		return nil
+	}
+	source, normalizedSessionID := normalizeTodoWorkSessionIdentity(provider, sessionID)
+	if normalizedSessionID == "" {
+		return nil
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	if err := s.store.AttachTodoWorkSession(ctx, id, source, normalizedSessionID, model.TodoWorkStateWorking, at); err != nil {
+		return err
+	}
+	s.refreshProjectStatusAsync(projectPath)
+	now := time.Now()
+	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "todo_work_started"}})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "todo_work_started"})
+	return nil
+}
+
 func (s *Service) DeleteTodo(ctx context.Context, projectPath string, id int64) error {
 	if err := s.store.DeleteTodo(ctx, id); err != nil {
 		return err

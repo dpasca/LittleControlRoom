@@ -299,6 +299,13 @@ func bossDeskTodoStyledText(todo TodoBrief) string {
 		project = strings.TrimSpace(todo.ProjectPath)
 	}
 	text := cleanHandoffSummary(firstNonEmpty(todo.Label, todo.Text))
+	if activity := bossDeskTodoActivity(todo); activity != "" {
+		if text != "" {
+			text += " · " + activity
+		} else {
+			text = activity
+		}
+	}
 	switch {
 	case project == "":
 		return bossSummaryTextStyle.Render(text)
@@ -307,6 +314,25 @@ func bossDeskTodoStyledText(todo TodoBrief) string {
 	default:
 		return bossProjectIdentityStyle(firstNonEmpty(todo.ProjectPath, project), bossProjectNameStyle).Render(project) + bossSummaryTextStyle.Render(" - "+text)
 	}
+}
+
+func bossDeskTodoActivity(todo TodoBrief) string {
+	state := model.NormalizeTodoWorkState(todo.WorkState)
+	if state == "" || state == model.TodoWorkStateIdle {
+		return ""
+	}
+	label := string(state)
+	switch model.NormalizeSessionSource(todo.WorkProvider) {
+	case model.SessionSourceCodex:
+		label += " Codex"
+	case model.SessionSourceOpenCode:
+		label += " OpenCode"
+	case model.SessionSourceClaudeCode:
+		label += " Claude"
+	case model.SessionSourceLCAgent:
+		label += " LCAgent"
+	}
+	return label
 }
 
 func (m Model) bossDeskWatchingRows(width int, now time.Time) []string {

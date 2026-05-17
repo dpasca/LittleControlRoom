@@ -64,6 +64,7 @@ type todoDeleteConfirmState struct {
 
 type todoLaunchDraftState struct {
 	projectPath    string
+	todoID         int64
 	provider       codexapp.Provider
 	openModelFirst bool
 	autoSubmit     bool
@@ -143,6 +144,7 @@ type todoWorktreeEditorState struct {
 type todoExistingWorktreeDialogState struct {
 	ProjectPath    string
 	ProjectName    string
+	TodoID         int64
 	TodoText       string
 	Provider       codexapp.Provider
 	OpenModelFirst bool
@@ -558,6 +560,7 @@ func (m *Model) openTodoExistingWorktreeDialog(provider codexapp.Provider) {
 	m.todoExistingWorktree = &todoExistingWorktreeDialogState{
 		ProjectPath:    m.todoCopyDialog.ProjectPath,
 		ProjectName:    m.todoCopyDialog.ProjectName,
+		TodoID:         m.todoCopyDialog.TodoID,
 		TodoText:       m.todoCopyDialog.TodoText,
 		Provider:       provider,
 		OpenModelFirst: m.todoCopyDialog.OpenModelFirst,
@@ -880,7 +883,7 @@ func (m Model) updateTodoExistingWorktreeMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			return m, nil
 		}
 		target := dialog.Candidates[dialog.Selected]
-		return m.startTodoInProjectPath(target.Path, dialog.TodoText, dialog.Provider, dialog.OpenModelFirst)
+		return m.startTodoInProjectPath(target.Path, dialog.TodoID, dialog.TodoText, dialog.Provider, dialog.OpenModelFirst)
 	}
 	return m, nil
 }
@@ -994,6 +997,29 @@ func (m Model) toggleTodoDoneCmd(item model.TodoItem) tea.Cmd {
 	}
 }
 
+func (m Model) markTodoWorkStartedCmd(projectPath string, todoID int64, snapshot codexapp.Snapshot) tea.Cmd {
+	if m.svc == nil || todoID <= 0 {
+		return nil
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		projectPath = strings.TrimSpace(snapshot.ProjectPath)
+	}
+	sessionID := strings.TrimSpace(snapshot.ThreadID)
+	if projectPath == "" || sessionID == "" {
+		return nil
+	}
+	provider := modelSessionSourceFromCodexProvider(embeddedProvider(snapshot))
+	startedAt := embeddedSnapshotActivityAt(snapshot)
+	if startedAt.IsZero() {
+		startedAt = m.currentTime()
+	}
+	return func() tea.Msg {
+		err := m.svc.MarkTodoWorkStarted(m.ctx, projectPath, todoID, provider, sessionID, startedAt)
+		return projectStatusRefreshedMsg{projectPath: projectPath, err: err}
+	}
+}
+
 func (m Model) deleteTodoCmd(projectPath string, todoID int64) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
@@ -1068,6 +1094,7 @@ func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64,
 		return todoWorktreeLaunchMsg{
 			launchID:       launchID,
 			projectPath:    result.WorktreePath,
+			todoID:         todoID,
 			todoText:       todoText,
 			status:         "Worktree ready",
 			provider:       provider,
@@ -1128,7 +1155,7 @@ func (m Model) ensureTodoWorktreeSuggestionCmd(projectPath string, todoID int64)
 	}
 }
 
-func (m Model) startTodoInProjectPath(projectPath, todoText string, provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
+func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.status = "No project selected"
@@ -1144,7 +1171,7 @@ func (m Model) startTodoInProjectPath(projectPath, todoText string, provider cod
 		provider = provider.Normalized()
 	}
 	m.restoreCodexDraft(project.Path, codexDraft{Text: todoText})
-	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, provider: provider, openModelFirst: openModelFirst})
+	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, todoID: todoID, provider: provider, openModelFirst: openModelFirst})
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.todoExistingWorktree = nil
@@ -1195,7 +1222,7 @@ func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider, openMod
 		return m, nil
 	}
 	m.todoCopyDialog = nil
-	return m.startTodoInProjectPath(project.Path, item.Text, provider, openModelFirst)
+	return m.startTodoInProjectPath(project.Path, item.ID, item.Text, provider, openModelFirst)
 }
 
 func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
@@ -1412,7 +1439,10 @@ func todoDialogLegendLine() string {
 
 func (m Model) todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
 	base := prefix + " " + todoPreviewText(item.Text)
-	label, labelStyle := m.todoWorktreeSuggestionLabel(item)
+	label, labelStyle := m.todoActivityLabel(item)
+	if label == "" {
+		label, labelStyle = m.todoWorktreeSuggestionLabel(item)
+	}
 	if label == "" {
 		return truncateText(base, width)
 	}
@@ -1435,6 +1465,41 @@ func (m Model) todoDialogItemLine(item model.TodoItem, prefix string, width int)
 		return truncateText(base, width)
 	}
 	return base + labelStyle.Render(ansi.Truncate(suffixPlain, remaining, ""))
+}
+
+func (m Model) todoActivityLabel(item model.TodoItem) (string, lipgloss.Style) {
+	if item.Done {
+		return "", lipgloss.Style{}
+	}
+	state := model.NormalizeTodoWorkState(item.WorkState)
+	if state == "" || state == model.TodoWorkStateIdle {
+		return "", lipgloss.Style{}
+	}
+	label := string(state)
+	if providerLabel := todoWorkProviderLabel(item.WorkProvider); providerLabel != "" {
+		label += " " + providerLabel
+	}
+	switch state {
+	case model.TodoWorkStateWaiting, model.TodoWorkStateBlocked:
+		return label, detailWarningStyle
+	default:
+		return label, statusStyle(model.StatusActive)
+	}
+}
+
+func todoWorkProviderLabel(provider model.SessionSource) string {
+	switch model.NormalizeSessionSource(provider) {
+	case model.SessionSourceOpenCode:
+		return "OpenCode"
+	case model.SessionSourceClaudeCode:
+		return "Claude"
+	case model.SessionSourceLCAgent:
+		return "LCAgent"
+	case model.SessionSourceCodex:
+		return "Codex"
+	default:
+		return ""
+	}
 }
 
 func (m Model) todoWorktreeSuggestionLabel(item model.TodoItem) (string, lipgloss.Style) {

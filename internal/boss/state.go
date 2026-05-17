@@ -80,12 +80,15 @@ type AgentTaskBrief struct {
 }
 
 type TodoBrief struct {
-	ID          int64
-	ProjectPath string
-	ProjectName string
-	Label       string
-	Text        string
-	UpdatedAt   time.Time
+	ID            int64
+	ProjectPath   string
+	ProjectName   string
+	Label         string
+	Text          string
+	WorkState     model.TodoWorkState
+	WorkProvider  model.SessionSource
+	WorkSessionID string
+	UpdatedAt     time.Time
 }
 
 type GoalRunBrief struct {
@@ -223,12 +226,15 @@ func appendSnapshotOpenTodos(ctx context.Context, svc *service.Service, projects
 
 func todoBriefFromItem(item model.TodoItem, projectName string) TodoBrief {
 	return TodoBrief{
-		ID:          item.ID,
-		ProjectPath: strings.TrimSpace(item.ProjectPath),
-		ProjectName: strings.TrimSpace(projectName),
-		Label:       todoBriefLabelFromItem(item),
-		Text:        strings.TrimSpace(item.Text),
-		UpdatedAt:   item.UpdatedAt,
+		ID:            item.ID,
+		ProjectPath:   strings.TrimSpace(item.ProjectPath),
+		ProjectName:   strings.TrimSpace(projectName),
+		Label:         todoBriefLabelFromItem(item),
+		Text:          strings.TrimSpace(item.Text),
+		WorkState:     model.NormalizeTodoWorkState(item.WorkState),
+		WorkProvider:  model.NormalizeSessionSource(item.WorkProvider),
+		WorkSessionID: strings.TrimSpace(item.WorkSessionID),
+		UpdatedAt:     item.UpdatedAt,
 	}
 }
 
@@ -480,6 +486,9 @@ func operationalTodoLine(todo TodoBrief, now time.Time) string {
 	if text := strings.TrimSpace(todo.Text); text != "" && text != label {
 		parts = append(parts, "text="+clipText(text, 180))
 	}
+	if work := operationalTodoWorkState(todo); work != "" {
+		parts = append(parts, work)
+	}
 	if !todo.UpdatedAt.IsZero() {
 		parts = append(parts, "updated "+relativeAge(now, todo.UpdatedAt))
 	}
@@ -487,6 +496,21 @@ func operationalTodoLine(todo TodoBrief, now time.Time) string {
 		parts = append(parts, "project_path="+path)
 	}
 	return strings.Join(parts, "; ")
+}
+
+func operationalTodoWorkState(todo TodoBrief) string {
+	state := model.NormalizeTodoWorkState(todo.WorkState)
+	if state == "" || state == model.TodoWorkStateIdle {
+		return ""
+	}
+	value := "work_state=" + string(state)
+	if provider := model.NormalizeSessionSource(todo.WorkProvider); provider != "" {
+		value += " provider=" + string(provider)
+	}
+	if sessionID := strings.TrimSpace(todo.WorkSessionID); sessionID != "" {
+		value += " session_id=" + sessionID
+	}
+	return value
 }
 
 func operationalGoalRunLine(goal GoalRunBrief, now time.Time) string {

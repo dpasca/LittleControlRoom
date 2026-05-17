@@ -631,6 +631,71 @@ func TestRecordEmbeddedSessionActivityClearsStaleStuckState(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSessionActivityUpdatesLinkedTodoWorkState(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "demo",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	todo, err := st.AddTodo(ctx, projectPath, "Let the coordinator track this")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if err := svc.MarkTodoWorkStarted(ctx, projectPath, todo.ID, model.SessionSourceCodex, "thread-demo", now); err != nil {
+		t.Fatalf("MarkTodoWorkStarted() error = %v", err)
+	}
+
+	started, err := st.GetTodo(ctx, todo.ID)
+	if err != nil {
+		t.Fatalf("get started todo: %v", err)
+	}
+	if started.WorkSessionID != "codex:thread-demo" || started.WorkState != model.TodoWorkStateWorking {
+		t.Fatalf("started todo work = session:%q state:%q, want codex:thread-demo/working", started.WorkSessionID, started.WorkState)
+	}
+
+	waitingAt := now.Add(3 * time.Minute)
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               model.SessionSourceCodex,
+		SessionID:            "thread-demo",
+		Format:               "modern",
+		LastActivityAt:       waitingAt,
+		LatestTurnStartedAt:  now,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+		WorkState:            model.TodoWorkStateWaiting,
+	}); err != nil {
+		t.Fatalf("RecordEmbeddedSessionActivity() error = %v", err)
+	}
+
+	updated, err := st.GetTodo(ctx, todo.ID)
+	if err != nil {
+		t.Fatalf("get updated todo: %v", err)
+	}
+	if updated.WorkState != model.TodoWorkStateWaiting || !updated.WorkStateAt.Equal(waitingAt) {
+		t.Fatalf("updated todo work = state:%q at:%v, want waiting at %v", updated.WorkState, updated.WorkStateAt, waitingAt)
+	}
+}
+
 func TestRecordEmbeddedSessionActivityMarksTurnSettledAtSameLastEvent(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))

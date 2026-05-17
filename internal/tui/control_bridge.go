@@ -523,7 +523,50 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		err := errors.New(status)
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	cmd = m.todoEngineerLaunchTrackingCmd(project.Path, trackedTodo.ID, cmd)
 	return controlInvocationOutcome{model: m, cmd: cmd, inv: engineerSendPromptInvocationFromInput(input)}
+}
+
+func (m Model) todoEngineerLaunchTrackingCmd(projectPath string, todoID int64, cmd tea.Cmd) tea.Cmd {
+	if cmd == nil || m.svc == nil || todoID <= 0 {
+		return cmd
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	return func() tea.Msg {
+		msg := cmd()
+		opened, ok := msg.(codexSessionOpenedMsg)
+		if !ok || opened.err != nil {
+			return msg
+		}
+		snapshot := opened.snapshot
+		sessionID := strings.TrimSpace(snapshot.ThreadID)
+		if sessionID == "" {
+			return opened
+		}
+		path := projectPath
+		if path == "" {
+			path = strings.TrimSpace(opened.projectPath)
+		}
+		if path == "" {
+			path = strings.TrimSpace(snapshot.ProjectPath)
+		}
+		if path == "" {
+			return opened
+		}
+		at := embeddedSnapshotActivityAt(snapshot)
+		if at.IsZero() {
+			at = time.Now()
+		}
+		provider := modelSessionSourceFromCodexProvider(embeddedProvider(snapshot))
+		if err := m.svc.MarkTodoWorkStarted(m.ctx, path, todoID, provider, sessionID, at); err != nil {
+			if opened.status != "" {
+				opened.status += "; TODO tracking update failed"
+			} else {
+				opened.status = "TODO tracking update failed"
+			}
+		}
+		return opened
+	}
 }
 
 func controlPromptTargetsNonSteerableActiveEmbeddedSession(input control.EngineerSendPromptInput, m Model, projectPath string, provider codexapp.Provider) bool {

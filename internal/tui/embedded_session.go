@@ -150,12 +150,14 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	}
 	status := msg.statusForReveal(revealOnOpen)
 	seenCmd := m.finishCodexPendingOpen(msg.projectPath, msg.snapshot, true, revealOnOpen)
+	todoWorkStartedCmd := tea.Cmd(nil)
 	if hasTodoLaunchDraft {
+		todoWorkStartedCmd = m.markTodoWorkStartedCmd(msg.projectPath, draft.todoID, msg.snapshot)
 		m.clearTodoLaunchDraft(msg.projectPath)
 		if draft.openModelFirst {
 			m.openCodexModelPickerLoading()
 			m.status = "Pick a model, then send the TODO draft."
-			return m, tea.Batch(seenCmd, m.openCodexModelPickerCmd())
+			return m, tea.Batch(seenCmd, todoWorkStartedCmd, m.openCodexModelPickerCmd())
 		}
 		if draft.autoSubmit {
 			if status != "" {
@@ -170,9 +172,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.status = status
 	}
 	if focusInput {
-		return m, tea.Batch(seenCmd, m.codexInput.Focus())
+		return m, tea.Batch(seenCmd, todoWorkStartedCmd, m.codexInput.Focus())
 	}
-	return m, seenCmd
+	return m, tea.Batch(seenCmd, todoWorkStartedCmd)
 }
 
 func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
@@ -522,7 +524,27 @@ func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapsh
 		LatestTurnStartedAt:  snapshot.BusySince,
 		LatestTurnStateKnown: latestTurnKnown,
 		LatestTurnCompleted:  latestTurnCompleted,
+		WorkState:            todoWorkStateFromEmbeddedSnapshot(snapshot, latestTurnCompleted),
 	}, true
+}
+
+func todoWorkStateFromEmbeddedSnapshot(snapshot codexapp.Snapshot, latestTurnCompleted bool) model.TodoWorkState {
+	if snapshot.Closed || latestTurnCompleted {
+		return model.TodoWorkStateIdle
+	}
+	if snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+		return model.TodoWorkStateWaiting
+	}
+	if snapshot.BrowserActivity.Normalize().State == browserctl.SessionActivityStateWaitingForUser {
+		return model.TodoWorkStateWaiting
+	}
+	if strings.TrimSpace(snapshot.LastError) != "" {
+		return model.TodoWorkStateBlocked
+	}
+	if snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+		return model.TodoWorkStateWorking
+	}
+	return model.TodoWorkStateIdle
 }
 
 func embeddedSessionSource(provider codexapp.Provider) model.SessionSource {

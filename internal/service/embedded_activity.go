@@ -24,6 +24,7 @@ type EmbeddedSessionActivity struct {
 	LatestTurnStartedAt  time.Time
 	LatestTurnStateKnown bool
 	LatestTurnCompleted  bool
+	WorkState            model.TodoWorkState
 }
 
 func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity EmbeddedSessionActivity) error {
@@ -57,7 +58,7 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 		detail.Summary.LastActivity = detail.Sessions[0].LastEventAt
 	}
 
-	return s.persistProjectStateUpdate(ctx, detail, time.Now(), projectStatusRefreshOverrides{
+	if err := s.persistProjectStateUpdate(ctx, detail, time.Now(), projectStatusRefreshOverrides{
 		presentOnDisk:        detail.Summary.PresentOnDisk,
 		worktreeRootPath:     detail.Summary.WorktreeRootPath,
 		worktreeKind:         detail.Summary.WorktreeKind,
@@ -70,7 +71,10 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
-	}, runtime.cfg, runtime.classifier, ScanOptions{})
+	}, runtime.cfg, runtime.classifier, ScanOptions{}); err != nil {
+		return err
+	}
+	return s.updateTodoWorkStateForEmbeddedActivity(ctx, projectPath, activity)
 }
 
 func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivity, cfg config.AppConfig) model.SessionEvidence {
@@ -98,6 +102,30 @@ func embeddedActivitySession(projectPath string, activity EmbeddedSessionActivit
 		LatestTurnStateKnown: activity.LatestTurnStateKnown,
 		LatestTurnCompleted:  activity.LatestTurnCompleted,
 	})
+}
+
+func (s *Service) updateTodoWorkStateForEmbeddedActivity(ctx context.Context, projectPath string, activity EmbeddedSessionActivity) error {
+	state := model.NormalizeTodoWorkState(activity.WorkState)
+	if state == "" {
+		return nil
+	}
+	source, sessionID := normalizeTodoWorkSessionIdentity(activity.Source, strings.TrimSpace(activity.SessionID))
+	if sessionID == "" {
+		return nil
+	}
+	at := activity.LastActivityAt
+	if at.IsZero() {
+		at = time.Now()
+	}
+	_, err := s.store.UpdateTodoWorkStateForSession(ctx, projectPath, source, sessionID, state, at)
+	return err
+}
+
+func normalizeTodoWorkSessionIdentity(source model.SessionSource, sessionID string) (model.SessionSource, string) {
+	source = model.NormalizeSessionSource(source)
+	format := embeddedActivityDefaultFormat(source)
+	normalizedSource, normalizedSessionID, _ := model.NormalizeSessionIdentity(source, format, strings.TrimSpace(sessionID), "")
+	return normalizedSource, strings.TrimSpace(normalizedSessionID)
 }
 
 func embeddedActivityDefaultFormat(source model.SessionSource) string {

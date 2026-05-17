@@ -951,6 +951,92 @@ func TestDeleteDoneTodosRemovesOnlyCompletedItems(t *testing.T) {
 	}
 }
 
+func TestTodoWorkSessionStateLifecycle(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/demo"
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	item, err := st.AddTodo(ctx, projectPath, "Track work state")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	claimedAt := now.Add(time.Minute)
+	if err := st.AttachTodoWorkSession(ctx, item.ID, model.SessionSourceCodex, "codex:thread-demo", model.TodoWorkStateWorking, claimedAt); err != nil {
+		t.Fatalf("attach todo work session: %v", err)
+	}
+
+	got, err := st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo: %v", err)
+	}
+	if got.WorkProvider != model.SessionSourceCodex || got.WorkSessionID != "codex:thread-demo" || got.WorkState != model.TodoWorkStateWorking {
+		t.Fatalf("work state = provider:%q session:%q state:%q, want codex/thread-demo/working", got.WorkProvider, got.WorkSessionID, got.WorkState)
+	}
+	if !got.WorkClaimedAt.Equal(claimedAt) || !got.WorkStateAt.Equal(claimedAt) {
+		t.Fatalf("work timestamps = claimed:%v state:%v, want %v", got.WorkClaimedAt, got.WorkStateAt, claimedAt)
+	}
+
+	waitingAt := claimedAt.Add(2 * time.Minute)
+	updated, err := st.UpdateTodoWorkStateForSession(ctx, projectPath, model.SessionSourceCodex, "codex:thread-demo", model.TodoWorkStateWaiting, waitingAt)
+	if err != nil {
+		t.Fatalf("update todo work state: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("updated rows = %d, want 1", updated)
+	}
+	got, err = st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get updated todo: %v", err)
+	}
+	if got.WorkState != model.TodoWorkStateWaiting || !got.WorkStateAt.Equal(waitingAt) {
+		t.Fatalf("updated work state = %q at %v, want waiting at %v", got.WorkState, got.WorkStateAt, waitingAt)
+	}
+	olderUpdates, err := st.UpdateTodoWorkStateForSession(ctx, projectPath, model.SessionSourceCodex, "codex:thread-demo", model.TodoWorkStateIdle, claimedAt)
+	if err != nil {
+		t.Fatalf("older update todo work state: %v", err)
+	}
+	if olderUpdates != 0 {
+		t.Fatalf("older updated rows = %d, want 0", olderUpdates)
+	}
+	got, err = st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo after older update: %v", err)
+	}
+	if got.WorkState != model.TodoWorkStateWaiting || !got.WorkStateAt.Equal(waitingAt) {
+		t.Fatalf("older update changed work state = %q at %v, want waiting at %v", got.WorkState, got.WorkStateAt, waitingAt)
+	}
+
+	if err := st.ToggleTodoDone(ctx, item.ID, true); err != nil {
+		t.Fatalf("toggle todo done: %v", err)
+	}
+	got, err = st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get completed todo: %v", err)
+	}
+	if got.WorkProvider != "" || got.WorkSessionID != "" || got.WorkState != "" || !got.WorkClaimedAt.IsZero() || !got.WorkStateAt.IsZero() {
+		t.Fatalf("completed todo kept work metadata: %#v", got)
+	}
+}
+
 func TestAddTodoPreservesBlankLines(t *testing.T) {
 	t.Parallel()
 

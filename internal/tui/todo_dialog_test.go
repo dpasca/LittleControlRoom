@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"lcroom/internal/model"
@@ -37,6 +38,20 @@ func TestTodoDialogItemLineUsesSingleLinePreview(t *testing.T) {
 	}, "[ ]", 80)
 	if line != "[ ] Fix spacing on selected TODO row" {
 		t.Fatalf("todoDialogItemLine() = %q, want single-line preview", line)
+	}
+}
+
+func TestTodoDialogItemLineShowsWorkStateHint(t *testing.T) {
+	t.Parallel()
+
+	m := Model{}
+	line := m.todoDialogItemLine(model.TodoItem{
+		Text:         "Fix Boss handoff",
+		WorkProvider: model.SessionSourceCodex,
+		WorkState:    model.TodoWorkStateWaiting,
+	}, "[ ]", 80)
+	if !strings.Contains(line, "waiting Codex") {
+		t.Fatalf("todoDialogItemLine() = %q, want waiting Codex hint", line)
 	}
 }
 

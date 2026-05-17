@@ -102,6 +102,11 @@ func (s *Store) initSchema(ctx context.Context) error {
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
+			work_provider TEXT NOT NULL DEFAULT '',
+			work_session_id TEXT NOT NULL DEFAULT '',
+			work_claimed_at INTEGER,
+			work_state TEXT NOT NULL DEFAULT '',
+			work_state_at INTEGER,
 			FOREIGN KEY(project_path) REFERENCES projects(path) ON DELETE CASCADE
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_project_todos_project_path_position ON project_todos(project_path, done, position, id);`,
@@ -367,6 +372,70 @@ func (s *Store) initSchema(ctx context.Context) error {
 	}
 	if err := s.ensureProjectsCreatedAtColumn(ctx); err != nil {
 		return err
+	}
+	if err := s.ensureProjectTodosWorkColumns(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) projectTodoTableColumns(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(project_todos)`)
+	if err != nil {
+		return nil, fmt.Errorf("check project_todos schema: %w", err)
+	}
+	defer rows.Close()
+
+	columns := map[string]struct{}{}
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			return nil, fmt.Errorf("scan project_todos schema: %w", err)
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read project_todos schema: %w", err)
+	}
+	return columns, nil
+}
+
+func (s *Store) ensureProjectTodosWorkColumns(ctx context.Context) error {
+	columns, err := s.projectTodoTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["work_provider"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_todos ADD COLUMN work_provider TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add project_todos.work_provider column: %w", err)
+		}
+	}
+	if _, ok := columns["work_session_id"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_todos ADD COLUMN work_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add project_todos.work_session_id column: %w", err)
+		}
+	}
+	if _, ok := columns["work_claimed_at"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_todos ADD COLUMN work_claimed_at INTEGER`); err != nil {
+			return fmt.Errorf("add project_todos.work_claimed_at column: %w", err)
+		}
+	}
+	if _, ok := columns["work_state"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_todos ADD COLUMN work_state TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add project_todos.work_state column: %w", err)
+		}
+	}
+	if _, ok := columns["work_state_at"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_todos ADD COLUMN work_state_at INTEGER`); err != nil {
+			return fmt.Errorf("add project_todos.work_state_at column: %w", err)
+		}
 	}
 	return nil
 }
@@ -3234,6 +3303,7 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			pt.id, pt.project_path, pt.text, pt.done, pt.position, pt.created_at, pt.updated_at, pt.completed_at,
+			pt.work_provider, pt.work_session_id, pt.work_claimed_at, pt.work_state, pt.work_state_at,
 			tws.todo_id, tws.status, tws.todo_text_hash, tws.branch_name, tws.worktree_suffix, tws.kind,
 			tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at
 		FROM project_todos pt
@@ -3249,25 +3319,31 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 	out := []model.TodoItem{}
 	for rows.Next() {
 		var (
-			item        model.TodoItem
-			done        int
-			createdAt   int64
-			updatedAt   int64
-			completedAt sql.NullInt64
-			suggestion  sql.NullInt64
-			status      sql.NullString
-			textHash    sql.NullString
-			branchName  sql.NullString
-			suffix      sql.NullString
-			kind        sql.NullString
-			reason      sql.NullString
-			confidence  sql.NullFloat64
-			modelName   sql.NullString
-			lastError   sql.NullString
-			suggestedAt sql.NullInt64
+			item         model.TodoItem
+			done         int
+			createdAt    int64
+			updatedAt    int64
+			completedAt  sql.NullInt64
+			workProvider sql.NullString
+			workSession  sql.NullString
+			workClaimed  sql.NullInt64
+			workState    sql.NullString
+			workStateAt  sql.NullInt64
+			suggestion   sql.NullInt64
+			status       sql.NullString
+			textHash     sql.NullString
+			branchName   sql.NullString
+			suffix       sql.NullString
+			kind         sql.NullString
+			reason       sql.NullString
+			confidence   sql.NullFloat64
+			modelName    sql.NullString
+			lastError    sql.NullString
+			suggestedAt  sql.NullInt64
 		)
 		if err := rows.Scan(
 			&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt,
+			&workProvider, &workSession, &workClaimed, &workState, &workStateAt,
 			&suggestion, &status, &textHash, &branchName, &suffix, &kind, &reason, &confidence, &modelName, &lastError, &suggestedAt,
 		); err != nil {
 			return nil, err
@@ -3277,6 +3353,15 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 		item.UpdatedAt = time.Unix(updatedAt, 0)
 		if completedAt.Valid {
 			item.CompletedAt = time.Unix(completedAt.Int64, 0)
+		}
+		item.WorkProvider = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(workProvider.String)))
+		item.WorkSessionID = strings.TrimSpace(workSession.String)
+		item.WorkState = model.NormalizeTodoWorkState(model.TodoWorkState(strings.TrimSpace(workState.String)))
+		if workClaimed.Valid {
+			item.WorkClaimedAt = time.Unix(workClaimed.Int64, 0)
+		}
+		if workStateAt.Valid {
+			item.WorkStateAt = time.Unix(workStateAt.Int64, 0)
 		}
 		if suggestion.Valid {
 			worktreeSuggestion := &model.TodoWorktreeSuggestion{
@@ -3909,18 +3994,28 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 		return model.TodoItem{}, fmt.Errorf("todo id is required")
 	}
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, project_path, text, done, position, created_at, updated_at, completed_at
+		SELECT
+			id, project_path, text, done, position, created_at, updated_at, completed_at,
+			work_provider, work_session_id, work_claimed_at, work_state, work_state_at
 		FROM project_todos
 		WHERE id = ?
 	`, todoID)
 	var (
-		item        model.TodoItem
-		done        int
-		createdAt   int64
-		updatedAt   int64
-		completedAt sql.NullInt64
+		item         model.TodoItem
+		done         int
+		createdAt    int64
+		updatedAt    int64
+		completedAt  sql.NullInt64
+		workProvider sql.NullString
+		workSession  sql.NullString
+		workClaimed  sql.NullInt64
+		workState    sql.NullString
+		workStateAt  sql.NullInt64
 	)
-	if err := row.Scan(&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt); err != nil {
+	if err := row.Scan(
+		&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt,
+		&workProvider, &workSession, &workClaimed, &workState, &workStateAt,
+	); err != nil {
 		return model.TodoItem{}, err
 	}
 	item.Done = done != 0
@@ -3928,6 +4023,15 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 	item.UpdatedAt = time.Unix(updatedAt, 0)
 	if completedAt.Valid {
 		item.CompletedAt = time.Unix(completedAt.Int64, 0)
+	}
+	item.WorkProvider = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(workProvider.String)))
+	item.WorkSessionID = strings.TrimSpace(workSession.String)
+	item.WorkState = model.NormalizeTodoWorkState(model.TodoWorkState(strings.TrimSpace(workState.String)))
+	if workClaimed.Valid {
+		item.WorkClaimedAt = time.Unix(workClaimed.Int64, 0)
+	}
+	if workStateAt.Valid {
+		item.WorkStateAt = time.Unix(workStateAt.Int64, 0)
 	}
 	return item, nil
 }
@@ -3963,15 +4067,32 @@ func (s *Store) ToggleTodoDone(ctx context.Context, id int64, done bool) error {
 		return fmt.Errorf("todo id is required")
 	}
 	now := time.Now()
-	completedAt := any(nil)
+	var (
+		result sql.Result
+		err    error
+	)
 	if done {
-		completedAt = now.Unix()
+		result, err = s.db.ExecContext(ctx, `
+			UPDATE project_todos
+			SET done = 1,
+				completed_at = ?,
+				updated_at = ?,
+				work_provider = '',
+				work_session_id = '',
+				work_claimed_at = NULL,
+				work_state = '',
+				work_state_at = NULL
+			WHERE id = ?
+		`, now.Unix(), now.Unix(), id)
+	} else {
+		result, err = s.db.ExecContext(ctx, `
+			UPDATE project_todos
+			SET done = 0,
+				completed_at = NULL,
+				updated_at = ?
+			WHERE id = ?
+		`, now.Unix(), id)
 	}
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE project_todos
-		SET done = ?, completed_at = ?, updated_at = ?
-		WHERE id = ?
-	`, boolToInt(done), completedAt, now.Unix(), id)
 	if err != nil {
 		return err
 	}
@@ -3983,6 +4104,90 @@ func (s *Store) ToggleTodoDone(ctx context.Context, id int64, done bool) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (s *Store) AttachTodoWorkSession(ctx context.Context, todoID int64, provider model.SessionSource, sessionID string, state model.TodoWorkState, at time.Time) error {
+	if todoID <= 0 {
+		return fmt.Errorf("todo id is required")
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("todo work session id is required")
+	}
+	provider = model.NormalizeSessionSource(provider)
+	if provider == "" {
+		provider = model.SessionSourceUnknown
+	}
+	state = model.NormalizeTodoWorkState(state)
+	if state == "" {
+		state = model.TodoWorkStateWorking
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE project_todos
+		SET work_provider = ?,
+			work_session_id = ?,
+			work_claimed_at = ?,
+			work_state = ?,
+			work_state_at = ?,
+			updated_at = ?
+		WHERE id = ?
+		  AND done = 0
+	`, string(provider), sessionID, at.Unix(), string(state), at.Unix(), now.Unix(), todoID)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) UpdateTodoWorkStateForSession(ctx context.Context, projectPath string, provider model.SessionSource, sessionID string, state model.TodoWorkState, at time.Time) (int, error) {
+	projectPath = strings.TrimSpace(projectPath)
+	sessionID = strings.TrimSpace(sessionID)
+	if projectPath == "" || sessionID == "" {
+		return 0, nil
+	}
+	provider = model.NormalizeSessionSource(provider)
+	if provider == "" {
+		provider = model.SessionSourceUnknown
+	}
+	state = model.NormalizeTodoWorkState(state)
+	if state == "" {
+		state = model.TodoWorkStateIdle
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE project_todos
+		SET work_state = ?,
+			work_state_at = ?,
+			updated_at = ?
+		WHERE project_path = ?
+		  AND work_provider = ?
+		  AND work_session_id = ?
+		  AND done = 0
+		  AND (work_state <> ? OR work_state_at IS NULL OR work_state_at < ?)
+		  AND (work_state_at IS NULL OR work_state_at <= ?)
+	`, string(state), at.Unix(), now.Unix(), projectPath, string(provider), sessionID, string(state), at.Unix(), at.Unix())
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
 }
 
 func (s *Store) DeleteTodo(ctx context.Context, id int64) error {

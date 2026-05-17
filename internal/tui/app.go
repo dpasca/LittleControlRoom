@@ -393,6 +393,7 @@ type todoWorktreeLaunchMsg struct {
 	perfOpID       int64
 	perfDuration   time.Duration
 	projectPath    string
+	todoID         int64
 	todoText       string
 	status         string
 	provider       codexapp.Provider
@@ -1873,6 +1874,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.storeTodoLaunchDraft(todoLaunchDraftState{
 			projectPath:    msg.projectPath,
+			todoID:         msg.todoID,
 			provider:       provider,
 			openModelFirst: msg.openModelFirst,
 			autoSubmit:     !msg.openModelFirst,
