@@ -623,11 +623,15 @@ func localLinkText(target string) (string, bool) {
 	if err != nil || parsed.Scheme != "file" {
 		return "", false
 	}
-	pathText := localPathText(parsed.Path, parsed.Fragment)
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = parsed.Path
+	}
+	pathText := localPathText(path, parsed.Fragment)
 	if parsed.Host != "" && parsed.Host != "localhost" {
 		pathText = parsed.Host + ":" + pathText
 	}
-	return pathText, parsed.Path != ""
+	return pathText, path != ""
 }
 
 func localPathText(path, fragment string) string {
@@ -701,7 +705,19 @@ func localOpenPath(target string) (path, location string) {
 	if lineLocation != "" {
 		location = lineLocation
 	}
+	path = unescapeLocalOpenPath(path)
 	return path, location
+}
+
+func unescapeLocalOpenPath(path string) string {
+	if !strings.Contains(path, "%") {
+		return path
+	}
+	unescaped, err := url.PathUnescape(path)
+	if err != nil {
+		return path
+	}
+	return unescaped
 }
 
 func splitLocalLineSuffix(path string) (string, string) {

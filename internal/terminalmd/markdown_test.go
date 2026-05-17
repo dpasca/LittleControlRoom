@@ -53,6 +53,25 @@ func TestRenderBodyUnwrapsAngleBracketLocalMarkdownLinks(t *testing.T) {
 	}
 }
 
+func TestRenderBodyDecodesPercentEscapedLocalMarkdownPaths(t *testing.T) {
+	t.Parallel()
+
+	path := "/tmp/Family Room/jun_it_citizenship/Italian B1 certificate.pdf"
+	encodedPath := strings.ReplaceAll(path, " ", "%20")
+	rendered := RenderBody("Open [Italian B1 certificate]("+encodedPath+").", lipgloss.Color("252"), 120)
+	if !strings.Contains(rendered, ansi.SetHyperlink(path)) {
+		t.Fatalf("rendered link should target the decoded local path %q: %q", path, rendered)
+	}
+	if strings.Contains(rendered, ansi.SetHyperlink(encodedPath)) || strings.Contains(rendered, "%20") {
+		t.Fatalf("rendered local link should not keep percent-escaped spaces: %q", rendered)
+	}
+
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "Open Italian B1 certificate.") {
+		t.Fatalf("rendered text should keep the compact link label: %q", stripped)
+	}
+}
+
 func TestRenderBodyKeepsExternalMarkdownLinksClickable(t *testing.T) {
 	t.Parallel()
 
@@ -103,6 +122,20 @@ func TestExtractOpenLinksUsesOpenableLocalPath(t *testing.T) {
 	}
 	if links[1].Kind != "url" || links[1].OpenPath != "https://example.com/docs" {
 		t.Fatalf("external link = %#v, want openable URL", links[1])
+	}
+}
+
+func TestExtractOpenLinksDecodesPercentEscapedLocalPath(t *testing.T) {
+	t.Parallel()
+
+	path := "/tmp/Family Room/jun_it_citizenship/Italian B1 certificate.pdf"
+	encodedPath := strings.ReplaceAll(path, " ", "%20")
+	links := ExtractOpenLinks("Open [Italian B1 certificate](" + encodedPath + ").")
+	if len(links) != 1 {
+		t.Fatalf("links = %d, want 1: %#v", len(links), links)
+	}
+	if links[0].Kind != "pdf" || links[0].Label != "Italian B1 certificate" || links[0].OpenPath != path {
+		t.Fatalf("local link = %#v, want decoded PDF path %q", links[0], path)
 	}
 }
 

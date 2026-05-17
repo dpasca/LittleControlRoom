@@ -17862,6 +17862,73 @@ func TestCodexLinkPickerOpensLineSuffixedLocalMarkdownLinksAsFiles(t *testing.T)
 	_ = updated
 }
 
+func TestCodexLinkPickerOpensPercentEscapedLocalMarkdownLinksAsFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Family Room", "jun_it_citizenship")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	path := filepath.Join(dir, "Italian B1 certificate.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\n"), 0o600); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+	encodedPath := strings.ReplaceAll(path, " ", "%20")
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Open [Italian B1 certificate](" + encodedPath + ").",
+			},
+		},
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+		codexViewport: viewport.New(100, 4),
+	}
+	rendered := m.renderAndCacheCodexTranscript("/tmp/demo", snapshot, 100)
+	if strings.Contains(rendered, "%20") {
+		t.Fatalf("rendered transcript should not expose percent-escaped local path spaces: %q", rendered)
+	}
+	m.codexViewport.SetContent(rendered)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("link picker state = %#v, want one PDF target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "pdf" || target.Path != path {
+		t.Fatalf("PDF target = %#v, want kind pdf path %q", target, path)
+	}
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on PDF link should queue open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("PDF open command returned nil")
+	}
+	if opened != path {
+		t.Fatalf("PDF picker opened %q, want decoded file path %q", opened, path)
+	}
+	_ = updated
+}
+
 func TestRenderCodexTranscriptEntriesRendersFileURLMarkdownLinksAsRawPathHyperlinks(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{

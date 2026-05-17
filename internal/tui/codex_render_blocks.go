@@ -804,11 +804,15 @@ func codexLocalLinkText(target string) (string, bool) {
 	if err != nil || parsed.Scheme != "file" {
 		return "", false
 	}
-	pathText := codexLocalPathText(parsed.Path, parsed.Fragment)
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = parsed.Path
+	}
+	pathText := codexLocalPathText(path, parsed.Fragment)
 	if parsed.Host != "" && parsed.Host != "localhost" {
 		pathText = parsed.Host + ":" + pathText
 	}
-	return pathText, parsed.Path != ""
+	return pathText, path != ""
 }
 
 func codexLocalPathText(path, fragment string) string {
@@ -880,7 +884,19 @@ func codexLocalOpenPath(target string) (path, location string) {
 	if lineLocation != "" {
 		location = lineLocation
 	}
+	path = unescapeCodexLocalOpenPath(path)
 	return path, location
+}
+
+func unescapeCodexLocalOpenPath(path string) string {
+	if !strings.Contains(path, "%") {
+		return path
+	}
+	unescaped, err := url.PathUnescape(path)
+	if err != nil {
+		return path
+	}
+	return unescaped
 }
 
 func codexSplitLocalLineSuffix(path string) (string, string) {

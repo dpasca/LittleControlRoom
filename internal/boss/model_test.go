@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1029,6 +1030,87 @@ func TestModelAltOOpensFilePickerForMarkdownLinks(t *testing.T) {
 	if got.status != "Opened file" {
 		t.Fatalf("status = %q, want Opened file", got.status)
 	}
+}
+
+func TestModelAltOOpensPercentEscapedLocalPathsAndFolders(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Family Room", "jun_it_citizenship")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	path := filepath.Join(dir, "Italian B1 certificate.pdf")
+	if err := os.WriteFile(path, []byte("%PDF-1.7\n"), 0o600); err != nil {
+		t.Fatalf("write pdf: %v", err)
+	}
+	encodedPath := strings.ReplaceAll(path, " ", "%20")
+
+	m := New(context.Background(), nil)
+	m.width = 100
+	m.height = 28
+	m.messages = []ChatMessage{{
+		Role:    "assistant",
+		Content: "June IT citizenship docs:\n- [Italian B1 certificate](" + encodedPath + ")",
+	}}
+	m.syncLayout(true)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("alt+o should open the picker without a command")
+	}
+	got := updated.(Model)
+	if got.openTargetPicker == nil || len(got.openTargetPicker.Targets) != 1 {
+		t.Fatalf("targets = %#v, want one decoded local PDF", got.openTargetPicker)
+	}
+	target := got.openTargetPicker.Targets[0]
+	if target.Kind != "pdf" || target.Path != path {
+		t.Fatalf("target = %#v, want kind pdf path %q", target, path)
+	}
+	if strings.Contains(ansi.Strip(got.View()), "%20") {
+		t.Fatalf("file picker should show decoded local paths, view:\n%s", got.View())
+	}
+
+	oldPathOpener := bossExternalPathOpener
+	defer func() { bossExternalPathOpener = oldPathOpener }()
+	opened := ""
+	bossExternalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+
+	folderModel := got
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("enter should return an open command")
+	}
+	msg := cmd()
+	if opened != path {
+		t.Fatalf("opened path = %q, want decoded file path %q", opened, path)
+	}
+	openMsg, ok := msg.(bossOpenTargetOpenedMsg)
+	if !ok {
+		t.Fatalf("open command returned %T, want bossOpenTargetOpenedMsg", msg)
+	}
+	if openMsg.err != nil || openMsg.status != "Opened file" {
+		t.Fatalf("open message = %#v, want successful file open", openMsg)
+	}
+	_ = updated
+
+	opened = ""
+	updated, cmd = folderModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	if cmd == nil {
+		t.Fatalf("f should return a containing-folder open command")
+	}
+	msg = cmd()
+	if opened != dir {
+		t.Fatalf("opened folder = %q, want decoded containing folder %q", opened, dir)
+	}
+	openMsg, ok = msg.(bossOpenTargetOpenedMsg)
+	if !ok {
+		t.Fatalf("folder open command returned %T, want bossOpenTargetOpenedMsg", msg)
+	}
+	if openMsg.err != nil || openMsg.status != "Opened containing folder" {
+		t.Fatalf("folder open message = %#v, want successful folder open", openMsg)
+	}
+	_ = updated
 }
 
 func TestModelAltOWithoutLinksLeavesPickerClosed(t *testing.T) {
