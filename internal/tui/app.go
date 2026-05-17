@@ -110,6 +110,7 @@ type Model struct {
 	ignoredPickerItems                  []model.IgnoredProject
 	newProjectDialog                    *newProjectDialogState
 	newTaskDialog                       *newTaskDialogState
+	newTaskRequestSeq                   int64
 	runCommandDialog                    *runCommandDialogState
 	skillsDialog                        *skillsDialogState
 	preferredSelectPath                 string
@@ -1385,19 +1386,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
 	case newTaskResultMsg:
-		if m.newTaskDialog != nil {
-			m.newTaskDialog.Submitting = false
-		}
-		if msg.err != nil {
-			m.reportError("Scratch task setup failed", msg.err, "")
-			return m, nil
-		}
-		m.err = nil
-		m.newTaskDialog = nil
-		m.focusedPane = focusProjects
-		m.preferredSelectPath = msg.result.TaskPath
-		m.status = "Scratch task created and added to the list"
-		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
+		return m.applyNewTaskResultMsg(msg)
 	case cpuRemediationTaskCreatedMsg:
 		return m.applyCPURemediationTaskCreatedMsg(msg)
 	case detailMsg:
@@ -6445,7 +6434,7 @@ func (m Model) renderFooter(width int) string {
 	if m.newTaskDialog != nil {
 		label := "New task: Enter create, Esc cancel"
 		if m.newTaskDialog.Submitting {
-			label = "New task: applying..."
+			label = "New task: applying... Esc close"
 		}
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}

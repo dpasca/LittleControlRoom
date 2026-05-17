@@ -328,6 +328,72 @@ func TestCreateScratchTaskCreatesMetadataAndPersistsKind(t *testing.T) {
 	}
 }
 
+func TestCreateScratchTaskCleansFolderWhenPersistenceFails(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	if _, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{Title: "Canceled before persistence"}); err == nil {
+		t.Fatalf("CreateScratchTask() error = nil, want canceled persistence error")
+	}
+	entries, err := os.ReadDir(cfg.ScratchRoot)
+	if err != nil {
+		t.Fatalf("read scratch root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("scratch root entries = %d, want cleanup after failed persistence: %#v", len(entries), entries)
+	}
+}
+
+func TestScanOnceDiscoversScratchTaskFolderCreatedBeforePersistence(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{t.TempDir()}
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	taskPath := filepath.Join(cfg.ScratchRoot, "2026-05-18-pdf-of-alien-card")
+	if err := os.MkdirAll(taskPath, 0o755); err != nil {
+		t.Fatalf("mkdir scratch task: %v", err)
+	}
+	createdAt := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(filepath.Join(taskPath, scratchTaskMetadataFileName), []byte(renderScratchTaskMetadata("pdf of alien card", createdAt)), 0o644); err != nil {
+		t.Fatalf("write scratch metadata: %v", err)
+	}
+
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+	detail, err := st.GetProjectDetail(ctx, taskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.Kind != model.ProjectKindScratchTask || detail.Summary.Name != "pdf of alien card" {
+		t.Fatalf("discovered scratch task summary = %#v", detail.Summary)
+	}
+	if !detail.Summary.ManuallyAdded || !detail.Summary.InScope || !detail.Summary.PresentOnDisk {
+		t.Fatalf("unexpected discovered scratch task flags: %#v", detail.Summary)
+	}
+}
+
 func TestScanOnceKeepsScratchTaskVisibleOutsideIncludePaths(t *testing.T) {
 	t.Parallel()
 

@@ -748,6 +748,26 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	if err != nil {
 		return ScanReport{}, fmt.Errorf("load previous project state: %w", err)
 	}
+	if shouldDiscoverScratchTaskFolders(cfg, oldMap) {
+		scratchTasks, err := discoverScratchTaskFolders(cfg.ScratchRoot)
+		if err != nil {
+			return ScanReport{}, fmt.Errorf("discover scratch tasks: %w", err)
+		}
+		for _, task := range scratchTasks {
+			if _, ok := oldMap[task.Path]; ok {
+				continue
+			}
+			oldMap[task.Path] = model.ProjectSummary{
+				Path:          task.Path,
+				Name:          task.Title,
+				Kind:          model.ProjectKindScratchTask,
+				PresentOnDisk: true,
+				ManuallyAdded: true,
+				InScope:       true,
+				CreatedAt:     task.CreatedAt,
+			}
+		}
+	}
 	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader)
 	for path, old := range oldMap {
 		inScopeNow := scope.Allows(path) || old.ManuallyAdded
@@ -1165,6 +1185,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			AttentionReason:      score.Reasons,
 			Sessions:             sessions,
 			Artifacts:            artifacts,
+			CreatedAt:            old.CreatedAt,
 			UpdatedAt:            now,
 		}
 

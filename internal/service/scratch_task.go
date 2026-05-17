@@ -55,16 +55,25 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 	if err != nil {
 		return CreateScratchTaskResult{}, err
 	}
+	cleanupTaskPath := false
+	cleanupOnError := func(err error) (CreateScratchTaskResult, error) {
+		if cleanupTaskPath {
+			_ = os.RemoveAll(taskPath)
+		}
+		return CreateScratchTaskResult{}, err
+	}
 	if err := os.MkdirAll(taskPath, 0o755); err != nil {
 		return CreateScratchTaskResult{}, fmt.Errorf("create task directory: %w", err)
 	}
+	cleanupTaskPath = true
 	if err := os.WriteFile(filepath.Join(taskPath, scratchTaskMetadataFileName), []byte(renderScratchTaskMetadata(title, now)), 0o644); err != nil {
-		return CreateScratchTaskResult{}, fmt.Errorf("write task metadata: %w", err)
+		return cleanupOnError(fmt.Errorf("write task metadata: %w", err))
 	}
 
 	if err := s.upsertManualProjectState(ctx, model.ProjectSummary{}, taskPath, title, model.ProjectKindScratchTask); err != nil {
-		return CreateScratchTaskResult{}, err
+		return cleanupOnError(err)
 	}
+	cleanupTaskPath = false
 
 	if s.bus != nil {
 		s.bus.Publish(events.Event{
@@ -87,6 +96,104 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 		TaskPath: taskPath,
 		TaskName: title,
 	}, nil
+}
+
+type discoveredScratchTask struct {
+	Path      string
+	Title     string
+	CreatedAt time.Time
+}
+
+func discoverScratchTaskFolders(rootPath string) ([]discoveredScratchTask, error) {
+	rootPath = normalizedScratchRootPath(rootPath)
+	entries, err := os.ReadDir(rootPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read scratch root: %w", err)
+	}
+
+	tasks := []discoveredScratchTask{}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == scratchTaskArchiveDirName {
+			continue
+		}
+		taskPath := filepath.Join(rootPath, entry.Name())
+		content, err := os.ReadFile(filepath.Join(taskPath, scratchTaskMetadataFileName))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read scratch task metadata: %w", err)
+		}
+		task, ok := parseScratchTaskMetadata(taskPath, string(content))
+		if ok {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks, nil
+}
+
+func shouldDiscoverScratchTaskFolders(cfg config.AppConfig, oldMap map[string]model.ProjectSummary) bool {
+	rootPath := normalizedScratchRootPath(cfg.ScratchRoot)
+	if rootPath == "" {
+		return false
+	}
+	if rootPath != normalizedScratchRootPath(config.Default().ScratchRoot) {
+		return true
+	}
+	prefix := rootPath + string(os.PathSeparator)
+	for path, summary := range oldMap {
+		if model.NormalizeProjectKind(summary.Kind) != model.ProjectKindScratchTask {
+			continue
+		}
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == rootPath || strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizedScratchRootPath(rootPath string) string {
+	rootPath = strings.TrimSpace(rootPath)
+	if rootPath == "" {
+		rootPath = config.Default().ScratchRoot
+	}
+	if rootPath == "" {
+		return ""
+	}
+	return filepath.Clean(rootPath)
+}
+
+func parseScratchTaskMetadata(taskPath, content string) (discoveredScratchTask, bool) {
+	task := discoveredScratchTask{Path: filepath.Clean(taskPath)}
+	kind := model.ProjectKind("")
+	status := "active"
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(line, "# "):
+			task.Title = strings.TrimSpace(strings.TrimPrefix(line, "# "))
+		case strings.HasPrefix(lower, "kind:"):
+			kind = model.ProjectKind(strings.TrimSpace(line[len("Kind:"):]))
+		case strings.HasPrefix(lower, "status:"):
+			status = strings.ToLower(strings.TrimSpace(line[len("Status:"):]))
+		case strings.HasPrefix(lower, "created:"):
+			if createdAt, err := time.Parse("2006-01-02", strings.TrimSpace(line[len("Created:"):])); err == nil {
+				task.CreatedAt = createdAt
+			}
+		}
+	}
+	if model.NormalizeProjectKind(kind) != model.ProjectKindScratchTask || status != "active" {
+		return discoveredScratchTask{}, false
+	}
+	if strings.TrimSpace(task.Title) == "" {
+		task.Title = filepath.Base(task.Path)
+	}
+	return task, true
 }
 
 func (s *Service) ArchiveScratchTask(ctx context.Context, projectPath string) (string, error) {
