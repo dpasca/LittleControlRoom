@@ -1877,7 +1877,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	}
 	if len(view.EngineerActivities) > 0 {
 		limit := minInt(len(view.EngineerActivities), 5)
-		lines = append(lines, "- active engineer work:")
+		lines = append(lines, "- active engineer work (mid-turn or waiting for input):")
 		for i := 0; i < limit; i++ {
 			activity := view.EngineerActivities[i]
 			label := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))

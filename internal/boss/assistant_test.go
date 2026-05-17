@@ -923,7 +923,11 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"project TODOs are separate from delegated agent tasks",
 		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
+		"Project implementation requests are not TODO requests",
+		"open idle Codex or OpenCode engineer session",
+		"Use todo.add only when the user explicitly asks",
 		"Default project handoffs to session_mode=new",
+		"It is fine to start a fresh Codex/OpenCode handoff",
 		"Use session_mode=resume_or_new only when",
 		"operator note meant to steer that work",
 		"The host will steer the active Codex turn when possible",
@@ -1402,6 +1406,125 @@ func TestAssistantReplyCanProposeTodoAddControl(t *testing.T) {
 	if input.ProjectPath != "/tmp/alpha" || input.ProjectName != "Alpha" ||
 		input.Text != "Add a Boss Desk TODO section for pending project backlog items." {
 		t.Fatalf("invocation args = %#v", input)
+	}
+}
+
+func TestAssistantTodoAddPolicyConvertsImplicitBacklogToFreshEngineerHandoff(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass}), Usage: model.LLMUsage{TotalTokens: 3}},
+			{OutputText: encodedTodoAddPolicyReview(t, bossTodoAddPolicyReview{
+				AllowTodoAdd:                 false,
+				ReplacementControlCapability: string(control.CapabilityEngineerSendPrompt),
+				ReplacementSessionMode:       string(control.SessionModeNew),
+				Reason:                       "The user asked for project work now; an open idle engineer session is not a backlog request.",
+			}), Usage: model.LLMUsage{TotalTokens: 5}},
+		},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "todo.add",
+				ProjectPath:       "/tmp/lcr",
+				ProjectName:       "Little Control Room",
+				TodoText:          "Change Boss Chat so project change requests start a fresh engineer handoff instead of becoming TODOs.",
+				Reason:            "The project has an open engineer session.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 17},
+		}},
+	}
+	assistant := &Assistant{
+		planner:      planner,
+		queryRouter:  router,
+		query:        newQueryExecutor(&fakeBossStore{}),
+		model:        "gpt-test",
+		utilityModel: "gpt-utility",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.\nCurrent TUI view:\n- classic TUI status: Embedded Codex session is already open in the background.",
+		Messages:   []ChatMessage{{Role: "user", Content: "change Little Control Room so boss chat does not turn project change requests into TODOs just because a session is open"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want engineer.send_prompt proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityEngineerSendPrompt {
+		t.Fatalf("capability = %q, want engineer.send_prompt", resp.ControlInvocation.Capability)
+	}
+	var input control.EngineerSendPromptInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.SessionMode != control.SessionModeNew ||
+		input.ProjectPath != "/tmp/lcr" ||
+		input.TodoText != "" ||
+		!strings.Contains(input.Prompt, "project change requests start a fresh engineer handoff") {
+		t.Fatalf("invocation args = %#v", input)
+	}
+	if !strings.Contains(resp.Content, "start a fresh session") {
+		t.Fatalf("proposal content = %q, want fresh-session confirmation", resp.Content)
+	}
+	if len(router.reqs) != 2 {
+		t.Fatalf("router requests = %d, want route plus todo policy review", len(router.reqs))
+	}
+	if router.reqs[1].SchemaName != "boss_todo_add_policy_review" || router.reqs[1].Model != "gpt-utility" {
+		t.Fatalf("policy review request = %+v", router.reqs[1])
+	}
+	if resp.Usage.TotalTokens != 25 {
+		t.Fatalf("usage total = %d, want route+planner+policy usage", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantTodoAddPolicyAllowsExplicitBacklog(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass})},
+			{OutputText: encodedTodoAddPolicyReview(t, bossTodoAddPolicyReview{
+				AllowTodoAdd: true,
+				Reason:       "The user explicitly asked to enqueue the work.",
+			})},
+		},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "todo.add",
+				ProjectPath:       "/tmp/alpha",
+				ProjectName:       "Alpha",
+				TodoText:          "Add a Boss Desk TODO section.",
+			}),
+		}},
+	}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "enqueue this for Alpha: add a Boss Desk TODO section"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil || resp.ControlInvocation.Capability != control.CapabilityTodoAdd {
+		t.Fatalf("ControlInvocation = %#v, want todo.add", resp.ControlInvocation)
+	}
+	if len(router.reqs) != 2 || router.reqs[1].SchemaName != "boss_todo_add_policy_review" {
+		t.Fatalf("router requests = %+v, want route plus todo policy review", router.reqs)
 	}
 }
 
@@ -2059,6 +2182,15 @@ func encodedReadOnlyRoute(t *testing.T, route bossReadOnlyRoute) string {
 	raw, err := json.Marshal(route)
 	if err != nil {
 		t.Fatalf("marshal read-only route: %v", err)
+	}
+	return string(raw)
+}
+
+func encodedTodoAddPolicyReview(t *testing.T, review bossTodoAddPolicyReview) string {
+	t.Helper()
+	raw, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("marshal todo.add policy review: %v", err)
 	}
 	return string(raw)
 }

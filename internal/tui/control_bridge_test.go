@@ -879,6 +879,80 @@ func TestExecuteBossControlInvocationBlocksFreshPromptWhileSameEngineerTurnActiv
 	}
 }
 
+func TestExecuteBossControlInvocationAllowsFreshPromptWhenSameEngineerSessionIdle(t *testing.T) {
+	projectPath := "/tmp/control-idle-fresh-allowed"
+	liveSession := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			ThreadID: "thread-idle",
+			Started:  true,
+			Phase:    codexapp.SessionPhaseIdle,
+		},
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		if req.ForceNew {
+			return &fakeCodexSession{
+				projectPath: projectPath,
+				snapshot: codexapp.Snapshot{
+					Provider: codexapp.ProviderCodex,
+					ThreadID: "thread-fresh",
+					Started:  true,
+					Phase:    codexapp.SessionPhaseIdle,
+				},
+			}, nil
+		}
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "control-idle-fresh-allowed",
+			PresentOnDisk: true,
+		}},
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			Provider:    control.ProviderCodex,
+			SessionMode: control.SessionModeNew,
+			Prompt:      "Start a separate fresh investigation.",
+			Reveal:      false,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
+	}
+	if !strings.Contains(got.status, "Starting a new embedded Codex session") {
+		t.Fatalf("status = %q, want fresh session start", got.status)
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err != nil {
+		t.Fatalf("result err = %v, want idle session to allow fresh launch", result.Err)
+	}
+	if len(requests) != 2 || !requests[1].ForceNew || requests[1].Prompt == "" {
+		t.Fatalf("launch requests = %#v, want second forced fresh prompt", requests)
+	}
+}
+
 func TestExecuteBossControlInvocationBlocksFreshPromptWhenLatestSameProviderTurnUnfinished(t *testing.T) {
 	projectPath := "/tmp/control-latest-turn-block"
 	m := Model{

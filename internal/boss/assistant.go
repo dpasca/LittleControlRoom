@@ -539,6 +539,13 @@ type bossReadOnlyRoute struct {
 	Reason            string `json:"reason"`
 }
 
+type bossTodoAddPolicyReview struct {
+	AllowTodoAdd                 bool   `json:"allow_todo_add"`
+	ReplacementControlCapability string `json:"replacement_control_capability"`
+	ReplacementSessionMode       string `json:"replacement_session_mode"`
+	Reason                       string `json:"reason"`
+}
+
 const bossReadOnlyRoutePass = "pass"
 
 func (a *Assistant) tryStructuredHandleQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (*bossToolResult, bool, error) {
@@ -637,6 +644,18 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 	}
 	normalizeBossAction(&action)
 	prepareBossActionForRequest(&action, req)
+	if reviewed, changed, reviewResponse, err := a.reviewTodoAddPolicy(ctx, req, action); err != nil {
+		if ctx.Err() != nil {
+			return response, bossAction{}, err
+		}
+	} else {
+		addLLMUsage(&response.Usage, reviewResponse.Usage)
+		if changed {
+			action = reviewed
+			normalizeBossAction(&action)
+			prepareBossActionForRequest(&action, req)
+		}
+	}
 	if err := validateBossAction(action); err != nil {
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
 			return response, bossAction{}, wrapControlProposalError(err)
@@ -653,6 +672,129 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		}
 	}
 	return response, action, nil
+}
+
+func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantRequest, action bossAction) (bossAction, bool, llm.JSONSchemaResponse, error) {
+	if a == nil || a.queryRouter == nil || !bossActionIsTodoAddProposal(action) {
+		return action, false, llm.JSONSchemaResponse{}, nil
+	}
+	response, err := a.queryRouter.RunJSONSchema(ctx, llm.JSONSchemaRequest{
+		Model:           firstNonEmpty(strings.TrimSpace(a.utilityModel), strings.TrimSpace(a.model)),
+		SystemText:      bossTodoAddPolicyReviewSystemPrompt(),
+		UserText:        bossTodoAddPolicyReviewUserText(req, action),
+		SchemaName:      "boss_todo_add_policy_review",
+		Schema:          bossTodoAddPolicyReviewSchema(),
+		ReasoningEffort: bossReadOnlyRouterReasoningEffort,
+	})
+	if err != nil {
+		return action, false, response, err
+	}
+	if strings.TrimSpace(response.OutputText) == "" {
+		return action, false, response, errors.New("boss chat returned no todo.add policy review")
+	}
+	var review bossTodoAddPolicyReview
+	if err := llm.DecodeJSONObjectOutput(response.OutputText, &review); err != nil {
+		return action, false, response, fmt.Errorf("decode boss todo.add policy review: %w", err)
+	}
+	if review.AllowTodoAdd {
+		return action, false, response, nil
+	}
+	if control.CapabilityName(strings.TrimSpace(review.ReplacementControlCapability)) != control.CapabilityEngineerSendPrompt {
+		return action, false, response, nil
+	}
+	replacement := action
+	replacement.ControlCapability = string(control.CapabilityEngineerSendPrompt)
+	replacement.EngineerProvider = firstNonEmpty(replacement.EngineerProvider, string(control.ProviderAuto))
+	replacement.SessionMode = string(control.SessionModeNew)
+	if mode := control.NormalizeSessionMode(review.ReplacementSessionMode); mode != "" {
+		replacement.SessionMode = string(mode)
+	}
+	replacement.Prompt = firstNonEmpty(replacement.Prompt, replacement.TodoText)
+	replacement.TodoID = 0
+	replacement.TodoLabel = ""
+	replacement.TodoText = ""
+	replacement.TodoEvidence = ""
+	if reason := strings.TrimSpace(review.Reason); reason != "" {
+		replacement.Reason = "TODO policy review: " + reason
+	}
+	return replacement, true, response, nil
+}
+
+func bossActionIsTodoAddProposal(action bossAction) bool {
+	return normalizeBossActionKind(action.Kind) == bossActionProposeControl &&
+		control.CapabilityName(strings.TrimSpace(action.ControlCapability)) == control.CapabilityTodoAdd
+}
+
+func bossTodoAddPolicyReviewSystemPrompt() string {
+	return strings.Join([]string{
+		"You are the Boss Chat todo.add policy reviewer for Little Control Room.",
+		"The main planner proposed adding a project TODO. Decide whether that is allowed.",
+		"Allow todo.add only when the latest user message explicitly asks to make a TODO, backlog, queue, reminder, or pending item without starting work now, or when same-project active Codex/OpenCode work is in the middle of a turn and unrelated work must be parked for later.",
+		"Do not allow todo.add merely because a project already has an open idle Codex/OpenCode engineer session. Idle open sessions are safe to replace with a fresh engineer.send_prompt handoff.",
+		"For loaded-project implementation, change, fix, or investigation work the user wants handled now, reject todo.add and choose replacement_control_capability=\"engineer.send_prompt\" with replacement_session_mode=\"new\".",
+		"Judge intent from the conversation and supplied app state. Do not use keyword rules; return only the structured review.",
+	}, "\n")
+}
+
+func bossTodoAddPolicyReviewUserText(req AssistantRequest, action bossAction) string {
+	var b strings.Builder
+	b.WriteString(requestContextBrief(req))
+	b.WriteString("\n\nRecent chat:\n")
+	for _, message := range trimChatHistory(req.Messages, 10) {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		b.WriteString(normalizeChatRole(message.Role))
+		b.WriteString(": ")
+		b.WriteString(clipText(content, 900))
+		b.WriteString("\n")
+	}
+	b.WriteString("\nProposed todo.add action:\n")
+	b.WriteString("project_path: " + strings.TrimSpace(action.ProjectPath) + "\n")
+	b.WriteString("project_name: " + strings.TrimSpace(action.ProjectName) + "\n")
+	b.WriteString("todo_text: " + strings.TrimSpace(action.TodoText) + "\n")
+	if prompt := strings.TrimSpace(action.Prompt); prompt != "" {
+		b.WriteString("prompt: " + prompt + "\n")
+	}
+	if reason := strings.TrimSpace(action.Reason); reason != "" {
+		b.WriteString("planner_reason: " + clipText(reason, 500) + "\n")
+	}
+	b.WriteString("\nReturn allow_todo_add=true only if this really belongs in the project backlog. Otherwise return allow_todo_add=false and replacement_control_capability=\"engineer.send_prompt\".")
+	return strings.TrimSpace(b.String())
+}
+
+func bossTodoAddPolicyReviewSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"allow_todo_add": map[string]any{
+				"type":        "boolean",
+				"description": "True only when adding a backlog TODO is the intended action.",
+			},
+			"replacement_control_capability": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.CapabilityEngineerSendPrompt)},
+				"description": "When allow_todo_add is false for now-work on a loaded project, use engineer.send_prompt.",
+			},
+			"replacement_session_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"", string(control.SessionModeNew)},
+				"description": "Use new for replacement engineer.send_prompt handoffs.",
+			},
+			"reason": map[string]any{
+				"type":        "string",
+				"description": "Concise policy reason for the decision.",
+			},
+		},
+		"required": []string{
+			"allow_todo_add",
+			"replacement_control_capability",
+			"replacement_session_mode",
+			"reason",
+		},
+	}
 }
 
 func unconfiguredAssistantMessage(backend config.AIBackend) string {
@@ -767,7 +909,8 @@ func bossActionPlannerSystemPrompt() string {
 		"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, scratch_task.archive, todo.add, or todo.complete.",
 		"Available goal action kind: propose_goal. Supported goal_kind values are agent_task_cleanup and lcagent_task. agent_task_cleanup archives multiple delegated agent task records under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. lcagent_task creates one Boss-owned LCAgent agent task, launches LCAgent with scoped authority, records the handoff, waits for completion, harvests the trace, and verifies LCAgent reported checks.",
 		"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
-		"Use todo.add when the user asks to queue, enqueue, backlog, remember, or add pending work for a loaded project without starting it now; project TODOs are pending backlog items, not delegated engineer work.",
+		"Project implementation requests are not TODO requests. For loaded-project work the user wants handled now, propose engineer.send_prompt with session_mode=new even if that project already has an open idle Codex or OpenCode engineer session.",
+		"Use todo.add only when the user explicitly asks to make a TODO/backlog/queue/reminder, or when same-project active engineer work is in the middle of a turn and the user accepts parking unrelated work for later. An open idle engineer session alone must not cause todo.add.",
 		"Use todo.complete when the user asks to mark, close, finish, resolve, or clear an existing project TODO as done, or when gathered engineer/project evidence directly satisfies a linked TODO; never silently complete a TODO without a control confirmation.",
 		"When delegating project work for an open project TODO, set todo_id and todo_text on engineer.send_prompt, and set todo_label from the short TODO label when available. If the user names a TODO id, use that id; if the target TODO is unclear, inspect todo_report/project_detail or ask before sending work.",
 		"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
@@ -788,7 +931,7 @@ func bossActionPlannerSystemPrompt() string {
 		"Do not answer with only a priority order when the user asks Boss to get open agent tasks solved and a task id is visible.",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue for generic or host-level work.",
 		"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
-		"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. Default project handoffs to session_mode=new so unrelated work does not inherit stale engineer context. Use session_mode=resume_or_new only when the user explicitly asks to resume/continue a prior engineer session, clearly gives a same-topic follow-up, or provides an operator note meant to steer active work. Set reveal true only when the user asks to show/open the session.",
+		"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. Default project handoffs to session_mode=new so unrelated work does not inherit stale engineer context. It is fine to start a fresh Codex/OpenCode handoff for a project that already has an open idle session; only a session in the middle of a turn is a blocker. Use session_mode=resume_or_new only when the user explicitly asks to resume/continue a prior engineer session, clearly gives a same-topic follow-up, or provides an operator note meant to steer active work. Set reveal true only when the user asks to show/open the session.",
 		"If the current view lists active Codex engineer work and the user gives an operator note meant to steer that work, such as offering to log in or clarifying what the engineer should try next, propose engineer.send_prompt with session_mode=resume_or_new for that same project/task. The host will steer the active Codex turn when possible. Active work alone is not enough reason to resume; start a fresh separate handoff for new or unrelated project work.",
 		"Wanting to see an app, page, server, screenshot, or browser result is not a request to reveal the engineer transcript pane; keep reveal false unless the user explicitly asks to show, open, or watch that engineer session.",
 		"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
@@ -881,9 +1024,9 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 		}
 	}
 	if forceAnswer {
-		b.WriteString("\nYou must choose kind=\"answer\", kind=\"propose_control\", or kind=\"propose_goal\" now. Use the gathered data; do not request more read-only queries. If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known. If the user asks to mark/close/finish/resolve a project TODO as done, or gathered evidence directly satisfies a linked project TODO, choose kind=\"propose_control\" with control_capability=\"todo.complete\" and fill todo_id, todo_text, and todo_evidence. If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer. If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record multiple delegated agent tasks and gathered data identifies more than one task id, choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" and put all selected ids in goal_resources. If the user explicitly asks Boss to have LCAgent take a scoped task under one traceable approval, choose kind=\"propose_goal\" with goal_kind=\"lcagent_task\". If exactly one delegated task should be removed and the task id is known, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" and task_close_status=\"archived\". This applies to open/review/waiting tasks too; do not use task_close_status=\"waiting\" for cleanup. If gathered project data identifies kind=scratch_task and the user wants that task gone, choose kind=\"propose_control\" with control_capability=\"scratch_task.archive\". If gathered task data lacks the detail the user asked for and a task id is clear, and the user is asking for information or progress, choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" and ask that same task for the missing detail. If the user asks whether commit/deploy/release is safe, or whether DB migration/schema/storage/API shape changed, do not answer from summaries; only answer if gathered data directly covers current-diff evidence, otherwise choose kind=\"propose_control\" with control_capability=\"engineer.send_prompt\" and session_mode=\"new\" for a fresh verification.\n")
+		b.WriteString("\nYou must choose kind=\"answer\", kind=\"propose_control\", or kind=\"propose_goal\" now. Use the gathered data; do not request more read-only queries. If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known. For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO. If same-project active engineer work is in the middle of a turn, only park unrelated work as todo.add when the user accepts or asks for later backlog handling. If the user asks to mark/close/finish/resolve a project TODO as done, or gathered evidence directly satisfies a linked project TODO, choose kind=\"propose_control\" with control_capability=\"todo.complete\" and fill todo_id, todo_text, and todo_evidence. If the gathered data resolves a visible review/waiting agent task with no remaining work, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" instead of a plain answer. If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record multiple delegated agent tasks and gathered data identifies more than one task id, choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" and put all selected ids in goal_resources. If the user explicitly asks Boss to have LCAgent take a scoped task under one traceable approval, choose kind=\"propose_goal\" with goal_kind=\"lcagent_task\". If exactly one delegated task should be removed and the task id is known, choose kind=\"propose_control\" with control_capability=\"agent_task.close\" and task_close_status=\"archived\". This applies to open/review/waiting tasks too; do not use task_close_status=\"waiting\" for cleanup. If gathered project data identifies kind=scratch_task and the user wants that task gone, choose kind=\"propose_control\" with control_capability=\"scratch_task.archive\". If gathered task data lacks the detail the user asked for and a task id is clear, and the user is asking for information or progress, choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" and ask that same task for the missing detail. If the user asks whether commit/deploy/release is safe, or whether DB migration/schema/storage/API shape changed, do not answer from summaries; only answer if gathered data directly covers current-diff evidence, otherwise choose kind=\"propose_control\" with control_capability=\"engineer.send_prompt\" and session_mode=\"new\" for a fresh verification.\n")
 	} else {
-		b.WriteString("\nChoose kind=\"answer\" if you have enough data. If a visible linked task or project can likely answer the question, choose one read-only query before answering. If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now and the project is ambiguous, choose a read-only query or ask for the project; when the project is known, choose control_capability=\"todo.add\". If the user asks to mark/close/finish/resolve a project TODO as done and the TODO id/project is ambiguous, choose todo_report/project_detail before answering; when the TODO is known, choose control_capability=\"todo.complete\". If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record delegated agent tasks and no task id is visible yet, choose agent_task_report with include_historical=true before answering. If the user asks to remove, clear, hide, archive, or get rid of a task/project and the state does not show whether it is a scratch task, choose project_detail before answering. Choose kind=\"propose_control\" if the user asked to delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, manage/continue/solve/archive/remove one agent task, or archive/remove a scratch task whose project metadata says kind=scratch_task; if fresh gathered data resolves a visible review/waiting agent task and a task id is clear; or if gathered task data lacks the detail the user asked for and the same task should be asked a sharper follow-up. Choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" when the user wants multiple delegated agent task records removed/cleared/archived and the selected task ids are known. Choose kind=\"propose_goal\" with goal_kind=\"lcagent_task\" when the user explicitly wants LCAgent to take a scoped task as a traceable Boss goal. For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"engineer.send_prompt\" with session_mode=\"new\" if direct current-diff evidence is still missing. For a resolved review/waiting task use control_capability=\"agent_task.close\"; for a satisfied project TODO use control_capability=\"todo.complete\"; for any delegated task the user wants gone from the active record and exactly one task is selected, use control_capability=\"agent_task.close\" with task_close_status=\"archived\"; for multiple tasks the user wants removed, use propose_goal agent_task_cleanup; for multiple delegated task records the user wants gone use propose_goal agent_task_cleanup; for a scratch task project the user wants gone use control_capability=\"scratch_task.archive\"; for a missing detail or progress request use control_capability=\"agent_task.continue\". For multiple open agent tasks that need progress, propose one concrete next agent_task.continue rather than only giving an order.\n")
+		b.WriteString("\nChoose kind=\"answer\" if you have enough data. If a visible linked task or project can likely answer the question, choose one read-only query before answering. If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now and the project is ambiguous, choose a read-only query or ask for the project; when the project is known, choose control_capability=\"todo.add\". For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO. If same-project active engineer work is in the middle of a turn, only park unrelated work as todo.add when the user accepts or asks for later backlog handling. If the user asks to mark/close/finish/resolve a project TODO as done and the TODO id/project is ambiguous, choose todo_report/project_detail before answering; when the TODO is known, choose control_capability=\"todo.complete\". If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record delegated agent tasks and no task id is visible yet, choose agent_task_report with include_historical=true before answering. If the user asks to remove, clear, hide, archive, or get rid of a task/project and the state does not show whether it is a scratch task, choose project_detail before answering. Choose kind=\"propose_control\" if the user asked to delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, manage/continue/solve/archive/remove one agent task, or archive/remove a scratch task whose project metadata says kind=scratch_task; if fresh gathered data resolves a visible review/waiting agent task and a task id is clear; or if gathered task data lacks the detail the user asked for and the same task should be asked a sharper follow-up. Choose kind=\"propose_goal\" with goal_kind=\"agent_task_cleanup\" when the user wants multiple delegated agent task records removed/cleared/archived and the selected task ids are known. Choose kind=\"propose_goal\" with goal_kind=\"lcagent_task\" when the user explicitly wants LCAgent to take a scoped task as a traceable Boss goal. For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"engineer.send_prompt\" with session_mode=\"new\" if direct current-diff evidence is still missing. For a resolved review/waiting task use control_capability=\"agent_task.close\"; for a satisfied project TODO use control_capability=\"todo.complete\"; for any delegated task the user wants gone from the active record and exactly one task is selected, use control_capability=\"agent_task.close\" with task_close_status=\"archived\"; for multiple tasks the user wants removed, use propose_goal agent_task_cleanup; for multiple delegated task records the user wants gone use propose_goal agent_task_cleanup; for a scratch task project the user wants gone use control_capability=\"scratch_task.archive\"; for a missing detail or progress request use control_capability=\"agent_task.continue\". For multiple open agent tasks that need progress, propose one concrete next agent_task.continue rather than only giving an order.\n")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -1151,7 +1294,7 @@ func bossActionSchema() map[string]any {
 			},
 			"todo_text": map[string]any{
 				"type":        "string",
-				"description": "For todo.add proposals, the durable project TODO text to add. For engineer.send_prompt or todo.complete, the known linked TODO text. Otherwise empty.",
+				"description": "For todo.add proposals, the durable project TODO text to add; use todo.add only for explicit backlog/TODO intent or accepted later parking while active work is mid-turn. For engineer.send_prompt or todo.complete, the known linked TODO text. Otherwise empty.",
 			},
 			"todo_label": map[string]any{
 				"type":        "string",
@@ -1173,7 +1316,7 @@ func bossActionSchema() map[string]any {
 			"session_mode": map[string]any{
 				"type":        "string",
 				"enum":        []string{"", string(control.SessionModeResumeOrNew), string(control.SessionModeNew)},
-				"description": "For engineer.send_prompt proposals: new by default for standalone project work; resume_or_new only for explicit resume/continue, same-topic follow-up, or active-work steering. For agent_task.continue: resume_or_new unless the user explicitly asks for a fresh task session.",
+				"description": "For engineer.send_prompt proposals: new by default for standalone project work, including work for a project with an open idle Codex/OpenCode session; resume_or_new only for explicit resume/continue, same-topic follow-up, or active-work steering. For agent_task.continue: resume_or_new unless the user explicitly asks for a fresh task session.",
 			},
 			"prompt": map[string]any{
 				"type":        "string",
