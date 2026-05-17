@@ -148,6 +148,52 @@ func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
 	}
 }
 
+func TestBossViewContextCarriesActiveProjectTodo(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	project := model.ProjectSummary{Path: "/tmp/project-task", Name: "Project Task"}
+	m := Model{
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+		bossTrackedTodos: map[string]bossTrackedTodo{
+			bossTrackedTodoKey(project.Path, model.SessionSourceCodex, "thread-project-1"): {
+				ID:          42,
+				Label:       "boss todo tracking",
+				Text:        "Add Boss-managed TODO tracking.",
+				ProjectPath: project.Path,
+				Provider:    model.SessionSourceCodex,
+				SessionID:   "thread-project-1",
+			},
+		},
+		codexSnapshots: map[string]codexapp.Snapshot{
+			project.Path: {
+				Provider:           codexapp.ProviderCodex,
+				ProjectPath:        project.Path,
+				ThreadID:           "thread-project-1",
+				Started:            true,
+				Busy:               true,
+				BusySince:          now.Add(-2 * time.Minute),
+				ActiveTurnID:       "turn-live",
+				LastBusyActivityAt: now.Add(-5 * time.Second),
+				LastActivityAt:     now.Add(-5 * time.Second),
+			},
+		},
+	}
+
+	view := m.bossViewContext()
+	if len(view.EngineerActivities) != 1 {
+		t.Fatalf("EngineerActivities len = %d, want 1: %#v", len(view.EngineerActivities), view.EngineerActivities)
+	}
+	activity := view.EngineerActivities[0]
+	if activity.TodoID != 42 || activity.TodoLabel != "boss todo tracking" || activity.TodoText != "Add Boss-managed TODO tracking." {
+		t.Fatalf("activity TODO = %#v, want tracked TODO", activity)
+	}
+	if !strings.Contains(activity.Title, "Project Task #42 boss todo tracking") {
+		t.Fatalf("activity title = %q, want project plus TODO label", activity.Title)
+	}
+}
+
 func TestBossViewContextIncludesRuntimeTestingContext(t *testing.T) {
 	t.Parallel()
 

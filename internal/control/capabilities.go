@@ -16,6 +16,7 @@ const (
 	FeatureCloseTask        = "close_task"
 	FeatureArchiveTask      = "archive_task"
 	FeatureAddTodo          = "add_todo"
+	FeatureCompleteTodo     = "complete_todo"
 	FeatureApprovalResponse = "approval_response"
 	FeatureReview           = "review"
 	FeatureCompact          = "compact"
@@ -25,6 +26,7 @@ const (
 	HostEffectMayRevealEngineerSession = "may_reveal_engineer_session"
 	HostEffectMayCreateTaskWorkspace   = "may_create_task_workspace"
 	HostEffectMayCreateProjectTodo     = "may_create_project_todo"
+	HostEffectMayCompleteProjectTodo   = "may_complete_project_todo"
 )
 
 type AgentTaskKind string
@@ -81,6 +83,9 @@ type EngineerSendPromptInput struct {
 	Provider    Provider    `json:"provider"`
 	SessionMode SessionMode `json:"session_mode"`
 	Prompt      string      `json:"prompt"`
+	TodoID      int64       `json:"todo_id,omitempty"`
+	TodoLabel   string      `json:"todo_label,omitempty"`
+	TodoText    string      `json:"todo_text,omitempty"`
 	Reveal      bool        `json:"reveal"`
 }
 
@@ -92,6 +97,7 @@ type EngineerSendPromptResult struct {
 	PromptSent  bool     `json:"prompt_sent"`
 	Revealed    bool     `json:"revealed"`
 	Status      string   `json:"status"`
+	TodoID      int64    `json:"todo_id"`
 }
 
 type AgentTaskCreateInput struct {
@@ -136,6 +142,16 @@ type TodoAddInput struct {
 	Text        string `json:"text"`
 }
 
+type TodoCompleteInput struct {
+	RequestID   string `json:"request_id,omitempty"`
+	ProjectPath string `json:"project_path,omitempty"`
+	ProjectName string `json:"project_name,omitempty"`
+	TodoID      int64  `json:"todo_id"`
+	TodoLabel   string `json:"todo_label,omitempty"`
+	TodoText    string `json:"todo_text,omitempty"`
+	Evidence    string `json:"evidence,omitempty"`
+}
+
 func Capabilities() []Capability {
 	return []Capability{
 		EngineerSendPromptCapability(),
@@ -144,6 +160,7 @@ func Capabilities() []Capability {
 		AgentTaskCloseCapability(),
 		ScratchTaskArchiveCapability(),
 		TodoAddCapability(),
+		TodoCompleteCapability(),
 	}
 }
 
@@ -161,6 +178,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return ScratchTaskArchiveCapability(), true
 	case CapabilityTodoAdd:
 		return TodoAddCapability(), true
+	case CapabilityTodoComplete:
+		return TodoCompleteCapability(), true
 	default:
 		return Capability{}, false
 	}
@@ -278,6 +297,24 @@ func TodoAddCapability() Capability {
 	}
 }
 
+func TodoCompleteCapability() Capability {
+	return Capability{
+		Name:         CapabilityTodoComplete,
+		Description:  "Mark an existing project TODO item complete after user confirmation.",
+		InputSchema:  todoCompleteInputSchema(),
+		OutputSchema: todoCompleteOutputSchema(),
+		Risk:         RiskWrite,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects:  []string{HostEffectMayCompleteProjectTodo},
+		Providers: []ProviderCapability{{
+			ID:        ProviderAuto,
+			Available: true,
+			Features:  []string{FeatureCompleteTodo},
+		}},
+	}
+}
+
 func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSendPromptInput, error) {
 	input.RequestID = strings.TrimSpace(input.RequestID)
 	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
@@ -294,6 +331,11 @@ func NormalizeEngineerSendPromptInput(input EngineerSendPromptInput) (EngineerSe
 		return EngineerSendPromptInput{}, fmt.Errorf("unsupported engineer session mode: %s", input.SessionMode)
 	}
 	input.Prompt = strings.TrimSpace(input.Prompt)
+	input.TodoLabel = strings.TrimSpace(input.TodoLabel)
+	input.TodoText = strings.TrimSpace(input.TodoText)
+	if input.TodoID < 0 {
+		return EngineerSendPromptInput{}, fmt.Errorf("todo_id cannot be negative")
+	}
 	if input.ProjectPath == "" && input.ProjectName == "" {
 		return EngineerSendPromptInput{}, fmt.Errorf("project_path or project_name is required")
 	}
@@ -388,6 +430,22 @@ func NormalizeTodoAddInput(input TodoAddInput) (TodoAddInput, error) {
 	}
 	if input.Text == "" {
 		return TodoAddInput{}, fmt.Errorf("todo text is required")
+	}
+	return input, nil
+}
+
+func NormalizeTodoCompleteInput(input TodoCompleteInput) (TodoCompleteInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" {
+		input.ProjectPath = filepath.Clean(input.ProjectPath)
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	input.TodoLabel = strings.TrimSpace(input.TodoLabel)
+	input.TodoText = strings.TrimSpace(input.TodoText)
+	input.Evidence = strings.TrimSpace(input.Evidence)
+	if input.TodoID <= 0 {
+		return TodoCompleteInput{}, fmt.Errorf("todo_id is required")
 	}
 	return input, nil
 }
@@ -560,6 +618,34 @@ func validateTodoAddInvocation(inv Invocation) (Invocation, error) {
 	return inv, nil
 }
 
+func validateTodoCompleteInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityTodoComplete)
+	}
+	var input TodoCompleteInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityTodoComplete, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityTodoComplete)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeTodoCompleteInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityTodoComplete, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
 func normalizeCapabilityList(capabilities []string) []string {
 	out := make([]string, 0, len(capabilities))
 	seen := map[string]struct{}{}
@@ -639,6 +725,18 @@ func engineerSendPromptInputSchema() map[string]any {
 				"type":        "string",
 				"description": "Prompt to send to the engineer session.",
 			},
+			"todo_id": map[string]any{
+				"type":        "integer",
+				"description": "Open project TODO id this engineer handoff is meant to address, or 0 when not tied to a TODO.",
+			},
+			"todo_text": map[string]any{
+				"type":        "string",
+				"description": "Text of the tracked TODO for display and engineer context, or empty.",
+			},
+			"todo_label": map[string]any{
+				"type":        "string",
+				"description": "Short display label for the tracked TODO, or empty.",
+			},
 			"reveal": map[string]any{
 				"type":        "boolean",
 				"description": "Whether the host should reveal the engineer session after sending.",
@@ -668,8 +766,9 @@ func engineerSendPromptOutputSchema() map[string]any {
 			"prompt_sent":  map[string]any{"type": "boolean"},
 			"revealed":     map[string]any{"type": "boolean"},
 			"status":       map[string]any{"type": "string"},
+			"todo_id":      map[string]any{"type": "integer"},
 		},
-		"required": []string{"provider", "project_path", "session_id", "reused", "prompt_sent", "revealed", "status"},
+		"required": []string{"provider", "project_path", "session_id", "reused", "prompt_sent", "revealed", "status", "todo_id"},
 	}
 }
 
@@ -786,6 +885,49 @@ func todoAddOutputSchema() map[string]any {
 			"status":       map[string]any{"type": "string"},
 		},
 		"required": []string{"project_path", "todo_id", "text", "status"},
+	}
+}
+
+func todoCompleteInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":   map[string]any{"type": "string"},
+			"project_path": map[string]any{"type": "string"},
+			"project_name": map[string]any{"type": "string"},
+			"todo_id": map[string]any{
+				"type":        "integer",
+				"description": "The existing project TODO id to mark complete.",
+			},
+			"todo_text": map[string]any{
+				"type":        "string",
+				"description": "Known TODO text for confirmation display, or empty if unknown.",
+			},
+			"todo_label": map[string]any{
+				"type":        "string",
+				"description": "Short display label for the TODO, or empty if unknown.",
+			},
+			"evidence": map[string]any{
+				"type":        "string",
+				"description": "Brief evidence that the TODO is satisfied, used only for the confirmation preview.",
+			},
+		},
+		"required": []string{"todo_id"},
+	}
+}
+
+func todoCompleteOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"project_path": map[string]any{"type": "string"},
+			"todo_id":      map[string]any{"type": "integer"},
+			"completed":    map[string]any{"type": "boolean"},
+			"status":       map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "todo_id", "completed", "status"},
 	}
 }
 

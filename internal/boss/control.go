@@ -65,6 +65,9 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
 			SessionMode: control.SessionMode(strings.TrimSpace(action.SessionMode)),
 			Prompt:      bossLosslessControlPrompt(action),
+			TodoID:      action.TodoID,
+			TodoLabel:   strings.TrimSpace(action.TodoLabel),
+			TodoText:    strings.TrimSpace(action.TodoText),
 			Reveal:      action.Reveal,
 		}
 	case control.CapabilityAgentTaskCreate:
@@ -112,6 +115,16 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			ProjectPath: strings.TrimSpace(action.ProjectPath),
 			ProjectName: strings.TrimSpace(action.ProjectName),
 			Text:        text,
+		}
+	case control.CapabilityTodoComplete:
+		payload = control.TodoCompleteInput{
+			RequestID:   strings.TrimSpace(action.RequestID),
+			ProjectPath: strings.TrimSpace(action.ProjectPath),
+			ProjectName: strings.TrimSpace(action.ProjectName),
+			TodoID:      action.TodoID,
+			TodoLabel:   strings.TrimSpace(action.TodoLabel),
+			TodoText:    strings.TrimSpace(action.TodoText),
+			Evidence:    strings.TrimSpace(action.TodoEvidence),
 		}
 	default:
 		return control.Invocation{}, "", fmt.Errorf("unsupported control capability: %s", capability)
@@ -202,13 +215,16 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		if input.Reveal {
 			visibility = "show it afterward"
 		}
-		lines := []string{
-			fmt.Sprintf("Send this to %s for %s?", provider, target),
+		lines := []string{fmt.Sprintf("Send this to %s for %s?", provider, target)}
+		if input.TodoID > 0 {
+			lines = append(lines, "", "Tracked TODO: "+controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText))
+		}
+		lines = append(lines,
 			"",
 			strings.TrimSpace(input.Prompt),
 			"",
 			fmt.Sprintf("I will %s session and %s. Enter confirms; Esc cancels.", mode, visibility),
-		}
+		)
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityAgentTaskCreate:
 		var input control.AgentTaskCreateInput
@@ -290,9 +306,38 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			"Enter confirms; Esc cancels.",
 		}
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityTodoComplete:
+		var input control.TodoCompleteInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath)
+		if target == "" {
+			target = "the TODO's project"
+		}
+		lines := []string{
+			fmt.Sprintf("Mark %s complete in %s?", controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText), target),
+		}
+		if evidence := strings.TrimSpace(input.Evidence); evidence != "" {
+			lines = append(lines, "", evidence)
+		}
+		lines = append(lines, "", "Enter confirms; Esc cancels.")
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	default:
 		return "", fmt.Errorf("unsupported control capability: %s", inv.Capability)
 	}
+}
+
+func controlTodoLabel(id int64, shortLabel, text string) string {
+	label := fmt.Sprintf("TODO #%d", id)
+	display := strings.TrimSpace(shortLabel)
+	if display == "" {
+		display = clipText(strings.Join(strings.Fields(strings.TrimSpace(text)), " "), 72)
+	}
+	if display != "" {
+		label += " " + display
+	}
+	return label
 }
 
 func controlResourceSummary(resources []control.ResourceRef) string {

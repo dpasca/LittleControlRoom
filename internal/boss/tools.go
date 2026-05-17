@@ -57,7 +57,10 @@ type bossAction struct {
 	ParentTaskID             string                `json:"parent_task_id"`
 	TaskCloseStatus          string                `json:"task_close_status"`
 	TaskSummary              string                `json:"task_summary"`
+	TodoID                   int64                 `json:"todo_id"`
+	TodoLabel                string                `json:"todo_label"`
 	TodoText                 string                `json:"todo_text"`
+	TodoEvidence             string                `json:"todo_evidence"`
 	EngineerProvider         string                `json:"engineer_provider"`
 	SessionMode              string                `json:"session_mode"`
 	Prompt                   string                `json:"prompt"`
@@ -155,6 +158,9 @@ type ViewEngineerActivity struct {
 	TaskID       string
 	ProjectPath  string
 	Title        string
+	TodoID       int64
+	TodoLabel    string
+	TodoText     string
 	EngineerName string
 	Provider     model.SessionSource
 	SessionID    string
@@ -733,7 +739,15 @@ func (e *QueryExecutor) todoReport(ctx context.Context, action bossAction, view 
 				if i >= limit {
 					break
 				}
-				lines = append(lines, fmt.Sprintf("- #%d %s", item.ID, clipText(item.Text, 240)))
+				label := todoBriefLabelFromItem(item)
+				if label == "" {
+					label = clipText(item.Text, 240)
+				}
+				if text := strings.TrimSpace(item.Text); text != "" && text != label {
+					lines = append(lines, fmt.Sprintf("- #%d %s | text: %s", item.ID, label, clipText(text, 240)))
+					continue
+				}
+				lines = append(lines, fmt.Sprintf("- #%d %s", item.ID, label))
 			}
 		} else if hasTarget {
 			lines = append(lines, "", "Target project TODO detail unavailable: "+detailErr.Error())

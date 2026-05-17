@@ -159,6 +159,25 @@ func TestTodoAddCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestTodoCompleteCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityTodoComplete)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityTodoComplete)
+	}
+	if capability.Name != CapabilityTodoComplete {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilityTodoComplete)
+	}
+	if capability.Risk != RiskWrite || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected TODO complete capability metadata: %#v", capability)
+	}
+	if !stringSliceContains(capability.HostEffects, HostEffectMayCompleteProjectTodo) {
+		t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, HostEffectMayCompleteProjectTodo)
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("TODO complete schemas should be object schemas")
+	}
+}
+
 func TestNormalizeEngineerSendPromptInput(t *testing.T) {
 	input, err := NormalizeEngineerSendPromptInput(EngineerSendPromptInput{
 		RequestID:   " req-1 ",
@@ -363,6 +382,33 @@ func TestValidateInvocationNormalizesTodoAddArgs(t *testing.T) {
 	}
 	if input.RequestID != "boss-turn-todo" || input.ProjectPath != "/tmp/demo" || input.Text != "Follow up on Boss desk TODO visibility." {
 		t.Fatalf("normalized todo add input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesTodoCompleteArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-todo-complete ",
+		Capability: CapabilityTodoComplete,
+		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":" Demo ","todo_id":42,"todo_label":"  tracking  ","todo_text":"  Add tracking.  ","evidence":"  Engineer verified it.  "}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	if inv.RequestID != "boss-turn-todo-complete" {
+		t.Fatalf("RequestID = %q, want boss-turn-todo-complete", inv.RequestID)
+	}
+	var input TodoCompleteInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if input.RequestID != "boss-turn-todo-complete" ||
+		input.ProjectPath != "/tmp/demo" ||
+		input.ProjectName != "Demo" ||
+		input.TodoID != 42 ||
+		input.TodoLabel != "tracking" ||
+		input.TodoText != "Add tracking." ||
+		input.Evidence != "Engineer verified it." {
+		t.Fatalf("normalized todo complete input = %#v", input)
 	}
 }
 

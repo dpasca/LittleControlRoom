@@ -67,6 +67,11 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 		renderBossControlDetail("Project", target, width),
 		renderBossControlDetail("Mode", mode, width),
 		renderBossControlDetail("View", visibility, width),
+	}
+	if input.TodoID > 0 {
+		lines = append(lines, renderBossControlDetail("TODO", controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText), width))
+	}
+	lines = append(lines,
 		"",
 		bossControlSectionStyle.Render(fitLine("Prompt", width)),
 		renderBossControlPromptBox(input.Prompt, width),
@@ -75,7 +80,7 @@ func renderEngineerSendPromptConfirmation(input control.EngineerSendPromptInput,
 			renderBossControlAction("Enter", "send", uistyle.DialogActionPrimary),
 			renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 		}, "   "),
-	}
+	)
 	return strings.Join(lines, "\n")
 }
 
@@ -166,6 +171,32 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
 			}
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityTodoComplete:
+		var input control.TodoCompleteInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			target := firstNonEmpty(input.ProjectName, input.ProjectPath, "TODO project")
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: mark a project TODO complete", width)),
+				"",
+				renderBossControlDetail("Project", target, width),
+				renderBossControlDetail("TODO", controlTodoLabel(input.TodoID, input.TodoLabel, input.TodoText), width),
+			}
+			if evidence := strings.TrimSpace(input.Evidence); evidence != "" {
+				lines = append(lines,
+					"",
+					bossControlSectionStyle.Render(fitLine("Evidence", width)),
+					renderBossControlPromptBox(evidence, width),
+				)
+			}
+			lines = append(lines,
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "mark done", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+				}, "   "),
+			)
 			return strings.Join(lines, "\n")
 		}
 	}

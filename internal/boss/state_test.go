@@ -194,6 +194,7 @@ func TestBuildStateBriefIncludesOpenProjectTodos(t *testing.T) {
 			ID:          42,
 			ProjectPath: "/tmp/alpha",
 			ProjectName: "Alpha",
+			Label:       "boss desk todos",
 			Text:        "Add Boss Desk TODO visibility.",
 			UpdatedAt:   now.Add(-3 * time.Minute),
 		}},
@@ -203,7 +204,8 @@ func TestBuildStateBriefIncludesOpenProjectTodos(t *testing.T) {
 	for _, want := range []string{
 		"Open project TODOs (pending backlog, not delegated agent tasks):",
 		"#42",
-		"Alpha: Add Boss Desk TODO visibility.",
+		"Alpha: boss desk todos",
+		"text=Add Boss Desk TODO visibility.",
 		"updated 3m ago",
 		"project_path=/tmp/alpha",
 	} {
@@ -322,6 +324,21 @@ func TestLoadStateSnapshotIncludesOpenTodosWithPrivacyFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddTodo(public) error = %v", err)
 	}
+	if _, err := st.QueueTodoWorktreeSuggestion(ctx, publicTodo.ID); err != nil {
+		t.Fatalf("QueueTodoWorktreeSuggestion(public) error = %v", err)
+	}
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("ClaimNextQueuedTodoWorktreeSuggestion(public) error = %v", err)
+	}
+	suggestion.BranchName = "feat/public-boss-desk-todos"
+	suggestion.WorktreeSuffix = "public-boss-desk-todos"
+	suggestion.Kind = "feat"
+	suggestion.Confidence = 0.9
+	suggestion.Model = "test-model"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil || !completed {
+		t.Fatalf("CompleteTodoWorktreeSuggestion(public) = (%t, %v), want completed", completed, err)
+	}
 	if _, err := svc.AddTodo(ctx, privatePath, "Add private Boss Desk TODO visibility"); err != nil {
 		t.Fatalf("AddTodo(private) error = %v", err)
 	}
@@ -332,6 +349,16 @@ func TestLoadStateSnapshotIncludesOpenTodosWithPrivacyFiltering(t *testing.T) {
 	}
 	if len(snapshot.OpenTodos) != 2 {
 		t.Fatalf("open todos = %#v, want both created TODOs", snapshot.OpenTodos)
+	}
+	var publicBrief TodoBrief
+	for _, todo := range snapshot.OpenTodos {
+		if todo.ID == publicTodo.ID {
+			publicBrief = todo
+			break
+		}
+	}
+	if publicBrief.Label != "public boss desk todos" {
+		t.Fatalf("public TODO label = %q, want generated short label", publicBrief.Label)
 	}
 
 	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{

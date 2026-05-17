@@ -1682,16 +1682,20 @@ func TestBossSidebarShowsOpenTodos(t *testing.T) {
 			ID:          42,
 			ProjectName: "Alpha",
 			ProjectPath: "/tmp/alpha",
+			Label:       "boss desk todos",
 			Text:        "Add Boss Desk TODO visibility.",
 		}},
 	}
 
 	rendered := strings.Join(m.bossSidebarLines(80, 12), "\n")
 	stripped := ansi.Strip(rendered)
-	for _, want := range []string{"TODOs", "#42", "Alpha - Add Boss Desk TODO visibility."} {
+	for _, want := range []string{"TODOs", "#42", "Alpha - boss desk todos"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("Boss Desk missing TODO text %q:\n%s", want, stripped)
 		}
+	}
+	if strings.Contains(stripped, "Add Boss Desk TODO visibility.") {
+		t.Fatalf("Boss Desk should prefer the short TODO label:\n%s", stripped)
 	}
 	if strings.Contains(stripped, "todo Alpha") {
 		t.Fatalf("Boss Desk should use the TODO id in the label column:\n%s", stripped)

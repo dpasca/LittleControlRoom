@@ -83,6 +83,7 @@ type TodoBrief struct {
 	ID          int64
 	ProjectPath string
 	ProjectName string
+	Label       string
 	Text        string
 	UpdatedAt   time.Time
 }
@@ -225,9 +226,35 @@ func todoBriefFromItem(item model.TodoItem, projectName string) TodoBrief {
 		ID:          item.ID,
 		ProjectPath: strings.TrimSpace(item.ProjectPath),
 		ProjectName: strings.TrimSpace(projectName),
+		Label:       todoBriefLabelFromItem(item),
 		Text:        strings.TrimSpace(item.Text),
 		UpdatedAt:   item.UpdatedAt,
 	}
+}
+
+func todoBriefLabelFromItem(item model.TodoItem) string {
+	return todoWorktreeSuggestionDisplayLabel(item.WorktreeSuggestion)
+}
+
+func todoWorktreeSuggestionDisplayLabel(suggestion *model.TodoWorktreeSuggestion) string {
+	if suggestion == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(suggestion.WorktreeSuffix)
+	if raw == "" {
+		raw = strings.TrimSpace(suggestion.BranchName)
+		if idx := strings.LastIndex(raw, "/"); idx >= 0 {
+			raw = raw[idx+1:]
+		}
+	}
+	raw = strings.TrimSpace(raw)
+	for _, prefix := range []string{"todo-", "feat-", "feature-", "fix-", "docs-", "doc-", "chore-", "refactor-", "test-"} {
+		raw = strings.TrimPrefix(raw, prefix)
+	}
+	raw = strings.Trim(raw, "-_ ")
+	raw = strings.ReplaceAll(raw, "-", " ")
+	raw = strings.ReplaceAll(raw, "_", " ")
+	return clipText(strings.Join(strings.Fields(raw), " "), 72)
 }
 
 func goalRunBriefFromRecord(record bossrun.GoalRecord) GoalRunBrief {
@@ -370,7 +397,7 @@ func todoBriefHiddenByPrivacy(todo TodoBrief, patterns []string) bool {
 	if len(patterns) == 0 {
 		return false
 	}
-	return bossPrivacyMatchesAny(patterns, todo.ProjectName, todo.ProjectPath, todo.Text)
+	return bossPrivacyMatchesAny(patterns, todo.ProjectName, todo.ProjectPath, todo.Label, todo.Text)
 }
 
 func bossPrivacyMatchesAny(patterns []string, values ...string) bool {
@@ -442,11 +469,17 @@ func operationalTodoLine(todo TodoBrief, now time.Time) string {
 	if project == "" || project == "." || project == string(filepath.Separator) {
 		project = "project"
 	}
-	text := clipText(strings.TrimSpace(todo.Text), 180)
-	if text == "" {
-		text = "untitled TODO"
+	label := strings.TrimSpace(todo.Label)
+	if label == "" {
+		label = clipText(strings.TrimSpace(todo.Text), 180)
 	}
-	parts := []string{fmt.Sprintf("#%d", todo.ID), project + ": " + text}
+	if label == "" {
+		label = "untitled TODO"
+	}
+	parts := []string{fmt.Sprintf("#%d", todo.ID), project + ": " + label}
+	if text := strings.TrimSpace(todo.Text); text != "" && text != label {
+		parts = append(parts, "text="+clipText(text, 180))
+	}
 	if !todo.UpdatedAt.IsZero() {
 		parts = append(parts, "updated "+relativeAge(now, todo.UpdatedAt))
 	}

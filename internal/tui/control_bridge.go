@@ -25,10 +25,14 @@ func (m Model) executeBossControlInvocation(msg bossui.ControlInvocationConfirme
 	}
 	outcome := m.executeControlInvocationWithOutcome(inv)
 	m = outcome.model
-	if outcome.cmd == nil {
-		return m, bossControlResultCmd(inv, m.status, outcome.err)
+	resultInv := inv
+	if outcome.inv.Capability != "" {
+		resultInv = outcome.inv
 	}
-	return m, bossControlExecutionCmd(inv, outcome.cmd)
+	if outcome.cmd == nil {
+		return m, bossControlResultCmd(resultInv, m.status, outcome.err)
+	}
+	return m, bossControlExecutionCmd(resultInv, outcome.cmd)
 }
 
 func (m Model) executeControlInvocation(inv control.Invocation) (tea.Model, tea.Cmd) {
@@ -40,6 +44,18 @@ type controlInvocationOutcome struct {
 	model Model
 	cmd   tea.Cmd
 	err   error
+	inv   control.Invocation
+}
+
+type bossTrackedTodo struct {
+	ID          int64
+	Label       string
+	Text        string
+	ProjectPath string
+	ProjectName string
+	Provider    model.SessionSource
+	SessionID   string
+	StartedAt   time.Time
 }
 
 func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) controlInvocationOutcome {
@@ -92,11 +108,94 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeTodoAddControlWithOutcome(input)
+	case control.CapabilityTodoComplete:
+		var input control.TodoCompleteInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeTodoCompleteControlWithOutcome(input)
 	default:
 		err := fmt.Errorf("unsupported capability: %s", normalized.Capability)
 		m.status = "Control request unsupported: " + string(normalized.Capability)
 		return controlInvocationOutcome{model: m, err: err}
 	}
+}
+
+func (m Model) recordBossTrackedTodoFromControlResult(msg bossui.ControlInvocationResultMsg) Model {
+	if msg.Err != nil || msg.Activity == nil || msg.Activity.TodoID <= 0 {
+		return m
+	}
+	activity := *msg.Activity
+	key := bossTrackedTodoKey(activity.ProjectPath, activity.Provider, activity.SessionID)
+	if key == "" {
+		return m
+	}
+	if m.bossTrackedTodos == nil {
+		m.bossTrackedTodos = map[string]bossTrackedTodo{}
+	}
+	m.bossTrackedTodos[key] = bossTrackedTodo{
+		ID:          activity.TodoID,
+		Label:       strings.TrimSpace(activity.TodoLabel),
+		Text:        strings.TrimSpace(activity.TodoText),
+		ProjectPath: strings.TrimSpace(activity.ProjectPath),
+		ProjectName: bossActivityProjectName(activity),
+		Provider:    model.NormalizeSessionSource(activity.Provider),
+		SessionID:   strings.TrimSpace(activity.SessionID),
+		StartedAt:   activity.StartedAt,
+	}
+	return m
+}
+
+func bossActivityProjectName(activity bossui.ViewEngineerActivity) string {
+	title := strings.TrimSpace(activity.Title)
+	if activity.TodoID <= 0 {
+		return title
+	}
+	label := bossTrackedTodoTargetLabel("", activity.TodoID, activity.TodoLabel, activity.TodoText)
+	return strings.TrimSpace(strings.TrimSuffix(title, " "+label))
+}
+
+func bossTrackedTodoKey(projectPath string, provider model.SessionSource, sessionID string) string {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "." || projectPath == "" {
+		return ""
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	provider = model.NormalizeSessionSource(provider)
+	if provider == "" {
+		provider = model.SessionSourceUnknown
+	}
+	return strings.Join([]string{projectPath, string(provider), sessionID}, "\x00")
+}
+
+func (m Model) bossTrackedTodoForSnapshot(projectPath string, snapshot codexapp.Snapshot) (bossTrackedTodo, bool) {
+	if len(m.bossTrackedTodos) == 0 {
+		return bossTrackedTodo{}, false
+	}
+	provider := modelSessionSourceFromCodexProvider(embeddedProvider(snapshot))
+	key := bossTrackedTodoKey(projectPath, provider, snapshot.ThreadID)
+	if key == "" {
+		return bossTrackedTodo{}, false
+	}
+	todo, ok := m.bossTrackedTodos[key]
+	return todo, ok
+}
+
+func (m Model) clearBossTrackedTodo(projectPath string, todoID int64) Model {
+	if todoID <= 0 || len(m.bossTrackedTodos) == 0 {
+		return m
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	for key, todo := range m.bossTrackedTodos {
+		if todo.ID == todoID && filepath.Clean(strings.TrimSpace(todo.ProjectPath)) == projectPath {
+			delete(m.bossTrackedTodos, key)
+		}
+	}
+	return m
 }
 
 func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
@@ -148,10 +247,14 @@ func bossControlOpenedSessionActivity(inv control.Invocation, msg tea.Msg) *boss
 		if title == "" {
 			title = "the selected project"
 		}
+		title = bossTrackedTodoTargetLabel(title, input.TodoID, input.TodoLabel, input.TodoText)
 		return &bossui.ViewEngineerActivity{
 			Kind:         "project",
 			ProjectPath:  strings.TrimSpace(opened.projectPath),
 			Title:        title,
+			TodoID:       input.TodoID,
+			TodoLabel:    strings.TrimSpace(input.TodoLabel),
+			TodoText:     strings.TrimSpace(input.TodoText),
 			EngineerName: bossui.EngineerNameForKey("project", opened.projectPath, sessionID),
 			Provider:     provider,
 			SessionID:    sessionID,
@@ -262,9 +365,29 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 		return "Opened the " + sessionLabel + targetPhrase + "."
 	}
 	if target != "" {
-		return "Ok, " + name + " is working on " + target + "."
+		return "Ok, " + name + " is working on " + bossTrackedTodoTargetLabel(target, input.TodoID, input.TodoLabel, input.TodoText) + "."
 	}
 	return "Ok, " + name + " is working on it now."
+}
+
+func bossTrackedTodoTargetLabel(target string, todoID int64, todoLabel, todoText string) string {
+	target = strings.TrimSpace(target)
+	if todoID <= 0 {
+		return target
+	}
+	label := fmt.Sprintf("#%d", todoID)
+	display := strings.Join(strings.Fields(strings.TrimSpace(todoLabel)), " ")
+	if display == "" {
+		display = strings.Join(strings.Fields(strings.TrimSpace(todoText)), " ")
+		display = compactEngineerNoticeText(display, 48)
+	}
+	if display != "" {
+		label += " " + display
+	}
+	if target == "" {
+		return label
+	}
+	return target + " " + label
 }
 
 func bossAgentTaskLaunchOpenedStatus(taskID, fallback string) string {
@@ -375,9 +498,16 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		return controlInvocationOutcome{model: m, err: err}
 	}
 
-	prompt := m.engineerPromptWithRuntimeContext(project, input.Prompt)
+	trackedTodo, err := m.resolveControlTrackedTodo(project, input.TodoID, input.TodoText)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	input.TodoText = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoText, trackedTodo.Text))
+	input.TodoLabel = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoLabel, todoDisplayLabelFromItem(trackedTodo)))
+	prompt := m.engineerPromptWithRuntimeContext(project, input.Prompt, trackedTodo)
 	if controlPromptWillSteerActiveEmbeddedSession(input, m, project.Path, provider) {
-		prompt = m.promptWithRuntimeContext(input.Prompt, m.projectRuntimeContextLines(project))
+		prompt = m.promptWithRuntimeContext(engineerPromptWithTrackedTodo(input.Prompt, trackedTodo), m.projectRuntimeContextLines(project))
 	}
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: input.SessionMode == control.SessionModeNew,
@@ -393,7 +523,7 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		err := errors.New(status)
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	return controlInvocationOutcome{model: m, cmd: cmd}
+	return controlInvocationOutcome{model: m, cmd: cmd, inv: engineerSendPromptInvocationFromInput(input)}
 }
 
 func controlPromptTargetsNonSteerableActiveEmbeddedSession(input control.EngineerSendPromptInput, m Model, projectPath string, provider codexapp.Provider) bool {
@@ -652,6 +782,119 @@ func (m Model) executeTodoAddControlWithOutcome(input control.TodoAddInput) cont
 	return controlInvocationOutcome{model: m}
 }
 
+func (m Model) executeTodoCompleteControlWithOutcome(input control.TodoCompleteInput) controlInvocationOutcome {
+	if m.svc == nil || m.svc.Store() == nil {
+		err := errors.New("service unavailable")
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	item, err := m.svc.Store().GetTodo(m.ctx, input.TodoID)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	projectPath := strings.TrimSpace(item.ProjectPath)
+	if projectPath == "" {
+		projectPath = strings.TrimSpace(input.ProjectPath)
+	}
+	if projectPath == "" {
+		err := fmt.Errorf("TODO #%d has no project path", input.TodoID)
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	if ref := strings.TrimSpace(input.ProjectPath); ref != "" && filepath.Clean(ref) != filepath.Clean(projectPath) {
+		err := fmt.Errorf("TODO #%d belongs to %s, not %s", input.TodoID, projectPath, ref)
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	if item.Done {
+		m.status = fmt.Sprintf("TODO #%d was already complete", input.TodoID)
+		return controlInvocationOutcome{model: m}
+	}
+	if err := m.svc.ToggleTodoDone(m.ctx, projectPath, input.TodoID, true); err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	name := filepath.Base(projectPath)
+	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
+		name = projectNameForPicker(project, projectPath)
+	}
+	m = m.clearBossTrackedTodo(projectPath, input.TodoID)
+	m.status = fmt.Sprintf("Marked TODO #%d complete in %s", input.TodoID, name)
+	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) resolveControlTrackedTodo(project model.ProjectSummary, todoID int64, todoText string) (model.TodoItem, error) {
+	if todoID <= 0 {
+		return model.TodoItem{ProjectPath: strings.TrimSpace(project.Path), Text: strings.TrimSpace(todoText)}, nil
+	}
+	if m.svc == nil || m.svc.Store() == nil {
+		return model.TodoItem{}, errors.New("service unavailable for TODO tracking")
+	}
+	item, err := m.svc.Store().GetTodo(m.ctx, todoID)
+	if err != nil {
+		return model.TodoItem{}, err
+	}
+	projectPath := filepath.Clean(strings.TrimSpace(project.Path))
+	todoProjectPath := filepath.Clean(strings.TrimSpace(item.ProjectPath))
+	if projectPath != "" && projectPath != "." && todoProjectPath != "" && todoProjectPath != "." && projectPath != todoProjectPath {
+		return model.TodoItem{}, fmt.Errorf("TODO #%d belongs to %s, not %s", todoID, item.ProjectPath, project.Path)
+	}
+	if item.Done {
+		return model.TodoItem{}, fmt.Errorf("TODO #%d is already complete", todoID)
+	}
+	if strings.TrimSpace(item.Text) == "" {
+		item.Text = strings.TrimSpace(todoText)
+	}
+	if suggestion, err := m.svc.Store().GetTodoWorktreeSuggestion(m.ctx, todoID); err == nil {
+		item.WorktreeSuggestion = &suggestion
+	}
+	return item, nil
+}
+
+func engineerSendPromptInvocationFromInput(input control.EngineerSendPromptInput) control.Invocation {
+	normalized, err := control.NormalizeEngineerSendPromptInput(input)
+	if err != nil {
+		normalized = input
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return control.Invocation{}
+	}
+	return control.Invocation{
+		Capability: control.CapabilityEngineerSendPrompt,
+		RequestID:  strings.TrimSpace(normalized.RequestID),
+		Args:       payload,
+	}
+}
+
+func todoDisplayLabelFromItem(item model.TodoItem) string {
+	if label := todoWorktreeSuggestionDisplayLabel(item.WorktreeSuggestion); label != "" {
+		return label
+	}
+	return compactEngineerNoticeText(strings.Join(strings.Fields(strings.TrimSpace(item.Text)), " "), 48)
+}
+
+func todoWorktreeSuggestionDisplayLabel(suggestion *model.TodoWorktreeSuggestion) string {
+	if suggestion == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(suggestion.WorktreeSuffix)
+	if raw == "" {
+		raw = strings.TrimSpace(suggestion.BranchName)
+		if idx := strings.LastIndex(raw, "/"); idx >= 0 {
+			raw = raw[idx+1:]
+		}
+	}
+	for _, prefix := range []string{"todo-", "feat-", "feature-", "fix-", "docs-", "doc-", "chore-", "refactor-", "test-"} {
+		raw = strings.TrimPrefix(raw, prefix)
+	}
+	raw = strings.Trim(raw, "-_ ")
+	raw = strings.ReplaceAll(raw, "-", " ")
+	raw = strings.ReplaceAll(raw, "_", " ")
+	return compactEngineerNoticeText(strings.Join(strings.Fields(raw), " "), 48)
+}
+
 func (m Model) controlFreshSessionBlockedByActiveEngineerTurn(project model.ProjectSummary, provider codexapp.Provider, targetLabel string) (string, bool) {
 	projectPath := strings.TrimSpace(project.Path)
 	targetLabel = strings.TrimSpace(targetLabel)
@@ -853,19 +1096,48 @@ func (m Model) agentTaskLaunchPromptWithRuntimeContext(task model.AgentTask, pro
 	return m.promptWithRuntimeContext(agentTaskLaunchPrompt(task, prompt), m.agentTaskRuntimeContextLines(task))
 }
 
-func (m Model) engineerPromptWithRuntimeContext(project model.ProjectSummary, prompt string) string {
-	return m.promptWithRuntimeContext(engineerLaunchPrompt(prompt), m.projectRuntimeContextLines(project))
+func (m Model) engineerPromptWithRuntimeContext(project model.ProjectSummary, prompt string, todo model.TodoItem) string {
+	return m.promptWithRuntimeContext(engineerLaunchPromptWithTodo(prompt, todo), m.projectRuntimeContextLines(project))
 }
 
 func engineerLaunchPrompt(prompt string) string {
+	return engineerLaunchPromptWithTodo(prompt, model.TodoItem{})
+}
+
+func engineerLaunchPromptWithTodo(prompt string, todo model.TodoItem) string {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return ""
 	}
 	lines := []string{"Little Control Room engineer task:"}
+	lines = append(lines, trackedTodoPromptLines(todo)...)
 	lines = append(lines, engineerReportContractPromptLines()...)
 	lines = append(lines, "", "User request:", prompt)
 	return strings.Join(lines, "\n")
+}
+
+func engineerPromptWithTrackedTodo(prompt string, todo model.TodoItem) string {
+	prompt = strings.TrimSpace(prompt)
+	if todo.ID <= 0 || prompt == "" {
+		return prompt
+	}
+	lines := []string{"Little Control Room engineer task:"}
+	lines = append(lines, trackedTodoPromptLines(todo)...)
+	lines = append(lines, "", "User request:", prompt)
+	return strings.Join(lines, "\n")
+}
+
+func trackedTodoPromptLines(todo model.TodoItem) []string {
+	if todo.ID <= 0 {
+		return nil
+	}
+	text := strings.TrimSpace(todo.Text)
+	lines := []string{fmt.Sprintf("Tracked project TODO: #%d", todo.ID)}
+	if text != "" {
+		lines = append(lines, "TODO text: "+text)
+	}
+	lines = append(lines, "When done, report whether this TODO is complete, partial, blocked, or still open.")
+	return lines
 }
 
 func engineerReportContractPromptLines() []string {

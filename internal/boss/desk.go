@@ -298,7 +298,7 @@ func bossDeskTodoStyledText(todo TodoBrief) string {
 	if project == "" {
 		project = strings.TrimSpace(todo.ProjectPath)
 	}
-	text := cleanHandoffSummary(todo.Text)
+	text := cleanHandoffSummary(firstNonEmpty(todo.Label, todo.Text))
 	switch {
 	case project == "":
 		return bossSummaryTextStyle.Render(text)

@@ -464,6 +464,126 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	}
 }
 
+func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	projectPath := filepath.Join(t.TempDir(), "alpha")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := svc.Store().UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "Alpha",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		LastActivity:  time.Now(),
+	}); err != nil {
+		t.Fatalf("UpsertProjectState() error = %v", err)
+	}
+	todo, err := svc.AddTodo(ctx, projectPath, "Add Boss-managed TODO tracking.")
+	if err != nil {
+		t.Fatalf("AddTodo() error = %v", err)
+	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, svc.Store(), todo.ID)
+	suggestion, err := svc.Store().ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("ClaimNextQueuedTodoWorktreeSuggestion() error = %v", err)
+	}
+	suggestion.BranchName = "feat/boss-todo-tracking"
+	suggestion.WorktreeSuffix = "boss-todo-tracking"
+	suggestion.Kind = "feat"
+	suggestion.Reason = "Short generated TODO name."
+	suggestion.Confidence = 0.86
+	suggestion.Model = "test-model"
+	if completed, err := svc.Store().CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil || !completed {
+		t.Fatalf("CompleteTodoWorktreeSuggestion() = (%t, %v), want completed", completed, err)
+	}
+	projects, err := svc.Store().ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "thread-alpha-todo",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{
+		ctx:          ctx,
+		svc:          svc,
+		allProjects:  projects,
+		projects:     projects,
+		codexManager: manager,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			ProjectName: "Alpha",
+			Provider:    control.ProviderCodex,
+			SessionMode: control.SessionModeNew,
+			Prompt:      "Implement the tracked TODO and report what remains.",
+			TodoID:      todo.ID,
+			TodoText:    todo.Text,
+			Reveal:      false,
+		}),
+	})
+	_ = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		if typed, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = typed
+			break
+		}
+	}
+	if result.Err != nil {
+		t.Fatalf("result err = %v", result.Err)
+	}
+	if !strings.Contains(result.Status, "Alpha #") || !strings.Contains(result.Status, "boss todo tracking") {
+		t.Fatalf("result status = %q, want project plus short TODO label", result.Status)
+	}
+	if strings.Contains(result.Status, "Add Boss-managed TODO tracking") {
+		t.Fatalf("result status = %q, should use the short TODO label instead of the full text", result.Status)
+	}
+	if result.Activity == nil || result.Activity.TodoID != todo.ID || result.Activity.TodoText != todo.Text ||
+		result.Activity.TodoLabel != "boss todo tracking" ||
+		!strings.Contains(result.Activity.Title, "Alpha #") || !strings.Contains(result.Activity.Title, "boss todo tracking") {
+		t.Fatalf("result activity = %#v, want active TODO context", result.Activity)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	for _, want := range []string{
+		"Tracked project TODO:",
+		"TODO text: Add Boss-managed TODO tracking.",
+		"complete, partial, blocked, or still open",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
+	}
+	recorded := updated.(Model).recordBossTrackedTodoFromControlResult(result)
+	tracked, ok := recorded.bossTrackedTodoForSnapshot(projectPath, codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		ThreadID: "thread-alpha-todo",
+	})
+	if !ok || tracked.ID != todo.ID || tracked.Label != "boss todo tracking" {
+		t.Fatalf("tracked TODO = %#v/%t, want #%d", tracked, ok, todo.ID)
+	}
+}
+
 func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 	projectPath := "/tmp/control-boss-blocked"
 	m := Model{
@@ -1108,6 +1228,73 @@ func TestExecuteTodoAddControlAddsProjectTodo(t *testing.T) {
 	}
 	if len(detail.Todos) != 1 || detail.Todos[0].Text != "Add the Boss Desk TODO list." {
 		t.Fatalf("todos = %#v, want added TODO", detail.Todos)
+	}
+}
+
+func TestExecuteTodoCompleteControlMarksTodoDone(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	projectPath := filepath.Join(t.TempDir(), "alpha")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := svc.Store().UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "Alpha",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		LastActivity:  time.Now(),
+	}); err != nil {
+		t.Fatalf("UpsertProjectState() error = %v", err)
+	}
+	todo, err := svc.AddTodo(ctx, projectPath, "Add Boss-managed TODO tracking.")
+	if err != nil {
+		t.Fatalf("AddTodo() error = %v", err)
+	}
+	projects, err := svc.Store().ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		projects:    projects,
+		bossTrackedTodos: map[string]bossTrackedTodo{
+			bossTrackedTodoKey(projectPath, model.SessionSourceCodex, "thread-alpha-todo"): {
+				ID:          todo.ID,
+				Text:        todo.Text,
+				ProjectPath: projectPath,
+				Provider:    model.SessionSourceCodex,
+				SessionID:   "thread-alpha-todo",
+			},
+		},
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityTodoComplete, control.TodoCompleteInput{
+		ProjectPath: projectPath,
+		ProjectName: "Alpha",
+		TodoID:      todo.ID,
+		TodoText:    todo.Text,
+		Evidence:    "Engineer reported the tracked flow is implemented.",
+	}))
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate TODO completion", cmd)
+	}
+	if !strings.Contains(got.status, "Marked TODO #") || !strings.Contains(got.status, "Alpha") {
+		t.Fatalf("status = %q, want TODO complete status", got.status)
+	}
+	completed, err := svc.Store().GetTodo(ctx, todo.ID)
+	if err != nil {
+		t.Fatalf("GetTodo() error = %v", err)
+	}
+	if !completed.Done || completed.CompletedAt.IsZero() {
+		t.Fatalf("completed TODO = %#v, want done with timestamp", completed)
+	}
+	if len(got.bossTrackedTodos) != 0 {
+		t.Fatalf("bossTrackedTodos = %#v, want cleared linked TODO", got.bossTrackedTodos)
 	}
 }
 

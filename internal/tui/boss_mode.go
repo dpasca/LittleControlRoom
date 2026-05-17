@@ -518,10 +518,18 @@ func (m Model) bossProjectEngineerActivityFromSnapshot(snapshot codexapp.Snapsho
 	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
 		title = projectNameForPicker(project, projectPath)
 	}
+	var todo bossTrackedTodo
+	if tracked, ok := m.bossTrackedTodoForSnapshot(projectPath, snapshot); ok {
+		todo = tracked
+		title = bossTrackedTodoTargetLabel(title, tracked.ID, tracked.Label, tracked.Text)
+	}
 	return bossui.ViewEngineerActivity{
 		Kind:         "project",
 		ProjectPath:  projectPath,
 		Title:        strings.TrimSpace(title),
+		TodoID:       todo.ID,
+		TodoLabel:    strings.TrimSpace(todo.Label),
+		TodoText:     strings.TrimSpace(todo.Text),
 		EngineerName: bossui.EngineerNameForKey("project", projectPath, snapshot.ThreadID),
 		Provider:     modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
 		SessionID:    strings.TrimSpace(snapshot.ThreadID),
@@ -607,7 +615,7 @@ func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev 
 	if !hadPrev || !bossEngineerSnapshotActive(prevSnapshot) || bossEngineerSnapshotActive(snapshot) {
 		return bossHostNotice{}
 	}
-	label := m.bossEngineerCompletionLabel(projectPath)
+	label := m.bossEngineerCompletionLabel(projectPath, snapshot)
 	engineerName := m.bossEngineerCompletionName(projectPath, snapshot)
 	output := latestEngineerTranscriptOutput(snapshot)
 	if output != "" {
@@ -681,7 +689,7 @@ func (m Model) bossEngineerCompletionNoticeCmd(projectPath string, snapshot code
 	if projectPath == "" || session == nil {
 		return nil
 	}
-	label := m.bossEngineerCompletionLabel(projectPath)
+	label := m.bossEngineerCompletionLabel(projectPath, snapshot)
 	engineerName := m.bossEngineerCompletionName(projectPath, snapshot)
 	return func() tea.Msg {
 		snapshot = freshEngineerCompletionSnapshot(projectPath, snapshot, session)
@@ -774,8 +782,9 @@ func bossEngineerCompletionHandoff(label, engineerName string) *bossui.HandoffHi
 	return &bossui.HandoffHighlight{EngineerName: engineerName, ProjectLabel: label}
 }
 
-func (m Model) bossEngineerCompletionLabel(projectPath string) string {
+func (m Model) bossEngineerCompletionLabel(projectPath string, snapshot codexapp.Snapshot) string {
 	projectPath = strings.TrimSpace(projectPath)
+	trackedTodo, hasTrackedTodo := m.bossTrackedTodoForSnapshot(projectPath, snapshot)
 	if task, ok := m.agentTaskForProjectPath(projectPath); ok {
 		if title := strings.TrimSpace(task.Title); title != "" {
 			return title
@@ -786,13 +795,22 @@ func (m Model) bossEngineerCompletionLabel(projectPath string) string {
 	}
 	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
 		if name := projectNameForPicker(project, projectPath); strings.TrimSpace(name) != "" {
+			if hasTrackedTodo {
+				return bossTrackedTodoTargetLabel(name, trackedTodo.ID, trackedTodo.Label, trackedTodo.Text)
+			}
 			return name
 		}
 	}
 	if base := strings.TrimSpace(filepath.Base(projectPath)); base != "" && base != "." && base != string(filepath.Separator) {
+		if hasTrackedTodo {
+			return bossTrackedTodoTargetLabel(base, trackedTodo.ID, trackedTodo.Label, trackedTodo.Text)
+		}
 		return base
 	}
 	if projectPath != "" {
+		if hasTrackedTodo {
+			return bossTrackedTodoTargetLabel(projectPath, trackedTodo.ID, trackedTodo.Label, trackedTodo.Text)
+		}
 		return projectPath
 	}
 	return "engineer session"

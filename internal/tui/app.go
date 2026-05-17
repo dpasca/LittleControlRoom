@@ -239,6 +239,7 @@ type Model struct {
 	lastSpinnerTickAt           time.Time
 	skillsInventorySeq          int64
 	pendingBossHostNotices      []bossHostNotice
+	bossTrackedTodos            map[string]bossTrackedTodo
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -1053,6 +1054,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if msg, ok := msg.(bossui.GoalRunResultMsg); ok {
 		m = m.applyBossGoalRunResultToHost(msg)
+	}
+	if msg, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+		m = m.recordBossTrackedTodoFromControlResult(msg)
 	}
 	if m.bossMode && bossui.IsMessage(msg) {
 		return m.updateBossModeMessage(msg)
