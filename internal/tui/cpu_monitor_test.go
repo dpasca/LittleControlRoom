@@ -67,13 +67,160 @@ func TestCPUProcessRowsStayWithinCompactLimit(t *testing.T) {
 func TestCPUDialogActionsRenderOnOneLine(t *testing.T) {
 	rendered := ansi.Strip(renderCPUDialogActions())
 	compact := strings.Join(strings.Fields(rendered), " ")
-	for _, want := range []string{"space mark", "a ask scoped", "A ask all", "r refresh", "Esc close"} {
+	for _, want := range []string{"space mark", "tab view", "a ask scoped", "A ask all", "r refresh", "Esc close"} {
 		if !strings.Contains(compact, want) {
 			t.Fatalf("actions missing %q: %q", want, rendered)
 		}
 	}
 	if strings.Contains(rendered, "\n") {
 		t.Fatalf("actions should render on one line: %q", rendered)
+	}
+}
+
+func TestCPUDialogOpensOnSelectedProjectPIDFlags(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:          "okmain",
+		Path:          "/tmp/okmain",
+		PresentOnDisk: true,
+	}
+	m := Model{
+		projects: []model.ProjectSummary{project},
+		selected: 0,
+		cpuSnapshot: procinspect.CPUSnapshot{
+			ScannedAt:    time.Date(2026, 5, 5, 14, 46, 39, 0, time.UTC),
+			ProcessCount: 3,
+			Processes: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 1110, CPU: 75.7, Command: "fileproviderd"}},
+				{Process: procinspect.Process{PID: 2220, CPU: 12, Command: "WindowServer"}},
+			},
+		},
+		processReports: map[string]procinspect.ProjectReport{
+			project.Path: {
+				ProjectPath: project.Path,
+				Findings: []procinspect.Finding{{
+					Process: procinspect.Process{
+						PID:     49995,
+						PPID:    1,
+						PGID:    49995,
+						CPU:     3.2,
+						Mem:     0.4,
+						Command: "node server.js",
+						CWD:     "/tmp/okmain",
+						Ports:   []int{3000},
+					},
+					ProjectPath: project.Path,
+					Reasons:     []string{"orphaned under PID 1", "listening on TCP ports"},
+				}},
+			},
+		},
+	}
+
+	cmd := m.openCPUDialog()
+	if cmd == nil {
+		t.Fatalf("/cpu should still queue a refresh command")
+	}
+	if m.cpuDialog == nil {
+		t.Fatalf("/cpu should open the CPU dialog")
+	}
+	if m.cpuDialog.View != cpuDialogViewProjectPIDs {
+		t.Fatalf("view = %v, want project PID flags", m.cpuDialog.View)
+	}
+	if m.cpuDialog.SelectedPID != 49995 {
+		t.Fatalf("selected PID = %d, want flagged project PID", m.cpuDialog.SelectedPID)
+	}
+	rendered := ansi.Strip(m.renderCPUDialogContent(110, 32))
+	for _, want := range []string{"Project PIDs", "okmain", "PID 49995", "listening on TCP ports"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("CPU project PID view missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "PID 1110") {
+		t.Fatalf("project PID view should not bury the selected project flag under top CPU rows:\n%s", rendered)
+	}
+
+	updated, _ := m.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	got := updated.(Model)
+	if _, ok := got.cpuDialog.MarkedPIDs[49995]; !ok {
+		t.Fatalf("space should mark the selected project PID: %#v", got.cpuDialog.MarkedPIDs)
+	}
+	updated, cmd = got.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got = updated.(Model)
+	if cmd == nil || got.cpuRemediationEditor == nil {
+		t.Fatalf("a should open the CPU engineer prompt editor")
+	}
+	if !strings.Contains(got.cpuRemediationEditor.Input.Value(), "PID 49995") {
+		t.Fatalf("CPU engineer prompt should include the marked project PID:\n%s", got.cpuRemediationEditor.Input.Value())
+	}
+}
+
+func TestCPUDialogTabSwitchesBetweenProjectPIDsAndTopCPU(t *testing.T) {
+	m := Model{
+		cpuDialog: &cpuDialogState{
+			View:            cpuDialogViewProjectPIDs,
+			SelectedPID:     49995,
+			FlagProjectName: "okmain",
+			Processes: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 1110, CPU: 75.7, Command: "fileproviderd"}},
+			},
+			FlaggedProcesses: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 49995, CPU: 3.2, Command: "node server.js"}, ProjectPath: "/tmp/okmain", Reasons: []string{"orphaned under PID 1"}},
+			},
+		},
+	}
+
+	updated, _ := m.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyTab})
+	got := updated.(Model)
+	if got.cpuDialog.View != cpuDialogViewTopCPU || !got.cpuDialog.ViewPinned {
+		t.Fatalf("tab should switch and pin top CPU view: %#v", got.cpuDialog)
+	}
+	rendered := ansi.Strip(got.renderCPUDialogContent(100, 28))
+	if !strings.Contains(rendered, "Top CPU") || !strings.Contains(rendered, "PID 1110") {
+		t.Fatalf("top CPU view missing expected row:\n%s", rendered)
+	}
+
+	updated, _ = got.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.cpuDialog.View != cpuDialogViewProjectPIDs {
+		t.Fatalf("second tab should switch back to project PID flags: %#v", got.cpuDialog)
+	}
+	rendered = ansi.Strip(got.renderCPUDialogContent(100, 28))
+	if !strings.Contains(rendered, "Project PIDs") || !strings.Contains(rendered, "PID 49995") {
+		t.Fatalf("project PID view missing expected row:\n%s", rendered)
+	}
+}
+
+func TestCPUDialogProcessScanPromotesSelectedProjectPIDFlags(t *testing.T) {
+	project := model.ProjectSummary{Name: "okmain", Path: "/tmp/okmain", PresentOnDisk: true}
+	m := Model{
+		projects: []model.ProjectSummary{project},
+		selected: 0,
+		cpuDialog: &cpuDialogState{
+			View:            cpuDialogViewTopCPU,
+			FlagProjectPath: project.Path,
+			FlagProjectName: project.Name,
+			Processes: []procinspect.CPUProcess{
+				{Process: procinspect.Process{PID: 1110, CPU: 75.7, Command: "fileproviderd"}},
+			},
+		},
+	}
+
+	_ = m.applyProcessScanMsg(processScanMsg{
+		dialogProjectPath: project.Path,
+		reports: []procinspect.ProjectReport{{
+			ProjectPath: project.Path,
+			Findings: []procinspect.Finding{{
+				Process:     procinspect.Process{PID: 49995, PPID: 1, CPU: 2.1, Command: "node server.js"},
+				ProjectPath: project.Path,
+				Reasons:     []string{"orphaned under PID 1"},
+			}},
+		}},
+	})
+
+	if m.cpuDialog.View != cpuDialogViewProjectPIDs {
+		t.Fatalf("process scan should promote fresh selected-project PID flags, got view %v", m.cpuDialog.View)
+	}
+	if m.cpuDialog.SelectedPID != 49995 {
+		t.Fatalf("selected PID = %d, want fresh project PID", m.cpuDialog.SelectedPID)
 	}
 }
 
