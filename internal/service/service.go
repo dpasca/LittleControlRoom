@@ -467,6 +467,27 @@ func (s *Service) SessionUsage() model.LLMSessionUsage {
 	return model.LLMSessionUsage{Enabled: enabled}
 }
 
+func (s *Service) BossChatUsage() model.LLMSessionUsage {
+	if s == nil {
+		return model.LLMSessionUsage{}
+	}
+	s.mu.Lock()
+	cfg := cloneAppConfig(s.cfg)
+	usageTracker := s.bossChatUsageTracker
+	s.mu.Unlock()
+
+	backend := cfg.EffectiveBossChatBackend()
+	enabled := backend == config.AIBackendOpenAIAPI || backend == config.AIBackendMLX || backend == config.AIBackendOllama
+	if usageTracker == nil {
+		return model.LLMSessionUsage{Enabled: enabled}
+	}
+	snapshot := usageTracker.Snapshot(enabled)
+	if hasMeaningfulLLMUsage(snapshot) {
+		return snapshot
+	}
+	return model.LLMSessionUsage{Enabled: enabled}
+}
+
 func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend) {
 	if s == nil {
 		return nil, "", config.AIBackendUnset

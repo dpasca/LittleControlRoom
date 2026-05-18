@@ -81,6 +81,9 @@ type Model struct {
 	assistantStreamID      int
 	streamingAssistantText string
 	streamingToolCalls     []string
+	haveLastAssistantUsage bool
+	lastAssistantUsage     model.LLMUsage
+	lastAssistantModel     string
 
 	summaryFlashUntil map[string]time.Time
 }
@@ -409,6 +412,91 @@ func (m Model) StatusText() string {
 	return status
 }
 
+func (m Model) UsageText() string {
+	parts := make([]string, 0, 2)
+	if m.haveLastAssistantUsage {
+		switch {
+		case m.lastAssistantUsage.InputTokens > 0:
+			parts = append(parts, "ctx "+formatBossTokenCount(m.lastAssistantUsage.InputTokens))
+		case m.lastAssistantUsage.TotalTokens > 0:
+			parts = append(parts, "tok "+formatBossTokenCount(m.lastAssistantUsage.TotalTokens))
+		}
+	}
+	if usage := m.bossChatUsage(); usage.Running > 0 && len(parts) == 0 {
+		parts = append(parts, "ctx measuring")
+	} else if costUSD, ok := bossEstimatedUsageCostUSD(usage); ok && costUSD > 0 {
+		parts = append(parts, "spent "+formatBossEstimatedCostUSD(costUSD))
+	} else if m.haveLastAssistantUsage {
+		if costUSD, ok := bossEstimatedLLMCostUSD(m.lastAssistantModel, m.lastAssistantUsage); ok && costUSD > 0 {
+			parts = append(parts, "last "+formatBossEstimatedCostUSD(costUSD))
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+func (m Model) bossChatUsage() model.LLMSessionUsage {
+	if m.svc == nil {
+		return model.LLMSessionUsage{}
+	}
+	return m.svc.BossChatUsage()
+}
+
+func (m *Model) recordAssistantUsage(response AssistantResponse) {
+	usage := response.Usage
+	if usage.InputTokens == 0 &&
+		usage.OutputTokens == 0 &&
+		usage.TotalTokens == 0 &&
+		usage.CachedInputTokens == 0 &&
+		usage.ReasoningTokens == 0 &&
+		usage.EstimatedCostUSD == 0 {
+		return
+	}
+	m.haveLastAssistantUsage = true
+	m.lastAssistantUsage = usage
+	m.lastAssistantModel = strings.TrimSpace(response.Model)
+}
+
+func bossEstimatedUsageCostUSD(usage model.LLMSessionUsage) (float64, bool) {
+	if usage.Totals.EstimatedCostUSD > 0 {
+		return usage.Totals.EstimatedCostUSD, true
+	}
+	return bossEstimatedLLMCostUSD(usage.Model, usage.Totals)
+}
+
+func bossEstimatedLLMCostUSD(modelName string, usage model.LLMUsage) (float64, bool) {
+	if usage.EstimatedCostUSD > 0 {
+		return usage.EstimatedCostUSD, true
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+		return 0, false
+	}
+	return model.EstimateLLMCostUSD(modelName, usage)
+}
+
+func formatBossTokenCount(v int64) string {
+	switch {
+	case v >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(v)/1_000_000)
+	case v >= 10_000:
+		return fmt.Sprintf("%dk", v/1_000)
+	case v >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(v)/1_000)
+	default:
+		return fmt.Sprintf("%d", v)
+	}
+}
+
+func formatBossEstimatedCostUSD(costUSD float64) string {
+	switch {
+	case costUSD >= 1:
+		return fmt.Sprintf("$%.2f", costUSD)
+	case costUSD >= 0.01:
+		return fmt.Sprintf("$%.3f", costUSD)
+	default:
+		return fmt.Sprintf("$%.4f", costUSD)
+	}
+}
+
 func (m Model) HotProjectPath(index int) string {
 	item := m.HotAttentionItem(index)
 	if item.Kind != AttentionItemProject {
@@ -593,6 +681,9 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	m.sending = false
 	m.streamingAssistantText = ""
 	m.streamingToolCalls = nil
+	if err == nil {
+		m.recordAssistantUsage(response)
+	}
 	if stateRefreshed {
 		m.syncSummaryFlashes(snapshot)
 		m.snapshot = snapshot
@@ -1075,7 +1166,12 @@ func (m Model) renderHeader(width int) string {
 	} else if m.sessionPickerVisible || m.openTargetPicker != nil || m.inputCopyDialog != nil {
 		escAction = "Esc closes"
 	}
-	text := " Boss Mode  " + m.StatusText() + "  |  " + escAction + "  Ctrl+R refresh"
+	usageText := strings.TrimSpace(m.UsageText())
+	usageSegment := ""
+	if usageText != "" {
+		usageSegment = "  |  " + usageText
+	}
+	text := " Boss Mode  " + m.StatusText() + usageSegment + "  |  " + escAction + "  Ctrl+R refresh"
 	return bossHeaderStyle.Width(width).Render(fitLine(text, width))
 }
 

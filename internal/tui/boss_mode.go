@@ -300,6 +300,9 @@ func (m Model) renderBossModeHeader(width int) string {
 		renderFooterStatus(m.bossModel.StatusText()),
 		renderFooterMeta("high-level project chat"),
 	}
+	if usageText := strings.TrimSpace(m.bossModel.UsageText()); usageText != "" {
+		parts = append(parts, renderFooterUsage(usageText))
+	}
 	if notice := processWarningFooterLabel(m.totalProcessWarningStats()); notice != "" {
 		parts = append(parts, renderFooterAlert(notice))
 	}

@@ -74,6 +74,37 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	}
 }
 
+func TestModelHeaderShowsLastContextUsage(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.width = 120
+	m.height = 30
+	m.stateLoaded = true
+
+	updated, _ := m.Update(AssistantReplyMsg{
+		response: AssistantResponse{
+			Content: "Done.",
+			Model:   "gpt-5.5",
+			Usage: model.LLMUsage{
+				InputTokens:      4321,
+				OutputTokens:     210,
+				TotalTokens:      4531,
+				EstimatedCostUSD: 0.0123,
+			},
+		},
+	})
+	got := updated.(Model)
+
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "ctx 4.3k") {
+		t.Fatalf("view missing context token count:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "last $0.012") {
+		t.Fatalf("view missing last cost estimate:\n%s", rendered)
+	}
+}
+
 func TestPageKeysScrollChatByEightyPercent(t *testing.T) {
 	t.Parallel()
 
