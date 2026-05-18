@@ -153,6 +153,8 @@ The main TUI command palette opens with `/`.
 - `/focus <list|detail|runtime>`: Move focus between panes.
 - `/ignore`: Hide the selected project's exact name.
 - `/ignored`: Review ignored names and paths, then restore them.
+- `/archive`: Move the selected project to the Archived tab.
+- `/unarchive`: Move the selected archived project back to Active when it is in scope.
 - `/remove`: Confirm, then make the selected item go away safely. For regular projects, hides only the selected path. Aliases: `/delete`, `/forget`.
 - `/quit`: Quit the TUI.
 
@@ -207,7 +209,7 @@ Most day-to-day use falls into a few buckets:
   | --- | --- | --- |
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
-- **Keep the list clean** — Use `a` to switch between Active and Archived project tabs, `f` or `/filter <text>` to narrow the project list, `/pin` and `/snooze` to control attention, `/remove` to confirm and archive/delete/hide the selected item based on context. Use `/ignore` when you want an explicit exact-name hide rule, and `/ignored` to restore hidden names or paths.
+- **Keep the list clean** — Use `a` to switch between Active and Archived project tabs, `/archive` and `/unarchive` to move regular projects between them, `f` or `/filter <text>` to narrow the project list, and `/pin` or `/snooze` to control attention. Use `/remove` when an item should go away by its safest matching action, `/ignore` for an exact-name hide rule, and `/ignored` to restore hidden names or paths.
 - **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, the OpenAI key when needed, and project search paths. Providers & Models keeps the same provider choices visible beside local endpoints, model overrides, and launch presets. Project Scope controls include/exclude paths and privacy patterns. Browser sets the Playwright window policy. Advanced holds experimental LCAgent settings and tuning knobs like refresh thresholds. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).

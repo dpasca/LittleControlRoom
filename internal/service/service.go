@@ -1038,6 +1038,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				Forgotten:            true,
 				ManuallyAdded:        old.ManuallyAdded,
 				InScope:              false,
+				Archived:             old.Archived,
 				Pinned:               old.Pinned,
 				SnoozedUntil:         old.SnoozedUntil,
 				RunCommand:           old.RunCommand,
@@ -1199,6 +1200,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			Forgotten:            forgotten,
 			ManuallyAdded:        old.ManuallyAdded,
 			InScope:              scope.Allows(path) || old.ManuallyAdded,
+			Archived:             old.Archived,
 			Pinned:               old.Pinned,
 			SnoozedUntil:         old.SnoozedUntil,
 			MovedFromPath:        old.MovedFromPath,
@@ -1721,6 +1723,7 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.RepoBehindCount != state.RepoBehindCount ||
 		old.Forgotten != state.Forgotten ||
 		old.ManuallyAdded != state.ManuallyAdded ||
+		old.Archived != state.Archived ||
 		!timesEqual(old.LastActivity, state.LastActivity)
 }
 
@@ -2207,6 +2210,7 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		repoAheadCount:       repoAheadCount,
 		repoBehindCount:      repoBehindCount,
 		forgotten:            forgotten,
+		archived:             detail.Summary.Archived,
 	}, runtime.cfg, runtime.classifier, opts); err != nil {
 		return err
 	}
@@ -2263,6 +2267,7 @@ type projectStatusRefreshOverrides struct {
 	repoAheadCount       int
 	repoBehindCount      int
 	forgotten            bool
+	archived             bool
 }
 
 func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig, classifier SessionClassifier, opts ScanOptions) error {
@@ -2324,6 +2329,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		Forgotten:            overrides.forgotten,
 		ManuallyAdded:        detail.Summary.ManuallyAdded,
 		InScope:              detail.Summary.InScope,
+		Archived:             overrides.archived,
 		Pinned:               detail.Summary.Pinned,
 		SnoozedUntil:         detail.Summary.SnoozedUntil,
 		RunCommand:           detail.Summary.RunCommand,
@@ -2380,6 +2386,7 @@ func (s *Service) refreshProjectAttentionLocked(ctx context.Context, projectPath
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
+		archived:             detail.Summary.Archived,
 	}, cfg, nil, ScanOptions{})
 }
 
@@ -2404,6 +2411,38 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 	now := time.Now()
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "toggle_pin"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "toggle_pin"})
+	return nil
+}
+
+func (s *Service) ArchiveProject(ctx context.Context, projectPath string) error {
+	return s.setProjectArchived(ctx, projectPath, true, "archive_project")
+}
+
+func (s *Service) UnarchiveProject(ctx context.Context, projectPath string) error {
+	return s.setProjectArchived(ctx, projectPath, false, "unarchive_project")
+}
+
+func (s *Service) setProjectArchived(ctx context.Context, projectPath string, archived bool, action string) error {
+	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	defer unlockProjectState()
+
+	m, err := s.store.GetProjectSummaryMap(ctx)
+	if err != nil {
+		return err
+	}
+	project := m[projectPath]
+	if project.Path == "" {
+		return fmt.Errorf("project not found: %s", projectPath)
+	}
+	if project.Archived == archived {
+		return nil
+	}
+	if err := s.store.SetProjectArchived(ctx, projectPath, archived); err != nil {
+		return err
+	}
+	now := time.Now()
+	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": action}})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: action})
 	return nil
 }
 

@@ -3371,9 +3371,6 @@ func (m Model) selectedProject() (model.ProjectSummary, bool) {
 }
 
 func (m Model) renderProjectArchiveTabs(width int) string {
-	if m.archiveMode != projectArchiveArchived && len(m.archivedProjects) == 0 {
-		return ""
-	}
 	activeLabel := fmt.Sprintf("Active %d", len(m.allProjects))
 	archivedLabel := fmt.Sprintf("Archived %d", len(m.archivedProjects))
 	if width > 0 && width < 34 {
@@ -3384,7 +3381,7 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 		" " +
 		renderProjectArchiveTab(archivedLabel, m.archiveMode == projectArchiveArchived)
 	if width > 0 {
-		return fitStyledWidth(line, width)
+		return ansi.Truncate(line, width, "")
 	}
 	return line
 }
@@ -3413,7 +3410,7 @@ func (m Model) renderProjectList(width, height int) string {
 				message = fmt.Sprintf("No projects match %s\nPress f or /filter to change it", filterLabel)
 			}
 		} else if m.archiveMode == projectArchiveArchived {
-			message = "No archived projects\nOld out-of-scope projects will appear here"
+			message = "No archived projects\nUse /archive, or old out-of-scope projects will appear here"
 		} else if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
 			message = "No AI-linked folders\nUse /view all to switch folders"
 		} else if len(m.archivedProjects) > 0 {
@@ -3428,9 +3425,6 @@ func (m Model) renderProjectList(width, height int) string {
 	}
 
 	headerRows := 1
-	if tabs != "" {
-		headerRows = 2
-	}
 	if height < headerRows+2 {
 		height = headerRows + 2
 	}
@@ -3446,6 +3440,9 @@ func (m Model) renderProjectList(width, height int) string {
 	filterLabel := m.projectFilterSummaryLabel(16)
 	if filterLabel != "" {
 		metaParts = append(metaParts, "filter:"+filterLabel)
+		if tabs != "" {
+			tabs += " " + detailMutedStyle.Render("filter:"+filterLabel)
+		}
 	}
 	if m.privacyMode {
 		metaParts = append(metaParts, "privacy")
@@ -3459,10 +3456,10 @@ func (m Model) renderProjectList(width, height int) string {
 	}
 	projectW, assessmentW := projectListColumnWidths(columnWidth)
 	rows := make([]string, 0, visible+3)
-	if tabs != "" {
-		rows = append(rows, tabs)
-	}
 	header := renderProjectListHeader(projectW, assessmentW)
+	if tabs != "" {
+		header = tabs + "  " + header
+	}
 	if lipgloss.Width(header)+lipgloss.Width(meta) <= width {
 		header += meta
 	}
@@ -4154,10 +4151,9 @@ func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
 		return
 	}
 	summary.Path = path
-	wasArchived := summaryPathInProjects(path, m.archivedProjects)
 	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
 	m.archivedProjects = removeProjectSummaryFromSlice(m.archivedProjects, path)
-	if !summary.InScope && (m.archiveMode == projectArchiveArchived || wasArchived) {
+	if projectSummaryArchived(summary) {
 		m.archivedProjects = append(m.archivedProjects, summary)
 		return
 	}
@@ -4233,19 +4229,6 @@ func (m *Model) removeProjectSummary(projectPath string) {
 	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
 	m.archivedProjects = removeProjectSummaryFromSlice(m.archivedProjects, path)
 	m.projects = removeProjectSummaryFromSlice(m.projects, path)
-}
-
-func summaryPathInProjects(path string, projects []model.ProjectSummary) bool {
-	path = filepath.Clean(strings.TrimSpace(path))
-	if path == "" {
-		return false
-	}
-	for _, project := range projects {
-		if filepath.Clean(strings.TrimSpace(project.Path)) == path {
-			return true
-		}
-	}
-	return false
 }
 
 func removeProjectSummaryFromSlice(projects []model.ProjectSummary, cleanPath string) []model.ProjectSummary {
@@ -4647,6 +4630,10 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.ignoreProjectCmd(p)
 	case commands.KindIgnored:
 		return m.openIgnoredPicker()
+	case commands.KindArchive:
+		return m.setProjectArchivedForSelection(true)
+	case commands.KindUnarchive:
+		return m.setProjectArchivedForSelection(false)
 	case commands.KindRemove:
 		return m.openRemoveActionForSelection()
 	case commands.KindFocus:
@@ -4773,6 +4760,63 @@ func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 		return m, m.openProjectRemoveConfirmForSelection()
 	}
 	return m, m.openProjectRemoveConfirmForSelection()
+}
+
+func (m Model) setProjectArchivedForSelection(archived bool) (tea.Model, tea.Cmd) {
+	project, ok := m.selectedProject()
+	if !ok {
+		m.status = "No project selected"
+		return m, nil
+	}
+	switch model.NormalizeProjectKind(project.Kind) {
+	case model.ProjectKindAgentTask:
+		m.status = "Agent tasks use /remove or /task-actions"
+		return m, nil
+	case model.ProjectKindScratchTask:
+		m.status = "Scratch tasks use /task-actions"
+		return m, nil
+	}
+	if archived && project.Archived {
+		m.status = fmt.Sprintf("%q is already archived", projectRemovalName(project))
+		return m, nil
+	}
+	if !archived && !project.Archived {
+		if !project.InScope {
+			m.status = fmt.Sprintf("%q is outside project scope", projectRemovalName(project))
+		} else {
+			m.status = fmt.Sprintf("%q is already active", projectRemovalName(project))
+		}
+		return m, nil
+	}
+	return m, m.setProjectArchivedCmd(project, archived)
+}
+
+func (m Model) setProjectArchivedCmd(project model.ProjectSummary, archived bool) tea.Cmd {
+	path := filepath.Clean(strings.TrimSpace(project.Path))
+	if path == "" || path == "." {
+		return nil
+	}
+	name := projectRemovalName(project)
+	return func() tea.Msg {
+		var err error
+		status := fmt.Sprintf("Archived %q", name)
+		if archived {
+			err = m.svc.ArchiveProject(m.ctx, path)
+		} else {
+			err = m.svc.UnarchiveProject(m.ctx, path)
+			if project.InScope {
+				status = fmt.Sprintf("Unarchived %q", name)
+			} else {
+				status = fmt.Sprintf("Unarchived %q; still in Archived because it is outside project scope", name)
+			}
+		}
+		return actionMsg{
+			projectPath: path,
+			status:      status,
+			refresh:     invalidateProjectStructure(""),
+			err:         err,
+		}
+	}
 }
 
 func (m Model) openHideActionForSelection() (tea.Model, tea.Cmd) {

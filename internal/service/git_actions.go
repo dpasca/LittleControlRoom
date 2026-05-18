@@ -841,6 +841,7 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		Forgotten:            detail.Summary.Forgotten,
 		ManuallyAdded:        detail.Summary.ManuallyAdded,
 		InScope:              detail.Summary.InScope,
+		Archived:             detail.Summary.Archived,
 		Pinned:               detail.Summary.Pinned,
 		SnoozedUntil:         detail.Summary.SnoozedUntil,
 		RunCommand:           detail.Summary.RunCommand,

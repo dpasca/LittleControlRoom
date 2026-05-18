@@ -577,6 +577,7 @@ func TestProjectSummaryMsgAddsProjectDuringInitialScan(t *testing.T) {
 			Name:                "demo",
 			Path:                "/tmp/demo",
 			PresentOnDisk:       true,
+			InScope:             true,
 			LatestSessionFormat: "modern",
 		},
 	})
