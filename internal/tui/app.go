@@ -43,6 +43,7 @@ type Model struct {
 	unsub func()
 
 	allProjects             []model.ProjectSummary
+	archivedProjects        []model.ProjectSummary
 	openAgentTasks          []model.AgentTask
 	orphanedWorktreesByRoot map[string][]model.ProjectSummary
 	projects                []model.ProjectSummary
@@ -52,6 +53,7 @@ type Model struct {
 	offset                  int
 	sortMode                projectSortMode
 	visibility              projectVisibilityMode
+	archiveMode             projectArchiveMode
 	excludeProjectPatterns  []string
 	privacyMode             bool
 	privacyPatterns         []string
@@ -524,6 +526,7 @@ type spinnerTickMsg struct{}
 
 type projectSortMode string
 type projectVisibilityMode string
+type projectArchiveMode string
 type paneFocus string
 
 type bodyLayout struct {
@@ -544,6 +547,9 @@ const (
 
 	visibilityAIFolders  projectVisibilityMode = "ai_folders"
 	visibilityAllFolders projectVisibilityMode = "all_folders"
+
+	projectArchiveActive   projectArchiveMode = "active"
+	projectArchiveArchived projectArchiveMode = "archived"
 
 	focusProjects paneFocus = "projects"
 	focusDetail   paneFocus = "detail"
@@ -592,6 +598,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		assessmentFlashUntil:       make(map[string]time.Time),
 		sortMode:                   sortByAttention,
 		visibility:                 visibilityAIFolders,
+		archiveMode:                projectArchiveActive,
 		excludeProjectPatterns:     currentExcludeProjectPatterns(svc),
 		privacyMode:                initialSettings.PrivacyMode,
 		privacyPatterns:            currentPrivacyPatterns(svc),
@@ -1276,7 +1283,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = projectLoadFailedStatus(len(m.projects) > 0)
 			return m, reloadCmd
 		}
-		startupEmptyCache := m.status == initialProjectsStatus && len(msg.projects) == 0
+		startupEmptyCache := m.status == initialProjectsStatus && len(msg.projects) == 0 && len(msg.archivedProjects) == 0
 		if !startupEmptyCache {
 			m.loading = false
 		}
@@ -1291,6 +1298,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.excludeProjectPatterns = append([]string(nil), msg.excludeProjectPatterns...)
 		m.allProjects = m.preserveRefreshingAssessmentDisplays(msg.projects)
+		m.archivedProjects = m.preserveRefreshingAssessmentDisplays(msg.archivedProjects)
 		m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
 		m.rebuildProjectList(selectedPath)
@@ -2206,6 +2214,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "f":
 		return m, m.openProjectFilterDialog()
+	case "a":
+		return m, m.toggleArchiveMode()
 	case "b":
 		return m.openBossModeOrSetupPrompt()
 	case "f3":
@@ -2623,6 +2633,36 @@ func (m *Model) setVisibilityMode(mode projectVisibilityMode) tea.Cmd {
 	m.rebuildProjectList(selectedPath)
 	m.syncDetailViewport(false)
 	m.status = fmt.Sprintf("Visibility: %s", visibilityLabel(m.visibility))
+	if p, ok := m.selectedProject(); ok {
+		return m.requestProjectDetailViewCmd(p.Path)
+	}
+	m.detail = model.ProjectDetail{}
+	m.syncDetailViewport(true)
+	return nil
+}
+
+func (m *Model) toggleArchiveMode() tea.Cmd {
+	if m.archiveMode == projectArchiveArchived {
+		return m.setArchiveMode(projectArchiveActive)
+	}
+	return m.setArchiveMode(projectArchiveArchived)
+}
+
+func (m *Model) setArchiveMode(mode projectArchiveMode) tea.Cmd {
+	if mode != projectArchiveArchived {
+		mode = projectArchiveActive
+	}
+	selectedPath := ""
+	if p, ok := m.selectedProject(); ok {
+		selectedPath = p.Path
+	}
+	if m.archiveMode != mode {
+		selectedPath = ""
+	}
+	m.archiveMode = mode
+	m.rebuildProjectList(selectedPath)
+	m.syncDetailViewport(false)
+	m.status = fmt.Sprintf("Project tab: %s", projectArchiveLabel(m.archiveMode))
 	if p, ok := m.selectedProject(); ok {
 		return m.requestProjectDetailViewCmd(p.Path)
 	}
@@ -3330,24 +3370,71 @@ func (m Model) selectedProject() (model.ProjectSummary, bool) {
 	return m.projects[m.selected], true
 }
 
+func (m Model) renderProjectArchiveTabs(width int) string {
+	if m.archiveMode != projectArchiveArchived && len(m.archivedProjects) == 0 {
+		return ""
+	}
+	activeLabel := fmt.Sprintf("Active %d", len(m.allProjects))
+	archivedLabel := fmt.Sprintf("Archived %d", len(m.archivedProjects))
+	if width > 0 && width < 34 {
+		activeLabel = "Active"
+		archivedLabel = "Archived"
+	}
+	line := renderProjectArchiveTab(activeLabel, m.archiveMode != projectArchiveArchived) +
+		" " +
+		renderProjectArchiveTab(archivedLabel, m.archiveMode == projectArchiveArchived)
+	if width > 0 {
+		return fitStyledWidth(line, width)
+	}
+	return line
+}
+
+func renderProjectArchiveTab(label string, selected bool) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "Tab"
+	}
+	if selected {
+		return projectListActiveTabStyle.Render("[" + label + "]")
+	}
+	return projectListInactiveTabStyle.Render(" " + label + " ")
+}
+
 func (m Model) renderProjectList(width, height int) string {
+	tabs := m.renderProjectArchiveTabs(width)
 	if len(m.projects) == 0 {
+		message := ""
 		if m.loading {
-			return "Loading..."
+			message = "Loading..."
+		} else if filterLabel := m.projectFilterSummaryLabel(24); filterLabel != "" {
+			if m.archiveMode == projectArchiveArchived {
+				message = fmt.Sprintf("No archived projects match %s\nPress f or /filter to change it", filterLabel)
+			} else {
+				message = fmt.Sprintf("No projects match %s\nPress f or /filter to change it", filterLabel)
+			}
+		} else if m.archiveMode == projectArchiveArchived {
+			message = "No archived projects\nOld out-of-scope projects will appear here"
+		} else if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
+			message = "No AI-linked folders\nUse /view all to switch folders"
+		} else if len(m.archivedProjects) > 0 {
+			message = "No active projects\nPress a for Archived"
+		} else {
+			message = "No projects detected\nUse /settings to set your project search paths"
 		}
-		if filterLabel := m.projectFilterSummaryLabel(24); filterLabel != "" {
-			return fmt.Sprintf("No projects match %s\nPress f or /filter to change it", filterLabel)
+		if tabs != "" {
+			return tabs + "\n" + message
 		}
-		if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
-			return "No AI-linked folders\nPress v for All folders"
-		}
-		return "No projects detected\nUse /settings to set your project search paths"
+		return message
 	}
 
-	if height < 3 {
-		height = 3
+	headerRows := 1
+	if tabs != "" {
+		headerRows = 2
 	}
-	visible := height - 1 // minus header
+	if height < headerRows+2 {
+		height = headerRows + 2
+	}
+	visible := height - headerRows
 	if visible < 1 {
 		visible = 1
 	}
@@ -3371,7 +3458,10 @@ func (m Model) renderProjectList(width, height int) string {
 		}
 	}
 	projectW, assessmentW := projectListColumnWidths(columnWidth)
-	rows := make([]string, 0, visible+2)
+	rows := make([]string, 0, visible+3)
+	if tabs != "" {
+		rows = append(rows, tabs)
+	}
 	header := renderProjectListHeader(projectW, assessmentW)
 	if lipgloss.Width(header)+lipgloss.Width(meta) <= width {
 		header += meta
@@ -3633,7 +3723,10 @@ func (m Model) renderDetailContent(width int) string {
 	defer done()
 	p, ok := m.selectedProject()
 	if !ok {
-		if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
+		if m.archiveMode == projectArchiveArchived {
+			return "No archived project selected\nPress a to return to Active"
+		}
+		if len(m.projectListSourceProjects()) > 0 && m.visibility == visibilityAIFolders {
 			return "No AI-linked folder selected\nUse /view to switch folders"
 		}
 		return "Select a project"
@@ -3942,6 +4035,8 @@ var (
 	topStatusConflictBadgeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("92")).Bold(true).Padding(0, 1)
 	topStatusSetupBadgeStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
 	detailAttentionValueStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	projectListActiveTabStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true).Padding(0, 1)
+	projectListInactiveTabStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("238")).Padding(0, 1)
 	projectListSelectedRowStyle     = lipgloss.NewStyle().
 					Background(lipgloss.AdaptiveColor{Light: "255", Dark: "236"})
 	dialogSelectedRowStyle = lipgloss.NewStyle().
@@ -4059,11 +4154,12 @@ func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
 		return
 	}
 	summary.Path = path
-	for i := range m.allProjects {
-		if filepath.Clean(m.allProjects[i].Path) == path {
-			m.allProjects[i] = summary
-			return
-		}
+	wasArchived := summaryPathInProjects(path, m.archivedProjects)
+	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
+	m.archivedProjects = removeProjectSummaryFromSlice(m.archivedProjects, path)
+	if !summary.InScope && (m.archiveMode == projectArchiveArchived || wasArchived) {
+		m.archivedProjects = append(m.archivedProjects, summary)
+		return
 	}
 	m.allProjects = append(m.allProjects, summary)
 }
@@ -4135,7 +4231,21 @@ func (m *Model) removeProjectSummary(projectPath string) {
 		return
 	}
 	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
+	m.archivedProjects = removeProjectSummaryFromSlice(m.archivedProjects, path)
 	m.projects = removeProjectSummaryFromSlice(m.projects, path)
+}
+
+func summaryPathInProjects(path string, projects []model.ProjectSummary) bool {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" {
+		return false
+	}
+	for _, project := range projects {
+		if filepath.Clean(strings.TrimSpace(project.Path)) == path {
+			return true
+		}
+	}
+	return false
 }
 
 func removeProjectSummaryFromSlice(projects []model.ProjectSummary, cleanPath string) []model.ProjectSummary {
@@ -4215,6 +4325,11 @@ func (m *Model) markProjectSessionSeenLocal(projectPath string, seenAt time.Time
 			m.allProjects[i].LastSessionSeenAt = seenAt
 		}
 	}
+	for i := range m.archivedProjects {
+		if filepath.Clean(m.archivedProjects[i].Path) == path {
+			m.archivedProjects[i].LastSessionSeenAt = seenAt
+		}
+	}
 	for i := range m.projects {
 		if filepath.Clean(m.projects[i].Path) == path {
 			m.projects[i].LastSessionSeenAt = seenAt
@@ -4233,6 +4348,11 @@ func (m *Model) clearProjectSessionSeenLocal(projectPath string) {
 	for i := range m.allProjects {
 		if filepath.Clean(m.allProjects[i].Path) == path {
 			m.allProjects[i].LastSessionSeenAt = time.Time{}
+		}
+	}
+	for i := range m.archivedProjects {
+		if filepath.Clean(m.archivedProjects[i].Path) == path {
+			m.archivedProjects[i].LastSessionSeenAt = time.Time{}
 		}
 	}
 	for i := range m.projects {
@@ -6164,6 +6284,15 @@ func visibilityShortLabel(mode projectVisibilityMode) string {
 	}
 }
 
+func projectArchiveLabel(mode projectArchiveMode) string {
+	switch mode {
+	case projectArchiveArchived:
+		return "Archived"
+	default:
+		return "Active"
+	}
+}
+
 func projectHasAIMetadata(project model.ProjectSummary) bool {
 	return project.ManuallyAdded || !project.LastActivity.IsZero() || project.LatestSessionFormat != "" || project.LatestSessionClassification != ""
 }
@@ -7553,6 +7682,7 @@ func helpPanelLines() []string {
 		detailSectionStyle.Render("Quick Actions"),
 		renderHelpPanelActionRow(
 			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("a", "archive tab", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("b", "boss", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
