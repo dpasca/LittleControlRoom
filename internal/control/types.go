@@ -20,6 +20,23 @@ const (
 	CapabilityTodoComplete       CapabilityName = "todo.complete"
 )
 
+func CapabilityNameValues() []CapabilityName {
+	return []CapabilityName{
+		CapabilityEngineerSendPrompt,
+		CapabilityAgentTaskCreate,
+		CapabilityAgentTaskContinue,
+		CapabilityAgentTaskClose,
+		CapabilityProjectArchive,
+		CapabilityScratchTaskArchive,
+		CapabilityTodoAdd,
+		CapabilityTodoComplete,
+	}
+}
+
+func CapabilityNameStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, CapabilityNameValues()...)
+}
+
 type Provider string
 
 const (
@@ -29,6 +46,33 @@ const (
 	ProviderClaudeCode Provider = "claude_code"
 	ProviderLCAgent    Provider = "lcagent"
 )
+
+func ProviderValues() []Provider {
+	return []Provider{
+		ProviderAuto,
+		ProviderCodex,
+		ProviderOpenCode,
+		ProviderClaudeCode,
+		ProviderLCAgent,
+	}
+}
+
+func EngineerProviderValues() []Provider {
+	return []Provider{
+		ProviderCodex,
+		ProviderOpenCode,
+		ProviderClaudeCode,
+		ProviderLCAgent,
+	}
+}
+
+func ProviderStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, ProviderValues()...)
+}
+
+func EngineerProviderStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, EngineerProviderValues()...)
+}
 
 func NormalizeProvider(value string) Provider {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -79,6 +123,17 @@ const (
 	SessionModeNew         SessionMode = "new"
 )
 
+func SessionModeValues() []SessionMode {
+	return []SessionMode{
+		SessionModeResumeOrNew,
+		SessionModeNew,
+	}
+}
+
+func SessionModeStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, SessionModeValues()...)
+}
+
 func NormalizeSessionMode(value string) SessionMode {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", string(SessionModeResumeOrNew), "resume", "resume-or-new":
@@ -102,6 +157,19 @@ const (
 	RiskExternal    RiskLevel = "external"
 	RiskDestructive RiskLevel = "destructive"
 )
+
+func RiskLevelValues() []RiskLevel {
+	return []RiskLevel{
+		RiskRead,
+		RiskWrite,
+		RiskExternal,
+		RiskDestructive,
+	}
+}
+
+func RiskLevelStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, RiskLevelValues()...)
+}
 
 type ConfirmationPolicy string
 
@@ -185,6 +253,22 @@ const (
 	ResourceFile            ResourceKind = "file"
 )
 
+func ResourceKindValues() []ResourceKind {
+	return []ResourceKind{
+		ResourceProject,
+		ResourceEngineerSession,
+		ResourceTodo,
+		ResourceAgentTask,
+		ResourceProcess,
+		ResourcePort,
+		ResourceFile,
+	}
+}
+
+func ResourceKindStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, ResourceKindValues()...)
+}
+
 type ResourceRef struct {
 	Kind        ResourceKind `json:"kind"`
 	ID          string       `json:"id,omitempty"`
@@ -196,6 +280,17 @@ type ResourceRef struct {
 	PID         int          `json:"pid,omitempty"`
 	Port        int          `json:"port,omitempty"`
 	Label       string       `json:"label,omitempty"`
+}
+
+func stringValues[T ~string](includeEmpty bool, values ...T) []string {
+	out := make([]string, 0, len(values)+1)
+	if includeEmpty {
+		out = append(out, "")
+	}
+	for _, value := range values {
+		out = append(out, string(value))
+	}
+	return out
 }
 
 type Operation struct {

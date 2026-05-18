@@ -37,6 +37,17 @@ const (
 	AgentTaskKindSubagent AgentTaskKind = "subagent"
 )
 
+func AgentTaskKindValues() []AgentTaskKind {
+	return []AgentTaskKind{
+		AgentTaskKindAgent,
+		AgentTaskKindSubagent,
+	}
+}
+
+func AgentTaskKindStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, AgentTaskKindValues()...)
+}
+
 func NormalizeAgentTaskKind(value string) AgentTaskKind {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", string(AgentTaskKindAgent):
@@ -59,6 +70,18 @@ const (
 	AgentTaskCloseArchived  AgentTaskCloseStatus = "archived"
 	AgentTaskCloseWaiting   AgentTaskCloseStatus = "waiting"
 )
+
+func AgentTaskCloseStatusValues() []AgentTaskCloseStatus {
+	return []AgentTaskCloseStatus{
+		AgentTaskCloseCompleted,
+		AgentTaskCloseArchived,
+		AgentTaskCloseWaiting,
+	}
+}
+
+func AgentTaskCloseStatusStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, AgentTaskCloseStatusValues()...)
+}
 
 func NormalizeAgentTaskCloseStatus(value string) AgentTaskCloseStatus {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -83,6 +106,17 @@ const (
 	ProjectArchiveActionArchive   ProjectArchiveAction = "archive"
 	ProjectArchiveActionUnarchive ProjectArchiveAction = "unarchive"
 )
+
+func ProjectArchiveActionValues() []ProjectArchiveAction {
+	return []ProjectArchiveAction{
+		ProjectArchiveActionArchive,
+		ProjectArchiveActionUnarchive,
+	}
+}
+
+func ProjectArchiveActionStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, ProjectArchiveActionValues()...)
+}
 
 func NormalizeProjectArchiveAction(value string) ProjectArchiveAction {
 	switch strings.ToLower(strings.TrimSpace(value)) {
@@ -799,11 +833,11 @@ func resourceRefInputSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": false,
 		"properties": map[string]any{
-			"kind":         map[string]any{"type": "string", "enum": []string{string(ResourceProject), string(ResourceEngineerSession), string(ResourceTodo), string(ResourceAgentTask), string(ResourceProcess), string(ResourcePort), string(ResourceFile)}},
+			"kind":         map[string]any{"type": "string", "enum": ResourceKindStrings(false)},
 			"id":           map[string]any{"type": "string"},
 			"path":         map[string]any{"type": "string"},
 			"project_path": map[string]any{"type": "string"},
-			"provider":     map[string]any{"type": "string", "enum": []string{"", string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)}},
+			"provider":     map[string]any{"type": "string", "enum": ProviderStrings(true)},
 			"session_id":   map[string]any{"type": "string"},
 			"todo_id":      map[string]any{"type": "integer"},
 			"pid":          map[string]any{"type": "integer"},
@@ -833,20 +867,11 @@ func engineerSendPromptInputSchema() map[string]any {
 			},
 			"provider": map[string]any{
 				"type": "string",
-				"enum": []string{
-					string(ProviderAuto),
-					string(ProviderCodex),
-					string(ProviderOpenCode),
-					string(ProviderClaudeCode),
-					string(ProviderLCAgent),
-				},
+				"enum": ProviderStrings(false),
 			},
 			"session_mode": map[string]any{
 				"type": "string",
-				"enum": []string{
-					string(SessionModeResumeOrNew),
-					string(SessionModeNew),
-				},
+				"enum": SessionModeStrings(false),
 			},
 			"prompt": map[string]any{
 				"type":        "string",
@@ -880,12 +905,7 @@ func engineerSendPromptOutputSchema() map[string]any {
 		"properties": map[string]any{
 			"provider": map[string]any{
 				"type": "string",
-				"enum": []string{
-					string(ProviderCodex),
-					string(ProviderOpenCode),
-					string(ProviderClaudeCode),
-					string(ProviderLCAgent),
-				},
+				"enum": EngineerProviderStrings(false),
 			},
 			"project_path": map[string]any{"type": "string"},
 			"session_id":   map[string]any{"type": "string"},
@@ -906,12 +926,12 @@ func agentTaskCreateInputSchema() map[string]any {
 		"properties": map[string]any{
 			"request_id":     map[string]any{"type": "string"},
 			"title":          map[string]any{"type": "string"},
-			"kind":           map[string]any{"type": "string", "enum": []string{string(AgentTaskKindAgent), string(AgentTaskKindSubagent)}},
+			"kind":           map[string]any{"type": "string", "enum": AgentTaskKindStrings(false)},
 			"parent_task_id": map[string]any{"type": "string"},
 			"prompt":         map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
-				"enum": []string{string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)},
+				"enum": ProviderStrings(false),
 			},
 			"reveal":       map[string]any{"type": "boolean"},
 			"capabilities": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
@@ -931,11 +951,11 @@ func agentTaskContinueInputSchema() map[string]any {
 			"prompt":     map[string]any{"type": "string"},
 			"provider": map[string]any{
 				"type": "string",
-				"enum": []string{string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)},
+				"enum": ProviderStrings(false),
 			},
 			"session_mode": map[string]any{
 				"type": "string",
-				"enum": []string{string(SessionModeResumeOrNew), string(SessionModeNew)},
+				"enum": SessionModeStrings(false),
 			},
 			"reveal": map[string]any{"type": "boolean"},
 		},
@@ -950,7 +970,7 @@ func agentTaskCloseInputSchema() map[string]any {
 		"properties": map[string]any{
 			"request_id":    map[string]any{"type": "string"},
 			"task_id":       map[string]any{"type": "string"},
-			"status":        map[string]any{"type": "string", "enum": []string{string(AgentTaskCloseCompleted), string(AgentTaskCloseArchived), string(AgentTaskCloseWaiting)}},
+			"status":        map[string]any{"type": "string", "enum": AgentTaskCloseStatusStrings(false)},
 			"summary":       map[string]any{"type": "string"},
 			"close_session": map[string]any{"type": "boolean"},
 		},
@@ -994,10 +1014,7 @@ func projectArchiveInputSchema() map[string]any {
 			"project_name": map[string]any{"type": "string"},
 			"action": map[string]any{
 				"type": "string",
-				"enum": []string{
-					string(ProjectArchiveActionArchive),
-					string(ProjectArchiveActionUnarchive),
-				},
+				"enum": ProjectArchiveActionStrings(false),
 			},
 			"resources": map[string]any{
 				"type":        "array",
@@ -1015,7 +1032,7 @@ func projectArchiveOutputSchema() map[string]any {
 		"additionalProperties": false,
 		"properties": map[string]any{
 			"project_path": map[string]any{"type": "string"},
-			"action":       map[string]any{"type": "string", "enum": []string{string(ProjectArchiveActionArchive), string(ProjectArchiveActionUnarchive)}},
+			"action":       map[string]any{"type": "string", "enum": ProjectArchiveActionStrings(false)},
 			"archived":     map[string]any{"type": "boolean"},
 			"status":       map[string]any{"type": "string"},
 		},
@@ -1120,11 +1137,11 @@ func resourceRefsSchema() map[string]any {
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"kind":         map[string]any{"type": "string", "enum": []string{string(ResourceProject), string(ResourceEngineerSession), string(ResourceTodo), string(ResourceAgentTask), string(ResourceProcess), string(ResourcePort), string(ResourceFile)}},
+				"kind":         map[string]any{"type": "string", "enum": ResourceKindStrings(false)},
 				"id":           map[string]any{"type": "string"},
 				"path":         map[string]any{"type": "string"},
 				"project_path": map[string]any{"type": "string"},
-				"provider":     map[string]any{"type": "string", "enum": []string{"", string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)}},
+				"provider":     map[string]any{"type": "string", "enum": ProviderStrings(true)},
 				"session_id":   map[string]any{"type": "string"},
 				"todo_id":      map[string]any{"type": "integer"},
 				"pid":          map[string]any{"type": "integer"},
