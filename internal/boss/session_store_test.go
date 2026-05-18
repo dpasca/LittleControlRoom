@@ -156,6 +156,35 @@ func TestBossSessionStoreAppendCreatesReadableMarkdownFile(t *testing.T) {
 	}
 }
 
+func TestAppendAssistantNoticeToLatestSessionPersistsAndDedupes(t *testing.T) {
+	t.Parallel()
+
+	svc := newBossSessionTestService(t)
+	now := time.Date(2026, 4, 27, 10, 0, 0, 0, time.UTC)
+	content := "Ada is back from Cursor cleanup.\n\nCursor access still needs user-side confirmation."
+	if err := AppendAssistantNoticeToLatestSession(context.Background(), svc, content, now); err != nil {
+		t.Fatalf("AppendAssistantNoticeToLatestSession() error = %v", err)
+	}
+	if err := AppendAssistantNoticeToLatestSession(context.Background(), svc, content, now.Add(time.Minute)); err != nil {
+		t.Fatalf("AppendAssistantNoticeToLatestSession() duplicate error = %v", err)
+	}
+
+	store := newBossSessionStore(svc.Config().DataDir)
+	session, messages, created, err := store.loadLatestOrCreate(context.Background(), now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("loadLatestOrCreate() error = %v", err)
+	}
+	if created || session.SessionID == "" {
+		t.Fatalf("loadLatestOrCreate() = (%#v, created=%v), want persisted session", session, created)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages len = %d, want one deduped notice: %#v", len(messages), messages)
+	}
+	if messages[0].Role != "assistant" || messages[0].Content != content {
+		t.Fatalf("message = %#v, want assistant notice", messages[0])
+	}
+}
+
 func TestBossSessionStoreSearchesMarkdownTurns(t *testing.T) {
 	t.Parallel()
 

@@ -53,6 +53,48 @@ func newBossSessionStoreForService(svc *service.Service) *bossSessionStore {
 	return newBossSessionStore(svc.Config().DataDir)
 }
 
+func AppendAssistantNoticeToLatestSession(ctx context.Context, svc *service.Service, content string, at time.Time) error {
+	store := newBossSessionStoreForService(svc)
+	if store == nil {
+		return errors.New("boss chat session store is not available")
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	session, messages, _, err := store.loadLatestOrCreate(ctx, at)
+	if err != nil {
+		return err
+	}
+	if bossSessionHasAssistantMessage(messages, content) {
+		return nil
+	}
+	return store.appendMessage(ctx, session.SessionID, ChatMessage{
+		Role:    "assistant",
+		Content: content,
+		At:      at,
+	})
+}
+
+func bossSessionHasAssistantMessage(messages []ChatMessage, content string) bool {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return false
+	}
+	for _, message := range messages {
+		if normalizeChatRole(message.Role) != "assistant" {
+			continue
+		}
+		if strings.TrimSpace(message.Content) == content {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *bossSessionStore) loadLatestOrCreate(ctx context.Context, now time.Time) (bossChatSession, []ChatMessage, bool, error) {
 	if s == nil {
 		return bossChatSession{}, nil, false, errors.New("boss chat session store is not available")
