@@ -5524,23 +5524,23 @@ func TestRenderProjectListHighlightsSelectedRow(t *testing.T) {
 
 	rendered := m.renderProjectList(80, 8)
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("renderProjectList() expected header plus two rows, got %q", rendered)
+	if len(lines) != 4 {
+		t.Fatalf("renderProjectList() expected tabs, header, and two rows, got %q", rendered)
 	}
-	if strings.Contains(lines[1], "\x1b[48;5;236m") {
-		t.Fatalf("renderProjectList() should not highlight unselected rows: %q", lines[1])
+	if strings.Contains(lines[2], "\x1b[48;5;236m") {
+		t.Fatalf("renderProjectList() should not highlight unselected rows: %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "\x1b[48;5;236m") {
-		t.Fatalf("renderProjectList() should apply a background highlight to the selected row: %q", lines[2])
+	if !strings.Contains(lines[3], "\x1b[48;5;236m") {
+		t.Fatalf("renderProjectList() should apply a background highlight to the selected row: %q", lines[3])
 	}
-	if got := strings.Count(lines[2], "\x1b[48;5;236m"); got < 4 {
-		t.Fatalf("renderProjectList() should carry the selected-row background across styled cells, got %d matches in %q", got, lines[2])
+	if got := strings.Count(lines[3], "\x1b[48;5;236m"); got < 4 {
+		t.Fatalf("renderProjectList() should carry the selected-row background across styled cells, got %d matches in %q", got, lines[3])
 	}
-	if stripped := ansi.Strip(lines[2]); !strings.Contains(stripped, "selected") {
+	if stripped := ansi.Strip(lines[3]); !strings.Contains(stripped, "selected") {
 		t.Fatalf("renderProjectList() should preserve the selected row text, got %q", stripped)
 	}
-	if got := ansi.StringWidth(ansi.Strip(lines[2])); got > 80 {
-		t.Fatalf("renderProjectList() selected row width = %d, want <= 80: %q", got, ansi.Strip(lines[2]))
+	if got := ansi.StringWidth(ansi.Strip(lines[3])); got > 80 {
+		t.Fatalf("renderProjectList() selected row width = %d, want <= 80: %q", got, ansi.Strip(lines[3]))
 	}
 }
 
@@ -5561,14 +5561,14 @@ func TestRenderProjectListShowsRepoWarningInAttentionColumn(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderProjectList(60, 6))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) < 2 {
-		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
+	if len(lines) < 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "!   95") {
-		t.Fatalf("renderProjectList() should show repo warnings in ATTN, got %q", lines[1])
+	if !strings.Contains(lines[2], "!   95") {
+		t.Fatalf("renderProjectList() should show repo warnings in ATTN, got %q", lines[2])
 	}
-	if strings.Contains(lines[1], "demo project !") {
-		t.Fatalf("renderProjectList() should keep the project name free of suffix markers, got %q", lines[1])
+	if strings.Contains(lines[2], "demo project !") {
+		t.Fatalf("renderProjectList() should keep the project name free of suffix markers, got %q", lines[2])
 	}
 }
 
@@ -5589,14 +5589,14 @@ func TestRenderProjectListShowsTODOCount(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderProjectList(80, 6))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) < 2 {
-		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
+	if len(lines) < 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[0], "AGENT") || !strings.Contains(lines[0], "TODO RUN") {
-		t.Fatalf("renderProjectList() missing agent/todo/run headers, got %q", lines[0])
+	if !strings.Contains(lines[1], "AGENT") || !strings.Contains(lines[1], "TODO RUN") {
+		t.Fatalf("renderProjectList() missing agent/todo/run headers, got %q", lines[1])
 	}
-	if !strings.Contains(lines[1], " 3 ") {
-		t.Fatalf("renderProjectList() should show the open TODO count in the row, got %q", lines[1])
+	if !strings.Contains(lines[2], " 3 ") {
+		t.Fatalf("renderProjectList() should show the open TODO count in the row, got %q", lines[2])
 	}
 }
 
@@ -5623,11 +5623,11 @@ func TestRenderProjectListShowsProcessWarningInRunColumn(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderProjectList(90, 6))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) < 2 {
-		t.Fatalf("renderProjectList() expected header plus one row, got %q", rendered)
+	if len(lines) < 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "HOT!") {
-		t.Fatalf("renderProjectList() should flag suspicious hot PIDs in RUN, got %q", lines[1])
+	if !strings.Contains(lines[2], "HOT!") {
+		t.Fatalf("renderProjectList() should flag suspicious hot PIDs in RUN, got %q", lines[2])
 	}
 }
 
@@ -6241,23 +6241,23 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(140, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("renderProjectList() expected header plus one grouped row, got %q", rendered)
+	if len(lines) != 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one grouped row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "▸ repo") {
-		t.Fatalf("renderProjectList() should show a collapsed disclosure row, got %q", lines[1])
+	if !strings.Contains(lines[2], "▸ repo") {
+		t.Fatalf("renderProjectList() should show a collapsed disclosure row, got %q", lines[2])
 	}
-	if !strings.Contains(lines[1], "Keep root summary") {
-		t.Fatalf("renderProjectList() should keep the root repo assessment text, got %q", lines[1])
+	if !strings.Contains(lines[2], "Keep root summary") {
+		t.Fatalf("renderProjectList() should keep the root repo assessment text, got %q", lines[2])
 	}
-	if !strings.Contains(lines[1], "[1 linked, 1 active]") {
-		t.Fatalf("renderProjectList() should show a compact linked-worktree badge, got %q", lines[1])
+	if !strings.Contains(lines[2], "[1 linked, 1 active]") {
+		t.Fatalf("renderProjectList() should show a compact linked-worktree badge, got %q", lines[2])
 	}
-	if strings.Contains(lines[1], "2 worktrees") {
-		t.Fatalf("renderProjectList() should not describe the root repo as a generic worktree, got %q", lines[1])
+	if strings.Contains(lines[2], "2 worktrees") {
+		t.Fatalf("renderProjectList() should not describe the root repo as a generic worktree, got %q", lines[2])
 	}
-	if strings.Contains(lines[1], "feat/parallel-lane") {
-		t.Fatalf("renderProjectList() should keep child worktree rows hidden while collapsed, got %q", lines[1])
+	if strings.Contains(lines[2], "feat/parallel-lane") {
+		t.Fatalf("renderProjectList() should keep child worktree rows hidden while collapsed, got %q", lines[2])
 	}
 }
 
@@ -6295,14 +6295,14 @@ func TestRenderProjectListShowsOrphanedWorktreeBadgeOnRootRow(t *testing.T) {
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(160, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("renderProjectList() expected header plus one root row, got %q", rendered)
+	if len(lines) != 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one root row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "Keep root summary") {
-		t.Fatalf("renderProjectList() should keep the root summary text, got %q", lines[1])
+	if !strings.Contains(lines[2], "Keep root summary") {
+		t.Fatalf("renderProjectList() should keep the root summary text, got %q", lines[2])
 	}
-	if !strings.Contains(lines[1], "[1 orphaned]") {
-		t.Fatalf("renderProjectList() should show an orphaned-checkout badge on the root row, got %q", lines[1])
+	if !strings.Contains(lines[2], "[1 orphaned]") {
+		t.Fatalf("renderProjectList() should show an orphaned-checkout badge on the root row, got %q", lines[2])
 	}
 }
 
@@ -6377,14 +6377,14 @@ func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(160, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("renderProjectList() expected header plus root and child rows, got %q", rendered)
+	if len(lines) != 4 {
+		t.Fatalf("renderProjectList() expected tabs, header, root, and child rows, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "▾ repo") {
-		t.Fatalf("renderProjectList() should show an expanded disclosure row, got %q", lines[1])
+	if !strings.Contains(lines[2], "▾ repo") {
+		t.Fatalf("renderProjectList() should show an expanded disclosure row, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "↳ feat/parallel-lane") {
-		t.Fatalf("renderProjectList() should render the child worktree branch label, got %q", lines[2])
+	if !strings.Contains(lines[3], "↳ feat/parallel-lane") {
+		t.Fatalf("renderProjectList() should render the child worktree branch label, got %q", lines[3])
 	}
 }
 
@@ -6421,20 +6421,20 @@ func TestRenderProjectListSurfacesCleanUnmergedWorktree(t *testing.T) {
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(160, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 3 {
+	if len(lines) != 4 {
 		t.Fatalf("renderProjectList() should auto-expand a clean unmerged worktree, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "▾ repo") || !strings.Contains(lines[1], "M") {
-		t.Fatalf("renderProjectList() should mark the root row when a linked worktree needs merging, got %q", lines[1])
+	if !strings.Contains(lines[2], "▾ repo") || !strings.Contains(lines[2], "M") {
+		t.Fatalf("renderProjectList() should mark the root row when a linked worktree needs merging, got %q", lines[2])
 	}
-	if !strings.Contains(lines[1], "[1 linked, 1 needs merge]") {
-		t.Fatalf("renderProjectList() should count unmerged linked worktrees in the root badge, got %q", lines[1])
+	if !strings.Contains(lines[2], "[1 linked, 1 needs merge]") {
+		t.Fatalf("renderProjectList() should count unmerged linked worktrees in the root badge, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "↳ feat/parallel-lane") || !strings.Contains(lines[2], "M") {
-		t.Fatalf("renderProjectList() should mark the linked worktree row when it needs merging, got %q", lines[2])
+	if !strings.Contains(lines[3], "↳ feat/parallel-lane") || !strings.Contains(lines[3], "M") {
+		t.Fatalf("renderProjectList() should mark the linked worktree row when it needs merging, got %q", lines[3])
 	}
-	if !strings.Contains(lines[2], "ready to merge into master") {
-		t.Fatalf("renderProjectList() should show merge status in the linked worktree summary, got %q", lines[2])
+	if !strings.Contains(lines[3], "ready to merge into master") {
+		t.Fatalf("renderProjectList() should show merge status in the linked worktree summary, got %q", lines[3])
 	}
 }
 
@@ -6471,17 +6471,17 @@ func TestRenderProjectListShowsUnmergedBadgeWhenWorktreeGroupCollapsed(t *testin
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(160, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("renderProjectList() expected header plus collapsed root row, got %q", rendered)
+	if len(lines) != 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and collapsed root row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "▸ repo") || !strings.Contains(lines[1], "M") {
-		t.Fatalf("renderProjectList() should mark collapsed root rows with unmerged linked work, got %q", lines[1])
+	if !strings.Contains(lines[2], "▸ repo") || !strings.Contains(lines[2], "M") {
+		t.Fatalf("renderProjectList() should mark collapsed root rows with unmerged linked work, got %q", lines[2])
 	}
-	if !strings.Contains(lines[1], "[1 linked, 1 needs merge]") {
-		t.Fatalf("renderProjectList() should keep unmerged linked work visible while collapsed, got %q", lines[1])
+	if !strings.Contains(lines[2], "[1 linked, 1 needs merge]") {
+		t.Fatalf("renderProjectList() should keep unmerged linked work visible while collapsed, got %q", lines[2])
 	}
-	if strings.Contains(lines[1], "feat/parallel-lane") {
-		t.Fatalf("renderProjectList() should keep child rows hidden while collapsed, got %q", lines[1])
+	if strings.Contains(lines[2], "feat/parallel-lane") {
+		t.Fatalf("renderProjectList() should keep child rows hidden while collapsed, got %q", lines[2])
 	}
 }
 
@@ -6519,11 +6519,11 @@ func TestRenderProjectListKeepsVisibleWorktreeFamilyWhenChildMatchesPrivacyPatte
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(140, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 2 {
-		t.Fatalf("renderProjectList() expected header plus grouped root row, got %q", rendered)
+	if len(lines) != 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and grouped root row, got %q", rendered)
 	}
-	if !strings.Contains(lines[1], "[1 linked]") {
-		t.Fatalf("renderProjectList() should keep linked lanes visible under a visible root, got %q", lines[1])
+	if !strings.Contains(lines[2], "[1 linked]") {
+		t.Fatalf("renderProjectList() should keep linked lanes visible under a visible root, got %q", lines[2])
 	}
 }
 

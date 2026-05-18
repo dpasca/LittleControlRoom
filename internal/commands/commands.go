@@ -20,6 +20,7 @@ const (
 	KindRefresh        Kind = "refresh"
 	KindSort           Kind = "sort"
 	KindView           Kind = "view"
+	KindTab            Kind = "tab"
 	KindSetup          Kind = "setup"
 	KindSettings       Kind = "settings"
 	KindSkills         Kind = "skills"
@@ -83,6 +84,14 @@ const (
 	ViewAll ViewMode = "all"
 )
 
+type ProjectTab string
+
+const (
+	ProjectTabActive   ProjectTab = "active"
+	ProjectTabArchived ProjectTab = "archived"
+	ProjectTabToggle   ProjectTab = "toggle"
+)
+
 type ToggleMode string
 
 const (
@@ -107,6 +116,7 @@ type Invocation struct {
 	Kind      Kind
 	Sort      SortMode
 	View      ViewMode
+	Tab       ProjectTab
 	Toggle    ToggleMode
 	Focus     FocusTarget
 	Duration  time.Duration
@@ -128,6 +138,7 @@ var specs = []Spec{
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
+	{Name: "tab", Usage: "/tab [active|archived|toggle]", Summary: "Switch the Active/Archived project-list tab"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
 	{Name: "skills", Usage: "/skills", Summary: "Review Codex skills and local duplicates that may be stale"},
 	{Name: "setup", Usage: "/setup", Summary: "Open the friendly AI setup concierge"},
@@ -221,6 +232,16 @@ func Suggestions(input string) []Suggestion {
 		return slashcmd.EnumSuggestions("/view ", argPrefix,
 			choice("ai", "Show AI-linked folders only"),
 			choice("all", "Show all discovered folders"),
+		)
+	case "tab", "tabs":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return slashcmd.EnumSuggestions("/tab ", argPrefix,
+			choice("active", "Show the Active project-list tab"),
+			choice("archived", "Show the Archived project-list tab"),
+			choice("toggle", "Switch to the other project-list tab"),
 		)
 	case "filter":
 		argPrefix := ""
@@ -374,6 +395,12 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, err
 		}
 		return Invocation{Kind: KindView, View: mode, Canonical: "/view " + string(mode)}, nil
+	case "tab", "tabs":
+		tab, err := parseProjectTab(rawArgs)
+		if err != nil {
+			return Invocation{}, err
+		}
+		return Invocation{Kind: KindTab, Tab: tab, Canonical: "/tab " + string(tab)}, nil
 	case "setup":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /setup")
@@ -657,6 +684,19 @@ func parseViewMode(raw string) (ViewMode, error) {
 		return ViewAll, nil
 	default:
 		return "", fmt.Errorf("usage: /view ai|all")
+	}
+}
+
+func parseProjectTab(raw string) (ProjectTab, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "toggle", "next", "cycle":
+		return ProjectTabToggle, nil
+	case "active":
+		return ProjectTabActive, nil
+	case "archived", "archive":
+		return ProjectTabArchived, nil
+	default:
+		return "", fmt.Errorf("usage: /tab [active|archived|toggle]")
 	}
 }
 

@@ -129,6 +129,51 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "tab default toggle",
+			raw:  "/tab",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindTab {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindTab)
+				}
+				if inv.Tab != ProjectTabToggle {
+					t.Fatalf("tab = %s, want %s", inv.Tab, ProjectTabToggle)
+				}
+				if inv.Canonical != "/tab toggle" {
+					t.Fatalf("canonical = %q, want /tab toggle", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "tab archived",
+			raw:  "/tab archived",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindTab {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindTab)
+				}
+				if inv.Tab != ProjectTabArchived {
+					t.Fatalf("tab = %s, want %s", inv.Tab, ProjectTabArchived)
+				}
+				if inv.Canonical != "/tab archived" {
+					t.Fatalf("canonical = %q, want /tab archived", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "tabs active alias",
+			raw:  "/tabs active",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindTab {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindTab)
+				}
+				if inv.Tab != ProjectTabActive {
+					t.Fatalf("tab = %s, want %s", inv.Tab, ProjectTabActive)
+				}
+				if inv.Canonical != "/tab active" {
+					t.Fatalf("canonical = %q, want /tab active", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "skills",
 			raw:  "/skills",
 			check: func(t *testing.T, inv Invocation) {
@@ -767,6 +812,16 @@ func TestSuggestionsCommandArguments(t *testing.T) {
 	}
 	if got[0].Insert != "/sort recent" {
 		t.Fatalf("suggestion = %q, want /sort recent", got[0].Insert)
+	}
+}
+
+func TestSuggestionsTabArguments(t *testing.T) {
+	got := Suggestions("/tab a")
+	if len(got) != 2 {
+		t.Fatalf("Suggestions(/tab a) len = %d, want 2", len(got))
+	}
+	if got[0].Insert != "/tab active" || got[1].Insert != "/tab archived" {
+		t.Fatalf("suggestions = %#v, want active and archived tab suggestions", got)
 	}
 }
 
