@@ -3,11 +3,13 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 
@@ -1638,6 +1640,7 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 		"",
 	}
 	projectPath := copyDialog.ProjectPath
+	settings := m.currentSettingsBaseline()
 	runButtons := make([]string, 0, 3)
 	for _, mode := range []int{todoCopyModeHere, todoCopyModeNewWorktree} {
 		runButtons = append(runButtons, renderDialogButton(todoCopyRunModeLabel(mode), copyDialog.RunMode == mode))
@@ -1648,11 +1651,14 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	}
 	providerButtons := make([]string, 0, 4)
 	for _, provider := range todoCopyDialogProviders() {
-		label := provider.Label() + "  (" + m.embeddedModelLabelForProject(projectPath, provider) + ")"
+		label := m.todoCopyProviderButtonLabel(projectPath, provider, settings)
 		providerButtons = append(providerButtons, renderDialogButton(label, copyDialog.Provider == provider))
 	}
 	optionButtons := []string{m.renderTodoCopyModelToggle(copyDialog.OpenModelFirst)}
 	lines = append(lines, m.renderTodoCopyChooserColumns(panelInnerW, runButtons, providerButtons, optionButtons))
+	if statusLine := m.todoCopyProviderStatusLine(copyDialog.Provider, settings); statusLine != "" {
+		lines = append(lines, detailField("Agent status", statusLine))
+	}
 	if copyDialog.RunMode == todoCopyModeNewWorktree {
 		lines = append(lines, "")
 		if item, ok := m.selectedTodoItem(); ok && item.ID == copyDialog.TodoID {
@@ -1858,6 +1864,116 @@ func todoCopyDialogProviders() []codexapp.Provider {
 		codexapp.ProviderCodex,
 		codexapp.ProviderOpenCode,
 		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	}
+}
+
+type todoCopyProviderReadiness struct {
+	State  string
+	Detail string
+	Style  lipgloss.Style
+}
+
+func (m Model) todoCopyProviderButtonLabel(projectPath string, provider codexapp.Provider, settings config.EditableSettings) string {
+	label := provider.Label()
+	if state := strings.TrimSpace(m.todoCopyProviderReadiness(provider, settings).State); state != "" {
+		label += " - " + state
+	}
+	label += "  (" + m.embeddedModelLabelForProject(projectPath, provider) + ")"
+	return label
+}
+
+func (m Model) todoCopyProviderStatusLine(provider codexapp.Provider, settings config.EditableSettings) string {
+	readiness := m.todoCopyProviderReadiness(provider, settings)
+	detail := strings.TrimSpace(readiness.Detail)
+	if detail == "" {
+		return ""
+	}
+	return readiness.Style.Render(detail)
+}
+
+func (m Model) todoCopyProviderReadiness(provider codexapp.Provider, settings config.EditableSettings) todoCopyProviderReadiness {
+	switch provider.Normalized() {
+	case codexapp.ProviderCodex:
+		return m.todoCopyCLIProviderReadiness(config.AIBackendCodex, settings)
+	case codexapp.ProviderOpenCode:
+		return m.todoCopyCLIProviderReadiness(config.AIBackendOpenCode, settings)
+	case codexapp.ProviderClaudeCode:
+		return m.todoCopyCLIProviderReadiness(config.AIBackendClaude, settings)
+	case codexapp.ProviderLCAgent:
+		return todoCopyLCAgentReadiness(settings)
+	default:
+		return todoCopyProviderReadiness{
+			State:  "unknown",
+			Detail: "Unknown embedded agent provider.",
+			Style:  detailWarningStyle,
+		}
+	}
+}
+
+func (m Model) todoCopyCLIProviderReadiness(backend config.AIBackend, settings config.EditableSettings) todoCopyProviderReadiness {
+	status, known := m.inferenceBackendStatus(backend, settings)
+	if !known {
+		return todoCopyProviderReadiness{
+			State:  "checking",
+			Detail: backend.Label() + " availability has not refreshed yet.",
+			Style:  detailMutedStyle,
+		}
+	}
+	if status.Ready {
+		detail := strings.TrimSpace(status.Detail)
+		if detail == "" {
+			detail = backend.Label() + " is ready."
+		}
+		return todoCopyProviderReadiness{
+			State:  "ready",
+			Detail: detail,
+			Style:  footerPrimaryLabelStyle,
+		}
+	}
+	state := "needs setup"
+	switch {
+	case !status.Installed && backend.RequiresCLIInstallHint():
+		state = "not installed"
+	case status.Installed && !status.Authenticated:
+		state = "needs login"
+	}
+	detail := firstNonEmptyTrimmed(status.LoginHint, status.Detail, backend.Label()+" needs setup before it can start TODO work.")
+	return todoCopyProviderReadiness{
+		State:  state,
+		Detail: detail,
+		Style:  detailWarningStyle,
+	}
+}
+
+func todoCopyLCAgentReadiness(settings config.EditableSettings) todoCopyProviderReadiness {
+	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+	keyName := lcagentProviderAPIKeyName(provider)
+	if keyName == "" {
+		return todoCopyProviderReadiness{
+			State:  "needs config",
+			Detail: "Unknown LCAgent provider " + provider + ". Open /settings and choose openrouter, openai, deepseek, or moonshot.",
+			Style:  detailWarningStyle,
+		}
+	}
+	if strings.TrimSpace(settings.LCAgentEnvFile) != "" {
+		return todoCopyProviderReadiness{
+			State:  "configured",
+			Detail: "LCAgent will load " + keyName + " from the configured env file.",
+			Style:  footerPrimaryLabelStyle,
+		}
+	}
+	if strings.TrimSpace(os.Getenv(keyName)) != "" {
+		return todoCopyProviderReadiness{
+			State:  "ready",
+			Detail: keyName + " is available in the process environment.",
+			Style:  footerPrimaryLabelStyle,
+		}
+	}
+	return todoCopyProviderReadiness{
+		State:  "needs key",
+		Detail: keyName + " is not configured. Set an LCAgent env file or environment variable in /settings.",
+		Style:  detailWarningStyle,
 	}
 }
 

@@ -10671,6 +10671,9 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	if !strings.Contains(rendered, "Claude Code") {
 		t.Fatalf("rendered copy dialog = %q, want Claude Code provider option", rendered)
 	}
+	if !strings.Contains(rendered, "LCAgent") {
+		t.Fatalf("rendered copy dialog = %q, want LCAgent provider option", rendered)
+	}
 	if !strings.Contains(rendered, "Run in  [w]") {
 		t.Fatalf("rendered copy dialog = %q, want dedicated worktree hotkey hint", rendered)
 	}
@@ -10753,6 +10756,70 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	}
 	if requests[0].Provider != codexapp.ProviderClaudeCode || !requests[0].ForceNew {
 		t.Fatalf("launch request = %#v, want fresh Claude Code launch", requests[0])
+	}
+}
+
+func TestTodoCopyDialogShowsProviderReadinessWarnings(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "")
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Codex: aibackend.Status{
+				Backend:       config.AIBackendCodex,
+				Label:         "Codex",
+				Installed:     true,
+				Authenticated: false,
+				Ready:         false,
+				Detail:        "Codex installed, but not logged in.",
+				LoginHint:     "Run `codex login`, then press r to refresh.",
+			},
+			OpenCode: aibackend.Status{
+				Backend:   config.AIBackendOpenCode,
+				Label:     "OpenCode",
+				Installed: false,
+				Ready:     false,
+				Detail:    "OpenCode CLI is not installed.",
+				LoginHint: "Install OpenCode, then refresh.",
+			},
+			Claude: aibackend.Status{
+				Backend:       config.AIBackendClaude,
+				Label:         "Claude Code",
+				Installed:     true,
+				Authenticated: false,
+				Ready:         false,
+				Detail:        "Claude Code installed, but not logged in.",
+				LoginHint:     "Run `claude auth login`, then press r to refresh.",
+			},
+		},
+		settingsBaseline: &settings,
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      9,
+			TodoText:    "Investigate unavailable agent providers",
+			RunMode:     todoCopyModeHere,
+			Provider:    codexapp.ProviderLCAgent,
+		},
+		width:  132,
+		height: 32,
+	}
+
+	rendered := ansi.Strip(m.renderTodoCopyDialogOverlay("", 132, 32))
+	for _, want := range []string{
+		"Codex",
+		"needs login",
+		"OpenCode",
+		"not installed",
+		"Claude Code",
+		"LCAgent",
+		"needs key",
+		"OPENROUTER_API_KEY is not configured",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered copy dialog = %q, want %q", rendered, want)
+		}
 	}
 }
 
