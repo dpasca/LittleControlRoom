@@ -1060,6 +1060,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossui.ControlInvocationResultMsg); ok {
 		m = m.recordBossTrackedTodoFromControlResult(msg)
 	}
+	if msg, ok := msg.(bossHostNoticePersistedMsg); ok {
+		if msg.err != nil {
+			m.appendBackgroundErrorLogEntry("Boss chat notice save failed", msg.err, "")
+		}
+		return m, nil
+	}
 	if m.bossMode && bossui.IsMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}

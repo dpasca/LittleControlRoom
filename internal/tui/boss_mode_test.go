@@ -807,6 +807,124 @@ func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing
 	}
 }
 
+func TestBossHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		ctx:    context.Background(),
+		width:  100,
+		height: 30,
+	}
+	opened, _ := m.openBossMode()
+	got := opened.(Model)
+	got.closeBossMode("Boss hidden")
+
+	updated, cmd := got.updateBossHostChatNotice("Ada is back from hidden work.\n\nEverything is ready to review.")
+	got = updated
+	if cmd != nil {
+		for _, msg := range collectCmdMsgs(cmd) {
+			updated, _ := got.Update(msg)
+			got = updated.(Model)
+		}
+	}
+	if len(got.pendingBossHostNotices) != 0 {
+		t.Fatalf("pending notices = %#v, want hidden active model to receive notice directly", got.pendingBossHostNotices)
+	}
+	view := bossChatOnlyText(got.bossModel)
+	for _, want := range []string{
+		"Ada is back from hidden work.",
+		"Everything is ready to review.",
+	} {
+		if !bossTextContains(view, want) {
+			t.Fatalf("hidden active Boss model transcript missing notice %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestBossEngineerCompletionWhileClosedPersistsToBossTranscript(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	now := time.Unix(1_800_000_000, 0)
+	projectPath := "/tmp/project-task"
+	idleSnapshot := codexapp.Snapshot{
+		Provider:       codexapp.ProviderCodex,
+		ProjectPath:    projectPath,
+		ThreadID:       "thread-project-1",
+		Started:        true,
+		Status:         "Codex turn completed",
+		LastActivityAt: now,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Killed the stale dev server on port 5173 and left the project clean.",
+		}},
+	}
+	prevSnapshot := idleSnapshot
+	prevSnapshot.Busy = true
+	prevSnapshot.BusySince = now.Add(-2 * time.Minute)
+	prevSnapshot.ActiveTurnID = "turn-live"
+	prevSnapshot.Phase = codexapp.SessionPhaseRunning
+	project := model.ProjectSummary{Path: projectPath, Name: "Project Task"}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		width:       100,
+		height:      30,
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+	}
+
+	updated, cmd := m.handleBossEngineerTurnCompletion(projectPath, true, prevSnapshot, idleSnapshot)
+	got := updated
+	if len(got.pendingBossHostNotices) != 1 {
+		t.Fatalf("pending notices = %#v, want queued hidden completion", got.pendingBossHostNotices)
+	}
+	persisted := false
+	for _, msg := range collectCmdMsgs(cmd) {
+		if _, ok := msg.(bossHostNoticePersistedMsg); !ok {
+			continue
+		}
+		persisted = true
+		updated, _ := got.Update(msg)
+		got = updated.(Model)
+	}
+	if !persisted {
+		t.Fatalf("hidden engineer completion should persist a boss chat notice")
+	}
+	if len(got.errorLogEntries) != 0 {
+		t.Fatalf("unexpected error log entries after persisting hidden notice: %#v", got.errorLogEntries)
+	}
+
+	reopened, initCmd := (Model{
+		ctx:         ctx,
+		svc:         svc,
+		width:       100,
+		height:      30,
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+	}).openBossMode()
+	got = reopened.(Model)
+	for _, msg := range collectCmdMsgs(initCmd) {
+		if _, ok := msg.(bossui.TickMsg); ok {
+			continue
+		}
+		updated, _ := got.Update(msg)
+		got = updated.(Model)
+	}
+
+	view := bossChatOnlyText(got.bossModel)
+	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
+	for _, want := range []string{
+		engineerName + " is back from Project Task:",
+		"Killed the stale dev server on port 5173",
+	} {
+		if !bossTextContains(view, want) {
+			t.Fatalf("reopened Boss Chat transcript missing persisted hidden completion %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
 	t.Parallel()
 

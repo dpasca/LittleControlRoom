@@ -69,6 +69,10 @@ type bossHostNotice struct {
 	Handoff        *bossui.HandoffHighlight
 }
 
+type bossHostNoticePersistedMsg struct {
+	err error
+}
+
 func (m Model) updateBossHostNotice(content string) (Model, tea.Cmd) {
 	return m.updateBossHostNoticeWithOptions(bossHostNotice{Content: content})
 }
@@ -82,13 +86,37 @@ func (m Model) updateBossHostNoticeWithOptions(notice bossHostNotice) (Model, te
 	if content == "" {
 		return m, nil
 	}
-	if !m.bossMode || !m.bossModel.HostNoticesReady() {
-		notice.Content = content
-		m.pendingBossHostNotices = appendPendingBossHostNotice(m.pendingBossHostNotices, notice)
-		return m, nil
-	}
 	notice.Content = content
-	return m.applyBossHostNotice(notice)
+	if m.bossMode || (m.bossModelActive && m.bossModel.HostNoticesReady()) {
+		return m.applyBossHostNotice(notice)
+	}
+	persistCmd := m.persistBossHostChatNoticeCmd(notice)
+	m.pendingBossHostNotices = appendPendingBossHostNotice(m.pendingBossHostNotices, notice)
+	return m, persistCmd
+}
+
+func (m Model) persistBossHostChatNoticeCmd(notice bossHostNotice) tea.Cmd {
+	if !notice.AnnounceInChat || m.svc == nil {
+		return nil
+	}
+	content := strings.TrimSpace(notice.Content)
+	if content == "" {
+		return nil
+	}
+	svc := m.svc
+	parent := m.ctx
+	at := m.currentTime()
+	return func() tea.Msg {
+		ctx := parent
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		saveCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		return bossHostNoticePersistedMsg{
+			err: bossui.AppendAssistantNoticeToLatestSession(saveCtx, svc, content, at),
+		}
+	}
 }
 
 func (m Model) applyBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
