@@ -1594,6 +1594,24 @@ func TestRenderFooterListOmitsMoveAndRemoveHints(t *testing.T) {
 	}
 }
 
+func TestRenderFooterShowsResolveHintForMergeConflict(t *testing.T) {
+	m := Model{
+		focusedPane: focusProjects,
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+			RepoConflict:  true,
+		}},
+		selected: 0,
+	}
+
+	rendered := ansi.Strip(m.renderFooter(160))
+	if !strings.Contains(rendered, "/resolve resolve") {
+		t.Fatalf("renderFooter() missing /resolve action for merge conflict: %q", rendered)
+	}
+}
+
 func TestRenderFooterShowsRemoveHintForMissingProject(t *testing.T) {
 	m := Model{
 		focusedPane: focusProjects,
@@ -4238,6 +4256,133 @@ func TestRenderTopStatusLineShowsMergeConflictBadge(t *testing.T) {
 	if !strings.Contains(rendered, "selected repo has unmerged files") {
 		t.Fatalf("top status line missing merge conflict summary: %q", rendered)
 	}
+	if !strings.Contains(rendered, "use /resolve") {
+		t.Fatalf("top status line missing /resolve guidance: %q", rendered)
+	}
+}
+
+func TestDispatchResolveStartsFreshEngineerForMergeConflict(t *testing.T) {
+	projectPath := "/tmp/resolve-conflict"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "resolve-thread",
+				Started:  true,
+				Status:   "Codex session ready",
+			},
+		}, nil
+	})
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "resolve-conflict",
+			PresentOnDisk: true,
+			RepoConflict:  true,
+			RepoDirty:     true,
+			RepoBranch:    "feat/conflict",
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/resolve) cmd = nil, want fresh engineer launch")
+	}
+	if got.codexPendingOpen == nil || !got.codexPendingOpen.newSession {
+		t.Fatalf("codexPendingOpen = %#v, want fresh pending open", got.codexPendingOpen)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			break
+		}
+	}
+	if opened.projectPath == "" {
+		t.Fatalf("command messages = %#v, want codexSessionOpenedMsg", msgs)
+	}
+	if opened.err != nil {
+		t.Fatalf("codexSessionOpenedMsg.err = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderCodex {
+		t.Fatalf("request provider = %q, want Codex", requests[0].Provider)
+	}
+	if !requests[0].ForceNew {
+		t.Fatalf("request ForceNew = false, want true")
+	}
+	for _, want := range []string{
+		"Resolve the current Git merge conflicts",
+		"Current branch: feat/conflict",
+		"Inspect `git status --short`",
+		"Do not commit, push, abort",
+		"remaining `git status --short` state",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("/resolve prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
+	}
+}
+
+func TestDispatchResolveBlocksWhileSameEngineerTurnActive(t *testing.T) {
+	projectPath := "/tmp/resolve-active"
+	liveSession := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			ThreadID: "active-thread",
+			Started:  true,
+			Busy:     true,
+			Status:   "Codex is working...",
+		},
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "resolve-active",
+			PresentOnDisk: true,
+			RepoConflict:  true,
+			RepoDirty:     true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/resolve) cmd = %#v, want nil while active engineer turn blocks launch", cmd)
+	}
+	if !strings.Contains(got.status, "already running") {
+		t.Fatalf("status = %q, want active engineer refusal", got.status)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the existing active session request", len(requests))
+	}
+	if len(liveSession.submitted) != 0 {
+		t.Fatalf("active session received submissions: %#v", liveSession.submitted)
+	}
 }
 
 func TestRenderAIBackendStatusNoticeUsesWarningBadge(t *testing.T) {
@@ -6869,6 +7014,9 @@ func TestRenderDetailContentShowsRepoConflict(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Unmerged files are present") {
 		t.Fatalf("renderDetailContent() missing conflict explanation: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Use /resolve") {
+		t.Fatalf("renderDetailContent() missing /resolve guidance: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Repo: conflict") {
 		t.Fatalf("renderDetailContent() should surface repo conflict state: %q", rendered)

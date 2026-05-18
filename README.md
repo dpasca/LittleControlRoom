@@ -134,6 +134,7 @@ The main TUI command palette opens with `/`.
 - `/diff`: Open the full-screen git diff.
 - `/commit [message]`: Preview a commit for the selected project.
 - `/push`: Push the selected project's branch.
+- `/resolve`: Start a fresh engineer session to resolve selected repo merge conflicts.
 - `/codex [prompt]`: Resume the latest Codex session or start one.
 - `/codex-new [prompt]`: Start a fresh Codex session.
 - `/claude [prompt]`: Resume the latest Claude Code session or start one.

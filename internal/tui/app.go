@@ -3139,7 +3139,7 @@ func (m Model) renderTopStatusLine(width int) string {
 	}
 	if project, ok := m.selectedProject(); ok && project.RepoConflict {
 		statusParts = append(statusParts, topStatusConflictBadgeStyle.Render("MERGE CONFLICT"))
-		statusParts = append(statusParts, detailConflictStyle.Render("selected repo has unmerged files"))
+		statusParts = append(statusParts, detailConflictStyle.Render("selected repo has unmerged files; use /resolve"))
 	}
 
 	segments := []string{title}
@@ -4401,6 +4401,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		m.setPendingGitOperation(p.Path, pendingGitOperationPush, "Pushing...")
 		m.status = "Pushing..."
 		return m, m.pushCmd(p.Path)
+	case commands.KindResolve:
+		return m.resolveMergeConflictsForSelection()
 	case commands.KindCodex:
 		return m.launchCodexForSelection(false, inv.Prompt)
 	case commands.KindCodexNew:
@@ -5802,7 +5804,7 @@ func repoConflictDetailValue(project model.ProjectSummary) string {
 	if project.WorktreeKind == model.WorktreeKindLinked {
 		location = "worktree"
 	}
-	return detailConflictStyle.Render("Unmerged files are present in this " + location + ". Resolve or abort the in-progress Git operation before continuing.")
+	return detailConflictStyle.Render("Unmerged files are present in this " + location + ". Use /resolve to ask a fresh engineer session for help, or resolve/abort the in-progress Git operation manually.")
 }
 
 func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
