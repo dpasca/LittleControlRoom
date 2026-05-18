@@ -298,7 +298,6 @@ func (m Model) renderBossModeHeader(width int) string {
 	parts := []string{
 		bossModeTitleStyle.Render("Boss Mode"),
 		renderFooterStatus(m.bossModel.StatusText()),
-		renderFooterMeta("high-level project chat"),
 	}
 	if usageText := strings.TrimSpace(m.bossModel.UsageText()); usageText != "" {
 		parts = append(parts, renderFooterUsage(usageText))

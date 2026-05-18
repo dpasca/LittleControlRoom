@@ -19968,6 +19968,9 @@ func TestCommandEnterOpensBossMode(t *testing.T) {
 	if len(lines) < 2 || !strings.Contains(lines[0], "Boss Mode") {
 		t.Fatalf("boss view should use a boss-specific top status line: %q", rendered)
 	}
+	if strings.Contains(lines[0], "high-level project chat") {
+		t.Fatalf("boss view should not show redundant high-level chat label: %q", rendered)
+	}
 	if !strings.HasPrefix(lines[1], "╭") {
 		t.Fatalf("boss frames should start below the boss top status line: %q", rendered)
 	}

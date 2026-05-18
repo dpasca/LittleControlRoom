@@ -18,6 +18,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/codexslash"
+	"lcroom/internal/uistyle"
 	"lcroom/internal/viewportnav"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -2707,23 +2708,14 @@ func codexSnapshotTokenUsageLabel(snapshot codexapp.Snapshot) string {
 	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.ReasoningOutputTokens == 0 {
 		return ""
 	}
-	parts := make([]string, 0, 5)
-	if usage.InputTokens > 0 {
-		parts = append(parts, "i"+formatTokenCount(usage.InputTokens))
-	}
-	if usage.OutputTokens > 0 {
-		parts = append(parts, "o"+formatTokenCount(usage.OutputTokens))
-	}
-	if usage.CachedInputTokens > 0 {
-		parts = append(parts, "c"+formatTokenCount(usage.CachedInputTokens))
-	}
-	if usage.ReasoningOutputTokens > 0 {
-		parts = append(parts, "r"+formatTokenCount(usage.ReasoningOutputTokens))
-	}
-	if usage.TotalTokens > 0 {
-		parts = append(parts, "t"+formatTokenCount(usage.TotalTokens))
-	}
-	return strings.Join(parts, " ")
+	return uistyle.FormatCompactTokenUsage(
+		usage.InputTokens,
+		usage.OutputTokens,
+		usage.CachedInputTokens,
+		usage.ReasoningOutputTokens,
+		usage.TotalTokens,
+		true,
+	)
 }
 
 func codexSnapshotGoalLabel(snapshot codexapp.Snapshot) string {

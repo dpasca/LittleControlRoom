@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/terminalmd"
+	"lcroom/internal/uistyle"
 	"lcroom/internal/viewportnav"
 
 	"github.com/atotto/clipboard"
@@ -415,15 +416,12 @@ func (m Model) StatusText() string {
 func (m Model) UsageText() string {
 	parts := make([]string, 0, 2)
 	if m.haveLastAssistantUsage {
-		switch {
-		case m.lastAssistantUsage.InputTokens > 0:
-			parts = append(parts, "ctx "+formatBossTokenCount(m.lastAssistantUsage.InputTokens))
-		case m.lastAssistantUsage.TotalTokens > 0:
-			parts = append(parts, "tok "+formatBossTokenCount(m.lastAssistantUsage.TotalTokens))
+		if tokens := formatBossLLMUsageTokens(m.lastAssistantUsage); tokens != "" {
+			parts = append(parts, "tok "+tokens)
 		}
 	}
 	if usage := m.bossChatUsage(); usage.Running > 0 && len(parts) == 0 {
-		parts = append(parts, "ctx measuring")
+		parts = append(parts, "tok measuring")
 	} else if costUSD, ok := bossEstimatedUsageCostUSD(usage); ok && costUSD > 0 {
 		parts = append(parts, "spent "+formatBossEstimatedCostUSD(costUSD))
 	} else if m.haveLastAssistantUsage {
@@ -473,17 +471,15 @@ func bossEstimatedLLMCostUSD(modelName string, usage model.LLMUsage) (float64, b
 	return model.EstimateLLMCostUSD(modelName, usage)
 }
 
-func formatBossTokenCount(v int64) string {
-	switch {
-	case v >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(v)/1_000_000)
-	case v >= 10_000:
-		return fmt.Sprintf("%dk", v/1_000)
-	case v >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(v)/1_000)
-	default:
-		return fmt.Sprintf("%d", v)
-	}
+func formatBossLLMUsageTokens(usage model.LLMUsage) string {
+	return uistyle.FormatCompactTokenUsage(
+		usage.InputTokens,
+		usage.OutputTokens,
+		usage.CachedInputTokens,
+		usage.ReasoningTokens,
+		usage.TotalTokens,
+		false,
+	)
 }
 
 func formatBossEstimatedCostUSD(costUSD float64) string {

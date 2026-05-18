@@ -7729,16 +7729,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 }
 
 func formatTokenCount(v int64) string {
-	switch {
-	case v >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(v)/1_000_000)
-	case v >= 10_000:
-		return fmt.Sprintf("%dk", v/1_000)
-	case v >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(v)/1_000)
-	default:
-		return fmt.Sprintf("%d", v)
-	}
+	return uistyle.FormatTokenCount(v)
 }
 
 func estimatedUsageCostUSD(usage model.LLMSessionUsage) (float64, bool) {
