@@ -234,6 +234,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "resolve",
+			raw:  "/resolve",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindResolve {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindResolve)
+				}
+				if inv.Canonical != "/resolve" {
+					t.Fatalf("canonical = %q, want /resolve", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "run with explicit command",
 			raw:  "/run pnpm dev",
 			check: func(t *testing.T, inv Invocation) {
@@ -859,6 +871,16 @@ func TestSuggestionsIncludeDiffCommand(t *testing.T) {
 	}
 	if got[0].Insert != "/diff" {
 		t.Fatalf("first /di suggestion = %q, want /diff", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeResolveCommand(t *testing.T) {
+	got := Suggestions("/reso")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/reso) returned none")
+	}
+	if got[0].Insert != "/resolve" {
+		t.Fatalf("first /reso suggestion = %q, want /resolve", got[0].Insert)
 	}
 }
 

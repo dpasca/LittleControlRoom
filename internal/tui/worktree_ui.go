@@ -967,6 +967,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if projectMissing(project) {
 		actions = append(actions, footerNavAction("/remove", "remove"))
 	}
+	if project.RepoConflict && width >= 80 {
+		actions = append(actions, footerPrimaryAction("/resolve", "resolve"))
+	}
 	rootPath := row.RootPath
 	if rootPath == "" {
 		rootPath = projectWorktreeRootPath(project)
