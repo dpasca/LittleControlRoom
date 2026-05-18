@@ -9928,6 +9928,81 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	}
 }
 
+func TestTodoDialogHereBlocksFreshSessionWhenProviderLaneBusy(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:     req.Provider.Normalized(),
+				ThreadID:     firstNonEmptyTrimmed(req.ResumeID, "ses-busy"),
+				Started:      true,
+				Busy:         true,
+				ActiveTurnID: "turn-busy",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderOpenCode,
+		ResumeID:    "ses-busy",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "opencode_db",
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: "/tmp/demo",
+				Text:        "Do not replace the active engineer turn",
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open after Enter")
+	}
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got = updated.(Model)
+	if got.todoCopyDialog.RunMode != todoCopyModeHere {
+		t.Fatalf("copy dialog run mode = %d, want %d after w", got.todoCopyDialog.RunMode, todoCopyModeHere)
+	}
+
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("busy engineer lane should block fresh TODO launch")
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should stay open after the blocked launch")
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the seeded busy session", len(requests))
+	}
+	if !strings.Contains(got.status, "embedded OpenCode engineer session is already running") || !strings.Contains(got.status, "TODO #7") {
+		t.Fatalf("status = %q, want active-turn block for TODO #7", got.status)
+	}
+}
+
 func TestTodoDialogModelToggleOpensPickerBeforeDraft(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -10753,6 +10828,217 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	}
 	if requests[0].Provider != codexapp.ProviderClaudeCode || !requests[0].ForceNew {
 		t.Fatalf("launch request = %#v, want fresh Claude Code launch", requests[0])
+	}
+}
+
+func TestTodoDialogEnterReopensPinnedLiveEngineerSession(t *testing.T) {
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--feat-pinned"
+	session := &fakeCodexSession{
+		projectPath: worktreePath,
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderOpenCode,
+			ThreadID:     "op-session-pinned",
+			Started:      true,
+			Busy:         true,
+			ActiveTurnID: "turn-pinned",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderOpenCode,
+		ProjectPath: worktreePath,
+		Preset:      codexcli.PresetYolo,
+		ResumeID:    "op-session-pinned",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		allProjects: []model.ProjectSummary{
+			{Path: rootPath, Name: "repo", PresentOnDisk: true},
+			{Path: worktreePath, Name: "repo--feat-pinned", PresentOnDisk: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, WorktreeOriginTodoID: 42},
+		},
+		projects: []model.ProjectSummary{
+			{Path: rootPath, Name: "repo", PresentOnDisk: true},
+			{Path: worktreePath, Name: "repo--feat-pinned", PresentOnDisk: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, WorktreeOriginTodoID: 42},
+		},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: rootPath},
+			Todos: []model.TodoItem{{
+				ID:              42,
+				ProjectPath:     rootPath,
+				Text:            "Use the pinned OpenCode lane",
+				WorkProvider:    model.SessionSourceOpenCode,
+				WorkProjectPath: worktreePath,
+				WorkSessionID:   "opencode:op-session-pinned",
+				WorkState:       model.TodoWorkStateWorking,
+			}},
+		},
+		todoDialog:    &todoDialogState{ProjectPath: rootPath, ProjectName: "repo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoDialog != nil || got.todoCopyDialog != nil {
+		t.Fatalf("pinned TODO Enter should reveal the session without opening the launcher, todo=%#v copy=%#v", got.todoDialog, got.todoCopyDialog)
+	}
+	if got.codexVisibleProject != worktreePath {
+		t.Fatalf("codexVisibleProject = %q, want pinned worktree %q", got.codexVisibleProject, worktreePath)
+	}
+	if !strings.Contains(got.status, "pinned TODO #42 OpenCode session") || !strings.Contains(got.status, "working") {
+		t.Fatalf("status = %q, want pinned OpenCode working status", got.status)
+	}
+}
+
+func TestTodoDialogEnterResumesPinnedEngineerSession(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: req.ResumeID,
+				Started:  true,
+			},
+		}, nil
+	})
+	projectPath := "/tmp/repo"
+	m := Model{
+		codexManager: manager,
+		allProjects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+		}},
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "repo",
+			PresentOnDisk: true,
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: projectPath},
+			Todos: []model.TodoItem{{
+				ID:            77,
+				ProjectPath:   projectPath,
+				Text:          "Resume the pinned Claude session",
+				WorkProvider:  model.SessionSourceClaudeCode,
+				WorkSessionID: "claude_code:claude-session-77",
+				WorkState:     model.TodoWorkStateIdle,
+			}},
+		},
+		todoDialog:    &todoDialogState{ProjectPath: projectPath, ProjectName: "repo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("pinned TODO Enter should return a resume command")
+	}
+	if got.todoDialog != nil || got.todoCopyDialog != nil {
+		t.Fatalf("pinned TODO resume should close TODO dialogs, todo=%#v copy=%#v", got.todoDialog, got.todoCopyDialog)
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != projectPath || got.codexPendingOpen.provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("codexPendingOpen = %#v, want pending Claude Code resume for %q", got.codexPendingOpen, projectPath)
+	}
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("resume returned error = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(requests))
+	}
+	if requests[0].Provider != codexapp.ProviderClaudeCode || requests[0].ForceNew || requests[0].ResumeID != "claude-session-77" {
+		t.Fatalf("resume request = %#v, want Claude Code resume of claude-session-77", requests[0])
+	}
+}
+
+func TestTodoDialogEnterPinnedSessionBlocksDifferentLiveProvider(t *testing.T) {
+	worktreePath := "/tmp/repo--pinned"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:     req.Provider.Normalized(),
+				ThreadID:     firstNonEmptyTrimmed(req.ResumeID, "claude-live"),
+				Started:      true,
+				Busy:         true,
+				ActiveTurnID: "turn-live",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderClaudeCode,
+		ProjectPath: worktreePath,
+		ResumeID:    "claude-live",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	rootPath := "/tmp/repo"
+	m := Model{
+		codexManager: manager,
+		allProjects: []model.ProjectSummary{
+			{Path: rootPath, Name: "repo", PresentOnDisk: true},
+			{Path: worktreePath, Name: "repo--pinned", PresentOnDisk: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, WorktreeOriginTodoID: 42},
+		},
+		projects: []model.ProjectSummary{
+			{Path: rootPath, Name: "repo", PresentOnDisk: true},
+			{Path: worktreePath, Name: "repo--pinned", PresentOnDisk: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, WorktreeOriginTodoID: 42},
+		},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: rootPath},
+			Todos: []model.TodoItem{{
+				ID:              42,
+				ProjectPath:     rootPath,
+				Text:            "Resume pinned Codex without replacing Claude",
+				WorkProvider:    model.SessionSourceCodex,
+				WorkProjectPath: worktreePath,
+				WorkSessionID:   "codex:codex-pinned",
+				WorkState:       model.TodoWorkStateIdle,
+			}},
+		},
+		todoDialog:    &todoDialogState{ProjectPath: rootPath, ProjectName: "repo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("different active provider should block pinned TODO reopen")
+	}
+	if got.todoDialog == nil {
+		t.Fatalf("TODO dialog should stay open after the blocked pinned reopen")
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the seeded Claude session", len(requests))
+	}
+	if !strings.Contains(got.status, "active embedded Claude Code session") || !strings.Contains(got.status, "Codex") {
+		t.Fatalf("status = %q, want cross-provider active-session block", got.status)
 	}
 }
 

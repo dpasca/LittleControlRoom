@@ -543,12 +543,12 @@ func (m Model) todoEngineerLaunchTrackingCmd(projectPath string, todoID int64, c
 		if sessionID == "" {
 			return opened
 		}
-		path := projectPath
-		if path == "" {
-			path = strings.TrimSpace(opened.projectPath)
-		}
+		path := strings.TrimSpace(opened.projectPath)
 		if path == "" {
 			path = strings.TrimSpace(snapshot.ProjectPath)
+		}
+		if path == "" {
+			path = projectPath
 		}
 		if path == "" {
 			return opened

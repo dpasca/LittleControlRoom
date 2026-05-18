@@ -541,7 +541,7 @@ func todoWorkStateFromEmbeddedSnapshot(snapshot codexapp.Snapshot, latestTurnCom
 	if strings.TrimSpace(snapshot.LastError) != "" {
 		return model.TodoWorkStateBlocked
 	}
-	if snapshot.Busy || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+	if snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
 		return model.TodoWorkStateWorking
 	}
 	return model.TodoWorkStateIdle

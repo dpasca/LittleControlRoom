@@ -277,7 +277,7 @@ func (m Model) bossDeskTodoRows(width int, now time.Time) []string {
 		if len(rows) >= bossDeskTodoLimit {
 			break
 		}
-		text := bossDeskTodoStyledText(todo)
+		text := m.bossDeskTodoStyledText(todo)
 		if strings.TrimSpace(ansi.Strip(text)) == "" {
 			continue
 		}
@@ -293,13 +293,13 @@ func bossDeskTodoLabel(todo TodoBrief) string {
 	return "-"
 }
 
-func bossDeskTodoStyledText(todo TodoBrief) string {
+func (m Model) bossDeskTodoStyledText(todo TodoBrief) string {
 	project := strings.TrimSpace(todo.ProjectName)
 	if project == "" {
 		project = strings.TrimSpace(todo.ProjectPath)
 	}
 	text := cleanHandoffSummary(firstNonEmpty(todo.Label, todo.Text))
-	if activity := bossDeskTodoActivity(todo); activity != "" {
+	if activity := m.bossDeskTodoActivity(todo); activity != "" {
 		if text != "" {
 			text += " · " + activity
 		} else {
@@ -316,23 +316,90 @@ func bossDeskTodoStyledText(todo TodoBrief) string {
 	}
 }
 
-func bossDeskTodoActivity(todo TodoBrief) string {
+func (m Model) bossDeskTodoActivity(todo TodoBrief) string {
+	providerLabel := bossTodoWorkProviderLabel(todo.WorkProvider)
+	if strings.TrimSpace(todo.WorkSessionID) != "" {
+		if activity, ok := m.liveEngineerActivityForTodo(todo); ok {
+			status := strings.TrimSpace(activity.Status)
+			if status == "" {
+				status = "working"
+			}
+			if providerLabel != "" {
+				return status + " " + providerLabel
+			}
+			return status
+		}
+	}
 	state := model.NormalizeTodoWorkState(todo.WorkState)
 	if state == "" || state == model.TodoWorkStateIdle {
+		if providerLabel != "" && strings.TrimSpace(todo.WorkSessionID) != "" {
+			return "resume " + providerLabel
+		}
 		return ""
 	}
-	label := string(state)
-	switch model.NormalizeSessionSource(todo.WorkProvider) {
-	case model.SessionSourceCodex:
-		label += " Codex"
-	case model.SessionSourceOpenCode:
-		label += " OpenCode"
-	case model.SessionSourceClaudeCode:
-		label += " Claude"
-	case model.SessionSourceLCAgent:
-		label += " LCAgent"
+	if providerLabel != "" && strings.TrimSpace(todo.WorkSessionID) != "" {
+		return "stale " + providerLabel
 	}
-	return label
+	return string(state)
+}
+
+func bossTodoWorkProviderLabel(provider model.SessionSource) string {
+	switch model.NormalizeSessionSource(provider) {
+	case model.SessionSourceCodex:
+		return "Codex"
+	case model.SessionSourceOpenCode:
+		return "OpenCode"
+	case model.SessionSourceClaudeCode:
+		return "Claude"
+	case model.SessionSourceLCAgent:
+		return "LCAgent"
+	}
+	return ""
+}
+
+func (m Model) liveEngineerActivityForTodo(todo TodoBrief) (ViewEngineerActivity, bool) {
+	for _, activity := range m.activeEngineerActivities() {
+		if todo.ID > 0 && activity.TodoID == todo.ID {
+			return activity, true
+		}
+		if bossTodoMatchesEngineerActivity(todo, activity) {
+			return activity, true
+		}
+	}
+	return ViewEngineerActivity{}, false
+}
+
+func bossTodoMatchesEngineerActivity(todo TodoBrief, activity ViewEngineerActivity) bool {
+	provider := model.NormalizeSessionSource(todo.WorkProvider)
+	if provider != "" && model.NormalizeSessionSource(activity.Provider) != provider {
+		return false
+	}
+	if !bossSessionIDsMatch(todo.WorkSessionID, activity.SessionID) {
+		return false
+	}
+	workProjectPath := strings.TrimSpace(todo.WorkProjectPath)
+	if workProjectPath == "" {
+		workProjectPath = strings.TrimSpace(todo.ProjectPath)
+	}
+	activityProjectPath := strings.TrimSpace(activity.ProjectPath)
+	if workProjectPath == "" || activityProjectPath == "" {
+		return true
+	}
+	return workProjectPath == activityProjectPath
+}
+
+func bossSessionIDsMatch(expected, actual string) bool {
+	expected = strings.TrimSpace(expected)
+	actual = strings.TrimSpace(actual)
+	if expected == "" || actual == "" {
+		return false
+	}
+	if expected == actual {
+		return true
+	}
+	_, expectedRaw := model.ParseCanonicalSessionID(expected)
+	_, actualRaw := model.ParseCanonicalSessionID(actual)
+	return expectedRaw != "" && expectedRaw == actualRaw
 }
 
 func (m Model) bossDeskWatchingRows(width int, now time.Time) []string {

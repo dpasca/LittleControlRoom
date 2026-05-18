@@ -696,6 +696,88 @@ func TestEmbeddedSessionActivityUpdatesLinkedTodoWorkState(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSessionActivityUpdatesTodoPinnedToWorktreeSession(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	rootPath := filepath.Join(t.TempDir(), "demo")
+	worktreePath := filepath.Join(t.TempDir(), "demo--feat-pinned-todo")
+	if err := os.MkdirAll(rootPath, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	if err := os.MkdirAll(worktreePath, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             rootPath,
+		Name:             "demo",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		InScope:          true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("seed root project: %v", err)
+	}
+	todo, err := st.AddTodo(ctx, rootPath, "Track work in a dedicated worktree")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:                 worktreePath,
+		Name:                 "demo--feat-pinned-todo",
+		Status:               model.StatusIdle,
+		PresentOnDisk:        true,
+		InScope:              true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeOriginTodoID: todo.ID,
+		UpdatedAt:            now,
+	}); err != nil {
+		t.Fatalf("seed worktree project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.MarkTodoWorkStarted(ctx, worktreePath, todo.ID, model.SessionSourceCodex, "thread-worktree", now); err != nil {
+		t.Fatalf("MarkTodoWorkStarted() error = %v", err)
+	}
+	started, err := st.GetTodo(ctx, todo.ID)
+	if err != nil {
+		t.Fatalf("get started todo: %v", err)
+	}
+	if started.WorkProjectPath != worktreePath || started.WorkSessionID != "codex:thread-worktree" {
+		t.Fatalf("started todo work = project:%q session:%q, want %q/codex:thread-worktree", started.WorkProjectPath, started.WorkSessionID, worktreePath)
+	}
+
+	waitingAt := now.Add(2 * time.Minute)
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          worktreePath,
+		Source:               model.SessionSourceCodex,
+		SessionID:            "thread-worktree",
+		Format:               "modern",
+		LastActivityAt:       waitingAt,
+		LatestTurnStartedAt:  now,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+		WorkState:            model.TodoWorkStateWaiting,
+	}); err != nil {
+		t.Fatalf("RecordEmbeddedSessionActivity() error = %v", err)
+	}
+	updated, err := st.GetTodo(ctx, todo.ID)
+	if err != nil {
+		t.Fatalf("get updated todo: %v", err)
+	}
+	if updated.WorkState != model.TodoWorkStateWaiting || !updated.WorkStateAt.Equal(waitingAt) {
+		t.Fatalf("updated todo work = state:%q at:%v, want waiting at %v", updated.WorkState, updated.WorkStateAt, waitingAt)
+	}
+}
+
 func TestRecordEmbeddedSessionActivityMarksTurnSettledAtSameLastEvent(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))

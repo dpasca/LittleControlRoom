@@ -80,15 +80,16 @@ type AgentTaskBrief struct {
 }
 
 type TodoBrief struct {
-	ID            int64
-	ProjectPath   string
-	ProjectName   string
-	Label         string
-	Text          string
-	WorkState     model.TodoWorkState
-	WorkProvider  model.SessionSource
-	WorkSessionID string
-	UpdatedAt     time.Time
+	ID              int64
+	ProjectPath     string
+	ProjectName     string
+	Label           string
+	Text            string
+	WorkState       model.TodoWorkState
+	WorkProvider    model.SessionSource
+	WorkProjectPath string
+	WorkSessionID   string
+	UpdatedAt       time.Time
 }
 
 type GoalRunBrief struct {
@@ -226,15 +227,16 @@ func appendSnapshotOpenTodos(ctx context.Context, svc *service.Service, projects
 
 func todoBriefFromItem(item model.TodoItem, projectName string) TodoBrief {
 	return TodoBrief{
-		ID:            item.ID,
-		ProjectPath:   strings.TrimSpace(item.ProjectPath),
-		ProjectName:   strings.TrimSpace(projectName),
-		Label:         todoBriefLabelFromItem(item),
-		Text:          strings.TrimSpace(item.Text),
-		WorkState:     model.NormalizeTodoWorkState(item.WorkState),
-		WorkProvider:  model.NormalizeSessionSource(item.WorkProvider),
-		WorkSessionID: strings.TrimSpace(item.WorkSessionID),
-		UpdatedAt:     item.UpdatedAt,
+		ID:              item.ID,
+		ProjectPath:     strings.TrimSpace(item.ProjectPath),
+		ProjectName:     strings.TrimSpace(projectName),
+		Label:           todoBriefLabelFromItem(item),
+		Text:            strings.TrimSpace(item.Text),
+		WorkState:       model.NormalizeTodoWorkState(item.WorkState),
+		WorkProvider:    model.NormalizeSessionSource(item.WorkProvider),
+		WorkProjectPath: strings.TrimSpace(item.WorkProjectPath),
+		WorkSessionID:   strings.TrimSpace(item.WorkSessionID),
+		UpdatedAt:       item.UpdatedAt,
 	}
 }
 
@@ -506,6 +508,9 @@ func operationalTodoWorkState(todo TodoBrief) string {
 	value := "work_state=" + string(state)
 	if provider := model.NormalizeSessionSource(todo.WorkProvider); provider != "" {
 		value += " provider=" + string(provider)
+	}
+	if workProjectPath := strings.TrimSpace(todo.WorkProjectPath); workProjectPath != "" && workProjectPath != strings.TrimSpace(todo.ProjectPath) {
+		value += " work_project_path=" + workProjectPath
 	}
 	if sessionID := strings.TrimSpace(todo.WorkSessionID); sessionID != "" {
 		value += " session_id=" + sessionID

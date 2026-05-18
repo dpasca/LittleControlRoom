@@ -980,7 +980,7 @@ func TestTodoWorkSessionStateLifecycle(t *testing.T) {
 		t.Fatalf("add todo: %v", err)
 	}
 	claimedAt := now.Add(time.Minute)
-	if err := st.AttachTodoWorkSession(ctx, item.ID, model.SessionSourceCodex, "codex:thread-demo", model.TodoWorkStateWorking, claimedAt); err != nil {
+	if err := st.AttachTodoWorkSession(ctx, item.ID, projectPath, model.SessionSourceCodex, "codex:thread-demo", model.TodoWorkStateWorking, claimedAt); err != nil {
 		t.Fatalf("attach todo work session: %v", err)
 	}
 
@@ -988,8 +988,8 @@ func TestTodoWorkSessionStateLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get todo: %v", err)
 	}
-	if got.WorkProvider != model.SessionSourceCodex || got.WorkSessionID != "codex:thread-demo" || got.WorkState != model.TodoWorkStateWorking {
-		t.Fatalf("work state = provider:%q session:%q state:%q, want codex/thread-demo/working", got.WorkProvider, got.WorkSessionID, got.WorkState)
+	if got.WorkProvider != model.SessionSourceCodex || got.WorkProjectPath != projectPath || got.WorkSessionID != "codex:thread-demo" || got.WorkState != model.TodoWorkStateWorking {
+		t.Fatalf("work state = provider:%q project:%q session:%q state:%q, want codex/%s/thread-demo/working", got.WorkProvider, got.WorkProjectPath, got.WorkSessionID, got.WorkState, projectPath)
 	}
 	if !got.WorkClaimedAt.Equal(claimedAt) || !got.WorkStateAt.Equal(claimedAt) {
 		t.Fatalf("work timestamps = claimed:%v state:%v, want %v", got.WorkClaimedAt, got.WorkStateAt, claimedAt)
@@ -1032,7 +1032,7 @@ func TestTodoWorkSessionStateLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get completed todo: %v", err)
 	}
-	if got.WorkProvider != "" || got.WorkSessionID != "" || got.WorkState != "" || !got.WorkClaimedAt.IsZero() || !got.WorkStateAt.IsZero() {
+	if got.WorkProvider != "" || got.WorkProjectPath != "" || got.WorkSessionID != "" || got.WorkState != "" || !got.WorkClaimedAt.IsZero() || !got.WorkStateAt.IsZero() {
 		t.Fatalf("completed todo kept work metadata: %#v", got)
 	}
 }

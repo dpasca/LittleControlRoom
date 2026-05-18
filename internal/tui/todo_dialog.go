@@ -660,6 +660,9 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "No TODO selected"
 			return m, nil
 		}
+		if updated, cmd, handled := m.openPinnedTodoWorkSession(item); handled {
+			return updated, cmd
+		}
 		return m, m.openTodoCopyDialog(item)
 	case "c":
 		item, ok := m.selectedTodoItem()
@@ -815,7 +818,6 @@ func (m *Model) activateTodoCopyDialogSelection() (tea.Model, tea.Cmd) {
 		}
 		return m.startSelectedTodoInNewWorktree(copyDialog.Provider, copyDialog.OpenModelFirst)
 	}
-	m.todoCopyDialog = nil
 	return m.startSelectedTodoWithProvider(copyDialog.Provider, copyDialog.OpenModelFirst)
 }
 
@@ -1155,6 +1157,181 @@ func (m Model) ensureTodoWorktreeSuggestionCmd(projectPath string, todoID int64)
 	}
 }
 
+func (m Model) openPinnedTodoWorkSession(item model.TodoItem) (tea.Model, tea.Cmd, bool) {
+	if item.Done || strings.TrimSpace(item.WorkSessionID) == "" {
+		return m, nil, false
+	}
+	provider := todoWorkProvider(item)
+	if provider == "" {
+		return m, nil, false
+	}
+	if snapshot, projectPath, ok := m.livePinnedTodoWorkSnapshot(item); ok {
+		m.closeTodoWorkLaunchDialogs()
+		status := fmt.Sprintf("Opened pinned TODO #%d %s session. Alt+Up hides it.", item.ID, provider.Label())
+		if state := todoWorkStateFromEmbeddedSnapshot(snapshot, false); state != "" && state != model.TodoWorkStateIdle {
+			status = fmt.Sprintf("Opened pinned TODO #%d %s session (%s). Alt+Up hides it.", item.ID, provider.Label(), state)
+		}
+		updated, cmd := m.showCodexProject(projectPath, status)
+		return updated, cmd, true
+	}
+	project, ok := m.pinnedTodoWorkProject(item)
+	if !ok || strings.TrimSpace(project.Path) == "" {
+		m.status = fmt.Sprintf("Pinned TODO #%d %s session is no longer available", item.ID, provider.Label())
+		return m, nil, true
+	}
+	if block, blocked := m.embeddedLaunchBlock(project, provider, false); blocked {
+		m.status = block.Message
+		return m, nil, true
+	}
+	if snapshot, ok := m.liveEmbeddedSnapshotForProject(project.Path, provider); ok && !todoWorkSessionIDMatches(provider, item.WorkSessionID, snapshot.ThreadID) {
+		m.status = fmt.Sprintf("Another embedded %s session is open for this TODO lane. Finish or close it before opening TODO #%d's pinned session.", provider.Label(), item.ID)
+		return m, nil, true
+	}
+	if !project.PresentOnDisk {
+		m.status = fmt.Sprintf("Pinned TODO #%d %s session path is not present on disk", item.ID, provider.Label())
+		return m, nil, true
+	}
+	resumeID := todoWorkExternalSessionID(provider, item.WorkSessionID)
+	if resumeID == "" {
+		m.status = fmt.Sprintf("Pinned TODO #%d %s session is missing a resumable session id", item.ID, provider.Label())
+		return m, nil, true
+	}
+	req := codexapp.LaunchRequest{
+		Provider:                 provider,
+		ProjectPath:              project.Path,
+		ResumeID:                 resumeID,
+		ForceNew:                 false,
+		Preset:                   m.currentCodexLaunchPreset(),
+		PlaywrightPolicy:         m.currentPlaywrightPolicy(),
+		AppDataDir:               m.appDataDir(),
+		CodexHome:                m.codexHome(),
+		LCAgentPath:              m.lcagentPath(),
+		LCAgentEnvFile:           m.lcagentEnvFile(),
+		LCAgentRoutePreset:       m.lcagentRoutePreset(),
+		LCAgentProvider:          m.lcagentProvider(),
+		LCAgentAuto:              m.lcagentAuto(),
+		LCAgentToolProfile:       m.lcagentToolProfile(),
+		LCAgentContextProfile:    m.lcagentContextProfile(),
+		LCAgentRequestTimeout:    m.lcagentRequestTimeout(),
+		LCAgentWebSearchBackend:  m.lcagentWebSearchBackend(),
+		LCAgentWebSearchAPIKey:   m.lcagentWebSearchAPIKey(),
+		LCAgentWebSearchEngineID: m.lcagentWebSearchEngineID(),
+		LCAgentWebSearchURL:      m.lcagentWebSearchURL(),
+	}
+	if err := req.Validate(); err != nil {
+		m.status = err.Error()
+		return m, nil, true
+	}
+	m.closeTodoWorkLaunchDialogs()
+	m.ensureCodexRuntime()
+	m.beginCodexPendingOpenWithVisibilityAndReveal(project.Path, provider, true, true)
+	m.err = nil
+	m.status = fmt.Sprintf("Opening pinned TODO #%d %s session...", item.ID, provider.Label())
+	return m, m.openCodexSessionCmdWithVisibility(req, true), true
+}
+
+func (m *Model) closeTodoWorkLaunchDialogs() {
+	m.todoDialog = nil
+	m.todoCopyDialog = nil
+	m.todoWorktreeEditor = nil
+	m.todoExistingWorktree = nil
+	m.todoEditor = nil
+	m.todoDeleteConfirm = nil
+}
+
+func (m Model) livePinnedTodoWorkSnapshot(item model.TodoItem) (codexapp.Snapshot, string, bool) {
+	provider := todoWorkProvider(item)
+	if provider == "" || strings.TrimSpace(item.WorkSessionID) == "" {
+		return codexapp.Snapshot{}, "", false
+	}
+	for _, projectPath := range m.pinnedTodoWorkProjectPathCandidates(item) {
+		snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider)
+		if !ok {
+			continue
+		}
+		if todoWorkSessionIDMatches(provider, item.WorkSessionID, snapshot.ThreadID) {
+			return snapshot, projectPath, true
+		}
+	}
+	return codexapp.Snapshot{}, "", false
+}
+
+func (m Model) pinnedTodoWorkProject(item model.TodoItem) (model.ProjectSummary, bool) {
+	for _, projectPath := range m.pinnedTodoWorkProjectPathCandidates(item) {
+		if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
+			return project, true
+		}
+		if project, ok := m.projectSummaryByPath(projectPath); ok {
+			return project, true
+		}
+	}
+	if projectPath := strings.TrimSpace(item.WorkProjectPath); projectPath != "" {
+		return model.ProjectSummary{Path: projectPath}, true
+	}
+	return model.ProjectSummary{}, false
+}
+
+func (m Model) pinnedTodoWorkProjectPathCandidates(item model.TodoItem) []string {
+	var paths []string
+	add := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		for _, existing := range paths {
+			if filepath.Clean(existing) == filepath.Clean(path) {
+				return
+			}
+		}
+		paths = append(paths, path)
+	}
+	add(item.WorkProjectPath)
+	if strings.TrimSpace(item.WorkProjectPath) == "" {
+		if linked, ok := m.todoLinkedWorktreeProject(item.ID); ok {
+			add(linked.Path)
+		}
+	}
+	add(item.ProjectPath)
+	return paths
+}
+
+func todoWorkProvider(item model.TodoItem) codexapp.Provider {
+	if provider := codexProviderFromSessionSource(item.WorkProvider); provider != "" {
+		return provider
+	}
+	source, _ := model.ParseCanonicalSessionID(item.WorkSessionID)
+	return codexProviderFromSessionSource(source)
+}
+
+func todoWorkExternalSessionID(provider codexapp.Provider, sessionID string) string {
+	provider = provider.Normalized()
+	if provider == "" {
+		return strings.TrimSpace(sessionID)
+	}
+	source := modelSessionSourceFromCodexProvider(provider)
+	return model.ExternalSessionID(source, embeddedSessionFormat(provider), sessionID, "")
+}
+
+func todoWorkSessionIDMatches(provider codexapp.Provider, expected, actual string) bool {
+	expected = strings.TrimSpace(expected)
+	actual = strings.TrimSpace(actual)
+	if expected == "" || actual == "" {
+		return false
+	}
+	if expected == actual {
+		return true
+	}
+	provider = provider.Normalized()
+	source := modelSessionSourceFromCodexProvider(provider)
+	format := embeddedSessionFormat(provider)
+	_, expectedCanonical, expectedRaw := model.NormalizeSessionIdentity(source, format, expected, "")
+	_, actualCanonical, actualRaw := model.NormalizeSessionIdentity(source, format, actual, "")
+	if expectedCanonical != "" && expectedCanonical == actualCanonical {
+		return true
+	}
+	return expectedRaw != "" && expectedRaw == actualRaw
+}
+
 func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -1170,39 +1347,48 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 	} else {
 		provider = provider.Normalized()
 	}
-	m.restoreCodexDraft(project.Path, codexDraft{Text: todoText})
-	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, todoID: todoID, provider: provider, openModelFirst: openModelFirst})
-	m.todoEditor = nil
-	m.todoDeleteConfirm = nil
-	m.todoExistingWorktree = nil
-	m.todoDialog = nil
+	if message, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, fmt.Sprintf("TODO #%d", todoID)); blocked {
+		m.status = message
+		return m, nil
+	}
 	if !project.PresentOnDisk {
 		m.status = provider.Label() + " launch requires a folder present on disk"
 		return m, nil
 	}
 	req := codexapp.LaunchRequest{
-		Provider:              provider,
-		ProjectPath:           project.Path,
-		ResumeID:              m.selectedProjectSessionID(project, provider),
-		ForceNew:              true,
-		Preset:                m.currentCodexLaunchPreset(),
-		PlaywrightPolicy:      m.currentPlaywrightPolicy(),
-		AppDataDir:            m.appDataDir(),
-		CodexHome:             m.codexHome(),
-		LCAgentPath:           m.lcagentPath(),
-		LCAgentEnvFile:        m.lcagentEnvFile(),
-		LCAgentRoutePreset:    m.lcagentRoutePreset(),
-		LCAgentProvider:       m.lcagentProvider(),
-		LCAgentAuto:           m.lcagentAuto(),
-		LCAgentToolProfile:    m.lcagentToolProfile(),
-		LCAgentContextProfile: m.lcagentContextProfile(),
-		LCAgentRequestTimeout: m.lcagentRequestTimeout(),
+		Provider:                 provider,
+		ProjectPath:              project.Path,
+		ResumeID:                 m.selectedProjectSessionID(project, provider),
+		ForceNew:                 true,
+		Preset:                   m.currentCodexLaunchPreset(),
+		PlaywrightPolicy:         m.currentPlaywrightPolicy(),
+		AppDataDir:               m.appDataDir(),
+		CodexHome:                m.codexHome(),
+		LCAgentPath:              m.lcagentPath(),
+		LCAgentEnvFile:           m.lcagentEnvFile(),
+		LCAgentRoutePreset:       m.lcagentRoutePreset(),
+		LCAgentProvider:          m.lcagentProvider(),
+		LCAgentAuto:              m.lcagentAuto(),
+		LCAgentToolProfile:       m.lcagentToolProfile(),
+		LCAgentContextProfile:    m.lcagentContextProfile(),
+		LCAgentRequestTimeout:    m.lcagentRequestTimeout(),
+		LCAgentWebSearchBackend:  m.lcagentWebSearchBackend(),
+		LCAgentWebSearchAPIKey:   m.lcagentWebSearchAPIKey(),
+		LCAgentWebSearchEngineID: m.lcagentWebSearchEngineID(),
+		LCAgentWebSearchURL:      m.lcagentWebSearchURL(),
 	}
 	if err := req.Validate(); err != nil {
 		m.clearTodoLaunchDraft(project.Path)
 		m.status = err.Error()
 		return m, nil
 	}
+	m.restoreCodexDraft(project.Path, codexDraft{Text: todoText})
+	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, todoID: todoID, provider: provider, openModelFirst: openModelFirst})
+	m.todoEditor = nil
+	m.todoDeleteConfirm = nil
+	m.todoExistingWorktree = nil
+	m.todoCopyDialog = nil
+	m.todoDialog = nil
 	m.ensureCodexRuntime()
 	m.beginNewCodexPendingOpen(project.Path, provider)
 	m.err = nil
@@ -1221,7 +1407,6 @@ func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider, openMod
 		m.status = "No project selected"
 		return m, nil
 	}
-	m.todoCopyDialog = nil
 	return m.startTodoInProjectPath(project.Path, item.ID, item.Text, provider, openModelFirst)
 }
 
@@ -1471,6 +1656,9 @@ func (m Model) todoActivityLabel(item model.TodoItem) (string, lipgloss.Style) {
 	if item.Done {
 		return "", lipgloss.Style{}
 	}
+	if label, style, ok := m.todoPinnedWorkLabel(item); ok {
+		return label, style
+	}
 	state := model.NormalizeTodoWorkState(item.WorkState)
 	if state == "" || state == model.TodoWorkStateIdle {
 		return "", lipgloss.Style{}
@@ -1485,6 +1673,36 @@ func (m Model) todoActivityLabel(item model.TodoItem) (string, lipgloss.Style) {
 	default:
 		return label, statusStyle(model.StatusActive)
 	}
+}
+
+func (m Model) todoPinnedWorkLabel(item model.TodoItem) (string, lipgloss.Style, bool) {
+	if strings.TrimSpace(item.WorkSessionID) == "" {
+		return "", lipgloss.Style{}, false
+	}
+	provider := todoWorkProvider(item)
+	if provider == "" {
+		return "", lipgloss.Style{}, false
+	}
+	providerLabel := todoWorkProviderLabel(modelSessionSourceFromCodexProvider(provider))
+	if providerLabel == "" {
+		providerLabel = provider.Label()
+	}
+	if snapshot, _, ok := m.livePinnedTodoWorkSnapshot(item); ok {
+		state := todoWorkStateFromEmbeddedSnapshot(snapshot, false)
+		switch state {
+		case model.TodoWorkStateWaiting, model.TodoWorkStateBlocked:
+			return string(state) + " " + providerLabel, detailWarningStyle, true
+		case model.TodoWorkStateWorking:
+			return string(state) + " " + providerLabel, statusStyle(model.StatusActive), true
+		default:
+			return providerLabel + " session", detailMutedStyle, true
+		}
+	}
+	state := model.NormalizeTodoWorkState(item.WorkState)
+	if state == "" || state == model.TodoWorkStateIdle {
+		return "resume " + providerLabel, detailMutedStyle, true
+	}
+	return "stale " + providerLabel, detailWarningStyle, true
 }
 
 func todoWorkProviderLabel(provider model.SessionSource) string {

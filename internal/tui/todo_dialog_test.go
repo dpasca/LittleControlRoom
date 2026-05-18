@@ -55,6 +55,21 @@ func TestTodoDialogItemLineShowsWorkStateHint(t *testing.T) {
 	}
 }
 
+func TestTodoDialogItemLineMarksMissingPinnedSessionStale(t *testing.T) {
+	t.Parallel()
+
+	m := Model{}
+	line := m.todoDialogItemLine(model.TodoItem{
+		Text:          "Finish the LCAgent lane",
+		WorkProvider:  model.SessionSourceLCAgent,
+		WorkSessionID: "lcagent:run-1",
+		WorkState:     model.TodoWorkStateWorking,
+	}, "[ ]", 80)
+	if !strings.Contains(line, "stale LCAgent") {
+		t.Fatalf("todoDialogItemLine() = %q, want stale LCAgent hint", line)
+	}
+}
+
 func TestNewTodoTextInputAllowsLongPrompts(t *testing.T) {
 	t.Parallel()
 

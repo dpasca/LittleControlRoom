@@ -103,6 +103,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			updated_at INTEGER NOT NULL,
 			completed_at INTEGER,
 			work_provider TEXT NOT NULL DEFAULT '',
+			work_project_path TEXT NOT NULL DEFAULT '',
 			work_session_id TEXT NOT NULL DEFAULT '',
 			work_claimed_at INTEGER,
 			work_state TEXT NOT NULL DEFAULT '',
@@ -415,6 +416,11 @@ func (s *Store) ensureProjectTodosWorkColumns(ctx context.Context) error {
 	if _, ok := columns["work_provider"]; !ok {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_todos ADD COLUMN work_provider TEXT NOT NULL DEFAULT ''`); err != nil {
 			return fmt.Errorf("add project_todos.work_provider column: %w", err)
+		}
+	}
+	if _, ok := columns["work_project_path"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_todos ADD COLUMN work_project_path TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add project_todos.work_project_path column: %w", err)
 		}
 	}
 	if _, ok := columns["work_session_id"]; !ok {
@@ -3303,7 +3309,7 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			pt.id, pt.project_path, pt.text, pt.done, pt.position, pt.created_at, pt.updated_at, pt.completed_at,
-			pt.work_provider, pt.work_session_id, pt.work_claimed_at, pt.work_state, pt.work_state_at,
+			pt.work_provider, pt.work_project_path, pt.work_session_id, pt.work_claimed_at, pt.work_state, pt.work_state_at,
 			tws.todo_id, tws.status, tws.todo_text_hash, tws.branch_name, tws.worktree_suffix, tws.kind,
 			tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at
 		FROM project_todos pt
@@ -3325,6 +3331,7 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 			updatedAt    int64
 			completedAt  sql.NullInt64
 			workProvider sql.NullString
+			workProject  sql.NullString
 			workSession  sql.NullString
 			workClaimed  sql.NullInt64
 			workState    sql.NullString
@@ -3343,7 +3350,7 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 		)
 		if err := rows.Scan(
 			&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt,
-			&workProvider, &workSession, &workClaimed, &workState, &workStateAt,
+			&workProvider, &workProject, &workSession, &workClaimed, &workState, &workStateAt,
 			&suggestion, &status, &textHash, &branchName, &suffix, &kind, &reason, &confidence, &modelName, &lastError, &suggestedAt,
 		); err != nil {
 			return nil, err
@@ -3355,6 +3362,7 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 			item.CompletedAt = time.Unix(completedAt.Int64, 0)
 		}
 		item.WorkProvider = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(workProvider.String)))
+		item.WorkProjectPath = strings.TrimSpace(workProject.String)
 		item.WorkSessionID = strings.TrimSpace(workSession.String)
 		item.WorkState = model.NormalizeTodoWorkState(model.TodoWorkState(strings.TrimSpace(workState.String)))
 		if workClaimed.Valid {
@@ -3996,7 +4004,7 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 	row := s.db.QueryRowContext(ctx, `
 		SELECT
 			id, project_path, text, done, position, created_at, updated_at, completed_at,
-			work_provider, work_session_id, work_claimed_at, work_state, work_state_at
+			work_provider, work_project_path, work_session_id, work_claimed_at, work_state, work_state_at
 		FROM project_todos
 		WHERE id = ?
 	`, todoID)
@@ -4007,6 +4015,7 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 		updatedAt    int64
 		completedAt  sql.NullInt64
 		workProvider sql.NullString
+		workProject  sql.NullString
 		workSession  sql.NullString
 		workClaimed  sql.NullInt64
 		workState    sql.NullString
@@ -4014,7 +4023,7 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 	)
 	if err := row.Scan(
 		&item.ID, &item.ProjectPath, &item.Text, &done, &item.Position, &createdAt, &updatedAt, &completedAt,
-		&workProvider, &workSession, &workClaimed, &workState, &workStateAt,
+		&workProvider, &workProject, &workSession, &workClaimed, &workState, &workStateAt,
 	); err != nil {
 		return model.TodoItem{}, err
 	}
@@ -4025,6 +4034,7 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 		item.CompletedAt = time.Unix(completedAt.Int64, 0)
 	}
 	item.WorkProvider = model.NormalizeSessionSource(model.SessionSource(strings.TrimSpace(workProvider.String)))
+	item.WorkProjectPath = strings.TrimSpace(workProject.String)
 	item.WorkSessionID = strings.TrimSpace(workSession.String)
 	item.WorkState = model.NormalizeTodoWorkState(model.TodoWorkState(strings.TrimSpace(workState.String)))
 	if workClaimed.Valid {
@@ -4078,6 +4088,7 @@ func (s *Store) ToggleTodoDone(ctx context.Context, id int64, done bool) error {
 				completed_at = ?,
 				updated_at = ?,
 				work_provider = '',
+				work_project_path = '',
 				work_session_id = '',
 				work_claimed_at = NULL,
 				work_state = '',
@@ -4106,10 +4117,11 @@ func (s *Store) ToggleTodoDone(ctx context.Context, id int64, done bool) error {
 	return nil
 }
 
-func (s *Store) AttachTodoWorkSession(ctx context.Context, todoID int64, provider model.SessionSource, sessionID string, state model.TodoWorkState, at time.Time) error {
+func (s *Store) AttachTodoWorkSession(ctx context.Context, todoID int64, workProjectPath string, provider model.SessionSource, sessionID string, state model.TodoWorkState, at time.Time) error {
 	if todoID <= 0 {
 		return fmt.Errorf("todo id is required")
 	}
+	workProjectPath = strings.TrimSpace(workProjectPath)
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return fmt.Errorf("todo work session id is required")
@@ -4129,6 +4141,7 @@ func (s *Store) AttachTodoWorkSession(ctx context.Context, todoID int64, provide
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE project_todos
 		SET work_provider = ?,
+			work_project_path = ?,
 			work_session_id = ?,
 			work_claimed_at = ?,
 			work_state = ?,
@@ -4136,7 +4149,7 @@ func (s *Store) AttachTodoWorkSession(ctx context.Context, todoID int64, provide
 			updated_at = ?
 		WHERE id = ?
 		  AND done = 0
-	`, string(provider), sessionID, at.Unix(), string(state), at.Unix(), now.Unix(), todoID)
+	`, string(provider), workProjectPath, sessionID, at.Unix(), string(state), at.Unix(), now.Unix(), todoID)
 	if err != nil {
 		return err
 	}
@@ -4150,10 +4163,10 @@ func (s *Store) AttachTodoWorkSession(ctx context.Context, todoID int64, provide
 	return nil
 }
 
-func (s *Store) UpdateTodoWorkStateForSession(ctx context.Context, projectPath string, provider model.SessionSource, sessionID string, state model.TodoWorkState, at time.Time) (int, error) {
-	projectPath = strings.TrimSpace(projectPath)
+func (s *Store) UpdateTodoWorkStateForSession(ctx context.Context, workProjectPath string, provider model.SessionSource, sessionID string, state model.TodoWorkState, at time.Time) (int, error) {
+	workProjectPath = strings.TrimSpace(workProjectPath)
 	sessionID = strings.TrimSpace(sessionID)
-	if projectPath == "" || sessionID == "" {
+	if workProjectPath == "" || sessionID == "" {
 		return 0, nil
 	}
 	provider = model.NormalizeSessionSource(provider)
@@ -4173,13 +4186,13 @@ func (s *Store) UpdateTodoWorkStateForSession(ctx context.Context, projectPath s
 		SET work_state = ?,
 			work_state_at = ?,
 			updated_at = ?
-		WHERE project_path = ?
-		  AND work_provider = ?
+		WHERE work_provider = ?
 		  AND work_session_id = ?
 		  AND done = 0
 		  AND (work_state <> ? OR work_state_at IS NULL OR work_state_at < ?)
 		  AND (work_state_at IS NULL OR work_state_at <= ?)
-	`, string(state), at.Unix(), now.Unix(), projectPath, string(provider), sessionID, string(state), at.Unix(), at.Unix())
+		  AND (work_project_path = ? OR (work_project_path = '' AND project_path = ?))
+	`, string(state), at.Unix(), now.Unix(), string(provider), sessionID, string(state), at.Unix(), at.Unix(), workProjectPath, workProjectPath)
 	if err != nil {
 		return 0, err
 	}
@@ -4188,6 +4201,45 @@ func (s *Store) UpdateTodoWorkStateForSession(ctx context.Context, projectPath s
 		return 0, err
 	}
 	return int(rowsAffected), nil
+}
+
+func (s *Store) TodoProjectPathsForWorkSession(ctx context.Context, workProjectPath string, provider model.SessionSource, sessionID string) ([]string, error) {
+	workProjectPath = strings.TrimSpace(workProjectPath)
+	sessionID = strings.TrimSpace(sessionID)
+	if workProjectPath == "" || sessionID == "" {
+		return nil, nil
+	}
+	provider = model.NormalizeSessionSource(provider)
+	if provider == "" {
+		provider = model.SessionSourceUnknown
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT project_path
+		FROM project_todos
+		WHERE work_provider = ?
+		  AND work_session_id = ?
+		  AND done = 0
+		  AND (work_project_path = ? OR (work_project_path = '' AND project_path = ?))
+		ORDER BY project_path ASC
+	`, string(provider), sessionID, workProjectPath, workProjectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(path) != "" {
+			paths = append(paths, strings.TrimSpace(path))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 func (s *Store) DeleteTodo(ctx context.Context, id int64) error {

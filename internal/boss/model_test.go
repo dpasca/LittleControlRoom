@@ -220,6 +220,43 @@ func TestBossDeskRowsShowStableAltHotkeys(t *testing.T) {
 	}
 }
 
+func TestBossDeskTodoRowsQualifyPinnedWorkSessionAgainstLiveActivity(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.snapshot = StateSnapshot{
+		OpenTodos: []TodoBrief{{
+			ID:              42,
+			ProjectPath:     "/repo",
+			ProjectName:     "repo",
+			Text:            "Finish pinned lane",
+			WorkState:       model.TodoWorkStateWorking,
+			WorkProvider:    model.SessionSourceCodex,
+			WorkProjectPath: "/repo--todo-42",
+			WorkSessionID:   "codex:thread-42",
+		}},
+	}
+
+	stale := ansi.Strip(strings.Join(m.bossDeskTodoRows(100, now), "\n"))
+	if !strings.Contains(stale, "stale Codex") {
+		t.Fatalf("boss desk TODO row = %q, want stale Codex without live activity", stale)
+	}
+
+	m.viewContext.EngineerActivities = []ViewEngineerActivity{{
+		Provider:    model.SessionSourceCodex,
+		ProjectPath: "/repo--todo-42",
+		SessionID:   "thread-42",
+		Status:      "working",
+		Active:      true,
+	}}
+	live := ansi.Strip(strings.Join(m.bossDeskTodoRows(100, now), "\n"))
+	if !strings.Contains(live, "working Codex") || strings.Contains(live, "stale Codex") {
+		t.Fatalf("boss desk TODO row = %q, want live working Codex activity", live)
+	}
+}
+
 func TestBossAttentionHotkeysStayWithIdentityAcrossRefresh(t *testing.T) {
 	t.Parallel()
 
