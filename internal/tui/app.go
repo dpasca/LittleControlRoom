@@ -3396,8 +3396,14 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 	line := renderProjectArchiveTab(activeLabel, m.archiveMode != projectArchiveArchived) +
 		" " +
 		renderProjectArchiveTab(archivedLabel, m.archiveMode == projectArchiveArchived)
+	hint := renderProjectArchiveTabHotkey()
+	if width <= 0 || lipgloss.Width(line)+2+lipgloss.Width(hint) <= width {
+		line += "  " + hint
+	} else if lipgloss.Width(line)+2 <= width {
+		line += " " + projectListTabHotkeyStyle.Render("a")
+	}
 	if width > 0 {
-		return ansi.Truncate(line, width, "")
+		return fitStyledWidth(line, width)
 	}
 	return line
 }
@@ -3411,6 +3417,10 @@ func renderProjectArchiveTab(label string, selected bool) string {
 		return projectListActiveTabStyle.Render("[" + label + "]")
 	}
 	return projectListInactiveTabStyle.Render(" " + label + " ")
+}
+
+func renderProjectArchiveTabHotkey() string {
+	return projectListTabHotkeyStyle.Render("a") + projectListTabHintStyle.Render(" cycle")
 }
 
 func (m Model) renderProjectList(width, height int) string {
@@ -3441,6 +3451,9 @@ func (m Model) renderProjectList(width, height int) string {
 	}
 
 	headerRows := 1
+	if tabs != "" {
+		headerRows++
+	}
 	if height < headerRows+2 {
 		height = headerRows + 2
 	}
@@ -3456,9 +3469,6 @@ func (m Model) renderProjectList(width, height int) string {
 	filterLabel := m.projectFilterSummaryLabel(16)
 	if filterLabel != "" {
 		metaParts = append(metaParts, "filter:"+filterLabel)
-		if tabs != "" {
-			tabs += " " + detailMutedStyle.Render("filter:"+filterLabel)
-		}
 	}
 	if m.privacyMode {
 		metaParts = append(metaParts, "privacy")
@@ -3475,10 +3485,10 @@ func (m Model) renderProjectList(width, height int) string {
 	}
 	projectW, assessmentW := projectListColumnWidths(columnWidth)
 	rows := make([]string, 0, visible+3)
-	header := renderProjectListHeader(projectW, assessmentW)
 	if tabs != "" {
-		header = tabs + "  " + header
+		rows = append(rows, tabs)
 	}
+	header := renderProjectListHeader(projectW, assessmentW)
 	if lipgloss.Width(header)+lipgloss.Width(meta) <= width {
 		header += meta
 	}
@@ -4072,6 +4082,8 @@ var (
 	detailAttentionValueStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	projectListActiveTabStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true).Padding(0, 1)
 	projectListInactiveTabStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("238")).Padding(0, 1)
+	projectListTabHotkeyStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	projectListTabHintStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	projectListSelectedRowStyle     = lipgloss.NewStyle().
 					Background(lipgloss.AdaptiveColor{Light: "255", Dark: "236"})
 	dialogSelectedRowStyle = lipgloss.NewStyle().
@@ -4433,6 +4445,15 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.setSortMode(projectSortMode(inv.Sort))
 	case commands.KindView:
 		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
+	case commands.KindTab:
+		switch inv.Tab {
+		case commands.ProjectTabActive:
+			return m, m.setArchiveMode(projectArchiveActive)
+		case commands.ProjectTabArchived:
+			return m, m.setArchiveMode(projectArchiveArchived)
+		default:
+			return m, m.toggleArchiveMode()
+		}
 	case commands.KindSetup:
 		return m, m.openSetupMode()
 	case commands.KindSettings:

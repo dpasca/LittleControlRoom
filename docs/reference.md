@@ -258,6 +258,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/sort recent`
 - `/view ai`
 - `/view all`
+- `/tab`
+- `/tab active`
+- `/tab archived`
 - `/setup`
 - `/settings`
 - `/filter`
@@ -329,7 +332,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 
 - `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
 - `/open` opens the selected project's folder in the system browser.
-- `/archive` moves the selected regular project to the Archived tab, and `/unarchive` restores it to Active when the project is still in scope. The `a` key switches between the Active and Archived tabs.
+- `/archive` moves the selected regular project to the Archived tab, and `/unarchive` restores it to Active when the project is still in scope. The `a` key and `/tab [active|archived|toggle]` switch between the Active and Archived tabs.
 - `/remove` asks for confirmation, then makes the selected item go away using the safest matching action: it opens scratch-task archive/delete actions, cleans up linked worktrees, removes missing folders from the dashboard, or hides a regular project's exact path from the list. `/delete` and `/forget` are aliases.
 - `/ignore` hides the selected project's exact name inside Little Control Room, which is handy for Codex-generated worktrees or other old projects that share a stable folder name.
 - `/snooze [duration|off]` snoozes the selected project for a period, and `/unsnooze` clears any active snooze.

@@ -218,12 +218,65 @@ func TestRenderedListShowsProjectArchiveTabs(t *testing.T) {
 	if !strings.Contains(list, "[Active 1]") || !strings.Contains(list, "Archived 1") {
 		t.Fatalf("rendered list = %q, want active and archived tabs", list)
 	}
+	lines := strings.Split(list, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("rendered list = %q, want tabs and header rows", list)
+	}
+	if !strings.Contains(lines[0], "a cycle") {
+		t.Fatalf("tab row = %q, want advertised cycle hotkey", lines[0])
+	}
+	if strings.Contains(lines[0], "ATTN") || !strings.Contains(lines[1], "ATTN") {
+		t.Fatalf("rendered list = %q, want tabs on their own row above the header", list)
+	}
 
 	m.archiveMode = projectArchiveArchived
 	m.projects = append([]model.ProjectSummary(nil), m.archivedProjects...)
 	list = ansi.Strip(m.renderProjectList(120, 12))
 	if !strings.Contains(list, "[Archived 1]") {
 		t.Fatalf("rendered archived list = %q, want selected archived tab", list)
+	}
+}
+
+func TestDispatchProjectArchiveTabCommand(t *testing.T) {
+	active := model.ProjectSummary{
+		Name:          "active-demo",
+		Path:          "/tmp/active-demo",
+		InScope:       true,
+		PresentOnDisk: true,
+	}
+	archived := model.ProjectSummary{
+		Name:          "archived-demo",
+		Path:          "/tmp/archived-demo",
+		InScope:       true,
+		Archived:      true,
+		PresentOnDisk: true,
+	}
+	m := Model{
+		allProjects:      []model.ProjectSummary{active},
+		archivedProjects: []model.ProjectSummary{archived},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+		width:            100,
+		height:           24,
+	}
+	m.rebuildProjectList("")
+
+	updated, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindTab, Tab: commands.ProjectTabArchived})
+	got := updated.(Model)
+	if got.archiveMode != projectArchiveArchived {
+		t.Fatalf("archiveMode = %q, want archived", got.archiveMode)
+	}
+	if len(got.projects) != 1 || got.projects[0].Path != archived.Path {
+		t.Fatalf("archived projects = %#v, want archived project", got.projects)
+	}
+
+	updated, _ = got.dispatchCommand(commands.Invocation{Kind: commands.KindTab, Tab: commands.ProjectTabActive})
+	got = updated.(Model)
+	if got.archiveMode != projectArchiveActive {
+		t.Fatalf("archiveMode = %q, want active", got.archiveMode)
+	}
+	if len(got.projects) != 1 || got.projects[0].Path != active.Path {
+		t.Fatalf("active projects = %#v, want active project", got.projects)
 	}
 }
 
