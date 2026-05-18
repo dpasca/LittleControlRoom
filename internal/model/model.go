@@ -470,6 +470,7 @@ type TodoItem struct {
 	UpdatedAt          time.Time
 	CompletedAt        time.Time
 	WorkProvider       SessionSource
+	WorkProjectPath    string
 	WorkSessionID      string
 	WorkClaimedAt      time.Time
 	WorkState          TodoWorkState

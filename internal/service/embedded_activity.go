@@ -117,8 +117,20 @@ func (s *Service) updateTodoWorkStateForEmbeddedActivity(ctx context.Context, pr
 	if at.IsZero() {
 		at = time.Now()
 	}
-	_, err := s.store.UpdateTodoWorkStateForSession(ctx, projectPath, source, sessionID, state, at)
-	return err
+	updated, err := s.store.UpdateTodoWorkStateForSession(ctx, projectPath, source, sessionID, state, at)
+	if err != nil || updated == 0 {
+		return err
+	}
+	paths, err := s.store.TodoProjectPathsForWorkSession(ctx, projectPath, source, sessionID)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if strings.TrimSpace(path) != "" && strings.TrimSpace(path) != projectPath {
+			s.refreshProjectStatusAsync(path)
+		}
+	}
+	return nil
 }
 
 func normalizeTodoWorkSessionIdentity(source model.SessionSource, sessionID string) (model.SessionSource, string) {

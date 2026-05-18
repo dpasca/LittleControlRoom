@@ -2610,6 +2610,7 @@ func (s *Service) MarkTodoWorkStarted(ctx context.Context, projectPath string, i
 	if s == nil || s.store == nil {
 		return nil
 	}
+	workProjectPath := strings.TrimSpace(projectPath)
 	source, normalizedSessionID := normalizeTodoWorkSessionIdentity(provider, sessionID)
 	if normalizedSessionID == "" {
 		return nil
@@ -2617,13 +2618,20 @@ func (s *Service) MarkTodoWorkStarted(ctx context.Context, projectPath string, i
 	if at.IsZero() {
 		at = time.Now()
 	}
-	if err := s.store.AttachTodoWorkSession(ctx, id, source, normalizedSessionID, model.TodoWorkStateWorking, at); err != nil {
+	if err := s.store.AttachTodoWorkSession(ctx, id, workProjectPath, source, normalizedSessionID, model.TodoWorkStateWorking, at); err != nil {
 		return err
 	}
-	s.refreshProjectStatusAsync(projectPath)
+	rootProjectPath := workProjectPath
+	if todo, err := s.store.GetTodo(ctx, id); err == nil && strings.TrimSpace(todo.ProjectPath) != "" {
+		rootProjectPath = strings.TrimSpace(todo.ProjectPath)
+	}
+	s.refreshProjectStatusAsync(rootProjectPath)
+	if workProjectPath != "" && workProjectPath != rootProjectPath {
+		s.refreshProjectStatusAsync(workProjectPath)
+	}
 	now := time.Now()
-	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "todo_work_started"}})
-	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "todo_work_started"})
+	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: rootProjectPath, Payload: map[string]string{"action": "todo_work_started"}})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: rootProjectPath, Type: string(events.ActionApplied), Payload: "todo_work_started"})
 	return nil
 }
 
