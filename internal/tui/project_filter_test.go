@@ -138,3 +138,83 @@ func TestRenderedListAndFooterShowActiveProjectFilter(t *testing.T) {
 		t.Fatalf("rendered no-match state = %q, want filter-specific empty state", noMatches)
 	}
 }
+
+func TestProjectArchiveTabSwitchesVisibleProjects(t *testing.T) {
+	active := model.ProjectSummary{
+		Name:                "active-demo",
+		Path:                "/tmp/active-demo",
+		InScope:             true,
+		PresentOnDisk:       true,
+		LatestSessionFormat: "modern",
+	}
+	archived := model.ProjectSummary{
+		Name:                "archived-demo",
+		Path:                "/tmp/archived-demo",
+		InScope:             false,
+		PresentOnDisk:       true,
+		LatestSessionFormat: "modern",
+	}
+	m := Model{
+		allProjects:      []model.ProjectSummary{active},
+		archivedProjects: []model.ProjectSummary{archived},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+		width:            100,
+		height:           24,
+	}
+	m.rebuildProjectList("")
+	if len(m.projects) != 1 || m.projects[0].Path != active.Path {
+		t.Fatalf("active projects = %#v, want active project", m.projects)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got := updated.(Model)
+	if got.archiveMode != projectArchiveArchived {
+		t.Fatalf("archiveMode = %q, want archived", got.archiveMode)
+	}
+	if len(got.projects) != 1 || got.projects[0].Path != archived.Path {
+		t.Fatalf("archived projects = %#v, want archived project", got.projects)
+	}
+	if !strings.Contains(got.status, "Archived") {
+		t.Fatalf("status = %q, want archived tab status", got.status)
+	}
+}
+
+func TestRenderedListShowsProjectArchiveTabs(t *testing.T) {
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Name:          "active-demo",
+			Path:          "/tmp/active-demo",
+			InScope:       true,
+			PresentOnDisk: true,
+		}},
+		archivedProjects: []model.ProjectSummary{{
+			Name:          "archived-demo",
+			Path:          "/tmp/archived-demo",
+			InScope:       false,
+			PresentOnDisk: true,
+		}},
+		projects: []model.ProjectSummary{{
+			Name:          "active-demo",
+			Path:          "/tmp/active-demo",
+			InScope:       true,
+			PresentOnDisk: true,
+		}},
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+		width:      120,
+		height:     24,
+	}
+
+	list := ansi.Strip(m.renderProjectList(120, 12))
+	if !strings.Contains(list, "[Active 1]") || !strings.Contains(list, "Archived 1") {
+		t.Fatalf("rendered list = %q, want active and archived tabs", list)
+	}
+
+	m.archiveMode = projectArchiveArchived
+	m.projects = append([]model.ProjectSummary(nil), m.archivedProjects...)
+	list = ansi.Strip(m.renderProjectList(120, 12))
+	if !strings.Contains(list, "[Archived 1]") {
+		t.Fatalf("rendered archived list = %q, want selected archived tab", list)
+	}
+}

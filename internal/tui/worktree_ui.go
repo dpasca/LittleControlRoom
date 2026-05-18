@@ -623,7 +623,7 @@ func (m Model) worktreeFamily(rootPath string) []model.ProjectSummary {
 		return nil
 	}
 	out := make([]model.ProjectSummary, 0, 4)
-	for _, project := range m.allProjects {
+	for _, project := range m.projectListSourceProjects() {
 		if !projectParticipatesInWorktreeFamily(project) {
 			continue
 		}
@@ -652,8 +652,10 @@ func (m Model) existingWorktreeCandidates(projectPath string) []model.ProjectSum
 }
 
 func (m *Model) rebuildProjectList(selectedPath string) {
-	sorted := append([]model.ProjectSummary(nil), m.allProjects...)
-	sorted = append(sorted, m.agentTaskProjectSummaries()...)
+	sorted := append([]model.ProjectSummary(nil), m.projectListSourceProjects()...)
+	if m.archiveMode != projectArchiveArchived {
+		sorted = append(sorted, m.agentTaskProjectSummaries()...)
+	}
 	m.sortProjects(sorted)
 	filtered := filterProjects(sorted, m.visibility, m.excludeProjectPatterns, m.projectFilter)
 	if m.privacyMode {
@@ -680,6 +682,13 @@ func (m *Model) rebuildProjectList(selectedPath string) {
 		m.selected = max(0, len(m.projects)-1)
 	}
 	m.ensureSelectionVisible()
+}
+
+func (m Model) projectListSourceProjects() []model.ProjectSummary {
+	if m.archiveMode == projectArchiveArchived {
+		return m.archivedProjects
+	}
+	return m.allProjects
 }
 
 func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath string) ([]model.ProjectSummary, []projectListRow) {
@@ -1230,6 +1239,11 @@ func (m Model) projectSummaryByPathAllProjects(projectPath string) (model.Projec
 		return model.ProjectSummary{}, false
 	}
 	for _, project := range m.allProjects {
+		if filepath.Clean(strings.TrimSpace(project.Path)) == projectPath {
+			return project, true
+		}
+	}
+	for _, project := range m.archivedProjects {
 		if filepath.Clean(strings.TrimSpace(project.Path)) == projectPath {
 			return project, true
 		}

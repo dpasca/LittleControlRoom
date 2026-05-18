@@ -369,5 +369,10 @@ func (m Model) projectSummaryByPath(projectPath string) (model.ProjectSummary, b
 			return project, true
 		}
 	}
+	for _, project := range m.archivedProjects {
+		if filepath.Clean(strings.TrimSpace(project.Path)) == projectPath {
+			return project, true
+		}
+	}
 	return model.ProjectSummary{}, false
 }

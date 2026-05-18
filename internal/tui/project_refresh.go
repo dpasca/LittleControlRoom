@@ -25,6 +25,7 @@ const tuiOpenAgentTaskLimit = 50
 
 type projectsMsg struct {
 	projects                []model.ProjectSummary
+	archivedProjects        []model.ProjectSummary
 	openAgentTasks          []model.AgentTask
 	orphanedWorktreesByRoot map[string][]model.ProjectSummary
 	excludeProjectPatterns  []string
@@ -442,10 +443,11 @@ func (m Model) waitBusCmd() tea.Cmd {
 
 func (m Model) loadProjectsCmd() tea.Cmd {
 	return func() tea.Msg {
-		projects, err := m.svc.Store().ListProjects(m.ctx, false)
+		allProjects, err := m.svc.Store().ListProjects(m.ctx, true)
 		if err != nil {
 			return projectsMsg{err: err}
 		}
+		projects, archivedProjects := splitProjectArchiveSummaries(allProjects)
 		summaries, err := m.svc.Store().GetProjectSummaryMap(m.ctx)
 		if err != nil {
 			return projectsMsg{err: err}
@@ -457,12 +459,29 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 		}
 		return projectsMsg{
 			projects:                projects,
+			archivedProjects:        archivedProjects,
 			openAgentTasks:          openAgentTasks,
 			orphanedWorktreesByRoot: buildOrphanedWorktreeMap(summaries),
 			excludeProjectPatterns:  patterns,
 			filterErr:               filterErr,
 		}
 	}
+}
+
+func splitProjectArchiveSummaries(projects []model.ProjectSummary) ([]model.ProjectSummary, []model.ProjectSummary) {
+	if len(projects) == 0 {
+		return nil, nil
+	}
+	active := make([]model.ProjectSummary, 0, len(projects))
+	archived := make([]model.ProjectSummary, 0)
+	for _, project := range projects {
+		if project.InScope {
+			active = append(active, project)
+			continue
+		}
+		archived = append(archived, project)
+	}
+	return active, archived
 }
 
 func (m Model) loadDetailCmd(path string) tea.Cmd {
@@ -475,7 +494,7 @@ func (m Model) loadDetailCmd(path string) tea.Cmd {
 
 func (m Model) loadProjectSummaryCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		summary, err := m.svc.Store().GetProjectSummary(m.ctx, path, false)
+		summary, err := m.svc.Store().GetProjectSummary(m.ctx, path, true)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return projectSummaryMsg{path: path}
