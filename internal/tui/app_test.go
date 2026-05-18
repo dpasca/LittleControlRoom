@@ -5483,16 +5483,7 @@ func TestProjectRunSummaryUsesSavedCommandWhenIdle(t *testing.T) {
 	}
 }
 
-func TestRenderProjectListHighlightsSelectedRow(t *testing.T) {
-	prevProfile := lipgloss.ColorProfile()
-	prevDarkBackground := lipgloss.HasDarkBackground()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	lipgloss.SetHasDarkBackground(true)
-	t.Cleanup(func() {
-		lipgloss.SetColorProfile(prevProfile)
-		lipgloss.SetHasDarkBackground(prevDarkBackground)
-	})
-
+func TestRenderProjectListMarksSelectedRow(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{
 			{
@@ -5527,20 +5518,74 @@ func TestRenderProjectListHighlightsSelectedRow(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("renderProjectList() expected header plus two rows, got %q", rendered)
 	}
-	if strings.Contains(lines[1], "\x1b[48;5;236m") {
-		t.Fatalf("renderProjectList() should not highlight unselected rows: %q", lines[1])
+	firstRow := ansi.Strip(lines[1])
+	selectedRow := ansi.Strip(lines[2])
+	if strings.HasPrefix(firstRow, ">") {
+		t.Fatalf("renderProjectList() should not mark unselected rows: %q", firstRow)
 	}
-	if !strings.Contains(lines[2], "\x1b[48;5;236m") {
-		t.Fatalf("renderProjectList() should apply a background highlight to the selected row: %q", lines[2])
+	if !strings.HasPrefix(selectedRow, "> ") {
+		t.Fatalf("renderProjectList() should mark the selected row in the gutter, got %q", selectedRow)
 	}
-	if got := strings.Count(lines[2], "\x1b[48;5;236m"); got < 4 {
-		t.Fatalf("renderProjectList() should carry the selected-row background across styled cells, got %d matches in %q", got, lines[2])
+	if !strings.Contains(selectedRow, "selected") {
+		t.Fatalf("renderProjectList() should preserve the selected row text, got %q", selectedRow)
 	}
-	if stripped := ansi.Strip(lines[2]); !strings.Contains(stripped, "selected") {
-		t.Fatalf("renderProjectList() should preserve the selected row text, got %q", stripped)
+	if got := ansi.StringWidth(selectedRow); got > 80 {
+		t.Fatalf("renderProjectList() selected row width = %d, want <= 80: %q", got, selectedRow)
 	}
-	if got := ansi.StringWidth(ansi.Strip(lines[2])); got > 80 {
-		t.Fatalf("renderProjectList() selected row width = %d, want <= 80: %q", got, ansi.Strip(lines[2]))
+}
+
+func TestMoveSelectionFlashesSelectedRowBriefly(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	now := time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC)
+	m := Model{
+		nowFn: func() time.Time { return now },
+		projects: []model.ProjectSummary{
+			{
+				Name:          "first",
+				Path:          "/tmp/first",
+				Status:        model.StatusIdle,
+				PresentOnDisk: true,
+			},
+			{
+				Name:          "selected",
+				Path:          "/tmp/selected",
+				Status:        model.StatusActive,
+				PresentOnDisk: true,
+			},
+		},
+		selected:   0,
+		sortMode:   sortByAttention,
+		visibility: visibilityAIFolders,
+	}
+
+	if m.selectionFlashActive() {
+		t.Fatalf("selection flash should start inactive")
+	}
+	_ = m.moveSelectionTo(1)
+	if !m.selectionFlashActive() {
+		t.Fatalf("moveSelectionTo() should flash the selected row")
+	}
+	flashing := m.renderProjectList(80, 8)
+
+	now = now.Add(projectListSelectionFlashDuration + time.Nanosecond)
+	m.pruneTransientHighlights(now)
+	if m.selectionFlashActive() {
+		t.Fatalf("selection flash should expire after %v", projectListSelectionFlashDuration)
+	}
+	settled := m.renderProjectList(80, 8)
+	if ansi.Strip(flashing) != ansi.Strip(settled) {
+		t.Fatalf("selection flash should keep visible row text: %q vs %q", ansi.Strip(flashing), ansi.Strip(settled))
+	}
+	if flashing == settled {
+		t.Fatalf("selection flash should change the selected row styling")
 	}
 }
 

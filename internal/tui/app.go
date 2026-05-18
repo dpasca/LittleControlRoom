@@ -165,6 +165,7 @@ type Model struct {
 	runtimeActionSelected int
 	focusedPane           paneFocus
 	assessmentFlashUntil  map[string]time.Time
+	selectionFlashUntil   time.Time
 	usagePulseUntil       time.Time
 	lastUsageTotals       model.LLMUsage
 	haveUsageTotals       bool
@@ -658,6 +659,13 @@ func (m *Model) markAssessmentFlash(projectPath string, at time.Time) {
 	m.assessmentFlashUntil[projectPath] = at.Add(assessmentFlashDuration)
 }
 
+func (m *Model) markSelectionFlash(at time.Time) {
+	if at.IsZero() {
+		at = m.currentTime()
+	}
+	m.selectionFlashUntil = at.Add(projectListSelectionFlashDuration)
+}
+
 func (m *Model) setPendingGitSummary(projectPath, summary string) {
 	op := inferPendingGitOperation(summary)
 	m.setPendingGitOperation(projectPath, op.Kind, op.Summary)
@@ -827,6 +835,10 @@ func (m Model) assessmentFlashActive(projectPath string) bool {
 	return until.After(m.currentTime())
 }
 
+func (m Model) selectionFlashActive() bool {
+	return m.selectionFlashUntil.After(m.currentTime())
+}
+
 func (m *Model) pruneTransientHighlights(now time.Time) {
 	if now.IsZero() {
 		now = m.currentTime()
@@ -838,6 +850,9 @@ func (m *Model) pruneTransientHighlights(now time.Time) {
 	}
 	if !m.usagePulseUntil.After(now) {
 		m.usagePulseUntil = time.Time{}
+	}
+	if !m.selectionFlashUntil.After(now) {
+		m.selectionFlashUntil = time.Time{}
 	}
 }
 
@@ -2544,6 +2559,7 @@ func (m *Model) moveSelectionTo(index int) tea.Cmd {
 		return nil
 	}
 	m.selected = index
+	m.markSelectionFlash(time.Time{})
 	m.ensureSelectionVisible()
 	m.syncDetailViewport(true)
 	return m.requestSelectedProjectDetailViewCmd()
@@ -3454,6 +3470,9 @@ func (m Model) renderProjectList(width, height int) string {
 			columnWidth = width - reserved
 		}
 	}
+	if columnWidth > projectListSelectionGutterWidth {
+		columnWidth -= projectListSelectionGutterWidth
+	}
 	projectW, assessmentW := projectListColumnWidths(columnWidth)
 	rows := make([]string, 0, visible+3)
 	header := renderProjectListHeader(projectW, assessmentW)
@@ -3527,9 +3546,12 @@ func (m Model) renderProjectList(width, height int) string {
 			rowMeta = m.projectRows[i]
 		}
 		selectedRow := i == m.selected
+		selectionFlashRow := selectedRow && m.selectionFlashActive()
 		cellStyle := func(style lipgloss.Style) lipgloss.Style {
 			style = projectListCellStyle(style, selectedRow)
-			if m.projectApprovalPulseActive(p.Path) {
+			if selectionFlashRow {
+				style = projectListSelectionFlashStyle(style)
+			} else if m.projectApprovalPulseActive(p.Path) {
 				style = approvalPulseStyle(style)
 			} else if m.projectBrowserPulseActive(p.Path) {
 				style = browserPulseStyle(style)
@@ -3630,8 +3652,15 @@ func (m Model) renderProjectList(width, height int) string {
 			runState = projectRunError
 		}
 		assessment = truncateText(assessmentText, assessmentW)
+		selectionMarker := " "
+		selectionMarkerStyle := lipgloss.NewStyle().Width(projectListSelectionGutterWidth)
+		if selectedRow {
+			selectionMarker = ">"
+			selectionMarkerStyle = selectionMarkerStyle.Foreground(lipgloss.Color("81")).Bold(true)
+		}
 		row := lipgloss.JoinHorizontal(
 			lipgloss.Top,
+			cellStyle(selectionMarkerStyle).Render(selectionMarker),
 			flagIndicators+cellStyle(lipgloss.NewStyle().Width(4).Align(lipgloss.Right).Bold(selectedRow)).Render(attention),
 			" ",
 			cellStyle(statusStyle.Width(8)).Render(statusText),
@@ -3652,7 +3681,11 @@ func (m Model) renderProjectList(width, height int) string {
 			row = fitStyledWidth(row, width)
 		}
 		if selectedRow {
-			row = projectListSelectedRowStyle.Render(row)
+			rowStyle := projectListSelectedRowStyle
+			if selectionFlashRow {
+				rowStyle = projectListSelectionFlashStyle(rowStyle)
+			}
+			row = rowStyle.Render(row)
 		}
 		rows = append(rows, row)
 	}
@@ -3988,6 +4021,10 @@ func projectListCellStyle(style lipgloss.Style, selected bool) lipgloss.Style {
 	return style.Inherit(projectListSelectedRowStyle)
 }
 
+func projectListSelectionFlashStyle(style lipgloss.Style) lipgloss.Style {
+	return style.Foreground(lipgloss.Color("16")).Background(lipgloss.Color("178")).Bold(true)
+}
+
 func approvalPulseStyle(style lipgloss.Style) lipgloss.Style {
 	return style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true)
 }
@@ -4003,13 +4040,14 @@ func browserPulseStyle(style lipgloss.Style) lipgloss.Style {
 var spinnerFrames = []string{"|", "/", "-", `\`}
 
 const (
-	recentMoveWindow          = 24 * time.Hour
-	spinnerAnimationFrameWrap = 4096
-	assessmentFlashDuration   = time.Second
-	projectListAgentWidth     = 10
-	projectListTODOWidth      = 4
-	projectListRunWidth       = 11
-	usagePulseDuration        = 900 * time.Millisecond
+	recentMoveWindow                = 24 * time.Hour
+	spinnerAnimationFrameWrap       = 4096
+	assessmentFlashDuration         = time.Second
+	projectListAgentWidth           = 10
+	projectListTODOWidth            = 4
+	projectListRunWidth             = 11
+	projectListSelectionGutterWidth = 2
+	usagePulseDuration              = 900 * time.Millisecond
 )
 
 var (
@@ -4061,6 +4099,7 @@ var (
 )
 
 const spinnerTickInterval = 120 * time.Millisecond
+const projectListSelectionFlashDuration = spinnerTickInterval
 const runtimeSnapshotRefreshEveryTicks = 8
 const cpuSnapshotRefreshEveryTicks = 25
 const processScanRefreshEveryTicks = 500
@@ -5402,6 +5441,7 @@ func projectListColumnWidths(totalWidth int) (int, int) {
 func renderProjectListHeader(projectW, assessmentW int) string {
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
+		lipgloss.NewStyle().Width(projectListSelectionGutterWidth).Render(""),
 		lipgloss.NewStyle().Width(5).Align(lipgloss.Right).Render("ATTN"),
 		"  ",
 		lipgloss.NewStyle().Width(8).Render("ASSESS"),
