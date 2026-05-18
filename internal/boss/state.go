@@ -54,6 +54,9 @@ type ProjectBrief struct {
 	RepoAheadCount       int
 	RepoBehindCount      int
 	OpenTODOCount        int
+	ScopeKnown           bool
+	InScope              bool
+	Archived             bool
 	SnoozedUntil         *time.Time
 	LatestFormat         string
 	LatestSummary        string
@@ -307,6 +310,9 @@ func projectBriefFromSummary(project model.ProjectSummary) ProjectBrief {
 		RepoAheadCount:       project.RepoAheadCount,
 		RepoBehindCount:      project.RepoBehindCount,
 		OpenTODOCount:        project.OpenTODOCount,
+		ScopeKnown:           true,
+		InScope:              project.InScope,
+		Archived:             project.Archived,
 		SnoozedUntil:         project.SnoozedUntil,
 		LatestFormat:         strings.TrimSpace(project.LatestSessionFormat),
 		LatestSummary:        strings.TrimSpace(project.LatestSessionSummary),
@@ -954,6 +960,12 @@ func projectReferenceMetadata(project ProjectBrief, now time.Time) string {
 	}
 	if project.Status != "" {
 		parts = append(parts, "status="+string(project.Status))
+	}
+	if project.Archived {
+		parts = append(parts, "archived=true")
+	}
+	if project.ScopeKnown && !project.InScope {
+		parts = append(parts, "in_scope=false")
 	}
 	if branch := strings.TrimSpace(project.RepoBranch); branch != "" {
 		parts = append(parts, "branch="+branch)

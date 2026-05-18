@@ -25,6 +25,7 @@ const (
 const (
 	HostEffectMayRevealEngineerSession = "may_reveal_engineer_session"
 	HostEffectMayCreateTaskWorkspace   = "may_create_task_workspace"
+	HostEffectMaySetProjectArchive     = "may_set_project_archive_state"
 	HostEffectMayCreateProjectTodo     = "may_create_project_todo"
 	HostEffectMayCompleteProjectTodo   = "may_complete_project_todo"
 )
@@ -74,6 +75,28 @@ func NormalizeAgentTaskCloseStatus(value string) AgentTaskCloseStatus {
 
 func (s AgentTaskCloseStatus) Normalized() AgentTaskCloseStatus {
 	return NormalizeAgentTaskCloseStatus(string(s))
+}
+
+type ProjectArchiveAction string
+
+const (
+	ProjectArchiveActionArchive   ProjectArchiveAction = "archive"
+	ProjectArchiveActionUnarchive ProjectArchiveAction = "unarchive"
+)
+
+func NormalizeProjectArchiveAction(value string) ProjectArchiveAction {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(ProjectArchiveActionArchive), "archived":
+		return ProjectArchiveActionArchive
+	case string(ProjectArchiveActionUnarchive), "restore", "active":
+		return ProjectArchiveActionUnarchive
+	default:
+		return ""
+	}
+}
+
+func (a ProjectArchiveAction) Normalized() ProjectArchiveAction {
+	return NormalizeProjectArchiveAction(string(a))
 }
 
 type EngineerSendPromptInput struct {
@@ -135,6 +158,13 @@ type ScratchTaskArchiveInput struct {
 	ProjectName string `json:"project_name"`
 }
 
+type ProjectArchiveInput struct {
+	RequestID   string               `json:"request_id,omitempty"`
+	ProjectPath string               `json:"project_path"`
+	ProjectName string               `json:"project_name"`
+	Action      ProjectArchiveAction `json:"action"`
+}
+
 type TodoAddInput struct {
 	RequestID   string `json:"request_id,omitempty"`
 	ProjectPath string `json:"project_path"`
@@ -158,6 +188,7 @@ func Capabilities() []Capability {
 		AgentTaskCreateCapability(),
 		AgentTaskContinueCapability(),
 		AgentTaskCloseCapability(),
+		ProjectArchiveCapability(),
 		ScratchTaskArchiveCapability(),
 		TodoAddCapability(),
 		TodoCompleteCapability(),
@@ -174,6 +205,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return AgentTaskContinueCapability(), true
 	case CapabilityAgentTaskClose:
 		return AgentTaskCloseCapability(), true
+	case CapabilityProjectArchive:
+		return ProjectArchiveCapability(), true
 	case CapabilityScratchTaskArchive:
 		return ScratchTaskArchiveCapability(), true
 	case CapabilityTodoAdd:
@@ -259,6 +292,24 @@ func AgentTaskCloseCapability() Capability {
 		Risk:         RiskWrite,
 		Confirmation: ConfirmationRequired,
 		RequiresHost: true,
+	}
+}
+
+func ProjectArchiveCapability() Capability {
+	return Capability{
+		Name:         CapabilityProjectArchive,
+		Description:  "Move a regular loaded project between the Active and Archived project-list tabs without touching its files.",
+		InputSchema:  projectArchiveInputSchema(),
+		OutputSchema: projectArchiveOutputSchema(),
+		Risk:         RiskWrite,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects:  []string{HostEffectMaySetProjectArchive},
+		Providers: []ProviderCapability{{
+			ID:        ProviderAuto,
+			Available: true,
+			Features:  []string{FeatureArchiveTask},
+		}},
 	}
 }
 
@@ -413,6 +464,24 @@ func NormalizeScratchTaskArchiveInput(input ScratchTaskArchiveInput) (ScratchTas
 	input.ProjectName = strings.TrimSpace(input.ProjectName)
 	if input.ProjectPath == "" && input.ProjectName == "" {
 		return ScratchTaskArchiveInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	return input, nil
+}
+
+func NormalizeProjectArchiveInput(input ProjectArchiveInput) (ProjectArchiveInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" {
+		input.ProjectPath = filepath.Clean(input.ProjectPath)
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	rawAction := strings.TrimSpace(string(input.Action))
+	input.Action = input.Action.Normalized()
+	if input.ProjectPath == "" && input.ProjectName == "" {
+		return ProjectArchiveInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	if input.Action == "" {
+		return ProjectArchiveInput{}, fmt.Errorf("unsupported project archive action: %s", rawAction)
 	}
 	return input, nil
 }
@@ -584,6 +653,34 @@ func validateScratchTaskArchiveInvocation(inv Invocation) (Invocation, error) {
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityScratchTaskArchive, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateProjectArchiveInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityProjectArchive)
+	}
+	var input ProjectArchiveInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityProjectArchive, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityProjectArchive)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeProjectArchiveInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityProjectArchive, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -854,6 +951,40 @@ func scratchTaskArchiveOutputSchema() map[string]any {
 			"status":        map[string]any{"type": "string"},
 		},
 		"required": []string{"project_path", "archived_path", "status"},
+	}
+}
+
+func projectArchiveInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":   map[string]any{"type": "string"},
+			"project_path": map[string]any{"type": "string"},
+			"project_name": map[string]any{"type": "string"},
+			"action": map[string]any{
+				"type": "string",
+				"enum": []string{
+					string(ProjectArchiveActionArchive),
+					string(ProjectArchiveActionUnarchive),
+				},
+			},
+		},
+		"required": []string{"project_path", "project_name", "action"},
+	}
+}
+
+func projectArchiveOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"project_path": map[string]any{"type": "string"},
+			"action":       map[string]any{"type": "string", "enum": []string{string(ProjectArchiveActionArchive), string(ProjectArchiveActionUnarchive)}},
+			"archived":     map[string]any{"type": "boolean"},
+			"status":       map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "action", "archived", "status"},
 	}
 }
 

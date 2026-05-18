@@ -99,6 +99,13 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			Summary:      strings.TrimSpace(action.TaskSummary),
 			CloseSession: action.CloseSession,
 		}
+	case control.CapabilityProjectArchive:
+		payload = control.ProjectArchiveInput{
+			RequestID:   strings.TrimSpace(action.RequestID),
+			ProjectPath: strings.TrimSpace(action.ProjectPath),
+			ProjectName: strings.TrimSpace(action.ProjectName),
+			Action:      control.ProjectArchiveAction(strings.TrimSpace(action.ProjectArchiveAction)),
+		}
 	case control.CapabilityScratchTaskArchive:
 		payload = control.ScratchTaskArchiveInput{
 			RequestID:   strings.TrimSpace(action.RequestID),
@@ -285,6 +292,26 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			fmt.Sprintf("Archive scratch task %s?", target),
 			"",
 			"This moves the task into the scratch-task archive and removes it from the active dashboard.",
+			"",
+			"Enter confirms; Esc cancels.",
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityProjectArchive:
+		var input control.ProjectArchiveInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath)
+		verb := "Archive"
+		destination := "Archived"
+		if input.Action == control.ProjectArchiveActionUnarchive {
+			verb = "Unarchive"
+			destination = "Active"
+		}
+		lines := []string{
+			fmt.Sprintf("%s project %s?", verb, target),
+			"",
+			fmt.Sprintf("This moves the project to the %s tab without changing files on disk.", destination),
 			"",
 			"Enter confirms; Esc cancels.",
 		}

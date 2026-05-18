@@ -676,6 +676,88 @@ func TestExecuteScratchTaskArchiveControlArchivesTask(t *testing.T) {
 	}
 }
 
+func TestExecuteProjectArchiveControlArchivesAndUnarchivesProject(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "regular-project")
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "regular-project",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active projects: %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		projects:    projects,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityProjectArchive, control.ProjectArchiveInput{
+		ProjectPath: projectPath,
+		Action:      control.ProjectArchiveActionArchive,
+	}))
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	}
+	if got.status != `Archived "regular-project"` {
+		t.Fatalf("archive status = %q, want archive confirmation", got.status)
+	}
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after archive: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("archived project should leave active list, got %#v", active)
+	}
+	archived, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("list historical after archive: %v", err)
+	}
+	if len(archived) != 1 || !archived[0].Archived {
+		t.Fatalf("historical projects = %#v, want archived project", archived)
+	}
+	if _, ok := got.projectSummaryByPathAllProjects(projectPath); !ok {
+		t.Fatalf("archived project should remain in local archived summaries")
+	}
+
+	updated, cmd = got.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityProjectArchive, control.ProjectArchiveInput{
+		ProjectName: "regular-project",
+		Action:      control.ProjectArchiveActionUnarchive,
+	}))
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate unarchive", cmd)
+	}
+	if got.status != `Unarchived "regular-project"` {
+		t.Fatalf("unarchive status = %q, want unarchive confirmation", got.status)
+	}
+	active, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after unarchive: %v", err)
+	}
+	if len(active) != 1 || active[0].Archived {
+		t.Fatalf("unarchived project should return to active list, got %#v", active)
+	}
+}
+
 func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T) {
 	projectPath := "/tmp/control-active-session"
 	liveSession := &fakeCodexSession{

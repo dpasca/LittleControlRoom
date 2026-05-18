@@ -920,6 +920,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"fresh external research",
 		"propose_control",
 		"agent_task.create",
+		"project.set_archive_state",
 		"scratch_task.archive",
 		"agent_task_report",
 		"Use agent_task_report when the user asks about open, active, completed, archived, historical, or delegated agent tasks",
@@ -937,6 +938,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"The host will steer the active Codex turn when possible",
 		"Active work alone is not enough reason to resume",
 		"Use agent_task.create for temporary delegated work",
+		"Use project.set_archive_state when project metadata identifies a regular loaded project",
 		"external web/product/market research",
 		"do not encode special domains as task kinds",
 		"Use scratch_task.archive when project metadata identifies kind=scratch_task",
@@ -1990,6 +1992,57 @@ func TestAssistantReplyCanProposeScratchTaskArchiveControl(t *testing.T) {
 		t.Fatalf("decode invocation args: %v", err)
 	}
 	if input.ProjectPath != "/tmp/tasks/hex-accessibility" || input.ProjectName != "Hex accessibility issue" {
+		t.Fatalf("invocation args = %#v", input)
+	}
+}
+
+func TestAssistantReplyCanProposeProjectArchiveControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:                 bossActionProposeControl,
+				ControlCapability:    "project.set_archive_state",
+				ProjectPath:          "/tmp/repos/regular-project",
+				ProjectName:          "regular-project",
+				ProjectArchiveAction: "archive",
+				Reason:               "The user asked to hide the regular project from Active.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 17},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Hot projects:\n- regular-project; latest work: Done.\n  Reference metadata (use only for disambiguation/blockers): kind=project; path=/tmp/repos/regular-project",
+		Messages:   []ChatMessage{{Role: "user", Content: "archive regular-project"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want project.set_archive_state proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityProjectArchive {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Archive project regular-project?") ||
+		!strings.Contains(resp.Content, "without changing files on disk") {
+		t.Fatalf("proposal content = %q, want project archive confirmation", resp.Content)
+	}
+	var input control.ProjectArchiveInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.ProjectPath != "/tmp/repos/regular-project" ||
+		input.ProjectName != "regular-project" ||
+		input.Action != control.ProjectArchiveActionArchive {
 		t.Fatalf("invocation args = %#v", input)
 	}
 }

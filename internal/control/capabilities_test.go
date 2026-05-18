@@ -53,6 +53,25 @@ func TestNormalizeSessionMode(t *testing.T) {
 	}
 }
 
+func TestNormalizeProjectArchiveAction(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want ProjectArchiveAction
+	}{
+		{raw: " archive ", want: ProjectArchiveActionArchive},
+		{raw: "archived", want: ProjectArchiveActionArchive},
+		{raw: "unarchive", want: ProjectArchiveActionUnarchive},
+		{raw: "restore", want: ProjectArchiveActionUnarchive},
+		{raw: "active", want: ProjectArchiveActionUnarchive},
+		{raw: "delete", want: ""},
+	}
+	for _, tt := range tests {
+		if got := NormalizeProjectArchiveAction(tt.raw); got != tt.want {
+			t.Fatalf("NormalizeProjectArchiveAction(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
+	}
+}
+
 func TestEngineerSendPromptCapabilityMetadata(t *testing.T) {
 	capability, ok := CapabilityByName(CapabilityEngineerSendPrompt)
 	if !ok {
@@ -137,6 +156,25 @@ func TestScratchTaskArchiveCapabilityMetadata(t *testing.T) {
 	}
 	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
 		t.Fatalf("scratch task archive schemas should be object schemas")
+	}
+}
+
+func TestProjectArchiveCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityProjectArchive)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityProjectArchive)
+	}
+	if capability.Name != CapabilityProjectArchive {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilityProjectArchive)
+	}
+	if capability.Risk != RiskWrite || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected project archive capability metadata: %#v", capability)
+	}
+	if !stringSliceContains(capability.HostEffects, HostEffectMaySetProjectArchive) {
+		t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, HostEffectMaySetProjectArchive)
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("project archive schemas should be object schemas")
 	}
 }
 
@@ -361,6 +399,29 @@ func TestValidateInvocationNormalizesScratchTaskArchiveArgs(t *testing.T) {
 	}
 	if input.RequestID != "boss-turn-scratch" || input.ProjectPath != "/tmp/demo" {
 		t.Fatalf("normalized scratch task archive input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesProjectArchiveArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-project-archive ",
+		Capability: CapabilityProjectArchive,
+		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":"","action":" restore "}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	if inv.RequestID != "boss-turn-project-archive" {
+		t.Fatalf("RequestID = %q, want boss-turn-project-archive", inv.RequestID)
+	}
+	var input ProjectArchiveInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if input.RequestID != "boss-turn-project-archive" ||
+		input.ProjectPath != "/tmp/demo" ||
+		input.Action != ProjectArchiveActionUnarchive {
+		t.Fatalf("normalized project archive input = %#v", input)
 	}
 }
 

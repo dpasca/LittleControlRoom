@@ -94,6 +94,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeAgentTaskCloseControlWithOutcome(input)
+	case control.CapabilityProjectArchive:
+		var input control.ProjectArchiveInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeProjectArchiveControlWithOutcome(input)
 	case control.CapabilityScratchTaskArchive:
 		var input control.ScratchTaskArchiveInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -804,6 +811,75 @@ func (m Model) executeScratchTaskArchiveControlWithOutcome(input control.Scratch
 	return controlInvocationOutcome{model: m}
 }
 
+func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArchiveInput) controlInvocationOutcome {
+	if m.svc == nil {
+		err := errors.New("service unavailable")
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	project, err := m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	switch model.NormalizeProjectKind(project.Kind) {
+	case model.ProjectKindAgentTask:
+		err := fmt.Errorf("agent tasks use agent_task.close with archived status: %s", project.Path)
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	case model.ProjectKindScratchTask:
+		err := fmt.Errorf("scratch tasks use scratch_task.archive: %s", project.Path)
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+
+	archive := input.Action == control.ProjectArchiveActionArchive
+	name := projectRemovalName(project)
+	if archive && project.Archived {
+		m.status = fmt.Sprintf("%q is already archived", name)
+		return controlInvocationOutcome{model: m}
+	}
+	if !archive && !project.Archived {
+		if !project.InScope {
+			m.status = fmt.Sprintf("%q is outside project scope", name)
+		} else {
+			m.status = fmt.Sprintf("%q is already active", name)
+		}
+		return controlInvocationOutcome{model: m}
+	}
+
+	if archive {
+		err = m.svc.ArchiveProject(m.ctx, project.Path)
+	} else {
+		err = m.svc.UnarchiveProject(m.ctx, project.Path)
+	}
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+
+	project.Archived = archive
+	m.upsertProjectSummary(project)
+	selectPath := project.Path
+	if (archive && m.archiveMode != projectArchiveArchived) || (!archive && m.archiveMode == projectArchiveArchived) {
+		selectPath = ""
+	}
+	m.rebuildProjectList(selectPath)
+	if normalizeProjectPath(m.detail.Summary.Path) == normalizeProjectPath(project.Path) {
+		m.detail.Summary = project
+		m.syncDetailViewport(false)
+	}
+
+	if archive {
+		m.status = fmt.Sprintf("Archived %q", name)
+	} else if project.InScope {
+		m.status = fmt.Sprintf("Unarchived %q", name)
+	} else {
+		m.status = fmt.Sprintf("Unarchived %q; still in Archived because it is outside project scope", name)
+	}
+	return controlInvocationOutcome{model: m}
+}
+
 func (m Model) executeTodoAddControlWithOutcome(input control.TodoAddInput) controlInvocationOutcome {
 	if m.svc == nil {
 		err := errors.New("service unavailable")
@@ -1392,7 +1468,9 @@ func (m Model) resolveControlProjectRef(projectPath, projectName string) (model.
 		matched model.ProjectSummary
 		found   bool
 	)
-	for _, project := range append(append([]model.ProjectSummary(nil), m.allProjects...), m.projects...) {
+	candidates := append(append([]model.ProjectSummary(nil), m.allProjects...), m.archivedProjects...)
+	candidates = append(candidates, m.projects...)
+	for _, project := range candidates {
 		if !controlProjectNameMatches(project, name) {
 			continue
 		}
