@@ -84,6 +84,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			forgotten INTEGER NOT NULL DEFAULT 0,
 			manually_added INTEGER NOT NULL DEFAULT 0,
 			in_scope INTEGER NOT NULL DEFAULT 1,
+			archived INTEGER NOT NULL DEFAULT 0,
 			pinned INTEGER NOT NULL DEFAULT 0,
 			snoozed_until INTEGER,
 			last_session_seen_at INTEGER,
@@ -321,6 +322,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		}
 	}
 	if err := s.ensureProjectsInScopeColumn(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureProjectsArchivedColumn(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureProjectsVisibilityColumns(ctx); err != nil {
@@ -572,6 +576,21 @@ func (s *Store) ensureProjectsInScopeColumn(ctx context.Context) error {
 
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN in_scope INTEGER NOT NULL DEFAULT 1`); err != nil {
 		return fmt.Errorf("add projects.in_scope column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureProjectsArchivedColumn(ctx context.Context) error {
+	columns, err := s.projectTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["archived"]; ok {
+		return nil
+	}
+
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add projects.archived column: %w", err)
 	}
 	return nil
 }
@@ -1586,7 +1605,7 @@ func (s *Store) writeSessionClassificationMigrationRow(ctx context.Context, tx *
 func projectSummaryBaseQuery() string {
 	return fmt.Sprintf(`
 		SELECT
-			p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
+			p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.archived, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -1642,7 +1661,7 @@ func projectSummaryVisibilityConditions(includeHistorical bool) string {
 			WHERE ipp.path = p.path
 		)`
 	if !includeHistorical {
-		conditions += ` AND p.in_scope = 1`
+		conditions += ` AND p.in_scope = 1 AND p.archived = 0`
 	}
 	return conditions
 }
@@ -1725,7 +1744,8 @@ func scanSummaryRow(scanner interface {
 		repoSyncStatus                                                                       string
 		attentionScore, repoAheadCount, repoBehindCount, openTODOCount, totalTODOCount       int
 		latestTurnKnown, latestTurnCompleted                                                 int
-		presentOnDisk, repoDirty, repoConflict, forgotten, manuallyAdded, inScope, pinned    int
+		presentOnDisk, repoDirty, repoConflict, forgotten, manuallyAdded, inScope, archived  int
+		pinned                                                                               int
 	)
 	if err := scanner.Scan(
 		&path,
@@ -1749,6 +1769,7 @@ func scanSummaryRow(scanner interface {
 		&forgotten,
 		&manuallyAdded,
 		&inScope,
+		&archived,
 		&pinned,
 		&snoozedUntil,
 		&lastSessionSeenAt,
@@ -1807,6 +1828,7 @@ func scanSummaryRow(scanner interface {
 		Forgotten:                                forgotten == 1,
 		ManuallyAdded:                            manuallyAdded == 1,
 		InScope:                                  inScope == 1,
+		Archived:                                 archived == 1,
 		Pinned:                                   pinned == 1,
 		OpenTODOCount:                            openTODOCount,
 		TotalTODOCount:                           totalTODOCount,
@@ -1867,7 +1889,7 @@ func (s *Store) GetSessionClassificationCounts(ctx context.Context, inScopeOnly 
 		FROM session_classifications sc
 	`
 	if inScopeOnly {
-		query += ` JOIN projects p ON p.path = sc.project_path WHERE p.in_scope = 1`
+		query += ` JOIN projects p ON p.path = sc.project_path WHERE p.in_scope = 1 AND p.archived = 0`
 	}
 	query += ` GROUP BY sc.status`
 
@@ -1930,8 +1952,8 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, moved_from_path, moved_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, moved_from_path, moved_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			name=excluded.name,
 			kind=excluded.kind,
@@ -1962,6 +1984,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			END,
 			manually_added=excluded.manually_added,
 			in_scope=excluded.in_scope,
+			archived=excluded.archived,
 			pinned=projects.pinned,
 			snoozed_until=projects.snoozed_until,
 			moved_from_path=CASE
@@ -1974,7 +1997,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			END,
 			created_at=COALESCE(projects.created_at, excluded.created_at),
 			updated_at=excluded.updated_at
-	`, state.Path, state.Name, string(state.Kind), lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Pinned), snoozedUntil, state.MovedFromPath, movedAt, createdAt, state.UpdatedAt.Unix())
+	`, state.Path, state.Name, string(state.Kind), lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Archived), boolToInt(state.Pinned), snoozedUntil, state.MovedFromPath, movedAt, createdAt, state.UpdatedAt.Unix())
 	if err != nil {
 		return err
 	}
@@ -2190,8 +2213,8 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at, created_at, updated_at)
-		SELECT ?, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, pinned, snoozed_until, last_session_seen_at, run_command, ?, ?, created_at, ?
+		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at, created_at, updated_at)
+		SELECT ?, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, ?, ?, created_at, ?
 		FROM projects
 		WHERE path = ?
 	`, newPath, oldPath, movedAt.Unix(), movedAt.Unix(), oldPath)
@@ -2252,6 +2275,7 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 		manuallyAdded bool
 		pinned        bool
 		forgotten     bool
+		archived      bool
 		snoozedUntil  sql.NullInt64
 		lastSeenAt    sql.NullInt64
 		runCommand    string
@@ -2261,18 +2285,19 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 
 	loadProject := func(path string) (projectRow, error) {
 		var row projectRow
-		var manuallyAdded, pinned, forgotten int
+		var manuallyAdded, pinned, forgotten, archived int
 		err := tx.QueryRowContext(ctx, `
-			SELECT manually_added, pinned, forgotten, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at
+			SELECT manually_added, pinned, forgotten, archived, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at
 			FROM projects
 			WHERE path = ?
-		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &row.snoozedUntil, &row.lastSeenAt, &row.runCommand, &row.movedFromPath, &row.movedAt)
+		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &archived, &row.snoozedUntil, &row.lastSeenAt, &row.runCommand, &row.movedFromPath, &row.movedAt)
 		if err != nil {
 			return projectRow{}, err
 		}
 		row.manuallyAdded = manuallyAdded != 0
 		row.pinned = pinned != 0
 		row.forgotten = forgotten != 0
+		row.archived = archived != 0
 		return row, nil
 	}
 
@@ -2293,6 +2318,7 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 
 	mergedPinned := oldProject.pinned || newProject.pinned
 	mergedForgotten := oldProject.forgotten || newProject.forgotten
+	mergedArchived := oldProject.archived || newProject.archived
 	mergedManuallyAdded := oldProject.manuallyAdded || newProject.manuallyAdded
 	mergedRunCommand := strings.TrimSpace(newProject.runCommand)
 	if mergedRunCommand == "" {
@@ -2317,6 +2343,7 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 		SET manually_added = ?,
 			pinned = ?,
 			forgotten = ?,
+			archived = ?,
 			snoozed_until = ?,
 			last_session_seen_at = ?,
 			run_command = ?,
@@ -2324,7 +2351,7 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 			moved_at = ?,
 			updated_at = ?
 		WHERE path = ?
-	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), nullableInt64Value(mergedSnoozedUntil), nullableInt64Value(mergedLastSeenAt), mergedRunCommand, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
+	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), boolToInt(mergedArchived), nullableInt64Value(mergedSnoozedUntil), nullableInt64Value(mergedLastSeenAt), mergedRunCommand, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
 		return err
 	}
 
@@ -2825,7 +2852,7 @@ func (s *Store) ClaimNextPendingSessionClassification(ctx context.Context, stale
 			sc.last_error, sc.source_updated_at, sc.created_at, sc.stage_started_at, sc.updated_at, sc.completed_at
 		FROM session_classifications sc
 		JOIN projects p ON p.path = sc.project_path
-		WHERE sc.status = ? AND p.in_scope = 1
+		WHERE sc.status = ? AND p.in_scope = 1 AND p.archived = 0
 		  AND NOT EXISTS (
 			SELECT 1
 			FROM session_classifications sc_pref
@@ -3211,7 +3238,7 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 
 	query := fmt.Sprintf(`
 		SELECT
-			p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
+			p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.archived, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -3906,6 +3933,7 @@ func (s *Store) ClaimNextQueuedTodoWorktreeSuggestion(ctx context.Context, debou
 		WHERE tws.status = ?
 		  AND pt.done = 0
 		  AND p.in_scope = 1
+		  AND p.archived = 0
 		  AND tws.updated_at <= ?
 		ORDER BY p.attention_score DESC, pt.updated_at ASC, tws.updated_at ASC
 		LIMIT 1
@@ -4444,6 +4472,11 @@ func (s *Store) ListIgnoredProjects(ctx context.Context) ([]model.IgnoredProject
 
 func (s *Store) SetProjectScope(ctx context.Context, path string, inScope bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET in_scope = ?, updated_at = ? WHERE path = ?`, boolToInt(inScope), time.Now().Unix(), path)
+	return err
+}
+
+func (s *Store) SetProjectArchived(ctx context.Context, path string, archived bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET archived = ?, updated_at = ? WHERE path = ?`, boolToInt(archived), time.Now().Unix(), path)
 	return err
 }
 

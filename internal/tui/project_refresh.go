@@ -399,7 +399,7 @@ func (m *Model) requestProjectInvalidationCmd(intent projectInvalidationIntent) 
 
 func actionChangesProjectStructure(action string) bool {
 	switch strings.TrimSpace(action) {
-	case "forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted":
+	case "archive_project", "unarchive_project", "forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted":
 		return true
 	default:
 		return false
@@ -475,13 +475,17 @@ func splitProjectArchiveSummaries(projects []model.ProjectSummary) ([]model.Proj
 	active := make([]model.ProjectSummary, 0, len(projects))
 	archived := make([]model.ProjectSummary, 0)
 	for _, project := range projects {
-		if project.InScope {
+		if projectSummaryArchived(project) {
+			archived = append(archived, project)
+		} else {
 			active = append(active, project)
-			continue
 		}
-		archived = append(archived, project)
 	}
 	return active, archived
+}
+
+func projectSummaryArchived(project model.ProjectSummary) bool {
+	return project.Archived || !project.InScope
 }
 
 func (m Model) loadDetailCmd(path string) tea.Cmd {

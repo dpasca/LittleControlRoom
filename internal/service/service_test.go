@@ -3085,6 +3085,62 @@ func TestScanOnceForgottenMissingProjectStaysHiddenUntilRediscovered(t *testing.
 	}
 }
 
+func TestArchiveProjectMovesProjectOutOfCurrentList(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "active-project")
+	now := time.Now().UTC()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "active-project",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.ArchiveProject(ctx, projectPath); err != nil {
+		t.Fatalf("ArchiveProject() error = %v", err)
+	}
+
+	current, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(current) error = %v", err)
+	}
+	if len(current) != 0 {
+		t.Fatalf("archived project should be hidden from current list, got %#v", current)
+	}
+
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("ListProjects(all) error = %v", err)
+	}
+	if len(all) != 1 || !all[0].Archived {
+		t.Fatalf("historical list should include archived project, got %#v", all)
+	}
+
+	if err := svc.UnarchiveProject(ctx, projectPath); err != nil {
+		t.Fatalf("UnarchiveProject() error = %v", err)
+	}
+	current, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(current after unarchive) error = %v", err)
+	}
+	if len(current) != 1 || current[0].Archived {
+		t.Fatalf("unarchived project should return to current list, got %#v", current)
+	}
+}
+
 func TestScanOnceKeepsConcurrentForgottenMissingProjectHidden(t *testing.T) {
 	t.Parallel()
 

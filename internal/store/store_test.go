@@ -46,6 +46,17 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 		t.Fatalf("upsert historical project: %v", err)
 	}
 	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           "/tmp/archived",
+		Name:           "archived",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		Archived:       true,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("upsert archived project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
 		Path:           "/tmp/forgotten",
 		Name:           "forgotten",
 		Status:         model.StatusIdle,
@@ -72,8 +83,17 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list all projects: %v", err)
 	}
-	if len(allProjects) != 2 {
-		t.Fatalf("expected 2 non-forgotten projects when including historical, got %d", len(allProjects))
+	if len(allProjects) != 3 {
+		t.Fatalf("expected 3 non-forgotten projects when including historical, got %d", len(allProjects))
+	}
+	archivedFound := false
+	for _, project := range allProjects {
+		if project.Path == "/tmp/archived" && project.Archived {
+			archivedFound = true
+		}
+	}
+	if !archivedFound {
+		t.Fatalf("expected archived project in historical list, got %#v", allProjects)
 	}
 }
 
@@ -1303,6 +1323,9 @@ func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	}
 	if !projects[0].InScope {
 		t.Fatalf("expected migrated row to default to in_scope=true")
+	}
+	if projects[0].Archived {
+		t.Fatalf("expected migrated row to default to archived=false")
 	}
 	if !projects[0].PresentOnDisk {
 		t.Fatalf("expected migrated row to default to present_on_disk=true")

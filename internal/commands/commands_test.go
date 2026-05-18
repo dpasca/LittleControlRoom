@@ -618,6 +618,42 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "archive",
+			raw:  "/archive",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindArchive {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindArchive)
+				}
+				if inv.Canonical != "/archive" {
+					t.Fatalf("canonical = %q, want /archive", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "unarchive",
+			raw:  "/unarchive",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindUnarchive {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindUnarchive)
+				}
+				if inv.Canonical != "/unarchive" {
+					t.Fatalf("canonical = %q, want /unarchive", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "restore alias",
+			raw:  "/restore",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindUnarchive {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindUnarchive)
+				}
+				if inv.Canonical != "/unarchive" {
+					t.Fatalf("canonical = %q, want /unarchive", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "remove",
 			raw:  "/remove",
 			check: func(t *testing.T, inv Invocation) {
@@ -759,6 +795,16 @@ func TestSuggestionsIncludeAICommand(t *testing.T) {
 	}
 	if got[0].Insert != "/ai" {
 		t.Fatalf("first /a suggestion = %q, want /ai", got[0].Insert)
+	}
+}
+
+func TestSuggestionsIncludeArchiveCommand(t *testing.T) {
+	got := Suggestions("/arch")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/arch) returned none")
+	}
+	if got[0].Insert != "/archive" {
+		t.Fatalf("first /arch suggestion = %q, want /archive", got[0].Insert)
 	}
 }
 

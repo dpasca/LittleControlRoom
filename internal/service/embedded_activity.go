@@ -71,6 +71,7 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 		repoAheadCount:       detail.Summary.RepoAheadCount,
 		repoBehindCount:      detail.Summary.RepoBehindCount,
 		forgotten:            detail.Summary.Forgotten,
+		archived:             detail.Summary.Archived,
 	}, runtime.cfg, runtime.classifier, ScanOptions{}); err != nil {
 		return err
 	}

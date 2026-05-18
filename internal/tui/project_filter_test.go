@@ -1,12 +1,18 @@
 package tui
 
 import (
+	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/commands"
+	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
+	"lcroom/internal/store"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -150,7 +156,8 @@ func TestProjectArchiveTabSwitchesVisibleProjects(t *testing.T) {
 	archived := model.ProjectSummary{
 		Name:                "archived-demo",
 		Path:                "/tmp/archived-demo",
-		InScope:             false,
+		InScope:             true,
+		Archived:            true,
 		PresentOnDisk:       true,
 		LatestSessionFormat: "modern",
 	}
@@ -191,7 +198,8 @@ func TestRenderedListShowsProjectArchiveTabs(t *testing.T) {
 		archivedProjects: []model.ProjectSummary{{
 			Name:          "archived-demo",
 			Path:          "/tmp/archived-demo",
-			InScope:       false,
+			InScope:       true,
+			Archived:      true,
 			PresentOnDisk: true,
 		}},
 		projects: []model.ProjectSummary{{
@@ -216,5 +224,93 @@ func TestRenderedListShowsProjectArchiveTabs(t *testing.T) {
 	list = ansi.Strip(m.renderProjectList(120, 12))
 	if !strings.Contains(list, "[Archived 1]") {
 		t.Fatalf("rendered archived list = %q, want selected archived tab", list)
+	}
+}
+
+func TestDispatchArchiveAndUnarchiveProjectCommands(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "archive-demo")
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "archive-demo",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active projects: %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: active,
+		projects:    active,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+	_, archiveCmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindArchive, Canonical: "/archive"})
+	if archiveCmd == nil {
+		t.Fatalf("/archive should return an action command")
+	}
+	archiveMsg, ok := archiveCmd().(actionMsg)
+	if !ok {
+		t.Fatalf("/archive command returned unexpected message")
+	}
+	if archiveMsg.err != nil {
+		t.Fatalf("/archive action error = %v", archiveMsg.err)
+	}
+	if archiveMsg.status != `Archived "archive-demo"` {
+		t.Fatalf("archive status = %q, want archive confirmation", archiveMsg.status)
+	}
+	active, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after archive: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("archived project should leave active list, got %#v", active)
+	}
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("list historical after archive: %v", err)
+	}
+	if len(all) != 1 || !all[0].Archived {
+		t.Fatalf("historical projects = %#v, want archived project", all)
+	}
+
+	m.archiveMode = projectArchiveArchived
+	m.archivedProjects = all
+	m.projects = all
+	_, unarchiveCmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindUnarchive, Canonical: "/unarchive"})
+	if unarchiveCmd == nil {
+		t.Fatalf("/unarchive should return an action command")
+	}
+	unarchiveMsg, ok := unarchiveCmd().(actionMsg)
+	if !ok {
+		t.Fatalf("/unarchive command returned unexpected message")
+	}
+	if unarchiveMsg.err != nil {
+		t.Fatalf("/unarchive action error = %v", unarchiveMsg.err)
+	}
+	if unarchiveMsg.status != `Unarchived "archive-demo"` {
+		t.Fatalf("unarchive status = %q, want unarchive confirmation", unarchiveMsg.status)
+	}
+	active, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after unarchive: %v", err)
+	}
+	if len(active) != 1 || active[0].Archived {
+		t.Fatalf("unarchived project should return to active list, got %#v", active)
 	}
 }

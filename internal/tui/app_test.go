@@ -4871,6 +4871,7 @@ func TestProjectSummaryMsgKeepsLatestAssessmentDisplayDuringRefresh(t *testing.T
 		Path:                            "/tmp/demo",
 		Name:                            "demo",
 		PresentOnDisk:                   true,
+		InScope:                         true,
 		LatestSessionID:                 "codex:ses_current",
 		LatestSessionFormat:             "modern",
 		LatestSessionClassification:     model.ClassificationCompleted,
@@ -4881,6 +4882,7 @@ func TestProjectSummaryMsgKeepsLatestAssessmentDisplayDuringRefresh(t *testing.T
 		Path:                                     previous.Path,
 		Name:                                     previous.Name,
 		PresentOnDisk:                            true,
+		InScope:                                  true,
 		LatestSessionID:                          previous.LatestSessionID,
 		LatestSessionFormat:                      previous.LatestSessionFormat,
 		LatestSessionClassification:              model.ClassificationRunning,
@@ -21505,7 +21507,7 @@ func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 	if !strings.Contains(rendered, "Page Up/Page Down") || !strings.Contains(rendered, "changes section") {
 		t.Fatalf("View() should keep the settings section legend visible at 24 rows: %q", rendered)
 	}
-	if !strings.Contains(rendered, "│  A") || !strings.Contains(rendered, "│ Pa") {
+	if !strings.Contains(rendered, "│  [") || !strings.Contains(rendered, "│ Pa") {
 		t.Fatalf("View() should preserve background list and detail context under the settings modal: %q", rendered)
 	}
 }
@@ -23493,7 +23495,7 @@ func TestBusTodoSuggestionFailureAddsErrorLogEntry(t *testing.T) {
 }
 
 func TestActionChangesProjectStructure(t *testing.T) {
-	for _, action := range []string{"forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted"} {
+	for _, action := range []string{"archive_project", "unarchive_project", "forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted"} {
 		if !actionChangesProjectStructure(action) {
 			t.Fatalf("actionChangesProjectStructure(%q) = false, want true", action)
 		}
@@ -25091,7 +25093,7 @@ func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
 	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "slash-command palette") {
 		t.Fatalf("View() should show the help overlay content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "ATTN") || !strings.Contains(rendered, "Summary") || !strings.Contains(rendered, "Path:") {
+	if !strings.Contains(rendered, "[Activ") || !strings.Contains(rendered, "Summary") || !strings.Contains(rendered, "Path:") {
 		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
 	}
 }

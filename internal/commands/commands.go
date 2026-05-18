@@ -60,6 +60,8 @@ const (
 	KindEvents         Kind = "events"
 	KindIgnore         Kind = "ignore"
 	KindIgnored        Kind = "ignored"
+	KindArchive        Kind = "archive"
+	KindUnarchive      Kind = "unarchive"
 	KindRemove         Kind = "remove"
 	KindFocus          Kind = "focus"
 	KindPrivacy        Kind = "privacy"
@@ -164,6 +166,8 @@ var specs = []Spec{
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
 	{Name: "ignored", Usage: "/ignored", Summary: "Review ignored project names and restore them"},
+	{Name: "archive", Usage: "/archive", Summary: "Move the selected project to the Archived tab"},
+	{Name: "unarchive", Usage: "/unarchive", Summary: "Move the selected project back to Active when it is in scope"},
 	{Name: "remove", Usage: "/remove", Summary: "Confirm, then make the selected item go away safely"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
 	{Name: "privacy", Usage: "/privacy on|off|toggle", Summary: "Toggle demo privacy mode that hides project name patterns"},
@@ -586,6 +590,16 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /ignored")
 		}
 		return Invocation{Kind: KindIgnored, Canonical: "/ignored"}, nil
+	case "archive":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /archive")
+		}
+		return Invocation{Kind: KindArchive, Canonical: "/archive"}, nil
+	case "unarchive", "restore":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /unarchive")
+		}
+		return Invocation{Kind: KindUnarchive, Canonical: "/unarchive"}, nil
 	case "remove", "delete", "forget":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /remove")

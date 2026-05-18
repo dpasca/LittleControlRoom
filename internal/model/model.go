@@ -396,6 +396,7 @@ type ProjectState struct {
 	Forgotten            bool
 	ManuallyAdded        bool
 	InScope              bool
+	Archived             bool
 	Pinned               bool
 	SnoozedUntil         *time.Time
 	RunCommand           string
@@ -430,6 +431,7 @@ type ProjectSummary struct {
 	Forgotten                                     bool
 	ManuallyAdded                                 bool
 	InScope                                       bool
+	Archived                                      bool
 	Pinned                                        bool
 	SnoozedUntil                                  *time.Time
 	OpenTODOCount                                 int
