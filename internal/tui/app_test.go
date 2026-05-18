@@ -16205,7 +16205,7 @@ func TestVisibleCodexCurrentBackgroundBrowserPageUsesVisibleBrowserCopyWhenCache
 	}
 }
 
-func TestVisibleCodexStaleResumedBrowserPageDoesNotOfferReveal(t *testing.T) {
+func TestVisibleCodexStaleResumedBrowserPageDoesNotRenderPersistentNoticeOrOfferReveal(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -16241,11 +16241,11 @@ func TestVisibleCodexStaleResumedBrowserPageDoesNotOfferReveal(t *testing.T) {
 	}
 
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(session.snapshot, 140))
-	if !strings.Contains(renderedBlocks, "Previous browser page is no longer attached: https://kakaku.com/item/K0001687585/pricehistory/") {
-		t.Fatalf("renderCodexBrowserPanel() missing stale browser page message: %q", renderedBlocks)
+	if strings.Contains(renderedBlocks, "Previous browser page is no longer attached") {
+		t.Fatalf("renderCodexBrowserPanel() rendered stale browser page notice: %q", renderedBlocks)
 	}
-	if !strings.Contains(renderedBlocks, "This page came from the resumed transcript, so ctrl+o cannot reveal it.") {
-		t.Fatalf("renderCodexBrowserPanel() missing stale browser page explanation: %q", renderedBlocks)
+	if strings.Contains(renderedBlocks, "resumed transcript") {
+		t.Fatalf("renderCodexBrowserPanel() rendered persistent stale browser page explanation: %q", renderedBlocks)
 	}
 	if strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
 		t.Fatalf("renderCodexBrowserPanel() offered stale ctrl+o reveal hint: %q", renderedBlocks)

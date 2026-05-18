@@ -2502,10 +2502,8 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 		return nil
 	}
 	if snapshot.CurrentBrowserPageStale {
-		return []string{
-			fitFooterWidth("Previous browser page is no longer attached: "+pageURL, width),
-			fitFooterWidth("This page came from the resumed transcript, so ctrl+o cannot reveal it. Ask the assistant to reopen the page if you still need it.", width),
-		}
+		// URLs recovered from resumed transcripts are historical context, not live controls.
+		return nil
 	}
 	lines := []string{fitFooterWidth(m.managedBrowserCurrentPageLabel(snapshot)+pageURL, width)}
 	if hint := m.managedBrowserCurrentPageHint(snapshot); hint != "" {
