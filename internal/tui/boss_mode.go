@@ -74,25 +74,41 @@ type bossHostNoticePersistedMsg struct {
 }
 
 func (m Model) updateBossHostNotice(content string) (Model, tea.Cmd) {
-	return m.updateBossHostNoticeWithOptions(bossHostNotice{Content: content})
+	return m.recordBossHostNotice(bossHostNotice{Content: content})
 }
 
 func (m Model) updateBossHostChatNotice(content string) (Model, tea.Cmd) {
-	return m.updateBossHostNoticeWithOptions(bossHostNotice{Content: content, AnnounceInChat: true})
+	return m.recordBossHostNotice(bossHostNotice{Content: content, AnnounceInChat: true})
 }
 
-func (m Model) updateBossHostNoticeWithOptions(notice bossHostNotice) (Model, tea.Cmd) {
-	content := strings.TrimSpace(notice.Content)
-	if content == "" {
+func (m Model) recordBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
+	var ok bool
+	notice, ok = normalizeBossHostNotice(notice)
+	if !ok {
 		return m, nil
 	}
-	notice.Content = content
-	if m.bossMode || (m.bossModelActive && m.bossModel.HostNoticesReady()) {
-		return m.applyBossHostNotice(notice)
+	if m.canDeliverBossHostNotice() {
+		return m.deliverBossHostNotice(notice)
 	}
-	persistCmd := m.persistBossHostChatNoticeCmd(notice)
+	return m.queueBossHostNotice(notice)
+}
+
+func normalizeBossHostNotice(notice bossHostNotice) (bossHostNotice, bool) {
+	content := strings.TrimSpace(notice.Content)
+	if content == "" {
+		return bossHostNotice{}, false
+	}
+	notice.Content = content
+	return notice, true
+}
+
+func (m Model) canDeliverBossHostNotice() bool {
+	return m.bossMode || (m.bossModelActive && m.bossModel.HostNoticesReady())
+}
+
+func (m Model) queueBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
 	m.pendingBossHostNotices = appendPendingBossHostNotice(m.pendingBossHostNotices, notice)
-	return m, persistCmd
+	return m, m.persistBossHostChatNoticeCmd(notice)
 }
 
 func (m Model) persistBossHostChatNoticeCmd(notice bossHostNotice) tea.Cmd {
@@ -119,7 +135,7 @@ func (m Model) persistBossHostChatNoticeCmd(notice bossHostNotice) tea.Cmd {
 	}
 }
 
-func (m Model) applyBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
+func (m Model) deliverBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
 	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat, Handoff: notice.Handoff})
 	m.bossModel = normalizeBossModel(updated)
@@ -135,7 +151,7 @@ func (m Model) drainPendingBossHostNotices() (Model, tea.Cmd) {
 	cmds := make([]tea.Cmd, 0, len(notices))
 	for _, notice := range notices {
 		var cmd tea.Cmd
-		m, cmd = m.applyBossHostNotice(notice)
+		m, cmd = m.deliverBossHostNotice(notice)
 		cmds = append(cmds, cmd)
 	}
 	return m, tea.Batch(cmds...)
@@ -668,7 +684,7 @@ func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool
 	if strings.TrimSpace(notice.Content) == "" {
 		return m, nil
 	}
-	return m.updateBossHostNoticeWithOptions(notice)
+	return m.recordBossHostNotice(notice)
 }
 
 func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.AgentTask, snapshot codexapp.Snapshot, session codexapp.Session) tea.Cmd {
