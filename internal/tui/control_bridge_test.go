@@ -758,6 +758,70 @@ func TestExecuteProjectArchiveControlArchivesAndUnarchivesProject(t *testing.T) 
 	}
 }
 
+func TestExecuteProjectArchiveControlArchivesBatch(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectOne := filepath.Join(t.TempDir(), "quickgame_01")
+	projectTwo := filepath.Join(t.TempDir(), "quickgame_02")
+	for _, project := range []model.ProjectState{
+		{Path: projectOne, Name: "quickgame_01", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()},
+		{Path: projectTwo, Name: "quickgame_02", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()},
+	} {
+		if err := st.UpsertProjectState(ctx, project); err != nil {
+			t.Fatalf("seed project: %v", err)
+		}
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active projects: %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		projects:    projects,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityProjectArchive, control.ProjectArchiveInput{
+		Action: control.ProjectArchiveActionArchive,
+		Resources: []control.ResourceRef{
+			{Kind: control.ResourceProject, ProjectPath: projectOne, Label: "quickgame_01"},
+			{Kind: control.ResourceProject, ProjectPath: projectTwo, Label: "quickgame_02"},
+		},
+	}))
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	}
+	if got.status != "Archived 2 projects" {
+		t.Fatalf("status = %q, want batch archive confirmation", got.status)
+	}
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after archive: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("archived projects should leave active list, got %#v", active)
+	}
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("list historical after archive: %v", err)
+	}
+	for _, project := range all {
+		if !project.Archived {
+			t.Fatalf("project %s archived = false, want true", project.Path)
+		}
+	}
+}
+
 func TestExecuteBossControlInvocationSteersActiveCodexSessionPrompt(t *testing.T) {
 	projectPath := "/tmp/control-active-session"
 	liveSession := &fakeCodexSession{

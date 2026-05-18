@@ -168,6 +168,30 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 			}
 			return strings.Join(lines, "\n")
 		}
+	case control.CapabilityProjectArchive:
+		var input control.ProjectArchiveInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			verb := "archive"
+			if input.Action == control.ProjectArchiveActionUnarchive {
+				verb = "unarchive"
+			}
+			target := firstNonEmpty(input.ProjectName, input.ProjectPath, "selected project")
+			if len(input.Resources) > 0 {
+				target = controlResourceSummary(input.Resources)
+			}
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: "+verb+" project records", width)),
+				"",
+				renderBossControlDetail("Targets", target, width),
+				renderBossControlDetail("Count", fmt.Sprintf("%d", maxInt(1, len(input.Resources))), width),
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", verb, uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+				}, "   "),
+			}
+			return strings.Join(lines, "\n")
+		}
 	case control.CapabilityTodoAdd:
 		var input control.TodoAddInput
 		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {

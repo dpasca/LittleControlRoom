@@ -761,7 +761,7 @@ func TestAssistantReadOnlyRouteErrorFallsBackToHelmPlanner(t *testing.T) {
 	}
 }
 
-func TestAssistantStreamFinalAnswerUsesHelmAfterUtilityRoute(t *testing.T) {
+func TestAssistantStreamUsesPlannerAnswerAfterUtilityRoute(t *testing.T) {
 	t.Parallel()
 
 	router := &fakeJSONSchemaRunner{
@@ -778,13 +778,7 @@ func TestAssistantStreamFinalAnswerUsesHelmAfterUtilityRoute(t *testing.T) {
 			Usage:      model.LLMUsage{TotalTokens: 13},
 		}},
 	}
-	runner := &fakeStreamingTextRunner{
-		resp: llm.TextResponse{
-			Model:      "gpt-5.5",
-			OutputText: "Final helm answer.",
-			Usage:      model.LLMUsage{TotalTokens: 17},
-		},
-	}
+	runner := &fakeStreamingTextRunner{err: errors.New("final text runner should not be called")}
 	assistant := &Assistant{
 		runner:       runner,
 		planner:      planner,
@@ -807,14 +801,14 @@ func TestAssistantStreamFinalAnswerUsesHelmAfterUtilityRoute(t *testing.T) {
 	if got, want := planner.reqs[0].Model, "gpt-5.5"; got != want {
 		t.Fatalf("planner model = %q, want helm model %q", got, want)
 	}
-	if got, want := runner.req.Model, "gpt-5.5"; got != want {
-		t.Fatalf("final text model = %q, want helm model %q", got, want)
+	if runner.req.Model != "" {
+		t.Fatalf("final text runner was called with model %q", runner.req.Model)
 	}
-	if got, want := resp.Content, "Final helm answer."; got != want {
+	if got, want := resp.Content, "Planner draft."; got != want {
 		t.Fatalf("Content = %q, want %q", got, want)
 	}
-	if got, want := resp.Usage.TotalTokens, int64(35); got != want {
-		t.Fatalf("usage total = %d, want router plus planner plus final answer usage", got)
+	if got, want := resp.Usage.TotalTokens, int64(18); got != want {
+		t.Fatalf("usage total = %d, want router plus planner usage", got)
 	}
 }
 
@@ -2047,6 +2041,60 @@ func TestAssistantReplyCanProposeProjectArchiveControl(t *testing.T) {
 	}
 }
 
+func TestAssistantReplyCanProposeBatchProjectArchiveControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:                 bossActionProposeControl,
+				ControlCapability:    "project.set_archive_state",
+				ProjectArchiveAction: "archive",
+				Resources: []control.ResourceRef{
+					{Kind: control.ResourceProject, ProjectPath: "/tmp/repos/quickgame_01", Label: "quickgame_01"},
+					{Kind: control.ResourceProject, ProjectPath: "/tmp/repos/quickgame_02", Label: "quickgame_02"},
+				},
+				Reason: "The user asked to archive all matching regular projects.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 17},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Context search exact project matches include quickgame_01 and quickgame_02.",
+		Messages:   []ChatMessage{{Role: "user", Content: "archive all quickgame projects"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want project.set_archive_state proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityProjectArchive {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Archive 2 projects?") ||
+		!strings.Contains(resp.Content, "quickgame_01") {
+		t.Fatalf("proposal content = %q, want batch project archive confirmation", resp.Content)
+	}
+	var input control.ProjectArchiveInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.ProjectPath != "" || input.ProjectName != "" ||
+		input.Action != control.ProjectArchiveActionArchive ||
+		len(input.Resources) != 2 ||
+		input.Resources[0].ProjectPath != "/tmp/repos/quickgame_01" {
+		t.Fatalf("invocation args = %#v", input)
+	}
+}
+
 func TestAssistantReplyReportsInvalidControlProposalAsActionError(t *testing.T) {
 	t.Parallel()
 
@@ -2118,14 +2166,7 @@ func TestAssistantReplyStreamEmitsToolCallsAndTextDeltas(t *testing.T) {
 			},
 		},
 	}
-	runner := &fakeStreamingTextRunner{
-		deltas: []string{"Focus ", "Alpha first."},
-		resp: llm.TextResponse{
-			Model:      "gpt-test",
-			OutputText: "Focus Alpha first.",
-			Usage:      model.LLMUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
-		},
-	}
+	runner := &fakeStreamingTextRunner{err: errors.New("final text runner should not be called")}
 	assistant := &Assistant{
 		runner:  runner,
 		planner: planner,
@@ -2146,8 +2187,11 @@ func TestAssistantReplyStreamEmitsToolCallsAndTextDeltas(t *testing.T) {
 	if resp.Content != "Focus Alpha first." {
 		t.Fatalf("Content = %q", resp.Content)
 	}
-	if resp.Usage.TotalTokens != 45 {
-		t.Fatalf("total usage = %d, want 45", resp.Usage.TotalTokens)
+	if runner.req.Model != "" {
+		t.Fatalf("final text runner was called with model %q", runner.req.Model)
+	}
+	if resp.Usage.TotalTokens != 38 {
+		t.Fatalf("total usage = %d, want 38", resp.Usage.TotalTokens)
 	}
 	var toolStates []string
 	var text string
@@ -2165,8 +2209,11 @@ func TestAssistantReplyStreamEmitsToolCallsAndTextDeltas(t *testing.T) {
 	if text != "Focus Alpha first." {
 		t.Fatalf("streamed text = %q", text)
 	}
-	if !strings.Contains(runner.req.Messages[len(runner.req.Messages)-1].Content, "Decide rollout shape") {
-		t.Fatalf("final text request missing tool result:\n%s", runner.req.Messages[len(runner.req.Messages)-1].Content)
+	if len(planner.reqs) < 2 {
+		t.Fatalf("planner requests = %d, want follow-up after tool result", len(planner.reqs))
+	}
+	if !strings.Contains(planner.reqs[1].UserText, "Decide rollout shape") {
+		t.Fatalf("planner follow-up request missing tool result:\n%s", planner.reqs[1].UserText)
 	}
 }
 

@@ -105,6 +105,7 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			ProjectPath: strings.TrimSpace(action.ProjectPath),
 			ProjectName: strings.TrimSpace(action.ProjectName),
 			Action:      control.ProjectArchiveAction(strings.TrimSpace(action.ProjectArchiveAction)),
+			Resources:   append([]control.ResourceRef(nil), action.Resources...),
 		}
 	case control.CapabilityScratchTaskArchive:
 		payload = control.ScratchTaskArchiveInput{
@@ -301,13 +302,25 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		if err := json.Unmarshal(inv.Args, &input); err != nil {
 			return "", err
 		}
-		target := firstNonEmpty(input.ProjectName, input.ProjectPath)
 		verb := "Archive"
 		destination := "Archived"
 		if input.Action == control.ProjectArchiveActionUnarchive {
 			verb = "Unarchive"
 			destination = "Active"
 		}
+		if len(input.Resources) > 0 {
+			targets := controlResourceSummary(input.Resources)
+			lines := []string{
+				fmt.Sprintf("%s %d projects?", verb, len(input.Resources)),
+				"",
+				fmt.Sprintf("Targets: %s", targets),
+				fmt.Sprintf("This moves the projects to the %s tab without changing files on disk.", destination),
+				"",
+				"Enter confirms; Esc cancels.",
+			}
+			return strings.TrimSpace(strings.Join(lines, "\n")), nil
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath)
 		lines := []string{
 			fmt.Sprintf("%s project %s?", verb, target),
 			"",

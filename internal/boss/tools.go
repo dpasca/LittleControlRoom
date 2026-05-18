@@ -886,6 +886,7 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 		}
 		results = filterContextSearchResultsForBossPrivacy(results, view, privatePaths)
 	}
+	exactProjectMatches, exactProjectTotal, exactProjectErr := e.exactProjectMatchesForContext(ctx, query, action.IncludeHistorical, view, clampBossLimit(action.Limit, 80, 80))
 
 	now := e.now()
 	lines := []string{
@@ -901,6 +902,24 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 	}
 	if note != "" {
 		lines = append(lines, "Target note: "+note)
+	}
+	if exactProjectErr == nil && exactProjectTotal > 0 {
+		lines = append(lines, fmt.Sprintf("Exact project name/path matches: showing %d of %d.", len(exactProjectMatches), exactProjectTotal))
+		for i, project := range exactProjectMatches {
+			state := "active"
+			if project.Archived {
+				state = "archived"
+			} else if !project.InScope {
+				state = "outside_scope"
+			}
+			lines = append(lines, fmt.Sprintf("   %d. %s | %s | kind=%s | path=%s", i+1, displayProjectName(project), state, model.NormalizeProjectKind(project.Kind), project.Path))
+		}
+		if exactProjectTotal > len(exactProjectMatches) {
+			lines = append(lines, fmt.Sprintf("   ... %d more exact project matches not shown", exactProjectTotal-len(exactProjectMatches)))
+		}
+		lines = append(lines, "   Batch control hint: for bulk project.set_archive_state, put exact targets in resources as kind=project with project_path and label.")
+	} else if exactProjectErr != nil {
+		lines = append(lines, "Exact project match lookup unavailable: "+exactProjectErr.Error())
 	}
 	for i, result := range results {
 		label := result.Source
@@ -937,6 +956,63 @@ func (e *QueryExecutor) searchContext(ctx context.Context, action bossAction, vi
 		lines = append(lines, "No project summaries, assessments, or cached session transcripts matched that query.")
 	}
 	return clippedToolResult(bossActionSearchContext, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) exactProjectMatchesForContext(ctx context.Context, query string, includeHistorical bool, view ViewContext, limit int) ([]model.ProjectSummary, int, error) {
+	if e == nil || e.store == nil {
+		return nil, 0, nil
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return nil, 0, nil
+	}
+	projects, err := e.store.ListProjects(ctx, includeHistorical)
+	if err != nil {
+		return nil, 0, err
+	}
+	projects = filterProjectSummariesForBossPrivacy(projects, view)
+	matches := make([]model.ProjectSummary, 0)
+	seen := map[string]struct{}{}
+	for _, project := range projects {
+		if !projectMatchesContextQuery(project, query) {
+			continue
+		}
+		key := filepath.Clean(strings.TrimSpace(project.Path))
+		if key == "" {
+			key = strings.ToLower(strings.TrimSpace(project.Name))
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		matches = append(matches, project)
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		left := strings.ToLower(displayProjectName(matches[i]))
+		right := strings.ToLower(displayProjectName(matches[j]))
+		if left != right {
+			return left < right
+		}
+		return matches[i].Path < matches[j].Path
+	})
+	total := len(matches)
+	if limit > 0 && len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return matches, total, nil
+}
+
+func projectMatchesContextQuery(project model.ProjectSummary, query string) bool {
+	for _, candidate := range []string{
+		project.Name,
+		project.Path,
+		filepath.Base(strings.TrimSpace(project.Path)),
+	} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(candidate)), query) {
+			return true
+		}
+	}
+	return false
 }
 
 type parsedContextCommand struct {

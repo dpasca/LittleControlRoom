@@ -817,11 +817,15 @@ func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArch
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	project, err := m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
+	targets, err := m.resolveProjectArchiveTargets(input)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	if len(targets) != 1 || len(input.Resources) > 0 {
+		return m.executeProjectArchiveBatchControlWithOutcome(input, targets)
+	}
+	project := targets[0]
 	switch model.NormalizeProjectKind(project.Kind) {
 	case model.ProjectKindAgentTask:
 		err := fmt.Errorf("agent tasks use agent_task.close with archived status: %s", project.Path)
@@ -878,6 +882,99 @@ func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArch
 		m.status = fmt.Sprintf("Unarchived %q; still in Archived because it is outside project scope", name)
 	}
 	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.ProjectArchiveInput, targets []model.ProjectSummary) controlInvocationOutcome {
+	archive := input.Action == control.ProjectArchiveActionArchive
+	for _, project := range targets {
+		switch model.NormalizeProjectKind(project.Kind) {
+		case model.ProjectKindAgentTask:
+			err := fmt.Errorf("agent tasks use agent_task.close with archived status: %s", project.Path)
+			m.status = "Control request failed: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		case model.ProjectKindScratchTask:
+			err := fmt.Errorf("scratch tasks use scratch_task.archive: %s", project.Path)
+			m.status = "Control request failed: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+	}
+
+	changed := 0
+	already := 0
+	for _, project := range targets {
+		if project.Archived == archive {
+			already++
+			continue
+		}
+		var err error
+		if archive {
+			err = m.svc.ArchiveProject(m.ctx, project.Path)
+		} else {
+			err = m.svc.UnarchiveProject(m.ctx, project.Path)
+		}
+		if err != nil {
+			m.status = "Control request failed: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		project.Archived = archive
+		m.upsertProjectSummary(project)
+		if normalizeProjectPath(m.detail.Summary.Path) == normalizeProjectPath(project.Path) {
+			m.detail.Summary = project
+		}
+		changed++
+	}
+
+	m.rebuildProjectList("")
+	m.syncDetailViewport(false)
+
+	verb := "Archived"
+	if !archive {
+		verb = "Unarchived"
+	}
+	switch {
+	case changed > 0 && already > 0:
+		m.status = fmt.Sprintf("%s %d projects; %d already matched that state", verb, changed, already)
+	case changed > 0:
+		m.status = fmt.Sprintf("%s %d projects", verb, changed)
+	default:
+		state := "archived"
+		if !archive {
+			state = "active"
+		}
+		m.status = fmt.Sprintf("All %d projects were already %s", len(targets), state)
+	}
+	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) resolveProjectArchiveTargets(input control.ProjectArchiveInput) ([]model.ProjectSummary, error) {
+	if len(input.Resources) == 0 {
+		project, err := m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
+		if err != nil {
+			return nil, err
+		}
+		return []model.ProjectSummary{project}, nil
+	}
+
+	targets := make([]model.ProjectSummary, 0, len(input.Resources))
+	seen := map[string]struct{}{}
+	for _, resource := range input.Resources {
+		path := firstNonEmptyTrimmed(resource.ProjectPath, resource.Path)
+		name := strings.TrimSpace(resource.Label)
+		project, err := m.resolveControlProjectRef(path, name)
+		if err != nil {
+			return nil, err
+		}
+		key := normalizeProjectPath(project.Path)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, project)
+	}
+	if len(targets) == 0 {
+		return nil, errors.New("project archive batch has no resolvable project resources")
+	}
+	return targets, nil
 }
 
 func (m Model) executeTodoAddControlWithOutcome(input control.TodoAddInput) controlInvocationOutcome {

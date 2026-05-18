@@ -163,6 +163,7 @@ type ProjectArchiveInput struct {
 	ProjectPath string               `json:"project_path"`
 	ProjectName string               `json:"project_name"`
 	Action      ProjectArchiveAction `json:"action"`
+	Resources   []ResourceRef        `json:"resources,omitempty"`
 }
 
 type TodoAddInput struct {
@@ -475,13 +476,22 @@ func NormalizeProjectArchiveInput(input ProjectArchiveInput) (ProjectArchiveInpu
 		input.ProjectPath = filepath.Clean(input.ProjectPath)
 	}
 	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	input.Resources = normalizeResourceRefs(input.Resources)
 	rawAction := strings.TrimSpace(string(input.Action))
 	input.Action = input.Action.Normalized()
-	if input.ProjectPath == "" && input.ProjectName == "" {
-		return ProjectArchiveInput{}, fmt.Errorf("project_path or project_name is required")
+	if input.ProjectPath == "" && input.ProjectName == "" && len(input.Resources) == 0 {
+		return ProjectArchiveInput{}, fmt.Errorf("project_path, project_name, or project resources are required")
 	}
 	if input.Action == "" {
 		return ProjectArchiveInput{}, fmt.Errorf("unsupported project archive action: %s", rawAction)
+	}
+	for _, resource := range input.Resources {
+		if resource.Kind != ResourceProject {
+			return ProjectArchiveInput{}, fmt.Errorf("project archive resources must use kind=%s", ResourceProject)
+		}
+		if resource.ProjectPath == "" && resource.Path == "" && resource.Label == "" {
+			return ProjectArchiveInput{}, fmt.Errorf("project archive resource needs project_path, path, or label")
+		}
 	}
 	return input, nil
 }
@@ -784,6 +794,26 @@ func normalizeResourceRefs(resources []ResourceRef) []ResourceRef {
 	return out
 }
 
+func resourceRefInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"kind":         map[string]any{"type": "string", "enum": []string{string(ResourceProject), string(ResourceEngineerSession), string(ResourceTodo), string(ResourceAgentTask), string(ResourceProcess), string(ResourcePort), string(ResourceFile)}},
+			"id":           map[string]any{"type": "string"},
+			"path":         map[string]any{"type": "string"},
+			"project_path": map[string]any{"type": "string"},
+			"provider":     map[string]any{"type": "string", "enum": []string{"", string(ProviderAuto), string(ProviderCodex), string(ProviderOpenCode), string(ProviderClaudeCode), string(ProviderLCAgent)}},
+			"session_id":   map[string]any{"type": "string"},
+			"todo_id":      map[string]any{"type": "integer"},
+			"pid":          map[string]any{"type": "integer"},
+			"port":         map[string]any{"type": "integer"},
+			"label":        map[string]any{"type": "string"},
+		},
+		"required": []string{"kind", "id", "path", "project_path", "provider", "session_id", "todo_id", "pid", "port", "label"},
+	}
+}
+
 func engineerSendPromptInputSchema() map[string]any {
 	return map[string]any{
 		"type":                 "object",
@@ -969,8 +999,13 @@ func projectArchiveInputSchema() map[string]any {
 					string(ProjectArchiveActionUnarchive),
 				},
 			},
+			"resources": map[string]any{
+				"type":        "array",
+				"items":       resourceRefInputSchema(),
+				"description": "Optional batch targets. Each resource must have kind=project and project_path, path, or label.",
+			},
 		},
-		"required": []string{"project_path", "project_name", "action"},
+		"required": []string{"project_path", "project_name", "action", "resources"},
 	}
 }
 

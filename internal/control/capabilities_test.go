@@ -72,6 +72,28 @@ func TestNormalizeProjectArchiveAction(t *testing.T) {
 	}
 }
 
+func TestNormalizeProjectArchiveInputAllowsProjectResources(t *testing.T) {
+	input, err := NormalizeProjectArchiveInput(ProjectArchiveInput{
+		Action: ProjectArchiveActionArchive,
+		Resources: []ResourceRef{{
+			Kind:        ResourceProject,
+			ProjectPath: " /tmp/repos/quickgame_01 ",
+			Label:       " quickgame_01 ",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeProjectArchiveInput() error = %v", err)
+	}
+	if input.ProjectPath != "" || input.ProjectName != "" {
+		t.Fatalf("single target fields = %q/%q, want empty batch target", input.ProjectPath, input.ProjectName)
+	}
+	if len(input.Resources) != 1 ||
+		input.Resources[0].ProjectPath != "/tmp/repos/quickgame_01" ||
+		input.Resources[0].Label != "quickgame_01" {
+		t.Fatalf("resources = %#v, want normalized project resource", input.Resources)
+	}
+}
+
 func TestEngineerSendPromptCapabilityMetadata(t *testing.T) {
 	capability, ok := CapabilityByName(CapabilityEngineerSendPrompt)
 	if !ok {
