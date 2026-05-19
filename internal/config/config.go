@@ -84,6 +84,11 @@ type AppConfig struct {
 	PrivacyMode               bool
 }
 
+const (
+	DefaultBossHelmModel    = "gpt-5.5"
+	DefaultBossUtilityModel = "gpt-5.4-mini"
+)
+
 func (c AppConfig) EffectiveAIBackend() AIBackend {
 	return ResolveAIBackend(c.AIBackend, c.OpenAIAPIKey)
 }

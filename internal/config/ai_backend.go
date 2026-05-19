@@ -114,7 +114,7 @@ func (b AIBackend) Label() string {
 	case AIBackendDisabled:
 		return "Disabled"
 	case AIBackendOpenAIAPI:
-		return "OpenAI API key"
+		return "OpenAI API"
 	case AIBackendCodex:
 		return "Codex"
 	case AIBackendOpenCode:

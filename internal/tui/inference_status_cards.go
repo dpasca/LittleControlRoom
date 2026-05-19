@@ -60,9 +60,9 @@ func bossChatRelationshipSummary(settings config.EditableSettings) string {
 	switch settings.BossChatBackend {
 	case config.AIBackendOpenAIAPI:
 		if settings.AIBackend == config.AIBackendOpenAIAPI {
-			return "Both use the saved OpenAI API key."
+			return "Both use the shared OpenAI API connection."
 		}
-		return "Boss chat uses the saved OpenAI API key; project reports stay separate."
+		return "Boss chat uses the shared OpenAI API connection; project reports stay separate."
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if settings.AIBackend == settings.BossChatBackend {
 			return "Both use " + settings.BossChatBackend.Label() + "."
@@ -116,7 +116,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 		if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
 			state = "ready"
 			stateStyle = footerPrimaryLabelStyle
-			detail = "Auto will use the saved OpenAI API key."
+			detail = "Auto will use the shared OpenAI API connection."
 		} else {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
@@ -132,9 +132,9 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 			stateStyle = detailWarningStyle
 			detail = "Needs a saved OpenAI API key."
 		} else if settings.AIBackend == config.AIBackendOpenAIAPI {
-			detail = "Uses the same saved OpenAI API key as project reports."
+			detail = "Uses the same OpenAI API connection as project reports."
 		} else {
-			detail = "Uses the saved OpenAI API key; project reports stay separate."
+			detail = "Uses the shared OpenAI API connection; project reports stay separate."
 		}
 	}
 	if backend == config.AIBackendMLX || backend == config.AIBackendOllama {

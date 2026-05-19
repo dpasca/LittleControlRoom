@@ -39,7 +39,7 @@ Requirements:
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
 - Claude Code installed locally if you want embedded Claude Code sessions.
-- At least one AI backend configured: Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key.
+- At least one AI backend configured: Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
 
 ### Prebuilt binaries
 
@@ -75,7 +75,7 @@ make install
 lcroom tui
 ```
 
-On the first run, LCR opens `/setup` if no AI backend is configured. `/setup` is the Getting Started view inside `/settings`: choose the backend for project reports, choose whether boss chat should use a separate direct-chat backend, then drill into only the fields that path needs. An OpenAI API key field appears only for OpenAI API choices or when a key is already saved; local endpoint fields appear only for MLX/Ollama choices. `/settings` keeps the same Getting Started section plus deeper AI/model, scope, browser, and advanced controls. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
+On the first run, LCR opens `/setup` if no AI backend is configured. `/setup` is the Getting Started view inside `/settings`: choose the backend for project reports, choose whether boss chat should use a separate realtime backend, then press Enter on a row to drill into only the fields that path needs. Shared connection fields, such as OpenAI API, MLX, or Ollama, appear inside those focused setup panels when selected. `/settings` keeps Providers & Models minimal as a connection/status inventory plus global model-display defaults. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
 
 <p align="center">
   <a href="docs/screenshots/setup.png">
@@ -88,7 +88,7 @@ On the first run, LCR opens `/setup` if no AI backend is configured. `/setup` is
 LCR separates embedded session providers from the backend used for background work such as summaries, classification, commit help, and TODO worktree suggestions.
 
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
-- Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or a direct OpenAI API key.
+- Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
 - Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
 - MLX and Ollama use OpenAI-compatible local endpoints, so they fit into the same background inference path without a separate integration surface.
 
@@ -119,7 +119,7 @@ The main TUI command palette opens with `/`.
 - `/view <ai|all>`: Switch between AI-linked and all tracked folders.
 - `/tab [active|archived|toggle]`: Switch the project list between Active and Archived tabs.
 - `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
-- `/settings`: Full preferences with Getting Started first, then Providers & Models, Project Scope, Browser, and Advanced.
+- `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Browser, and Advanced.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or paste an existing project path to add it directly.
 - `/new-task`: Create a scratch task folder under the default task root.
@@ -211,7 +211,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `a` or `/tab` to switch between Active and Archived project tabs, `/archive` and `/unarchive` to move regular projects between them, `f` or `/filter <text>` to narrow the project list, and `/pin` or `/snooze` to control attention. Use `/remove` when an item should go away by its safest matching action, `/ignore` for an exact-name hide rule, and `/ignored` to restore hidden names or paths.
-- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, provider-specific details only after they are relevant, and project search paths. Providers & Models keeps the same provider choices visible beside the currently relevant local endpoints, model overrides, and launch presets. Project Scope controls include/exclude paths and privacy patterns. Browser sets the Playwright window policy. Advanced holds experimental LCAgent settings and tuning knobs like refresh thresholds. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
+- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, LCAgent, and project search paths through focused setup panels. Shared provider connection fields are reused inside those panels, so the same OpenAI/MLX/Ollama settings are edited from whichever feature needs them. Providers & Models stays compact: connection status plus global launch/display defaults. Project Scope controls include/exclude paths and privacy patterns. Browser sets the Playwright window policy. Advanced holds refresh thresholds and low-level tuning knobs. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 

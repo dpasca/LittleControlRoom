@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
@@ -65,6 +66,16 @@ const (
 	settingsSectionScope          settingsSectionID = "scope"
 	settingsSectionBrowser        settingsSectionID = "browser"
 	settingsSectionAdvanced       settingsSectionID = "advanced"
+)
+
+type settingsDrilldownID string
+
+const (
+	settingsDrilldownNone           settingsDrilldownID = ""
+	settingsDrilldownProjectReports settingsDrilldownID = "project-reports"
+	settingsDrilldownBossChat       settingsDrilldownID = "boss-chat"
+	settingsDrilldownLCAgent        settingsDrilldownID = "lcagent"
+	settingsDrilldownProjectScope   settingsDrilldownID = "project-scope"
 )
 
 const settingsConfigIssueStatus = "LCAgent env file warning"
@@ -166,19 +177,8 @@ func settingsSections() []settingsSection {
 		{
 			id:    settingsSectionAI,
 			label: "Providers & Models",
-			hint:  "Choose the helpers for project reports and boss chat, then tune the model fields only when you need more control.",
+			hint:  "A compact inventory of shared provider connections and global model display defaults. Use Getting Started for feature setup.",
 			fieldOrder: []int{
-				settingsFieldAIBackend,
-				settingsFieldBossChatBackend,
-				settingsFieldOpenAIAPIKey,
-				settingsFieldBossChatModel,
-				settingsFieldBossUtilityModel,
-				settingsFieldMLXBaseURL,
-				settingsFieldMLXAPIKey,
-				settingsFieldMLXModel,
-				settingsFieldOllamaBaseURL,
-				settingsFieldOllamaAPIKey,
-				settingsFieldOllamaModel,
 				settingsFieldCodexLaunchPreset,
 				settingsFieldHideReasoningSections,
 			},
@@ -241,6 +241,15 @@ func settingsSectionIndexForField(index int) int {
 			if fieldIndex == index {
 				return sectionIndex
 			}
+		}
+	}
+	return 0
+}
+
+func settingsSectionIndexByID(id settingsSectionID) int {
+	for i, section := range settingsSections() {
+		if section.id == id {
+			return i
 		}
 	}
 	return 0
@@ -373,6 +382,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsMode = true
 	m.settingsSaving = false
 	m.settingsRevealPrivacy = false
+	m.settingsDrilldown = settingsDrilldownNone
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
 	m.settingsLCAgentProviderVisible = false
@@ -402,6 +412,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsSaving = false
 	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
+	m.settingsDrilldown = settingsDrilldownNone
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
 	m.settingsLCAgentProviderVisible = false
@@ -439,6 +450,7 @@ func (m *Model) closeSettingsMode(status string) {
 	m.blurSettingsFields()
 	m.settingsMode = false
 	m.settingsSaving = false
+	m.settingsDrilldown = settingsDrilldownNone
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
 	m.settingsLCAgentProviderVisible = false
@@ -462,6 +474,9 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
+		if m.settingsDrilldown != settingsDrilldownNone {
+			return m.closeSettingsDrilldown("Back to Getting Started.")
+		}
 		m.closeSettingsMode("Settings edit canceled")
 		return m, nil
 	case "pgup", "[", "ctrl+b":
@@ -475,6 +490,11 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+s":
 		return m.saveSettingsFromFields()
 	case "enter":
+		if m.activeSettingsSection().id == settingsSectionGettingStarted && m.settingsDrilldown == settingsDrilldownNone {
+			if drilldown := settingsDrilldownForField(m.settingsSelected); drilldown != settingsDrilldownNone {
+				return m.openSettingsDrilldown(drilldown)
+			}
+		}
 		if settingsFieldUsesPicker(m.settingsSelected) {
 			return m.openSettingsPickerForField(m.settingsSelected)
 		}
@@ -502,6 +522,51 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	input, cmd := m.settingsFields[m.settingsSelected].input.Update(msg)
 	m.settingsFields[m.settingsSelected].input = input
 	return m, cmd
+}
+
+func settingsDrilldownForField(fieldIndex int) settingsDrilldownID {
+	switch fieldIndex {
+	case settingsFieldAIBackend:
+		return settingsDrilldownProjectReports
+	case settingsFieldBossChatBackend:
+		return settingsDrilldownBossChat
+	case settingsFieldLCAgentProvider:
+		return settingsDrilldownLCAgent
+	case settingsFieldIncludePaths:
+		return settingsDrilldownProjectScope
+	default:
+		return settingsDrilldownNone
+	}
+}
+
+func (m Model) openSettingsDrilldown(drilldown settingsDrilldownID) (tea.Model, tea.Cmd) {
+	if drilldown == settingsDrilldownNone {
+		return m, nil
+	}
+	m.settingsDrilldown = drilldown
+	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionGettingStarted)
+	fields := m.visibleSettingsDrilldownFieldOrder(drilldown)
+	if len(fields) == 0 {
+		m.settingsDrilldown = settingsDrilldownNone
+		m.status = "No setup fields are available for this section."
+		return m, nil
+	}
+	m.status = settingsDrilldownTitle(drilldown) + " setup open. Press Esc to go back or ctrl+s to save."
+	return m, m.setSettingsSelection(fields[0])
+}
+
+func (m Model) closeSettingsDrilldown(status string) (tea.Model, tea.Cmd) {
+	drilldown := m.settingsDrilldown
+	m.settingsDrilldown = settingsDrilldownNone
+	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionGettingStarted)
+	target := settingsDrilldownTopField(drilldown)
+	if target < 0 {
+		target = defaultSettingsSelection()
+	}
+	if status != "" {
+		m.status = status
+	}
+	return m, m.setSettingsSelection(target)
 }
 
 func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
@@ -621,7 +686,7 @@ func (m *Model) moveSettingsSelection(delta int) tea.Cmd {
 	if len(m.settingsFields) == 0 || delta == 0 {
 		return nil
 	}
-	fields := m.visibleSettingsFieldOrder(m.activeSettingsSection())
+	fields := m.currentSettingsFieldOrder()
 	if len(fields) == 0 {
 		return nil
 	}
@@ -659,17 +724,27 @@ func (m *Model) setSettingsSelection(index int) tea.Cmd {
 
 	sections := settingsSections()
 	if !m.settingsFieldVisible(index) {
-		sectionIndex := settingsSectionIndexForField(index)
-		if sectionIndex >= 0 && sectionIndex < len(sections) {
-			if fields := m.visibleSettingsFieldOrder(sections[sectionIndex]); len(fields) > 0 {
+		if m.settingsDrilldown != settingsDrilldownNone {
+			if fields := m.visibleSettingsDrilldownFieldOrder(m.settingsDrilldown); len(fields) > 0 {
 				index = fields[0]
+			}
+		} else {
+			sectionIndex := settingsSectionIndexForField(index)
+			if sectionIndex >= 0 && sectionIndex < len(sections) {
+				if fields := m.visibleSettingsFieldOrder(sections[sectionIndex]); len(fields) > 0 {
+					index = fields[0]
+				}
 			}
 		}
 	}
 
 	m.settingsSelected = index
 	if m.settingsSectionSelected < 0 || m.settingsSectionSelected >= len(sections) || !settingsSectionContainsField(sections[m.settingsSectionSelected], index) {
-		m.settingsSectionSelected = settingsSectionIndexForField(index)
+		if m.settingsDrilldown != settingsDrilldownNone {
+			m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionGettingStarted)
+		} else {
+			m.settingsSectionSelected = settingsSectionIndexForField(index)
+		}
 	}
 	cmds := make([]tea.Cmd, 0, 1)
 	for i := range m.settingsFields {
@@ -719,6 +794,7 @@ func (m *Model) setSettingsSection(index int) tea.Cmd {
 	if index >= len(sections) {
 		index = len(sections) - 1
 	}
+	m.settingsDrilldown = settingsDrilldownNone
 	m.settingsSectionSelected = index
 	fields := m.visibleSettingsFieldOrder(sections[index])
 	if len(fields) == 0 {
@@ -736,6 +812,9 @@ func (m Model) activeSettingsSectionIndex() int {
 	sections := settingsSections()
 	if len(sections) == 0 {
 		return 0
+	}
+	if m.settingsDrilldown != settingsDrilldownNone {
+		return settingsSectionIndexByID(settingsSectionGettingStarted)
 	}
 	selectedSection := settingsSectionIndexForField(m.settingsSelected)
 	if m.settingsSectionSelected < 0 || m.settingsSectionSelected >= len(sections) {
@@ -769,6 +848,13 @@ func (m Model) visibleSettingsFieldOrder(section settingsSection) []int {
 		}
 	}
 	return fields
+}
+
+func (m Model) currentSettingsFieldOrder() []int {
+	if m.settingsDrilldown != settingsDrilldownNone {
+		return m.visibleSettingsDrilldownFieldOrder(m.settingsDrilldown)
+	}
+	return m.visibleSettingsFieldOrder(m.activeSettingsSection())
 }
 
 func (m Model) settingsFieldVisible(index int) bool {
@@ -830,6 +916,109 @@ func settingsProviderDetailField(backend config.AIBackend) int {
 		return settingsFieldOllamaBaseURL
 	default:
 		return -1
+	}
+}
+
+func (m Model) visibleSettingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int {
+	fields := m.settingsDrilldownFieldOrder(drilldown)
+	visible := make([]int, 0, len(fields))
+	for _, fieldIndex := range fields {
+		if m.settingsFieldVisible(fieldIndex) {
+			visible = append(visible, fieldIndex)
+		}
+	}
+	return visible
+}
+
+func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int {
+	settings := m.settingsDraftForInferenceStatus()
+	switch drilldown {
+	case settingsDrilldownProjectReports:
+		fields := []int{settingsFieldAIBackend}
+		fields = append(fields, settingsProviderConnectionFields(settings.AIBackend)...)
+		return fields
+	case settingsDrilldownBossChat:
+		fields := []int{settingsFieldBossChatBackend}
+		fields = append(fields, settingsProviderConnectionFields(settings.BossChatBackend)...)
+		if settingsBossModelFieldsRelevant(settings) {
+			fields = append(fields, settingsFieldBossChatModel, settingsFieldBossUtilityModel)
+		}
+		return fields
+	case settingsDrilldownLCAgent:
+		fields := []int{
+			settingsFieldLCAgentProvider,
+			settingsFieldLCAgentModel,
+			settingsFieldLCAgentReasoning,
+			settingsFieldLCAgentEnvFile,
+			settingsFieldLCAgentWebSearchBackend,
+		}
+		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
+		return fields
+	case settingsDrilldownProjectScope:
+		return []int{
+			settingsFieldIncludePaths,
+			settingsFieldExcludePaths,
+			settingsFieldExcludeProjectPatterns,
+			settingsFieldPrivacyPatterns,
+		}
+	default:
+		return nil
+	}
+}
+
+func settingsProviderConnectionFields(backend config.AIBackend) []int {
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return []int{settingsFieldOpenAIAPIKey}
+	case config.AIBackendMLX:
+		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
+	case config.AIBackendOllama:
+		return []int{settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel}
+	default:
+		return nil
+	}
+}
+
+func settingsLCAgentWebSearchDetailFields(backend string) []int {
+	switch normalizeSettingsChoice(backend) {
+	case "exa":
+		return []int{settingsFieldLCAgentWebSearchAPIKey}
+	case "google":
+		return []int{settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID}
+	case "searxng":
+		return []int{settingsFieldLCAgentWebSearchURL}
+	default:
+		return nil
+	}
+}
+
+func settingsDrilldownTopField(drilldown settingsDrilldownID) int {
+	switch drilldown {
+	case settingsDrilldownProjectReports:
+		return settingsFieldAIBackend
+	case settingsDrilldownBossChat:
+		return settingsFieldBossChatBackend
+	case settingsDrilldownLCAgent:
+		return settingsFieldLCAgentProvider
+	case settingsDrilldownProjectScope:
+		return settingsFieldIncludePaths
+	default:
+		return -1
+	}
+}
+
+func settingsDrilldownTitle(drilldown settingsDrilldownID) string {
+	switch drilldown {
+	case settingsDrilldownProjectReports:
+		return "Project Reports"
+	case settingsDrilldownBossChat:
+		return "Boss Chat"
+	case settingsDrilldownLCAgent:
+		return "LCAgent"
+	case settingsDrilldownProjectScope:
+		return "Project Roots"
+	default:
+		return "Setup"
 	}
 }
 
@@ -958,6 +1147,8 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	}
 	settings.AIBackend = config.AIBackend(m.settingsFieldValue(settingsFieldAIBackend))
 	settings.BossChatBackend = config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend))
+	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
+	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
 	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
@@ -1023,9 +1214,12 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 	separatorWidth := 3
 	contentWidth := max(18, width-sidebarWidth-separatorWidth)
 
-	gettingStartedGuide := activeSection.id == settingsSectionGettingStarted && maxHeight >= 20
+	gettingStartedGuide := activeSection.id == settingsSectionGettingStarted && m.settingsDrilldown == settingsDrilldownNone && maxHeight >= 20
+	gettingStartedDrilldown := activeSection.id == settingsSectionGettingStarted && m.settingsDrilldown != settingsDrilldownNone
 	mainLines := []string{}
-	if gettingStartedGuide {
+	if gettingStartedDrilldown {
+		mainLines = append(mainLines, m.renderSettingsDrilldown(contentWidth, maxHeight)...)
+	} else if gettingStartedGuide {
 		mainLines = append(mainLines, m.renderSettingsGettingStartedGuide(contentWidth)...)
 	} else {
 		mainLines = append(mainLines, m.renderSettingsSectionHint(activeSection, contentWidth))
@@ -1035,16 +1229,15 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 		mainLines = append(mainLines, commandPaletteHintStyle.Render("Saving settings..."))
 	}
 
-	fieldIndexes := m.visibleSettingsFieldOrder(activeSection)
+	fieldIndexes := m.currentSettingsFieldOrder()
 	labelWidth := m.settingsLabelWidth(contentWidth, fieldIndexes)
 	inputWidth := max(10, contentWidth-labelWidth-1)
-	if gettingStartedGuide {
-		if maxHeight >= 28 {
-			if editor := m.renderSettingsGettingStartedFocusedEditor(contentWidth, labelWidth, inputWidth); editor != "" {
-				mainLines = append(mainLines, "")
-				mainLines = append(mainLines, editor)
-			}
-		}
+	if gettingStartedDrilldown {
+		// The drilldown renderer owns its field rows so it can add shared
+		// provider group labels between feature-specific controls.
+	} else if gettingStartedGuide {
+		// Top-level Getting Started rows are only entry points. Press Enter to
+		// drill into the focused row instead of editing fields inline.
 	} else {
 		start, end := m.settingsVisibleWindow(fieldIndexes, m.settingsVisibleFieldCount(maxHeight))
 		if start > 0 {
@@ -1056,6 +1249,10 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 		if end < len(fieldIndexes) {
 			mainLines = append(mainLines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fieldIndexes)-end)))
 		}
+	}
+	if activeSection.id == settingsSectionAI {
+		mainLines = append(mainLines, "")
+		mainLines = append(mainLines, m.renderProviderConnectionsStatus(contentWidth)...)
 	}
 	if activeSection.id == settingsSectionBrowser {
 		mainLines = append(mainLines, "")
@@ -1069,7 +1266,7 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 }
 
 func (m Model) settingsVisibleFieldCount(maxHeight int) int {
-	total := len(m.visibleSettingsFieldOrder(m.activeSettingsSection()))
+	total := len(m.currentSettingsFieldOrder())
 	if total == 0 {
 		return 0
 	}
@@ -1159,6 +1356,198 @@ func (m Model) renderSettingsSectionSidebar(width int) string {
 func (m Model) renderSettingsSectionHint(section settingsSection, width int) string {
 	text := fmt.Sprintf("%s section. %s", section.label, section.hint)
 	return commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render(text))
+}
+
+func (m Model) renderSettingsDrilldown(width, maxHeight int) []string {
+	drilldown := m.settingsDrilldown
+	fields := m.visibleSettingsDrilldownFieldOrder(drilldown)
+	lines := []string{
+		detailSectionStyle.Render(settingsDrilldownTitle(drilldown) + " Setup"),
+		commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render(settingsDrilldownSummary(drilldown))),
+	}
+	lines = append(lines, m.renderSettingsDrilldownStatus(width)...)
+	if len(fields) == 0 {
+		lines = append(lines, commandPaletteHintStyle.Render("No setup fields are available for this section."))
+		return lines
+	}
+
+	labelWidth := m.settingsLabelWidth(width, fields)
+	inputWidth := max(10, width-labelWidth-1)
+	limit := max(1, maxHeight-10-len(lines))
+	start, end := m.settingsVisibleWindow(fields, limit)
+	if start > 0 {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
+	}
+	previousGroup := ""
+	for _, fieldIndex := range fields[start:end] {
+		group := settingsDrilldownGroupForField(drilldown, fieldIndex)
+		if group != "" && group != previousGroup {
+			lines = append(lines, "")
+			lines = append(lines, detailLabelStyle.Render(group))
+		}
+		lines = append(lines, m.renderSettingsFieldRow(fieldIndex, m.settingsFields[fieldIndex], fieldIndex == m.settingsSelected, labelWidth, inputWidth))
+		previousGroup = group
+	}
+	if end < len(fields) {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(fields)-end)))
+	}
+	return lines
+}
+
+func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
+	switch drilldown {
+	case settingsDrilldownProjectReports:
+		return "Choose the runner for background summaries, classification, TODO help, and commit help. Provider credentials are shared when another feature uses the same connection."
+	case settingsDrilldownBossChat:
+		return "Choose a realtime backend for /boss. This deliberately excludes Codex, OpenCode, and Claude Code because engineer sessions can be too slow for chat."
+	case settingsDrilldownLCAgent:
+		return "Configure the LCR-native worker essentials: provider, model, credentials, and web search. Use the LCAgent section for runtime policy and advanced launch fields."
+	case settingsDrilldownProjectScope:
+		return "Choose where projects are discovered and which folders or names stay hidden."
+	default:
+		return "Configure this setup area."
+	}
+}
+
+func (m Model) renderSettingsDrilldownStatus(width int) []string {
+	settings := m.settingsDraftForInferenceStatus()
+	switch m.settingsDrilldown {
+	case settingsDrilldownProjectReports:
+		choice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
+		return []string{renderWrappedDetailField("Current", detailValueStyle, width, firstNonEmptyTrimmed(choice.NextStep, choice.Detail))}
+	case settingsDrilldownBossChat:
+		choice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
+		return []string{renderWrappedDetailField("Current", detailValueStyle, width, firstNonEmptyTrimmed(choice.NextStep, choice.Detail))}
+	case settingsDrilldownLCAgent:
+		provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+		state, style, detail := lcagentCredentialSmokeCheck(settings)
+		label := settingsLCAgentProviderOptionLabel(provider) + " connection"
+		return []string{detailField(label, style.Render(state)+detailMutedStyle.Render(" - "+detail))}
+	case settingsDrilldownProjectScope:
+		_, state, style, detail := m.settingsProjectRootsStepState()
+		return []string{detailField("Project roots", style.Render(state)+detailMutedStyle.Render(" - "+detail))}
+	default:
+		return nil
+	}
+}
+
+func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex int) string {
+	switch drilldown {
+	case settingsDrilldownProjectReports:
+		switch fieldIndex {
+		case settingsFieldAIBackend:
+			return "Report Runner"
+		case settingsFieldOpenAIAPIKey:
+			return "Shared OpenAI Connection"
+		case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
+			return "Shared MLX Connection"
+		case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
+			return "Shared Ollama Connection"
+		}
+	case settingsDrilldownBossChat:
+		switch fieldIndex {
+		case settingsFieldBossChatBackend:
+			return "Realtime Chat Backend"
+		case settingsFieldOpenAIAPIKey:
+			return "Shared OpenAI Connection"
+		case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
+			return "Shared MLX Connection"
+		case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
+			return "Shared Ollama Connection"
+		case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
+			return "Boss Models"
+		}
+	case settingsDrilldownLCAgent:
+		switch fieldIndex {
+		case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
+			return "Model Provider"
+		case settingsFieldLCAgentEnvFile:
+			return "Provider Credentials"
+		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
+			return "Web Search"
+		case settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
+			return "Runtime Policy"
+		case settingsFieldLCAgentRoutePreset, settingsFieldLCAgentPath:
+			return "Advanced"
+		}
+	case settingsDrilldownProjectScope:
+		switch fieldIndex {
+		case settingsFieldIncludePaths:
+			return "Discovery"
+		case settingsFieldExcludePaths, settingsFieldExcludeProjectPatterns:
+			return "Filtering"
+		case settingsFieldPrivacyPatterns:
+			return "Privacy"
+		}
+	}
+	return ""
+}
+
+func (m Model) renderProviderConnectionsStatus(width int) []string {
+	settings := m.settingsDraftForInferenceStatus()
+	lines := []string{detailSectionStyle.Render("Provider Connections")}
+	lines = append(lines, m.renderProviderConnectionLine("OpenAI API", settingsOpenAIConnectionState(settings), settingsProviderUsers(settings, config.AIBackendOpenAIAPI), width))
+	lines = append(lines, m.renderProviderConnectionLine("MLX", settingsLocalConnectionState(settings, config.AIBackendMLX), settingsProviderUsers(settings, config.AIBackendMLX), width))
+	lines = append(lines, m.renderProviderConnectionLine("Ollama", settingsLocalConnectionState(settings, config.AIBackendOllama), settingsProviderUsers(settings, config.AIBackendOllama), width))
+
+	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+	state, style, detail := lcagentCredentialSmokeCheck(settings)
+	label := "LCAgent " + settingsLCAgentProviderOptionLabel(provider)
+	line := style.Render(state) + detailMutedStyle.Render(" - "+detail)
+	lines = append(lines, renderWrappedDetailField(label, detailValueStyle, width, line))
+	return lines
+}
+
+func (m Model) renderProviderConnectionLine(label string, state string, users []string, width int) string {
+	style := detailMutedStyle
+	if state == "ready" {
+		style = footerPrimaryLabelStyle
+	} else if state == "needed" || state == "blocked" {
+		style = detailWarningStyle
+	}
+	detail := "not used right now"
+	if len(users) > 0 {
+		detail = "used by " + strings.Join(users, ", ")
+	}
+	return renderWrappedDetailField(label, detailValueStyle, width, style.Render(state)+detailMutedStyle.Render(" - "+detail))
+}
+
+func settingsOpenAIConnectionState(settings config.EditableSettings) string {
+	if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
+		return "ready"
+	}
+	if settings.AIBackend == config.AIBackendOpenAIAPI || settings.BossChatBackend == config.AIBackendOpenAIAPI {
+		return "needed"
+	}
+	return "optional"
+}
+
+func settingsLocalConnectionState(settings config.EditableSettings, backend config.AIBackend) string {
+	if settings.AIBackend == backend || settings.BossChatBackend == backend {
+		return "selected"
+	}
+	switch backend {
+	case config.AIBackendMLX:
+		if strings.TrimSpace(settings.MLXBaseURL) != "" || strings.TrimSpace(settings.MLXModel) != "" {
+			return "configured"
+		}
+	case config.AIBackendOllama:
+		if strings.TrimSpace(settings.OllamaBaseURL) != "" || strings.TrimSpace(settings.OllamaModel) != "" {
+			return "configured"
+		}
+	}
+	return "optional"
+}
+
+func settingsProviderUsers(settings config.EditableSettings, backend config.AIBackend) []string {
+	users := []string{}
+	if settings.AIBackend == backend {
+		users = append(users, "Project reports")
+	}
+	if settings.BossChatBackend == backend {
+		users = append(users, "Boss chat")
+	}
+	return users
 }
 
 func (m Model) renderSettingsGettingStartedGuide(width int) []string {
@@ -1299,6 +1688,47 @@ func lcagentDefaultModelForProvider(provider string) string {
 		return "kimi-k2.6"
 	default:
 		return "deepseek/deepseek-v4-pro"
+	}
+}
+
+func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
+	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName + " from " + brand.BossAssistantModelEnvVar
+	}
+	switch settings.BossChatBackend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if modelName := settingsOpenAICompatibleModel(settings, settings.BossChatBackend); modelName != "" {
+			return modelName + " from " + settings.BossChatBackend.Label()
+		}
+		return "the first discovered " + settings.BossChatBackend.Label() + " model"
+	default:
+		return config.DefaultBossHelmModel
+	}
+}
+
+func settingsBossUtilityDefaultLabel(settings config.EditableSettings) string {
+	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName + " from " + brand.BossAssistantModelEnvVar
+	}
+	switch settings.BossChatBackend {
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if modelName := settingsOpenAICompatibleModel(settings, settings.BossChatBackend); modelName != "" {
+			return modelName + " from " + settings.BossChatBackend.Label()
+		}
+		return "the first discovered " + settings.BossChatBackend.Label() + " model"
+	default:
+		return config.DefaultBossUtilityModel
+	}
+}
+
+func settingsOpenAICompatibleModel(settings config.EditableSettings, backend config.AIBackend) string {
+	switch backend {
+	case config.AIBackendMLX:
+		return strings.TrimSpace(settings.MLXModel)
+	case config.AIBackendOllama:
+		return strings.TrimSpace(settings.OllamaModel)
+	default:
+		return ""
 	}
 }
 
@@ -1554,6 +1984,9 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 	}
 
 	input := field.input
+	if placeholder := m.settingsFieldPlaceholder(fieldIndex); placeholder != "" {
+		input.Placeholder = placeholder
+	}
 	input.Width = inputWidth
 	row := labelStyle.Width(labelWidth).Render(label) + " " + input.View()
 	if selected {
@@ -1562,11 +1995,28 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 	return row
 }
 
+func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
+	settings := m.settingsDraftForInferenceStatus()
+	switch fieldIndex {
+	case settingsFieldBossChatModel:
+		return "Default: " + settingsBossHelmDefaultLabel(settings)
+	case settingsFieldBossUtilityModel:
+		return "Default: " + settingsBossUtilityDefaultLabel(settings)
+	case settingsFieldLCAgentModel:
+		provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+		return "Default: " + lcagentDefaultModelForProvider(provider)
+	default:
+		return ""
+	}
+}
+
 func (m Model) renderSelectedSettingsHint(width int) string {
 	if m.settingsSelected < 0 || m.settingsSelected >= len(m.settingsFields) {
 		return ""
 	}
-	if m.activeSettingsSection().id == settingsSectionGettingStarted {
+	if m.activeSettingsSection().id == settingsSectionGettingStarted &&
+		m.settingsDrilldown == settingsDrilldownNone &&
+		settingsDrilldownForField(m.settingsSelected) != settingsDrilldownNone {
 		return m.renderSettingsGettingStartedNextAction(width)
 	}
 
@@ -1585,12 +2035,12 @@ func (m Model) renderSelectedSettingsHint(width int) string {
 
 func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 	step := m.selectedSettingsGettingStartedStep()
-	action := "Use Tab to move through setup, then ctrl+s to save."
+	action := "Press Enter to open this setup panel, Tab to move, or ctrl+s to save."
 	switch m.settingsSelected {
 	case settingsFieldAIBackend, settingsFieldBossChatBackend:
-		action = "Next: press Enter to choose from the provider list."
+		action = "Next: press Enter to open the focused setup panel."
 	case settingsFieldLCAgentProvider:
-		action = "Next: press Enter to choose an LCAgent provider, or Tab to continue."
+		action = "Next: press Enter to configure LCAgent provider, model, credentials, and web search."
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(settingsFieldOpenAIAPIKey)); suffix != "" {
 			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change API keys."
@@ -1628,7 +2078,16 @@ func (m Model) renderSettingsActions() string {
 		renderDialogAction("Up/Down", "move", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	}
-	if settingsFieldUsesPicker(m.settingsSelected) {
+	if m.settingsDrilldown != settingsDrilldownNone {
+		actions[len(actions)-1] = renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle)
+	}
+	if m.activeSettingsSection().id == settingsSectionGettingStarted &&
+		m.settingsDrilldown == settingsDrilldownNone &&
+		settingsDrilldownForField(m.settingsSelected) != settingsDrilldownNone {
+		actions = append([]string{
+			renderDialogAction("Enter", "setup", navigateActionKeyStyle, navigateActionTextStyle),
+		}, actions...)
+	} else if settingsFieldUsesPicker(m.settingsSelected) {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions...)
@@ -1655,18 +2114,20 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			32,
 			settingsSectionGettingStarted,
 		),
-		newSettingsField(
+		newSettingsFieldWithPlaceholder(
 			"Boss helm model",
-			"High-grade Boss model for interactive answers, planning, risky choices, and control proposals. Leave blank for the built-in default or set LCROOM_BOSS_MODEL as an environment override.",
+			"High-grade Boss model for interactive answers, planning, risky choices, and control proposals. Leave blank for the displayed default or set LCROOM_BOSS_MODEL as an environment override.",
 			settings.BossHelmModel,
 			128,
+			"Default: "+settingsBossHelmDefaultLabel(settings),
 			settingsSectionAI,
 		),
-		newSettingsField(
+		newSettingsFieldWithPlaceholder(
 			"Boss utility model",
-			"Lower-cost Boss model for routine read-only query routing. Leave blank for the built-in utility default.",
+			"Lower-cost Boss model for routine read-only query routing. Leave blank for the displayed utility default.",
 			settings.BossUtilityModel,
 			128,
+			"Default: "+settingsBossUtilityDefaultLabel(settings),
 			settingsSectionAI,
 		),
 		newSettingsField(
@@ -1741,11 +2202,12 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			32,
 			settingsSectionLCAgent,
 		),
-		newSettingsField(
+		newSettingsFieldWithPlaceholder(
 			"LCAgent model",
 			"Optional exact model ID for experimental LCAgent runs. Leave blank to use the provider default.",
 			settings.EmbeddedLCAgentModel,
 			256,
+			"Default: "+lcagentDefaultModelForProvider(firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")),
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
@@ -1905,6 +2367,12 @@ func newSettingsField(label, hint, value string, charLimit int, section settings
 	}
 }
 
+func newSettingsFieldWithPlaceholder(label, hint, value string, charLimit int, placeholder string, section settingsSectionID) settingsField {
+	field := newSettingsField(label, hint, value, charLimit, section)
+	field.input.Placeholder = placeholder
+	return field
+}
+
 func newSensitiveSettingsField(label, hint, value string, charLimit int, section settingsSectionID) settingsField {
 	return newSensitiveSettingsFieldWithPlaceholder(label, hint, value, charLimit, "Paste OpenAI API key", section)
 }
@@ -2014,12 +2482,14 @@ func (m Model) settingsFieldHint(index int) string {
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
 			return "Boss helm calls will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
 		}
-		return field.hint
+		settings := m.settingsDraftForInferenceStatus()
+		return "Blank uses " + settingsBossHelmDefaultLabel(settings) + ". " + brand.BossAssistantModelEnvVar + " still wins if set in the environment."
 	case settingsFieldBossUtilityModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
 			return "Routine Boss utility calls will request model " + model + ". LCROOM_BOSS_MODEL still overrides all Boss model choices if set."
 		}
-		return field.hint
+		settings := m.settingsDraftForInferenceStatus()
+		return "Blank uses " + settingsBossUtilityDefaultLabel(settings) + ". " + brand.BossAssistantModelEnvVar + " still overrides all Boss model choices if set."
 	case settingsFieldMLXBaseURL:
 		return field.hint
 	case settingsFieldMLXAPIKey:

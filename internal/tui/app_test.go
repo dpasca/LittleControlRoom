@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21180,7 +21181,8 @@ func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {
 		width:          100,
 		height:         24,
 	}
-	_ = m.setSettingsSelection(settingsFieldBossChatBackend)
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownBossChat)
+	m = updated.(Model)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
@@ -21807,8 +21809,10 @@ func TestInferenceStatusCardsShowProjectAndBossChatSelections(t *testing.T) {
 		"Project reports",
 		"OpenCode",
 		"Boss chat",
-		"OpenAI API key",
-		"project reports stay separate",
+		"OpenAI API",
+		"shared OpenAI API connection",
+		"project reports stay",
+		"separate",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("inference cards missing %q: %q", want, rendered)
@@ -21877,8 +21881,8 @@ func TestProviderChoicesAreRoleSpecific(t *testing.T) {
 		t.Fatalf("boss chat choices should not include Codex; selection fallback = %d, want 0", index)
 	}
 	auto := bossChoices[providerChoiceSelection(bossChoices, config.AIBackendUnset)]
-	if auto.State != "ready" || !strings.Contains(auto.Detail, "saved OpenAI API key") {
-		t.Fatalf("auto boss choice = state:%q detail:%q, want ready with saved-key detail", auto.State, auto.Detail)
+	if auto.State != "ready" || !strings.Contains(auto.Detail, "shared OpenAI API connection") {
+		t.Fatalf("auto boss choice = state:%q detail:%q, want ready with shared connection detail", auto.State, auto.Detail)
 	}
 	if !strings.Contains(auto.NextStep, "Save") || !strings.Contains(auto.NextStep, "automatically") {
 		t.Fatalf("auto boss next step = %q, want save guidance", auto.NextStep)
@@ -21916,7 +21920,7 @@ func TestSettingsProviderPickersRenderSharedStatus(t *testing.T) {
 	}
 
 	bossPicker := ansi.Strip(m.renderSettingsBossChatBackendPickerContent(72))
-	for _, want := range []string{"Boss Chat", "Auto", "ready", "saved OpenAI API key", "Selected Helper", "After choosing"} {
+	for _, want := range []string{"Boss Chat", "Auto", "ready", "shared OpenAI API connection", "Selected Helper", "After choosing"} {
 		if !strings.Contains(bossPicker, want) {
 			t.Fatalf("boss picker missing %q: %q", want, bossPicker)
 		}
@@ -21993,7 +21997,7 @@ func TestSettingsGettingStartedNavigationSkipsProviderDetailFields(t *testing.T)
 	}
 }
 
-func TestSettingsAISectionUsesProviderRoleRows(t *testing.T) {
+func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenCode
 	settings.BossChatBackend = config.AIBackendOpenAIAPI
@@ -22007,32 +22011,36 @@ func TestSettingsAISectionUsesProviderRoleRows(t *testing.T) {
 		height:           30,
 	}
 	_ = m.setSettingsSection(1)
-	_ = m.setSettingsSelection(settingsFieldAIBackend)
 	if m.activeSettingsSection().id != settingsSectionAI {
 		t.Fatalf("active settings section = %q, want providers and models", m.activeSettingsSection().id)
 	}
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Providers & Models", "Project reports", "OpenCode", "Boss chat", "OpenAI API", "OpenAI API key"} {
+	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Boss chat", "Codex launch mode", "Show reasoning"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("providers and models section missing %q: %q", want, rendered)
+		}
+	}
+	for _, hidden := range []string{"OpenAI API key", "Boss helm model", "MLX base URL"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("providers and models should stay compact and hide %q: %q", hidden, rendered)
 		}
 	}
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyTab})
 	if cmd == nil {
-		t.Fatalf("Tab should refocus the next provider row")
+		t.Fatalf("Tab should refocus the next compact setting")
 	}
 	got := updated.(Model)
 	if got.activeSettingsSection().id != settingsSectionAI {
-		t.Fatalf("provider rows should stay in Providers & Models section, got %q", got.activeSettingsSection().id)
+		t.Fatalf("compact settings should stay in Providers & Models section, got %q", got.activeSettingsSection().id)
 	}
-	if got.settingsSelected != settingsFieldBossChatBackend {
-		t.Fatalf("settingsSelected = %d, want boss chat provider row", got.settingsSelected)
+	if got.settingsSelected != settingsFieldHideReasoningSections {
+		t.Fatalf("settingsSelected = %d, want show reasoning row", got.settingsSelected)
 	}
 }
 
-func TestSettingsHidesProviderDetailFieldsUntilRelevant(t *testing.T) {
+func TestSettingsDrilldownShowsProviderDetailFieldsWhenRelevant(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	m := Model{
 		settingsMode:     true,
@@ -22041,22 +22049,66 @@ func TestSettingsHidesProviderDetailFieldsUntilRelevant(t *testing.T) {
 		width:            120,
 		height:           30,
 	}
-	_ = m.setSettingsSection(1)
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)
+	m = updated.(Model)
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
 	for _, hidden := range []string{"OpenAI API key", "Boss helm model", "MLX base URL", "Ollama base URL"} {
 		if strings.Contains(rendered, hidden) {
-			t.Fatalf("default provider settings should hide %q until relevant: %q", hidden, rendered)
+			t.Fatalf("default project-report setup should hide %q until relevant: %q", hidden, rendered)
 		}
 	}
 
 	m.settingsFields[settingsFieldAIBackend].input.SetValue(string(config.AIBackendMLX))
 	rendered = ansi.Strip(m.renderSettingsContent(100, 24))
-	if !strings.Contains(rendered, "MLX base URL") || !strings.Contains(rendered, "MLX model") {
-		t.Fatalf("MLX provider selection should reveal MLX details: %q", rendered)
+	if !strings.Contains(rendered, "Shared MLX Connection") || !strings.Contains(rendered, "MLX base URL") || !strings.Contains(rendered, "MLX model") {
+		t.Fatalf("MLX provider selection should reveal shared MLX details: %q", rendered)
 	}
 	if strings.Contains(rendered, "OpenAI API key") || strings.Contains(rendered, "Ollama base URL") {
 		t.Fatalf("MLX provider selection should keep unrelated details hidden: %q", rendered)
+	}
+}
+
+func TestSettingsProjectAndBossDrilldownsUseSharedOpenAIConnection(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenAIAPI
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-shared-example"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            120,
+		height:           30,
+	}
+
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)
+	project := updated.(Model)
+	projectFields := project.visibleSettingsDrilldownFieldOrder(settingsDrilldownProjectReports)
+	if !slices.Contains(projectFields, settingsFieldOpenAIAPIKey) {
+		t.Fatalf("project report drilldown should include the shared OpenAI connection field: %#v", projectFields)
+	}
+	projectRendered := ansi.Strip(project.renderSettingsContent(100, 24))
+	for _, want := range []string{"Project Reports Setup", "Shared OpenAI Connection", "OpenAI API key"} {
+		if !strings.Contains(projectRendered, want) {
+			t.Fatalf("project report drilldown missing %q: %q", want, projectRendered)
+		}
+	}
+
+	updated, _ = project.closeSettingsDrilldown("")
+	back := updated.(Model)
+	updated, _ = back.openSettingsDrilldown(settingsDrilldownBossChat)
+	boss := updated.(Model)
+	bossFields := boss.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
+	if !slices.Contains(bossFields, settingsFieldOpenAIAPIKey) {
+		t.Fatalf("boss chat drilldown should include the same shared OpenAI connection field: %#v", bossFields)
+	}
+	bossRendered := ansi.Strip(boss.renderSettingsContent(100, 24))
+	for _, want := range []string{"Boss Chat Setup", "Shared OpenAI Connection", "Boss Models", "Default: gpt-5.5", "Default: gpt-5.4-mini"} {
+		if !strings.Contains(bossRendered, want) {
+			t.Fatalf("boss chat drilldown missing %q: %q", want, bossRendered)
+		}
 	}
 }
 
@@ -22126,7 +22178,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 		height:           24,
 	}
 	_ = m.setSettingsSection(1)
-	_ = m.setSettingsSelection(settingsFieldBossChatModel)
+	_ = m.setSettingsSelection(settingsFieldCodexLaunchPreset)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyPgDown})
 	if cmd == nil {
@@ -22334,7 +22386,8 @@ func TestSettingsLCAgentProviderEnterOpensPicker(t *testing.T) {
 		width:            100,
 		height:           24,
 	}
-	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
+	m = updated.(Model)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
@@ -22346,6 +22399,42 @@ func TestSettingsLCAgentProviderEnterOpensPicker(t *testing.T) {
 	}
 	if got.status != "Choose the provider for LCAgent." {
 		t.Fatalf("status = %q, want chooser status", got.status)
+	}
+}
+
+func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("opening a setup panel should focus its first field")
+	}
+	if got.settingsDrilldown != settingsDrilldownLCAgent {
+		t.Fatalf("settingsDrilldown = %q, want LCAgent", got.settingsDrilldown)
+	}
+	if got.settingsLCAgentProviderVisible {
+		t.Fatalf("top-level Getting Started Enter should open the setup panel before the picker")
+	}
+	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
+	for _, want := range []string{"LCAgent Setup", "Model Provider", "Provider Credentials", "Web Search"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("LCAgent setup panel missing %q: %q", want, rendered)
+		}
+	}
+	for _, hidden := range []string{"Runtime Policy", "LCAgent timeout", "LCAgent route preset", "LCAgent executable"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("LCAgent setup panel should keep advanced field %q out of the first setup panel: %q", hidden, rendered)
+		}
 	}
 }
 
@@ -23149,7 +23238,8 @@ func TestSettingsEnterOnTextFieldDoesNotSave(t *testing.T) {
 		width:          100,
 		height:         24,
 	}
-	_ = m.setSettingsSelection(settingsFieldIncludePaths)
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectScope)
+	m = updated.(Model)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)

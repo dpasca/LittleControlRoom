@@ -32,8 +32,6 @@ import (
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
 const bossAssistantHTTPTimeout = 90 * time.Second
-const defaultBossHelmModel = "gpt-5.5"
-const defaultBossUtilityModel = "gpt-5.4-mini"
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 
@@ -575,7 +573,7 @@ func configuredBossHelmModelForBackend(cfg config.AppConfig, backend config.AIBa
 	case config.AIBackendMLX, config.AIBackendOllama:
 		return ""
 	}
-	return defaultBossHelmModel
+	return config.DefaultBossHelmModel
 }
 
 func configuredBossUtilityModelForBackend(cfg config.AppConfig, backend config.AIBackend) string {
@@ -592,7 +590,7 @@ func configuredBossUtilityModelForBackend(cfg config.AppConfig, backend config.A
 		}
 		return ""
 	}
-	return defaultBossUtilityModel
+	return config.DefaultBossUtilityModel
 }
 
 func (s *Service) configureAIClientsLocked() {

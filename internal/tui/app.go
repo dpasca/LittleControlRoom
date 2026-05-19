@@ -147,6 +147,7 @@ type Model struct {
 	settingsFields                      []settingsField
 	settingsSectionSelected             int
 	settingsSelected                    int
+	settingsDrilldown                   settingsDrilldownID
 	settingsBaseline                    *config.EditableSettings
 	settingsRevealPrivacy               bool
 	settingsBossChatPickerVisible       bool

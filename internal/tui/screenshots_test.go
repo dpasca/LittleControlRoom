@@ -280,7 +280,8 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 	}
 	m.settingsFields = newSettingsFields(settings)
 	m.settingsBaseline = &settings
-	_ = m.setSettingsSection(1)
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)
+	m = updated.(Model)
 	_ = m.setSettingsSelection(settingsFieldMLXBaseURL)
 	m.detail = model.ProjectDetail{
 		Summary: model.ProjectSummary{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
@@ -290,8 +291,8 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 	rendered := ansi.Strip(m.View())
 	for _, want := range []string{
 		"Settings",
-		"Project reports",
-		"Boss chat",
+		"Project Reports Setup",
+		"Shared MLX Connection",
 		"MLX base URL",
 		"MLX API key",
 		"MLX model",

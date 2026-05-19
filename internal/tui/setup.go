@@ -1044,7 +1044,7 @@ func (m Model) renderBossChatSetupHint(width int) string {
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
 			hint = "Auto leaves boss chat unconfigured for now. Choose MLX, Ollama, OpenAI API, or Off when you want a specific path."
 		} else {
-			hint = "Auto will use the saved OpenAI API key for boss chat."
+			hint = "Auto will use the shared OpenAI API connection for boss chat."
 		}
 	case config.AIBackendDisabled:
 		hint = "Turn boss chat off. Project reports and embedded sessions can still use their own backends."
@@ -1052,9 +1052,9 @@ func (m Model) renderBossChatSetupHint(width int) string {
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
 			hint = "Boss chat uses direct OpenAI API inference. Press Enter to add the API key here."
 		} else if settings.AIBackend == config.AIBackendOpenAIAPI {
-			hint = "Boss chat will use the saved OpenAI API key. Project reports are also using OpenAI API."
+			hint = "Boss chat will use the shared OpenAI API connection. Project reports are also using OpenAI API."
 		} else {
-			hint = "Boss chat will use the saved OpenAI API key. Project reports stay on " + settings.AIBackend.Label() + "."
+			hint = "Boss chat will use the shared OpenAI API connection. Project reports stay on " + settings.AIBackend.Label() + "."
 		}
 	case config.AIBackendMLX:
 		hint = "Boss chat will use your MLX OpenAI-compatible endpoint. Press Enter to select and configure it, or m to pick a discovered model."
