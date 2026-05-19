@@ -21,6 +21,9 @@ import (
 
 const (
 	settingsFieldOpenAIAPIKey = iota
+	settingsFieldOpenRouterAPIKey
+	settingsFieldDeepSeekAPIKey
+	settingsFieldMoonshotAPIKey
 	settingsFieldBossChatBackend
 	settingsFieldBossChatModel
 	settingsFieldBossUtilityModel
@@ -188,20 +191,24 @@ func settingsSections() []settingsSection {
 			label: "LCAgent",
 			hint:  "Configure the experimental LCR-native worker separately from project reports and Boss chat.",
 			fieldOrder: []int{
-				settingsFieldLCAgentPath,
-				settingsFieldLCAgentEnvFile,
-				settingsFieldLCAgentRoutePreset,
 				settingsFieldLCAgentProvider,
+				settingsFieldOpenRouterAPIKey,
+				settingsFieldOpenAIAPIKey,
+				settingsFieldDeepSeekAPIKey,
+				settingsFieldMoonshotAPIKey,
 				settingsFieldLCAgentModel,
 				settingsFieldLCAgentReasoning,
-				settingsFieldLCAgentAuto,
-				settingsFieldLCAgentToolProfile,
-				settingsFieldLCAgentContextProfile,
-				settingsFieldLCAgentRequestTimeout,
 				settingsFieldLCAgentWebSearchBackend,
 				settingsFieldLCAgentWebSearchAPIKey,
 				settingsFieldLCAgentWebSearchEngineID,
 				settingsFieldLCAgentWebSearchURL,
+				settingsFieldLCAgentAuto,
+				settingsFieldLCAgentToolProfile,
+				settingsFieldLCAgentContextProfile,
+				settingsFieldLCAgentRequestTimeout,
+				settingsFieldLCAgentPath,
+				settingsFieldLCAgentEnvFile,
+				settingsFieldLCAgentRoutePreset,
 			},
 		},
 		{
@@ -600,6 +607,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		config.AIBackend(m.settingsFieldValue(settingsFieldAIBackend)),
 		config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend)),
 		m.settingsFieldValue(settingsFieldOpenAIAPIKey),
+		m.settingsFieldValue(settingsFieldOpenRouterAPIKey),
+		m.settingsFieldValue(settingsFieldDeepSeekAPIKey),
+		m.settingsFieldValue(settingsFieldMoonshotAPIKey),
 		m.settingsFieldValue(settingsFieldBossChatModel),
 		m.settingsFieldValue(settingsFieldBossUtilityModel),
 		m.settingsFieldValue(settingsFieldMLXBaseURL),
@@ -861,7 +871,19 @@ func (m Model) settingsFieldVisible(index int) bool {
 	settings := m.settingsDraftForInferenceStatus()
 	switch index {
 	case settingsFieldOpenAIAPIKey:
+		if m.settingsShowingLCAgentCredentials() {
+			return settingsLCAgentCredentialFieldRelevant(settings, "openai")
+		}
 		return settingsOpenAIKeyFieldRelevant(settings)
+	case settingsFieldOpenRouterAPIKey:
+		return settingsLCAgentCredentialFieldRelevant(settings, "openrouter") ||
+			strings.TrimSpace(settings.OpenRouterAPIKey) != ""
+	case settingsFieldDeepSeekAPIKey:
+		return settingsLCAgentCredentialFieldRelevant(settings, "deepseek") ||
+			strings.TrimSpace(settings.DeepSeekAPIKey) != ""
+	case settingsFieldMoonshotAPIKey:
+		return settingsLCAgentCredentialFieldRelevant(settings, "moonshot") ||
+			strings.TrimSpace(settings.MoonshotAPIKey) != ""
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 		return settingsBossModelFieldsRelevant(settings)
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
@@ -880,10 +902,23 @@ func (m Model) settingsFieldVisible(index int) bool {
 	}
 }
 
+func (m Model) settingsShowingLCAgentCredentials() bool {
+	if m.settingsDrilldown == settingsDrilldownLCAgent {
+		return true
+	}
+	return m.settingsDrilldown == settingsDrilldownNone && m.activeSettingsSection().id == settingsSectionLCAgent
+}
+
 func settingsOpenAIKeyFieldRelevant(settings config.EditableSettings) bool {
 	return settings.AIBackend == config.AIBackendOpenAIAPI ||
 		settings.BossChatBackend == config.AIBackendOpenAIAPI ||
+		settingsLCAgentCredentialFieldRelevant(settings, "openai") ||
 		strings.TrimSpace(settings.OpenAIAPIKey) != ""
+}
+
+func settingsLCAgentCredentialFieldRelevant(settings config.EditableSettings, provider string) bool {
+	selected := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+	return strings.EqualFold(strings.TrimSpace(selected), strings.TrimSpace(provider))
 }
 
 func settingsBossModelFieldsRelevant(settings config.EditableSettings) bool {
@@ -947,11 +982,15 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 	case settingsDrilldownLCAgent:
 		fields := []int{
 			settingsFieldLCAgentProvider,
+		}
+		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
+			fields = append(fields, credentialField)
+		}
+		fields = append(fields,
 			settingsFieldLCAgentModel,
 			settingsFieldLCAgentReasoning,
-			settingsFieldLCAgentEnvFile,
 			settingsFieldLCAgentWebSearchBackend,
-		}
+		)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
 		return fields
 	case settingsDrilldownProjectScope:
@@ -976,6 +1015,22 @@ func settingsProviderConnectionFields(backend config.AIBackend) []int {
 		return []int{settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel}
 	default:
 		return nil
+	}
+}
+
+func settingsLCAgentCredentialField(settings config.EditableSettings) int {
+	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return settingsFieldOpenAIAPIKey
+	case "", "openrouter":
+		return settingsFieldOpenRouterAPIKey
+	case "deepseek":
+		return settingsFieldDeepSeekAPIKey
+	case "moonshot":
+		return settingsFieldMoonshotAPIKey
+	default:
+		return -1
 	}
 }
 
@@ -1150,6 +1205,9 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
+	settings.OpenRouterAPIKey = m.settingsFieldValue(settingsFieldOpenRouterAPIKey)
+	settings.DeepSeekAPIKey = m.settingsFieldValue(settingsFieldDeepSeekAPIKey)
+	settings.MoonshotAPIKey = m.settingsFieldValue(settingsFieldMoonshotAPIKey)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
 	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
 	settings.MLXModel = m.settingsFieldValue(settingsFieldMLXModel)
@@ -1461,7 +1519,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 		switch fieldIndex {
 		case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
 			return "Model Provider"
-		case settingsFieldLCAgentEnvFile:
+		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey:
 			return "Provider Credentials"
 		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
 			return "Web Search"
@@ -1516,7 +1574,9 @@ func settingsOpenAIConnectionState(settings config.EditableSettings) string {
 	if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
 		return "ready"
 	}
-	if settings.AIBackend == config.AIBackendOpenAIAPI || settings.BossChatBackend == config.AIBackendOpenAIAPI {
+	if settings.AIBackend == config.AIBackendOpenAIAPI ||
+		settings.BossChatBackend == config.AIBackendOpenAIAPI ||
+		settingsLCAgentCredentialFieldRelevant(settings, "openai") {
 		return "needed"
 	}
 	return "optional"
@@ -1546,6 +1606,9 @@ func settingsProviderUsers(settings config.EditableSettings, backend config.AIBa
 	}
 	if settings.BossChatBackend == backend {
 		users = append(users, "Boss chat")
+	}
+	if backend == config.AIBackendOpenAIAPI && settingsLCAgentCredentialFieldRelevant(settings, "openai") {
+		users = append(users, "LCAgent")
 	}
 	return users
 }
@@ -1635,6 +1698,9 @@ func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipg
 	if keyName == "" {
 		return "unknown", detailWarningStyle, "Unknown LCAgent provider " + provider + "."
 	}
+	if value := lcagentProviderSavedAPIKey(settings, provider); value != "" {
+		return "ready", footerPrimaryLabelStyle, lcagentProviderSavedKeyLabel(provider) + " saved " + maskedOpenAIKeySuffix(value) + "."
+	}
 	envFile := strings.TrimSpace(settings.LCAgentEnvFile)
 	if envFile != "" {
 		value, found, err := readEnvFileKey(envFile, keyName)
@@ -1649,7 +1715,37 @@ func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipg
 	if value := strings.TrimSpace(os.Getenv(keyName)); value != "" {
 		return "ready", footerPrimaryLabelStyle, keyName + " found in process environment " + maskedOpenAIKeySuffix(value) + "."
 	}
-	return "needed", detailWarningStyle, keyName + " is not configured; set an env file or process environment variable."
+	return "needed", detailWarningStyle, keyName + " is not configured; paste the provider key here or use an advanced env file."
+}
+
+func lcagentProviderSavedAPIKey(settings config.EditableSettings, provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return strings.TrimSpace(settings.OpenAIAPIKey)
+	case "", "openrouter":
+		return strings.TrimSpace(settings.OpenRouterAPIKey)
+	case "deepseek":
+		return strings.TrimSpace(settings.DeepSeekAPIKey)
+	case "moonshot":
+		return strings.TrimSpace(settings.MoonshotAPIKey)
+	default:
+		return ""
+	}
+}
+
+func lcagentProviderSavedKeyLabel(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return "OpenAI API key"
+	case "", "openrouter":
+		return "OpenRouter API key"
+	case "deepseek":
+		return "DeepSeek API key"
+	case "moonshot":
+		return "Moonshot API key"
+	default:
+		return "Provider key"
+	}
 }
 
 func lcagentProviderForRoutePreset(preset string) string {
@@ -2047,6 +2143,12 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 		} else {
 			action = "Next: paste a key here for the selected OpenAI API path, or go back and choose a local/off provider."
 		}
+	case settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey:
+		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(m.settingsSelected)); suffix != "" {
+			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change this provider key."
+		} else {
+			action = "Next: paste the selected LCAgent provider key, or go back and choose a different provider."
+		}
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
 		action = "Next: adjust MLX only if your local endpoint or model is not the default, then save."
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
@@ -2102,10 +2204,34 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
 		newSensitiveSettingsField(
 			"OpenAI API key",
-			"Used only when Project reports or Boss chat is set to OpenAI API.",
+			"Shared by Project reports, Boss chat, and LCAgent when they use direct OpenAI API.",
 			settings.OpenAIAPIKey,
 			512,
 			settingsSectionGettingStarted,
+		),
+		newSensitiveSettingsFieldWithPlaceholder(
+			"OpenRouter API key",
+			"Shared by LCAgent OpenRouter runs. The LCAgent env file remains available as an advanced fallback.",
+			settings.OpenRouterAPIKey,
+			512,
+			"Paste OpenRouter API key",
+			settingsSectionLCAgent,
+		),
+		newSensitiveSettingsFieldWithPlaceholder(
+			"DeepSeek API key",
+			"Shared by LCAgent direct DeepSeek runs. The LCAgent env file remains available as an advanced fallback.",
+			settings.DeepSeekAPIKey,
+			512,
+			"Paste DeepSeek API key",
+			settingsSectionLCAgent,
+		),
+		newSensitiveSettingsFieldWithPlaceholder(
+			"Moonshot API key",
+			"Shared by LCAgent direct Moonshot/Kimi runs. The LCAgent env file remains available as an advanced fallback.",
+			settings.MoonshotAPIKey,
+			512,
+			"Paste Moonshot API key",
+			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"Boss chat",
@@ -2183,7 +2309,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent env file",
-			"Optional env file for experimental LCAgent provider credentials, such as OpenRouter, DeepSeek, Moonshot, or OpenAI keys. Missing files are shown as warnings and launches will fail until fixed or cleared.",
+			"Advanced fallback: optional dotenv file for LCAgent provider credentials. Saved provider keys above are used first.",
 			settings.LCAgentEnvFile,
 			1024,
 			settingsSectionLCAgent,
@@ -2402,6 +2528,9 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
 	settings.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
+	settings.OpenRouterAPIKey = strings.TrimSpace(settings.OpenRouterAPIKey)
+	settings.DeepSeekAPIKey = strings.TrimSpace(settings.DeepSeekAPIKey)
+	settings.MoonshotAPIKey = strings.TrimSpace(settings.MoonshotAPIKey)
 	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
 	settings.MLXModel = strings.TrimSpace(settings.MLXModel)
@@ -2459,8 +2588,23 @@ func (m Model) settingsFieldHint(index int) string {
 			return "Used for OpenAI API backed features. Stored key ends with " + suffix + "."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		if settings.AIBackend == config.AIBackendOpenAIAPI || settings.BossChatBackend == config.AIBackendOpenAIAPI {
+		if settings.AIBackend == config.AIBackendOpenAIAPI || settings.BossChatBackend == config.AIBackendOpenAIAPI || settingsLCAgentCredentialFieldRelevant(settings, "openai") {
 			return field.hint + " The selected OpenAI API path still needs a saved key."
+		}
+		return field.hint
+	case settingsFieldOpenRouterAPIKey:
+		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+			return "Used for LCAgent OpenRouter runs. Stored key ends with " + suffix + "."
+		}
+		return field.hint
+	case settingsFieldDeepSeekAPIKey:
+		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+			return "Used for LCAgent direct DeepSeek runs. Stored key ends with " + suffix + "."
+		}
+		return field.hint
+	case settingsFieldMoonshotAPIKey:
+		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
+			return "Used for LCAgent direct Moonshot/Kimi runs. Stored key ends with " + suffix + "."
 		}
 		return field.hint
 	case settingsFieldBossChatBackend:

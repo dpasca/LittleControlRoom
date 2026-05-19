@@ -872,6 +872,18 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentEnvFile) == "" {
 			req.LCAgentEnvFile = m.lcagentEnvFile()
 		}
+		if strings.TrimSpace(req.LCAgentOpenAIAPIKey) == "" {
+			req.LCAgentOpenAIAPIKey = m.openAIAPIKey()
+		}
+		if strings.TrimSpace(req.LCAgentOpenRouterAPIKey) == "" {
+			req.LCAgentOpenRouterAPIKey = m.openRouterAPIKey()
+		}
+		if strings.TrimSpace(req.LCAgentDeepSeekAPIKey) == "" {
+			req.LCAgentDeepSeekAPIKey = m.deepSeekAPIKey()
+		}
+		if strings.TrimSpace(req.LCAgentMoonshotAPIKey) == "" {
+			req.LCAgentMoonshotAPIKey = m.moonshotAPIKey()
+		}
 		if strings.TrimSpace(req.LCAgentRoutePreset) == "" {
 			req.LCAgentRoutePreset = m.lcagentRoutePreset()
 		}

@@ -327,6 +327,7 @@ func TestLCAgentSessionListModelsKeepsCustomCurrentModel(t *testing.T) {
 func TestLCAgentSessionLaunchUsesRoutePresetBundle(t *testing.T) {
 	root := t.TempDir()
 	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	envCapturePath := filepath.Join(t.TempDir(), "env.txt")
 	exe := filepath.Join(t.TempDir(), "fake-lcagent")
 	script := `#!/bin/sh
 {
@@ -334,6 +335,7 @@ func TestLCAgentSessionLaunchUsesRoutePresetBundle(t *testing.T) {
     printf '%s\n' "$arg"
   done
 } > "$LCAGENT_ARGS_FILE"
+printf '%s\n' "$OPENAI_API_KEY" > "$LCAGENT_ENV_CAPTURE_FILE"
 printf '%s\n' '{"type":"session_meta","id":"lca_route_session","cwd":"/tmp/demo"}'
 printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 `
@@ -341,6 +343,8 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 		t.Fatalf("write fake lcagent: %v", err)
 	}
 	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+	t.Setenv("LCAGENT_ENV_CAPTURE_FILE", envCapturePath)
+	t.Setenv("OPENAI_API_KEY", "process-openai-key")
 
 	notify := make(chan struct{}, 20)
 	session, err := newLCAgentSession(LaunchRequest{
@@ -348,6 +352,7 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 		ProjectPath:         root,
 		AppDataDir:          t.TempDir(),
 		LCAgentPath:         exe,
+		LCAgentOpenAIAPIKey: "saved-openai-key",
 		LCAgentRoutePreset:  "quality",
 		LCAgentProvider:     "deepseek",
 		LCAgentAuto:         "medium",
@@ -384,6 +389,13 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 		if lcagentTestStringSliceContains(args, blocked) {
 			t.Fatalf("route preset should own %s unless review/override is active: %#v", blocked, args)
 		}
+	}
+	envBytes, err := os.ReadFile(envCapturePath)
+	if err != nil {
+		t.Fatalf("read captured env: %v", err)
+	}
+	if got := strings.TrimSpace(string(envBytes)); got != "saved-openai-key" {
+		t.Fatalf("OPENAI_API_KEY passed to route preset = %q, want saved settings key", got)
 	}
 }
 

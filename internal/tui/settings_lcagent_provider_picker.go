@@ -14,25 +14,25 @@ func settingsLCAgentProviderOptions() []settingsLCAgentProviderOption {
 			Value:       "openrouter",
 			Label:       "OpenRouter",
 			Summary:     "Use OpenRouter as the LCAgent model gateway.",
-			Description: "Good default for model-routing experiments. Uses OPENROUTER_API_KEY from the configured LCAgent env file or process environment.",
+			Description: "Good default for model-routing experiments. Uses the saved OpenRouter API key, with env file or process environment as an advanced fallback.",
 		},
 		{
 			Value:       "openai",
 			Label:       "OpenAI",
 			Summary:     "Use the direct OpenAI route for LCAgent.",
-			Description: "Best fit when you want direct OpenAI Responses API behavior. Uses OPENAI_API_KEY from the configured LCAgent env file or process environment.",
+			Description: "Best fit when you want direct OpenAI Responses API behavior. Reuses the shared OpenAI API key when saved.",
 		},
 		{
 			Value:       "deepseek",
 			Label:       "DeepSeek",
 			Summary:     "Use the direct DeepSeek route for LCAgent.",
-			Description: "Uses DEEPSEEK_API_KEY from the configured LCAgent env file or process environment.",
+			Description: "Uses the saved DeepSeek API key, with env file or process environment as an advanced fallback.",
 		},
 		{
 			Value:       "moonshot",
 			Label:       "Moonshot",
 			Summary:     "Use the direct Moonshot/Kimi route for LCAgent.",
-			Description: "Uses MOONSHOT_API_KEY from the configured LCAgent env file or process environment.",
+			Description: "Uses the saved Moonshot API key, with env file or process environment as an advanced fallback.",
 		},
 	}
 }

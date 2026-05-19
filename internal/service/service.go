@@ -202,6 +202,7 @@ func cloneAppConfig(cfg config.AppConfig) config.AppConfig {
 	cloned.RecentCodexModels = append([]string(nil), cfg.RecentCodexModels...)
 	cloned.RecentClaudeModels = append([]string(nil), cfg.RecentClaudeModels...)
 	cloned.RecentOpenCodeModels = append([]string(nil), cfg.RecentOpenCodeModels...)
+	cloned.RecentLCAgentModels = append([]string(nil), cfg.RecentLCAgentModels...)
 	cloned.PlaywrightPolicy = cfg.PlaywrightPolicy.Normalize()
 	return cloned
 }
@@ -295,6 +296,9 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
 	s.cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
+	s.cfg.OpenRouterAPIKey = strings.TrimSpace(settings.OpenRouterAPIKey)
+	s.cfg.DeepSeekAPIKey = strings.TrimSpace(settings.DeepSeekAPIKey)
+	s.cfg.MoonshotAPIKey = strings.TrimSpace(settings.MoonshotAPIKey)
 	s.cfg.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	s.cfg.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
 	s.cfg.MLXModel = strings.TrimSpace(settings.MLXModel)
@@ -315,6 +319,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
 	s.cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	s.cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
+	s.cfg.LCAgentRoutePreset = strings.TrimSpace(settings.LCAgentRoutePreset)
 	s.cfg.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	s.cfg.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	s.cfg.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)

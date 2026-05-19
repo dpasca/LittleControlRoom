@@ -41,6 +41,10 @@ type lcagentSession struct {
 	dataDir           string
 	execPath          string
 	envFile           string
+	openAIAPIKey      string
+	openRouterAPIKey  string
+	deepSeekAPIKey    string
+	moonshotAPIKey    string
 	routePreset       string
 	provider          string
 	auto              string
@@ -109,6 +113,10 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		dataDir:           dataDir,
 		execPath:          strings.TrimSpace(req.LCAgentPath),
 		envFile:           strings.TrimSpace(req.LCAgentEnvFile),
+		openAIAPIKey:      strings.TrimSpace(req.LCAgentOpenAIAPIKey),
+		openRouterAPIKey:  strings.TrimSpace(req.LCAgentOpenRouterAPIKey),
+		deepSeekAPIKey:    strings.TrimSpace(req.LCAgentDeepSeekAPIKey),
+		moonshotAPIKey:    strings.TrimSpace(req.LCAgentMoonshotAPIKey),
 		routePreset:       routePreset,
 		provider:          provider,
 		auto:              strings.TrimSpace(req.LCAgentAuto),
@@ -439,6 +447,8 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		requestTimeout = lcagentDefaultRequestTimeout
 	}
 	reasoningEffort := strings.TrimSpace(s.reasoningEffort)
+	credentialProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
+	providerAPIKeyName, providerAPIKey := s.providerCredentialLocked(credentialProvider)
 	webSearchBackend := firstNonEmpty(s.webSearchBackend, lcagentDefaultWebSearch)
 	webSearchAPIKey := strings.TrimSpace(s.webSearchAPIKey)
 	webSearchEngineID := strings.TrimSpace(s.webSearchEngineID)
@@ -498,12 +508,15 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	cmd := exec.CommandContext(ctx, spec.Command, args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = os.Environ()
+	if providerAPIKeyName != "" && providerAPIKey != "" {
+		cmd.Env = setCommandEnv(cmd.Env, providerAPIKeyName, providerAPIKey)
+	}
 	if webSearchAPIKey != "" {
 		switch webSearchBackend {
 		case "exa":
-			cmd.Env = append(cmd.Env, "EXA_API_KEY="+webSearchAPIKey)
+			cmd.Env = setCommandEnv(cmd.Env, "EXA_API_KEY", webSearchAPIKey)
 		default:
-			cmd.Env = append(cmd.Env, "GOOGLE_SEARCH_API_KEY="+webSearchAPIKey)
+			cmd.Env = setCommandEnv(cmd.Env, "GOOGLE_SEARCH_API_KEY", webSearchAPIKey)
 		}
 	}
 	stdout, err := cmd.StdoutPipe()
@@ -561,6 +574,36 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		s.finishRun(processState, err == nil, err)
 	}()
 	return nil
+}
+
+func (s *lcagentSession) providerCredentialLocked(provider string) (string, string) {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return "OPENAI_API_KEY", strings.TrimSpace(s.openAIAPIKey)
+	case "", "openrouter":
+		return "OPENROUTER_API_KEY", strings.TrimSpace(s.openRouterAPIKey)
+	case "deepseek":
+		return "DEEPSEEK_API_KEY", strings.TrimSpace(s.deepSeekAPIKey)
+	case "moonshot":
+		return "MOONSHOT_API_KEY", strings.TrimSpace(s.moonshotAPIKey)
+	default:
+		return "", ""
+	}
+}
+
+func setCommandEnv(env []string, key, value string) []string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return env
+	}
+	prefix := key + "="
+	out := env[:0]
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, prefix) {
+			out = append(out, entry)
+		}
+	}
+	return append(out, prefix+value)
 }
 
 func (s *lcagentSession) readStream(reader io.Reader) error {

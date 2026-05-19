@@ -74,6 +74,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"boss_helm_model = \"gpt-5.5\"\n" +
 		"boss_utility_model = \"gpt-5.4-mini\"\n" +
 		"openai_api_key = \"sk-live-example\"\n" +
+		"openrouter_api_key = \"or-live-example\"\n" +
+		"deepseek_api_key = \"ds-live-example\"\n" +
+		"moonshot_api_key = \"mk-live-example\"\n" +
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
 		"exclude_project_patterns = [\"quickgame_*\", \"secret-demo\"]\n" +
@@ -111,6 +114,15 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.OpenAIAPIKey, "sk-live-example"; got != want {
 		t.Fatalf("openai api key = %q, want %q", got, want)
+	}
+	if got, want := cfg.OpenRouterAPIKey, "or-live-example"; got != want {
+		t.Fatalf("openrouter api key = %q, want %q", got, want)
+	}
+	if got, want := cfg.DeepSeekAPIKey, "ds-live-example"; got != want {
+		t.Fatalf("deepseek api key = %q, want %q", got, want)
+	}
+	if got, want := cfg.MoonshotAPIKey, "mk-live-example"; got != want {
+		t.Fatalf("moonshot api key = %q, want %q", got, want)
 	}
 	if got, want := cfg.BossChatBackend, AIBackendOpenAIAPI; got != want {
 		t.Fatalf("boss chat backend = %q, want %q", got, want)
@@ -440,7 +452,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "generous", "large", "10m", "off", "", "", "", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "generous", "large", "10m", "off", "", "", "", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -455,6 +467,15 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 	if got, want := settings.OpenAIAPIKey, "sk-test-example"; got != want {
 		t.Fatalf("openai api key = %q, want %q", got, want)
+	}
+	if got, want := settings.OpenRouterAPIKey, "sk-openrouter"; got != want {
+		t.Fatalf("openrouter api key = %q, want %q", got, want)
+	}
+	if got, want := settings.DeepSeekAPIKey, "sk-deepseek"; got != want {
+		t.Fatalf("deepseek api key = %q, want %q", got, want)
+	}
+	if got, want := settings.MoonshotAPIKey, "sk-moonshot"; got != want {
+		t.Fatalf("moonshot api key = %q, want %q", got, want)
 	}
 	if got, want := settings.BossChatBackend, AIBackendOpenAIAPI; got != want {
 		t.Fatalf("boss chat backend = %q, want %q", got, want)
@@ -527,7 +548,7 @@ func TestParseEditableSettings(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -535,7 +556,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -543,7 +564,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -562,6 +583,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		BossHelmModel:             "gpt-5.5",
 		BossUtilityModel:          "gpt-5.4-mini",
 		OpenAIAPIKey:              "sk-test-example",
+		OpenRouterAPIKey:          "or-test-example",
+		DeepSeekAPIKey:            "ds-test-example",
+		MoonshotAPIKey:            "mk-test-example",
 		MLXBaseURL:                "http://127.0.0.1:8080/v1",
 		MLXAPIKey:                 "mlx",
 		MLXModel:                  "mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -628,6 +652,15 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") {
 		t.Fatalf("saved config should include openai api key: %q", text)
+	}
+	for _, want := range []string{
+		"openrouter_api_key = \"or-test-example\"",
+		"deepseek_api_key = \"ds-test-example\"",
+		"moonshot_api_key = \"mk-test-example\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config should include %q: %q", want, text)
+		}
 	}
 	for _, want := range []string{
 		"mlx_base_url = \"http://127.0.0.1:8080/v1\"",

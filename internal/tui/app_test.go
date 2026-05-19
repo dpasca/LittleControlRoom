@@ -19895,8 +19895,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 35 {
-		t.Fatalf("settings field count = %d, want 35", len(got.settingsFields))
+	if len(got.settingsFields) != 38 {
+		t.Fatalf("settings field count = %d, want 38", len(got.settingsFields))
 	}
 }
 
@@ -21018,7 +21018,7 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 		t.Fatalf("setup config fields should not save until save confirmation")
 	}
 
-	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got = updated.(Model)
 	if cmd != nil {
 		t.Fatalf("continuing from LCAgent setup should open the save step before save")
@@ -21742,7 +21742,8 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 		width:            100,
 		height:           24,
 	}
-	_ = m.setSettingsSelection(0)
+	_ = m.setSettingsSection(3)
+	_ = m.setSettingsSelection(settingsFieldExcludePaths)
 
 	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
 	if !strings.Contains(rendered, "ctrl+s") || !strings.Contains(rendered, "save") {
@@ -22185,8 +22186,8 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 		t.Fatalf("PgDn should move to the next settings section")
 	}
 	got := updated.(Model)
-	if got.settingsSelected != settingsFieldLCAgentPath {
-		t.Fatalf("settingsSelected = %d, want LCAgent path field", got.settingsSelected)
+	if got.settingsSelected != settingsFieldLCAgentProvider {
+		t.Fatalf("settingsSelected = %d, want LCAgent provider field", got.settingsSelected)
 	}
 
 	rendered := ansi.Strip(got.renderSettingsContent(72, 18))
@@ -22209,7 +22210,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "LCAgent executable") || !strings.Contains(rendered, "LCAgent route preset") {
+	if !strings.Contains(rendered, "LCAgent provider") || !strings.Contains(rendered, "OpenRouter API key") {
 		t.Fatalf("settings modal should show LCAgent fields after switching sections: %q", rendered)
 	}
 	if strings.Contains(rendered, "Boss helm model") {
@@ -22426,12 +22427,12 @@ func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
 		t.Fatalf("top-level Getting Started Enter should open the setup panel before the picker")
 	}
 	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
-	for _, want := range []string{"LCAgent Setup", "Model Provider", "Provider Credentials", "Web Search"} {
+	for _, want := range []string{"LCAgent Setup", "Model Provider", "Provider Credentials", "OpenRouter API key", "Web Search"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("LCAgent setup panel missing %q: %q", want, rendered)
 		}
 	}
-	for _, hidden := range []string{"Runtime Policy", "LCAgent timeout", "LCAgent route preset", "LCAgent executable"} {
+	for _, hidden := range []string{"Runtime Policy", "LCAgent timeout", "LCAgent route preset", "LCAgent executable", "LCAgent env file"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("LCAgent setup panel should keep advanced field %q out of the first setup panel: %q", hidden, rendered)
 		}
@@ -22470,6 +22471,15 @@ func TestSettingsLCAgentProviderPickerChoosesDeepSeek(t *testing.T) {
 	}
 	if got.settingsFields[settingsFieldLCAgentProvider].input.Value() != "deepseek" {
 		t.Fatalf("LCAgent provider = %q, want deepseek", got.settingsFields[settingsFieldLCAgentProvider].input.Value())
+	}
+	updated, _ = got.openSettingsDrilldown(settingsDrilldownLCAgent)
+	got = updated.(Model)
+	rendered = ansi.Strip(got.renderSettingsContent(84, 24))
+	if !strings.Contains(rendered, "DeepSeek API key") {
+		t.Fatalf("DeepSeek provider should reveal DeepSeek credentials: %q", rendered)
+	}
+	if strings.Contains(rendered, "OpenRouter API key") {
+		t.Fatalf("DeepSeek provider should not show OpenRouter credentials in focused setup: %q", rendered)
 	}
 }
 
@@ -23588,6 +23598,7 @@ func TestSettingsEscCancelsWithoutQuitting(t *testing.T) {
 
 func TestSettingsAPIKeyHintShowsMaskedSuffix(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenAIAPI
 	settings.OpenAIAPIKey = "sk-live-12345"
 
 	m := Model{
@@ -23596,6 +23607,8 @@ func TestSettingsAPIKeyHintShowsMaskedSuffix(t *testing.T) {
 		width:          100,
 		height:         24,
 	}
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)
+	m = updated.(Model)
 	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
 
 	rendered := ansi.Strip(m.renderSettingsContent(72, 18))

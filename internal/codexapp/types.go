@@ -548,6 +548,10 @@ type LaunchRequest struct {
 	CodexHome                string
 	LCAgentPath              string
 	LCAgentEnvFile           string
+	LCAgentOpenAIAPIKey      string
+	LCAgentOpenRouterAPIKey  string
+	LCAgentDeepSeekAPIKey    string
+	LCAgentMoonshotAPIKey    string
 	LCAgentRoutePreset       string
 	LCAgentProvider          string
 	LCAgentAuto              string

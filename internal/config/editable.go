@@ -19,6 +19,9 @@ type EditableSettings struct {
 	BossHelmModel             string
 	BossUtilityModel          string
 	OpenAIAPIKey              string
+	OpenRouterAPIKey          string
+	DeepSeekAPIKey            string
+	MoonshotAPIKey            string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -71,6 +74,9 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		BossHelmModel:             firstNonEmptyTrimmed(cfg.BossHelmModel, cfg.BossChatModel),
 		BossUtilityModel:          cfg.BossUtilityModel,
 		OpenAIAPIKey:              cfg.OpenAIAPIKey,
+		OpenRouterAPIKey:          cfg.OpenRouterAPIKey,
+		DeepSeekAPIKey:            cfg.DeepSeekAPIKey,
+		MoonshotAPIKey:            cfg.MoonshotAPIKey,
 		MLXBaseURL:                cfg.MLXBaseURL,
 		MLXAPIKey:                 cfg.MLXAPIKey,
 		MLXModel:                  cfg.MLXModel,
@@ -149,7 +155,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -159,6 +165,9 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		return EditableSettings{}, err
 	}
 	openAIAPIKey := strings.TrimSpace(openAIAPIKeyRaw)
+	openRouterAPIKey := strings.TrimSpace(openRouterAPIKeyRaw)
+	deepSeekAPIKey := strings.TrimSpace(deepSeekAPIKeyRaw)
+	moonshotAPIKey := strings.TrimSpace(moonshotAPIKeyRaw)
 	bossHelmModel := strings.TrimSpace(bossHelmModelRaw)
 	bossUtilityModel := strings.TrimSpace(bossUtilityModelRaw)
 	mlxBaseURL := strings.TrimSpace(mlxBaseURLRaw)
@@ -259,6 +268,9 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		BossHelmModel:          bossHelmModel,
 		BossUtilityModel:       bossUtilityModel,
 		OpenAIAPIKey:           openAIAPIKey,
+		OpenRouterAPIKey:       openRouterAPIKey,
+		DeepSeekAPIKey:         deepSeekAPIKey,
+		MoonshotAPIKey:         moonshotAPIKey,
 		MLXBaseURL:             mlxBaseURL,
 		MLXAPIKey:              mlxAPIKey,
 		MLXModel:               mlxModel,
@@ -346,6 +358,9 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
 	cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	cfg.OpenAIAPIKey = settings.OpenAIAPIKey
+	cfg.OpenRouterAPIKey = settings.OpenRouterAPIKey
+	cfg.DeepSeekAPIKey = settings.DeepSeekAPIKey
+	cfg.MoonshotAPIKey = settings.MoonshotAPIKey
 	cfg.MLXBaseURL = settings.MLXBaseURL
 	cfg.MLXAPIKey = settings.MLXAPIKey
 	cfg.MLXModel = settings.MLXModel
@@ -425,7 +440,16 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, "")
 	}
 	if settings.OpenAIAPIKey != "" {
-		lines = append(lines, fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)), "")
+		lines = append(lines, fmt.Sprintf("openai_api_key = %s", strconv.Quote(settings.OpenAIAPIKey)))
+	}
+	if settings.OpenRouterAPIKey != "" {
+		lines = append(lines, fmt.Sprintf("openrouter_api_key = %s", strconv.Quote(settings.OpenRouterAPIKey)))
+	}
+	if settings.DeepSeekAPIKey != "" {
+		lines = append(lines, fmt.Sprintf("deepseek_api_key = %s", strconv.Quote(settings.DeepSeekAPIKey)))
+	}
+	if settings.MoonshotAPIKey != "" {
+		lines = append(lines, fmt.Sprintf("moonshot_api_key = %s", strconv.Quote(settings.MoonshotAPIKey)))
 	}
 	if value := strings.TrimSpace(settings.MLXBaseURL); value != "" {
 		lines = append(lines, fmt.Sprintf("mlx_base_url = %s", strconv.Quote(value)))
@@ -446,6 +470,9 @@ func renderEditableSettings(settings EditableSettings) string {
 		lines = append(lines, fmt.Sprintf("ollama_model = %s", strconv.Quote(value)))
 	}
 	if settings.OpenAIAPIKey != "" ||
+		strings.TrimSpace(settings.OpenRouterAPIKey) != "" ||
+		strings.TrimSpace(settings.DeepSeekAPIKey) != "" ||
+		strings.TrimSpace(settings.MoonshotAPIKey) != "" ||
 		strings.TrimSpace(settings.MLXBaseURL) != "" ||
 		strings.TrimSpace(settings.MLXAPIKey) != "" ||
 		strings.TrimSpace(settings.MLXModel) != "" ||

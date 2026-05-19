@@ -23,6 +23,9 @@ type AppConfig struct {
 	BossHelmModel             string
 	BossUtilityModel          string
 	OpenAIAPIKey              string
+	OpenRouterAPIKey          string
+	DeepSeekAPIKey            string
+	MoonshotAPIKey            string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -137,6 +140,9 @@ type fileConfig struct {
 	BossHelmModel             *string   `toml:"boss_helm_model"`
 	BossUtilityModel          *string   `toml:"boss_utility_model"`
 	OpenAIAPIKey              *string   `toml:"openai_api_key"`
+	OpenRouterAPIKey          *string   `toml:"openrouter_api_key"`
+	DeepSeekAPIKey            *string   `toml:"deepseek_api_key"`
+	MoonshotAPIKey            *string   `toml:"moonshot_api_key"`
 	MLXBaseURL                *string   `toml:"mlx_base_url"`
 	MLXAPIKey                 *string   `toml:"mlx_api_key"`
 	MLXModel                  *string   `toml:"mlx_model"`
@@ -491,6 +497,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.BossHelmModel, fc.BossHelmModel)
 	applyOptionalTrimmedString(&cfg.BossUtilityModel, fc.BossUtilityModel)
 	applyOptionalTrimmedString(&cfg.OpenAIAPIKey, fc.OpenAIAPIKey)
+	applyOptionalTrimmedString(&cfg.OpenRouterAPIKey, fc.OpenRouterAPIKey)
+	applyOptionalTrimmedString(&cfg.DeepSeekAPIKey, fc.DeepSeekAPIKey)
+	applyOptionalTrimmedString(&cfg.MoonshotAPIKey, fc.MoonshotAPIKey)
 	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
 	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)
 	applyOptionalTrimmedString(&cfg.MLXModel, fc.MLXModel)

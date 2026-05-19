@@ -46,6 +46,9 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `lcroom browser reveal --session-key <id>`
 
 - `openai_api_key`
+- `openrouter_api_key`
+- `deepseek_api_key`
+- `moonshot_api_key`
 - `include_paths`
 - `exclude_paths`
 - `exclude_project_patterns`
@@ -72,6 +75,11 @@ Minimal config example:
 
 ```toml
 openai_api_key = "sk-your-openai-api-key"
+# Optional direct LCAgent provider keys. OpenAI-backed LCAgent reuses
+# openai_api_key; the env file below is only an advanced fallback.
+# openrouter_api_key = "sk-or-your-openrouter-key"
+# deepseek_api_key = "sk-your-deepseek-key"
+# moonshot_api_key = "sk-your-moonshot-key"
 
 include_paths = [
   "~/dev/repos",
@@ -81,7 +89,8 @@ exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
 # LCAgent is experimental. Leave lcagent_path blank to use the bundled binary,
-# PATH lookup, or local go run fallback. Put provider API keys in the env file.
+# PATH lookup, or local go run fallback. Saved provider keys are used before
+# process environment variables; lcagent_env_file is an advanced fallback.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
 # lcagent_env_file = "~/path/to/openrouter.env"
 # lcagent_route_preset = "balanced" # optional: balanced, quality, cheap-scout

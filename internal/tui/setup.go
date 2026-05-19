@@ -467,18 +467,26 @@ func (m Model) setupConfigFieldIndexes() []int {
 		return nil
 	}
 	if m.setupFocusedRole == setupRoleLCAgent {
-		return []int{
-			settingsFieldLCAgentPath,
-			settingsFieldLCAgentEnvFile,
-			settingsFieldLCAgentRoutePreset,
+		settings := m.setupDraftSettingsForProviderChoices()
+		fields := []int{
 			settingsFieldLCAgentProvider,
+		}
+		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
+			fields = append(fields, credentialField)
+		}
+		fields = append(fields,
 			settingsFieldLCAgentModel,
 			settingsFieldLCAgentReasoning,
+			settingsFieldLCAgentWebSearchBackend,
+		)
+		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
+		fields = append(fields,
 			settingsFieldLCAgentAuto,
 			settingsFieldLCAgentToolProfile,
 			settingsFieldLCAgentContextProfile,
 			settingsFieldLCAgentRequestTimeout,
-		}
+		)
+		return fields
 	}
 	if m.setupFocusedRole == setupRoleBossChat {
 		switch m.setupSelectedBossBackend() {
@@ -528,6 +536,9 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 		return settings
 	}
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
+	settings.OpenRouterAPIKey = m.settingsFieldValue(settingsFieldOpenRouterAPIKey)
+	settings.DeepSeekAPIKey = m.settingsFieldValue(settingsFieldDeepSeekAPIKey)
+	settings.MoonshotAPIKey = m.settingsFieldValue(settingsFieldMoonshotAPIKey)
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
@@ -545,6 +556,10 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.LCAgentAuto = m.settingsFieldValue(settingsFieldLCAgentAuto)
 	settings.LCAgentToolProfile = m.settingsFieldValue(settingsFieldLCAgentToolProfile)
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
+	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
+	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
+	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
+	settings.LCAgentWebSearchURL = m.settingsFieldValue(settingsFieldLCAgentWebSearchURL)
 	if timeout, err := time.ParseDuration(m.settingsFieldValue(settingsFieldLCAgentRequestTimeout)); err == nil {
 		settings.LCAgentRequestTimeout = timeout
 	}

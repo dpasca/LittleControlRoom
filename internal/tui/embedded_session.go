@@ -711,6 +711,10 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		CodexHome:                m.codexHome(),
 		LCAgentPath:              m.lcagentPath(),
 		LCAgentEnvFile:           m.lcagentEnvFile(),
+		LCAgentOpenAIAPIKey:      m.openAIAPIKey(),
+		LCAgentOpenRouterAPIKey:  m.openRouterAPIKey(),
+		LCAgentDeepSeekAPIKey:    m.deepSeekAPIKey(),
+		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
 		LCAgentAuto:              m.lcagentAuto(),
@@ -789,6 +793,10 @@ func (m Model) shouldReloadEmbeddedLCAgentAfterSettingsSave(previous, saved conf
 func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool {
 	return strings.TrimSpace(previous.LCAgentPath) != strings.TrimSpace(saved.LCAgentPath) ||
 		strings.TrimSpace(previous.LCAgentEnvFile) != strings.TrimSpace(saved.LCAgentEnvFile) ||
+		strings.TrimSpace(previous.OpenAIAPIKey) != strings.TrimSpace(saved.OpenAIAPIKey) ||
+		strings.TrimSpace(previous.OpenRouterAPIKey) != strings.TrimSpace(saved.OpenRouterAPIKey) ||
+		strings.TrimSpace(previous.DeepSeekAPIKey) != strings.TrimSpace(saved.DeepSeekAPIKey) ||
+		strings.TrimSpace(previous.MoonshotAPIKey) != strings.TrimSpace(saved.MoonshotAPIKey) ||
 		strings.TrimSpace(previous.LCAgentRoutePreset) != strings.TrimSpace(saved.LCAgentRoutePreset) ||
 		strings.TrimSpace(previous.LCAgentProvider) != strings.TrimSpace(saved.LCAgentProvider) ||
 		strings.TrimSpace(previous.EmbeddedLCAgentModel) != strings.TrimSpace(saved.EmbeddedLCAgentModel) ||
@@ -814,6 +822,10 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		CodexHome:                m.codexHome(),
 		LCAgentPath:              strings.TrimSpace(settings.LCAgentPath),
 		LCAgentEnvFile:           strings.TrimSpace(settings.LCAgentEnvFile),
+		LCAgentOpenAIAPIKey:      strings.TrimSpace(settings.OpenAIAPIKey),
+		LCAgentOpenRouterAPIKey:  strings.TrimSpace(settings.OpenRouterAPIKey),
+		LCAgentDeepSeekAPIKey:    strings.TrimSpace(settings.DeepSeekAPIKey),
+		LCAgentMoonshotAPIKey:    strings.TrimSpace(settings.MoonshotAPIKey),
 		LCAgentRoutePreset:       strings.TrimSpace(settings.LCAgentRoutePreset),
 		LCAgentProvider:          strings.TrimSpace(settings.LCAgentProvider),
 		LCAgentAuto:              strings.TrimSpace(settings.LCAgentAuto),
@@ -906,6 +918,22 @@ func (m Model) codexHome() string {
 		return strings.TrimSpace(m.svc.Config().CodexHome)
 	}
 	return strings.TrimSpace(config.Default().CodexHome)
+}
+
+func (m Model) openAIAPIKey() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey)
+}
+
+func (m Model) openRouterAPIKey() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().OpenRouterAPIKey)
+}
+
+func (m Model) deepSeekAPIKey() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().DeepSeekAPIKey)
+}
+
+func (m Model) moonshotAPIKey() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().MoonshotAPIKey)
 }
 
 func (m Model) lcagentPath() string {
