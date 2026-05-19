@@ -120,7 +120,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 		} else {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
-			detail = "Auto uses OpenAI when a saved key exists; otherwise choose Off."
+			detail = "Choose OpenAI API, MLX, Ollama, or Off when you want /boss configured."
 		}
 	}
 	if backend == config.AIBackendDisabled {

@@ -70,7 +70,7 @@ func (m Model) applySettingsAIBackendPickerSelection(option providerChoice) (tea
 		m.settingsFields[settingsFieldAIBackend].input.SetValue(string(option.Value))
 	}
 	m.closeSettingsAIBackendPicker(fmt.Sprintf("AI backend set to %s. Press ctrl+s to save.", option.Label))
-	return m, nil
+	return m.focusSettingsProviderDetail(option.Value)
 }
 
 func (m Model) renderSettingsAIBackendPickerOverlay(body string, bodyW, bodyH int) string {

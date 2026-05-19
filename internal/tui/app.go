@@ -155,6 +155,8 @@ type Model struct {
 	settingsBrowserPickerSelected       int
 	settingsAIBackendPickerVisible      bool
 	settingsAIBackendPickerSelected     int
+	settingsLCAgentProviderVisible      bool
+	settingsLCAgentProviderSelected     int
 	settingsLCAgentSearchPickerVisible  bool
 	settingsLCAgentSearchPickerSelected int
 	settingsEmbeddedProject             string
@@ -1179,6 +1181,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsBossChatPickerVisible {
 			return m.updateSettingsBossChatBackendPickerMode(msg)
+		}
+		if m.settingsLCAgentProviderVisible {
+			return m.updateSettingsLCAgentProviderPickerMode(msg)
 		}
 		if m.settingsBrowserPickerVisible {
 			return m.updateSettingsBrowserAutomationPickerMode(msg)
@@ -2990,6 +2995,9 @@ func (m Model) View() string {
 		if m.localModelPickerVisible {
 			body = m.renderLocalBackendModelPickerOverlay(body, layout.width, layout.height)
 		}
+		if m.settingsLCAgentProviderVisible {
+			body = m.renderSettingsLCAgentProviderPickerOverlay(body, layout.width, layout.height)
+		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 		if m.settingsAIBackendPickerVisible {
@@ -2997,6 +3005,9 @@ func (m Model) View() string {
 		}
 		if m.settingsBossChatPickerVisible {
 			body = m.renderSettingsBossChatBackendPickerOverlay(body, layout.width, layout.height)
+		}
+		if m.settingsLCAgentProviderVisible {
+			body = m.renderSettingsLCAgentProviderPickerOverlay(body, layout.width, layout.height)
 		}
 		if m.settingsBrowserPickerVisible {
 			body = m.renderSettingsBrowserAutomationPickerOverlay(body, layout.width, layout.height)

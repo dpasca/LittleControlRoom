@@ -70,7 +70,7 @@ func (m Model) applySettingsBossChatBackendPickerSelection(option providerChoice
 		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(option.Value))
 	}
 	m.closeSettingsBossChatBackendPicker(fmt.Sprintf("Boss chat set to %s. Press ctrl+s to save.", option.Label))
-	return m, nil
+	return m.focusSettingsProviderDetail(option.Value)
 }
 
 func (m Model) renderSettingsBossChatBackendPickerOverlay(body string, bodyW, bodyH int) string {

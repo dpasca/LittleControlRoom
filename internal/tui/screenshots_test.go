@@ -279,8 +279,9 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 		},
 	}
 	m.settingsFields = newSettingsFields(settings)
-	m.settingsSelected = settingsFieldMLXBaseURL
 	m.settingsBaseline = &settings
+	_ = m.setSettingsSection(1)
+	_ = m.setSettingsSelection(settingsFieldMLXBaseURL)
 	m.detail = model.ProjectDetail{
 		Summary: model.ProjectSummary{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
 	}
@@ -294,16 +295,16 @@ func TestScreenshotSettingsRendersLocalBackendFields(t *testing.T) {
 		"MLX base URL",
 		"MLX API key",
 		"MLX model",
-		"Ollama base URL",
-		"Ollama API key",
-		"Ollama model",
 		"http://127.0.0.1:8080/v1",
-		"http://127.0.0.1:11434/v1",
 		"mlx-community/Qwen3.5-9B-MLX-4bit",
-		"qwen3.5:latest",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("settings screenshot render missing %q: %q", want, rendered)
+		}
+	}
+	for _, hidden := range []string{"Ollama base URL", "Ollama API key", "Ollama model", "http://127.0.0.1:11434/v1", "qwen3.5:latest"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("settings screenshot should hide unrelated %q: %q", hidden, rendered)
 		}
 	}
 }

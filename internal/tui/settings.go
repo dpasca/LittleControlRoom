@@ -98,6 +98,13 @@ type settingsLCAgentWebSearchOption struct {
 	Description string
 }
 
+type settingsLCAgentProviderOption struct {
+	Value       string
+	Label       string
+	Summary     string
+	Description string
+}
+
 const settingsHintMaxLines = 2
 
 const (
@@ -151,7 +158,6 @@ func settingsSections() []settingsSection {
 			hint:  "I only need two decisions first: who writes project reports, and whether /boss should answer. Everything else can wait.",
 			fieldOrder: []int{
 				settingsFieldAIBackend,
-				settingsFieldOpenAIAPIKey,
 				settingsFieldBossChatBackend,
 				settingsFieldLCAgentProvider,
 				settingsFieldIncludePaths,
@@ -332,6 +338,7 @@ func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy
 func settingsFieldUsesPicker(index int) bool {
 	return index == settingsFieldAIBackend ||
 		index == settingsFieldBossChatBackend ||
+		index == settingsFieldLCAgentProvider ||
 		index == settingsFieldBrowserAutomation ||
 		index == settingsFieldLCAgentWebSearchBackend
 }
@@ -368,6 +375,8 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsRevealPrivacy = false
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
+	m.settingsLCAgentProviderVisible = false
+	m.settingsLCAgentProviderSelected = 0
 	m.settingsBossChatPickerVisible = false
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
@@ -395,6 +404,8 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsRevealPrivacy = false
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
+	m.settingsLCAgentProviderVisible = false
+	m.settingsLCAgentProviderSelected = 0
 	m.settingsBossChatPickerVisible = false
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
@@ -430,6 +441,8 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsSaving = false
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
+	m.settingsLCAgentProviderVisible = false
+	m.settingsLCAgentProviderSelected = 0
 	m.settingsBossChatPickerVisible = false
 	m.settingsBossChatPickerSelected = 0
 	m.settingsBrowserPickerVisible = false
@@ -463,16 +476,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.saveSettingsFromFields()
 	case "enter":
 		if settingsFieldUsesPicker(m.settingsSelected) {
-			switch m.settingsSelected {
-			case settingsFieldAIBackend:
-				return m.openSettingsAIBackendPicker()
-			case settingsFieldBossChatBackend:
-				return m.openSettingsBossChatBackendPicker()
-			case settingsFieldBrowserAutomation:
-				return m.openSettingsBrowserAutomationPicker()
-			case settingsFieldLCAgentWebSearchBackend:
-				return m.openSettingsLCAgentWebSearchPicker()
-			}
+			return m.openSettingsPickerForField(m.settingsSelected)
 		}
 		m.status = "Press ctrl+s to save settings."
 		return m, nil
@@ -498,6 +502,23 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	input, cmd := m.settingsFields[m.settingsSelected].input.Update(msg)
 	m.settingsFields[m.settingsSelected].input = input
 	return m, cmd
+}
+
+func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
+	switch fieldIndex {
+	case settingsFieldAIBackend:
+		return m.openSettingsAIBackendPicker()
+	case settingsFieldBossChatBackend:
+		return m.openSettingsBossChatBackendPicker()
+	case settingsFieldLCAgentProvider:
+		return m.openSettingsLCAgentProviderPicker()
+	case settingsFieldBrowserAutomation:
+		return m.openSettingsBrowserAutomationPicker()
+	case settingsFieldLCAgentWebSearchBackend:
+		return m.openSettingsLCAgentWebSearchPicker()
+	default:
+		return m, nil
+	}
 }
 
 func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
@@ -751,7 +772,16 @@ func (m Model) visibleSettingsFieldOrder(section settingsSection) []int {
 }
 
 func (m Model) settingsFieldVisible(index int) bool {
+	settings := m.settingsDraftForInferenceStatus()
 	switch index {
+	case settingsFieldOpenAIAPIKey:
+		return settingsOpenAIKeyFieldRelevant(settings)
+	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
+		return settingsBossModelFieldsRelevant(settings)
+	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
+		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendMLX)
+	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
+		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendOllama)
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -761,6 +791,45 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "searxng"
 	default:
 		return true
+	}
+}
+
+func settingsOpenAIKeyFieldRelevant(settings config.EditableSettings) bool {
+	return settings.AIBackend == config.AIBackendOpenAIAPI ||
+		settings.BossChatBackend == config.AIBackendOpenAIAPI ||
+		strings.TrimSpace(settings.OpenAIAPIKey) != ""
+}
+
+func settingsBossModelFieldsRelevant(settings config.EditableSettings) bool {
+	return settings.BossChatBackend == config.AIBackendOpenAIAPI ||
+		settings.BossChatBackend == config.AIBackendMLX ||
+		settings.BossChatBackend == config.AIBackendOllama ||
+		strings.TrimSpace(settings.OpenAIAPIKey) != ""
+}
+
+func settingsOpenAICompatibleFieldsRelevant(settings config.EditableSettings, backend config.AIBackend) bool {
+	return settings.AIBackend == backend || settings.BossChatBackend == backend
+}
+
+func (m Model) focusSettingsProviderDetail(backend config.AIBackend) (tea.Model, tea.Cmd) {
+	fieldIndex := settingsProviderDetailField(backend)
+	if fieldIndex < 0 || len(m.settingsFields) == 0 || !m.settingsFieldVisible(fieldIndex) {
+		return m, nil
+	}
+	cmd := m.setSettingsSelection(fieldIndex)
+	return m, cmd
+}
+
+func settingsProviderDetailField(backend config.AIBackend) int {
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return settingsFieldOpenAIAPIKey
+	case config.AIBackendMLX:
+		return settingsFieldMLXBaseURL
+	case config.AIBackendOllama:
+		return settingsFieldOllamaBaseURL
+	default:
+		return -1
 	}
 }
 
@@ -1106,7 +1175,6 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 	settings := m.settingsDraftForInferenceStatus()
 	projectChoice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
 	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
-	keyState, keyStyle, keyDetail := m.settingsOpenAIKeyStepState(settings)
 	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := settingsLCAgentStepState(settings)
 	rootsValue, rootsState, rootsStyle, rootsDetail := m.settingsProjectRootsStepState()
 	return []settingsGettingStartedStep{
@@ -1121,15 +1189,6 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 		},
 		{
 			Number:     "2",
-			Title:      "OpenAI key",
-			Value:      keyState,
-			State:      keyState,
-			StateStyle: keyStyle,
-			Detail:     keyDetail,
-			FieldIndex: settingsFieldOpenAIAPIKey,
-		},
-		{
-			Number:     "3",
 			Title:      "Boss chat",
 			Value:      firstNonEmptyTrimmed(bossChoice.Label, "Auto"),
 			State:      firstNonEmptyTrimmed(bossChoice.State, "needs setup"),
@@ -1138,7 +1197,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 			FieldIndex: settingsFieldBossChatBackend,
 		},
 		{
-			Number:     "4",
+			Number:     "3",
 			Title:      "LCAgent",
 			Value:      lcagentValue,
 			State:      lcagentState,
@@ -1147,7 +1206,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 			FieldIndex: settingsFieldLCAgentProvider,
 		},
 		{
-			Number:     "5",
+			Number:     "4",
 			Title:      "Project roots",
 			Value:      rootsValue,
 			State:      rootsState,
@@ -1164,20 +1223,6 @@ func (m Model) selectedSettingsProviderChoice(role providerChoiceRole, backend c
 		return providerChoice{}
 	}
 	return choices[providerChoiceSelection(choices, backend)]
-}
-
-func (m Model) settingsOpenAIKeyStepState(settings config.EditableSettings) (string, lipgloss.Style, string) {
-	hasKey := strings.TrimSpace(settings.OpenAIAPIKey) != ""
-	needsKey := settings.AIBackend == config.AIBackendOpenAIAPI ||
-		settings.BossChatBackend == config.AIBackendOpenAIAPI ||
-		settings.BossChatBackend == config.AIBackendUnset
-	if hasKey {
-		return "saved", footerPrimaryLabelStyle, "Ready for OpenAI API and Auto Boss chat."
-	}
-	if needsKey {
-		return "needed", detailWarningStyle, "Paste a key or choose local/off paths."
-	}
-	return "optional", detailMutedStyle, "Only needed for OpenAI API paths."
 }
 
 func settingsLCAgentStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
@@ -1342,6 +1387,12 @@ func (m Model) renderSettingsGettingStartedFocusedEditor(width, labelWidth, inpu
 	if m.settingsSelected == settingsFieldOpenAIAPIKey {
 		label = "Paste key"
 	}
+	if m.settingsSelected == settingsFieldMLXBaseURL || m.settingsSelected == settingsFieldOllamaBaseURL {
+		label = "Endpoint"
+	}
+	if m.settingsSelected == settingsFieldMLXModel || m.settingsSelected == settingsFieldOllamaModel {
+		label = "Model"
+	}
 	if m.settingsSelected == settingsFieldIncludePaths {
 		label = "Project roots"
 	}
@@ -1489,6 +1540,8 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsAIBackendValue(selected, inputWidth)
 		case settingsFieldBossChatBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
+		case settingsFieldLCAgentProvider:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentProviderValue(selected, inputWidth)
 		case settingsFieldBrowserAutomation:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
 		case settingsFieldLCAgentWebSearchBackend:
@@ -1536,12 +1589,18 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 	switch m.settingsSelected {
 	case settingsFieldAIBackend, settingsFieldBossChatBackend:
 		action = "Next: press Enter to choose from the provider list."
+	case settingsFieldLCAgentProvider:
+		action = "Next: press Enter to choose an LCAgent provider, or Tab to continue."
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(settingsFieldOpenAIAPIKey)); suffix != "" {
 			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change API keys."
 		} else {
-			action = "Next: paste a key here, or choose local/off providers if you want no OpenAI API key."
+			action = "Next: paste a key here for the selected OpenAI API path, or go back and choose a local/off provider."
 		}
+	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
+		action = "Next: adjust MLX only if your local endpoint or model is not the default, then save."
+	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
+		action = "Next: adjust Ollama only if your local endpoint or model is not the default, then save."
 	case settingsFieldIncludePaths:
 		action = "Next: enter comma-separated project roots, or leave the default and save."
 	}
@@ -1584,7 +1643,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
 		newSensitiveSettingsField(
 			"OpenAI API key",
-			"Used by OpenAI API backed features, including boss chat when its backend is openai_api.",
+			"Used only when Project reports or Boss chat is set to OpenAI API.",
 			settings.OpenAIAPIKey,
 			512,
 			settingsSectionGettingStarted,
@@ -1677,7 +1736,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent provider",
-			"Experimental LCAgent provider. Accepted values: openrouter, openai, deepseek, moonshot.",
+			"Press Enter to choose the experimental LCAgent provider.",
 			settings.LCAgentProvider,
 			32,
 			settingsSectionLCAgent,
@@ -1920,8 +1979,8 @@ func (m Model) settingsFieldHint(index int) string {
 		case config.AIBackendDisabled:
 			return "AI features are disabled. Project reports and commit help stay off."
 		case config.AIBackendOpenAIAPI:
-			if strings.TrimSpace(m.currentSettingsBaseline().OpenAIAPIKey) == "" {
-				return "OpenAI API backend selected. Save an OpenAI API key above to enable it."
+			if strings.TrimSpace(m.settingsFieldValue(settingsFieldOpenAIAPIKey)) == "" {
+				return "OpenAI API backend selected. Paste an OpenAI API key in the detail field that appears for this path."
 			}
 			return "OpenAI API backend selected. Uses the saved API key for summaries and commit help."
 		default:
@@ -1931,8 +1990,8 @@ func (m Model) settingsFieldHint(index int) string {
 		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
 			return "Used for OpenAI API backed features. Stored key ends with " + suffix + "."
 		}
-		baseline := m.currentSettingsBaseline()
-		if baseline.AIBackend == config.AIBackendOpenAIAPI || baseline.BossChatBackend == config.AIBackendOpenAIAPI {
+		settings := m.settingsDraftForInferenceStatus()
+		if settings.AIBackend == config.AIBackendOpenAIAPI || settings.BossChatBackend == config.AIBackendOpenAIAPI {
 			return field.hint + " The selected OpenAI API path still needs a saved key."
 		}
 		return field.hint

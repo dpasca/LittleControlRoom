@@ -108,7 +108,7 @@ func (m Model) projectReportsProviderChoices(settings config.EditableSettings) [
 			Value:       config.AIBackendOpenAIAPI,
 			Label:       "OpenAI API",
 			Summary:     "Writes project summaries and helper output directly through the saved OpenAI API key.",
-			Description: "An OpenAI API key must be saved. This is the most predictable path if you do not want to rely on local CLI tools.",
+			Description: "Choose this path only if you want direct API inference; the key field appears after you select it.",
 		},
 		{
 			Value:       config.AIBackendDisabled,
@@ -131,8 +131,8 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 		{
 			Value:       config.AIBackendUnset,
 			Label:       "Auto",
-			Summary:     "Lets /boss answer through OpenAI API automatically when a saved API key exists.",
-			Description: "A saved OpenAI API key is enough. If no key is saved, boss chat stays unconfigured until you choose another path.",
+			Summary:     "Leaves /boss unconfigured until you choose a chat backend.",
+			Description: "If a saved OpenAI API key already exists, /boss can use it automatically. No OpenAI key is required unless you choose OpenAI API.",
 		},
 		{
 			Value:       config.AIBackendOpenAIAPI,
@@ -227,7 +227,7 @@ func bossChatProviderNextStep(choice providerChoice, settings config.EditableSet
 		if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
 			return "Save to let boss chat use the saved OpenAI API key automatically."
 		}
-		return "Save an OpenAI API key, choose a local chat backend, or turn boss chat off."
+		return "Choose a boss chat backend, or save to leave /boss unconfigured."
 	case config.AIBackendDisabled:
 		return "Save to keep boss chat off."
 	case config.AIBackendOpenAIAPI:

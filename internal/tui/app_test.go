@@ -21947,10 +21947,13 @@ func TestSettingsGettingStartedRendersStepGuide(t *testing.T) {
 	_ = m.setSettingsSelection(settingsFieldAIBackend)
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Setup Guide", "Project reports", "OpenAI key", "Boss chat", "Project roots", "Next: press Enter"} {
+	for _, want := range []string{"Setup Guide", "Project reports", "Boss chat", "Project roots", "Next: press Enter"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("getting started guide missing %q: %q", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "OpenAI key") {
+		t.Fatalf("getting started guide should not show OpenAI key as a required top-level step: %q", rendered)
 	}
 	for _, want := range []string{"About:", "Save to use this for project reports."} {
 		if !strings.Contains(rendered, want) {
@@ -21963,6 +21966,30 @@ func TestSettingsGettingStartedRendersStepGuide(t *testing.T) {
 	}
 	if strings.Contains(rendered, "I will keep the setup small") {
 		t.Fatalf("getting started guide should use steps instead of paragraph copy: %q", rendered)
+	}
+}
+
+func TestSettingsGettingStartedNavigationSkipsProviderDetailFields(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            120,
+		height:           30,
+	}
+	_ = m.setSettingsSelection(settingsFieldBossChatBackend)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyDown})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("moving down should refocus the next top-level setup row")
+	}
+	if got.settingsSelected != settingsFieldLCAgentProvider {
+		t.Fatalf("settingsSelected = %d, want LCAgent provider, not OpenAI key", got.settingsSelected)
 	}
 }
 
@@ -22005,6 +22032,64 @@ func TestSettingsAISectionUsesProviderRoleRows(t *testing.T) {
 	}
 }
 
+func TestSettingsHidesProviderDetailFieldsUntilRelevant(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            120,
+		height:           30,
+	}
+	_ = m.setSettingsSection(1)
+
+	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
+	for _, hidden := range []string{"OpenAI API key", "Boss helm model", "MLX base URL", "Ollama base URL"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("default provider settings should hide %q until relevant: %q", hidden, rendered)
+		}
+	}
+
+	m.settingsFields[settingsFieldAIBackend].input.SetValue(string(config.AIBackendMLX))
+	rendered = ansi.Strip(m.renderSettingsContent(100, 24))
+	if !strings.Contains(rendered, "MLX base URL") || !strings.Contains(rendered, "MLX model") {
+		t.Fatalf("MLX provider selection should reveal MLX details: %q", rendered)
+	}
+	if strings.Contains(rendered, "OpenAI API key") || strings.Contains(rendered, "Ollama base URL") {
+		t.Fatalf("MLX provider selection should keep unrelated details hidden: %q", rendered)
+	}
+}
+
+func TestSettingsProviderPickerDrillsIntoNeededDetailField(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            120,
+		height:           30,
+	}
+	_ = m.setSettingsSelection(settingsFieldAIBackend)
+
+	updated, cmd := m.applySettingsAIBackendPickerSelection(providerChoice{Value: config.AIBackendOpenAIAPI, Label: "OpenAI API"})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("selecting OpenAI API should focus the API key detail field")
+	}
+	if got.settingsSelected != settingsFieldOpenAIAPIKey {
+		t.Fatalf("settingsSelected = %d, want OpenAI API key detail field", got.settingsSelected)
+	}
+
+	updated, cmd = got.applySettingsAIBackendPickerSelection(providerChoice{Value: config.AIBackendMLX, Label: "MLX"})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("selecting MLX should focus the MLX detail field")
+	}
+	if got.settingsSelected != settingsFieldMLXBaseURL {
+		t.Fatalf("settingsSelected = %d, want MLX base URL detail field", got.settingsSelected)
+	}
+}
+
 func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 	m := Model{
 		settingsMode:   true,
@@ -22027,18 +22112,20 @@ func TestSettingsModalShowsSelectedHintAndWindowsLowerFields(t *testing.T) {
 	if strings.Contains(rendered, "Used by OpenAI API backed features") {
 		t.Fatalf("settings modal should not render every field hint inline anymore: %q", rendered)
 	}
-	if !strings.Contains(rendered, "↑ ") {
-		t.Fatalf("settings modal should show an above-window indicator when earlier fields are hidden: %q", rendered)
-	}
 }
 
 func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
 	}
+	_ = m.setSettingsSection(1)
 	_ = m.setSettingsSelection(settingsFieldBossChatModel)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyPgDown})
@@ -22079,12 +22166,17 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 }
 
 func TestSettingsLeftRightStayWithFocusedInput(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendMLX
+
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
 	}
+	_ = m.setSettingsSection(1)
 	_ = m.setSettingsSelection(settingsFieldMLXModel)
 	m.settingsFields[settingsFieldMLXModel].input.SetValue("abcdef")
 	m.settingsFields[settingsFieldMLXModel].input.CursorEnd()
@@ -22229,6 +22321,66 @@ func TestSettingsBrowserAutomationFieldRendersChooserHint(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("browser settings field is missing %q: %q", want, rendered)
 		}
+	}
+}
+
+func TestSettingsLCAgentProviderEnterOpensPicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("LCAgent provider picker enter should not save immediately")
+	}
+	if !got.settingsLCAgentProviderVisible {
+		t.Fatalf("LCAgent provider enter should open the chooser")
+	}
+	if got.status != "Choose the provider for LCAgent." {
+		t.Fatalf("status = %q, want chooser status", got.status)
+	}
+}
+
+func TestSettingsLCAgentProviderPickerChoosesDeepSeek(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
+
+	updated, _ := m.openSettingsLCAgentProviderPicker()
+	got := updated.(Model)
+	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	rendered := ansi.Strip(got.renderSettingsLCAgentProviderPickerContent(56, 18))
+	for _, want := range []string{"OpenRouter  (current)", "> DeepSeek", "Selected: DeepSeek"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("LCAgent provider picker is missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsLCAgentProviderVisible {
+		t.Fatalf("LCAgent provider picker should close after choosing")
+	}
+	if got.settingsFields[settingsFieldLCAgentProvider].input.Value() != "deepseek" {
+		t.Fatalf("LCAgent provider = %q, want deepseek", got.settingsFields[settingsFieldLCAgentProvider].input.Value())
 	}
 }
 
@@ -22997,7 +23149,7 @@ func TestSettingsEnterOnTextFieldDoesNotSave(t *testing.T) {
 		width:          100,
 		height:         24,
 	}
-	_ = m.setSettingsSelection(settingsFieldOpenAIAPIKey)
+	_ = m.setSettingsSelection(settingsFieldIncludePaths)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)

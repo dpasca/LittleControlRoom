@@ -47,6 +47,8 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.setupSaving = false
 	m.setupReviewMode = false
 	m.localModelPickerVisible = false
+	m.settingsLCAgentProviderVisible = false
+	m.settingsLCAgentProviderSelected = 0
 	m.setupStep = setupStepProjectProvider
 	m.setupFocusedRole = setupRoleProjectReports
 	m.setupConfigMode = false
@@ -76,6 +78,8 @@ func (m *Model) closeSetupMode(status string) {
 	m.setupStep = setupStepProjectProvider
 	m.setupConfigSelected = 0
 	m.localModelPickerVisible = false
+	m.settingsLCAgentProviderVisible = false
+	m.settingsLCAgentProviderSelected = 0
 	m.blurSettingsFields()
 	if status != "" {
 		m.status = status
@@ -164,12 +168,20 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "up", "ctrl+p":
 		cmd := m.moveSetupConfigSelection(-1)
 		return m, cmd
-	case "ctrl+s", "enter":
+	case "ctrl+s":
+		return m.setupAdvance()
+	case "enter":
+		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
+			return m.openSettingsPickerForField(m.setupSelectedConfigFieldIndex())
+		}
 		return m.setupAdvance()
 	}
 
 	fieldIndex := m.setupSelectedConfigFieldIndex()
 	if fieldIndex < 0 || fieldIndex >= len(m.settingsFields) {
+		return m, nil
+	}
+	if settingsFieldUsesPicker(fieldIndex) {
 		return m, nil
 	}
 	input, cmd := m.settingsFields[fieldIndex].input.Update(msg)
@@ -1030,7 +1042,7 @@ func (m Model) renderBossChatSetupHint(width int) string {
 	switch selected {
 	case config.AIBackendUnset:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			hint = "Auto keeps boss chat unconfigured until you save an OpenAI API key here."
+			hint = "Auto leaves boss chat unconfigured for now. Choose MLX, Ollama, OpenAI API, or Off when you want a specific path."
 		} else {
 			hint = "Auto will use the saved OpenAI API key for boss chat."
 		}
@@ -1120,6 +1132,15 @@ func (m Model) setupActionSegments() []string {
 		}
 	}
 	if m.setupConfigMode {
+		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
+			return []string{
+				renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
+				renderDialogAction("ctrl+s", "continue", commitActionKeyStyle, commitActionTextStyle),
+				renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
+				renderDialogAction("Up/Down", "field", navigateActionKeyStyle, navigateActionTextStyle),
+				renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
+			}
+		}
 		return []string{
 			renderDialogAction("Enter", "continue", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
