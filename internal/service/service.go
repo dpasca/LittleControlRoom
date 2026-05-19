@@ -56,6 +56,7 @@ type Service struct {
 	backendDetector func(context.Context, config.AppConfig, config.AIBackend) aibackend.Status
 
 	commitMessageSuggester   gitops.CommitMessageSuggester
+	commitTodoChecker        gitops.CommitTodoCompletionChecker
 	untrackedFileRecommender gitops.UntrackedFileRecommender
 	commitAssistantTimeout   time.Duration
 	llmUsageTracker          *llm.UsageTracker
@@ -75,6 +76,9 @@ type Service struct {
 
 	refreshMu    sync.Mutex
 	refreshState map[string]asyncProjectRefreshState
+
+	commitTodoNotifyCh  chan struct{}
+	commitTodoStartOnce sync.Once
 }
 
 type asyncProjectRefreshState struct {
@@ -123,6 +127,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		llmUsageTracker:        llm.NewUsageTracker(),
 		bossChatUsageTracker:   llm.NewUsageTracker(),
 		opencodeDiscovery:      llm.NewOpenCodeDiscovery(),
+		commitTodoNotifyCh:     make(chan struct{}, 1),
 		gitFingerprintReader:   scanner.ReadGitFingerprint,
 		gitRepoStatusReader:    scanner.ReadGitRepoStatus,
 		gitWorktreeInfoReader:  scanner.ReadGitWorktreeInfo,
@@ -167,6 +172,15 @@ func (s *Service) currentCommitMessageSuggester() gitops.CommitMessageSuggester 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.commitMessageSuggester
+}
+
+func (s *Service) currentCommitTodoChecker() gitops.CommitTodoCompletionChecker {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.commitTodoChecker
 }
 
 func (s *Service) currentUntrackedFileRecommender() gitops.UntrackedFileRecommender {
@@ -417,6 +431,26 @@ func (s *Service) StartTodoWorktreeSuggester(ctx context.Context) {
 	suggester.Start(ctx)
 }
 
+func (s *Service) StartCommitTodoChecker(ctx context.Context) {
+	if s == nil || s.store == nil || s.commitTodoNotifyCh == nil {
+		return
+	}
+	s.commitTodoStartOnce.Do(func() {
+		s.NotifyCommitTodoChecker()
+		go s.commitTodoCheckWorker(ctx)
+	})
+}
+
+func (s *Service) NotifyCommitTodoChecker() {
+	if s == nil || s.commitTodoNotifyCh == nil {
+		return
+	}
+	select {
+	case s.commitTodoNotifyCh <- struct{}{}:
+	default:
+	}
+}
+
 func (s *Service) HasTodoWorktreeSuggester() bool {
 	suggester := s.currentTodoSuggester()
 	if suggester == nil {
@@ -657,6 +691,7 @@ func (s *Service) configureAIClientsLocked() {
 		unavailableReason = sessionClassifierUnavailableReason(selectedBackend, selectedStatus)
 	}
 	s.commitMessageSuggester = commitAssistant
+	s.commitTodoChecker = commitAssistant
 	s.untrackedFileRecommender = commitAssistant
 	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
 		manager.ConfigureClientWithUnavailableReason(client, unavailableReason)
@@ -964,6 +999,9 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		if gitFingerprintReader != nil {
 			fingerprint, readErr := gitFingerprintReader(ctx, path)
 			if readErr == nil {
+				if cached, ok := cachedFingerprints[path]; ok {
+					s.queueCommitTodoCheckForFingerprintChange(ctx, path, oldMap[path], cached, fingerprint)
+				}
 				if err := s.store.UpsertProjectGitFingerprint(ctx, model.ProjectGitFingerprint{
 					ProjectPath:  path,
 					HeadHash:     fingerprint.HeadHash,
@@ -2659,13 +2697,20 @@ func (s *Service) queueSavedTodoWorktreeSuggestion(ctx context.Context, projectP
 }
 
 func (s *Service) ToggleTodoDone(ctx context.Context, projectPath string, id int64, done bool) error {
+	eventProjectPath := strings.TrimSpace(projectPath)
+	if todo, err := s.store.GetTodo(ctx, id); err == nil && strings.TrimSpace(todo.ProjectPath) != "" {
+		eventProjectPath = strings.TrimSpace(todo.ProjectPath)
+	}
 	if err := s.store.ToggleTodoDone(ctx, id, done); err != nil {
 		return err
 	}
-	s.refreshProjectStatusAsync(projectPath)
+	s.refreshProjectStatusAsync(eventProjectPath)
+	if strings.TrimSpace(projectPath) != "" && filepath.Clean(strings.TrimSpace(projectPath)) != filepath.Clean(eventProjectPath) {
+		s.refreshProjectStatusAsync(projectPath)
+	}
 	now := time.Now()
-	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "toggle_todo"}})
-	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "toggle_todo"})
+	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: eventProjectPath, Payload: map[string]string{"action": "toggle_todo"}})
+	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: eventProjectPath, Type: string(events.ActionApplied), Payload: "toggle_todo"})
 	return nil
 }
 

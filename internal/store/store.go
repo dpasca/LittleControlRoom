@@ -228,6 +228,19 @@ func (s *Store) initSchema(ctx context.Context) error {
 			recent_hashes TEXT NOT NULL DEFAULT '',
 			updated_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS commit_todo_checks (
+			project_path TEXT NOT NULL,
+			head_hash TEXT NOT NULL,
+			base_hash TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			model TEXT NOT NULL DEFAULT '',
+			completed_todo_ids TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(project_path, head_hash)
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_commit_todo_checks_status_updated ON commit_todo_checks(status, updated_at);`,
 		`CREATE TABLE IF NOT EXISTS events (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			ts INTEGER NOT NULL,
@@ -2183,6 +2196,143 @@ func (s *Store) UpsertProjectGitFingerprint(ctx context.Context, fingerprint mod
 	return err
 }
 
+func (s *Store) QueueCommitTodoCheck(ctx context.Context, check model.CommitTodoCheck) (bool, error) {
+	projectPath := filepath.Clean(strings.TrimSpace(check.ProjectPath))
+	headHash := strings.TrimSpace(check.HeadHash)
+	if projectPath == "" || projectPath == "." {
+		return false, errors.New("commit TODO check requires project_path")
+	}
+	if headHash == "" {
+		return false, errors.New("commit TODO check requires head_hash")
+	}
+	now := check.UpdatedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	baseHash := strings.TrimSpace(check.BaseHash)
+
+	var status string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT status
+		FROM commit_todo_checks
+		WHERE project_path = ? AND head_hash = ?
+	`, projectPath, headHash).Scan(&status)
+	if err == nil {
+		switch model.CommitTodoCheckStatus(strings.TrimSpace(status)) {
+		case model.CommitTodoCheckQueued, model.CommitTodoCheckRunning, model.CommitTodoCheckCompleted:
+			return false, nil
+		}
+		_, err = s.db.ExecContext(ctx, `
+			UPDATE commit_todo_checks
+			SET base_hash = ?, status = ?, model = '', completed_todo_ids = '', last_error = '', updated_at = ?
+			WHERE project_path = ? AND head_hash = ?
+		`, baseHash, string(model.CommitTodoCheckQueued), now.Unix(), projectPath, headHash)
+		return err == nil, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO commit_todo_checks(project_path, head_hash, base_hash, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, projectPath, headHash, baseHash, string(model.CommitTodoCheckQueued), now.Unix(), now.Unix())
+	return err == nil, err
+}
+
+func (s *Store) ClaimNextQueuedCommitTodoCheck(ctx context.Context, staleAfter time.Duration) (model.CommitTodoCheck, error) {
+	now := time.Now()
+	staleBefore := now.Add(-staleAfter)
+	if staleAfter <= 0 {
+		staleBefore = now
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.CommitTodoCheck{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	check, err := scanCommitTodoCheck(tx.QueryRowContext(ctx, `
+		SELECT project_path, base_hash, head_hash, status, model, completed_todo_ids, last_error, created_at, updated_at
+		FROM commit_todo_checks
+		WHERE status = ? OR (status = ? AND updated_at <= ?)
+		ORDER BY updated_at ASC, created_at ASC
+		LIMIT 1
+	`, string(model.CommitTodoCheckQueued), string(model.CommitTodoCheckRunning), staleBefore.Unix()))
+	if err != nil {
+		return model.CommitTodoCheck{}, err
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE commit_todo_checks
+		SET status = ?, updated_at = ?
+		WHERE project_path = ? AND head_hash = ? AND (status = ? OR status = ?)
+	`, string(model.CommitTodoCheckRunning), now.Unix(), check.ProjectPath, check.HeadHash, string(model.CommitTodoCheckQueued), string(model.CommitTodoCheckRunning))
+	if err != nil {
+		return model.CommitTodoCheck{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return model.CommitTodoCheck{}, err
+	}
+	if affected == 0 {
+		err = sql.ErrNoRows
+		return model.CommitTodoCheck{}, err
+	}
+	check.Status = model.CommitTodoCheckRunning
+	check.UpdatedAt = now
+
+	if err = tx.Commit(); err != nil {
+		return model.CommitTodoCheck{}, err
+	}
+	return check, nil
+}
+
+func (s *Store) CompleteCommitTodoCheck(ctx context.Context, check model.CommitTodoCheck) (bool, error) {
+	projectPath := filepath.Clean(strings.TrimSpace(check.ProjectPath))
+	headHash := strings.TrimSpace(check.HeadHash)
+	if projectPath == "" || projectPath == "." || headHash == "" {
+		return false, errors.New("commit TODO check requires project_path and head_hash")
+	}
+	now := check.UpdatedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE commit_todo_checks
+		SET status = ?, model = ?, completed_todo_ids = ?, last_error = '', updated_at = ?
+		WHERE project_path = ? AND head_hash = ?
+	`, string(model.CommitTodoCheckCompleted), strings.TrimSpace(check.Model), formatInt64Lines(check.CompletedTodoIDs), now.Unix(), projectPath, headHash)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
+func (s *Store) FailCommitTodoCheck(ctx context.Context, check model.CommitTodoCheck, lastError string) (bool, error) {
+	projectPath := filepath.Clean(strings.TrimSpace(check.ProjectPath))
+	headHash := strings.TrimSpace(check.HeadHash)
+	if projectPath == "" || projectPath == "." || headHash == "" {
+		return false, errors.New("commit TODO check requires project_path and head_hash")
+	}
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE commit_todo_checks
+		SET status = ?, last_error = ?, updated_at = ?
+		WHERE project_path = ? AND head_hash = ?
+	`, string(model.CommitTodoCheckFailed), strings.TrimSpace(lastError), now.Unix(), projectPath, headHash)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
 func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, movedAt time.Time) error {
 	if oldPath == "" || newPath == "" {
 		return errors.New("move project path requires old and new paths")
@@ -2235,6 +2385,7 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 		`UPDATE project_sessions SET project_path = ? WHERE project_path = ?`,
 		`UPDATE project_artifacts SET project_path = ? WHERE project_path = ?`,
 		`UPDATE session_classifications SET project_path = ? WHERE project_path = ?`,
+		`UPDATE commit_todo_checks SET project_path = ? WHERE project_path = ?`,
 		`UPDATE events SET project_path = ? WHERE project_path = ?`,
 	}
 	for _, stmt := range updateStatements {
@@ -2373,6 +2524,9 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 	}
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM project_git_fingerprints WHERE project_path = ?`, oldPath); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM commit_todo_checks WHERE project_path = ?`, oldPath); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE path = ?`, oldPath); err != nil {
@@ -4559,4 +4713,59 @@ func splitRecentHashes(v string) []string {
 	return strings.FieldsFunc(v, func(r rune) bool {
 		return r == '\n' || r == '\r' || r == ' ' || r == '\t'
 	})
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanCommitTodoCheck(row rowScanner) (model.CommitTodoCheck, error) {
+	var (
+		check            model.CommitTodoCheck
+		status           string
+		completedTodoIDs string
+		createdAt        int64
+		updatedAt        int64
+	)
+	if err := row.Scan(
+		&check.ProjectPath,
+		&check.BaseHash,
+		&check.HeadHash,
+		&status,
+		&check.Model,
+		&completedTodoIDs,
+		&check.LastError,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return model.CommitTodoCheck{}, err
+	}
+	check.Status = model.CommitTodoCheckStatus(strings.TrimSpace(status))
+	check.CompletedTodoIDs = parseInt64Lines(completedTodoIDs)
+	check.CreatedAt = time.Unix(createdAt, 0)
+	check.UpdatedAt = time.Unix(updatedAt, 0)
+	return check, nil
+}
+
+func formatInt64Lines(values []int64) string {
+	var out []string
+	for _, value := range values {
+		out = append(out, fmt.Sprintf("%d", value))
+	}
+	return strings.Join(out, "\n")
+}
+
+func parseInt64Lines(value string) []int64 {
+	var out []int64
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var parsed int64
+		if _, err := fmt.Sscanf(line, "%d", &parsed); err == nil {
+			out = append(out, parsed)
+		}
+	}
+	return out
 }

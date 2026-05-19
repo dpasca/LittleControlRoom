@@ -690,6 +690,7 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
 	go svc.StartTodoWorktreeSuggester(ctx)
+	go svc.StartCommitTodoChecker(ctx)
 	svc.StartBackgroundDiscovery(ctx)
 
 	m := tui.New(ctx, svc)
@@ -706,6 +707,7 @@ func runBoss(ctx context.Context, svc *service.Service) int {
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
 	go svc.StartTodoWorktreeSuggester(ctx)
+	go svc.StartCommitTodoChecker(ctx)
 	svc.StartBackgroundDiscovery(ctx)
 
 	m := boss.New(ctx, svc)
@@ -722,6 +724,7 @@ func runServe(ctx context.Context, svc *service.Service) int {
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
 	go svc.StartTodoWorktreeSuggester(ctx)
+	go svc.StartCommitTodoChecker(ctx)
 	svc.StartBackgroundDiscovery(ctx)
 
 	s := server.New(svc)

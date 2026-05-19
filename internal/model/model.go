@@ -213,6 +213,27 @@ type ProjectGitFingerprint struct {
 	UpdatedAt    time.Time
 }
 
+type CommitTodoCheckStatus string
+
+const (
+	CommitTodoCheckQueued    CommitTodoCheckStatus = "queued"
+	CommitTodoCheckRunning   CommitTodoCheckStatus = "running"
+	CommitTodoCheckCompleted CommitTodoCheckStatus = "completed"
+	CommitTodoCheckFailed    CommitTodoCheckStatus = "failed"
+)
+
+type CommitTodoCheck struct {
+	ProjectPath      string
+	BaseHash         string
+	HeadHash         string
+	Status           CommitTodoCheckStatus
+	Model            string
+	CompletedTodoIDs []int64
+	LastError        string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
 type AgentTask struct {
 	ID            string
 	ParentTaskID  string

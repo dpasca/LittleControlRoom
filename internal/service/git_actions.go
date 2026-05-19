@@ -41,8 +41,11 @@ type CommitFile struct {
 }
 
 type TodoCompletion struct {
-	ID   int64
-	Text string
+	ID          int64
+	Text        string
+	ProjectPath string
+	Reason      string
+	Confidence  float64
 }
 
 type CommitPreview struct {
@@ -292,7 +295,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	preview.Warnings = append(preview.Warnings, submodulePreviewWarnings(includedChanges, excludedChanges)...)
 
 	// Collect open TODOs for the AI to evaluate.
-	openTodos := openTodoRefs(detail.Todos)
+	openTodos, commitTodos := s.commitTodoRefsForDetail(ctx, detail)
 
 	messageOverride = normalizeCommitMessage(messageOverride)
 	if messageOverride != "" {
@@ -318,7 +321,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 			cancel()
 			if suggestErr == nil {
 				preview.Message = normalizeCommitMessage(suggestion.Message)
-				preview.SuggestedTodos = matchSuggestedTodos(openTodos, detail.Todos, suggestion.CompletedTodoIDs)
+				preview.SuggestedTodos = matchSuggestedTodos(openTodos, commitTodos, suggestion.CompletedTodoIDs)
 			} else {
 				errText := formatCommitAssistantError(suggestErr, s.effectiveCommitAssistantTimeout())
 				preview.CommitMessageError = errText
@@ -426,6 +429,7 @@ func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAf
 	if err != nil {
 		return CommitResult{}, err
 	}
+	s.refreshStoredGitFingerprint(ctx, preview.ProjectPath)
 
 	now := time.Now()
 	action := "git_commit"
@@ -872,9 +876,9 @@ func matchSuggestedTodos(refs []gitops.CommitTodoRef, allTodos []model.TodoItem,
 		openSet[r.ID] = struct{}{}
 	}
 	// Build ID→text lookup from all todos.
-	textByID := make(map[int64]string, len(allTodos))
+	todoByID := make(map[int64]model.TodoItem, len(allTodos))
 	for _, t := range allTodos {
-		textByID[t.ID] = t.Text
+		todoByID[t.ID] = t
 	}
 
 	var result []TodoCompletion
@@ -882,9 +886,11 @@ func matchSuggestedTodos(refs []gitops.CommitTodoRef, allTodos []model.TodoItem,
 		if _, ok := openSet[id]; !ok {
 			continue // AI hallucinated or referenced a done/nonexistent TODO
 		}
+		todo := todoByID[id]
 		result = append(result, TodoCompletion{
-			ID:   id,
-			Text: textByID[id],
+			ID:          id,
+			Text:        todo.Text,
+			ProjectPath: todo.ProjectPath,
 		})
 	}
 	return result

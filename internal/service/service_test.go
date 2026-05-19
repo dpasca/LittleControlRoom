@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"image"
 	"image/color"
@@ -6211,6 +6212,183 @@ func TestApplyCommitStagesAllAndPushes(t *testing.T) {
 	}
 }
 
+func TestScanOnceQueuesAndProcessesCommitTodoCheckForExternalCommit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+	if realPath, err := filepath.EvalSymlinks(projectPath); err == nil {
+		projectPath = realPath
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.refreshProjectStatusFn = func(context.Context, string) error { return nil }
+	svc.commitTodoChecker = &fakeCommitTodoChecker{model: "fake-todo-checker"}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("baseline scan: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Add release notes for the shipped workflow")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	checker := &fakeCommitTodoChecker{
+		model: "fake-todo-checker",
+		suggestion: gitops.CommitTodoCompletionSuggestion{
+			Model: "fake-todo-checker-v2",
+			CompletedTodos: []gitops.CommitTodoCompletionDecision{{
+				ID:         item.ID,
+				Reason:     "The commit adds release notes.",
+				Confidence: 0.92,
+			}},
+		},
+	}
+	svc.commitTodoChecker = checker
+
+	if err := os.WriteFile(filepath.Join(projectPath, "RELEASE.md"), []byte("workflow shipped\n"), 0o644); err != nil {
+		t.Fatalf("write release notes: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "RELEASE.md")
+	runGit(t, projectPath, "git", "commit", "-m", "add release notes")
+	head := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("scan after external commit: %v", err)
+	}
+	if err := svc.processOneCommitTodoCheck(ctx); err != nil {
+		t.Fatalf("process commit TODO check: %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Todos) != 1 || !detail.Todos[0].Done {
+		t.Fatalf("todo after commit check = %#v, want marked done", detail.Todos)
+	}
+	if checker.lastInput.HeadHash != head {
+		t.Fatalf("checker head = %q, want %q", checker.lastInput.HeadHash, head)
+	}
+	if len(checker.lastInput.OpenTodos) != 1 || checker.lastInput.OpenTodos[0].ID != item.ID {
+		t.Fatalf("checker open todos = %#v, want TODO %d", checker.lastInput.OpenTodos, item.ID)
+	}
+	if !strings.Contains(strings.Join(checker.lastInput.ChangedFiles, "\n"), "RELEASE.md") {
+		t.Fatalf("checker changed files = %#v, want RELEASE.md", checker.lastInput.ChangedFiles)
+	}
+	if !strings.Contains(checker.lastInput.Patch, "workflow shipped") {
+		t.Fatalf("checker patch = %q, want release notes content", checker.lastInput.Patch)
+	}
+}
+
+func TestApplyCommitRefreshesFingerprintToAvoidPostCommitTodoCheck(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+	if realPath, err := filepath.EvalSymlinks(projectPath); err == nil {
+		projectPath = realPath
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.refreshProjectStatusFn = func(context.Context, string) error { return nil }
+	svc.commitMessageSuggester = nil
+	svc.commitTodoChecker = &fakeCommitTodoChecker{model: "fake-todo-checker"}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("baseline scan: %v", err)
+	}
+	if _, err := svc.AddTodo(ctx, projectPath, "Ship README update"); err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nship via lcr\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	preview, err := svc.PrepareCommit(ctx, projectPath, GitActionCommit, "Ship README update")
+	if err != nil {
+		t.Fatalf("prepare commit: %v", err)
+	}
+	if _, err := svc.ApplyCommit(ctx, preview, false, nil); err != nil {
+		t.Fatalf("apply commit: %v", err)
+	}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("scan after LCR commit: %v", err)
+	}
+	if _, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("queued commit TODO check after LCR commit err = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestCommitTodoRefsForDetailIncludesLinkedOriginTodo(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	rootPath := filepath.Join(t.TempDir(), "repo")
+	worktreePath := filepath.Join(t.TempDir(), "repo--todo")
+	if err := st.UpsertProjectState(ctx, model.ProjectState{Path: rootPath, Name: "repo", PresentOnDisk: true, InScope: true, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("upsert root: %v", err)
+	}
+	item, err := st.AddTodo(ctx, rootPath, "Finish linked worktree task")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	refs, todos := svc.commitTodoRefsForDetail(ctx, model.ProjectDetail{
+		Summary: model.ProjectSummary{
+			Path:                 worktreePath,
+			WorktreeOriginTodoID: item.ID,
+		},
+	})
+	if len(refs) != 1 || refs[0].ID != item.ID {
+		t.Fatalf("refs = %#v, want origin TODO", refs)
+	}
+	if len(todos) != 1 || todos[0].ProjectPath != rootPath {
+		t.Fatalf("todos = %#v, want root TODO item", todos)
+	}
+}
+
 func TestPushProjectReportsNothingToPushWhenBranchAlreadySynced(t *testing.T) {
 	t.Parallel()
 
@@ -6260,6 +6438,13 @@ type fakeCommitMessageSuggester struct {
 	waitForContext bool
 }
 
+type fakeCommitTodoChecker struct {
+	lastInput  gitops.CommitTodoCompletionInput
+	suggestion gitops.CommitTodoCompletionSuggestion
+	err        error
+	model      string
+}
+
 func (f *fakeUntrackedFileRecommender) RecommendUntracked(ctx context.Context, input gitops.UntrackedFileRecommendationInput) (gitops.UntrackedFileRecommendationResult, error) {
 	f.lastInput = input
 	if f.waitForContext {
@@ -6289,6 +6474,21 @@ func (f fakeCommitMessageSuggester) Suggest(ctx context.Context, _ gitops.Commit
 
 func (f fakeCommitMessageSuggester) ModelName() string {
 	return "fake-commit-suggester"
+}
+
+func (f *fakeCommitTodoChecker) CheckCompletedTodos(_ context.Context, input gitops.CommitTodoCompletionInput) (gitops.CommitTodoCompletionSuggestion, error) {
+	f.lastInput = input
+	if f.err != nil {
+		return gitops.CommitTodoCompletionSuggestion{}, f.err
+	}
+	return f.suggestion, nil
+}
+
+func (f *fakeCommitTodoChecker) ModelName() string {
+	if strings.TrimSpace(f.model) != "" {
+		return strings.TrimSpace(f.model)
+	}
+	return "fake-commit-todo-checker"
 }
 
 func (d *fakeDetector) Name() string {
