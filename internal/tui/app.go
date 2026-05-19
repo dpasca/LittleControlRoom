@@ -3314,6 +3314,8 @@ func topStatusNeedsAttention(status string) bool {
 	for _, snippet := range []string{
 		"Resolve or abort the in-progress Git operation before ",
 		"Commit or discard changes before ",
+		"Finish or close it before ",
+		"Close it before ",
 		"Switch it to ",
 	} {
 		if strings.Contains(status, snippet) {

@@ -4117,6 +4117,30 @@ func TestRenderTopStatusLinePulsesActionRequiredWarning(t *testing.T) {
 	}
 }
 
+func TestRenderTopStatusLinePulsesPinnedTodoResumeBlockWarning(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{status: "Another embedded Claude Code session is open for this TODO lane. Finish or close it before opening TODO #42's pinned session."}
+
+	warnA := m.renderTopStatusLine(160)
+	m.spinnerFrame = 1
+	warnB := m.renderTopStatusLine(160)
+
+	if ansi.Strip(warnA) != ansi.Strip(warnB) {
+		t.Fatalf("pinned TODO warning pulse should preserve banner text, got %q vs %q", ansi.Strip(warnA), ansi.Strip(warnB))
+	}
+	if warnA == warnB {
+		t.Fatalf("pinned TODO warning should animate across spinner frames")
+	}
+}
+
 func TestRenderTopStatusLinePulsesErrorsAsDanger(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
