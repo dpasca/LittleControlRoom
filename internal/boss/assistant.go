@@ -800,6 +800,8 @@ func describeBossAction(action bossAction) string {
 			return kind + " " + clipText(query, 80)
 		}
 		return kind
+	case bossActionReflectionReport:
+		return kind
 	case bossActionSessionClassifications, bossActionTodoReport:
 		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.SessionID, action.Target)
 		if target != "" {

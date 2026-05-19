@@ -296,6 +296,55 @@ func TestLoadStateSnapshotIncludesOpenAgentTasksWithPrivacyFiltering(t *testing.
 	}
 }
 
+func TestLoadStateSnapshotCountsActiveAndArchivedTabs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	svc := service.New(cfg, st, events.NewBus(), nil)
+
+	now := time.Unix(1_800_000_000, 0)
+	for _, state := range []model.ProjectState{
+		{Path: filepath.Join(cfg.DataDir, "active"), Name: "Active", Status: model.StatusActive, PresentOnDisk: true, InScope: true, LastActivity: now},
+		{Path: filepath.Join(cfg.DataDir, "archived"), Name: "Archived", Status: model.StatusActive, PresentOnDisk: true, InScope: true, Archived: true, LastActivity: now.Add(-time.Minute)},
+		{Path: filepath.Join(cfg.DataDir, "outside"), Name: "Outside", Status: model.StatusPossiblyStuck, PresentOnDisk: true, InScope: false, LastActivity: now.Add(-2 * time.Minute)},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("UpsertProjectState(%s) error = %v", state.Name, err)
+		}
+	}
+
+	snapshot, err := LoadStateSnapshot(ctx, svc, now)
+	if err != nil {
+		t.Fatalf("LoadStateSnapshot() error = %v", err)
+	}
+	if snapshot.TotalProjects != 3 || snapshot.ActiveTabProjects != 1 || snapshot.ArchivedProjects != 2 {
+		t.Fatalf("project counts = total %d active tab %d archived %d, want 3/1/2", snapshot.TotalProjects, snapshot.ActiveTabProjects, snapshot.ArchivedProjects)
+	}
+	if snapshot.ActiveProjects != 1 || snapshot.PossiblyStuckProjects != 0 {
+		t.Fatalf("operational counts = active %d stuck %d, want active-tab-only 1/0", snapshot.ActiveProjects, snapshot.PossiblyStuckProjects)
+	}
+
+	brief := BuildStateBrief(snapshot, now)
+	for _, want := range []string{
+		"Visible projects: 3 total",
+		"Active tab: 1",
+		"Archived tab: 2",
+		"Active work status: 1",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("state brief missing %q:\n%s", want, brief)
+		}
+	}
+}
+
 func TestLoadStateSnapshotIncludesOpenTodosWithPrivacyFiltering(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

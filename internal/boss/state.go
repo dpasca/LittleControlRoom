@@ -27,6 +27,8 @@ const (
 type StateSnapshot struct {
 	LoadedAt               time.Time
 	TotalProjects          int
+	ActiveTabProjects      int
+	ArchivedProjects       int
 	ActiveProjects         int
 	PossiblyStuckProjects  int
 	DirtyProjects          int
@@ -118,7 +120,7 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 	if now.IsZero() {
 		now = time.Now()
 	}
-	projects, err := svc.Store().ListProjects(ctx, false)
+	allProjects, err := svc.Store().ListProjects(ctx, true)
 	if err != nil {
 		return StateSnapshot{}, err
 	}
@@ -127,12 +129,16 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 		opts = options[0]
 	}
 	if opts.PrivacyMode {
-		projects = filterProjectSummariesByPrivacy(projects, opts.PrivacyPatterns)
+		allProjects = filterProjectSummariesByPrivacy(allProjects, opts.PrivacyPatterns)
 	}
+	projects := activeTabProjectSummaries(allProjects)
+	inventory := buildProjectInventory(allProjects)
 
 	snapshot := StateSnapshot{
-		LoadedAt:      now,
-		TotalProjects: len(projects),
+		LoadedAt:          now,
+		TotalProjects:     inventory.Total,
+		ActiveTabProjects: inventory.DashboardBuckets[projectDashboardBucketActive],
+		ArchivedProjects:  inventory.DashboardBuckets[projectDashboardBucketArchived],
 	}
 	for _, project := range projects {
 		switch project.Status {
@@ -184,6 +190,129 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 		snapshot.HotProjects = append(snapshot.HotProjects, brief)
 	}
 	return snapshot, nil
+}
+
+const (
+	projectDashboardBucketActive   = "active_tab"
+	projectDashboardBucketArchived = "archived_tab"
+	projectScopeInScope            = "in_scope"
+	projectScopeOutOfScope         = "out_of_scope"
+	projectArchiveExplicit         = "explicit_archived"
+	projectArchiveNotArchived      = "not_archived"
+	projectRepoHealthDirty         = "dirty"
+	projectRepoHealthConflict      = "conflict"
+)
+
+type projectInventory struct {
+	Total               int
+	DashboardBuckets    map[string]int
+	ActiveTabStatuses   map[string]int
+	Kinds               map[string]int
+	Scopes              map[string]int
+	ArchiveStates       map[string]int
+	ActiveTabRepoHealth map[string]int
+}
+
+func buildProjectInventory(projects []model.ProjectSummary) projectInventory {
+	inventory := projectInventory{
+		Total:               len(projects),
+		DashboardBuckets:    map[string]int{},
+		ActiveTabStatuses:   map[string]int{},
+		Kinds:               map[string]int{},
+		Scopes:              map[string]int{},
+		ArchiveStates:       map[string]int{},
+		ActiveTabRepoHealth: map[string]int{},
+	}
+	for _, project := range projects {
+		kind := string(model.NormalizeProjectKind(project.Kind))
+		if kind == "" {
+			kind = string(model.ProjectKindProject)
+		}
+		inventory.Kinds[kind]++
+		if project.InScope {
+			inventory.Scopes[projectScopeInScope]++
+		} else {
+			inventory.Scopes[projectScopeOutOfScope]++
+		}
+		if project.Archived {
+			inventory.ArchiveStates[projectArchiveExplicit]++
+		} else {
+			inventory.ArchiveStates[projectArchiveNotArchived]++
+		}
+		if projectArchivedTab(project) {
+			inventory.DashboardBuckets[projectDashboardBucketArchived]++
+			continue
+		}
+		inventory.DashboardBuckets[projectDashboardBucketActive]++
+		status := string(project.Status)
+		if status == "" {
+			status = string(model.StatusIdle)
+		}
+		inventory.ActiveTabStatuses[status]++
+		if project.RepoDirty {
+			inventory.ActiveTabRepoHealth[projectRepoHealthDirty]++
+		}
+		if project.RepoConflict {
+			inventory.ActiveTabRepoHealth[projectRepoHealthConflict]++
+		}
+	}
+	return inventory
+}
+
+func activeTabProjectSummaries(projects []model.ProjectSummary) []model.ProjectSummary {
+	if len(projects) == 0 {
+		return nil
+	}
+	active := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if !projectArchivedTab(project) {
+			active = append(active, project)
+		}
+	}
+	return active
+}
+
+func projectArchivedTab(project model.ProjectSummary) bool {
+	return project.Archived || !project.InScope
+}
+
+func stateSnapshotProjectInventory(snapshot StateSnapshot) projectInventory {
+	inventory := projectInventory{
+		Total: snapshot.TotalProjects,
+		DashboardBuckets: map[string]int{
+			projectDashboardBucketActive:   snapshot.ActiveTabProjects,
+			projectDashboardBucketArchived: snapshot.ArchivedProjects,
+		},
+		ActiveTabStatuses: map[string]int{
+			string(model.StatusActive):        snapshot.ActiveProjects,
+			string(model.StatusPossiblyStuck): snapshot.PossiblyStuckProjects,
+		},
+		Kinds:         map[string]int{},
+		Scopes:        map[string]int{},
+		ArchiveStates: map[string]int{},
+		ActiveTabRepoHealth: map[string]int{
+			projectRepoHealthDirty:    snapshot.DirtyProjects,
+			projectRepoHealthConflict: snapshot.ConflictProjects,
+		},
+	}
+	if inventory.DashboardBuckets[projectDashboardBucketActive] == 0 &&
+		inventory.DashboardBuckets[projectDashboardBucketArchived] == 0 &&
+		inventory.Total > 0 {
+		inventory.DashboardBuckets[projectDashboardBucketActive] = inventory.Total
+	}
+	return inventory
+}
+
+func formatProjectInventoryHeadline(inventory projectInventory) string {
+	return fmt.Sprintf(
+		"Visible projects: %d total; Active tab: %d; Archived tab: %d. Active work status: %d. Possibly stuck: %d. Conflicts: %d.",
+		inventory.Total,
+		inventory.DashboardBuckets[projectDashboardBucketActive],
+		inventory.DashboardBuckets[projectDashboardBucketArchived],
+		inventory.ActiveTabStatuses[string(model.StatusActive)],
+		inventory.ActiveTabStatuses[string(model.StatusPossiblyStuck)],
+		inventory.ActiveTabRepoHealth[projectRepoHealthConflict],
+	)
 }
 
 func appendSnapshotOpenTodos(ctx context.Context, svc *service.Service, projects []model.ProjectSummary, opts StateSnapshotOptions, snapshot *StateSnapshot) {
@@ -429,12 +558,7 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 	}
 	lines := []string{
 		"Current app state:",
-		fmt.Sprintf("Visible projects: %d. Active: %d. Possibly stuck: %d. Conflicts: %d.",
-			snapshot.TotalProjects,
-			snapshot.ActiveProjects,
-			snapshot.PossiblyStuckProjects,
-			snapshot.ConflictProjects,
-		),
+		formatProjectInventoryHeadline(stateSnapshotProjectInventory(snapshot)),
 		"Routine dirty/ahead/branch state is reference metadata; treat it as background unless a blocker is listed or the user asks repo-health.",
 	}
 	if snapshot.PendingClassifications > 0 {

@@ -37,6 +37,9 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 			project,
 			{Path: "/tmp/beta", Name: "Beta"},
 		},
+		archivedProjects: []model.ProjectSummary{
+			{Path: "/tmp/old", Name: "Old", Archived: true},
+		},
 		projects:    []model.ProjectSummary{project},
 		selected:    0,
 		sortMode:    sortByAttention,
@@ -53,7 +56,7 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 	if !view.Active || !view.Embedded {
 		t.Fatalf("view should be active embedded context: %#v", view)
 	}
-	if view.VisibleProjectCount != 1 || view.AllProjectCount != 2 {
+	if view.VisibleProjectCount != 1 || view.AllProjectCount != 3 || view.ActiveTabProjectCount != 2 || view.ArchivedProjectCount != 1 {
 		t.Fatalf("project counts = visible %d all %d", view.VisibleProjectCount, view.AllProjectCount)
 	}
 	if view.FocusedPane != "detail" || view.SortMode != "attention" || view.Visibility != "all_folders" {

@@ -26,6 +26,7 @@ const (
 	bossActionSessionClassifications = "session_classifications"
 	bossActionTodoReport             = "todo_report"
 	bossActionAgentTaskReport        = "agent_task_report"
+	bossActionReflectionReport       = "reflection_report"
 	bossActionCurrentTUI             = "current_tui"
 	bossActionAssessmentQueue        = "assessment_queue"
 	bossActionProcessReport          = "process_report"
@@ -130,21 +131,23 @@ type QueryExecutor struct {
 }
 
 type ViewContext struct {
-	Active              bool
-	Embedded            bool
-	Loading             bool
-	AllProjectCount     int
-	VisibleProjectCount int
-	FocusedPane         string
-	SortMode            string
-	Visibility          string
-	Filter              string
-	Status              string
-	PrivacyMode         bool
-	PrivacyPatterns     []string
-	SystemNotices       []ViewSystemNotice
-	EngineerActivities  []ViewEngineerActivity
-	RuntimeContexts     []ViewRuntimeContext
+	Active                bool
+	Embedded              bool
+	Loading               bool
+	AllProjectCount       int
+	VisibleProjectCount   int
+	ActiveTabProjectCount int
+	ArchivedProjectCount  int
+	FocusedPane           string
+	SortMode              string
+	Visibility            string
+	Filter                string
+	Status                string
+	PrivacyMode           bool
+	PrivacyPatterns       []string
+	SystemNotices         []ViewSystemNotice
+	EngineerActivities    []ViewEngineerActivity
+	RuntimeContexts       []ViewRuntimeContext
 }
 
 type ViewSystemNotice struct {
@@ -221,6 +224,8 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	switch kind {
 	case bossActionListProjects:
 		return e.listProjects(ctx, action, view)
+	case bossActionReflectionReport:
+		return e.reflectionReport(ctx, action, view)
 	case bossActionProjectDetail:
 		return e.projectDetail(ctx, action, view)
 	case bossActionSessionClassifications:
@@ -427,6 +432,9 @@ func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction, vie
 	limit := clampBossLimit(action.Limit, 12, 40)
 	now := e.now()
 	lines := []string{fmt.Sprintf("Project list: showing %d of %d projects.", minInt(limit, len(projects)), len(projects))}
+	if reflectionLines, err := e.projectReflectionLines(ctx, view); err == nil && len(reflectionLines) > 0 {
+		lines = append(lines, reflectionLines...)
+	}
 	if action.IncludeHistorical {
 		lines[0] += " Historical/out-of-scope projects are included."
 	}
@@ -444,6 +452,122 @@ func (e *QueryExecutor) listProjects(ctx context.Context, action bossAction, vie
 		lines = append(lines, "No projects matched the current store query.")
 	}
 	return clippedToolResult(bossActionListProjects, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) reflectionReport(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
+	lines, err := e.projectReflectionLines(ctx, view)
+	if err != nil {
+		return bossToolResult{}, err
+	}
+	if len(lines) == 0 {
+		lines = []string{"Reflection report: no projects matched the current store query."}
+	}
+	return clippedToolResult(bossActionReflectionReport, strings.Join(lines, "\n")), nil
+}
+
+func (e *QueryExecutor) projectReflectionLines(ctx context.Context, view ViewContext) ([]string, error) {
+	projects, err := e.store.ListProjects(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	projects = filterProjectSummariesForBossPrivacy(projects, view)
+	inventory := buildProjectInventory(projects)
+	lines := []string{
+		"Reflection report:",
+		"Project inventory facets:",
+		"- " + formatProjectInventoryHeadline(inventory),
+		"- dashboard_bucket: " + formatNamedCounts(inventory.DashboardBuckets, []string{projectDashboardBucketActive, projectDashboardBucketArchived}),
+		"- active_tab_status: " + formatNamedCounts(inventory.ActiveTabStatuses, []string{string(model.StatusActive), string(model.StatusPossiblyStuck), string(model.StatusIdle)}),
+		"- kind: " + formatNamedCounts(inventory.Kinds, []string{string(model.ProjectKindProject), string(model.ProjectKindScratchTask), string(model.ProjectKindAgentTask)}),
+		"- scope: " + formatNamedCounts(inventory.Scopes, []string{projectScopeInScope, projectScopeOutOfScope}),
+		"- archive_state: " + formatNamedCounts(inventory.ArchiveStates, []string{projectArchiveExplicit, projectArchiveNotArchived}),
+		"- active_tab_repo_health: " + formatNamedCounts(inventory.ActiveTabRepoHealth, []string{projectRepoHealthDirty, projectRepoHealthConflict}),
+		`- Count semantics: dashboard_bucket is the dashboard tab split; active_tab_status is operational state inside the Active tab only.`,
+	}
+	coverageLines := e.reflectionCoverageLines(ctx, view)
+	if len(coverageLines) > 0 {
+		lines = append(lines, "Data coverage:")
+		lines = append(lines, coverageLines...)
+	}
+	if view.PrivacyMode {
+		lines = append(lines, "- Privacy mode is enabled; counts omit private projects.")
+	}
+	return lines, nil
+}
+
+func (e *QueryExecutor) reflectionCoverageLines(ctx context.Context, view ViewContext) []string {
+	var lines []string
+	if counts, err := e.store.GetSessionClassificationCounts(ctx, true); err == nil {
+		lines = append(lines, "- session_assessments: "+formatNamedCounts(map[string]int{
+			string(model.ClassificationPending):   counts[model.ClassificationPending],
+			string(model.ClassificationRunning):   counts[model.ClassificationRunning],
+			string(model.ClassificationFailed):    counts[model.ClassificationFailed],
+			string(model.ClassificationCompleted): counts[model.ClassificationCompleted],
+		}, []string{
+			string(model.ClassificationPending),
+			string(model.ClassificationRunning),
+			string(model.ClassificationFailed),
+			string(model.ClassificationCompleted),
+		}))
+	}
+	taskReader, ok := e.store.(bossAgentTaskReader)
+	if !ok {
+		return lines
+	}
+	tasks, err := taskReader.ListAgentTasks(ctx, model.AgentTaskFilter{IncludeArchived: true})
+	if err != nil {
+		return lines
+	}
+	if view.PrivacyMode {
+		tasks = filterAgentTasksForBossPrivacy(tasks, view.PrivacyPatterns)
+	}
+	taskCounts := map[string]int{
+		string(model.AgentTaskStatusActive):    0,
+		string(model.AgentTaskStatusWaiting):   0,
+		string(model.AgentTaskStatusCompleted): 0,
+		string(model.AgentTaskStatusArchived):  0,
+	}
+	for _, task := range tasks {
+		status := string(model.NormalizeAgentTaskStatus(task.Status))
+		if status == "" {
+			status = string(model.AgentTaskStatusActive)
+		}
+		taskCounts[status]++
+	}
+	lines = append(lines, "- delegated_agent_tasks: "+formatNamedCounts(taskCounts, []string{
+		string(model.AgentTaskStatusActive),
+		string(model.AgentTaskStatusWaiting),
+		string(model.AgentTaskStatusCompleted),
+		string(model.AgentTaskStatusArchived),
+	}))
+	return lines
+}
+
+func formatNamedCounts(counts map[string]int, preferredOrder []string) string {
+	if len(counts) == 0 && len(preferredOrder) == 0 {
+		return "none"
+	}
+	seen := map[string]bool{}
+	parts := make([]string, 0, len(counts))
+	for _, key := range preferredOrder {
+		seen[key] = true
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	var rest []string
+	for key := range counts {
+		if seen[key] {
+			continue
+		}
+		rest = append(rest, key)
+	}
+	sort.Strings(rest)
+	for _, key := range rest {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func filterProjectSummariesForBossPrivacy(projects []model.ProjectSummary, view ViewContext) []model.ProjectSummary {
@@ -1935,7 +2059,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	lines := []string{
 		"Current TUI view:",
 		"- mode: " + mode,
-		fmt.Sprintf("- project list: %d visible of %d known", view.VisibleProjectCount, view.AllProjectCount),
+		viewProjectListLine(view),
 	}
 	if view.SortMode != "" || view.Visibility != "" || view.Filter != "" {
 		lines = append(lines, fmt.Sprintf("- list controls: sort=%s visibility=%s filter=%q", emptyLabel(view.SortMode), emptyLabel(view.Visibility), strings.TrimSpace(view.Filter)))
@@ -2022,6 +2146,23 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 		lines = append(lines, noticeLines...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func viewProjectListLine(view ViewContext) string {
+	if view.ActiveTabProjectCount > 0 || view.ArchivedProjectCount > 0 {
+		total := view.AllProjectCount
+		if total == 0 {
+			total = view.ActiveTabProjectCount + view.ArchivedProjectCount
+		}
+		return fmt.Sprintf(
+			"- project list: %d visible in current tab; %d total known (%d Active tab, %d Archived tab)",
+			view.VisibleProjectCount,
+			total,
+			view.ActiveTabProjectCount,
+			view.ArchivedProjectCount,
+		)
+	}
+	return fmt.Sprintf("- project list: %d visible of %d known", view.VisibleProjectCount, view.AllProjectCount)
 }
 
 func compactViewRuntimeContextLine(runtime ViewRuntimeContext, view ViewContext) string {

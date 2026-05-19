@@ -121,6 +121,7 @@ func bossActionIsReadOnlyQuery(kind string) bool {
 		bossActionSessionClassifications,
 		bossActionTodoReport,
 		bossActionAgentTaskReport,
+		bossActionReflectionReport,
 		bossActionCurrentTUI,
 		bossActionAssessmentQueue,
 		bossActionProcessReport,
@@ -240,7 +241,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionAgentTaskReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory, bossActionGoalRunReport:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionAgentTaskReport, bossActionReflectionReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory, bossActionGoalRunReport:
 		return nil
 	case bossActionProposeControl:
 		_, _, err := controlProposalFromBossAction(action)

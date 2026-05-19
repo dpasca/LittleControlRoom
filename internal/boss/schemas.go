@@ -48,6 +48,7 @@ func bossReadOnlyRouteKindStrings() []string {
 		bossActionSessionClassifications,
 		bossActionTodoReport,
 		bossActionAgentTaskReport,
+		bossActionReflectionReport,
 		bossActionCurrentTUI,
 		bossActionAssessmentQueue,
 		bossActionProcessReport,

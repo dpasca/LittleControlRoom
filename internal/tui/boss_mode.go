@@ -363,21 +363,25 @@ func bossModeBodyHeight(shellBodyHeight int) int {
 }
 
 func (m Model) bossViewContext() bossui.ViewContext {
+	activeTabCount := len(m.allProjects)
+	archivedCount := len(m.archivedProjects)
 	view := bossui.ViewContext{
-		Active:              true,
-		Embedded:            true,
-		Loading:             m.loading,
-		AllProjectCount:     len(m.allProjects),
-		VisibleProjectCount: len(m.projects),
-		FocusedPane:         string(m.focusedPane),
-		SortMode:            string(m.sortMode),
-		Visibility:          string(m.visibility),
-		Filter:              strings.TrimSpace(m.projectFilter),
-		Status:              strings.TrimSpace(m.status),
-		PrivacyMode:         m.privacyMode,
-		PrivacyPatterns:     append([]string(nil), m.privacyPatterns...),
-		EngineerActivities:  m.bossEngineerActivities(),
-		RuntimeContexts:     m.bossRuntimeContexts(),
+		Active:                true,
+		Embedded:              true,
+		Loading:               m.loading,
+		AllProjectCount:       activeTabCount + archivedCount,
+		VisibleProjectCount:   len(m.projects),
+		ActiveTabProjectCount: activeTabCount,
+		ArchivedProjectCount:  archivedCount,
+		FocusedPane:           string(m.focusedPane),
+		SortMode:              string(m.sortMode),
+		Visibility:            string(m.visibility),
+		Filter:                strings.TrimSpace(m.projectFilter),
+		Status:                strings.TrimSpace(m.status),
+		PrivacyMode:           m.privacyMode,
+		PrivacyPatterns:       append([]string(nil), m.privacyPatterns...),
+		EngineerActivities:    m.bossEngineerActivities(),
+		RuntimeContexts:       m.bossRuntimeContexts(),
 	}
 	if notice := processWarningSystemNoticeSummary(m.totalProcessWarningStats()); notice != "" {
 		view.SystemNotices = append(view.SystemNotices, bossui.ViewSystemNotice{

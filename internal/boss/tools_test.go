@@ -70,6 +70,52 @@ func TestQueryExecutorReportsProjectDetailFromStore(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorReportsReflectionInventoryFacets(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Unix(1_800_000_000, 0)
+	for _, state := range []model.ProjectState{
+		{Path: "/tmp/alpha", Name: "Alpha", Status: model.StatusActive, PresentOnDisk: true, InScope: true, RepoDirty: true, LastActivity: now},
+		{Path: "/tmp/beta", Name: "Beta", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, LastActivity: now.Add(-time.Minute)},
+		{Path: "/tmp/old", Name: "Old", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, Archived: true, LastActivity: now.Add(-2 * time.Minute)},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert project %s: %v", state.Name, err)
+		}
+	}
+
+	executor := newQueryExecutor(st)
+	executor.nowFn = func() time.Time { return now }
+	result, err := executor.Execute(ctx, bossAction{
+		Kind: bossActionReflectionReport,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(reflection_report) error = %v", err)
+	}
+	for _, want := range []string{
+		"Reflection report:",
+		"Project inventory facets:",
+		"Visible projects: 3 total",
+		"dashboard_bucket: active_tab=2, archived_tab=1",
+		"active_tab_status: active=1",
+		"archive_state: explicit_archived=1, not_archived=2",
+		"Active work status: 1",
+		"active_tab_repo_health: dirty=1",
+		"dashboard_bucket is the dashboard tab split",
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("reflection report missing %q:\n%s", want, result.Text)
+		}
+	}
+}
+
 func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {
 	t.Parallel()
 
@@ -1150,6 +1196,30 @@ func TestBuildViewContextBriefIncludesClassicTUIState(t *testing.T) {
 	}
 	if strings.Contains(brief, "selected project") || strings.Contains(brief, "detail panel") {
 		t.Fatalf("brief should not expose hidden project cursor/detail state:\n%s", brief)
+	}
+}
+
+func TestBuildViewContextBriefIncludesArchiveTabCounts(t *testing.T) {
+	t.Parallel()
+
+	brief := BuildViewContextBrief(ViewContext{
+		Active:                true,
+		Embedded:              true,
+		AllProjectCount:       147,
+		VisibleProjectCount:   115,
+		ActiveTabProjectCount: 115,
+		ArchivedProjectCount:  32,
+	}, time.Unix(1_800_000_000, 0))
+
+	for _, want := range []string{
+		"115 visible in current tab",
+		"147 total known",
+		"115 Active tab",
+		"32 Archived tab",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief missing %q:\n%s", want, brief)
+		}
 	}
 }
 

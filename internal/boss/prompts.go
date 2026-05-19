@@ -215,7 +215,8 @@ var bossPlannerEvidencePrompt = []string{
 
 var bossPlannerReadOnlyPrompt = []string{
 	"Use queries when the user asks about a concrete project, project TODOs, open agent tasks, delegated/background agents, Boss goal runs, assessment status, current TUI state, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-	"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory, goal_run_report.",
+	"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, reflection_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory, goal_run_report.",
+	"Use reflection_report when the user asks what Boss/LCR knows, what data is available, project counts, total projects, Active vs Archived tab split, or portfolio-level aggregate facts.",
 	"Use agent_task_report when the user asks about open, active, completed, archived, historical, or delegated agent tasks, background agents, task cleanup, or what the agents are doing.",
 	"For completed/archived/historical agent-task lookup, or when the user asks to remove, clear, archive, hide, or get rid of a delegated task that is not listed as open, set include_historical=true on agent_task_report.",
 	"Use todo_report for project TODOs; project TODOs are separate from delegated agent tasks.",
