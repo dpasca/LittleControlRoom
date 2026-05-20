@@ -361,6 +361,7 @@ func settingsFieldUsesPicker(index int) bool {
 	return index == settingsFieldAIBackend ||
 		index == settingsFieldBossChatBackend ||
 		index == settingsFieldLCAgentProvider ||
+		index == settingsFieldLCAgentUtilityProvider ||
 		index == settingsFieldBrowserAutomation ||
 		index == settingsFieldLCAgentWebSearchBackend
 }
@@ -589,6 +590,8 @@ func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
 	case settingsFieldBossChatBackend:
 		return m.openSettingsBossChatBackendPicker()
 	case settingsFieldLCAgentProvider:
+		return m.openSettingsLCAgentProviderPicker()
+	case settingsFieldLCAgentUtilityProvider:
 		return m.openSettingsLCAgentProviderPicker()
 	case settingsFieldBrowserAutomation:
 		return m.openSettingsBrowserAutomationPicker()
@@ -900,8 +903,7 @@ func (m Model) settingsFieldVisible(index int) bool {
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendOllama)
 	case settingsFieldLCAgentUtilityModel:
-		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off" ||
-			strings.TrimSpace(settings.LCAgentUtilityModel) != ""
+		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off"
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -1291,7 +1293,7 @@ func (m Model) renderSettingsOverlay(body string, bodyW, bodyH int) string {
 func (m Model) renderSettingsPanel(bodyW, bodyH int) string {
 	panelWidth := min(bodyW, min(max(64, bodyW-10), 104))
 	panelInnerWidth := max(28, panelWidth-4)
-	maxContentHeight := max(10, bodyH-2)
+	maxContentHeight := min(max(10, bodyH-2), 32)
 	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderSettingsContent(panelInnerWidth, maxContentHeight))
 }
 
@@ -1835,6 +1837,19 @@ func lcagentDefaultModelForProvider(provider string) string {
 	}
 }
 
+func lcagentDefaultUtilityModelForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "deepseek":
+		return "deepseek-v4-flash"
+	case "openai":
+		return "gpt-5.4-mini"
+	case "moonshot":
+		return "kimi-k2.6"
+	default:
+		return "deepseek/deepseek-v4-flash"
+	}
+}
+
 func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
 		return modelName + " from " + brand.BossAssistantModelEnvVar
@@ -2114,8 +2129,8 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsAIBackendValue(selected, inputWidth)
 		case settingsFieldBossChatBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
-		case settingsFieldLCAgentProvider:
-			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentProviderValue(selected, inputWidth)
+		case settingsFieldLCAgentProvider, settingsFieldLCAgentUtilityProvider:
+			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentProviderValue(fieldIndex, selected, inputWidth)
 		case settingsFieldBrowserAutomation:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
 		case settingsFieldLCAgentWebSearchBackend:
@@ -2149,6 +2164,9 @@ func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
 	case settingsFieldLCAgentModel:
 		provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
 		return "Default: " + lcagentDefaultModelForProvider(provider)
+	case settingsFieldLCAgentUtilityModel:
+		provider := firstNonEmptyTrimmed(settings.LCAgentUtilityProvider, "openrouter")
+		return "Default: " + lcagentDefaultUtilityModelForProvider(provider)
 	default:
 		return ""
 	}
@@ -2428,7 +2446,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent utility provider",
-			"Provider for cheap utility-model refinement of oversized search results. Accepted values: off, openrouter, openai, deepseek, moonshot.",
+			"Press Enter to choose the provider for cheap search-result refinement, or turn utility refinement off.",
 			settings.LCAgentUtilityProvider,
 			32,
 			settingsSectionLCAgent,

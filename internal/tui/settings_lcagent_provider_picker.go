@@ -37,11 +37,57 @@ func settingsLCAgentProviderOptions() []settingsLCAgentProviderOption {
 	}
 }
 
+func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
+	return []settingsLCAgentProviderOption{
+		{
+			Value:       "off",
+			Label:       "Off",
+			Summary:     "Disable utility-model search refinement.",
+			Description: "LCAgent can still ask for compact deterministic search results, but oversized search output will not be condensed by a secondary model.",
+		},
+		{
+			Value:       "openrouter",
+			Label:       "OpenRouter",
+			Summary:     "Use OpenRouter for low-cost search-result refinement.",
+			Description: "Default utility route. Uses the saved OpenRouter API key and defaults to deepseek/deepseek-v4-flash when the utility model is blank.",
+		},
+		{
+			Value:       "openai",
+			Label:       "OpenAI",
+			Summary:     "Use the direct OpenAI route for utility refinement.",
+			Description: "Useful if you prefer direct OpenAI billing and behavior for small structured search summaries.",
+		},
+		{
+			Value:       "deepseek",
+			Label:       "DeepSeek",
+			Summary:     "Use the direct DeepSeek route for utility refinement.",
+			Description: "Uses the saved DeepSeek API key and defaults to deepseek-v4-flash when the utility model is blank.",
+		},
+		{
+			Value:       "moonshot",
+			Label:       "Moonshot",
+			Summary:     "Use the direct Moonshot/Kimi route for utility refinement.",
+			Description: "Uses the saved Moonshot API key and defaults to the normal Moonshot LCAgent model when the utility model is blank.",
+		},
+	}
+}
+
+func settingsLCAgentProviderOptionsForField(fieldIndex int) []settingsLCAgentProviderOption {
+	if fieldIndex == settingsFieldLCAgentUtilityProvider {
+		return settingsLCAgentUtilityProviderOptions()
+	}
+	return settingsLCAgentProviderOptions()
+}
+
 func (m Model) openSettingsLCAgentProviderPicker() (tea.Model, tea.Cmd) {
-	options := settingsLCAgentProviderOptions()
+	fieldIndex := m.settingsLCAgentProviderPickerField()
+	options := settingsLCAgentProviderOptionsForField(fieldIndex)
 	m.settingsLCAgentProviderVisible = true
-	m.settingsLCAgentProviderSelected = m.settingsLCAgentProviderPickerSelection(options)
+	m.settingsLCAgentProviderSelected = m.settingsLCAgentProviderPickerSelection(options, fieldIndex)
 	m.status = "Choose the provider for LCAgent."
+	if fieldIndex == settingsFieldLCAgentUtilityProvider {
+		m.status = "Choose the utility provider for LCAgent search refinement."
+	}
 	return m, nil
 }
 
@@ -53,8 +99,15 @@ func (m *Model) closeSettingsLCAgentProviderPicker(status string) {
 	}
 }
 
-func (m Model) settingsLCAgentProviderPickerSelection(options []settingsLCAgentProviderOption) int {
-	current := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentProvider))
+func (m Model) settingsLCAgentProviderPickerField() int {
+	if m.settingsSelected == settingsFieldLCAgentUtilityProvider {
+		return settingsFieldLCAgentUtilityProvider
+	}
+	return settingsFieldLCAgentProvider
+}
+
+func (m Model) settingsLCAgentProviderPickerSelection(options []settingsLCAgentProviderOption, fieldIndex int) int {
+	current := settingsLCAgentProviderOptionValueForField(fieldIndex, m.settingsFieldValue(fieldIndex))
 	for i, option := range options {
 		if option.Value == current {
 			return i
@@ -64,7 +117,8 @@ func (m Model) settingsLCAgentProviderPickerSelection(options []settingsLCAgentP
 }
 
 func (m Model) updateSettingsLCAgentProviderPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	options := settingsLCAgentProviderOptions()
+	fieldIndex := m.settingsLCAgentProviderPickerField()
+	options := settingsLCAgentProviderOptionsForField(fieldIndex)
 	if len(options) == 0 {
 		m.closeSettingsLCAgentProviderPicker("No LCAgent provider options are available right now.")
 		return m, nil
@@ -93,14 +147,19 @@ func (m Model) updateSettingsLCAgentProviderPickerMode(msg tea.KeyMsg) (tea.Mode
 }
 
 func (m Model) applySettingsLCAgentProviderPickerSelection(option settingsLCAgentProviderOption) (tea.Model, tea.Cmd) {
-	if len(m.settingsFields) > settingsFieldLCAgentProvider {
-		m.settingsFields[settingsFieldLCAgentProvider].input.SetValue(option.Value)
+	fieldIndex := m.settingsLCAgentProviderPickerField()
+	if len(m.settingsFields) > fieldIndex {
+		m.settingsFields[fieldIndex].input.SetValue(option.Value)
 	}
 	hint := "Press ctrl+s to save."
 	if m.setupMode {
 		hint = "Press ctrl+s to continue."
 	}
-	m.closeSettingsLCAgentProviderPicker(fmt.Sprintf("LCAgent provider set to %s. %s", option.Label, hint))
+	target := "LCAgent provider"
+	if fieldIndex == settingsFieldLCAgentUtilityProvider {
+		target = "LCAgent utility provider"
+	}
+	m.closeSettingsLCAgentProviderPicker(fmt.Sprintf("%s set to %s. %s", target, option.Label, hint))
 	return m, nil
 }
 
@@ -120,17 +179,23 @@ func (m Model) renderSettingsLCAgentProviderPickerPanel(bodyW, bodyH int) string
 }
 
 func (m Model) renderSettingsLCAgentProviderPickerContent(width, bodyH int) string {
-	options := settingsLCAgentProviderOptions()
+	fieldIndex := m.settingsLCAgentProviderPickerField()
+	options := settingsLCAgentProviderOptionsForField(fieldIndex)
+	title := "LCAgent Provider"
+	if fieldIndex == settingsFieldLCAgentUtilityProvider {
+		title = "LCAgent Utility Provider"
+	}
 	lines := []string{
-		commandPaletteTitleStyle.Render("LCAgent Provider"),
+		commandPaletteTitleStyle.Render(title),
 		renderDialogAction("Up/Down", "move", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
-	currentLabel := settingsLCAgentProviderOptionLabel(m.settingsFieldValue(settingsFieldLCAgentProvider))
+	currentValue := settingsLCAgentProviderOptionValueForField(fieldIndex, m.settingsFieldValue(fieldIndex))
+	currentLabel := settingsLCAgentProviderOptionLabelForField(fieldIndex, m.settingsFieldValue(fieldIndex))
 	lines = append(lines, detailField("Current", detailValueStyle.Render(currentLabel)), "")
 	for i, option := range options {
-		lines = append(lines, renderSettingsLCAgentProviderPickerRow(option, i == m.settingsLCAgentProviderSelected, option.Label == currentLabel, width))
+		lines = append(lines, renderSettingsLCAgentProviderPickerRow(option, i == m.settingsLCAgentProviderSelected, option.Value == currentValue, width))
 	}
 	selected := options[m.settingsLCAgentProviderSelected]
 	lines = append(lines, "", detailSectionStyle.Render("About"))
@@ -173,8 +238,23 @@ func renderSettingsLCAgentProviderPickerRow(option settingsLCAgentProviderOption
 }
 
 func settingsLCAgentProviderOptionLabel(raw string) string {
+	return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentProvider, raw)
+}
+
+func settingsLCAgentProviderOptionValueForField(fieldIndex int, raw string) string {
 	normalized := normalizeSettingsChoice(raw)
-	for _, option := range settingsLCAgentProviderOptions() {
+	if normalized == "" {
+		return "openrouter"
+	}
+	if fieldIndex == settingsFieldLCAgentUtilityProvider && normalized == "off" {
+		return "off"
+	}
+	return normalized
+}
+
+func settingsLCAgentProviderOptionLabelForField(fieldIndex int, raw string) string {
+	normalized := settingsLCAgentProviderOptionValueForField(fieldIndex, raw)
+	for _, option := range settingsLCAgentProviderOptionsForField(fieldIndex) {
 		if option.Value == normalized {
 			return option.Label
 		}
@@ -182,8 +262,8 @@ func settingsLCAgentProviderOptionLabel(raw string) string {
 	return "OpenRouter"
 }
 
-func (m Model) renderSettingsLCAgentProviderValue(selected bool, inputWidth int) string {
-	label := settingsLCAgentProviderOptionLabel(m.settingsFieldValue(settingsFieldLCAgentProvider))
+func (m Model) renderSettingsLCAgentProviderValue(fieldIndex int, selected bool, inputWidth int) string {
+	label := settingsLCAgentProviderOptionLabelForField(fieldIndex, m.settingsFieldValue(fieldIndex))
 	value := detailValueStyle.Bold(true).Render(label + " ▼")
 	if selected {
 		value = projectListSelectedRowStyle.Render(label + " ▼")

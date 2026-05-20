@@ -22507,6 +22507,69 @@ func TestSettingsLCAgentProviderPickerChoosesDeepSeek(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentUtilityProviderPickerChoosesOff(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentUtilityProvider)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("utility provider picker enter should not save immediately")
+	}
+	if !got.settingsLCAgentProviderVisible {
+		t.Fatalf("utility provider enter should open the shared provider chooser")
+	}
+	if got.status != "Choose the utility provider for LCAgent search refinement." {
+		t.Fatalf("status = %q, want utility chooser status", got.status)
+	}
+	rendered := ansi.Strip(got.renderSettingsLCAgentProviderPickerContent(56, 18))
+	for _, want := range []string{"LCAgent Utility Provider", "Off", "> OpenRouter  (current)", "Selected: OpenRouter"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("utility provider picker is missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyUp})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsLCAgentProviderVisible {
+		t.Fatalf("utility provider picker should close after choosing")
+	}
+	if got.settingsFields[settingsFieldLCAgentUtilityProvider].input.Value() != "off" {
+		t.Fatalf("utility provider = %q, want off", got.settingsFields[settingsFieldLCAgentUtilityProvider].input.Value())
+	}
+	if got.settingsFieldVisible(settingsFieldLCAgentUtilityModel) {
+		t.Fatalf("utility model field should hide while utility provider is off")
+	}
+}
+
+func TestSettingsPanelHeightIsCappedOnTallTerminals(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            140,
+		height:           60,
+	}
+	_ = m.setSettingsSection(settingsSectionIndexByID(settingsSectionLCAgent))
+
+	panel := m.renderSettingsPanel(140, 60)
+	if got, wantMax := lipgloss.Height(panel), 34; got > wantMax {
+		t.Fatalf("settings panel height = %d, want <= %d:\n%s", got, wantMax, ansi.Strip(panel))
+	}
+}
+
 func TestSettingsLCAgentWebSearchEnterOpensPicker(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 
