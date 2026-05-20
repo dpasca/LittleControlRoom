@@ -242,7 +242,7 @@ func (t FileTools) ListWithOptions(path, glob string, maxEntries int, opts ListO
 	hiddenDirs := []string{}
 	truncated := false
 	addEntry := func(path string, entry fs.DirEntry) {
-		display := t.relative(path)
+		display := t.displayPath(path)
 		if display == "." {
 			display = rel
 		}
@@ -259,7 +259,7 @@ func (t FileTools) ListWithOptions(path, glob string, maxEntries int, opts ListO
 		entries = append(entries, display)
 	}
 	addHiddenDir := func(path string, entry fs.DirEntry) {
-		display := t.relative(path)
+		display := t.displayPath(path)
 		if entry != nil && entry.IsDir() && display != "." {
 			display += "/"
 		}
@@ -359,7 +359,7 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 		if truncated {
 			return
 		}
-		display := t.relative(path)
+		display := t.displayPath(path)
 		if fileGlob != "" && !fileGlobMatches(fileGlob, display) {
 			return
 		}
@@ -373,7 +373,7 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 		}
 	}
 	addHiddenDir := func(path string, entry fs.DirEntry) {
-		display := t.relative(path)
+		display := t.displayPath(path)
 		if entry == nil || entry.IsDir() {
 			display = strings.TrimSuffix(display, "/") + "/"
 		}
@@ -471,7 +471,7 @@ func (t FileTools) ModuleOutlineWithOptions(path, fileGlob string, maxFiles int,
 	candidates := []string{}
 	hiddenDirs := []string{}
 	addHiddenDir := func(path string) {
-		display := strings.TrimSuffix(t.relative(path), "/") + "/"
+		display := strings.TrimSuffix(t.displayPath(path), "/") + "/"
 		hiddenDirs = append(hiddenDirs, display)
 	}
 	if !opts.IncludeHidden && rel != "." && pathHasDefaultHiddenSegment(rel) {
@@ -494,7 +494,7 @@ func (t FileTools) ModuleOutlineWithOptions(path, fileGlob string, maxFiles int,
 			if entry.Type()&os.ModeSymlink != 0 {
 				return nil
 			}
-			display := t.relative(path)
+			display := t.displayPath(path)
 			if !outlineSupported(display) {
 				return nil
 			}
@@ -533,7 +533,7 @@ func (t FileTools) ModuleOutlineWithOptions(path, fileGlob string, maxFiles int,
 	b.WriteByte('\n')
 
 	for _, candidate := range candidates {
-		section := outlineFile(candidate, t.relative(candidate))
+		section := outlineFile(candidate, t.displayPath(candidate))
 		if !section.Success {
 			continue
 		}
@@ -555,17 +555,28 @@ func (t FileTools) resolve(path string) (string, string, error) {
 	if strings.TrimSpace(path) == "" || filepath.Clean(strings.TrimSpace(path)) == "." {
 		return t.Workspace.Root, ".", nil
 	}
-	target, err := t.Workspace.Resolve(path)
+	target, err := t.Workspace.ResolveRead(path)
 	if err != nil {
 		return "", "", err
 	}
-	return target, t.relative(target), nil
+	return target, t.displayPath(target), nil
 }
 
 func (t FileTools) relative(path string) string {
+	return t.displayPath(path)
+}
+
+func (t FileTools) displayPath(path string) string {
+	path = filepath.Clean(path)
 	rel, err := filepath.Rel(t.Workspace.Root, path)
 	if err != nil || rel == "" {
+		return filepath.ToSlash(path)
+	}
+	if rel == "." {
 		return "."
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return filepath.ToSlash(path)
 	}
 	return filepath.ToSlash(filepath.Clean(rel))
 }

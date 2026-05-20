@@ -46,8 +46,8 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		)
 	}
 	lines = append(lines,
-		"Use workspace-relative paths in file tools; absolute paths are denied.",
-		"File tools are workspace-only; use read-only run_command argv for paths outside the workspace.",
+		"Use workspace-relative paths for project files; read-only file inspection tools may use absolute paths when the user asks for system/admin inspection outside the workspace.",
+		"Write tools such as apply_patch and replace_text are workspace-only and require workspace-relative paths.",
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
 		"At low autonomy, use run_command argv for approved verification forms such as go test/list/vet, make test, npm test, pnpm exec wrappers around tsc/eslint/prettier/biome checks, cargo test/check, pytest, python -m unittest, ruff/prettier/eslint checks, and tsc --noEmit; shell strings and broad write-like commands are denied.",

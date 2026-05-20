@@ -98,6 +98,29 @@ func TestPatchApplierDeniesOutsidePath(t *testing.T) {
 	}
 }
 
+func TestPatchApplierDeniesAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := PatchApplier{Workspace: w}.Apply(`*** Begin Patch
+*** Add File: ` + outside + `
++nope
+*** End Patch
+`)
+	if result.Success {
+		t.Fatal("absolute patch succeeded, want denial")
+	}
+	if !result.Denied || !strings.Contains(result.DenialReason, "read-only file inspection") {
+		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("outside file exists after denied patch: %v", err)
+	}
+}
+
 func TestPatchApplierMalformedPatchReturnsFormatHint(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyLow)

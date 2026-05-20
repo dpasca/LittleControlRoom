@@ -36,6 +36,31 @@ func TestWorkspaceResolveDeniesParentEscape(t *testing.T) {
 	}
 }
 
+func TestWorkspaceResolveReadAllowsAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "note.txt")
+	if err := os.WriteFile(target, []byte("outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := NewWorkspace(root, AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := w.ResolveRead(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Clean(target); got != want {
+		t.Fatalf("ResolveRead absolute = %q, want %q", got, want)
+	}
+	if _, err := w.Resolve(target); err == nil {
+		t.Fatal("Resolve absolute succeeded, want write-path denial")
+	} else if !IsDenied(err) || !strings.Contains(DenialReason(err), "read-only file inspection") {
+		t.Fatalf("Resolve absolute denial = %v", err)
+	}
+}
+
 func TestWorkspaceResolveDeniesSymlinkEscape(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink setup requires elevated privileges on some Windows hosts")

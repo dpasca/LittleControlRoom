@@ -59,6 +59,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(readFilePathDescription, "Workspace-relative") {
 		t.Fatalf("read_file path description should mention relative paths: %q", readFilePathDescription)
 	}
+	if !strings.Contains(readFilePathDescription, "absolute path") || !strings.Contains(readFilePathDescription, "read-only inspection") {
+		t.Fatalf("read_file path description should mention absolute read-only inspection: %q", readFilePathDescription)
+	}
 	if !strings.Contains(descriptions["file_outline"], "line ranges") {
 		t.Fatalf("file_outline description should mention line ranges: %q", descriptions["file_outline"])
 	}
@@ -142,7 +145,7 @@ func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer repo_overview") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") {
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "absolute paths") || !strings.Contains(prompt, "read-only file inspection") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer repo_overview") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
 }

@@ -26,12 +26,13 @@ func Tools() []ToolDefinition {
 
 func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 	opts = opts.withDefaults()
-	readDescription := "Read a bounded line range from a text file inside the workspace. Prefer targeted ranges after search or file_outline; use broad reads only when the whole range is relevant."
+	readDescription := "Read a bounded line range from a text file. Prefer targeted ranges after search or file_outline; use broad reads only when the whole range is relevant."
 	limitDescription := fmt.Sprintf("Maximum lines to read. For scouting, prefer 40-100 lines; larger ranges are allowed when needed. Defaults to %d.", opts.DefaultReadLineLimit)
 	if strings.EqualFold(opts.ToolProfile, "generous") {
-		readDescription = "Read a bounded line range from a text file inside the workspace. Larger read limits are available in this run: after search or file_outline identifies a central file, prefer contiguous evidence-complete ranges over tiny samples."
+		readDescription = "Read a bounded line range from a text file. Larger read limits are available in this run: after search or file_outline identifies a central file, prefer contiguous evidence-complete ranges over tiny samples."
 		limitDescription = fmt.Sprintf("Maximum lines to read. For central files, prefer 120-300 line ranges and continue with next_offset when useful. Defaults to %d.", opts.DefaultReadLineLimit)
 	}
+	inspectionPathDescription := "Workspace-relative path, or absolute path for read-only inspection outside the workspace."
 	defs := []ToolDefinition{
 		{
 			Type: "function",
@@ -42,7 +43,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":   map[string]any{"type": "string", "description": "Workspace-relative path. Absolute paths are denied."},
+						"path":   map[string]any{"type": "string", "description": inspectionPathDescription},
 						"offset": map[string]any{"type": "integer", "minimum": 1, "description": "1-based starting line. Defaults to 1."},
 						"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxReadLineLimit, "description": limitDescription},
 					},
@@ -59,7 +60,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path": map[string]any{"type": "string", "description": "Workspace-relative path to a supported source or Markdown file. Absolute paths are denied."},
+						"path": map[string]any{"type": "string", "description": "Workspace-relative path, or absolute path, to a supported source or Markdown file for read-only inspection."},
 					},
 					"required": []string{"path"},
 				},
@@ -74,7 +75,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file. Defaults to workspace root. Absolute paths are denied."},
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file, or absolute path for read-only inspection. Defaults to workspace root."},
 						"file_glob":      map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename, for example *.go."},
 						"max_files":      map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxOutlineFileLimit, "description": fmt.Sprintf("Maximum files to outline. Defaults to %d.", opts.DefaultOutlineFileLimit)},
 						"include_hidden": map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false; only enable when those contents are directly relevant."},
@@ -91,7 +92,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file. Defaults to workspace root. Absolute paths are denied."},
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file, or absolute path for read-only inspection. Defaults to workspace root."},
 						"max_files":      map[string]any{"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum representative files to include. Defaults to 120."},
 						"include_hidden": map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false; skipped directories are reported."},
 					},
@@ -107,7 +108,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to list. Defaults to workspace root. Absolute paths are denied."},
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to list, or absolute path for read-only inspection. Defaults to workspace root."},
 						"glob":           map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
 						"max_entries":    map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxListEntryLimit},
 						"include_hidden": map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false."},
@@ -125,7 +126,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"query":          map[string]any{"type": "string", "description": "Case-insensitive literal substring to find. Do not use regex syntax; use separate calls for separate identifiers or phrases."},
-						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to search. Defaults to workspace root. Absolute paths are denied."},
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to search, or absolute path for read-only inspection. Defaults to workspace root."},
 						"file_glob":      map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
 						"max_matches":    map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxSearchMaxMatch},
 						"context_before": map[string]any{"type": "integer", "minimum": 0, "maximum": opts.MaxSearchContextLines, "description": "Lines of context before each match. Defaults to 1 in the harness."},

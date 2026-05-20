@@ -116,6 +116,54 @@ func TestFileToolsHonorsCustomReadLimits(t *testing.T) {
 	}
 }
 
+func TestFileToolsAllowAbsoluteInspectionOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	note := filepath.Join(outside, "note.txt")
+	if err := os.WriteFile(note, []byte("needle outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+	outsideDisplay := filepath.ToSlash(filepath.Clean(outside))
+	noteDisplay := filepath.ToSlash(filepath.Clean(note))
+
+	read := files.Read(note, 1, 20)
+	if !read.Success {
+		t.Fatalf("absolute read failed: %s", read.Error)
+	}
+	if !strings.Contains(read.Output, "file: "+noteDisplay) || strings.Contains(read.Output, "../") {
+		t.Fatalf("absolute read used wrong display path:\n%s", read.Output)
+	}
+
+	list := files.List(outside, "", 20)
+	if !list.Success {
+		t.Fatalf("absolute list failed: %s", list.Error)
+	}
+	if !strings.Contains(list.Output, "path: "+outsideDisplay) || !strings.Contains(list.Output, noteDisplay) {
+		t.Fatalf("absolute list output =\n%s", list.Output)
+	}
+
+	search := files.Search("needle", outside, "", 20)
+	if !search.Success {
+		t.Fatalf("absolute search failed: %s", search.Error)
+	}
+	if !strings.Contains(search.Output, noteDisplay+":1: needle outside") {
+		t.Fatalf("absolute search output =\n%s", search.Output)
+	}
+
+	overview := files.RepoOverview(outside, RepoOverviewOptions{MaxFiles: 20})
+	if !overview.Success {
+		t.Fatalf("absolute repo overview failed: %s", overview.Error)
+	}
+	if !strings.Contains(overview.Output, "path: "+outsideDisplay) || !strings.Contains(overview.Output, noteDisplay) {
+		t.Fatalf("absolute repo overview output =\n%s", overview.Output)
+	}
+}
+
 func TestFileToolsListAndSearchReportHiddenDirs(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{".git", ".venv", "src"} {
@@ -359,6 +407,37 @@ func TestTextEditorReplaceTextDeniesAutoOff(t *testing.T) {
 	}
 	if !result.Denied || !strings.Contains(result.DenialReason, "replace_text denied with --auto off") {
 		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
+	}
+}
+
+func TestTextEditorReplaceTextDeniesAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "note.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.ReplaceText(ReplaceTextSpec{
+		Path:    target,
+		OldText: "old\n",
+		NewText: "new\n",
+	})
+	if result.Success {
+		t.Fatal("replace_text absolute path succeeded, want denial")
+	}
+	if !result.Denied || !strings.Contains(result.DenialReason, "read-only file inspection") {
+		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old\n" {
+		t.Fatalf("outside file changed: %q", data)
 	}
 }
 

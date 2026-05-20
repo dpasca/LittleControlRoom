@@ -92,7 +92,7 @@ func (w Workspace) Resolve(rel string) (string, error) {
 		return "", fmt.Errorf("path is required")
 	}
 	if filepath.IsAbs(rel) {
-		return "", Denied(fmt.Sprintf("absolute paths are not allowed: %s", rel))
+		return "", Denied(fmt.Sprintf("absolute paths are only allowed for read-only file inspection; workspace writes require relative paths: %s", rel))
 	}
 	clean := filepath.Clean(rel)
 	if clean == "." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || clean == ".." {
@@ -111,6 +111,17 @@ func (w Workspace) Resolve(rel string) (string, error) {
 		return "", Denied(fmt.Sprintf("path escapes workspace through symlink: %s", rel))
 	}
 	return target, nil
+}
+
+func (w Workspace) ResolveRead(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	return w.Resolve(path)
 }
 
 func existingParent(path string) string {
@@ -203,7 +214,7 @@ func commandDenialHint(argv []string, command string, shell bool) string {
 		return ""
 	}
 	if argvEscapesWorkspaceLexically(argv[1:]) {
-		return "Use workspace-relative paths inside the project; parent-directory and absolute paths require a higher-autonomy review."
+		return "Use workspace-relative paths inside the project. For read-only inspection outside the workspace, prefer read_file/list_files/search with an absolute path; run_command parent-directory and absolute paths require a higher-autonomy review."
 	}
 	name := filepath.Base(argv[0])
 	args := argv[1:]
@@ -331,7 +342,7 @@ func verificationArgsDenialHint(args []string, fallback string) string {
 			return fmt.Sprintf("Flag %s is denied at low autonomy because it may write files, update state, install dependencies, watch, or emit reports. %s", arg, fallback)
 		}
 		if argEscapesWorkspaceLexically(arg) {
-			return "Use workspace-relative paths inside the project; parent-directory and absolute paths require a higher-autonomy review."
+			return "Use workspace-relative paths inside the project. For read-only inspection outside the workspace, prefer read_file/list_files/search with an absolute path; run_command parent-directory and absolute paths require a higher-autonomy review."
 		}
 	}
 	return fallback
