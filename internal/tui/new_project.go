@@ -9,6 +9,7 @@ import (
 
 	"lcroom/internal/service"
 
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -20,18 +21,23 @@ const (
 	newProjectFieldGitRepo
 )
 
-const newProjectRecentPathLimit = 3
+const (
+	newProjectRecentPathLimit     = 3
+	newProjectPathSuggestionLimit = 8
+)
 
 type newProjectDialogState struct {
-	PathInput          textinput.Model
-	NameInput          textinput.Model
-	Selected           int
-	CreateGitRepo      bool
-	Submitting         bool
-	PathManuallyEdited bool
-	Preview            newProjectPreview
-	PreviewPending     bool
-	PreviewSeq         int64
+	PathInput              textinput.Model
+	NameInput              textinput.Model
+	Selected               int
+	CreateGitRepo          bool
+	Submitting             bool
+	PathManuallyEdited     bool
+	PathSuggestionsPending bool
+	PathSuggestionSeq      int64
+	Preview                newProjectPreview
+	PreviewPending         bool
+	PreviewSeq             int64
 }
 
 type newProjectResultMsg struct {
@@ -47,6 +53,11 @@ type recentProjectParentsMsg struct {
 type newProjectPreviewMsg struct {
 	seq     int64
 	preview newProjectPreview
+}
+
+type newProjectPathSuggestionsMsg struct {
+	seq         int64
+	suggestions []string
 }
 
 type newProjectPreview struct {
@@ -71,8 +82,10 @@ func (m Model) loadRecentProjectParentsCmd() tea.Cmd {
 }
 
 func (m *Model) openNewProjectDialog() tea.Cmd {
+	pathInput := newNewProjectTextInput(m.defaultNewProjectParentPath(), 1024)
+	configureNewProjectPathInput(&pathInput)
 	dialog := &newProjectDialogState{
-		PathInput:     newNewProjectTextInput(m.defaultNewProjectParentPath(), 1024),
+		PathInput:     pathInput,
 		NameInput:     newNewProjectTextInput("", 256),
 		Selected:      newProjectFieldPath,
 		CreateGitRepo: true,
@@ -84,7 +97,7 @@ func (m *Model) openNewProjectDialog() tea.Cmd {
 	m.showHelp = false
 	m.err = nil
 	m.status = "New project dialog open. Enter create/add, Esc cancel"
-	return batchCmds(m.setNewProjectSelection(newProjectFieldPath), m.refreshNewProjectPreview())
+	return batchCmds(m.setNewProjectSelection(newProjectFieldPath), m.refreshNewProjectPreview(), m.refreshNewProjectPathSuggestions())
 }
 
 func (m *Model) closeNewProjectDialog(status string) {
@@ -108,9 +121,20 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Alt && len(msg.Runes) == 1 {
 		index := int(msg.Runes[0] - '1')
+		if dialog.Selected == newProjectFieldPath {
+			if suggestion, ok := newProjectPathSuggestionAt(dialog.PathInput, index); ok {
+				dialog.PathInput.SetValue(suggestion)
+				dialog.PathInput.CursorEnd()
+				dialog.PathInput.SetSuggestions(nil)
+				dialog.PathManuallyEdited = true
+				m.status = fmt.Sprintf("Using path suggestion %d", index+1)
+				return m, batchCmds(m.refreshNewProjectPreview(), m.refreshNewProjectPathSuggestions())
+			}
+		}
 		if index >= 0 && index < len(m.newProjectRecentParents) && index < newProjectRecentPathLimit {
 			dialog.PathInput.SetValue(m.newProjectRecentParents[index])
 			dialog.PathInput.CursorEnd()
+			dialog.PathInput.SetSuggestions(nil)
 			dialog.PathManuallyEdited = false
 			m.status = fmt.Sprintf("Using recent parent path %d", index+1)
 			return m, m.refreshNewProjectPreview()
@@ -164,7 +188,7 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dialog.PathInput = input
 		if dialog.PathInput.Value() != previous {
 			dialog.PathManuallyEdited = true
-			return m, batchCmds(cmd, m.refreshNewProjectPreview())
+			return m, batchCmds(cmd, m.refreshNewProjectPreview(), m.refreshNewProjectPathSuggestions())
 		}
 		return m, cmd
 	case newProjectFieldName:
@@ -253,12 +277,33 @@ func newNewProjectTextInput(value string, charLimit int) textinput.Model {
 	return input
 }
 
+func configureNewProjectPathInput(input *textinput.Model) {
+	if input == nil {
+		return
+	}
+	input.ShowSuggestions = true
+	input.KeyMap.AcceptSuggestion = key.NewBinding(key.WithKeys("right"))
+	input.KeyMap.NextSuggestion = key.NewBinding(key.WithKeys("alt+down"))
+	input.KeyMap.PrevSuggestion = key.NewBinding(key.WithKeys("alt+up"))
+}
+
 func (m Model) currentNewProjectPreview() newProjectPreview {
 	dialog := m.newProjectDialog
 	if dialog == nil {
 		return newProjectPreview{}
 	}
 	return dialog.Preview
+}
+
+func newProjectPathSuggestionAt(input textinput.Model, index int) (string, bool) {
+	if index < 0 || index >= newProjectPathSuggestionLimit {
+		return "", false
+	}
+	suggestions := input.MatchedSuggestions()
+	if index >= len(suggestions) {
+		return "", false
+	}
+	return suggestions[index], true
 }
 
 type newProjectPreviewProbe struct {
@@ -284,6 +329,32 @@ func (m *Model) refreshNewProjectPreview() tea.Cmd {
 		return nil
 	}
 	return m.inspectNewProjectPreviewCmd(dialog.PreviewSeq, preview, probe)
+}
+
+func (m *Model) refreshNewProjectPathSuggestions() tea.Cmd {
+	dialog := m.newProjectDialog
+	if dialog == nil {
+		return nil
+	}
+	dialog.PathSuggestionSeq++
+	seq := dialog.PathSuggestionSeq
+	rawPath := dialog.PathInput.Value()
+	if strings.TrimSpace(trimNewProjectWrappingQuotes(rawPath)) == "" {
+		dialog.PathInput.SetSuggestions(nil)
+		dialog.PathSuggestionsPending = false
+		return nil
+	}
+	dialog.PathSuggestionsPending = true
+	return m.loadNewProjectPathSuggestionsCmd(seq, rawPath)
+}
+
+func (m Model) loadNewProjectPathSuggestionsCmd(seq int64, rawPath string) tea.Cmd {
+	return func() tea.Msg {
+		return newProjectPathSuggestionsMsg{
+			seq:         seq,
+			suggestions: newProjectExistingPathSuggestions(m.homeDirFn, rawPath, newProjectPathSuggestionLimit),
+		}
+	}
 }
 
 func buildNewProjectPreviewBase(homeDirFn func() (string, error), rawPath, rawName string, pathManuallyEdited bool) (newProjectPreview, newProjectPreviewProbe, bool) {
@@ -353,6 +424,116 @@ func inspectNewProjectPreviewPath(preview newProjectPreview) newProjectPreview {
 	}
 	preview.Ready = preview.Error == ""
 	return preview
+}
+
+func newProjectExistingPathSuggestions(homeDirFn func() (string, error), raw string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	displayPath := trimNewProjectWrappingQuotes(strings.TrimSpace(raw))
+	if displayPath == "" {
+		return nil
+	}
+	inspectPath := displayPath
+	if expanded := expandNewProjectHomePath(homeDirFn, inspectPath); expanded != "" {
+		inspectPath = expanded
+	}
+	if absPath, err := filepath.Abs(inspectPath); err == nil {
+		inspectPath = absPath
+	}
+
+	if newProjectPathHasTrailingSeparator(displayPath) || newProjectPathIsDir(inspectPath) {
+		return newProjectChildDirectorySuggestions(
+			filepath.Clean(inspectPath),
+			ensureNewProjectTrailingSeparator(displayPath),
+			"",
+			limit,
+		)
+	}
+
+	dirPath := filepath.Dir(filepath.Clean(inspectPath))
+	namePrefix := filepath.Base(inspectPath)
+	displayPrefix, displayNamePrefix := splitNewProjectDisplayPath(displayPath)
+	if displayNamePrefix != "" {
+		namePrefix = displayNamePrefix
+	}
+	return newProjectChildDirectorySuggestions(dirPath, displayPrefix, namePrefix, limit)
+}
+
+func newProjectChildDirectorySuggestions(dirPath, displayPrefix, namePrefix string, limit int) []string {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return nil
+	}
+	namePrefixLower := strings.ToLower(namePrefix)
+	showHidden := strings.HasPrefix(namePrefix, ".")
+	suggestions := make([]string, 0, min(limit, len(entries)))
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "." || name == ".." {
+			continue
+		}
+		if !showHidden && namePrefix == "" && strings.HasPrefix(name, ".") {
+			continue
+		}
+		if namePrefixLower != "" && !strings.HasPrefix(strings.ToLower(name), namePrefixLower) {
+			continue
+		}
+		if !newProjectDirEntryIsDir(dirPath, entry) {
+			continue
+		}
+		suggestions = append(suggestions, joinNewProjectDisplayPath(displayPrefix, name))
+		if len(suggestions) >= limit {
+			break
+		}
+	}
+	return suggestions
+}
+
+func newProjectDirEntryIsDir(parent string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	if entry.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(parent, entry.Name()))
+	return err == nil && info.IsDir()
+}
+
+func newProjectPathIsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func splitNewProjectDisplayPath(path string) (string, string) {
+	index := strings.LastIndexAny(path, `/\`)
+	if index < 0 {
+		return "", path
+	}
+	return path[:index+1], path[index+1:]
+}
+
+func joinNewProjectDisplayPath(prefix, name string) string {
+	return ensureNewProjectTrailingSeparator(prefix) + name + newProjectDisplaySeparator(prefix)
+}
+
+func ensureNewProjectTrailingSeparator(path string) string {
+	if path == "" || newProjectPathHasTrailingSeparator(path) {
+		return path
+	}
+	return path + newProjectDisplaySeparator(path)
+}
+
+func newProjectPathHasTrailingSeparator(path string) bool {
+	return strings.HasSuffix(path, "/") || strings.HasSuffix(path, "\\")
+}
+
+func newProjectDisplaySeparator(path string) string {
+	if strings.Contains(path, "\\") && !strings.Contains(path, "/") {
+		return "\\"
+	}
+	return string(os.PathSeparator)
 }
 
 func normalizeNewProjectPathInput(homeDirFn func() (string, error), raw string) string {
@@ -472,16 +653,21 @@ func (m Model) renderNewProjectContent(width int) string {
 		commandPaletteHintStyle.Render("Create a new folder, or add an existing one even before any Codex/OpenCode activity exists there."),
 		"",
 		m.renderNewProjectInputRow("Path", dialog.Selected == newProjectFieldPath, labelWidth, inputWidth, dialog.PathInput),
+	}
+	if dialog.Selected == newProjectFieldPath {
+		lines = append(lines, m.renderNewProjectPathSuggestions(width)...)
+	}
+	lines = append(lines,
 		m.renderNewProjectInputRow("Name", dialog.Selected == newProjectFieldName, labelWidth, inputWidth, dialog.NameInput),
 		m.renderNewProjectGitRow(labelWidth, inputWidth),
 		"",
 		detailLabelStyle.Render("Full path:"),
 		lipgloss.NewStyle().Width(width).Render(detailValueStyle.Render(preview.FullPath)),
-	}
+	)
 
 	lines = append(lines, m.renderNewProjectStatus(preview, width)...)
 
-	if len(m.newProjectRecentParents) > 0 {
+	if len(m.newProjectRecentParents) > 0 && len(dialog.PathInput.MatchedSuggestions()) == 0 {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("Recent Paths"))
 		lines = append(lines, commandPaletteHintStyle.Render("Alt+1..3 applies a remembered parent path."))
@@ -498,6 +684,36 @@ func (m Model) renderNewProjectContent(width int) string {
 	lines = append(lines, "")
 	lines = append(lines, renderNewProjectActions(preview))
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderNewProjectPathSuggestions(width int) []string {
+	dialog := m.newProjectDialog
+	if dialog == nil {
+		return nil
+	}
+	suggestions := dialog.PathInput.MatchedSuggestions()
+	if len(suggestions) == 0 {
+		if dialog.PathSuggestionsPending {
+			return []string{commandPaletteHintStyle.Render("Looking for matching folders...")}
+		}
+		return nil
+	}
+	limit := min(newProjectPathSuggestionLimit, len(suggestions))
+	lines := []string{
+		commandPaletteHintStyle.Render("Right completes the inline folder; Alt+1..8 picks from suggestions."),
+		commandPaletteTitleStyle.Render("Path Suggestions"),
+	}
+	selected := dialog.PathInput.CurrentSuggestionIndex()
+	for i := 0; i < limit; i++ {
+		label := fmt.Sprintf("Alt+%d ", i+1)
+		row := label + truncateText(suggestions[i], max(12, width-len(label)))
+		rowStyle := commandPaletteRowStyle
+		if i == selected {
+			rowStyle = commandPaletteSelectStyle
+		}
+		lines = append(lines, rowStyle.Width(width).Render(row))
+	}
+	return lines
 }
 
 func (m Model) renderNewProjectInputRow(label string, selected bool, labelWidth, inputWidth int, input textinput.Model) string {

@@ -121,7 +121,7 @@ The main TUI command palette opens with `/`.
 - `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
 - `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Browser, and Advanced.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
-- `/new-project`: Create a project folder, or paste an existing project path to add it directly.
+- `/new-project`: Create a project folder, or use path suggestions/paste an existing project path to add it directly.
 - `/new-task`: Create a scratch task folder under the default task root.
 - `/task-actions`: Open archive/delete actions for the selected scratch task.
 - `/open`: Open the selected project's folder in the system browser.

@@ -136,6 +136,74 @@ func TestNewProjectDialogAltDigitAppliesRecentPath(t *testing.T) {
 	}
 }
 
+func TestNewProjectPathSuggestionsApplyExistingFolder(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "alpha")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(parent, "beta"), 0o755); err != nil {
+		t.Fatalf("mkdir beta path: %v", err)
+	}
+
+	input := newNewProjectTextInput(filepath.Join(parent, "a"), 1024)
+	configureNewProjectPathInput(&input)
+	m := Model{
+		width:     100,
+		height:    28,
+		homeDirFn: func() (string, error) { return "/Users/tester", nil },
+		newProjectDialog: &newProjectDialogState{
+			PathInput:          input,
+			NameInput:          newNewProjectTextInput("", 256),
+			Selected:           newProjectFieldPath,
+			CreateGitRepo:      true,
+			PathManuallyEdited: true,
+		},
+	}
+
+	m = drainCmdMsgs(m, m.refreshNewProjectPathSuggestions())
+	wantSuggestion := projectPath + string(os.PathSeparator)
+	if suggestion, ok := newProjectPathSuggestionAt(m.newProjectDialog.PathInput, 0); !ok || suggestion != wantSuggestion {
+		t.Fatalf("first path suggestion = %q, %t; want %q, true", suggestion, ok, wantSuggestion)
+	}
+
+	rendered := m.renderNewProjectContent(90)
+	if !strings.Contains(rendered, "Path Suggestions") || !strings.Contains(rendered, "Alt+1") {
+		t.Fatalf("rendered dialog missing path suggestions: %q", rendered)
+	}
+
+	updated, cmd := m.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}, Alt: true})
+	m = updated.(Model)
+	m = drainCmdMsgs(m, cmd)
+
+	if got := m.newProjectDialog.PathInput.Value(); got != wantSuggestion {
+		t.Fatalf("path input = %q, want %q", got, wantSuggestion)
+	}
+	preview := m.currentNewProjectPreview()
+	if !preview.Ready || !preview.NameDerivedFromPath || preview.FullPath != projectPath {
+		t.Fatalf("preview after applying suggestion = %#v, want existing alpha folder", preview)
+	}
+}
+
+func TestNewProjectPathSuggestionsPreserveHomePrefix(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "dev"), 0o755); err != nil {
+		t.Fatalf("mkdir dev path: %v", err)
+	}
+
+	suggestions := newProjectExistingPathSuggestions(func() (string, error) { return home, nil }, "~/d", 8)
+	if len(suggestions) == 0 {
+		t.Fatalf("expected home-relative suggestions")
+	}
+	if suggestions[0] != "~/dev/" {
+		t.Fatalf("first suggestion = %q, want ~/dev/", suggestions[0])
+	}
+}
+
 func TestNewProjectPreviewDerivesNameFromQuotedExistingPathWhenNameBlank(t *testing.T) {
 	t.Parallel()
 

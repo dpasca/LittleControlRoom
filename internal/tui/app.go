@@ -1378,6 +1378,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.newProjectDialog.Preview = msg.preview
 		m.newProjectDialog.PreviewPending = false
 		return m, nil
+	case newProjectPathSuggestionsMsg:
+		if m.newProjectDialog == nil || msg.seq != m.newProjectDialog.PathSuggestionSeq {
+			return m, nil
+		}
+		m.newProjectDialog.PathInput.SetSuggestions(msg.suggestions)
+		m.newProjectDialog.PathSuggestionsPending = false
+		return m, nil
 	case setupSnapshotMsg:
 		m.setupChecked = true
 		m.setupLoading = false
@@ -6686,6 +6693,9 @@ func (m Model) renderFooter(width int) string {
 	}
 	if m.newProjectDialog != nil {
 		label := "New project: Enter create/add, Space toggle git, Alt+1..3 recent, Esc cancel"
+		if len(m.newProjectDialog.PathInput.MatchedSuggestions()) > 0 {
+			label = "New project: Enter create/add, Right complete path, Alt+1..8 pick, Space git, Esc cancel"
+		}
 		if m.newProjectDialog.Submitting {
 			label = "New project: applying..."
 		}
