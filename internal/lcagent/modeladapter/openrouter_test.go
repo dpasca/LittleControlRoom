@@ -62,7 +62,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["file_outline"], "line ranges") {
 		t.Fatalf("file_outline description should mention line ranges: %q", descriptions["file_outline"])
 	}
-	if !strings.Contains(descriptions["module_outline"], "many Go or Markdown files") {
+	if !strings.Contains(descriptions["module_outline"], "many supported source or Markdown files") {
 		t.Fatalf("module_outline description should mention many files: %q", descriptions["module_outline"])
 	}
 	if !strings.Contains(descriptions["search"], "literal substring") || !strings.Contains(descriptions["search"], "not a regex") {

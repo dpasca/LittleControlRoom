@@ -54,12 +54,12 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "file_outline",
-				Description: "Summarize structure for a source or Markdown file before reading raw text. Go files return package/import summary and top-level symbols with line ranges; Markdown files return headings with line ranges.",
+				Description: "Summarize structure for a source or Markdown file before reading raw text, returning headings or symbols with line ranges. Supports Go with parser-backed symbols, Markdown headings, and lightweight symbol outlines for Python, JavaScript/TypeScript, Rust, C/C++, C#, Java, Kotlin, and Swift.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path": map[string]any{"type": "string", "description": "Workspace-relative path to a .go, .md, or .markdown file. Absolute paths are denied."},
+						"path": map[string]any{"type": "string", "description": "Workspace-relative path to a supported source or Markdown file. Absolute paths are denied."},
 					},
 					"required": []string{"path"},
 				},
@@ -69,14 +69,15 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "module_outline",
-				Description: "Summarize structure for many Go or Markdown files under a workspace directory before broad review. Use this before reading many files in the same module or package.",
+				Description: "Summarize structure for many supported source or Markdown files under a workspace directory before broad review. Hidden/generated directories are skipped by default but reported as skipped; set include_hidden=true only when the task truly needs them.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":      map[string]any{"type": "string", "description": "Workspace-relative directory or file. Defaults to workspace root. Absolute paths are denied."},
-						"file_glob": map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename, for example *.go."},
-						"max_files": map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxOutlineFileLimit, "description": fmt.Sprintf("Maximum files to outline. Defaults to %d.", opts.DefaultOutlineFileLimit)},
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file. Defaults to workspace root. Absolute paths are denied."},
+						"file_glob":      map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename, for example *.go."},
+						"max_files":      map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxOutlineFileLimit, "description": fmt.Sprintf("Maximum files to outline. Defaults to %d.", opts.DefaultOutlineFileLimit)},
+						"include_hidden": map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false; only enable when those contents are directly relevant."},
 					},
 				},
 			},
@@ -85,14 +86,15 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "list_files",
-				Description: "List files under a workspace path, optionally filtered by a simple glob.",
+				Description: "List files under a workspace path, optionally filtered by a simple glob. Hidden/generated directories are listed as placeholders but not descended into by default; set include_hidden=true only when those contents are directly relevant.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":        map[string]any{"type": "string", "description": "Workspace-relative directory or file to list. Defaults to workspace root. Absolute paths are denied."},
-						"glob":        map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
-						"max_entries": map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxListEntryLimit},
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to list. Defaults to workspace root. Absolute paths are denied."},
+						"glob":           map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
+						"max_entries":    map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxListEntryLimit},
+						"include_hidden": map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false."},
 					},
 				},
 			},
@@ -112,6 +114,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"max_matches":    map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxSearchMaxMatch},
 						"context_before": map[string]any{"type": "integer", "minimum": 0, "maximum": opts.MaxSearchContextLines, "description": "Lines of context before each match. Defaults to 1 in the harness."},
 						"context_after":  map[string]any{"type": "integer", "minimum": 0, "maximum": opts.MaxSearchContextLines, "description": "Lines of context after each match. Defaults to 2 in the harness."},
+						"include_hidden": map[string]any{"type": "boolean", "description": "Search normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false; skipped directories are reported in the result."},
 					},
 					"required": []string{"query"},
 				},

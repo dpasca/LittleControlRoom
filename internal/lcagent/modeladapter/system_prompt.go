@@ -33,6 +33,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
 		"For unfamiliar source or Markdown files, prefer file_outline before raw reads.",
 		"For broad repo, package, or module review, prefer module_outline before reading many files.",
+		"File discovery tools skip noisy hidden/generated directories by default but report them as skipped; set include_hidden=true only when the user specifically needs contents such as .git, .venv, node_modules, vendor, dist, or build.",
 		"For specific behavior, identifiers, errors, commands, or tests, prefer search with context before raw reads.",
 		"Search queries are case-insensitive literal substrings, not regexes, globs, or alternation patterns; use separate searches for separate identifiers or phrases.",
 		"Use read_file for targeted ranges. Reading from line 1 is useful for imports/package context, but do not default to first-N-line scouting when an outline or search can locate the relevant range.",

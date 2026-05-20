@@ -206,9 +206,10 @@ type readFileArgs struct {
 }
 
 type listFilesArgs struct {
-	Path       string `json:"path"`
-	Glob       string `json:"glob"`
-	MaxEntries int    `json:"max_entries"`
+	Path          string `json:"path"`
+	Glob          string `json:"glob"`
+	MaxEntries    int    `json:"max_entries"`
+	IncludeHidden bool   `json:"include_hidden"`
 }
 
 type searchArgs struct {
@@ -218,6 +219,7 @@ type searchArgs struct {
 	MaxMatches    int    `json:"max_matches"`
 	ContextBefore *int   `json:"context_before"`
 	ContextAfter  *int   `json:"context_after"`
+	IncludeHidden bool   `json:"include_hidden"`
 }
 
 type webSearchArgs struct {
@@ -232,9 +234,10 @@ type fileOutlineArgs struct {
 }
 
 type moduleOutlineArgs struct {
-	Path     string `json:"path"`
-	FileGlob string `json:"file_glob"`
-	MaxFiles int    `json:"max_files"`
+	Path          string `json:"path"`
+	FileGlob      string `json:"file_glob"`
+	MaxFiles      int    `json:"max_files"`
+	IncludeHidden bool   `json:"include_hidden"`
 }
 
 type loadSkillArgs struct {
@@ -338,7 +341,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		if err := json.Unmarshal(action.Args, &args); err != nil {
 			return tools.ToolResult{}, err
 		}
-		result = r.Files.List(args.Path, args.Glob, args.MaxEntries)
+		result = r.Files.ListWithOptions(args.Path, args.Glob, args.MaxEntries, tools.ListOptions{IncludeHidden: args.IncludeHidden})
 	case "search":
 		var args searchArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {
@@ -352,7 +355,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		if args.ContextAfter != nil {
 			contextAfter = *args.ContextAfter
 		}
-		result = r.Files.SearchContext(args.Query, args.Path, args.FileGlob, args.MaxMatches, contextBefore, contextAfter)
+		result = r.Files.SearchContextWithOptions(args.Query, args.Path, args.FileGlob, args.MaxMatches, contextBefore, contextAfter, tools.SearchOptions{IncludeHidden: args.IncludeHidden})
 	case "web_search":
 		var args webSearchArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {
@@ -374,7 +377,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		if err := json.Unmarshal(action.Args, &args); err != nil {
 			return tools.ToolResult{}, err
 		}
-		result = r.Files.ModuleOutline(args.Path, args.FileGlob, args.MaxFiles)
+		result = r.Files.ModuleOutlineWithOptions(args.Path, args.FileGlob, args.MaxFiles, tools.ModuleOutlineOptions{IncludeHidden: args.IncludeHidden})
 	case "load_skill":
 		var args loadSkillArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {

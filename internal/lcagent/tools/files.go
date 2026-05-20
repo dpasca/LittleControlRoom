@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +58,18 @@ type FileLimits struct {
 type FileTools struct {
 	Workspace policy.Workspace
 	Limits    FileLimits
+}
+
+type ListOptions struct {
+	IncludeHidden bool
+}
+
+type SearchOptions struct {
+	IncludeHidden bool
+}
+
+type ModuleOutlineOptions struct {
+	IncludeHidden bool
 }
 
 func ParseFileProfile(raw string) (FileProfile, error) {
@@ -209,6 +222,10 @@ func (t FileTools) Read(path string, offset, limit int) ToolResult {
 }
 
 func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
+	return t.ListWithOptions(path, glob, maxEntries, ListOptions{})
+}
+
+func (t FileTools) ListWithOptions(path, glob string, maxEntries int, opts ListOptions) ToolResult {
 	limits := t.limits()
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
@@ -222,6 +239,7 @@ func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
 	glob = strings.TrimSpace(glob)
 
 	entries := []string{}
+	hiddenDirs := []string{}
 	truncated := false
 	addEntry := func(path string, entry fs.DirEntry) {
 		display := t.relative(path)
@@ -240,8 +258,25 @@ func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
 		}
 		entries = append(entries, display)
 	}
+	addHiddenDir := func(path string, entry fs.DirEntry) {
+		display := t.relative(path)
+		if entry != nil && entry.IsDir() && display != "." {
+			display += "/"
+		}
+		if glob != "" && !fileGlobMatches(glob, display) {
+			return
+		}
+		if len(entries) >= maxEntries {
+			truncated = true
+			return
+		}
+		hiddenDirs = append(hiddenDirs, display)
+		entries = append(entries, display+" [hidden by default; set include_hidden=true to descend]")
+	}
 
-	if !info.IsDir() {
+	if !opts.IncludeHidden && rel != "." && pathHasDefaultHiddenSegment(rel) {
+		addHiddenDir(target, nil)
+	} else if !info.IsDir() {
 		addEntry(target, nil)
 	} else {
 		err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -256,6 +291,10 @@ func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
 					return filepath.SkipDir
 				}
 				return nil
+			}
+			if !opts.IncludeHidden && entry != nil && entry.IsDir() && defaultHiddenDir(entry.Name()) {
+				addHiddenDir(path, entry)
+				return filepath.SkipDir
 			}
 			addEntry(path, entry)
 			return nil
@@ -272,6 +311,10 @@ func (t FileTools) List(path, glob string, maxEntries int) ToolResult {
 		fmt.Fprintf(&b, "glob: %s\n", glob)
 	}
 	fmt.Fprintf(&b, "entries: %d\n\n", len(entries))
+	if len(hiddenDirs) > 0 {
+		fmt.Fprintf(&b, "hidden_dirs: %d (%s)\n", len(hiddenDirs), strings.Join(trimStrings(hiddenDirs, 12), ", "))
+		b.WriteString("hidden_note: hidden directories are placeholders; set include_hidden=true to list their contents.\n\n")
+	}
 	b.WriteString(strings.Join(entries, "\n"))
 	if len(entries) > 0 {
 		b.WriteByte('\n')
@@ -287,6 +330,10 @@ func (t FileTools) Search(query, path, fileGlob string, maxMatches int) ToolResu
 }
 
 func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, contextBefore, contextAfter int) ToolResult {
+	return t.SearchContextWithOptions(query, path, fileGlob, maxMatches, contextBefore, contextAfter, SearchOptions{})
+}
+
+func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMatches, contextBefore, contextAfter int, opts SearchOptions) ToolResult {
 	limits := t.limits()
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -306,6 +353,7 @@ func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, conte
 	fileGlob = strings.TrimSpace(fileGlob)
 
 	matches := []string{}
+	hiddenDirs := []string{}
 	truncated := false
 	searchFile := func(path string) {
 		if truncated {
@@ -324,15 +372,31 @@ func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, conte
 			truncated = true
 		}
 	}
+	addHiddenDir := func(path string, entry fs.DirEntry) {
+		display := t.relative(path)
+		if entry == nil || entry.IsDir() {
+			display = strings.TrimSuffix(display, "/") + "/"
+		}
+		hiddenDirs = append(hiddenDirs, display)
+	}
 
-	if !info.IsDir() {
+	if !opts.IncludeHidden && rel != "." && pathHasDefaultHiddenSegment(rel) {
+		addHiddenDir(target, nil)
+	} else if !info.IsDir() {
 		searchFile(target)
 	} else {
 		err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return nil
 			}
-			if path == target || entry == nil || entry.IsDir() {
+			if path == target || entry == nil {
+				return nil
+			}
+			if entry.IsDir() {
+				if !opts.IncludeHidden && defaultHiddenDir(entry.Name()) {
+					addHiddenDir(path, entry)
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			searchFile(path)
@@ -349,6 +413,10 @@ func (t FileTools) SearchContext(query, path, fileGlob string, maxMatches, conte
 	fmt.Fprintf(&b, "path: %s\n", rel)
 	if fileGlob != "" {
 		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
+	}
+	if len(hiddenDirs) > 0 {
+		fmt.Fprintf(&b, "hidden_dirs_skipped: %d (%s)\n", len(hiddenDirs), strings.Join(trimStrings(hiddenDirs, 12), ", "))
+		fmt.Fprintf(&b, "hidden_note: set include_hidden=true to search hidden/generated directories.\n")
 	}
 	if contextBefore > 0 || contextAfter > 0 {
 		fmt.Fprintf(&b, "context_before: %d\n", contextBefore)
@@ -381,6 +449,10 @@ func (t FileTools) Outline(path string) ToolResult {
 }
 
 func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult {
+	return t.ModuleOutlineWithOptions(path, fileGlob, maxFiles, ModuleOutlineOptions{})
+}
+
+func (t FileTools) ModuleOutlineWithOptions(path, fileGlob string, maxFiles int, opts ModuleOutlineOptions) ToolResult {
 	limits := t.limits()
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
@@ -397,34 +469,44 @@ func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult
 	maxFiles = clampInt(maxFiles, limits.DefaultOutlineFileLimit, limits.MaxOutlineFileLimit)
 	fileGlob = strings.TrimSpace(fileGlob)
 	candidates := []string{}
-	err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if path == target || entry == nil {
-			return nil
-		}
-		if entry.IsDir() {
-			if shouldSkipOutlineDir(entry.Name()) {
-				return filepath.SkipDir
+	hiddenDirs := []string{}
+	addHiddenDir := func(path string) {
+		display := strings.TrimSuffix(t.relative(path), "/") + "/"
+		hiddenDirs = append(hiddenDirs, display)
+	}
+	if !opts.IncludeHidden && rel != "." && pathHasDefaultHiddenSegment(rel) {
+		addHiddenDir(target)
+	} else {
+		err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return nil
 			}
+			if path == target || entry == nil {
+				return nil
+			}
+			if entry.IsDir() {
+				if !opts.IncludeHidden && defaultHiddenDir(entry.Name()) {
+					addHiddenDir(path)
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if entry.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			display := t.relative(path)
+			if !outlineSupported(display) {
+				return nil
+			}
+			if fileGlob != "" && !fileGlobMatches(fileGlob, display) {
+				return nil
+			}
+			candidates = append(candidates, path)
 			return nil
+		})
+		if err != nil {
+			return ToolResult{Success: false, Error: err.Error()}
 		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		display := t.relative(path)
-		if !outlineSupported(display) {
-			return nil
-		}
-		if fileGlob != "" && !fileGlobMatches(fileGlob, display) {
-			return nil
-		}
-		candidates = append(candidates, path)
-		return nil
-	})
-	if err != nil {
-		return ToolResult{Success: false, Error: err.Error()}
 	}
 	sort.Strings(candidates)
 
@@ -441,6 +523,10 @@ func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult
 	}
 	fmt.Fprintf(&b, "files: %d\n", len(candidates))
 	fmt.Fprintf(&b, "max_files: %d\n", maxFiles)
+	if len(hiddenDirs) > 0 {
+		fmt.Fprintf(&b, "hidden_dirs_skipped: %d (%s)\n", len(hiddenDirs), strings.Join(trimStrings(hiddenDirs, 12), ", "))
+		fmt.Fprintf(&b, "hidden_note: set include_hidden=true to outline hidden/generated directories.\n")
+	}
 	if truncated {
 		fmt.Fprintf(&b, "file_limit_truncated: true\n")
 	}
@@ -460,7 +546,7 @@ func (t FileTools) ModuleOutline(path, fileGlob string, maxFiles int) ToolResult
 		b.WriteString(next)
 	}
 	if len(candidates) == 0 {
-		b.WriteString("No supported .go, .md, or .markdown files found.\n")
+		b.WriteString("No supported source or Markdown files found.\n")
 	}
 	return ToolResult{Success: true, Output: b.String(), Truncated: truncated}
 }
@@ -692,6 +778,202 @@ func markdownOutline(path, display string) ToolResult {
 	return ToolResult{Success: true, Output: b.String()}
 }
 
+type lightweightSymbol struct {
+	Kind  string
+	Name  string
+	Line  int
+	Level int
+}
+
+var (
+	pythonClassRe  = regexp.MustCompile(`^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	pythonDefRe    = regexp.MustCompile(`^\s*(async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	jsClassRe      = regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
+	jsFunctionRe   = regexp.MustCompile(`^\s*(?:export\s+)?(?:default\s+)?(async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	jsConstFuncRe  = regexp.MustCompile(`^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)`)
+	jsTypeRe       = regexp.MustCompile(`^\s*(?:export\s+)?(interface|type|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)\b`)
+	rustFnRe       = regexp.MustCompile(`^\s*(?:pub(?:\([^)]*\))?\s+)?(async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	rustTypeRe     = regexp.MustCompile(`^\s*(?:pub(?:\([^)]*\))?\s+)?(struct|enum|trait|mod|const|static)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	rustImplRe     = regexp.MustCompile(`^\s*(?:unsafe\s+)?impl(?:\s*<[^>{}]+>)?\s+([^{]+?)\s*\{`)
+	cppTypeRe      = regexp.MustCompile(`^\s*(?:template\s*<[^;{}]+>\s*)?(class|struct|union|namespace|enum(?:\s+class)?)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	cppFunctionRe  = regexp.MustCompile(`^\s*(?:template\s*<[^;{}]+>\s*)?(?:inline\s+|static\s+|virtual\s+|constexpr\s+|consteval\s+|friend\s+|extern\s+|explicit\s+)*[A-Za-z_~][A-Za-z0-9_:<>,~*&\s]+\s+([~A-Za-z_][A-Za-z0-9_:~]*)\s*\([^;{}]*\)\s*(?:const\s*)?(?:noexcept(?:\s*\([^)]*\))?\s*)?(?:override\s*)?(?:final\s*)?(?:->\s*[A-Za-z_][A-Za-z0-9_:<>,~*&\s]+)?(?:\{|;)\s*$`)
+	csharpTypeRe   = regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|static|sealed|abstract|partial|unsafe|new)\s+)*(class|struct|interface|record|enum|delegate)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	csharpMethodRe = regexp.MustCompile(`^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|sealed|abstract|partial|extern|unsafe|new)\s+)+[A-Za-z_][A-Za-z0-9_<>,\[\]?.\s]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{}]*\)\s*(?:where\s+.+)?(?:\{|=>)?\s*$`)
+	javaTypeRe     = regexp.MustCompile(`^\s*(?:(?:public|private|protected|static|final|abstract|sealed|non-sealed|strictfp)\s+)*(class|interface|enum|record)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	javaMethodRe   = regexp.MustCompile(`^\s*(?:(?:public|private|protected|static|final|abstract|synchronized|native|strictfp|default)\s+)+[A-Za-z_][A-Za-z0-9_<>,\[\]?.\s]*\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^;{}]*\)\s*(?:throws\s+[^{]+)?(?:\{|;)\s*$`)
+	kotlinDeclRe   = regexp.MustCompile(`^\s*(?:public\s+|private\s+|protected\s+|internal\s+|open\s+|data\s+|sealed\s+|abstract\s+|object\s+|companion\s+)*(class|object|interface|enum\s+class|fun)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+	swiftDeclRe    = regexp.MustCompile(`^\s*(?:public\s+|private\s+|internal\s+|open\s+|final\s+|static\s+|class\s+)*(class|struct|enum|protocol|extension|func)\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
+)
+
+func lightweightSourceOutline(path, display, language string, extract func(string) (string, string, bool)) ToolResult {
+	lines, binary, err := readTextFileLines(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if binary {
+		return ToolResult{Success: false, Error: fmt.Sprintf("binary file suppressed: %s", display), Binary: true}
+	}
+	symbols := make([]lightweightSymbol, 0)
+	for i, line := range lines {
+		kind, name, ok := extract(line)
+		if !ok {
+			continue
+		}
+		symbols = append(symbols, lightweightSymbol{
+			Kind:  kind,
+			Name:  name,
+			Line:  i + 1,
+			Level: leadingIndent(line),
+		})
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "file: %s\n", display)
+	fmt.Fprintf(&b, "type: %s\n", language)
+	fmt.Fprintf(&b, "total_lines: %d\n", len(lines))
+	b.WriteString("symbols:\n")
+	if len(symbols) == 0 {
+		b.WriteString("- none\n")
+		return ToolResult{Success: true, Output: b.String()}
+	}
+	for i, symbol := range symbols {
+		endLine := len(lines)
+		for j := i + 1; j < len(symbols); j++ {
+			if symbols[j].Level <= symbol.Level {
+				endLine = symbols[j].Line - 1
+				break
+			}
+		}
+		if endLine < symbol.Line {
+			endLine = symbol.Line
+		}
+		fmt.Fprintf(&b, "- %s %s lines %d-%d\n", symbol.Kind, symbol.Name, symbol.Line, endLine)
+	}
+	return ToolResult{Success: true, Output: b.String()}
+}
+
+func pythonOutline(path, display string) ToolResult {
+	return lightweightSourceOutline(path, display, "python", func(line string) (string, string, bool) {
+		if m := pythonClassRe.FindStringSubmatch(line); len(m) == 2 {
+			return "class", m[1], true
+		}
+		if m := pythonDefRe.FindStringSubmatch(line); len(m) == 3 {
+			kind := "func"
+			if strings.TrimSpace(m[1]) != "" {
+				kind = "async func"
+			}
+			return kind, m[2], true
+		}
+		return "", "", false
+	})
+}
+
+func jsOutline(path, display, language string) ToolResult {
+	return lightweightSourceOutline(path, display, language, func(line string) (string, string, bool) {
+		if m := jsClassRe.FindStringSubmatch(line); len(m) == 2 {
+			return "class", m[1], true
+		}
+		if m := jsFunctionRe.FindStringSubmatch(line); len(m) == 3 {
+			kind := "func"
+			if strings.TrimSpace(m[1]) != "" {
+				kind = "async func"
+			}
+			return kind, m[2], true
+		}
+		if m := jsConstFuncRe.FindStringSubmatch(line); len(m) == 2 {
+			return "func", m[1], true
+		}
+		if m := jsTypeRe.FindStringSubmatch(line); len(m) == 3 {
+			return m[1], m[2], true
+		}
+		return "", "", false
+	})
+}
+
+func rustOutline(path, display string) ToolResult {
+	return lightweightSourceOutline(path, display, "rust", func(line string) (string, string, bool) {
+		if m := rustFnRe.FindStringSubmatch(line); len(m) == 3 {
+			kind := "fn"
+			if strings.TrimSpace(m[1]) != "" {
+				kind = "async fn"
+			}
+			return kind, m[2], true
+		}
+		if m := rustTypeRe.FindStringSubmatch(line); len(m) == 3 {
+			return m[1], m[2], true
+		}
+		if m := rustImplRe.FindStringSubmatch(line); len(m) == 2 {
+			return "impl", compactSymbolName(m[1]), true
+		}
+		return "", "", false
+	})
+}
+
+func cppOutline(path, display string) ToolResult {
+	return lightweightSourceOutline(path, display, "c/c++", func(line string) (string, string, bool) {
+		if m := cppTypeRe.FindStringSubmatch(line); len(m) == 3 {
+			return strings.Join(strings.Fields(m[1]), " "), m[2], true
+		}
+		if m := cppFunctionRe.FindStringSubmatch(line); len(m) == 2 {
+			name := compactSymbolName(m[1])
+			if sourceControlKeyword(name) {
+				return "", "", false
+			}
+			return "func", name, true
+		}
+		return "", "", false
+	})
+}
+
+func csharpOutline(path, display string) ToolResult {
+	return lightweightSourceOutline(path, display, "csharp", func(line string) (string, string, bool) {
+		if m := csharpTypeRe.FindStringSubmatch(line); len(m) == 3 {
+			return m[1], m[2], true
+		}
+		if m := csharpMethodRe.FindStringSubmatch(line); len(m) == 2 {
+			name := compactSymbolName(m[1])
+			if sourceControlKeyword(name) {
+				return "", "", false
+			}
+			return "method", name, true
+		}
+		return "", "", false
+	})
+}
+
+func javaOutline(path, display string) ToolResult {
+	return lightweightSourceOutline(path, display, "java", func(line string) (string, string, bool) {
+		if m := javaTypeRe.FindStringSubmatch(line); len(m) == 3 {
+			return m[1], m[2], true
+		}
+		if m := javaMethodRe.FindStringSubmatch(line); len(m) == 2 {
+			name := compactSymbolName(m[1])
+			if sourceControlKeyword(name) {
+				return "", "", false
+			}
+			return "method", name, true
+		}
+		return "", "", false
+	})
+}
+
+func kotlinOutline(path, display string) ToolResult {
+	return lightweightSourceOutline(path, display, "kotlin", func(line string) (string, string, bool) {
+		if m := kotlinDeclRe.FindStringSubmatch(line); len(m) == 3 {
+			return strings.Join(strings.Fields(m[1]), " "), m[2], true
+		}
+		return "", "", false
+	})
+}
+
+func swiftOutline(path, display string) ToolResult {
+	return lightweightSourceOutline(path, display, "swift", func(line string) (string, string, bool) {
+		if m := swiftDeclRe.FindStringSubmatch(line); len(m) == 3 {
+			return m[1], m[2], true
+		}
+		return "", "", false
+	})
+}
+
 func fileLooksBinary(file *os.File) (bool, error) {
 	var sample [4096]byte
 	n, err := file.Read(sample[:])
@@ -715,6 +997,53 @@ func fileGlobMatches(glob, path string) bool {
 		return true
 	}
 	return false
+}
+
+func defaultHiddenDir(name string) bool {
+	switch name {
+	case ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "vendor", "dist", "build", "coverage", ".next", "out", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache":
+		return true
+	default:
+		return false
+	}
+}
+
+func pathHasDefaultHiddenSegment(path string) bool {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	for _, part := range strings.Split(path, "/") {
+		if defaultHiddenDir(part) {
+			return true
+		}
+	}
+	return false
+}
+
+func leadingIndent(line string) int {
+	indent := 0
+	for _, ch := range line {
+		switch ch {
+		case ' ':
+			indent++
+		case '\t':
+			indent += 4
+		default:
+			return indent
+		}
+	}
+	return indent
+}
+
+func compactSymbolName(name string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(name)), " ")
+}
+
+func sourceControlKeyword(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "if", "for", "while", "switch", "catch", "return", "sizeof":
+		return true
+	default:
+		return false
+	}
 }
 
 func clampInt(value, fallback, maxValue int) int {
@@ -768,6 +1097,24 @@ func outlineFile(path, display string) ToolResult {
 		return goOutline(path, display)
 	case ".md", ".markdown":
 		return markdownOutline(path, display)
+	case ".py", ".pyi":
+		return pythonOutline(path, display)
+	case ".js", ".jsx", ".mjs", ".cjs":
+		return jsOutline(path, display, "javascript")
+	case ".ts", ".tsx", ".mts", ".cts":
+		return jsOutline(path, display, "typescript")
+	case ".rs":
+		return rustOutline(path, display)
+	case ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp":
+		return cppOutline(path, display)
+	case ".cs":
+		return csharpOutline(path, display)
+	case ".java":
+		return javaOutline(path, display)
+	case ".kt", ".kts":
+		return kotlinOutline(path, display)
+	case ".swift":
+		return swiftOutline(path, display)
 	default:
 		return ToolResult{Success: false, Error: fmt.Sprintf("outline unsupported for %s", display)}
 	}
@@ -775,7 +1122,7 @@ func outlineFile(path, display string) ToolResult {
 
 func outlineSupported(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go", ".md", ".markdown":
+	case ".go", ".md", ".markdown", ".py", ".pyi", ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".rs", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".cs", ".java", ".kt", ".kts", ".swift":
 		return true
 	default:
 		return false

@@ -115,6 +115,63 @@ func TestFileToolsHonorsCustomReadLimits(t *testing.T) {
 	}
 }
 
+func TestFileToolsListAndSearchReportHiddenDirs(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{".git", ".venv", "src"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, ".git", "HEAD"), []byte("needle hidden git\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".venv", "note.py"), []byte("needle hidden venv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "app.py"), []byte("needle visible\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	list := files.List(".", "", 20)
+	if !list.Success {
+		t.Fatalf("list failed: %s", list.Error)
+	}
+	for _, want := range []string{".git/ [hidden by default", ".venv/ [hidden by default", "hidden_dirs: 2", "src/"} {
+		if !strings.Contains(list.Output, want) {
+			t.Fatalf("list missing %q:\n%s", want, list.Output)
+		}
+	}
+	if strings.Contains(list.Output, ".git/HEAD") || strings.Contains(list.Output, ".venv/note.py") {
+		t.Fatalf("list descended into hidden dirs by default:\n%s", list.Output)
+	}
+
+	search := files.SearchContext("needle", ".", "", 20, 0, 0)
+	if !search.Success {
+		t.Fatalf("search failed: %s", search.Error)
+	}
+	if !strings.Contains(search.Output, "src/app.py:1: needle visible") || !strings.Contains(search.Output, "hidden_dirs_skipped: 2") {
+		t.Fatalf("search did not report visible match and skipped dirs:\n%s", search.Output)
+	}
+	if strings.Contains(search.Output, ".git/HEAD") || strings.Contains(search.Output, ".venv/note.py") {
+		t.Fatalf("search descended into hidden dirs by default:\n%s", search.Output)
+	}
+
+	searchHidden := files.SearchContextWithOptions("needle", ".", "", 20, 0, 0, SearchOptions{IncludeHidden: true})
+	if !searchHidden.Success {
+		t.Fatalf("search hidden failed: %s", searchHidden.Error)
+	}
+	for _, want := range []string{".git/HEAD:1: needle hidden git", ".venv/note.py:1: needle hidden venv", "src/app.py:1: needle visible"} {
+		if !strings.Contains(searchHidden.Output, want) {
+			t.Fatalf("search hidden missing %q:\n%s", want, searchHidden.Output)
+		}
+	}
+}
+
 func TestTextEditorReplaceText(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\nkeep\n"), 0o644); err != nil {
@@ -271,6 +328,97 @@ func (r *Runner) String() string {
 	}
 	if strings.Contains(moduleOutline.Output, "vendor/skip.go") {
 		t.Fatalf("module outline should skip vendor:\n%s", moduleOutline.Output)
+	}
+}
+
+func TestFileToolsOutlineCommonLanguages(t *testing.T) {
+	root := t.TempDir()
+	filesToWrite := map[string]string{
+		"app.py": `class Worker:
+    async def run(self):
+        pass
+
+def helper():
+    pass
+`,
+		"view.tsx": `export interface Props {
+  title: string
+}
+
+export function Page(props: Props) {
+  return null
+}
+
+export const useThing = () => null
+`,
+		"lib.rs": `pub struct Runner;
+
+impl Runner {
+    pub async fn run(&self) {}
+}
+
+pub fn helper() {}
+`,
+		"demo.cpp": `namespace demo {
+class Widget {
+public:
+  void draw();
+};
+
+int add(int left, int right) {
+  return left + right;
+}
+}
+`,
+		"Service.cs": `public class Service
+{
+    public async Task RunAsync()
+    {
+    }
+}
+`,
+	}
+	for name, body := range filesToWrite {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	cases := []struct {
+		path string
+		want []string
+	}{
+		{"app.py", []string{"type: python", "class Worker lines", "async func run lines", "func helper lines"}},
+		{"view.tsx", []string{"type: typescript", "interface Props lines", "func Page lines", "func useThing lines"}},
+		{"lib.rs", []string{"type: rust", "struct Runner lines", "impl Runner lines", "async fn run lines", "fn helper lines"}},
+		{"demo.cpp", []string{"type: c/c++", "namespace demo lines", "class Widget lines", "func add lines"}},
+		{"Service.cs", []string{"type: csharp", "class Service lines", "method RunAsync lines"}},
+	}
+	for _, tt := range cases {
+		outline := files.Outline(tt.path)
+		if !outline.Success {
+			t.Fatalf("%s outline failed: %s", tt.path, outline.Error)
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(outline.Output, want) {
+				t.Fatalf("%s outline missing %q:\n%s", tt.path, want, outline.Output)
+			}
+		}
+	}
+
+	moduleOutline := files.ModuleOutline(".", "", 20)
+	if !moduleOutline.Success {
+		t.Fatalf("module outline failed: %s", moduleOutline.Error)
+	}
+	for _, want := range []string{"file: app.py", "file: view.tsx", "file: lib.rs", "file: demo.cpp", "file: Service.cs"} {
+		if !strings.Contains(moduleOutline.Output, want) {
+			t.Fatalf("module outline missing %q:\n%s", want, moduleOutline.Output)
+		}
 	}
 }
 
