@@ -131,6 +131,20 @@ func TestLCAgentSessionWarnsWhenWebSearchUnavailable(t *testing.T) {
 	}
 }
 
+func TestLCAgentRepoOverviewTranscriptSummaries(t *testing.T) {
+	call := lcagentToolCallText("repo_overview", json.RawMessage(`{"path":".","max_files":40,"include_hidden":true}`))
+	if call != "Tool repo_overview running: . 40 files include hidden" {
+		t.Fatalf("call summary = %q", call)
+	}
+
+	raw := json.RawMessage(`{"success":true,"truncated":true,"output":"path: .\nsource: git ls-files + untracked\ngit: true\nbranch: feature/repo-overview\ntracked_files: 12\ndirty: true\n\nfile_sample:\n- README.md\n"}`)
+	result := lcagentToolResultText("repo_overview", raw)
+	want := "Tool repo_overview completed: . git feature/repo-overview dirty 12 tracked via git ls-files + untracked truncated"
+	if result != want {
+		t.Fatalf("result summary = %q, want %q", result, want)
+	}
+}
+
 func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

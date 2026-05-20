@@ -85,6 +85,22 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "repo_overview",
+				Description: "Get a quick deterministic repository overview before broad exploration: Git branch/status, shallow tree, skipped hidden/generated directories, important manifests, project hints, and a representative file sample. Use include_hidden=true only when hidden/generated contents are directly relevant.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file. Defaults to workspace root. Absolute paths are denied."},
+						"max_files":      map[string]any{"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum representative files to include. Defaults to 120."},
+						"include_hidden": map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false; skipped directories are reported."},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "list_files",
 				Description: "List files under a workspace path, optionally filtered by a simple glob. Hidden/generated directories are listed as placeholders but not descended into by default; set include_hidden=true only when those contents are directly relevant.",
 				Parameters: map[string]any{

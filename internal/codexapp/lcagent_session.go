@@ -1237,6 +1237,22 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 		if json.Unmarshal(raw, &args) == nil {
 			return strings.TrimSpace(args.Path)
 		}
+	case "repo_overview":
+		var args struct {
+			Path          string `json:"path"`
+			MaxFiles      int    `json:"max_files"`
+			IncludeHidden bool   `json:"include_hidden"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			parts := []string{firstNonEmpty(args.Path, ".")}
+			if args.MaxFiles > 0 {
+				parts = append(parts, fmt.Sprintf("%d files", args.MaxFiles))
+			}
+			if args.IncludeHidden {
+				parts = append(parts, "include hidden")
+			}
+			return strings.Join(nonEmptyStrings(parts), " ")
+		}
 	case "list_files":
 		var args struct {
 			Path       string `json:"path"`
@@ -1322,6 +1338,8 @@ func lcagentToolResultSummary(tool, output, errText string, exitCode int, durati
 		return lcagentFileReadSummary(output, truncated)
 	case "file_outline":
 		return lcagentFileOutlineSummary(output)
+	case "repo_overview":
+		return lcagentRepoOverviewSummary(output, truncated)
 	case "list_files":
 		return lcagentListFilesSummary(output, truncated)
 	case "search":
@@ -1393,6 +1411,33 @@ func lcagentListFilesSummary(output string, truncated bool) string {
 	}
 	if values["entries"] != "" {
 		parts = append(parts, values["entries"]+" entries")
+	}
+	if truncated {
+		parts = append(parts, "truncated")
+	}
+	return strings.Join(nonEmptyStrings(parts), " ")
+}
+
+func lcagentRepoOverviewSummary(output string, truncated bool) string {
+	values := lcagentOutputHeaderValues(output)
+	parts := []string{values["path"]}
+	if values["git"] == "true" {
+		if values["branch"] != "" {
+			parts = append(parts, "git "+values["branch"])
+		} else {
+			parts = append(parts, "git")
+		}
+		if values["dirty"] == "true" {
+			parts = append(parts, "dirty")
+		}
+	} else if values["git"] == "false" {
+		parts = append(parts, "no git")
+	}
+	if values["tracked_files"] != "" {
+		parts = append(parts, values["tracked_files"]+" tracked")
+	}
+	if values["source"] != "" {
+		parts = append(parts, "via "+values["source"])
 	}
 	if truncated {
 		parts = append(parts, "truncated")

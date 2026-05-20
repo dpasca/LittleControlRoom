@@ -212,6 +212,12 @@ type listFilesArgs struct {
 	IncludeHidden bool   `json:"include_hidden"`
 }
 
+type repoOverviewArgs struct {
+	Path          string `json:"path"`
+	MaxFiles      int    `json:"max_files"`
+	IncludeHidden bool   `json:"include_hidden"`
+}
+
 type searchArgs struct {
 	Query         string `json:"query"`
 	Path          string `json:"path"`
@@ -342,6 +348,12 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			return tools.ToolResult{}, err
 		}
 		result = r.Files.ListWithOptions(args.Path, args.Glob, args.MaxEntries, tools.ListOptions{IncludeHidden: args.IncludeHidden})
+	case "repo_overview":
+		var args repoOverviewArgs
+		if err := json.Unmarshal(action.Args, &args); err != nil {
+			return tools.ToolResult{}, err
+		}
+		result = r.Files.RepoOverview(args.Path, tools.RepoOverviewOptions{MaxFiles: args.MaxFiles, IncludeHidden: args.IncludeHidden})
 	case "search":
 		var args searchArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {

@@ -262,7 +262,7 @@ func compactOpenRouterLoopMessagesWithOptions(messages []modeladapter.Message, l
 	}
 	context.WriteString("\n\nContinuation instructions:\n")
 	context.WriteString("- You may call tools if more evidence is genuinely needed.\n")
-	context.WriteString("- Check the read ledger before calling read_file; prefer unread adjacent ranges, search, file_outline, or module_outline when they answer the question.\n")
+	context.WriteString("- Check the read ledger before calling read_file; prefer repo_overview, unread adjacent ranges, search, file_outline, or module_outline when they answer the question.\n")
 	context.WriteString("- Re-read an already inspected range only when exact current lines are needed for edits or verification.\n")
 	context.WriteString("- When ready, call final_response exactly once.")
 

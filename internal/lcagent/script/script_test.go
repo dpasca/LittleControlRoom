@@ -52,6 +52,7 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 		Skills:    catalog,
 	}
 	actions := []Action{
+		{Type: "tool_call", Tool: "repo_overview", Args: raw(`{"path":".","max_files":10}`)},
 		{Type: "tool_call", Tool: "list_files", Args: raw(`{"path":".","glob":"*.md","max_entries":10}`)},
 		{Type: "tool_call", Tool: "read_file", Args: raw(`{"path":"README.md","limit":20}`)},
 		{Type: "tool_call", Tool: "search", Args: raw(`{"query":"old","path":".","file_glob":"*.md","max_matches":10}`)},

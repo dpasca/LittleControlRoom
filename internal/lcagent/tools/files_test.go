@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -172,6 +173,108 @@ func TestFileToolsListAndSearchReportHiddenDirs(t *testing.T) {
 	}
 }
 
+func TestFileToolsRepoOverviewFilesystemReportsHiddenDirs(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{".venv", "build", "src"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Demo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "app.py"), []byte("def main():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".venv", "hidden.py"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build", "bundle.js"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	overview := files.RepoOverview(".", RepoOverviewOptions{MaxFiles: 20})
+	if !overview.Success {
+		t.Fatalf("repo overview failed: %s", overview.Error)
+	}
+	for _, want := range []string{"path: .", "source: filesystem", "git: false", ".venv/ [hidden by default", "build/ [hidden by default", "hidden_dirs_skipped: 2", "README.md", "src/app.py", "Python"} {
+		if !strings.Contains(overview.Output, want) {
+			t.Fatalf("repo overview missing %q:\n%s", want, overview.Output)
+		}
+	}
+	if strings.Contains(overview.Output, ".venv/hidden.py") || strings.Contains(overview.Output, "build/bundle.js") {
+		t.Fatalf("repo overview descended into hidden dirs by default:\n%s", overview.Output)
+	}
+
+	hiddenPlaceholder := files.RepoOverview(".venv", RepoOverviewOptions{})
+	if !hiddenPlaceholder.Success {
+		t.Fatalf("hidden repo overview failed: %s", hiddenPlaceholder.Error)
+	}
+	if !strings.Contains(hiddenPlaceholder.Output, "source: hidden placeholder") || !strings.Contains(hiddenPlaceholder.Output, ".venv/ [hidden by default") || strings.Contains(hiddenPlaceholder.Output, "hidden.py") {
+		t.Fatalf("hidden placeholder output =\n%s", hiddenPlaceholder.Output)
+	}
+
+	withHidden := files.RepoOverview(".", RepoOverviewOptions{IncludeHidden: true, MaxFiles: 20})
+	if !withHidden.Success {
+		t.Fatalf("repo overview include hidden failed: %s", withHidden.Error)
+	}
+	for _, want := range []string{".venv/hidden.py", "build/bundle.js"} {
+		if !strings.Contains(withHidden.Output, want) {
+			t.Fatalf("repo overview include hidden missing %q:\n%s", want, withHidden.Output)
+		}
+	}
+}
+
+func TestFileToolsRepoOverviewGitIncludesTrackedAndUntracked(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	for _, dir := range []string{".github/workflows", ".venv", "src"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filesToWrite := map[string]string{
+		"README.md":                "# Demo\n",
+		"package.json":             `{"scripts":{"test":"echo ok"}}` + "\n",
+		".github/workflows/ci.yml": "name: ci\n",
+		"src/lib.rs":               "pub fn demo() {}\n",
+		"src/main.cpp":             "int main() { return 0; }\n",
+		"notes.txt":                "untracked visible\n",
+		".venv/hidden.py":          "untracked hidden\n",
+	}
+	for name, body := range filesToWrite {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGitForTest(t, root, "init")
+	runGitForTest(t, root, "add", "README.md", "package.json", ".github/workflows/ci.yml", "src/lib.rs", "src/main.cpp")
+
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	overview := FileTools{Workspace: w}.RepoOverview(".", RepoOverviewOptions{MaxFiles: 30})
+	if !overview.Success {
+		t.Fatalf("repo overview failed: %s", overview.Error)
+	}
+	for _, want := range []string{"git: true", "source: git ls-files + untracked", "tracked_files: 5", "dirty: true", ".git/ [hidden by default", ".venv/ [hidden by default", "hidden_dirs_skipped:", "README.md", "package.json", ".github/workflows/ci.yml", "src/lib.rs", "src/main.cpp", "notes.txt", "Node/JavaScript package", "Rust", "C/C++"} {
+		if !strings.Contains(overview.Output, want) {
+			t.Fatalf("repo overview missing %q:\n%s", want, overview.Output)
+		}
+	}
+	if strings.Contains(overview.Output, ".venv/hidden.py") {
+		t.Fatalf("repo overview included hidden untracked file by default:\n%s", overview.Output)
+	}
+}
+
 func TestTextEditorReplaceText(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\nkeep\n"), 0o644); err != nil {
@@ -204,6 +307,14 @@ func TestTextEditorReplaceText(t *testing.T) {
 	}
 	if !strings.Contains(result.DiffSummary, "README.md: replace +1 -1") {
 		t.Fatalf("diff summary = %q", result.DiffSummary)
+	}
+}
+
+func runGitForTest(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
 }
 

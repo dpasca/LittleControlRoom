@@ -36,7 +36,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 		names[tool.Function.Name] = true
 		descriptions[tool.Function.Name] = tool.Function.Description
 	}
-	for _, want := range []string{"read_file", "file_outline", "module_outline", "list_files", "search", "load_skill", "run_command", "apply_patch", "replace_text", "update_plan", "final_response"} {
+	for _, want := range []string{"read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "load_skill", "run_command", "apply_patch", "replace_text", "update_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
@@ -64,6 +64,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	}
 	if !strings.Contains(descriptions["module_outline"], "many supported source or Markdown files") {
 		t.Fatalf("module_outline description should mention many files: %q", descriptions["module_outline"])
+	}
+	if !strings.Contains(descriptions["repo_overview"], "deterministic repository overview") {
+		t.Fatalf("repo_overview description should mention deterministic overview: %q", descriptions["repo_overview"])
 	}
 	if !strings.Contains(descriptions["search"], "literal substring") || !strings.Contains(descriptions["search"], "not a regex") {
 		t.Fatalf("search description should explain literal matching: %q", descriptions["search"])
@@ -129,11 +132,17 @@ func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {
 	if got := outlineProps["max_files"].(map[string]any)["maximum"]; got != 160 {
 		t.Fatalf("module_outline max_files max = %#v, want 160", got)
 	}
+
+	overviewSpec := toolSpec(t, tools, "repo_overview")
+	overviewProps := overviewSpec.Parameters["properties"].(map[string]any)
+	if got := overviewProps["max_files"].(map[string]any)["maximum"]; got != 500 {
+		t.Fatalf("repo_overview max_files max = %#v, want 500", got)
+	}
 }
 
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
-	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") {
+	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer repo_overview") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
 }

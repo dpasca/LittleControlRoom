@@ -32,6 +32,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
 		"For unfamiliar source or Markdown files, prefer file_outline before raw reads.",
+		"For unfamiliar repositories, prefer repo_overview before list_files, module_outline, or broad reads.",
 		"For broad repo, package, or module review, prefer module_outline before reading many files.",
 		"File discovery tools skip noisy hidden/generated directories by default but report them as skipped; set include_hidden=true only when the user specifically needs contents such as .git, .venv, node_modules, vendor, dist, or build.",
 		"For specific behavior, identifiers, errors, commands, or tests, prefer search with context before raw reads.",
