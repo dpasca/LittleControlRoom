@@ -25,8 +25,8 @@ const (
 	maxReadLineLimit        = 1000
 	defaultListEntryLimit   = 200
 	maxListEntryLimit       = 1000
-	defaultSearchMaxMatch   = 50
-	maxSearchMaxMatch       = 200
+	defaultSearchMaxMatch   = 25
+	maxSearchMaxMatch       = 100
 	maxSearchContextLines   = 8
 	defaultOutlineFileLimit = 30
 	maxOutlineFileLimit     = 80
@@ -113,8 +113,8 @@ func GenerousFileLimits() FileLimits {
 		MaxReadLineLimit:        2500,
 		DefaultListEntryLimit:   400,
 		MaxListEntryLimit:       2000,
-		DefaultSearchMaxMatch:   100,
-		MaxSearchMaxMatch:       500,
+		DefaultSearchMaxMatch:   50,
+		MaxSearchMaxMatch:       250,
 		MaxSearchContextLines:   16,
 		DefaultOutlineFileLimit: 60,
 		MaxOutlineFileLimit:     160,

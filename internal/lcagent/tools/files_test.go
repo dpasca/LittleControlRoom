@@ -429,7 +429,7 @@ func TestTextEditorReplaceTextDeniesAbsolutePath(t *testing.T) {
 	if result.Success {
 		t.Fatal("replace_text absolute path succeeded, want denial")
 	}
-	if !result.Denied || !strings.Contains(result.DenialReason, "read-only file inspection") {
+	if !result.Denied || !strings.Contains(result.DenialReason, "--admin-write") {
 		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
 	}
 	data, err := os.ReadFile(target)
@@ -438,6 +438,35 @@ func TestTextEditorReplaceTextDeniesAbsolutePath(t *testing.T) {
 	}
 	if string(data) != "old\n" {
 		t.Fatalf("outside file changed: %q", data)
+	}
+}
+
+func TestTextEditorAdminWriteAllowsAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "note.txt")
+	if err := os.WriteFile(target, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.AdminWrite = true
+	result := TextEditor{Workspace: w}.ReplaceText(ReplaceTextSpec{
+		Path:    target,
+		OldText: "old\n",
+		NewText: "new\n",
+	})
+	if !result.Success {
+		t.Fatalf("replace_text failed: %s", result.Error)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new\n" {
+		t.Fatalf("outside file = %q", data)
 	}
 }
 

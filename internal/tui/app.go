@@ -1920,6 +1920,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			LCAgentRoutePreset:      m.lcagentRoutePreset(),
 			LCAgentProvider:         m.lcagentProvider(),
 			LCAgentAuto:             m.lcagentAuto(),
+			LCAgentAdminWrite:       m.lcagentAdminWrite(),
 			LCAgentToolProfile:      m.lcagentToolProfile(),
 			LCAgentContextProfile:   m.lcagentContextProfile(),
 			LCAgentRequestTimeout:   m.lcagentRequestTimeout(),

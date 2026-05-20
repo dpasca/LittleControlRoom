@@ -643,6 +643,7 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		LCAgentRoutePreset:      m.lcagentRoutePreset(),
 		LCAgentProvider:         m.lcagentProvider(),
 		LCAgentAuto:             m.lcagentAuto(),
+		LCAgentAdminWrite:       m.lcagentAdminWrite(),
 		LCAgentToolProfile:      m.lcagentToolProfile(),
 		LCAgentContextProfile:   m.lcagentContextProfile(),
 		LCAgentRequestTimeout:   m.lcagentRequestTimeout(),

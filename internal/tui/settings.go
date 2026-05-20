@@ -40,6 +40,7 @@ const (
 	settingsFieldLCAgentModel
 	settingsFieldLCAgentReasoning
 	settingsFieldLCAgentAuto
+	settingsFieldLCAgentAdminWrite
 	settingsFieldLCAgentToolProfile
 	settingsFieldLCAgentContextProfile
 	settingsFieldLCAgentRequestTimeout
@@ -203,6 +204,7 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentWebSearchEngineID,
 				settingsFieldLCAgentWebSearchURL,
 				settingsFieldLCAgentAuto,
+				settingsFieldLCAgentAdminWrite,
 				settingsFieldLCAgentToolProfile,
 				settingsFieldLCAgentContextProfile,
 				settingsFieldLCAgentRequestTimeout,
@@ -635,6 +637,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldLCAgentRoutePreset),
 		m.settingsFieldValue(settingsFieldLCAgentProvider),
 		m.settingsFieldValue(settingsFieldLCAgentAuto),
+		m.settingsFieldValue(settingsFieldLCAgentAdminWrite),
 		m.settingsFieldValue(settingsFieldLCAgentToolProfile),
 		m.settingsFieldValue(settingsFieldLCAgentContextProfile),
 		m.settingsFieldValue(settingsFieldLCAgentRequestTimeout),
@@ -1221,6 +1224,7 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.EmbeddedLCAgentModel = m.settingsFieldValue(settingsFieldLCAgentModel)
 	settings.EmbeddedLCAgentReasoning = m.settingsFieldValue(settingsFieldLCAgentReasoning)
 	settings.LCAgentAuto = m.settingsFieldValue(settingsFieldLCAgentAuto)
+	settings.LCAgentAdminWrite = strings.EqualFold(strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentAdminWrite)), "true")
 	settings.LCAgentToolProfile = m.settingsFieldValue(settingsFieldLCAgentToolProfile)
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
@@ -1523,7 +1527,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Provider Credentials"
 		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
 			return "Web Search"
-		case settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
+		case settingsFieldLCAgentAuto, settingsFieldLCAgentAdminWrite, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
 			return "Runtime Policy"
 		case settingsFieldLCAgentRoutePreset, settingsFieldLCAgentPath:
 			return "Advanced"
@@ -2351,6 +2355,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
+			"LCAgent admin write",
+			"Accepted values: true, false. True passes --admin-write so LCAgent write tools may edit absolute paths outside the project.",
+			strconv.FormatBool(settings.LCAgentAdminWrite),
+			8,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
 			"LCAgent tool profile",
 			"Accepted values: balanced, generous. Balanced keeps read budgets conservative; generous is useful for large-context model experiments.",
 			settings.LCAgentToolProfile,
@@ -2715,6 +2726,11 @@ func (m Model) settingsFieldHint(index int) string {
 		default:
 			return field.hint
 		}
+	case settingsFieldLCAgentAdminWrite:
+		if strings.EqualFold(strings.TrimSpace(field.input.Value()), "true") {
+			return "LCAgent will pass --admin-write, allowing write tools to edit absolute paths outside the workspace when a task explicitly needs that."
+		}
+		return "Default false: absolute writes outside the workspace are denied; absolute project paths that resolve inside the workspace still work."
 	case settingsFieldLCAgentToolProfile:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "", "balanced":

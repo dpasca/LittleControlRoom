@@ -32,8 +32,9 @@ func ParseAutonomy(value string) (Autonomy, error) {
 }
 
 type Workspace struct {
-	Root string
-	Auto Autonomy
+	Root       string
+	Auto       Autonomy
+	AdminWrite bool
 }
 
 type DenialError struct {
@@ -92,23 +93,38 @@ func (w Workspace) Resolve(rel string) (string, error) {
 		return "", fmt.Errorf("path is required")
 	}
 	if filepath.IsAbs(rel) {
-		return "", Denied(fmt.Sprintf("absolute paths are only allowed for read-only file inspection; workspace writes require relative paths: %s", rel))
+		clean := filepath.Clean(rel)
+		if !w.AdminWrite {
+			target, err := w.resolveWorkspaceTarget(clean, rel)
+			if err == nil {
+				return target, nil
+			}
+			if IsDenied(err) && isUnder(w.Root, clean) {
+				return "", err
+			}
+			return "", Denied(fmt.Sprintf("absolute write path is outside the workspace; enable LCAgent admin write (CLI: --admin-write; LCR /settings: LCAgent admin write) only when the task truly needs system/admin edits: %s", rel))
+		}
+		return clean, nil
 	}
 	clean := filepath.Clean(rel)
 	if clean == "." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || clean == ".." {
 		return "", Denied(fmt.Sprintf("path escapes workspace: %s", rel))
 	}
 	target := filepath.Join(w.Root, clean)
+	return w.resolveWorkspaceTarget(target, rel)
+}
+
+func (w Workspace) resolveWorkspaceTarget(target, original string) (string, error) {
 	parent := existingParent(target)
 	canonParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		return "", err
 	}
 	if !isUnder(w.Root, canonParent) {
-		return "", Denied(fmt.Sprintf("path escapes workspace through symlink: %s", rel))
+		return "", Denied(fmt.Sprintf("path escapes workspace through symlink: %s", original))
 	}
 	if canonTarget, err := filepath.EvalSymlinks(target); err == nil && !isUnder(w.Root, canonTarget) {
-		return "", Denied(fmt.Sprintf("path escapes workspace through symlink: %s", rel))
+		return "", Denied(fmt.Sprintf("path escapes workspace through symlink: %s", original))
 	}
 	return target, nil
 }

@@ -18,6 +18,7 @@ type ToolOptions struct {
 	MaxOutlineFileLimit     int
 	MaxModuleOutlineChars   int
 	WebSearchEnabled        bool
+	AdminWrite              bool
 }
 
 func Tools() []ToolDefinition {
@@ -33,6 +34,12 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		limitDescription = fmt.Sprintf("Maximum lines to read. For central files, prefer 120-300 line ranges and continue with next_offset when useful. Defaults to %d.", opts.DefaultReadLineLimit)
 	}
 	inspectionPathDescription := "Workspace-relative path, or absolute path for read-only inspection outside the workspace."
+	writePathDescription := "Workspace-relative path to an existing text file, or an absolute path that resolves inside the workspace. Absolute paths outside the workspace require --admin-write."
+	patchPathDescription := "Patch file paths may be workspace-relative, or absolute paths that resolve inside the workspace. Absolute paths outside the workspace require --admin-write."
+	if opts.AdminWrite {
+		writePathDescription = "Workspace-relative path, or absolute path for explicit admin-write edits outside the workspace."
+		patchPathDescription = "Patch file paths may be workspace-relative or absolute because admin-write mode is enabled."
+	}
 	defs := []ToolDefinition{
 		{
 			Type: "function",
@@ -196,7 +203,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "apply_patch",
-				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. Successful patches return a diff summary; failed stale hunks may return suggested read_file ranges to refresh before retrying. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
+				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. " + patchPathDescription + " Successful patches return a diff summary; failed stale hunks may return suggested read_file ranges to refresh before retrying. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -216,7 +223,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":                  map[string]any{"type": "string", "description": "Workspace-relative path to an existing text file. Absolute paths are denied."},
+						"path":                  map[string]any{"type": "string", "description": writePathDescription},
 						"old_text":              map[string]any{"type": "string", "description": "Exact current text to replace. Re-read the target range first if unsure."},
 						"new_text":              map[string]any{"type": "string", "description": "Replacement text."},
 						"expected_replacements": map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "Required number of occurrences. Defaults to 1 so accidental broad edits fail."},
@@ -286,10 +293,10 @@ func (o ToolOptions) withDefaults() ToolOptions {
 		o.MaxListEntryLimit = 1000
 	}
 	if o.DefaultSearchMaxMatch <= 0 {
-		o.DefaultSearchMaxMatch = 50
+		o.DefaultSearchMaxMatch = 25
 	}
 	if o.MaxSearchMaxMatch <= 0 {
-		o.MaxSearchMaxMatch = 200
+		o.MaxSearchMaxMatch = 100
 	}
 	if o.MaxSearchContextLines <= 0 {
 		o.MaxSearchContextLines = 8

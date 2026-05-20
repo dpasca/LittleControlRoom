@@ -14,6 +14,7 @@ const benchmarkSessionJSONL = `{"type":"session_meta","id":"lca_demo","cwd":"/re
 {"type":"tool_call","tool":"read_file","args":{"path":"a.go"}}
 {"type":"tool_result","tool":"read_file","result":{"success":true,"output":"file: a.go\ntotal_lines: 300\nhas_more: true\nnext_offset: 201\nlines: 1-200\n\n1 | package demo\n200 | func A() {}\n","truncated":true}}
 {"type":"model_response","model":"deepseek/test","usage":{"prompt_tokens":150,"prompt_tokens_details":{"cached_tokens":50},"completion_tokens":20,"total_tokens":170,"cost":0.002}}
+{"type":"context_compacted","turn":2,"threshold":120000,"stats":{"before_chars":140000,"after_chars":60000}}
 {"type":"tool_call","tool":"read_file","args":{"path":"a.go","offset":200}}
 {"type":"tool_result","tool":"read_file","result":{"success":true,"output":"file: a.go\nlines: 200-300\n\n200 | func A() {}\n300 | func B() {}\n"}}
 {"type":"tool_call","tool":"search","args":{"query":"func","path":"."}}
@@ -67,6 +68,9 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	if summary.TokenUsage.InputTokens != 250 || summary.TokenUsage.CachedInputTokens != 75 || summary.TokenUsage.OutputTokens != 30 || summary.TokenUsage.TotalTokens != 280 {
 		t.Fatalf("token usage = %+v", summary.TokenUsage)
 	}
+	if summary.UncachedInputTokens != 175 || summary.ContextCompactions != 1 {
+		t.Fatalf("context waste = uncached %d compactions %d", summary.UncachedInputTokens, summary.ContextCompactions)
+	}
 	if summary.MaxInputTokens != 150 || summary.MaxTotalTokens != 170 {
 		t.Fatalf("max tokens = input %d total %d", summary.MaxInputTokens, summary.MaxTotalTokens)
 	}
@@ -75,6 +79,9 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	}
 	if len(summary.LargestToolOutputs) == 0 || summary.LargestToolOutputs[0].Tool != "read_file" {
 		t.Fatalf("largest outputs = %#v", summary.LargestToolOutputs)
+	}
+	if summary.WasteReport.UncachedInputTokens != 175 || summary.WasteReport.ContextCompactions != 1 || len(summary.WasteReport.LargestToolOutputs) == 0 || summary.WasteReport.ReadFileOverlappingLines != 1 {
+		t.Fatalf("waste report = %#v", summary.WasteReport)
 	}
 }
 

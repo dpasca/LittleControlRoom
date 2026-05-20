@@ -39,6 +39,7 @@ func TestWorkspaceResolveDeniesParentEscape(t *testing.T) {
 func TestWorkspaceResolveReadAllowsAbsolutePath(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
+	inside := filepath.Join(root, "note.txt")
 	target := filepath.Join(outside, "note.txt")
 	if err := os.WriteFile(target, []byte("outside\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -56,8 +57,23 @@ func TestWorkspaceResolveReadAllowsAbsolutePath(t *testing.T) {
 	}
 	if _, err := w.Resolve(target); err == nil {
 		t.Fatal("Resolve absolute succeeded, want write-path denial")
-	} else if !IsDenied(err) || !strings.Contains(DenialReason(err), "read-only file inspection") {
+	} else if !IsDenied(err) || !strings.Contains(DenialReason(err), "--admin-write") {
 		t.Fatalf("Resolve absolute denial = %v", err)
+	}
+	got, err = w.Resolve(inside)
+	if err != nil {
+		t.Fatalf("Resolve workspace absolute denied: %v", err)
+	}
+	if want := filepath.Clean(inside); got != want {
+		t.Fatalf("Resolve workspace absolute = %q, want %q", got, want)
+	}
+	w.AdminWrite = true
+	got, err = w.Resolve(target)
+	if err != nil {
+		t.Fatalf("Resolve admin absolute denied: %v", err)
+	}
+	if want := filepath.Clean(target); got != want {
+		t.Fatalf("Resolve admin absolute = %q, want %q", got, want)
 	}
 }
 

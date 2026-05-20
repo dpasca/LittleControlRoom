@@ -19919,8 +19919,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 38 {
-		t.Fatalf("settings field count = %d, want 38", len(got.settingsFields))
+	if len(got.settingsFields) != 39 {
+		t.Fatalf("settings field count = %d, want 39", len(got.settingsFields))
 	}
 }
 
@@ -22456,7 +22456,7 @@ func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
 			t.Fatalf("LCAgent setup panel missing %q: %q", want, rendered)
 		}
 	}
-	for _, hidden := range []string{"Runtime Policy", "LCAgent timeout", "LCAgent route preset", "LCAgent executable", "LCAgent env file"} {
+	for _, hidden := range []string{"Runtime Policy", "LCAgent admin write", "LCAgent timeout", "LCAgent route preset", "LCAgent executable", "LCAgent env file"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("LCAgent setup panel should keep advanced field %q out of the first setup panel: %q", hidden, rendered)
 		}
@@ -22657,6 +22657,7 @@ func TestOpenLCAgentSessionFillsWebSearchSettings(t *testing.T) {
 	settings.LCAgentWebSearchEngineID = "engine-id"
 	settings.LCAgentWebSearchURL = "http://127.0.0.1:8888"
 	settings.LCAgentProvider = "openai"
+	settings.LCAgentAdminWrite = true
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -22706,6 +22707,9 @@ func TestOpenLCAgentSessionFillsWebSearchSettings(t *testing.T) {
 	if captured.LCAgentProvider != "openai" {
 		t.Fatalf("lcagent provider = %q, want openai", captured.LCAgentProvider)
 	}
+	if !captured.LCAgentAdminWrite {
+		t.Fatalf("lcagent admin write = false, want true")
+	}
 }
 
 func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
@@ -22713,6 +22717,7 @@ func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
 	saved := previous
 	saved.LCAgentWebSearchBackend = "exa"
 	saved.LCAgentWebSearchAPIKey = "exa-key"
+	saved.LCAgentAdminWrite = true
 	saved.EmbeddedLCAgentModel = "custom-lcagent-model"
 	initial := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -22782,6 +22787,9 @@ func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
 	}
 	if captured.LCAgentWebSearchBackend != "exa" || captured.LCAgentWebSearchAPIKey != "exa-key" {
 		t.Fatalf("captured web search = (%q, %q), want exa/exa-key", captured.LCAgentWebSearchBackend, captured.LCAgentWebSearchAPIKey)
+	}
+	if !captured.LCAgentAdminWrite {
+		t.Fatalf("captured admin write = false, want true")
 	}
 	if captured.PendingModel != "custom-lcagent-model" {
 		t.Fatalf("pending model = %q, want custom-lcagent-model", captured.PendingModel)

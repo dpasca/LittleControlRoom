@@ -90,6 +90,7 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"lcagent_route_preset = \"quality\"\n" +
 		"lcagent_provider = \"deepseek\"\n" +
 		"lcagent_auto = \"medium\"\n" +
+		"lcagent_admin_write = true\n" +
 		"lcagent_tool_profile = \"generous\"\n" +
 		"lcagent_context_profile = \"large\"\n" +
 		"lcagent_request_timeout = \"10m\"\n" +
@@ -175,6 +176,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.LCAgentAuto, "medium"; got != want {
 		t.Fatalf("lcagent auto = %q, want %q", got, want)
+	}
+	if !cfg.LCAgentAdminWrite {
+		t.Fatalf("lcagent admin write = false, want true")
 	}
 	if got, want := cfg.LCAgentToolProfile, "generous"; got != want {
 		t.Fatalf("lcagent tool profile = %q, want %q", got, want)
@@ -452,7 +456,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "generous", "large", "10m", "off", "", "", "", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "off", "", "", "", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -501,6 +505,9 @@ func TestParseEditableSettings(t *testing.T) {
 	if got, want := settings.LCAgentAuto, "medium"; got != want {
 		t.Fatalf("lcagent auto = %q, want %q", got, want)
 	}
+	if !settings.LCAgentAdminWrite {
+		t.Fatalf("lcagent admin write = false, want true")
+	}
 	if got, want := settings.LCAgentToolProfile, "generous"; got != want {
 		t.Fatalf("lcagent tool profile = %q, want %q", got, want)
 	}
@@ -548,7 +555,7 @@ func TestParseEditableSettings(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -556,7 +563,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -564,7 +571,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "off", "", "", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -608,6 +615,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		LCAgentRoutePreset:        "cheap-scout",
 		LCAgentProvider:           "deepseek",
 		LCAgentAuto:               "medium",
+		LCAgentAdminWrite:         true,
 		LCAgentToolProfile:        "generous",
 		LCAgentContextProfile:     "large",
 		LCAgentRequestTimeout:     10 * time.Minute,
@@ -720,6 +728,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		"lcagent_route_preset = \"cheap-scout\"",
 		"lcagent_provider = \"deepseek\"",
 		"lcagent_auto = \"medium\"",
+		"lcagent_admin_write = true",
 		"lcagent_tool_profile = \"generous\"",
 		"lcagent_context_profile = \"large\"",
 		"lcagent_request_timeout = \"10m\"",

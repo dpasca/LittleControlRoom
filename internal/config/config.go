@@ -58,6 +58,7 @@ type AppConfig struct {
 	LCAgentRoutePreset        string
 	LCAgentProvider           string
 	LCAgentAuto               string
+	LCAgentAdminWrite         bool
 	LCAgentToolProfile        string
 	LCAgentContextProfile     string
 	LCAgentRequestTimeout     time.Duration
@@ -171,6 +172,7 @@ type fileConfig struct {
 	LCAgentRoutePreset        *string   `toml:"lcagent_route_preset"`
 	LCAgentProvider           *string   `toml:"lcagent_provider"`
 	LCAgentAuto               *string   `toml:"lcagent_auto"`
+	LCAgentAdminWrite         *bool     `toml:"lcagent_admin_write"`
 	LCAgentToolProfile        *string   `toml:"lcagent_tool_profile"`
 	LCAgentContextProfile     *string   `toml:"lcagent_context_profile"`
 	LCAgentRequestTimeout     *string   `toml:"lcagent_request_timeout"`
@@ -254,6 +256,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, or cheap-scout")
 	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, or moonshot")
 	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent autonomy level: off, low, or medium")
+	lcagentAdminWrite := fs.Bool("lcagent-admin-write", cfg.LCAgentAdminWrite, "Allow LCAgent write tools to edit absolute paths outside the workspace")
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
 	lcagentContextProfile := fs.String("lcagent-context-profile", cfg.LCAgentContextProfile, "LCAgent provider loop context profile: balanced or large")
 	lcagentRequestTimeout := fs.Duration("lcagent-request-timeout", cfg.LCAgentRequestTimeout, "LCAgent provider HTTP request timeout")
@@ -343,6 +346,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	if err != nil {
 		return AppConfig{}, err
 	}
+	cfg.LCAgentAdminWrite = *lcagentAdminWrite
 	cfg.LCAgentToolProfile, err = parseLCAgentToolProfile(*lcagentToolProfile)
 	if err != nil {
 		return AppConfig{}, err
@@ -574,6 +578,9 @@ func applyConfigFile(cfg *AppConfig) error {
 			return fmt.Errorf("config lcagent_auto: %w", err)
 		}
 		cfg.LCAgentAuto = value
+	}
+	if fc.LCAgentAdminWrite != nil {
+		cfg.LCAgentAdminWrite = *fc.LCAgentAdminWrite
 	}
 	if fc.LCAgentToolProfile != nil {
 		value, err := parseLCAgentToolProfile(*fc.LCAgentToolProfile)

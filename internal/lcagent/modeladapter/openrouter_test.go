@@ -143,6 +143,20 @@ func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {
 	}
 }
 
+func TestToolsWithOptionsDescribeAdminWritePaths(t *testing.T) {
+	tools := ToolsWithOptions(ToolOptions{AdminWrite: true})
+	replaceSpec := toolSpec(t, tools, "replace_text")
+	props := replaceSpec.Parameters["properties"].(map[string]any)
+	pathSpec := props["path"].(map[string]any)
+	if !strings.Contains(pathSpec["description"].(string), "admin-write") || !strings.Contains(pathSpec["description"].(string), "absolute path") {
+		t.Fatalf("replace_text path description = %q", pathSpec["description"])
+	}
+	patchSpec := toolSpec(t, tools, "apply_patch")
+	if !strings.Contains(patchSpec.Description, "admin-write mode is enabled") {
+		t.Fatalf("apply_patch description = %q", patchSpec.Description)
+	}
+}
+
 func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	prompt := SystemPrompt("Available skills\n- demo [project]: Demo workflow", "Project instructions from AGENTS.md:\nRun tests.")
 	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "absolute paths") || !strings.Contains(prompt, "read-only file inspection") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer repo_overview") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") {
@@ -163,6 +177,13 @@ func TestSystemPromptIncludesGenerousToolProfile(t *testing.T) {
 	}
 	if strings.Contains(prompt, "tool profile") {
 		t.Fatalf("prompt should not expose benchmark profile labels to the model:\n%s", prompt)
+	}
+}
+
+func TestSystemPromptIncludesAdminWriteMode(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{AdminWrite: true})
+	if !strings.Contains(prompt, "admin-write enabled") || !strings.Contains(prompt, "absolute paths outside the workspace") {
+		t.Fatalf("prompt missing admin-write guidance:\n%s", prompt)
 	}
 }
 

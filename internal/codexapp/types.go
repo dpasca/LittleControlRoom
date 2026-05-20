@@ -555,6 +555,7 @@ type LaunchRequest struct {
 	LCAgentRoutePreset       string
 	LCAgentProvider          string
 	LCAgentAuto              string
+	LCAgentAdminWrite        bool
 	LCAgentToolProfile       string
 	LCAgentContextProfile    string
 	LCAgentRequestTimeout    time.Duration

@@ -50,6 +50,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		LCAgentEnvFile:        envPath,
 		LCAgentProvider:       "deepseek",
 		LCAgentAuto:           "medium",
+		LCAgentAdminWrite:     true,
 		LCAgentToolProfile:    "generous",
 		LCAgentContextProfile: "large",
 		LCAgentRequestTimeout: 10 * time.Minute,
@@ -100,6 +101,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--data-dir", dataDir,
 		"--auto", "medium",
 		"--output", "stream-json",
+		"--admin-write",
 		"--provider", "deepseek",
 		"--model", "deepseek/test-model",
 		"--tool-profile", "generous",
@@ -370,6 +372,7 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 		LCAgentRoutePreset:  "quality",
 		LCAgentProvider:     "deepseek",
 		LCAgentAuto:         "medium",
+		LCAgentAdminWrite:   true,
 		LCAgentToolProfile:  "generous",
 		PendingModel:        "",
 		PendingReasoning:    "high",
@@ -394,7 +397,7 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 		t.Fatalf("read fake args: %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
-	for _, want := range []string{"--route-preset", "quality", "--env-file", "/tmp/test.env", "--web-search-url", "http://127.0.0.1:8888"} {
+	for _, want := range []string{"--route-preset", "quality", "--admin-write", "--env-file", "/tmp/test.env", "--web-search-url", "http://127.0.0.1:8888"} {
 		if !lcagentTestStringSliceContains(args, want) {
 			t.Fatalf("args missing %q: %#v", want, args)
 		}

@@ -893,6 +893,9 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentAuto) == "" {
 			req.LCAgentAuto = m.lcagentAuto()
 		}
+		if !req.LCAgentAdminWrite {
+			req.LCAgentAdminWrite = m.lcagentAdminWrite()
+		}
 		if strings.TrimSpace(req.LCAgentToolProfile) == "" {
 			req.LCAgentToolProfile = m.lcagentToolProfile()
 		}

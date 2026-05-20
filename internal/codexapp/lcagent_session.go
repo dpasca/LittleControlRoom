@@ -48,6 +48,7 @@ type lcagentSession struct {
 	routePreset       string
 	provider          string
 	auto              string
+	adminWrite        bool
 	toolProfile       string
 	contextProfile    string
 	requestTimeout    time.Duration
@@ -120,6 +121,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		routePreset:       routePreset,
 		provider:          provider,
 		auto:              strings.TrimSpace(req.LCAgentAuto),
+		adminWrite:        req.LCAgentAdminWrite,
 		toolProfile:       toolProfile,
 		contextProfile:    contextProfile,
 		requestTimeout:    requestTimeout,
@@ -442,6 +444,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	}
 	toolProfile := firstNonEmpty(s.toolProfile, lcagentDefaultToolProfile)
 	contextProfile := firstNonEmpty(s.contextProfile, lcagentDefaultContextProfile)
+	adminWrite := s.adminWrite
 	requestTimeout := s.requestTimeout
 	if requestTimeout <= 0 {
 		requestTimeout = lcagentDefaultRequestTimeout
@@ -472,6 +475,9 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		"--output", "stream-json",
 		"--web-search-backend", webSearchBackend,
 	)
+	if adminWrite {
+		args = append(args, "--admin-write")
+	}
 	if routePreset != "" && opts.autoOverride == "" {
 		args = append(args, "--route-preset", routePreset)
 	} else {

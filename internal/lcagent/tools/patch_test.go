@@ -113,11 +113,39 @@ func TestPatchApplierDeniesAbsolutePath(t *testing.T) {
 	if result.Success {
 		t.Fatal("absolute patch succeeded, want denial")
 	}
-	if !result.Denied || !strings.Contains(result.DenialReason, "read-only file inspection") {
+	if !result.Denied || !strings.Contains(result.DenialReason, "--admin-write") {
 		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
 	}
 	if _, err := os.Stat(outside); !os.IsNotExist(err) {
 		t.Fatalf("outside file exists after denied patch: %v", err)
+	}
+}
+
+func TestPatchApplierAdminWriteAllowsAbsolutePath(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "admin.txt")
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.AdminWrite = true
+	result := PatchApplier{Workspace: w}.Apply(`*** Begin Patch
+*** Add File: ` + outside + `
++admin edit
+*** End Patch
+`)
+	if !result.Success {
+		t.Fatalf("patch failed: %s", result.Error)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "admin edit\n" {
+		t.Fatalf("admin target = %q", data)
+	}
+	if got := strings.Join(result.FilesTouched, ","); got != filepath.Clean(outside) {
+		t.Fatalf("FilesTouched = %v", result.FilesTouched)
 	}
 }
 

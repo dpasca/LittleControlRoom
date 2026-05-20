@@ -218,6 +218,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var requestTimeout time.Duration
 	var maxTurns int
+	var adminWrite bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "autonomy: off, low, medium")
@@ -233,6 +234,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
+	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent session id or .jsonl artifact to summarize as continuation context")
 	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent session id or .jsonl artifact to continue from")
 	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
@@ -283,6 +285,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if err != nil {
 		return err
 	}
+	workspace.AdminWrite = adminWrite
 	instructions, err := projectinstructions.LoadWorkspace(workspace.Root)
 	if err != nil {
 		return fmt.Errorf("load project instructions: %w", err)
@@ -341,6 +344,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	defer writer.Close()
 	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)
+	meta["admin_write"] = adminWrite
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
 		meta["root_session_id"] = resumeContext.rootSessionID()
@@ -536,6 +540,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 
 	systemPromptOptions := modelSystemPromptOptions(toolProfile, fileLimits)
 	systemPromptOptions.WebSearchEnabled = webSearchEnabled
+	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, systemPromptOptions)
 	if resumeSection := strings.TrimSpace(resumeContext.systemPromptSection()); resumeSection != "" {
 		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + resumeSection)
@@ -547,6 +552,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	readLedger := newReadLedger()
 	toolOptions := modelToolOptions(toolProfile, fileLimits)
 	toolOptions.WebSearchEnabled = webSearchEnabled
+	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
 	feedbackTracker := newOpenRouterFeedbackTracker()

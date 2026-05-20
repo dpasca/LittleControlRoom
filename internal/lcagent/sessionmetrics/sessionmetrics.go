@@ -44,6 +44,7 @@ type Summary struct {
 	VerificationFeedback        int                `json:"verification_feedback"`
 	VerificationCheckStatuses   map[string]int     `json:"verification_check_statuses,omitempty"`
 	VerificationStatuses        map[string]int     `json:"verification_statuses,omitempty"`
+	ContextCompactions          int                `json:"context_compactions,omitempty"`
 	ReadFileCalls               int                `json:"read_file_calls"`
 	ReadFileLines               int                `json:"read_file_lines"`
 	ReadFileOutputBytes         int                `json:"read_file_output_bytes"`
@@ -52,6 +53,7 @@ type Summary struct {
 	RepeatedReadRanges          []ReadRangeCount   `json:"repeated_read_ranges,omitempty"`
 	LargestToolOutputs          []ToolOutputSize   `json:"largest_tool_outputs,omitempty"`
 	TokenUsage                  lcrmodel.LLMUsage  `json:"token_usage"`
+	UncachedInputTokens         int64              `json:"uncached_input_tokens,omitempty"`
 	MaxInputTokens              int64              `json:"max_input_tokens"`
 	MaxTotalTokens              int64              `json:"max_total_tokens"`
 	ObservedElapsedSeconds      float64            `json:"observed_elapsed_seconds,omitempty"`
@@ -60,6 +62,7 @@ type Summary struct {
 	ToolSeconds                 map[string]float64 `json:"tool_seconds,omitempty"`
 	SlowestEventGaps            []EventGap         `json:"slowest_event_gaps,omitempty"`
 	SlowestToolRuns             []ToolRunTiming    `json:"slowest_tool_runs,omitempty"`
+	WasteReport                 WasteReport        `json:"waste_report"`
 	TraceQuality                TraceQuality       `json:"trace_quality"`
 	rangesByFile                map[string][]lineRange
 	readRangeCounts             map[string]rangeSeen
@@ -80,6 +83,18 @@ type ToolOutputSize struct {
 	Tool      string `json:"tool"`
 	Bytes     int    `json:"bytes"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type WasteReport struct {
+	RepeatedReadRanges       []ReadRangeCount `json:"repeated_read_ranges,omitempty"`
+	LargestToolOutputs       []ToolOutputSize `json:"largest_tool_outputs,omitempty"`
+	ContextCompactions       int              `json:"context_compactions,omitempty"`
+	UncachedInputTokens      int64            `json:"uncached_input_tokens,omitempty"`
+	ReadFileOutputBytes      int              `json:"read_file_output_bytes,omitempty"`
+	ReadFileOverlappingCalls int              `json:"read_file_overlapping_calls,omitempty"`
+	ReadFileOverlappingLines int              `json:"read_file_overlapping_lines,omitempty"`
+	ReadOverlapRate          float64          `json:"read_overlap_rate,omitempty"`
+	CachedInputTokenRate     float64          `json:"cached_input_token_rate,omitempty"`
 }
 
 type EventGap struct {
@@ -262,7 +277,21 @@ func (s *Summary) finish() {
 		s.ObservedElapsedSeconds += roundedSeconds(bounds.Last.Sub(bounds.First).Seconds())
 	}
 	s.ObservedElapsedSeconds = roundedSeconds(s.ObservedElapsedSeconds)
+	if s.TokenUsage.InputTokens > s.TokenUsage.CachedInputTokens {
+		s.UncachedInputTokens = s.TokenUsage.InputTokens - s.TokenUsage.CachedInputTokens
+	}
 	s.TraceQuality = s.computeTraceQuality()
+	s.WasteReport = WasteReport{
+		RepeatedReadRanges:       append([]ReadRangeCount(nil), s.RepeatedReadRanges...),
+		LargestToolOutputs:       append([]ToolOutputSize(nil), s.LargestToolOutputs...),
+		ContextCompactions:       s.ContextCompactions,
+		UncachedInputTokens:      s.UncachedInputTokens,
+		ReadFileOutputBytes:      s.ReadFileOutputBytes,
+		ReadFileOverlappingCalls: s.ReadFileOverlappingCalls,
+		ReadFileOverlappingLines: s.ReadFileOverlappingLines,
+		ReadOverlapRate:          s.TraceQuality.ReadOverlapRate,
+		CachedInputTokenRate:     s.TraceQuality.CachedInputTokenRate,
+	}
 }
 
 func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
@@ -288,6 +317,8 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			profile = "unknown"
 		}
 		s.ContextProfiles[profile]++
+	case "context_compacted":
+		s.ContextCompactions++
 	case "model_response":
 		s.ModelResponses++
 		usage := usageFromEvent(event)

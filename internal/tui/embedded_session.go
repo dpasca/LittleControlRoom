@@ -718,6 +718,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
 		LCAgentAuto:              m.lcagentAuto(),
+		LCAgentAdminWrite:        m.lcagentAdminWrite(),
 		LCAgentToolProfile:       m.lcagentToolProfile(),
 		LCAgentContextProfile:    m.lcagentContextProfile(),
 		LCAgentRequestTimeout:    m.lcagentRequestTimeout(),
@@ -802,6 +803,7 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		strings.TrimSpace(previous.EmbeddedLCAgentModel) != strings.TrimSpace(saved.EmbeddedLCAgentModel) ||
 		strings.TrimSpace(previous.EmbeddedLCAgentReasoning) != strings.TrimSpace(saved.EmbeddedLCAgentReasoning) ||
 		strings.TrimSpace(previous.LCAgentAuto) != strings.TrimSpace(saved.LCAgentAuto) ||
+		previous.LCAgentAdminWrite != saved.LCAgentAdminWrite ||
 		strings.TrimSpace(previous.LCAgentToolProfile) != strings.TrimSpace(saved.LCAgentToolProfile) ||
 		strings.TrimSpace(previous.LCAgentContextProfile) != strings.TrimSpace(saved.LCAgentContextProfile) ||
 		previous.LCAgentRequestTimeout != saved.LCAgentRequestTimeout ||
@@ -829,6 +831,7 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentRoutePreset:       strings.TrimSpace(settings.LCAgentRoutePreset),
 		LCAgentProvider:          strings.TrimSpace(settings.LCAgentProvider),
 		LCAgentAuto:              strings.TrimSpace(settings.LCAgentAuto),
+		LCAgentAdminWrite:        settings.LCAgentAdminWrite,
 		LCAgentToolProfile:       strings.TrimSpace(settings.LCAgentToolProfile),
 		LCAgentContextProfile:    strings.TrimSpace(settings.LCAgentContextProfile),
 		LCAgentRequestTimeout:    settings.LCAgentRequestTimeout,
@@ -954,6 +957,10 @@ func (m Model) lcagentProvider() string {
 
 func (m Model) lcagentAuto() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentAuto)
+}
+
+func (m Model) lcagentAdminWrite() bool {
+	return m.currentSettingsBaseline().LCAgentAdminWrite
 }
 
 func (m Model) lcagentToolProfile() string {
