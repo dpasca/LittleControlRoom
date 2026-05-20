@@ -176,11 +176,13 @@ Summarize the resulting session artifact:
 go run ./cmd/lcagent metrics "$BENCH_DATA"/lcagent/sessions/*/*/*/*.jsonl
 ```
 
-The metrics output includes a `trace_quality` block. Treat it as a calibration
-signal, not a product-grade leaderboard: it combines verified-session coverage,
-failed tool results, repair feedback, duplicate repair suppression, read
-overlap, cached-token rate, and estimated cost so route/profile changes can be
-compared without re-reading every JSONL trace by hand.
+The metrics output includes timing rollups plus a `trace_quality` block. Treat
+it as a calibration signal, not a product-grade leaderboard: it combines
+observed elapsed time, model-response wait time, tool runtime by tool,
+verified-session coverage, failed tool results, repair feedback, duplicate
+repair suppression, read overlap, cached-token rate, and estimated cost so
+route/profile changes can be compared without re-reading every JSONL trace by
+hand.
 
 Clean up when finished:
 

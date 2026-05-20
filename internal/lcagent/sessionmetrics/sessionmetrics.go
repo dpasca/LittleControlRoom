@@ -5,55 +5,67 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"lcroom/internal/lcagent/modeladapter"
 	lcrmodel "lcroom/internal/model"
 )
 
 const largestToolOutputLimit = 5
+const largestTimingLimit = 5
 
 type Summary struct {
-	Files                     []string          `json:"files,omitempty"`
-	Sessions                  int               `json:"sessions"`
-	SessionIDs                []string          `json:"session_ids,omitempty"`
-	ToolProfiles              map[string]int    `json:"tool_profiles,omitempty"`
-	ContextProfiles           map[string]int    `json:"context_profiles,omitempty"`
-	ModelResponses            int               `json:"model_responses"`
-	ToolCalls                 map[string]int    `json:"tool_calls"`
-	ToolResults               map[string]int    `json:"tool_results"`
-	ToolSuccesses             map[string]int    `json:"tool_successes,omitempty"`
-	ToolFailures              map[string]int    `json:"tool_failures,omitempty"`
-	ProviderFailures          map[string]int    `json:"provider_failures,omitempty"`
-	ProviderRetries           int               `json:"provider_retries"`
-	ProviderRetrySuccesses    int               `json:"provider_retry_successes"`
-	Continuations             int               `json:"continuations"`
-	ResumeContexts            int               `json:"resume_contexts"`
-	PermissionDenials         int               `json:"permission_denials"`
-	PatchDiffSummaries        int               `json:"patch_diff_summaries"`
-	PatchFeedback             int               `json:"patch_feedback"`
-	RepairFeedbackSuppressed  int               `json:"repair_feedback_suppressed"`
-	RepairGuidance            int               `json:"repair_guidance"`
-	VerificationChecks        int               `json:"verification_checks"`
-	VerificationFeedback      int               `json:"verification_feedback"`
-	VerificationCheckStatuses map[string]int    `json:"verification_check_statuses,omitempty"`
-	VerificationStatuses      map[string]int    `json:"verification_statuses,omitempty"`
-	ReadFileCalls             int               `json:"read_file_calls"`
-	ReadFileLines             int               `json:"read_file_lines"`
-	ReadFileOutputBytes       int               `json:"read_file_output_bytes"`
-	ReadFileOverlappingCalls  int               `json:"read_file_overlapping_calls"`
-	ReadFileOverlappingLines  int               `json:"read_file_overlapping_lines"`
-	RepeatedReadRanges        []ReadRangeCount  `json:"repeated_read_ranges,omitempty"`
-	LargestToolOutputs        []ToolOutputSize  `json:"largest_tool_outputs,omitempty"`
-	TokenUsage                lcrmodel.LLMUsage `json:"token_usage"`
-	MaxInputTokens            int64             `json:"max_input_tokens"`
-	MaxTotalTokens            int64             `json:"max_total_tokens"`
-	TraceQuality              TraceQuality      `json:"trace_quality"`
-	rangesByFile              map[string][]lineRange
-	readRangeCounts           map[string]rangeSeen
+	Files                       []string           `json:"files,omitempty"`
+	Sessions                    int                `json:"sessions"`
+	SessionIDs                  []string           `json:"session_ids,omitempty"`
+	ToolProfiles                map[string]int     `json:"tool_profiles,omitempty"`
+	ContextProfiles             map[string]int     `json:"context_profiles,omitempty"`
+	ModelResponses              int                `json:"model_responses"`
+	ToolCalls                   map[string]int     `json:"tool_calls"`
+	ToolResults                 map[string]int     `json:"tool_results"`
+	ToolSuccesses               map[string]int     `json:"tool_successes,omitempty"`
+	ToolFailures                map[string]int     `json:"tool_failures,omitempty"`
+	ProviderFailures            map[string]int     `json:"provider_failures,omitempty"`
+	ProviderRetries             int                `json:"provider_retries"`
+	ProviderRetrySuccesses      int                `json:"provider_retry_successes"`
+	Continuations               int                `json:"continuations"`
+	ResumeContexts              int                `json:"resume_contexts"`
+	PermissionDenials           int                `json:"permission_denials"`
+	PatchDiffSummaries          int                `json:"patch_diff_summaries"`
+	PatchFeedback               int                `json:"patch_feedback"`
+	RepairFeedbackSuppressed    int                `json:"repair_feedback_suppressed"`
+	RepairGuidance              int                `json:"repair_guidance"`
+	VerificationChecks          int                `json:"verification_checks"`
+	VerificationFeedback        int                `json:"verification_feedback"`
+	VerificationCheckStatuses   map[string]int     `json:"verification_check_statuses,omitempty"`
+	VerificationStatuses        map[string]int     `json:"verification_statuses,omitempty"`
+	ReadFileCalls               int                `json:"read_file_calls"`
+	ReadFileLines               int                `json:"read_file_lines"`
+	ReadFileOutputBytes         int                `json:"read_file_output_bytes"`
+	ReadFileOverlappingCalls    int                `json:"read_file_overlapping_calls"`
+	ReadFileOverlappingLines    int                `json:"read_file_overlapping_lines"`
+	RepeatedReadRanges          []ReadRangeCount   `json:"repeated_read_ranges,omitempty"`
+	LargestToolOutputs          []ToolOutputSize   `json:"largest_tool_outputs,omitempty"`
+	TokenUsage                  lcrmodel.LLMUsage  `json:"token_usage"`
+	MaxInputTokens              int64              `json:"max_input_tokens"`
+	MaxTotalTokens              int64              `json:"max_total_tokens"`
+	ObservedElapsedSeconds      float64            `json:"observed_elapsed_seconds,omitempty"`
+	ModelResponseWaitSeconds    float64            `json:"model_response_wait_seconds,omitempty"`
+	MaxModelResponseWaitSeconds float64            `json:"max_model_response_wait_seconds,omitempty"`
+	ToolSeconds                 map[string]float64 `json:"tool_seconds,omitempty"`
+	SlowestEventGaps            []EventGap         `json:"slowest_event_gaps,omitempty"`
+	SlowestToolRuns             []ToolRunTiming    `json:"slowest_tool_runs,omitempty"`
+	TraceQuality                TraceQuality       `json:"trace_quality"`
+	rangesByFile                map[string][]lineRange
+	readRangeCounts             map[string]rangeSeen
+	sourceBounds                map[string]timeBounds
+	lastEventBySource           map[string]timedEvent
+	pendingToolStarts           map[string][]timedEvent
 }
 
 type ReadRangeCount struct {
@@ -68,6 +80,19 @@ type ToolOutputSize struct {
 	Tool      string `json:"tool"`
 	Bytes     int    `json:"bytes"`
 	Truncated bool   `json:"truncated,omitempty"`
+}
+
+type EventGap struct {
+	Source  string  `json:"source,omitempty"`
+	From    string  `json:"from"`
+	To      string  `json:"to"`
+	Seconds float64 `json:"seconds"`
+}
+
+type ToolRunTiming struct {
+	Source  string  `json:"source,omitempty"`
+	Tool    string  `json:"tool"`
+	Seconds float64 `json:"seconds"`
 }
 
 type TraceQuality struct {
@@ -101,6 +126,16 @@ type lineRange struct {
 type rangeSeen struct {
 	Range lineRange
 	Count int
+}
+
+type timeBounds struct {
+	First time.Time
+	Last  time.Time
+}
+
+type timedEvent struct {
+	Type string
+	At   time.Time
 }
 
 func AnalyzeFiles(paths []string) (Summary, error) {
@@ -182,6 +217,18 @@ func (s *Summary) init() {
 	if s.readRangeCounts == nil {
 		s.readRangeCounts = map[string]rangeSeen{}
 	}
+	if s.ToolSeconds == nil {
+		s.ToolSeconds = map[string]float64{}
+	}
+	if s.sourceBounds == nil {
+		s.sourceBounds = map[string]timeBounds{}
+	}
+	if s.lastEventBySource == nil {
+		s.lastEventBySource = map[string]timedEvent{}
+	}
+	if s.pendingToolStarts == nil {
+		s.pendingToolStarts = map[string][]timedEvent{}
+	}
 }
 
 func (s *Summary) finish() {
@@ -207,11 +254,23 @@ func (s *Summary) finish() {
 		return repeated[i].Start < repeated[j].Start
 	})
 	s.RepeatedReadRanges = repeated
+	s.ObservedElapsedSeconds = 0
+	for _, bounds := range s.sourceBounds {
+		if bounds.First.IsZero() || bounds.Last.IsZero() || !bounds.Last.After(bounds.First) {
+			continue
+		}
+		s.ObservedElapsedSeconds += roundedSeconds(bounds.Last.Sub(bounds.First).Seconds())
+	}
+	s.ObservedElapsedSeconds = roundedSeconds(s.ObservedElapsedSeconds)
 	s.TraceQuality = s.computeTraceQuality()
 }
 
 func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
-	switch rawString(event["type"]) {
+	eventType := rawString(event["type"])
+	eventAt, hasEventAt := rawTime(event["timestamp"])
+	s.observeTiming(source, eventType, eventAt, hasEventAt)
+
+	switch eventType {
 	case "session_meta":
 		s.Sessions++
 		if id := rawString(event["id"]); id != "" {
@@ -278,12 +337,18 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			tool = "unknown"
 		}
 		s.ToolCalls[tool]++
+		if hasEventAt {
+			s.addPendingToolStart(source, tool, eventAt)
+		}
 	case "tool_result":
 		tool := rawString(event["tool"])
 		if tool == "" {
 			tool = "unknown"
 		}
 		s.ToolResults[tool]++
+		if hasEventAt {
+			s.observeToolRun(source, tool, eventAt)
+		}
 		result := toolResultFromRaw(event["result"])
 		if result.Success != nil {
 			if *result.Success {
@@ -308,6 +373,96 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			}
 		}
 	}
+}
+
+func (s *Summary) observeTiming(source, eventType string, eventAt time.Time, ok bool) {
+	if !ok || eventType == "" {
+		return
+	}
+	bounds := s.sourceBounds[source]
+	if bounds.First.IsZero() || eventAt.Before(bounds.First) {
+		bounds.First = eventAt
+	}
+	if bounds.Last.IsZero() || eventAt.After(bounds.Last) {
+		bounds.Last = eventAt
+	}
+	s.sourceBounds[source] = bounds
+
+	if prior, exists := s.lastEventBySource[source]; exists && eventAt.After(prior.At) {
+		seconds := roundedSeconds(eventAt.Sub(prior.At).Seconds())
+		s.addSlowestEventGap(EventGap{
+			Source:  source,
+			From:    firstNonEmpty(prior.Type, "unknown"),
+			To:      eventType,
+			Seconds: seconds,
+		})
+		if eventType == "model_response" {
+			s.ModelResponseWaitSeconds = roundedSeconds(s.ModelResponseWaitSeconds + seconds)
+			if seconds > s.MaxModelResponseWaitSeconds {
+				s.MaxModelResponseWaitSeconds = seconds
+			}
+		}
+	}
+	s.lastEventBySource[source] = timedEvent{Type: eventType, At: eventAt}
+}
+
+func (s *Summary) addPendingToolStart(source, tool string, eventAt time.Time) {
+	key := toolTimingKey(source, tool)
+	s.pendingToolStarts[key] = append(s.pendingToolStarts[key], timedEvent{Type: tool, At: eventAt})
+}
+
+func (s *Summary) observeToolRun(source, tool string, resultAt time.Time) {
+	key := toolTimingKey(source, tool)
+	starts := s.pendingToolStarts[key]
+	if len(starts) == 0 {
+		return
+	}
+	start := starts[0]
+	if len(starts) == 1 {
+		delete(s.pendingToolStarts, key)
+	} else {
+		s.pendingToolStarts[key] = starts[1:]
+	}
+	if !resultAt.After(start.At) {
+		return
+	}
+	seconds := roundedSeconds(resultAt.Sub(start.At).Seconds())
+	s.ToolSeconds[tool] = roundedSeconds(s.ToolSeconds[tool] + seconds)
+	s.addSlowestToolRun(ToolRunTiming{
+		Source:  source,
+		Tool:    tool,
+		Seconds: seconds,
+	})
+}
+
+func (s *Summary) addSlowestEventGap(gap EventGap) {
+	if gap.Seconds <= 0 {
+		return
+	}
+	s.SlowestEventGaps = append(s.SlowestEventGaps, gap)
+	sort.Slice(s.SlowestEventGaps, func(i, j int) bool {
+		return s.SlowestEventGaps[i].Seconds > s.SlowestEventGaps[j].Seconds
+	})
+	if len(s.SlowestEventGaps) > largestTimingLimit {
+		s.SlowestEventGaps = s.SlowestEventGaps[:largestTimingLimit]
+	}
+}
+
+func (s *Summary) addSlowestToolRun(run ToolRunTiming) {
+	if run.Seconds <= 0 {
+		return
+	}
+	s.SlowestToolRuns = append(s.SlowestToolRuns, run)
+	sort.Slice(s.SlowestToolRuns, func(i, j int) bool {
+		return s.SlowestToolRuns[i].Seconds > s.SlowestToolRuns[j].Seconds
+	})
+	if len(s.SlowestToolRuns) > largestTimingLimit {
+		s.SlowestToolRuns = s.SlowestToolRuns[:largestTimingLimit]
+	}
+}
+
+func toolTimingKey(source, tool string) string {
+	return source + "\x00" + tool
 }
 
 func usageFromEvent(event map[string]json.RawMessage) lcrmodel.LLMUsage {
@@ -436,6 +591,35 @@ func rawString(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(value)
+}
+
+func rawTime(raw json.RawMessage) (time.Time, bool) {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return time.Time{}, false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+func roundedSeconds(seconds float64) float64 {
+	return math.Round(seconds*1000) / 1000
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func minInt(a, b int) int {

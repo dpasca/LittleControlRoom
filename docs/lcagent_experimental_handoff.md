@@ -103,10 +103,11 @@ Setup and product UX:
   experience.
 - Cost/cached-token feedback is visible through session artifacts, metrics, and
   LCAgent trace-quality summaries, but not yet surfaced in a guided setup card.
-- `sessionmetrics` emits a derived `trace_quality` block with score, grade,
-  findings, tool failure rate, repair pressure, verification rate, read overlap
-  rate, cached-token rate, and estimated cost. `live-eval` reports the same
-  score/grade per case for trace-driven calibration across routes. The project
+- `sessionmetrics` emits timing rollups plus a derived `trace_quality` block
+  with score, grade, findings, tool failure rate, repair pressure,
+  verification rate, read overlap rate, cached-token rate, and estimated cost.
+  `live-eval` reports the same score/grade per case for trace-driven
+  calibration across routes. The project
   detail pane now loads recent LCAgent artifacts asynchronously and shows a
   compact `LCAgent trace` rollup for latest checks, verification, provider
   failures/retries, repairs, pending state, and continuations.

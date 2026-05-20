@@ -128,6 +128,41 @@ func TestAnalyzeFilesTraceQualityFlagsProviderFailures(t *testing.T) {
 	}
 }
 
+func TestAnalyzeFilesSummarizesTiming(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.jsonl")
+	body := `{"type":"session_meta","id":"lca_timing","timestamp":"2026-05-20T00:00:00Z"}
+{"type":"user_message","session_id":"lca_timing","timestamp":"2026-05-20T00:00:01Z","message":"inspect"}
+{"type":"model_response","session_id":"lca_timing","timestamp":"2026-05-20T00:00:06Z","model":"deepseek/test"}
+{"type":"tool_call","session_id":"lca_timing","timestamp":"2026-05-20T00:00:06.5Z","tool":"list_files","args":{"path":"."}}
+{"type":"tool_result","session_id":"lca_timing","timestamp":"2026-05-20T00:00:07.75Z","tool":"list_files","result":{"success":true,"output":"path: .\nentries: 0\n"}}
+{"type":"model_response","session_id":"lca_timing","timestamp":"2026-05-20T00:00:10.25Z","model":"deepseek/test"}
+{"type":"turn_complete","session_id":"lca_timing","timestamp":"2026-05-20T00:00:11Z","summary":"done"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := AnalyzeFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.ObservedElapsedSeconds != 11 {
+		t.Fatalf("observed elapsed = %v, want 11", summary.ObservedElapsedSeconds)
+	}
+	if summary.ModelResponseWaitSeconds != 7.5 || summary.MaxModelResponseWaitSeconds != 5 {
+		t.Fatalf("model waits = total %v max %v, want 7.5/5", summary.ModelResponseWaitSeconds, summary.MaxModelResponseWaitSeconds)
+	}
+	if summary.ToolSeconds["list_files"] != 1.25 {
+		t.Fatalf("tool seconds = %#v, want list_files 1.25", summary.ToolSeconds)
+	}
+	if len(summary.SlowestEventGaps) == 0 || summary.SlowestEventGaps[0].From != "user_message" || summary.SlowestEventGaps[0].To != "model_response" || summary.SlowestEventGaps[0].Seconds != 5 {
+		t.Fatalf("slowest event gaps = %#v", summary.SlowestEventGaps)
+	}
+	if len(summary.SlowestToolRuns) == 0 || summary.SlowestToolRuns[0].Tool != "list_files" || summary.SlowestToolRuns[0].Seconds != 1.25 {
+		t.Fatalf("slowest tool runs = %#v", summary.SlowestToolRuns)
+	}
+}
+
 func traceQualityHasFinding(quality TraceQuality, code string) bool {
 	for _, finding := range quality.Findings {
 		if finding.Code == code {

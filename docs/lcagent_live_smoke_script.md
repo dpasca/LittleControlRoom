@@ -36,6 +36,10 @@ printed artifact with:
 go run ./cmd/lcagent metrics <artifact.jsonl>
 ```
 
+The metrics output includes timing rollups (`observed_elapsed_seconds`,
+`model_response_wait_seconds`, `tool_seconds`, and slowest gaps/runs) to help
+separate provider/model latency from local tool work.
+
 ## Manual Boss Smoke
 
 From Boss Chat, ask for one traceable LCAgent task against a disposable project,
