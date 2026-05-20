@@ -1924,6 +1924,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			LCAgentToolProfile:      m.lcagentToolProfile(),
 			LCAgentContextProfile:   m.lcagentContextProfile(),
 			LCAgentRequestTimeout:   m.lcagentRequestTimeout(),
+			LCAgentUtilityProvider:  m.lcagentUtilityProvider(),
+			LCAgentUtilityModel:     m.lcagentUtilityModel(),
 		}
 		if !msg.openModelFirst {
 			req.Prompt = msg.todoText

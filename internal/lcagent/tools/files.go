@@ -66,6 +66,8 @@ type ListOptions struct {
 
 type SearchOptions struct {
 	IncludeHidden bool
+	OutputMode    string
+	Intent        string
 }
 
 type ModuleOutlineOptions struct {
@@ -339,6 +341,8 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 	if query == "" {
 		return ToolResult{Success: false, Error: "query is required"}
 	}
+	outputMode := normalizeSearchOutputMode(opts.OutputMode)
+	intent := strings.TrimSpace(opts.Intent)
 	target, rel, err := t.resolve(defaultPath(path))
 	if err != nil {
 		return failureResult(err)
@@ -350,6 +354,10 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 	maxMatches = clampInt(maxMatches, limits.DefaultSearchMaxMatch, limits.MaxSearchMaxMatch)
 	contextBefore = clampNonNegative(contextBefore, limits.MaxSearchContextLines)
 	contextAfter = clampNonNegative(contextAfter, limits.MaxSearchContextLines)
+	if outputMode == "compact" {
+		contextBefore = 0
+		contextAfter = 0
+	}
 	fileGlob = strings.TrimSpace(fileGlob)
 
 	matches := []string{}
@@ -409,6 +417,10 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "query: %s\n", query)
+	if intent != "" {
+		fmt.Fprintf(&b, "intent: %s\n", intent)
+	}
+	fmt.Fprintf(&b, "output_mode: %s\n", outputMode)
 	fmt.Fprintf(&b, "match_type: literal_substring_case_insensitive\n")
 	fmt.Fprintf(&b, "path: %s\n", rel)
 	if fileGlob != "" {
@@ -443,7 +455,7 @@ func (t FileTools) Outline(path string) ToolResult {
 		return ToolResult{Success: false, Error: err.Error()}
 	}
 	if info.IsDir() {
-		return ToolResult{Success: false, Error: fmt.Sprintf("path is a directory: %s", rel)}
+		return ToolResult{Success: false, Error: fmt.Sprintf("path is a directory: %s; use module_outline for directories", rel)}
 	}
 	return outlineFile(target, rel)
 }
@@ -611,6 +623,15 @@ func searchTextFile(path, display, query string, remaining, contextBefore, conte
 		}
 	}
 	return matches, nil
+}
+
+func normalizeSearchOutputMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "compact", "summary":
+		return "compact"
+	default:
+		return "full"
+	}
 }
 
 func formatSearchMatch(display string, index int, lines []string, contextBefore, contextAfter int) string {

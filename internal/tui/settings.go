@@ -44,6 +44,8 @@ const (
 	settingsFieldLCAgentToolProfile
 	settingsFieldLCAgentContextProfile
 	settingsFieldLCAgentRequestTimeout
+	settingsFieldLCAgentUtilityProvider
+	settingsFieldLCAgentUtilityModel
 	settingsFieldLCAgentWebSearchBackend
 	settingsFieldLCAgentWebSearchAPIKey
 	settingsFieldLCAgentWebSearchEngineID
@@ -208,6 +210,8 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentToolProfile,
 				settingsFieldLCAgentContextProfile,
 				settingsFieldLCAgentRequestTimeout,
+				settingsFieldLCAgentUtilityProvider,
+				settingsFieldLCAgentUtilityModel,
 				settingsFieldLCAgentPath,
 				settingsFieldLCAgentEnvFile,
 				settingsFieldLCAgentRoutePreset,
@@ -641,6 +645,8 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldLCAgentToolProfile),
 		m.settingsFieldValue(settingsFieldLCAgentContextProfile),
 		m.settingsFieldValue(settingsFieldLCAgentRequestTimeout),
+		m.settingsFieldValue(settingsFieldLCAgentUtilityProvider),
+		m.settingsFieldValue(settingsFieldLCAgentUtilityModel),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID),
@@ -893,6 +899,9 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendMLX)
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendOllama)
+	case settingsFieldLCAgentUtilityModel:
+		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off" ||
+			strings.TrimSpace(settings.LCAgentUtilityModel) != ""
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -921,7 +930,12 @@ func settingsOpenAIKeyFieldRelevant(settings config.EditableSettings) bool {
 
 func settingsLCAgentCredentialFieldRelevant(settings config.EditableSettings, provider string) bool {
 	selected := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
-	return strings.EqualFold(strings.TrimSpace(selected), strings.TrimSpace(provider))
+	if strings.EqualFold(strings.TrimSpace(selected), strings.TrimSpace(provider)) {
+		return true
+	}
+	utilityProvider := firstNonEmptyTrimmed(settings.LCAgentUtilityProvider, "openrouter")
+	return !strings.EqualFold(utilityProvider, "off") &&
+		strings.EqualFold(strings.TrimSpace(utilityProvider), strings.TrimSpace(provider))
 }
 
 func settingsBossModelFieldsRelevant(settings config.EditableSettings) bool {
@@ -989,9 +1003,14 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
 			fields = append(fields, credentialField)
 		}
+		if utilityCredentialField := settingsLCAgentUtilityCredentialField(settings); utilityCredentialField >= 0 && !intSliceContains(fields, utilityCredentialField) {
+			fields = append(fields, utilityCredentialField)
+		}
 		fields = append(fields,
 			settingsFieldLCAgentModel,
 			settingsFieldLCAgentReasoning,
+			settingsFieldLCAgentUtilityProvider,
+			settingsFieldLCAgentUtilityModel,
 			settingsFieldLCAgentWebSearchBackend,
 		)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
@@ -1023,6 +1042,18 @@ func settingsProviderConnectionFields(backend config.AIBackend) []int {
 
 func settingsLCAgentCredentialField(settings config.EditableSettings) int {
 	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+	return settingsLCAgentCredentialFieldForProvider(provider)
+}
+
+func settingsLCAgentUtilityCredentialField(settings config.EditableSettings) int {
+	provider := firstNonEmptyTrimmed(settings.LCAgentUtilityProvider, "openrouter")
+	if strings.EqualFold(provider, "off") {
+		return -1
+	}
+	return settingsLCAgentCredentialFieldForProvider(provider)
+}
+
+func settingsLCAgentCredentialFieldForProvider(provider string) int {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "openai":
 		return settingsFieldOpenAIAPIKey
@@ -1048,6 +1079,15 @@ func settingsLCAgentWebSearchDetailFields(backend string) []int {
 	default:
 		return nil
 	}
+}
+
+func intSliceContains(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func settingsDrilldownTopField(drilldown settingsDrilldownID) int {
@@ -1227,6 +1267,8 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentAdminWrite = strings.EqualFold(strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentAdminWrite)), "true")
 	settings.LCAgentToolProfile = m.settingsFieldValue(settingsFieldLCAgentToolProfile)
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
+	settings.LCAgentUtilityProvider = m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)
+	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
@@ -1525,6 +1567,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Model Provider"
 		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey:
 			return "Provider Credentials"
+		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentUtilityModel:
+			return "Search Refinement"
 		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
 			return "Web Search"
 		case settingsFieldLCAgentAuto, settingsFieldLCAgentAdminWrite, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
@@ -2383,6 +2427,21 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
+			"LCAgent utility provider",
+			"Provider for cheap utility-model refinement of oversized search results. Accepted values: off, openrouter, openai, deepseek, moonshot.",
+			settings.LCAgentUtilityProvider,
+			32,
+			settingsSectionLCAgent,
+		),
+		newSettingsFieldWithPlaceholder(
+			"LCAgent utility model",
+			"Secondary model used only to condense oversized search results into read/search hints.",
+			settings.LCAgentUtilityModel,
+			256,
+			"Default: deepseek/deepseek-v4-flash",
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
 			"LCAgent web search",
 			"Press Enter to choose Off, Exa, Google, or SearXNG.",
 			settings.LCAgentWebSearchBackend,
@@ -2557,6 +2616,8 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	settings.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
 	settings.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
+	settings.LCAgentUtilityProvider = strings.TrimSpace(settings.LCAgentUtilityProvider)
+	settings.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
 	settings.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
@@ -2715,6 +2776,26 @@ func (m Model) settingsFieldHint(index int) string {
 			return "LCAgent will request reasoning effort " + effort + " when the selected provider supports it."
 		}
 		return field.hint
+	case settingsFieldLCAgentUtilityProvider:
+		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		case "off":
+			return "Oversized search results will not use a utility model; deterministic compact search still works when requested."
+		case "", "openrouter":
+			return "Oversized search results can be condensed through OpenRouter, defaulting to DeepSeek V4 Flash."
+		case "deepseek":
+			return "Oversized search results can be condensed through direct DeepSeek with a low-cost utility model."
+		case "openai":
+			return "Oversized search results can be condensed through direct OpenAI using the configured utility model."
+		case "moonshot":
+			return "Oversized search results can be condensed through direct Moonshot/Kimi."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentUtilityModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "Oversized search-result refinement will request utility model " + model + "."
+		}
+		return "Blank uses the utility provider default; for OpenRouter that is deepseek/deepseek-v4-flash."
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":

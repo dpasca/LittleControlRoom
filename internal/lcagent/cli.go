@@ -215,9 +215,11 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw string
+	var utilityProviderRaw, utilityModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var requestTimeout time.Duration
 	var maxTurns int
+	var searchRefineMinBytes int
 	var adminWrite bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
@@ -232,6 +234,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
+	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: off, openrouter, openai, deepseek, or moonshot")
+	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
@@ -243,6 +247,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&webSearchURL, "web-search-url", "", "optional web search endpoint URL, used by searxng")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
+	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -313,6 +318,13 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	contextProfile, err := parseOpenRouterContextProfile(contextProfileRaw)
 	if err != nil {
 		return err
+	}
+	utilityProvider, err := normalizeUtilityProvider(utilityProviderRaw)
+	if err != nil {
+		return err
+	}
+	if searchRefineMinBytes < 0 {
+		return fmt.Errorf("search-refine-min-bytes must be >= 0")
 	}
 	contextOptions := openRouterContextOptionsForProfile(contextProfile)
 	if strings.TrimSpace(model) == "" {
@@ -486,7 +498,14 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 			ProviderOnly:    splitCommaFields(providerOnlyRaw),
-		}, strings.ToLower(strings.TrimSpace(provider)), toolProfile, fileLimits, contextOptions, webSearchStatus.Enabled)
+		}, modeladapter.OpenRouterConfig{
+			Model:           utilityModel,
+			EnvFile:         envFile,
+			MaxTurns:        1,
+			RequestTimeout:  requestTimeout,
+			Temperature:     temperature,
+			OmitTemperature: omitTemperature,
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -506,7 +525,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, provider string, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
+func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -528,6 +547,22 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			"session_id": runner.SessionID,
 			"reason":     err.Error(),
 		})
+		return err
+	}
+	searchRefine := newSearchRefineProfile(utilityProvider, utilityCfg, searchRefineMinBytes)
+	if searchRefine.Enabled {
+		runner.SearchRefiner = searchRefine.Refiner
+		runner.SearchRefineMinBytes = searchRefine.MinBytes
+	}
+	if err := writer.Write(session.Event{
+		"type":       "search_refine_profile",
+		"session_id": runner.SessionID,
+		"enabled":    searchRefine.Enabled,
+		"provider":   searchRefine.Provider,
+		"model":      searchRefine.Model,
+		"min_bytes":  searchRefine.MinBytes,
+		"message":    searchRefine.Message,
+	}); err != nil {
 		return err
 	}
 	if err := writer.Write(session.Event{
@@ -595,7 +630,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			requestPhase = "synthesis"
 			requestOptions = openRouterFinalCompletionOptions(cfg)
 		}
-		completion, err = completeProviderWithRetries(ctx, writer, runner.SessionID, providerLabel, requestPhase, turn+1, requestClient.Model(), func() (modeladapter.Completion, error) {
+		completion, err = completeProviderWithRetriesValidated(ctx, writer, runner.SessionID, providerLabel, requestPhase, turn+1, requestClient.Model(), validateVisibleCompletion(providerLabel), func() (modeladapter.Completion, error) {
 			return requestClient.CompleteWithOptions(ctx, requestMessages, requestTools, requestOptions)
 		})
 		if err != nil {
@@ -801,7 +836,7 @@ func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer
 	}); err != nil {
 		return err
 	}
-	completion, err := completeProviderWithRetries(ctx, writer, runner.SessionID, providerLabel, "final_handoff", maxTurns+1, finalClient.Model(), func() (modeladapter.Completion, error) {
+	completion, err := completeProviderWithRetriesValidated(ctx, writer, runner.SessionID, providerLabel, "final_handoff", maxTurns+1, finalClient.Model(), validateVisibleCompletion(providerLabel), func() (modeladapter.Completion, error) {
 		return finalClient.CompleteWithOptions(ctx, compactedMessages, nil, openRouterFinalCompletionOptions(cfg))
 	})
 	if err != nil {
@@ -916,9 +951,24 @@ func writeRepairGuidance(writer *session.Writer, sessionID, kind, message string
 const providerRetryMaxAttempts = 3
 
 func completeProviderWithRetries(ctx context.Context, writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, call func() (modeladapter.Completion, error)) (modeladapter.Completion, error) {
+	return completeProviderWithRetriesValidated(ctx, writer, sessionID, provider, phase, turn, modelName, nil, call)
+}
+
+func completeProviderWithRetriesValidated(ctx context.Context, writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, validate func(modeladapter.Completion) error, call func() (modeladapter.Completion, error)) (modeladapter.Completion, error) {
 	var lastErr error
 	for attempt := 1; attempt <= providerRetryMaxAttempts; attempt++ {
 		completion, err := call()
+		if err == nil && validate != nil {
+			if validationErr := validate(completion); validationErr != nil {
+				event := modelResponseEvent(sessionID, turn, completion, len(completion.Message.ToolCalls))
+				event["invalid"] = true
+				event["attempt"] = attempt
+				if writeErr := writer.Write(event); writeErr != nil {
+					return modeladapter.Completion{}, writeErr
+				}
+				err = validationErr
+			}
+		}
 		if err == nil {
 			if attempt > 1 {
 				if writeErr := writer.Write(session.Event{
@@ -972,6 +1022,21 @@ func completeProviderWithRetries(ctx context.Context, writer *session.Writer, se
 		}
 	}
 	return modeladapter.Completion{}, lastErr
+}
+
+func validateVisibleCompletion(provider string) func(modeladapter.Completion) error {
+	provider = strings.TrimSpace(provider)
+	return func(completion modeladapter.Completion) error {
+		if len(completion.Message.ToolCalls) > 0 || strings.TrimSpace(completion.Message.Content) != "" {
+			return nil
+		}
+		return &modeladapter.ProviderError{
+			Provider:  provider,
+			Kind:      modeladapter.ProviderFailureMalformedResponse,
+			Message:   "response had no content or tool calls",
+			Retryable: true,
+		}
+	}
 }
 
 func writeProviderFailure(writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, attempt int, retrying bool, delay time.Duration, err error, failure *modeladapter.ProviderError) error {

@@ -177,6 +177,79 @@ func TestRunExecOpenRouterRetriesTransientProviderFailure(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterRetriesEmptyProviderCompletion(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_empty",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":""}
+				}],
+				"usage":{"prompt_tokens":11,"completion_tokens":2,"total_tokens":13}
+			}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_after_empty",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done after empty retry"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want retry once", requests)
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"response_id":"resp_empty"`,
+		`"invalid":true`,
+		`"prompt_tokens":11`,
+		`"type":"provider_failure"`,
+		`"kind":"malformed_response"`,
+		`"retrying":true`,
+		`"type":"provider_retry"`,
+		`"attempt":2`,
+		`"type":"provider_retry_succeeded"`,
+		`"summary":"done after empty retry"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"turn_aborted"`) {
+		t.Fatalf("stdout should not abort after empty completion retry:\n%s", text)
+	}
+}
+
 func TestRunPresetsListsCodingRoutes(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"presets", "--output", "json"}, &stdout, &stderr)

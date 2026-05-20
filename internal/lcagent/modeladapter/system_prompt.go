@@ -43,6 +43,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"File discovery tools skip noisy hidden/generated directories by default but report them as skipped; set include_hidden=true only when the user specifically needs contents such as .git, .venv, node_modules, vendor, dist, or build.",
 		"For specific behavior, identifiers, errors, commands, or tests, prefer search with context before raw reads.",
 		"Search queries are case-insensitive literal substrings, not regexes, globs, or alternation patterns; use separate searches for separate identifiers or phrases. For broad terms, short tokens, or common UI words, set a low max_matches and a path or file_glob before widening.",
+		"For broad searches that may have many hits, set search output_mode=compact and include an intent sentence describing what you are trying to learn. If a search result is condensed by a utility model, treat it as routing advice only: read the named files and line ranges before making final claims.",
 		"Use read_file for targeted ranges. Reading from line 1 is useful for imports/package context, but do not default to first-N-line scouting when an outline or search can locate the relevant range.",
 		readScoutingLine,
 	}

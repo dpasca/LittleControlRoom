@@ -102,6 +102,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--auto", "medium",
 		"--output", "stream-json",
 		"--admin-write",
+		"--utility-provider", "openrouter",
 		"--provider", "deepseek",
 		"--model", "deepseek/test-model",
 		"--tool-profile", "generous",

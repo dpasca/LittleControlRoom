@@ -19919,8 +19919,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 39 {
-		t.Fatalf("settings field count = %d, want 39", len(got.settingsFields))
+	if len(got.settingsFields) != 41 {
+		t.Fatalf("settings field count = %d, want 41", len(got.settingsFields))
 	}
 }
 
@@ -22502,8 +22502,8 @@ func TestSettingsLCAgentProviderPickerChoosesDeepSeek(t *testing.T) {
 	if !strings.Contains(rendered, "DeepSeek API key") {
 		t.Fatalf("DeepSeek provider should reveal DeepSeek credentials: %q", rendered)
 	}
-	if strings.Contains(rendered, "OpenRouter API key") {
-		t.Fatalf("DeepSeek provider should not show OpenRouter credentials in focused setup: %q", rendered)
+	if !strings.Contains(rendered, "OpenRouter API key") {
+		t.Fatalf("Default utility OpenRouter refiner should reveal OpenRouter credentials too: %q", rendered)
 	}
 }
 

@@ -905,6 +905,12 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if req.LCAgentRequestTimeout <= 0 {
 			req.LCAgentRequestTimeout = m.lcagentRequestTimeout()
 		}
+		if strings.TrimSpace(req.LCAgentUtilityProvider) == "" {
+			req.LCAgentUtilityProvider = m.lcagentUtilityProvider()
+		}
+		if strings.TrimSpace(req.LCAgentUtilityModel) == "" {
+			req.LCAgentUtilityModel = m.lcagentUtilityModel()
+		}
 		if strings.TrimSpace(req.LCAgentWebSearchBackend) == "" {
 			req.LCAgentWebSearchBackend = m.lcagentWebSearchBackend()
 		}

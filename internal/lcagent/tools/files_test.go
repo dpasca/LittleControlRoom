@@ -72,6 +72,22 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 		}
 	}
 
+	compactSearch := files.SearchContextWithOptions("needle", "README.md", "", 20, 2, 2, SearchOptions{
+		OutputMode: "compact",
+		Intent:     "find the smallest relevant match list",
+	})
+	if !compactSearch.Success {
+		t.Fatalf("compact search failed: %s", compactSearch.Error)
+	}
+	for _, want := range []string{"intent: find the smallest relevant match list", "output_mode: compact", "README.md:2: beta needle"} {
+		if !strings.Contains(compactSearch.Output, want) {
+			t.Fatalf("compact search missing %q:\n%s", want, compactSearch.Output)
+		}
+	}
+	if strings.Contains(compactSearch.Output, "  1 | alpha") || strings.Contains(compactSearch.Output, "> 2 | beta needle") {
+		t.Fatalf("compact search should suppress context:\n%s", compactSearch.Output)
+	}
+
 	binary := files.Read("image.bin", 1, 20)
 	if binary.Success || !binary.Binary || !strings.Contains(binary.Error, "binary file suppressed") {
 		t.Fatalf("binary read = %#v, want suppressed failure", binary)

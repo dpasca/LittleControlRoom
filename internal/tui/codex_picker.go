@@ -647,6 +647,8 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		LCAgentToolProfile:      m.lcagentToolProfile(),
 		LCAgentContextProfile:   m.lcagentContextProfile(),
 		LCAgentRequestTimeout:   m.lcagentRequestTimeout(),
+		LCAgentUtilityProvider:  m.lcagentUtilityProvider(),
+		LCAgentUtilityModel:     m.lcagentUtilityModel(),
 	}
 	if choice.Provider.Normalized() == codexapp.ProviderCodex {
 		req.Preset = m.currentCodexLaunchPreset()

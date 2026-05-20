@@ -33,6 +33,8 @@ type Summary struct {
 	ProviderFailures            map[string]int     `json:"provider_failures,omitempty"`
 	ProviderRetries             int                `json:"provider_retries"`
 	ProviderRetrySuccesses      int                `json:"provider_retry_successes"`
+	SearchRefinements           int                `json:"search_refinements,omitempty"`
+	SearchRefinementFailures    int                `json:"search_refinement_failures,omitempty"`
 	Continuations               int                `json:"continuations"`
 	ResumeContexts              int                `json:"resume_contexts"`
 	PermissionDenials           int                `json:"permission_denials"`
@@ -335,6 +337,12 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.ProviderRetries++
 	case "provider_retry_succeeded":
 		s.ProviderRetrySuccesses++
+	case "search_refine_result":
+		if rawBool(event["success"]) {
+			s.SearchRefinements++
+		} else {
+			s.SearchRefinementFailures++
+		}
 	case "continuation":
 		s.Continuations++
 	case "resume_context":
@@ -622,6 +630,14 @@ func rawString(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(value)
+}
+
+func rawBool(raw json.RawMessage) bool {
+	var value bool
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return false
+	}
+	return value
 }
 
 func rawTime(raw json.RawMessage) (time.Time, bool) {

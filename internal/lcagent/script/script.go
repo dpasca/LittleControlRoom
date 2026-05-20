@@ -11,22 +11,51 @@ import (
 	"lcroom/internal/lcagent/session"
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
+	lcrmodel "lcroom/internal/model"
 )
 
+const DefaultSearchRefineMinBytes = 12000
+
 type Runner struct {
-	Session      *session.Writer
-	Command      tools.CommandRunner
-	Patch        tools.PatchApplier
-	Files        tools.FileTools
-	WebSearch    tools.WebSearchRunner
-	WebSearchOn  bool
-	Skills       skillcatalog.Catalog
-	SessionID    string
-	Prompt       string
-	ArtifactsDir string
+	Session              *session.Writer
+	Command              tools.CommandRunner
+	Patch                tools.PatchApplier
+	Files                tools.FileTools
+	WebSearch            tools.WebSearchRunner
+	WebSearchOn          bool
+	SearchRefiner        SearchRefiner
+	SearchRefineMinBytes int
+	Skills               skillcatalog.Catalog
+	SessionID            string
+	Prompt               string
+	ArtifactsDir         string
 
 	verificationChecks []tools.VerificationCheck
 	filesTouched       []string
+}
+
+type SearchRefiner interface {
+	RefineSearch(context.Context, SearchRefineRequest) (SearchRefineResult, error)
+}
+
+type SearchRefineRequest struct {
+	Query               string
+	Intent              string
+	Path                string
+	FileGlob            string
+	MaxMatches          int
+	SearchOutput        string
+	OriginalOutputBytes int
+	CompactOutputBytes  int
+	Truncated           bool
+}
+
+type SearchRefineResult struct {
+	Output       string
+	Provider     string
+	Model        string
+	Usage        json.RawMessage
+	UsageSummary lcrmodel.LLMUsage
 }
 
 type VerificationFeedback struct {
@@ -226,6 +255,8 @@ type searchArgs struct {
 	ContextBefore *int   `json:"context_before"`
 	ContextAfter  *int   `json:"context_after"`
 	IncludeHidden bool   `json:"include_hidden"`
+	OutputMode    string `json:"output_mode"`
+	Intent        string `json:"intent"`
 }
 
 type webSearchArgs struct {
@@ -359,15 +390,11 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		if err := json.Unmarshal(action.Args, &args); err != nil {
 			return tools.ToolResult{}, err
 		}
-		contextBefore := 1
-		contextAfter := 2
-		if args.ContextBefore != nil {
-			contextBefore = *args.ContextBefore
+		var err error
+		result, err = r.runSearch(ctx, args)
+		if err != nil {
+			return tools.ToolResult{}, err
 		}
-		if args.ContextAfter != nil {
-			contextAfter = *args.ContextAfter
-		}
-		result = r.Files.SearchContextWithOptions(args.Query, args.Path, args.FileGlob, args.MaxMatches, contextBefore, contextAfter, tools.SearchOptions{IncludeHidden: args.IncludeHidden})
 	case "web_search":
 		var args webSearchArgs
 		if err := json.Unmarshal(action.Args, &args); err != nil {
@@ -512,6 +539,176 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
+}
+
+func (r *Runner) runSearch(ctx context.Context, args searchArgs) (tools.ToolResult, error) {
+	contextBefore := 1
+	contextAfter := 2
+	outputMode := strings.ToLower(strings.TrimSpace(args.OutputMode))
+	if outputMode == "compact" || outputMode == "summary" {
+		contextBefore = 0
+		contextAfter = 0
+	}
+	if args.ContextBefore != nil {
+		contextBefore = *args.ContextBefore
+	}
+	if args.ContextAfter != nil {
+		contextAfter = *args.ContextAfter
+	}
+	result := r.Files.SearchContextWithOptions(args.Query, args.Path, args.FileGlob, args.MaxMatches, contextBefore, contextAfter, tools.SearchOptions{
+		IncludeHidden: args.IncludeHidden,
+		OutputMode:    outputMode,
+		Intent:        args.Intent,
+	})
+	if !result.Success {
+		return result, nil
+	}
+	refined, err := r.maybeRefineSearch(ctx, args, result, outputMode)
+	if err != nil {
+		return tools.ToolResult{}, err
+	}
+	return refined, nil
+}
+
+func (r *Runner) maybeRefineSearch(ctx context.Context, args searchArgs, result tools.ToolResult, outputMode string) (tools.ToolResult, error) {
+	if r.SearchRefiner == nil {
+		return result, nil
+	}
+	minBytes := r.SearchRefineMinBytes
+	if minBytes <= 0 {
+		minBytes = DefaultSearchRefineMinBytes
+	}
+	originalBytes := len(result.Output)
+	if originalBytes < minBytes {
+		return result, nil
+	}
+
+	compact := result
+	normalizedMode := strings.ToLower(strings.TrimSpace(outputMode))
+	if normalizedMode != "compact" && normalizedMode != "summary" {
+		compact = r.Files.SearchContextWithOptions(args.Query, args.Path, args.FileGlob, args.MaxMatches, 0, 0, tools.SearchOptions{
+			IncludeHidden: args.IncludeHidden,
+			OutputMode:    "compact",
+			Intent:        args.Intent,
+		})
+		if !compact.Success {
+			return result, nil
+		}
+	}
+	compactBytes := len(compact.Output)
+	if compactBytes < minBytes/2 {
+		compact.Output = annotateSearchOutput(compact.Output,
+			"search_compacted: true",
+			fmt.Sprintf("original_output_bytes: %d", originalBytes),
+			fmt.Sprintf("compact_output_bytes: %d", compactBytes),
+			"compact_note: The original contextual search result was large; this compact result omits per-match context. Use read_file on relevant lines before making final claims.",
+		)
+		compact.Truncated = true
+		return compact, nil
+	}
+
+	if err := r.writeSearchRefineEvent(args, originalBytes, compactBytes); err != nil {
+		return tools.ToolResult{}, err
+	}
+	refined, err := r.SearchRefiner.RefineSearch(ctx, SearchRefineRequest{
+		Query:               args.Query,
+		Intent:              args.Intent,
+		Path:                args.Path,
+		FileGlob:            args.FileGlob,
+		MaxMatches:          args.MaxMatches,
+		SearchOutput:        compact.Output,
+		OriginalOutputBytes: originalBytes,
+		CompactOutputBytes:  compactBytes,
+		Truncated:           result.Truncated || compact.Truncated,
+	})
+	if err != nil || strings.TrimSpace(refined.Output) == "" {
+		message := "search refinement failed"
+		if err != nil {
+			message = err.Error()
+		}
+		if writeErr := r.writeSearchRefineResultEvent(false, message, refined); writeErr != nil {
+			return tools.ToolResult{}, writeErr
+		}
+		compact.Output = annotateSearchOutput(compact.Output,
+			"search_refine_failed: true",
+			fmt.Sprintf("original_output_bytes: %d", originalBytes),
+			fmt.Sprintf("compact_output_bytes: %d", compactBytes),
+			"refine_note: Returning compact matches because the utility refiner was unavailable. Use read_file on relevant lines before making final claims.",
+		)
+		compact.Truncated = true
+		return compact, nil
+	}
+	if err := r.writeUtilityModelResponseEvent(refined); err != nil {
+		return tools.ToolResult{}, err
+	}
+	if err := r.writeSearchRefineResultEvent(true, "", refined); err != nil {
+		return tools.ToolResult{}, err
+	}
+	result.Output = strings.TrimSpace(refined.Output) + "\n"
+	result.Truncated = true
+	return result, nil
+}
+
+func annotateSearchOutput(output string, headerLines ...string) string {
+	var b strings.Builder
+	for _, line := range headerLines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	b.WriteByte('\n')
+	b.WriteString(strings.TrimSpace(output))
+	b.WriteByte('\n')
+	return b.String()
+}
+
+func (r *Runner) writeSearchRefineEvent(args searchArgs, originalBytes, compactBytes int) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":                  "search_refine",
+		"session_id":            r.SessionID,
+		"query":                 strings.TrimSpace(args.Query),
+		"intent":                strings.TrimSpace(args.Intent),
+		"path":                  strings.TrimSpace(args.Path),
+		"file_glob":             strings.TrimSpace(args.FileGlob),
+		"original_output_bytes": originalBytes,
+		"compact_output_bytes":  compactBytes,
+	})
+}
+
+func (r *Runner) writeSearchRefineResultEvent(success bool, message string, result SearchRefineResult) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":         "search_refine_result",
+		"session_id":   r.SessionID,
+		"success":      success,
+		"message":      strings.TrimSpace(message),
+		"provider":     strings.TrimSpace(result.Provider),
+		"model":        strings.TrimSpace(result.Model),
+		"output_bytes": len(result.Output),
+	})
+}
+
+func (r *Runner) writeUtilityModelResponseEvent(result SearchRefineResult) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	event := session.Event{
+		"type":          "model_response",
+		"session_id":    r.SessionID,
+		"phase":         "search_refine",
+		"provider":      strings.TrimSpace(result.Provider),
+		"model":         strings.TrimSpace(result.Model),
+		"usage":         result.Usage,
+		"usage_summary": result.UsageSummary,
+	}
+	return r.Session.Write(event)
 }
 
 func (r *Runner) FilesTouched() []string {

@@ -474,9 +474,14 @@ func (m Model) setupConfigFieldIndexes() []int {
 		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
 			fields = append(fields, credentialField)
 		}
+		if utilityCredentialField := settingsLCAgentUtilityCredentialField(settings); utilityCredentialField >= 0 && !intSliceContains(fields, utilityCredentialField) {
+			fields = append(fields, utilityCredentialField)
+		}
 		fields = append(fields,
 			settingsFieldLCAgentModel,
 			settingsFieldLCAgentReasoning,
+			settingsFieldLCAgentUtilityProvider,
+			settingsFieldLCAgentUtilityModel,
 			settingsFieldLCAgentWebSearchBackend,
 		)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
@@ -556,6 +561,8 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.LCAgentAuto = m.settingsFieldValue(settingsFieldLCAgentAuto)
 	settings.LCAgentToolProfile = m.settingsFieldValue(settingsFieldLCAgentToolProfile)
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
+	settings.LCAgentUtilityProvider = m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)
+	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)

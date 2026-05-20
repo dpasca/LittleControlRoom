@@ -14,6 +14,7 @@ import (
 	"lcroom/internal/lcagent/session"
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
+	lcrmodel "lcroom/internal/model"
 )
 
 func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
@@ -119,6 +120,68 @@ func TestRunnerRecordsActualVerificationCheck(t *testing.T) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
 	}
+}
+
+func TestRunnerRefinesOversizedSearchWithIntent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("alpha target\nbeta target\ngamma target\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	refiner := &fakeSearchRefiner{}
+	runner := Runner{
+		Session:              writer,
+		SessionID:            sessionID,
+		Files:                tools.FileTools{Workspace: w},
+		SearchRefiner:        refiner,
+		SearchRefineMinBytes: 1,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "search",
+		Args: raw(`{"query":"target","path":".","max_matches":10,"intent":"find app entry points"}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v", err)
+	}
+	if !strings.Contains(result.Output, "search_refined: true") || !strings.Contains(result.Output, "app.go:1") {
+		t.Fatalf("refined output =\n%s", result.Output)
+	}
+	if refiner.request.Intent != "find app entry points" || refiner.request.Query != "target" {
+		t.Fatalf("refiner request = %#v", refiner.request)
+	}
+	if !strings.Contains(refiner.request.SearchOutput, "output_mode: compact") || strings.Contains(refiner.request.SearchOutput, "> 1 |") {
+		t.Fatalf("refiner should receive compact search output:\n%s", refiner.request.SearchOutput)
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"search_refine"`, `"phase":"search_refine"`, `"type":"search_refine_result"`, `"model":"fake-cheap"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
+type fakeSearchRefiner struct {
+	request SearchRefineRequest
+}
+
+func (f *fakeSearchRefiner) RefineSearch(_ context.Context, request SearchRefineRequest) (SearchRefineResult, error) {
+	f.request = request
+	return SearchRefineResult{
+		Output:       "search_refined: true\nlikely_relevant:\n- app.go:1 confidence=high reason=entry point\n",
+		Provider:     "fake",
+		Model:        "fake-cheap",
+		UsageSummary: lcrmodel.LLMUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+	}, nil
 }
 
 func TestFinalVerificationStatusUsesLatestPassingOutcome(t *testing.T) {

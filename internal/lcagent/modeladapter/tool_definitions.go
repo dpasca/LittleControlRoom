@@ -127,7 +127,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "search",
-				Description: "Search text files in the workspace with case-insensitive literal substring matching, optionally returning a small context window around each match. The query is not a regex, glob, or alternation pattern.",
+				Description: "Search text files in the workspace with case-insensitive literal substring matching, optionally returning a small context window around each match. The query is not a regex, glob, or alternation pattern. For broad or common terms, set output_mode=compact and provide intent so oversized results can be condensed around the task.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -139,6 +139,8 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"context_before": map[string]any{"type": "integer", "minimum": 0, "maximum": opts.MaxSearchContextLines, "description": "Lines of context before each match. Defaults to 1 in the harness."},
 						"context_after":  map[string]any{"type": "integer", "minimum": 0, "maximum": opts.MaxSearchContextLines, "description": "Lines of context after each match. Defaults to 2 in the harness."},
 						"include_hidden": map[string]any{"type": "boolean", "description": "Search normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false; skipped directories are reported in the result."},
+						"output_mode":    map[string]any{"type": "string", "enum": []string{"full", "compact"}, "description": "Use compact for broad searches: match lines only, no per-match context. Defaults to full."},
+						"intent":         map[string]any{"type": "string", "description": "Natural-language purpose of the search, for example 'find checkout/payment code paths relevant to performance review'. Useful when compact or oversized results are refined by a utility model."},
 					},
 					"required": []string{"query"},
 				},

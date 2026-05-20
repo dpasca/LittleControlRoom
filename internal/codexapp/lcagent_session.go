@@ -21,12 +21,14 @@ import (
 )
 
 const (
-	lcagentDefaultAuto           = "low"
-	lcagentDefaultProvider       = "openrouter"
-	lcagentDefaultToolProfile    = "balanced"
-	lcagentDefaultContextProfile = "balanced"
-	lcagentDefaultRequestTimeout = 10 * time.Minute
-	lcagentDefaultWebSearch      = "off"
+	lcagentDefaultAuto            = "low"
+	lcagentDefaultProvider        = "openrouter"
+	lcagentDefaultToolProfile     = "balanced"
+	lcagentDefaultContextProfile  = "balanced"
+	lcagentDefaultRequestTimeout  = 10 * time.Minute
+	lcagentDefaultUtilityProvider = "openrouter"
+	lcagentDefaultUtilityModel    = "deepseek/deepseek-v4-flash"
+	lcagentDefaultWebSearch       = "off"
 )
 
 type lcagentRunOptions struct {
@@ -52,6 +54,8 @@ type lcagentSession struct {
 	toolProfile       string
 	contextProfile    string
 	requestTimeout    time.Duration
+	utilityProvider   string
+	utilityModel      string
 	webSearchBackend  string
 	webSearchAPIKey   string
 	webSearchEngineID string
@@ -125,6 +129,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		toolProfile:       toolProfile,
 		contextProfile:    contextProfile,
 		requestTimeout:    requestTimeout,
+		utilityProvider:   lcagentUtilityProviderValue(req.LCAgentUtilityProvider),
+		utilityModel:      strings.TrimSpace(req.LCAgentUtilityModel),
 		webSearchBackend:  lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:   strings.TrimSpace(req.LCAgentWebSearchAPIKey),
 		webSearchEngineID: strings.TrimSpace(req.LCAgentWebSearchEngineID),
@@ -456,6 +462,9 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	webSearchAPIKey := strings.TrimSpace(s.webSearchAPIKey)
 	webSearchEngineID := strings.TrimSpace(s.webSearchEngineID)
 	webSearchURL := strings.TrimSpace(s.webSearchURL)
+	utilityProvider := firstNonEmpty(s.utilityProvider, lcagentDefaultUtilityProvider)
+	utilityModel := strings.TrimSpace(s.utilityModel)
+	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
 	if warning := s.webSearchWarningLocked(); warning != "" {
 		s.appendEntryLocked(TranscriptStatus, warning)
 	}
@@ -473,8 +482,12 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		"--cwd", s.projectPath,
 		"--data-dir", s.dataDir,
 		"--output", "stream-json",
+		"--utility-provider", utilityProvider,
 		"--web-search-backend", webSearchBackend,
 	)
+	if utilityModel != "" {
+		args = append(args, "--utility-model", utilityModel)
+	}
 	if adminWrite {
 		args = append(args, "--admin-write")
 	}
@@ -516,6 +529,9 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	cmd.Env = os.Environ()
 	if providerAPIKeyName != "" && providerAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, providerAPIKeyName, providerAPIKey)
+	}
+	if utilityAPIKeyName != "" && utilityAPIKey != "" {
+		cmd.Env = setCommandEnv(cmd.Env, utilityAPIKeyName, utilityAPIKey)
 	}
 	if webSearchAPIKey != "" {
 		switch webSearchBackend {
@@ -724,6 +740,26 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			s.appendAsync(TranscriptStatus, firstNonEmpty(message, "LCAgent web search is not available. Use /settings here to configure a web search backend and API key."))
 		} else if backend != "" {
 			s.appendAsync(TranscriptStatus, "LCAgent web search enabled: "+backend)
+		}
+	case "search_refine_profile":
+		enabled := rawJSONBool(event["enabled"])
+		message := rawJSONString(event["message"])
+		provider := rawJSONString(event["provider"])
+		model := rawJSONString(event["model"])
+		if enabled {
+			label := strings.TrimSpace(strings.Join([]string{provider, model}, " "))
+			s.appendAsync(TranscriptStatus, "LCAgent oversized search refinement enabled: "+strings.TrimSpace(label))
+		} else if strings.TrimSpace(message) != "" && provider != "off" {
+			s.appendAsync(TranscriptStatus, message)
+		}
+	case "search_refine_result":
+		if rawJSONBool(event["success"]) {
+			model := rawJSONString(event["model"])
+			if model != "" {
+				s.appendAsync(TranscriptStatus, "LCAgent condensed an oversized search with "+model)
+			}
+		} else if message := rawJSONString(event["message"]); message != "" {
+			s.appendAsync(TranscriptStatus, "LCAgent search refinement skipped: "+message)
 		}
 	case "plan_update":
 		s.appendAsync(TranscriptPlan, lcagentPlanText(event["items"]))
@@ -991,6 +1027,16 @@ func lcagentWebSearchBackendValue(configured string) string {
 		return value
 	default:
 		return lcagentDefaultWebSearch
+	}
+}
+
+func lcagentUtilityProviderValue(configured string) string {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_UTILITY_PROVIDER"))))
+	switch value {
+	case "off", "openai", "deepseek", "moonshot":
+		return value
+	default:
+		return lcagentDefaultUtilityProvider
 	}
 }
 
