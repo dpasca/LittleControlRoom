@@ -1369,21 +1369,27 @@ func (s *appServerSession) SetGoal(objective string, tokenBudget *int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
-	result, err := s.call(ctx, "thread/goal/set", threadGoalSetParams{
-		ThreadID:    threadID,
-		Objective:   objective,
-		TokenBudget: cloneInt64Ptr(tokenBudget),
-	})
+	goal, err := s.setThreadGoal(ctx, threadID, objective, tokenBudget)
 	if err != nil {
 		s.appendSystemError(err)
 		return err
 	}
-	var response threadGoalResponse
-	if err := json.Unmarshal(result, &response); err != nil {
-		s.appendSystemError(err)
-		return err
+	if threadGoalSetResponseStale(goal, objective, tokenBudget) {
+		if _, err := s.clearThreadGoal(ctx, threadID); err != nil {
+			s.appendSystemError(err)
+			return err
+		}
+		goal, err = s.setThreadGoal(ctx, threadID, objective, tokenBudget)
+		if err != nil {
+			s.appendSystemError(err)
+			return err
+		}
+		if threadGoalSetResponseStale(goal, objective, tokenBudget) {
+			err := fmt.Errorf("embedded Codex goal did not update; Codex returned %s", threadGoalSummary(goal))
+			s.appendSystemError(err)
+			return err
+		}
 	}
-	goal := exportedThreadGoal(response.Goal)
 	if goal == nil {
 		goal = &ThreadGoal{
 			ThreadID:    threadID,
@@ -1431,13 +1437,8 @@ func (s *appServerSession) ClearGoal() error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
-	result, err := s.call(ctx, "thread/goal/clear", threadGoalClearParams{ThreadID: threadID})
+	response, err := s.clearThreadGoal(ctx, threadID)
 	if err != nil {
-		s.appendSystemError(err)
-		return err
-	}
-	var response threadGoalClearResponse
-	if err := json.Unmarshal(result, &response); err != nil {
 		s.appendSystemError(err)
 		return err
 	}
@@ -1455,6 +1456,34 @@ func (s *appServerSession) ClearGoal() error {
 	s.mu.Unlock()
 	s.notify()
 	return nil
+}
+
+func (s *appServerSession) setThreadGoal(ctx context.Context, threadID, objective string, tokenBudget *int64) (*ThreadGoal, error) {
+	result, err := s.call(ctx, "thread/goal/set", threadGoalSetParams{
+		ThreadID:    threadID,
+		Objective:   objective,
+		TokenBudget: cloneInt64Ptr(tokenBudget),
+	})
+	if err != nil {
+		return nil, err
+	}
+	var response threadGoalResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return nil, err
+	}
+	return exportedThreadGoal(response.Goal), nil
+}
+
+func (s *appServerSession) clearThreadGoal(ctx context.Context, threadID string) (threadGoalClearResponse, error) {
+	result, err := s.call(ctx, "thread/goal/clear", threadGoalClearParams{ThreadID: threadID})
+	if err != nil {
+		return threadGoalClearResponse{}, err
+	}
+	var response threadGoalClearResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return threadGoalClearResponse{}, err
+	}
+	return response, nil
 }
 
 func (s *appServerSession) readAndStoreGoal() (*ThreadGoal, error) {
@@ -3166,6 +3195,51 @@ func cloneInt64Ptr(in *int64) *int64 {
 	}
 	out := *in
 	return &out
+}
+
+func threadGoalSetResponseStale(goal *ThreadGoal, objective string, tokenBudget *int64) bool {
+	if goal == nil {
+		return false
+	}
+	if strings.TrimSpace(goal.Objective) != strings.TrimSpace(objective) {
+		return true
+	}
+	if !int64PtrEqual(goal.TokenBudget, tokenBudget) {
+		return true
+	}
+	switch strings.TrimSpace(string(goal.Status)) {
+	case string(ThreadGoalStatusComplete), string(ThreadGoalStatusBudgetLimited), "budget_limited", "blocked", "usage_limited":
+		return true
+	default:
+		return false
+	}
+}
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func threadGoalSummary(goal *ThreadGoal) string {
+	if goal == nil {
+		return "no goal"
+	}
+	parts := []string{}
+	if goal.Objective != "" {
+		parts = append(parts, fmt.Sprintf("objective %q", goal.Objective))
+	}
+	if goal.Status != "" {
+		parts = append(parts, "status "+string(goal.Status))
+	}
+	if goal.TokenBudget != nil {
+		parts = append(parts, fmt.Sprintf("token budget %d", *goal.TokenBudget))
+	}
+	if len(parts) == 0 {
+		return "an empty goal"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func unixSecondsTime(seconds int64) time.Time {

@@ -2097,6 +2097,119 @@ func TestSetGoalCallsThreadGoalSetAndStoresGoal(t *testing.T) {
 	}
 }
 
+func TestSetGoalClearsCompletedGoalAndRetriesWhenCodexReturnsStaleGoal(t *testing.T) {
+	calls := []string{}
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			calls = append(calls, method)
+			switch len(calls) {
+			case 1:
+				if method != "thread/goal/set" {
+					t.Fatalf("first method = %q, want thread/goal/set", method)
+				}
+				request, ok := params.(threadGoalSetParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalSetParams", params)
+				}
+				if request.Objective != "ship the next goal" {
+					t.Fatalf("objective = %q, want ship the next goal", request.Objective)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"old goal","status":"complete","tokensUsed":324582,"timeUsedSeconds":733,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
+			case 2:
+				if method != "thread/goal/clear" {
+					t.Fatalf("second method = %q, want thread/goal/clear", method)
+				}
+				request, ok := params.(threadGoalClearParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalClearParams", params)
+				}
+				if request.ThreadID != "thread_456" {
+					t.Fatalf("clear thread id = %q, want thread_456", request.ThreadID)
+				}
+				return json.RawMessage(`{"cleared":true}`), nil
+			case 3:
+				if method != "thread/goal/set" {
+					t.Fatalf("third method = %q, want thread/goal/set", method)
+				}
+				request, ok := params.(threadGoalSetParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalSetParams", params)
+				}
+				if request.Objective != "ship the next goal" {
+					t.Fatalf("retry objective = %q, want ship the next goal", request.Objective)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"ship the next goal","status":"active","tokensUsed":0,"timeUsedSeconds":0,"createdAt":1773027020,"updatedAt":1773027020}}`), nil
+			default:
+				t.Fatalf("unexpected RPC call %d: %s", len(calls), method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.SetGoal("ship the next goal", nil); err != nil {
+		t.Fatalf("SetGoal() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "thread/goal/set,thread/goal/clear,thread/goal/set" {
+		t.Fatalf("calls = %#v, want set, clear, set", calls)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Goal == nil {
+		t.Fatalf("snapshot goal = nil, want stored goal")
+	}
+	if snapshot.Goal.Objective != "ship the next goal" {
+		t.Fatalf("goal objective = %q, want ship the next goal", snapshot.Goal.Objective)
+	}
+	if snapshot.Goal.Status != ThreadGoalStatusActive {
+		t.Fatalf("goal status = %q, want active", snapshot.Goal.Status)
+	}
+	if len(snapshot.Entries) != 1 || !strings.Contains(snapshot.Entries[0].Text, "objective: ship the next goal") || strings.Contains(snapshot.Entries[0].Text, "old goal") {
+		t.Fatalf("entries = %#v, want only new goal transcript entry", snapshot.Entries)
+	}
+}
+
+func TestSetGoalErrorsWhenCodexKeepsReturningStaleGoal(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, _ any) (json.RawMessage, error) {
+			callCount++
+			switch method {
+			case "thread/goal/set":
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"old goal","status":"complete","tokensUsed":324582,"timeUsedSeconds":733,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
+			case "thread/goal/clear":
+				return json.RawMessage(`{"cleared":true}`), nil
+			default:
+				t.Fatalf("unexpected method = %q", method)
+				return nil, nil
+			}
+		},
+	}
+
+	err := s.SetGoal("ship the next goal", nil)
+	if err == nil {
+		t.Fatalf("SetGoal() error = nil, want stale-goal error")
+	}
+	if !strings.Contains(err.Error(), "embedded Codex goal did not update") {
+		t.Fatalf("SetGoal() error = %v, want stale-goal message", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("call count = %d, want 3", callCount)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Goal != nil {
+		t.Fatalf("snapshot goal = %#v, want nil after failed stale set", snapshot.Goal)
+	}
+}
+
 func TestHandleGoalNotificationsUpdateSnapshot(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
