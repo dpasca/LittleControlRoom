@@ -16,6 +16,7 @@ import (
 
 	"lcroom/internal/boss"
 	"lcroom/internal/brand"
+	"lcroom/internal/buildinfo"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/detectors/claudecode"
@@ -43,6 +44,10 @@ func Run(programName string, args []string) int {
 	}
 
 	subcmd := args[0]
+	if subcmd == "version" || subcmd == "--version" || subcmd == "-v" {
+		fmt.Println(buildinfo.Summary(programName))
+		return 0
+	}
 	if subcmd == "playwright-mcp" {
 		return runPlaywrightMCP(args[1:])
 	}
@@ -842,7 +847,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|boss|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <version|scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|boss|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")

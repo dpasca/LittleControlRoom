@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,34 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/store"
 )
+
+func TestRunVersion(t *testing.T) {
+	oldStdout := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = writer
+	defer func() {
+		os.Stdout = oldStdout
+		_ = reader.Close()
+	}()
+
+	code := Run("lcroom", []string{"version"})
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if got, want := strings.TrimSpace(string(output)), "lcroom dev"; got != want {
+		t.Fatalf("version output = %q, want %q", got, want)
+	}
+}
 
 func TestLoadStoredProjectStates(t *testing.T) {
 	t.Parallel()

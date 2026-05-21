@@ -15,6 +15,17 @@ import (
 	"lcroom/internal/lcagent/sessionmetrics"
 )
 
+func TestRunVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--version"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s", code, stderr.String())
+	}
+	if got, want := strings.TrimSpace(stdout.String()), "lcagent dev"; got != want {
+		t.Fatalf("version output = %q, want %q", got, want)
+	}
+}
+
 func TestRunExecScriptedStreamJSON(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

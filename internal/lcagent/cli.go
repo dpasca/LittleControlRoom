@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/buildinfo"
 	projectinstructions "lcroom/internal/lcagent/instructions"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/policy"
@@ -22,8 +23,6 @@ import (
 	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
 )
-
-const version = "dev"
 
 type outputMode string
 
@@ -39,6 +38,9 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "version", "--version", "-v":
+		fmt.Fprintln(stdout, buildinfo.Summary("lcagent"))
+		return 0
 	case "exec":
 		if err := runExec(args[1:], stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -91,7 +93,7 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 }
 
 func lcagentUsage() string {
-	return "usage: lcagent exec [flags] <prompt>\n       lcagent scout [exec flags] <prompt>\n       lcagent presets [flags]\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]\n       lcagent live-eval [flags]\n       lcagent smoke [flags]"
+	return "usage: lcagent version\n       lcagent exec [flags] <prompt>\n       lcagent scout [exec flags] <prompt>\n       lcagent presets [flags]\n       lcagent metrics <session.jsonl>...\n       lcagent eval [flags]\n       lcagent live-eval [flags]\n       lcagent smoke [flags]"
 }
 
 type execRunOptions struct {
@@ -355,7 +357,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	defer writer.Close()
-	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, version, started)
+	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, buildinfo.Version(), started)
 	meta["admin_write"] = adminWrite
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
