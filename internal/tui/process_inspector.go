@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"lcroom/internal/procinspect"
+	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -24,6 +25,7 @@ type processWarningStats struct {
 	HighCPU       int
 	Orphaned      int
 	PortListeners int
+	PortConflicts int
 	MaxCPU        float64
 }
 
@@ -96,16 +98,21 @@ func (m Model) loadProcessReportsCmd(dialogProjectPath string) tea.Cmd {
 		return nil
 	}
 	managedPIDs, managedPGIDs := m.managedRuntimeProcessSets()
+	managedPIDProjects, managedPGIDProjects := m.managedRuntimeProcessProjectMaps()
+	expectedPorts := m.processScanExpectedPorts(dialogProjectPath)
 	now := m.currentTime()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), processScanTimeout)
 		defer cancel()
 		reports, err := procinspect.ScanProjects(ctx, procinspect.ScanOptions{
-			ProjectPaths: paths,
-			ManagedPIDs:  managedPIDs,
-			ManagedPGIDs: managedPGIDs,
-			OwnPID:       os.Getpid(),
-			Now:          now,
+			ProjectPaths:        paths,
+			ExpectedPorts:       expectedPorts,
+			ManagedPIDs:         managedPIDs,
+			ManagedPGIDs:        managedPGIDs,
+			ManagedPIDProjects:  managedPIDProjects,
+			ManagedPGIDProjects: managedPGIDProjects,
+			OwnPID:              os.Getpid(),
+			Now:                 now,
 		})
 		return processScanMsg{
 			reports:           reports,
@@ -184,6 +191,88 @@ func (m Model) managedRuntimeProcessSets() (map[int]struct{}, map[int]struct{}) 
 		}
 	}
 	return pids, pgids
+}
+
+func (m Model) managedRuntimeProcessProjectMaps() (map[int]string, map[int]string) {
+	pids := map[int]string{}
+	pgids := map[int]string{}
+	for _, snapshot := range m.runtimeSnapshots {
+		projectPath := filepath.Clean(strings.TrimSpace(snapshot.ProjectPath))
+		if projectPath == "" || projectPath == "." {
+			continue
+		}
+		if snapshot.PID > 0 {
+			pids[snapshot.PID] = projectPath
+		}
+		if snapshot.PGID > 0 {
+			pgids[snapshot.PGID] = projectPath
+		}
+	}
+	return pids, pgids
+}
+
+func (m Model) processScanExpectedPorts(dialogProjectPath string) []procinspect.ExpectedPort {
+	paths := m.processScanProjectPaths(dialogProjectPath)
+	if len(paths) == 0 {
+		return nil
+	}
+	pathSet := map[string]struct{}{}
+	for _, path := range paths {
+		pathSet[filepath.Clean(path)] = struct{}{}
+	}
+
+	type projectRuntimeState struct {
+		path       string
+		runCommand string
+		snapshot   projectrun.Snapshot
+	}
+	statesByPath := map[string]projectRuntimeState{}
+	add := func(path, runCommand string) {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "" || path == "." {
+			return
+		}
+		if _, ok := pathSet[path]; !ok {
+			return
+		}
+		state := statesByPath[path]
+		state.path = path
+		if strings.TrimSpace(state.runCommand) == "" {
+			state.runCommand = strings.TrimSpace(runCommand)
+		}
+		state.snapshot = m.projectRuntimeSnapshot(path)
+		statesByPath[path] = state
+	}
+	for _, project := range m.allProjects {
+		add(project.Path, project.RunCommand)
+	}
+	for _, project := range m.projects {
+		add(project.Path, project.RunCommand)
+	}
+	for _, snapshot := range m.runtimeSnapshots {
+		add(snapshot.ProjectPath, snapshot.Command)
+	}
+
+	expected := []procinspect.ExpectedPort{}
+	for _, path := range paths {
+		state, ok := statesByPath[filepath.Clean(path)]
+		if !ok {
+			state = projectRuntimeState{path: filepath.Clean(path), snapshot: m.projectRuntimeSnapshot(path)}
+		}
+		command := effectiveRuntimeCommand(state.runCommand, state.snapshot)
+		ports := projectrun.ExpectedPorts(command, state.snapshot.AnnouncedURLs, state.snapshot.Ports)
+		if len(state.snapshot.RecentOutput) > 0 {
+			ports = append(ports, projectrun.ExpectedPorts(strings.Join(state.snapshot.RecentOutput, "\n"), nil, nil)...)
+		}
+		for _, port := range ports {
+			expected = append(expected, procinspect.ExpectedPort{
+				ProjectPath: state.path,
+				Port:        port,
+				Source:      "runtime",
+			})
+		}
+	}
+	return expected
 }
 
 func (m *Model) applyProcessScanMsg(msg processScanMsg) tea.Cmd {
@@ -275,7 +364,7 @@ func (m Model) renderProcessDialogContent(width, maxHeight int) string {
 	} else if len(dialog.Findings) == 0 {
 		lines = append(lines, "", detailValueStyle.Render("No suspicious project-local processes found."))
 	} else {
-		lines = append(lines, "", detailWarningStyle.Render(processDialogCountLabel(len(dialog.Findings))))
+		lines = append(lines, "", detailWarningStyle.Render(processDialogFindingsLabel(dialog.Findings)))
 		lines = append(lines, m.renderProcessFindingRows(width, max(2, maxHeight-len(lines)-10))...)
 		if dialog.Selected >= 0 && dialog.Selected < len(dialog.Findings) {
 			lines = append(lines, "")
@@ -349,6 +438,12 @@ func (m Model) renderProcessFindingDetail(width int, finding procinspect.Finding
 	if len(finding.Ports) > 0 {
 		fields = append(fields, detailField("Ports", detailValueStyle.Render(joinPorts(finding.Ports))))
 	}
+	if len(finding.ConflictPorts) > 0 {
+		fields = append(fields, detailField("Conflict", detailDangerStyle.Render("port "+joinPorts(finding.ConflictPorts)+" busy")))
+	}
+	if finding.PortConflict && strings.TrimSpace(finding.OwnerProjectPath) != "" {
+		fields = append(fields, detailField("Owner", detailWarningStyle.Render(m.runtimeOwnerLabel(finding.OwnerProjectPath))))
+	}
 	lines = appendDetailFields(lines, width, fields...)
 	if strings.TrimSpace(finding.CWD) != "" {
 		lines = append(lines, renderWrappedDetailField("CWD", detailMutedStyle, width, m.displayPathWithHomeTilde(finding.CWD)))
@@ -384,6 +479,9 @@ func (m Model) globalProcessFindings() ([]procinspect.Finding, time.Time) {
 func sortProcessFindings(findings []procinspect.Finding) {
 	sort.SliceStable(findings, func(i, j int) bool {
 		left, right := findings[i], findings[j]
+		if left.PortConflict != right.PortConflict {
+			return left.PortConflict
+		}
 		if left.CPU != right.CPU {
 			return left.CPU > right.CPU
 		}
@@ -443,6 +541,7 @@ func (m Model) processWarningStatsForPaths(paths []string) processWarningStats {
 		stats.HighCPU += projectStats.HighCPU
 		stats.Orphaned += projectStats.Orphaned
 		stats.PortListeners += projectStats.PortListeners
+		stats.PortConflicts += projectStats.PortConflicts
 		if projectStats.Total > 0 {
 			stats.Projects++
 		}
@@ -465,6 +564,9 @@ func processWarningStatsForFindings(findings []procinspect.Finding) processWarni
 		if processFindingHasPorts(finding) {
 			stats.PortListeners++
 		}
+		if processFindingIsPortConflict(finding) {
+			stats.PortConflicts++
+		}
 		if finding.CPU > stats.MaxCPU {
 			stats.MaxCPU = finding.CPU
 		}
@@ -482,6 +584,10 @@ func processFindingIsOrphaned(finding procinspect.Finding) bool {
 
 func processFindingHasPorts(finding procinspect.Finding) bool {
 	return len(finding.Ports) > 0
+}
+
+func processFindingIsPortConflict(finding procinspect.Finding) bool {
+	return finding.PortConflict || len(finding.ConflictPorts) > 0
 }
 
 func (m Model) processNoticeProjectPaths() []string {
@@ -517,6 +623,9 @@ func (m Model) projectProcessWarningSummary(projectPath string) string {
 }
 
 func processWarningDetailLabel(stats processWarningStats) string {
+	if stats.PortConflicts > 0 && stats.Total == stats.PortConflicts {
+		return formatCount(stats.PortConflicts, "runtime port conflict")
+	}
 	subject := "suspicious project-local PID"
 	if stats.Total != 1 {
 		subject = "suspicious project-local PIDs"
@@ -537,6 +646,9 @@ func processWarningQualifiers(stats processWarningStats) []string {
 	if stats.Orphaned > 0 {
 		qualifiers = append(qualifiers, formatCount(stats.Orphaned, "orphaned"))
 	}
+	if stats.PortConflicts > 0 {
+		qualifiers = append(qualifiers, formatCount(stats.PortConflicts, "port conflict"))
+	}
 	if stats.PortListeners > 0 {
 		qualifiers = append(qualifiers, formatCount(stats.PortListeners, "port listener"))
 	}
@@ -547,11 +659,15 @@ func processWarningFooterLabel(stats processWarningStats) string {
 	if stats.Total == 0 {
 		return ""
 	}
-	parts := []string{fmt.Sprintf("PIDs %d", stats.Total)}
+	parts := []string{}
+	if stats.PortConflicts > 0 {
+		parts = append(parts, fmt.Sprintf("PORT CONFLICT %d", stats.PortConflicts))
+	}
+	parts = append(parts, fmt.Sprintf("PIDs %d", stats.Total))
 	if stats.HighCPU > 0 {
 		parts = append(parts, fmt.Sprintf("hot%d", stats.HighCPU))
 	}
-	if stats.PortListeners > 0 {
+	if stats.PortListeners > 0 && stats.PortConflicts == 0 {
 		parts = append(parts, fmt.Sprintf("port%d", stats.PortListeners))
 	}
 	return strings.Join(parts, " ")
@@ -588,6 +704,12 @@ func (m Model) projectProcessRunFlag(projectPath string) string {
 		return ""
 	}
 	prefix := "PID!"
+	if stats.PortConflicts > 0 {
+		if stats.PortConflicts == 1 {
+			return "PORT!"
+		}
+		return fmt.Sprintf("PORT!%d", stats.PortConflicts)
+	}
 	if stats.HighCPU > 0 {
 		prefix = "HOT!"
 	}
@@ -602,6 +724,14 @@ func processDialogCountLabel(count int) string {
 		return "1 suspicious project-local process"
 	}
 	return fmt.Sprintf("%d suspicious project-local processes", count)
+}
+
+func processDialogFindingsLabel(findings []procinspect.Finding) string {
+	stats := processWarningStatsForFindings(findings)
+	if stats.PortConflicts > 0 && stats.Total == stats.PortConflicts {
+		return formatCount(stats.PortConflicts, "runtime port conflict")
+	}
+	return processDialogCountLabel(len(findings))
 }
 
 func processDialogReadyStatus(count int, scope string) string {

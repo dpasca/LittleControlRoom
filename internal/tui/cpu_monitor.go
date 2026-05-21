@@ -389,6 +389,9 @@ func cpuProcessesFromFindings(findings []procinspect.Finding) []procinspect.CPUP
 			Reasons:           append([]string(nil), finding.Reasons...),
 			ManagedRuntime:    finding.ManagedRuntime,
 			OwnedByCurrentApp: finding.OwnedByCurrentApp,
+			PortConflict:      finding.PortConflict,
+			ConflictPorts:     append([]int(nil), finding.ConflictPorts...),
+			OwnerProjectPath:  finding.OwnerProjectPath,
 		})
 	}
 	return processes
@@ -799,7 +802,7 @@ func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess, scope cp
 		}
 	}
 
-	lines := []string{cpuRemediationOpeningInstruction(scope)}
+	lines := []string{cpuRemediationOpeningInstruction(processes, scope)}
 	if scannedAt != "" {
 		lines = append(lines, "Snapshot scanned at: "+scannedAt)
 	}
@@ -823,6 +826,12 @@ func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess, scope cp
 		"",
 		"Goal:",
 	)
+	if cpuProcessesIncludePortConflict(processes) {
+		lines = append(lines,
+			"- Determine which listener owns the expected runtime port and whether it explains browser traffic going to the wrong app.",
+			"- Inspect the listener's command, cwd, parent process, age, and recent activity before deciding whether it is stale or intended.",
+		)
+	}
 	if scope == cpuRemediationScopeSnapshot {
 		lines = append(lines, "- Use the whole listed snapshot as context; choose the likely culprit yourself rather than assuming the selected row is relevant.")
 	}
@@ -836,11 +845,26 @@ func (m Model) cpuRemediationPrompt(processes []procinspect.CPUProcess, scope cp
 	return strings.Join(lines, "\n")
 }
 
-func cpuRemediationOpeningInstruction(scope cpuRemediationScope) string {
+func cpuRemediationOpeningInstruction(processes []procinspect.CPUProcess, scope cpuRemediationScope) string {
+	if cpuProcessesIncludePortConflict(processes) && scope == cpuRemediationScopeSnapshot {
+		return "Investigate the current CPU and process situation and identify what, if anything, is unexpectedly consuming CPU or runtime ports."
+	}
+	if cpuProcessesIncludePortConflict(processes) {
+		return "Investigate the selected runtime-port process issue and resolve it where it is safe to do so."
+	}
 	if scope == cpuRemediationScopeSnapshot {
 		return "Investigate the current CPU situation and identify what, if anything, is taking CPU time unexpectedly."
 	}
 	return "Investigate the current high CPU usage and reduce it where it is safe to do so."
+}
+
+func cpuProcessesIncludePortConflict(processes []procinspect.CPUProcess) bool {
+	for _, process := range processes {
+		if process.PortConflict || len(process.ConflictPorts) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) cpuRemediationProcessLine(process procinspect.CPUProcess) string {
@@ -861,6 +885,15 @@ func (m Model) cpuRemediationProcessLine(process procinspect.CPUProcess) string 
 	}
 	if len(process.Reasons) > 0 {
 		parts = append(parts, "reasons "+strings.Join(process.Reasons, ", "))
+	}
+	if len(process.ConflictPorts) > 0 {
+		parts = append(parts, "conflict ports "+joinPorts(process.ConflictPorts))
+	}
+	if process.PortConflict && strings.TrimSpace(process.ProjectPath) != "" {
+		parts = append(parts, "expected by "+m.runtimeOwnerLabel(process.ProjectPath))
+	}
+	if process.PortConflict && strings.TrimSpace(process.OwnerProjectPath) != "" {
+		parts = append(parts, "port owner project "+m.runtimeOwnerLabel(process.OwnerProjectPath))
 	}
 	if cwd := strings.TrimSpace(process.CWD); cwd != "" {
 		parts = append(parts, "cwd "+singleLineCPUField(cwd))
@@ -1067,12 +1100,18 @@ func (m Model) renderCPUProcessDetail(width int, process procinspect.CPUProcess)
 	if len(process.Ports) > 0 {
 		fields = append(fields, detailField("Ports", detailValueStyle.Render(joinPorts(process.Ports))))
 	}
+	if len(process.ConflictPorts) > 0 {
+		fields = append(fields, detailField("Conflict", detailDangerStyle.Render("port "+joinPorts(process.ConflictPorts)+" busy")))
+	}
 	lines = appendCPUCompactFields(lines, width, fields...)
 	if len(process.Reasons) > 0 {
 		lines = append(lines, renderCompactCPUTextField("Why", detailWarningStyle, width, strings.Join(process.Reasons, ", ")))
 	}
 	if strings.TrimSpace(process.ProjectPath) != "" {
 		lines = append(lines, renderCompactCPUTextField("Project", detailValueStyle, width, m.runtimeOwnerLabel(process.ProjectPath)))
+	}
+	if process.PortConflict && strings.TrimSpace(process.OwnerProjectPath) != "" {
+		lines = append(lines, renderCompactCPUTextField("Port owner", detailWarningStyle, width, m.runtimeOwnerLabel(process.OwnerProjectPath)))
 	}
 	if strings.TrimSpace(process.CWD) != "" {
 		lines = append(lines, renderCompactCPUTextField("CWD", detailMutedStyle, width, m.displayPathWithHomeTilde(process.CWD)))
@@ -1121,7 +1160,9 @@ func (m Model) cpuProcessOwnerLabel(process procinspect.CPUProcess) string {
 	if process.ManagedRuntime {
 		parts = append(parts, "managed runtime")
 	}
-	if strings.TrimSpace(process.ProjectPath) != "" {
+	if process.PortConflict && strings.TrimSpace(process.OwnerProjectPath) != "" {
+		parts = append(parts, m.runtimeOwnerLabel(process.OwnerProjectPath))
+	} else if strings.TrimSpace(process.ProjectPath) != "" {
 		parts = append(parts, m.runtimeOwnerLabel(process.ProjectPath))
 	}
 	if process.PPID == 1 {

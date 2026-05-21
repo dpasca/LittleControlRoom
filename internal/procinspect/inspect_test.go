@@ -103,6 +103,71 @@ func TestClassifyProcessIgnoresQuietOrphanWithoutPorts(t *testing.T) {
 	}
 }
 
+func TestAppendExpectedPortFindingsFlagsExternalOwner(t *testing.T) {
+	target := "/Users/davide/dev/repos/FraactalMech"
+	owner := "/Users/davide/dev/repos/OtherApp"
+	reports := map[string]*ProjectReport{
+		target: {ProjectPath: target},
+		owner:  {ProjectPath: owner},
+	}
+	process := Process{
+		PID:     301,
+		PPID:    44,
+		PGID:    301,
+		CPU:     0.2,
+		Command: "node server.js",
+		CWD:     owner,
+		Ports:   []int{3001},
+	}
+
+	appendExpectedPortFindings(reports, map[int]Process{301: process}, cleanProjectPaths([]string{target, owner}), map[int]int{301: 44}, 999, ScanOptions{
+		ExpectedPorts: []ExpectedPort{{ProjectPath: target, Port: 3001}},
+	})
+
+	findings := reports[target].Findings
+	if len(findings) != 1 {
+		t.Fatalf("findings len = %d, want 1: %#v", len(findings), findings)
+	}
+	finding := findings[0]
+	if !finding.PortConflict {
+		t.Fatalf("PortConflict = false, want true")
+	}
+	if finding.OwnerProjectPath != owner {
+		t.Fatalf("OwnerProjectPath = %q, want %q", finding.OwnerProjectPath, owner)
+	}
+	if len(finding.ConflictPorts) != 1 || finding.ConflictPorts[0] != 3001 {
+		t.Fatalf("ConflictPorts = %v, want [3001]", finding.ConflictPorts)
+	}
+	joined := strings.Join(finding.Reasons, ",")
+	if !strings.Contains(joined, "port 3001 busy by another project") {
+		t.Fatalf("reasons = %#v, want port conflict reason", finding.Reasons)
+	}
+}
+
+func TestAppendExpectedPortFindingsIgnoresSameManagedProject(t *testing.T) {
+	target := "/Users/davide/dev/repos/FraactalMech"
+	reports := map[string]*ProjectReport{
+		target: {ProjectPath: target},
+	}
+	process := Process{
+		PID:   301,
+		PPID:  44,
+		PGID:  301,
+		CWD:   target,
+		Ports: []int{3001},
+	}
+
+	appendExpectedPortFindings(reports, map[int]Process{301: process}, cleanProjectPaths([]string{target}), map[int]int{301: 44}, 999, ScanOptions{
+		ExpectedPorts:      []ExpectedPort{{ProjectPath: target, Port: 3001}},
+		ManagedPIDs:        map[int]struct{}{301: {}},
+		ManagedPIDProjects: map[int]string{301: target},
+	})
+
+	if len(reports[target].Findings) != 0 {
+		t.Fatalf("findings = %#v, want none for same managed runtime", reports[target].Findings)
+	}
+}
+
 func TestBuildCPUSnapshotSortsAndAnnotatesTopProcesses(t *testing.T) {
 	now := time.Now()
 	snapshot := buildCPUSnapshot([]Process{{

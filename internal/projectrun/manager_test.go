@@ -173,3 +173,27 @@ func TestAppendOutputPreservesFirstAnnouncedRuntimeURLs(t *testing.T) {
 		t.Fatalf("last announced URL = %q, want the last retained URL before cap", snapshot.AnnouncedURLs[len(snapshot.AnnouncedURLs)-1])
 	}
 }
+
+func TestExpectedPortsCombinesRuntimeSignals(t *testing.T) {
+	ports := ExpectedPorts(
+		"PORT=3001 pnpm dev -- --host 0.0.0.0 --port 5173 && echo http://localhost:8080/app",
+		[]string{"http://127.0.0.1:9229/debug"},
+		[]int{3001, 4444},
+	)
+	want := []int{3001, 4444, 5173, 8080, 9229}
+	if len(ports) != len(want) {
+		t.Fatalf("ports = %v, want %v", ports, want)
+	}
+	for i := range want {
+		if ports[i] != want[i] {
+			t.Fatalf("ports = %v, want %v", ports, want)
+		}
+	}
+}
+
+func TestExpectedPortsIgnoresUnrelatedNumbers(t *testing.T) {
+	ports := ExpectedPorts("pnpm test --runInBand --retries 3001", nil, nil)
+	if len(ports) != 0 {
+		t.Fatalf("ports = %v, want none for unrelated command numbers", ports)
+	}
+}

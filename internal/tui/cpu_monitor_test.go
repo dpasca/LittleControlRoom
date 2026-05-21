@@ -9,6 +9,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
+	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -221,6 +222,112 @@ func TestCPUDialogProcessScanPromotesSelectedProjectPIDFlags(t *testing.T) {
 	}
 	if m.cpuDialog.SelectedPID != 49995 {
 		t.Fatalf("selected PID = %d, want fresh project PID", m.cpuDialog.SelectedPID)
+	}
+}
+
+func TestCPUDialogSurfacesRuntimePortConflict(t *testing.T) {
+	target := model.ProjectSummary{Name: "FraactalMech", Path: "/tmp/fraactal", PresentOnDisk: true}
+	owner := model.ProjectSummary{Name: "OtherApp", Path: "/tmp/other", PresentOnDisk: true}
+	m := Model{
+		projects:    []model.ProjectSummary{target, owner},
+		allProjects: []model.ProjectSummary{target, owner},
+		selected:    0,
+		processReports: map[string]procinspect.ProjectReport{
+			target.Path: {
+				ProjectPath: target.Path,
+				Findings: []procinspect.Finding{{
+					Process: procinspect.Process{
+						PID:     4401,
+						PPID:    1,
+						PGID:    4401,
+						CPU:     0.1,
+						Mem:     0.3,
+						Command: "node stale-server.js",
+						CWD:     owner.Path,
+						Ports:   []int{3001},
+					},
+					ProjectPath:      target.Path,
+					Reasons:          []string{"port 3001 busy by another project"},
+					PortConflict:     true,
+					ConflictPorts:    []int{3001},
+					OwnerProjectPath: owner.Path,
+				}},
+			},
+		},
+	}
+
+	cmd := m.openCPUDialog()
+	if cmd == nil {
+		t.Fatalf("/cpu should queue a refresh command")
+	}
+	if m.cpuDialog == nil || m.cpuDialog.View != cpuDialogViewProjectPIDs {
+		t.Fatalf("/cpu should open on project PID flags for port conflict: %#v", m.cpuDialog)
+	}
+	rendered := ansi.Strip(m.renderCPUDialogContent(112, 32))
+	for _, want := range []string{"Project PIDs", "FraactalMech", "PID 4401", "port 3001 busy", "OtherApp"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("CPU port conflict view missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, cmd := m.updateCPUDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got := updated.(Model)
+	if cmd == nil || got.cpuRemediationEditor == nil {
+		t.Fatalf("a should open the process engineer prompt editor")
+	}
+	prompt := got.cpuRemediationEditor.Input.Value()
+	for _, want := range []string{
+		"runtime-port process issue",
+		"PID 4401",
+		"conflict ports 3001",
+		"expected by FraactalMech",
+		"port owner project OtherApp",
+		"whether it explains browser traffic going to the wrong app",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("port conflict prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestProcessScanExpectedPortsUsesRunCommandAndRuntimeSignals(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:       "FraactalMech",
+		Path:       "/tmp/fraactal",
+		RunCommand: "PORT=3001 pnpm dev",
+	}
+	m := Model{
+		projects:    []model.ProjectSummary{project},
+		allProjects: []model.ProjectSummary{project},
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			project.Path: {
+				ProjectPath:   project.Path,
+				Command:       "pnpm dev -- --port 5173",
+				Ports:         []int{9229},
+				AnnouncedURLs: []string{"http://127.0.0.1:8080/app"},
+			},
+		},
+	}
+
+	expected := m.processScanExpectedPorts(project.Path)
+	got := map[int]struct{}{}
+	for _, port := range expected {
+		if port.ProjectPath != project.Path {
+			t.Fatalf("expected project path = %q, want %q", port.ProjectPath, project.Path)
+		}
+		got[port.Port] = struct{}{}
+	}
+	for _, want := range []int{3001, 8080, 9229} {
+		if _, ok := got[want]; !ok {
+			t.Fatalf("expected ports = %#v, missing %d", expected, want)
+		}
+	}
+}
+
+func TestProcessWarningFooterMakesPortConflictObvious(t *testing.T) {
+	label := processWarningFooterLabel(processWarningStats{Total: 1, PortListeners: 1, PortConflicts: 1})
+	if label != "PORT CONFLICT 1 PIDs 1" {
+		t.Fatalf("footer label = %q, want explicit port conflict", label)
 	}
 }
 

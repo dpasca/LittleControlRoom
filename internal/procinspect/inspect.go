@@ -35,12 +35,21 @@ type Process struct {
 	Ports   []int
 }
 
+type ExpectedPort struct {
+	ProjectPath string
+	Port        int
+	Source      string
+}
+
 type Finding struct {
 	Process
 	ProjectPath       string
 	Reasons           []string
 	ManagedRuntime    bool
 	OwnedByCurrentApp bool
+	PortConflict      bool
+	ConflictPorts     []int
+	OwnerProjectPath  string
 }
 
 type ProjectReport struct {
@@ -55,6 +64,9 @@ type CPUProcess struct {
 	Reasons           []string
 	ManagedRuntime    bool
 	OwnedByCurrentApp bool
+	PortConflict      bool
+	ConflictPorts     []int
+	OwnerProjectPath  string
 }
 
 type CPUSnapshot struct {
@@ -66,13 +78,16 @@ type CPUSnapshot struct {
 }
 
 type ScanOptions struct {
-	ProjectPaths       []string
-	ManagedPIDs        map[int]struct{}
-	ManagedPGIDs       map[int]struct{}
-	OwnPID             int
-	HighCPUThreshold   float64
-	OrphanCPUThreshold float64
-	Now                time.Time
+	ProjectPaths        []string
+	ExpectedPorts       []ExpectedPort
+	ManagedPIDs         map[int]struct{}
+	ManagedPGIDs        map[int]struct{}
+	ManagedPIDProjects  map[int]string
+	ManagedPGIDProjects map[int]string
+	OwnPID              int
+	HighCPUThreshold    float64
+	OrphanCPUThreshold  float64
+	Now                 time.Time
 }
 
 type CPUScanOptions struct {
@@ -153,12 +168,16 @@ func ScanProjects(ctx context.Context, opts ScanOptions) ([]ProjectReport, error
 		}
 		reportsByProject[projectPath].Findings = append(reportsByProject[projectPath].Findings, finding)
 	}
+	appendExpectedPortFindings(reportsByProject, byPID, projectPaths, ppids, ownPID, opts)
 
 	reports := make([]ProjectReport, 0, len(reportsByProject))
 	for _, projectPath := range projectPaths {
 		report := reportsByProject[projectPath]
 		sort.SliceStable(report.Findings, func(i, j int) bool {
 			left, right := report.Findings[i], report.Findings[j]
+			if left.PortConflict != right.PortConflict {
+				return left.PortConflict
+			}
 			if left.CPU != right.CPU {
 				return left.CPU > right.CPU
 			}
@@ -306,6 +325,183 @@ func classifyProcess(process Process, projectPath string, ppids map[int]int, own
 		finding.Reasons = append(finding.Reasons, "listening on TCP ports")
 	}
 	return finding
+}
+
+func appendExpectedPortFindings(reportsByProject map[string]*ProjectReport, byPID map[int]Process, projectPaths []string, ppids map[int]int, ownPID int, opts ScanOptions) {
+	expectedPorts := cleanExpectedPorts(opts.ExpectedPorts)
+	if len(expectedPorts) == 0 {
+		return
+	}
+
+	pidsByPort := map[int][]int{}
+	for _, process := range byPID {
+		for _, port := range process.Ports {
+			if port <= 0 {
+				continue
+			}
+			pidsByPort[port] = append(pidsByPort[port], process.PID)
+		}
+	}
+	for port, pids := range pidsByPort {
+		sort.Ints(pids)
+		pidsByPort[port] = dedupeSortedInts(pids)
+	}
+
+	for _, expected := range expectedPorts {
+		report := reportsByProject[expected.ProjectPath]
+		if report == nil {
+			continue
+		}
+		for _, pid := range pidsByPort[expected.Port] {
+			process, ok := byPID[pid]
+			if !ok {
+				continue
+			}
+			ownerProjectPath := managedProjectForProcess(process, opts.ManagedPIDProjects, opts.ManagedPGIDProjects)
+			if ownerProjectPath == expected.ProjectPath {
+				continue
+			}
+			if ownerProjectPath == "" && process.CWD != "" {
+				if projectPath, ok := deepestProjectForPath(process.CWD, projectPaths); ok {
+					ownerProjectPath = projectPath
+				}
+			}
+
+			finding := Finding{
+				Process:           process,
+				ProjectPath:       expected.ProjectPath,
+				Reasons:           []string{portConflictReason(expected.Port, ownerProjectPath, expected.ProjectPath)},
+				ManagedRuntime:    processIsManaged(process, opts.ManagedPIDs, opts.ManagedPGIDs),
+				OwnedByCurrentApp: processDescendsFrom(process.PID, ownPID, ppids),
+				PortConflict:      true,
+				ConflictPorts:     []int{expected.Port},
+				OwnerProjectPath:  ownerProjectPath,
+			}
+			mergeFinding(report, finding)
+		}
+	}
+}
+
+func cleanExpectedPorts(values []ExpectedPort) []ExpectedPort {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]ExpectedPort, 0, len(values))
+	for _, value := range values {
+		projectPath := filepath.Clean(strings.TrimSpace(value.ProjectPath))
+		if projectPath == "" || projectPath == "." || value.Port <= 0 || value.Port > 65535 {
+			continue
+		}
+		key := projectPath + "\x00" + strconv.Itoa(value.Port)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, ExpectedPort{
+			ProjectPath: projectPath,
+			Port:        value.Port,
+			Source:      strings.TrimSpace(value.Source),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ProjectPath != out[j].ProjectPath {
+			return out[i].ProjectPath < out[j].ProjectPath
+		}
+		return out[i].Port < out[j].Port
+	})
+	return out
+}
+
+func mergeFinding(report *ProjectReport, finding Finding) {
+	if report == nil || finding.PID <= 0 {
+		return
+	}
+	for i := range report.Findings {
+		if report.Findings[i].PID != finding.PID {
+			continue
+		}
+		report.Findings[i].Reasons = appendUniqueStrings(report.Findings[i].Reasons, finding.Reasons...)
+		report.Findings[i].Ports = dedupeSortedInts(append(report.Findings[i].Ports, finding.Ports...))
+		report.Findings[i].ManagedRuntime = report.Findings[i].ManagedRuntime || finding.ManagedRuntime
+		report.Findings[i].OwnedByCurrentApp = report.Findings[i].OwnedByCurrentApp || finding.OwnedByCurrentApp
+		report.Findings[i].PortConflict = report.Findings[i].PortConflict || finding.PortConflict
+		report.Findings[i].ConflictPorts = dedupeSortedInts(append(report.Findings[i].ConflictPorts, finding.ConflictPorts...))
+		if strings.TrimSpace(report.Findings[i].OwnerProjectPath) == "" {
+			report.Findings[i].OwnerProjectPath = finding.OwnerProjectPath
+		}
+		return
+	}
+	report.Findings = append(report.Findings, finding)
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values)+len(additions))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	for _, value := range additions {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func portConflictReason(port int, ownerProjectPath, targetProjectPath string) string {
+	switch {
+	case ownerProjectPath != "" && ownerProjectPath != targetProjectPath:
+		return fmt.Sprintf("port %d busy by another project", port)
+	case ownerProjectPath == targetProjectPath:
+		return fmt.Sprintf("port %d busy by project process", port)
+	default:
+		return fmt.Sprintf("port %d busy", port)
+	}
+}
+
+func processIsManaged(process Process, managedPIDs, managedPGIDs map[int]struct{}) bool {
+	if _, ok := managedPIDs[process.PID]; ok {
+		return true
+	}
+	if _, ok := managedPGIDs[process.PGID]; ok && process.PGID > 0 {
+		return true
+	}
+	return false
+}
+
+func managedProjectForProcess(process Process, managedPIDProjects, managedPGIDProjects map[int]string) string {
+	if projectPath := cleanManagedProjectPath(managedPIDProjects[process.PID]); projectPath != "" {
+		return projectPath
+	}
+	if process.PGID > 0 {
+		if projectPath := cleanManagedProjectPath(managedPGIDProjects[process.PGID]); projectPath != "" {
+			return projectPath
+		}
+	}
+	return ""
+}
+
+func cleanManagedProjectPath(projectPath string) string {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "." {
+		return ""
+	}
+	return projectPath
 }
 
 func processDescendsFrom(pid, ancestor int, ppids map[int]int) bool {

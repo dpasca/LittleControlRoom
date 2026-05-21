@@ -10,6 +10,7 @@ import (
 const (
 	runtimeRunningAttentionWeight   = 10
 	processWarningAttentionWeight   = 45
+	processPortConflictWeight       = 105
 	processHotCPUAttentionWeight    = 90
 	embeddedApprovalAttentionWeight = 120
 	embeddedBrowserAttentionWeight  = 115
@@ -82,7 +83,9 @@ func (m Model) projectProcessAttentionReason(projectPath string) *model.Attentio
 	}
 
 	weight := processWarningAttentionWeight
-	if stats.HighCPU > 0 {
+	if stats.PortConflicts > 0 {
+		weight = processPortConflictWeight
+	} else if stats.HighCPU > 0 {
 		weight = processHotCPUAttentionWeight
 	}
 	if stats.PortListeners > 0 && weight < processHotCPUAttentionWeight {
