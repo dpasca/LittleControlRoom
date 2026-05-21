@@ -49,6 +49,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.localModelPickerVisible = false
 	m.settingsLCAgentProviderVisible = false
 	m.settingsLCAgentProviderSelected = 0
+	m.settingsLCAgentModelPicker = nil
 	m.setupStep = setupStepProjectProvider
 	m.setupFocusedRole = setupRoleProjectReports
 	m.setupConfigMode = false
@@ -80,6 +81,7 @@ func (m *Model) closeSetupMode(status string) {
 	m.localModelPickerVisible = false
 	m.settingsLCAgentProviderVisible = false
 	m.settingsLCAgentProviderSelected = 0
+	m.settingsLCAgentModelPicker = nil
 	m.blurSettingsFields()
 	if status != "" {
 		m.status = status
@@ -173,6 +175,9 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
 			return m.openSettingsPickerForField(m.setupSelectedConfigFieldIndex())
+		}
+		if settingsFieldUsesLCAgentModelPicker(m.setupSelectedConfigFieldIndex()) {
+			return m.openSettingsLCAgentModelPicker()
 		}
 		return m.setupAdvance()
 	}

@@ -407,6 +407,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsBrowserPickerSelected = 0
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
+	m.settingsLCAgentModelPicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
 	m.localModelPickerVisible = false
@@ -437,6 +438,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsBrowserPickerSelected = 0
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
+	m.settingsLCAgentModelPicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
 	m.localModelPickerVisible = false
@@ -475,6 +477,7 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsBrowserPickerSelected = 0
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
+	m.settingsLCAgentModelPicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
 	if status != "" {
@@ -511,6 +514,9 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if settingsFieldUsesPicker(m.settingsSelected) {
 			return m.openSettingsPickerForField(m.settingsSelected)
+		}
+		if settingsFieldUsesLCAgentModelPicker(m.settingsSelected) {
+			return m.openSettingsLCAgentModelPicker()
 		}
 		m.status = "Press ctrl+s to save settings."
 		return m, nil
@@ -2428,7 +2434,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Main model",
-			"Optional exact model ID for experimental LCAgent runs. Leave blank to use the provider default.",
+			"Optional exact model ID for experimental LCAgent runs. Press Enter to check/fetch provider models when available, or type an exact custom ID. Leave blank to use the provider default.",
 			settings.EmbeddedLCAgentModel,
 			256,
 			"Default: "+lcagentDefaultModelForProvider(firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")),
@@ -2485,7 +2491,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Utility model",
-			"Secondary model used for helper work such as condensing oversized search results into read/search hints.",
+			"Secondary model used for helper work such as condensing oversized search results into read/search hints. Press Enter to check/fetch provider models when available.",
 			settings.LCAgentUtilityModel,
 			256,
 			"Default: "+settingsLCAgentUtilityDefaultLabel(settings),
@@ -2818,10 +2824,10 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 	case settingsFieldLCAgentModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "The Main Model will request " + model + "."
+			return "The Main Model will request " + model + ". Press Enter to check this provider's model list when available."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses the Main Model default: " + settingsLCAgentMainModel(settings) + "."
+		return "Blank uses the Main Model default: " + settingsLCAgentMainModel(settings) + ". Press Enter to fetch/select provider models when available, or type an exact ID."
 	case settingsFieldLCAgentReasoning:
 		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
 			return "The Main Model will request reasoning effort " + effort + " when the selected provider supports it."
@@ -2846,10 +2852,10 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 	case settingsFieldLCAgentUtilityModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "The Utility Model will request " + model + "."
+			return "The Utility Model will request " + model + ". Press Enter to check this provider's model list when available."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses " + settingsLCAgentUtilityDefaultLabel(settings) + "."
+		return "Blank uses " + settingsLCAgentUtilityDefaultLabel(settings) + ". Press Enter to fetch/select provider models when available, or type an exact ID."
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":

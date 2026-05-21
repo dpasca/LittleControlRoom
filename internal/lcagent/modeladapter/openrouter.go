@@ -151,6 +151,12 @@ type Completion struct {
 	UsageSummary model.LLMUsage
 }
 
+type ListedModel struct {
+	ID          string
+	Name        string
+	Description string
+}
+
 type CompletionOptions struct {
 	MaxCompletionTokens int
 	ReasoningMaxTokens  int
@@ -282,6 +288,91 @@ func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile)
 
 func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolDefinition) (Completion, error) {
 	return c.CompleteWithOptions(ctx, messages, tools, CompletionOptions{})
+}
+
+func (c *Client) ListModels(ctx context.Context) ([]ListedModel, error) {
+	if c == nil {
+		return nil, fmt.Errorf("provider client is not configured")
+	}
+	endpoint, err := url.JoinPath(c.baseURL, "models")
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(c.apiKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	for key, value := range c.extraHeaders {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, newProviderRequestError(c.providerLabel(), err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	if err != nil {
+		return nil, newProviderRequestError(c.providerLabel(), err)
+	}
+	var parsed modelListResponse
+	decodeErr := json.Unmarshal(data, &parsed)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if decodeErr != nil {
+			if body := responseSnippet(data); body != "" {
+				return nil, newProviderHTTPError(c.providerLabel(), resp.StatusCode, body, resp.Header.Get("Retry-After"))
+			}
+			return nil, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
+		}
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return nil, newProviderHTTPError(c.providerLabel(), resp.StatusCode, parsed.Error.Message, resp.Header.Get("Retry-After"))
+		}
+		return nil, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
+	}
+	if decodeErr != nil {
+		return nil, newProviderDecodeError(c.providerLabel(), decodeErr)
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return nil, newProviderBodyError(c.providerLabel(), parsed.Error.Message, parsed.Error.Type)
+	}
+	models := make([]ListedModel, 0, len(parsed.Data))
+	seen := map[string]struct{}{}
+	for _, item := range parsed.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		key := strings.ToLower(id)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		models = append(models, ListedModel{
+			ID:          id,
+			Name:        strings.TrimSpace(item.Name),
+			Description: strings.TrimSpace(item.Description),
+		})
+	}
+	if len(models) == 0 {
+		return nil, newProviderSchemaError(c.providerLabel(), "model list response contained no models")
+	}
+	return models, nil
+}
+
+type modelListResponse struct {
+	Data []struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	} `json:"data"`
+	Error *struct {
+		Message string `json:"message"`
+		Type    string `json:"type"`
+		Code    any    `json:"code"`
+	} `json:"error,omitempty"`
 }
 
 func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, tools []ToolDefinition, opts CompletionOptions) (Completion, error) {
