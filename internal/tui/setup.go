@@ -470,6 +470,10 @@ func (m Model) setupConfigFieldIndexes() []int {
 		settings := m.setupDraftSettingsForProviderChoices()
 		fields := []int{
 			settingsFieldLCAgentProvider,
+			settingsFieldLCAgentModel,
+			settingsFieldLCAgentReasoning,
+			settingsFieldLCAgentUtilityProvider,
+			settingsFieldLCAgentUtilityModel,
 		}
 		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
 			fields = append(fields, credentialField)
@@ -477,13 +481,7 @@ func (m Model) setupConfigFieldIndexes() []int {
 		if utilityCredentialField := settingsLCAgentUtilityCredentialField(settings); utilityCredentialField >= 0 && !intSliceContains(fields, utilityCredentialField) {
 			fields = append(fields, utilityCredentialField)
 		}
-		fields = append(fields,
-			settingsFieldLCAgentModel,
-			settingsFieldLCAgentReasoning,
-			settingsFieldLCAgentUtilityProvider,
-			settingsFieldLCAgentUtilityModel,
-			settingsFieldLCAgentWebSearchBackend,
-		)
+		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
 		fields = append(fields,
 			settingsFieldLCAgentAuto,

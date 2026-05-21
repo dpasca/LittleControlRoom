@@ -26,8 +26,7 @@ const (
 	lcagentDefaultToolProfile     = "balanced"
 	lcagentDefaultContextProfile  = "balanced"
 	lcagentDefaultRequestTimeout  = 10 * time.Minute
-	lcagentDefaultUtilityProvider = "openrouter"
-	lcagentDefaultUtilityModel    = "deepseek/deepseek-v4-flash"
+	lcagentDefaultUtilityProvider = "main"
 	lcagentDefaultWebSearch       = "off"
 )
 
@@ -129,8 +128,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		toolProfile:       toolProfile,
 		contextProfile:    contextProfile,
 		requestTimeout:    requestTimeout,
-		utilityProvider:   lcagentUtilityProviderValue(req.LCAgentUtilityProvider),
-		utilityModel:      strings.TrimSpace(req.LCAgentUtilityModel),
+		utilityProvider:   lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider),
+		utilityModel:      lcagentResolvedUtilityModel(routePreset, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel),
 		webSearchBackend:  lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:   strings.TrimSpace(req.LCAgentWebSearchAPIKey),
 		webSearchEngineID: strings.TrimSpace(req.LCAgentWebSearchEngineID),
@@ -1032,12 +1031,36 @@ func lcagentWebSearchBackendValue(configured string) string {
 
 func lcagentUtilityProviderValue(configured string) string {
 	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_UTILITY_PROVIDER"))))
+	value = strings.ReplaceAll(value, "_", "-")
 	switch value {
+	case "main", "same", "same-as-main":
+		return lcagentDefaultUtilityProvider
 	case "off", "openai", "deepseek", "moonshot":
 		return value
+	case "openrouter":
+		return "openrouter"
 	default:
 		return lcagentDefaultUtilityProvider
 	}
+}
+
+func lcagentResolvedUtilityProvider(routePreset string, mainProvider string, configured string) string {
+	utilityProvider := lcagentUtilityProviderValue(configured)
+	if utilityProvider != lcagentDefaultUtilityProvider {
+		return utilityProvider
+	}
+	return firstNonEmpty(lcagentRoutePresetProvider(routePreset), mainProvider, lcagentDefaultProvider)
+}
+
+func lcagentResolvedUtilityModel(routePreset string, mainModel string, configuredProvider string, configuredModel string) string {
+	model := strings.TrimSpace(configuredModel)
+	if model != "" {
+		return model
+	}
+	if lcagentUtilityProviderValue(configuredProvider) != lcagentDefaultUtilityProvider {
+		return ""
+	}
+	return firstNonEmpty(lcagentRoutePresetModel(routePreset), mainModel)
 }
 
 func (s *lcagentSession) webSearchWarning() string {

@@ -195,12 +195,14 @@ func settingsSections() []settingsSection {
 			hint:  "Configure the experimental LCR-native worker separately from project reports and Boss chat.",
 			fieldOrder: []int{
 				settingsFieldLCAgentProvider,
+				settingsFieldLCAgentModel,
+				settingsFieldLCAgentReasoning,
+				settingsFieldLCAgentUtilityProvider,
+				settingsFieldLCAgentUtilityModel,
 				settingsFieldOpenRouterAPIKey,
 				settingsFieldOpenAIAPIKey,
 				settingsFieldDeepSeekAPIKey,
 				settingsFieldMoonshotAPIKey,
-				settingsFieldLCAgentModel,
-				settingsFieldLCAgentReasoning,
 				settingsFieldLCAgentWebSearchBackend,
 				settingsFieldLCAgentWebSearchAPIKey,
 				settingsFieldLCAgentWebSearchEngineID,
@@ -210,8 +212,6 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentToolProfile,
 				settingsFieldLCAgentContextProfile,
 				settingsFieldLCAgentRequestTimeout,
-				settingsFieldLCAgentUtilityProvider,
-				settingsFieldLCAgentUtilityModel,
 				settingsFieldLCAgentPath,
 				settingsFieldLCAgentEnvFile,
 				settingsFieldLCAgentRoutePreset,
@@ -903,7 +903,7 @@ func (m Model) settingsFieldVisible(index int) bool {
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendOllama)
 	case settingsFieldLCAgentUtilityModel:
-		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off"
+		return settingsLCAgentUtilityProviderValue(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off"
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -931,12 +931,13 @@ func settingsOpenAIKeyFieldRelevant(settings config.EditableSettings) bool {
 }
 
 func settingsLCAgentCredentialFieldRelevant(settings config.EditableSettings, provider string) bool {
-	selected := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+	selected := settingsLCAgentMainProvider(settings)
 	if strings.EqualFold(strings.TrimSpace(selected), strings.TrimSpace(provider)) {
 		return true
 	}
-	utilityProvider := firstNonEmptyTrimmed(settings.LCAgentUtilityProvider, "openrouter")
+	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
 	return !strings.EqualFold(utilityProvider, "off") &&
+		!strings.EqualFold(utilityProvider, "main") &&
 		strings.EqualFold(strings.TrimSpace(utilityProvider), strings.TrimSpace(provider))
 }
 
@@ -1001,6 +1002,10 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 	case settingsDrilldownLCAgent:
 		fields := []int{
 			settingsFieldLCAgentProvider,
+			settingsFieldLCAgentModel,
+			settingsFieldLCAgentReasoning,
+			settingsFieldLCAgentUtilityProvider,
+			settingsFieldLCAgentUtilityModel,
 		}
 		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
 			fields = append(fields, credentialField)
@@ -1008,13 +1013,7 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		if utilityCredentialField := settingsLCAgentUtilityCredentialField(settings); utilityCredentialField >= 0 && !intSliceContains(fields, utilityCredentialField) {
 			fields = append(fields, utilityCredentialField)
 		}
-		fields = append(fields,
-			settingsFieldLCAgentModel,
-			settingsFieldLCAgentReasoning,
-			settingsFieldLCAgentUtilityProvider,
-			settingsFieldLCAgentUtilityModel,
-			settingsFieldLCAgentWebSearchBackend,
-		)
+		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
 		return fields
 	case settingsDrilldownProjectScope:
@@ -1043,13 +1042,12 @@ func settingsProviderConnectionFields(backend config.AIBackend) []int {
 }
 
 func settingsLCAgentCredentialField(settings config.EditableSettings) int {
-	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
-	return settingsLCAgentCredentialFieldForProvider(provider)
+	return settingsLCAgentCredentialFieldForProvider(settingsLCAgentMainProvider(settings))
 }
 
 func settingsLCAgentUtilityCredentialField(settings config.EditableSettings) int {
-	provider := firstNonEmptyTrimmed(settings.LCAgentUtilityProvider, "openrouter")
-	if strings.EqualFold(provider, "off") {
+	provider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
+	if strings.EqualFold(provider, "off") || strings.EqualFold(provider, "main") {
 		return -1
 	}
 	return settingsLCAgentCredentialFieldForProvider(provider)
@@ -1507,7 +1505,7 @@ func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
 	case settingsDrilldownBossChat:
 		return "Choose a realtime backend for /boss. This deliberately excludes Codex, OpenCode, and Claude Code because engineer sessions can be too slow for chat."
 	case settingsDrilldownLCAgent:
-		return "Configure the LCR-native worker essentials: provider, model, credentials, and web search. Use the LCAgent section for runtime policy and advanced launch fields."
+		return "Configure the LCR-native worker essentials: Main Model, Utility Model, credentials, and web search. Use the LCAgent section for runtime policy and advanced launch fields."
 	case settingsDrilldownProjectScope:
 		return "Choose where projects are discovered and which folders or names stay hidden."
 	default:
@@ -1525,7 +1523,7 @@ func (m Model) renderSettingsDrilldownStatus(width int) []string {
 		choice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
 		return []string{renderWrappedDetailField("Current", detailValueStyle, width, firstNonEmptyTrimmed(choice.NextStep, choice.Detail))}
 	case settingsDrilldownLCAgent:
-		provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+		provider := settingsLCAgentMainProvider(settings)
 		state, style, detail := lcagentCredentialSmokeCheck(settings)
 		label := settingsLCAgentProviderOptionLabel(provider) + " connection"
 		return []string{detailField(label, style.Render(state)+detailMutedStyle.Render(" - "+detail))}
@@ -1566,11 +1564,11 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 	case settingsDrilldownLCAgent:
 		switch fieldIndex {
 		case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
-			return "Model Provider"
+			return "Main Model"
 		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey:
 			return "Provider Credentials"
 		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentUtilityModel:
-			return "Search Refinement"
+			return "Utility Model"
 		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
 			return "Web Search"
 		case settingsFieldLCAgentAuto, settingsFieldLCAgentAdminWrite, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
@@ -1732,8 +1730,8 @@ func settingsLCAgentStepState(settings config.EditableSettings) (string, string,
 		state, style, detail := lcagentCredentialSmokeCheck(settings)
 		return "preset " + preset, state, style, detail
 	}
-	provider := firstNonEmptyTrimmed(settings.LCAgentProvider, "openrouter")
-	model := firstNonEmptyTrimmed(settings.EmbeddedLCAgentModel, lcagentDefaultModelForProvider(provider))
+	provider := settingsLCAgentMainProvider(settings)
+	model := settingsLCAgentMainModel(settings)
 	state, style, detail := lcagentCredentialSmokeCheck(settings)
 	value := provider + " / " + model
 	if state == "optional" {
@@ -1743,7 +1741,7 @@ func settingsLCAgentStepState(settings config.EditableSettings) (string, string,
 }
 
 func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipgloss.Style, string) {
-	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+	provider := settingsLCAgentMainProvider(settings)
 	keyName := lcagentProviderAPIKeyName(provider)
 	if keyName == "" {
 		return "unknown", detailWarningStyle, "Unknown LCAgent provider " + provider + "."
@@ -1809,6 +1807,19 @@ func lcagentProviderForRoutePreset(preset string) string {
 	}
 }
 
+func lcagentModelForRoutePreset(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "quality":
+		return "gpt-5.5"
+	case "balanced":
+		return "deepseek/deepseek-v4-pro"
+	case "cheap-scout", "cheap", "scout":
+		return "deepseek/deepseek-v4-flash"
+	default:
+		return ""
+	}
+}
+
 func lcagentProviderAPIKeyName(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "", "openrouter":
@@ -1837,16 +1848,39 @@ func lcagentDefaultModelForProvider(provider string) string {
 	}
 }
 
-func lcagentDefaultUtilityModelForProvider(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "deepseek":
-		return "deepseek-v4-flash"
-	case "openai":
-		return "gpt-5.4-mini"
-	case "moonshot":
-		return "kimi-k2.6"
+func settingsLCAgentMainProvider(settings config.EditableSettings) string {
+	return firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
+}
+
+func settingsLCAgentMainModel(settings config.EditableSettings) string {
+	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+		if model := strings.TrimSpace(settings.EmbeddedLCAgentModel); model != "" {
+			return model
+		}
+	}
+	return firstNonEmptyTrimmed(lcagentModelForRoutePreset(settings.LCAgentRoutePreset), lcagentDefaultModelForProvider(settingsLCAgentMainProvider(settings)))
+}
+
+func settingsLCAgentUtilityDefaultLabel(settings config.EditableSettings) string {
+	provider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
+	if provider == "off" {
+		return "off"
+	}
+	if provider == "main" {
+		return "same as Main Model (" + settingsLCAgentMainProvider(settings) + " / " + settingsLCAgentMainModel(settings) + ")"
+	}
+	return lcagentDefaultModelForProvider(provider)
+}
+
+func settingsLCAgentUtilityProviderValue(raw string) string {
+	normalized := normalizeSettingsChoice(raw)
+	switch normalized {
+	case "", "main", "same", "same-as-main":
+		return "main"
+	case "off", "openrouter", "openai", "deepseek", "moonshot":
+		return normalized
 	default:
-		return "deepseek/deepseek-v4-flash"
+		return normalized
 	}
 }
 
@@ -2162,11 +2196,9 @@ func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
 	case settingsFieldBossUtilityModel:
 		return "Default: " + settingsBossUtilityDefaultLabel(settings)
 	case settingsFieldLCAgentModel:
-		provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
-		return "Default: " + lcagentDefaultModelForProvider(provider)
+		return "Default: " + settingsLCAgentMainModel(settings)
 	case settingsFieldLCAgentUtilityModel:
-		provider := firstNonEmptyTrimmed(settings.LCAgentUtilityProvider, "openrouter")
-		return "Default: " + lcagentDefaultUtilityModelForProvider(provider)
+		return "Default: " + settingsLCAgentUtilityDefaultLabel(settings)
 	default:
 		return ""
 	}
@@ -2202,7 +2234,7 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 	case settingsFieldAIBackend, settingsFieldBossChatBackend:
 		action = "Next: press Enter to open the focused setup panel."
 	case settingsFieldLCAgentProvider:
-		action = "Next: press Enter to configure LCAgent provider, model, credentials, and web search."
+		action = "Next: press Enter to configure LCAgent Main Model, Utility Model, credentials, and web search."
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(settingsFieldOpenAIAPIKey)); suffix != "" {
 			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change API keys."
@@ -2213,7 +2245,7 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(m.settingsSelected)); suffix != "" {
 			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change this provider key."
 		} else {
-			action = "Next: paste the selected LCAgent provider key, or go back and choose a different provider."
+			action = "Next: paste the selected LCAgent model provider key, or go back and choose a different provider."
 		}
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
 		action = "Next: adjust MLX only if your local endpoint or model is not the default, then save."
@@ -2388,14 +2420,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
-			"LCAgent provider",
-			"Press Enter to choose the experimental LCAgent provider.",
+			"Main model provider",
+			"Press Enter to choose the provider for the main LCAgent model.",
 			settings.LCAgentProvider,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsFieldWithPlaceholder(
-			"LCAgent model",
+			"Main model",
 			"Optional exact model ID for experimental LCAgent runs. Leave blank to use the provider default.",
 			settings.EmbeddedLCAgentModel,
 			256,
@@ -2403,7 +2435,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
-			"LCAgent reasoning",
+			"Main reasoning",
 			"Optional reasoning effort for experimental LCAgent runs, such as low. Leave blank to omit provider-specific effort controls.",
 			settings.EmbeddedLCAgentReasoning,
 			32,
@@ -2445,18 +2477,18 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
-			"LCAgent utility provider",
-			"Press Enter to choose the provider for cheap search-result refinement, or turn utility refinement off.",
+			"Utility model provider",
+			"Press Enter to choose the provider for helper-model work, use the Main Model, or turn utility refinement off.",
 			settings.LCAgentUtilityProvider,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsFieldWithPlaceholder(
-			"LCAgent utility model",
-			"Secondary model used only to condense oversized search results into read/search hints.",
+			"Utility model",
+			"Secondary model used for helper work such as condensing oversized search results into read/search hints.",
 			settings.LCAgentUtilityModel,
 			256,
-			"Default: deepseek/deepseek-v4-flash",
+			"Default: "+settingsLCAgentUtilityDefaultLabel(settings),
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
@@ -2774,46 +2806,50 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentProvider:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "", "openrouter":
-			return "LCAgent will use OpenRouter-compatible tool calls and model IDs such as deepseek/deepseek-v4-pro."
+			return "The Main Model will use OpenRouter-compatible tool calls and model IDs such as deepseek/deepseek-v4-pro."
 		case "deepseek":
-			return "LCAgent will call DeepSeek directly and use direct DeepSeek model IDs."
+			return "The Main Model will call DeepSeek directly and use direct DeepSeek model IDs."
 		case "moonshot":
-			return "LCAgent will call Moonshot directly and use Kimi model IDs."
+			return "The Main Model will call Moonshot directly and use Kimi model IDs."
 		case "openai":
-			return "LCAgent will call the OpenAI Responses API directly."
+			return "The Main Model will call the OpenAI Responses API directly."
 		default:
 			return field.hint
 		}
 	case settingsFieldLCAgentModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "LCAgent will request model " + model + "."
+			return "The Main Model will request " + model + "."
 		}
-		return "Blank uses the selected provider default: " + lcagentDefaultModelForProvider(m.settingsFieldValue(settingsFieldLCAgentProvider)) + "."
+		settings := m.settingsDraftForInferenceStatus()
+		return "Blank uses the Main Model default: " + settingsLCAgentMainModel(settings) + "."
 	case settingsFieldLCAgentReasoning:
 		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
-			return "LCAgent will request reasoning effort " + effort + " when the selected provider supports it."
+			return "The Main Model will request reasoning effort " + effort + " when the selected provider supports it."
 		}
 		return field.hint
 	case settingsFieldLCAgentUtilityProvider:
-		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
+		switch settingsLCAgentUtilityProviderValue(field.input.Value()) {
+		case "main":
+			return "The Utility Model will use the same provider and model as the Main Model."
 		case "off":
 			return "Oversized search results will not use a utility model; deterministic compact search still works when requested."
-		case "", "openrouter":
-			return "Oversized search results can be condensed through OpenRouter, defaulting to DeepSeek V4 Flash."
+		case "openrouter":
+			return "The Utility Model will use OpenRouter. Leave the model blank for the OpenRouter Main Model default."
 		case "deepseek":
-			return "Oversized search results can be condensed through direct DeepSeek with a low-cost utility model."
+			return "The Utility Model will use direct DeepSeek. Leave the model blank for the DeepSeek Main Model default."
 		case "openai":
-			return "Oversized search results can be condensed through direct OpenAI using the configured utility model."
+			return "The Utility Model will use direct OpenAI. Leave the model blank for the OpenAI Main Model default."
 		case "moonshot":
-			return "Oversized search results can be condensed through direct Moonshot/Kimi."
+			return "The Utility Model will use direct Moonshot/Kimi."
 		default:
 			return field.hint
 		}
 	case settingsFieldLCAgentUtilityModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Oversized search-result refinement will request utility model " + model + "."
+			return "The Utility Model will request " + model + "."
 		}
-		return "Blank uses the utility provider default; for OpenRouter that is deepseek/deepseek-v4-flash."
+		settings := m.settingsDraftForInferenceStatus()
+		return "Blank uses " + settingsLCAgentUtilityDefaultLabel(settings) + "."
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":

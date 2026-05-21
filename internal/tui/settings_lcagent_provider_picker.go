@@ -40,6 +40,12 @@ func settingsLCAgentProviderOptions() []settingsLCAgentProviderOption {
 func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
 	return []settingsLCAgentProviderOption{
 		{
+			Value:       "main",
+			Label:       "Same as Main",
+			Summary:     "Use the Main Model provider and model for utility work.",
+			Description: "Default utility route. Search-result refinement and other helper work use the same provider and model selected for the Main Model unless you override the Utility Model field.",
+		},
+		{
 			Value:       "off",
 			Label:       "Off",
 			Summary:     "Disable utility-model search refinement.",
@@ -48,26 +54,26 @@ func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
 		{
 			Value:       "openrouter",
 			Label:       "OpenRouter",
-			Summary:     "Use OpenRouter for low-cost search-result refinement.",
-			Description: "Default utility route. Uses the saved OpenRouter API key and defaults to deepseek/deepseek-v4-flash when the utility model is blank.",
+			Summary:     "Use OpenRouter for utility work.",
+			Description: "Uses the saved OpenRouter API key. Leave Utility Model blank to use the standard OpenRouter LCAgent model default.",
 		},
 		{
 			Value:       "openai",
 			Label:       "OpenAI",
-			Summary:     "Use the direct OpenAI route for utility refinement.",
-			Description: "Useful if you prefer direct OpenAI billing and behavior for small structured search summaries.",
+			Summary:     "Use the direct OpenAI route for utility work.",
+			Description: "Useful if you prefer direct OpenAI billing and behavior for small structured helper calls.",
 		},
 		{
 			Value:       "deepseek",
 			Label:       "DeepSeek",
-			Summary:     "Use the direct DeepSeek route for utility refinement.",
-			Description: "Uses the saved DeepSeek API key and defaults to deepseek-v4-flash when the utility model is blank.",
+			Summary:     "Use the direct DeepSeek route for utility work.",
+			Description: "Uses the saved DeepSeek API key. Leave Utility Model blank to use the standard DeepSeek LCAgent model default.",
 		},
 		{
 			Value:       "moonshot",
 			Label:       "Moonshot",
-			Summary:     "Use the direct Moonshot/Kimi route for utility refinement.",
-			Description: "Uses the saved Moonshot API key and defaults to the normal Moonshot LCAgent model when the utility model is blank.",
+			Summary:     "Use the direct Moonshot/Kimi route for utility work.",
+			Description: "Uses the saved Moonshot API key. Leave Utility Model blank to use the standard Moonshot LCAgent model default.",
 		},
 	}
 }
@@ -84,9 +90,9 @@ func (m Model) openSettingsLCAgentProviderPicker() (tea.Model, tea.Cmd) {
 	options := settingsLCAgentProviderOptionsForField(fieldIndex)
 	m.settingsLCAgentProviderVisible = true
 	m.settingsLCAgentProviderSelected = m.settingsLCAgentProviderPickerSelection(options, fieldIndex)
-	m.status = "Choose the provider for LCAgent."
+	m.status = "Choose the Main Model provider for LCAgent."
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
-		m.status = "Choose the utility provider for LCAgent search refinement."
+		m.status = "Choose the Utility Model provider for LCAgent."
 	}
 	return m, nil
 }
@@ -157,7 +163,9 @@ func (m Model) applySettingsLCAgentProviderPickerSelection(option settingsLCAgen
 	}
 	target := "LCAgent provider"
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
-		target = "LCAgent utility provider"
+		target = "Utility Model provider"
+	} else {
+		target = "Main Model provider"
 	}
 	m.closeSettingsLCAgentProviderPicker(fmt.Sprintf("%s set to %s. %s", target, option.Label, hint))
 	return m, nil
@@ -183,7 +191,9 @@ func (m Model) renderSettingsLCAgentProviderPickerContent(width, bodyH int) stri
 	options := settingsLCAgentProviderOptionsForField(fieldIndex)
 	title := "LCAgent Provider"
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
-		title = "LCAgent Utility Provider"
+		title = "Utility Model Provider"
+	} else {
+		title = "Main Model Provider"
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
@@ -243,11 +253,17 @@ func settingsLCAgentProviderOptionLabel(raw string) string {
 
 func settingsLCAgentProviderOptionValueForField(fieldIndex int, raw string) string {
 	normalized := normalizeSettingsChoice(raw)
+	if fieldIndex == settingsFieldLCAgentUtilityProvider {
+		switch normalized {
+		case "", "main", "same", "same-as-main":
+			return "main"
+		case "off":
+			return "off"
+		}
+		return normalized
+	}
 	if normalized == "" {
 		return "openrouter"
-	}
-	if fieldIndex == settingsFieldLCAgentUtilityProvider && normalized == "off" {
-		return "off"
 	}
 	return normalized
 }
@@ -258,6 +274,9 @@ func settingsLCAgentProviderOptionLabelForField(fieldIndex int, raw string) stri
 		if option.Value == normalized {
 			return option.Label
 		}
+	}
+	if fieldIndex == settingsFieldLCAgentUtilityProvider {
+		return "Same as Main"
 	}
 	return "OpenRouter"
 }

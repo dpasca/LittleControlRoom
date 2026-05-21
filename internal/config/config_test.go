@@ -189,6 +189,12 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	if got, want := cfg.LCAgentRequestTimeout, 10*time.Minute; got != want {
 		t.Fatalf("lcagent request timeout = %s, want %s", got, want)
 	}
+	if got, want := cfg.LCAgentUtilityProvider, "main"; got != want {
+		t.Fatalf("lcagent utility provider = %q, want %q", got, want)
+	}
+	if got, want := cfg.LCAgentUtilityModel, ""; got != want {
+		t.Fatalf("lcagent utility model = %q, want blank", got)
+	}
 	if got, want := cfg.LCAgentWebSearchBackend, "google"; got != want {
 		t.Fatalf("lcagent web search backend = %q, want %q", got, want)
 	}

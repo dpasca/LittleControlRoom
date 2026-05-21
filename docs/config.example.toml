@@ -32,6 +32,12 @@ codex_launch_preset = "yolo"
 # lcagent_path = ""
 # lcagent_env_file = "~/path/to/openrouter.env"
 # lcagent_provider = "openrouter"
+# Utility Model defaults to the same provider/model as the Main Model.
+# Set to "off" to disable utility-model search refinement, or choose
+# "openrouter", "openai", "deepseek", or "moonshot" with an optional
+# lcagent_utility_model override.
+# lcagent_utility_provider = "main"
+# lcagent_utility_model = ""
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"
 # lcagent_context_profile = "balanced"

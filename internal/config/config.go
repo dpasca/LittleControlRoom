@@ -210,8 +210,7 @@ func Default() AppConfig {
 		LCAgentToolProfile:      "balanced",
 		LCAgentContextProfile:   "balanced",
 		LCAgentRequestTimeout:   10 * time.Minute,
-		LCAgentUtilityProvider:  "openrouter",
-		LCAgentUtilityModel:     "deepseek/deepseek-v4-flash",
+		LCAgentUtilityProvider:  "main",
 		LCAgentWebSearchBackend: "off",
 		CodexLaunchPreset:       codexcli.DefaultPreset(),
 		PlaywrightPolicy:        browserctl.DefaultPolicy(),
@@ -266,8 +265,8 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
 	lcagentContextProfile := fs.String("lcagent-context-profile", cfg.LCAgentContextProfile, "LCAgent provider loop context profile: balanced or large")
 	lcagentRequestTimeout := fs.Duration("lcagent-request-timeout", cfg.LCAgentRequestTimeout, "LCAgent provider HTTP request timeout")
-	lcagentUtilityProvider := fs.String("lcagent-utility-provider", cfg.LCAgentUtilityProvider, "LCAgent utility provider for oversized search refinement: off, openrouter, openai, deepseek, or moonshot")
-	lcagentUtilityModel := fs.String("lcagent-utility-model", cfg.LCAgentUtilityModel, "LCAgent utility model for oversized search refinement")
+	lcagentUtilityProvider := fs.String("lcagent-utility-provider", cfg.LCAgentUtilityProvider, "LCAgent utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, or moonshot")
+	lcagentUtilityModel := fs.String("lcagent-utility-model", cfg.LCAgentUtilityModel, "LCAgent utility model for oversized search refinement; blank with provider main uses the main model")
 	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, or searxng")
 	lcagentWebSearchAPIKey := fs.String("lcagent-web-search-api-key", cfg.LCAgentWebSearchAPIKey, "LCAgent web search API key for Exa or Google")
 	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
@@ -806,14 +805,17 @@ func parseLCAgentContextProfile(raw string) (string, error) {
 
 func parseLCAgentUtilityProvider(raw string) (string, error) {
 	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "_", "-")
 	if value == "" {
-		return "openrouter", nil
+		return "main", nil
 	}
 	switch value {
+	case "main", "same", "same-as-main":
+		return "main", nil
 	case "off", "openrouter", "openai", "deepseek", "moonshot":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-utility-provider must be one of: off, openrouter, openai, deepseek, moonshot")
+		return "", fmt.Errorf("lcagent-utility-provider must be one of: main, off, openrouter, openai, deepseek, moonshot")
 	}
 }
 

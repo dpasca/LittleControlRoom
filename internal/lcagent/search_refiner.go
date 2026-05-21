@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	defaultUtilityProvider = "openrouter"
-	defaultUtilityModel    = "deepseek/deepseek-v4-flash"
+	defaultUtilityProvider = "main"
+	defaultUtilityModel    = ""
 )
 
 type searchRefineProfile struct {
@@ -51,7 +51,7 @@ type searchRefineSuggestedSearch struct {
 	Intent   string `json:"intent"`
 }
 
-func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, minBytes int) searchRefineProfile {
+func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, minBytes int, mainProvider string, mainModel string) searchRefineProfile {
 	if minBytes <= 0 {
 		minBytes = script.DefaultSearchRefineMinBytes
 	}
@@ -65,6 +65,11 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 			DisabledErr: err,
 		}
 	}
+	sameAsMain := provider == "main"
+	if sameAsMain {
+		provider = normalizeMainProvider(mainProvider)
+		cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), strings.TrimSpace(mainModel), defaultMainModelForProvider(provider))
+	}
 	if provider == "off" {
 		return searchRefineProfile{
 			Enabled:  false,
@@ -73,7 +78,7 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 			Message:  "LCAgent search refinement disabled.",
 		}
 	}
-	cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), defaultUtilityModelForProvider(provider))
+	cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), defaultMainModelForProvider(provider))
 	client, err := newChatProviderClient(provider, cfg)
 	if err != nil {
 		return searchRefineProfile{
@@ -85,39 +90,59 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 			DisabledErr: err,
 		}
 	}
+	message := "LCAgent utility model enabled."
+	if sameAsMain {
+		message = "LCAgent utility model uses the Main Model."
+	}
 	return searchRefineProfile{
 		Enabled:  true,
 		Provider: provider,
 		Model:    client.Model(),
 		MinBytes: minBytes,
-		Message:  "LCAgent search refinement enabled.",
+		Message:  message,
 		Refiner:  utilitySearchRefiner{provider: provider, client: client},
 	}
 }
 
 func normalizeUtilityProvider(raw string) (string, error) {
 	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "_", "-")
 	if value == "" {
 		return defaultUtilityProvider, nil
 	}
 	switch value {
+	case "main", "same", "same-as-main":
+		return "main", nil
 	case "off", "openrouter", "openai", "deepseek", "moonshot":
 		return value, nil
 	default:
-		return "", fmt.Errorf("utility provider must be one of: off, openrouter, openai, deepseek, moonshot")
+		return "", fmt.Errorf("utility provider must be one of: main, off, openrouter, openai, deepseek, moonshot")
 	}
 }
 
-func defaultUtilityModelForProvider(provider string) string {
+func normalizeMainProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "deepseek":
-		return "deepseek-v4-flash"
 	case "openai":
-		return "gpt-5.4-mini"
+		return "openai"
+	case "deepseek":
+		return "deepseek"
+	case "moonshot":
+		return "moonshot"
+	default:
+		return "openrouter"
+	}
+}
+
+func defaultMainModelForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return modeladapter.DefaultOpenAIModel
+	case "deepseek":
+		return modeladapter.DefaultDeepSeekModel
 	case "moonshot":
 		return modeladapter.DefaultMoonshotModel
 	default:
-		return defaultUtilityModel
+		return modeladapter.DefaultOpenRouterModel
 	}
 }
 

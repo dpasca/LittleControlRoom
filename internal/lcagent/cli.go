@@ -234,8 +234,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
-	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: off, openrouter, openai, deepseek, or moonshot")
-	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement")
+	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, or moonshot")
+	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
@@ -549,7 +549,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		})
 		return err
 	}
-	searchRefine := newSearchRefineProfile(utilityProvider, utilityCfg, searchRefineMinBytes)
+	searchRefine := newSearchRefineProfile(utilityProvider, utilityCfg, searchRefineMinBytes, providerLabel, client.Model())
 	if searchRefine.Enabled {
 		runner.SearchRefiner = searchRefine.Refiner
 		runner.SearchRefineMinBytes = searchRefine.MinBytes

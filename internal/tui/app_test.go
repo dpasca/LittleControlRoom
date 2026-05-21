@@ -22234,7 +22234,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "LCAgent provider") || !strings.Contains(rendered, "OpenRouter API key") {
+	if !strings.Contains(rendered, "Main model provider") || !strings.Contains(rendered, "Utility model provider") {
 		t.Fatalf("settings modal should show LCAgent fields after switching sections: %q", rendered)
 	}
 	if strings.Contains(rendered, "Boss helm model") {
@@ -22422,7 +22422,7 @@ func TestSettingsLCAgentProviderEnterOpensPicker(t *testing.T) {
 	if !got.settingsLCAgentProviderVisible {
 		t.Fatalf("LCAgent provider enter should open the chooser")
 	}
-	if got.status != "Choose the provider for LCAgent." {
+	if got.status != "Choose the Main Model provider for LCAgent." {
 		t.Fatalf("status = %q, want chooser status", got.status)
 	}
 }
@@ -22451,7 +22451,7 @@ func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
 		t.Fatalf("top-level Getting Started Enter should open the setup panel before the picker")
 	}
 	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
-	for _, want := range []string{"LCAgent Setup", "Model Provider", "Provider Credentials", "OpenRouter API key", "Web Search"} {
+	for _, want := range []string{"LCAgent Setup", "Main Model", "Utility Model", "Provider Credentials", "OpenRouter API key", "Web Search"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("LCAgent setup panel missing %q: %q", want, rendered)
 		}
@@ -22502,8 +22502,8 @@ func TestSettingsLCAgentProviderPickerChoosesDeepSeek(t *testing.T) {
 	if !strings.Contains(rendered, "DeepSeek API key") {
 		t.Fatalf("DeepSeek provider should reveal DeepSeek credentials: %q", rendered)
 	}
-	if !strings.Contains(rendered, "OpenRouter API key") {
-		t.Fatalf("Default utility OpenRouter refiner should reveal OpenRouter credentials too: %q", rendered)
+	if strings.Contains(rendered, "OpenRouter API key") {
+		t.Fatalf("Utility Model should default to the Main Model and avoid showing an extra OpenRouter credential: %q", rendered)
 	}
 }
 
@@ -22527,17 +22527,17 @@ func TestSettingsLCAgentUtilityProviderPickerChoosesOff(t *testing.T) {
 	if !got.settingsLCAgentProviderVisible {
 		t.Fatalf("utility provider enter should open the shared provider chooser")
 	}
-	if got.status != "Choose the utility provider for LCAgent search refinement." {
+	if got.status != "Choose the Utility Model provider for LCAgent." {
 		t.Fatalf("status = %q, want utility chooser status", got.status)
 	}
 	rendered := ansi.Strip(got.renderSettingsLCAgentProviderPickerContent(56, 18))
-	for _, want := range []string{"LCAgent Utility Provider", "Off", "> OpenRouter  (current)", "Selected: OpenRouter"} {
+	for _, want := range []string{"Utility Model Provider", "> Same as Main  (current)", "Off", "Selected: Same as Main"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("utility provider picker is missing %q: %q", want, rendered)
 		}
 	}
 
-	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(Model)
 	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
