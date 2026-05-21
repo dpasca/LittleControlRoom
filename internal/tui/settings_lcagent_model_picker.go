@@ -176,13 +176,13 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	case "esc":
 		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
 		return m, nil
-	case "up", "k", "shift+tab":
+	case "up", "shift+tab":
 		state.Selected--
 		if state.Selected < 0 {
 			state.Selected = maxIndex
 		}
 		return m, nil
-	case "down", "j", "tab":
+	case "down", "tab":
 		state.Selected++
 		if state.Selected > maxIndex {
 			state.Selected = 0
