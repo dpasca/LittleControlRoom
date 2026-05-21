@@ -280,6 +280,41 @@ func TestOpenRouterClientSendsToolRequestAndParsesResponse(t *testing.T) {
 	}
 }
 
+func TestOpenRouterClientListModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %s, want /models", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer key" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek V4 Pro","description":"coding route"},{"id":"openai/gpt-5.5"},{"id":"deepseek/deepseek-v4-pro"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouterClient(OpenRouterConfig{
+		APIKey:  "key",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("ListModels() returned %d models, want 2: %#v", len(models), models)
+	}
+	if models[0].ID != "deepseek/deepseek-v4-pro" || models[0].Name != "DeepSeek V4 Pro" || models[0].Description != "coding route" {
+		t.Fatalf("first model = %#v", models[0])
+	}
+	if models[1].ID != "openai/gpt-5.5" {
+		t.Fatalf("second model = %#v", models[1])
+	}
+}
+
 func TestOpenRouterClientSendsCompletionOptions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

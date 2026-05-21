@@ -160,6 +160,7 @@ type Model struct {
 	settingsLCAgentProviderSelected     int
 	settingsLCAgentSearchPickerVisible  bool
 	settingsLCAgentSearchPickerSelected int
+	settingsLCAgentModelPicker          *settingsLCAgentModelPickerState
 	settingsEmbeddedProject             string
 	settingsEmbeddedProvider            codexapp.Provider
 
@@ -1177,6 +1178,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.localModelPickerVisible {
 			return m.updateLocalBackendModelPickerMode(msg)
 		}
+		if m.settingsLCAgentModelPicker != nil {
+			return m.updateSettingsLCAgentModelPickerMode(msg)
+		}
 		if m.settingsAIBackendPickerVisible {
 			return m.updateSettingsAIBackendPickerMode(msg)
 		}
@@ -2065,6 +2069,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail = model.ProjectDetail{}
 		m.syncDetailViewport(true)
 		return m, tea.Batch(cmds...)
+	case settingsLCAgentModelListMsg:
+		return m.applySettingsLCAgentModelListMsg(msg)
 	case setupSavedMsg:
 		m.setupSaving = false
 		m.err = nil
@@ -3013,6 +3019,9 @@ func (m Model) View() string {
 		if m.settingsLCAgentProviderVisible {
 			body = m.renderSettingsLCAgentProviderPickerOverlay(body, layout.width, layout.height)
 		}
+		if m.settingsLCAgentModelPicker != nil {
+			body = m.renderSettingsLCAgentModelPickerOverlay(body, layout.width, layout.height)
+		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 		if m.settingsAIBackendPickerVisible {
@@ -3029,6 +3038,9 @@ func (m Model) View() string {
 		}
 		if m.settingsLCAgentSearchPickerVisible {
 			body = m.renderSettingsLCAgentWebSearchPickerOverlay(body, layout.width, layout.height)
+		}
+		if m.settingsLCAgentModelPicker != nil {
+			body = m.renderSettingsLCAgentModelPickerOverlay(body, layout.width, layout.height)
 		}
 	} else if m.showPerf {
 		body = m.renderPerfOverlay(body, layout.width, layout.height)

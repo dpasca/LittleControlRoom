@@ -1,7 +1,10 @@
 package codexapp
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -339,6 +342,51 @@ func TestLCAgentSessionListModelsKeepsCustomCurrentModel(t *testing.T) {
 	}
 	if len(models) == 0 || models[0].Model != "deepseek/custom-experiment" {
 		t.Fatalf("custom model should be preserved first: %#v", models)
+	}
+}
+
+func TestLCAgentModelOptionsMergesProviderModelList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %q, want /models", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer key" {
+			t.Fatalf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek V4 Pro"},{"id":"provider/new-coder","name":"New Coder","description":"fresh provider route"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	models, err := LCAgentModelOptions(context.Background(), LCAgentModelListConfig{
+		Provider:         "openrouter",
+		Model:            "missing/custom",
+		OpenRouterAPIKey: "key",
+	})
+	if err != nil {
+		t.Fatalf("LCAgentModelOptions() error = %v", err)
+	}
+	if len(models) < 2 || models[0].Model != "missing/custom" {
+		t.Fatalf("custom model should be preserved first: %#v", models)
+	}
+	if !strings.Contains(models[0].Description, "did not return") {
+		t.Fatalf("custom model should mention provider miss: %#v", models[0])
+	}
+	foundProviderModel := false
+	foundVerifiedDefault := false
+	for _, option := range models {
+		if option.Model == "provider/new-coder" && option.DisplayName == "New Coder" && strings.Contains(option.Description, "fresh provider route") {
+			foundProviderModel = true
+		}
+		if option.Model == "deepseek/deepseek-v4-pro" && strings.Contains(strings.ToLower(option.Description), "verified") {
+			foundVerifiedDefault = true
+		}
+	}
+	if !foundProviderModel {
+		t.Fatalf("provider model missing from options: %#v", models)
+	}
+	if !foundVerifiedDefault {
+		t.Fatalf("curated default should be marked verified by provider list: %#v", models)
 	}
 }
 

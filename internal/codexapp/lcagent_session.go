@@ -277,24 +277,130 @@ func (s *lcagentSession) Review() error {
 }
 
 func (s *lcagentSession) ListModels() ([]ModelOption, error) {
-	provider := s.provider
+	s.mu.Lock()
+	cfg := LCAgentModelListConfig{
+		Provider:         s.provider,
+		Model:            s.model,
+		EnvFile:          s.envFile,
+		OpenAIAPIKey:     s.openAIAPIKey,
+		OpenRouterAPIKey: s.openRouterAPIKey,
+		DeepSeekAPIKey:   s.deepSeekAPIKey,
+		MoonshotAPIKey:   s.moonshotAPIKey,
+		RequestTimeout:   s.requestTimeout,
+	}
+	s.mu.Unlock()
+	models, err := LCAgentModelOptions(context.Background(), cfg)
+	if len(models) > 0 {
+		return models, nil
+	}
+	return nil, err
+}
+
+type LCAgentModelListConfig struct {
+	Provider         string
+	Model            string
+	EnvFile          string
+	OpenAIAPIKey     string
+	OpenRouterAPIKey string
+	DeepSeekAPIKey   string
+	MoonshotAPIKey   string
+	RequestTimeout   time.Duration
+}
+
+func LCAgentModelOptions(ctx context.Context, cfg LCAgentModelListConfig) ([]ModelOption, error) {
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	if provider == "" {
 		provider = lcagentDefaultProvider
 	}
-	models := lcagentModelOptionsForProvider(provider)
-	for _, model := range []string{s.model} {
-		model = strings.TrimSpace(model)
-		if model == "" || lcagentModelOptionExists(models, model) {
+	curated := lcagentModelOptionsForProvider(provider)
+	live, err := lcagentProviderModelOptions(ctx, cfg, provider)
+	if err != nil {
+		return lcagentModelOptionsWithCurrent(curated, cfg.Model, false), err
+	}
+	merged := mergeLCAgentModelOptions(curated, live)
+	return lcagentModelOptionsWithCurrent(merged, cfg.Model, true), nil
+}
+
+func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig, provider string) ([]ModelOption, error) {
+	client, err := lcagentModelListClient(provider, cfg)
+	if err != nil {
+		return nil, err
+	}
+	listed, err := client.ListModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defaultModel := lcagentDefaultModel(provider)
+	options := make([]ModelOption, 0, len(listed))
+	for _, item := range listed {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
 			continue
 		}
-		models = append([]ModelOption{{
-			ID:          model,
-			Model:       model,
-			DisplayName: model,
-			Description: "Custom LCAgent model.",
-		}}, models...)
+		displayName := strings.TrimSpace(item.Name)
+		if displayName == "" {
+			displayName = id
+		}
+		description := strings.TrimSpace(item.Description)
+		if description == "" {
+			description = "Returned by the " + lcagentProviderDisplayName(provider) + " model list."
+		}
+		options = append(options, ModelOption{
+			ID:                        id,
+			Model:                     id,
+			DisplayName:               displayName,
+			Description:               description,
+			SupportedReasoningEfforts: lcagentReasoningEffortOptions(),
+			DefaultReasoningEffort:    lcagentDefaultReasoningEffort(provider, id),
+			IsDefault:                 strings.EqualFold(id, defaultModel),
+		})
 	}
-	return models, nil
+	if len(options) == 0 {
+		return nil, fmt.Errorf("%s model list returned no usable models", lcagentProviderDisplayName(provider))
+	}
+	return options, nil
+}
+
+func lcagentModelListClient(provider string, cfg LCAgentModelListConfig) (*modeladapter.Client, error) {
+	adapterCfg := modeladapter.OpenRouterConfig{
+		APIKey:         lcagentModelListAPIKey(provider, cfg),
+		Model:          firstNonEmpty(strings.TrimSpace(cfg.Model), lcagentDefaultModel(provider)),
+		EnvFile:        strings.TrimSpace(cfg.EnvFile),
+		RequestTimeout: lcagentModelListTimeout(cfg.RequestTimeout),
+	}
+	switch provider {
+	case "openai":
+		return modeladapter.NewOpenAIClient(adapterCfg)
+	case "deepseek":
+		return modeladapter.NewDeepSeekClient(adapterCfg)
+	case "moonshot":
+		return modeladapter.NewMoonshotClient(adapterCfg)
+	default:
+		return modeladapter.NewOpenRouterClient(adapterCfg)
+	}
+}
+
+func lcagentModelListAPIKey(provider string, cfg LCAgentModelListConfig) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return strings.TrimSpace(cfg.OpenAIAPIKey)
+	case "deepseek":
+		return strings.TrimSpace(cfg.DeepSeekAPIKey)
+	case "moonshot":
+		return strings.TrimSpace(cfg.MoonshotAPIKey)
+	default:
+		return strings.TrimSpace(cfg.OpenRouterAPIKey)
+	}
+}
+
+func lcagentModelListTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return 15 * time.Second
+	}
+	if timeout > 30*time.Second {
+		return 30 * time.Second
+	}
+	return timeout
 }
 
 func lcagentModelOptionsForProvider(provider string) []ModelOption {
@@ -303,11 +409,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		provider = lcagentDefaultProvider
 	}
 	defaultModel := lcagentDefaultModel(provider)
-	reasoning := []ReasoningEffortOption{
-		{ReasoningEffort: "low", Description: "Light reasoning for coding turns."},
-		{ReasoningEffort: "medium", Description: "More reasoning for harder coding turns."},
-		{ReasoningEffort: "high", Description: "Deeper reasoning for difficult reviews or refactors."},
-	}
+	reasoning := lcagentReasoningEffortOptions()
 	option := func(model, displayName, description, defaultReasoning string, isDefault bool) ModelOption {
 		return ModelOption{
 			ID:                        model,
@@ -346,9 +448,92 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 	}
 }
 
+func lcagentReasoningEffortOptions() []ReasoningEffortOption {
+	return []ReasoningEffortOption{
+		{ReasoningEffort: "low", Description: "Light reasoning for coding turns."},
+		{ReasoningEffort: "medium", Description: "More reasoning for harder coding turns."},
+		{ReasoningEffort: "high", Description: "Deeper reasoning for difficult reviews or refactors."},
+	}
+}
+
+func lcagentDefaultReasoningEffort(provider, model string) string {
+	if strings.EqualFold(strings.TrimSpace(provider), "openai") ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "openai/") {
+		return "low"
+	}
+	return ""
+}
+
+func mergeLCAgentModelOptions(curated, discovered []ModelOption) []ModelOption {
+	merged := append([]ModelOption(nil), curated...)
+	index := map[string]int{}
+	for i, option := range merged {
+		key := strings.ToLower(strings.TrimSpace(option.Model))
+		if key != "" {
+			index[key] = i
+		}
+	}
+	for _, option := range discovered {
+		key := strings.ToLower(strings.TrimSpace(option.Model))
+		if key == "" {
+			continue
+		}
+		if existingIndex, ok := index[key]; ok {
+			existing := merged[existingIndex]
+			if strings.TrimSpace(existing.Description) == "" {
+				existing.Description = "Verified by provider model list."
+			} else if !strings.Contains(strings.ToLower(existing.Description), "verified") {
+				existing.Description = strings.TrimSpace(existing.Description) + " Verified by provider model list."
+			}
+			if strings.TrimSpace(existing.DisplayName) == strings.TrimSpace(existing.Model) && strings.TrimSpace(option.DisplayName) != "" {
+				existing.DisplayName = strings.TrimSpace(option.DisplayName)
+			}
+			existing.IsDefault = existing.IsDefault || option.IsDefault
+			merged[existingIndex] = existing
+			continue
+		}
+		merged = append(merged, option)
+		index[key] = len(merged) - 1
+	}
+	return merged
+}
+
+func lcagentModelOptionsWithCurrent(models []ModelOption, current string, checkedProviderList bool) []ModelOption {
+	current = strings.TrimSpace(current)
+	if current == "" || lcagentModelOptionExists(models, current) {
+		return models
+	}
+	description := "Custom LCAgent model."
+	if checkedProviderList {
+		description = "Custom LCAgent model. The provider model list did not return this ID."
+	}
+	return append([]ModelOption{{
+		ID:                        current,
+		Model:                     current,
+		DisplayName:               current,
+		Description:               description,
+		SupportedReasoningEfforts: lcagentReasoningEffortOptions(),
+		DefaultReasoningEffort:    lcagentDefaultReasoningEffort("", current),
+	}}, models...)
+}
+
+func lcagentProviderDisplayName(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return "OpenAI"
+	case "deepseek":
+		return "DeepSeek"
+	case "moonshot":
+		return "Moonshot"
+	default:
+		return "OpenRouter"
+	}
+}
+
 func lcagentModelOptionExists(models []ModelOption, id string) bool {
 	for _, option := range models {
-		if option.ID == id || option.Model == id {
+		if strings.EqualFold(strings.TrimSpace(option.ID), strings.TrimSpace(id)) ||
+			strings.EqualFold(strings.TrimSpace(option.Model), strings.TrimSpace(id)) {
 			return true
 		}
 	}
