@@ -63,6 +63,7 @@ type Model struct {
 	err     error
 
 	startupScanCompleted   bool
+	suspendedTurnChecked   bool
 	projectsReloadInFlight bool
 	projectsReloadQueued   bool
 	scanInFlight           bool
@@ -92,6 +93,7 @@ type Model struct {
 	worktreePostMerge     *worktreePostMergeState
 	worktreeRemoveConfirm *worktreeRemoveConfirmState
 	attentionDialog       *attentionDialogState
+	suspendedTurnDialog   *suspendedTurnResumeDialogState
 
 	commandMode                         bool
 	commandInput                        textinput.Model
@@ -1214,6 +1216,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.skillsDialog != nil {
 			return m.updateSkillsDialogMode(msg)
 		}
+		if m.suspendedTurnDialog != nil {
+			return m.updateSuspendedTurnResumeDialogMode(msg)
+		}
 		if m.attentionDialog != nil {
 			return m.updateAttentionDialogMode(msg)
 		}
@@ -1519,7 +1524,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.startupScanCompleted = true
 		m.status = scanCompleteStatus(msg.report)
-		return m, batchCmds(reloadCmd, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
+		suspendedTurnsCmd := tea.Cmd(nil)
+		if !m.suspendedTurnChecked {
+			suspendedTurnsCmd = m.loadSuspendedTurnResumeChoicesCmd()
+		}
+		return m, batchCmds(reloadCmd, m.requestProjectInvalidationCmd(invalidateProjectStructure("")), suspendedTurnsCmd)
+	case suspendedTurnResumeChoicesMsg:
+		return m.applySuspendedTurnResumeChoicesMsg(msg)
 	case commitPreviewMsg:
 		if msg.requestID != 0 && msg.requestID != m.commitPreviewRequestID {
 			return m, nil
@@ -3110,6 +3121,9 @@ func (m Model) View() string {
 	}
 	if m.attentionDialog != nil {
 		body = m.renderAttentionDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.suspendedTurnDialog != nil {
+		body = m.renderSuspendedTurnResumeDialogOverlay(body, layout.width, layout.height)
 	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
