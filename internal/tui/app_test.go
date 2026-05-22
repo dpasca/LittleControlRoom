@@ -4117,6 +4117,50 @@ func TestRenderTopStatusLinePulsesActionRequiredWarning(t *testing.T) {
 	}
 }
 
+func TestRenderTopStatusLineSettlesEmbeddedSessionAttentionWarning(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
+	m := Model{
+		status: "Close the embedded agent session before merging this worktree back.",
+		nowFn: func() time.Time {
+			return now
+		},
+	}
+	m.markTopStatusAttentionPulse(m.status)
+
+	warnA := m.renderTopStatusLine(160)
+	m.spinnerFrame = 1
+	warnB := m.renderTopStatusLine(160)
+
+	if ansi.Strip(warnA) != ansi.Strip(warnB) {
+		t.Fatalf("embedded-session warning pulse should preserve banner text, got %q vs %q", ansi.Strip(warnA), ansi.Strip(warnB))
+	}
+	if warnA == warnB {
+		t.Fatalf("embedded-session warning should pulse during its short attention window")
+	}
+
+	now = now.Add(topStatusAttentionPulseDuration + time.Millisecond)
+	m.spinnerFrame = 0
+	settledA := m.renderTopStatusLine(160)
+	m.spinnerFrame = 1
+	settledB := m.renderTopStatusLine(160)
+
+	if ansi.Strip(settledA) != ansi.Strip(settledB) {
+		t.Fatalf("settled embedded-session warning should preserve banner text, got %q vs %q", ansi.Strip(settledA), ansi.Strip(settledB))
+	}
+	if settledA != settledB {
+		t.Fatalf("embedded-session warning should stop pulsing after the attention window")
+	}
+}
+
 func TestRenderTopStatusLinePulsesPinnedTodoResumeBlockWarning(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()

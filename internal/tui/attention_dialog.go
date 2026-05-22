@@ -45,6 +45,7 @@ func (m *Model) showAttentionDialog(dialog attentionDialogState) {
 	case strings.TrimSpace(dialog.Title) != "":
 		m.status = dialog.Title
 	}
+	m.markTopStatusAttentionPulse(m.status)
 }
 
 func (m *Model) dismissAttentionDialog() {

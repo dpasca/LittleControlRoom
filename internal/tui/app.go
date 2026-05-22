@@ -62,6 +62,9 @@ type Model struct {
 	status  string
 	err     error
 
+	topStatusAttentionPulseStatus string
+	topStatusAttentionPulseUntil  time.Time
+
 	startupScanCompleted   bool
 	suspendedTurnChecked   bool
 	projectsReloadInFlight bool
@@ -859,6 +862,10 @@ func (m *Model) pruneTransientHighlights(now time.Time) {
 	}
 	if !m.selectionFlashUntil.After(now) {
 		m.selectionFlashUntil = time.Time{}
+	}
+	if !m.topStatusAttentionPulseUntil.After(now) {
+		m.topStatusAttentionPulseStatus = ""
+		m.topStatusAttentionPulseUntil = time.Time{}
 	}
 }
 
@@ -3276,6 +3283,9 @@ func (m Model) renderTopStatusMessage(rawStatus, displayStatus string) string {
 
 	switch topStatusSeverityForMessage(rawStatus, m.err) {
 	case topStatusSeverityWarning:
+		if !m.topStatusWarningPulseActive(rawStatus) {
+			return renderTopStatusWarningStableMessage(displayStatus)
+		}
 		return renderTopStatusWarningMessage(displayStatus, m.spinnerFrame)
 	case topStatusSeverityDanger:
 		return renderTopStatusDangerMessage(displayStatus, m.spinnerFrame)
@@ -3360,6 +3370,37 @@ func topStatusNeedsAttention(status string) bool {
 	}
 
 	return false
+}
+
+func (m Model) topStatusWarningPulseActive(status string) bool {
+	status = strings.TrimSpace(status)
+	if !topStatusWarningSettlesAfterAttentionPulse(status) {
+		return true
+	}
+	return status != "" &&
+		status == strings.TrimSpace(m.topStatusAttentionPulseStatus) &&
+		m.topStatusAttentionPulseUntil.After(m.currentTime())
+}
+
+func topStatusWarningSettlesAfterAttentionPulse(status string) bool {
+	return strings.HasPrefix(strings.TrimSpace(status), "Close the embedded agent session before ")
+}
+
+func (m *Model) markTopStatusAttentionPulse(status string) {
+	status = strings.TrimSpace(status)
+	if !topStatusWarningSettlesAfterAttentionPulse(status) {
+		return
+	}
+	m.topStatusAttentionPulseStatus = status
+	m.topStatusAttentionPulseUntil = m.currentTime().Add(topStatusAttentionPulseDuration)
+}
+
+func renderTopStatusWarningStableMessage(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return topStatusWarningBadgeStyle.Render(text)
 }
 
 func renderTopStatusWarningMessage(text string, spinnerFrame int) string {
@@ -4107,6 +4148,7 @@ const (
 	recentMoveWindow                = 24 * time.Hour
 	spinnerAnimationFrameWrap       = 4096
 	assessmentFlashDuration         = time.Second
+	topStatusAttentionPulseDuration = 480 * time.Millisecond
 	projectListAgentWidth           = 10
 	projectListTODOWidth            = 4
 	projectListRunWidth             = 11
