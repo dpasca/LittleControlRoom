@@ -97,6 +97,161 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 	}
 }
 
+func TestProjectMissingSincePersistsUntilRediscovered(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/repo--gone"
+	missingAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	later := missingAt.Add(time.Hour)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             projectPath,
+		Name:             "repo--gone",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    false,
+		WorktreeKind:     model.WorktreeKindLinked,
+		WorktreeRootPath: "/tmp/repo",
+		Forgotten:        true,
+		InScope:          true,
+		UpdatedAt:        missingAt,
+	}); err != nil {
+		t.Fatalf("upsert missing project: %v", err)
+	}
+
+	var missingSince sql.NullInt64
+	if err := st.db.QueryRowContext(ctx, `SELECT missing_since FROM projects WHERE path = ?`, projectPath).Scan(&missingSince); err != nil {
+		t.Fatalf("read missing_since: %v", err)
+	}
+	if !missingSince.Valid || missingSince.Int64 != missingAt.Unix() {
+		t.Fatalf("missing_since = %#v, want %d", missingSince, missingAt.Unix())
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             projectPath,
+		Name:             "repo--gone",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    false,
+		WorktreeKind:     model.WorktreeKindLinked,
+		WorktreeRootPath: "/tmp/repo",
+		Forgotten:        true,
+		InScope:          true,
+		UpdatedAt:        later,
+	}); err != nil {
+		t.Fatalf("refresh missing project: %v", err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT missing_since FROM projects WHERE path = ?`, projectPath).Scan(&missingSince); err != nil {
+		t.Fatalf("read refreshed missing_since: %v", err)
+	}
+	if !missingSince.Valid || missingSince.Int64 != missingAt.Unix() {
+		t.Fatalf("refreshed missing_since = %#v, want original %d", missingSince, missingAt.Unix())
+	}
+
+	if err := st.SetProjectPresence(ctx, projectPath, true); err != nil {
+		t.Fatalf("mark present: %v", err)
+	}
+	if err := st.db.QueryRowContext(ctx, `SELECT missing_since FROM projects WHERE path = ?`, projectPath).Scan(&missingSince); err != nil {
+		t.Fatalf("read rediscovered missing_since: %v", err)
+	}
+	if missingSince.Valid {
+		t.Fatalf("rediscovered missing_since = %#v, want NULL", missingSince)
+	}
+}
+
+func TestDeleteExpiredMissingLinkedWorktreesKeepsProtectedRows(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	expiredAt := now.Add(-8 * 24 * time.Hour)
+	recentAt := now.Add(-3 * 24 * time.Hour)
+	seed := func(path string, updatedAt time.Time, pinned bool) {
+		t.Helper()
+		if err := st.UpsertProjectState(ctx, model.ProjectState{
+			Path:             path,
+			Name:             filepath.Base(path),
+			Status:           model.StatusIdle,
+			PresentOnDisk:    false,
+			WorktreeKind:     model.WorktreeKindLinked,
+			WorktreeRootPath: "/tmp/repo",
+			Forgotten:        true,
+			InScope:          true,
+			Pinned:           pinned,
+			UpdatedAt:        updatedAt,
+			Sessions: []model.SessionEvidence{{
+				SessionID:           "session-" + filepath.Base(path),
+				ProjectPath:         path,
+				DetectedProjectPath: path,
+				SessionFile:         filepath.Join(t.TempDir(), "session.jsonl"),
+				Format:              "modern",
+				StartedAt:           updatedAt,
+				LastEventAt:         updatedAt,
+			}},
+		}); err != nil {
+			t.Fatalf("seed %s: %v", path, err)
+		}
+	}
+
+	expiredPath := "/tmp/repo--expired"
+	recentPath := "/tmp/repo--recent"
+	pinnedPath := "/tmp/repo--pinned"
+	openTodoPath := "/tmp/repo--open-todo"
+	seed(expiredPath, expiredAt, false)
+	seed(recentPath, recentAt, false)
+	seed(pinnedPath, expiredAt, true)
+	seed(openTodoPath, expiredAt, false)
+	if _, err := st.AddTodo(ctx, openTodoPath, "Keep the tombstone while work is open"); err != nil {
+		t.Fatalf("add open todo: %v", err)
+	}
+	if _, err := st.QueueSessionClassification(ctx, model.SessionClassification{
+		SessionID:       "expired-classification",
+		ProjectPath:     expiredPath,
+		SessionFile:     "expired-session.jsonl",
+		SessionFormat:   "modern",
+		SnapshotHash:    "expired-hash",
+		Status:          model.ClassificationPending,
+		SourceUpdatedAt: expiredAt,
+		CreatedAt:       expiredAt,
+		UpdatedAt:       expiredAt,
+	}, 0); err != nil {
+		t.Fatalf("queue classification: %v", err)
+	}
+
+	count, err := st.DeleteExpiredMissingLinkedWorktrees(ctx, now, 7*24*time.Hour)
+	if err != nil {
+		t.Fatalf("DeleteExpiredMissingLinkedWorktrees() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("DeleteExpiredMissingLinkedWorktrees() count = %d, want 1", count)
+	}
+	if _, err := st.GetProjectDetail(ctx, expiredPath, 5); err == nil || !strings.Contains(err.Error(), "project not found") {
+		t.Fatalf("expired project lookup error = %v, want project not found", err)
+	}
+	for _, path := range []string{recentPath, pinnedPath, openTodoPath} {
+		if _, err := st.GetProjectDetail(ctx, path, 5); err != nil {
+			t.Fatalf("protected project %s should remain: %v", path, err)
+		}
+	}
+	var classificationCount int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM session_classifications WHERE project_path = ?`, expiredPath).Scan(&classificationCount); err != nil {
+		t.Fatalf("count classification rows: %v", err)
+	}
+	if classificationCount != 0 {
+		t.Fatalf("expired classification rows = %d, want 0", classificationCount)
+	}
+}
+
 func TestSearchContextFindsProjectAssessmentSummaries(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

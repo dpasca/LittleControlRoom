@@ -32,6 +32,7 @@ import (
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
 const bossAssistantHTTPTimeout = 90 * time.Second
+const missingLinkedWorktreeRetention = 7 * 24 * time.Hour
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 
@@ -790,6 +791,9 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, timedOutGitPaths)
 	bus := runtime.bus
 	now := time.Now()
+	if _, err := s.store.DeleteExpiredMissingLinkedWorktrees(ctx, now, missingLinkedWorktreeRetention); err != nil {
+		return ScanReport{}, fmt.Errorf("purge expired missing linked worktrees: %w", err)
+	}
 	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(cfg.DataDir)
 	scope := scanner.NewPathScope(cfg.IncludePaths, cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot)
 	discovered := []string{}
@@ -2278,6 +2282,9 @@ func (s *Service) refreshLinkedWorktreeStatusesForRoot(ctx context.Context, root
 	var errs []string
 	for _, project := range projects {
 		if project.WorktreeKind != model.WorktreeKindLinked {
+			continue
+		}
+		if project.Forgotten && !project.PresentOnDisk {
 			continue
 		}
 		if filepath.Clean(strings.TrimSpace(project.WorktreeRootPath)) != rootPath {

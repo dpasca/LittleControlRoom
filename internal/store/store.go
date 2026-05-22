@@ -70,6 +70,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			status TEXT NOT NULL,
 			attention_score INTEGER NOT NULL,
 			present_on_disk INTEGER NOT NULL DEFAULT 1,
+			missing_since INTEGER,
 			worktree_root_path TEXT NOT NULL DEFAULT '',
 			worktree_kind TEXT NOT NULL DEFAULT '',
 			worktree_parent_branch TEXT NOT NULL DEFAULT '',
@@ -343,6 +344,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureProjectsVisibilityColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureProjectsMissingSinceColumn(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureProjectsWorktreeColumns(ctx); err != nil {
 		return err
 	}
@@ -392,6 +396,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 		return err
 	}
 	if err := s.ensureProjectTodosWorkColumns(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureProjectsMissingLinkedWorktreeIndex(ctx); err != nil {
 		return err
 	}
 	return nil
@@ -653,6 +660,38 @@ func (s *Store) ensureProjectsVisibilityColumns(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN forgotten INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("add projects.forgotten column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureProjectsMissingSinceColumn(ctx context.Context) error {
+	columns, err := s.projectTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["missing_since"]; ok {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN missing_since INTEGER`); err != nil {
+		return fmt.Errorf("add projects.missing_since column: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE projects
+		SET missing_since = updated_at
+		WHERE present_on_disk = 0 AND missing_since IS NULL
+	`); err != nil {
+		return fmt.Errorf("backfill projects.missing_since column: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureProjectsMissingLinkedWorktreeIndex(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_projects_missing_linked_worktree
+		ON projects(worktree_kind, present_on_disk, forgotten, missing_since)
+	`)
+	if err != nil {
+		return fmt.Errorf("create missing linked worktree index: %w", err)
 	}
 	return nil
 }
@@ -1950,9 +1989,17 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 		snoozedUntil any
 		movedAt      any
 		createdAt    any
+		missingSince any
 	)
 	if !state.LastActivity.IsZero() {
 		lastActivity = state.LastActivity.Unix()
+	}
+	if !state.PresentOnDisk {
+		missingAt := state.UpdatedAt
+		if missingAt.IsZero() {
+			missingAt = time.Now()
+		}
+		missingSince = missingAt.Unix()
 	}
 	if state.SnoozedUntil != nil {
 		snoozedUntil = state.SnoozedUntil.Unix()
@@ -1965,8 +2012,8 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, moved_from_path, moved_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, moved_from_path, moved_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			name=excluded.name,
 			kind=excluded.kind,
@@ -1974,6 +2021,10 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			status=excluded.status,
 			attention_score=excluded.attention_score,
 			present_on_disk=excluded.present_on_disk,
+			missing_since=CASE
+				WHEN excluded.present_on_disk != 0 THEN NULL
+				ELSE COALESCE(projects.missing_since, excluded.missing_since, excluded.updated_at)
+			END,
 			worktree_root_path=excluded.worktree_root_path,
 			worktree_kind=excluded.worktree_kind,
 			worktree_parent_branch=CASE
@@ -2010,7 +2061,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 			END,
 			created_at=COALESCE(projects.created_at, excluded.created_at),
 			updated_at=excluded.updated_at
-	`, state.Path, state.Name, string(state.Kind), lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Archived), boolToInt(state.Pinned), snoozedUntil, state.MovedFromPath, movedAt, createdAt, state.UpdatedAt.Unix())
+	`, state.Path, state.Name, string(state.Kind), lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), missingSince, strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Archived), boolToInt(state.Pinned), snoozedUntil, state.MovedFromPath, movedAt, createdAt, state.UpdatedAt.Unix())
 	if err != nil {
 		return err
 	}
@@ -2363,8 +2414,8 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at, created_at, updated_at)
-		SELECT ?, name, kind, last_activity, status, attention_score, present_on_disk, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, ?, ?, created_at, ?
+		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at, created_at, updated_at)
+		SELECT ?, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, ?, ?, created_at, ?
 		FROM projects
 		WHERE path = ?
 	`, newPath, oldPath, movedAt.Unix(), movedAt.Unix(), oldPath)
@@ -4472,6 +4523,96 @@ func (s *Store) DeleteDoneTodos(ctx context.Context, projectPath string) (int, e
 	return int(rowsAffected), nil
 }
 
+func (s *Store) DeleteExpiredMissingLinkedWorktrees(ctx context.Context, now time.Time, retention time.Duration) (int, error) {
+	if retention <= 0 {
+		return 0, nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cutoff := now.Add(-retention).Unix()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT p.path
+		FROM projects p
+		WHERE p.worktree_kind = ?
+			AND p.present_on_disk = 0
+			AND p.forgotten = 1
+			AND p.archived = 0
+			AND p.pinned = 0
+			AND p.missing_since IS NOT NULL
+			AND p.missing_since <= ?
+			AND NOT EXISTS (
+				SELECT 1
+				FROM project_todos pt
+				WHERE pt.project_path = p.path AND pt.done = 0
+			)
+	`, string(model.WorktreeKindLinked), cutoff)
+	if err != nil {
+		return 0, err
+	}
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err = rows.Scan(&path); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		paths = append(paths, path)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	if err = rows.Close(); err != nil {
+		return 0, err
+	}
+	for _, path := range paths {
+		if err = deleteProjectOwnedRows(ctx, tx, path); err != nil {
+			return 0, err
+		}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE path = ?`, path); err != nil {
+			return 0, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(paths), nil
+}
+
+func deleteProjectOwnedRows(ctx context.Context, tx *sql.Tx, path string) error {
+	type deleteStatement struct {
+		query string
+		args  []any
+	}
+	deleteStatements := []deleteStatement{
+		{query: `DELETE FROM session_classifications WHERE project_path = ?`, args: []any{path}},
+		{query: `DELETE FROM context_session_text_cache WHERE project_path = ?`, args: []any{path}},
+		{query: `DELETE FROM context_search_fts WHERE project_path = ?`, args: []any{path}},
+		{query: `DELETE FROM project_git_fingerprints WHERE project_path = ?`, args: []any{path}},
+		{query: `DELETE FROM commit_todo_checks WHERE project_path = ?`, args: []any{path}},
+		{query: `DELETE FROM events WHERE project_path = ?`, args: []any{path}},
+		{query: `DELETE FROM path_aliases WHERE old_path = ? OR new_path = ?`, args: []any{path, path}},
+	}
+	for _, stmt := range deleteStatements {
+		if _, err := tx.ExecContext(ctx, stmt.query, stmt.args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) SetRunCommand(ctx context.Context, path, command string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET run_command = ?, updated_at = ? WHERE path = ?`, strings.TrimSpace(command), time.Now().Unix(), path)
 	return err
@@ -4493,7 +4634,12 @@ func (s *Store) SetForgotten(ctx context.Context, path string, forgotten bool) e
 }
 
 func (s *Store) SetProjectPresence(ctx context.Context, path string, presentOnDisk bool) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE projects SET present_on_disk = ?, updated_at = ? WHERE path = ?`, boolToInt(presentOnDisk), time.Now().Unix(), path)
+	now := time.Now().Unix()
+	if presentOnDisk {
+		_, err := s.db.ExecContext(ctx, `UPDATE projects SET present_on_disk = 1, missing_since = NULL, updated_at = ? WHERE path = ?`, now, path)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET present_on_disk = 0, missing_since = COALESCE(missing_since, ?), updated_at = ? WHERE path = ?`, now, now, path)
 	return err
 }
 

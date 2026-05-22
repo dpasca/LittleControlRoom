@@ -4894,6 +4894,105 @@ func TestRefreshProjectStatusForRootUpdatesLinkedWorktreeMergeStatus(t *testing.
 	}
 }
 
+func TestRefreshProjectStatusForRootSkipsForgottenMissingLinkedWorktrees(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	missingWorktreePath := filepath.Join(root, "repo--missing")
+	initGitRepo(t, projectPath)
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	oldUpdatedAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     oldUpdatedAt,
+	}); err != nil {
+		t.Fatalf("seed root project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             missingWorktreePath,
+		Name:             "repo--missing",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    false,
+		WorktreeRootPath: projectPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+		Forgotten:        true,
+		InScope:          true,
+		UpdatedAt:        oldUpdatedAt,
+	}); err != nil {
+		t.Fatalf("seed missing worktree project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	if err := svc.RefreshProjectStatus(ctx, projectPath); err != nil {
+		t.Fatalf("RefreshProjectStatus(root) error = %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open verification db: %v", err)
+	}
+	defer db.Close()
+
+	var updatedAt int64
+	if err := db.QueryRowContext(ctx, `SELECT updated_at FROM projects WHERE path = ?`, missingWorktreePath).Scan(&updatedAt); err != nil {
+		t.Fatalf("read missing worktree updated_at: %v", err)
+	}
+	if updatedAt != oldUpdatedAt.Unix() {
+		t.Fatalf("missing linked worktree updated_at = %d, want unchanged %d", updatedAt, oldUpdatedAt.Unix())
+	}
+}
+
+func TestScanPurgesExpiredMissingLinkedWorktrees(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	expiredPath := filepath.Join(t.TempDir(), "repo--expired")
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             expiredPath,
+		Name:             "repo--expired",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    false,
+		WorktreeRootPath: filepath.Dir(expiredPath),
+		WorktreeKind:     model.WorktreeKindLinked,
+		Forgotten:        true,
+		InScope:          true,
+		UpdatedAt:        time.Now().Add(-8 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("seed expired missing worktree: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+	if _, err := st.GetProjectDetail(ctx, expiredPath, 5); err == nil || !strings.Contains(err.Error(), "project not found") {
+		t.Fatalf("expired missing worktree lookup error = %v, want project not found", err)
+	}
+}
+
 func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	t.Parallel()
 
