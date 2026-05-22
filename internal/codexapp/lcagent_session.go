@@ -68,6 +68,7 @@ type lcagentSession struct {
 	stdin              io.WriteCloser
 	cancel             context.CancelFunc
 	threadID           string
+	runID              string
 	started            bool
 	busy               bool
 	closed             bool
@@ -231,7 +232,7 @@ func (s *lcagentSession) Compact() error {
 		s.mu.Unlock()
 		return fmt.Errorf("cannot compact while LCAgent is running")
 	}
-	sessionID := strings.TrimSpace(s.threadID)
+	sessionID := strings.TrimSpace(s.runID)
 	dataDir := s.dataDir
 	projectPath := s.projectPath
 	s.mu.Unlock()
@@ -253,7 +254,7 @@ func (s *lcagentSession) Compact() error {
 	}
 	s.mu.Lock()
 	if trace.SessionID != "" {
-		s.threadID = trace.SessionID
+		s.runID = trace.SessionID
 	}
 	s.status = notice
 	s.appendEntryLocked(TranscriptStatus, notice)
@@ -674,9 +675,9 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	}
 	if resumeID != "" {
 		if s.replayLoaded && len(s.entries) > 0 {
-			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run from saved context "+resumeID+".")
+			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run from thread "+resumeID+".")
 		} else {
-			s.appendEntryLocked(TranscriptStatus, "Continuing from LCAgent session "+resumeID+".")
+			s.appendEntryLocked(TranscriptStatus, "Continuing LCAgent thread "+resumeID+".")
 		}
 		s.replayLoaded = false
 	}
@@ -911,11 +912,15 @@ func (s *lcagentSession) handleEvent(line []byte) {
 	switch eventType {
 	case "session_meta":
 		id := rawJSONString(event["id"])
+		threadID := firstNonEmpty(rawJSONString(event["thread_id"]), id)
 		s.mu.Lock()
 		if id != "" {
-			s.threadID = id
+			s.runID = id
 		}
-		s.status = "LCAgent session " + firstNonEmpty(id, "started")
+		if threadID != "" {
+			s.threadID = threadID
+		}
+		s.status = "LCAgent thread " + firstNonEmpty(threadID, id, "started")
 		s.touchLocked()
 		s.mu.Unlock()
 	case "model_response":
@@ -1156,7 +1161,7 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 
 func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 	s.mu.Lock()
-	sessionID := strings.TrimSpace(s.threadID)
+	runID := strings.TrimSpace(s.runID)
 	dataDir := s.dataDir
 	projectPath := s.projectPath
 	stdin := s.stdin
@@ -1181,7 +1186,7 @@ func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 		_ = stdin.Close()
 	}
 	if err == nil && ok {
-		if trace, traceErr := LoadLCAgentTrace(dataDir, sessionID, projectPath); traceErr == nil {
+		if trace, traceErr := LoadLCAgentTrace(dataDir, runID, projectPath); traceErr == nil {
 			if quality := trace.TraceQualitySummaryLabel(); quality != "" {
 				s.appendAsync(TranscriptStatus, "LCAgent "+quality)
 			}
@@ -1231,7 +1236,8 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.threadID = strings.TrimSpace(replay.sessionID)
+	s.threadID = firstNonEmpty(strings.TrimSpace(replay.threadID), strings.TrimSpace(replay.sessionID))
+	s.runID = strings.TrimSpace(replay.sessionID)
 	s.started = true
 	s.busy = false
 	s.closed = false
@@ -1253,13 +1259,13 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	}
 	s.tokenUsage = cloneThreadTokenUsage(replay.tokenUsage)
 	label := firstNonEmpty(s.threadID, "history")
-	s.status = "Loaded LCAgent session " + label + " from disk"
+	s.status = "Loaded LCAgent thread " + label + " from disk"
 	s.replayLoaded = true
 	s.entries = nil
 	s.revision = 0
 	s.cache.ready = false
 	replayActivityAt := s.lastActivityAt
-	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent session "+label+" from disk. Sending a prompt starts a continuing run from saved context.")
+	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent thread "+label+" from disk. Sending a prompt starts a continuing run from canonical thread state.")
 	for _, entry := range replay.entries {
 		text := strings.TrimSpace(entry.Text)
 		if text == "" {
@@ -2049,17 +2055,34 @@ func lcagentPlanText(raw json.RawMessage) string {
 		if step == "" {
 			continue
 		}
-		status := strings.TrimSpace(item.Status)
-		if status != "" {
-			lines = append(lines, status+": "+step)
-		} else {
-			lines = append(lines, step)
+		if marker := lcagentPlanStatusMarker(item.Status); marker != "" {
+			lines = append(lines, marker+" "+step)
+			continue
 		}
+		status := strings.TrimSpace(item.Status)
+		if status == "" {
+			lines = append(lines, step)
+			continue
+		}
+		lines = append(lines, "["+status+"] "+step)
 	}
 	if len(lines) == 0 {
 		return "Plan updated"
 	}
 	return strings.Join(lines, "\n")
+}
+
+func lcagentPlanStatusMarker(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "complete", "done":
+		return "[x]"
+	case "in_progress", "inprogress", "active", "running":
+		return "[>]"
+	case "pending", "todo", "not_started":
+		return "[ ]"
+	default:
+		return ""
+	}
 }
 
 func lcagentFilesTouchedText(raw json.RawMessage) string {

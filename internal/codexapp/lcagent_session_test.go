@@ -89,7 +89,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 120 || snapshot.TokenUsage.Last.OutputTokens != 30 || snapshot.TokenUsage.Last.CachedInputTokens != 40 || snapshot.TokenUsage.Total.TotalTokens != 150 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
-	for _, want := range []string{"please run the fake agent", "Tool run_command running", "command ok", "completed: exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
+	for _, want := range []string{"please run the fake agent", "Tool run_command running", "command ok", "Plan:\n[x] exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
 		}
@@ -555,7 +555,7 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	if !snapshot.Started || snapshot.Busy {
 		t.Fatalf("Started/Busy = %v/%v, want replayed idle session", snapshot.Started, snapshot.Busy)
 	}
-	if snapshot.Status != "Loaded LCAgent session "+sessionID+" from disk" {
+	if snapshot.Status != "Loaded LCAgent thread "+sessionID+" from disk" {
 		t.Fatalf("Status = %q", snapshot.Status)
 	}
 	if !snapshot.LastActivityAt.Equal(last) {
@@ -568,13 +568,13 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
 	for _, want := range []string{
-		"Loaded LCAgent session " + sessionID + " from disk. Sending a prompt starts a continuing run from saved context.",
+		"Loaded LCAgent thread " + sessionID + " from disk. Sending a prompt starts a continuing run from canonical thread state.",
 		"summarize this repo",
 		"Continuing LCAgent from lca_parent_replay",
 		"pending verification missing_after_changes",
 		"Tool read_file running",
 		"README.md lines 1-1",
-		"done: inspect repo",
+		"Plan:\n[x] inspect repo",
 		"Replay answer",
 		"Files touched:\nREADME.md",
 	} {
@@ -656,6 +656,67 @@ func TestLCAgentSessionReplayStitchesAncestorHistory(t *testing.T) {
 	for _, want := range []string{"launch the site locally", "http://localhost:3001", "again please"} {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("stitched transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+}
+
+func TestLCAgentSessionReplayUsesCanonicalThreadState(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	threadID := "lct_replay_thread"
+	started := time.Date(2026, 5, 23, 1, 0, 0, 0, time.UTC)
+	writeLCAgentReplayArtifact(t, dataDir, started, "lca_run_one", []map[string]any{
+		{"type": "session_meta", "id": "lca_run_one", "thread_id": threadID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "user_message", "session_id": "lca_run_one", "message": "first prompt", "timestamp": started.Add(time.Second).Format(time.RFC3339Nano)},
+		{"type": "assistant_message", "session_id": "lca_run_one", "message": "first answer", "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano)},
+		{"type": "turn_complete", "session_id": "lca_run_one", "summary": "first answer", "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano)},
+	})
+	writeLCAgentReplayArtifact(t, dataDir, started.Add(4*time.Second), "lca_run_two", []map[string]any{
+		{"type": "session_meta", "id": "lca_run_two", "thread_id": threadID, "cwd": root, "started_at": started.Add(4 * time.Second).Format(time.RFC3339Nano)},
+		{"type": "user_message", "session_id": "lca_run_two", "message": "second prompt", "timestamp": started.Add(5 * time.Second).Format(time.RFC3339Nano)},
+		{"type": "assistant_message", "session_id": "lca_run_two", "message": "second answer", "timestamp": started.Add(6 * time.Second).Format(time.RFC3339Nano)},
+		{"type": "turn_complete", "session_id": "lca_run_two", "summary": "second answer", "timestamp": started.Add(7 * time.Second).Format(time.RFC3339Nano)},
+	})
+	stateDir := filepath.Join(dataDir, "lcagent", "threads", threadID)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("mkdir thread state: %v", err)
+	}
+	state := map[string]any{
+		"version":           1,
+		"thread_id":         threadID,
+		"project_path":      root,
+		"created_at":        started,
+		"updated_at":        started.Add(8 * time.Second),
+		"last_run_id":       "lca_run_two",
+		"status":            "stable",
+		"context_mode":      "exact",
+		"last_stable_point": "assistant_message",
+		"messages":          []map[string]string{{"role": "user", "content": "first prompt"}, {"role": "assistant", "content": "first answer"}},
+		"message_count":     2,
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal thread state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "state.json"), body, 0o600); err != nil {
+		t.Fatalf("write thread state: %v", err)
+	}
+
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: root,
+		AppDataDir:  dataDir,
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.ThreadID != threadID {
+		t.Fatalf("ThreadID = %q, want canonical thread", snapshot.ThreadID)
+	}
+	for _, want := range []string{"first prompt", "first answer", "second prompt", "second answer"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("thread replay missing %q:\n%s", want, snapshot.Transcript)
 		}
 	}
 }
@@ -856,7 +917,7 @@ func TestLCAgentSessionContinuesLoadedReplayWithContinueFromArg(t *testing.T) {
     printf '%s\n' "$arg"
   done
 } > "$LCAGENT_ARGS_FILE"
-printf '%s\n' '{"type":"session_meta","id":"lca_new_after_resume","cwd":"/tmp/demo"}'
+	printf '%s\n' '{"type":"session_meta","id":"lca_new_after_resume","thread_id":"lca_replay_continue","cwd":"/tmp/demo"}'
 printf '%s\n' '{"type":"continuation","parent_session_id":"lca_replay_continue","chain_depth":1,"continuation_reason":"continue_from","handoff_source":"turn_complete","pending_status":"reported","pending_files":["README.md"],"parent_summary":"source lca_replay_continue; summary: loaded answer"}'
 printf '%s\n' '{"type":"resume_context","source_session_id":"lca_replay_continue","summary":"source lca_replay_continue; summary: loaded answer"}'
 printf '%s\n' '{"type":"assistant_message","message":"continued answer"}'
@@ -889,11 +950,11 @@ printf '%s\n' '{"type":"turn_complete"}'
 
 	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
 	snapshot = waitForLCAgentTranscript(t, session, "continued answer")
-	if snapshot.ThreadID != "lca_new_after_resume" {
-		t.Fatalf("ThreadID = %q, want new resumed run id", snapshot.ThreadID)
+	if snapshot.ThreadID != sessionID {
+		t.Fatalf("ThreadID = %q, want stable thread id", snapshot.ThreadID)
 	}
 	for _, want := range []string{
-		"Starting a continuing LCAgent run from saved context " + sessionID,
+		"Starting a continuing LCAgent run from thread " + sessionID,
 		"Continuing LCAgent from " + sessionID,
 		"Loaded summarized LCAgent context from " + sessionID,
 		"continued answer",

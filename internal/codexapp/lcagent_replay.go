@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	lcagentcore "lcroom/internal/lcagent"
 	lcrmodel "lcroom/internal/model"
 )
 
@@ -19,6 +20,7 @@ const lcagentReplayMaxDepth = 20
 
 type lcagentReplay struct {
 	sessionID      string
+	threadID       string
 	parentID       string
 	projectPath    string
 	model          string
@@ -40,6 +42,19 @@ func loadLCAgentReplay(req LaunchRequest) (*lcagentReplay, error) {
 	}
 	projectPath := strings.TrimSpace(req.ProjectPath)
 	sessionID := strings.TrimSpace(req.ResumeID)
+	if sessionID != "" {
+		if info, ok, err := lcagentcore.LoadThreadStateInfo(dataDir, sessionID, projectPath); err != nil {
+			return nil, err
+		} else if ok {
+			return loadLCAgentThreadReplay(dataDir, info)
+		}
+	} else {
+		if info, ok, err := lcagentcore.LatestThreadStateInfo(dataDir, projectPath); err != nil {
+			return nil, err
+		} else if ok {
+			return loadLCAgentThreadReplay(dataDir, info)
+		}
+	}
 	var path string
 	var err error
 	if sessionID != "" {
@@ -66,11 +81,83 @@ func loadLCAgentReplay(req LaunchRequest) (*lcagentReplay, error) {
 	if replay.sessionID == "" {
 		replay.sessionID = sessionID
 	}
+	if replay.threadID == "" {
+		replay.threadID = replay.sessionID
+	}
 	if projectPath != "" && replay.projectPath != "" && !sameCleanPath(projectPath, replay.projectPath) {
 		return nil, fmt.Errorf("LCAgent session %s belongs to %s, not %s", firstNonEmpty(replay.sessionID, sessionID), replay.projectPath, projectPath)
 	}
+	if replay.threadID != "" && replay.threadID != replay.sessionID {
+		if info, ok, err := lcagentcore.LoadThreadStateInfo(dataDir, replay.threadID, projectPath); err != nil {
+			return nil, err
+		} else if ok {
+			return loadLCAgentThreadReplay(dataDir, info)
+		}
+	}
 	replay = loadLCAgentReplayChain(dataDir, replay, projectPath)
 	return replay, nil
+}
+
+func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (*lcagentReplay, error) {
+	threadID := strings.TrimSpace(info.ThreadID)
+	if threadID == "" {
+		return nil, nil
+	}
+	paths, err := findLCAgentSessionFilesByThread(dataDir, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if len(paths) == 0 && strings.TrimSpace(info.LastRunID) != "" {
+		path, err := findLCAgentSessionFile(dataDir, info.LastRunID)
+		if err != nil {
+			return nil, err
+		}
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	combined := &lcagentReplay{
+		sessionID:      strings.TrimSpace(info.LastRunID),
+		threadID:       threadID,
+		projectPath:    strings.TrimSpace(info.ProjectPath),
+		lastActivityAt: info.UpdatedAt,
+	}
+	for _, path := range paths {
+		replay, err := parseLCAgentReplayFile(path)
+		if err != nil || replay == nil {
+			continue
+		}
+		if replay.threadID == "" {
+			replay.threadID = replay.sessionID
+		}
+		if replay.threadID != threadID {
+			continue
+		}
+		if replay.projectPath != "" {
+			combined.projectPath = replay.projectPath
+		}
+		if replay.model != "" {
+			combined.model = replay.model
+		}
+		if replay.modelProvider != "" {
+			combined.modelProvider = replay.modelProvider
+		}
+		if replay.startedAt.Before(combined.startedAt) || combined.startedAt.IsZero() {
+			combined.startedAt = replay.startedAt
+		}
+		if replay.lastActivityAt.After(combined.lastActivityAt) {
+			combined.lastActivityAt = replay.lastActivityAt
+		}
+		if replay.sessionID != "" {
+			combined.sessionID = replay.sessionID
+		}
+		if replay.lastError != "" {
+			combined.lastError = replay.lastError
+		}
+		combined.entries = appendReplayEntries(combined.entries, replay.entries)
+		combined.tokenUsage = mergeReplayTokenUsage(combined.tokenUsage, replay.tokenUsage)
+	}
+	return combined, nil
 }
 
 func loadLCAgentReplayChain(dataDir string, replay *lcagentReplay, projectPath string) *lcagentReplay {
@@ -178,6 +265,61 @@ func findLCAgentSessionFile(dataDir, sessionID string) (string, error) {
 	return found, err
 }
 
+func findLCAgentSessionFilesByThread(dataDir, threadID string) ([]string, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, nil
+	}
+	root := filepath.Join(dataDir, "lcagent", "sessions")
+	if _, err := os.Stat(root); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	type candidate struct {
+		path string
+		at   time.Time
+	}
+	var candidates []candidate
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		replay, err := parseLCAgentReplayFile(path)
+		if err != nil || replay == nil {
+			return nil
+		}
+		if firstNonEmpty(replay.threadID, replay.sessionID) == threadID {
+			at := replay.startedAt
+			if at.IsZero() {
+				at = replay.lastActivityAt
+			}
+			candidates = append(candidates, candidate{path: path, at: at})
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].at.Equal(candidates[j].at) {
+			return candidates[i].path < candidates[j].path
+		}
+		if candidates[i].at.IsZero() {
+			return true
+		}
+		if candidates[j].at.IsZero() {
+			return false
+		}
+		return candidates[i].at.Before(candidates[j].at)
+	})
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.path)
+	}
+	return paths, nil
+}
+
 func findLatestLCAgentSessionFile(dataDir, projectPath string) (string, error) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -250,6 +392,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 		switch eventType {
 		case "session_meta":
 			replay.sessionID = rawJSONString(event["id"])
+			replay.threadID = firstNonEmpty(rawJSONString(event["thread_id"]), replay.threadID)
 			replay.parentID = firstNonEmpty(rawJSONString(event["parent_session_id"]), replay.parentID)
 			replay.projectPath = rawJSONString(event["cwd"])
 			replay.startedAt = rawJSONTime(event["started_at"])
@@ -327,6 +470,9 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 		}
 	}); err != nil {
 		return nil, err
+	}
+	if replay.threadID == "" {
+		replay.threadID = replay.sessionID
 	}
 	return replay, nil
 }

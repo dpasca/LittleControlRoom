@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/sessionmetrics"
 )
 
@@ -337,7 +338,7 @@ func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
 		},
 		{
 			Name:   "resume_context_trace",
-			Prompt: "continue with summary fallback",
+			Prompt: "continue with canonical thread state",
 			Auto:   "low",
 			Script: `{"type":"final_response","summary":"continued from context","files_changed":[],"verification":[]}
 `,
@@ -477,19 +478,56 @@ func lcagentEvalSessionFiles(dataDir string) ([]string, error) {
 }
 
 func writeLCAgentEvalResumeArtifact(dataDir, cwd, sessionID string, started time.Time) error {
+	if err := saveThreadState(dataDir, threadState{
+		Version:         threadStateVersion,
+		ThreadID:        sessionID,
+		ProjectPath:     cwd,
+		CreatedAt:       started,
+		UpdatedAt:       started.Add(2 * time.Second),
+		LastRunID:       sessionID,
+		Status:          threadStateStatusStable,
+		ContextMode:     threadContextModeExact,
+		LastStablePoint: "turn_complete",
+		Messages: []modeladapter.Message{
+			{Role: "user", Content: "previous eval task"},
+			{Role: "assistant", Content: "previous eval summary"},
+		},
+		MessageCount: 2,
+	}); err != nil {
+		return err
+	}
 	return writeLCAgentEvalArtifact(dataDir, sessionID, started, []map[string]any{
-		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "session_meta", "id": sessionID, "thread_id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
 		{"type": "user_message", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "message": "previous eval task"},
 		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "summary": "previous eval summary", "verification_status": "reported_only", "verification": []string{"scripted"}},
 	})
 }
 
 func writeLCAgentEvalMaxTurnHandoffArtifact(dataDir, cwd, sessionID string, started time.Time) error {
+	summary := "Turn budget reached. README.md was changed. Verification was not run. Continue by verifying README.md."
+	if err := saveThreadState(dataDir, threadState{
+		Version:         threadStateVersion,
+		ThreadID:        sessionID,
+		ProjectPath:     cwd,
+		CreatedAt:       started,
+		UpdatedAt:       started.Add(3 * time.Second),
+		LastRunID:       sessionID,
+		Status:          threadStateStatusStable,
+		ContextMode:     threadContextModeCompacted,
+		LastStablePoint: "final_handoff",
+		Messages: []modeladapter.Message{
+			{Role: "user", Content: "patch README then continue later"},
+			{Role: "assistant", Content: summary},
+		},
+		MessageCount: 2,
+	}); err != nil {
+		return err
+	}
 	return writeLCAgentEvalArtifact(dataDir, sessionID, started, []map[string]any{
-		{"type": "session_meta", "id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
+		{"type": "session_meta", "id": sessionID, "thread_id": sessionID, "cwd": cwd, "started_at": started.Format(time.RFC3339Nano)},
 		{"type": "user_message", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "message": "patch README then continue later"},
 		{"type": "final_handoff_compacted", "session_id": sessionID, "timestamp": started.Add(2 * time.Second).Format(time.RFC3339Nano), "final_model": "deepseek/test-model"},
-		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": "Turn budget reached. README.md was changed. Verification was not run. Continue by verifying README.md.", "files_changed": []string{"README.md"}, "verification": []string{}, "verification_status": "missing_after_changes"},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(3 * time.Second).Format(time.RFC3339Nano), "summary": summary, "files_changed": []string{"README.md"}, "verification": []string{}, "verification_status": "missing_after_changes"},
 	})
 }
 

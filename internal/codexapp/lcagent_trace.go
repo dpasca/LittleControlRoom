@@ -14,6 +14,7 @@ import (
 
 type LCAgentTrace struct {
 	SessionID                 string
+	ThreadID                  string
 	ArtifactPath              string
 	ProjectPath               string
 	StartedAt                 time.Time
@@ -94,6 +95,9 @@ func LoadLCAgentTrace(dataDir, sessionID, projectPath string) (LCAgentTrace, err
 	if trace.SessionID == "" {
 		trace.SessionID = sessionID
 	}
+	if trace.ThreadID == "" {
+		trace.ThreadID = trace.SessionID
+	}
 	if projectPath != "" && trace.ProjectPath != "" && !sameCleanPath(projectPath, trace.ProjectPath) {
 		return LCAgentTrace{}, fmt.Errorf("LCAgent session %s belongs to %s, not %s", firstNonEmpty(trace.SessionID, sessionID), trace.ProjectPath, projectPath)
 	}
@@ -117,6 +121,7 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 		switch eventType {
 		case "session_meta":
 			trace.SessionID = rawJSONString(event["id"])
+			trace.ThreadID = firstNonEmpty(rawJSONString(event["thread_id"]), trace.ThreadID)
 			trace.ProjectPath = rawJSONString(event["cwd"])
 			trace.StartedAt = rawJSONTime(event["started_at"])
 			trace.ResumeSourceSessionID = firstNonEmpty(rawJSONString(event["parent_session_id"]), trace.ResumeSourceSessionID)
@@ -237,6 +242,9 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 	}
 	if summary, err := sessionmetrics.AnalyzeFiles([]string{path}); err == nil {
 		trace.TraceQuality = summary.TraceQuality
+	}
+	if trace.ThreadID == "" {
+		trace.ThreadID = trace.SessionID
 	}
 	return trace, nil
 }

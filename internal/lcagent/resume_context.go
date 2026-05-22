@@ -24,6 +24,8 @@ const (
 
 type resumeContext struct {
 	SourceSessionID    string
+	ThreadID           string
+	LastRunID          string
 	ParentSessionID    string
 	SourcePath         string
 	ProjectPath        string
@@ -47,6 +49,8 @@ type resumeContext struct {
 	ExactMessageCount  int
 	ExactChars         int
 	ExactFromAncestor  bool
+	ThreadContextMode  string
+	FromThreadState    bool
 }
 
 type resumeVerificationCheck struct {
@@ -57,6 +61,19 @@ type resumeVerificationCheck struct {
 }
 
 func loadResumeContext(dataDir, raw, workspaceRoot string) (*resumeContext, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if state, ok, err := loadThreadState(dataDir, raw, workspaceRoot); err != nil {
+		return nil, err
+	} else if ok {
+		return resumeContextFromThreadState(state)
+	}
+	return nil, fmt.Errorf("LCAgent thread state not found: %s", raw)
+}
+
+func loadLegacyResumeContext(dataDir, raw, workspaceRoot string) (*resumeContext, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
@@ -176,6 +193,7 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 		switch eventType {
 		case "session_meta":
 			ctx.SourceSessionID = resumeJSONString(event["id"])
+			ctx.ThreadID = firstResumeNonEmpty(resumeJSONString(event["thread_id"]), ctx.ThreadID)
 			ctx.ParentSessionID = firstResumeNonEmpty(resumeJSONString(event["parent_session_id"]), ctx.ParentSessionID)
 			ctx.ProjectPath = resumeJSONString(event["cwd"])
 			ctx.StartedAt = resumeJSONTime(event["started_at"])
@@ -256,6 +274,45 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 	return ctx, nil
 }
 
+func resumeContextFromThreadState(state *threadState) (*resumeContext, error) {
+	if state == nil {
+		return nil, nil
+	}
+	status := firstResumeNonEmpty(strings.TrimSpace(state.Status), threadStateStatusStable)
+	if status != threadStateStatusStable {
+		reason := strings.TrimSpace(state.PendingReason)
+		if reason == "" {
+			reason = "the last run did not reach a stable model/tool boundary"
+		}
+		return nil, fmt.Errorf("LCAgent thread %s is not resumable yet (%s): %s", state.ThreadID, status, reason)
+	}
+	if len(state.Messages) == 0 {
+		return nil, fmt.Errorf("LCAgent thread %s has no canonical model context", state.ThreadID)
+	}
+	mode := firstResumeNonEmpty(strings.TrimSpace(state.ContextMode), threadContextModeExact)
+	ctx := &resumeContext{
+		SourceSessionID:   strings.TrimSpace(state.ThreadID),
+		ThreadID:          strings.TrimSpace(state.ThreadID),
+		LastRunID:         strings.TrimSpace(state.LastRunID),
+		ProjectPath:       strings.TrimSpace(state.ProjectPath),
+		RootSessionID:     strings.TrimSpace(state.ThreadID),
+		HandoffSource:     firstResumeNonEmpty(strings.TrimSpace(state.LastStablePoint), "thread_state"),
+		StartedAt:         state.CreatedAt,
+		LastActivityAt:    state.UpdatedAt,
+		FinalSummary:      lastAssistantMessageText(state.Messages),
+		ExactMessages:     cloneModelMessages(state.Messages),
+		ExactSource:       "thread_state:" + firstResumeNonEmpty(strings.TrimSpace(state.LastStablePoint), "checkpoint"),
+		ExactMessageCount: len(state.Messages),
+		ExactChars:        state.ApproxChars,
+		ThreadContextMode: mode,
+		FromThreadState:   true,
+	}
+	if ctx.ExactChars <= 0 {
+		ctx.ExactChars = messagesApproxChars(state.Messages)
+	}
+	return ctx, nil
+}
+
 func hydrateResumeContextFromAncestors(dataDir string, ctx *resumeContext, workspaceRoot string) {
 	if ctx == nil {
 		return
@@ -308,6 +365,9 @@ func (c *resumeContext) event(currentSessionID, reason string) session.Event {
 	return session.Event{
 		"type":                 "resume_context",
 		"session_id":           currentSessionID,
+		"thread_id":            firstResumeNonEmpty(c.ThreadID, c.SourceSessionID),
+		"source_thread_id":     c.ThreadID,
+		"source_run_id":        c.LastRunID,
 		"source_session_id":    c.SourceSessionID,
 		"parent_session_id":    c.SourceSessionID,
 		"root_session_id":      c.rootSessionID(),
@@ -342,6 +402,9 @@ func (c *resumeContext) continuationEvent(currentSessionID, reason string) sessi
 	return session.Event{
 		"type":                   "continuation",
 		"session_id":             currentSessionID,
+		"thread_id":              firstResumeNonEmpty(c.ThreadID, c.SourceSessionID),
+		"continued_thread_id":    c.ThreadID,
+		"continued_run_id":       c.LastRunID,
 		"parent_session_id":      c.SourceSessionID,
 		"root_session_id":        c.rootSessionID(),
 		"chain_depth":            c.nextChainDepth(),
@@ -367,6 +430,12 @@ func (c *resumeContext) hasExactMessages() bool {
 }
 
 func (c *resumeContext) contextMode() string {
+	if c == nil {
+		return "none"
+	}
+	if mode := strings.TrimSpace(c.ThreadContextMode); mode != "" {
+		return mode
+	}
 	if c.hasExactMessages() {
 		return "exact"
 	}
@@ -384,7 +453,7 @@ func (c *resumeContext) rootSessionID() string {
 	if c == nil {
 		return ""
 	}
-	return firstResumeNonEmpty(c.RootSessionID, c.SourceSessionID)
+	return firstResumeNonEmpty(c.RootSessionID, c.ThreadID, c.SourceSessionID)
 }
 
 func (c *resumeContext) nextChainDepth() int {

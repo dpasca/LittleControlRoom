@@ -538,7 +538,7 @@ func TestRunExecRoutePresetAllowsExplicitOverrides(t *testing.T) {
 	}
 }
 
-func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
+func TestRunExecRejectsLegacySessionContinuationWithoutThreadState(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	dataDir := t.TempDir()
@@ -585,59 +585,6 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 		},
 	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			Messages []struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"messages"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if len(body.Messages) < 2 {
-			t.Fatalf("request missing messages: %#v", body.Messages)
-		}
-		systemPrompt := body.Messages[0].Content
-		for _, want := range []string{
-			"Previous LCAgent session context",
-			sessionID,
-			"implement the first half",
-			"first half complete",
-			"README.md: +2 -1",
-			"go test ./internal/lcagent/...",
-			"Previous verification status: reported",
-			"Handoff source: turn_complete",
-			"Pending files to verify",
-		} {
-			if !strings.Contains(systemPrompt, want) {
-				t.Fatalf("system prompt missing resume context %q:\n%s", want, systemPrompt)
-			}
-		}
-		foundCurrentPrompt := false
-		for _, msg := range body.Messages {
-			if msg.Role == "user" && msg.Content == "continue from previous work" {
-				foundCurrentPrompt = true
-			}
-		}
-		if !foundCurrentPrompt {
-			t.Fatalf("request missing current continuation prompt: %#v", body.Messages)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"id":"resp_resume",
-			"model":"deepseek/test-model",
-			"choices":[{
-				"finish_reason":"stop",
-				"message":{"role":"assistant","content":"continued with context"}
-			}]
-		}`))
-	}))
-	defer server.Close()
-
-	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("OPENROUTER_BASE_URL", server.URL)
-
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
 		"exec",
@@ -651,27 +598,14 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 		"--max-turns", "2",
 		"continue from previous work",
 	}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	if code == 0 {
+		t.Fatalf("code = 0, want failure")
 	}
-	text := stdout.String()
-	for _, want := range []string{
-		`"type":"continuation"`,
-		`"parent_session_id":"` + sessionID + `"`,
-		`"chain_depth":1`,
-		`"continuation_reason":"continue_from"`,
-		`"handoff_source":"turn_complete"`,
-		`"context_mode":"summary"`,
-		`"pending_files":["README.md"]`,
-		`"type":"resume_context"`,
-		`"source_session_id":"` + sessionID + `"`,
-		`"source_path":`,
-		`"summary":"source ` + sessionID,
-		`"summary":"continued with context"`,
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("stdout missing %q:\n%s", want, text)
-		}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %s, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "thread state not found") {
+		t.Fatalf("stderr missing thread-state error: %s", stderr.String())
 	}
 }
 
@@ -679,7 +613,7 @@ func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	dataDir := t.TempDir()
-	sessionID := "lca_exact_source"
+	threadID := "lct_exact_source"
 	started := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
 	exactMessages := []modeladapter.Message{
 		{Role: "system", Content: "previous system prompt"},
@@ -695,30 +629,10 @@ func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
 		{Role: "tool", ToolCallID: "call_read", Content: `{"success":true,"output":"file: README.md\ntotal_lines: 1\nhas_more: false\nlines: 1-1\n\n1 | hello\n"}`},
 		{Role: "assistant", Content: "first answer"},
 	}
-	writeLCAgentCLITestArtifact(t, dataDir, started, sessionID, []map[string]any{
-		{
-			"type":       "session_meta",
-			"id":         sessionID,
-			"cwd":        root,
-			"started_at": started.Format(time.RFC3339Nano),
-		},
-		{
-			"type":          "model_context_snapshot",
-			"session_id":    sessionID,
-			"timestamp":     started.Add(time.Second).Format(time.RFC3339Nano),
-			"source":        "final_response",
-			"message_count": len(exactMessages),
-			"approx_chars":  messagesApproxChars(exactMessages),
-			"messages":      exactMessages,
-		},
-		{
-			"type":                "turn_complete",
-			"session_id":          sessionID,
-			"timestamp":           started.Add(2 * time.Second).Format(time.RFC3339Nano),
-			"summary":             "first answer",
-			"verification_status": "not_run",
-		},
-	})
+	store := newThreadStateStore(dataDir, threadID, root, "lca_exact_source_run", started)
+	if err := store.SaveCheckpoint("final_response", exactMessages, false); err != nil {
+		t.Fatalf("write thread state: %v", err)
+	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -780,7 +694,7 @@ func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", "deepseek/test-model",
-		"--continue-from", sessionID,
+		"--continue-from", threadID,
 		"--max-turns", "2",
 		"continue exactly",
 	}, &stdout, &stderr)
@@ -799,6 +713,161 @@ func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterResumesCanonicalThreadState(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []modeladapter.Message `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_thread_first",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":"first answer"}
+				}]
+			}`))
+		case 2:
+			for _, want := range []modeladapter.Message{
+				{Role: "user", Content: "first prompt"},
+				{Role: "assistant", Content: "first answer"},
+				{Role: "user", Content: "second prompt"},
+			} {
+				found := false
+				for _, msg := range body.Messages {
+					if msg.Role == want.Role && msg.Content == want.Content {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("resumed request missing %#v in %#v", want, body.Messages)
+				}
+			}
+			for _, msg := range body.Messages {
+				if msg.Role == "system" && strings.Contains(msg.Content, "Previous LCAgent session context") {
+					t.Fatalf("thread resume should use canonical messages, not summary prompt: %#v", body.Messages)
+				}
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_thread_second",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":"second answer"}
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var firstStdout, firstStderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"first prompt",
+	}, &firstStdout, &firstStderr)
+	if code != 0 {
+		t.Fatalf("first code = %d stderr=%s stdout=%s", code, firstStderr.String(), firstStdout.String())
+	}
+	threadID := lcagentCLITestThreadIDFromStream(t, firstStdout.String())
+	state, ok, err := loadThreadState(dataDir, threadID, root)
+	if err != nil || !ok {
+		t.Fatalf("load thread state ok=%v err=%v", ok, err)
+	}
+	if state.Status != threadStateStatusStable || state.ContextMode != threadContextModeExact {
+		t.Fatalf("state status/mode = %q/%q", state.Status, state.ContextMode)
+	}
+	if state.ThreadID != threadID || !sameCleanPath(state.ProjectPath, root) || len(state.Messages) < 3 {
+		t.Fatalf("state = %#v", state)
+	}
+
+	var secondStdout, secondStderr bytes.Buffer
+	code = Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--continue-from", threadID,
+		"--max-turns", "2",
+		"second prompt",
+	}, &secondStdout, &secondStderr)
+	if code != 0 {
+		t.Fatalf("second code = %d stderr=%s stdout=%s", code, secondStderr.String(), secondStdout.String())
+	}
+	for _, want := range []string{
+		`"thread_id":"` + threadID + `"`,
+		`"source_thread_id":"` + threadID + `"`,
+		`"context_mode":"exact"`,
+		`"summary":"second answer"`,
+	} {
+		if !strings.Contains(secondStdout.String(), want) {
+			t.Fatalf("second stdout missing %q:\n%s", want, secondStdout.String())
+		}
+	}
+}
+
+func TestRunExecRejectsUnstableThreadState(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	threadID := "lct_unstable"
+	store := newThreadStateStore(dataDir, threadID, root, "lca_interrupted", time.Now())
+	if err := store.MarkInFlight("model_request", []modeladapter.Message{
+		{Role: "system", Content: "system"},
+		{Role: "user", Content: "pending prompt"},
+	}, false); err != nil {
+		t.Fatalf("write unstable state: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--continue-from", threadID,
+		"continue",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("code = 0, want failure")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %s, want empty", stdout.String())
+	}
+	for _, want := range []string{"not resumable", threadStateStatusInFlight} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q: %s", want, stderr.String())
+		}
+	}
+}
+
 func TestRunExecRejectsConflictingContinuationFlags(t *testing.T) {
 	isolateSkillHomes(t)
 	var stdout, stderr bytes.Buffer
@@ -813,7 +882,7 @@ func TestRunExecRejectsConflictingContinuationFlags(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("code = 0, want failure")
 	}
-	if !strings.Contains(stderr.String(), "--resume and --continue-from refer to different sessions") {
+	if !strings.Contains(stderr.String(), "--resume and --continue-from refer to different threads") {
 		t.Fatalf("stderr missing conflict error: %s", stderr.String())
 	}
 	if stdout.Len() != 0 {
@@ -2237,7 +2306,7 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("first code = %d stderr=%s stdout=%s", code, firstStderr.String(), firstStdout.String())
 	}
-	sourceSessionID := lcagentCLITestSessionIDFromStream(t, firstStdout.String())
+	sourceThreadID := lcagentCLITestThreadIDFromStream(t, firstStdout.String())
 	firstText := firstStdout.String()
 	for _, want := range []string{
 		`"type":"final_handoff_compacted"`,
@@ -2258,7 +2327,7 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", "deepseek/test-model",
-		"--continue-from", sourceSessionID,
+		"--continue-from", sourceThreadID,
 		"--max-turns", "2",
 		"continue from the handoff",
 	}, &secondStdout, &secondStderr)
@@ -2268,11 +2337,10 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 	secondText := secondStdout.String()
 	for _, want := range []string{
 		`"type":"continuation"`,
-		`"parent_session_id":"` + sourceSessionID + `"`,
+		`"thread_id":"` + sourceThreadID + `"`,
+		`"parent_session_id":"` + sourceThreadID + `"`,
 		`"handoff_source":"final_handoff"`,
-		`"context_mode":"exact"`,
-		`"pending_status":"missing_after_changes"`,
-		`"pending_files":["README.md"]`,
+		`"context_mode":"compacted"`,
 		`"summary":"continued after handoff"`,
 	} {
 		if !strings.Contains(secondText, want) {
@@ -2674,6 +2742,33 @@ func lcagentCLITestSessionIDFromStream(t *testing.T, stream string) string {
 			id = strings.TrimSpace(id)
 			if id == "" {
 				t.Fatalf("session_meta missing id in stream:\n%s", stream)
+			}
+			return id
+		}
+	}
+	t.Fatalf("stream missing session_meta:\n%s", stream)
+	return ""
+}
+
+func lcagentCLITestThreadIDFromStream(t *testing.T, stream string) string {
+	t.Helper()
+	for _, line := range strings.Split(stream, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		var eventType string
+		_ = json.Unmarshal(event["type"], &eventType)
+		if strings.TrimSpace(eventType) == "session_meta" {
+			var id string
+			_ = json.Unmarshal(event["thread_id"], &id)
+			id = strings.TrimSpace(id)
+			if id == "" {
+				t.Fatalf("session_meta missing thread_id in stream:\n%s", stream)
 			}
 			return id
 		}

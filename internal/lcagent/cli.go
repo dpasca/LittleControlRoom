@@ -242,8 +242,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
-	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent session id or .jsonl artifact to summarize as continuation context")
-	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent session id or .jsonl artifact to continue from")
+	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent thread id to continue from")
+	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
 	fs.StringVar(&webSearchAPIKey, "web-search-api-key", "", "optional web search API key, used by exa or google")
 	fs.StringVar(&webSearchEngineID, "web-search-engine-id", "", "optional Google Programmable Search engine ID")
@@ -276,7 +276,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	resumeSourceRaw := strings.TrimSpace(resumeRaw)
 	continueSourceRaw := strings.TrimSpace(continueRaw)
 	if resumeSourceRaw != "" && continueSourceRaw != "" && resumeSourceRaw != continueSourceRaw {
-		return fmt.Errorf("--resume and --continue-from refer to different sessions")
+		return fmt.Errorf("--resume and --continue-from refer to different threads")
 	}
 	continuationReason := ""
 	if continueSourceRaw != "" {
@@ -352,6 +352,16 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if err != nil {
 		return err
 	}
+	threadID := ""
+	if resumeContext != nil {
+		threadID = firstResumeNonEmpty(resumeContext.ThreadID, resumeContext.rootSessionID(), resumeContext.SourceSessionID)
+	}
+	if threadID == "" {
+		threadID, err = newLCAgentThreadID()
+		if err != nil {
+			return err
+		}
+	}
 	stream := io.Writer(nil)
 	if outMode == outputStreamJSON {
 		stream = stdout
@@ -363,6 +373,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	defer writer.Close()
 	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, buildinfo.Version(), started)
+	meta["thread_id"] = threadID
+	meta["run_id"] = sessionID
 	meta["admin_write"] = adminWrite
 	meta["approval_mode"] = approvalMode
 	if resumeContext != nil {
@@ -377,6 +389,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if err := writer.Write(meta); err != nil {
 		return err
 	}
+	threadStore := newThreadStateStore(dataDir, threadID, workspace.Root, sessionID, started)
 	if routePresetSet {
 		if err := writer.Write(session.Event{
 			"type":              "route_preset",
@@ -501,7 +514,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		}
 		runErr = runner.Run(context.Background(), actions)
 	case "openrouter", "openai", "deepseek", "moonshot":
-		runErr = runOpenRouter(context.Background(), writer, runner, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
+		runErr = runOpenRouter(context.Background(), writer, runner, threadStore, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
 			Model:           model,
 			FinalModel:      finalModel,
 			EnvFile:         envFile,
@@ -538,7 +551,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
+func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -593,13 +606,11 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, systemPromptOptions)
 	readLedger := newReadLedger()
 	var messages []modeladapter.Message
+	contextCompacted := resumeContext != nil && strings.EqualFold(strings.TrimSpace(resumeContext.ThreadContextMode), threadContextModeCompacted)
 	if resumeContext != nil && resumeContext.hasExactMessages() {
 		messages = resumeContext.exactMessages()
 		if !modelMessagesHaveSystem(messages) && strings.TrimSpace(systemPrompt) != "" {
 			messages = append([]modeladapter.Message{{Role: "system", Content: systemPrompt}}, messages...)
-		}
-		if resumeContext.ExactFromAncestor {
-			messages = appendSystemContextToModelMessages(messages, resumeContext.systemPromptSection())
 		}
 		observeReadLedgerMessages(readLedger, messages)
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
@@ -614,14 +625,9 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				return err
 			}
 			messages = compactedMessages
+			contextCompacted = true
 		}
 		messages = append(messages, modeladapter.Message{Role: "user", Content: runner.Prompt})
-	} else if resumeSection := strings.TrimSpace(resumeContext.systemPromptSection()); resumeSection != "" {
-		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + resumeSection)
-		messages = []modeladapter.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: runner.Prompt},
-		}
 	} else {
 		messages = []modeladapter.Message{
 			{Role: "system", Content: systemPrompt},
@@ -647,6 +653,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				return err
 			}
 			messages = compactedMessages
+			contextCompacted = true
 		}
 		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{ToolProfile: string(toolProfile)})
 		requestMessages := appendOpenRouterProgressNote(messages, guidance, readLedger)
@@ -662,6 +669,11 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				"final_model": finalClient.Model(),
 				"stats":       compaction,
 			}); err != nil {
+				return err
+			}
+		}
+		if threadStore != nil {
+			if err := threadStore.MarkInFlight("model_request", messages, contextCompacted); err != nil {
 				return err
 			}
 		}
@@ -707,7 +719,12 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			if err := runner.Final(final); err != nil {
 				return err
 			}
-			return writeModelContextSnapshot(writer, runner.SessionID, "assistant_message", messages)
+			return writeModelContextSnapshot(writer, threadStore, runner.SessionID, "assistant_message", messages, contextCompacted)
+		}
+		if threadStore != nil {
+			if err := threadStore.MarkPendingTools("assistant_tool_calls", messages, contextCompacted, msg.ToolCalls); err != nil {
+				return err
+			}
 		}
 		if msg.Content != "" && !hasToolCall(msg.ToolCalls, "final_response") {
 			if err := writer.Write(session.Event{
@@ -773,7 +790,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				if err := runner.Final(final); err != nil {
 					return err
 				}
-				return writeModelContextSnapshot(writer, runner.SessionID, "final_response", snapshotMessages)
+				return writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_response", snapshotMessages, contextCompacted)
 			}
 			result, err := runner.RunTool(ctx, action)
 			if call.Function.Name == "read_file" {
@@ -831,11 +848,11 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 		}
-		if err := writeModelContextSnapshot(writer, runner.SessionID, "tool_result", messages); err != nil {
+		if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "tool_result", messages, contextCompacted); err != nil {
 			return err
 		}
 	}
-	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)
+	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, threadStore, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)
 }
 
 func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (*modeladapter.Client, error) {
@@ -877,7 +894,7 @@ func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) st
 	return strings.TrimSpace(os.Getenv("OPENROUTER_FINAL_MODEL"))
 }
 
-func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
+func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
 	maxTurns := client.MaxTurns()
 	filesChanged := runner.FilesTouched()
 	verification := runner.VerificationDetails()
@@ -889,6 +906,11 @@ func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer
 		"stats":       compaction,
 	}); err != nil {
 		return err
+	}
+	if threadStore != nil {
+		if err := threadStore.MarkInFlight("final_handoff_request", compactedMessages, true); err != nil {
+			return err
+		}
 	}
 	completion, err := completeProviderWithRetriesValidated(ctx, writer, runner.SessionID, providerLabel, "final_handoff", maxTurns+1, finalClient.Model(), validateVisibleCompletion(providerLabel), func() (modeladapter.Completion, error) {
 		return finalClient.CompleteWithOptions(ctx, compactedMessages, nil, openRouterFinalCompletionOptions(cfg))
@@ -920,7 +942,7 @@ func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer
 	if err := runner.Final(final); err != nil {
 		return err
 	}
-	return writeModelContextSnapshot(writer, runner.SessionID, "final_handoff", appendAssistantContentForContextSnapshot(compactedMessages, sanitizedContent))
+	return writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_handoff", appendAssistantContentForContextSnapshot(compactedMessages, sanitizedContent), true)
 }
 
 func openRouterMaxTurnsFinalPrompt(maxTurns int, filesChanged, verification []string) string {

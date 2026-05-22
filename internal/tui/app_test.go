@@ -17781,6 +17781,35 @@ func TestRenderCodexTranscriptEntryCompactsToolCallsToSingleLine(t *testing.T) {
 	}
 }
 
+func TestRenderCodexTranscriptEntryRendersPlanLabelOnOwnLine(t *testing.T) {
+	rendered := ansi.Strip(renderCodexTranscriptEntry(codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptPlan,
+		Text: "[x] Inspect renderer\n[>] Add plan status styling\n[ ] Run verification",
+	}, 64, codexDenseBlockSummary))
+
+	lines := strings.Split(rendered, "\n")
+	trimmed := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if text := strings.TrimSpace(line); text != "" {
+			trimmed = append(trimmed, text)
+		}
+	}
+	wantLines := []string{
+		"Plan",
+		"[x] Inspect renderer",
+		"[>] Add plan status styling",
+		"[ ] Run verification",
+	}
+	for i, want := range wantLines {
+		if i >= len(trimmed) || trimmed[i] != want {
+			t.Fatalf("plan line %d = %q, want %q; rendered:\n%s", i, trimmed, want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Plan [x]") {
+		t.Fatalf("plan label should not share the first item line:\n%s", rendered)
+	}
+}
+
 func TestRenderCodexTranscriptEntriesKeepsConsecutiveToolCallsDense(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{

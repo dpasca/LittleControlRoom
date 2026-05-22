@@ -29,6 +29,86 @@ func renderCodexUserMessageBlock(body string, width int) string {
 	return renderCodexMessageBlockWithStyle("", body, lipgloss.Color("81"), lipgloss.Color("252"), width, true)
 }
 
+func renderCodexPlanBlock(body string, width int) string {
+	accent := lipgloss.Color("214")
+	contentWidth := max(10, width-2)
+	label := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Plan")
+	lines := []string{label}
+	if renderedBody := strings.TrimSpace(renderCodexPlanBody(body, contentWidth)); renderedBody != "" {
+		lines = append(lines, strings.Split(renderedBody, "\n")...)
+	}
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(accent).
+		PaddingLeft(1).
+		Render(strings.Join(lines, "\n"))
+}
+
+func renderCodexPlanBody(body string, width int) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	lines := strings.Split(body, "\n")
+	rendered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if marker, text, ok := parseCodexPlanMarker(line); ok {
+			rendered = append(rendered, renderCodexPlanStatusLine(marker, text, width)...)
+			continue
+		}
+		rendered = append(rendered, strings.Split(renderCodexBody(line, lipgloss.Color("252"), width), "\n")...)
+	}
+	return strings.Join(rendered, "\n")
+}
+
+func parseCodexPlanMarker(line string) (marker, text string, ok bool) {
+	trimmed := strings.TrimSpace(line)
+	for _, candidate := range []string{"[x]", "[>]", "[*]", "[ ]"} {
+		if strings.HasPrefix(trimmed, candidate) {
+			return candidate, strings.TrimSpace(strings.TrimPrefix(trimmed, candidate)), true
+		}
+	}
+	return "", "", false
+}
+
+func renderCodexPlanStatusLine(marker, text string, width int) []string {
+	markerStyle, textStyle := codexPlanStatusStyles(marker)
+	markerWidth := ansi.StringWidth(marker)
+	indent := markerWidth + 1
+	textWidth := max(4, width-indent)
+	if strings.TrimSpace(text) == "" {
+		return []string{markerStyle.Render(marker)}
+	}
+	renderedText := renderCodexInlineMarkdown(text, textStyle)
+	wrapped := strings.Split(lipgloss.NewStyle().Width(textWidth).Render(renderedText), "\n")
+	out := make([]string, 0, len(wrapped))
+	for index, line := range wrapped {
+		if index == 0 {
+			out = append(out, markerStyle.Render(marker)+" "+line)
+			continue
+		}
+		out = append(out, strings.Repeat(" ", indent)+line)
+	}
+	return out
+}
+
+func codexPlanStatusStyles(marker string) (lipgloss.Style, lipgloss.Style) {
+	switch marker {
+	case "[x]":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
+	case "[>]", "[*]":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+	case "[ ]":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true),
+			lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	}
+}
+
 func renderCodexMessageBlockWithStyle(label, body string, accent, bodyColor lipgloss.Color, width int, shaded bool) string {
 	paddingRight := 0
 	style := lipgloss.NewStyle().

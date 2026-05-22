@@ -38,6 +38,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 - Codex artifacts live primarily under `~/.codex`, not per-project `.codex` directories.
 - Project mapping comes from session metadata `cwd` values.
 - OpenCode artifacts live primarily under `~/.local/share/opencode` and are mapped via session and project metadata.
+- Experimental LCAgent uses canonical thread state under the app data directory (`lcagent/threads/<thread-id>/state.json`) as the model-resume source of truth; JSONL session files are per-run traces for replay, metrics, and audit.
 - Boss chat inference is configured separately from background project-analysis inference, with a high-grade helm model for main Boss reasoning and a lower-cost utility model for routine routing, while summaries/classification continue to use Codex, OpenCode, Claude Code, MLX, Ollama, or another selected backend.
 - Boss chat transcripts are local Markdown text files under the app data directory (`boss-sessions/`), not SQLite rows; assistant recall packages search matches as XML-like snippets at query time.
 - If detector assumptions change, update [docs/codex_cli_footprint.md](docs/codex_cli_footprint.md) in the same change.

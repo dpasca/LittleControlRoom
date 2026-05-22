@@ -4391,12 +4391,20 @@ func formatTranscriptEntry(kind TranscriptKind, text string) string {
 	case TranscriptError:
 		return "[error] " + text
 	case TranscriptPlan:
-		return "Plan: " + text
+		return formatPlanTranscriptEntry(text)
 	case TranscriptReasoning:
 		return "Reasoning: " + text
 	default:
 		return text
 	}
+}
+
+func formatPlanTranscriptEntry(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return "Plan:\n" + text
 }
 
 func renderResumedThreadItem(item map[string]json.RawMessage) (string, TranscriptKind, string) {

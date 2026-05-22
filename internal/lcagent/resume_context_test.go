@@ -66,71 +66,37 @@ func TestParseResumeContextFileReadsLargeModelContextSnapshot(t *testing.T) {
 	}
 }
 
-func TestLoadResumeContextFallsBackToAncestorExactSnapshot(t *testing.T) {
+func TestLoadResumeContextReadsCanonicalThreadState(t *testing.T) {
 	dataDir := t.TempDir()
 	root := t.TempDir()
 	started := time.Date(2026, 5, 22, 10, 0, 0, 0, time.UTC)
-	ancestorMessages := []modeladapter.Message{
+	threadID := "lct_resume_source"
+	messages := []modeladapter.Message{
 		{Role: "system", Content: "system prompt"},
 		{Role: "user", Content: "launch the site locally"},
 		{Role: "assistant", Content: "The dev server is running at http://localhost:3001."},
 	}
-	writeLCAgentCLITestArtifact(t, dataDir, started, "lca_parent", []map[string]any{
-		{
-			"type":       "session_meta",
-			"id":         "lca_parent",
-			"cwd":        root,
-			"started_at": started.Format(time.RFC3339Nano),
-		},
-		{
-			"type":          modelContextSnapshotType,
-			"session_id":    "lca_parent",
-			"timestamp":     started.Add(time.Second).Format(time.RFC3339Nano),
-			"source":        "tool_result",
-			"message_count": len(ancestorMessages),
-			"approx_chars":  messagesApproxChars(ancestorMessages),
-			"messages":      ancestorMessages,
-		},
-	})
-	writeLCAgentCLITestArtifact(t, dataDir, started.Add(2*time.Second), "lca_child", []map[string]any{
-		{
-			"type":              "session_meta",
-			"id":                "lca_child",
-			"parent_session_id": "lca_parent",
-			"cwd":               root,
-			"started_at":        started.Add(2 * time.Second).Format(time.RFC3339Nano),
-		},
-		{
-			"type":              "resume_context",
-			"session_id":        "lca_child",
-			"parent_session_id": "lca_parent",
-			"summary":           "source lca_parent; summary: The dev server is running at http://localhost:3001.",
-			"timestamp":         started.Add(3 * time.Second).Format(time.RFC3339Nano),
-		},
-		{
-			"type":       "user_message",
-			"session_id": "lca_child",
-			"message":    "again please",
-			"timestamp":  started.Add(4 * time.Second).Format(time.RFC3339Nano),
-		},
-	})
+	store := newThreadStateStore(dataDir, threadID, root, "lca_resume_run", started)
+	if err := store.SaveCheckpoint("tool_result", messages, false); err != nil {
+		t.Fatalf("write thread state: %v", err)
+	}
 
-	ctx, err := loadResumeContext(dataDir, "lca_child", root)
+	ctx, err := loadResumeContext(dataDir, threadID, root)
 	if err != nil {
 		t.Fatalf("loadResumeContext() error = %v", err)
 	}
-	if !ctx.hasExactMessages() || !ctx.ExactFromAncestor {
-		t.Fatalf("exact fallback = %t fromAncestor=%t source=%q", ctx.hasExactMessages(), ctx.ExactFromAncestor, ctx.ExactSource)
+	if !ctx.hasExactMessages() || ctx.ExactFromAncestor || !ctx.FromThreadState {
+		t.Fatalf("exact thread state = %t fromAncestor=%t fromThread=%t source=%q", ctx.hasExactMessages(), ctx.ExactFromAncestor, ctx.FromThreadState, ctx.ExactSource)
 	}
 	if got := ctx.ExactMessages[1].Content; got != "launch the site locally" {
-		t.Fatalf("ancestor exact user message = %q", got)
+		t.Fatalf("thread exact user message = %q", got)
 	}
 	section := ctx.systemPromptSection()
-	if !strings.Contains(section, "again please") || !strings.Contains(section, "http://localhost:3001") {
-		t.Fatalf("systemPromptSection() missing child/inherited context:\n%s", section)
+	if !strings.Contains(section, threadID) || !strings.Contains(section, "http://localhost:3001") {
+		t.Fatalf("systemPromptSection() missing thread context:\n%s", section)
 	}
 	if summary := ctx.summaryText(); !strings.Contains(summary, "http://localhost:3001") {
-		t.Fatalf("summaryText() = %q, want inherited launch context", summary)
+		t.Fatalf("summaryText() = %q, want thread context", summary)
 	}
 }
 

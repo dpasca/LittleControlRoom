@@ -2414,7 +2414,7 @@ func formatTranscriptEntryForProvider(provider Provider, kind TranscriptKind, te
 	case TranscriptError:
 		return "[error] " + text
 	case TranscriptPlan:
-		return "Plan: " + text
+		return formatPlanTranscriptEntry(text)
 	case TranscriptReasoning:
 		return "Reasoning: " + text
 	default:

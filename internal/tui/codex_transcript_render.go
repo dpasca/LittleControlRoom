@@ -147,7 +147,7 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 	case codexapp.TranscriptAgent:
 		return renderCodexMessageBlock("", text, lipgloss.Color("120"), lipgloss.Color("252"), width)
 	case codexapp.TranscriptPlan:
-		return renderCodexMessageBlock("Plan", text, lipgloss.Color("214"), lipgloss.Color("252"), width)
+		return renderCodexPlanBlock(text, width)
 	case codexapp.TranscriptReasoning:
 		return renderReasoningBlock(text, width)
 	case codexapp.TranscriptCommand:
@@ -907,8 +907,8 @@ func parseLegacyCodexTranscriptBlock(block string) (codexapp.TranscriptKind, str
 	case legacyTranscriptBlockHasPrefix(block, "Codex: "):
 		text, _ := trimLegacyCodexTranscriptPrefix(block, "Codex: ")
 		return codexapp.TranscriptAgent, text
-	case legacyTranscriptBlockHasPrefix(block, "Plan: "):
-		text, _ := trimLegacyCodexTranscriptPrefix(block, "Plan: ")
+	case legacyTranscriptBlockHasPrefix(block, "Plan:"):
+		text, _ := trimLegacyCodexTranscriptPrefix(block, "Plan:")
 		return codexapp.TranscriptPlan, text
 	case legacyTranscriptBlockHasPrefix(block, "Reasoning: "):
 		text, _ := trimLegacyCodexTranscriptPrefix(block, "Reasoning: ")
