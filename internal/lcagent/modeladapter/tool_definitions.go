@@ -18,6 +18,7 @@ type ToolOptions struct {
 	MaxOutlineFileLimit     int
 	MaxModuleOutlineChars   int
 	WebSearchEnabled        bool
+	ManagedProcessesEnabled bool
 	AdminWrite              bool
 }
 
@@ -213,6 +214,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"properties": map[string]any{
 						"command": map[string]any{"type": "string", "description": "Shell command to run as the managed process, for example \"pnpm dev\". Keep it to the foreground server/watch command; LCR owns backgrounding and stopping."},
 						"cwd":     map[string]any{"type": "string", "description": "Optional workspace-relative working directory for the process, for example \"frontend\". Absolute or parent-directory cwd values outside the workspace are rejected."},
+						"name":    map[string]any{"type": "string", "description": "Optional short label for this process, such as \"frontend\" or \"emulators\"."},
 					},
 					"required": []string{"command"},
 				},
@@ -222,7 +224,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "list_processes",
-				Description: "List managed background processes known to Little Control Room, including running state, PID, ports, URLs, and recent output. Use this to verify whether a dev server is actually still running.",
+				Description: "List managed background processes for this workspace, including running state, process id, PID, ports, URLs, and recent output. Use this to verify whether a dev server is actually still running.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -234,11 +236,13 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "stop_process",
-				Description: "Stop the current workspace's managed background process through Little Control Room. This only affects LCR-owned managed runtimes. Do not call this before start_process just to launch an app; start_process will report if a managed process is already running.",
+				Description: "Stop a managed background process through Little Control Room. This only affects LCR-owned managed runtimes. Use process_id from list_processes when more than one process is active.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
-					"properties":           map[string]any{},
+					"properties": map[string]any{
+						"process_id": map[string]any{"type": "string", "description": "Optional managed process id from list_processes. If omitted, LCR stops the selected/default process for this workspace."},
+					},
 				},
 			},
 		},
@@ -319,6 +323,18 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			},
 		},
 	)
+	if !opts.ManagedProcessesEnabled {
+		filtered := defs[:0]
+		for _, def := range defs {
+			switch def.Function.Name {
+			case "start_process", "list_processes", "stop_process":
+				continue
+			default:
+				filtered = append(filtered, def)
+			}
+		}
+		defs = filtered
+	}
 	return defs
 }
 

@@ -501,7 +501,7 @@ func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "start_process",
-		Args: raw(`{"command":"pnpm dev","cwd":"frontend"}`),
+		Args: raw(`{"command":"pnpm dev","cwd":"frontend","name":"frontend"}`),
 	})
 	if err != nil {
 		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
@@ -516,7 +516,7 @@ func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 		t.Fatalf("process requests = %#v", processes.requests)
 	}
 	request := processes.requests[0]
-	if request.Action != ProcessActionStart || request.Command != "pnpm dev" || request.CWD != "frontend" || request.SessionID != sessionID {
+	if request.Action != ProcessActionStart || request.Command != "pnpm dev" || request.CWD != "frontend" || request.Name != "frontend" || request.SessionID != sessionID {
 		t.Fatalf("process request = %#v", request)
 	}
 }
@@ -589,7 +589,7 @@ func TestRunnerStopProcessDoesNotRequireApproval(t *testing.T) {
 	result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "stop_process",
-		Args: raw(`{}`),
+		Args: raw(`{"process_id":"rt_2"}`),
 	})
 	if err != nil {
 		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
@@ -600,7 +600,7 @@ func TestRunnerStopProcessDoesNotRequireApproval(t *testing.T) {
 	if approvals.calls != 0 {
 		t.Fatalf("stop_process should not request approval, got %d calls", approvals.calls)
 	}
-	if len(processes.requests) != 1 || processes.requests[0].Action != ProcessActionStop {
+	if len(processes.requests) != 1 || processes.requests[0].Action != ProcessActionStop || processes.requests[0].ProcessID != "rt_2" {
 		t.Fatalf("process requests = %#v", processes.requests)
 	}
 }

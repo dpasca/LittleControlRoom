@@ -17,7 +17,6 @@ import (
 
 	"lcroom/internal/appfs"
 	"lcroom/internal/lcagent/modeladapter"
-	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
 	"lcroom/internal/projectrun"
 )
@@ -1127,219 +1126,32 @@ func lcagentApprovalResolvedText(event map[string]json.RawMessage) string {
 }
 
 func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMessage) {
-	id := rawJSONString(event["id"])
-	action := strings.TrimSpace(rawJSONString(event["action"]))
-	command := strings.TrimSpace(rawJSONString(event["command"]))
-	cwd := strings.TrimSpace(rawJSONString(event["cwd"]))
-	if id == "" {
+	request := lcagentManagedProcessRequest{
+		ID:        rawJSONString(event["id"]),
+		Action:    strings.TrimSpace(rawJSONString(event["action"])),
+		ProcessID: strings.TrimSpace(rawJSONString(event["process_id"])),
+		Name:      strings.TrimSpace(rawJSONString(event["name"])),
+		Command:   strings.TrimSpace(rawJSONString(event["command"])),
+		CWD:       strings.TrimSpace(rawJSONString(event["cwd"])),
+	}
+	if request.ID == "" {
 		return
 	}
 	s.mu.Lock()
-	manager := s.runtimeManager
-	projectPath := s.projectPath
-	stdin := s.stdin
-	s.status = lcagentProcessRequestStatus(action)
-	if text := lcagentProcessRequestText(action, command, cwd); text != "" {
+	bridge := lcagentProcessBridge{
+		manager:     s.runtimeManager,
+		projectPath: s.projectPath,
+		stdin:       s.stdin,
+		appendAsync: s.appendAsync,
+	}
+	s.status = lcagentProcessRequestStatus(request.Action)
+	if text := lcagentProcessRequestText(request.Action, request.Command, request.CWD); text != "" {
 		s.appendEntryLocked(TranscriptStatus, text)
 	}
 	s.touchLocked()
 	s.mu.Unlock()
 
-	if stdin == nil {
-		s.appendAsync(TranscriptError, "LCAgent managed process response failed: process channel is not available")
-		return
-	}
-	result := s.runLCAgentProcessRequest(manager, projectPath, action, command, cwd)
-	payload, err := json.Marshal(map[string]any{
-		"type":   "process_response",
-		"id":     id,
-		"result": result,
-	})
-	if err != nil {
-		s.appendAsync(TranscriptError, "LCAgent managed process response failed: "+err.Error())
-		return
-	}
-	if _, err := fmt.Fprintln(stdin, string(payload)); err != nil {
-		s.appendAsync(TranscriptError, "LCAgent managed process response failed: "+err.Error())
-		return
-	}
-	if result.Success {
-		s.appendAsync(TranscriptStatus, result.Output)
-	} else {
-		s.appendAsync(TranscriptError, firstNonEmpty(result.Error, "LCAgent managed process request failed"))
-	}
-}
-
-func (s *lcagentSession) runLCAgentProcessRequest(manager *projectrun.Manager, projectPath, action, command, cwd string) tools.ToolResult {
-	if manager == nil {
-		return tools.ToolResult{Success: false, Error: "runtime manager unavailable"}
-	}
-	projectPath = strings.TrimSpace(projectPath)
-	switch action {
-	case "start":
-		if command == "" {
-			return tools.ToolResult{Success: false, Error: "managed process command is required"}
-		}
-		snapshot, err := manager.Start(projectrun.StartRequest{
-			ProjectPath: projectPath,
-			Command:     command,
-			CWD:         cwd,
-		})
-		if errors.Is(err, projectrun.ErrAlreadyRunning) {
-			return lcagentManagedProcessResult("Managed process already running", snapshot, true)
-		}
-		if err != nil {
-			return tools.ToolResult{Success: false, Error: err.Error(), Command: command, CWD: cwd}
-		}
-		return lcagentManagedProcessResult("Started managed process", snapshot, true)
-	case "list":
-		return lcagentManagedProcessListResult(manager.Snapshots())
-	case "stop":
-		err := manager.Stop(projectPath)
-		if errors.Is(err, projectrun.ErrNotRunning) {
-			return tools.ToolResult{Success: true, Output: "No managed process is running for this workspace."}
-		}
-		if err != nil {
-			return tools.ToolResult{Success: false, Error: err.Error()}
-		}
-		return tools.ToolResult{Success: true, Output: "Stopping managed process for this workspace."}
-	default:
-		return tools.ToolResult{Success: false, Error: "unsupported managed process action: " + action}
-	}
-}
-
-func lcagentProcessRequestStatus(action string) string {
-	switch strings.TrimSpace(action) {
-	case "start":
-		return "Starting managed process"
-	case "list":
-		return "Listing managed processes"
-	case "stop":
-		return "Stopping managed process"
-	default:
-		return "Handling managed process request"
-	}
-}
-
-func lcagentProcessRequestText(action, command, cwd string) string {
-	switch strings.TrimSpace(action) {
-	case "start":
-		message := "LCAgent starting managed process"
-		if command = strings.TrimSpace(command); command != "" {
-			message += ": " + command
-		}
-		if cwd = strings.TrimSpace(cwd); cwd != "" {
-			message += " in " + cwd
-		}
-		return message
-	case "list":
-		return "LCAgent listing managed processes"
-	case "stop":
-		return "LCAgent stopping managed process"
-	default:
-		return ""
-	}
-}
-
-func lcagentManagedProcessResult(prefix string, snapshot projectrun.Snapshot, success bool) tools.ToolResult {
-	output := strings.TrimSpace(prefix)
-	detail := lcagentManagedProcessLine(snapshot)
-	if detail != "" {
-		if output != "" {
-			output += ": "
-		}
-		output += detail
-	}
-	if output == "" {
-		output = "Managed process updated."
-	}
-	return tools.ToolResult{
-		Success: success,
-		Output:  output,
-		Command: snapshot.Command,
-		CWD:     firstNonEmpty(snapshot.CWD, snapshot.ProjectPath),
-	}
-}
-
-func lcagentManagedProcessListResult(snapshots []projectrun.Snapshot) tools.ToolResult {
-	lines := []string{}
-	for _, snapshot := range snapshots {
-		if !lcagentSnapshotHasProcessDetail(snapshot) {
-			continue
-		}
-		line := lcagentManagedProcessLine(snapshot)
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	if len(lines) == 0 {
-		return tools.ToolResult{Success: true, Output: "No managed background processes are known to Little Control Room."}
-	}
-	return tools.ToolResult{Success: true, Output: strings.Join(lines, "\n")}
-}
-
-func lcagentSnapshotHasProcessDetail(snapshot projectrun.Snapshot) bool {
-	return snapshot.Running ||
-		strings.TrimSpace(snapshot.Command) != "" ||
-		!snapshot.ExitedAt.IsZero() ||
-		strings.TrimSpace(snapshot.LastError) != "" ||
-		len(snapshot.Ports) > 0 ||
-		len(snapshot.AnnouncedURLs) > 0 ||
-		len(snapshot.RecentOutput) > 0
-}
-
-func lcagentManagedProcessLine(snapshot projectrun.Snapshot) string {
-	project := strings.TrimSpace(snapshot.ProjectPath)
-	command := strings.TrimSpace(snapshot.Command)
-	if command == "" {
-		command = "managed process"
-	}
-	status := "stopped"
-	if snapshot.Running {
-		status = "running"
-	} else if snapshot.ExitCodeKnown {
-		status = fmt.Sprintf("exited %d", snapshot.ExitCode)
-	}
-	parts := []string{status, command}
-	if project != "" {
-		parts = append(parts, "project "+project)
-	}
-	if cwd := strings.TrimSpace(snapshot.CWD); cwd != "" && cwd != project {
-		parts = append(parts, "cwd "+cwd)
-	}
-	if snapshot.PID > 0 {
-		parts = append(parts, fmt.Sprintf("pid %d", snapshot.PID))
-	}
-	if snapshot.PGID > 0 {
-		parts = append(parts, fmt.Sprintf("pgid %d", snapshot.PGID))
-	}
-	if url := lcagentRuntimeURL(snapshot); url != "" {
-		parts = append(parts, "url "+url)
-	}
-	if len(snapshot.Ports) > 0 {
-		ports := make([]string, 0, len(snapshot.Ports))
-		for _, port := range snapshot.Ports {
-			ports = append(ports, strconv.Itoa(port))
-		}
-		parts = append(parts, "ports "+strings.Join(ports, ","))
-	}
-	if len(snapshot.RecentOutput) > 0 {
-		parts = append(parts, "recent "+snapshot.RecentOutput[len(snapshot.RecentOutput)-1])
-	}
-	if strings.TrimSpace(snapshot.LastError) != "" {
-		parts = append(parts, "error "+strings.TrimSpace(snapshot.LastError))
-	}
-	return strings.Join(parts, "; ")
-}
-
-func lcagentRuntimeURL(snapshot projectrun.Snapshot) string {
-	if len(snapshot.AnnouncedURLs) > 0 {
-		return strings.TrimSpace(snapshot.AnnouncedURLs[0])
-	}
-	if len(snapshot.Ports) > 0 {
-		return fmt.Sprintf("http://127.0.0.1:%d/", snapshot.Ports[0])
-	}
-	return ""
+	bridge.handle(request)
 }
 
 func (s *lcagentSession) finishRun(processState string, ok bool, err error) {

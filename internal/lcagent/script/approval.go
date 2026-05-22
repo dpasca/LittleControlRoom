@@ -42,6 +42,8 @@ type ProcessRequest struct {
 	ID        string
 	SessionID string
 	Action    ProcessAction
+	ProcessID string
+	Name      string
 	Command   string
 	CWD       string
 }

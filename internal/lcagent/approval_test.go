@@ -66,6 +66,7 @@ func TestStdioApprovalBrokerEmitsProcessRequestAndReceivesResult(t *testing.T) {
 	)
 	result, err := broker.RequestProcess(context.Background(), script.ProcessRequest{
 		Action:  script.ProcessActionStart,
+		Name:    "frontend",
 		Command: "pnpm dev",
 		CWD:     "frontend",
 	})
@@ -80,6 +81,7 @@ func TestStdioApprovalBrokerEmitsProcessRequestAndReceivesResult(t *testing.T) {
 		`"type":"process_request"`,
 		`"id":"lca_process_1"`,
 		`"action":"start"`,
+		`"name":"frontend"`,
 		`"command":"pnpm dev"`,
 		`"cwd":"frontend"`,
 	} {

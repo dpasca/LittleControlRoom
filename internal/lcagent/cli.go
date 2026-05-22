@@ -588,6 +588,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 
 	systemPromptOptions := modelSystemPromptOptions(toolProfile, fileLimits)
 	systemPromptOptions.WebSearchEnabled = webSearchEnabled
+	systemPromptOptions.ManagedProcessesEnabled = runner.Processes != nil
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, systemPromptOptions)
 	readLedger := newReadLedger()
@@ -626,6 +627,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	}
 	toolOptions := modelToolOptions(toolProfile, fileLimits)
 	toolOptions.WebSearchEnabled = webSearchEnabled
+	toolOptions.ManagedProcessesEnabled = runner.Processes != nil
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0

@@ -186,6 +186,8 @@ type Model struct {
 	runtimeRefreshInFlight      bool
 	runtimeRefreshQueued        bool
 	runtimeSnapshots            map[string]projectrun.Snapshot
+	runtimeProcessSnapshots     []projectrun.Snapshot
+	runtimeProcessSelected      map[string]string
 	cpuSnapshot                 procinspect.CPUSnapshot
 	cpuMonitorInFlight          bool
 	cpuMonitorQueued            bool
@@ -616,6 +618,8 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexManager:               codexapp.NewManager(),
 		runtimeManager:             projectrun.NewManager(),
 		runtimeSnapshots:           make(map[string]projectrun.Snapshot),
+		runtimeProcessSnapshots:    nil,
+		runtimeProcessSelected:     make(map[string]string),
 		processReports:             make(map[string]procinspect.ProjectReport),
 		embeddedModelPrefs:         embeddedModelPreferencesFromSettings(initialSettings),
 		recentCodexModels:          append([]string(nil), initialSettings.RecentCodexModels...),
@@ -993,9 +997,40 @@ func cloneRuntimeSnapshots(snapshots []projectrun.Snapshot) map[string]projectru
 			continue
 		}
 		snapshot.ProjectPath = path
-		cloned[path] = snapshot
+		if existing, ok := cloned[path]; !ok || runtimeSnapshotPreferred(snapshot, existing) {
+			cloned[path] = snapshot
+		}
 	}
 	return cloned
+}
+
+func cloneRuntimeProcessSnapshots(snapshots []projectrun.Snapshot) []projectrun.Snapshot {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	out := make([]projectrun.Snapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		path := normalizeProjectPath(snapshot.ProjectPath)
+		if path == "" {
+			continue
+		}
+		snapshot.ProjectPath = path
+		out = append(out, snapshot)
+	}
+	return out
+}
+
+func runtimeSnapshotPreferred(candidate, existing projectrun.Snapshot) bool {
+	if candidate.Running != existing.Running {
+		return candidate.Running
+	}
+	if candidate.Default != existing.Default {
+		return candidate.Default
+	}
+	if candidate.StartedAt.Equal(existing.StartedAt) {
+		return strings.TrimSpace(candidate.ID) < strings.TrimSpace(existing.ID)
+	}
+	return candidate.StartedAt.After(existing.StartedAt)
 }
 
 func runtimeRunningStateChanged(prev, next map[string]projectrun.Snapshot) bool {
@@ -1746,6 +1781,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runtimeSnapshotsMsg:
 		reloadCmd := m.finishRuntimeSnapshotsRefreshCmd()
 		prevSnapshots := m.runtimeSnapshots
+		m.runtimeProcessSnapshots = cloneRuntimeProcessSnapshots(msg.snapshots)
 		m.runtimeSnapshots = cloneRuntimeSnapshots(msg.snapshots)
 		selectedPath := ""
 		if p, ok := m.selectedProject(); ok {
@@ -2422,6 +2458,16 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowRepo && row.LinkedCount > 0 && !row.Expanded {
 				return m, m.toggleSelectedWorktreeGroup()
 			}
+		}
+	case "[":
+		if m.focusedPane == focusRuntime {
+			m.selectRuntimeProcess(-1)
+			return m, nil
+		}
+	case "]":
+		if m.focusedPane == focusRuntime {
+			m.selectRuntimeProcess(1)
+			return m, nil
 		}
 	case "o":
 		if m.focusedPane == focusRuntime {
@@ -4611,7 +4657,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = "Restarting runtime..."
-		return m, m.restartProjectRuntimeCmd(p.Path, command, snapshot.CWD)
+		return m, m.restartProjectRuntimeCmd(p.Path, snapshot.ID, command, snapshot.CWD)
 	case commands.KindRunEdit:
 		p, ok := m.selectedProject()
 		if !ok {

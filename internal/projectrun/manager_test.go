@@ -129,6 +129,70 @@ func TestStartSerializesConcurrentStartsForSameProject(t *testing.T) {
 	}
 }
 
+func TestStartCreateNewAllowsMultipleProcessesForSameProject(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	first, err := manager.Start(StartRequest{
+		ProjectPath: dir,
+		Command:     "sleep 30",
+		Name:        "first",
+		CreateNew:   true,
+	})
+	if err != nil {
+		t.Fatalf("first Start() error = %v", err)
+	}
+	second, err := manager.Start(StartRequest{
+		ProjectPath: dir,
+		Command:     "sleep 30",
+		Name:        "second",
+		CreateNew:   true,
+	})
+	if err != nil {
+		t.Fatalf("second Start() error = %v", err)
+	}
+	if first.ID == "" || second.ID == "" || first.ID == second.ID {
+		t.Fatalf("process IDs = %q/%q, want distinct generated IDs", first.ID, second.ID)
+	}
+	if first.Default || second.Default {
+		t.Fatalf("generated process snapshots should not be default: first=%+v second=%+v", first, second)
+	}
+
+	snapshots := manager.SnapshotsForProject(dir)
+	if len(snapshots) != 2 {
+		t.Fatalf("SnapshotsForProject() len = %d, want 2: %+v", len(snapshots), snapshots)
+	}
+	for _, snapshot := range snapshots {
+		if !snapshot.Running {
+			t.Fatalf("snapshot should be running: %+v", snapshot)
+		}
+	}
+
+	if err := manager.StopProcess(dir, first.ID); err != nil {
+		t.Fatalf("StopProcess(%q) error = %v", first.ID, err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		firstSnapshot, err := manager.SnapshotProcess(dir, first.ID)
+		if err != nil {
+			t.Fatalf("first SnapshotProcess() error = %v", err)
+		}
+		secondSnapshot, err := manager.SnapshotProcess(dir, second.ID)
+		if err != nil {
+			t.Fatalf("second SnapshotProcess() error = %v", err)
+		}
+		if !firstSnapshot.Running && secondSnapshot.Running {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	firstSnapshot, _ := manager.SnapshotProcess(dir, first.ID)
+	secondSnapshot, _ := manager.SnapshotProcess(dir, second.ID)
+	t.Fatalf("stopping first process should leave second running: first=%+v second=%+v", firstSnapshot, secondSnapshot)
+}
+
 func TestStartRunsCommandInRequestedCWD(t *testing.T) {
 	dir := t.TempDir()
 	frontend := filepath.Join(dir, "frontend")

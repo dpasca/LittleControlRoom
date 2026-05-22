@@ -21,9 +21,82 @@ func (m Model) projectRuntimeSnapshot(projectPath string) projectrun.Snapshot {
 	return projectrun.Snapshot{ProjectPath: projectPath}
 }
 
+func (m Model) projectRuntimeSnapshots(projectPath string) []projectrun.Snapshot {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "." || projectPath == "" {
+		return nil
+	}
+	if len(m.runtimeProcessSnapshots) == 0 {
+		if snapshot, ok := m.runtimeSnapshots[projectPath]; ok && runtimeDetailAvailable("", snapshot) {
+			return []projectrun.Snapshot{snapshot}
+		}
+		return nil
+	}
+	out := make([]projectrun.Snapshot, 0)
+	for _, snapshot := range m.runtimeProcessSnapshots {
+		if filepath.Clean(strings.TrimSpace(snapshot.ProjectPath)) != projectPath {
+			continue
+		}
+		out = append(out, snapshot)
+	}
+	return out
+}
+
+func (m Model) selectedRuntimeProcessSnapshot(projectPath string) (projectrun.Snapshot, int, int) {
+	snapshots := m.projectRuntimeSnapshots(projectPath)
+	if len(snapshots) == 0 {
+		return m.projectRuntimeSnapshot(projectPath), 0, 0
+	}
+	selectedID := ""
+	if m.runtimeProcessSelected != nil {
+		selectedID = strings.TrimSpace(m.runtimeProcessSelected[filepath.Clean(strings.TrimSpace(projectPath))])
+	}
+	for i, snapshot := range snapshots {
+		if selectedID != "" && strings.TrimSpace(snapshot.ID) == selectedID {
+			return snapshot, i, len(snapshots)
+		}
+	}
+	primary := m.projectRuntimeSnapshot(projectPath)
+	for i, snapshot := range snapshots {
+		if strings.TrimSpace(snapshot.ID) != "" && strings.TrimSpace(snapshot.ID) == strings.TrimSpace(primary.ID) {
+			return snapshot, i, len(snapshots)
+		}
+	}
+	return snapshots[0], 0, len(snapshots)
+}
+
+func (m *Model) selectRuntimeProcess(delta int) {
+	projectPath := filepath.Clean(strings.TrimSpace(m.runtimePanelProjectPath()))
+	if projectPath == "" || delta == 0 {
+		return
+	}
+	snapshots := m.projectRuntimeSnapshots(projectPath)
+	if len(snapshots) <= 1 {
+		m.status = "Only one managed process for this project"
+		return
+	}
+	_, index, _ := m.selectedRuntimeProcessSnapshot(projectPath)
+	next := (index + delta) % len(snapshots)
+	if next < 0 {
+		next += len(snapshots)
+	}
+	if m.runtimeProcessSelected == nil {
+		m.runtimeProcessSelected = make(map[string]string)
+	}
+	m.runtimeProcessSelected[projectPath] = strings.TrimSpace(snapshots[next].ID)
+	m.status = "Selected runtime process " + runtimeProcessLabel(snapshots[next])
+	m.syncRuntimeViewport(true)
+}
+
 func (m Model) runningRuntimeCount() int {
 	count := 0
-	for _, snapshot := range m.runtimeSnapshots {
+	snapshots := m.runtimeProcessSnapshots
+	if len(snapshots) == 0 {
+		for _, snapshot := range m.runtimeSnapshots {
+			snapshots = append(snapshots, snapshot)
+		}
+	}
+	for _, snapshot := range snapshots {
 		if snapshot.Running {
 			count++
 		}
@@ -98,6 +171,23 @@ func runtimeURLSummary(snapshot projectrun.Snapshot) string {
 	return fmt.Sprintf("%s (+%d more)", primary, len(snapshot.AnnouncedURLs)-1)
 }
 
+func runtimeProcessLabel(snapshot projectrun.Snapshot) string {
+	id := strings.TrimSpace(snapshot.ID)
+	if id == "" {
+		id = "default"
+	}
+	label := id
+	if name := strings.TrimSpace(snapshot.Name); name != "" {
+		label += " " + name
+	} else if snapshot.Default {
+		label += " default"
+	}
+	if snapshot.PID > 0 {
+		label += fmt.Sprintf(" pid %d", snapshot.PID)
+	}
+	return strings.TrimSpace(label)
+}
+
 func renderRuntimeStatusValue(snapshot projectrun.Snapshot) string {
 	statusStyle := detailMutedStyle
 	statusText := "idle"
@@ -132,7 +222,7 @@ func joinPorts(ports []int) string {
 	return strings.Join(values, ", ")
 }
 
-func (m Model) runtimeConflictSummary(projectPath string, ports []int) string {
+func (m Model) runtimeConflictSummary(projectPath, processID string, ports []int) string {
 	if len(ports) == 0 {
 		return ""
 	}
@@ -141,8 +231,14 @@ func (m Model) runtimeConflictSummary(projectPath string, ports []int) string {
 		portSet[port] = struct{}{}
 	}
 	owners := map[string]struct{}{}
-	for _, snapshot := range m.runtimeSnapshots {
-		if snapshot.ProjectPath == projectPath {
+	snapshots := m.runtimeProcessSnapshots
+	if len(snapshots) == 0 {
+		for _, snapshot := range m.runtimeSnapshots {
+			snapshots = append(snapshots, snapshot)
+		}
+	}
+	for _, snapshot := range snapshots {
+		if snapshot.ProjectPath == projectPath && strings.TrimSpace(snapshot.ID) == strings.TrimSpace(processID) {
 			continue
 		}
 		for _, port := range snapshot.Ports {

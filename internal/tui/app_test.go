@@ -2987,6 +2987,18 @@ func TestWorktreeMergePlanStopsRuntimeBeforeRunningGitActions(t *testing.T) {
 	if !snapshot.Running {
 		t.Fatalf("runtime should be running after start, got %+v", snapshot)
 	}
+	extraSnapshot, err := runtimeManager.Start(projectrun.StartRequest{
+		ProjectPath: projectPath,
+		Command:     "sleep 30",
+		Name:        "extra",
+		CreateNew:   true,
+	})
+	if err != nil {
+		t.Fatalf("second Start() error = %v", err)
+	}
+	if !extraSnapshot.Running {
+		t.Fatalf("second runtime should be running after start, got %+v", extraSnapshot)
+	}
 
 	m := Model{
 		runtimeManager: runtimeManager,
@@ -3031,12 +3043,10 @@ func TestWorktreeMergePlanStopsRuntimeBeforeRunningGitActions(t *testing.T) {
 	if action.err == nil || !strings.Contains(action.err.Error(), "service unavailable") {
 		t.Fatalf("merge plan should reach the service boundary after stopping the runtime, got %#v", action)
 	}
-	stopped, err := runtimeManager.Snapshot(projectPath)
-	if err != nil {
-		t.Fatalf("Snapshot() error = %v", err)
-	}
-	if stopped.Running {
-		t.Fatalf("runtime should be stopped before the merge action returns, got %+v", stopped)
+	for _, stopped := range runtimeManager.SnapshotsForProject(projectPath) {
+		if stopped.Running {
+			t.Fatalf("all runtimes should be stopped before the merge action returns, got %+v", stopped)
+		}
 	}
 }
 
@@ -6827,6 +6837,109 @@ func TestRuntimePaneShowsRuntimeOutputAndActions(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Focus: runtime") {
 		t.Fatalf("View() should show runtime focus in the footer: %q", rendered)
+	}
+}
+
+func TestRuntimeSnapshotRefreshKeepsPrimaryAndProcessList(t *testing.T) {
+	projectPath := "/tmp/demo"
+	now := time.Now()
+	snapshots := []projectrun.Snapshot{
+		{
+			ID:          "default",
+			Default:     true,
+			ProjectPath: projectPath,
+			Command:     "pnpm dev",
+			Running:     false,
+			StartedAt:   now.Add(-2 * time.Minute),
+		},
+		{
+			ID:          "rt_1",
+			Name:        "frontend",
+			ProjectPath: projectPath,
+			Command:     "pnpm dev",
+			Running:     true,
+			StartedAt:   now.Add(-time.Minute),
+		},
+		{
+			ID:          "rt_2",
+			Name:        "emulators",
+			ProjectPath: projectPath,
+			Command:     "firebase emulators:start",
+			Running:     true,
+			StartedAt:   now,
+		},
+	}
+
+	m := Model{
+		runtimeSnapshots:        cloneRuntimeSnapshots(snapshots),
+		runtimeProcessSnapshots: cloneRuntimeProcessSnapshots(snapshots),
+	}
+	if got := m.projectRuntimeSnapshot(projectPath); got.ID != "rt_2" {
+		t.Fatalf("primary runtime snapshot ID = %q, want newest running process", got.ID)
+	}
+	if got := m.runningRuntimeCount(); got != 2 {
+		t.Fatalf("runningRuntimeCount() = %d, want 2", got)
+	}
+	if got := m.projectRuntimeSnapshots(projectPath); len(got) != 3 {
+		t.Fatalf("projectRuntimeSnapshots() len = %d, want 3: %+v", len(got), got)
+	}
+}
+
+func TestRuntimePaneSwitchesBetweenManagedProcesses(t *testing.T) {
+	projectPath := "/tmp/demo"
+	now := time.Now()
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          projectPath,
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          projectPath,
+			PresentOnDisk: true,
+			RunCommand:    "pnpm dev",
+		}},
+		selected: 0,
+		runtimeProcessSnapshots: []projectrun.Snapshot{
+			{
+				ID:           "rt_1",
+				Name:         "frontend",
+				ProjectPath:  projectPath,
+				Command:      "pnpm dev",
+				Running:      true,
+				StartedAt:    now.Add(-time.Minute),
+				RecentOutput: []string{"frontend ready"},
+			},
+			{
+				ID:           "rt_2",
+				Name:         "emulators",
+				ProjectPath:  projectPath,
+				Command:      "firebase emulators:start",
+				Running:      true,
+				StartedAt:    now,
+				RecentOutput: []string{"emulator ready"},
+			},
+		},
+		runtimeSnapshots:       map[string]projectrun.Snapshot{},
+		runtimeProcessSelected: make(map[string]string),
+		focusedPane:            focusRuntime,
+		runtimeViewport:        viewport.New(60, 5),
+	}
+	m.runtimeSnapshots = cloneRuntimeSnapshots(m.runtimeProcessSnapshots)
+
+	m.syncRuntimeViewport(true)
+	rendered := ansi.Strip(m.renderRuntimePanel(80, 14))
+	if !strings.Contains(rendered, "Process") || !strings.Contains(rendered, "rt_2 emulators") || !strings.Contains(rendered, "emulator ready") {
+		t.Fatalf("runtime pane should show newest running process by default: %q", rendered)
+	}
+
+	m.selectRuntimeProcess(1)
+	m.syncRuntimeViewport(true)
+	rendered = ansi.Strip(m.renderRuntimePanel(80, 14))
+	if !strings.Contains(rendered, "rt_1 frontend") || !strings.Contains(rendered, "frontend ready") {
+		t.Fatalf("runtime pane should switch to the next process: %q", rendered)
 	}
 }
 

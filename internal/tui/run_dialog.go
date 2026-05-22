@@ -186,11 +186,15 @@ func (m Model) startProjectRuntimeCmd(projectPath, command string) tea.Cmd {
 }
 
 func (m Model) stopProjectRuntimeCmd(projectPath string) tea.Cmd {
+	return m.stopRuntimeProcessCmd(projectPath, "")
+}
+
+func (m Model) stopRuntimeProcessCmd(projectPath, processID string) tea.Cmd {
 	return func() tea.Msg {
 		if m.runtimeManager == nil {
 			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("runtime manager unavailable")}
 		}
-		err := m.runtimeManager.Stop(projectPath)
+		err := m.runtimeManager.StopProcess(projectPath, processID)
 		if errors.Is(err, projectrun.ErrNotRunning) {
 			return runtimeActionMsg{projectPath: projectPath, status: "Runtime is not running"}
 		}
@@ -201,7 +205,7 @@ func (m Model) stopProjectRuntimeCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m Model) restartProjectRuntimeCmd(projectPath, command, cwd string) tea.Cmd {
+func (m Model) restartProjectRuntimeCmd(projectPath, processID, command, cwd string) tea.Cmd {
 	command = strings.TrimSpace(command)
 	cwd = strings.TrimSpace(cwd)
 	return func() tea.Msg {
@@ -213,6 +217,7 @@ func (m Model) restartProjectRuntimeCmd(projectPath, command, cwd string) tea.Cm
 		}
 		snapshot, err := restartProjectRuntime(m.runtimeManager, projectrun.StartRequest{
 			ProjectPath: projectPath,
+			ProcessID:   processID,
 			Command:     command,
 			CWD:         cwd,
 		})
@@ -250,12 +255,12 @@ func restartProjectRuntime(manager *projectrun.Manager, req projectrun.StartRequ
 	if manager == nil {
 		return projectrun.Snapshot{}, fmt.Errorf("runtime manager unavailable")
 	}
-	snapshot, err := manager.Snapshot(req.ProjectPath)
+	snapshot, err := manager.SnapshotProcess(req.ProjectPath, req.ProcessID)
 	if err != nil {
 		return projectrun.Snapshot{}, err
 	}
 	if snapshot.Running {
-		if snapshot, err = stopProjectRuntimeAndWait(manager, req.ProjectPath, 3*time.Second); err != nil {
+		if snapshot, err = stopRuntimeProcessAndWait(manager, req.ProjectPath, req.ProcessID, 3*time.Second); err != nil {
 			return snapshot, err
 		}
 	}
@@ -267,15 +272,49 @@ func restartProjectRuntime(manager *projectrun.Manager, req projectrun.StartRequ
 }
 
 func stopProjectRuntimeAndWait(manager *projectrun.Manager, projectPath string, timeout time.Duration) (projectrun.Snapshot, error) {
+	return stopRuntimeProcessAndWait(manager, projectPath, "", timeout)
+}
+
+func stopProjectRuntimesAndWait(manager *projectrun.Manager, projectPath string, timeout time.Duration) (projectrun.Snapshot, error) {
 	if manager == nil {
 		return projectrun.Snapshot{}, fmt.Errorf("runtime manager unavailable")
 	}
-	if err := manager.Stop(projectPath); err != nil && !errors.Is(err, projectrun.ErrNotRunning) {
+	if err := manager.StopProject(projectPath); err != nil && !errors.Is(err, projectrun.ErrNotRunning) {
 		return projectrun.Snapshot{}, err
 	}
 	deadline := time.Now().Add(timeout)
 	for {
 		snapshot, err := manager.Snapshot(projectPath)
+		if err != nil {
+			return projectrun.Snapshot{}, err
+		}
+		running := false
+		for _, candidate := range manager.SnapshotsForProject(projectPath) {
+			if candidate.Running {
+				running = true
+				break
+			}
+		}
+		if !running {
+			return snapshot, nil
+		}
+		if time.Now().After(deadline) {
+			return snapshot, fmt.Errorf("timed out waiting for runtime to stop")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func stopRuntimeProcessAndWait(manager *projectrun.Manager, projectPath, processID string, timeout time.Duration) (projectrun.Snapshot, error) {
+	if manager == nil {
+		return projectrun.Snapshot{}, fmt.Errorf("runtime manager unavailable")
+	}
+	if err := manager.StopProcess(projectPath, processID); err != nil && !errors.Is(err, projectrun.ErrNotRunning) {
+		return projectrun.Snapshot{}, err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		snapshot, err := manager.SnapshotProcess(projectPath, processID)
 		if err != nil {
 			return projectrun.Snapshot{}, err
 		}

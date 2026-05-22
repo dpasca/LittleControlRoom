@@ -1414,7 +1414,7 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 				msg.err = fmt.Errorf("runtime manager unavailable")
 				return msg
 			}
-			snapshot, err := stopProjectRuntimeAndWait(m.runtimeManager, projectPath, 3*time.Second)
+			snapshot, err := stopProjectRuntimesAndWait(m.runtimeManager, projectPath, 3*time.Second)
 			if err != nil {
 				msg.err = fmt.Errorf("stop runtime: %w", err)
 				return msg

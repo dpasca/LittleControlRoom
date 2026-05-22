@@ -251,8 +251,10 @@ type commandArgs struct {
 }
 
 type processArgs struct {
-	Command string `json:"command"`
-	CWD     string `json:"cwd"`
+	Command   string `json:"command"`
+	CWD       string `json:"cwd"`
+	ProcessID string `json:"process_id"`
+	Name      string `json:"name"`
 }
 
 type patchArgs struct {
@@ -563,6 +565,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			Action:    ProcessActionStart,
 			Command:   spec.Command,
 			CWD:       spec.CWD,
+			Name:      strings.TrimSpace(args.Name),
 		}, spec, "start_process")
 	case "list_processes":
 		result = r.runProcess(ctx, ProcessRequest{
@@ -570,9 +573,15 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			Action:    ProcessActionList,
 		})
 	case "stop_process":
+		var args processArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
 		result = r.runProcess(ctx, ProcessRequest{
 			SessionID: r.SessionID,
 			Action:    ProcessActionStop,
+			ProcessID: strings.TrimSpace(args.ProcessID),
 		})
 	case "apply_patch":
 		var args patchArgs

@@ -33,6 +33,9 @@ var (
 )
 
 type Snapshot struct {
+	ID            string
+	Name          string
+	Default       bool
 	ProjectPath   string
 	Command       string
 	CWD           string
@@ -54,11 +57,15 @@ type StartRequest struct {
 	ProjectPath string
 	Command     string
 	CWD         string
+	ProcessID   string
+	Name        string
+	CreateNew   bool
 }
 
 type Manager struct {
 	mu          sync.Mutex
 	runtimes    map[string]*managedRuntime
+	nextID      int64
 	procGroups  processGroupReader
 	portReaders portReader
 	opLocks     keyedmutex.Locker
@@ -68,25 +75,30 @@ type Manager struct {
 }
 
 type managedRuntime struct {
-	projectPath   string
-	command       string
-	cwd           string
-	process       *exec.Cmd
-	pid           int
-	pgid          int
-	running       bool
-	stopRequested bool
-	startedAt     time.Time
-	exitedAt      time.Time
-	exitCode      int
-	exitCodeKnown bool
-	lastError     string
-	ports         []int
-	announcedURLs []string
-	recentOutput  []string
+	key            string
+	id             string
+	name           string
+	defaultRuntime bool
+	projectPath    string
+	command        string
+	cwd            string
+	process        *exec.Cmd
+	pid            int
+	pgid           int
+	running        bool
+	stopRequested  bool
+	startedAt      time.Time
+	exitedAt       time.Time
+	exitCode       int
+	exitCodeKnown  bool
+	lastError      string
+	ports          []int
+	announcedURLs  []string
+	recentOutput   []string
 }
 
 type managedRuntimeStopTarget struct {
+	key         string
 	projectPath string
 	runtime     *managedRuntime
 	cmd         *exec.Cmd
@@ -115,13 +127,14 @@ func (m *Manager) CloseAll() error {
 
 	m.mu.Lock()
 	targets := make([]managedRuntimeStopTarget, 0, len(m.runtimes))
-	for projectPath, runtime := range m.runtimes {
+	for key, runtime := range m.runtimes {
 		if runtime == nil || !runtime.running {
 			continue
 		}
 		runtime.stopRequested = true
 		targets = append(targets, managedRuntimeStopTarget{
-			projectPath: projectPath,
+			key:         key,
+			projectPath: runtime.projectPath,
 			runtime:     runtime,
 			cmd:         runtime.process,
 		})
@@ -189,13 +202,24 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	unlock := m.opLocks.Lock(projectPath)
+	runtimeKey := ""
+	runtimeID := ""
+	defaultRuntime := false
+	m.mu.Lock()
+	runtimeKey, runtimeID, defaultRuntime = m.runtimeIdentityLocked(projectPath, req)
+	m.mu.Unlock()
+
+	lockKey := runtimeKey
+	if defaultRuntime {
+		lockKey = "project:" + projectPath
+	}
+	unlock := m.opLocks.Lock(lockKey)
 	defer unlock()
 
 	m.mu.Lock()
-	existing := m.runtimes[projectPath]
+	existing := m.runtimes[runtimeKey]
 	if existing != nil && existing.running {
-		snapshot := m.snapshotLocked(projectPath)
+		snapshot := m.snapshotForRuntimeLocked(existing)
 		m.mu.Unlock()
 		return snapshot, ErrAlreadyRunning
 	}
@@ -207,16 +231,27 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	}
 	if err := prepare(cwd, command); err != nil {
 		startErr := fmt.Errorf("prepare runtime dependencies: %w", err)
-		m.markRuntimeStartFailure(projectPath, command, cwd, startErr)
+		m.markRuntimeStartFailure(runtimeKey, runtimeID, req.Name, defaultRuntime, projectPath, command, cwd, startErr)
 		return Snapshot{}, startErr
 	}
 
 	m.mu.Lock()
-	existing = m.runtimes[projectPath]
+	existing = m.runtimes[runtimeKey]
 	if existing == nil {
-		existing = &managedRuntime{projectPath: projectPath}
-		m.runtimes[projectPath] = existing
+		existing = &managedRuntime{
+			key:            runtimeKey,
+			id:             runtimeID,
+			name:           strings.TrimSpace(req.Name),
+			defaultRuntime: defaultRuntime,
+			projectPath:    projectPath,
+		}
+		m.runtimes[runtimeKey] = existing
 	}
+	existing.key = runtimeKey
+	existing.id = runtimeID
+	existing.name = strings.TrimSpace(req.Name)
+	existing.defaultRuntime = defaultRuntime
+	existing.projectPath = projectPath
 	existing.command = command
 	existing.cwd = cwd
 	existing.exitedAt = time.Time{}
@@ -236,16 +271,16 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		m.markRuntimeStartFailure(projectPath, command, cwd, err)
+		m.markRuntimeStartFailure(runtimeKey, runtimeID, req.Name, defaultRuntime, projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		m.markRuntimeStartFailure(projectPath, command, cwd, err)
+		m.markRuntimeStartFailure(runtimeKey, runtimeID, req.Name, defaultRuntime, projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		m.markRuntimeStartFailure(projectPath, command, cwd, err)
+		m.markRuntimeStartFailure(runtimeKey, runtimeID, req.Name, defaultRuntime, projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
 
@@ -257,11 +292,16 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	pgid := managedProcessGroupID(cmd)
 
 	m.mu.Lock()
-	runtime := m.runtimes[projectPath]
+	runtime := m.runtimes[runtimeKey]
 	if runtime == nil {
-		runtime = &managedRuntime{projectPath: projectPath}
-		m.runtimes[projectPath] = runtime
+		runtime = &managedRuntime{key: runtimeKey}
+		m.runtimes[runtimeKey] = runtime
 	}
+	runtime.key = runtimeKey
+	runtime.id = runtimeID
+	runtime.name = strings.TrimSpace(req.Name)
+	runtime.defaultRuntime = defaultRuntime
+	runtime.projectPath = projectPath
 	runtime.command = command
 	runtime.cwd = cwd
 	runtime.process = cmd
@@ -279,11 +319,11 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	runtime.recentOutput = nil
 	m.mu.Unlock()
 
-	go m.captureOutput(projectPath, stdout)
-	go m.captureOutput(projectPath, stderr)
-	go m.waitForExit(projectPath, cmd)
+	go m.captureOutput(runtimeKey, stdout)
+	go m.captureOutput(runtimeKey, stderr)
+	go m.waitForExit(runtimeKey, cmd)
 	m.refreshPorts()
-	return m.Snapshot(projectPath)
+	return m.SnapshotProcess(projectPath, runtimeID)
 }
 
 func normalizeRuntimeCWD(projectPath, cwd string) (string, error) {
@@ -306,7 +346,36 @@ func normalizeRuntimeCWD(projectPath, cwd string) (string, error) {
 	return cwd, nil
 }
 
+func (m *Manager) runtimeIdentityLocked(projectPath string, req StartRequest) (key, id string, defaultRuntime bool) {
+	id = strings.TrimSpace(req.ProcessID)
+	if req.CreateNew || id == "" {
+		if req.CreateNew {
+			m.nextID++
+			id = fmt.Sprintf("rt_%d", m.nextID)
+			return processRuntimeKey(projectPath, id), id, false
+		}
+		id = "default"
+		return defaultRuntimeKey(projectPath), id, true
+	}
+	if id == "default" {
+		return defaultRuntimeKey(projectPath), id, true
+	}
+	return processRuntimeKey(projectPath, id), id, false
+}
+
+func defaultRuntimeKey(projectPath string) string {
+	return "default:" + filepath.Clean(strings.TrimSpace(projectPath))
+}
+
+func processRuntimeKey(projectPath, id string) string {
+	return "process:" + filepath.Clean(strings.TrimSpace(projectPath)) + ":" + strings.TrimSpace(id)
+}
+
 func (m *Manager) Stop(projectPath string) error {
+	return m.StopProcess(projectPath, "")
+}
+
+func (m *Manager) StopProcess(projectPath, processID string) error {
 	if m == nil {
 		return nil
 	}
@@ -314,17 +383,26 @@ func (m *Manager) Stop(projectPath string) error {
 	if projectPath == "" {
 		return errors.New("project path is required")
 	}
-	unlock := m.opLocks.Lock(projectPath)
+	processID = strings.TrimSpace(processID)
+	lockKey := "project:" + projectPath
+	if processID != "" {
+		lockKey = processRuntimeKey(projectPath, processID)
+		if processID == "default" {
+			lockKey = defaultRuntimeKey(projectPath)
+		}
+	}
+	unlock := m.opLocks.Lock(lockKey)
 	defer unlock()
 
 	m.mu.Lock()
-	runtime := m.runtimes[projectPath]
+	key, runtime := m.stopTargetLocked(projectPath, processID)
 	if runtime == nil || !runtime.running {
 		m.mu.Unlock()
 		return ErrNotRunning
 	}
 	runtime.stopRequested = true
 	target := managedRuntimeStopTarget{
+		key:         key,
 		projectPath: projectPath,
 		runtime:     runtime,
 		cmd:         runtime.process,
@@ -337,13 +415,79 @@ func (m *Manager) Stop(projectPath string) error {
 	return nil
 }
 
+func (m *Manager) StopProject(projectPath string) error {
+	if m == nil {
+		return nil
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return errors.New("project path is required")
+	}
+	unlock := m.opLocks.Lock("project:" + projectPath)
+	defer unlock()
+
+	m.mu.Lock()
+	targets := make([]managedRuntimeStopTarget, 0)
+	for key, runtime := range m.runtimes {
+		if runtime == nil || !runtime.running || runtime.projectPath != projectPath {
+			continue
+		}
+		runtime.stopRequested = true
+		targets = append(targets, managedRuntimeStopTarget{
+			key:         key,
+			projectPath: projectPath,
+			runtime:     runtime,
+			cmd:         runtime.process,
+		})
+	}
+	m.mu.Unlock()
+	if len(targets) == 0 {
+		return ErrNotRunning
+	}
+	var firstErr error
+	for _, target := range targets {
+		if err := stopManagedCommand(target.cmd); err != nil {
+			m.clearStopRequested(target)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
+func (m *Manager) stopTargetLocked(projectPath, processID string) (string, *managedRuntime) {
+	if processID != "" {
+		key := defaultRuntimeKey(projectPath)
+		if processID != "default" {
+			key = processRuntimeKey(projectPath, processID)
+		}
+		return key, m.runtimes[key]
+	}
+	if runtime := m.runtimes[defaultRuntimeKey(projectPath)]; runtime != nil && runtime.running {
+		return defaultRuntimeKey(projectPath), runtime
+	}
+	var selectedKey string
+	var selected *managedRuntime
+	for key, runtime := range m.runtimes {
+		if runtime == nil || !runtime.running || runtime.projectPath != projectPath {
+			continue
+		}
+		if selected == nil || runtime.startedAt.After(selected.startedAt) {
+			selectedKey = key
+			selected = runtime
+		}
+	}
+	return selectedKey, selected
+}
+
 func (m *Manager) clearStopRequested(target managedRuntimeStopTarget) {
 	if m == nil || target.runtime == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if current := m.runtimes[target.projectPath]; current == target.runtime {
+	if current := m.runtimes[target.key]; current == target.runtime {
 		current.stopRequested = false
 	}
 }
@@ -361,6 +505,53 @@ func (m *Manager) Snapshot(projectPath string) (Snapshot, error) {
 	return m.snapshotLocked(projectPath), nil
 }
 
+func (m *Manager) SnapshotProcess(projectPath, processID string) (Snapshot, error) {
+	if m == nil {
+		return Snapshot{}, errors.New("runtime manager unavailable")
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	processID = strings.TrimSpace(processID)
+	if projectPath == "" {
+		return Snapshot{}, errors.New("project path is required")
+	}
+	if processID == "" {
+		return m.Snapshot(projectPath)
+	}
+	key := defaultRuntimeKey(projectPath)
+	if processID != "default" {
+		key = processRuntimeKey(projectPath, processID)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	runtime := m.runtimes[key]
+	if runtime == nil {
+		return Snapshot{ID: processID, ProjectPath: projectPath, Default: processID == "default"}, nil
+	}
+	return m.snapshotForRuntimeLocked(runtime), nil
+}
+
+func (m *Manager) SnapshotsForProject(projectPath string) []Snapshot {
+	if m == nil {
+		return nil
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	portOwners := m.portOwnersLocked()
+	out := make([]Snapshot, 0)
+	for _, runtime := range m.runtimes {
+		if runtime == nil || runtime.projectPath != projectPath {
+			continue
+		}
+		out = append(out, snapshotFromRuntime(runtime, portOwners))
+	}
+	sortRuntimeSnapshots(out)
+	return out
+}
+
 func (m *Manager) Snapshots() []Snapshot {
 	if m == nil {
 		return nil
@@ -368,23 +559,13 @@ func (m *Manager) Snapshots() []Snapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	portOwners := map[int][]string{}
-	for _, runtime := range m.runtimes {
-		for _, port := range runtime.ports {
-			portOwners[port] = append(portOwners[port], runtime.projectPath)
-		}
-	}
+	portOwners := m.portOwnersLocked()
 
 	out := make([]Snapshot, 0, len(m.runtimes))
 	for _, runtime := range m.runtimes {
 		out = append(out, snapshotFromRuntime(runtime, portOwners))
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].ProjectPath == out[j].ProjectPath {
-			return out[i].StartedAt.After(out[j].StartedAt)
-		}
-		return out[i].ProjectPath < out[j].ProjectPath
-	})
+	sortRuntimeSnapshots(out)
 	return out
 }
 
@@ -428,7 +609,7 @@ func (m *Manager) refreshPorts() {
 	}
 }
 
-func (m *Manager) captureOutput(projectPath string, stream io.Reader) {
+func (m *Manager) captureOutput(runtimeKey string, stream io.Reader) {
 	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 0, 1024), 1024*1024)
 	for scanner.Scan() {
@@ -436,14 +617,14 @@ func (m *Manager) captureOutput(projectPath string, stream io.Reader) {
 		if line == "" {
 			continue
 		}
-		m.appendOutput(projectPath, line)
+		m.appendOutput(runtimeKey, line)
 	}
 }
 
-func (m *Manager) appendOutput(projectPath, line string) {
+func (m *Manager) appendOutput(runtimeKey, line string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	runtime := m.runtimes[projectPath]
+	runtime := m.runtimes[runtimeKey]
 	if runtime == nil {
 		return
 	}
@@ -466,7 +647,7 @@ func (m *Manager) appendOutput(projectPath, line string) {
 	}
 }
 
-func (m *Manager) waitForExit(projectPath string, cmd *exec.Cmd) {
+func (m *Manager) waitForExit(runtimeKey string, cmd *exec.Cmd) {
 	err := cmd.Wait()
 
 	exitCode, exitCodeKnown := exitCodeFromError(err)
@@ -477,7 +658,7 @@ func (m *Manager) waitForExit(projectPath string, cmd *exec.Cmd) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	runtime := m.runtimes[projectPath]
+	runtime := m.runtimes[runtimeKey]
 	if runtime == nil {
 		return
 	}
@@ -498,14 +679,18 @@ func (m *Manager) waitForExit(projectPath string, cmd *exec.Cmd) {
 	runtime.process = nil
 }
 
-func (m *Manager) markRuntimeStartFailure(projectPath, command, cwd string, err error) {
+func (m *Manager) markRuntimeStartFailure(runtimeKey, runtimeID, name string, defaultRuntime bool, projectPath, command, cwd string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	runtime := m.runtimes[projectPath]
+	runtime := m.runtimes[runtimeKey]
 	if runtime == nil {
-		runtime = &managedRuntime{projectPath: projectPath}
-		m.runtimes[projectPath] = runtime
+		runtime = &managedRuntime{key: runtimeKey}
+		m.runtimes[runtimeKey] = runtime
 	}
+	runtime.id = strings.TrimSpace(runtimeID)
+	runtime.name = strings.TrimSpace(name)
+	runtime.defaultRuntime = defaultRuntime
+	runtime.projectPath = projectPath
 	runtime.command = command
 	runtime.cwd = cwd
 	runtime.running = false
@@ -520,17 +705,51 @@ func (m *Manager) markRuntimeStartFailure(projectPath, command, cwd string, err 
 }
 
 func (m *Manager) snapshotLocked(projectPath string) Snapshot {
-	runtime := m.runtimes[projectPath]
-	if runtime == nil {
-		return Snapshot{ProjectPath: projectPath}
+	if runtime := m.runtimes[defaultRuntimeKey(projectPath)]; runtime != nil {
+		return m.snapshotForRuntimeLocked(runtime)
 	}
-	portOwners := map[int][]string{}
-	for _, candidate := range m.runtimes {
-		for _, port := range candidate.ports {
-			portOwners[port] = append(portOwners[port], candidate.projectPath)
+	var selected *managedRuntime
+	for _, runtime := range m.runtimes {
+		if runtime == nil || runtime.projectPath != projectPath {
+			continue
+		}
+		if selected == nil {
+			selected = runtime
+			continue
+		}
+		if runtime.running && !selected.running {
+			selected = runtime
+			continue
+		}
+		if runtime.running == selected.running && runtime.startedAt.After(selected.startedAt) {
+			selected = runtime
 		}
 	}
-	return snapshotFromRuntime(runtime, portOwners)
+	if selected == nil {
+		return Snapshot{ID: "default", ProjectPath: projectPath, Default: true}
+	}
+	return m.snapshotForRuntimeLocked(selected)
+}
+
+func (m *Manager) snapshotForRuntimeLocked(runtime *managedRuntime) Snapshot {
+	return snapshotFromRuntime(runtime, m.portOwnersLocked())
+}
+
+func (m *Manager) portOwnersLocked() map[int][]string {
+	portOwners := map[int][]string{}
+	for _, candidate := range m.runtimes {
+		if candidate == nil {
+			continue
+		}
+		for _, port := range candidate.ports {
+			owner := strings.TrimSpace(candidate.projectPath)
+			if candidate.id != "" {
+				owner += "\x00" + candidate.id
+			}
+			portOwners[port] = append(portOwners[port], owner)
+		}
+	}
+	return portOwners
 }
 
 func snapshotFromRuntime(runtime *managedRuntime, portOwners map[int][]string) Snapshot {
@@ -547,6 +766,9 @@ func snapshotFromRuntime(runtime *managedRuntime, portOwners map[int][]string) S
 	}
 	sort.Ints(conflictPorts)
 	return Snapshot{
+		ID:            firstNonEmptyRuntimeString(runtime.id, "default"),
+		Name:          runtime.name,
+		Default:       runtime.defaultRuntime,
 		ProjectPath:   runtime.projectPath,
 		Command:       runtime.command,
 		CWD:           runtime.cwd,
@@ -644,6 +866,33 @@ func uniqueStrings(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func firstNonEmptyRuntimeString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func sortRuntimeSnapshots(out []Snapshot) {
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ProjectPath == out[j].ProjectPath {
+			if out[i].Running != out[j].Running {
+				return out[i].Running
+			}
+			if out[i].Default != out[j].Default {
+				return out[i].Default
+			}
+			if out[i].StartedAt.Equal(out[j].StartedAt) {
+				return out[i].ID < out[j].ID
+			}
+			return out[i].StartedAt.After(out[j].StartedAt)
+		}
+		return out[i].ProjectPath < out[j].ProjectPath
+	})
 }
 
 func slicesContainString(values []string, needle string) bool {

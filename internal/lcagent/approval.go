@@ -198,6 +198,8 @@ func (b *stdioApprovalBroker) RequestProcess(ctx context.Context, request script
 		"session_id": request.SessionID,
 		"id":         request.ID,
 		"action":     string(request.Action),
+		"process_id": request.ProcessID,
+		"name":       request.Name,
 		"command":    request.Command,
 		"cwd":        request.CWD,
 	}); err != nil {

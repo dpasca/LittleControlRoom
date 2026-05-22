@@ -77,6 +77,11 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if names["web_search"] {
 		t.Fatalf("Tools() should not expose web_search unless it is enabled")
 	}
+	for _, processTool := range []string{"start_process", "list_processes", "stop_process"} {
+		if names[processTool] {
+			t.Fatalf("Tools() should not expose %s outside managed-process sessions", processTool)
+		}
+	}
 }
 
 func TestToolsWithOptionsExposeWebSearchWhenEnabled(t *testing.T) {
@@ -87,6 +92,24 @@ func TestToolsWithOptionsExposeWebSearchWhenEnabled(t *testing.T) {
 	props := spec.Parameters["properties"].(map[string]any)
 	if _, ok := props["query"]; !ok {
 		t.Fatalf("web_search missing query property: %#v", props)
+	}
+}
+
+func TestToolsWithOptionsExposeManagedProcessesWhenEnabled(t *testing.T) {
+	tools := ToolsWithOptions(ToolOptions{ManagedProcessesEnabled: true})
+	startSpec := toolSpec(t, tools, "start_process")
+	if !strings.Contains(startSpec.Description, "long-running managed background process") {
+		t.Fatalf("start_process description = %q", startSpec.Description)
+	}
+	startProps := startSpec.Parameters["properties"].(map[string]any)
+	if _, ok := startProps["name"]; !ok {
+		t.Fatalf("start_process missing name property: %#v", startProps)
+	}
+	_ = toolSpec(t, tools, "list_processes")
+	stopSpec := toolSpec(t, tools, "stop_process")
+	stopProps := stopSpec.Parameters["properties"].(map[string]any)
+	if _, ok := stopProps["process_id"]; !ok {
+		t.Fatalf("stop_process missing process_id property: %#v", stopProps)
 	}
 }
 
@@ -169,6 +192,9 @@ func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	if !strings.Contains(prompt, "call load_skill") || !strings.Contains(prompt, "demo [project]") || !strings.Contains(prompt, "Run tests.") || !strings.Contains(prompt, "*** Update File: path") || !strings.Contains(prompt, "workspace-relative paths") || !strings.Contains(prompt, "absolute paths") || !strings.Contains(prompt, "read-only file inspection") || !strings.Contains(prompt, "workspace-only") || !strings.Contains(prompt, "structured tool_calls") || !strings.Contains(prompt, "prefer file_outline") || !strings.Contains(prompt, "prefer repo_overview") || !strings.Contains(prompt, "prefer module_outline") || !strings.Contains(prompt, "literal substrings") || !strings.Contains(prompt, "intent sentence") || !strings.Contains(prompt, "next_offset") || !strings.Contains(prompt, "summary must contain the full answer") || !strings.Contains(prompt, "toolchain probes") || !strings.Contains(prompt, "corepack enable") || !strings.Contains(prompt, "process group") || !strings.Contains(prompt, "long-running process is still running") {
 		t.Fatalf("prompt missing skill guidance:\n%s", prompt)
 	}
+	if strings.Contains(prompt, "start_process") {
+		t.Fatalf("default prompt should not mention managed-process tools when they are disabled:\n%s", prompt)
+	}
 }
 
 func TestSystemPromptIncludesGenerousToolProfile(t *testing.T) {
@@ -184,6 +210,15 @@ func TestSystemPromptIncludesGenerousToolProfile(t *testing.T) {
 	}
 	if strings.Contains(prompt, "tool profile") {
 		t.Fatalf("prompt should not expose benchmark profile labels to the model:\n%s", prompt)
+	}
+}
+
+func TestSystemPromptIncludesManagedProcessGuidanceWhenEnabled(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{ManagedProcessesEnabled: true})
+	for _, want := range []string{"call start_process first", "list_processes", "stop_process"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("managed-process prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

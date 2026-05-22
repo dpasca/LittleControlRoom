@@ -122,6 +122,9 @@ func (m *Model) activateRuntimePaneAction() tea.Cmd {
 	}
 
 	snapshot := m.projectRuntimeSnapshot(project.Path)
+	if m.focusedPane == focusRuntime {
+		snapshot, _, _ = m.selectedRuntimeProcessSnapshot(project.Path)
+	}
 	switch action.Kind {
 	case runtimePaneActionOpenURL:
 		rawURL := runtimePrimaryURL(snapshot)
@@ -138,14 +141,14 @@ func (m *Model) activateRuntimePaneAction() tea.Cmd {
 			return nil
 		}
 		m.status = "Restarting runtime..."
-		return m.restartProjectRuntimeCmd(project.Path, command, snapshot.CWD)
+		return m.restartProjectRuntimeCmd(project.Path, snapshot.ID, command, snapshot.CWD)
 	case runtimePaneActionStop:
 		if !snapshot.Running {
 			m.status = "Runtime is not running"
 			return nil
 		}
 		m.status = "Stopping runtime..."
-		return m.stopProjectRuntimeCmd(project.Path)
+		return m.stopRuntimeProcessCmd(project.Path, snapshot.ID)
 	default:
 		m.status = "Runtime action unavailable"
 		return nil
@@ -179,7 +182,7 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 	}
 
 	project, _ := m.projectSummaryByPath(projectPath)
-	snapshot := m.projectRuntimeSnapshot(projectPath)
+	snapshot, processIndex, processTotal := m.selectedRuntimeProcessSnapshot(projectPath)
 	projectName := strings.TrimSpace(project.Name)
 	if projectName == "" {
 		projectName = filepath.Base(strings.TrimSpace(projectPath))
@@ -200,6 +203,10 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 	lines = append(lines, renderWrappedRuntimeField("Run cmd", width, commandStyle, command)...)
 	if cwd := runtimeRelativeCWD(projectPath, snapshot.CWD); cwd != "" {
 		lines = append(lines, renderWrappedRuntimeField("CWD", width, detailMutedStyle, cwd)...)
+	}
+	if processTotal > 1 {
+		processText := fmt.Sprintf("%d/%d  %s", processIndex+1, processTotal, runtimeProcessLabel(snapshot))
+		lines = append(lines, renderWrappedRuntimeField("Process", width, detailMutedStyle, processText)...)
 	}
 
 	runtimeStatus := renderRuntimeStatusValue(snapshot)
@@ -225,7 +232,7 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 
 	statusFields := make([]string, 0, 2)
 	if len(snapshot.ConflictPorts) > 0 {
-		statusFields = append(statusFields, detailField("Conflict", detailDangerStyle.Render(m.runtimeConflictSummary(projectPath, snapshot.ConflictPorts))))
+		statusFields = append(statusFields, detailField("Conflict", detailDangerStyle.Render(m.runtimeConflictSummary(projectPath, snapshot.ID, snapshot.ConflictPorts))))
 	}
 	if strings.TrimSpace(snapshot.LastError) != "" {
 		statusFields = append(statusFields, detailField("Runtime err", detailDangerStyle.Render(snapshot.LastError)))
@@ -242,7 +249,7 @@ func (m Model) renderRuntimePanelOutputContent(width int, projectPath string) st
 		return detailMutedStyle.Render("Select a project to see runtime output")
 	}
 	project, _ := m.projectSummaryByPath(projectPath)
-	snapshot := m.projectRuntimeSnapshot(projectPath)
+	snapshot, _, _ := m.selectedRuntimeProcessSnapshot(projectPath)
 	if len(snapshot.RecentOutput) == 0 {
 		if !runtimeDetailAvailable(project.RunCommand, snapshot) {
 			return detailMutedStyle.Render("No managed runtime yet")
@@ -308,7 +315,7 @@ func (m Model) runtimePanelActions(projectPath string) []runtimePaneAction {
 		return nil
 	}
 	project, _ := m.projectSummaryByPath(projectPath)
-	snapshot := m.projectRuntimeSnapshot(projectPath)
+	snapshot, _, _ := m.selectedRuntimeProcessSnapshot(projectPath)
 	command := effectiveRuntimeCommand(project.RunCommand, snapshot)
 	return []runtimePaneAction{
 		{

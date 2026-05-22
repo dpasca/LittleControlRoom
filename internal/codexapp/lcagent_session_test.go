@@ -226,6 +226,91 @@ func TestLCAgentProcessRequestStartsManagedRuntime(t *testing.T) {
 	}
 }
 
+func TestLCAgentProcessRequestStartsDistinctManagedRuntimes(t *testing.T) {
+	projectPath := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","name":"frontend","command":"sleep 30"}`))
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-2","action":"start","name":"emulators","command":"sleep 30"}`))
+
+	if got := strings.Join(stdin.writes, ""); !strings.Contains(got, `"id":"process-1"`) ||
+		!strings.Contains(got, `"id":"process-2"`) ||
+		strings.Count(got, `"success":true`) != 2 {
+		t.Fatalf("process response payloads = %q", got)
+	}
+	snapshots := manager.SnapshotsForProject(projectPath)
+	if len(snapshots) != 2 {
+		t.Fatalf("SnapshotsForProject() len = %d, want 2: %+v", len(snapshots), snapshots)
+	}
+	ids := map[string]bool{}
+	names := map[string]bool{}
+	for _, snapshot := range snapshots {
+		if !snapshot.Running || snapshot.Command != "sleep 30" {
+			t.Fatalf("runtime snapshot = %#v", snapshot)
+		}
+		if snapshot.ID == "" {
+			t.Fatalf("runtime snapshot missing process ID: %#v", snapshot)
+		}
+		ids[snapshot.ID] = true
+		names[snapshot.Name] = true
+	}
+	if len(ids) != 2 || !names["frontend"] || !names["emulators"] {
+		t.Fatalf("snapshots should have distinct IDs and names: %+v", snapshots)
+	}
+}
+
+func TestLCAgentProcessListIsScopedToSessionWorkspace(t *testing.T) {
+	projectPath := t.TempDir()
+	otherPath := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	if _, err := manager.Start(projectrun.StartRequest{
+		ProjectPath: projectPath,
+		Command:     "sleep 30",
+		Name:        "current",
+		CreateNew:   true,
+	}); err != nil {
+		t.Fatalf("Start(current) error = %v", err)
+	}
+	if _, err := manager.Start(projectrun.StartRequest{
+		ProjectPath: otherPath,
+		Command:     "sleep 30",
+		Name:        "other",
+		CreateNew:   true,
+	}); err != nil {
+		t.Fatalf("Start(other) error = %v", err)
+	}
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-list","action":"list"}`))
+
+	got := strings.Join(stdin.writes, "")
+	if !strings.Contains(got, `"id":"process-list"`) || !strings.Contains(got, "name current") {
+		t.Fatalf("process list response missing current workspace process: %q", got)
+	}
+	if strings.Contains(got, "name other") || strings.Contains(got, otherPath) {
+		t.Fatalf("process list response should not include other workspace process: %q", got)
+	}
+}
+
 func TestLCAgentSessionLaunchesManagedProcessAfterStopWithoutDoubleApproval(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
