@@ -216,7 +216,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw string
 	var utilityProviderRaw, utilityModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var requestTimeout time.Duration
@@ -232,6 +232,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, or moonshot")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
+	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "approval mode for denied low-autonomy commands: deny or ask")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
@@ -329,6 +330,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return fmt.Errorf("search-refine-min-bytes must be >= 0")
 	}
 	contextOptions := openRouterContextOptionsForProfile(contextProfile)
+	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(model) == "" {
 		switch strings.ToLower(strings.TrimSpace(provider)) {
 		case "openrouter":
@@ -359,6 +364,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	defer writer.Close()
 	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, buildinfo.Version(), started)
 	meta["admin_write"] = adminWrite
+	meta["approval_mode"] = approvalMode
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
 		meta["root_session_id"] = resumeContext.rootSessionID()
@@ -476,6 +482,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		SessionID:    sessionID,
 		Prompt:       prompt,
 		ArtifactsDir: artifactDir,
+	}
+	if approvalMode == approvalModeAsk {
+		runner.Approvals = newStdioApprovalBroker(writer, sessionID, workspace.Root, os.Stdin)
 	}
 
 	var runErr error

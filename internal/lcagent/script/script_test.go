@@ -184,6 +184,23 @@ func (f *fakeSearchRefiner) RefineSearch(_ context.Context, request SearchRefine
 	}, nil
 }
 
+type fakeApprovalBroker struct {
+	decisions []ApprovalDecision
+	requests  []CommandApprovalRequest
+	calls     int
+}
+
+func (f *fakeApprovalBroker) RequestCommandApproval(_ context.Context, request CommandApprovalRequest) (ApprovalDecision, error) {
+	f.calls++
+	f.requests = append(f.requests, request)
+	if len(f.decisions) == 0 {
+		return DecisionCancel, nil
+	}
+	decision := f.decisions[0]
+	f.decisions = f.decisions[1:]
+	return decision, nil
+}
+
 func TestFinalVerificationStatusUsesLatestPassingOutcome(t *testing.T) {
 	status, message := finalVerificationStatus(nil, []string{"go test ./... - PASS"}, []tools.VerificationCheck{
 		{Command: "go test ./...", Status: tools.VerificationStatusFailed, ExitCode: 1},
@@ -337,6 +354,121 @@ func TestRunnerEmitsPermissionDeniedEvent(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunnerApprovedCommandRunsOnceAtMediumAutonomy(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"printf approved","timeout_ms":1000}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !result.Success || result.Denied || !strings.Contains(result.Output, "approved") {
+		t.Fatalf("result = %#v", result)
+	}
+	if approvals.calls != 1 || approvals.requests[0].Command != "printf approved" || approvals.requests[0].CWD != w.Root {
+		t.Fatalf("approval requests = %#v calls=%d", approvals.requests, approvals.calls)
+	}
+	if strings.Contains(stream.String(), `"type":"permission_denied"`) {
+		t.Fatalf("approved command should not emit permission_denied:\n%s", stream.String())
+	}
+}
+
+func TestRunnerApprovedCommandForSessionRaisesCommandAutonomy(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAcceptForSession}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+	}
+	if result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"printf first","timeout_ms":1000}`),
+	}); err != nil || !result.Success {
+		t.Fatalf("first RunTool() = %#v, %v", result, err)
+	}
+	if result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"printf second","timeout_ms":1000}`),
+	}); err != nil || !result.Success {
+		t.Fatalf("second RunTool() = %#v, %v", result, err)
+	}
+	if approvals.calls != 1 {
+		t.Fatalf("approval should be requested once, got %d calls", approvals.calls)
+	}
+	if runner.Command.Workspace.Auto != policy.AutonomyMedium {
+		t.Fatalf("runner command autonomy = %q, want medium", runner.Command.Workspace.Auto)
+	}
+}
+
+func TestRunnerDeclinedCommandApprovalKeepsDeniedResult(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: &fakeApprovalBroker{
+			decisions: []ApprovalDecision{DecisionDecline},
+		},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"printf denied","timeout_ms":1000}`),
+	})
+	if err == nil {
+		t.Fatal("RunTool succeeded, want denied command error")
+	}
+	if !result.Denied || result.Success {
+		t.Fatalf("result = %#v", result)
+	}
+	if !strings.Contains(stream.String(), `"type":"permission_denied"`) {
+		t.Fatalf("stream missing permission_denied:\n%s", stream.String())
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/session"
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
@@ -25,6 +26,7 @@ type Runner struct {
 	WebSearchOn          bool
 	SearchRefiner        SearchRefiner
 	SearchRefineMinBytes int
+	Approvals            ApprovalBroker
 	Skills               skillcatalog.Catalog
 	SessionID            string
 	Prompt               string
@@ -444,13 +446,14 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		if err := json.Unmarshal(action.Args, &args); err != nil {
 			return tools.ToolResult{}, err
 		}
-		result = r.Command.RunSpec(ctx, tools.CommandSpec{
+		spec := tools.CommandSpec{
 			Command:   args.Command,
 			Argv:      args.Argv,
 			Shell:     args.Shell || args.Command != "",
 			TimeoutMS: args.TimeoutMS,
 			Purpose:   args.Purpose,
-		})
+		}
+		result = r.runCommandWithApproval(ctx, spec)
 		if strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) {
 			check := tools.VerificationCheckFromResult(result)
 			r.verificationChecks = append(r.verificationChecks, check)
@@ -539,6 +542,42 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
+}
+
+func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandSpec) tools.ToolResult {
+	result := r.Command.RunSpec(ctx, spec)
+	if !result.Denied || r.Approvals == nil || r.Command.Workspace.Auto != policy.AutonomyLow {
+		return result
+	}
+	request := CommandApprovalRequest{
+		SessionID: r.SessionID,
+		Tool:      "run_command",
+		Command:   firstNonEmpty(result.Command, commandLabelForApproval(spec)),
+		CWD:       r.Command.Workspace.Root,
+		Reason:    firstNonEmpty(result.DenialReason, result.Error),
+	}
+	decision, err := r.Approvals.RequestCommandApproval(ctx, request)
+	if err != nil {
+		return result
+	}
+	switch decision {
+	case DecisionAccept:
+		approved := r.Command
+		approved.Workspace.Auto = policy.AutonomyMedium
+		return approved.RunSpec(ctx, spec)
+	case DecisionAcceptForSession:
+		r.Command.Workspace.Auto = policy.AutonomyMedium
+		return r.Command.RunSpec(ctx, spec)
+	default:
+		return result
+	}
+}
+
+func commandLabelForApproval(spec tools.CommandSpec) string {
+	if len(spec.Argv) > 0 {
+		return strings.Join(spec.Argv, " ")
+	}
+	return strings.TrimSpace(spec.Command)
 }
 
 func (r *Runner) runSearch(ctx context.Context, args searchArgs) (tools.ToolResult, error) {

@@ -234,6 +234,12 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			reason := firstNonEmpty(rawJSONString(event["reason"]), "LCAgent permission denied")
 			replay.lastError = reason
 			replay.appendEntry(TranscriptError, reason)
+		case "approval_request":
+			if request := lcagentApprovalRequestFromEvent(event, replay.sessionID); request != nil {
+				replay.appendEntry(TranscriptStatus, "LCAgent requested command approval: "+request.Summary())
+			}
+		case "approval_resolved":
+			replay.appendEntry(TranscriptStatus, lcagentApprovalResolvedText(event))
 		}
 	}); err != nil {
 		return nil, err

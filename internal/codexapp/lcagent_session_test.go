@@ -104,6 +104,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--data-dir", dataDir,
 		"--auto", "medium",
 		"--output", "stream-json",
+		"--approval-mode", "ask",
 		"--admin-write",
 		"--utility-provider", "deepseek",
 		"--utility-model", "deepseek/test-model",
@@ -135,6 +136,48 @@ func TestLCAgentSessionWarnsWhenWebSearchUnavailable(t *testing.T) {
 	if !strings.Contains(snapshot.Transcript, "LCAgent web search is not available") ||
 		!strings.Contains(snapshot.Transcript, "/settings") {
 		t.Fatalf("transcript missing web search setup warning:\n%s", snapshot.Transcript)
+	}
+}
+
+func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		stdin:       stdin,
+		started:     true,
+		busy:        true,
+		status:      "LCAgent running",
+	}
+	session.handleEvent([]byte(`{"type":"approval_request","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","cwd":"/repo","reason":"requires medium autonomy"}`))
+
+	snapshot := session.Snapshot()
+	if snapshot.PendingApproval == nil {
+		t.Fatal("PendingApproval = nil, want request")
+	}
+	if snapshot.PendingApproval.ID != "approval-1" || snapshot.PendingApproval.Kind != ApprovalCommandExecution ||
+		snapshot.PendingApproval.Command != "corepack enable" || snapshot.Status != "Waiting for command approval" {
+		t.Fatalf("pending approval snapshot = %#v status=%q", snapshot.PendingApproval, snapshot.Status)
+	}
+	if !strings.Contains(snapshot.Transcript, "LCAgent requested command approval") {
+		t.Fatalf("transcript missing approval request:\n%s", snapshot.Transcript)
+	}
+	if err := session.RespondApproval(DecisionAcceptForSession); err != nil {
+		t.Fatalf("RespondApproval() error = %v", err)
+	}
+	if got := strings.Join(stdin.writes, ""); !strings.Contains(got, `"type":"approval_response"`) ||
+		!strings.Contains(got, `"id":"approval-1"`) ||
+		!strings.Contains(got, `"decision":"acceptForSession"`) {
+		t.Fatalf("approval response payload = %q", got)
+	}
+
+	session.handleEvent([]byte(`{"type":"approval_resolved","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","decision":"acceptForSession","status":"approved"}`))
+	snapshot = session.Snapshot()
+	if snapshot.PendingApproval != nil {
+		t.Fatalf("PendingApproval after resolution = %#v, want nil", snapshot.PendingApproval)
+	}
+	if !strings.Contains(snapshot.Status, "raised to medium") ||
+		!strings.Contains(snapshot.Transcript, "corepack enable") {
+		t.Fatalf("approval resolution not reflected; status=%q transcript=\n%s", snapshot.Status, snapshot.Transcript)
 	}
 }
 

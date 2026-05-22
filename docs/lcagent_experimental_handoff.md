@@ -76,8 +76,11 @@ Default posture:
 
 LCR session parity:
 
-- LCAgent does not support approvals, attachments, structured tool input,
-  elicitation, or goal state in the embedded pane.
+- LCAgent supports embedded approval prompts for denied low-autonomy
+  `run_command` calls. `Allow once` reruns that command at medium autonomy;
+  `Allow for session` raises command autonomy to medium for the rest of the
+  LCAgent run. Attachments, structured tool input, elicitation, and goal state
+  are still not wired in the embedded pane.
 - Embedded `/review` now starts a read-only current-diff LCAgent review run
   using the same JSONL trace path, with `--auto off` and no continuation resume.
 - Embedded `/compact` now writes a durable Markdown handoff summary from the

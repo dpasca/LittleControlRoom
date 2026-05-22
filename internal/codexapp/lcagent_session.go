@@ -63,6 +63,7 @@ type lcagentSession struct {
 
 	mu                 sync.Mutex
 	cmd                *exec.Cmd
+	stdin              io.WriteCloser
 	cancel             context.CancelFunc
 	threadID           string
 	started            bool
@@ -77,6 +78,7 @@ type lcagentSession struct {
 	modelProvider      string
 	reasoningEffort    string
 	tokenUsage         *threadTokenUsage
+	pendingApproval    *ApprovalRequest
 	replayLoaded       bool
 	entries            []TranscriptEntry
 	revision           uint64
@@ -560,8 +562,53 @@ func (s *lcagentSession) Interrupt() error {
 	return nil
 }
 
-func (s *lcagentSession) RespondApproval(ApprovalDecision) error {
-	return fmt.Errorf("LCAgent approvals are not supported yet")
+func (s *lcagentSession) RespondApproval(decision ApprovalDecision) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("LCAgent session is closed")
+	}
+	request := cloneApprovalRequest(s.pendingApproval)
+	if request == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("no pending approval")
+	}
+	if !request.AllowsDecision(decision) {
+		s.mu.Unlock()
+		return fmt.Errorf("approval decision %q is not supported for %s approvals", decision, request.Kind)
+	}
+	stdin := s.stdin
+	if stdin == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("LCAgent approval channel is not available")
+	}
+	s.status = "Sending LCAgent approval decision..."
+	s.touchLocked()
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+
+	payload, err := json.Marshal(map[string]string{
+		"type":     "approval_response",
+		"id":       request.ID,
+		"decision": string(decision),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdin, string(payload)); err != nil {
+		s.appendAsync(TranscriptError, "LCAgent approval response failed: "+err.Error())
+		return err
+	}
+	s.mu.Lock()
+	s.status = "LCAgent approval decision sent"
+	s.touchLocked()
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+	return nil
 }
 
 func (s *lcagentSession) RespondToolInput(map[string][]string) error {
@@ -666,6 +713,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		"--cwd", s.projectPath,
 		"--data-dir", s.dataDir,
 		"--output", "stream-json",
+		"--approval-mode", "ask",
 		"--utility-provider", utilityProvider,
 		"--web-search-backend", webSearchBackend,
 	)
@@ -737,13 +785,21 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		s.finishRun("", false, err)
 		return err
 	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		s.finishRun("", false, err)
+		return err
+	}
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
 		cancel()
 		s.finishRun("", false, err)
 		return err
 	}
 	s.mu.Lock()
 	s.cmd = cmd
+	s.stdin = stdin
 	s.cancel = cancel
 	s.status = firstNonEmpty(opts.runningStatus, "LCAgent running")
 	s.mu.Unlock()
@@ -883,6 +939,31 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			reason = "LCAgent permission denied"
 		}
 		s.appendAsync(TranscriptError, "Permission denied: "+reason)
+	case "approval_request":
+		request := lcagentApprovalRequestFromEvent(event, "")
+		if request != nil {
+			s.mu.Lock()
+			s.pendingApproval = request
+			s.status = "Waiting for command approval"
+			s.touchLocked()
+			s.mu.Unlock()
+			s.appendAsync(TranscriptStatus, "LCAgent requested command approval: "+request.Summary())
+		}
+	case "approval_resolved":
+		id := rawJSONString(event["id"])
+		status := lcagentApprovalResolvedStatus(event)
+		s.mu.Lock()
+		if s.pendingApproval != nil && (id == "" || id == s.pendingApproval.ID) {
+			s.pendingApproval = nil
+		}
+		if status != "" {
+			s.status = status
+		}
+		s.touchLocked()
+		s.mu.Unlock()
+		if text := lcagentApprovalResolvedText(event); text != "" {
+			s.appendAsync(TranscriptStatus, text)
+		}
 	case "patch_diff_summary":
 		if summary := rawJSONString(event["summary"]); summary != "" {
 			s.appendAsync(TranscriptFileChange, summary)
@@ -980,14 +1061,67 @@ func (s *lcagentSession) handleEvent(line []byte) {
 	}
 }
 
+func lcagentApprovalRequestFromEvent(event map[string]json.RawMessage, fallbackThreadID string) *ApprovalRequest {
+	id := rawJSONString(event["id"])
+	if id == "" {
+		return nil
+	}
+	return &ApprovalRequest{
+		ID:       id,
+		Kind:     ApprovalCommandExecution,
+		ThreadID: firstNonEmpty(rawJSONString(event["session_id"]), fallbackThreadID),
+		Command:  rawJSONString(event["command"]),
+		CWD:      rawJSONString(event["cwd"]),
+		Reason:   rawJSONString(event["reason"]),
+	}
+}
+
+func lcagentApprovalResolvedStatus(event map[string]json.RawMessage) string {
+	switch rawJSONString(event["decision"]) {
+	case string(DecisionAcceptForSession):
+		return "LCAgent command access raised to medium for this run"
+	case string(DecisionAccept):
+		return "LCAgent command approval accepted"
+	case string(DecisionDecline):
+		return "LCAgent command approval declined"
+	case string(DecisionCancel):
+		return "LCAgent command approval canceled"
+	default:
+		switch rawJSONString(event["status"]) {
+		case "approved":
+			return "LCAgent command approval accepted"
+		case "declined":
+			return "LCAgent command approval declined"
+		case "canceled":
+			return "LCAgent command approval canceled"
+		default:
+			return ""
+		}
+	}
+}
+
+func lcagentApprovalResolvedText(event map[string]json.RawMessage) string {
+	status := lcagentApprovalResolvedStatus(event)
+	if status == "" {
+		return ""
+	}
+	if command := rawJSONString(event["command"]); command != "" {
+		return status + ": " + command
+	}
+	return status
+}
+
 func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 	s.mu.Lock()
 	sessionID := strings.TrimSpace(s.threadID)
 	dataDir := s.dataDir
 	projectPath := s.projectPath
+	stdin := s.stdin
 	s.busy = false
 	s.cancel = nil
 	s.cmd = nil
+	s.stdin = nil
+	s.pendingApproval = nil
 	s.lastBusyActivityAt = time.Now()
 	s.lastActivityAt = s.lastBusyActivityAt
 	if err != nil {
@@ -1000,6 +1134,9 @@ func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 		s.status = firstNonEmpty(processState, "LCAgent stopped")
 	}
 	s.mu.Unlock()
+	if stdin != nil {
+		_ = stdin.Close()
+	}
 	if err == nil && ok {
 		if trace, traceErr := LoadLCAgentTrace(dataDir, sessionID, projectPath); traceErr == nil {
 			if quality := trace.TraceQualitySummaryLabel(); quality != "" {
@@ -1363,6 +1500,7 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		Transcript:         transcript,
 		Status:             s.status,
 		LastError:          s.lastError,
+		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
 		LastActivityAt:     s.lastActivityAt,
 		CurrentCWD:         s.projectPath,
 		Model:              firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
