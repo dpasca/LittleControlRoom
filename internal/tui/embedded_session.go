@@ -295,6 +295,10 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 	if ok {
 		providerLabel = embeddedProvider(snapshot).Label()
 		transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
+		if normalizeProjectPath(m.codexPendingOpenProject()) == normalizeProjectPath(msg.projectPath) && codexSnapshotCanSettlePendingOpen(snapshot) {
+			reveal := m.revealPendingEmbeddedOpenOnSuccess(msg.projectPath) || codexSnapshotHasPendingUserResponse(snapshot)
+			cmds = append(cmds, m.finishCodexPendingOpen(msg.projectPath, snapshot, true, reveal))
+		}
 		m.observeManagedBrowserLease(msg.projectPath, snapshot)
 		if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrevSnapshot, prevSnapshot, snapshot) {
 			statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(msg.projectPath, snapshot)
@@ -861,6 +865,7 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentWebSearchAPIKey:   strings.TrimSpace(settings.LCAgentWebSearchAPIKey),
 		LCAgentWebSearchEngineID: strings.TrimSpace(settings.LCAgentWebSearchEngineID),
 		LCAgentWebSearchURL:      strings.TrimSpace(settings.LCAgentWebSearchURL),
+		RuntimeManager:           m.runtimeManager,
 	}
 }
 

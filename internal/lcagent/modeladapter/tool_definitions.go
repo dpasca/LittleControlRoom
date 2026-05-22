@@ -205,6 +205,46 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "start_process",
+				Description: "Start a long-running managed background process through Little Control Room, for dev servers or watchers that should remain inspectable and stoppable after the tool returns. Use this instead of run_command for processes expected to keep running.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"command": map[string]any{"type": "string", "description": "Shell command to run as the managed process, for example \"pnpm dev\". Keep it to the foreground server/watch command; LCR owns backgrounding and stopping."},
+						"cwd":     map[string]any{"type": "string", "description": "Optional workspace-relative working directory for the process, for example \"frontend\". Absolute or parent-directory cwd values outside the workspace are rejected."},
+					},
+					"required": []string{"command"},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "list_processes",
+				Description: "List managed background processes known to Little Control Room, including running state, PID, ports, URLs, and recent output. Use this to verify whether a dev server is actually still running.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties":           map[string]any{},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "stop_process",
+				Description: "Stop the current workspace's managed background process through Little Control Room. This only affects LCR-owned managed runtimes. Do not call this before start_process just to launch an app; start_process will report if a managed process is already running.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties":           map[string]any{},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "apply_patch",
 				Description: "Apply a Codex apply_patch patch. The patch must use the exact envelope: *** Begin Patch, then *** Update File: path or *** Add File: path, hunks with @@ and +/- lines, then *** End Patch. " + patchPathDescription + " Successful patches return a diff summary; failed stale hunks may return suggested read_file ranges to refresh before retrying. Example: *** Begin Patch\n*** Update File: README.md\n@@\n-old\n+new\n*** End Patch",
 				Parameters: map[string]any{

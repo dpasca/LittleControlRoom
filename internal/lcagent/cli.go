@@ -484,7 +484,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		ArtifactsDir: artifactDir,
 	}
 	if approvalMode == approvalModeAsk {
-		runner.Approvals = newStdioApprovalBroker(writer, sessionID, workspace.Root, os.Stdin)
+		broker := newStdioApprovalBroker(writer, sessionID, workspace.Root, os.Stdin)
+		runner.Approvals = broker
+		runner.Processes = broker
 	}
 
 	var runErr error

@@ -4604,7 +4604,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = "Restarting runtime..."
-		return m, m.restartProjectRuntimeCmd(p.Path, command)
+		return m, m.restartProjectRuntimeCmd(p.Path, command, snapshot.CWD)
 	case commands.KindRunEdit:
 		p, ok := m.selectedProject()
 		if !ok {
@@ -6700,14 +6700,15 @@ func (m Model) renderFooter(width int) string {
 	usageSegment := m.renderFooterUsageSegment(m.footerUsageLabel())
 	browserSegment := m.renderFooterBrowserAttentionSegment()
 	processSegment := m.renderFooterProcessWarningSegment()
+	runtimeSegment := m.renderFooterRuntimeSegment()
 	assessmentSegment := ""
 	if !m.errorLogVisible {
 		assessmentSegment = m.renderFooterAssessmentSegment()
 	}
 	filterSegment := m.renderFooterProjectFilterSegment()
-	supplementSegments := footerSupplementSegments(filterSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
+	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
 	if m.diffView != nil {
-		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, processSegment, browserSegment, assessmentSegment, "")...)
+		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, "")...)
 		return renderFooterLine(width, diffSegments...)
 	}
 	if m.gitStatusDialog != nil {

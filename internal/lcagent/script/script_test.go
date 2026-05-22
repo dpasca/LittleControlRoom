@@ -201,6 +201,24 @@ func (f *fakeApprovalBroker) RequestCommandApproval(_ context.Context, request C
 	return decision, nil
 }
 
+type fakeProcessBroker struct {
+	requests []ProcessRequest
+	result   tools.ToolResult
+	err      error
+}
+
+func (f *fakeProcessBroker) RequestProcess(_ context.Context, request ProcessRequest) (tools.ToolResult, error) {
+	f.requests = append(f.requests, request)
+	if f.err != nil {
+		return tools.ToolResult{}, f.err
+	}
+	if f.result.Output == "" {
+		f.result.Output = "started"
+	}
+	f.result.Success = true
+	return f.result, nil
+}
+
 func TestFinalVerificationStatusUsesLatestPassingOutcome(t *testing.T) {
 	status, message := finalVerificationStatus(nil, []string{"go test ./... - PASS"}, []tools.VerificationCheck{
 		{Command: "go test ./...", Status: tools.VerificationStatusFailed, ExitCode: 1},
@@ -459,6 +477,134 @@ func TestRunnerApprovedCommandRunsOnceAtMediumAutonomy(t *testing.T) {
 	}
 }
 
+func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
+	processes := &fakeProcessBroker{result: tools.ToolResult{Output: "running; pid 42"}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+		Processes: processes,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "start_process",
+		Args: raw(`{"command":"pnpm dev","cwd":"frontend"}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !result.Success || result.Output != "running; pid 42" {
+		t.Fatalf("result = %#v", result)
+	}
+	if approvals.calls != 1 || approvals.requests[0].Tool != "start_process" || approvals.requests[0].Command != "pnpm dev" {
+		t.Fatalf("approval requests = %#v calls=%d", approvals.requests, approvals.calls)
+	}
+	if len(processes.requests) != 1 {
+		t.Fatalf("process requests = %#v", processes.requests)
+	}
+	request := processes.requests[0]
+	if request.Action != ProcessActionStart || request.Command != "pnpm dev" || request.CWD != "frontend" || request.SessionID != sessionID {
+		t.Fatalf("process request = %#v", request)
+	}
+}
+
+func TestRunnerProcessApprovalGrantDoesNotReuseRunCommandGrant(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAcceptForSession}}
+	processes := &fakeProcessBroker{result: tools.ToolResult{Output: "running"}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+		Processes: processes,
+	}
+	if _, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"printf ok","timeout_ms":1000}`),
+	}); err != nil {
+		t.Fatalf("run_command RunTool() error = %v", err)
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "start_process",
+		Args: raw(`{"command":"printf ok"}`),
+	})
+	if err == nil {
+		t.Fatalf("start_process RunTool() error = nil, want denial; result=%#v", result)
+	}
+	if !result.Denied || len(processes.requests) != 0 {
+		t.Fatalf("result = %#v process requests=%#v", result, processes.requests)
+	}
+	if approvals.calls != 2 || approvals.requests[1].Tool != "start_process" {
+		t.Fatalf("approval calls=%d requests=%#v", approvals.calls, approvals.requests)
+	}
+}
+
+func TestRunnerStopProcessDoesNotRequireApproval(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionCancel}}
+	processes := &fakeProcessBroker{result: tools.ToolResult{Output: "stopped"}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+		Processes: processes,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "stop_process",
+		Args: raw(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !result.Success || result.Output != "stopped" {
+		t.Fatalf("result = %#v", result)
+	}
+	if approvals.calls != 0 {
+		t.Fatalf("stop_process should not request approval, got %d calls", approvals.calls)
+	}
+	if len(processes.requests) != 1 || processes.requests[0].Action != ProcessActionStop {
+		t.Fatalf("process requests = %#v", processes.requests)
+	}
+}
+
 func TestRunnerRejectsUnknownToolArgument(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0o644); err != nil {
@@ -629,15 +775,18 @@ func TestRunnerApprovedCommandForSessionScopesToExactCommand(t *testing.T) {
 
 func TestCommandApprovalGrantMatchesPackageDependencyFamily(t *testing.T) {
 	root := t.TempDir()
-	grant := newCommandApprovalGrant(root, tools.CommandSpec{Argv: []string{"pnpm", "install"}, CWD: "frontend"})
-	if !grant.Matches(root, tools.CommandSpec{Argv: []string{"pnpm", "add", "vite"}, CWD: "frontend"}) {
+	grant := newCommandApprovalGrant(root, tools.CommandSpec{Argv: []string{"pnpm", "install"}, CWD: "frontend"}, "run_command")
+	if !grant.Matches(root, tools.CommandSpec{Argv: []string{"pnpm", "add", "vite"}, CWD: "frontend"}, "run_command") {
 		t.Fatalf("package dependency grant did not match same manager/cwd family: %#v", grant)
 	}
-	if grant.Matches(root, tools.CommandSpec{Argv: []string{"pnpm", "add", "vite"}, CWD: "backend"}) {
+	if grant.Matches(root, tools.CommandSpec{Argv: []string{"pnpm", "add", "vite"}, CWD: "backend"}, "run_command") {
 		t.Fatalf("package dependency grant matched a different cwd")
 	}
-	if grant.Matches(root, tools.CommandSpec{Argv: []string{"npm", "install"}, CWD: "frontend"}) {
+	if grant.Matches(root, tools.CommandSpec{Argv: []string{"npm", "install"}, CWD: "frontend"}, "run_command") {
 		t.Fatalf("package dependency grant matched a different manager")
+	}
+	if grant.Matches(root, tools.CommandSpec{Argv: []string{"pnpm", "add", "vite"}, CWD: "frontend"}, "start_process") {
+		t.Fatalf("package dependency grant matched a different tool")
 	}
 	if !strings.Contains(grant.ScopeText(), "pnpm dependency commands") {
 		t.Fatalf("scope text = %q", grant.ScopeText())

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -125,6 +127,45 @@ func TestStartSerializesConcurrentStartsForSameProject(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("second start did not finish")
 	}
+}
+
+func TestStartRunsCommandInRequestedCWD(t *testing.T) {
+	dir := t.TempDir()
+	frontend := filepath.Join(dir, "frontend")
+	if err := os.MkdirAll(frontend, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	snapshot, err := manager.Start(StartRequest{
+		ProjectPath: dir,
+		Command:     "pwd; sleep 30",
+		CWD:         "frontend",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if snapshot.CWD != frontend {
+		t.Fatalf("snapshot.CWD = %q, want %q", snapshot.CWD, frontend)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot, err := manager.Snapshot(dir)
+		if err != nil {
+			t.Fatalf("Snapshot() error = %v", err)
+		}
+		if len(snapshot.RecentOutput) > 0 && snapshot.RecentOutput[0] == frontend {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	snapshot, err = manager.Snapshot(dir)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	t.Fatalf("recent output = %v, want cwd %q", snapshot.RecentOutput, frontend)
 }
 
 func TestCloseAllIgnoresAlreadyStoppedRuntime(t *testing.T) {

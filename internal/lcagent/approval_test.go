@@ -50,3 +50,41 @@ func TestStdioApprovalBrokerEmitsRequestAndResolvedEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestStdioApprovalBrokerEmitsProcessRequestAndReceivesResult(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	broker := newStdioApprovalBroker(
+		writer,
+		sessionID,
+		"/repo",
+		strings.NewReader(`{"type":"process_response","id":"lca_process_1","result":{"success":true,"output":"started","command":"pnpm dev","cwd":"/repo/frontend"}}`+"\n"),
+	)
+	result, err := broker.RequestProcess(context.Background(), script.ProcessRequest{
+		Action:  script.ProcessActionStart,
+		Command: "pnpm dev",
+		CWD:     "frontend",
+	})
+	if err != nil {
+		t.Fatalf("RequestProcess() error = %v", err)
+	}
+	if !result.Success || result.Output != "started" || result.Command != "pnpm dev" || result.CWD != "/repo/frontend" {
+		t.Fatalf("result = %#v", result)
+	}
+	text := stream.String()
+	for _, want := range []string{
+		`"type":"process_request"`,
+		`"id":"lca_process_1"`,
+		`"action":"start"`,
+		`"command":"pnpm dev"`,
+		`"cwd":"frontend"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}

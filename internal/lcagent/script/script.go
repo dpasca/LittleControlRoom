@@ -31,6 +31,7 @@ type Runner struct {
 	SearchRefiner        SearchRefiner
 	SearchRefineMinBytes int
 	Approvals            ApprovalBroker
+	Processes            ProcessBroker
 	Skills               skillcatalog.Catalog
 	SessionID            string
 	Prompt               string
@@ -247,6 +248,11 @@ type commandArgs struct {
 	Shell     bool     `json:"shell"`
 	TimeoutMS int      `json:"timeout_ms"`
 	Purpose   string   `json:"purpose"`
+}
+
+type processArgs struct {
+	Command string `json:"command"`
+	CWD     string `json:"cwd"`
 }
 
 type patchArgs struct {
@@ -537,6 +543,37 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 				return tools.ToolResult{}, err
 			}
 		}
+	case "start_process":
+		var args processArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		spec := tools.CommandSpec{
+			Command: strings.TrimSpace(args.Command),
+			CWD:     strings.TrimSpace(args.CWD),
+			Shell:   true,
+		}
+		if spec.Command == "" {
+			result = tools.ToolResult{Success: false, Error: "start_process command is required"}
+			break
+		}
+		result = r.runProcessWithApproval(ctx, ProcessRequest{
+			SessionID: r.SessionID,
+			Action:    ProcessActionStart,
+			Command:   spec.Command,
+			CWD:       spec.CWD,
+		}, spec, "start_process")
+	case "list_processes":
+		result = r.runProcess(ctx, ProcessRequest{
+			SessionID: r.SessionID,
+			Action:    ProcessActionList,
+		})
+	case "stop_process":
+		result = r.runProcess(ctx, ProcessRequest{
+			SessionID: r.SessionID,
+			Action:    ProcessActionStop,
+		})
 	case "apply_patch":
 		var args patchArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -628,10 +665,10 @@ func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandS
 	if !result.Denied || r.Approvals == nil || r.Command.Workspace.Auto != policy.AutonomyLow {
 		return result
 	}
-	if r.commandApprovalGranted(spec) {
+	if r.commandApprovalGranted(spec, "run_command") {
 		return r.runCommandAtMedium(ctx, spec)
 	}
-	grant := newCommandApprovalGrant(r.Command.Workspace.Root, spec)
+	grant := newCommandApprovalGrant(r.Command.Workspace.Root, spec, "run_command")
 	request := CommandApprovalRequest{
 		SessionID: r.SessionID,
 		Tool:      "run_command",
@@ -661,12 +698,74 @@ func (r *Runner) runCommandAtMedium(ctx context.Context, spec tools.CommandSpec)
 	return approved.RunSpec(ctx, spec)
 }
 
-func (r *Runner) commandApprovalGranted(spec tools.CommandSpec) bool {
+func (r *Runner) runProcessWithApproval(ctx context.Context, request ProcessRequest, spec tools.CommandSpec, tool string) tools.ToolResult {
+	if r == nil {
+		return tools.ToolResult{Success: false, Error: "runner unavailable"}
+	}
+	if r.Command.Workspace.Auto == policy.AutonomyLow {
+		if !r.processApprovalGranted(ctx, spec, tool) {
+			return tools.ToolResult{
+				Success:      false,
+				Denied:       true,
+				DenialReason: "managed background process requires approval at low autonomy",
+				Error:        "managed background process requires approval at low autonomy",
+				Command:      commandLabelForApproval(spec),
+				CWD:          commandCWDForApproval(r.Command.Workspace.Root, spec),
+			}
+		}
+	}
+	return r.runProcess(ctx, request)
+}
+
+func (r *Runner) runProcess(ctx context.Context, request ProcessRequest) tools.ToolResult {
+	if r == nil || r.Processes == nil {
+		return tools.ToolResult{Success: false, Error: "managed background process tools are unavailable outside an embedded LCR session"}
+	}
+	request.SessionID = firstNonEmpty(strings.TrimSpace(request.SessionID), r.SessionID)
+	result, err := r.Processes.RequestProcess(ctx, request)
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error()}
+	}
+	return result
+}
+
+func (r *Runner) processApprovalGranted(ctx context.Context, spec tools.CommandSpec, tool string) bool {
+	if r == nil || r.Approvals == nil {
+		return false
+	}
+	if r.commandApprovalGranted(spec, tool) {
+		return true
+	}
+	grant := newCommandApprovalGrant(r.Command.Workspace.Root, spec, tool)
+	request := CommandApprovalRequest{
+		SessionID: r.SessionID,
+		Tool:      firstNonEmpty(strings.TrimSpace(tool), "start_process"),
+		Command:   firstNonEmpty(commandLabelForApproval(spec), "managed process"),
+		CWD:       firstNonEmpty(commandCWDForApproval(r.Command.Workspace.Root, spec), r.Command.Workspace.Root),
+		Reason:    "managed background process requires approval at low autonomy",
+		Scope:     grant.ScopeText(),
+	}
+	decision, err := r.Approvals.RequestCommandApproval(ctx, request)
+	if err != nil {
+		return false
+	}
+	switch decision {
+	case DecisionAccept:
+		return true
+	case DecisionAcceptForSession:
+		r.commandApprovalGrants = append(r.commandApprovalGrants, grant)
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Runner) commandApprovalGranted(spec tools.CommandSpec, tool string) bool {
 	if r == nil || len(r.commandApprovalGrants) == 0 {
 		return false
 	}
 	for _, grant := range r.commandApprovalGrants {
-		if grant.Matches(r.Command.Workspace.Root, spec) {
+		if grant.Matches(r.Command.Workspace.Root, spec, tool) {
 			return true
 		}
 	}
@@ -692,6 +791,7 @@ func commandCWDForApproval(root string, spec tools.CommandSpec) string {
 }
 
 type commandApprovalGrant struct {
+	Tool           string
 	Command        string
 	CWD            string
 	Scope          string
@@ -703,8 +803,9 @@ const (
 	commandApprovalScopePackageDeps = "package_dependency_family"
 )
 
-func newCommandApprovalGrant(root string, spec tools.CommandSpec) commandApprovalGrant {
+func newCommandApprovalGrant(root string, spec tools.CommandSpec, tool string) commandApprovalGrant {
 	grant := commandApprovalGrant{
+		Tool:    firstNonEmpty(strings.TrimSpace(tool), "run_command"),
 		Command: commandLabelForApproval(spec),
 		CWD:     commandCWDForApproval(root, spec),
 		Scope:   commandApprovalScopeExact,
@@ -716,8 +817,11 @@ func newCommandApprovalGrant(root string, spec tools.CommandSpec) commandApprova
 	return grant
 }
 
-func (g commandApprovalGrant) Matches(root string, spec tools.CommandSpec) bool {
-	next := newCommandApprovalGrant(root, spec)
+func (g commandApprovalGrant) Matches(root string, spec tools.CommandSpec, tool string) bool {
+	next := newCommandApprovalGrant(root, spec, tool)
+	if g.Tool != "" && next.Tool != "" && g.Tool != next.Tool {
+		return false
+	}
 	if g.CWD != next.CWD {
 		return false
 	}

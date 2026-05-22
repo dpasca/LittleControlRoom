@@ -35,6 +35,7 @@ var (
 type Snapshot struct {
 	ProjectPath   string
 	Command       string
+	CWD           string
 	PID           int
 	PGID          int
 	Running       bool
@@ -52,6 +53,7 @@ type Snapshot struct {
 type StartRequest struct {
 	ProjectPath string
 	Command     string
+	CWD         string
 }
 
 type Manager struct {
@@ -68,6 +70,7 @@ type Manager struct {
 type managedRuntime struct {
 	projectPath   string
 	command       string
+	cwd           string
 	process       *exec.Cmd
 	pid           int
 	pgid          int
@@ -182,6 +185,10 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	if command == "" {
 		return Snapshot{}, errors.New("run command is required")
 	}
+	cwd, err := normalizeRuntimeCWD(projectPath, req.CWD)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	unlock := m.opLocks.Lock(projectPath)
 	defer unlock()
 
@@ -198,9 +205,9 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	if prepare == nil {
 		prepare = ensureRuntimeDependencies
 	}
-	if err := prepare(projectPath, command); err != nil {
+	if err := prepare(cwd, command); err != nil {
 		startErr := fmt.Errorf("prepare runtime dependencies: %w", err)
-		m.markRuntimeStartFailure(projectPath, command, startErr)
+		m.markRuntimeStartFailure(projectPath, command, cwd, startErr)
 		return Snapshot{}, startErr
 	}
 
@@ -211,6 +218,7 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 		m.runtimes[projectPath] = existing
 	}
 	existing.command = command
+	existing.cwd = cwd
 	existing.exitedAt = time.Time{}
 	existing.exitCode = 0
 	existing.exitCodeKnown = false
@@ -223,21 +231,21 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 
 	shellProgram := defaultShellProgram()
 	cmd := exec.Command(shellProgram, "-lc", command)
-	cmd.Dir = projectPath
+	cmd.Dir = cwd
 	configureManagedCommand(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		m.markRuntimeStartFailure(projectPath, command, err)
+		m.markRuntimeStartFailure(projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		m.markRuntimeStartFailure(projectPath, command, err)
+		m.markRuntimeStartFailure(projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
 	if err := cmd.Start(); err != nil {
-		m.markRuntimeStartFailure(projectPath, command, err)
+		m.markRuntimeStartFailure(projectPath, command, cwd, err)
 		return Snapshot{}, err
 	}
 
@@ -255,6 +263,7 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 		m.runtimes[projectPath] = runtime
 	}
 	runtime.command = command
+	runtime.cwd = cwd
 	runtime.process = cmd
 	runtime.pid = pid
 	runtime.pgid = pgid
@@ -275,6 +284,26 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	go m.waitForExit(projectPath, cmd)
 	m.refreshPorts()
 	return m.Snapshot(projectPath)
+}
+
+func normalizeRuntimeCWD(projectPath, cwd string) (string, error) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return projectPath, nil
+	}
+	if !filepath.IsAbs(cwd) {
+		cwd = filepath.Join(projectPath, cwd)
+	}
+	cwd = filepath.Clean(cwd)
+	rel, err := filepath.Rel(projectPath, cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve runtime cwd: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("runtime cwd must stay inside project: %s", cwd)
+	}
+	return cwd, nil
 }
 
 func (m *Manager) Stop(projectPath string) error {
@@ -469,7 +498,7 @@ func (m *Manager) waitForExit(projectPath string, cmd *exec.Cmd) {
 	runtime.process = nil
 }
 
-func (m *Manager) markRuntimeStartFailure(projectPath, command string, err error) {
+func (m *Manager) markRuntimeStartFailure(projectPath, command, cwd string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	runtime := m.runtimes[projectPath]
@@ -478,6 +507,7 @@ func (m *Manager) markRuntimeStartFailure(projectPath, command string, err error
 		m.runtimes[projectPath] = runtime
 	}
 	runtime.command = command
+	runtime.cwd = cwd
 	runtime.running = false
 	runtime.stopRequested = false
 	runtime.exitedAt = time.Now()
@@ -519,6 +549,7 @@ func snapshotFromRuntime(runtime *managedRuntime, portOwners map[int][]string) S
 	return Snapshot{
 		ProjectPath:   runtime.projectPath,
 		Command:       runtime.command,
+		CWD:           runtime.cwd,
 		PID:           runtime.pid,
 		PGID:          runtime.pgid,
 		Running:       runtime.running,

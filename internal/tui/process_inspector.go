@@ -259,8 +259,7 @@ func (m Model) processScanExpectedPorts(dialogProjectPath string) []procinspect.
 		if !ok {
 			state = projectRuntimeState{path: filepath.Clean(path), snapshot: m.projectRuntimeSnapshot(path)}
 		}
-		command := effectiveRuntimeCommand(state.runCommand, state.snapshot)
-		ports := projectrun.ExpectedPorts(command, state.snapshot.AnnouncedURLs, state.snapshot.Ports)
+		ports := projectrun.ExpectedPorts(strings.Join(expectedRuntimePortCommands(state.runCommand, state.snapshot), "\n"), state.snapshot.AnnouncedURLs, state.snapshot.Ports)
 		if len(state.snapshot.RecentOutput) > 0 {
 			ports = append(ports, projectrun.ExpectedPorts(strings.Join(state.snapshot.RecentOutput, "\n"), nil, nil)...)
 		}
@@ -273,6 +272,23 @@ func (m Model) processScanExpectedPorts(dialogProjectPath string) []procinspect.
 		}
 	}
 	return expected
+}
+
+func expectedRuntimePortCommands(savedCommand string, snapshot projectrun.Snapshot) []string {
+	values := []string{}
+	seen := map[string]struct{}{}
+	for _, command := range []string{savedCommand, snapshot.Command} {
+		command = strings.TrimSpace(command)
+		if command == "" {
+			continue
+		}
+		if _, ok := seen[command]; ok {
+			continue
+		}
+		seen[command] = struct{}{}
+		values = append(values, command)
+	}
+	return values
 }
 
 func (m *Model) applyProcessScanMsg(msg processScanMsg) tea.Cmd {

@@ -21,9 +21,32 @@ func (m Model) projectRuntimeSnapshot(projectPath string) projectrun.Snapshot {
 	return projectrun.Snapshot{ProjectPath: projectPath}
 }
 
+func (m Model) runningRuntimeCount() int {
+	count := 0
+	for _, snapshot := range m.runtimeSnapshots {
+		if snapshot.Running {
+			count++
+		}
+	}
+	return count
+}
+
+func (m Model) renderFooterRuntimeSegment() string {
+	count := m.runningRuntimeCount()
+	if count == 0 {
+		return ""
+	}
+	label := "1 runtime active"
+	if count != 1 {
+		label = fmt.Sprintf("%d runtimes active", count)
+	}
+	return renderFooterStatus(label)
+}
+
 func runtimeDetailAvailable(savedCommand string, snapshot projectrun.Snapshot) bool {
 	return strings.TrimSpace(savedCommand) != "" ||
 		strings.TrimSpace(snapshot.Command) != "" ||
+		strings.TrimSpace(snapshot.CWD) != "" ||
 		snapshot.Running ||
 		snapshot.ExitCodeKnown ||
 		!snapshot.ExitedAt.IsZero() ||
@@ -35,11 +58,23 @@ func runtimeDetailAvailable(savedCommand string, snapshot projectrun.Snapshot) b
 }
 
 func effectiveRuntimeCommand(savedCommand string, snapshot projectrun.Snapshot) string {
-	savedCommand = strings.TrimSpace(savedCommand)
-	if savedCommand != "" {
-		return savedCommand
+	if command := strings.TrimSpace(snapshot.Command); command != "" {
+		return command
 	}
-	return strings.TrimSpace(snapshot.Command)
+	return strings.TrimSpace(savedCommand)
+}
+
+func runtimeRelativeCWD(projectPath, cwd string) string {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	cwd = filepath.Clean(strings.TrimSpace(cwd))
+	if cwd == "" || cwd == "." || cwd == projectPath {
+		return ""
+	}
+	rel, err := filepath.Rel(projectPath, cwd)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return cwd
+	}
+	return rel
 }
 
 func runtimePrimaryURL(snapshot projectrun.Snapshot) string {

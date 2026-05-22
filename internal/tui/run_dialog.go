@@ -201,8 +201,9 @@ func (m Model) stopProjectRuntimeCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m Model) restartProjectRuntimeCmd(projectPath, command string) tea.Cmd {
+func (m Model) restartProjectRuntimeCmd(projectPath, command, cwd string) tea.Cmd {
 	command = strings.TrimSpace(command)
+	cwd = strings.TrimSpace(cwd)
 	return func() tea.Msg {
 		if m.runtimeManager == nil {
 			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("runtime manager unavailable")}
@@ -213,6 +214,7 @@ func (m Model) restartProjectRuntimeCmd(projectPath, command string) tea.Cmd {
 		snapshot, err := restartProjectRuntime(m.runtimeManager, projectrun.StartRequest{
 			ProjectPath: projectPath,
 			Command:     command,
+			CWD:         cwd,
 		})
 		if err != nil {
 			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("restart runtime: %w", err)}

@@ -19536,6 +19536,157 @@ func TestVisibleCodexViewHidesSessionApprovalShortcutForFileChanges(t *testing.T
 	}
 }
 
+func TestPendingOpenCodexApprovalCanBeAcceptedImmediately(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "Waiting for command approval",
+			PendingApproval: &codexapp.ApprovalRequest{
+				ID:      "approval-1",
+				Kind:    codexapp.ApprovalCommandExecution,
+				Command: "pnpm run dev",
+				CWD:     "/tmp/demo/frontend",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexPendingOpen: &codexPendingOpenState{
+			projectPath:      "/tmp/demo",
+			provider:         codexapp.ProviderLCAgent,
+			showWhilePending: true,
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	got := updated.(Model)
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want cleared once approval is pending", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if got.status != "Approving LCAgent request for this session..." {
+		t.Fatalf("status = %q, want approving status", got.status)
+	}
+
+	_ = collectCmdMsgs(cmd)
+	if len(session.decisions) != 1 || session.decisions[0] != codexapp.DecisionAcceptForSession {
+		t.Fatalf("approval decisions = %#v, want acceptForSession", session.decisions)
+	}
+}
+
+func TestCodexUpdateRevealsPendingOpenApproval(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "Waiting for command approval",
+			PendingApproval: &codexapp.ApprovalRequest{
+				ID:      "approval-1",
+				Kind:    codexapp.ApprovalCommandExecution,
+				Command: "pnpm run dev",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexPendingOpen: &codexPendingOpenState{
+			projectPath:      "/tmp/demo",
+			provider:         codexapp.ProviderLCAgent,
+			showWhilePending: true,
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: "/tmp/demo"})
+	got := updated.(Model)
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want cleared once update carries approval", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if snapshot, ok := got.currentCodexSnapshot(); !ok || snapshot.PendingApproval == nil {
+		t.Fatalf("currentCodexSnapshot() = (%#v, %v), want pending approval", snapshot, ok)
+	}
+}
+
+func TestCodexUpdateSettlesPendingOpenWhenSessionStarts(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "LCAgent running",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexPendingOpen: &codexPendingOpenState{
+			projectPath:      "/tmp/demo",
+			provider:         codexapp.ProviderLCAgent,
+			showWhilePending: true,
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: "/tmp/demo"})
+	got := updated.(Model)
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want cleared once session has started", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if snapshot, ok := got.currentCodexSnapshot(); !ok || !snapshot.Started {
+		t.Fatalf("currentCodexSnapshot() = (%#v, %v), want started session", snapshot, ok)
+	}
+}
+
 func TestStoreCodexSnapshotOnlyInvalidatesTranscriptRevisionWhenTranscriptChanges(t *testing.T) {
 	m := Model{}
 	projectPath := "/tmp/demo"

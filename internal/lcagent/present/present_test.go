@@ -43,3 +43,17 @@ func TestCommandSuppressesBinaryOutput(t *testing.T) {
 		t.Fatalf("Text = %q", p.Text)
 	}
 }
+
+func TestCommandTimeoutSaysProcessGroupWasTerminated(t *testing.T) {
+	p := Command(CommandOutput{
+		Stdout:   []byte("ready on localhost\n"),
+		ExitCode: -1,
+		Duration: time.Second,
+		TimedOut: true,
+	})
+	for _, want := range []string{"ready on localhost", "timeout", "process group", "assume long-running servers or watchers from this command are stopped"} {
+		if !strings.Contains(p.Text, want) {
+			t.Fatalf("Text missing %q: %q", want, p.Text)
+		}
+	}
+}

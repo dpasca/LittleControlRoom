@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"lcroom/internal/projectrun"
 )
 
 func TestLCAgentSessionLaunchesConfiguredCommandAndStreamsTranscript(t *testing.T) {
@@ -169,6 +171,9 @@ func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 		!strings.Contains(got, `"decision":"acceptForSession"`) {
 		t.Fatalf("approval response payload = %q", got)
 	}
+	if snapshot = session.Snapshot(); !strings.Contains(snapshot.Transcript, "LCAgent approval decision sent: corepack enable") {
+		t.Fatalf("transcript missing immediate approval feedback:\n%s", snapshot.Transcript)
+	}
 
 	session.handleEvent([]byte(`{"type":"approval_resolved","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","scope":"this exact command in /repo","decision":"acceptForSession","status":"approved"}`))
 	snapshot = session.Snapshot()
@@ -178,6 +183,128 @@ func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 	if !strings.Contains(snapshot.Status, "this exact command in /repo") ||
 		!strings.Contains(snapshot.Transcript, "corepack enable") {
 		t.Fatalf("approval resolution not reflected; status=%q transcript=\n%s", snapshot.Status, snapshot.Transcript)
+	}
+}
+
+func TestLCAgentProcessRequestStartsManagedRuntime(t *testing.T) {
+	projectPath := t.TempDir()
+	frontend := filepath.Join(projectPath, "frontend")
+	if err := os.MkdirAll(frontend, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","command":"pwd; sleep 30","cwd":"frontend"}`))
+
+	if got := strings.Join(stdin.writes, ""); !strings.Contains(got, `"type":"process_response"`) ||
+		!strings.Contains(got, `"id":"process-1"`) ||
+		!strings.Contains(got, `"success":true`) {
+		t.Fatalf("process response payload = %q", got)
+	}
+	snapshot, err := manager.Snapshot(projectPath)
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	if !snapshot.Running || snapshot.Command != "pwd; sleep 30" || snapshot.CWD != frontend {
+		t.Fatalf("runtime snapshot = %#v", snapshot)
+	}
+	transcript := session.Snapshot().Transcript
+	if !strings.Contains(transcript, "LCAgent starting managed process: pwd; sleep 30 in frontend") ||
+		!strings.Contains(transcript, "Started managed process") ||
+		!strings.Contains(transcript, "pwd; sleep 30") {
+		t.Fatalf("transcript missing managed process status:\n%s", transcript)
+	}
+}
+
+func TestLCAgentSessionLaunchesManagedProcessAfterStopWithoutDoubleApproval(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(frontend, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	exe := filepath.Join(t.TempDir(), "fake-lcagent-managed-process")
+	script := `#!/bin/sh
+printf '%s\n' '{"type":"session_meta","id":"lca_fake_managed_process","cwd":"` + root + `"}'
+printf '%s\n' '{"type":"tool_call","tool":"stop_process","args":{}}'
+printf '%s\n' '{"type":"process_request","session_id":"lca_fake_managed_process","id":"process-stop","action":"stop"}'
+IFS= read -r stop_response || exit 2
+printf '%s\n' '{"type":"tool_result","tool":"stop_process","result":{"success":true,"output":"No managed process is running for this workspace."}}'
+printf '%s\n' '{"type":"tool_call","tool":"start_process","args":{"command":"printf managed-ready; sleep 30","cwd":"frontend"}}'
+printf '%s\n' '{"type":"approval_request","session_id":"lca_fake_managed_process","id":"approval-start","kind":"command","tool":"start_process","command":"printf managed-ready; sleep 30","cwd":"` + frontend + `","reason":"managed background process requires approval at low autonomy","scope":"this exact command in ` + frontend + `"}'
+IFS= read -r approval_response || exit 3
+printf '%s\n' '{"type":"approval_resolved","session_id":"lca_fake_managed_process","id":"approval-start","kind":"command","tool":"start_process","command":"printf managed-ready; sleep 30","cwd":"` + frontend + `","decision":"accept","status":"approved"}'
+printf '%s\n' '{"type":"process_request","session_id":"lca_fake_managed_process","id":"process-start","action":"start","command":"printf managed-ready; sleep 30","cwd":"frontend"}'
+IFS= read -r start_response || exit 4
+printf '%s\n' '{"type":"tool_result","tool":"start_process","result":{"success":true,"output":"Started managed process"}}'
+printf '%s\n' '{"type":"turn_complete"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:       ProviderLCAgent,
+		ProjectPath:    root,
+		AppDataDir:     dataDir,
+		LCAgentPath:    exe,
+		LCAgentAuto:    "low",
+		RuntimeManager: manager,
+		Prompt:         "again please",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+
+	snapshot := waitForLCAgentPendingApproval(t, session, notify, "printf managed-ready; sleep 30")
+	if strings.Contains(snapshot.Transcript, "Command approval: stop managed process") {
+		t.Fatalf("stop_process should not request approval:\n%s", snapshot.Transcript)
+	}
+	if err := session.RespondApproval(DecisionAccept); err != nil {
+		t.Fatalf("RespondApproval() error = %v", err)
+	}
+
+	snapshot = waitForLCAgentIdleSnapshot(t, session, notify)
+	if snapshot.LastError != "" {
+		t.Fatalf("LCAgent session finished with error: %s\n%s", snapshot.LastError, snapshot.Transcript)
+	}
+	runtimeSnapshot, err := manager.Snapshot(root)
+	if err != nil {
+		t.Fatalf("runtime Snapshot() error = %v", err)
+	}
+	if !runtimeSnapshot.Running || runtimeSnapshot.Command != "printf managed-ready; sleep 30" || runtimeSnapshot.CWD != frontend {
+		t.Fatalf("runtime snapshot = %#v", runtimeSnapshot)
+	}
+	for _, want := range []string{
+		"LCAgent stopping managed process",
+		"No managed process is running for this workspace.",
+		"LCAgent requested command approval",
+		"LCAgent approval decision sent: printf managed-ready; sleep 30",
+		"LCAgent starting managed process: printf managed-ready; sleep 30 in frontend",
+		"Started managed process",
+	} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
 	}
 }
 
@@ -1013,6 +1140,25 @@ func waitForLCAgentIdleSnapshot(t *testing.T, session Session, notify <-chan str
 		case <-tick.C:
 		case <-deadline:
 			t.Fatalf("timed out waiting for lcagent session to finish; snapshot=%#v", snapshot)
+		}
+	}
+}
+
+func waitForLCAgentPendingApproval(t *testing.T, session Session, notify <-chan struct{}, commandContains string) Snapshot {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		snapshot := session.Snapshot()
+		if snapshot.PendingApproval != nil && strings.Contains(snapshot.PendingApproval.Command, commandContains) {
+			return snapshot
+		}
+		select {
+		case <-notify:
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("timed out waiting for lcagent approval %q; snapshot=%#v", commandContains, snapshot)
 		}
 	}
 }

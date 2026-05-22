@@ -866,6 +866,9 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		provider = codexapp.ProviderCodex
 	}
 	if provider == codexapp.ProviderLCAgent {
+		if req.RuntimeManager == nil {
+			req.RuntimeManager = m.runtimeManager
+		}
 		if strings.TrimSpace(req.LCAgentPath) == "" {
 			req.LCAgentPath = m.lcagentPath()
 		}
@@ -1509,6 +1512,12 @@ func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {
 
 func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
+		if snapshot, ok := m.nonBlockingCodexSnapshot(projectPath); ok && codexSnapshotCanSettlePendingOpen(snapshot) {
+			reveal := m.revealPendingEmbeddedOpenOnSuccess(projectPath) || codexSnapshotHasPendingUserResponse(snapshot)
+			openCmd := m.finishCodexPendingOpen(projectPath, snapshot, true, reveal)
+			updated, cmd := m.updateCodexMode(msg)
+			return updated, batchCmds(openCmd, cmd)
+		}
 		label := m.codexPendingOpenProvider().Label()
 		switch msg.String() {
 		case "alt+up", "esc":
@@ -3569,7 +3578,18 @@ func (m *Model) closeCodexArtifactPicker(status string) {
 }
 
 func codexArtifactPickerAllowed(snapshot codexapp.Snapshot) bool {
-	return snapshot.PendingApproval == nil && snapshot.PendingToolInput == nil && snapshot.PendingElicitation == nil
+	return !codexSnapshotHasPendingUserResponse(snapshot)
+}
+
+func codexSnapshotCanSettlePendingOpen(snapshot codexapp.Snapshot) bool {
+	return !snapshot.Closed && (snapshot.Started ||
+		strings.TrimSpace(snapshot.ThreadID) != "" ||
+		strings.TrimSpace(snapshot.Status) != "" ||
+		codexSnapshotHasPendingUserResponse(snapshot))
+}
+
+func codexSnapshotHasPendingUserResponse(snapshot codexapp.Snapshot) bool {
+	return snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil
 }
 
 func (m *Model) codexArtifactPickerPreviewCmd() tea.Cmd {

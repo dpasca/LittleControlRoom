@@ -82,7 +82,7 @@ func combine(stdout, stderr []byte) []byte {
 func metadata(result CommandOutput) string {
 	status := fmt.Sprintf("[exit:%d | %s]", result.ExitCode, result.Duration.Round(time.Millisecond))
 	if result.TimedOut {
-		status = fmt.Sprintf("[exit:%d | timeout | %s]", result.ExitCode, result.Duration.Round(time.Millisecond))
+		status = fmt.Sprintf("[exit:%d | timeout | %s]\n[timeout] command exceeded its timeout and LCAgent terminated its process group; assume long-running servers or watchers from this command are stopped unless a later probe proves otherwise.", result.ExitCode, result.Duration.Round(time.Millisecond))
 	}
 	return status
 }

@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/keyedmutex"
+	"lcroom/internal/projectrun"
 )
 
 type TranscriptKind string
@@ -569,6 +570,7 @@ type LaunchRequest struct {
 	LCAgentWebSearchAPIKey   string
 	LCAgentWebSearchEngineID string
 	LCAgentWebSearchURL      string
+	RuntimeManager           *projectrun.Manager
 	CLIExecutablePath        string
 }
 

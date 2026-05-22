@@ -138,7 +138,7 @@ func (m *Model) activateRuntimePaneAction() tea.Cmd {
 			return nil
 		}
 		m.status = "Restarting runtime..."
-		return m.restartProjectRuntimeCmd(project.Path, command)
+		return m.restartProjectRuntimeCmd(project.Path, command, snapshot.CWD)
 	case runtimePaneActionStop:
 		if !snapshot.Running {
 			m.status = "Runtime is not running"
@@ -198,6 +198,9 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 		commandStyle = detailMutedStyle
 	}
 	lines = append(lines, renderWrappedRuntimeField("Run cmd", width, commandStyle, command)...)
+	if cwd := runtimeRelativeCWD(projectPath, snapshot.CWD); cwd != "" {
+		lines = append(lines, renderWrappedRuntimeField("CWD", width, detailMutedStyle, cwd)...)
+	}
 
 	runtimeStatus := renderRuntimeStatusValue(snapshot)
 	if snapshot.Running && !snapshot.StartedAt.IsZero() {

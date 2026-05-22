@@ -40,6 +40,12 @@ func TestCommandRunnerTimesOut(t *testing.T) {
 	if !result.TimedOut {
 		t.Fatalf("TimedOut = false, output %q", result.Output)
 	}
+	if !strings.Contains(result.Error, "process group terminated") {
+		t.Fatalf("Error = %q, want process-group termination note", result.Error)
+	}
+	if !strings.Contains(result.Output, "assume long-running servers or watchers from this command are stopped") {
+		t.Fatalf("Output missing timeout liveness warning: %q", result.Output)
+	}
 }
 
 func TestCommandRunnerTimeoutKillsChildProcessHoldingOutputPipe(t *testing.T) {

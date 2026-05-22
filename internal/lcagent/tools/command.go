@@ -228,7 +228,7 @@ func exitCodeFromError(err error) int {
 
 func errorString(err error, timedOut bool) string {
 	if timedOut {
-		return "command timed out"
+		return "command timed out; process group terminated"
 	}
 	if err == nil {
 		return ""

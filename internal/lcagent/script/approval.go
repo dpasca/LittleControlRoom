@@ -3,6 +3,8 @@ package script
 import (
 	"context"
 	"strings"
+
+	"lcroom/internal/lcagent/tools"
 )
 
 type ApprovalDecision string
@@ -26,6 +28,26 @@ type CommandApprovalRequest struct {
 
 type ApprovalBroker interface {
 	RequestCommandApproval(context.Context, CommandApprovalRequest) (ApprovalDecision, error)
+}
+
+type ProcessAction string
+
+const (
+	ProcessActionStart ProcessAction = "start"
+	ProcessActionList  ProcessAction = "list"
+	ProcessActionStop  ProcessAction = "stop"
+)
+
+type ProcessRequest struct {
+	ID        string
+	SessionID string
+	Action    ProcessAction
+	Command   string
+	CWD       string
+}
+
+type ProcessBroker interface {
+	RequestProcess(context.Context, ProcessRequest) (tools.ToolResult, error)
 }
 
 func NormalizeApprovalDecision(raw string) ApprovalDecision {
