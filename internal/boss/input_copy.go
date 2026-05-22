@@ -209,7 +209,7 @@ func renderBossInputWithSelection(input textarea.Model, sel *inputcomposer.Selec
 		Cursor:      bossInputSelectionCursorStyle,
 		CursorRange: bossInputSelectionCursorRangeStyle,
 	})
-	return bossInputShellStyle.Width(width).Render(editorView)
+	return renderBossInputBlock(input, editorView, width)
 }
 
 func (m Model) renderInputCopyDialogOverlay(body string, bodyW, bodyH int) string {

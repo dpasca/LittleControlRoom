@@ -164,17 +164,18 @@ type AttentionItem struct {
 }
 
 type bossLayout struct {
-	width            int
-	height           int
-	topHeight        int
-	bottomHeight     int
-	middleGapHeight  int
-	chatWidth        int
-	sidebarWidth     int
-	chatInnerWidth   int
-	transcriptHeight int
-	inputHeight      int
-	slashHeight      int
+	width             int
+	height            int
+	topHeight         int
+	bottomHeight      int
+	middleGapHeight   int
+	chatWidth         int
+	sidebarWidth      int
+	chatInnerWidth    int
+	transcriptHeight  int
+	inputHeight       int
+	inputEditorHeight int
+	slashHeight       int
 }
 
 func New(ctx context.Context, svc *service.Service) Model {
@@ -198,7 +199,7 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 		if line == 0 {
 			return "> "
 		}
-		return "  "
+		return "| "
 	})
 	input.Placeholder = ""
 	input.CharLimit = 6000
@@ -998,7 +999,7 @@ func bossTickCmd() tea.Cmd {
 func (m *Model) syncLayout(gotoBottom bool) {
 	layout := m.layout()
 	m.input.SetWidth(maxInt(20, layout.chatInnerWidth))
-	m.input.SetHeight(layout.inputHeight)
+	m.input.SetHeight(layout.inputEditorHeight)
 	m.chatViewport.Width = maxInt(1, layout.chatInnerWidth)
 	m.chatViewport.Height = maxInt(1, layout.transcriptHeight)
 	m.chatViewport.SetContent(m.renderTranscript(layout.chatInnerWidth))
@@ -1029,8 +1030,6 @@ func (m Model) layout() bossLayout {
 			height -= 2
 		}
 	}
-	inputHeight := 2
-
 	bottomHeight := 0
 	if height >= 14 {
 		bottomHeight = bossLogTargetHeight(height, m.embedded)
@@ -1046,37 +1045,43 @@ func (m Model) layout() bossLayout {
 
 	if width < 78 {
 		chatInnerWidth := bossPanelInnerWidth(width)
+		inputEditorHeight := m.bossInputEditorHeight(chatInnerWidth, topHeight, false)
+		inputHeight := bossInputBlockHeight(inputEditorHeight)
 		transcriptHeight, slashHeight := m.chatAuxiliaryHeights(topHeight, inputHeight, false)
 		return bossLayout{
-			width:            width,
-			height:           height,
-			topHeight:        topHeight,
-			bottomHeight:     bottomHeight,
-			chatWidth:        width,
-			chatInnerWidth:   chatInnerWidth,
-			transcriptHeight: transcriptHeight,
-			inputHeight:      inputHeight,
-			slashHeight:      slashHeight,
+			width:             width,
+			height:            height,
+			topHeight:         topHeight,
+			bottomHeight:      bottomHeight,
+			chatWidth:         width,
+			chatInnerWidth:    chatInnerWidth,
+			transcriptHeight:  transcriptHeight,
+			inputHeight:       inputHeight,
+			inputEditorHeight: inputEditorHeight,
+			slashHeight:       slashHeight,
 		}
 	}
 
 	sidebarWidth := bossSidebarTargetWidth(width)
 	chatWidth := width - sidebarWidth
 	chatInnerWidth := bossPanelInnerWidth(chatWidth)
+	inputEditorHeight := m.bossInputEditorHeight(chatInnerWidth, topHeight, !m.embedded)
+	inputHeight := bossInputBlockHeight(inputEditorHeight)
 	transcriptHeight, slashHeight := m.chatAuxiliaryHeights(topHeight, inputHeight, !m.embedded)
 	middleGapHeight := 0
 	return bossLayout{
-		width:            width,
-		height:           height,
-		topHeight:        topHeight,
-		bottomHeight:     bottomHeight,
-		middleGapHeight:  middleGapHeight,
-		chatWidth:        chatWidth,
-		sidebarWidth:     sidebarWidth,
-		chatInnerWidth:   chatInnerWidth,
-		transcriptHeight: transcriptHeight,
-		inputHeight:      inputHeight,
-		slashHeight:      slashHeight,
+		width:             width,
+		height:            height,
+		topHeight:         topHeight,
+		bottomHeight:      bottomHeight,
+		middleGapHeight:   middleGapHeight,
+		chatWidth:         chatWidth,
+		sidebarWidth:      sidebarWidth,
+		chatInnerWidth:    chatInnerWidth,
+		transcriptHeight:  transcriptHeight,
+		inputHeight:       inputHeight,
+		inputEditorHeight: inputEditorHeight,
+		slashHeight:       slashHeight,
 	}
 }
 
@@ -1122,6 +1127,44 @@ func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint boo
 	}
 	transcriptHeight := maxInt(1, available-slashHeight)
 	return transcriptHeight, slashHeight
+}
+
+const (
+	bossInputPromptWidth     = 2
+	bossInputChromeHeight    = 1
+	bossInputMinEditorHeight = 2
+	bossInputMaxEditorHeight = 6
+)
+
+func bossInputBlockHeight(editorHeight int) int {
+	return maxInt(1, editorHeight) + bossInputChromeHeight
+}
+
+func (m Model) bossInputEditorHeight(width, topHeight int, includesHint bool) int {
+	desired := clampInt(bossInputVisualRows(m.input.Value(), width), bossInputMinEditorHeight, bossInputMaxEditorHeight)
+	hintHeight := 0
+	if includesHint {
+		hintHeight = 1
+	}
+	bodyHeight := maxInt(1, topHeight-4)
+	maxEditorHeight := bodyHeight - hintHeight - bossInputChromeHeight - 1
+	maxEditorHeight = clampInt(maxEditorHeight, 1, bossInputMaxEditorHeight)
+	if maxEditorHeight < bossInputMinEditorHeight {
+		return maxEditorHeight
+	}
+	return minInt(desired, maxEditorHeight)
+}
+
+func bossInputVisualRows(value string, width int) int {
+	textWidth := maxInt(1, width-bossInputPromptWidth)
+	normalized := strings.ReplaceAll(value, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	rows := 0
+	for _, line := range strings.Split(normalized, "\n") {
+		lineWidth := ansi.StringWidth(line)
+		rows += maxInt(1, (lineWidth+textWidth-1)/textWidth)
+	}
+	return maxInt(1, rows)
 }
 
 func (m Model) renderChat(layout bossLayout) string {
@@ -1712,8 +1755,8 @@ func bossSummaryFingerprint(project ProjectBrief) string {
 var (
 	clipboardTextWriter           = clipboard.WriteAll
 	bossPanelBackground           = lipgloss.Color("#000000")
-	bossInputBackground           = lipgloss.Color("#000000")
-	bossInputCursorLineBackground = lipgloss.Color("#101010")
+	bossInputBackground           = lipgloss.Color("236")
+	bossInputCursorLineBackground = lipgloss.Color("237")
 	bossPanelAccent               = lipgloss.Color("81")
 	bossPanelText                 = lipgloss.Color("252")
 	bossHeaderStyle               = lipgloss.NewStyle().
@@ -1763,6 +1806,7 @@ var (
 	bossUserPrefixStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossUserMessageBackground).Bold(true)
 	bossUserContinuationPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossUserMessageBackground)
 	bossInputShellStyle             = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText)
+	bossInputSeparatorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossInputBackground)
 )
 
 func bossPanelInnerWidth(width int) int {
@@ -1795,7 +1839,29 @@ func styleBossTextarea(input *textarea.Model) {
 }
 
 func renderBossInput(input textarea.Model, width int) string {
-	return bossInputShellStyle.Width(width).Render(input.View())
+	return renderBossInputBlock(input, input.View(), width)
+}
+
+func renderBossInputBlock(input textarea.Model, editorView string, width int) string {
+	editor := bossInputShellStyle.Width(width).Render(editorView)
+	separator := renderBossInputSeparator(input, width)
+	return lipgloss.JoinVertical(lipgloss.Left, separator, editor)
+}
+
+func renderBossInputSeparator(input textarea.Model, width int) string {
+	line := strings.Repeat("-", maxInt(0, width))
+	visualRows := bossInputVisualRows(input.Value(), width)
+	if visualRows > 1 && width >= 16 {
+		label := fmt.Sprintf(" %d lines ", visualRows)
+		if visualRows > input.Height() {
+			label = fmt.Sprintf(" %d lines + ", visualRows)
+		}
+		if len(label) < width {
+			start := maxInt(1, width-len(label))
+			line = line[:start] + label
+		}
+	}
+	return bossInputSeparatorStyle.Width(width).Render(fitLine(line, width))
 }
 
 func panelHeightForRawLines(contentLines int) int {
