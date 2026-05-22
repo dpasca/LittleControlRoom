@@ -1,7 +1,6 @@
 package codexapp
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -154,16 +153,10 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 	defer file.Close()
 
 	replay := &lcagentReplay{}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		var event map[string]json.RawMessage
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
+	if err := forEachLCAgentJSONLEvent(file, func(event map[string]json.RawMessage) {
 		eventType := rawJSONString(event["type"])
 		if eventType == "" {
-			continue
+			return
 		}
 		at := rawJSONTime(event["timestamp"])
 		if at.IsZero() {
@@ -227,6 +220,8 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptStatus, lcagentContinuationText(event))
 		case "resume_context":
 			replay.appendEntry(TranscriptStatus, lcagentResumeContextText(event))
+		case "context_compacted":
+			replay.appendEntry(TranscriptStatus, lcagentContextCompactedText(event))
 		case "turn_complete":
 			if text := lcagentTurnCompleteTraceText(event); text != "" {
 				replay.appendEntry(TranscriptStatus, text)
@@ -240,8 +235,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.lastError = reason
 			replay.appendEntry(TranscriptError, reason)
 		}
-	}
-	if err := scanner.Err(); err != nil {
+	}); err != nil {
 		return nil, err
 	}
 	return replay, nil

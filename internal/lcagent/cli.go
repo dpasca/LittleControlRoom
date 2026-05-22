@@ -579,14 +579,40 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	systemPromptOptions.WebSearchEnabled = webSearchEnabled
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, systemPromptOptions)
-	if resumeSection := strings.TrimSpace(resumeContext.systemPromptSection()); resumeSection != "" {
-		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + resumeSection)
-	}
-	messages := []modeladapter.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: runner.Prompt},
-	}
 	readLedger := newReadLedger()
+	var messages []modeladapter.Message
+	if resumeContext != nil && resumeContext.hasExactMessages() {
+		messages = resumeContext.exactMessages()
+		if !modelMessagesHaveSystem(messages) && strings.TrimSpace(systemPrompt) != "" {
+			messages = append([]modeladapter.Message{{Role: "system", Content: systemPrompt}}, messages...)
+		}
+		observeReadLedgerMessages(readLedger, messages)
+		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
+			if err := writer.Write(session.Event{
+				"type":       "context_compacted",
+				"session_id": runner.SessionID,
+				"turn":       0,
+				"threshold":  contextOptions.LoopCompactionCharThreshold,
+				"reason":     "continuation_preflight",
+				"stats":      compaction,
+			}); err != nil {
+				return err
+			}
+			messages = compactedMessages
+		}
+		messages = append(messages, modeladapter.Message{Role: "user", Content: runner.Prompt})
+	} else if resumeSection := strings.TrimSpace(resumeContext.systemPromptSection()); resumeSection != "" {
+		systemPrompt = strings.TrimSpace(systemPrompt + "\n\n" + resumeSection)
+		messages = []modeladapter.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: runner.Prompt},
+		}
+	} else {
+		messages = []modeladapter.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: runner.Prompt},
+		}
+	}
 	toolOptions := modelToolOptions(toolProfile, fileLimits)
 	toolOptions.WebSearchEnabled = webSearchEnabled
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
@@ -658,10 +684,14 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			if strings.TrimSpace(msg.Content) == "" {
 				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response had no content or tool calls", providerLabel))
 			}
-			return runner.Final(script.Action{
+			final := script.Action{
 				Type:    "final_response",
 				Summary: msg.Content,
-			})
+			}
+			if err := runner.Final(final); err != nil {
+				return err
+			}
+			return writeModelContextSnapshot(writer, runner.SessionID, "assistant_message", messages)
 		}
 		if msg.Content != "" && !hasToolCall(msg.ToolCalls, "final_response") {
 			if err := writer.Write(session.Event{
@@ -724,7 +754,11 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 					messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 					continue
 				}
-				return runner.Final(final)
+				snapshotMessages := appendFinalResponseForContextSnapshot(messages, call.ID, final)
+				if err := runner.Final(final); err != nil {
+					return err
+				}
+				return writeModelContextSnapshot(writer, runner.SessionID, "final_response", snapshotMessages)
 			}
 			result, err := runner.RunTool(ctx, action)
 			if call.Function.Name == "read_file" {
@@ -859,12 +893,16 @@ func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer
 	if sanitizedContent == "" {
 		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff was empty", providerLabel))
 	}
-	return runner.Final(script.Action{
+	final := script.Action{
 		Type:         "final_response",
 		Summary:      sanitizedContent,
 		FilesChanged: filesChanged,
 		Verification: verification,
-	})
+	}
+	if err := runner.Final(final); err != nil {
+		return err
+	}
+	return writeModelContextSnapshot(writer, runner.SessionID, "final_handoff", appendAssistantContentForContextSnapshot(compactedMessages, sanitizedContent))
 }
 
 func openRouterMaxTurnsFinalPrompt(maxTurns int, filesChanged, verification []string) string {

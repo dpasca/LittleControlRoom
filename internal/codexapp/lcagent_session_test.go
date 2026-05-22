@@ -270,7 +270,7 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
 	for _, want := range []string{
-		"Loaded LCAgent session " + sessionID + " from disk. Sending a prompt starts a continuing run with summarized context.",
+		"Loaded LCAgent session " + sessionID + " from disk. Sending a prompt starts a continuing run from saved context.",
 		"summarize this repo",
 		"Continuing LCAgent from lca_parent_replay",
 		"pending verification missing_after_changes",
@@ -522,9 +522,9 @@ printf '%s\n' '{"type":"turn_complete"}'
 		t.Fatalf("ThreadID = %q, want new resumed run id", snapshot.ThreadID)
 	}
 	for _, want := range []string{
-		"Starting a continuing LCAgent run with summarized context from " + sessionID,
+		"Starting a continuing LCAgent run from saved context " + sessionID,
 		"Continuing LCAgent from " + sessionID,
-		"Loaded resume context from " + sessionID,
+		"Loaded summarized LCAgent context from " + sessionID,
 		"continued answer",
 	} {
 		if !strings.Contains(snapshot.Transcript, want) {
