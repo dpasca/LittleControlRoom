@@ -1495,7 +1495,7 @@ func TestRunExecOpenRouterFeedsFailedVerificationBackToModel(t *testing.T) {
 		}
 		feedbackSeen := false
 		for _, msg := range body.Messages {
-			if msg.Role == "user" && strings.Contains(msg.Content, "Verification feedback: go test ./... failed") && strings.Contains(msg.Content, "rerun a purpose=verify check") {
+			if msg.Role == "user" && strings.Contains(msg.Content, "Verification feedback: go test ./...") && strings.Contains(msg.Content, " failed.") && strings.Contains(msg.Content, "rerun a purpose=verify check") {
 				feedbackSeen = true
 			}
 		}

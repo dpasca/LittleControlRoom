@@ -724,11 +724,10 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			}
 			action := script.Action{Type: "tool_call", Tool: call.Function.Name, Args: args}
 			if call.Function.Name == "final_response" {
-				var final script.Action
-				if err := json.Unmarshal(args, &final); err != nil {
+				final, err := script.DecodeFinalResponseArgs(args)
+				if err != nil {
 					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode final_response arguments: %w", err))
 				}
-				final.Type = "final_response"
 				if feedback, ok := runner.VerificationFeedbackForFinal(final); ok && finalVerificationFeedbacks == 0 {
 					finalVerificationFeedbacks++
 					if err := writer.Write(session.Event{
@@ -782,7 +781,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				ToolCallID: call.ID,
 				Content:    string(resultJSON),
 			})
-			if feedback, ok := script.VerificationFeedbackForResult(result); ok {
+			if feedback, ok := runner.VerificationFeedbackForResult(result); ok {
 				pendingVerificationFeedback = append(pendingVerificationFeedback, feedback)
 			}
 			if feedback, ok := script.PatchFeedbackForResult(result); ok {

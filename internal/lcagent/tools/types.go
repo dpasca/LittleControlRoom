@@ -10,6 +10,7 @@ type ToolResult struct {
 	DenialReason string        `json:"denial_reason,omitempty"`
 	Command      string        `json:"command,omitempty"`
 	Argv         []string      `json:"argv,omitempty"`
+	CWD          string        `json:"cwd,omitempty"`
 	Purpose      string        `json:"purpose,omitempty"`
 	ExitCode     int           `json:"exit_code,omitempty"`
 	Duration     time.Duration `json:"duration,omitempty"`
@@ -50,6 +51,7 @@ const (
 type VerificationCheck struct {
 	Command  string        `json:"command,omitempty"`
 	Argv     []string      `json:"argv,omitempty"`
+	CWD      string        `json:"cwd,omitempty"`
 	Purpose  string        `json:"purpose,omitempty"`
 	Status   string        `json:"status"`
 	Success  bool          `json:"success"`
@@ -73,6 +75,7 @@ func VerificationCheckFromResult(result ToolResult) VerificationCheck {
 	return VerificationCheck{
 		Command:  result.Command,
 		Argv:     append([]string(nil), result.Argv...),
+		CWD:      result.CWD,
 		Purpose:  result.Purpose,
 		Status:   status,
 		Success:  result.Success,

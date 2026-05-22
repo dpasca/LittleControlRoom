@@ -2,10 +2,14 @@ package script
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"lcroom/internal/lcagent/policy"
@@ -32,8 +36,9 @@ type Runner struct {
 	Prompt               string
 	ArtifactsDir         string
 
-	verificationChecks []tools.VerificationCheck
-	filesTouched       []string
+	verificationChecks    []tools.VerificationCheck
+	filesTouched          []string
+	commandApprovalGrants []commandApprovalGrant
 }
 
 type SearchRefiner interface {
@@ -89,12 +94,30 @@ type replaceTextArgs struct {
 	ExpectedReplacements int    `json:"expected_replacements,omitempty"`
 }
 
+type finalResponseArgs struct {
+	Summary      string   `json:"summary"`
+	FilesChanged []string `json:"files_changed"`
+	Verification []string `json:"verification"`
+}
+
 func VerificationFeedbackForResult(result tools.ToolResult) (VerificationFeedback, bool) {
+	return verificationFeedbackForResult(result, "")
+}
+
+func (r *Runner) VerificationFeedbackForResult(result tools.ToolResult) (VerificationFeedback, bool) {
+	hint := ""
+	if r != nil {
+		hint = r.packageScriptCWDHint(result)
+	}
+	return verificationFeedbackForResult(result, hint)
+}
+
+func verificationFeedbackForResult(result tools.ToolResult, hint string) (VerificationFeedback, bool) {
 	if !strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) || result.Success {
 		return VerificationFeedback{}, false
 	}
 	check := tools.VerificationCheckFromResult(result)
-	command := firstNonEmpty(check.Command, strings.Join(check.Argv, " "), "verification check")
+	command := firstNonEmpty(verificationCheckDisplayLabel(check), "verification check")
 	status := firstNonEmpty(check.Status, "failed")
 	var next string
 	switch status {
@@ -109,6 +132,9 @@ func VerificationFeedbackForResult(result tools.ToolResult) (VerificationFeedbac
 	message := fmt.Sprintf("Verification feedback: %s %s. %s", command, verificationStatusPhrase(status), next)
 	if detail != "" {
 		message += " Error: " + detail
+	}
+	if hint = strings.TrimSpace(hint); hint != "" {
+		message += " " + hint
 	}
 	return VerificationFeedback{Status: status, Command: command, Message: message}, true
 }
@@ -217,6 +243,7 @@ func formatReadSuggestionsForModel(suggestions []tools.ReadSuggestion) string {
 type commandArgs struct {
 	Command   string   `json:"command"`
 	Argv      []string `json:"argv"`
+	CWD       string   `json:"cwd"`
 	Shell     bool     `json:"shell"`
 	TimeoutMS int      `json:"timeout_ms"`
 	Purpose   string   `json:"purpose"`
@@ -283,6 +310,45 @@ type loadSkillArgs struct {
 	Name string `json:"name"`
 }
 
+func DecodeFinalResponseArgs(raw json.RawMessage) (Action, error) {
+	var args finalResponseArgs
+	if err := decodeStrictJSON(raw, &args); err != nil {
+		return Action{}, err
+	}
+	return Action{
+		Type:         "final_response",
+		Summary:      args.Summary,
+		FilesChanged: args.FilesChanged,
+		Verification: args.Verification,
+	}, nil
+}
+
+func decodeToolArgs(tool string, raw json.RawMessage, dst any) (tools.ToolResult, bool) {
+	if err := decodeStrictJSON(raw, dst); err != nil {
+		return tools.ToolResult{
+			Success: false,
+			Error:   fmt.Sprintf("invalid %s arguments: %v", firstNonEmpty(tool, "tool"), err),
+		}, false
+	}
+	return tools.ToolResult{}, true
+}
+
+func decodeStrictJSON(raw json.RawMessage, dst any) error {
+	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
 func Load(path string) ([]Action, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -326,7 +392,7 @@ func (r *Runner) Run(ctx context.Context, actions []Action) error {
 				if feedback, ok := PatchFeedbackForResult(result); ok {
 					_ = r.WritePatchFeedback(feedback)
 				}
-				if feedback, ok := VerificationFeedbackForResult(result); ok {
+				if feedback, ok := r.VerificationFeedbackForResult(result); ok {
 					_ = r.WriteVerificationFeedback(feedback)
 				}
 				_ = r.Session.Write(session.Event{
@@ -371,26 +437,30 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 	switch action.Tool {
 	case "read_file":
 		var args readFileArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = r.Files.Read(args.Path, args.Offset, args.Limit)
 	case "list_files":
 		var args listFilesArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = r.Files.ListWithOptions(args.Path, args.Glob, args.MaxEntries, tools.ListOptions{IncludeHidden: args.IncludeHidden})
 	case "repo_overview":
 		var args repoOverviewArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = r.Files.RepoOverview(args.Path, tools.RepoOverviewOptions{MaxFiles: args.MaxFiles, IncludeHidden: args.IncludeHidden})
 	case "search":
 		var args searchArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		var err error
 		result, err = r.runSearch(ctx, args)
@@ -399,8 +469,9 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 	case "web_search":
 		var args webSearchArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		if !r.WebSearchOn {
 			result = tools.ToolResult{Success: false, Error: "web_search is not configured for this LCAgent run"}
@@ -409,20 +480,23 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		result = r.WebSearch.Search(ctx, args.Query, args.MaxResults, args.Site, args.RecencyDays)
 	case "file_outline":
 		var args fileOutlineArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = r.Files.Outline(args.Path)
 	case "module_outline":
 		var args moduleOutlineArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = r.Files.ModuleOutlineWithOptions(args.Path, args.FileGlob, args.MaxFiles, tools.ModuleOutlineOptions{IncludeHidden: args.IncludeHidden})
 	case "load_skill":
 		var args loadSkillArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		loaded, err := r.Skills.Load(args.Name)
 		if err != nil {
@@ -443,12 +517,14 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 	case "run_command":
 		var args commandArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		spec := tools.CommandSpec{
 			Command:   args.Command,
 			Argv:      args.Argv,
+			CWD:       args.CWD,
 			Shell:     args.Shell || args.Command != "",
 			TimeoutMS: args.TimeoutMS,
 			Purpose:   args.Purpose,
@@ -463,14 +539,16 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 	case "apply_patch":
 		var args patchArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = r.Patch.Apply(args.Patch)
 	case "replace_text":
 		var args replaceTextArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceText(tools.ReplaceTextSpec{
 			Path:                 args.Path,
@@ -480,8 +558,9 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		})
 	case "update_plan":
 		var args planArgs
-		if err := json.Unmarshal(action.Args, &args); err != nil {
-			return tools.ToolResult{}, err
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
 		}
 		result = tools.ToolResult{Success: true, Output: "plan updated"}
 		if err := r.Session.Write(session.Event{
@@ -549,12 +628,17 @@ func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandS
 	if !result.Denied || r.Approvals == nil || r.Command.Workspace.Auto != policy.AutonomyLow {
 		return result
 	}
+	if r.commandApprovalGranted(spec) {
+		return r.runCommandAtMedium(ctx, spec)
+	}
+	grant := newCommandApprovalGrant(r.Command.Workspace.Root, spec)
 	request := CommandApprovalRequest{
 		SessionID: r.SessionID,
 		Tool:      "run_command",
 		Command:   firstNonEmpty(result.Command, commandLabelForApproval(spec)),
-		CWD:       r.Command.Workspace.Root,
+		CWD:       firstNonEmpty(result.CWD, commandCWDForApproval(r.Command.Workspace.Root, spec)),
 		Reason:    firstNonEmpty(result.DenialReason, result.Error),
+		Scope:     grant.ScopeText(),
 	}
 	decision, err := r.Approvals.RequestCommandApproval(ctx, request)
 	if err != nil {
@@ -562,15 +646,31 @@ func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandS
 	}
 	switch decision {
 	case DecisionAccept:
-		approved := r.Command
-		approved.Workspace.Auto = policy.AutonomyMedium
-		return approved.RunSpec(ctx, spec)
+		return r.runCommandAtMedium(ctx, spec)
 	case DecisionAcceptForSession:
-		r.Command.Workspace.Auto = policy.AutonomyMedium
-		return r.Command.RunSpec(ctx, spec)
+		r.commandApprovalGrants = append(r.commandApprovalGrants, grant)
+		return r.runCommandAtMedium(ctx, spec)
 	default:
 		return result
 	}
+}
+
+func (r *Runner) runCommandAtMedium(ctx context.Context, spec tools.CommandSpec) tools.ToolResult {
+	approved := r.Command
+	approved.Workspace.Auto = policy.AutonomyMedium
+	return approved.RunSpec(ctx, spec)
+}
+
+func (r *Runner) commandApprovalGranted(spec tools.CommandSpec) bool {
+	if r == nil || len(r.commandApprovalGrants) == 0 {
+		return false
+	}
+	for _, grant := range r.commandApprovalGrants {
+		if grant.Matches(r.Command.Workspace.Root, spec) {
+			return true
+		}
+	}
+	return false
 }
 
 func commandLabelForApproval(spec tools.CommandSpec) string {
@@ -578,6 +678,285 @@ func commandLabelForApproval(spec tools.CommandSpec) string {
 		return strings.Join(spec.Argv, " ")
 	}
 	return strings.TrimSpace(spec.Command)
+}
+
+func commandCWDForApproval(root string, spec tools.CommandSpec) string {
+	cwd := strings.TrimSpace(spec.CWD)
+	if cwd == "" {
+		return root
+	}
+	if filepath.IsAbs(cwd) {
+		return filepath.Clean(cwd)
+	}
+	return filepath.Clean(filepath.Join(root, cwd))
+}
+
+type commandApprovalGrant struct {
+	Command        string
+	CWD            string
+	Scope          string
+	PackageManager string
+}
+
+const (
+	commandApprovalScopeExact       = "exact_command"
+	commandApprovalScopePackageDeps = "package_dependency_family"
+)
+
+func newCommandApprovalGrant(root string, spec tools.CommandSpec) commandApprovalGrant {
+	grant := commandApprovalGrant{
+		Command: commandLabelForApproval(spec),
+		CWD:     commandCWDForApproval(root, spec),
+		Scope:   commandApprovalScopeExact,
+	}
+	if manager, ok := packageManagerDependencyCommand(spec); ok {
+		grant.Scope = commandApprovalScopePackageDeps
+		grant.PackageManager = manager
+	}
+	return grant
+}
+
+func (g commandApprovalGrant) Matches(root string, spec tools.CommandSpec) bool {
+	next := newCommandApprovalGrant(root, spec)
+	if g.CWD != next.CWD {
+		return false
+	}
+	if g.Scope == commandApprovalScopePackageDeps && next.Scope == commandApprovalScopePackageDeps {
+		return g.PackageManager == next.PackageManager
+	}
+	return g.Scope == commandApprovalScopeExact && g.Command == next.Command
+}
+
+func (g commandApprovalGrant) ScopeText() string {
+	switch g.Scope {
+	case commandApprovalScopePackageDeps:
+		return strings.TrimSpace(strings.Join(nonEmptyStrings([]string{
+			g.PackageManager,
+			"dependency commands in",
+			g.CWD,
+		}), " "))
+	default:
+		if g.CWD != "" {
+			return "this exact command in " + g.CWD
+		}
+		return "this exact command"
+	}
+}
+
+func packageManagerDependencyCommand(spec tools.CommandSpec) (string, bool) {
+	argv := cleanCommandArgv(spec.Argv)
+	if len(argv) == 0 {
+		if strings.ContainsAny(spec.Command, "|;&<>$`") {
+			return "", false
+		}
+		argv = simpleCommandFields(spec.Command)
+	}
+	if len(argv) < 2 {
+		return "", false
+	}
+	manager := strings.ToLower(filepath.Base(argv[0]))
+	subcommand := strings.ToLower(strings.TrimSpace(argv[1]))
+	switch manager {
+	case "npm":
+		switch subcommand {
+		case "install", "i", "add", "uninstall", "remove", "rm", "update", "upgrade", "ci", "dedupe", "prune":
+			return manager, true
+		}
+	case "pnpm":
+		switch subcommand {
+		case "install", "i", "add", "remove", "rm", "update", "upgrade", "up", "import", "dedupe", "prune":
+			return manager, true
+		}
+	case "yarn":
+		switch subcommand {
+		case "install", "add", "remove", "upgrade", "up", "dedupe":
+			return manager, true
+		}
+	case "bun":
+		switch subcommand {
+		case "install", "i", "add", "remove", "rm", "update", "upgrade":
+			return manager, true
+		}
+	}
+	return "", false
+}
+
+func cleanCommandArgv(argv []string) []string {
+	out := make([]string, 0, len(argv))
+	for _, value := range argv {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func simpleCommandFields(command string) []string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return nil
+	}
+	command = normalizedVerificationCommand(command)
+	if strings.ContainsAny(command, "|;&<>$`") {
+		return nil
+	}
+	return strings.Fields(command)
+}
+
+func (r *Runner) packageScriptCWDHint(result tools.ToolResult) string {
+	if r == nil || r.Command.Workspace.Root == "" || result.Success {
+		return ""
+	}
+	if !strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) {
+		return ""
+	}
+	scriptName := packageScriptNameFromResult(result)
+	if scriptName == "" || !resultLooksLikeMissingPackageScript(result, scriptName) {
+		return ""
+	}
+	dirs := packageScriptDirs(r.Command.Workspace.Root, scriptName, result.CWD)
+	if len(dirs) == 0 {
+		return ""
+	}
+	dir := dirs[0]
+	packagePath := filepath.ToSlash(filepath.Join(dir, "package.json"))
+	return fmt.Sprintf("Try rerunning with run_command cwd set to %q because %s defines script %q.", dir, packagePath, scriptName)
+}
+
+func packageScriptNameFromResult(result tools.ToolResult) string {
+	if scriptName := packageScriptNameFromArgv(cleanCommandArgv(result.Argv)); scriptName != "" {
+		return scriptName
+	}
+	return packageScriptNameFromArgv(simpleCommandFields(result.Command))
+}
+
+func packageScriptNameFromArgv(argv []string) string {
+	if len(argv) < 2 {
+		return ""
+	}
+	manager := strings.ToLower(filepath.Base(argv[0]))
+	subcommand := strings.ToLower(strings.TrimSpace(argv[1]))
+	switch manager {
+	case "npm", "pnpm":
+		if len(argv) >= 3 && (subcommand == "run" || subcommand == "run-script") {
+			return strings.TrimSpace(argv[2])
+		}
+		if manager == "npm" && subcommand == "test" {
+			return "test"
+		}
+	case "yarn":
+		if subcommand == "run" && len(argv) >= 3 {
+			return strings.TrimSpace(argv[2])
+		}
+		if packageScriptNameLooksLikeScript(subcommand) {
+			return strings.TrimSpace(argv[1])
+		}
+	case "bun":
+		if subcommand == "run" && len(argv) >= 3 {
+			return strings.TrimSpace(argv[2])
+		}
+	}
+	return ""
+}
+
+func packageScriptNameLooksLikeScript(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "-") {
+		return false
+	}
+	switch strings.ToLower(value) {
+	case "install", "add", "remove", "rm", "update", "upgrade", "up", "exec", "dlx", "publish", "node":
+		return false
+	default:
+		return true
+	}
+}
+
+func resultLooksLikeMissingPackageScript(result tools.ToolResult, scriptName string) bool {
+	text := strings.ToLower(result.Output + "\n" + result.Error)
+	scriptName = strings.ToLower(strings.TrimSpace(scriptName))
+	if text == "" || scriptName == "" {
+		return false
+	}
+	markers := []string{
+		"missing script",
+		"no script named " + scriptName,
+		"couldn't find a script named",
+		"could not find a script named",
+		"script not found",
+		"err_pnpm_no_script",
+	}
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func packageScriptDirs(root, scriptName, currentCWD string) []string {
+	root = filepath.Clean(root)
+	currentCWD = filepath.Clean(firstNonEmpty(currentCWD, root))
+	var dirs []string
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			if path != root {
+				name := entry.Name()
+				if name == "node_modules" || name == ".git" || name == "dist" || name == "build" || strings.HasPrefix(name, ".") {
+					return filepath.SkipDir
+				}
+				rel, relErr := filepath.Rel(root, path)
+				if relErr == nil && pathDepth(rel) > 3 {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if entry.Name() != "package.json" {
+			return nil
+		}
+		dir := filepath.Dir(path)
+		if filepath.Clean(dir) == currentCWD {
+			return nil
+		}
+		if packageJSONDefinesScript(path, scriptName) {
+			if rel, relErr := filepath.Rel(root, dir); relErr == nil && rel != "." {
+				dirs = append(dirs, filepath.ToSlash(rel))
+			}
+		}
+		return nil
+	})
+	return dirs
+}
+
+func packageJSONDefinesScript(path, scriptName string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Scripts map[string]json.RawMessage `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return false
+	}
+	_, ok := pkg.Scripts[scriptName]
+	return ok
+}
+
+func pathDepth(rel string) int {
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || rel == "" {
+		return 0
+	}
+	return strings.Count(rel, "/") + 1
 }
 
 func (r *Runner) runSearch(ctx context.Context, args searchArgs) (tools.ToolResult, error) {
@@ -821,6 +1200,7 @@ func verificationCheckEvent(sessionID string, check tools.VerificationCheck) ses
 		"session_id": sessionID,
 		"command":    check.Command,
 		"argv":       check.Argv,
+		"cwd":        check.CWD,
 		"purpose":    check.Purpose,
 		"status":     check.Status,
 		"success":    check.Success,
@@ -883,10 +1263,14 @@ func relevantVerificationChecks(reported []string, actual []tools.VerificationCh
 		return actual
 	}
 	relevant := make([]tools.VerificationCheck, 0, len(actual))
-	for _, check := range actual {
-		if verificationReportsCheck(reported, check) {
-			relevant = append(relevant, check)
+	seen := map[int]bool{}
+	for _, item := range reported {
+		index := latestReportedVerificationCheckIndex(item, actual)
+		if index < 0 || seen[index] {
+			continue
 		}
+		seen[index] = true
+		relevant = append(relevant, actual[index])
 	}
 	if len(relevant) == 0 {
 		return actual
@@ -894,13 +1278,27 @@ func relevantVerificationChecks(reported []string, actual []tools.VerificationCh
 	return relevant
 }
 
-func verificationReportsCheck(reported []string, check tools.VerificationCheck) bool {
-	label := strings.ToLower(verificationCheckLabel(check))
-	if label == "" {
+func latestReportedVerificationCheckIndex(item string, actual []tools.VerificationCheck) int {
+	for index := len(actual) - 1; index >= 0; index-- {
+		if verificationReportItemMatchesCheck(item, actual[index]) {
+			return index
+		}
+	}
+	return -1
+}
+
+func verificationReportItemMatchesCheck(item string, check tools.VerificationCheck) bool {
+	item = strings.ToLower(strings.TrimSpace(item))
+	if item == "" {
 		return false
 	}
-	for _, item := range reported {
-		if strings.Contains(strings.ToLower(item), label) {
+	for _, candidate := range []string{
+		verificationCheckLabel(check),
+		verificationCheckDisplayLabel(check),
+		normalizedVerificationCommand(verificationCheckCommand(check)),
+	} {
+		candidate = strings.ToLower(strings.TrimSpace(candidate))
+		if candidate != "" && strings.Contains(item, candidate) {
 			return true
 		}
 	}
@@ -911,7 +1309,7 @@ func latestVerificationOutcomes(checks []tools.VerificationCheck) []tools.Verifi
 	out := make([]tools.VerificationCheck, 0, len(checks))
 	indexByLabel := map[string]int{}
 	for _, check := range checks {
-		label := verificationCheckLabel(check)
+		label := verificationCheckIdentity(check)
 		if label == "" {
 			label = "verification check"
 		}
@@ -941,7 +1339,7 @@ func formatVerificationChecks(checks []tools.VerificationCheck, limit int) []str
 	}
 	out := make([]string, 0, limit+1)
 	for _, check := range checks[:limit] {
-		label := firstNonEmpty(verificationCheckLabel(check), "verification check")
+		label := firstNonEmpty(verificationCheckDisplayLabel(check), "verification check")
 		if check.Status != "" && check.Status != tools.VerificationStatusPassed {
 			label += " (" + check.Status + ")"
 		}
@@ -954,7 +1352,83 @@ func formatVerificationChecks(checks []tools.VerificationCheck, limit int) []str
 }
 
 func verificationCheckLabel(check tools.VerificationCheck) string {
+	return firstNonEmpty(normalizedVerificationCommand(verificationCheckCommand(check)), verificationCheckCommand(check))
+}
+
+func verificationCheckCommand(check tools.VerificationCheck) string {
 	return firstNonEmpty(check.Command, strings.Join(check.Argv, " "))
+}
+
+func verificationCheckDisplayLabel(check tools.VerificationCheck) string {
+	label := verificationCheckLabel(check)
+	if label == "" {
+		return ""
+	}
+	if cwd := verificationCheckEffectiveCWD(check); cwd != "" {
+		label += " in " + cwd
+	}
+	return label
+}
+
+func verificationCheckIdentity(check tools.VerificationCheck) string {
+	label := verificationCheckLabel(check)
+	if label == "" {
+		return ""
+	}
+	if cwd := verificationCheckEffectiveCWD(check); cwd != "" {
+		return label + "\x00" + filepath.Clean(cwd)
+	}
+	return label
+}
+
+func verificationCheckEffectiveCWD(check tools.VerificationCheck) string {
+	if cwd := shellLeadingCDCWD(check.Command); cwd != "" {
+		return cwd
+	}
+	return strings.TrimSpace(check.CWD)
+}
+
+func normalizedVerificationCommand(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	segments := strings.Split(command, "&&")
+	for index := len(segments) - 1; index >= 0; index-- {
+		segment := strings.TrimSpace(segments[index])
+		if segment == "" || isShellBookkeepingCommand(segment) || shellLeadingCDCWD(segment) != "" {
+			continue
+		}
+		return segment
+	}
+	return command
+}
+
+func isShellBookkeepingCommand(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return true
+	}
+	switch fields[0] {
+	case "pwd":
+		return len(fields) == 1
+	case "ls":
+		return len(fields) == 1 || (len(fields) == 2 && fields[1] == "package.json")
+	default:
+		return false
+	}
+}
+
+func shellLeadingCDCWD(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 2 || fields[0] != "cd" {
+		return ""
+	}
+	cwd := strings.Trim(fields[1], `"'`)
+	if cwd == "" || cwd == "-" {
+		return ""
+	}
+	return filepath.Clean(cwd)
 }
 
 func cleanStringList(values []string) []string {
@@ -990,4 +1464,14 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }

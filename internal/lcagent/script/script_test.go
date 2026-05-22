@@ -214,6 +214,36 @@ func TestFinalVerificationStatusUsesLatestPassingOutcome(t *testing.T) {
 	}
 }
 
+func TestFinalVerificationStatusUsesLatestReportedCWDOutcome(t *testing.T) {
+	root := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	status, message := finalVerificationStatus(nil, []string{"pnpm run lint passed"}, []tools.VerificationCheck{
+		{Command: "pnpm run lint", CWD: root, Status: tools.VerificationStatusFailed, ExitCode: 1},
+		{Command: "pnpm run lint", CWD: frontend, Status: tools.VerificationStatusPassed, Success: true},
+	})
+	if status != "verified" {
+		t.Fatalf("status = %q, want verified; message=%s", status, message)
+	}
+	if !strings.Contains(message, "pnpm run lint") || !strings.Contains(message, frontend) || strings.Contains(message, "(failed)") {
+		t.Fatalf("message = %q", message)
+	}
+}
+
+func TestFinalVerificationStatusNormalizesShellCDCommand(t *testing.T) {
+	root := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	status, message := finalVerificationStatus(nil, []string{"pnpm run build"}, []tools.VerificationCheck{
+		{Command: "pnpm run build", CWD: root, Status: tools.VerificationStatusFailed, ExitCode: 1},
+		{Command: "cd " + frontend + " && pwd && ls package.json && pnpm run build", Status: tools.VerificationStatusPassed, Success: true},
+	})
+	if status != "verified" {
+		t.Fatalf("status = %q, want verified; message=%s", status, message)
+	}
+	if !strings.Contains(message, "pnpm run build") || !strings.Contains(message, frontend) || strings.Contains(message, "(failed)") {
+		t.Fatalf("message = %q", message)
+	}
+}
+
 func TestFinalVerificationStatusUsesReportedReplacementCommand(t *testing.T) {
 	status, message := finalVerificationStatus(nil, []string{"python3 -m unittest: OK"}, []tools.VerificationCheck{
 		{Command: "python -m unittest", Status: tools.VerificationStatusFailed, ExitCode: 127, Error: "executable not found"},
@@ -254,6 +284,40 @@ func TestVerificationFeedbackForFailedCheck(t *testing.T) {
 	}
 	if feedback.Status != tools.VerificationStatusFailed || !strings.Contains(feedback.Message, "go test ./...") || !strings.Contains(feedback.Message, "rerun a purpose=verify check") {
 		t.Fatalf("feedback = %#v", feedback)
+	}
+}
+
+func TestRunnerVerificationFeedbackSuggestsPackageSubdirCWD(t *testing.T) {
+	root := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	if err := os.Mkdir(frontend, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontend, "package.json"), []byte(`{"scripts":{"build":"vite build"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{Command: tools.CommandRunner{Workspace: w}}
+	feedback, ok := runner.VerificationFeedbackForResult(tools.ToolResult{
+		Success:  false,
+		Command:  "pnpm run build",
+		Argv:     []string{"pnpm", "run", "build"},
+		CWD:      root,
+		Purpose:  tools.CommandPurposeVerify,
+		ExitCode: 1,
+		Output:   "ERR_PNPM_NO_SCRIPT Missing script: build\n",
+		Error:    "exit status 1",
+	})
+	if !ok {
+		t.Fatal("VerificationFeedbackForResult returned ok=false, want feedback")
+	}
+	for _, want := range []string{`cwd set to "frontend"`, "frontend/package.json", `"build"`} {
+		if !strings.Contains(feedback.Message, want) {
+			t.Fatalf("feedback missing %q: %s", want, feedback.Message)
+		}
 	}
 }
 
@@ -395,7 +459,124 @@ func TestRunnerApprovedCommandRunsOnceAtMediumAutonomy(t *testing.T) {
 	}
 }
 
-func TestRunnerApprovedCommandForSessionRaisesCommandAutonomy(t *testing.T) {
+func TestRunnerRejectsUnknownToolArgument(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Files:     tools.FileTools{Workspace: w},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "read_file",
+		Args: raw(`{"path":"README.md","surprise":true}`),
+	})
+	if err == nil {
+		t.Fatal("RunTool succeeded, want invalid argument failure")
+	}
+	if result.Success || !strings.Contains(result.Error, `unknown field "surprise"`) {
+		t.Fatalf("result = %#v", result)
+	}
+	if text := stream.String(); !strings.Contains(text, `"type":"tool_result"`) || !strings.Contains(text, "invalid read_file arguments") {
+		t.Fatalf("stream missing invalid argument result:\n%s", text)
+	}
+}
+
+func TestDecodeFinalResponseArgsRejectsUnknownField(t *testing.T) {
+	_, err := DecodeFinalResponseArgs(raw(`{"summary":"done","files_changed":[],"verification":[],"extra":true}`))
+	if err == nil || !strings.Contains(err.Error(), `unknown field "extra"`) {
+		t.Fatalf("DecodeFinalResponseArgs() error = %v, want unknown field", err)
+	}
+}
+
+func TestRunnerRunCommandHonorsCWDArgument(t *testing.T) {
+	root := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	if err := os.Mkdir(frontend, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantCWD := filepath.Join(w.Root, "frontend")
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"argv":["pwd"],"cwd":"frontend","timeout_ms":1000}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !result.Success || result.CWD != wantCWD || !strings.Contains(result.Output, wantCWD) {
+		t.Fatalf("result = %#v, want successful command in %s", result, wantCWD)
+	}
+	if !strings.Contains(stream.String(), `"cwd":"`+wantCWD+`"`) {
+		t.Fatalf("stream did not record cwd %q:\n%s", wantCWD, stream.String())
+	}
+}
+
+func TestRunnerApprovalRequestUsesRequestedCommandCWD(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Dir(w.Root)
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"argv":["pwd"],"cwd":"..","timeout_ms":1000}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !result.Success || result.CWD != parent || !strings.Contains(result.Output, parent) {
+		t.Fatalf("result = %#v, want approved command in %s", result, parent)
+	}
+	if approvals.calls != 1 || approvals.requests[0].CWD != parent || !strings.Contains(approvals.requests[0].Scope, "this exact command") {
+		t.Fatalf("approval requests = %#v calls=%d, want cwd %q and exact scope", approvals.requests, approvals.calls, parent)
+	}
+}
+
+func TestRunnerApprovedCommandForSessionScopesToExactCommand(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
 	if err != nil {
@@ -417,22 +598,49 @@ func TestRunnerApprovedCommandForSessionRaisesCommandAutonomy(t *testing.T) {
 	if result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "run_command",
-		Args: raw(`{"command":"printf first","timeout_ms":1000}`),
+		Args: raw(`{"command":"printf scoped","timeout_ms":1000}`),
 	}); err != nil || !result.Success {
 		t.Fatalf("first RunTool() = %#v, %v", result, err)
 	}
 	if result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "run_command",
-		Args: raw(`{"command":"printf second","timeout_ms":1000}`),
+		Args: raw(`{"command":"printf scoped","timeout_ms":1000}`),
 	}); err != nil || !result.Success {
 		t.Fatalf("second RunTool() = %#v, %v", result, err)
 	}
-	if approvals.calls != 1 {
-		t.Fatalf("approval should be requested once, got %d calls", approvals.calls)
+	if result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"printf other","timeout_ms":1000}`),
+	}); err == nil || !result.Denied {
+		t.Fatalf("third RunTool() = %#v, %v; want denied outside approved scope", result, err)
 	}
-	if runner.Command.Workspace.Auto != policy.AutonomyMedium {
-		t.Fatalf("runner command autonomy = %q, want medium", runner.Command.Workspace.Auto)
+	if approvals.calls != 2 {
+		t.Fatalf("approval should be requested for first and third commands, got %d calls", approvals.calls)
+	}
+	if runner.Command.Workspace.Auto != policy.AutonomyLow {
+		t.Fatalf("runner command autonomy = %q, want low", runner.Command.Workspace.Auto)
+	}
+	if approvals.requests[0].Scope == "" || !strings.Contains(approvals.requests[0].Scope, "this exact command") {
+		t.Fatalf("approval scope = %#v, want exact command scope", approvals.requests)
+	}
+}
+
+func TestCommandApprovalGrantMatchesPackageDependencyFamily(t *testing.T) {
+	root := t.TempDir()
+	grant := newCommandApprovalGrant(root, tools.CommandSpec{Argv: []string{"pnpm", "install"}, CWD: "frontend"})
+	if !grant.Matches(root, tools.CommandSpec{Argv: []string{"pnpm", "add", "vite"}, CWD: "frontend"}) {
+		t.Fatalf("package dependency grant did not match same manager/cwd family: %#v", grant)
+	}
+	if grant.Matches(root, tools.CommandSpec{Argv: []string{"pnpm", "add", "vite"}, CWD: "backend"}) {
+		t.Fatalf("package dependency grant matched a different cwd")
+	}
+	if grant.Matches(root, tools.CommandSpec{Argv: []string{"npm", "install"}, CWD: "frontend"}) {
+		t.Fatalf("package dependency grant matched a different manager")
+	}
+	if !strings.Contains(grant.ScopeText(), "pnpm dependency commands") {
+		t.Fatalf("scope text = %q", grant.ScopeText())
 	}
 }
 

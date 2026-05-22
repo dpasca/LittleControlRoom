@@ -148,14 +148,14 @@ func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 		busy:        true,
 		status:      "LCAgent running",
 	}
-	session.handleEvent([]byte(`{"type":"approval_request","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","cwd":"/repo","reason":"requires medium autonomy"}`))
+	session.handleEvent([]byte(`{"type":"approval_request","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","cwd":"/repo","reason":"requires medium autonomy","scope":"this exact command in /repo"}`))
 
 	snapshot := session.Snapshot()
 	if snapshot.PendingApproval == nil {
 		t.Fatal("PendingApproval = nil, want request")
 	}
 	if snapshot.PendingApproval.ID != "approval-1" || snapshot.PendingApproval.Kind != ApprovalCommandExecution ||
-		snapshot.PendingApproval.Command != "corepack enable" || snapshot.Status != "Waiting for command approval" {
+		snapshot.PendingApproval.Command != "corepack enable" || snapshot.PendingApproval.Scope != "this exact command in /repo" || snapshot.Status != "Waiting for command approval" {
 		t.Fatalf("pending approval snapshot = %#v status=%q", snapshot.PendingApproval, snapshot.Status)
 	}
 	if !strings.Contains(snapshot.Transcript, "LCAgent requested command approval") {
@@ -170,12 +170,12 @@ func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 		t.Fatalf("approval response payload = %q", got)
 	}
 
-	session.handleEvent([]byte(`{"type":"approval_resolved","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","decision":"acceptForSession","status":"approved"}`))
+	session.handleEvent([]byte(`{"type":"approval_resolved","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","scope":"this exact command in /repo","decision":"acceptForSession","status":"approved"}`))
 	snapshot = session.Snapshot()
 	if snapshot.PendingApproval != nil {
 		t.Fatalf("PendingApproval after resolution = %#v, want nil", snapshot.PendingApproval)
 	}
-	if !strings.Contains(snapshot.Status, "raised to medium") ||
+	if !strings.Contains(snapshot.Status, "this exact command in /repo") ||
 		!strings.Contains(snapshot.Transcript, "corepack enable") {
 		t.Fatalf("approval resolution not reflected; status=%q transcript=\n%s", snapshot.Status, snapshot.Transcript)
 	}
@@ -192,6 +192,31 @@ func TestLCAgentRepoOverviewTranscriptSummaries(t *testing.T) {
 	want := "Tool repo_overview completed: . git feature/repo-overview dirty 12 tracked via git ls-files + untracked truncated"
 	if result != want {
 		t.Fatalf("result summary = %q, want %q", result, want)
+	}
+}
+
+func TestLCAgentCommandTranscriptSummariesIncludeCWD(t *testing.T) {
+	call := lcagentToolCallText("run_command", json.RawMessage(`{"argv":["pnpm","run","lint"],"cwd":"frontend"}`))
+	if call != "Tool run_command running: pnpm run lint in frontend" {
+		t.Fatalf("call summary = %q", call)
+	}
+
+	result := lcagentToolResultText("run_command", json.RawMessage(`{"success":false,"command":"pnpm run lint","cwd":"/repo/frontend","error":"exit status 1","exit_code":1}`))
+	for _, want := range []string{"Tool run_command failed", "pnpm run lint", "in /repo/frontend", "exit status 1"} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("result summary missing %q: %q", want, result)
+		}
+	}
+}
+
+func TestLCAgentVerificationCheckTextIncludesCWD(t *testing.T) {
+	got := lcagentVerificationCheckText(map[string]json.RawMessage{
+		"command": json.RawMessage(`"pnpm run build"`),
+		"cwd":     json.RawMessage(`"/repo/frontend"`),
+		"status":  json.RawMessage(`"passed"`),
+	})
+	if got != "Verification passed: pnpm run build in /repo/frontend" {
+		t.Fatalf("verification check text = %q", got)
 	}
 }
 

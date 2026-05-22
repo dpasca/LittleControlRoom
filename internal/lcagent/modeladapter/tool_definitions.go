@@ -194,6 +194,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"properties": map[string]any{
 						"argv":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Command argv, for example [\"go\",\"test\",\"./...\"]"},
 						"command":    map[string]any{"type": "string", "description": "Legacy shell command string. Prefer argv unless shell syntax is required."},
+						"cwd":        map[string]any{"type": "string", "description": "Optional working directory for the command. Prefer workspace-relative subdirectories such as \"frontend\". Absolute or parent-directory cwd values outside the workspace require approval."},
 						"shell":      map[string]any{"type": "boolean", "description": "Set true when using command as a shell string."},
 						"timeout_ms": map[string]any{"type": "integer", "minimum": 1, "maximum": 60000},
 						"purpose":    map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "Use verify for tests, linters, typechecks, builds, or other commands intended to verify the final answer. Use inspect for read-only exploration."},

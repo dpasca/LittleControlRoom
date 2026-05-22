@@ -1208,6 +1208,7 @@ func extractContextLCAgentTranscriptItem(line string) (contextTranscriptItem, bo
 		Status          string   `json:"status"`
 		Command         string   `json:"command"`
 		Argv            []string `json:"argv"`
+		CWD             string   `json:"cwd"`
 		Path            string   `json:"path"`
 		Stage           string   `json:"stage"`
 		Kind            string   `json:"kind"`
@@ -1242,7 +1243,7 @@ func extractContextLCAgentTranscriptItem(line string) (contextTranscriptItem, bo
 	case "patch_feedback":
 		return contextTranscriptItemFromText("assistant", contextLCAgentPatchFeedbackText(event.Path, event.Stage, event.Message))
 	case "verification_check":
-		return contextTranscriptItemFromText("assistant", contextLCAgentVerificationCheckText(event.Command, event.Argv, event.Status))
+		return contextTranscriptItemFromText("assistant", contextLCAgentVerificationCheckText(event.Command, event.Argv, event.CWD, event.Status))
 	case "verification_feedback":
 		return contextTranscriptItemFromText("assistant", contextLCAgentVerificationFeedbackText(event.Command, event.Status, event.Message))
 	case "repair_feedback_suppressed":
@@ -1270,6 +1271,8 @@ func contextLCAgentToolResultText(tool string, raw json.RawMessage) string {
 	var result struct {
 		Success      bool     `json:"success"`
 		Error        string   `json:"error"`
+		Command      string   `json:"command"`
+		CWD          string   `json:"cwd"`
 		ExitCode     int      `json:"exit_code"`
 		TimedOut     bool     `json:"timed_out"`
 		Truncated    bool     `json:"truncated"`
@@ -1291,6 +1294,14 @@ func contextLCAgentToolResultText(tool string, raw json.RawMessage) string {
 		parts[0] = "tool result: " + tool
 	}
 	parts = append(parts, status)
+	if tool == "run_command" {
+		if result.Command = contextSanitizeText(result.Command); result.Command != "" {
+			parts = append(parts, "command: "+result.Command)
+		}
+		if result.CWD = contextSanitizeText(result.CWD); result.CWD != "" {
+			parts = append(parts, "cwd: "+result.CWD)
+		}
+	}
 	if result.Error = contextSanitizeText(result.Error); result.Error != "" {
 		parts = append(parts, "error: "+result.Error)
 	}
@@ -1404,8 +1415,11 @@ func contextLCAgentPatchFeedbackText(path, stage, message string) string {
 	return "patch feedback: " + stage
 }
 
-func contextLCAgentVerificationCheckText(command string, argv []string, status string) string {
+func contextLCAgentVerificationCheckText(command string, argv []string, cwd string, status string) string {
 	command = contextFirstNonEmpty(contextSanitizeText(command), contextSanitizeText(strings.Join(argv, " ")), "verification check")
+	if cwd = contextSanitizeText(cwd); cwd != "" {
+		command += " in " + cwd
+	}
 	status = contextFirstNonEmpty(contextSanitizeText(status), "unknown")
 	return "verification " + status + ": " + command
 }

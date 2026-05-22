@@ -366,6 +366,12 @@ func compactToolResultEntry(toolName, args, content string, outputLimit int) str
 		return fmt.Sprintf("tool_result: %s args=%s\n%s", toolName, args, indentBlock(truncateMiddle(strings.TrimSpace(content), outputLimit)))
 	}
 	status := fmt.Sprintf("tool_result: %s args=%s success=%t", toolName, args, result.Success)
+	if strings.TrimSpace(result.Command) != "" {
+		status += fmt.Sprintf(" command=%q", strings.TrimSpace(result.Command))
+	}
+	if strings.TrimSpace(result.CWD) != "" {
+		status += fmt.Sprintf(" cwd=%q", strings.TrimSpace(result.CWD))
+	}
 	if result.Truncated {
 		status += " truncated=true"
 	}

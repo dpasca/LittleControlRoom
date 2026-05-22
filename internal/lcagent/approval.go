@@ -86,6 +86,7 @@ func (b *stdioApprovalBroker) RequestCommandApproval(ctx context.Context, reques
 	request.SessionID = firstNonEmptyString(strings.TrimSpace(request.SessionID), b.sessionID)
 	request.Tool = firstNonEmptyString(strings.TrimSpace(request.Tool), "run_command")
 	request.CWD = firstNonEmptyString(strings.TrimSpace(request.CWD), b.cwd)
+	request.Scope = strings.TrimSpace(request.Scope)
 	decision := script.DecisionCancel
 	if err := b.writer.Write(session.Event{
 		"type":       "approval_request",
@@ -96,6 +97,7 @@ func (b *stdioApprovalBroker) RequestCommandApproval(ctx context.Context, reques
 		"command":    request.Command,
 		"cwd":        request.CWD,
 		"reason":     request.Reason,
+		"scope":      request.Scope,
 		"decisions":  []string{string(script.DecisionAccept), string(script.DecisionAcceptForSession), string(script.DecisionDecline), string(script.DecisionCancel)},
 	}); err != nil {
 		return decision, err
@@ -108,6 +110,8 @@ func (b *stdioApprovalBroker) RequestCommandApproval(ctx context.Context, reques
 			"kind":       "command",
 			"tool":       request.Tool,
 			"command":    request.Command,
+			"cwd":        request.CWD,
+			"scope":      request.Scope,
 			"decision":   string(decision),
 			"status":     approvalDecisionStatus(decision),
 		})

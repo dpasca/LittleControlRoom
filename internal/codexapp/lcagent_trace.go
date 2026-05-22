@@ -58,6 +58,7 @@ type LCAgentPermissionDenial struct {
 type LCAgentVerificationCheck struct {
 	Command  string
 	Argv     []string
+	CWD      string
 	Purpose  string
 	Status   string
 	Success  bool
@@ -501,6 +502,7 @@ func lcagentVerificationCheckFromEvent(event map[string]json.RawMessage) LCAgent
 	return LCAgentVerificationCheck{
 		Command:  rawJSONString(event["command"]),
 		Argv:     rawJSONStringList(event["argv"]),
+		CWD:      rawJSONString(event["cwd"]),
 		Purpose:  rawJSONString(event["purpose"]),
 		Status:   firstNonEmpty(rawJSONString(event["status"]), "unknown"),
 		Success:  rawJSONBool(event["success"]),
@@ -518,6 +520,7 @@ func lcagentVerificationChecksFromRaw(raw json.RawMessage) []LCAgentVerification
 	for _, check := range checks {
 		check.Command = strings.TrimSpace(check.Command)
 		check.Argv = cleanLCAgentStringList(check.Argv)
+		check.CWD = strings.TrimSpace(check.CWD)
 		check.Purpose = strings.TrimSpace(check.Purpose)
 		check.Status = firstNonEmpty(strings.TrimSpace(check.Status), "unknown")
 		check.Error = strings.TrimSpace(check.Error)
@@ -531,6 +534,9 @@ func lcagentVerificationChecksFromRaw(raw json.RawMessage) []LCAgentVerification
 
 func formatLCAgentVerificationCheck(check LCAgentVerificationCheck) string {
 	label := firstNonEmpty(strings.TrimSpace(check.Command), strings.Join(check.Argv, " "), "verification check")
+	if cwd := strings.TrimSpace(check.CWD); cwd != "" {
+		label += " in " + cwd
+	}
 	status := firstNonEmpty(strings.TrimSpace(check.Status), "unknown")
 	text := label + " " + status
 	if check.ExitCode != 0 {
@@ -542,6 +548,9 @@ func formatLCAgentVerificationCheck(check LCAgentVerificationCheck) string {
 func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
 	check := lcagentVerificationCheckFromEvent(event)
 	label := firstNonEmpty(check.Command, strings.Join(check.Argv, " "), "verification check")
+	if check.CWD != "" {
+		label += " in " + check.CWD
+	}
 	status := firstNonEmpty(check.Status, "unknown")
 	text := "Verification " + status + ": " + label
 	if check.ExitCode != 0 {

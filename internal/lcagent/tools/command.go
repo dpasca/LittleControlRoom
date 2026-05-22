@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +28,7 @@ type CommandRunner struct {
 type CommandSpec struct {
 	Command   string
 	Argv      []string
+	CWD       string
 	Shell     bool
 	TimeoutMS int
 	Purpose   string
@@ -37,12 +39,30 @@ func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Dur
 }
 
 func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult {
+	cwdLabel := commandCWDLabel(r.Workspace.Root, spec.CWD)
+	cwd, err := r.Workspace.ResolveCommandCWD(spec.CWD)
+	if err != nil {
+		result := ToolResult{
+			Success: false,
+			Error:   err.Error(),
+			Command: commandLabelFromSpec(spec),
+			Argv:    cleanArgv(spec.Argv),
+			CWD:     cwdLabel,
+			Purpose: normalizeCommandPurpose(spec.Purpose),
+		}
+		if policy.IsDenied(err) {
+			result.Denied = true
+			result.DenialReason = policy.DenialReason(err)
+		}
+		return result
+	}
 	if err := r.Workspace.AllowCommandSpec(spec.Argv, spec.Command, spec.Shell); err != nil {
 		result := ToolResult{
 			Success: false,
 			Error:   err.Error(),
 			Command: commandLabelFromSpec(spec),
 			Argv:    cleanArgv(spec.Argv),
+			CWD:     cwd,
 			Purpose: normalizeCommandPurpose(spec.Purpose),
 		}
 		if policy.IsDenied(err) {
@@ -58,9 +78,9 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 
 	cmd, label, err := commandFromSpec(ctx, spec)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), Purpose: normalizeCommandPurpose(spec.Purpose)}
+		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), CWD: cwd, Purpose: normalizeCommandPurpose(spec.Purpose)}
 	}
-	cmd.Dir = r.Workspace.Root
+	cmd.Dir = cwd
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -89,6 +109,7 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 		Error:        errorString(err, timedOut),
 		Command:      label,
 		Argv:         cleanArgv(spec.Argv),
+		CWD:          cwd,
 		Purpose:      normalizeCommandPurpose(spec.Purpose),
 		ExitCode:     exitCode,
 		Duration:     duration,
@@ -104,6 +125,17 @@ func commandLabelFromSpec(spec CommandSpec) string {
 		return strings.Join(cleanArgv(spec.Argv), " ")
 	}
 	return strings.TrimSpace(spec.Command)
+}
+
+func commandCWDLabel(root, cwd string) string {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return filepath.Clean(root)
+	}
+	if filepath.IsAbs(cwd) {
+		return filepath.Clean(cwd)
+	}
+	return filepath.Clean(filepath.Join(root, cwd))
 }
 
 func normalizeCommandPurpose(raw string) string {

@@ -1073,13 +1073,17 @@ func lcagentApprovalRequestFromEvent(event map[string]json.RawMessage, fallbackT
 		Command:  rawJSONString(event["command"]),
 		CWD:      rawJSONString(event["cwd"]),
 		Reason:   rawJSONString(event["reason"]),
+		Scope:    rawJSONString(event["scope"]),
 	}
 }
 
 func lcagentApprovalResolvedStatus(event map[string]json.RawMessage) string {
 	switch rawJSONString(event["decision"]) {
 	case string(DecisionAcceptForSession):
-		return "LCAgent command access raised to medium for this run"
+		if scope := rawJSONString(event["scope"]); scope != "" {
+			return "LCAgent command approval accepted for " + scope
+		}
+		return "LCAgent command approval accepted for this run"
 	case string(DecisionAccept):
 		return "LCAgent command approval accepted"
 	case string(DecisionDecline):
@@ -1579,6 +1583,8 @@ func lcagentToolResultText(tool string, raw json.RawMessage) string {
 		Success      bool          `json:"success"`
 		Output       string        `json:"output"`
 		Error        string        `json:"error"`
+		Command      string        `json:"command"`
+		CWD          string        `json:"cwd"`
 		ExitCode     int           `json:"exit_code"`
 		Duration     time.Duration `json:"duration"`
 		TimedOut     bool          `json:"timed_out"`
@@ -1597,7 +1603,7 @@ func lcagentToolResultText(tool string, raw json.RawMessage) string {
 	} else if !result.Success {
 		status = "failed"
 	}
-	summary := lcagentToolResultSummary(tool, result.Output, result.Error, result.ExitCode, result.Duration, result.Truncated, result.Binary, result.ArtifactPath, result.FilesTouched)
+	summary := lcagentToolResultSummary(tool, result.Output, result.Error, result.Command, result.CWD, result.ExitCode, result.Duration, result.Truncated, result.Binary, result.ArtifactPath, result.FilesTouched)
 	if summary != "" {
 		return fmt.Sprintf("Tool %s %s: %s", tool, status, summary)
 	}
@@ -1718,20 +1724,29 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 		var args struct {
 			Command string   `json:"command"`
 			Argv    []string `json:"argv"`
+			CWD     string   `json:"cwd"`
 		}
 		if json.Unmarshal(raw, &args) == nil {
+			cwd := strings.TrimSpace(args.CWD)
+			var command string
 			if strings.TrimSpace(args.Command) != "" {
-				return strings.TrimSpace(args.Command)
+				command = strings.TrimSpace(args.Command)
+			} else {
+				command = strings.Join(nonEmptyStrings(args.Argv), " ")
 			}
-			return strings.Join(nonEmptyStrings(args.Argv), " ")
+			if cwd != "" {
+				return strings.TrimSpace(command + " in " + cwd)
+			}
+			return command
 		}
 	}
 	return ""
 }
 
-func lcagentToolResultSummary(tool, output, errText string, exitCode int, duration time.Duration, truncated, binary bool, artifactPath string, filesTouched []string) string {
+func lcagentToolResultSummary(tool, output, errText, command, cwd string, exitCode int, duration time.Duration, truncated, binary bool, artifactPath string, filesTouched []string) string {
 	if strings.TrimSpace(errText) != "" {
-		return strings.TrimSpace(errText)
+		prefix := lcagentCommandCWDPrefix(command, cwd)
+		return strings.TrimSpace(prefix + strings.TrimSpace(errText))
 	}
 	switch strings.TrimSpace(tool) {
 	case "read_file":
@@ -1747,7 +1762,8 @@ func lcagentToolResultSummary(tool, output, errText string, exitCode int, durati
 	case "web_search":
 		return lcagentWebSearchSummary(output, truncated)
 	case "run_command":
-		return lcagentCommandResultSummary(output, exitCode, duration, truncated, binary, artifactPath)
+		summary := lcagentCommandResultSummary(output, exitCode, duration, truncated, binary, artifactPath)
+		return strings.TrimSpace(lcagentCommandCWDPrefix(command, cwd) + summary)
 	case "apply_patch":
 		if len(filesTouched) > 0 {
 			return fmt.Sprintf("touched %s", strings.Join(filesTouched, ", "))
@@ -1758,6 +1774,20 @@ func lcagentToolResultSummary(tool, output, errText string, exitCode int, durati
 	default:
 		return firstOutputLine(output)
 	}
+}
+
+func lcagentCommandCWDPrefix(command, cwd string) string {
+	parts := []string{}
+	if command = strings.TrimSpace(command); command != "" {
+		parts = append(parts, command)
+	}
+	if cwd = strings.TrimSpace(cwd); cwd != "" {
+		parts = append(parts, "in "+cwd)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ") + ": "
 }
 
 func lcagentWebSearchSummary(output string, truncated bool) string {

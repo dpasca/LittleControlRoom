@@ -223,6 +223,7 @@ type ApprovalRequest struct {
 	Command   string
 	CWD       string
 	Reason    string
+	Scope     string
 	GrantRoot string
 }
 
@@ -252,6 +253,9 @@ func (r ApprovalRequest) Summary() string {
 		}
 		if r.CWD != "" {
 			parts = append(parts, "in "+r.CWD)
+		}
+		if r.Scope != "" {
+			parts = append(parts, "scope "+r.Scope)
 		}
 		if r.Reason != "" {
 			parts = append(parts, "("+r.Reason+")")

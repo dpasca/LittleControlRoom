@@ -56,6 +56,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Use workspace-relative paths for project files; read-only file inspection tools may use absolute paths when the user asks for system/admin inspection outside the workspace.",
 		writePathLine,
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
+		"When running a command for a package or subproject, set run_command cwd to a workspace-relative directory such as \"frontend\" instead of using shell cd.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
 		"At low autonomy, use run_command argv for approved verification forms such as go test/list/vet, make test, npm test, pnpm exec wrappers around tsc/eslint/prettier/biome checks, cargo test/check, pytest, python -m unittest, ruff/prettier/eslint checks, and tsc --noEmit; shell strings and broad write-like commands are denied.",
 		"At low autonomy, toolchain probes such as which pnpm or pnpm --version are allowed as read-only inspection; dependency installs, package updates, corepack enable, and publish/deploy actions require medium autonomy or a manual user step.",

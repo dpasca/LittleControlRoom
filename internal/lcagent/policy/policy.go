@@ -180,6 +180,37 @@ func (w Workspace) AllowCommand(command string) error {
 	return w.AllowCommandSpec(nil, command, true)
 }
 
+func (w Workspace) ResolveCommandCWD(cwd string) (string, error) {
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return w.Root, nil
+	}
+	target := filepath.Clean(cwd)
+	if !filepath.IsAbs(target) {
+		target = filepath.Clean(filepath.Join(w.Root, target))
+	}
+	if w.Auto != AutonomyMedium {
+		if !isUnder(w.Root, target) {
+			return "", Denied(fmt.Sprintf("run_command cwd is outside the workspace and requires approval: %s", cwd))
+		}
+		canonTarget, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			return "", err
+		}
+		if !isUnder(w.Root, canonTarget) {
+			return "", Denied(fmt.Sprintf("run_command cwd escapes workspace through symlink and requires approval: %s", cwd))
+		}
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("run_command cwd is not a directory: %s", cwd)
+	}
+	return target, nil
+}
+
 func (w Workspace) AllowCommandSpec(argv []string, command string, shell bool) error {
 	argv = cleanArgv(argv)
 	command = strings.TrimSpace(command)

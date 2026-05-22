@@ -21,6 +21,7 @@ type CommandApprovalRequest struct {
 	Command   string
 	CWD       string
 	Reason    string
+	Scope     string
 }
 
 type ApprovalBroker interface {
