@@ -1766,6 +1766,65 @@ func TestChatPanelKeepsStyledTranscriptAndInputVisible(t *testing.T) {
 	}
 }
 
+func TestChatInputExpandsAndMarksMultilineDrafts(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 82
+	m.height = 20
+	m.stateLoaded = true
+	m.input.SetValue("line 1\nline 2\nline 3\nline 4")
+	m.syncLayout(true)
+
+	layout := m.layout()
+	if layout.inputEditorHeight <= bossInputMinEditorHeight {
+		t.Fatalf("multiline input editor height = %d, want growth beyond %d", layout.inputEditorHeight, bossInputMinEditorHeight)
+	}
+	if layout.inputHeight != bossInputBlockHeight(layout.inputEditorHeight) {
+		t.Fatalf("input block height = %d, want editor height plus composer chrome", layout.inputHeight)
+	}
+	if m.input.Height() != layout.inputEditorHeight {
+		t.Fatalf("textarea height = %d, want layout editor height %d", m.input.Height(), layout.inputEditorHeight)
+	}
+
+	rendered := ansi.Strip(m.renderChat(layout))
+	if !strings.Contains(rendered, "4 lines") {
+		t.Fatalf("multiline input should show a compact line count:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "| line 2") {
+		t.Fatalf("continuation prompt should make additional lines visible:\n%s", rendered)
+	}
+}
+
+func TestChatInputCapsGrowthAndSignalsHiddenLines(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil)
+	m.width = 82
+	m.height = 20
+	m.stateLoaded = true
+	m.input.SetValue(strings.Join([]string{
+		"line 1",
+		"line 2",
+		"line 3",
+		"line 4",
+		"line 5",
+		"line 6",
+		"line 7",
+		"line 8",
+	}, "\n"))
+	m.syncLayout(true)
+
+	layout := m.layout()
+	if layout.inputEditorHeight > bossInputMaxEditorHeight {
+		t.Fatalf("input editor height = %d, want <= %d", layout.inputEditorHeight, bossInputMaxEditorHeight)
+	}
+	rendered := ansi.Strip(m.renderChat(layout))
+	if !strings.Contains(rendered, "8 lines +") {
+		t.Fatalf("overflowing multiline input should mark that more lines exist:\n%s", rendered)
+	}
+}
+
 func TestChatPanelDoesNotRenderCompanionInTranscriptSpace(t *testing.T) {
 	t.Parallel()
 
