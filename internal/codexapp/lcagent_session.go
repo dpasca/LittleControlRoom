@@ -619,7 +619,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	}
 	if resumeID != "" {
 		if s.replayLoaded && len(s.entries) > 0 {
-			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run with summarized context from "+resumeID+".")
+			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run from saved context "+resumeID+".")
 		} else {
 			s.appendEntryLocked(TranscriptStatus, "Continuing from LCAgent session "+resumeID+".")
 		}
@@ -916,6 +916,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.appendAsync(TranscriptStatus, lcagentContinuationText(event))
 	case "resume_context":
 		s.appendAsync(TranscriptStatus, lcagentResumeContextText(event))
+	case "context_compacted":
+		s.appendAsync(TranscriptStatus, lcagentContextCompactedText(event))
 	case "web_search_profile":
 		enabled := rawJSONBool(event["enabled"])
 		message := rawJSONString(event["message"])
@@ -1077,7 +1079,7 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.revision = 0
 	s.cache.ready = false
 	replayActivityAt := s.lastActivityAt
-	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent session "+label+" from disk. Sending a prompt starts a continuing run with summarized context.")
+	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent session "+label+" from disk. Sending a prompt starts a continuing run from saved context.")
 	for _, entry := range replay.entries {
 		text := strings.TrimSpace(entry.Text)
 		if text == "" {

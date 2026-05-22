@@ -47,9 +47,10 @@ Implemented pieces:
   embedded-launch wiring through `lcagent_route_preset`.
 - `lcagent scout` defaults to the `cheap-scout` route, low max turns, autonomy
   off, a read-only handoff prompt, and a `delegation_mode` trace event.
-- Explicit summarized continuation via `--continue-from` with backward-compatible
-  `--resume`, `continuation` trace events, parent/root chain metadata, handoff
-  source, and pending verification/file state.
+- Exact replay continuation for new artifacts via private model-context
+  snapshots, with backward-compatible `--resume`, `continuation` trace events,
+  parent/root chain metadata, handoff source, pending verification/file state,
+  and explicit summary fallback for older artifacts.
 - LCAgent saved-session resume choices include continuation/pending-verification
   hints and compact trace-quality badges.
 - Experimental tool profiles: `balanced` and `generous`.
@@ -81,10 +82,11 @@ LCR session parity:
   using the same JSONL trace path, with `--auto off` and no continuation resume.
 - Embedded `/compact` now writes a durable Markdown handoff summary from the
   latest LCAgent JSONL trace under the app data dir and shows it in the pane.
-- Replayed LCAgent history can seed a continuing run through summarized context,
-  with explicit continuation-chain metadata in the artifact and embedded
-  transcript. It is still not a true persistent model thread with full transcript
-  state, branching, or user-controlled compaction.
+- Replayed LCAgent history can continue from exact model-context snapshots for
+  new artifacts, with explicit continuation-chain metadata in the artifact and
+  embedded transcript. Older artifacts without snapshots continue through a
+  labeled summary fallback. It is still not a provider-native persistent model
+  thread with branching or user-controlled compaction.
 - The model picker now offers curated coding choices for the configured
   provider plus a custom-model escape hatch. It still does not discover provider
   models or validate provider credentials.
@@ -144,8 +146,8 @@ Eval maturity:
 - The deterministic eval lane protects the trace contract, but it does not
   score live coding quality.
 - The deterministic eval lane now includes a max-turn handoff continuation case
-  so summarized continuation from handoff artifacts is covered by the trace
-  regression suite.
+  so continuation from handoff artifacts is covered by the trace regression
+  suite.
 - The repeatable `lcagent live-eval` lane now runs fixed live-provider coding
   tasks for README edit, Go bug fix, small feature implementation,
   dependency-light JavaScript, Python unittest, and Rust cargo bug fixes,
@@ -204,14 +206,14 @@ small-to-medium coding tasks before it tries to be a broader assistant.
 
 ### P1: Make Continuation Feel Like A Coding Session
 
-1. Promote summarized continuation from "nice fallback" to an explicit session
-   model.
+1. Promote exact replay continuation into a session-like experience.
    LCAgent launches now have explicit `--continue-from` continuation, enriched
    session metadata, dedicated `continuation` events, pending file/verification
-   state, embedded status text, compact summaries, shared trace parsing, and
-   regression coverage for max-turn handoff continuation. Next, add browsing
-   and branch/restart affordances across session pickers and keep the warning
-   that exact file contents must be re-read before edits.
+   state, embedded status text, compact summaries, shared trace parsing, exact
+   model-context snapshots for new artifacts, labeled summary fallback for old
+   artifacts, and regression coverage for max-turn handoff continuation. Next,
+   add browsing and branch/restart affordances across session pickers and keep
+   the warning that exact file contents must be re-read before edits.
 
 2. Add user-visible compact/review behavior for LCAgent.
    `/review` now starts as a read-only current-diff review task using the same

@@ -2,9 +2,11 @@ package lcagent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -143,15 +145,36 @@ func parseSessionFile(path string) (parseResult, error) {
 	defer file.Close()
 
 	var result parseResult
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) == 0 {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return parseResult{}, readErr
+			}
+			continue
+		}
 		var event map[string]json.RawMessage
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return parseResult{}, readErr
+			}
 			continue
 		}
 		eventType := rawString(event["type"])
 		if eventType == "" {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return parseResult{}, readErr
+			}
 			continue
 		}
 		at := rawTime(event["timestamp"])
@@ -189,8 +212,14 @@ func parseSessionFile(path string) (parseResult, error) {
 		case "permission_denied":
 			result.errorCount++
 		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return parseResult{}, readErr
+		}
 	}
-	return result, scanner.Err()
+	return result, nil
 }
 
 func rawString(raw json.RawMessage) string {

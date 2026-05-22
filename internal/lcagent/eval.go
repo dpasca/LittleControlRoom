@@ -337,7 +337,7 @@ func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
 		},
 		{
 			Name:   "resume_context_trace",
-			Prompt: "continue with summarized context",
+			Prompt: "continue with summary fallback",
 			Auto:   "low",
 			Script: `{"type":"final_response","summary":"continued from context","files_changed":[],"verification":[]}
 `,

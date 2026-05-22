@@ -70,6 +70,14 @@ func (w *Writer) Close() error {
 }
 
 func (w *Writer) Write(event Event) error {
+	return w.write(event, true)
+}
+
+func (w *Writer) WritePrivate(event Event) error {
+	return w.write(event, false)
+}
+
+func (w *Writer) write(event Event, stream bool) error {
 	if w == nil {
 		return fmt.Errorf("session writer is nil")
 	}
@@ -94,7 +102,7 @@ func (w *Writer) Write(event Event) error {
 	if _, err := w.file.Write(append(line, '\n')); err != nil {
 		return err
 	}
-	if w.stream != nil {
+	if stream && w.stream != nil {
 		if _, err := w.stream.Write(append(line, '\n')); err != nil {
 			return err
 		}

@@ -1,7 +1,6 @@
 package codexapp
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,16 +107,10 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 	defer file.Close()
 
 	trace := LCAgentTrace{ArtifactPath: path}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		var event map[string]json.RawMessage
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
-		}
+	if err := forEachLCAgentJSONLEvent(file, func(event map[string]json.RawMessage) {
 		eventType := rawJSONString(event["type"])
 		if eventType == "" {
-			continue
+			return
 		}
 		trace.observeEventTime(event)
 		switch eventType {
@@ -227,8 +220,7 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			reason := firstNonEmpty(rawJSONString(event["reason"]), "LCAgent run aborted")
 			trace.Errors = append(trace.Errors, reason)
 		}
-	}
-	if err := scanner.Err(); err != nil {
+	}); err != nil {
 		return LCAgentTrace{}, err
 	}
 	if summary, err := sessionmetrics.AnalyzeFiles([]string{path}); err == nil {
@@ -565,7 +557,10 @@ func lcagentResumeContextText(event map[string]json.RawMessage) string {
 	sourceID := firstNonEmpty(rawJSONString(event["source_session_id"]), rawJSONString(event["parent_session_id"]))
 	sourcePath := rawJSONString(event["source_path"])
 	summary := rawJSONString(event["summary"])
-	text := "Loaded resume context"
+	text := "Loaded summarized LCAgent context"
+	if rawJSONString(event["context_mode"]) == "exact" {
+		text = "Loaded exact LCAgent context"
+	}
 	if sourceID != "" {
 		text += " from " + sourceID
 	}
@@ -578,6 +573,9 @@ func lcagentResumeContextText(event map[string]json.RawMessage) string {
 	}
 	if source := rawJSONString(event["handoff_source"]); source != "" {
 		details = append(details, "handoff "+source)
+	}
+	if count := rawJSONInt(event["exact_message_count"]); rawJSONString(event["context_mode"]) == "exact" && count > 0 {
+		details = append(details, fmt.Sprintf("%d replay messages", count))
 	}
 	if status := rawJSONString(event["pending_status"]); status != "" {
 		details = append(details, "pending verification "+status)
@@ -615,6 +613,15 @@ func lcagentContinuationText(event map[string]json.RawMessage) string {
 	if source := rawJSONString(event["handoff_source"]); source != "" {
 		details = append(details, "handoff "+source)
 	}
+	if rawJSONString(event["context_mode"]) == "exact" {
+		detail := "exact replay"
+		if count := rawJSONInt(event["exact_message_count"]); count > 0 {
+			detail = fmt.Sprintf("exact replay %d messages", count)
+		}
+		details = append(details, detail)
+	} else if rawJSONString(event["context_mode"]) == "summary" {
+		details = append(details, "summary fallback")
+	}
 	if status := rawJSONString(event["pending_status"]); status != "" {
 		details = append(details, "pending verification "+status)
 	}
@@ -626,6 +633,29 @@ func lcagentContinuationText(event map[string]json.RawMessage) string {
 	}
 	if summary != "" {
 		text += ": " + summary
+	}
+	return text
+}
+
+func lcagentContextCompactedText(event map[string]json.RawMessage) string {
+	reason := strings.TrimSpace(rawJSONString(event["reason"]))
+	text := "LCAgent compacted context"
+	if reason != "" {
+		text += " [" + strings.ReplaceAll(reason, "_", " ") + "]"
+	}
+	stats := map[string]json.RawMessage{}
+	_ = json.Unmarshal(event["stats"], &stats)
+	originalChars := firstPositiveInt(rawJSONInt(stats["original_chars"]), rawJSONInt(stats["before_chars"]))
+	compactedChars := firstPositiveInt(rawJSONInt(stats["compacted_chars"]), rawJSONInt(stats["after_chars"]))
+	var details []string
+	if originalChars > 0 && compactedChars > 0 {
+		details = append(details, fmt.Sprintf("%d -> %d chars", originalChars, compactedChars))
+	}
+	if threshold := rawJSONInt(event["threshold"]); threshold > 0 {
+		details = append(details, fmt.Sprintf("threshold %d", threshold))
+	}
+	if len(details) > 0 {
+		text += ": " + strings.Join(details, "; ")
 	}
 	return text
 }
@@ -764,6 +794,15 @@ func limitStrings(values []string, limit int) []string {
 	out := append([]string(nil), values[:limit]...)
 	out = append(out, fmt.Sprintf("%d more", len(values)-limit))
 	return out
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func pluralSuffix(count int) string {

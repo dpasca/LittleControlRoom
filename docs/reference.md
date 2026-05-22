@@ -107,10 +107,11 @@ playwright_isolation_scope = "task"
 
 LCAgent session JSONL artifacts are replayable in the embedded pane. Opening a previous
 LCAgent session loads read-only transcript history; sending a new prompt starts a fresh
-one-shot run with summarized continuation context rather than continuing that prior
-model context. The new run records `continuation` and `resume_context` events with
-the parent session, root session, chain depth, handoff source, and pending
-verification/file state when available.
+one-shot run that continues from a saved model-context snapshot when the prior artifact
+has one, with summarized continuation as a labeled fallback for older artifacts. The
+new run records `continuation` and `resume_context` events with the parent session,
+root session, chain depth, handoff source, context mode, and pending verification/file
+state when available.
 
 For direct CLI use, `lcagent presets` lists coding route presets. `lcagent exec
 --route-preset balanced|quality|cheap-scout` and `lcagent live-eval
@@ -123,8 +124,8 @@ reasoning.
 exploration; it records a `delegation_mode` trace event and asks for a compact
 handoff with findings, relevant files, next steps, and risks.
 Use `lcagent exec --continue-from <session-id-or-jsonl>` to start an explicit
-summarized continuation. The older `--resume` flag remains as a compatibility
-alias.
+continuation. Newer artifacts replay saved model context; older artifacts fall back to
+summarized context. The older `--resume` flag remains as a compatibility alias.
 In Little Control Room settings, `lcagent_route_preset` applies the same bundle
 to embedded LCAgent launches; leave it blank to use the individual provider,
 model, autonomy, tool-profile, and context-profile fields.

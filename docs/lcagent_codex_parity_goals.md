@@ -44,9 +44,15 @@ rather than a ground-up redesign.
 
 Current state:
 
-- Replay can seed a continuing run through summarized context.
+- New artifacts persist a private exact model-context snapshot, and
+  `--continue-from` prefers replaying that message state before the new prompt.
+- Older artifacts without a snapshot still seed a continuing run through
+  summarized context as an explicitly labeled fallback.
 - `/compact` can write a durable handoff summary.
 - Continuation metadata appears in traces.
+- Continuation and resume-context events report whether the run used exact
+  replay or summary fallback, including exact replay message counts when
+  available.
 - Max-turn final handoff now preserves harness-known files touched and recorded
   verification details in structured final events.
 - `--continue-from` is the explicit continuation entry point, with `--resume`
@@ -60,10 +66,9 @@ Current state:
 
 Missing:
 
-- A true durable LCAgent session model beyond summarized continuation.
 - User-visible branch/rewind/restart behavior.
-- A clear distinction between exact transcript continuity and summary-based
-  continuation.
+- Provider-native persistent thread handling beyond local exact replay
+  snapshots.
 - Better browsing of compact summaries from replay/session pickers.
 - User-visible branch/rewind/restart affordances for continuation chains.
 

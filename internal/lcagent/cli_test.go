@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/sessionmetrics"
 )
 
@@ -93,10 +94,11 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	t.Setenv("OPENROUTER_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
+	dataDir := t.TempDir()
 	code := Run([]string{
 		"exec",
 		"--cwd", root,
-		"--data-dir", t.TempDir(),
+		"--data-dir", dataDir,
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
@@ -122,6 +124,18 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
+	}
+	sessionID := lcagentCLITestSessionIDFromStream(t, text)
+	path, err := resolveResumeContextPath(dataDir, sessionID)
+	if err != nil {
+		t.Fatalf("resolve session artifact: %v", err)
+	}
+	artifact, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read session artifact: %v", err)
+	}
+	if !strings.Contains(string(artifact), `"type":"model_context_snapshot"`) {
+		t.Fatalf("artifact missing private model context snapshot:\n%s", string(artifact))
 	}
 	if got := strings.Count(text, `"type":"assistant_message"`); got != 1 {
 		t.Fatalf("assistant_message count = %d, want 1:\n%s", got, text)
@@ -645,12 +659,137 @@ func TestRunExecOpenRouterSendsResumeContext(t *testing.T) {
 		`"chain_depth":1`,
 		`"continuation_reason":"continue_from"`,
 		`"handoff_source":"turn_complete"`,
+		`"context_mode":"summary"`,
 		`"pending_files":["README.md"]`,
 		`"type":"resume_context"`,
 		`"source_session_id":"` + sessionID + `"`,
 		`"source_path":`,
 		`"summary":"source ` + sessionID,
 		`"summary":"continued with context"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_exact_source"
+	started := time.Date(2026, 5, 12, 9, 0, 0, 0, time.UTC)
+	exactMessages := []modeladapter.Message{
+		{Role: "system", Content: "previous system prompt"},
+		{Role: "user", Content: "first request"},
+		{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+			ID:   "call_read",
+			Type: "function",
+			Function: modeladapter.FunctionCall{
+				Name:      "read_file",
+				Arguments: json.RawMessage(`{"path":"README.md","limit":1}`),
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_read", Content: `{"success":true,"output":"file: README.md\ntotal_lines: 1\nhas_more: false\nlines: 1-1\n\n1 | hello\n"}`},
+		{Role: "assistant", Content: "first answer"},
+	}
+	writeLCAgentCLITestArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{
+			"type":       "session_meta",
+			"id":         sessionID,
+			"cwd":        root,
+			"started_at": started.Format(time.RFC3339Nano),
+		},
+		{
+			"type":          "model_context_snapshot",
+			"session_id":    sessionID,
+			"timestamp":     started.Add(time.Second).Format(time.RFC3339Nano),
+			"source":        "final_response",
+			"message_count": len(exactMessages),
+			"approx_chars":  messagesApproxChars(exactMessages),
+			"messages":      exactMessages,
+		},
+		{
+			"type":                "turn_complete",
+			"session_id":          sessionID,
+			"timestamp":           started.Add(2 * time.Second).Format(time.RFC3339Nano),
+			"summary":             "first answer",
+			"verification_status": "not_run",
+		},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []modeladapter.Message `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if len(body.Messages) < len(exactMessages)+1 {
+			t.Fatalf("request missing replay messages: %#v", body.Messages)
+		}
+		if body.Messages[0].Role != "system" || body.Messages[0].Content != "previous system prompt" {
+			t.Fatalf("first message = %#v, want exact previous system", body.Messages[0])
+		}
+		for _, msg := range body.Messages {
+			if msg.Role == "system" && strings.Contains(msg.Content, "Previous LCAgent session context") {
+				t.Fatalf("request used summarized resume context instead of exact snapshot:\n%#v", body.Messages)
+			}
+		}
+		if body.Messages[1].Role != "user" || body.Messages[1].Content != "first request" {
+			t.Fatalf("previous user message = %#v", body.Messages[1])
+		}
+		if len(body.Messages[2].ToolCalls) != 1 || body.Messages[2].ToolCalls[0].ID != "call_read" {
+			t.Fatalf("previous assistant tool call = %#v", body.Messages[2])
+		}
+		if body.Messages[3].Role != "tool" || body.Messages[3].ToolCallID != "call_read" || !strings.Contains(body.Messages[3].Content, "hello") {
+			t.Fatalf("previous tool result = %#v", body.Messages[3])
+		}
+		foundCurrentPrompt := false
+		for _, msg := range body.Messages {
+			if msg.Role == "user" && msg.Content == "continue exactly" {
+				foundCurrentPrompt = true
+			}
+		}
+		if !foundCurrentPrompt {
+			t.Fatalf("request missing current prompt: %#v", body.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_exact",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"continued from exact context"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--continue-from", sessionID,
+		"--max-turns", "2",
+		"continue exactly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"context_mode":"exact"`,
+		`"exact_message_count":5`,
+		`"summary":"continued from exact context"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
@@ -2035,16 +2174,20 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 			if len(body.Messages) == 0 {
 				t.Fatalf("continuation request missing messages: %#v", body)
 			}
-			systemPrompt := body.Messages[0].Content
+			for _, msg := range body.Messages {
+				if msg.Role == "system" && strings.Contains(msg.Content, "Previous LCAgent session context") {
+					t.Fatalf("continuation request used summary fallback instead of exact snapshot:\n%#v", body.Messages)
+				}
+			}
+			joined := fmt.Sprint(body.Messages)
 			for _, want := range []string{
-				"Previous LCAgent session context",
-				"Handoff source: final_handoff",
-				"Previous verification status: missing_after_changes",
-				"Pending files to verify",
-				"README.md",
+				"Original user request",
+				"patch README then continue later",
+				"Turn budget reached. README.md was changed",
+				"continue from the handoff",
 			} {
-				if !strings.Contains(systemPrompt, want) {
-					t.Fatalf("continuation system prompt missing %q:\n%s", want, systemPrompt)
+				if !strings.Contains(joined, want) {
+					t.Fatalf("continuation exact replay missing %q:\n%#v", want, body.Messages)
 				}
 			}
 			_, _ = w.Write([]byte(`{
@@ -2112,6 +2255,7 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 		`"type":"continuation"`,
 		`"parent_session_id":"` + sourceSessionID + `"`,
 		`"handoff_source":"final_handoff"`,
+		`"context_mode":"exact"`,
 		`"pending_status":"missing_after_changes"`,
 		`"pending_files":["README.md"]`,
 		`"summary":"continued after handoff"`,

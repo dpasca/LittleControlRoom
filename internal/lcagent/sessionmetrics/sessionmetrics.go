@@ -2,7 +2,9 @@ package sessionmetrics
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -181,21 +183,30 @@ func Analyze(reader io.Reader, source string, summary *Summary) error {
 		return fmt.Errorf("summary is nil")
 	}
 	summary.init()
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+	buffered := bufio.NewReader(reader)
+	for {
+		line, readErr := buffered.ReadBytes('\n')
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return readErr
+			}
 			continue
 		}
 		var event map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
 			return err
 		}
 		summary.addEvent(source, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return err
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
 	}
 	return nil
 }

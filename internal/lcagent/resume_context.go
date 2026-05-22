@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/session"
 )
 
@@ -37,6 +39,10 @@ type resumeContext struct {
 	PatchSummaries     []string
 	PermissionDenials  []string
 	LastError          string
+	ExactMessages      []modeladapter.Message
+	ExactSource        string
+	ExactMessageCount  int
+	ExactChars         int
 }
 
 func loadResumeContext(dataDir, raw, workspaceRoot string) (*resumeContext, error) {
@@ -116,15 +122,36 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 	defer file.Close()
 
 	ctx := &resumeContext{}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
+	reader := bufio.NewReader(file)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) == 0 {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return nil, readErr
+			}
+			continue
+		}
 		var event map[string]json.RawMessage
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+		if err := json.Unmarshal(line, &event); err != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return nil, readErr
+			}
 			continue
 		}
 		eventType := resumeJSONString(event["type"])
 		if eventType == "" {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			if readErr != nil {
+				return nil, readErr
+			}
 			continue
 		}
 		at := resumeJSONTime(event["timestamp"])
@@ -182,10 +209,27 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 		case "turn_aborted":
 			ctx.LastError = firstResumeNonEmpty(resumeJSONString(event["reason"]), ctx.LastError)
 			ctx.HandoffSource = "turn_aborted"
+		case "model_context_snapshot":
+			var messages []modeladapter.Message
+			if err := json.Unmarshal(event["messages"], &messages); err == nil && len(messages) > 0 {
+				ctx.ExactMessages = cloneModelMessages(messages)
+				ctx.ExactSource = firstResumeNonEmpty(resumeJSONString(event["source"]), "model_context_snapshot")
+				ctx.ExactMessageCount = resumeJSONInt(event["message_count"])
+				if ctx.ExactMessageCount <= 0 {
+					ctx.ExactMessageCount = len(messages)
+				}
+				ctx.ExactChars = resumeJSONInt(event["approx_chars"])
+				if ctx.ExactChars <= 0 {
+					ctx.ExactChars = messagesApproxChars(messages)
+				}
+			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
 	}
 	return ctx, nil
 }
@@ -215,6 +259,10 @@ func (c *resumeContext) event(currentSessionID, reason string) session.Event {
 		"patch_summaries":      c.PatchSummaries,
 		"permission_denials":   c.PermissionDenials,
 		"last_error":           c.LastError,
+		"context_mode":         c.contextMode(),
+		"exact_source":         c.ExactSource,
+		"exact_message_count":  c.ExactMessageCount,
+		"exact_chars":          c.ExactChars,
 		"source_last_activity": resumeTimeString(c.LastActivityAt),
 		"source_started_at":    resumeTimeString(c.StartedAt),
 	}
@@ -238,9 +286,31 @@ func (c *resumeContext) continuationEvent(currentSessionID, reason string) sessi
 		"pending_files":          c.pendingFiles(),
 		"pending_verification":   c.pendingVerification(),
 		"pending_status":         c.pendingVerificationStatus(),
+		"context_mode":           c.contextMode(),
+		"exact_source":           c.ExactSource,
+		"exact_message_count":    c.ExactMessageCount,
+		"exact_chars":            c.ExactChars,
 		"parent_last_activity":   resumeTimeString(c.LastActivityAt),
 		"parent_session_started": resumeTimeString(c.StartedAt),
 	}
+}
+
+func (c *resumeContext) hasExactMessages() bool {
+	return c != nil && len(c.ExactMessages) > 0
+}
+
+func (c *resumeContext) contextMode() string {
+	if c.hasExactMessages() {
+		return "exact"
+	}
+	return "summary"
+}
+
+func (c *resumeContext) exactMessages() []modeladapter.Message {
+	if c == nil {
+		return nil
+	}
+	return cloneModelMessages(c.ExactMessages)
 }
 
 func (c *resumeContext) rootSessionID() string {
@@ -493,4 +563,23 @@ func firstResumeNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func cloneModelMessages(messages []modeladapter.Message) []modeladapter.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	out := make([]modeladapter.Message, len(messages))
+	copy(out, messages)
+	for i := range out {
+		if len(messages[i].ToolCalls) > 0 {
+			out[i].ToolCalls = append([]modeladapter.ToolCall(nil), messages[i].ToolCalls...)
+			for j := range out[i].ToolCalls {
+				if len(messages[i].ToolCalls[j].Function.Arguments) > 0 {
+					out[i].ToolCalls[j].Function.Arguments = append(json.RawMessage(nil), messages[i].ToolCalls[j].Function.Arguments...)
+				}
+			}
+		}
+	}
+	return out
 }
