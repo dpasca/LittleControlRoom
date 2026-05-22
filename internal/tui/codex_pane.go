@@ -3808,11 +3808,13 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 		selected = len(indexes) - 1
 	}
 	start, end := codexArtifactPickerWindow(selected, len(indexes), bodyH)
+	layout := newCodexArtifactPickerRowLayout(width)
+	lines = append(lines, renderCodexArtifactPickerHeader(layout, width))
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
 	}
 	for i := start; i < end; i++ {
-		lines = append(lines, renderCodexArtifactPickerRow(picker.Targets[indexes[i]], i == selected, width))
+		lines = append(lines, renderCodexArtifactPickerRow(picker.Targets[indexes[i]], i == selected, width, layout))
 	}
 	if end < len(indexes) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(indexes)-end)))
@@ -3877,6 +3879,26 @@ func codexArtifactPickerWindow(selected, total, bodyH int) (int, int) {
 	return start, start + limit
 }
 
+type codexArtifactPickerRowLayout struct {
+	NameWidth int
+	TypeWidth int
+	PathWidth int
+}
+
+func newCodexArtifactPickerRowLayout(width int) codexArtifactPickerRowLayout {
+	typeWidth := 7
+	gutterWidth := 2
+	gapWidth := 4
+	available := max(24, width-gutterWidth-gapWidth-typeWidth)
+	nameWidth := max(18, min(68, available*42/100))
+	pathWidth := max(10, available-nameWidth)
+	return codexArtifactPickerRowLayout{
+		NameWidth: nameWidth,
+		TypeWidth: typeWidth,
+		PathWidth: pathWidth,
+	}
+}
+
 func renderCodexArtifactPickerFilterLine(picker *codexArtifactPickerState, width int) string {
 	filter := strings.TrimSpace(picker.Filter)
 	value := detailMutedStyle.Render("type to filter by name")
@@ -3904,29 +3926,82 @@ func renderCodexArtifactSelectedDetails(target codexArtifactOpenTarget, width in
 	return lines
 }
 
-func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool, width int) string {
-	kind := fixedBadgeSlot(codexArtifactTargetTypeLabel(target), 6)
+func renderCodexArtifactPickerHeader(layout codexArtifactPickerRowLayout, width int) string {
+	row := fmt.Sprintf("  %s  %s  %s",
+		renderCodexArtifactCell("Name", layout.NameWidth, codexArtifactHeaderStyle()),
+		renderCodexArtifactCell("Type", layout.TypeWidth, codexArtifactHeaderStyle()),
+		renderCodexArtifactCell("Path", layout.PathWidth, codexArtifactHeaderStyle()),
+	)
+	return fitStyledWidth(row, width)
+}
+
+func renderCodexArtifactPickerRow(target codexArtifactOpenTarget, selected bool, width int, layout codexArtifactPickerRowLayout) string {
+	kind := codexArtifactTargetTypeLabel(target)
 	name := codexArtifactTargetName(target)
 	path := strings.TrimSpace(target.Path)
 	if path == "" {
 		path = codexArtifactTargetRight(target)
 	}
-	pathWidth := max(10, min(46, width/3))
-	nameWidth := max(10, width-lipgloss.Width(kind)-pathWidth-8)
-	if nameDisplayWidth := lipgloss.Width(name); nameDisplayWidth < nameWidth {
-		pathWidth += nameWidth - nameDisplayWidth
-		nameWidth = nameDisplayWidth
-	}
 	row := fmt.Sprintf("  %s  %s  %s",
-		fitStyledWidth(fitFooterWidth(name, nameWidth), nameWidth),
-		kind,
-		fitStyledWidth(shortenHeadTail(path, pathWidth), pathWidth),
+		renderCodexArtifactCell(name, layout.NameWidth, codexArtifactNameStyle(selected)),
+		renderCodexArtifactCell(kind, layout.TypeWidth, codexArtifactTypeStyle(kind, selected)),
+		renderCodexArtifactCell(shortenHeadTail(path, layout.PathWidth), layout.PathWidth, codexArtifactPathStyle(selected)),
 	)
 	if selected {
 		row = "> " + strings.TrimPrefix(row, "  ")
-		return commandPaletteSelectStyle.Width(width).Render(row)
+		return codexArtifactSelectedRowStyle().Width(width).Render(row)
 	}
 	return commandPaletteRowStyle.Width(width).Render(row)
+}
+
+func renderCodexArtifactCell(value string, width int, style lipgloss.Style) string {
+	return fitStyledWidth(style.Render(fitFooterWidth(value, width)), width)
+}
+
+func codexArtifactHeaderStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+}
+
+func codexArtifactNameStyle(selected bool) lipgloss.Style {
+	if selected {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Bold(true)
+}
+
+func codexArtifactPathStyle(selected bool) lipgloss.Style {
+	if selected {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+}
+
+func codexArtifactSelectedRowStyle() lipgloss.Style {
+	return lipgloss.NewStyle().Background(lipgloss.Color("24")).Bold(true)
+}
+
+func codexArtifactTypeStyle(kind string, selected bool) lipgloss.Style {
+	if selected {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	}
+	color := lipgloss.Color("153")
+	switch strings.ToUpper(strings.TrimSpace(kind)) {
+	case "DIR":
+		color = lipgloss.Color("214")
+	case "DOC":
+		color = lipgloss.Color("111")
+	case "HTML":
+		color = lipgloss.Color("42")
+	case "IMAGE":
+		color = lipgloss.Color("213")
+	case "PDF":
+		color = lipgloss.Color("203")
+	case "SOURCE":
+		color = lipgloss.Color("149")
+	case "URL":
+		color = lipgloss.Color("81")
+	}
+	return lipgloss.NewStyle().Foreground(color).Bold(true)
 }
 
 func codexArtifactTargetName(target codexArtifactOpenTarget) string {

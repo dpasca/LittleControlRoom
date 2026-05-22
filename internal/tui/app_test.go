@@ -19112,6 +19112,31 @@ func TestCodexArtifactPickerFiltersByFuzzyFileName(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactPickerRowsUseFixedColumns(t *testing.T) {
+	layout := newCodexArtifactPickerRowLayout(100)
+	first := ansi.Strip(renderCodexArtifactPickerRow(codexArtifactOpenTarget{
+		Kind:  "doc",
+		Label: "short",
+		Path:  "/tmp/short.md",
+	}, false, 100, layout))
+	second := ansi.Strip(renderCodexArtifactPickerRow(codexArtifactOpenTarget{
+		Kind:  "html",
+		Label: "long",
+		Path:  "/tmp/a/much/longer/path/with/a/dashboard.html",
+	}, false, 100, layout))
+
+	firstType := strings.Index(first, "DOC")
+	secondType := strings.Index(second, "HTML")
+	if firstType < 0 || secondType < 0 || firstType != secondType {
+		t.Fatalf("type columns not aligned:\n%q\n%q", first, second)
+	}
+	firstPath := strings.Index(first, "/tmp")
+	secondPath := strings.Index(second, "/tmp")
+	if firstPath < 0 || secondPath < 0 || firstPath != secondPath {
+		t.Fatalf("path columns not aligned:\n%q\n%q", first, second)
+	}
+}
+
 func TestCodexArtifactPickerOpensContainingFolder(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "brief.pdf")
