@@ -66,13 +66,14 @@ type Model struct {
 	topStatusAttentionPulseStatus string
 	topStatusAttentionPulseUntil  time.Time
 
-	startupScanCompleted   bool
-	suspendedTurnChecked   bool
-	projectsReloadInFlight bool
-	projectsReloadQueued   bool
-	scanInFlight           bool
-	scanQueued             bool
-	scanQueuedForceRetry   bool
+	startupScanCompleted    bool
+	suspendedTurnChecked    bool
+	dismissedSuspendedTurns map[string]struct{}
+	projectsReloadInFlight  bool
+	projectsReloadQueued    bool
+	scanInFlight            bool
+	scanQueued              bool
+	scanQueuedForceRetry    bool
 
 	width     int
 	height    int
@@ -589,6 +590,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		status:                     initialProjectsStatus,
 		commandInput:               commandInput,
 		codexInput:                 codexInput,
+		dismissedSuspendedTurns:    make(map[string]struct{}),
 		codexDrafts:                make(map[string]codexDraft),
 		codexClosedHandled:         make(map[string]struct{}),
 		pendingGitOperations:       make(map[string]pendingGitOperation),
@@ -1337,6 +1339,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuildProjectList(selectedPath)
 		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
 			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)
+		}
+		if !m.suspendedTurnChecked {
+			allProjects := append([]model.ProjectSummary(nil), msg.projects...)
+			allProjects = append(allProjects, msg.archivedProjects...)
+			m.openSuspendedTurnResumeDialog(buildSuspendedTurnResumeChoices(allProjects, suspendedTurnResumeChoiceLimit))
 		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
@@ -5581,6 +5588,9 @@ func (m Model) projectTurnLiveWindow() time.Duration {
 
 func (m Model) projectUnfinishedTurnLooksLive(project model.ProjectSummary, now time.Time) bool {
 	if !project.LatestTurnStateKnown || project.LatestTurnCompleted {
+		return false
+	}
+	if m.suspendedTurnDismissed(project) {
 		return false
 	}
 

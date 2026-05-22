@@ -755,6 +755,9 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	}
 
 	m.ensureCodexRuntime()
+	if strings.TrimSpace(req.ResumeID) != "" {
+		m.clearDismissedSuspendedTurn(req.ProjectPath, provider, req.ResumeID)
+	}
 	if options.forceNew {
 		m.beginNewCodexPendingOpenWithVisibilityAndReveal(p.Path, provider, options.reveal, options.reveal)
 	} else {

@@ -124,3 +124,81 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 		t.Fatalf("confirmed startup resumes should stay hidden, visible project = %q", got.codexVisibleProject)
 	}
 }
+
+func TestProjectsMsgOpensSuspendedTurnDialogBeforeStartupScan(t *testing.T) {
+	now := time.Date(2026, 5, 21, 12, 5, 0, 0, time.UTC)
+	project := model.ProjectSummary{
+		Path:                     "/tmp/roman",
+		Name:                     "roman",
+		PresentOnDisk:            true,
+		InScope:                  true,
+		LatestSessionSource:      model.SessionSourceLCAgent,
+		LatestSessionFormat:      "lcagent_jsonl",
+		LatestSessionID:          "lca_roman",
+		LatestSessionLastEventAt: now.Add(-2 * time.Minute),
+		LatestTurnStartedAt:      now.Add(-65 * time.Minute),
+		LatestTurnStateKnown:     true,
+		LatestTurnCompleted:      false,
+	}
+	m := Model{}
+
+	updated, _ := m.Update(projectsMsg{projects: []model.ProjectSummary{project}})
+	got := updated.(Model)
+	if got.startupScanCompleted {
+		t.Fatalf("startup scan should not be marked complete")
+	}
+	if !got.suspendedTurnChecked {
+		t.Fatalf("suspended turn check should be satisfied by cached project summaries")
+	}
+	if got.suspendedTurnDialog == nil || len(got.suspendedTurnDialog.Choices) != 1 {
+		t.Fatalf("suspended turn dialog = %#v, want one cached choice", got.suspendedTurnDialog)
+	}
+	if got.suspendedTurnDialog.Choices[0].SessionID != "lca_roman" {
+		t.Fatalf("dialog session = %q, want lca_roman", got.suspendedTurnDialog.Choices[0].SessionID)
+	}
+}
+
+func TestSuspendedTurnResumeDialogEscSuppressesPersistedTimer(t *testing.T) {
+	now := time.Date(2026, 5, 21, 12, 5, 0, 0, time.UTC)
+	choice := suspendedTurnResumeChoice{
+		ProjectPath: "/tmp/roman",
+		ProjectName: "roman",
+		Provider:    codexapp.ProviderLCAgent,
+		SessionID:   "lca_roman",
+	}
+	m := Model{
+		startupScanCompleted: true,
+		suspendedTurnDialog: &suspendedTurnResumeDialogState{
+			Choices:  []suspendedTurnResumeChoice{choice},
+			Selected: suspendedTurnResumeSelectionResume,
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("esc should not launch resume command")
+	}
+	got := updated.(Model)
+	if got.suspendedTurnDialog != nil {
+		t.Fatalf("dialog should close after esc")
+	}
+
+	project := model.ProjectSummary{
+		Path:                     choice.ProjectPath,
+		PresentOnDisk:            true,
+		LatestSessionSource:      model.SessionSourceLCAgent,
+		LatestSessionFormat:      "lcagent_jsonl",
+		LatestSessionID:          choice.SessionID,
+		LatestSessionLastEventAt: now.Add(-2 * time.Minute),
+		LatestTurnStartedAt:      now.Add(-65 * time.Minute),
+		LatestTurnStateKnown:     true,
+		LatestTurnCompleted:      false,
+	}
+	label, tag, live := got.projectAgentDisplay(project, now)
+	if live {
+		t.Fatalf("projectAgentDisplay() live = true, want false after skipped startup resume")
+	}
+	if label != "LA" || tag != "LA" {
+		t.Fatalf("projectAgentDisplay() label/tag = %q/%q, want LA/LA", label, tag)
+	}
+}

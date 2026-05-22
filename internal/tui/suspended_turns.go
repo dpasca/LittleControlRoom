@@ -69,15 +69,21 @@ func (m Model) applySuspendedTurnResumeChoicesMsg(msg suspendedTurnResumeChoices
 		m.appendBackgroundErrorLogEntry("Interrupted turn check failed", msg.err, "")
 		return m, nil
 	}
-	if len(msg.choices) == 0 {
-		return m, nil
+	m.openSuspendedTurnResumeDialog(msg.choices)
+	return m, nil
+}
+
+func (m *Model) openSuspendedTurnResumeDialog(choices []suspendedTurnResumeChoice) bool {
+	if len(choices) == 0 {
+		return false
 	}
+	m.suspendedTurnChecked = true
 	m.suspendedTurnDialog = &suspendedTurnResumeDialogState{
-		Choices:  append([]suspendedTurnResumeChoice(nil), msg.choices...),
+		Choices:  append([]suspendedTurnResumeChoice(nil), choices...),
 		Selected: suspendedTurnResumeSelectionResume,
 	}
-	m.status = fmt.Sprintf("Found %d interrupted %s from before reload", len(msg.choices), pluralize("turn", len(msg.choices)))
-	return m, nil
+	m.status = fmt.Sprintf("Found %d interrupted %s from before reload", len(choices), pluralize("turn", len(choices)))
+	return true
 }
 
 func buildSuspendedTurnResumeChoices(projects []model.ProjectSummary, limit int) []suspendedTurnResumeChoice {
@@ -147,6 +153,7 @@ func (m Model) updateSuspendedTurnResumeDialogMode(msg tea.KeyMsg) (tea.Model, t
 	}
 	switch msg.String() {
 	case "esc", "q":
+		m.dismissSuspendedTurnChoices(dialog.Choices)
 		m.suspendedTurnDialog = nil
 		m.status = "Skipped interrupted turn resume"
 		return m, nil
@@ -162,6 +169,7 @@ func (m Model) updateSuspendedTurnResumeDialogMode(msg tea.KeyMsg) (tea.Model, t
 		selected := dialog.Selected
 		m.suspendedTurnDialog = nil
 		if selected == suspendedTurnResumeSelectionSkip {
+			m.dismissSuspendedTurnChoices(choices)
 			m.status = "Skipped interrupted turn resume"
 			return m, nil
 		}
@@ -202,6 +210,57 @@ func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (
 	}
 	m.status = fmt.Sprintf("Resuming %d interrupted %s in the background...", resumed, pluralize("turn", resumed))
 	return m, tea.Batch(cmds...)
+}
+
+func (m *Model) dismissSuspendedTurnChoices(choices []suspendedTurnResumeChoice) {
+	if len(choices) == 0 {
+		return
+	}
+	if m.dismissedSuspendedTurns == nil {
+		m.dismissedSuspendedTurns = make(map[string]struct{})
+	}
+	for _, choice := range choices {
+		key := suspendedTurnDismissalKey(choice.ProjectPath, choice.Provider, choice.SessionID)
+		if key == "" {
+			continue
+		}
+		m.dismissedSuspendedTurns[key] = struct{}{}
+	}
+}
+
+func (m *Model) clearDismissedSuspendedTurn(projectPath string, provider codexapp.Provider, sessionID string) {
+	key := suspendedTurnDismissalKey(projectPath, provider, sessionID)
+	if key == "" || m.dismissedSuspendedTurns == nil {
+		return
+	}
+	delete(m.dismissedSuspendedTurns, key)
+}
+
+func (m Model) suspendedTurnDismissed(project model.ProjectSummary) bool {
+	key := suspendedTurnDismissalKeyForProject(project)
+	if key == "" || m.dismissedSuspendedTurns == nil {
+		return false
+	}
+	_, ok := m.dismissedSuspendedTurns[key]
+	return ok
+}
+
+func suspendedTurnDismissalKeyForProject(project model.ProjectSummary) string {
+	provider := providerForSessionFormat(project.LatestSessionFormat)
+	if provider == "" {
+		provider = codexProviderFromSessionSource(project.LatestSessionSource)
+	}
+	return suspendedTurnDismissalKey(project.Path, provider, project.ExternalLatestSessionID())
+}
+
+func suspendedTurnDismissalKey(projectPath string, provider codexapp.Provider, sessionID string) string {
+	projectPath = strings.TrimSpace(projectPath)
+	sessionID = strings.TrimSpace(sessionID)
+	provider = provider.Normalized()
+	if projectPath == "" || provider == "" || sessionID == "" {
+		return ""
+	}
+	return projectPath + "\x00" + string(provider) + "\x00" + sessionID
 }
 
 func (m Model) renderSuspendedTurnResumeDialogOverlay(body string, bodyW, bodyH int) string {
