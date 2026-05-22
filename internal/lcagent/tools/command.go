@@ -76,15 +76,16 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd, label, err := commandFromSpec(ctx, spec)
+	cmd, label, err := commandFromSpec(spec)
 	if err != nil {
 		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), CWD: cwd, Purpose: normalizeCommandPurpose(spec.Purpose)}
 	}
 	cmd.Dir = cwd
+	prepareCommandProcessGroup(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+	err = runCommandProcess(ctx, cmd)
 	duration := time.Since(start)
 	timedOut := ctx.Err() == context.DeadlineExceeded
 	exitCode := 0
@@ -149,19 +150,56 @@ func normalizeCommandPurpose(raw string) string {
 	}
 }
 
-func commandFromSpec(ctx context.Context, spec CommandSpec) (*exec.Cmd, string, error) {
+func commandFromSpec(spec CommandSpec) (*exec.Cmd, string, error) {
 	if len(spec.Argv) > 0 {
 		argv := cleanArgv(spec.Argv)
 		if len(argv) == 0 {
 			return nil, "", fmt.Errorf("argv is required")
 		}
-		return exec.CommandContext(ctx, argv[0], argv[1:]...), strings.Join(argv, " "), nil
+		return exec.Command(argv[0], argv[1:]...), strings.Join(argv, " "), nil
 	}
 	command := strings.TrimSpace(spec.Command)
 	if command == "" {
 		return nil, "", fmt.Errorf("command is required")
 	}
-	return exec.CommandContext(ctx, "/bin/sh", "-c", command), command, nil
+	return exec.Command("/bin/sh", "-c", command), command, nil
+}
+
+func runCommandProcess(ctx context.Context, cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		killCommandProcessGroup(cmd)
+		return <-done
+	}
+}
+
+func prepareCommandProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+}
+
+func killCommandProcessGroup(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pid := cmd.Process.Pid
+	if pid <= 0 {
+		return
+	}
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+		_ = cmd.Process.Kill()
+	}
 }
 
 func cleanArgv(argv []string) []string {

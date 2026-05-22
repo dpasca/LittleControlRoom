@@ -42,6 +42,21 @@ func TestCommandRunnerTimesOut(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerTimeoutKillsChildProcessHoldingOutputPipe(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.Run(context.Background(), `sleep 5 &`, 50*time.Millisecond)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("command returned after %s, want prompt timeout despite child process holding pipe; result=%#v", elapsed, result)
+	}
+	if result.Success || !result.TimedOut {
+		t.Fatalf("result = %#v, want timeout", result)
+	}
+}
+
 func TestCommandRunnerSupportsArgv(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyOff)
 	if err != nil {
