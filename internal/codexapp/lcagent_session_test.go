@@ -220,6 +220,24 @@ func TestLCAgentVerificationCheckTextIncludesCWD(t *testing.T) {
 	}
 }
 
+func TestLCAgentContinuationStatusOmitsOldSummaryBody(t *testing.T) {
+	event := map[string]json.RawMessage{
+		"parent_session_id":   json.RawMessage(`"lca_previous"`),
+		"chain_depth":         json.RawMessage(`2`),
+		"context_mode":        json.RawMessage(`"exact"`),
+		"exact_message_count": json.RawMessage(`34`),
+		"pending_status":      json.RawMessage(`"failed"`),
+		"parent_summary":      json.RawMessage(`"Next step: deploy the built out directory to Firebase Hosting."`),
+	}
+	got := lcagentContinuationText(event)
+	if !strings.Contains(got, "Continuing LCAgent from lca_previous") || !strings.Contains(got, "exact replay 34 messages") {
+		t.Fatalf("continuation text = %q", got)
+	}
+	if strings.Contains(got, "deploy the built out") {
+		t.Fatalf("continuation text should not include old summary body: %q", got)
+	}
+}
+
 func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
@@ -888,6 +906,41 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 		if !strings.Contains(loaded.TraceQualitySummary(), want) {
 			t.Fatalf("trace quality missing %q:\n%s", want, loaded.TraceQualitySummary())
 		}
+	}
+}
+
+func TestParseLCAgentTraceFileCorrectsLegacyVerificationStatus(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_legacy_trace_status"
+	started := time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano)},
+		{
+			"type":                "turn_complete",
+			"session_id":          sessionID,
+			"timestamp":           started.Add(time.Second).Format(time.RFC3339Nano),
+			"summary":             "old final summary claimed checks passed",
+			"files_changed":       []string{"frontend/src/pages/index.tsx"},
+			"verification":        []string{"pnpm run lint passed", "pnpm run build passed"},
+			"verification_status": "failed",
+			"actual_checks": []map[string]any{
+				{"command": "pnpm run lint", "status": "failed", "success": false},
+				{"command": "pnpm run build", "status": "failed", "success": false},
+				{"command": "cd " + filepath.Join(root, "frontend") + " && pwd && ls package.json && pnpm run lint", "status": "passed", "success": true},
+				{"command": "cd " + filepath.Join(root, "frontend") + " && pnpm run build", "status": "passed", "success": true},
+			},
+		},
+	})
+	trace, err := ParseLCAgentTraceFile(path)
+	if err != nil {
+		t.Fatalf("ParseLCAgentTraceFile() error = %v", err)
+	}
+	if trace.VerificationStatus != "verified" {
+		t.Fatalf("VerificationStatus = %q, want verified", trace.VerificationStatus)
+	}
+	if !trace.Verified() {
+		t.Fatalf("Verified() = false, want true")
 	}
 }
 

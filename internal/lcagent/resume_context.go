@@ -45,6 +45,13 @@ type resumeContext struct {
 	ExactChars         int
 }
 
+type resumeVerificationCheck struct {
+	Command string   `json:"command"`
+	Argv    []string `json:"argv"`
+	Status  string   `json:"status"`
+	Success bool     `json:"success"`
+}
+
 func loadResumeContext(dataDir, raw, workspaceRoot string) (*resumeContext, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -193,14 +200,18 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 			ctx.PatchSummaries = appendResumeText(ctx.PatchSummaries, resumeJSONString(event["summary"]))
 			ctx.FilesChanged = appendResumeList(ctx.FilesChanged, resumeJSONStringList(event["files"])...)
 		case "verification_summary":
-			ctx.VerificationStatus = resumeJSONString(event["status"])
-			ctx.Verification = appendResumeList(ctx.Verification, resumeJSONStringList(event["verification_checks"])...)
+			reportedVerification := resumeJSONStringList(event["verification_checks"])
+			status := resumeJSONString(event["status"])
+			ctx.Verification = appendResumeList(ctx.Verification, reportedVerification...)
 			ctx.FilesChanged = appendResumeList(ctx.FilesChanged, resumeJSONStringList(event["files_changed"])...)
+			ctx.VerificationStatus = resumeCorrectedVerificationStatus(status, reportedVerification, event["actual_checks"])
 		case "turn_complete":
 			ctx.FinalSummary = firstResumeNonEmpty(resumeJSONString(event["summary"]), ctx.FinalSummary)
-			ctx.VerificationStatus = firstResumeNonEmpty(resumeJSONString(event["verification_status"]), ctx.VerificationStatus)
-			ctx.Verification = appendResumeList(ctx.Verification, resumeJSONStringList(event["verification"])...)
+			reportedVerification := resumeJSONStringList(event["verification"])
+			status := firstResumeNonEmpty(resumeJSONString(event["verification_status"]), ctx.VerificationStatus)
+			ctx.Verification = appendResumeList(ctx.Verification, reportedVerification...)
 			ctx.FilesChanged = appendResumeList(ctx.FilesChanged, resumeJSONStringList(event["files_changed"])...)
+			ctx.VerificationStatus = resumeCorrectedVerificationStatus(status, reportedVerification, event["actual_checks"])
 			if ctx.HandoffSource != "final_handoff" {
 				ctx.HandoffSource = "turn_complete"
 			}
@@ -537,6 +548,140 @@ func resumeTimeString(t time.Time) string {
 		return ""
 	}
 	return t.Format(time.RFC3339Nano)
+}
+
+func resumeCorrectedVerificationStatus(status string, reported []string, rawActual json.RawMessage) string {
+	status = strings.TrimSpace(status)
+	var actual []resumeVerificationCheck
+	if err := json.Unmarshal(rawActual, &actual); err != nil || len(actual) == 0 {
+		return status
+	}
+	checks := resumeRelevantVerificationChecks(reported, actual)
+	if len(checks) == 0 {
+		return status
+	}
+	checks = resumeLatestVerificationOutcomes(checks)
+	for _, check := range checks {
+		if !resumeVerificationCheckPassed(check) {
+			return firstResumeNonEmpty(strings.TrimSpace(check.Status), status, "failed")
+		}
+	}
+	return "verified"
+}
+
+func resumeRelevantVerificationChecks(reported []string, actual []resumeVerificationCheck) []resumeVerificationCheck {
+	if len(reported) == 0 {
+		return actual
+	}
+	relevant := make([]resumeVerificationCheck, 0, len(reported))
+	seen := map[int]bool{}
+	for _, item := range reported {
+		index := resumeLatestReportedCheckIndex(item, actual)
+		if index < 0 || seen[index] {
+			continue
+		}
+		seen[index] = true
+		relevant = append(relevant, actual[index])
+	}
+	return relevant
+}
+
+func resumeLatestReportedCheckIndex(item string, actual []resumeVerificationCheck) int {
+	for index := len(actual) - 1; index >= 0; index-- {
+		if resumeReportMatchesCheck(item, actual[index]) {
+			return index
+		}
+	}
+	return -1
+}
+
+func resumeReportMatchesCheck(item string, check resumeVerificationCheck) bool {
+	item = strings.ToLower(strings.TrimSpace(item))
+	label := strings.ToLower(resumeNormalizedVerificationCommand(resumeVerificationCheckCommand(check)))
+	return item != "" && label != "" && strings.Contains(item, label)
+}
+
+func resumeLatestVerificationOutcomes(checks []resumeVerificationCheck) []resumeVerificationCheck {
+	out := make([]resumeVerificationCheck, 0, len(checks))
+	indexByLabel := map[string]int{}
+	for _, check := range checks {
+		label := resumeNormalizedVerificationCommand(resumeVerificationCheckCommand(check))
+		if label == "" {
+			label = "verification check"
+		}
+		if index, ok := indexByLabel[label]; ok {
+			out[index] = check
+			continue
+		}
+		indexByLabel[label] = len(out)
+		out = append(out, check)
+	}
+	return out
+}
+
+func resumeVerificationCheckPassed(check resumeVerificationCheck) bool {
+	status := strings.ToLower(strings.TrimSpace(check.Status))
+	return check.Success || status == "passed" || status == "verified"
+}
+
+func resumeVerificationCheckCommand(check resumeVerificationCheck) string {
+	if command := strings.TrimSpace(check.Command); command != "" {
+		return command
+	}
+	return strings.Join(cleanResumeStrings(check.Argv), " ")
+}
+
+func resumeNormalizedVerificationCommand(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	segments := strings.Split(command, "&&")
+	for index := len(segments) - 1; index >= 0; index-- {
+		segment := strings.TrimSpace(segments[index])
+		if segment == "" || resumeIsShellBookkeepingCommand(segment) || resumeShellLeadingCDCWD(segment) != "" {
+			continue
+		}
+		return segment
+	}
+	return command
+}
+
+func resumeIsShellBookkeepingCommand(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return true
+	}
+	switch fields[0] {
+	case "pwd":
+		return len(fields) == 1
+	case "ls":
+		return len(fields) == 1 || (len(fields) == 2 && fields[1] == "package.json")
+	default:
+		return false
+	}
+}
+
+func resumeShellLeadingCDCWD(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 2 || fields[0] != "cd" {
+		return ""
+	}
+	cwd := strings.Trim(fields[1], `"'`)
+	if cwd == "" || cwd == "-" {
+		return ""
+	}
+	return filepath.Clean(cwd)
+}
+
+func cleanResumeStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func sameCleanPath(left, right string) bool {

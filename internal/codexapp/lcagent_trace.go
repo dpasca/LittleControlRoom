@@ -194,11 +194,17 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			}
 		case "verification_summary":
 			status := rawJSONString(event["status"])
-			if status != "" {
-				trace.VerificationStatus = status
-			}
+			actualChecks := lcagentVerificationChecksFromRaw(event["actual_checks"])
 			if len(trace.ActualChecks) == 0 {
-				trace.ActualChecks = append(trace.ActualChecks, lcagentVerificationChecksFromRaw(event["actual_checks"])...)
+				trace.ActualChecks = append(trace.ActualChecks, actualChecks...)
+			}
+			if len(actualChecks) == 0 {
+				actualChecks = trace.ActualChecks
+			}
+			if corrected := correctedLCAgentVerificationStatus(status, rawJSONStringList(event["verification_checks"]), actualChecks); corrected != "" {
+				trace.VerificationStatus = corrected
+			} else if status != "" {
+				trace.VerificationStatus = status
 			}
 			if message := rawJSONString(event["message"]); message != "" {
 				trace.VerificationSummaries = append(trace.VerificationSummaries, message)
@@ -212,10 +218,15 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			trace.Summary = firstNonEmpty(rawJSONString(event["summary"]), trace.Summary)
 			trace.FilesChanged = rawJSONStringList(event["files_changed"])
 			trace.Verification = rawJSONStringList(event["verification"])
-			trace.VerificationStatus = firstNonEmpty(rawJSONString(event["verification_status"]), trace.VerificationStatus)
+			status := firstNonEmpty(rawJSONString(event["verification_status"]), trace.VerificationStatus)
+			actualChecks := lcagentVerificationChecksFromRaw(event["actual_checks"])
 			if len(trace.ActualChecks) == 0 {
-				trace.ActualChecks = append(trace.ActualChecks, lcagentVerificationChecksFromRaw(event["actual_checks"])...)
+				trace.ActualChecks = append(trace.ActualChecks, actualChecks...)
 			}
+			if len(actualChecks) == 0 {
+				actualChecks = trace.ActualChecks
+			}
+			trace.VerificationStatus = firstNonEmpty(correctedLCAgentVerificationStatus(status, trace.Verification, actualChecks), status)
 		case "turn_aborted":
 			trace.Aborted = true
 			reason := firstNonEmpty(rawJSONString(event["reason"]), "LCAgent run aborted")
@@ -545,6 +556,129 @@ func formatLCAgentVerificationCheck(check LCAgentVerificationCheck) string {
 	return strings.TrimSpace(text)
 }
 
+func correctedLCAgentVerificationStatus(status string, reported []string, actual []LCAgentVerificationCheck) string {
+	status = strings.TrimSpace(status)
+	if len(actual) == 0 {
+		return status
+	}
+	checks := relevantLCAgentVerificationChecks(reported, actual)
+	if len(checks) == 0 {
+		return status
+	}
+	checks = latestLCAgentVerificationOutcomes(checks)
+	for _, check := range checks {
+		if !lcagentVerificationCheckPassed(check) {
+			return firstNonEmpty(strings.TrimSpace(check.Status), status, "failed")
+		}
+	}
+	return "verified"
+}
+
+func relevantLCAgentVerificationChecks(reported []string, actual []LCAgentVerificationCheck) []LCAgentVerificationCheck {
+	if len(reported) == 0 {
+		return actual
+	}
+	relevant := make([]LCAgentVerificationCheck, 0, len(reported))
+	seen := map[int]bool{}
+	for _, item := range reported {
+		index := latestReportedLCAgentCheckIndex(item, actual)
+		if index < 0 || seen[index] {
+			continue
+		}
+		seen[index] = true
+		relevant = append(relevant, actual[index])
+	}
+	return relevant
+}
+
+func latestReportedLCAgentCheckIndex(item string, actual []LCAgentVerificationCheck) int {
+	for index := len(actual) - 1; index >= 0; index-- {
+		if lcagentVerificationReportMatchesCheck(item, actual[index]) {
+			return index
+		}
+	}
+	return -1
+}
+
+func lcagentVerificationReportMatchesCheck(item string, check LCAgentVerificationCheck) bool {
+	item = strings.ToLower(strings.TrimSpace(item))
+	label := strings.ToLower(normalizedLCAgentVerificationCommand(lcagentVerificationCheckCommand(check)))
+	return item != "" && label != "" && strings.Contains(item, label)
+}
+
+func latestLCAgentVerificationOutcomes(checks []LCAgentVerificationCheck) []LCAgentVerificationCheck {
+	out := make([]LCAgentVerificationCheck, 0, len(checks))
+	indexByLabel := map[string]int{}
+	for _, check := range checks {
+		label := normalizedLCAgentVerificationCommand(lcagentVerificationCheckCommand(check))
+		if label == "" {
+			label = "verification check"
+		}
+		if index, ok := indexByLabel[label]; ok {
+			out[index] = check
+			continue
+		}
+		indexByLabel[label] = len(out)
+		out = append(out, check)
+	}
+	return out
+}
+
+func lcagentVerificationCheckPassed(check LCAgentVerificationCheck) bool {
+	status := strings.ToLower(strings.TrimSpace(check.Status))
+	return check.Success || status == "passed" || status == "verified"
+}
+
+func lcagentVerificationCheckCommand(check LCAgentVerificationCheck) string {
+	if command := strings.TrimSpace(check.Command); command != "" {
+		return command
+	}
+	return strings.Join(cleanLCAgentStringList(check.Argv), " ")
+}
+
+func normalizedLCAgentVerificationCommand(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	segments := strings.Split(command, "&&")
+	for index := len(segments) - 1; index >= 0; index-- {
+		segment := strings.TrimSpace(segments[index])
+		if segment == "" || isLCAgentShellBookkeepingCommand(segment) || lcagentShellLeadingCDCWD(segment) != "" {
+			continue
+		}
+		return segment
+	}
+	return command
+}
+
+func isLCAgentShellBookkeepingCommand(command string) bool {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return true
+	}
+	switch fields[0] {
+	case "pwd":
+		return len(fields) == 1
+	case "ls":
+		return len(fields) == 1 || (len(fields) == 2 && fields[1] == "package.json")
+	default:
+		return false
+	}
+}
+
+func lcagentShellLeadingCDCWD(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) < 2 || fields[0] != "cd" {
+		return ""
+	}
+	cwd := strings.Trim(fields[1], `"'`)
+	if cwd == "" || cwd == "-" {
+		return ""
+	}
+	return cwd
+}
+
 func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
 	check := lcagentVerificationCheckFromEvent(event)
 	label := firstNonEmpty(check.Command, strings.Join(check.Argv, " "), "verification check")
@@ -565,7 +699,6 @@ func lcagentVerificationCheckText(event map[string]json.RawMessage) string {
 func lcagentResumeContextText(event map[string]json.RawMessage) string {
 	sourceID := firstNonEmpty(rawJSONString(event["source_session_id"]), rawJSONString(event["parent_session_id"]))
 	sourcePath := rawJSONString(event["source_path"])
-	summary := rawJSONString(event["summary"])
 	text := "Loaded summarized LCAgent context"
 	if rawJSONString(event["context_mode"]) == "exact" {
 		text = "Loaded exact LCAgent context"
@@ -592,16 +725,12 @@ func lcagentResumeContextText(event map[string]json.RawMessage) string {
 	if len(details) > 0 {
 		text += " [" + strings.Join(details, "; ") + "]"
 	}
-	if summary != "" {
-		text += ": " + summary
-	}
 	return text
 }
 
 func lcagentContinuationText(event map[string]json.RawMessage) string {
 	parentID := rawJSONString(event["parent_session_id"])
 	parentPath := rawJSONString(event["parent_path"])
-	summary := rawJSONString(event["parent_summary"])
 	text := "Continuing LCAgent"
 	if parentID != "" {
 		text += " from " + parentID
@@ -639,9 +768,6 @@ func lcagentContinuationText(event map[string]json.RawMessage) string {
 	}
 	if len(details) > 0 {
 		text += " [" + strings.Join(details, "; ") + "]"
-	}
-	if summary != "" {
-		text += ": " + summary
 	}
 	return text
 }
