@@ -1125,12 +1125,47 @@ func readOnlyCommandFields(fields []string) bool {
 	switch name {
 	case "pwd", "ls", "rg", "grep", "cat", "head", "tail", "wc", "jq":
 		return true
+	case "which":
+		return readOnlyWhichArgs(fields[1:])
+	case "node", "npm", "pnpm", "yarn", "bun", "corepack":
+		return readOnlyVersionArgs(fields[1:])
 	case "find":
 		return readOnlyFindArgs(fields[1:])
 	case "sed":
 		return readOnlySedArgs(fields[1:])
 	case "git":
 		return readOnlyGitArgs(fields[1:])
+	default:
+		return false
+	}
+}
+
+func readOnlyWhichArgs(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	sawName := false
+	for _, arg := range args {
+		switch arg {
+		case "-a", "--all":
+			continue
+		default:
+			if !safeExecutableProbeName(arg) {
+				return false
+			}
+			sawName = true
+		}
+	}
+	return sawName
+}
+
+func readOnlyVersionArgs(args []string) bool {
+	if len(args) != 1 {
+		return false
+	}
+	switch args[0] {
+	case "-v", "--version":
+		return true
 	default:
 		return false
 	}
@@ -1196,6 +1231,28 @@ func hasAnyArgPrefix(args []string, prefixes ...string) bool {
 		}
 	}
 	return false
+}
+
+func safeExecutableProbeName(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || filepath.IsAbs(value) || strings.ContainsAny(value, `/\`) {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			continue
+		case r >= 'A' && r <= 'Z':
+			continue
+		case r >= '0' && r <= '9':
+			continue
+		case r == '-' || r == '_' || r == '.':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func cleanArgv(argv []string) []string {

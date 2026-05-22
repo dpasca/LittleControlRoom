@@ -86,3 +86,27 @@ func TestRenderCodexTranscriptEntriesRendersOpenCodeStatusCard(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderCodexTranscriptEntriesRendersGenericLabelsInline(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptStatus, Text: "Installing dependencies is blocked at low autonomy."},
+			{Kind: codexapp.TranscriptError, Text: "Permission denied: corepack enable requires medium autonomy."},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 100))
+	for _, want := range []string{
+		"Status Installing dependencies is blocked at low autonomy.",
+		"Error Permission denied: corepack enable requires medium autonomy.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered generic label should include inline %q:\n%s", want, rendered)
+		}
+	}
+	for _, notWant := range []string{"Status\nInstalling", "Error\nPermission"} {
+		if strings.Contains(rendered, notWant) {
+			t.Fatalf("rendered generic label should not reserve a label line %q:\n%s", notWant, rendered)
+		}
+	}
+}

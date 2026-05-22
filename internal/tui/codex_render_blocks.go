@@ -40,15 +40,42 @@ func renderCodexMessageBlockWithStyle(label, body string, accent, bodyColor lipg
 		style = style.PaddingRight(1).Background(codexComposerShellColor)
 	}
 	contentWidth := max(10, width-2-paddingRight)
-	lines := []string{}
-	if strings.TrimSpace(label) != "" {
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render(label))
-	}
-	lines = append(lines, renderCodexBody(body, bodyColor, contentWidth))
+	lines := renderCodexMessageBlockLines(label, body, accent, bodyColor, contentWidth)
 	return style.Render(strings.Join(lines, "\n"))
 }
 
 var reasoningBackgroundColor = lipgloss.Color("235")
+
+func renderCodexMessageBlockLines(label, body string, accent, bodyColor lipgloss.Color, contentWidth int) []string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return []string{renderCodexBody(body, bodyColor, contentWidth)}
+	}
+	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	labelWidth := ansi.StringWidth(label) + 1
+	if labelWidth >= contentWidth-4 {
+		return []string{
+			labelStyle.Render(label),
+			renderCodexBody(body, bodyColor, contentWidth),
+		}
+	}
+
+	firstLine, rest, _ := strings.Cut(body, "\n")
+	firstWidth := max(4, contentWidth-labelWidth)
+	firstRendered := strings.Split(renderCodexBody(firstLine, bodyColor, firstWidth), "\n")
+	lines := make([]string, 0, len(firstRendered)+1)
+	for index, line := range firstRendered {
+		if index == 0 {
+			lines = append(lines, labelStyle.Render(label)+" "+line)
+			continue
+		}
+		lines = append(lines, strings.Repeat(" ", labelWidth)+line)
+	}
+	if strings.TrimSpace(rest) != "" {
+		lines = append(lines, renderCodexBody(rest, bodyColor, contentWidth))
+	}
+	return lines
+}
 
 func renderReasoningBlock(body string, width int) string {
 	contentWidth := max(10, width-4)

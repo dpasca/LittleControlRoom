@@ -26352,7 +26352,7 @@ func TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen(t *testing.T) {
 	if !strings.Contains(rendered, "Clean worktree") {
 		t.Fatalf("clean diff screen should explain the empty state: %q", rendered)
 	}
-	if !strings.Contains(rendered, "demo has no staged, unstaged, or untracked changes") {
+	if !strings.Contains(rendered, "demo has no staged, unstaged, or untracked") || !strings.Contains(rendered, "changes right now") {
 		t.Fatalf("clean diff screen should show the no-diff warning in the content pane: %q", rendered)
 	}
 	if strings.Contains(rendered, "Enter/Tab") || strings.Contains(rendered, "unified") {
