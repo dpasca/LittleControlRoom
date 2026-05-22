@@ -5303,6 +5303,47 @@ func TestProjectAgentDisplayUsesLiveActiveTurnTimer(t *testing.T) {
 	}
 }
 
+func TestProjectAgentDisplayUsesLiveLCAgentTimer(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:     codexapp.ProviderLCAgent,
+			Started:      true,
+			ActiveTurnID: "turn-live",
+			BusySince:    time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC),
+			ThreadID:     "lca-live",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderLCAgent,
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{codexManager: manager}
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		PresentOnDisk:       true,
+		LatestSessionFormat: "lcagent_jsonl",
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, time.Date(2026, 3, 9, 12, 0, 37, 0, time.UTC))
+	if !live {
+		t.Fatalf("projectAgentDisplay() live = false, want true")
+	}
+	if tag != "LA" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "LA")
+	}
+	if label != "LA 00:37" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "LA 00:37")
+	}
+}
+
 func TestRenderProjectListShowsWorkingAssessmentForLiveEmbeddedTurn(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -19341,6 +19382,33 @@ func TestSourceStyleDimsNonLiveOpenCodeBadge(t *testing.T) {
 	}
 	if nonLive == live {
 		t.Fatalf("non-live OpenCode badge should render differently from a live badge: non-live=%q live=%q", nonLive, live)
+	}
+}
+
+func TestSourceStyleRecognizesLCAgentBadge(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	nonLive := sourceStyle("lcagent_jsonl", false).Render("LA")
+	live := sourceStyle("lcagent_jsonl", true).Render("LA")
+
+	if sourceTag("lcagent_jsonl") != "LA" {
+		t.Fatalf("sourceTag(lcagent_jsonl) = %q, want LA", sourceTag("lcagent_jsonl"))
+	}
+	if sourceLabel("lcagent_jsonl") != "LCAgent" {
+		t.Fatalf("sourceLabel(lcagent_jsonl) = %q, want LCAgent", sourceLabel("lcagent_jsonl"))
+	}
+	if ansi.Strip(nonLive) != "LA" || ansi.Strip(live) != "LA" {
+		t.Fatalf("source badge text should stay visible: non-live=%q live=%q", ansi.Strip(nonLive), ansi.Strip(live))
+	}
+	if nonLive == live {
+		t.Fatalf("non-live LCAgent badge should render differently from a live badge: non-live=%q live=%q", nonLive, live)
 	}
 }
 

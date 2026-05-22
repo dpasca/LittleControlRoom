@@ -8318,6 +8318,12 @@ func sourceStyleForTag(tag string, live bool) lipgloss.Style {
 			style = style.Foreground(lipgloss.Color("137")).Faint(true)
 		}
 		return style
+	case "LA":
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color("120")).Bold(true)
+		if !live {
+			style = style.Foreground(lipgloss.Color("71")).Faint(true)
+		}
+		return style
 	default:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	}
@@ -8331,6 +8337,8 @@ func sourceTag(format string) string {
 		return "OC"
 	case "claude_code":
 		return "CC"
+	case "lcagent_jsonl":
+		return "LA"
 	default:
 		return "--"
 	}
@@ -8344,6 +8352,8 @@ func sourceLabel(format string) string {
 		return "OpenCode"
 	case "CC":
 		return "Claude Code"
+	case "LA":
+		return "LCAgent"
 	default:
 		return "None"
 	}
