@@ -20,6 +20,7 @@ import (
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
+	"lcroom/internal/fuzzyfilter"
 	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
@@ -6614,40 +6615,10 @@ func projectMatchesFilter(project model.ProjectSummary, projectFilter string) bo
 		return true
 	}
 
-	filterNeedle := strings.ToLower(projectFilter)
-	normalizedNeedle := normalizeProjectFilterToken(projectFilter)
-	candidates := []string{
+	return fuzzyfilter.Match(projectFilter,
 		project.Name,
 		filepath.Base(filepath.Clean(project.Path)),
-	}
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if strings.Contains(strings.ToLower(candidate), filterNeedle) {
-			return true
-		}
-		if normalizedNeedle != "" && strings.Contains(normalizeProjectFilterToken(candidate), normalizedNeedle) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeProjectFilterToken(value string) string {
-	var out strings.Builder
-	out.Grow(len(value))
-	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
-		if r >= 'a' && r <= 'z' {
-			out.WriteRune(r)
-			continue
-		}
-		if r >= '0' && r <= '9' {
-			out.WriteRune(r)
-		}
-	}
-	return out.String()
+	)
 }
 
 func (m Model) renderClassificationSummary() string {

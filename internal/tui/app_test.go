@@ -1441,6 +1441,11 @@ func TestFilterProjectsByTransientProjectFilter(t *testing.T) {
 	if len(filtered) != 1 || filtered[0].Path != "/tmp/helper-tools" {
 		t.Fatalf("filterProjects() with helper filter = %#v, want only /tmp/helper-tools", filtered)
 	}
+
+	filtered = filterProjects(projects, visibilityAllFolders, nil, "lcr")
+	if len(filtered) != 1 || filtered[0].Name != "LittleControlRoom" {
+		t.Fatalf("filterProjects() with fuzzy lcr filter = %#v, want only LittleControlRoom", filtered)
+	}
 }
 
 func TestRebuildProjectListResetsSelectionWhenHidden(t *testing.T) {
@@ -18955,7 +18960,7 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 		t.Fatalf("picker selected = %d, want latest image index 1", got.codexArtifactPicker.Selected)
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"Open Links", "GPT Image Mockup", "generated.png", "Enter/Alt+O", "open", "Esc", "close"} {
+	for _, want := range []string{"Open Links", "mockup.png", "generated.png", "Enter/Alt+O", "open", "Esc", "close"} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("artifact picker missing %q: %q", want, overlay)
 		}
@@ -19002,7 +19007,7 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 	}
 }
 
-func TestCodexArtifactPickerOrdersTargetsByLastChatAppearance(t *testing.T) {
+func TestCodexArtifactPickerKeepsTranscriptOrderAndRepetitions(t *testing.T) {
 	dir := t.TempDir()
 	alphaPath := filepath.Join(dir, "alpha.txt")
 	betaPath := filepath.Join(dir, "beta.txt")
@@ -19041,18 +19046,69 @@ func TestCodexArtifactPickerOrdersTargetsByLastChatAppearance(t *testing.T) {
 		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
 	}
 	got := normalizeUpdateModel(updated)
-	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 2 {
-		t.Fatalf("artifact picker targets = %#v, want two de-duplicated targets", got.codexArtifactPicker)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 3 {
+		t.Fatalf("artifact picker targets = %#v, want three transcript-order targets", got.codexArtifactPicker)
 	}
 	targets := got.codexArtifactPicker.Targets
-	if targets[0].Path != betaPath || targets[1].Path != alphaPath {
-		t.Fatalf("target order = [%q, %q], want beta then alpha by last appearance", targets[0].Path, targets[1].Path)
+	if targets[0].Path != alphaPath || targets[1].Path != betaPath || targets[2].Path != alphaPath {
+		t.Fatalf("target order = [%q, %q, %q], want alpha, beta, alpha by transcript appearance", targets[0].Path, targets[1].Path, targets[2].Path)
 	}
-	if targets[1].Label != "Alpha latest" {
-		t.Fatalf("latest duplicate label = %q, want latest label", targets[1].Label)
+	if targets[0].Label != "Alpha" || targets[2].Label != "Alpha latest" {
+		t.Fatalf("duplicate labels = [%q, %q], want original and latest labels", targets[0].Label, targets[2].Label)
 	}
-	if got.codexArtifactPicker.Selected != 1 {
+	if got.codexArtifactPicker.Selected != 2 {
 		t.Fatalf("picker selected = %d, want latest target selected", got.codexArtifactPicker.Selected)
+	}
+}
+
+func TestCodexArtifactPickerFiltersByFuzzyFileName(t *testing.T) {
+	dir := t.TempDir()
+	alphaPath := filepath.Join(dir, "AlphaComponent.tsx")
+	betaPath := filepath.Join(dir, "beta_notes.md")
+	for _, path := range []string{alphaPath, betaPath} {
+		if err := os.WriteFile(path, []byte("demo\n"), 0o600); err != nil {
+			t.Fatalf("write target: %v", err)
+		}
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: "/tmp/demo",
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "First [Alpha source](" + alphaPath + "). Then [Beta notes](" + betaPath + ").",
+			},
+		},
+	}
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the artifact picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	for _, r := range []rune("acx") {
+		updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		if cmd != nil {
+			t.Fatalf("typing filter should not queue a command, got %T", cmd)
+		}
+		got = normalizeUpdateModel(updated)
+	}
+	if got.codexArtifactPicker == nil || got.codexArtifactPicker.Filter != "acx" {
+		t.Fatalf("picker filter = %#v, want acx", got.codexArtifactPicker)
+	}
+	selected, ok := got.currentCodexArtifactTarget()
+	if !ok || selected.Path != alphaPath {
+		t.Fatalf("selected filtered target = %#v, want %q", selected, alphaPath)
+	}
+	overlay := ansi.Strip(got.renderCodexArtifactPicker(100, 24))
+	if !strings.Contains(overlay, "AlphaComponent.tsx") || strings.Contains(overlay, "beta_notes.md") {
+		t.Fatalf("filtered overlay = %q, want only AlphaComponent.tsx", overlay)
 	}
 }
 
@@ -19096,15 +19152,15 @@ func TestCodexArtifactPickerOpensContainingFolder(t *testing.T) {
 		t.Fatalf("Alt+O should show the artifact picker")
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"f", "folder"} {
+	for _, want := range []string{"Alt+F", "folder"} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("artifact picker missing containing-folder action %q: %q", want, overlay)
 		}
 	}
 
-	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
 	if cmd == nil {
-		t.Fatalf("f on selected artifact should queue a containing-folder open command")
+		t.Fatalf("Alt+F on selected artifact should queue a containing-folder open command")
 	}
 	rawMsg := cmd()
 	openMsg, ok := rawMsg.(browserOpenMsg)
@@ -19218,12 +19274,12 @@ func TestCodexArtifactPickerListsPDFMarkdownLinksWithoutPreview(t *testing.T) {
 		t.Fatalf("PDF artifact target = %#v, want kind pdf path %q", target, path)
 	}
 	overlay := ansi.Strip(got.renderCodexArtifactPicker(80, 24))
-	for _, want := range []string{"Open Links", "PDF", "brief (brief.pdf)", filepath.Base(path)} {
+	for _, want := range []string{"Open Links", "PDF", filepath.Base(path), "Path:"} {
 		if !strings.Contains(overlay, want) {
 			t.Fatalf("PDF artifact picker missing %q: %q", want, overlay)
 		}
 	}
-	if strings.Contains(overlay, "Preview") {
+	if strings.Contains(overlay, "│ Preview") {
 		t.Fatalf("PDF artifact picker should not render a preview section: %q", overlay)
 	}
 
