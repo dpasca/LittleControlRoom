@@ -122,7 +122,7 @@ The main TUI command palette opens with `/`.
 - `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Browser, and Advanced.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
 - `/new-project`: Create a project folder, or use path suggestions/paste an existing project path to add it directly.
-- `/new-task`: Create a scratch task folder under the default task root.
+- `/new-task [request]`: Create a scratch task folder under the default task root without stopping to name it. Optional request text seeds the temporary task name.
 - `/task-actions`: Open archive/delete actions for the selected scratch task.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.

@@ -275,7 +275,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/filter`
 - `/filter clear`
 - `/new-project`
-- `/new-task`
+- `/new-task [request]`
 - `/task-actions`
 - `/open`
 - `/run`

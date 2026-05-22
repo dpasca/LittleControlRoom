@@ -4497,6 +4497,15 @@ func (s *Store) SetProjectPresence(ctx context.Context, path string, presentOnDi
 	return err
 }
 
+func (s *Store) SetProjectName(ctx context.Context, path, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("project name is required")
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET name = ?, updated_at = ? WHERE path = ?`, name, time.Now().Unix(), path)
+	return err
+}
+
 func (s *Store) SetIgnoredProjectName(ctx context.Context, name string, ignored bool) error {
 	name = strings.TrimSpace(name)
 	if name == "" {

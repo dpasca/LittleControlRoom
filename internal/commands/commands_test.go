@@ -258,6 +258,21 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "new task with request",
+			raw:  "/new-task answer Sarah about API docs",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindNewTask {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNewTask)
+				}
+				if inv.Prompt != "answer Sarah about API docs" {
+					t.Fatalf("prompt = %q, want request text", inv.Prompt)
+				}
+				if inv.Canonical != "/new-task answer Sarah about API docs" {
+					t.Fatalf("canonical = %q, want request canonical", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "task actions",
 			raw:  "/task-actions",
 			check: func(t *testing.T, inv Invocation) {

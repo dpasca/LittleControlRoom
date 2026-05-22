@@ -996,12 +996,15 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if !revealOnOpen {
 			status = backgroundStatus
 		}
+		renamedTask, renameErr := m.maybeAutoRenameScratchTaskFromPrompt(req.ProjectPath, req.Prompt)
 		return codexSessionOpenedMsg{
 			projectPath:      req.ProjectPath,
 			snapshot:         snapshot,
 			status:           status,
 			visibleStatus:    visibleStatus,
 			backgroundStatus: backgroundStatus,
+			renamedTask:      renamedTask,
+			renameErr:        renameErr,
 			perfOpID:         perfOpID,
 			perfDuration:     time.Since(startedAt),
 		}
@@ -1125,11 +1128,12 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 		if err := session.SubmitInput(submission); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: err}
 		}
+		renamedTask, renameErr := m.maybeAutoRenameScratchTaskFromPrompt(projectPath, submission.TranscriptDisplayText())
 		status := "Prompt sent to " + label
 		if steer {
 			status = "Steer sent to " + label
 		}
-		return codexActionMsg{projectPath: projectPath, status: status}
+		return codexActionMsg{projectPath: projectPath, status: status, renamedTask: renamedTask, renameErr: renameErr}
 	})
 }
 

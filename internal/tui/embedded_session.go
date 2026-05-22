@@ -27,6 +27,8 @@ type codexSessionOpenedMsg struct {
 	status           string
 	visibleStatus    string
 	backgroundStatus string
+	renamedTask      bool
+	renameErr        error
 	agentTaskID      string
 	agentTaskTitle   string
 	agentTaskName    string
@@ -58,6 +60,8 @@ type codexActionMsg struct {
 	model        string
 	reasoning    string
 	awaitSettle  bool
+	renamedTask  bool
+	renameErr    error
 	err          error
 }
 
@@ -110,6 +114,7 @@ type codexResumeChoicesMsg struct {
 func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model, tea.Cmd) {
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 	m.err = nil
+	renameRefreshCmd := m.scratchTaskRenameRefreshCmd(msg.projectPath, msg.renamedTask, msg.renameErr)
 	if msg.err != nil {
 		provider := m.codexPendingOpenProvider()
 		m.finishCodexPendingOpen(msg.projectPath, codexapp.Snapshot{}, false, false)
@@ -172,13 +177,14 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.status = status
 	}
 	if focusInput {
-		return m, tea.Batch(seenCmd, todoWorkStartedCmd, m.codexInput.Focus())
+		return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd, m.codexInput.Focus())
 	}
-	return m, tea.Batch(seenCmd, todoWorkStartedCmd)
+	return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd)
 }
 
 func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 	m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
+	renameRefreshCmd := m.scratchTaskRenameRefreshCmd(msg.projectPath, msg.renamedTask, msg.renameErr)
 	if msg.err != nil {
 		m.reportError("Embedded session action failed", msg.err, msg.projectPath)
 		if msg.projectPath != "" && !msg.restoreDraft.Empty() {
@@ -221,7 +227,17 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 		refresh := invalidateProjectScan(m.visibleDetailPathForProject(msg.projectPath), false)
 		return m, m.markProjectSessionSeenWithRefresh(msg.projectPath, refresh)
 	}
-	return m, nil
+	return m, renameRefreshCmd
+}
+
+func (m *Model) scratchTaskRenameRefreshCmd(projectPath string, renamed bool, err error) tea.Cmd {
+	if err != nil {
+		m.appendErrorLogEntry("Scratch task auto-name failed", err, projectPath)
+	}
+	if !renamed {
+		return nil
+	}
+	return m.requestProjectInvalidationCmd(invalidateProjectStructure(m.visibleDetailPathForProject(projectPath)))
 }
 
 func (m Model) applyCodexModelListMsg(msg codexModelListMsg) (tea.Model, tea.Cmd) {
