@@ -15,13 +15,23 @@ import (
 
 const scratchTaskMetadataFileName = "TASK.md"
 const scratchTaskArchiveDirName = "archive"
+const defaultScratchTaskTitlePrefix = "New task"
+const scratchTaskRequestTitleLimit = 120
 
 type CreateScratchTaskRequest struct {
-	Title string
+	Title   string
+	Request string
 }
 
 type CreateScratchTaskResult struct {
 	TaskPath string
+	TaskName string
+}
+
+type RenameScratchTaskResult struct {
+	Renamed  bool
+	TaskPath string
+	OldName  string
 	TaskName string
 }
 
@@ -37,10 +47,8 @@ func BuildScratchTaskFolderName(title string, at time.Time) string {
 }
 
 func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRequest) (CreateScratchTaskResult, error) {
-	title := strings.TrimSpace(req.Title)
-	if title == "" {
-		return CreateScratchTaskResult{}, fmt.Errorf("task title is required")
-	}
+	now := time.Now()
+	title := initialScratchTaskTitle(req, now)
 	rootPath := strings.TrimSpace(s.cfg.ScratchRoot)
 	if rootPath == "" {
 		rootPath = config.Default().ScratchRoot
@@ -50,7 +58,6 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 		return CreateScratchTaskResult{}, fmt.Errorf("create scratch root: %w", err)
 	}
 
-	now := time.Now()
 	taskPath, err := nextScratchTaskPath(rootPath, title, now)
 	if err != nil {
 		return CreateScratchTaskResult{}, err
@@ -96,6 +103,110 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 		TaskPath: taskPath,
 		TaskName: title,
 	}, nil
+}
+
+func (s *Service) MaybeRenameScratchTaskFromPrompt(ctx context.Context, projectPath, prompt string) (RenameScratchTaskResult, error) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return RenameScratchTaskResult{}, nil
+	}
+	nextTitle := scratchTaskTitleFromRequest(prompt)
+	if nextTitle == "" {
+		return RenameScratchTaskResult{}, nil
+	}
+
+	summaries, err := s.store.GetProjectSummaryMap(ctx)
+	if err != nil {
+		return RenameScratchTaskResult{}, err
+	}
+	project := summaries[projectPath]
+	if project.Path == "" || model.NormalizeProjectKind(project.Kind) != model.ProjectKindScratchTask {
+		return RenameScratchTaskResult{}, nil
+	}
+	if !project.PresentOnDisk || project.Archived || project.Forgotten {
+		return RenameScratchTaskResult{}, nil
+	}
+	oldTitle := strings.TrimSpace(project.Name)
+	if !isTemporaryScratchTaskTitle(oldTitle) || oldTitle == nextTitle {
+		return RenameScratchTaskResult{}, nil
+	}
+
+	unlockProjectState := s.lockProjectStateMutation(project.Path)
+	defer unlockProjectState()
+	if err := s.store.SetProjectName(ctx, project.Path, nextTitle); err != nil {
+		return RenameScratchTaskResult{}, err
+	}
+	createdAt := firstNonZeroTime(project.CreatedAt, time.Now())
+	if err := os.WriteFile(filepath.Join(project.Path, scratchTaskMetadataFileName), []byte(renderScratchTaskMetadata(nextTitle, createdAt)), 0o644); err != nil {
+		return RenameScratchTaskResult{}, fmt.Errorf("write task metadata: %w", err)
+	}
+
+	now := time.Now()
+	if s.bus != nil {
+		s.bus.Publish(events.Event{
+			Type:        events.ActionApplied,
+			At:          now,
+			ProjectPath: project.Path,
+			Payload: map[string]string{
+				"action": "scratch_task_renamed",
+			},
+		})
+	}
+	_ = s.store.AddEvent(ctx, model.StoredEvent{
+		At:          now,
+		ProjectPath: project.Path,
+		Type:        string(events.ActionApplied),
+		Payload:     "scratch_task_renamed",
+	})
+
+	return RenameScratchTaskResult{
+		Renamed:  true,
+		TaskPath: project.Path,
+		OldName:  oldTitle,
+		TaskName: nextTitle,
+	}, nil
+}
+
+func initialScratchTaskTitle(req CreateScratchTaskRequest, now time.Time) string {
+	if title := strings.TrimSpace(req.Title); title != "" {
+		return title
+	}
+	if title := scratchTaskTitleFromRequest(req.Request); title != "" {
+		return title
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return fmt.Sprintf("%s %s", defaultScratchTaskTitlePrefix, now.Format("15:04:05"))
+}
+
+func isTemporaryScratchTaskTitle(title string) bool {
+	title = strings.TrimSpace(title)
+	prefix := defaultScratchTaskTitlePrefix + " "
+	if !strings.HasPrefix(title, prefix) {
+		return false
+	}
+	_, err := time.Parse("15:04:05", strings.TrimSpace(strings.TrimPrefix(title, prefix)))
+	return err == nil
+}
+
+func scratchTaskTitleFromRequest(request string) string {
+	title := strings.Join(strings.Fields(request), " ")
+	if title == "" {
+		return ""
+	}
+	return truncateRunes(title, scratchTaskRequestTitleLimit)
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 type discoveredScratchTask struct {

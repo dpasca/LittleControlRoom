@@ -144,7 +144,7 @@ var specs = []Spec{
 	{Name: "setup", Usage: "/setup", Summary: "Open the friendly AI setup concierge"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
-	{Name: "new-task", Usage: "/new-task", Summary: "Create a scratch task folder under the default task root"},
+	{Name: "new-task", Usage: "/new-task [request]", Summary: "Create a scratch task folder without stopping to name it"},
 	{Name: "task-actions", Usage: "/task-actions", Summary: "Open archive/delete actions for the selected scratch task"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
@@ -435,10 +435,11 @@ func Parse(input string) (Invocation, error) {
 		}
 		return Invocation{Kind: KindNewProject, Canonical: "/new-project"}, nil
 	case "new-task":
-		if rawArgs != "" {
-			return Invocation{}, fmt.Errorf("usage: /new-task")
-		}
-		return Invocation{Kind: KindNewTask, Canonical: "/new-task"}, nil
+		return Invocation{
+			Kind:      KindNewTask,
+			Prompt:    strings.TrimSpace(rawArgs),
+			Canonical: slashcmd.CanonicalCommand("new-task", rawArgs),
+		}, nil
 	case "task-actions":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /task-actions")

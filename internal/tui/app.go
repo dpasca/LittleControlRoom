@@ -116,8 +116,6 @@ type Model struct {
 	ignoredPickerSelected               int
 	ignoredPickerItems                  []model.IgnoredProject
 	newProjectDialog                    *newProjectDialogState
-	newTaskDialog                       *newTaskDialogState
-	newTaskRequestSeq                   int64
 	runCommandDialog                    *runCommandDialogState
 	skillsDialog                        *skillsDialogState
 	preferredSelectPath                 string
@@ -1228,9 +1226,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.attentionDialog != nil {
 			return m.updateAttentionDialogMode(msg)
-		}
-		if m.newTaskDialog != nil {
-			return m.updateNewTaskMode(msg)
 		}
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
@@ -3021,8 +3016,6 @@ func (m Model) View() string {
 		body = m.renderGitStatusDialogOverlay(body, layout.width, layout.height)
 	} else if m.commitPreview != nil {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
-	} else if m.newTaskDialog != nil {
-		body = m.renderNewTaskOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.runCommandDialog != nil {
@@ -4567,7 +4560,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindNewProject:
 		return m, m.openNewProjectDialog()
 	case commands.KindNewTask:
-		return m, m.openNewTaskDialog()
+		return m, m.startNewTaskCreation(inv.Prompt)
 	case commands.KindTaskActions:
 		return m, m.openScratchTaskActionConfirmForSelection()
 	case commands.KindOpen:
@@ -6769,13 +6762,6 @@ func (m Model) renderFooter(width int) string {
 		}
 		if m.newProjectDialog.Submitting {
 			label = "New project: applying..."
-		}
-		return m.renderModalFooter(width, label, supplementSegments...)
-	}
-	if m.newTaskDialog != nil {
-		label := "New task: Enter create, Esc cancel"
-		if m.newTaskDialog.Submitting {
-			label = "New task: applying... Esc close"
 		}
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}

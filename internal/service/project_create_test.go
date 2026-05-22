@@ -328,6 +328,140 @@ func TestCreateScratchTaskCreatesMetadataAndPersistsKind(t *testing.T) {
 	}
 }
 
+func TestCreateScratchTaskUsesRequestAsInitialName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{
+		Request: "answer Sarah about API docs",
+	})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	if result.TaskName != "answer Sarah about API docs" {
+		t.Fatalf("task name = %q, want request-derived name", result.TaskName)
+	}
+	if got := filepath.Base(result.TaskPath); !strings.Contains(got, "answer-sarah-about-api-docs") {
+		t.Fatalf("task folder = %q, want request slug", got)
+	}
+}
+
+func TestCreateScratchTaskUsesTemporaryNameWhenTitleAndRequestAreBlank(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	if !strings.HasPrefix(result.TaskName, defaultScratchTaskTitlePrefix+" ") {
+		t.Fatalf("task name = %q, want temporary name", result.TaskName)
+	}
+	metadataPath := filepath.Join(result.TaskPath, scratchTaskMetadataFileName)
+	content, err := os.ReadFile(metadataPath)
+	if err != nil {
+		t.Fatalf("read task metadata: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "# "+result.TaskName) || !strings.Contains(got, "Kind: scratch_task") {
+		t.Fatalf("TASK.md = %q, want temporary heading and scratch kind", got)
+	}
+}
+
+func TestMaybeRenameScratchTaskFromPromptRenamesTemporaryName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	renamed, err := svc.MaybeRenameScratchTaskFromPrompt(ctx, result.TaskPath, "Fix API docs login")
+	if err != nil {
+		t.Fatalf("MaybeRenameScratchTaskFromPrompt() error = %v", err)
+	}
+	if !renamed.Renamed || renamed.OldName != result.TaskName || renamed.TaskName != "Fix API docs login" {
+		t.Fatalf("rename result = %#v, want temporary name replaced", renamed)
+	}
+	detail, err := st.GetProjectDetail(ctx, result.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.Name != "Fix API docs login" {
+		t.Fatalf("stored name = %q, want prompt title", detail.Summary.Name)
+	}
+	content, err := os.ReadFile(filepath.Join(result.TaskPath, scratchTaskMetadataFileName))
+	if err != nil {
+		t.Fatalf("read task metadata: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "# Fix API docs login") {
+		t.Fatalf("TASK.md = %q, want renamed heading", got)
+	}
+}
+
+func TestMaybeRenameScratchTaskFromPromptKeepsExplicitName(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{Title: "Quick note"})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	renamed, err := svc.MaybeRenameScratchTaskFromPrompt(ctx, result.TaskPath, "Fix API docs login")
+	if err != nil {
+		t.Fatalf("MaybeRenameScratchTaskFromPrompt() error = %v", err)
+	}
+	if renamed.Renamed {
+		t.Fatalf("rename result = %#v, want explicit name preserved", renamed)
+	}
+	detail, err := st.GetProjectDetail(ctx, result.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.Name != "Quick note" {
+		t.Fatalf("stored name = %q, want explicit title", detail.Summary.Name)
+	}
+}
+
 func TestCreateScratchTaskCleansFolderWhenPersistenceFails(t *testing.T) {
 	t.Parallel()
 

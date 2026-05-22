@@ -1,66 +1,132 @@
 package tui
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"lcroom/internal/codexapp"
+	"lcroom/internal/commands"
+	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/service"
-
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"lcroom/internal/store"
 )
 
-func TestSubmittingNewTaskDialogEscClosesWhileCommandContinues(t *testing.T) {
-	input := textinput.New()
-	m := Model{
-		newTaskDialog: &newTaskDialogState{
-			TitleInput: input,
-			Submitting: true,
-			RequestID:  1,
-		},
+func TestDispatchNewTaskCommandCreatesScratchTaskWithoutDialog(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	m := New(ctx, svc)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{
+		Kind:   commands.KindNewTask,
+		Prompt: "answer Sarah about API docs",
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("/new-task should start creation immediately")
+	}
+	if got.status != "Creating scratch task..." {
+		t.Fatalf("status = %q, want creation status", got.status)
 	}
 
-	updated, cmd := m.updateNewTaskMode(tea.KeyMsg{Type: tea.KeyEsc})
-	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("Esc while submitting should not queue work")
+	rawMsg := cmd()
+	msg, ok := rawMsg.(newTaskResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want newTaskResultMsg", rawMsg)
 	}
-	if got.newTaskDialog != nil {
-		t.Fatalf("Esc while submitting should close the new task dialog")
+	if msg.err != nil {
+		t.Fatalf("create scratch task error: %v", msg.err)
 	}
-	if !strings.Contains(got.status, "running in the background") {
-		t.Fatalf("status = %q, want background creation notice", got.status)
+	if msg.result.TaskName != "answer Sarah about API docs" {
+		t.Fatalf("task name = %q, want request-derived name", msg.result.TaskName)
+	}
+
+	updated, _ = got.applyNewTaskResultMsg(msg)
+	got = updated.(Model)
+	if got.preferredSelectPath != msg.result.TaskPath {
+		t.Fatalf("preferredSelectPath = %q, want created task path %q", got.preferredSelectPath, msg.result.TaskPath)
+	}
+	if got.status != "Scratch task created and added to the list" {
+		t.Fatalf("status = %q, want created status", got.status)
 	}
 }
 
-func TestNewTaskResultDoesNotCloseNewerDialog(t *testing.T) {
-	input := textinput.New()
-	m := Model{
-		newTaskDialog: &newTaskDialogState{
-			TitleInput: input,
-			Submitting: true,
-			RequestID:  2,
-		},
+func TestVisibleScratchTaskPromptAutoRenamesTemporaryTask(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	created, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
 	}
 
-	updated, _ := m.applyNewTaskResultMsg(newTaskResultMsg{
-		requestID: 1,
-		result: service.CreateScratchTaskResult{
-			TaskPath: "/tmp/tasks/old",
-			TaskName: "old",
+	session := &fakeCodexSession{
+		projectPath: created.TaskPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
 		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
 	})
-	got := updated.(Model)
-	if got.newTaskDialog == nil {
-		t.Fatalf("stale new task result should not close the current dialog")
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: created.TaskPath}); err != nil {
+		t.Fatalf("Open() error = %v", err)
 	}
-	if !got.newTaskDialog.Submitting {
-		t.Fatalf("stale new task result should not alter the current dialog submit state")
+
+	m := New(ctx, svc)
+	m.codexManager = manager
+	m.codexVisibleProject = created.TaskPath
+	cmd := m.submitVisibleCodexCmd(codexDraft{Text: "Fix API docs login"})
+	if cmd == nil {
+		t.Fatalf("submitVisibleCodexCmd() returned nil")
 	}
-	if got.preferredSelectPath == "/tmp/tasks/old" {
-		t.Fatalf("stale new task result should not steal selection from the current dialog")
+	rawMsg := cmd()
+	msg, ok := rawMsg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want codexActionMsg", rawMsg)
 	}
-	if got.status != "Background scratch task created and added to the list" {
-		t.Fatalf("status = %q, want background completion notice", got.status)
+	if msg.err != nil {
+		t.Fatalf("codex action error = %v", msg.err)
+	}
+	if !msg.renamedTask {
+		t.Fatalf("renamedTask = false, want scratch task auto-rename")
+	}
+
+	detail, err := st.GetProjectDetail(ctx, created.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.Name != "Fix API docs login" {
+		t.Fatalf("stored name = %q, want prompt title", detail.Summary.Name)
+	}
+	content, err := os.ReadFile(filepath.Join(created.TaskPath, "TASK.md"))
+	if err != nil {
+		t.Fatalf("read TASK.md: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "# Fix API docs login") {
+		t.Fatalf("TASK.md = %q, want renamed heading", got)
 	}
 }
