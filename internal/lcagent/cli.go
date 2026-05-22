@@ -598,6 +598,9 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 		if !modelMessagesHaveSystem(messages) && strings.TrimSpace(systemPrompt) != "" {
 			messages = append([]modeladapter.Message{{Role: "system", Content: systemPrompt}}, messages...)
 		}
+		if resumeContext.ExactFromAncestor {
+			messages = appendSystemContextToModelMessages(messages, resumeContext.systemPromptSection())
+		}
 		observeReadLedgerMessages(readLedger, messages)
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{
@@ -827,6 +830,9 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 				return err
 			}
 			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
+		}
+		if err := writeModelContextSnapshot(writer, runner.SessionID, "tool_result", messages); err != nil {
+			return err
 		}
 	}
 	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)

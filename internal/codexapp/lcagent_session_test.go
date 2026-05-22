@@ -587,6 +587,79 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	}
 }
 
+func TestLCAgentSessionReplayStitchesAncestorHistory(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	started := time.Date(2026, 5, 22, 19, 0, 0, 0, time.UTC)
+	writeLCAgentReplayArtifact(t, dataDir, started, "lca_parent", []map[string]any{
+		{
+			"type":       "session_meta",
+			"id":         "lca_parent",
+			"cwd":        root,
+			"started_at": started.Format(time.RFC3339Nano),
+		},
+		{
+			"type":       "user_message",
+			"session_id": "lca_parent",
+			"timestamp":  started.Add(time.Second).Format(time.RFC3339Nano),
+			"message":    "launch the site locally",
+		},
+		{
+			"type":       "assistant_message",
+			"session_id": "lca_parent",
+			"timestamp":  started.Add(2 * time.Second).Format(time.RFC3339Nano),
+			"message":    "The dev server is running at http://localhost:3001.",
+		},
+		{
+			"type":                "turn_complete",
+			"session_id":          "lca_parent",
+			"timestamp":           started.Add(3 * time.Second).Format(time.RFC3339Nano),
+			"summary":             "The dev server is running at http://localhost:3001.",
+			"verification_status": "not_run",
+		},
+	})
+	writeLCAgentReplayArtifact(t, dataDir, started.Add(4*time.Second), "lca_child", []map[string]any{
+		{
+			"type":              "session_meta",
+			"id":                "lca_child",
+			"parent_session_id": "lca_parent",
+			"cwd":               root,
+			"started_at":        started.Add(4 * time.Second).Format(time.RFC3339Nano),
+		},
+		{
+			"type":              "continuation",
+			"session_id":        "lca_child",
+			"parent_session_id": "lca_parent",
+			"timestamp":         started.Add(5 * time.Second).Format(time.RFC3339Nano),
+		},
+		{
+			"type":       "user_message",
+			"session_id": "lca_child",
+			"timestamp":  started.Add(6 * time.Second).Format(time.RFC3339Nano),
+			"message":    "again please",
+		},
+	})
+
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: root,
+		AppDataDir:  dataDir,
+		ResumeID:    "lca_child",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.ThreadID != "lca_child" {
+		t.Fatalf("ThreadID = %q, want child session", snapshot.ThreadID)
+	}
+	for _, want := range []string{"launch the site locally", "http://localhost:3001", "again please"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("stitched transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+}
+
 func TestLCAgentSessionListModelsReturnsCuratedCodingRoutes(t *testing.T) {
 	session, err := newLCAgentSession(LaunchRequest{
 		Provider:        ProviderLCAgent,

@@ -15,8 +15,11 @@ import (
 	lcrmodel "lcroom/internal/model"
 )
 
+const lcagentReplayMaxDepth = 20
+
 type lcagentReplay struct {
 	sessionID      string
+	parentID       string
 	projectPath    string
 	model          string
 	modelProvider  string
@@ -66,7 +69,86 @@ func loadLCAgentReplay(req LaunchRequest) (*lcagentReplay, error) {
 	if projectPath != "" && replay.projectPath != "" && !sameCleanPath(projectPath, replay.projectPath) {
 		return nil, fmt.Errorf("LCAgent session %s belongs to %s, not %s", firstNonEmpty(replay.sessionID, sessionID), replay.projectPath, projectPath)
 	}
+	replay = loadLCAgentReplayChain(dataDir, replay, projectPath)
 	return replay, nil
+}
+
+func loadLCAgentReplayChain(dataDir string, replay *lcagentReplay, projectPath string) *lcagentReplay {
+	if replay == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	if replay.sessionID != "" {
+		seen[replay.sessionID] = struct{}{}
+	}
+	parents := make([]*lcagentReplay, 0)
+	parentID := strings.TrimSpace(replay.parentID)
+	for depth := 0; parentID != "" && depth < lcagentReplayMaxDepth; depth++ {
+		if _, ok := seen[parentID]; ok {
+			break
+		}
+		seen[parentID] = struct{}{}
+		path, err := findLCAgentSessionFile(dataDir, parentID)
+		if err != nil || path == "" {
+			break
+		}
+		parent, err := parseLCAgentReplayFile(path)
+		if err != nil || parent == nil {
+			break
+		}
+		if projectPath != "" && parent.projectPath != "" && !sameCleanPath(projectPath, parent.projectPath) {
+			break
+		}
+		parents = append(parents, parent)
+		parentID = strings.TrimSpace(parent.parentID)
+	}
+	if len(parents) == 0 {
+		return replay
+	}
+	combined := *replay
+	combined.entries = nil
+	combined.tokenUsage = nil
+	for i := len(parents) - 1; i >= 0; i-- {
+		combined.entries = appendReplayEntries(combined.entries, parents[i].entries)
+		combined.tokenUsage = mergeReplayTokenUsage(combined.tokenUsage, parents[i].tokenUsage)
+	}
+	combined.entries = appendReplayEntries(combined.entries, replay.entries)
+	combined.tokenUsage = mergeReplayTokenUsage(combined.tokenUsage, replay.tokenUsage)
+	return &combined
+}
+
+func appendReplayEntries(out []TranscriptEntry, entries []TranscriptEntry) []TranscriptEntry {
+	for _, entry := range entries {
+		text := strings.TrimSpace(entry.Text)
+		if text == "" {
+			continue
+		}
+		entry.Text = text
+		entry.ItemID = fmt.Sprintf("lcagent-replay-%d", len(out)+1)
+		out = append(out, entry)
+	}
+	return out
+}
+
+func mergeReplayTokenUsage(total, next *threadTokenUsage) *threadTokenUsage {
+	if next == nil {
+		return total
+	}
+	out := cloneThreadTokenUsage(total)
+	if out == nil {
+		out = &threadTokenUsage{}
+	}
+	out.Last = next.Last
+	out.Total.CachedInputTokens += next.Total.CachedInputTokens
+	out.Total.InputTokens += next.Total.InputTokens
+	out.Total.OutputTokens += next.Total.OutputTokens
+	out.Total.ReasoningOutputTokens += next.Total.ReasoningOutputTokens
+	out.Total.TotalTokens += next.Total.TotalTokens
+	if next.ModelContextWindow != nil {
+		copied := *next.ModelContextWindow
+		out.ModelContextWindow = &copied
+	}
+	return out
 }
 
 func findLCAgentSessionFile(dataDir, sessionID string) (string, error) {
@@ -168,6 +250,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 		switch eventType {
 		case "session_meta":
 			replay.sessionID = rawJSONString(event["id"])
+			replay.parentID = firstNonEmpty(rawJSONString(event["parent_session_id"]), replay.parentID)
 			replay.projectPath = rawJSONString(event["cwd"])
 			replay.startedAt = rawJSONTime(event["started_at"])
 			replay.model = rawJSONString(event["model"])
@@ -217,6 +300,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			}
 			replay.appendEntry(TranscriptStatus, message)
 		case "continuation":
+			replay.parentID = firstNonEmpty(rawJSONString(event["parent_session_id"]), replay.parentID)
 			replay.appendEntry(TranscriptStatus, lcagentContinuationText(event))
 		case "resume_context":
 			replay.appendEntry(TranscriptStatus, lcagentResumeContextText(event))

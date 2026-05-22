@@ -65,6 +65,26 @@ func appendAssistantContentForContextSnapshot(messages []modeladapter.Message, c
 	return out
 }
 
+func appendSystemContextToModelMessages(messages []modeladapter.Message, context string) []modeladapter.Message {
+	context = strings.TrimSpace(context)
+	out := cloneModelMessages(messages)
+	if context == "" {
+		return out
+	}
+	for i := range out {
+		if out[i].Role != "system" {
+			continue
+		}
+		if strings.TrimSpace(out[i].Content) == "" {
+			out[i].Content = context
+		} else {
+			out[i].Content = strings.TrimSpace(out[i].Content) + "\n\n" + context
+		}
+		return out
+	}
+	return append([]modeladapter.Message{{Role: "system", Content: context}}, out...)
+}
+
 func modelMessagesHaveSystem(messages []modeladapter.Message) bool {
 	for _, msg := range messages {
 		if msg.Role == "system" && strings.TrimSpace(msg.Content) != "" {

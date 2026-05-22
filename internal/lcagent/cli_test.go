@@ -169,10 +169,11 @@ func TestRunExecOpenRouterRetriesTransientProviderFailure(t *testing.T) {
 	t.Setenv("OPENROUTER_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
+	dataDir := t.TempDir()
 	code := Run([]string{
 		"exec",
 		"--cwd", root,
-		"--data-dir", t.TempDir(),
+		"--data-dir", dataDir,
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
@@ -236,10 +237,11 @@ func TestRunExecOpenRouterRetriesEmptyProviderCompletion(t *testing.T) {
 	t.Setenv("OPENROUTER_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
+	dataDir := t.TempDir()
 	code := Run([]string{
 		"exec",
 		"--cwd", root,
-		"--data-dir", t.TempDir(),
+		"--data-dir", dataDir,
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
@@ -1269,10 +1271,11 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 	t.Setenv("OPENROUTER_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
+	dataDir := t.TempDir()
 	code := Run([]string{
 		"exec",
 		"--cwd", root,
-		"--data-dir", t.TempDir(),
+		"--data-dir", dataDir,
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
@@ -1295,6 +1298,18 @@ func TestRunExecOpenRouterCanUseReadOnlyTool(t *testing.T) {
 	}
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
+	}
+	sessionID := lcagentCLITestSessionIDFromStream(t, text)
+	path, err := resolveResumeContextPath(dataDir, sessionID)
+	if err != nil {
+		t.Fatalf("resolve session artifact: %v", err)
+	}
+	artifact, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read session artifact: %v", err)
+	}
+	if !strings.Contains(string(artifact), `"source":"tool_result"`) {
+		t.Fatalf("artifact missing tool-result context snapshot:\n%s", string(artifact))
 	}
 }
 

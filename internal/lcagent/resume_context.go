@@ -19,10 +19,12 @@ import (
 const (
 	resumeContextMaxText  = 1200
 	resumeContextMaxItems = 12
+	resumeContextMaxDepth = 20
 )
 
 type resumeContext struct {
 	SourceSessionID    string
+	ParentSessionID    string
 	SourcePath         string
 	ProjectPath        string
 	RootSessionID      string
@@ -39,10 +41,12 @@ type resumeContext struct {
 	PatchSummaries     []string
 	PermissionDenials  []string
 	LastError          string
+	InheritedSummaries []string
 	ExactMessages      []modeladapter.Message
 	ExactSource        string
 	ExactMessageCount  int
 	ExactChars         int
+	ExactFromAncestor  bool
 }
 
 type resumeVerificationCheck struct {
@@ -72,6 +76,7 @@ func loadResumeContext(dataDir, raw, workspaceRoot string) (*resumeContext, erro
 	if ctx.SourceSessionID == "" && !looksLikePath(raw) {
 		ctx.SourceSessionID = raw
 	}
+	hydrateResumeContextFromAncestors(dataDir, ctx, workspaceRoot)
 	if workspaceRoot != "" && ctx.ProjectPath != "" && !sameCleanPath(workspaceRoot, ctx.ProjectPath) {
 		return nil, fmt.Errorf("LCAgent resume session %s belongs to %s, not %s", firstResumeNonEmpty(ctx.SourceSessionID, raw), ctx.ProjectPath, workspaceRoot)
 	}
@@ -171,6 +176,7 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 		switch eventType {
 		case "session_meta":
 			ctx.SourceSessionID = resumeJSONString(event["id"])
+			ctx.ParentSessionID = firstResumeNonEmpty(resumeJSONString(event["parent_session_id"]), ctx.ParentSessionID)
 			ctx.ProjectPath = resumeJSONString(event["cwd"])
 			ctx.StartedAt = resumeJSONTime(event["started_at"])
 			ctx.RootSessionID = firstResumeNonEmpty(resumeJSONString(event["root_session_id"]), resumeJSONString(event["parent_session_id"]), ctx.RootSessionID)
@@ -181,10 +187,15 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 				ctx.LastActivityAt = ctx.StartedAt
 			}
 		case "continuation":
+			ctx.ParentSessionID = firstResumeNonEmpty(resumeJSONString(event["parent_session_id"]), ctx.ParentSessionID)
 			ctx.RootSessionID = firstResumeNonEmpty(resumeJSONString(event["root_session_id"]), resumeJSONString(event["parent_session_id"]), ctx.RootSessionID)
 			if depth := resumeJSONInt(event["chain_depth"]); depth > ctx.ChainDepth {
 				ctx.ChainDepth = depth
 			}
+			ctx.InheritedSummaries = appendResumeText(ctx.InheritedSummaries, resumeJSONString(event["parent_summary"]))
+		case "resume_context":
+			ctx.ParentSessionID = firstResumeNonEmpty(resumeJSONString(event["parent_session_id"]), resumeJSONString(event["source_session_id"]), ctx.ParentSessionID)
+			ctx.InheritedSummaries = appendResumeText(ctx.InheritedSummaries, resumeJSONString(event["summary"]))
 		case "user_message":
 			ctx.UserMessages = appendResumeText(ctx.UserMessages, resumeJSONString(event["message"]))
 		case "assistant_message":
@@ -243,6 +254,51 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 		}
 	}
 	return ctx, nil
+}
+
+func hydrateResumeContextFromAncestors(dataDir string, ctx *resumeContext, workspaceRoot string) {
+	if ctx == nil {
+		return
+	}
+	seen := map[string]struct{}{}
+	if ctx.SourceSessionID != "" {
+		seen[ctx.SourceSessionID] = struct{}{}
+	}
+	parentID := strings.TrimSpace(ctx.ParentSessionID)
+	for depth := 0; parentID != "" && depth < resumeContextMaxDepth; depth++ {
+		if _, ok := seen[parentID]; ok {
+			return
+		}
+		seen[parentID] = struct{}{}
+		path, err := resolveResumeContextPath(dataDir, parentID)
+		if err != nil || path == "" {
+			return
+		}
+		parent, err := parseResumeContextFile(path)
+		if err != nil || parent == nil {
+			return
+		}
+		if workspaceRoot != "" && parent.ProjectPath != "" && !sameCleanPath(workspaceRoot, parent.ProjectPath) {
+			return
+		}
+		if len(parent.InheritedSummaries) > 0 {
+			ctx.InheritedSummaries = appendResumeList(parent.InheritedSummaries, ctx.InheritedSummaries...)
+		}
+		if parent.FinalSummary != "" {
+			ctx.InheritedSummaries = appendResumeText(ctx.InheritedSummaries, parent.FinalSummary)
+		}
+		if !ctx.hasExactMessages() && parent.hasExactMessages() {
+			ctx.ExactMessages = parent.exactMessages()
+			ctx.ExactSource = firstResumeNonEmpty(parent.SourceSessionID, parentID) + ":" + firstResumeNonEmpty(parent.ExactSource, modelContextSnapshotType)
+			ctx.ExactMessageCount = parent.ExactMessageCount
+			ctx.ExactChars = parent.ExactChars
+			ctx.ExactFromAncestor = true
+		}
+		if ctx.hasExactMessages() && len(ctx.InheritedSummaries) > 0 {
+			return
+		}
+		parentID = strings.TrimSpace(parent.ParentSessionID)
+	}
 }
 
 func (c *resumeContext) event(currentSessionID, reason string) session.Event {
@@ -380,6 +436,7 @@ func (c *resumeContext) systemPromptSection() string {
 	if c.HandoffSource != "" {
 		fmt.Fprintf(&b, "- Handoff source: %s\n", c.HandoffSource)
 	}
+	appendResumePromptList(&b, "Inherited continuation context", lastResumeItems(c.InheritedSummaries, 3))
 	appendResumePromptList(&b, "Previous user request(s)", lastResumeItems(c.UserMessages, 3))
 	if c.FinalSummary != "" {
 		fmt.Fprintf(&b, "- Last final summary: %s\n", trimResumeText(c.FinalSummary))
@@ -417,6 +474,8 @@ func (c *resumeContext) summaryText() string {
 		parts = append(parts, "summary: "+trimResumeText(c.FinalSummary))
 	} else if len(c.AssistantMessages) > 0 {
 		parts = append(parts, "assistant: "+trimResumeText(c.AssistantMessages[len(c.AssistantMessages)-1]))
+	} else if len(c.InheritedSummaries) > 0 {
+		parts = append(parts, "context: "+trimResumeText(c.InheritedSummaries[len(c.InheritedSummaries)-1]))
 	}
 	if len(c.FilesChanged) > 0 {
 		parts = append(parts, fmt.Sprintf("%d file(s) changed/touched", len(c.FilesChanged)))
