@@ -1766,7 +1766,7 @@ func TestChatPanelKeepsStyledTranscriptAndInputVisible(t *testing.T) {
 	}
 }
 
-func TestChatInputExpandsAndMarksMultilineDrafts(t *testing.T) {
+func TestChatInputExpandsForMultilineDraftsWithoutSeparator(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -1788,15 +1788,15 @@ func TestChatInputExpandsAndMarksMultilineDrafts(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderChat(layout))
-	if !strings.Contains(rendered, "4 lines") {
-		t.Fatalf("multiline input should show a compact line count:\n%s", rendered)
+	if strings.Contains(rendered, "----") || strings.Contains(rendered, "4 lines") {
+		t.Fatalf("multiline input should not render the old separator chrome:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "| line 2") {
 		t.Fatalf("continuation prompt should make additional lines visible:\n%s", rendered)
 	}
 }
 
-func TestChatInputCapsGrowthAndSignalsHiddenLines(t *testing.T) {
+func TestChatInputCapsGrowthWithoutSeparator(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
@@ -1820,8 +1820,8 @@ func TestChatInputCapsGrowthAndSignalsHiddenLines(t *testing.T) {
 		t.Fatalf("input editor height = %d, want <= %d", layout.inputEditorHeight, bossInputMaxEditorHeight)
 	}
 	rendered := ansi.Strip(m.renderChat(layout))
-	if !strings.Contains(rendered, "8 lines +") {
-		t.Fatalf("overflowing multiline input should mark that more lines exist:\n%s", rendered)
+	if strings.Contains(rendered, "----") || strings.Contains(rendered, "8 lines +") {
+		t.Fatalf("overflowing multiline input should not render the old separator chrome:\n%s", rendered)
 	}
 }
 
@@ -2263,6 +2263,11 @@ func TestModelTranscriptKeepsChatBackgroundFlat(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(rendered), "You>") || !strings.Contains(ansi.Strip(rendered), "Boss>") {
 		t.Fatalf("transcript lost speaker labels:\n%s", ansi.Strip(rendered))
+	}
+	for i, line := range strings.Split(ansi.Strip(rendered), "\n") {
+		if strings.TrimSpace(line) == "" {
+			t.Fatalf("transcript should not insert blank lines between entries; blank line at %d:\n%s", i, ansi.Strip(rendered))
+		}
 	}
 }
 

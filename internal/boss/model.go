@@ -1131,7 +1131,7 @@ func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint boo
 
 const (
 	bossInputPromptWidth     = 2
-	bossInputChromeHeight    = 1
+	bossInputChromeHeight    = 0
 	bossInputMinEditorHeight = 2
 	bossInputMaxEditorHeight = 6
 )
@@ -1620,7 +1620,7 @@ func (m Model) renderTranscript(width int) string {
 			blocks = append(blocks, pending)
 		}
 	}
-	return strings.Join(blocks, "\n\n")
+	return strings.Join(blocks, "\n")
 }
 
 func (m Model) chatProjectHighlights() []bossProjectTextHighlight {
@@ -1806,7 +1806,6 @@ var (
 	bossUserPrefixStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossUserMessageBackground).Bold(true)
 	bossUserContinuationPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossUserMessageBackground)
 	bossInputShellStyle             = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText)
-	bossInputSeparatorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossInputBackground)
 )
 
 func bossPanelInnerWidth(width int) int {
@@ -1842,26 +1841,8 @@ func renderBossInput(input textarea.Model, width int) string {
 	return renderBossInputBlock(input, input.View(), width)
 }
 
-func renderBossInputBlock(input textarea.Model, editorView string, width int) string {
-	editor := bossInputShellStyle.Width(width).Render(editorView)
-	separator := renderBossInputSeparator(input, width)
-	return lipgloss.JoinVertical(lipgloss.Left, separator, editor)
-}
-
-func renderBossInputSeparator(input textarea.Model, width int) string {
-	line := strings.Repeat("-", maxInt(0, width))
-	visualRows := bossInputVisualRows(input.Value(), width)
-	if visualRows > 1 && width >= 16 {
-		label := fmt.Sprintf(" %d lines ", visualRows)
-		if visualRows > input.Height() {
-			label = fmt.Sprintf(" %d lines + ", visualRows)
-		}
-		if len(label) < width {
-			start := maxInt(1, width-len(label))
-			line = line[:start] + label
-		}
-	}
-	return bossInputSeparatorStyle.Width(width).Render(fitLine(line, width))
+func renderBossInputBlock(_ textarea.Model, editorView string, width int) string {
+	return bossInputShellStyle.Width(width).Render(editorView)
 }
 
 func panelHeightForRawLines(contentLines int) int {
