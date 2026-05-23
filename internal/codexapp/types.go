@@ -441,6 +441,7 @@ type ThreadGoalStatus string
 const (
 	ThreadGoalStatusActive        ThreadGoalStatus = "active"
 	ThreadGoalStatusPaused        ThreadGoalStatus = "paused"
+	ThreadGoalStatusBlocked       ThreadGoalStatus = "blocked"
 	ThreadGoalStatusBudgetLimited ThreadGoalStatus = "budgetLimited"
 	ThreadGoalStatusComplete      ThreadGoalStatus = "complete"
 )

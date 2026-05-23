@@ -2783,6 +2783,8 @@ func codexGoalStatusLabel(status codexapp.ThreadGoalStatus) string {
 		return "active"
 	case codexapp.ThreadGoalStatusPaused:
 		return "paused"
+	case codexapp.ThreadGoalStatusBlocked:
+		return "blocked"
 	case codexapp.ThreadGoalStatusBudgetLimited:
 		return "budget-limited"
 	case codexapp.ThreadGoalStatusComplete:

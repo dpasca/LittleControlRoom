@@ -17498,6 +17498,11 @@ func TestCodexSnapshotGoalLabelShowsGoalStates(t *testing.T) {
 			want: "budget-limited 101/100 tok",
 		},
 		{
+			name: "blocked",
+			goal: &codexapp.ThreadGoal{Status: codexapp.ThreadGoalStatusBlocked},
+			want: "blocked",
+		},
+		{
 			name: "complete",
 			goal: &codexapp.ThreadGoal{Status: codexapp.ThreadGoalStatusComplete},
 			want: "complete",

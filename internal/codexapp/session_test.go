@@ -1635,6 +1635,82 @@ func TestSubmitInputStartsNewTurnWhenSteerMismatchFindsIdleThread(t *testing.T) 
 	}
 }
 
+func TestSubmitInputReactivatesBlockedGoalBeforeStartingTurn(t *testing.T) {
+	calls := []string{}
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		goal: &ThreadGoal{
+			ThreadID:  "thread_456",
+			Objective: "finish the branch",
+			Status:    ThreadGoalStatusBlocked,
+		},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			calls = append(calls, method)
+			switch len(calls) {
+			case 1:
+				if method != "thread/goal/set" {
+					t.Fatalf("call 1 method = %q, want thread/goal/set", method)
+				}
+				request, ok := params.(threadGoalSetParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalSetParams", params)
+				}
+				if request.Objective != "finish the branch" {
+					t.Fatalf("objective = %q, want finish the branch", request.Objective)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"finish the branch","status":"blocked","tokensUsed":10,"timeUsedSeconds":2,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
+			case 2:
+				if method != "thread/goal/clear" {
+					t.Fatalf("call 2 method = %q, want thread/goal/clear", method)
+				}
+				return json.RawMessage(`{"cleared":true}`), nil
+			case 3:
+				if method != "thread/goal/set" {
+					t.Fatalf("call 3 method = %q, want thread/goal/set", method)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"finish the branch","status":"active","tokensUsed":0,"timeUsedSeconds":0,"createdAt":1773027020,"updatedAt":1773027020}}`), nil
+			case 4:
+				if method != "turn/start" {
+					t.Fatalf("call 4 method = %q, want turn/start", method)
+				}
+				request, ok := params.(turnStartParams)
+				if !ok {
+					t.Fatalf("params = %#v, want turnStartParams", params)
+				}
+				if request.ThreadID != "thread_456" {
+					t.Fatalf("thread id = %q, want thread_456", request.ThreadID)
+				}
+				return json.RawMessage(`{"turn":{"id":"turn_resumed"}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", len(calls), method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("please keep going"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "thread/goal/set,thread/goal/clear,thread/goal/set,turn/start" {
+		t.Fatalf("calls = %#v, want goal reset before turn start", calls)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Goal == nil {
+		t.Fatalf("snapshot goal = nil, want resumed goal")
+	}
+	if snapshot.Goal.Status != ThreadGoalStatusActive {
+		t.Fatalf("goal status = %q, want active", snapshot.Goal.Status)
+	}
+	if snapshot.ActiveTurnID != "turn_resumed" {
+		t.Fatalf("active turn id = %q, want turn_resumed", snapshot.ActiveTurnID)
+	}
+}
+
 func TestSubmitInputStartsNewTurnWhenSteerFindsNoActiveTurn(t *testing.T) {
 	callCount := 0
 

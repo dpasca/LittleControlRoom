@@ -717,12 +717,15 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 			return controlInvocationOutcome{model: m, err: err}
 		}
 	}
-	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt)
+	resumeID := taskSessionIDForProvider(task, provider)
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt, agentTaskPromptOptions{
+		ResumePausedGoal: input.SessionMode != control.SessionModeNew && resumeID != "",
+	})
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: input.SessionMode == control.SessionModeNew,
 		prompt:   prompt,
 		reveal:   input.Reveal,
-		resumeID: taskSessionIDForProvider(task, provider),
+		resumeID: resumeID,
 	})
 	m = normalizeUpdateModel(updated)
 	if cmd == nil {
@@ -1287,7 +1290,11 @@ func taskSessionIDForProvider(task model.AgentTask, provider codexapp.Provider) 
 	return ""
 }
 
-func agentTaskLaunchPrompt(task model.AgentTask, prompt string) string {
+type agentTaskPromptOptions struct {
+	ResumePausedGoal bool
+}
+
+func agentTaskLaunchPrompt(task model.AgentTask, prompt string, options agentTaskPromptOptions) string {
 	lines := []string{
 		"Little Control Room agent task:",
 		"ID: " + strings.TrimSpace(task.ID),
@@ -1303,13 +1310,25 @@ func agentTaskLaunchPrompt(task model.AgentTask, prompt string) string {
 	if resources := agentTaskResourcePromptSummary(task.Resources); resources != "" {
 		lines = append(lines, "Resources: "+resources)
 	}
+	if options.ResumePausedGoal {
+		lines = append(lines,
+			"",
+			"Resume signal:",
+			"The user explicitly confirmed this agent task continuation. If this session contains a paused /goal, treat this message as the user's explicit instruction to resume that goal now and continue toward the request below.",
+			"Do not report that you are still paused merely because an earlier instruction said to wait for the user; this handoff is that user resume instruction.",
+		)
+	}
 	lines = append(lines, engineerReportContractPromptLines()...)
 	lines = append(lines, "", "User request:", strings.TrimSpace(prompt))
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) agentTaskLaunchPromptWithRuntimeContext(task model.AgentTask, prompt string) string {
-	return m.promptWithRuntimeContext(agentTaskLaunchPrompt(task, prompt), m.agentTaskRuntimeContextLines(task))
+func (m Model) agentTaskLaunchPromptWithRuntimeContext(task model.AgentTask, prompt string, options ...agentTaskPromptOptions) string {
+	opts := agentTaskPromptOptions{}
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	return m.promptWithRuntimeContext(agentTaskLaunchPrompt(task, prompt, opts), m.agentTaskRuntimeContextLines(task))
 }
 
 func (m Model) engineerPromptWithRuntimeContext(project model.ProjectSummary, prompt string, todo model.TodoItem) string {

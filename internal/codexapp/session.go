@@ -1000,6 +1000,10 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
 	currentModel := strings.TrimSpace(s.model)
 	currentReasoning := strings.TrimSpace(s.reasoningEffort)
+	goalToResume := cloneThreadGoal(s.goal)
+	if busy || !threadGoalShouldReactivateOnManualPrompt(goalToResume) {
+		goalToResume = nil
+	}
 	if busyExternal {
 		s.mu.Unlock()
 		return fmt.Errorf("this Codex session is already busy in another process; Little Control Room is read-only until it finishes")
@@ -1012,9 +1016,18 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	s.mu.Unlock()
 	s.notify()
 
+	if goalToResume != nil {
+		goalCtx, goalCancel := context.WithTimeout(context.Background(), rpcTimeout)
+		err := s.reactivateThreadGoal(goalCtx, threadID, goalToResume)
+		goalCancel()
+		if err != nil {
+			s.appendSystemError(err)
+			return err
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
-
 	if err := s.ensurePlaywrightMCPReady(ctx); err != nil {
 		s.appendSystemError(err)
 		return err
@@ -1369,26 +1382,10 @@ func (s *appServerSession) SetGoal(objective string, tokenBudget *int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
-	goal, err := s.setThreadGoal(ctx, threadID, objective, tokenBudget)
+	goal, err := s.setThreadGoalReplacingStale(ctx, threadID, objective, tokenBudget)
 	if err != nil {
 		s.appendSystemError(err)
 		return err
-	}
-	if threadGoalSetResponseStale(goal, objective, tokenBudget) {
-		if _, err := s.clearThreadGoal(ctx, threadID); err != nil {
-			s.appendSystemError(err)
-			return err
-		}
-		goal, err = s.setThreadGoal(ctx, threadID, objective, tokenBudget)
-		if err != nil {
-			s.appendSystemError(err)
-			return err
-		}
-		if threadGoalSetResponseStale(goal, objective, tokenBudget) {
-			err := fmt.Errorf("embedded Codex goal did not update; Codex returned %s", threadGoalSummary(goal))
-			s.appendSystemError(err)
-			return err
-		}
 	}
 	if goal == nil {
 		goal = &ThreadGoal{
@@ -1408,6 +1405,59 @@ func (s *appServerSession) SetGoal(objective string, tokenBudget *int64) error {
 	s.mu.Unlock()
 	s.notify()
 	return nil
+}
+
+func (s *appServerSession) reactivateThreadGoal(ctx context.Context, threadID string, previous *ThreadGoal) error {
+	if previous == nil {
+		return nil
+	}
+	objective := strings.TrimSpace(previous.Objective)
+	if objective == "" {
+		return nil
+	}
+	goal, err := s.setThreadGoalReplacingStale(ctx, threadID, objective, previous.TokenBudget)
+	if err != nil {
+		return err
+	}
+	if goal == nil {
+		goal = &ThreadGoal{
+			ThreadID:    threadID,
+			Objective:   objective,
+			Status:      ThreadGoalStatusActive,
+			TokenBudget: cloneInt64Ptr(previous.TokenBudget),
+		}
+	}
+	s.mu.Lock()
+	if current := strings.TrimSpace(s.threadID); current == "" || strings.TrimSpace(threadID) == "" || current == strings.TrimSpace(threadID) {
+		s.goal = cloneThreadGoal(goal)
+		s.touchLocked()
+		s.lastSystemNotice = "Embedded Codex goal resumed"
+		s.status = "Embedded Codex goal resumed"
+	}
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+func (s *appServerSession) setThreadGoalReplacingStale(ctx context.Context, threadID, objective string, tokenBudget *int64) (*ThreadGoal, error) {
+	goal, err := s.setThreadGoal(ctx, threadID, objective, tokenBudget)
+	if err != nil {
+		return nil, err
+	}
+	if !threadGoalSetResponseStale(goal, objective, tokenBudget) {
+		return goal, nil
+	}
+	if _, err := s.clearThreadGoal(ctx, threadID); err != nil {
+		return nil, err
+	}
+	goal, err = s.setThreadGoal(ctx, threadID, objective, tokenBudget)
+	if err != nil {
+		return nil, err
+	}
+	if threadGoalSetResponseStale(goal, objective, tokenBudget) {
+		return nil, fmt.Errorf("embedded Codex goal did not update; Codex returned %s", threadGoalSummary(goal))
+	}
+	return goal, nil
 }
 
 func (s *appServerSession) ClearGoal() error {
@@ -2677,6 +2727,8 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 				switch s.goal.Status {
 				case ThreadGoalStatusPaused:
 					s.lastSystemNotice = "Embedded Codex goal paused"
+				case ThreadGoalStatusBlocked:
+					s.lastSystemNotice = "Embedded Codex goal blocked"
 				case ThreadGoalStatusBudgetLimited:
 					s.lastSystemNotice = "Embedded Codex goal reached its token budget"
 				case ThreadGoalStatusComplete:
@@ -3232,7 +3284,19 @@ func threadGoalSetResponseStale(goal *ThreadGoal, objective string, tokenBudget 
 		return true
 	}
 	switch strings.TrimSpace(string(goal.Status)) {
-	case string(ThreadGoalStatusComplete), string(ThreadGoalStatusBudgetLimited), "budget_limited", "blocked", "usage_limited":
+	case string(ThreadGoalStatusComplete), string(ThreadGoalStatusBudgetLimited), string(ThreadGoalStatusBlocked), "budget_limited", "usage_limited":
+		return true
+	default:
+		return false
+	}
+}
+
+func threadGoalShouldReactivateOnManualPrompt(goal *ThreadGoal) bool {
+	if goal == nil || strings.TrimSpace(goal.Objective) == "" {
+		return false
+	}
+	switch strings.TrimSpace(string(goal.Status)) {
+	case string(ThreadGoalStatusPaused), string(ThreadGoalStatusBlocked):
 		return true
 	default:
 		return false

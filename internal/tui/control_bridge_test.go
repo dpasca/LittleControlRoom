@@ -1316,6 +1316,8 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 		t.Fatalf("request ResumeID = %q, want tracked session", requests[0].ResumeID)
 	}
 	for _, want := range []string{
+		"Resume signal:",
+		"explicit instruction to resume that goal now",
 		"Report contract:",
 		"Answer the user's exact request directly",
 		"Preserve source, metric, timeframe, scope, negations, and explicit exclusions",
