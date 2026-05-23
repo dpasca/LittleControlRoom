@@ -226,9 +226,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider; fresh projects and scratch tasks default to Codex unless their create flow preselected another assistant
 - `Esc` hide the visible embedded session pane
-- `Alt+Down` or `/session` open the embedded session picker and history overlay
-- `Alt+[` jump to the previous live embedded session
-- `Alt+]` jump to the next live embedded session
+- `Alt+O` opens transcript links or generated artifacts when an embedded pane advertises available links
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
 - `Tab` or `Shift+Tab` switch focus between list, detail, and runtime
 - `f` open the temporary project-name filter dialog
@@ -299,7 +297,6 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/lcagent`
 - `/lcagent continue with the next small step`
 - `/lcagent-new inspect and patch the failing check`
-- `/session`
 - `/commit`
 - `/commit tighten git status parsing`
 - `/push`
@@ -363,9 +360,9 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/opencode-new` always starts a fresh OpenCode session.
 - `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot run with the configured experimental provider.
 - `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, in-pane approval for denied low-autonomy commands, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; attachments are not wired yet.
-- While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/resume` (`/session` alias), `/reconnect`, `/model`, `/status`, `/compact`, and `/review`.
+- While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/sessions` (`/resume` and `/session` aliases), `/reconnect`, `/model`, `/status`, `/compact`, and `/review`.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
-- `/resume` with no session ID opens a picker for saved sessions from the current project and provider; `/resume <session-id>` jumps straight to that session.
+- `/sessions` with no session ID opens a picker for saved sessions from the current project and provider; `/sessions <session-id>` jumps straight to that session.
 - `/reconnect` restarts the current embedded provider helper and reconnects to the same session when possible, which is useful after refreshing `codex login` or other provider auth outside Little Control Room.
 - `/review` starts an embedded Codex review of uncommitted changes and streams the review-mode transcript into the pane.
 - While boss chat is visible, `Alt+1` through `Alt+8` open the matching marked Boss Desk task or project in an embedded engineer session. Local slash commands include `/new [prompt]`, `/sessions [session-id]`, `/session [session-id]`, `/resume [session-id]`, `/help`, and `/boss off`. `/sessions` opens a picker with `Up`/`Down`, `Enter`, and `Esc`; adding a session ID switches directly. Boss slash commands use the same Tab and Shift+Tab autocomplete behavior as embedded slash commands.

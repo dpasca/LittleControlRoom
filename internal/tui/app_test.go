@@ -8764,7 +8764,7 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	if !strings.Contains(rendered, "Embedded Slash Commands") {
 		t.Fatalf("rendered view should show embedded slash commands: %q", rendered)
 	}
-	if !strings.Contains(rendered, "/new [prompt]") || !strings.Contains(rendered, "/resume [session-id]") || !strings.Contains(rendered, "/model") || !strings.Contains(rendered, "/status") {
+	if !strings.Contains(rendered, "/new [prompt]") || !strings.Contains(rendered, "/resume [session-id]") || !strings.Contains(rendered, "/sessions [session-id]") || !strings.Contains(rendered, "/model") {
 		t.Fatalf("rendered view should list embedded slash suggestions: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Enter run  ctrl+c close  Alt+Up hide") {
@@ -8978,8 +8978,8 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab cycling should not queue a command")
 	}
-	if got.codexInput.Value() != "/model" {
-		t.Fatalf("codex input = %q, want /model after third tab", got.codexInput.Value())
+	if got.codexInput.Value() != "/sessions" {
+		t.Fatalf("codex input = %q, want /sessions after third tab", got.codexInput.Value())
 	}
 
 	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
@@ -8987,8 +8987,8 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab cycling should not queue a command")
 	}
-	if got.codexInput.Value() != "/status" {
-		t.Fatalf("codex input = %q, want /status after fourth tab", got.codexInput.Value())
+	if got.codexInput.Value() != "/model" {
+		t.Fatalf("codex input = %q, want /model after fourth tab", got.codexInput.Value())
 	}
 
 	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyShiftTab})
@@ -8996,8 +8996,17 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("shift+tab cycling should not queue a command")
 	}
+	if got.codexInput.Value() != "/sessions" {
+		t.Fatalf("codex input = %q, want /sessions after shift+tab from /model", got.codexInput.Value())
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("tab cycling should not queue a command")
+	}
 	if got.codexInput.Value() != "/model" {
-		t.Fatalf("codex input = %q, want /model after shift+tab from /status", got.codexInput.Value())
+		t.Fatalf("codex input = %q, want /model after tab from /sessions", got.codexInput.Value())
 	}
 
 	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
@@ -9006,16 +9015,7 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 		t.Fatalf("tab cycling should not queue a command")
 	}
 	if got.codexInput.Value() != "/status" {
-		t.Fatalf("codex input = %q, want /status after tab from /model", got.codexInput.Value())
-	}
-
-	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
-	got = updated.(Model)
-	if cmd != nil {
-		t.Fatalf("tab cycling should not queue a command")
-	}
-	if got.codexInput.Value() != "/reconnect" {
-		t.Fatalf("codex input = %q, want /reconnect after fifth tab", got.codexInput.Value())
+		t.Fatalf("codex input = %q, want /status after fifth tab", got.codexInput.Value())
 	}
 }
 
@@ -9925,6 +9925,51 @@ func TestVisibleCodexSlashResumeOpensPickerAndLoadsChoices(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("resume picker render missing %q: %q", want, rendered)
 		}
+	}
+}
+
+func TestVisibleCodexSlashSessionsOpensProjectHistoryPicker(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			Status:   "Codex session ready",
+			ThreadID: "thread-demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: "/tmp/demo"}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/sessions")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should open the embedded /sessions picker")
+	}
+	if !got.codexPickerVisible || !got.codexPickerLoading || got.codexPickerKind != codexPickerKindResume {
+		t.Fatalf("/sessions should open the project-local resume picker, got visible=%v loading=%v kind=%q", got.codexPickerVisible, got.codexPickerLoading, got.codexPickerKind)
+	}
+	if got.codexPickerProject != "/tmp/demo" || got.codexPickerProvider != codexapp.ProviderCodex {
+		t.Fatalf("picker scope = (%q, %q), want current project Codex", got.codexPickerProject, got.codexPickerProvider)
+	}
+	if got.status != "Loading Codex sessions for this project..." {
+		t.Fatalf("status = %q, want loading embedded sessions notice", got.status)
 	}
 }
 
@@ -16362,7 +16407,7 @@ func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
 	}
 }
 
-func TestAltDownOpensCodexSessionPicker(t *testing.T) {
+func TestAltDownNoLongerOpensCodexSessionPicker(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -16403,14 +16448,13 @@ func TestAltDownOpensCodexSessionPicker(t *testing.T) {
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyDown, Alt: true})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("alt+down picker should not queue a command")
+		t.Fatalf("alt+down should not queue a command")
 	}
-	if !got.codexPickerVisible {
-		t.Fatalf("codex picker should be visible")
+	if got.codexPickerVisible {
+		t.Fatalf("alt+down should no longer open the obsolete embedded session picker")
 	}
-	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Embedded Sessions") || !strings.Contains(rendered, "Source: Codex") || !strings.Contains(rendered, "demo") {
-		t.Fatalf("picker overlay should render the session list: %q", rendered)
+	if got.status == "Embedded session picker open" {
+		t.Fatalf("alt+down should not report picker-open status")
 	}
 }
 
@@ -17380,8 +17424,11 @@ func TestVisibleCodexViewShowsBannerAndYoloWarning(t *testing.T) {
 	if strings.Count(ansi.Strip(rendered), "YOLO MODE") != 1 {
 		t.Fatalf("YOLO warning should appear exactly once: %q", ansi.Strip(rendered))
 	}
-	if !strings.Contains(lines[0], "Alt+Down picker") || !strings.Contains(lines[0], "Alt+L blocks") {
-		t.Fatalf("embedded Codex view should keep picker/session shortcuts on the banner line: %q", rendered)
+	if strings.Contains(lines[0], "Alt+Down picker") || strings.Contains(lines[0], "Alt+[ prev") || strings.Contains(lines[0], "Alt+] next") {
+		t.Fatalf("embedded Codex view should omit obsolete picker/session shortcuts from the banner line: %q", rendered)
+	}
+	if !strings.Contains(lines[0], "Alt+L blocks") {
+		t.Fatalf("embedded Codex view should keep block controls on the banner line: %q", rendered)
 	}
 	if len(lines) > 1 && strings.Contains(lines[1], "Alt+Down picker") {
 		t.Fatalf("embedded Codex view should not spend a separate row on banner shortcuts: %q", rendered)
@@ -20374,16 +20421,32 @@ func TestSpinnerTickDoesNotResyncRuntimeViewport(t *testing.T) {
 	}
 }
 
-func TestRenderCodexBannerPromotesPickerPrevNextAndBlocks(t *testing.T) {
-	rendered := ansi.Strip((Model{}).renderCodexBanner(codexapp.Snapshot{
+func TestRenderCodexBannerPromotesLinksAndBlocks(t *testing.T) {
+	snapshot := codexapp.Snapshot{
 		Started:     true,
 		Status:      "Codex session ready",
 		ProjectPath: "/tmp/demo",
-	}, 140))
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "See [README](/tmp/demo/README.md).",
+		}},
+	}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexViewport:       viewport.New(140, 4),
+		width:               140,
+	}
+	m.renderAndCacheCodexTranscript("/tmp/demo", snapshot, 140)
+	rendered := ansi.Strip(m.renderCodexBanner(snapshot, 140))
 
-	for _, expected := range []string{"Codex | demo", "Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks"} {
+	for _, expected := range []string{"Codex | demo", "Alt+O links", "Alt+L blocks"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("renderCodexBanner() missing %q: %q", expected, rendered)
+		}
+	}
+	for _, obsolete := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next"} {
+		if strings.Contains(rendered, obsolete) {
+			t.Fatalf("renderCodexBanner() should omit obsolete shortcut %q: %q", obsolete, rendered)
 		}
 	}
 }

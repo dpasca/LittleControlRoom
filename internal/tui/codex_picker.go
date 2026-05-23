@@ -47,6 +47,8 @@ type codexSessionChoice struct {
 }
 
 func (m Model) openCodexPicker() (tea.Model, tea.Cmd) {
+	// Obsolete global picker retained for now; the main dashboard no longer
+	// advertises or binds a shortcut to this flow.
 	choices := m.codexSessionChoices()
 	if len(choices) == 0 {
 		m.status = "No live or resumable embedded sessions"

@@ -47,6 +47,12 @@ const (
 	codexCacheMissByteLimit       = 32 * 1024
 )
 
+var (
+	codexBannerProjectStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
+	codexBannerMetaStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("153")).Bold(true)
+	codexBannerSeparatorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+)
+
 type codexDenseBlockMode int
 
 const (
@@ -1553,8 +1559,6 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "f3":
 		return m.cycleCodexSession(1)
-	case "alt+down":
-		return m.openCodexPicker()
 	case "alt+up", "esc":
 		return m.hideCodexSession()
 	case "alt+[":
@@ -2613,23 +2617,24 @@ func (m Model) codexBrowserReconnectStatus(snapshot codexapp.Snapshot) string {
 
 func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 	provider := embeddedProvider(snapshot)
-	parts := []string{provider.Label()}
+	parts := []string{
+		sourceStyle(embeddedSessionFormat(provider), snapshot.Started && !snapshot.Closed).Render(provider.Label()),
+	}
 	if projectName := strings.TrimSpace(filepath.Base(snapshot.ProjectPath)); projectName != "" && projectName != "." {
-		parts = append(parts, projectName)
+		parts = append(parts, codexBannerProjectStyle.Render(projectName))
 	}
 	if snapshot.BusyExternal {
-		parts = append(parts, "Read-only")
+		parts = append(parts, detailWarningStyle.Render("Read-only"))
 	}
 	if blockMode := m.codexDenseBlockMode.bannerText(); blockMode != "" {
-		parts = append(parts, blockMode)
+		parts = append(parts, codexBannerMetaStyle.Render(blockMode))
 	}
-	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(strings.Join(parts, " | "))
-	actions := renderFooterActionList(
-		footerNavAction("Alt+Down", "picker"),
-		footerNavAction("Alt+[", "prev"),
-		footerNavAction("Alt+]", "next"),
-		footerLowAction("Alt+L", "blocks"),
-	)
+	title := strings.Join(parts, codexBannerSeparatorStyle.Render(" | "))
+	actions := []footerAction{}
+	if len(m.cachedCodexOpenTargetsForPicker(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
+		actions = append(actions, footerNavAction("Alt+O", "links"))
+	}
+	actions = append(actions, footerLowAction("Alt+L", "blocks"))
 	overlay := ""
 	contentWidth := width
 	if snapshot.Preset == codexcli.PresetYolo && !snapshot.Closed {
@@ -2640,7 +2645,7 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 			contentWidth = width - overlayWidth
 		}
 	}
-	line := renderFooterLine(contentWidth, title, actions)
+	line := renderFooterLine(contentWidth, title, renderFooterActionList(actions...))
 	banner := lipgloss.PlaceHorizontal(max(0, contentWidth), lipgloss.Left, line)
 	if overlay != "" {
 		return banner + overlay
@@ -2942,9 +2947,6 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && !snapshot.CurrentBrowserPageStale {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
-	}
-	if len(m.cachedCodexOpenTargetsForPicker(snapshot)) > 0 && codexArtifactPickerAllowed(snapshot) {
-		actions = append(actions, footerNavAction("Alt+O", "links"))
 	}
 	if mismatchStatus := m.codexBrowserReconnectStatus(snapshot); mismatchStatus != "" && !snapshot.Closed && !snapshot.BusyExternal {
 		actions = append(actions, footerNavAction("/reconnect", "apply browser"))

@@ -49,6 +49,7 @@ type Invocation struct {
 var specs = []Spec{
 	{Name: "new", Usage: "/new [prompt]", Summary: "Start a fresh embedded session for this project"},
 	{Name: "resume", Usage: "/resume [session-id]", Summary: "Resume a different embedded session for this project, or pick one when no session ID is given"},
+	{Name: "sessions", Usage: "/sessions [session-id]", Summary: "Pick from this project's saved embedded sessions"},
 	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /resume", Hidden: true},
 	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for this and future embedded sessions of the same tool, even after restarting LCR"},
 	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
@@ -95,6 +96,8 @@ func Suggestions(input string) []Suggestion {
 		}}
 	case "resume":
 		return []Suggestion{resumeSuggestion("/resume")}
+	case "sessions":
+		return []Suggestion{resumeSuggestion("/sessions")}
 	case "session":
 		return []Suggestion{resumeSuggestion("/session")}
 	case "model":
@@ -200,10 +203,10 @@ func Parse(input string) (Invocation, error) {
 			Prompt:    strings.TrimSpace(rawArgs),
 			Canonical: slashcmd.CanonicalCommand("new", rawArgs),
 		}, nil
-	case "resume", "session":
+	case "resume", "sessions", "session":
 		sessionID := strings.TrimSpace(rawArgs)
 		if len(strings.Fields(sessionID)) > 1 {
-			return Invocation{}, fmt.Errorf("usage: /resume [session-id]")
+			return Invocation{}, fmt.Errorf("usage: /%s [session-id]", strings.ToLower(name))
 		}
 		return Invocation{
 			Kind:      KindResume,

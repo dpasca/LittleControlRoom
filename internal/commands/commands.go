@@ -175,7 +175,7 @@ var specs = []Spec{
 	{Name: "snooze", Usage: "/snooze [duration|off]", Summary: "Snooze the selected project or clear with /snooze off"},
 	{Name: "clear-snooze", Usage: "/clear-snooze", Summary: "Clear snooze on the selected project"},
 	{Name: "unsnooze", Usage: "/unsnooze", Summary: "Clear snooze on the selected project"},
-	{Name: "session", Usage: "/session", Summary: "Open the embedded session picker"},
+	{Name: "session", Usage: "/session", Summary: "Open the legacy embedded session picker", Hidden: true},
 	{Name: "sessions", Usage: "/sessions on|off|toggle", Summary: "Show or hide the Sessions section"},
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
