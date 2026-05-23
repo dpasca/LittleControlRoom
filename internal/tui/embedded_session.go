@@ -758,6 +758,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	if strings.TrimSpace(req.ResumeID) != "" {
 		m.clearDismissedSuspendedTurn(req.ProjectPath, provider, req.ResumeID)
 	}
+	m.clearEmbeddedLaunchProviderOverride(p.Path)
 	if options.forceNew {
 		m.beginNewCodexPendingOpenWithVisibilityAndReveal(p.Path, provider, options.reveal, options.reveal)
 	} else {
@@ -1200,7 +1201,55 @@ func (m Model) preferredEmbeddedProviderForProject(project model.ProjectSummary)
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		return embeddedProvider(snapshot)
 	}
+	if provider, ok := m.embeddedLaunchProviderOverride(project.Path); ok {
+		return provider
+	}
 	return preferredEmbeddedProviderFromProjectSummary(project)
+}
+
+func (m Model) embeddedLaunchProviderOverride(projectPath string) (codexapp.Provider, bool) {
+	key := normalizeProjectPath(projectPath)
+	if key == "" || len(m.embeddedProviderOverrides) == 0 {
+		return "", false
+	}
+	provider := explicitEmbeddedProvider(m.embeddedProviderOverrides[key])
+	if provider == "" {
+		return "", false
+	}
+	return provider, true
+}
+
+func (m *Model) setEmbeddedLaunchProviderOverride(projectPath string, provider codexapp.Provider) {
+	if m == nil {
+		return
+	}
+	key := normalizeProjectPath(projectPath)
+	provider = explicitEmbeddedProvider(provider)
+	if key == "" || provider == "" {
+		return
+	}
+	if m.embeddedProviderOverrides == nil {
+		m.embeddedProviderOverrides = make(map[string]codexapp.Provider)
+	}
+	m.embeddedProviderOverrides[key] = provider
+}
+
+func (m *Model) clearEmbeddedLaunchProviderOverride(projectPath string) {
+	if m == nil || len(m.embeddedProviderOverrides) == 0 {
+		return
+	}
+	key := normalizeProjectPath(projectPath)
+	if key == "" {
+		return
+	}
+	delete(m.embeddedProviderOverrides, key)
+}
+
+func explicitEmbeddedProvider(provider codexapp.Provider) codexapp.Provider {
+	if strings.TrimSpace(string(provider)) == "" {
+		return ""
+	}
+	return provider.Normalized()
 }
 
 func (m Model) currentEmbeddedLaunchLabel() string {

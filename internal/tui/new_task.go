@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -14,18 +15,19 @@ import (
 const newTaskCreateTimeout = 15 * time.Second
 
 type newTaskResultMsg struct {
-	result service.CreateScratchTaskResult
-	err    error
+	result   service.CreateScratchTaskResult
+	provider codexapp.Provider
+	err      error
 }
 
-func (m *Model) startNewTaskCreation(request string) tea.Cmd {
+func (m *Model) startNewTaskCreation(request string, provider codexapp.Provider) tea.Cmd {
 	m.showHelp = false
 	m.err = nil
 	m.status = "Creating scratch task..."
-	return m.createScratchTaskCmd(request)
+	return m.createScratchTaskCmd(request, provider)
 }
 
-func (m Model) createScratchTaskCmd(request string) tea.Cmd {
+func (m Model) createScratchTaskCmd(request string, provider codexapp.Provider) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return newTaskResultMsg{err: fmt.Errorf("service unavailable")}
@@ -40,7 +42,7 @@ func (m Model) createScratchTaskCmd(request string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(ctx, newTaskCreateTimeout)
 		defer cancel()
 		result, err := m.svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{Request: request})
-		return newTaskResultMsg{result: result, err: err}
+		return newTaskResultMsg{result: result, provider: explicitEmbeddedProvider(provider), err: err}
 	}
 }
 
@@ -55,6 +57,10 @@ func (m Model) applyNewTaskResultMsg(msg newTaskResultMsg) (tea.Model, tea.Cmd) 
 	m.focusedPane = focusProjects
 	m.preferredSelectPath = msg.result.TaskPath
 	m.status = "Scratch task created and added to the list"
+	if provider := explicitEmbeddedProvider(msg.provider); provider != "" {
+		m.setEmbeddedLaunchProviderOverride(msg.result.TaskPath, provider)
+		m.status += "; Enter opens " + provider.Label()
+	}
 	return m, refreshCmd
 }
 

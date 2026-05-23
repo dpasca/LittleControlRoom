@@ -249,6 +249,21 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "new project with assistant",
+			raw:  "/new-project --assistant opencode",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindNewProject {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNewProject)
+				}
+				if inv.Assistant != "opencode" {
+					t.Fatalf("assistant = %q, want opencode", inv.Assistant)
+				}
+				if inv.Canonical != "/new-project --assistant opencode" {
+					t.Fatalf("canonical = %q, want assistant canonical", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "new task",
 			raw:  "/new-task",
 			check: func(t *testing.T, inv Invocation) {
@@ -269,6 +284,24 @@ func TestParse(t *testing.T) {
 				}
 				if inv.Canonical != "/new-task answer Sarah about API docs" {
 					t.Fatalf("canonical = %q, want request canonical", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "new task with assistant and request",
+			raw:  "/new-task --assistant claude answer Sarah about API docs",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindNewTask {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNewTask)
+				}
+				if inv.Assistant != "claude_code" {
+					t.Fatalf("assistant = %q, want claude_code", inv.Assistant)
+				}
+				if inv.Prompt != "answer Sarah about API docs" {
+					t.Fatalf("prompt = %q, want request text", inv.Prompt)
+				}
+				if inv.Canonical != "/new-task --assistant claude_code answer Sarah about API docs" {
+					t.Fatalf("canonical = %q, want assistant canonical", inv.Canonical)
 				}
 			},
 		},

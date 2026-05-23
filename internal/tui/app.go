@@ -200,6 +200,7 @@ type Model struct {
 	processDialog               *processDialogState
 	processWarningLastCount     int
 	codexSnapshots              map[string]codexapp.Snapshot
+	embeddedProviderOverrides   map[string]codexapp.Provider
 	codexTranscriptRev          map[string]uint64
 	codexVisibleProject         string
 	codexHiddenProject          string
@@ -1460,6 +1461,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.newProjectDialog = nil
 		m.focusedPane = focusProjects
 		m.preferredSelectPath = msg.result.ProjectPath
+		provider := explicitEmbeddedProvider(msg.provider)
+		if provider != "" {
+			m.setEmbeddedLaunchProviderOverride(msg.result.ProjectPath, provider)
+		}
 		switch msg.result.Action {
 		case service.CreateOrAttachProjectCreated:
 			if msg.result.GitRepoCreated {
@@ -1479,6 +1484,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.status = "Project already in the list"
 			}
+		}
+		if provider != "" {
+			m.status += "; Enter opens " + provider.Label()
 		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
 	case newTaskResultMsg:
@@ -4612,9 +4620,9 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		}
 		return m, m.openProjectFilterDialog()
 	case commands.KindNewProject:
-		return m, m.openNewProjectDialog()
+		return m, m.openNewProjectDialog(commandAssistantProvider(inv.Assistant))
 	case commands.KindNewTask:
-		return m, m.startNewTaskCreation(inv.Prompt)
+		return m, m.startNewTaskCreation(inv.Prompt, commandAssistantProvider(inv.Assistant))
 	case commands.KindTaskActions:
 		return m, m.openScratchTaskActionConfirmForSelection()
 	case commands.KindOpen:
@@ -4879,6 +4887,13 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		m.status = "Command not implemented"
 		return m, nil
 	}
+}
+
+func commandAssistantProvider(raw string) codexapp.Provider {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	return codexapp.Provider(raw).Normalized()
 }
 
 func scanCompleteStatus(report service.ScanReport) string {

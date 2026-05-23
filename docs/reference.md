@@ -224,7 +224,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `/boss` opens the chat-first boss layer, or prompts for setup if boss chat is not configured; `Alt+Up` hides Boss Chat and returns to the classic TUI
 - `b` opens the chat-first boss layer, with the same setup prompt as `/boss` when needed
 - `↑/↓` move selection
-- `Enter` open or resume the selected project's latest embedded provider
+- `Enter` open or resume the selected project's latest embedded provider; fresh projects and scratch tasks default to Codex unless their create flow preselected another assistant
 - `Esc` hide the visible embedded session pane
 - `Alt+Down` or `/session` open the embedded session picker and history overlay
 - `Alt+[` jump to the previous live embedded session
@@ -275,8 +275,8 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/settings`
 - `/filter`
 - `/filter clear`
-- `/new-project`
-- `/new-task [request]`
+- `/new-project [--assistant codex|opencode|claude|lcagent]`
+- `/new-task [--assistant codex|opencode|claude|lcagent] [request]`
 - `/task-actions`
 - `/open`
 - `/run`
@@ -340,7 +340,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 
 ## Notes
 
-- `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room.
+- `Enter` on the selected project opens that project's latest embedded provider inside Little Control Room; fresh items use any assistant chosen during creation, otherwise Codex.
 - `/open` opens the selected project's folder in the system browser.
 - `/archive` moves the selected regular project to the Archived tab, and `/unarchive` restores it to Active when the project is still in scope. The `a` key and `/tab [active|archived|toggle]` switch between the Active and Archived tabs.
 - `/remove` asks for confirmation, then makes the selected item go away using the safest matching action: it opens scratch-task archive/delete actions, cleans up linked worktrees, removes missing folders from the dashboard, or hides a regular project's exact path from the list. `/delete` and `/forget` are aliases.

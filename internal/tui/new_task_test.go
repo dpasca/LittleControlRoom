@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
+	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
 )
@@ -61,6 +62,57 @@ func TestDispatchNewTaskCommandCreatesScratchTaskWithoutDialog(t *testing.T) {
 	}
 	if got.status != "Scratch task created and added to the list" {
 		t.Fatalf("status = %q, want created status", got.status)
+	}
+	if _, ok := got.embeddedLaunchProviderOverride(msg.result.TaskPath); ok {
+		t.Fatalf("default /new-task should not install an explicit launch provider override")
+	}
+}
+
+func TestDispatchNewTaskCommandCanPreselectAssistant(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	m := New(ctx, svc)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{
+		Kind:      commands.KindNewTask,
+		Prompt:    "answer Sarah about API docs",
+		Assistant: "opencode",
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("/new-task with assistant should start creation immediately")
+	}
+
+	rawMsg := cmd()
+	msg, ok := rawMsg.(newTaskResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want newTaskResultMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("create scratch task error: %v", msg.err)
+	}
+
+	updated, _ = got.applyNewTaskResultMsg(msg)
+	got = updated.(Model)
+	provider, ok := got.embeddedLaunchProviderOverride(msg.result.TaskPath)
+	if !ok || provider != codexapp.ProviderOpenCode {
+		t.Fatalf("launch provider override = (%q, %v), want OpenCode true", provider, ok)
+	}
+	if got.preferredEmbeddedProviderForProject(model.ProjectSummary{Path: msg.result.TaskPath}) != codexapp.ProviderOpenCode {
+		t.Fatalf("fresh scratch task should prefer the explicit assistant")
+	}
+	if !strings.Contains(got.status, "Enter opens OpenCode") {
+		t.Fatalf("status = %q, want OpenCode launch hint", got.status)
 	}
 }
 

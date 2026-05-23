@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/service"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -18,6 +19,7 @@ import (
 const (
 	newProjectFieldPath = iota
 	newProjectFieldName
+	newProjectFieldAssistant
 	newProjectFieldGitRepo
 )
 
@@ -31,6 +33,8 @@ type newProjectDialogState struct {
 	NameInput              textinput.Model
 	Selected               int
 	CreateGitRepo          bool
+	Provider               codexapp.Provider
+	ProviderExplicit       bool
 	Submitting             bool
 	PathManuallyEdited     bool
 	PathSuggestionsPending bool
@@ -41,8 +45,9 @@ type newProjectDialogState struct {
 }
 
 type newProjectResultMsg struct {
-	result service.CreateOrAttachProjectResult
-	err    error
+	result   service.CreateOrAttachProjectResult
+	provider codexapp.Provider
+	err      error
 }
 
 type recentProjectParentsMsg struct {
@@ -81,14 +86,22 @@ func (m Model) loadRecentProjectParentsCmd() tea.Cmd {
 	}
 }
 
-func (m *Model) openNewProjectDialog() tea.Cmd {
+func (m *Model) openNewProjectDialog(provider codexapp.Provider) tea.Cmd {
 	pathInput := newNewProjectTextInput(m.defaultNewProjectParentPath(), 1024)
 	configureNewProjectPathInput(&pathInput)
+	providerExplicit := strings.TrimSpace(string(provider)) != ""
+	if providerExplicit {
+		provider = provider.Normalized()
+	} else {
+		provider = codexapp.ProviderCodex
+	}
 	dialog := &newProjectDialogState{
-		PathInput:     pathInput,
-		NameInput:     newNewProjectTextInput("", 256),
-		Selected:      newProjectFieldPath,
-		CreateGitRepo: true,
+		PathInput:        pathInput,
+		NameInput:        newNewProjectTextInput("", 256),
+		Selected:         newProjectFieldPath,
+		CreateGitRepo:    true,
+		Provider:         provider,
+		ProviderExplicit: providerExplicit,
 	}
 	dialog.PathInput.Placeholder = "/path/to/projects"
 	dialog.NameInput.Placeholder = "project-name (optional for existing folder path)"
@@ -173,10 +186,24 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			ParentPath:    preview.ParentPath,
 			Name:          preview.Name,
 			CreateGitRepo: dialog.CreateGitRepo,
-		})
+		}, dialog.explicitProvider())
 	case " ", "x":
 		if dialog.Selected == newProjectFieldGitRepo {
 			dialog.CreateGitRepo = !dialog.CreateGitRepo
+			return m, nil
+		}
+		if dialog.Selected == newProjectFieldAssistant {
+			m.cycleNewProjectAssistant(1)
+			return m, nil
+		}
+	case "right", "l":
+		if dialog.Selected == newProjectFieldAssistant {
+			m.cycleNewProjectAssistant(1)
+			return m, nil
+		}
+	case "left", "h":
+		if dialog.Selected == newProjectFieldAssistant {
+			m.cycleNewProjectAssistant(-1)
 			return m, nil
 		}
 	}
@@ -245,7 +272,32 @@ func (m *Model) setNewProjectSelection(index int) tea.Cmd {
 	}
 }
 
-func (m Model) createOrAttachProjectCmd(req service.CreateOrAttachProjectRequest) tea.Cmd {
+func (m *Model) cycleNewProjectAssistant(delta int) {
+	dialog := m.newProjectDialog
+	if dialog == nil || delta == 0 {
+		return
+	}
+	options := newProjectAssistantOptions()
+	index := 0
+	current := dialog.Provider.Normalized()
+	for i, provider := range options {
+		if provider == current {
+			index = i
+			break
+		}
+	}
+	index += delta
+	if index < 0 {
+		index = len(options) - 1
+	}
+	if index >= len(options) {
+		index = 0
+	}
+	dialog.Provider = options[index]
+	dialog.ProviderExplicit = true
+}
+
+func (m Model) createOrAttachProjectCmd(req service.CreateOrAttachProjectRequest, provider codexapp.Provider) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return newProjectResultMsg{err: fmt.Errorf("service unavailable")}
@@ -253,8 +305,15 @@ func (m Model) createOrAttachProjectCmd(req service.CreateOrAttachProjectRequest
 	}
 	return func() tea.Msg {
 		result, err := m.svc.CreateOrAttachProject(m.ctx, req)
-		return newProjectResultMsg{result: result, err: err}
+		return newProjectResultMsg{result: result, provider: explicitEmbeddedProvider(provider), err: err}
 	}
+}
+
+func (s newProjectDialogState) explicitProvider() codexapp.Provider {
+	if !s.ProviderExplicit {
+		return ""
+	}
+	return explicitEmbeddedProvider(s.Provider)
 }
 
 func (m Model) defaultNewProjectParentPath() string {
@@ -659,6 +718,7 @@ func (m Model) renderNewProjectContent(width int) string {
 	}
 	lines = append(lines,
 		m.renderNewProjectInputRow("Name", dialog.Selected == newProjectFieldName, labelWidth, inputWidth, dialog.NameInput),
+		m.renderNewProjectAssistantRow(labelWidth, inputWidth),
 		m.renderNewProjectGitRow(labelWidth, inputWidth),
 		"",
 		detailLabelStyle.Render("Full path:"),
@@ -745,6 +805,37 @@ func (m Model) renderNewProjectGitRow(labelWidth, inputWidth int) string {
 	return labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) + " " + truncateText(value, inputWidth)
 }
 
+func (m Model) renderNewProjectAssistantRow(labelWidth, inputWidth int) string {
+	dialog := m.newProjectDialog
+	if dialog == nil {
+		return ""
+	}
+	label := "  Assistant"
+	labelStyle := detailLabelStyle
+	if dialog.Selected == newProjectFieldAssistant {
+		label = "> Assistant"
+		labelStyle = commandPalettePickStyle
+	}
+	buttons := make([]string, 0, len(newProjectAssistantOptions()))
+	for _, provider := range newProjectAssistantOptions() {
+		buttons = append(buttons, renderDialogButton(provider.Label(), dialog.Provider.Normalized() == provider))
+	}
+	value := strings.Join(buttons, " ")
+	if !dialog.ProviderExplicit {
+		value += " " + detailMutedStyle.Render("default")
+	}
+	return labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) + " " + fitStyledWidth(value, inputWidth)
+}
+
+func newProjectAssistantOptions() []codexapp.Provider {
+	return []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	}
+}
+
 func (m Model) renderNewProjectStatus(preview newProjectPreview, width int) []string {
 	var lines []string
 	switch {
@@ -784,7 +875,7 @@ func renderNewProjectActions(preview newProjectPreview) string {
 	actions := []string{
 		renderDialogAction("Enter", primary, commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
-		renderDialogAction("Space", "toggle git", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("Space", "toggle", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	return strings.Join(actions, "   ")

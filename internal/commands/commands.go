@@ -124,6 +124,7 @@ type Invocation struct {
 	Prompt    string
 	Command   string
 	Filter    string
+	Assistant string
 	All       bool
 	Clear     bool
 	Canonical string
@@ -143,8 +144,8 @@ var specs = []Spec{
 	{Name: "skills", Usage: "/skills", Summary: "Review Codex skills and local duplicates that may be stale"},
 	{Name: "setup", Usage: "/setup", Summary: "Open the friendly AI setup concierge"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
-	{Name: "new-project", Usage: "/new-project", Summary: "Create a project folder, or paste an existing path to add it"},
-	{Name: "new-task", Usage: "/new-task [request]", Summary: "Create a scratch task folder without stopping to name it"},
+	{Name: "new-project", Usage: "/new-project [--assistant codex|opencode|claude|lcagent]", Summary: "Create a project folder, or paste an existing path to add it"},
+	{Name: "new-task", Usage: "/new-task [--assistant codex|opencode|claude|lcagent] [request]", Summary: "Create a scratch task folder without stopping to name it"},
 	{Name: "task-actions", Usage: "/task-actions", Summary: "Open archive/delete actions for the selected scratch task"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
@@ -430,15 +431,32 @@ func Parse(input string) (Invocation, error) {
 			}, nil
 		}
 	case "new-project":
-		if rawArgs != "" {
-			return Invocation{}, fmt.Errorf("usage: /new-project")
+		assistant, rest, err := parseAssistantArg(rawArgs)
+		if err != nil {
+			return Invocation{}, err
 		}
-		return Invocation{Kind: KindNewProject, Canonical: "/new-project"}, nil
+		if rest != "" {
+			return Invocation{}, fmt.Errorf("usage: /new-project [--assistant codex|opencode|claude|lcagent]")
+		}
+		canonical := "/new-project"
+		if assistant != "" {
+			canonical += " --assistant " + assistant
+		}
+		return Invocation{Kind: KindNewProject, Assistant: assistant, Canonical: canonical}, nil
 	case "new-task":
+		assistant, prompt, err := parseAssistantArg(rawArgs)
+		if err != nil {
+			return Invocation{}, err
+		}
+		canonical := slashcmd.CanonicalCommand("new-task", prompt)
+		if assistant != "" {
+			canonical = slashcmd.CanonicalCommand("new-task", "--assistant "+assistant+" "+prompt)
+		}
 		return Invocation{
 			Kind:      KindNewTask,
-			Prompt:    strings.TrimSpace(rawArgs),
-			Canonical: slashcmd.CanonicalCommand("new-task", rawArgs),
+			Prompt:    strings.TrimSpace(prompt),
+			Assistant: assistant,
+			Canonical: canonical,
 		}, nil
 	case "task-actions":
 		if rawArgs != "" {
@@ -728,6 +746,61 @@ func parseFocusTarget(raw string) (FocusTarget, error) {
 		return FocusRuntime, nil
 	default:
 		return "", fmt.Errorf("usage: /focus list|detail|runtime")
+	}
+}
+
+func parseAssistantArg(raw string) (string, string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", "", nil
+	}
+	for _, flag := range []string{"--assistant", "--provider"} {
+		if value, rest, ok := splitFlagValue(trimmed, flag); ok {
+			assistant, err := normalizeAssistantArg(value)
+			if err != nil {
+				return "", "", err
+			}
+			return assistant, strings.TrimSpace(rest), nil
+		}
+	}
+	return "", trimmed, nil
+}
+
+func splitFlagValue(raw, flag string) (string, string, bool) {
+	if raw == flag {
+		return "", "", true
+	}
+	if strings.HasPrefix(raw, flag+"=") {
+		after := strings.TrimSpace(raw[len(flag)+1:])
+		fields := strings.Fields(after)
+		if len(fields) == 0 {
+			return "", "", true
+		}
+		return fields[0], strings.TrimSpace(after[len(fields[0]):]), true
+	}
+	if strings.HasPrefix(raw, flag+" ") {
+		after := strings.TrimSpace(raw[len(flag):])
+		fields := strings.Fields(after)
+		if len(fields) == 0 {
+			return "", "", true
+		}
+		return fields[0], strings.TrimSpace(after[len(fields[0]):]), true
+	}
+	return "", "", false
+}
+
+func normalizeAssistantArg(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "codex":
+		return "codex", nil
+	case "opencode", "open-code", "open_code":
+		return "opencode", nil
+	case "claude", "claude-code", "claude_code":
+		return "claude_code", nil
+	case "lcagent", "lc-agent", "lc_agent":
+		return "lcagent", nil
+	default:
+		return "", fmt.Errorf("assistant must be one of: codex, opencode, claude, lcagent")
 	}
 }
 

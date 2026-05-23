@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
@@ -53,6 +54,85 @@ func TestDispatchNewProjectCommandOpensDialogWithRecentPathDefault(t *testing.T)
 	rendered := got.renderNewProjectContent(72)
 	if !strings.Contains(rendered, "New Project") || !strings.Contains(rendered, "/tmp/work") {
 		t.Fatalf("rendered dialog missing title or default path: %q", rendered)
+	}
+}
+
+func TestNewProjectDialogCanPreselectAssistant(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	parent := t.TempDir()
+
+	m := New(ctx, svc)
+	m.width = 100
+	m.height = 28
+	m.homeDirFn = func() (string, error) { return parent, nil }
+
+	updated, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindNewProject, Assistant: "opencode"})
+	got := updated.(Model)
+	if got.newProjectDialog == nil {
+		t.Fatalf("expected dialog to open")
+	}
+	if got.newProjectDialog.Provider != codexapp.ProviderOpenCode || !got.newProjectDialog.ProviderExplicit {
+		t.Fatalf("dialog provider = %q explicit=%v, want explicit OpenCode", got.newProjectDialog.Provider, got.newProjectDialog.ProviderExplicit)
+	}
+	got.newProjectDialog.PathInput.SetValue(parent)
+	got.newProjectDialog.NameInput.SetValue("demo")
+	got.newProjectDialog.CreateGitRepo = false
+	got = applyNewProjectPreviewRefresh(t, got)
+
+	updated, cmd := got.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should submit the new project dialog")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(newProjectResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want newProjectResultMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("create project error: %v", msg.err)
+	}
+
+	updated, _ = got.Update(msg)
+	got = updated.(Model)
+	provider, ok := got.embeddedLaunchProviderOverride(msg.result.ProjectPath)
+	if !ok || provider != codexapp.ProviderOpenCode {
+		t.Fatalf("launch provider override = (%q, %v), want OpenCode true", provider, ok)
+	}
+	if !strings.Contains(got.status, "Enter opens OpenCode") {
+		t.Fatalf("status = %q, want OpenCode launch hint", got.status)
+	}
+}
+
+func TestNewProjectDialogCyclesAssistantSelection(t *testing.T) {
+	m := Model{
+		width:     100,
+		height:    28,
+		homeDirFn: func() (string, error) { return "/Users/tester", nil },
+	}
+	updated, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindNewProject})
+	got := updated.(Model)
+	if got.newProjectDialog == nil {
+		t.Fatalf("expected dialog to open")
+	}
+	got.newProjectDialog.Selected = newProjectFieldAssistant
+
+	updated, cmd := got.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyRight})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("assistant cycle should not return a command")
+	}
+	if got.newProjectDialog.Provider != codexapp.ProviderOpenCode || !got.newProjectDialog.ProviderExplicit {
+		t.Fatalf("dialog provider = %q explicit=%v, want explicit OpenCode", got.newProjectDialog.Provider, got.newProjectDialog.ProviderExplicit)
 	}
 }
 

@@ -450,3 +450,45 @@ func TestSelectedProjectCodexSessionIDFallsBackToSummary(t *testing.T) {
 		t.Fatalf("selectedProjectCodexSessionID() = %q, want %q", got, "cx_summary")
 	}
 }
+
+func TestPreferredEmbeddedProviderUsesOneShotOverrideBeforeStoredLatest(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:                "/tmp/demo",
+		Name:                "demo",
+		LatestSessionFormat: "modern",
+	}
+	m := Model{}
+	m.setEmbeddedLaunchProviderOverride(project.Path, codexapp.ProviderOpenCode)
+
+	if got := m.preferredEmbeddedProviderForProject(project); got != codexapp.ProviderOpenCode {
+		t.Fatalf("preferred provider = %q, want OpenCode override", got)
+	}
+}
+
+func TestPreferredEmbeddedProviderKeepsLiveSessionBeforeOneShotOverride(t *testing.T) {
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: codexapp.ProviderCodex,
+				Started:  true,
+				ThreadID: "thread-live",
+				Status:   "Codex session ready",
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{Path: "/tmp/demo", Name: "demo"}
+	m := Model{codexManager: manager}
+	m.setEmbeddedLaunchProviderOverride(project.Path, codexapp.ProviderOpenCode)
+
+	if got := m.preferredEmbeddedProviderForProject(project); got != codexapp.ProviderCodex {
+		t.Fatalf("preferred provider = %q, want live Codex provider", got)
+	}
+}
