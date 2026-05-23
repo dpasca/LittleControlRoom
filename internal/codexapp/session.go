@@ -1420,25 +1420,41 @@ func (s *appServerSession) ClearGoal() error {
 		s.mu.Unlock()
 		return fmt.Errorf("cannot clear the goal while conversation compaction is in progress")
 	}
-	if s.busy {
+	if s.busyExternal {
 		s.mu.Unlock()
-		return fmt.Errorf("cannot clear the goal while a turn is in progress")
+		return fmt.Errorf("cannot clear the goal while this Codex session is busy in another process")
 	}
 	threadID := strings.TrimSpace(s.threadID)
 	if threadID == "" {
 		s.mu.Unlock()
 		return fmt.Errorf("no active thread for goal")
 	}
+	busy := s.busy
+	turnID := strings.TrimSpace(s.activeTurnID)
 	s.touchLocked()
-	s.status = "Clearing embedded Codex goal..."
+	if busy {
+		s.status = "Stopping embedded Codex goal..."
+	} else {
+		s.status = "Clearing embedded Codex goal..."
+	}
 	s.mu.Unlock()
 	s.notify()
 
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
+	var interruptErr error
+	if busy && turnID != "" {
+		_, interruptErr = s.call(ctx, "turn/interrupt", turnInterruptParams{
+			ThreadID: threadID,
+			TurnID:   turnID,
+		})
+	}
 	response, err := s.clearThreadGoal(ctx, threadID)
 	if err != nil {
+		if interruptErr != nil {
+			err = fmt.Errorf("interrupting active turn failed: %v; clearing embedded Codex goal failed: %w", interruptErr, err)
+		}
 		s.appendSystemError(err)
 		return err
 	}
@@ -1447,8 +1463,14 @@ func (s *appServerSession) ClearGoal() error {
 	s.goal = nil
 	s.touchLocked()
 	text := "Embedded Codex goal cleared"
+	if busy {
+		text = "Embedded Codex goal stopped"
+	}
 	if !response.Cleared {
 		text = "No embedded Codex goal was active"
+	}
+	if interruptErr != nil && response.Cleared {
+		text += "; turn interrupt failed"
 	}
 	s.appendEntryLocked("", TranscriptStatus, text)
 	s.lastSystemNotice = text
@@ -2653,6 +2675,8 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			s.goal = exportedThreadGoal(&msg.Goal)
 			if s.goal != nil {
 				switch s.goal.Status {
+				case ThreadGoalStatusPaused:
+					s.lastSystemNotice = "Embedded Codex goal paused"
 				case ThreadGoalStatusBudgetLimited:
 					s.lastSystemNotice = "Embedded Codex goal reached its token budget"
 				case ThreadGoalStatusComplete:

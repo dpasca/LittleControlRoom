@@ -210,6 +210,22 @@ func TestParseGoalClearCommand(t *testing.T) {
 	}
 }
 
+func TestParseGoalStopCommandClearsGoal(t *testing.T) {
+	inv, err := Parse("/goal stop")
+	if err != nil {
+		t.Fatalf("Parse(/goal stop) error = %v", err)
+	}
+	if inv.Kind != KindGoal {
+		t.Fatalf("Parse(/goal stop) kind = %q, want %q", inv.Kind, KindGoal)
+	}
+	if inv.GoalAction != GoalActionClear {
+		t.Fatalf("Parse(/goal stop) action = %q, want %q", inv.GoalAction, GoalActionClear)
+	}
+	if inv.Canonical != "/goal clear" {
+		t.Fatalf("Parse(/goal stop) canonical = %q, want /goal clear", inv.Canonical)
+	}
+}
+
 func TestParseGoalSetCommandWithBudget(t *testing.T) {
 	inv, err := Parse("/goal ship this feature --budget 5000")
 	if err != nil {

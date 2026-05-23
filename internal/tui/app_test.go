@@ -9279,6 +9279,77 @@ func TestVisibleCodexSlashGoalSetRunsLocally(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashGoalStopRunsLocallyWhileBusy(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:      true,
+			Preset:       codexcli.PresetYolo,
+			Status:       "Codex is working...",
+			ThreadID:     "thread_demo",
+			Busy:         true,
+			ActiveTurnID: "turn_demo",
+			Goal: &codexapp.ThreadGoal{
+				ThreadID:  "thread_demo",
+				Objective: "stay paused",
+				Status:    codexapp.ThreadGoalStatusActive,
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/goal stop")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /goal stop command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /goal stop, got %q", got.codexInput.Value())
+	}
+	if got.status != "Stopping embedded Codex goal..." {
+		t.Fatalf("status = %q, want goal stop notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/goal stop returned error = %v", action.err)
+	}
+	if action.status != "Embedded Codex goal stopped" {
+		t.Fatalf("action status = %q, want Embedded Codex goal stopped", action.status)
+	}
+	if session.clearGoalCalls != 1 {
+		t.Fatalf("clear goal calls = %d, want 1", session.clearGoalCalls)
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("/goal stop should not submit a Codex prompt, submissions = %d", len(session.submissions))
+	}
+}
+
 func TestVisibleCodexSlashReviewRunsLocally(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -18435,6 +18506,49 @@ func TestRenderCodexTranscriptEntriesCollapsesRepetitiveContent(t *testing.T) {
 	}
 }
 
+func TestRenderCodexTranscriptEntriesCollapsesConsecutiveDuplicateAssistantMessages(t *testing.T) {
+	repeated := "Still paused, as requested. I won't resume or touch the worktree until you explicitly tell me to."
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptAgent, Text: repeated},
+			{Kind: codexapp.TranscriptAgent, Text: repeated},
+			{Kind: codexapp.TranscriptAgent, Text: repeated},
+			{Kind: codexapp.TranscriptAgent, Text: "Different final answer"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if count := strings.Count(rendered, repeated); count != 1 {
+		t.Fatalf("duplicate assistant message rendered %d times, want 1:\n%s", count, rendered)
+	}
+	if !strings.Contains(rendered, "Assistant message repeated 2 more times") {
+		t.Fatalf("rendered transcript should summarize collapsed duplicates:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Different final answer") {
+		t.Fatalf("rendered transcript should keep following non-duplicate answer:\n%s", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesExpandsConsecutiveDuplicateAssistantMessagesWithDenseMode(t *testing.T) {
+	repeated := "Still paused, as requested."
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptAgent, Text: repeated},
+			{Kind: codexapp.TranscriptAgent, Text: repeated},
+		},
+	}
+
+	rendered := ansi.Strip((Model{codexDenseBlockMode: codexDenseBlockFull}).renderCodexTranscriptEntries(snapshot, 120))
+	if count := strings.Count(rendered, repeated); count != 2 {
+		t.Fatalf("dense-expanded transcript rendered duplicate assistant message %d times, want 2:\n%s", count, rendered)
+	}
+	if strings.Contains(rendered, "message repeated") {
+		t.Fatalf("dense-expanded transcript should not collapse duplicates:\n%s", rendered)
+	}
+}
+
 func TestRenderCodexTranscriptEntriesExpandsMassiveOutputWithDenseMode(t *testing.T) {
 	lines := make([]string, 250)
 	for i := range lines {
@@ -20095,6 +20209,23 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("renderCodexFooter() should promote %q out of the footer: %q", hidden, rendered)
+		}
+	}
+}
+
+func TestRenderCodexFooterShowsGoalClearForActiveGoal(t *testing.T) {
+	rendered := ansi.Strip((Model{}).renderCodexFooter(codexapp.Snapshot{
+		Started: true,
+		Status:  "Codex session ready",
+		Goal: &codexapp.ThreadGoal{
+			Objective: "stay paused",
+			Status:    codexapp.ThreadGoalStatusActive,
+		},
+	}, 180))
+
+	for _, want := range []string{"/goal clear", "stop goal"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderCodexFooter() missing %q for active goal: %q", want, rendered)
 		}
 	}
 }

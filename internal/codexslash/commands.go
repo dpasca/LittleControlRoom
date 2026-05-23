@@ -57,7 +57,7 @@ var specs = []Spec{
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
 	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
-	{Name: "goal", Usage: "/goal [status|clear|objective] [--budget N]", Summary: "Show, set, or clear the embedded Codex goal"},
+	{Name: "goal", Usage: "/goal [status|clear|stop|objective] [--budget N]", Summary: "Show, set, or clear the embedded Codex goal"},
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 }
 
@@ -161,6 +161,11 @@ func Suggestions(input string) []Suggestion {
 				Insert:  "/goal clear",
 				Display: "/goal clear",
 				Summary: "Clear the current embedded Codex goal",
+			},
+			{
+				Insert:  "/goal stop",
+				Display: "/goal stop",
+				Summary: "Interrupt the active goal turn and clear the embedded Codex goal",
 			},
 			{
 				Insert:  "/goal --budget ",
@@ -285,7 +290,7 @@ func parseGoalInvocation(rawArgs string) (Invocation, error) {
 			Canonical:  "/goal",
 		}, nil
 	}
-	if strings.EqualFold(trimmed, "clear") || strings.EqualFold(trimmed, "reset") {
+	if strings.EqualFold(trimmed, "clear") || strings.EqualFold(trimmed, "reset") || strings.EqualFold(trimmed, "stop") || strings.EqualFold(trimmed, "cancel") {
 		return Invocation{
 			Kind:       KindGoal,
 			GoalAction: GoalActionClear,
@@ -319,7 +324,7 @@ func parseGoalSetArgs(rawArgs string) (string, *int64, error) {
 		switch {
 		case field == "--budget" || field == "--tokens":
 			if i+1 >= len(fields) {
-				return "", nil, fmt.Errorf("usage: /goal [status|clear|objective] [--budget N]")
+				return "", nil, fmt.Errorf("usage: /goal [status|clear|stop|objective] [--budget N]")
 			}
 			i++
 			parsed, err := parseGoalTokenBudget(fields[i])

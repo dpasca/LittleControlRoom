@@ -37,6 +37,9 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 		return "", nil
 	}
 	blockMode := m.codexDenseBlockMode.normalized()
+	if snapshot.Provider.Normalized() == codexapp.ProviderCodex {
+		entries = collapseConsecutiveDuplicateTranscriptEntries(entries, blockMode.full())
+	}
 	if !options.fullHistory {
 		entries = limitCodexTranscriptEntriesForLiveView(entries, blockMode)
 	}
@@ -572,6 +575,79 @@ func collapseMassiveTranscriptEntries(entries []codexapp.TranscriptEntry, expand
 		}
 	}
 	return out
+}
+
+func collapseConsecutiveDuplicateTranscriptEntries(entries []codexapp.TranscriptEntry, expanded bool) []codexapp.TranscriptEntry {
+	if expanded || len(entries) < 2 {
+		return entries
+	}
+	out := make([]codexapp.TranscriptEntry, 0, len(entries))
+	current := entries[0]
+	repeats := 0
+	flush := func() {
+		out = append(out, current)
+		if repeats > 0 {
+			out = append(out, codexapp.TranscriptEntry{
+				Kind: codexapp.TranscriptSystem,
+				Text: repeatedTranscriptEntrySummary(current.Kind, repeats),
+			})
+		}
+	}
+	for _, entry := range entries[1:] {
+		if duplicateTranscriptEntry(current, entry) {
+			repeats++
+			continue
+		}
+		flush()
+		current = entry
+		repeats = 0
+	}
+	flush()
+	return out
+}
+
+func duplicateTranscriptEntry(left, right codexapp.TranscriptEntry) bool {
+	if left.Kind != right.Kind || !collapsibleDuplicateTranscriptKind(left.Kind) {
+		return false
+	}
+	if left.GeneratedImage != nil || right.GeneratedImage != nil {
+		return false
+	}
+	leftText := strings.TrimSpace(left.Text)
+	rightText := strings.TrimSpace(right.Text)
+	if leftText == "" || leftText != rightText {
+		return false
+	}
+	return strings.TrimSpace(left.DisplayText) == strings.TrimSpace(right.DisplayText)
+}
+
+func collapsibleDuplicateTranscriptKind(kind codexapp.TranscriptKind) bool {
+	switch kind {
+	case codexapp.TranscriptAgent, codexapp.TranscriptStatus, codexapp.TranscriptSystem, codexapp.TranscriptError:
+		return true
+	default:
+		return false
+	}
+}
+
+func repeatedTranscriptEntrySummary(kind codexapp.TranscriptKind, repeats int) string {
+	if repeats <= 1 {
+		return fmt.Sprintf("%s message repeated once. Alt+L expands.", transcriptRepeatLabel(kind))
+	}
+	return fmt.Sprintf("%s message repeated %d more times. Alt+L expands.", transcriptRepeatLabel(kind), repeats)
+}
+
+func transcriptRepeatLabel(kind codexapp.TranscriptKind) string {
+	switch kind {
+	case codexapp.TranscriptAgent:
+		return "Assistant"
+	case codexapp.TranscriptStatus:
+		return "Status"
+	case codexapp.TranscriptError:
+		return "Error"
+	default:
+		return "System"
+	}
 }
 
 func limitCodexTranscriptEntriesForLiveView(entries []codexapp.TranscriptEntry, blockMode codexDenseBlockMode) []codexapp.TranscriptEntry {

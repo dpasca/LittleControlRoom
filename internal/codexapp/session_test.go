@@ -2210,6 +2210,63 @@ func TestSetGoalErrorsWhenCodexKeepsReturningStaleGoal(t *testing.T) {
 	}
 }
 
+func TestClearGoalInterruptsActiveTurnBeforeClearing(t *testing.T) {
+	calls := []string{}
+
+	s := &appServerSession{
+		projectPath:  "/tmp/demo",
+		threadID:     "thread_456",
+		activeTurnID: "turn_789",
+		busy:         true,
+		entryIndex:   make(map[string]int),
+		notify:       func() {},
+		goal:         &ThreadGoal{ThreadID: "thread_456", Objective: "stay paused", Status: ThreadGoalStatusActive},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			calls = append(calls, method)
+			switch method {
+			case "turn/interrupt":
+				request, ok := params.(turnInterruptParams)
+				if !ok {
+					t.Fatalf("params = %#v, want turnInterruptParams", params)
+				}
+				if request.ThreadID != "thread_456" || request.TurnID != "turn_789" {
+					t.Fatalf("interrupt request = %#v, want thread_456/turn_789", request)
+				}
+				return json.RawMessage(`{}`), nil
+			case "thread/goal/clear":
+				request, ok := params.(threadGoalClearParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalClearParams", params)
+				}
+				if request.ThreadID != "thread_456" {
+					t.Fatalf("clear thread id = %q, want thread_456", request.ThreadID)
+				}
+				return json.RawMessage(`{"cleared":true}`), nil
+			default:
+				t.Fatalf("unexpected method = %q", method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.ClearGoal(); err != nil {
+		t.Fatalf("ClearGoal() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "turn/interrupt,thread/goal/clear" {
+		t.Fatalf("calls = %#v, want interrupt then clear", calls)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Goal != nil {
+		t.Fatalf("snapshot goal = %#v, want nil", snapshot.Goal)
+	}
+	if snapshot.Status != "Embedded Codex goal stopped" {
+		t.Fatalf("status = %q, want goal stopped", snapshot.Status)
+	}
+	if len(snapshot.Entries) != 1 || snapshot.Entries[0].Text != "Embedded Codex goal stopped" {
+		t.Fatalf("entries = %#v, want stopped transcript entry", snapshot.Entries)
+	}
+}
+
 func TestHandleGoalNotificationsUpdateSnapshot(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",

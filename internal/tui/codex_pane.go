@@ -1203,14 +1203,20 @@ func (m Model) clearVisibleCodexGoalCmd() tea.Cmd {
 		return nil
 	}
 	label := "Codex"
+	stopping := false
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		label = embeddedProvider(snapshot).Label()
+		stopping = snapshot.Busy && codexSnapshotGoalCanBeStopped(snapshot)
 	}
 	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
 		if err := session.ClearGoal(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal cleared"}
+		status := "Embedded " + label + " goal cleared"
+		if stopping {
+			status = "Embedded " + label + " goal stopped"
+		}
+		return codexActionMsg{projectPath: projectPath, status: status}
 	})
 }
 
@@ -1711,7 +1717,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.status = "Setting embedded " + label + " goal..."
 					return m, m.setVisibleCodexGoalCmd(inv.GoalObjective, inv.GoalTokenBudget)
 				case codexslash.GoalActionClear:
-					m.status = "Clearing embedded " + label + " goal..."
+					if snapshot.Busy && codexSnapshotGoalCanBeStopped(snapshot) {
+						m.status = "Stopping embedded " + label + " goal..."
+					} else {
+						m.status = "Clearing embedded " + label + " goal..."
+					}
 					return m, m.clearVisibleCodexGoalCmd()
 				default:
 					m.status = "Unsupported embedded goal action"
@@ -2782,6 +2792,18 @@ func codexGoalStatusLabel(status codexapp.ThreadGoalStatus) string {
 	}
 }
 
+func codexSnapshotGoalCanBeStopped(snapshot codexapp.Snapshot) bool {
+	if snapshot.Goal == nil || snapshot.Closed || snapshot.BusyExternal {
+		return false
+	}
+	switch snapshot.Goal.Status {
+	case codexapp.ThreadGoalStatusBudgetLimited, codexapp.ThreadGoalStatusComplete:
+		return false
+	default:
+		return true
+	}
+}
+
 func cloneCodexThreadGoal(goal *codexapp.ThreadGoal) *codexapp.ThreadGoal {
 	if goal == nil {
 		return nil
@@ -2927,6 +2949,9 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		if cmd := embeddedNewCommand(embeddedProvider(snapshot)); cmd != "" {
 			actions = append(actions, footerLowAction(cmd, "fresh"))
 		}
+	}
+	if codexSnapshotGoalCanBeStopped(snapshot) && !m.codexSlashActive() {
+		actions = append([]footerAction{footerExitAction("/goal clear", "stop goal")}, actions...)
 	}
 
 	segments := []string{}
