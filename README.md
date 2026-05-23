@@ -162,8 +162,8 @@ The main TUI command palette opens with `/`.
 Inside the embedded Codex, Claude Code, or OpenCode pane:
 
 - `/new`: Start a fresh session for the current provider.
-- `/resume [session-id]`: Open the session picker or jump to a saved session.
-- `/session [session-id]`: Alias for `/resume`.
+- `/sessions [session-id]`: Open this project's session-history picker or jump to a saved session.
+- `/resume [session-id]` and `/session [session-id]`: Aliases for `/sessions`.
 - `/reconnect`: Restart the embedded provider helper and reconnect to the current session.
 - `/model`: Change the model and reasoning settings for this and future embedded sessions of the same tool, including after restarting LCR.
 - `/status`: Show the current provider/session status.
@@ -196,7 +196,7 @@ Most day-to-day use falls into a few buckets:
 
   [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
 
-- **Resume agent work** — Use `/codex`, `/claude`, `/opencode`, or experimental `/lcagent` to pick up where you left off, and `/codex-new`, `/claude-new`, `/opencode-new`, or `/lcagent-new` when you want a fresh session. Inside the embedded pane, `/resume`, `/session`, and `/reconnect` handle switching sessions or reattaching the helper. Claude Code support currently uses a headless CLI MVP, so approvals and attachments are still less complete than Codex/OpenCode, even though `/model` now offers saved Claude aliases and reasoning levels. LCAgent is a one-shot LCR-native worker with provider-backed tool calls and structured local JSONL artifacts.
+- **Resume agent work** — Use `/codex`, `/claude`, `/opencode`, or experimental `/lcagent` to pick up where you left off, and `/codex-new`, `/claude-new`, `/opencode-new`, or `/lcagent-new` when you want a fresh session. Inside the embedded pane, `/sessions`, `/resume`, `/session`, and `/reconnect` handle project-local session history or reattaching the helper. Claude Code support currently uses a headless CLI MVP, so approvals and attachments are still less complete than Codex/OpenCode, even though `/model` now offers saved Claude aliases and reasoning levels. LCAgent is a one-shot LCR-native worker with provider-backed tool calls and structured local JSONL artifacts.
 
   [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png)
 

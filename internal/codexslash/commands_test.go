@@ -264,12 +264,31 @@ func TestParseSessionAliasReturnsResumeInvocation(t *testing.T) {
 	}
 }
 
+func TestParseSessionsAliasReturnsResumeInvocation(t *testing.T) {
+	inv, err := Parse("/sessions ses_demo")
+	if err != nil {
+		t.Fatalf("Parse(/sessions ses_demo) error = %v", err)
+	}
+	if inv.Kind != KindResume {
+		t.Fatalf("Parse(/sessions ses_demo) kind = %q, want %q", inv.Kind, KindResume)
+	}
+	if inv.SessionID != "ses_demo" {
+		t.Fatalf("Parse(/sessions ses_demo) session id = %q, want %q", inv.SessionID, "ses_demo")
+	}
+	if inv.Canonical != "/resume ses_demo" {
+		t.Fatalf("Parse(/sessions ses_demo) canonical = %q, want /resume ses_demo", inv.Canonical)
+	}
+}
+
 func TestSuggestionsExposeSessionAliasWhenPrefixMatches(t *testing.T) {
 	suggestions := Suggestions("/sess")
-	if len(suggestions) != 1 {
-		t.Fatalf("Suggestions(/sess) returned %d suggestions, want 1", len(suggestions))
+	if len(suggestions) != 2 {
+		t.Fatalf("Suggestions(/sess) returned %d suggestions, want 2", len(suggestions))
 	}
-	if suggestions[0].Insert != "/session" {
-		t.Fatalf("Suggestions(/sess)[0].Insert = %q, want /session", suggestions[0].Insert)
+	if suggestions[0].Insert != "/sessions" {
+		t.Fatalf("Suggestions(/sess)[0].Insert = %q, want /sessions", suggestions[0].Insert)
+	}
+	if suggestions[1].Insert != "/session" {
+		t.Fatalf("Suggestions(/sess)[1].Insert = %q, want /session", suggestions[1].Insert)
 	}
 }

@@ -2326,8 +2326,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openBossModeOrSetupPrompt()
 	case "f3":
 		return m.cycleCodexSession(1)
-	case "alt+down":
-		return m.openCodexPicker()
 	case "alt+[":
 		return m.cycleCodexSession(-1)
 	case "alt+]":
@@ -7784,11 +7782,9 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		if hasHiddenCodex {
 			actions := []footerAction{
 				footerPrimaryAction("Enter", launchLabel),
-				footerNavAction("Alt+Down", "picker"),
 			}
 			actions = append(actions, projectActions...)
 			actions = append(actions,
-				footerNavAction("Alt+[/]", "sessions"),
 				footerLowAction("?", "help"),
 				footerExitAction("q", "quit"),
 			)
@@ -7798,7 +7794,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		}
 		actions := []footerAction{
 			footerPrimaryAction("Enter", launchLabel),
-			footerNavAction("Alt+Down", "picker"),
 		}
 		actions = append(actions, projectActions...)
 		actions = append(actions,
@@ -7814,7 +7809,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		if hasHiddenCodex {
 			actions := []footerAction{
 				footerPrimaryAction("Enter", launchLabel),
-				footerNavAction("Alt+Down", "picker"),
 			}
 			actions = append(actions, projectActions...)
 			actions = append(actions,
@@ -7827,7 +7821,6 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		}
 		actions := []footerAction{
 			footerPrimaryAction("Enter", launchLabel),
-			footerNavAction("Alt+Down", "picker"),
 		}
 		actions = append(actions, projectActions...)
 		actions = append(actions,
