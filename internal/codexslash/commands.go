@@ -31,9 +31,11 @@ type Suggestion = slashcmd.Suggestion
 type GoalAction string
 
 const (
-	GoalActionShow  GoalAction = "show"
-	GoalActionSet   GoalAction = "set"
-	GoalActionClear GoalAction = "clear"
+	GoalActionShow   GoalAction = "show"
+	GoalActionSet    GoalAction = "set"
+	GoalActionPause  GoalAction = "pause"
+	GoalActionResume GoalAction = "resume"
+	GoalActionClear  GoalAction = "clear"
 )
 
 type Invocation struct {
@@ -58,7 +60,7 @@ var specs = []Spec{
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
 	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
-	{Name: "goal", Usage: "/goal [status|clear|stop|objective] [--budget N]", Summary: "Show, set, or clear the embedded Codex goal"},
+	{Name: "goal", Usage: "/goal [status|pause|resume|clear|stop|objective] [--budget N]", Summary: "Show, set, pause, resume, or clear the embedded Codex goal"},
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
 }
 
@@ -159,6 +161,16 @@ func Suggestions(input string) []Suggestion {
 				Insert:  "/goal status",
 				Display: "/goal status",
 				Summary: "Show the current embedded Codex goal",
+			},
+			{
+				Insert:  "/goal pause",
+				Display: "/goal pause",
+				Summary: "Pause the current embedded Codex goal",
+			},
+			{
+				Insert:  "/goal resume",
+				Display: "/goal resume",
+				Summary: "Resume the current paused embedded Codex goal",
 			},
 			{
 				Insert:  "/goal clear",
@@ -298,6 +310,20 @@ func parseGoalInvocation(rawArgs string) (Invocation, error) {
 			Kind:       KindGoal,
 			GoalAction: GoalActionClear,
 			Canonical:  "/goal clear",
+		}, nil
+	}
+	if strings.EqualFold(trimmed, "pause") || strings.EqualFold(trimmed, "suspend") {
+		return Invocation{
+			Kind:       KindGoal,
+			GoalAction: GoalActionPause,
+			Canonical:  "/goal pause",
+		}, nil
+	}
+	if strings.EqualFold(trimmed, "resume") || strings.EqualFold(trimmed, "continue") {
+		return Invocation{
+			Kind:       KindGoal,
+			GoalAction: GoalActionResume,
+			Canonical:  "/goal resume",
 		}, nil
 	}
 

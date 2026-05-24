@@ -1815,6 +1815,91 @@ func TestSubmitInputStartsNewTurnWhenBusyStateIsStaleAndThreadReadShowsNoActiveT
 	}
 }
 
+func TestSubmitInputPausesActiveGoalBeforeStartingManualTurn(t *testing.T) {
+	calls := []string{}
+
+	s := &appServerSession{
+		projectPath:  "/tmp/demo",
+		threadID:     "thread_456",
+		activeTurnID: "turn_goal",
+		busy:         true,
+		entryIndex:   make(map[string]int),
+		notify:       func() {},
+		goal: &ThreadGoal{
+			ThreadID:  "thread_456",
+			Objective: "finish the branch",
+			Status:    ThreadGoalStatusActive,
+		},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			calls = append(calls, method)
+			switch len(calls) {
+			case 1:
+				if method != "turn/interrupt" {
+					t.Fatalf("call 1 method = %q, want turn/interrupt", method)
+				}
+				request, ok := params.(turnInterruptParams)
+				if !ok {
+					t.Fatalf("params = %#v, want turnInterruptParams", params)
+				}
+				if request.ThreadID != "thread_456" || request.TurnID != "turn_goal" {
+					t.Fatalf("interrupt request = %#v, want thread_456/turn_goal", request)
+				}
+				return json.RawMessage(`{}`), nil
+			case 2:
+				if method != "thread/goal/set" {
+					t.Fatalf("call 2 method = %q, want thread/goal/set", method)
+				}
+				request, ok := params.(threadGoalSetParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalSetParams", params)
+				}
+				if request.Status != ThreadGoalStatusPaused {
+					t.Fatalf("goal status = %q, want paused", request.Status)
+				}
+				if request.Objective != "finish the branch" {
+					t.Fatalf("goal objective = %q, want finish the branch", request.Objective)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"finish the branch","status":"paused","tokensUsed":20,"timeUsedSeconds":5,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
+			case 3:
+				if method != "thread/read" {
+					t.Fatalf("call 3 method = %q, want thread/read", method)
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","status":{"type":"idle"},"turns":[]}}`), nil
+			case 4:
+				if method != "turn/start" {
+					t.Fatalf("call 4 method = %q, want turn/start", method)
+				}
+				request, ok := params.(turnStartParams)
+				if !ok {
+					t.Fatalf("params = %#v, want turnStartParams", params)
+				}
+				if request.ThreadID != "thread_456" {
+					t.Fatalf("thread id = %q, want thread_456", request.ThreadID)
+				}
+				return json.RawMessage(`{"turn":{"id":"turn_manual"}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", len(calls), method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("answer this side question"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "turn/interrupt,thread/goal/set,thread/read,turn/start" {
+		t.Fatalf("calls = %#v, want pause then manual turn start", calls)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Goal == nil || snapshot.Goal.Status != ThreadGoalStatusPaused {
+		t.Fatalf("goal = %#v, want paused goal", snapshot.Goal)
+	}
+	if snapshot.ActiveTurnID != "turn_manual" {
+		t.Fatalf("active turn id = %q, want turn_manual", snapshot.ActiveTurnID)
+	}
+}
+
 func TestSubmitWaitsForPlaywrightMCPToolsBeforeTurnStart(t *testing.T) {
 	callCount := 0
 
@@ -2170,6 +2255,57 @@ func TestSetGoalCallsThreadGoalSetAndStoresGoal(t *testing.T) {
 	}
 	if len(snapshot.Entries) != 1 || !strings.Contains(snapshot.Entries[0].Text, "objective: ship the goal command") {
 		t.Fatalf("entries = %#v, want goal transcript entry", snapshot.Entries)
+	}
+}
+
+func TestResumeGoalCallsThreadGoalSetWithActiveStatus(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		goal: &ThreadGoal{
+			ThreadID:  "thread_456",
+			Objective: "finish the branch",
+			Status:    ThreadGoalStatusPaused,
+		},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			if method != "thread/goal/set" {
+				t.Fatalf("method = %q, want thread/goal/set", method)
+			}
+			request, ok := params.(threadGoalSetParams)
+			if !ok {
+				t.Fatalf("params = %#v, want threadGoalSetParams", params)
+			}
+			if request.ThreadID != "thread_456" {
+				t.Fatalf("thread id = %q, want thread_456", request.ThreadID)
+			}
+			if request.Status != ThreadGoalStatusActive {
+				t.Fatalf("status = %q, want active", request.Status)
+			}
+			if request.Objective != "finish the branch" {
+				t.Fatalf("objective = %q, want finish the branch", request.Objective)
+			}
+			return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"finish the branch","status":"active","tokensUsed":20,"timeUsedSeconds":5,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
+		},
+	}
+
+	if err := s.ResumeGoal(); err != nil {
+		t.Fatalf("ResumeGoal() error = %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("rpc call count = %d, want 1", callCount)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Goal == nil || snapshot.Goal.Status != ThreadGoalStatusActive {
+		t.Fatalf("goal = %#v, want active goal", snapshot.Goal)
+	}
+	if snapshot.Status != "Embedded Codex goal resumed" {
+		t.Fatalf("status = %q, want Embedded Codex goal resumed", snapshot.Status)
 	}
 }
 

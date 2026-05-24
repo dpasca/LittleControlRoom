@@ -526,6 +526,8 @@ type Session interface {
 	ShowStatus() error
 	ShowGoal() error
 	SetGoal(objective string, tokenBudget *int64) error
+	PauseGoal() error
+	ResumeGoal() error
 	ClearGoal() error
 	Compact() error
 	Review() error

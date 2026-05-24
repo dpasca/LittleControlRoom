@@ -231,9 +231,10 @@ type threadGoalClearResponse struct {
 }
 
 type threadGoalSetParams struct {
-	ThreadID    string `json:"threadId"`
-	Objective   string `json:"objective"`
-	TokenBudget *int64 `json:"tokenBudget,omitempty"`
+	ThreadID    string           `json:"threadId"`
+	Objective   string           `json:"objective,omitempty"`
+	Status      ThreadGoalStatus `json:"status,omitempty"`
+	TokenBudget *int64           `json:"tokenBudget,omitempty"`
 }
 
 type threadGoalGetParams struct {
@@ -1000,6 +1001,8 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
 	currentModel := strings.TrimSpace(s.model)
 	currentReasoning := strings.TrimSpace(s.reasoningEffort)
+	goalToPause := cloneThreadGoal(s.goal)
+	pauseGoalForManualPrompt := busy && activeTurnID != "" && threadGoalShouldPauseOnManualPrompt(goalToPause)
 	goalToResume := cloneThreadGoal(s.goal)
 	if busy || !threadGoalShouldReactivateOnManualPrompt(goalToResume) {
 		goalToResume = nil
@@ -1010,7 +1013,10 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	}
 	s.touchLocked()
 	s.appendEntryWithDisplayLocked("", TranscriptUser, input.TranscriptText(), input.TranscriptDisplayText())
-	if !busy {
+	switch {
+	case pauseGoalForManualPrompt:
+		s.status = "Pausing embedded Codex goal..."
+	case !busy:
 		s.status = "Sending prompt to Codex..."
 	}
 	s.mu.Unlock()
@@ -1031,6 +1037,18 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	if err := s.ensurePlaywrightMCPReady(ctx); err != nil {
 		s.appendSystemError(err)
 		return err
+	}
+
+	if pauseGoalForManualPrompt {
+		if err := s.pauseGoalForManualPrompt(ctx, threadID, activeTurnID, goalToPause); err != nil {
+			s.appendSystemError(err)
+			return err
+		}
+		if err := s.waitForThreadIdleAfterInterrupt(ctx, threadID); err != nil {
+			s.appendSystemError(err)
+			return err
+		}
+		return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
 	}
 
 	if busy && activeTurnID != "" {
@@ -1439,6 +1457,110 @@ func (s *appServerSession) reactivateThreadGoal(ctx context.Context, threadID st
 	return nil
 }
 
+func (s *appServerSession) PauseGoal() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("codex session is closed")
+	}
+	if s.compacting {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot pause the goal while conversation compaction is in progress")
+	}
+	if s.busyExternal {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot pause the goal while this Codex session is busy in another process")
+	}
+	threadID := strings.TrimSpace(s.threadID)
+	turnID := strings.TrimSpace(s.activeTurnID)
+	goal := cloneThreadGoal(s.goal)
+	if threadID == "" {
+		s.mu.Unlock()
+		return fmt.Errorf("no active thread for goal")
+	}
+	if goal == nil || strings.TrimSpace(goal.Objective) == "" {
+		s.mu.Unlock()
+		return fmt.Errorf("no embedded Codex goal to pause")
+	}
+	s.touchLocked()
+	s.status = "Pausing embedded Codex goal..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+	if err := s.pauseGoalForManualPrompt(ctx, threadID, turnID, goal); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+	return nil
+}
+
+func (s *appServerSession) ResumeGoal() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fmt.Errorf("codex session is closed")
+	}
+	if s.compacting {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot resume the goal while conversation compaction is in progress")
+	}
+	if s.busy {
+		s.mu.Unlock()
+		return fmt.Errorf("cannot resume the goal while a turn is in progress")
+	}
+	threadID := strings.TrimSpace(s.threadID)
+	goal := cloneThreadGoal(s.goal)
+	if threadID == "" {
+		s.mu.Unlock()
+		return fmt.Errorf("no active thread for goal")
+	}
+	s.touchLocked()
+	s.status = "Resuming embedded Codex goal..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+	if goal == nil {
+		var err error
+		goal, err = s.readThreadGoal(ctx, threadID)
+		if err != nil {
+			s.appendSystemError(err)
+			return err
+		}
+	}
+	if goal == nil || strings.TrimSpace(goal.Objective) == "" {
+		err := fmt.Errorf("no embedded Codex goal to resume")
+		s.appendSystemError(err)
+		return err
+	}
+	updated, err := s.setThreadGoalStatus(ctx, threadID, ThreadGoalStatusActive, goal)
+	if err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+	if updated == nil {
+		updated = &ThreadGoal{
+			ThreadID:    threadID,
+			Objective:   strings.TrimSpace(goal.Objective),
+			Status:      ThreadGoalStatusActive,
+			TokenBudget: cloneInt64Ptr(goal.TokenBudget),
+		}
+	}
+
+	s.mu.Lock()
+	s.goal = cloneThreadGoal(updated)
+	s.touchLocked()
+	s.appendEntryLocked("", TranscriptStatus, "Embedded Codex goal resumed")
+	s.lastSystemNotice = "Embedded Codex goal resumed"
+	s.status = "Embedded Codex goal resumed"
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
 func (s *appServerSession) setThreadGoalReplacingStale(ctx context.Context, threadID, objective string, tokenBudget *int64) (*ThreadGoal, error) {
 	goal, err := s.setThreadGoal(ctx, threadID, objective, tokenBudget)
 	if err != nil {
@@ -1544,6 +1666,97 @@ func (s *appServerSession) setThreadGoal(ctx context.Context, threadID, objectiv
 		return nil, err
 	}
 	return exportedThreadGoal(response.Goal), nil
+}
+
+func (s *appServerSession) setThreadGoalStatus(ctx context.Context, threadID string, status ThreadGoalStatus, previous *ThreadGoal) (*ThreadGoal, error) {
+	params := threadGoalSetParams{
+		ThreadID: strings.TrimSpace(threadID),
+		Status:   status,
+	}
+	if previous != nil {
+		params.Objective = strings.TrimSpace(previous.Objective)
+		params.TokenBudget = cloneInt64Ptr(previous.TokenBudget)
+	}
+	result, err := s.call(ctx, "thread/goal/set", params)
+	if err != nil {
+		return nil, err
+	}
+	var response threadGoalResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return nil, err
+	}
+	return exportedThreadGoal(response.Goal), nil
+}
+
+func (s *appServerSession) pauseGoalForManualPrompt(ctx context.Context, threadID, turnID string, goal *ThreadGoal) error {
+	threadID = strings.TrimSpace(threadID)
+	turnID = strings.TrimSpace(turnID)
+	if threadID == "" {
+		return fmt.Errorf("no active thread for goal")
+	}
+	var interruptErr error
+	if turnID != "" {
+		_, interruptErr = s.call(ctx, "turn/interrupt", turnInterruptParams{
+			ThreadID: threadID,
+			TurnID:   turnID,
+		})
+	}
+	updated, err := s.setThreadGoalStatus(ctx, threadID, ThreadGoalStatusPaused, goal)
+	if err != nil {
+		if interruptErr != nil {
+			return fmt.Errorf("interrupting active turn failed: %v; pausing embedded Codex goal failed: %w", interruptErr, err)
+		}
+		return err
+	}
+	if updated == nil && goal != nil {
+		updated = cloneThreadGoal(goal)
+		updated.Status = ThreadGoalStatusPaused
+	}
+
+	s.mu.Lock()
+	if current := strings.TrimSpace(s.threadID); current == "" || current == threadID {
+		s.goal = cloneThreadGoal(updated)
+		s.touchLocked()
+		text := "Embedded Codex goal paused"
+		if interruptErr != nil {
+			text += "; turn interrupt failed"
+		}
+		s.appendEntryLocked("", TranscriptStatus, text)
+		s.lastSystemNotice = text
+		s.status = text
+	}
+	s.mu.Unlock()
+	s.notify()
+	if interruptErr != nil {
+		return interruptErr
+	}
+	return nil
+}
+
+func (s *appServerSession) waitForThreadIdleAfterInterrupt(ctx context.Context, threadID string) error {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil
+	}
+	for {
+		thread, err := s.readThreadState(ctx, threadID)
+		if err != nil {
+			return err
+		}
+		status := effectiveThreadStatus(thread)
+		s.mu.Lock()
+		s.syncThreadStatusLocked(threadID, status, true)
+		s.mu.Unlock()
+		s.notify()
+		if activeTurnIDFromThread(thread) == "" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (s *appServerSession) clearThreadGoal(ctx context.Context, threadID string) (threadGoalClearResponse, error) {
@@ -3297,6 +3510,18 @@ func threadGoalShouldReactivateOnManualPrompt(goal *ThreadGoal) bool {
 	}
 	switch strings.TrimSpace(string(goal.Status)) {
 	case string(ThreadGoalStatusPaused), string(ThreadGoalStatusBlocked):
+		return true
+	default:
+		return false
+	}
+}
+
+func threadGoalShouldPauseOnManualPrompt(goal *ThreadGoal) bool {
+	if goal == nil || strings.TrimSpace(goal.Objective) == "" {
+		return false
+	}
+	switch strings.TrimSpace(string(goal.Status)) {
+	case "", string(ThreadGoalStatusActive):
 		return true
 	default:
 		return false

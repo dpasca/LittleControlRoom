@@ -1203,6 +1203,40 @@ func (m Model) setVisibleCodexGoalCmd(objective string, tokenBudget *int64) tea.
 	})
 }
 
+func (m Model) pauseVisibleCodexGoalCmd() tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if err := session.PauseGoal(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal paused"}
+	})
+}
+
+func (m Model) resumeVisibleCodexGoalCmd() tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		if err := session.ResumeGoal(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal resumed"}
+	})
+}
+
 func (m Model) clearVisibleCodexGoalCmd() tea.Cmd {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath == "" {
@@ -1720,6 +1754,12 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				case codexslash.GoalActionSet:
 					m.status = "Setting embedded " + label + " goal..."
 					return m, m.setVisibleCodexGoalCmd(inv.GoalObjective, inv.GoalTokenBudget)
+				case codexslash.GoalActionPause:
+					m.status = "Pausing embedded " + label + " goal..."
+					return m, m.pauseVisibleCodexGoalCmd()
+				case codexslash.GoalActionResume:
+					m.status = "Resuming embedded " + label + " goal..."
+					return m, m.resumeVisibleCodexGoalCmd()
 				case codexslash.GoalActionClear:
 					if snapshot.Busy && codexSnapshotGoalCanBeStopped(snapshot) {
 						m.status = "Stopping embedded " + label + " goal..."
@@ -1823,7 +1863,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, refreshCmd
 		}
 		m.clearCodexDraft(m.codexVisibleProject)
-		if codexSnapshotCanSteer(snapshot) {
+		if codexSnapshotGoalPausesOnPrompt(snapshot) {
+			m.status = "Pausing embedded " + label + " goal..."
+		} else if codexSnapshotCanSteer(snapshot) {
 			m.status = "Sending follow-up to " + label + "..."
 		} else {
 			m.status = "Sending prompt to " + label + "..."
@@ -2811,6 +2853,18 @@ func codexSnapshotGoalCanBeStopped(snapshot codexapp.Snapshot) bool {
 	}
 }
 
+func codexSnapshotGoalPausesOnPrompt(snapshot codexapp.Snapshot) bool {
+	if snapshot.Goal == nil || snapshot.Closed || snapshot.BusyExternal || !snapshot.Busy {
+		return false
+	}
+	switch snapshot.Goal.Status {
+	case "", codexapp.ThreadGoalStatusActive:
+		return true
+	default:
+		return false
+	}
+}
+
 func cloneCodexThreadGoal(goal *codexapp.ThreadGoal) *codexapp.ThreadGoal {
 	if goal == nil {
 		return nil
@@ -2922,8 +2976,12 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerNavAction("arrows", "move"),
 		}
 	case snapshot.Busy:
+		enterAction := footerPrimaryAction("Enter", "steer")
+		if codexSnapshotGoalPausesOnPrompt(snapshot) {
+			enterAction = footerPrimaryAction("Enter", "pause goal")
+		}
 		actions = []footerAction{
-			footerPrimaryAction("Enter", "steer"),
+			enterAction,
 			footerExitAction("ctrl+c", "interrupt"),
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
@@ -4340,6 +4398,9 @@ func codexSnapshotNeedsSubmitRefresh(snapshot codexapp.Snapshot) bool {
 }
 
 func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
+	if codexSnapshotGoalPausesOnPrompt(snapshot) {
+		return false
+	}
 	switch snapshot.Phase {
 	case "", codexapp.SessionPhaseRunning:
 		return snapshot.Busy && !snapshot.BusyExternal

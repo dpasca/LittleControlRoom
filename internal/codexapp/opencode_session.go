@@ -525,6 +525,14 @@ func (s *openCodeSession) SetGoal(objective string, tokenBudget *int64) error {
 	return fmt.Errorf("embedded OpenCode goals are not supported yet")
 }
 
+func (s *openCodeSession) PauseGoal() error {
+	return fmt.Errorf("embedded OpenCode goals are not supported yet")
+}
+
+func (s *openCodeSession) ResumeGoal() error {
+	return fmt.Errorf("embedded OpenCode goals are not supported yet")
+}
+
 func (s *openCodeSession) ClearGoal() error {
 	return fmt.Errorf("embedded OpenCode goals are not supported yet")
 }

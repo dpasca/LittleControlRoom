@@ -193,6 +193,20 @@ func (s *fakeCodexSession) SetGoal(objective string, tokenBudget *int64) error {
 	return nil
 }
 
+func (s *fakeCodexSession) PauseGoal() error {
+	if s.snapshot.Goal != nil {
+		s.snapshot.Goal.Status = codexapp.ThreadGoalStatusPaused
+	}
+	return nil
+}
+
+func (s *fakeCodexSession) ResumeGoal() error {
+	if s.snapshot.Goal != nil {
+		s.snapshot.Goal.Status = codexapp.ThreadGoalStatusActive
+	}
+	return nil
+}
+
 func (s *fakeCodexSession) ClearGoal() error {
 	s.clearGoalCalls++
 	s.snapshot.Goal = nil
@@ -9347,6 +9361,69 @@ func TestVisibleCodexSlashGoalStopRunsLocallyWhileBusy(t *testing.T) {
 	}
 	if len(session.submissions) != 0 {
 		t.Fatalf("/goal stop should not submit a Codex prompt, submissions = %d", len(session.submissions))
+	}
+}
+
+func TestVisibleCodexSlashGoalResumeRunsLocally(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:  true,
+			Preset:   codexcli.PresetYolo,
+			Status:   "Codex session ready",
+			ThreadID: "thread_demo",
+			Goal: &codexapp.ThreadGoal{
+				ThreadID:  "thread_demo",
+				Objective: "stay paused",
+				Status:    codexapp.ThreadGoalStatusPaused,
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/goal resume")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /goal resume command")
+	}
+	if got.status != "Resuming embedded Codex goal..." {
+		t.Fatalf("status = %q, want goal resume notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/goal resume returned error = %v", action.err)
+	}
+	if action.status != "Embedded Codex goal resumed" {
+		t.Fatalf("action status = %q, want Embedded Codex goal resumed", action.status)
+	}
+	if session.snapshot.Goal == nil || session.snapshot.Goal.Status != codexapp.ThreadGoalStatusActive {
+		t.Fatalf("goal = %#v, want active goal", session.snapshot.Goal)
 	}
 }
 

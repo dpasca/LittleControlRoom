@@ -218,6 +218,14 @@ func (s *lcagentSession) SetGoal(string, *int64) error {
 	return s.unsupportedNotice("LCAgent goals are not wired yet.")
 }
 
+func (s *lcagentSession) PauseGoal() error {
+	return s.unsupportedNotice("LCAgent goals are not wired yet.")
+}
+
+func (s *lcagentSession) ResumeGoal() error {
+	return s.unsupportedNotice("LCAgent goals are not wired yet.")
+}
+
 func (s *lcagentSession) ClearGoal() error {
 	return s.unsupportedNotice("LCAgent goals are not wired yet.")
 }

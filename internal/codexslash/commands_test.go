@@ -226,6 +226,38 @@ func TestParseGoalStopCommandClearsGoal(t *testing.T) {
 	}
 }
 
+func TestParseGoalResumeCommand(t *testing.T) {
+	inv, err := Parse("/goal resume")
+	if err != nil {
+		t.Fatalf("Parse(/goal resume) error = %v", err)
+	}
+	if inv.Kind != KindGoal {
+		t.Fatalf("Parse(/goal resume) kind = %q, want %q", inv.Kind, KindGoal)
+	}
+	if inv.GoalAction != GoalActionResume {
+		t.Fatalf("Parse(/goal resume) action = %q, want %q", inv.GoalAction, GoalActionResume)
+	}
+	if inv.Canonical != "/goal resume" {
+		t.Fatalf("Parse(/goal resume) canonical = %q, want /goal resume", inv.Canonical)
+	}
+}
+
+func TestParseGoalPauseCommand(t *testing.T) {
+	inv, err := Parse("/goal pause")
+	if err != nil {
+		t.Fatalf("Parse(/goal pause) error = %v", err)
+	}
+	if inv.Kind != KindGoal {
+		t.Fatalf("Parse(/goal pause) kind = %q, want %q", inv.Kind, KindGoal)
+	}
+	if inv.GoalAction != GoalActionPause {
+		t.Fatalf("Parse(/goal pause) action = %q, want %q", inv.GoalAction, GoalActionPause)
+	}
+	if inv.Canonical != "/goal pause" {
+		t.Fatalf("Parse(/goal pause) canonical = %q, want /goal pause", inv.Canonical)
+	}
+}
+
 func TestParseGoalSetCommandWithBudget(t *testing.T) {
 	inv, err := Parse("/goal ship this feature --budget 5000")
 	if err != nil {

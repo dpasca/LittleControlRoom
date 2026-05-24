@@ -653,6 +653,14 @@ func (s *screenshotCodexSession) SetGoal(objective string, tokenBudget *int64) e
 	return nil
 }
 
+func (s *screenshotCodexSession) PauseGoal() error {
+	return nil
+}
+
+func (s *screenshotCodexSession) ResumeGoal() error {
+	return nil
+}
+
 func (s *screenshotCodexSession) ClearGoal() error {
 	return nil
 }

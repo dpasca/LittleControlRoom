@@ -453,6 +453,14 @@ func (s *claudeCodeSession) SetGoal(objective string, tokenBudget *int64) error 
 	return fmt.Errorf("embedded Claude Code goals are not supported yet")
 }
 
+func (s *claudeCodeSession) PauseGoal() error {
+	return fmt.Errorf("embedded Claude Code goals are not supported yet")
+}
+
+func (s *claudeCodeSession) ResumeGoal() error {
+	return fmt.Errorf("embedded Claude Code goals are not supported yet")
+}
+
 func (s *claudeCodeSession) ClearGoal() error {
 	return fmt.Errorf("embedded Claude Code goals are not supported yet")
 }

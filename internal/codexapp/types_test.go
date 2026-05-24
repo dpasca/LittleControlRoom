@@ -63,6 +63,14 @@ func (s *fakeSession) SetGoal(objective string, tokenBudget *int64) error {
 	return nil
 }
 
+func (s *fakeSession) PauseGoal() error {
+	return nil
+}
+
+func (s *fakeSession) ResumeGoal() error {
+	return nil
+}
+
 func (s *fakeSession) ClearGoal() error {
 	return nil
 }
