@@ -86,6 +86,16 @@ func TestSuggestionsIncludeGoalCommand(t *testing.T) {
 	}
 }
 
+func TestGoalSuggestionsFilterSubcommandPrefix(t *testing.T) {
+	suggestions := Suggestions("/goal cle")
+	if len(suggestions) != 1 {
+		t.Fatalf("Suggestions(/goal cle) returned %d suggestions, want 1: %#v", len(suggestions), suggestions)
+	}
+	if suggestions[0].Insert != "/goal clear" {
+		t.Fatalf("Suggestions(/goal cle)[0].Insert = %q, want /goal clear", suggestions[0].Insert)
+	}
+}
+
 func TestSuggestionsIncludeSettingsCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false

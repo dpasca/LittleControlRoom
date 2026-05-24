@@ -9033,6 +9033,62 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashArrowsNavigateGoalSuggestions(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/goal ")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	var updated tea.Model = m
+	for range 4 {
+		var cmd tea.Cmd
+		updated, cmd = updated.(Model).updateCodexMode(tea.KeyMsg{Type: tea.KeyDown})
+		if cmd != nil {
+			t.Fatalf("arrow navigation should not queue a command")
+		}
+	}
+	got := updated.(Model)
+	selected, ok := got.selectedCodexSlashSuggestion()
+	if !ok {
+		t.Fatalf("expected selected slash suggestion")
+	}
+	if selected.Insert != "/goal clear" {
+		t.Fatalf("selected suggestion = %q, want /goal clear", selected.Insert)
+	}
+	rendered := ansi.Strip(strings.Join(got.renderCodexSlashBlocks(100), "\n"))
+	for _, want := range []string{"/goal clear", "↑ 1 more", "↓ 2 more"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered slash blocks missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestVisibleCodexSlashBossOpensBossMode(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

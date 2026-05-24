@@ -71,7 +71,7 @@ func Specs() []Spec {
 }
 
 func Suggestions(input string) []Suggestion {
-	trimmed := strings.TrimSpace(input)
+	trimmed := strings.TrimLeft(input, " \t\r\n")
 	if trimmed == "" {
 		trimmed = "/"
 	}
@@ -151,46 +151,78 @@ func Suggestions(input string) []Suggestion {
 			Summary: "Open app settings for this embedded provider",
 		}}
 	case "goal":
-		return []Suggestion{
-			{
-				Insert:  "/goal",
-				Display: "/goal",
-				Summary: "Show the current embedded Codex goal",
-			},
-			{
-				Insert:  "/goal status",
-				Display: "/goal status",
-				Summary: "Show the current embedded Codex goal",
-			},
-			{
-				Insert:  "/goal pause",
-				Display: "/goal pause",
-				Summary: "Pause the current embedded Codex goal",
-			},
-			{
-				Insert:  "/goal resume",
-				Display: "/goal resume",
-				Summary: "Resume the current paused embedded Codex goal",
-			},
-			{
-				Insert:  "/goal clear",
-				Display: "/goal clear",
-				Summary: "Clear the current embedded Codex goal",
-			},
-			{
-				Insert:  "/goal stop",
-				Display: "/goal stop",
-				Summary: "Interrupt the active goal turn and clear the embedded Codex goal",
-			},
-			{
-				Insert:  "/goal --budget ",
-				Display: "/goal --budget N objective",
-				Summary: "Set a goal with a token budget",
-			},
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
+		return goalSuggestions(argPrefix)
 	default:
 		return slashcmd.NameSuggestions(specs, strings.ToLower(fields[0]))
 	}
+}
+
+func goalSuggestions(argPrefix string) []Suggestion {
+	choices := []struct {
+		value   string
+		insert  string
+		display string
+		summary string
+	}{
+		{
+			value:   "",
+			insert:  "/goal",
+			display: "/goal",
+			summary: "Show the current embedded Codex goal",
+		},
+		{
+			value:   "status",
+			insert:  "/goal status",
+			display: "/goal status",
+			summary: "Show the current embedded Codex goal",
+		},
+		{
+			value:   "pause",
+			insert:  "/goal pause",
+			display: "/goal pause",
+			summary: "Pause the current embedded Codex goal",
+		},
+		{
+			value:   "resume",
+			insert:  "/goal resume",
+			display: "/goal resume",
+			summary: "Resume the current paused embedded Codex goal",
+		},
+		{
+			value:   "clear",
+			insert:  "/goal clear",
+			display: "/goal clear",
+			summary: "Clear the current embedded Codex goal",
+		},
+		{
+			value:   "stop",
+			insert:  "/goal stop",
+			display: "/goal stop",
+			summary: "Interrupt the active goal turn and clear the embedded Codex goal",
+		},
+		{
+			value:   "--budget",
+			insert:  "/goal --budget ",
+			display: "/goal --budget N objective",
+			summary: "Set a goal with a token budget",
+		},
+	}
+	out := make([]Suggestion, 0, len(choices))
+	for _, choice := range choices {
+		if argPrefix != "" && (choice.value == "" || !strings.HasPrefix(choice.value, argPrefix)) {
+			continue
+		}
+		out = append(out, Suggestion{
+			Insert:  choice.insert,
+			Display: choice.display,
+			Summary: choice.summary,
+		})
+	}
+	return out
 }
 
 func Parse(input string) (Invocation, error) {

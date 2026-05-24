@@ -1616,19 +1616,44 @@ func (s *appServerSession) ClearGoal() error {
 	defer cancel()
 
 	var interruptErr error
-	if busy && turnID != "" {
-		_, interruptErr = s.call(ctx, "turn/interrupt", turnInterruptParams{
-			ThreadID: threadID,
-			TurnID:   turnID,
-		})
+	if busy && turnID == "" {
+		thread, err := s.readThreadState(ctx, threadID)
+		if err != nil {
+			interruptErr = err
+		} else {
+			turnID = activeTurnIDFromThread(thread)
+			status := effectiveThreadStatus(thread)
+			s.mu.Lock()
+			s.syncThreadStatusLocked(threadID, status, true)
+			s.mu.Unlock()
+			s.notify()
+		}
 	}
-	response, err := s.clearThreadGoal(ctx, threadID)
+	clearCtx := ctx
+	var clearCancel context.CancelFunc
+	if ctx.Err() != nil {
+		clearCtx, clearCancel = context.WithTimeout(context.Background(), rpcTimeout)
+		defer clearCancel()
+	}
+	response, err := s.clearThreadGoal(clearCtx, threadID)
 	if err != nil {
 		if interruptErr != nil {
-			err = fmt.Errorf("interrupting active turn failed: %v; clearing embedded Codex goal failed: %w", interruptErr, err)
+			err = fmt.Errorf("checking active turn failed: %v; clearing embedded Codex goal failed: %w", interruptErr, err)
 		}
 		s.appendSystemError(err)
 		return err
+	}
+	if busy {
+		if turnID != "" {
+			if _, err := s.call(ctx, "turn/interrupt", turnInterruptParams{
+				ThreadID: threadID,
+				TurnID:   turnID,
+			}); err != nil {
+				interruptErr = err
+			} else if err := s.waitForThreadIdleAfterInterrupt(ctx, threadID); err != nil {
+				interruptErr = err
+			}
+		}
 	}
 
 	s.mu.Lock()

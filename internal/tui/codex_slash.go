@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"lcroom/internal/codexslash"
@@ -19,7 +20,7 @@ func (m Model) codexSlashInput() string {
 	if len(draft.Attachments) > 0 {
 		return ""
 	}
-	return strings.TrimSpace(draft.Text)
+	return strings.TrimLeft(draft.Text, " \t\r\n")
 }
 
 func (m Model) codexSlashSuggestions() []codexslash.Suggestion {
@@ -171,13 +172,13 @@ func (m Model) renderCodexSlashBlocks(width int) []string {
 	} else {
 		start, end := m.codexSlashSuggestionWindow(len(suggestions))
 		if start > 0 {
-			lines = append(lines, commandPaletteHintStyle.Render("↑ more"))
+			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
 		}
 		for i := start; i < end; i++ {
 			lines = append(lines, m.renderCodexSlashSuggestionRow(suggestions[i], i == m.codexSlashSelected, contentWidth))
 		}
 		if end < len(suggestions) {
-			lines = append(lines, commandPaletteHintStyle.Render("↓ more"))
+			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(suggestions)-end)))
 		}
 	}
 

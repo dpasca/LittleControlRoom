@@ -586,6 +586,44 @@ func TestStageModelOverrideKeepsTranscriptRevisionStable(t *testing.T) {
 	}
 }
 
+func TestSnapshotBoundsLargeTranscriptExport(t *testing.T) {
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		transcriptRevision: 1,
+	}
+	for i := 0; i < 900; i++ {
+		s.entries = append(s.entries, transcriptEntry{
+			ItemID: fmt.Sprintf("old_%03d", i),
+			Kind:   TranscriptCommand,
+			Text:   fmt.Sprintf("historical command %03d\n%s", i, strings.Repeat("output ", 700)),
+		})
+	}
+	s.entries = append(s.entries, transcriptEntry{
+		ItemID: "latest",
+		Kind:   TranscriptAgent,
+		Text:   strings.Repeat("latest reply body ", 12000) + "FINAL_REPLY_STAYS",
+	})
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) == 0 {
+		t.Fatalf("snapshot entries empty, want bounded transcript")
+	}
+	if len(snapshot.Entries) > maxExportedTranscriptEntries+1 {
+		t.Fatalf("snapshot entries = %d, want at most %d", len(snapshot.Entries), maxExportedTranscriptEntries+1)
+	}
+	if snapshot.Entries[0].Kind != TranscriptSystem || !strings.Contains(snapshot.Entries[0].Text, "older transcript entries omitted") {
+		t.Fatalf("first entry = %#v, want omission marker", snapshot.Entries[0])
+	}
+	if !strings.Contains(snapshot.Transcript, "FINAL_REPLY_STAYS") {
+		t.Fatalf("snapshot transcript dropped the latest reply tail")
+	}
+	if len(snapshot.Transcript) > maxExportedTranscriptBytes+64*1024 {
+		t.Fatalf("snapshot transcript length = %d, want bounded near %d", len(snapshot.Transcript), maxExportedTranscriptBytes)
+	}
+}
+
 func TestStagedModelOverride(t *testing.T) {
 	model, reasoning := stagedModelOverride("gpt-5", "medium", "gpt-5-codex", "high")
 	if model != "gpt-5-codex" || reasoning != "high" {
@@ -1207,8 +1245,20 @@ func TestReadStdoutHandlesLargeJSONLines(t *testing.T) {
 	if len(snapshot.Entries) != 1 {
 		t.Fatalf("entries = %d, want 1", len(snapshot.Entries))
 	}
-	if got := len(snapshot.Entries[0].Text); got != len(delta) {
-		t.Fatalf("entry text length = %d, want %d", got, len(delta))
+	if got := len(snapshot.Entries[0].Text); got > maxExportedTranscriptEntryBytes {
+		t.Fatalf("snapshot entry text length = %d, want at most %d", got, maxExportedTranscriptEntryBytes)
+	}
+	if !strings.Contains(snapshot.Entries[0].Text, "embedded transcript entry shortened") {
+		t.Fatalf("snapshot entry text missing truncation marker")
+	}
+	if !strings.HasSuffix(snapshot.Entries[0].Text, strings.Repeat("x", 64)) {
+		t.Fatalf("snapshot entry text should preserve the latest delta tail")
+	}
+	s.mu.Lock()
+	rawEntryText := s.entries[0].Text
+	s.mu.Unlock()
+	if got := len(rawEntryText); got != len(delta) {
+		t.Fatalf("raw entry text length = %d, want %d", got, len(delta))
 	}
 }
 
@@ -2422,7 +2472,7 @@ func TestSetGoalErrorsWhenCodexKeepsReturningStaleGoal(t *testing.T) {
 	}
 }
 
-func TestClearGoalInterruptsActiveTurnBeforeClearing(t *testing.T) {
+func TestClearGoalClearsBeforeInterruptingActiveTurn(t *testing.T) {
 	calls := []string{}
 
 	s := &appServerSession{
@@ -2445,6 +2495,8 @@ func TestClearGoalInterruptsActiveTurnBeforeClearing(t *testing.T) {
 					t.Fatalf("interrupt request = %#v, want thread_456/turn_789", request)
 				}
 				return json.RawMessage(`{}`), nil
+			case "thread/read":
+				return json.RawMessage(`{"thread":{"id":"thread_456","turns":[{"id":"turn_789","status":"completed"}]}}`), nil
 			case "thread/goal/clear":
 				request, ok := params.(threadGoalClearParams)
 				if !ok {
@@ -2464,8 +2516,8 @@ func TestClearGoalInterruptsActiveTurnBeforeClearing(t *testing.T) {
 	if err := s.ClearGoal(); err != nil {
 		t.Fatalf("ClearGoal() error = %v", err)
 	}
-	if strings.Join(calls, ",") != "turn/interrupt,thread/goal/clear" {
-		t.Fatalf("calls = %#v, want interrupt then clear", calls)
+	if strings.Join(calls, ",") != "thread/goal/clear,turn/interrupt,thread/read" {
+		t.Fatalf("calls = %#v, want clear, interrupt, then wait", calls)
 	}
 	snapshot := s.Snapshot()
 	if snapshot.Goal != nil {
@@ -2476,6 +2528,62 @@ func TestClearGoalInterruptsActiveTurnBeforeClearing(t *testing.T) {
 	}
 	if len(snapshot.Entries) != 1 || snapshot.Entries[0].Text != "Embedded Codex goal stopped" {
 		t.Fatalf("entries = %#v, want stopped transcript entry", snapshot.Entries)
+	}
+}
+
+func TestClearGoalRecoversActiveTurnBeforeClearing(t *testing.T) {
+	calls := []string{}
+	readCalls := 0
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		busy:        true,
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		goal:        &ThreadGoal{ThreadID: "thread_456", Objective: "stay paused", Status: ThreadGoalStatusActive},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			calls = append(calls, method)
+			switch method {
+			case "thread/read":
+				readCalls++
+				if readCalls == 1 {
+					return json.RawMessage(`{"thread":{"id":"thread_456","turns":[{"id":"turn_recovered","status":"inProgress"}]}}`), nil
+				}
+				return json.RawMessage(`{"thread":{"id":"thread_456","turns":[{"id":"turn_recovered","status":"completed"}]}}`), nil
+			case "turn/interrupt":
+				request, ok := params.(turnInterruptParams)
+				if !ok {
+					t.Fatalf("params = %#v, want turnInterruptParams", params)
+				}
+				if request.ThreadID != "thread_456" || request.TurnID != "turn_recovered" {
+					t.Fatalf("interrupt request = %#v, want thread_456/turn_recovered", request)
+				}
+				return json.RawMessage(`{}`), nil
+			case "thread/goal/clear":
+				return json.RawMessage(`{"cleared":true}`), nil
+			default:
+				t.Fatalf("unexpected method = %q", method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.ClearGoal(); err != nil {
+		t.Fatalf("ClearGoal() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "thread/read,thread/goal/clear,turn/interrupt,thread/read" {
+		t.Fatalf("calls = %#v, want recover, clear, interrupt, wait", calls)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Goal != nil {
+		t.Fatalf("snapshot goal = %#v, want nil", snapshot.Goal)
+	}
+	if snapshot.ActiveTurnID != "" {
+		t.Fatalf("active turn id = %q, want empty after interrupt wait", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Embedded Codex goal stopped" {
+		t.Fatalf("status = %q, want goal stopped", snapshot.Status)
 	}
 }
 

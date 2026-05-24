@@ -1695,6 +1695,12 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.codexSlashActive() {
 		switch msg.String() {
+		case "up", "ctrl+p":
+			m.moveCodexSlashSelection(-1)
+			return m, nil
+		case "down", "ctrl+n":
+			m.moveCodexSlashSelection(1)
+			return m, nil
 		case "tab":
 			if m.cycleAndApplyCodexSlashSuggestion(1) {
 				return m, nil
