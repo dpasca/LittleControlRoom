@@ -14,6 +14,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -99,6 +100,10 @@ type settingsField struct {
 	input     textinput.Model
 	sensitive bool
 	section   settingsSectionID
+}
+
+type settingsPrivacyEditorState struct {
+	Input textarea.Model
 }
 
 type settingsBrowserAutomationOption struct {
@@ -396,6 +401,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsMode = true
 	m.settingsSaving = false
 	m.settingsRevealPrivacy = false
+	m.settingsPrivacyEditor = nil
 	m.settingsDrilldown = settingsDrilldownNone
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
@@ -427,6 +433,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsSaving = false
 	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
+	m.settingsPrivacyEditor = nil
 	m.settingsDrilldown = settingsDrilldownNone
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
@@ -467,6 +474,7 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsMode = false
 	m.settingsSaving = false
 	m.settingsDrilldown = settingsDrilldownNone
+	m.settingsPrivacyEditor = nil
 	m.settingsAIBackendPickerVisible = false
 	m.settingsAIBackendPickerSelected = 0
 	m.settingsLCAgentProviderVisible = false
@@ -489,6 +497,9 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.settingsSaving {
 		return m, nil
 	}
+	if m.settingsPrivacyEditor != nil {
+		return m.updateSettingsPrivacyEditorMode(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		if m.settingsDrilldown != settingsDrilldownNone {
@@ -507,6 +518,9 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+s":
 		return m.saveSettingsFromFields()
 	case "enter":
+		if m.settingsSelected == settingsFieldPrivacyPatterns {
+			return m.openSettingsPrivacyEditor()
+		}
 		if m.activeSettingsSection().id == settingsSectionGettingStarted && m.settingsDrilldown == settingsDrilldownNone {
 			if drilldown := settingsDrilldownForField(m.settingsSelected); drilldown != settingsDrilldownNone {
 				return m.openSettingsDrilldown(drilldown)
@@ -522,13 +536,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+r":
 		if m.settingsSelected == settingsFieldPrivacyPatterns {
-			m.settingsRevealPrivacy = !m.settingsRevealPrivacy
-			m.syncPrivacyPatternsReveal()
-			if m.settingsRevealPrivacy {
-				m.status = "Privacy patterns revealed"
-			} else {
-				m.status = "Privacy patterns hidden"
-			}
+			m.toggleSettingsPrivacyPatternsReveal()
 			return m, nil
 		}
 	}
@@ -1146,6 +1154,92 @@ func (m *Model) syncPrivacyPatternsReveal() {
 	}
 }
 
+func (m *Model) toggleSettingsPrivacyPatternsReveal() {
+	m.settingsRevealPrivacy = !m.settingsRevealPrivacy
+	m.syncPrivacyPatternsReveal()
+	if m.settingsRevealPrivacy {
+		m.status = "Privacy patterns revealed"
+	} else {
+		m.status = "Privacy patterns hidden"
+	}
+}
+
+func newSettingsPrivacyEditorInput(value string) textarea.Model {
+	input := textarea.New()
+	input.Prompt = ""
+	input.Placeholder = "e.g., *medical*"
+	input.CharLimit = 2048
+	input.ShowLineNumbers = false
+	styleDialogTextarea(&input)
+	input.SetWidth(72)
+	input.SetHeight(8)
+	input.SetValue(settingsPrivacyEditorInitialValue(value))
+	input.CursorEnd()
+	return input
+}
+
+func settingsPrivacyEditorInitialValue(raw string) string {
+	values := splitCommaList(raw)
+	if len(values) == 0 {
+		return strings.TrimSpace(raw)
+	}
+	return strings.Join(values, "\n")
+}
+
+func normalizeSettingsPrivacyEditorValue(raw string) string {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+	values := []string{}
+	for _, line := range strings.Split(raw, "\n") {
+		for _, part := range strings.Split(line, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				values = append(values, trimmed)
+			}
+		}
+	}
+	return strings.Join(values, ",")
+}
+
+func (m Model) openSettingsPrivacyEditor() (tea.Model, tea.Cmd) {
+	input := newSettingsPrivacyEditorInput(m.settingsFieldValue(settingsFieldPrivacyPatterns))
+	cmd := input.Focus()
+	m.settingsPrivacyEditor = &settingsPrivacyEditorState{Input: input}
+	m.settingsRevealPrivacy = true
+	m.syncPrivacyPatternsReveal()
+	m.status = "Privacy patterns editor open. Press ctrl+s to save or Esc to cancel."
+	return m, cmd
+}
+
+func (m Model) closeSettingsPrivacyEditor(status string) (tea.Model, tea.Cmd) {
+	m.settingsPrivacyEditor = nil
+	if status != "" {
+		m.status = status
+	}
+	return m, m.setSettingsSelection(settingsFieldPrivacyPatterns)
+}
+
+func (m Model) updateSettingsPrivacyEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	editor := m.settingsPrivacyEditor
+	if editor == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		return m.closeSettingsPrivacyEditor("Privacy patterns edit canceled")
+	case "ctrl+s":
+		value := normalizeSettingsPrivacyEditorValue(editor.Input.Value())
+		m.settingsFields[settingsFieldPrivacyPatterns].input.SetValue(value)
+		m.settingsPrivacyEditor = nil
+		m.status = "Saving settings..."
+		return m.saveSettingsFromFields()
+	}
+	input, cmd := editor.Input.Update(msg)
+	editor.Input = input
+	m.settingsPrivacyEditor = editor
+	return m, cmd
+}
+
 func (m Model) saveSettingsCmd(settings config.EditableSettings) tea.Cmd {
 	path := m.currentConfigPath()
 	return func() tea.Msg {
@@ -1292,6 +1386,46 @@ func (m Model) renderSettingsOverlay(body string, bodyW, bodyH int) string {
 	left := max(0, (bodyW-panelWidth)/2)
 	top := max(0, (bodyH-panelHeight)/4)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderSettingsPrivacyEditorOverlay(body string, bodyW, bodyH int) string {
+	if m.settingsPrivacyEditor == nil {
+		return body
+	}
+	panel := m.renderSettingsPrivacyEditorPanel(bodyW, bodyH)
+	panelWidth := lipgloss.Width(panel)
+	panelHeight := lipgloss.Height(panel)
+	left := max(0, (bodyW-panelWidth)/2)
+	top := max(0, (bodyH-panelHeight)/5)
+	return overlayBlock(body, panel, bodyW, bodyH, left, top)
+}
+
+func (m Model) renderSettingsPrivacyEditorPanel(bodyW, bodyH int) string {
+	panelWidth := min(bodyW, min(max(64, bodyW-12), 104))
+	panelInnerWidth := max(28, panelWidth-4)
+	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderSettingsPrivacyEditorContent(panelInnerWidth, bodyH))
+}
+
+func (m Model) renderSettingsPrivacyEditorContent(width, bodyH int) string {
+	if m.settingsPrivacyEditor == nil {
+		return ""
+	}
+	input := m.settingsPrivacyEditor.Input
+	editorHeight := min(12, max(6, bodyH-12))
+	input.SetWidth(max(24, width))
+	input.SetHeight(editorHeight)
+	lines := []string{
+		commandPaletteTitleStyle.Render("Privacy Patterns"),
+		commandPaletteHintStyle.Render("One pattern per line. Commas also work."),
+		input.View(),
+		"",
+		strings.Join([]string{
+			renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Enter", "newline", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+		}, "   "),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) renderSettingsPanel(bodyW, bodyH int) string {
@@ -2293,6 +2427,15 @@ func (m Model) renderSettingsActions() string {
 		actions = append([]string{
 			renderDialogAction("Enter", "setup", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions...)
+	} else if m.settingsSelected == settingsFieldPrivacyPatterns {
+		actions = append([]string{
+			renderDialogAction("Enter", "edit", navigateActionKeyStyle, navigateActionTextStyle),
+		}, actions...)
+		label := "reveal"
+		if m.settingsRevealPrivacy {
+			label = "hide"
+		}
+		actions = append(actions, renderDialogAction("ctrl+r", label, navigateActionKeyStyle, navigateActionTextStyle))
 	} else if settingsFieldUsesPicker(m.settingsSelected) {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),

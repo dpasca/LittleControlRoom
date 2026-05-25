@@ -155,6 +155,7 @@ type Model struct {
 	settingsDrilldown                   settingsDrilldownID
 	settingsBaseline                    *config.EditableSettings
 	settingsRevealPrivacy               bool
+	settingsPrivacyEditor               *settingsPrivacyEditorState
 	settingsBossChatPickerVisible       bool
 	settingsBossChatPickerSelected      int
 	settingsBrowserPickerVisible        bool
@@ -3112,6 +3113,9 @@ func (m Model) View() string {
 		}
 		if m.settingsLCAgentModelPicker != nil {
 			body = m.renderSettingsLCAgentModelPickerOverlay(body, layout.width, layout.height)
+		}
+		if m.settingsPrivacyEditor != nil {
+			body = m.renderSettingsPrivacyEditorOverlay(body, layout.width, layout.height)
 		}
 	} else if m.showPerf {
 		body = m.renderPerfOverlay(body, layout.width, layout.height)
