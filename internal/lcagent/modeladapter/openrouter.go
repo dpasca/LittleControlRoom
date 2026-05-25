@@ -873,6 +873,17 @@ func (c *Client) MaxTurns() int {
 	return c.maxTurns
 }
 
+func MaxTurnsForRequestTimeout(timeout time.Duration) int {
+	switch {
+	case timeout >= 45*time.Minute:
+		return 128
+	case timeout >= 20*time.Minute:
+		return 96
+	default:
+		return DefaultOpenRouterMaxTurns
+	}
+}
+
 func (c *Client) shouldEnableAnthropicPromptCache() bool {
 	if c == nil || !strings.EqualFold(strings.TrimSpace(c.providerName), "openrouter") {
 		return false

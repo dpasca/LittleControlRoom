@@ -266,6 +266,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		routePresetSet = true
 		applyLCAgentRoutePreset(routePreset, visitedFlags, &provider, &model, &finalModel, &reasoningEffort, &autoRaw, &toolProfileRaw, &contextProfileRaw, &providerOnlyRaw, &temperatureRaw, &requestTimeout)
 	}
+	if !visitedFlags["max-turns"] {
+		maxTurns = modeladapter.MaxTurnsForRequestTimeout(requestTimeout)
+	}
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if prompt == "" {
 		return fmt.Errorf("prompt is required")
@@ -379,6 +382,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["run_id"] = sessionID
 	meta["admin_write"] = adminWrite
 	meta["approval_mode"] = approvalMode
+	meta["request_timeout"] = requestTimeout.String()
+	meta["max_turns"] = maxTurns
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
 		meta["root_session_id"] = resumeContext.rootSessionID()
@@ -406,6 +411,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			"context_profile":   string(contextProfile),
 			"reasoning_effort":  reasoningEffort,
 			"request_timeout":   requestTimeout.String(),
+			"max_turns":         maxTurns,
 		}); err != nil {
 			return err
 		}

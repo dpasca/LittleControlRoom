@@ -1050,6 +1050,26 @@ func TestOpenRouterClientDefaultsMaxTurns(t *testing.T) {
 	}
 }
 
+func TestMaxTurnsForRequestTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		want    int
+	}{
+		{name: "default", timeout: 0, want: DefaultOpenRouterMaxTurns},
+		{name: "short", timeout: 10 * time.Minute, want: DefaultOpenRouterMaxTurns},
+		{name: "medium", timeout: 20 * time.Minute, want: 96},
+		{name: "hour", timeout: time.Hour, want: 128},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MaxTurnsForRequestTimeout(tt.timeout); got != tt.want {
+				t.Fatalf("MaxTurnsForRequestTimeout(%s) = %d, want %d", tt.timeout, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestOpenRouterClientUsesConfiguredRequestTimeout(t *testing.T) {
 	client, err := NewOpenRouterClient(OpenRouterConfig{
 		APIKey:         "key",

@@ -26,7 +26,7 @@ const (
 	lcagentDefaultProvider        = "openrouter"
 	lcagentDefaultToolProfile     = "balanced"
 	lcagentDefaultContextProfile  = "balanced"
-	lcagentDefaultRequestTimeout  = 10 * time.Minute
+	lcagentDefaultRequestTimeout  = 60 * time.Minute
 	lcagentDefaultUtilityProvider = "main"
 	lcagentDefaultWebSearch       = "off"
 )
@@ -738,6 +738,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	if requestTimeout <= 0 {
 		requestTimeout = lcagentDefaultRequestTimeout
 	}
+	maxTurns := modeladapter.MaxTurnsForRequestTimeout(requestTimeout)
 	reasoningEffort := strings.TrimSpace(s.reasoningEffort)
 	credentialProvider := modelProvider
 	providerAPIKeyName, providerAPIKey := s.providerCredentialLocked(credentialProvider)
@@ -768,6 +769,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		"--approval-mode", "ask",
 		"--utility-provider", utilityProvider,
 		"--web-search-backend", webSearchBackend,
+		"--max-turns", strconv.Itoa(maxTurns),
 	)
 	if utilityModel != "" {
 		args = append(args, "--utility-model", utilityModel)
