@@ -846,21 +846,22 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 
 	notify := make(chan struct{}, 20)
 	session, err := newLCAgentSession(LaunchRequest{
-		Provider:            ProviderLCAgent,
-		ProjectPath:         root,
-		AppDataDir:          t.TempDir(),
-		LCAgentPath:         exe,
-		LCAgentOpenAIAPIKey: "saved-openai-key",
-		LCAgentRoutePreset:  "quality",
-		LCAgentProvider:     "deepseek",
-		LCAgentAuto:         "medium",
-		LCAgentAdminWrite:   true,
-		LCAgentToolProfile:  "generous",
-		PendingModel:        "",
-		PendingReasoning:    "high",
-		LCAgentEnvFile:      "/tmp/test.env",
-		LCAgentWebSearchURL: "http://127.0.0.1:8888",
-		Prompt:              "use the configured route",
+		Provider:              ProviderLCAgent,
+		ProjectPath:           root,
+		AppDataDir:            t.TempDir(),
+		LCAgentPath:           exe,
+		LCAgentOpenAIAPIKey:   "saved-openai-key",
+		LCAgentRoutePreset:    "quality",
+		LCAgentProvider:       "deepseek",
+		LCAgentAuto:           "medium",
+		LCAgentAdminWrite:     true,
+		LCAgentToolProfile:    "generous",
+		LCAgentRequestTimeout: 37 * time.Minute,
+		PendingModel:          "",
+		PendingReasoning:      "high",
+		LCAgentEnvFile:        "/tmp/test.env",
+		LCAgentWebSearchURL:   "http://127.0.0.1:8888",
+		Prompt:                "use the configured route",
 	}, func() {
 		select {
 		case notify <- struct{}{}:
@@ -879,7 +880,7 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 		t.Fatalf("read fake args: %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
-	for _, want := range []string{"--route-preset", "quality", "--admin-write", "--env-file", "/tmp/test.env", "--web-search-url", "http://127.0.0.1:8888"} {
+	for _, want := range []string{"--route-preset", "quality", "--request-timeout", "37m0s", "--admin-write", "--env-file", "/tmp/test.env", "--web-search-url", "http://127.0.0.1:8888"} {
 		if !lcagentTestStringSliceContains(args, want) {
 			t.Fatalf("args missing %q: %#v", want, args)
 		}

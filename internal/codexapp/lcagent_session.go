@@ -748,7 +748,10 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		args = append(args, "--admin-write")
 	}
 	if routePreset != "" && opts.autoOverride == "" {
-		args = append(args, "--route-preset", routePreset)
+		args = append(args,
+			"--route-preset", routePreset,
+			"--request-timeout", requestTimeout.String(),
+		)
 	} else {
 		args = append(args,
 			"--auto", lcagentAutoLevel(firstNonEmpty(opts.autoOverride, s.auto)),
