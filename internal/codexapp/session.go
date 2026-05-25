@@ -40,6 +40,8 @@ const (
 var errBusyTurnLikelyStuck = errors.New("embedded Codex session seems stuck or disconnected. Interrupt the current turn or use /reconnect before sending another prompt")
 var generatedImageArtifactRefreshDelay = 300 * time.Millisecond
 
+const codexCompactionStuckSuggestion = "Codex conversation compaction seems stuck or disconnected. Interrupt the current turn or use /reconnect."
+
 type ForceNewSessionReusedError struct {
 	Provider Provider
 	ThreadID string
@@ -94,6 +96,7 @@ type appServerSession struct {
 	busy                    bool
 	busyExternal            bool
 	compacting              bool
+	contextCompactionActive bool
 	reconciling             bool
 	reportedAuth403         bool
 	busySince               time.Time
@@ -820,16 +823,20 @@ func (s *appServerSession) activeTurnLooksStuckLocked(turnID string, now time.Ti
 	return age >= busyStateUnresponsiveFor
 }
 
-func (s *appServerSession) setBusyStalledLocked() {
+func (s *appServerSession) setBusyStalledLocked(notice ...string) {
+	message := codexReconnectSuggestion
+	if len(notice) > 0 && strings.TrimSpace(notice[0]) != "" {
+		message = strings.TrimSpace(notice[0])
+	}
 	if !s.stalled {
-		s.appendEntryLocked("", TranscriptSystem, codexReconnectSuggestion)
+		s.appendEntryLocked("", TranscriptSystem, message)
 	}
 	s.stalled = true
 	if s.stallCount < busyStateStallAfter {
 		s.stallCount = busyStateStallAfter
 	}
-	s.status = codexReconnectSuggestion
-	s.lastSystemNotice = codexReconnectSuggestion
+	s.status = message
+	s.lastSystemNotice = message
 }
 
 func (s *appServerSession) promoteHardStalledBusyLocked(now time.Time) {
@@ -840,11 +847,19 @@ func (s *appServerSession) promoteHardStalledBusyLocked(now time.Time) {
 		return
 	}
 	age, ok := s.busyActivityAgeLocked(now)
-	if !ok || age < busyStateHardStallAfter {
+	threshold := busyStateHardStallAfter
+	stallNotice := codexReconnectSuggestion
+	if s.compacting || s.contextCompactionActive {
+		threshold = compactionWaitTimeout
+		stallNotice = codexCompactionStuckSuggestion
+	}
+	if !ok || age < threshold {
 		return
 	}
+	s.compacting = false
+	s.contextCompactionActive = false
 	s.reconciling = false
-	s.setBusyStalledLocked()
+	s.setBusyStalledLocked(stallNotice)
 }
 
 func (s *appServerSession) noteSuspectedBusyStallLocked() {
@@ -864,6 +879,7 @@ func (s *appServerSession) clearBusyLocked(turnID string) {
 	s.lastBusyActivityAt = time.Time{}
 	s.activeItems = nil
 	s.pendingCompletion = nil
+	s.contextCompactionActive = false
 	if turnID == "" || s.activeTurnID == turnID {
 		s.activeTurnID = ""
 	}
@@ -924,7 +940,7 @@ func (s *appServerSession) finishPendingCompletionLocked() {
 
 func tracksBusyItemLifecycle(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "agentMessage", "commandExecution", "fileChange", "plan", "reasoning", "mcpToolCall", "imageGeneration":
+	case "agentMessage", "commandExecution", "fileChange", "plan", "reasoning", "mcpToolCall", "imageGeneration", "contextCompaction":
 		return true
 	default:
 		return false
@@ -3222,6 +3238,11 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 
 	s.mu.Lock()
 	s.touchBusyLocked()
+	if itemType == "contextCompaction" {
+		s.contextCompactionActive = true
+		s.status = "Compacting conversation history..."
+		s.lastSystemNotice = "Compacting conversation history..."
+	}
 	if tracksBusyItemLifecycle(itemType) {
 		s.markItemActiveLocked(msg.TurnID, itemID)
 	}
@@ -3278,6 +3299,12 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 
 	s.mu.Lock()
 	s.touchBusyLocked()
+	if itemType == "contextCompaction" {
+		s.contextCompactionActive = false
+		if s.busy && s.pendingCompletion == nil {
+			s.status = "Codex is working..."
+		}
+	}
 	if itemType == "mcpToolCall" {
 		if call, ok := s.browserToolCallForItem(msg.Item); ok {
 			if s.browserToolCalls == nil {
@@ -3645,6 +3672,7 @@ func (s *appServerSession) touchBusyLocked() {
 func (s *appServerSession) clearActiveStateLocked() {
 	s.clearBusyLocked("")
 	s.compacting = false
+	s.contextCompactionActive = false
 	s.pendingApproval = nil
 	s.pendingToolInput = nil
 	s.pendingElicitation = nil
@@ -4624,6 +4652,7 @@ func (s *appServerSession) waitForCompactionCompletion(ctx context.Context, thre
 	for {
 		thread, err := s.readThreadState(ctx, threadID)
 		if err != nil {
+			s.clearCompactionProgress()
 			s.appendSystemError(err)
 			return err
 		}
@@ -4644,17 +4673,27 @@ func (s *appServerSession) waitForCompactionCompletion(ctx context.Context, thre
 			return nil
 		case "systemError":
 			err := fmt.Errorf("codex reported a system error while compacting the conversation")
+			s.clearCompactionProgress()
 			s.appendSystemError(err)
 			return err
 		}
 
 		select {
 		case <-ctx.Done():
-			s.appendSystemError(ctx.Err())
-			return ctx.Err()
+			err := ctx.Err()
+			s.clearCompactionProgress()
+			s.appendSystemError(err)
+			return err
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+func (s *appServerSession) clearCompactionProgress() {
+	s.mu.Lock()
+	s.compacting = false
+	s.contextCompactionActive = false
+	s.mu.Unlock()
 }
 
 func threadHasRetainedHistory(thread resumedThread) bool {
