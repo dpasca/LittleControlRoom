@@ -145,6 +145,7 @@ var bossAssistantStylePrompt = []string{
 var bossAssistantControlBoundaryPrompt = []string{
 	"You can propose project engineer prompts or generic agent-task actions through structured control actions, but the user must confirm before anything is sent or changed.",
 	"Do not say agent work will be done unless you are returning a control proposal for that work or clearly saying it still needs confirmation.",
+	"Boss Chat does not have a native git commit control action or a bridge into the current operator conversation. If the user asks Boss to make a commit now, do not pretend a separate engineer handoff is the same thing; say to use the existing commit flow or current operator session unless they explicitly want a separate engineer to prepare or review it.",
 	"State the next useful check directly when follow-up work is needed.",
 }
 
@@ -235,6 +236,7 @@ var bossPlannerCapabilityCatalogPrompt = []string{
 
 var bossPlannerControlRoutingPrompt = []string{
 	"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
+	"Boss Chat does not have a native git commit control action or a bridge into the current operator conversation. Do not use engineer.send_prompt merely to create a git commit; for a simple commit-now request, choose answer and explain that it should use the existing commit flow or current operator session unless the user explicitly asks a separate engineer to prepare or review the commit.",
 	"Project implementation requests are not TODO requests. For loaded-project work the user wants handled now, propose engineer.send_prompt with session_mode=new even if that project already has an open idle Codex or OpenCode engineer session.",
 	"Use todo.add only when the user explicitly asks to make a TODO/backlog/queue/reminder, or when same-project active engineer work is in the middle of a turn and the user accepts parking unrelated work for later. An open idle engineer session alone must not cause todo.add.",
 	"Use todo.complete when the user asks to mark, close, finish, resolve, or clear an existing project TODO as done, or when gathered engineer/project evidence directly satisfies a linked TODO; never silently complete a TODO without a control confirmation.",
@@ -400,6 +402,7 @@ var bossActionPlannerForcedInstructions = []string{
 	"Use the gathered data; do not request more read-only queries.",
 
 	// Work parking and delegation.
+	"For a simple request to make a git commit now, choose kind=\"answer\" and say Boss should use the existing commit flow or current operator session, unless the user explicitly asks a separate engineer to prepare or review the commit.",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
@@ -452,6 +455,7 @@ var bossActionPlannerNormalInstructions = []string{
 	"Use search_context instead when the target is a matching term rather than a specific project.",
 
 	// Control and goal selection.
+	"For a simple request to make a git commit now, choose kind=\"answer\" and say Boss should use the existing commit flow or current operator session, unless the user explicitly asks a separate engineer to prepare or review the commit.",
 	"Choose kind=\"propose_control\" if the user asked to delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
 	"Also choose kind=\"propose_control\" if the user wants to archive/unarchive one or more regular loaded projects, or archive/remove a scratch task whose project metadata says kind=scratch_task.",
 	"Also choose kind=\"propose_control\" if the user wants fresh external research from an engineer.",

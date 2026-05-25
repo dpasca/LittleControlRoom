@@ -700,17 +700,21 @@ func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
 	if len(got.messages) != 2 {
 		t.Fatalf("control result should append a boss chat turn, got %#v", got.messages)
 	}
-	got.transcriptTab = bossTranscriptTabFlow
+	if got.messages[1].Kind != ChatMessageKindChat {
+		t.Fatalf("control result message kind = %q, want chat", got.messages[1].Kind)
+	}
 	rendered := ansi.Strip(got.renderTranscript(120))
 	for _, want := range []string{
-		"Flow> Ok, Niklaus is working on Retire projects-control-center skill.",
+		"Boss> Ok, Niklaus is working on Retire projects-control-center skill.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "just nuke that skill") {
-		t.Fatalf("flow tab should not include user chat turns:\n%s", rendered)
+	got.transcriptTab = bossTranscriptTabFlow
+	flowRendered := ansi.Strip(got.renderTranscript(120))
+	if strings.Contains(flowRendered, "Niklaus is working on Retire projects-control-center skill") {
+		t.Fatalf("flow tab should not include control acknowledgements:\n%s", flowRendered)
 	}
 }
 
@@ -728,6 +732,9 @@ func TestControlResultDoesNotDuplicateMatchingErrorStatus(t *testing.T) {
 	got := updated.(Model)
 	if len(got.messages) != 1 {
 		t.Fatalf("messages = %d, want one announced failure", len(got.messages))
+	}
+	if got.messages[0].Kind != ChatMessageKindChat {
+		t.Fatalf("failure message kind = %q, want chat", got.messages[0].Kind)
 	}
 	content := got.messages[0].Content
 	if strings.Count(content, detail) != 1 {

@@ -114,14 +114,23 @@ func (m Model) saveBossChatMessageCmd(message ChatMessage) tea.Cmd {
 	}
 }
 
+func (m *Model) appendAssistantChatMessage(content string, handoffs ...*HandoffHighlight) (ChatMessage, bool) {
+	return m.appendAssistantMessage(content, ChatMessageKindChat, handoffs...)
+}
+
 func (m *Model) appendAssistantNoticeMessage(content string, handoffs ...*HandoffHighlight) (ChatMessage, bool) {
+	return m.appendAssistantMessage(content, ChatMessageKindFlow, handoffs...)
+}
+
+func (m *Model) appendAssistantMessage(content string, kind string, handoffs ...*HandoffHighlight) (ChatMessage, bool) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return ChatMessage{}, false
 	}
+	kind = normalizeChatMessageKind(kind)
 	if len(m.messages) > 0 {
 		last := m.messages[len(m.messages)-1]
-		if normalizeChatRole(last.Role) == "assistant" && strings.TrimSpace(last.Content) == content {
+		if normalizeChatRole(last.Role) == "assistant" && strings.TrimSpace(last.Content) == content && normalizeChatMessageKind(last.Kind) == kind {
 			return ChatMessage{}, false
 		}
 	}
@@ -129,7 +138,7 @@ func (m *Model) appendAssistantNoticeMessage(content string, handoffs ...*Handof
 		Role:    "assistant",
 		Content: content,
 		At:      m.now(),
-		Kind:    ChatMessageKindFlow,
+		Kind:    kind,
 	}
 	if len(handoffs) > 0 {
 		if handoff, ok := normalizedHandoffHighlight(handoffs[0]); ok {

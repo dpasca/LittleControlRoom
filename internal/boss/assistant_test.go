@@ -933,6 +933,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"structured control action",
 		"user must confirm",
 		"Do not say agent work will be done",
+		"Boss Chat does not have a native git commit control action",
+		"do not pretend a separate engineer handoff is the same thing",
 		"recommend one next move",
 	} {
 		if !strings.Contains(directPrompt, want) {
@@ -962,6 +964,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"project TODOs are separate from delegated agent tasks",
 		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
+		"Do not use engineer.send_prompt merely to create a git commit",
+		"current operator session",
 		"Project implementation requests are not TODO requests",
 		"open idle Codex or OpenCode engineer session",
 		"Use todo.add only when the user explicitly asks",

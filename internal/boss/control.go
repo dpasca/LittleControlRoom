@@ -532,7 +532,7 @@ func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea
 		}
 	}
 	if msg.AnnounceInChat {
-		if saved, ok := m.appendAssistantNoticeMessage(content); ok {
+		if saved, ok := m.appendAssistantChatMessage(content); ok {
 			cmds = append(cmds, m.saveBossChatMessageCmd(saved))
 		}
 	}
