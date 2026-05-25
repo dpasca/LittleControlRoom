@@ -31,6 +31,8 @@ type State[M any, C any] struct {
 	Status           string    `json:"status"`
 	ContextMode      string    `json:"context_mode"`
 	LastStablePoint  string    `json:"last_stable_point,omitempty"`
+	Summary          string    `json:"summary,omitempty"`
+	SummaryCount     int       `json:"summary_count,omitempty"`
 	Messages         []M       `json:"messages,omitempty"`
 	MessageCount     int       `json:"message_count"`
 	ApproxChars      int       `json:"approx_chars"`

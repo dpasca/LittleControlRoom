@@ -95,6 +95,8 @@ type Model struct {
 	haveLastAssistantUsage bool
 	lastAssistantUsage     model.LLMUsage
 	lastAssistantModel     string
+	haveLastContextReport  bool
+	lastContextReport      bossContextReport
 
 	summaryFlashUntil map[string]time.Time
 }
@@ -453,7 +455,9 @@ func (m Model) ContextText() string {
 	}
 	mode := agentcontext.NormalizeContextMode(report.ContextMode)
 	turns := fmt.Sprintf("%dt", report.VisibleMessages)
-	if report.TotalMessages > report.VisibleMessages {
+	if report.SummaryMessages > 0 {
+		turns = fmt.Sprintf("%d+%d/%dt", report.VisibleMessages, report.SummaryMessages, report.TotalMessages)
+	} else if report.TotalMessages > report.VisibleMessages {
 		turns = fmt.Sprintf("%d/%dt", report.VisibleMessages, report.TotalMessages)
 	}
 	text := "ctx " + mode + " " + turns
@@ -478,11 +482,17 @@ type bossContextReport struct {
 	MessageCount    int
 	TotalMessages   int
 	VisibleMessages int
+	SummaryMessages int
 	ApproxChars     int
 	FlowEventCount  int
 }
 
 func (m Model) contextReport() bossContextReport {
+	if m.haveLastContextReport {
+		report := m.lastContextReport
+		report.FlowEventCount = bossFlowMessageCount(m.messages) + len(m.operationalNotices)
+		return report
+	}
 	chatMessages := conversationalChatMessages(m.messages)
 	total := len(chatMessages)
 	visible := total
@@ -537,6 +547,23 @@ func (m *Model) recordAssistantUsage(response AssistantResponse) {
 	m.haveLastAssistantUsage = true
 	m.lastAssistantUsage = usage
 	m.lastAssistantModel = strings.TrimSpace(response.Model)
+}
+
+func (m *Model) recordAssistantContext(response AssistantResponse) {
+	ctx := response.PromptContext
+	if !ctx.Prepared {
+		return
+	}
+	m.haveLastContextReport = true
+	m.lastContextReport = bossContextReport{
+		ContextMode:     ctx.ContextMode,
+		MessageCount:    ctx.TotalMessages,
+		TotalMessages:   ctx.TotalMessages,
+		VisibleMessages: ctx.VisibleMessages,
+		SummaryMessages: ctx.SummaryMessageCount,
+		ApproxChars:     ctx.ApproxChars,
+		FlowEventCount:  bossFlowMessageCount(m.messages) + len(m.operationalNotices),
+	}
 }
 
 func bossEstimatedUsageCostUSD(usage model.LLMSessionUsage) (float64, bool) {
@@ -770,6 +797,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 	m.streamingToolCalls = nil
 	if err == nil {
 		m.recordAssistantUsage(response)
+		m.recordAssistantContext(response)
 	}
 	if stateRefreshed {
 		m.syncSummaryFlashes(snapshot)
@@ -835,7 +863,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		if modelName := strings.TrimSpace(response.Model); modelName != "" {
 			m.pendingControl = nil
 			m.pendingGoal = nil
-			m.status = "Boss chat via " + modelName
+			m.status = "(" + modelName + ")"
 		} else {
 			m.pendingControl = nil
 			m.pendingGoal = nil
@@ -967,9 +995,10 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 		ctx, cancel := childContext(parent, 120*time.Second)
 		defer cancel()
 		if resp, handled, err := assistant.replyStructuredHandle(ctx, AssistantRequest{
-			Snapshot: snapshot,
-			View:     view,
-			Messages: messages,
+			Snapshot:  snapshot,
+			View:      view,
+			Messages:  messages,
+			SessionID: m.sessionID,
 		}, nil); handled || err != nil {
 			return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot}
 		}
@@ -989,6 +1018,7 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 			Snapshot:   snapshot,
 			View:       view,
 			Messages:   messages,
+			SessionID:  m.sessionID,
 		})
 		return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed}
 	}
@@ -1012,9 +1042,10 @@ func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snaps
 				}
 			}
 			if resp, handled, err := assistant.replyStructuredHandle(ctx, AssistantRequest{
-				Snapshot: snapshot,
-				View:     view,
-				Messages: messages,
+				Snapshot:  snapshot,
+				View:      view,
+				Messages:  messages,
+				SessionID: m.sessionID,
 			}, emit); handled || err != nil {
 				select {
 				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
@@ -1038,6 +1069,7 @@ func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snaps
 				Snapshot:   snapshot,
 				View:       view,
 				Messages:   messages,
+				SessionID:  m.sessionID,
 			}, emit)
 			select {
 			case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true}:

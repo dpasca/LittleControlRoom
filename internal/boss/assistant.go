@@ -44,6 +44,9 @@ type AssistantRequest struct {
 	Snapshot   StateSnapshot
 	View       ViewContext
 	Messages   []ChatMessage
+	SessionID  string
+
+	PromptContext BossPromptContext
 }
 
 type AssistantResponse struct {
@@ -52,6 +55,7 @@ type AssistantResponse struct {
 	Usage             model.LLMUsage
 	ControlInvocation *control.Invocation
 	GoalProposal      *bossrun.GoalProposal
+	PromptContext     BossPromptContext
 }
 
 type AssistantStreamEventKind string
@@ -76,6 +80,7 @@ type Assistant struct {
 	model        string
 	utilityModel string
 	backend      config.AIBackend
+	dataDir      string
 }
 
 func NewAssistant(svc *service.Service) *Assistant {
@@ -111,6 +116,7 @@ func NewAssistant(svc *service.Service) *Assistant {
 		model:        strings.TrimSpace(modelName),
 		utilityModel: strings.TrimSpace(utilityModel),
 		backend:      backend,
+		dataDir:      strings.TrimSpace(svc.Config().DataDir),
 	}
 }
 
@@ -137,12 +143,12 @@ func (a *Assistant) Label() string {
 		}
 	}
 	if strings.TrimSpace(a.model) == "" {
-		return fmt.Sprintf("Boss chat via %s (auto model)", a.backend.Label())
+		return fmt.Sprintf("(%s/auto)", a.backend.Label())
 	}
 	if utilityModel := strings.TrimSpace(a.utilityModel); utilityModel != "" && utilityModel != strings.TrimSpace(a.model) {
-		return fmt.Sprintf("Boss chat via %s (utility %s)", a.model, utilityModel)
+		return fmt.Sprintf("(%s/%s)", a.model, utilityModel)
 	}
-	return fmt.Sprintf("Boss chat via %s", a.model)
+	return fmt.Sprintf("(%s)", a.model)
 }
 
 func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
@@ -189,35 +195,26 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
-
-	messages := []llm.TextMessage{{
-		Role:    "user",
-		Content: strings.TrimSpace(requestContextBrief(req)),
-	}}
-	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 16) {
-		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
-		}
-		messages = append(messages, llm.TextMessage{
-			Role:    normalizeChatRole(message.Role),
-			Content: content,
-		})
+	req, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
+	if err != nil {
+		return AssistantResponse{}, err
 	}
 
 	resp, err := a.runner.RunText(ctx, llm.TextRequest{
 		Model:           modelName,
 		SystemText:      bossAssistantSystemPrompt(),
-		Messages:        messages,
+		Messages:        bossDirectMessages(req),
 		ReasoningEffort: bossAssistantReasoningEffort,
 	})
 	if err != nil {
 		return AssistantResponse{}, err
 	}
+	addLLMUsage(&resp.Usage, contextUsage)
 	return AssistantResponse{
-		Content: strings.TrimSpace(resp.OutputText),
-		Model:   strings.TrimSpace(resp.Model),
-		Usage:   resp.Usage,
+		Content:       strings.TrimSpace(resp.OutputText),
+		Model:         firstNonEmpty(strings.TrimSpace(resp.Model), contextModel),
+		Usage:         resp.Usage,
+		PromptContext: req.PromptContext,
 	}, nil
 }
 
@@ -229,6 +226,10 @@ func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest,
 	if modelName == "" && a.requiresExplicitModel() {
 		return AssistantResponse{}, errors.New("boss chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
+	req, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
+	if err != nil {
+		return AssistantResponse{}, err
+	}
 
 	resp, err := runBossText(ctx, a.runner, llm.TextRequest{
 		Model:           modelName,
@@ -239,10 +240,12 @@ func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest,
 	if err != nil {
 		return AssistantResponse{}, err
 	}
+	addLLMUsage(&resp.Usage, contextUsage)
 	return AssistantResponse{
-		Content: strings.TrimSpace(resp.OutputText),
-		Model:   strings.TrimSpace(resp.Model),
-		Usage:   resp.Usage,
+		Content:       strings.TrimSpace(resp.OutputText),
+		Model:         firstNonEmpty(strings.TrimSpace(resp.Model), contextModel),
+		Usage:         resp.Usage,
+		PromptContext: req.PromptContext,
 	}, nil
 }
 
@@ -283,6 +286,15 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		resp.Usage = totalUsage
 		return resp, nil
 	}
+	preparedReq, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
+	if err != nil {
+		return AssistantResponse{}, err
+	}
+	req = preparedReq
+	addLLMUsage(&totalUsage, contextUsage)
+	if strings.TrimSpace(contextModel) != "" {
+		usedModel = strings.TrimSpace(contextModel)
+	}
 	routeResponse, routeResult, routed, err := a.tryReadOnlyQueryRoute(ctx, req, nil)
 	if err != nil {
 		return AssistantResponse{}, err
@@ -297,9 +309,10 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		if routeResult != nil && routeResult.Name == bossActionGoalRunReport {
 			content := directGoalRunReportAnswer(*routeResult)
 			return AssistantResponse{
-				Content: content,
-				Model:   firstNonEmpty(usedModel, modelName),
-				Usage:   totalUsage,
+				Content:       content,
+				Model:         firstNonEmpty(usedModel, modelName),
+				Usage:         totalUsage,
+				PromptContext: req.PromptContext,
 			}, nil
 		}
 		if routeResult != nil {
@@ -326,9 +339,10 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 				return AssistantResponse{}, errors.New("boss chat returned an empty final answer")
 			}
 			return AssistantResponse{
-				Content: answer,
-				Model:   firstNonEmpty(usedModel, modelName),
-				Usage:   totalUsage,
+				Content:       answer,
+				Model:         firstNonEmpty(usedModel, modelName),
+				Usage:         totalUsage,
+				PromptContext: req.PromptContext,
 			}, nil
 		}
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
@@ -341,6 +355,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 				Model:             firstNonEmpty(usedModel, modelName),
 				Usage:             totalUsage,
 				ControlInvocation: &inv,
+				PromptContext:     req.PromptContext,
 			}, nil
 		}
 		if normalizeBossActionKind(action.Kind) == bossActionProposeGoal {
@@ -349,10 +364,11 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 				return AssistantResponse{}, wrapGoalProposalError(err)
 			}
 			return AssistantResponse{
-				Content:      content,
-				Model:        firstNonEmpty(usedModel, modelName),
-				Usage:        totalUsage,
-				GoalProposal: &proposal,
+				Content:       content,
+				Model:         firstNonEmpty(usedModel, modelName),
+				Usage:         totalUsage,
+				GoalProposal:  &proposal,
+				PromptContext: req.PromptContext,
 			}, nil
 		}
 
@@ -370,9 +386,10 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 	}
 
 	return AssistantResponse{
-		Content: synthesizeToolLoopFallback(toolResults),
-		Model:   firstNonEmpty(usedModel, modelName),
-		Usage:   totalUsage,
+		Content:       synthesizeToolLoopFallback(toolResults),
+		Model:         firstNonEmpty(usedModel, modelName),
+		Usage:         totalUsage,
+		PromptContext: req.PromptContext,
 	}, nil
 }
 
@@ -394,6 +411,15 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		resp.Usage = totalUsage
 		return resp, nil
 	}
+	preparedReq, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
+	if err != nil {
+		return AssistantResponse{}, err
+	}
+	req = preparedReq
+	addLLMUsage(&totalUsage, contextUsage)
+	if strings.TrimSpace(contextModel) != "" {
+		usedModel = strings.TrimSpace(contextModel)
+	}
 	routeResponse, routeResult, routed, err := a.tryReadOnlyQueryRoute(ctx, req, emit)
 	if err != nil {
 		return AssistantResponse{}, err
@@ -409,9 +435,10 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 			content := directGoalRunReportAnswer(*routeResult)
 			emitAssistantDelta(emit, content)
 			return AssistantResponse{
-				Content: content,
-				Model:   firstNonEmpty(usedModel, modelName),
-				Usage:   totalUsage,
+				Content:       content,
+				Model:         firstNonEmpty(usedModel, modelName),
+				Usage:         totalUsage,
+				PromptContext: req.PromptContext,
 			}, nil
 		}
 		if routeResult != nil {
@@ -439,9 +466,10 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 			}
 			emitAssistantDelta(emit, answer)
 			return AssistantResponse{
-				Content: answer,
-				Model:   firstNonEmpty(usedModel, modelName),
-				Usage:   totalUsage,
+				Content:       answer,
+				Model:         firstNonEmpty(usedModel, modelName),
+				Usage:         totalUsage,
+				PromptContext: req.PromptContext,
 			}, nil
 		}
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
@@ -456,6 +484,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 				Model:             firstNonEmpty(usedModel, modelName),
 				Usage:             totalUsage,
 				ControlInvocation: &inv,
+				PromptContext:     req.PromptContext,
 			}, nil
 		}
 		if normalizeBossActionKind(action.Kind) == bossActionProposeGoal {
@@ -466,10 +495,11 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 			emitToolCall(emit, describeBossAction(action), "ready")
 			emitAssistantDelta(emit, content)
 			return AssistantResponse{
-				Content:      content,
-				Model:        firstNonEmpty(usedModel, modelName),
-				Usage:        totalUsage,
-				GoalProposal: &proposal,
+				Content:       content,
+				Model:         firstNonEmpty(usedModel, modelName),
+				Usage:         totalUsage,
+				GoalProposal:  &proposal,
+				PromptContext: req.PromptContext,
 			}, nil
 		}
 
@@ -494,9 +524,10 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 	fallback := synthesizeToolLoopFallback(toolResults)
 	emitAssistantDelta(emit, fallback)
 	return AssistantResponse{
-		Content: fallback,
-		Model:   firstNonEmpty(usedModel, modelName),
-		Usage:   totalUsage,
+		Content:       fallback,
+		Model:         firstNonEmpty(usedModel, modelName),
+		Usage:         totalUsage,
+		PromptContext: req.PromptContext,
 	}, nil
 }
 

@@ -34,6 +34,7 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	streamID := m.assistantStreamID
 	m.streamingAssistantText = ""
 	m.streamingToolCalls = nil
+	m.haveLastContextReport = false
 	m.status = "Boss chat is thinking..."
 	m.syncLayout(true)
 	return m, tea.Batch(

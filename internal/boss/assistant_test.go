@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"lcroom/internal/agentcontext"
 	"lcroom/internal/bossrun"
 	"lcroom/internal/control"
 	"lcroom/internal/llm"
@@ -69,6 +71,17 @@ func (r *fakeJSONSchemaRunner) RunJSONSchema(_ context.Context, req llm.JSONSche
 	resp := r.resp[r.index]
 	r.index++
 	return resp, nil
+}
+
+func bossTextMessagesContent(messages []llm.TextMessage) string {
+	var b strings.Builder
+	for _, message := range messages {
+		b.WriteString(message.Role)
+		b.WriteString(": ")
+		b.WriteString(message.Content)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 type fakeBossStore struct {
@@ -821,7 +834,7 @@ func TestAssistantLabelShowsHelmAndUtilityModels(t *testing.T) {
 		utilityModel: "gpt-5.4-mini",
 	}
 
-	if got, want := assistant.Label(), "Boss chat via gpt-5.5 (utility gpt-5.4-mini)"; got != want {
+	if got, want := assistant.Label(), "(gpt-5.5/gpt-5.4-mini)"; got != want {
 		t.Fatalf("Label() = %q, want %q", got, want)
 	}
 }
@@ -880,6 +893,71 @@ func TestBossPromptHistorySkipsFlowMessages(t *testing.T) {
 				t.Fatalf("%s prompt missing conversational message %q:\n%s", label, want, text)
 			}
 		}
+	}
+}
+
+func TestBossPromptContextCompactsLongHistory(t *testing.T) {
+	t.Parallel()
+
+	runner := &fakeTextRunner{resp: llm.TextResponse{
+		OutputText: "ok",
+		Model:      "gpt-main",
+		Usage:      model.LLMUsage{TotalTokens: 7},
+	}}
+	router := &fakeJSONSchemaRunner{resp: []llm.JSONSchemaResponse{{
+		OutputText: `{"summary":"The user wants Boss Chat context to stay compact while preserving the commit-routing discussion."}`,
+		Model:      "gpt-utility",
+		Usage:      model.LLMUsage{TotalTokens: 5},
+	}}}
+	assistant := &Assistant{
+		runner:       runner,
+		queryRouter:  router,
+		model:        "gpt-main",
+		utilityModel: "gpt-utility",
+		dataDir:      t.TempDir(),
+	}
+	var messages []ChatMessage
+	for i := 0; i < 25; i++ {
+		messages = append(messages, ChatMessage{Role: "user", Content: fmt.Sprintf("chat turn %02d", i)})
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "state",
+		Messages:   messages,
+		SessionID:  "boss_test_context",
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.PromptContext.ContextMode != agentcontext.ContextModeCompacted {
+		t.Fatalf("context mode = %q, want compacted", resp.PromptContext.ContextMode)
+	}
+	if resp.PromptContext.SummaryMessageCount != 13 {
+		t.Fatalf("summary count = %d, want 13", resp.PromptContext.SummaryMessageCount)
+	}
+	if got, want := resp.Usage.TotalTokens, int64(12); got != want {
+		t.Fatalf("usage total = %d, want compaction+answer %d", got, want)
+	}
+	if len(router.reqs) != 1 || router.reqs[0].SchemaName != "boss_chat_context_compaction" {
+		t.Fatalf("router requests = %#v, want one compaction request", router.reqs)
+	}
+	joined := bossTextMessagesContent(runner.req.Messages)
+	if !strings.Contains(joined, "Compacted prior Boss Chat summary") ||
+		!strings.Contains(joined, "commit-routing discussion") {
+		t.Fatalf("direct prompt missing compacted summary:\n%s", joined)
+	}
+	if strings.Contains(joined, "chat turn 00") {
+		t.Fatalf("direct prompt should not keep the earliest raw turn after compaction:\n%s", joined)
+	}
+	if !strings.Contains(joined, "chat turn 24") {
+		t.Fatalf("direct prompt missing latest turn:\n%s", joined)
+	}
+	state, ok, err := agentcontext.LoadState[ChatMessage, bossContextNoToolCall](assistant.dataDir, bossContextNamespace, "boss_test_context", "", nil)
+	if err != nil || !ok {
+		t.Fatalf("load compacted state ok=%v err=%v", ok, err)
+	}
+	if state.ContextMode != agentcontext.ContextModeCompacted || state.SummaryCount != 13 {
+		t.Fatalf("stored context state = mode %q summary %d", state.ContextMode, state.SummaryCount)
 	}
 }
 

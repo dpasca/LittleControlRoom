@@ -1,6 +1,7 @@
 package boss
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -21,18 +22,7 @@ func bossTodoAddPolicyReviewSystemPrompt() string {
 
 func bossTodoAddPolicyReviewUserText(req AssistantRequest, action bossAction) string {
 	var b strings.Builder
-	b.WriteString(requestContextBrief(req))
-	b.WriteString("\n\nRecent chat:\n")
-	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 10) {
-		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
-		}
-		b.WriteString(normalizeChatRole(message.Role))
-		b.WriteString(": ")
-		b.WriteString(clipText(content, 900))
-		b.WriteString("\n")
-	}
+	writeBossPromptContextText(&b, req, 10, 900)
 	b.WriteString("\nProposed todo.add action:\n")
 	b.WriteString("project_path: " + strings.TrimSpace(action.ProjectPath) + "\n")
 	b.WriteString("project_name: " + strings.TrimSpace(action.ProjectName) + "\n")
@@ -347,18 +337,7 @@ func bossReadOnlyRouterSystemPrompt() string {
 
 func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResult, forceAnswer bool) string {
 	var b strings.Builder
-	b.WriteString(requestContextBrief(req))
-	b.WriteString("\n\nRecent chat:\n")
-	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 18) {
-		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
-		}
-		b.WriteString(normalizeChatRole(message.Role))
-		b.WriteString(": ")
-		b.WriteString(clipText(content, 1200))
-		b.WriteString("\n")
-	}
+	writeBossPromptContextText(&b, req, 18, 1200)
 	if len(toolResults) > 0 {
 		b.WriteString("\nTool results already gathered:\n")
 		for _, result := range toolResults {
@@ -492,28 +471,24 @@ func bossPromptParagraph(sentences []string) string {
 
 func bossReadOnlyRouterUserText(req AssistantRequest) string {
 	var b strings.Builder
-	b.WriteString(requestContextBrief(req))
-	b.WriteString("\n\nRecent chat:\n")
-	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 8) {
-		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
-		}
-		b.WriteString(normalizeChatRole(message.Role))
-		b.WriteString(": ")
-		b.WriteString(clipText(content, 900))
-		b.WriteString("\n")
-	}
+	writeBossPromptContextText(&b, req, 8, 900)
 	b.WriteString("\nPick one read-only route for the latest user message, or kind=\"pass\" if this is not a single-query inspection request.")
 	return strings.TrimSpace(b.String())
 }
 
 func bossDirectMessages(req AssistantRequest) []llm.TextMessage {
-	messages := []llm.TextMessage{{
+	messages := make([]llm.TextMessage, 0, 2+len(req.Messages))
+	if summary := bossPromptContextSummaryText(req); summary != "" {
+		messages = append(messages, llm.TextMessage{
+			Role:    "user",
+			Content: summary,
+		})
+	}
+	messages = append(messages, llm.TextMessage{
 		Role:    "user",
 		Content: strings.TrimSpace(requestContextBrief(req)),
-	}}
-	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 16) {
+	})
+	for _, message := range bossPromptRecentMessages(req, 16) {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue
@@ -524,6 +499,49 @@ func bossDirectMessages(req AssistantRequest) []llm.TextMessage {
 		})
 	}
 	return messages
+}
+
+func writeBossPromptContextText(b *strings.Builder, req AssistantRequest, recentLimit int, contentLimit int) {
+	if b == nil {
+		return
+	}
+	if summary := bossPromptContextSummaryText(req); summary != "" {
+		b.WriteString(summary)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(requestContextBrief(req))
+	b.WriteString("\n\nRecent chat:\n")
+	for _, message := range bossPromptRecentMessages(req, recentLimit) {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		b.WriteString(normalizeChatRole(message.Role))
+		b.WriteString(": ")
+		b.WriteString(clipText(content, contentLimit))
+		b.WriteString("\n")
+	}
+}
+
+func bossPromptContextSummaryText(req AssistantRequest) string {
+	ctx := req.PromptContext
+	summary := strings.TrimSpace(ctx.Summary)
+	if !ctx.Prepared || summary == "" {
+		return ""
+	}
+	count := ctx.SummaryMessageCount
+	if count < 0 {
+		count = 0
+	}
+	return fmt.Sprintf("Compacted prior Boss Chat summary (stable context; covers first %d conversational turns):\n%s", count, summary)
+}
+
+func bossPromptRecentMessages(req AssistantRequest, limit int) []ChatMessage {
+	messages := req.PromptContext.RecentMessages
+	if !req.PromptContext.Prepared {
+		messages = conversationalChatMessages(req.Messages)
+	}
+	return trimChatHistory(messages, limit)
 }
 
 func bossFinalAnswerMessages(req AssistantRequest, toolResults []bossToolResult, plannerAnswer string) []llm.TextMessage {

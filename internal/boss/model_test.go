@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/agentcontext"
 	"lcroom/internal/bossrun"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
@@ -131,6 +132,32 @@ func TestModelContextTextReportsClippedChatAndFlow(t *testing.T) {
 		"ctx clipped",
 		fmt.Sprintf("%d/%dt", bossPromptChatHistoryLimit, bossPromptChatHistoryLimit+3),
 		"flow1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ContextText() = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestModelContextTextReportsCompactedSummary(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.haveLastContextReport = true
+	m.lastContextReport = bossContextReport{
+		ContextMode:     agentcontext.ContextModeCompacted,
+		MessageCount:    25,
+		TotalMessages:   25,
+		VisibleMessages: 12,
+		SummaryMessages: 13,
+		ApproxChars:     1800,
+	}
+
+	got := m.ContextText()
+	for _, want := range []string{
+		"ctx compacted",
+		"12+13/25t",
+		"1.8kch",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("ContextText() = %q, missing %q", got, want)
