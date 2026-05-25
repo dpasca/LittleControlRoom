@@ -283,7 +283,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "update_plan",
-				Description: "Publish the current short plan with statuses pending, in_progress, or completed.",
+				Description: "Publish the current short plan with statuses pending, in_progress, or completed. This is progress tracking for execution work; after updating a plan, continue with the in_progress step unless tools, autonomy, or a concrete blocker prevent it.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

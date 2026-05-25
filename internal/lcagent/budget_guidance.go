@@ -101,7 +101,7 @@ func openRouterProgressNote(guidance openRouterProgressGuidance, ledger *readLed
 		b.WriteString("- Include enough uncertainty to be honest, but avoid asking the user to continue unless a concrete blocker remains.")
 	case "consolidation":
 		b.WriteString("- Start converging on the answer. Each new tool call should resolve a named blocker for the final response.\n")
-		b.WriteString("- Prefer final_response once the main question can be answered with the evidence already collected.\n")
+		b.WriteString("- Prefer final_response once the main question can be answered with the evidence already collected; for execution requests, do not skip to final_response before acting or reporting a blocker.\n")
 		b.WriteString("- Do not audit every file for completeness; prioritize the user-visible conclusion.")
 	default:
 		if strings.EqualFold(guidance.ToolProfile, "generous") {

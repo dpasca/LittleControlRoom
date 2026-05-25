@@ -74,6 +74,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["search"], "literal substring") || !strings.Contains(descriptions["search"], "not a regex") {
 		t.Fatalf("search description should explain literal matching: %q", descriptions["search"])
 	}
+	if !strings.Contains(descriptions["update_plan"], "continue with the in_progress step") {
+		t.Fatalf("update_plan description should keep plans tied to execution: %q", descriptions["update_plan"])
+	}
 	if names["web_search"] {
 		t.Fatalf("Tools() should not expose web_search unless it is enabled")
 	}
@@ -194,6 +197,19 @@ func TestSystemPromptIncludesSkillMetadata(t *testing.T) {
 	}
 	if strings.Contains(prompt, "start_process") {
 		t.Fatalf("default prompt should not mention managed-process tools when they are disabled:\n%s", prompt)
+	}
+}
+
+func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
+	prompt := SystemPrompt("", "")
+	for _, want := range []string{
+		"asks you to carry out a proposed plan or selected option",
+		"start executing it within the current autonomy and tool policy",
+		"continue with the in_progress step",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

@@ -56,6 +56,16 @@ func TestOpenRouterProgressNoteIncludesReadLedgerAndSynthesisInstructions(t *tes
 	}
 }
 
+func TestOpenRouterProgressNoteKeepsConsolidationExecutionAware(t *testing.T) {
+	guidance := openRouterGuidanceForTurn(16, 32, nil, nil)
+	note := openRouterProgressNote(guidance, nil)
+	for _, want := range []string{"phase: consolidation", "for execution requests", "do not skip to final_response before acting"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("consolidation progress note missing %q:\n%s", want, note)
+		}
+	}
+}
+
 func TestOpenRouterProgressNoteUsesGenerousExplorationGuidance(t *testing.T) {
 	guidance := openRouterGuidanceForTurnWithOptions(1, 32, nil, nil, openRouterGuidanceOptions{ToolProfile: "generous"})
 	note := openRouterProgressNote(guidance, nil)
