@@ -76,6 +76,7 @@ func AppendAssistantNoticeToLatestSession(ctx context.Context, svc *service.Serv
 		Role:    "assistant",
 		Content: content,
 		At:      at,
+		Kind:    ChatMessageKindFlow,
 	})
 }
 
@@ -246,6 +247,7 @@ func (s *bossSessionStore) appendMessage(ctx context.Context, sessionID string, 
 		Role:    role,
 		Content: content,
 		At:      at,
+		Kind:    normalizeChatMessageKind(message.Kind),
 	}); err != nil {
 		return err
 	}
@@ -311,6 +313,7 @@ func readBossSessionMarkdownFile(path string) (bossChatSession, []ChatMessage, e
 	session := bossChatSession{Path: path}
 	var messages []ChatMessage
 	var role string
+	var kind string
 	var at time.Time
 	var contentLines []string
 	flushMessage := func() {
@@ -324,7 +327,7 @@ func readBossSessionMarkdownFile(path string) (bossChatSession, []ChatMessage, e
 			contentLines = nil
 			return
 		}
-		msg := ChatMessage{Role: role, Content: content, At: at}
+		msg := ChatMessage{Role: role, Content: content, At: at, Kind: normalizeChatMessageKind(kind)}
 		messages = append(messages, msg)
 		session.MessageCount++
 		if msg.At.After(session.UpdatedAt) {
@@ -337,6 +340,7 @@ func readBossSessionMarkdownFile(path string) (bossChatSession, []ChatMessage, e
 			session.Title = bossSessionTitleFromMessage(msg.Content)
 		}
 		role = ""
+		kind = ""
 		at = time.Time{}
 		contentLines = nil
 	}
@@ -345,9 +349,10 @@ func readBossSessionMarkdownFile(path string) (bossChatSession, []ChatMessage, e
 	scanner.Buffer(make([]byte, 1024), 8*1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if nextRole, nextAt, ok := parseBossSessionMarkdownHeading(line); ok {
+		if nextRole, nextKind, nextAt, ok := parseBossSessionMarkdownHeading(line); ok {
 			flushMessage()
 			role = nextRole
+			kind = nextKind
 			at = nextAt
 			contentLines = nil
 			continue
@@ -401,35 +406,37 @@ func parseBossSessionMarkdownMetadata(line string, session *bossChatSession) {
 	}
 }
 
-func parseBossSessionMarkdownHeading(line string) (string, time.Time, bool) {
+func parseBossSessionMarkdownHeading(line string) (string, string, time.Time, bool) {
 	line = strings.TrimSpace(line)
 	if !strings.HasPrefix(line, bossSessionHeadingPrefix) {
-		return "", time.Time{}, false
+		return "", "", time.Time{}, false
 	}
 	body := strings.TrimSpace(strings.TrimPrefix(line, bossSessionHeadingPrefix))
 	roleText, timeText, ok := strings.Cut(body, bossSessionHeadingDivider)
 	if !ok {
-		return "", time.Time{}, false
+		return "", "", time.Time{}, false
 	}
-	role, ok := parseBossSessionMarkdownRole(roleText)
+	role, kind, ok := parseBossSessionMarkdownRole(roleText)
 	if !ok {
-		return "", time.Time{}, false
+		return "", "", time.Time{}, false
 	}
 	at, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(timeText))
 	if err != nil {
-		return "", time.Time{}, false
+		return "", "", time.Time{}, false
 	}
-	return role, at, true
+	return role, kind, at, true
 }
 
-func parseBossSessionMarkdownRole(role string) (string, bool) {
+func parseBossSessionMarkdownRole(role string) (string, string, bool) {
 	switch strings.TrimSpace(strings.ToLower(role)) {
 	case "user":
-		return "user", true
+		return "user", ChatMessageKindChat, true
 	case "assistant":
-		return "assistant", true
+		return "assistant", ChatMessageKindChat, true
+	case "flow":
+		return "assistant", ChatMessageKindFlow, true
 	default:
-		return "", false
+		return "", "", false
 	}
 }
 
@@ -455,7 +462,7 @@ func writeBossSessionMarkdownMessage(w io.Writer, message ChatMessage) error {
 	}
 	_, err := fmt.Fprintf(w, "\n%s%s%s%s\n\n%s\n",
 		bossSessionHeadingPrefix,
-		bossSessionMarkdownRole(message.Role),
+		bossSessionMarkdownRoleForMessage(message),
 		bossSessionHeadingDivider,
 		at.UTC().Format(time.RFC3339Nano),
 		content,
@@ -467,7 +474,14 @@ func writeBossSessionMarkdownMessage(w io.Writer, message ChatMessage) error {
 }
 
 func bossSessionMarkdownRole(role string) string {
-	if normalizeChatRole(role) == "assistant" {
+	return bossSessionMarkdownRoleForMessage(ChatMessage{Role: role})
+}
+
+func bossSessionMarkdownRoleForMessage(message ChatMessage) string {
+	if chatMessageIsFlow(message) {
+		return "Flow"
+	}
+	if normalizeChatRole(message.Role) == "assistant" {
 		return "Assistant"
 	}
 	return "User"

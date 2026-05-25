@@ -393,6 +393,30 @@ func trimChatHistory(messages []ChatMessage, limit int) []ChatMessage {
 	return append([]ChatMessage(nil), messages[len(messages)-limit:]...)
 }
 
+func conversationalChatMessages(messages []ChatMessage) []ChatMessage {
+	out := make([]ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		if chatMessageIsFlow(message) {
+			continue
+		}
+		out = append(out, message)
+	}
+	return out
+}
+
+func chatMessageIsFlow(message ChatMessage) bool {
+	return normalizeChatMessageKind(message.Kind) == ChatMessageKindFlow
+}
+
+func normalizeChatMessageKind(kind string) string {
+	switch strings.TrimSpace(strings.ToLower(kind)) {
+	case ChatMessageKindFlow:
+		return ChatMessageKindFlow
+	default:
+		return ChatMessageKindChat
+	}
+}
+
 func normalizeChatRole(role string) string {
 	switch strings.TrimSpace(strings.ToLower(role)) {
 	case "assistant":

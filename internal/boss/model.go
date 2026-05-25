@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"lcroom/internal/agentcontext"
 	"lcroom/internal/bossrun"
 	"lcroom/internal/inputcomposer"
 	"lcroom/internal/model"
@@ -32,6 +33,14 @@ const (
 	summaryFlashDuration         = time.Second
 	maxOperationalNotices        = 8
 	transientEngineerActivityTTL = 2 * time.Minute
+	bossPromptChatHistoryLimit   = 18
+)
+
+type bossTranscriptTab string
+
+const (
+	bossTranscriptTabChat bossTranscriptTab = "chat"
+	bossTranscriptTabFlow bossTranscriptTab = "flow"
 )
 
 type Model struct {
@@ -49,6 +58,7 @@ type Model struct {
 	openTargetPicker  *bossOpenTargetPickerState
 	chatViewport      viewport.Model
 	chatSelection     bossTextSelection
+	transcriptTab     bossTranscriptTab
 	messages          []ChatMessage
 	bossSlashSelected int
 	pendingControl    *ControlProposal
@@ -415,11 +425,14 @@ func (m Model) StatusText() string {
 }
 
 func (m Model) UsageText() string {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
 	if m.haveLastAssistantUsage {
 		if tokens := formatBossLLMUsageTokens(m.lastAssistantUsage); tokens != "" {
 			parts = append(parts, "tok "+tokens)
 		}
+	}
+	if contextText := m.ContextText(); contextText != "" {
+		parts = append(parts, contextText)
 	}
 	if usage := m.bossChatUsage(); usage.Running > 0 && len(parts) == 0 {
 		parts = append(parts, "tok measuring")
@@ -433,11 +446,82 @@ func (m Model) UsageText() string {
 	return strings.Join(parts, " | ")
 }
 
+func (m Model) ContextText() string {
+	report := m.contextReport()
+	if report.MessageCount == 0 && report.FlowEventCount == 0 {
+		return ""
+	}
+	mode := agentcontext.NormalizeContextMode(report.ContextMode)
+	turns := fmt.Sprintf("%dt", report.VisibleMessages)
+	if report.TotalMessages > report.VisibleMessages {
+		turns = fmt.Sprintf("%d/%dt", report.VisibleMessages, report.TotalMessages)
+	}
+	text := "ctx " + mode + " " + turns
+	if report.ApproxChars > 0 {
+		text += "/" + uistyle.FormatTokenCount(int64(report.ApproxChars)) + "ch"
+	}
+	if report.FlowEventCount > 0 {
+		text += fmt.Sprintf(" flow%d", report.FlowEventCount)
+	}
+	return text
+}
+
 func (m Model) bossChatUsage() model.LLMSessionUsage {
 	if m.svc == nil {
 		return model.LLMSessionUsage{}
 	}
 	return m.svc.BossChatUsage()
+}
+
+type bossContextReport struct {
+	ContextMode     string
+	MessageCount    int
+	TotalMessages   int
+	VisibleMessages int
+	ApproxChars     int
+	FlowEventCount  int
+}
+
+func (m Model) contextReport() bossContextReport {
+	chatMessages := conversationalChatMessages(m.messages)
+	total := len(chatMessages)
+	visible := total
+	mode := agentcontext.ContextModeExact
+	if visible > bossPromptChatHistoryLimit {
+		visible = bossPromptChatHistoryLimit
+		mode = agentcontext.ContextModeClipped
+	}
+	tail := chatMessages
+	if len(tail) > visible {
+		tail = tail[len(tail)-visible:]
+	}
+	return bossContextReport{
+		ContextMode:     mode,
+		MessageCount:    total,
+		TotalMessages:   total,
+		VisibleMessages: visible,
+		ApproxChars:     bossChatMessagesApproxChars(tail),
+		FlowEventCount:  bossFlowMessageCount(m.messages) + len(m.operationalNotices),
+	}
+}
+
+func bossFlowMessageCount(messages []ChatMessage) int {
+	count := 0
+	for _, message := range messages {
+		if chatMessageIsFlow(message) {
+			count++
+		}
+	}
+	return count
+}
+
+func bossChatMessagesApproxChars(messages []ChatMessage) int {
+	return agentcontext.ApproxMessages(messages, func(message ChatMessage) agentcontext.MessageParts {
+		return agentcontext.MessageParts{
+			Role:    normalizeChatRole(message.Role),
+			Content: strings.TrimSpace(message.Content),
+		}
+	})
 }
 
 func (m *Model) recordAssistantUsage(response AssistantResponse) {
@@ -643,6 +727,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
+		case "tab":
+			if !m.bossSlashActive() {
+				m = m.toggleTranscriptTab()
+				m.syncLayout(true)
+				return m, nil
+			}
 		case "pgup":
 			viewportnav.PageUp(&m.chatViewport)
 			return m, nil
@@ -831,6 +921,27 @@ func (m Model) View() string {
 		return fitRenderedBlock(body, layout.width, layout.height)
 	}
 	return fitRenderedBlock(lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(layout.width), body), layout.width, layout.height+1)
+}
+
+func (m Model) normalizedTranscriptTab() bossTranscriptTab {
+	switch m.transcriptTab {
+	case bossTranscriptTabFlow:
+		return bossTranscriptTabFlow
+	default:
+		return bossTranscriptTabChat
+	}
+}
+
+func (m Model) toggleTranscriptTab() Model {
+	switch m.normalizedTranscriptTab() {
+	case bossTranscriptTabFlow:
+		m.transcriptTab = bossTranscriptTabChat
+		m.status = "Switched to Boss Chat tab"
+	default:
+		m.transcriptTab = bossTranscriptTabFlow
+		m.status = "Switched to Boss Flow tab"
+	}
+	return m
 }
 
 func (m Model) submit() (tea.Model, tea.Cmd) {
@@ -1178,7 +1289,7 @@ func (m Model) renderChat(layout bossLayout) string {
 		parts = append(parts, slashBlock)
 	}
 	if !m.embedded {
-		hint := "Enter sends | Alt+Enter newline | Alt+O files | Alt+C copy menu | Ctrl+R refresh | Alt+Up hides"
+		hint := "Enter sends | Tab chat/flow | Alt+Enter newline | Alt+O files | Alt+C copy menu | Ctrl+R refresh | Alt+Up hides"
 		if m.bossSlashActive() {
 			hint = "Enter runs command | Tab complete | Shift+Tab previous | Alt+Enter newline"
 		}
@@ -1195,7 +1306,28 @@ func (m Model) renderChat(layout bossLayout) string {
 	}
 	parts = append(parts, input)
 	content := strings.Join(parts, "\n")
-	return m.renderRawPanel("Boss Chat", content, layout.chatWidth, layout.topHeight)
+	return m.renderRawPanelStyledTitle(m.renderTranscriptPanelTitle(), content, layout.chatWidth, layout.topHeight)
+}
+
+func (m Model) renderTranscriptPanelTitle() string {
+	active := m.normalizedTranscriptTab()
+	return strings.Join([]string{
+		panelTitleStyle.Render("Boss Chat"),
+		renderBossTranscriptTab("Chat", active == bossTranscriptTabChat),
+		renderBossTranscriptTab("Flow", active == bossTranscriptTabFlow),
+		bossTranscriptTabHotkeyStyle.Render("Tab") + bossTranscriptTabHintStyle.Render(" switch"),
+	}, "  ")
+}
+
+func renderBossTranscriptTab(label string, selected bool) string {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "Tab"
+	}
+	if selected {
+		return bossTranscriptActiveTabStyle.Render("[" + label + "]")
+	}
+	return bossTranscriptInactiveTabStyle.Render(" " + label + " ")
 }
 
 func (m Model) renderHeader(width int) string {
@@ -1594,11 +1726,22 @@ func (m Model) renderPanel(title, content string, width, height int) string {
 }
 
 func (m Model) renderRawPanel(title, content string, width, height int) string {
+	return m.renderRawPanelWithTitle(title, false, content, width, height)
+}
+
+func (m Model) renderRawPanelStyledTitle(title, content string, width, height int) string {
+	return m.renderRawPanelWithTitle(title, true, content, width, height)
+}
+
+func (m Model) renderRawPanelWithTitle(title string, styledTitle bool, content string, width, height int) string {
 	width = maxInt(12, width)
 	height = maxInt(4, height)
 	innerWidth := bossPanelInnerWidth(width)
 	innerHeight := maxInt(1, height-2)
 	titleLine := panelTitleStyle.Render(fitLine(title, innerWidth))
+	if styledTitle {
+		titleLine = fitStyledLine(title, innerWidth)
+	}
 	body := fitRenderedBlock(content, innerWidth, maxInt(0, innerHeight-2))
 	rendered := panelStyle.Width(bossPanelStyleWidth(width)).Height(innerHeight).Render(titleLine + "\n" + body)
 	return fitRenderedBlock(rendered, width, height)
@@ -1608,17 +1751,31 @@ func (m Model) renderTranscript(width int) string {
 	width = maxInt(12, width)
 	var blocks []string
 	projectHighlights := m.chatProjectHighlights()
+	activeTab := m.normalizedTranscriptTab()
 	for _, message := range m.messages {
+		if activeTab == bossTranscriptTabChat && chatMessageIsFlow(message) {
+			continue
+		}
+		if activeTab == bossTranscriptTabFlow && !chatMessageIsFlow(message) {
+			continue
+		}
+		if activeTab == bossTranscriptTabFlow {
+			blocks = append(blocks, renderFlowNoticeMessage(message, width, projectHighlights))
+			continue
+		}
 		if normalizeChatRole(message.Role) == "assistant" {
 			blocks = append(blocks, renderAssistantChatMessage(message, width, projectHighlights))
 			continue
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width, projectHighlights))
 	}
-	if m.sending {
+	if m.sending && activeTab == bossTranscriptTabChat {
 		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame, projectHighlights); pending != "" {
 			blocks = append(blocks, pending)
 		}
+	}
+	if len(blocks) == 0 && activeTab == bossTranscriptTabFlow {
+		blocks = append(blocks, bossMutedStyle.Render(fitLine("No flow notices yet.", width)))
 	}
 	return strings.Join(blocks, "\n")
 }
@@ -1772,6 +1929,10 @@ var (
 	panelTitleStyle = lipgloss.NewStyle().
 			Foreground(bossPanelAccent).
 			Bold(true)
+	bossTranscriptActiveTabStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(bossPanelAccent).Bold(true).Padding(0, 1)
+	bossTranscriptInactiveTabStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("238")).Padding(0, 1)
+	bossTranscriptTabHotkeyStyle    = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossPanelBackground).Bold(true)
+	bossTranscriptTabHintStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
 	bossMutedStyle                  = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
 	bossHotkeyStyle                 = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossPanelBackground).Bold(true)
 	bossProjectNameStyle            = lipgloss.NewStyle().Foreground(bossPanelText).Background(bossPanelBackground).Bold(true)
@@ -1875,6 +2036,11 @@ func renderAssistantChatMessage(message ChatMessage, width int, projectHighlight
 		return renderAssistantMessageWithProjectHighlights(message.Content, width, projectHighlights)
 	}
 	return renderPrefixedMessageWithProjectHighlights(message.Content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
+}
+
+func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
+	highlights := handoffMessageHighlights(message.Content, message.Handoff)
+	return renderPrefixedMessageWithProjectHighlights(message.Content, "Flow> ", bossPanelText, bossToolCallStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
 }
 
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {

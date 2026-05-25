@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/agentcontext"
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/tools"
 )
@@ -427,14 +428,23 @@ func compactRawJSON(raw json.RawMessage, limit int) string {
 }
 
 func messagesApproxChars(messages []modeladapter.Message) int {
-	total := 0
-	for _, msg := range messages {
-		total += len(msg.Role) + len(msg.Content) + len(msg.ToolCallID)
+	return agentcontext.ApproxMessages(messages, func(msg modeladapter.Message) agentcontext.MessageParts {
+		calls := make([]agentcontext.ToolCallParts, 0, len(msg.ToolCalls))
 		for _, call := range msg.ToolCalls {
-			total += len(call.ID) + len(call.Type) + len(call.Function.Name) + len(call.Function.Arguments)
+			calls = append(calls, agentcontext.ToolCallParts{
+				ID:        call.ID,
+				Type:      call.Type,
+				Name:      call.Function.Name,
+				Arguments: string(call.Function.Arguments),
+			})
 		}
-	}
-	return total
+		return agentcontext.MessageParts{
+			Role:       msg.Role,
+			Content:    msg.Content,
+			ToolCallID: msg.ToolCallID,
+			ToolCalls:  calls,
+		}
+	})
 }
 
 func indentBlock(text string) string {

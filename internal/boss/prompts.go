@@ -23,7 +23,7 @@ func bossTodoAddPolicyReviewUserText(req AssistantRequest, action bossAction) st
 	var b strings.Builder
 	b.WriteString(requestContextBrief(req))
 	b.WriteString("\n\nRecent chat:\n")
-	for _, message := range trimChatHistory(req.Messages, 10) {
+	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 10) {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue
@@ -347,7 +347,7 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 	var b strings.Builder
 	b.WriteString(requestContextBrief(req))
 	b.WriteString("\n\nRecent chat:\n")
-	for _, message := range trimChatHistory(req.Messages, 18) {
+	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 18) {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue
@@ -490,7 +490,7 @@ func bossReadOnlyRouterUserText(req AssistantRequest) string {
 	var b strings.Builder
 	b.WriteString(requestContextBrief(req))
 	b.WriteString("\n\nRecent chat:\n")
-	for _, message := range trimChatHistory(req.Messages, 8) {
+	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 8) {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue
@@ -509,7 +509,7 @@ func bossDirectMessages(req AssistantRequest) []llm.TextMessage {
 		Role:    "user",
 		Content: strings.TrimSpace(requestContextBrief(req)),
 	}}
-	for _, message := range trimChatHistory(req.Messages, 16) {
+	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 16) {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue

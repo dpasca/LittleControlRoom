@@ -129,6 +129,7 @@ func (m *Model) appendAssistantNoticeMessage(content string, handoffs ...*Handof
 		Role:    "assistant",
 		Content: content,
 		At:      m.now(),
+		Kind:    ChatMessageKindFlow,
 	}
 	if len(handoffs) > 0 {
 		if handoff, ok := normalizedHandoffHighlight(handoffs[0]); ok {
@@ -150,6 +151,7 @@ func chatMessagesFromBossMessages(messages []ChatMessage) []ChatMessage {
 			Role:    normalizeChatRole(message.Role),
 			Content: content,
 			At:      message.At,
+			Kind:    normalizeChatMessageKind(message.Kind),
 		})
 	}
 	return out

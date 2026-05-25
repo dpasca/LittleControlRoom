@@ -180,8 +180,15 @@ func TestAppendAssistantNoticeToLatestSessionPersistsAndDedupes(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("messages len = %d, want one deduped notice: %#v", len(messages), messages)
 	}
-	if messages[0].Role != "assistant" || messages[0].Content != content {
+	if messages[0].Role != "assistant" || messages[0].Kind != ChatMessageKindFlow || messages[0].Content != content {
 		t.Fatalf("message = %#v, want assistant notice", messages[0])
+	}
+	data, err := os.ReadFile(session.Path)
+	if err != nil {
+		t.Fatalf("ReadFile(session) error = %v", err)
+	}
+	if !strings.Contains(string(data), "## Flow @ ") {
+		t.Fatalf("session file should persist assistant notices as flow transcript entries:\n%s", string(data))
 	}
 }
 

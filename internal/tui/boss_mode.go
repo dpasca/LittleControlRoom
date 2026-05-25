@@ -313,6 +313,7 @@ func (m Model) renderBossModeFooter(width int) string {
 	actions := []footerAction{
 		footerPrimaryAction("Enter", "send"),
 		footerHideAction("Alt+Up", "hide"),
+		footerNavAction("Tab", "chat/flow"),
 		footerNavAction("Alt+Enter", "newline"),
 		footerNavAction("Alt+O", "files"),
 		footerNavAction("Alt+1..8", "open"),

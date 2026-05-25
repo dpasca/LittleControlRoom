@@ -110,6 +110,34 @@ func TestModelHeaderShowsLastContextUsage(t *testing.T) {
 	}
 }
 
+func TestModelContextTextReportsClippedChatAndFlow(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	for i := 0; i < bossPromptChatHistoryLimit+3; i++ {
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "user",
+			Content: fmt.Sprintf("chat turn %02d", i),
+		})
+	}
+	m.messages = append(m.messages, ChatMessage{
+		Role:    "assistant",
+		Content: "Ada is back from Alpha.",
+		Kind:    ChatMessageKindFlow,
+	})
+
+	got := m.ContextText()
+	for _, want := range []string{
+		"ctx clipped",
+		fmt.Sprintf("%d/%dt", bossPromptChatHistoryLimit, bossPromptChatHistoryLimit+3),
+		"flow1",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ContextText() = %q, missing %q", got, want)
+		}
+	}
+}
+
 func TestPageKeysScrollChatByEightyPercent(t *testing.T) {
 	t.Parallel()
 
@@ -672,14 +700,17 @@ func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
 	if len(got.messages) != 2 {
 		t.Fatalf("control result should append a boss chat turn, got %#v", got.messages)
 	}
+	got.transcriptTab = bossTranscriptTabFlow
 	rendered := ansi.Strip(got.renderTranscript(120))
 	for _, want := range []string{
-		"You> just nuke that skill",
-		"Boss> Ok, Niklaus is working on Retire projects-control-center skill.",
+		"Flow> Ok, Niklaus is working on Retire projects-control-center skill.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "just nuke that skill") {
+		t.Fatalf("flow tab should not include user chat turns:\n%s", rendered)
 	}
 }
 
@@ -2124,6 +2155,72 @@ func TestModelTranscriptRendersMarkdown(t *testing.T) {
 	}
 }
 
+func TestModelTranscriptSeparatesChatAndFlowMessages(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.messages = []ChatMessage{{
+		Role:    "user",
+		Content: "Keep this focused on Alpha.",
+	}, {
+		Role:    "assistant",
+		Content: "Ada is back from noisy flow.",
+		Kind:    ChatMessageKindFlow,
+	}, {
+		Role:    "assistant",
+		Content: "Alpha is ready for review.",
+	}}
+
+	chat := ansi.Strip(m.renderTranscript(120))
+	if strings.Contains(chat, "noisy flow") {
+		t.Fatalf("chat tab should hide flow notices:\n%s", chat)
+	}
+	for _, want := range []string{"You> Keep this focused on Alpha.", "Boss> Alpha is ready for review."} {
+		if !strings.Contains(chat, want) {
+			t.Fatalf("chat tab missing %q:\n%s", want, chat)
+		}
+	}
+
+	m.transcriptTab = bossTranscriptTabFlow
+	flow := ansi.Strip(m.renderTranscript(120))
+	if !strings.Contains(flow, "Flow> Ada is back from noisy flow.") {
+		t.Fatalf("flow tab missing flow notice:\n%s", flow)
+	}
+	for _, unwanted := range []string{"Keep this focused on Alpha.", "Alpha is ready for review."} {
+		if strings.Contains(flow, unwanted) {
+			t.Fatalf("flow tab should hide chat message %q:\n%s", unwanted, flow)
+		}
+	}
+}
+
+func TestModelTranscriptTabSwitchAnnouncesAndUsesProjectTabStyle(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	title := m.renderTranscriptPanelTitle()
+	if !strings.Contains(title, bossTranscriptActiveTabStyle.Render("[Chat]")) ||
+		!strings.Contains(title, bossTranscriptInactiveTabStyle.Render(" Flow ")) {
+		t.Fatalf("chat title should render styled Chat/Flow tabs: %q", title)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("tab switch should not return a command")
+	}
+	got := updated.(Model)
+	if got.normalizedTranscriptTab() != bossTranscriptTabFlow {
+		t.Fatalf("tab = %q, want flow", got.normalizedTranscriptTab())
+	}
+	if got.status != "Switched to Boss Flow tab" {
+		t.Fatalf("status = %q, want switch announcement", got.status)
+	}
+	title = got.renderTranscriptPanelTitle()
+	if !strings.Contains(title, bossTranscriptInactiveTabStyle.Render(" Chat ")) ||
+		!strings.Contains(title, bossTranscriptActiveTabStyle.Render("[Flow]")) {
+		t.Fatalf("flow title should render styled Chat/Flow tabs: %q", title)
+	}
+}
+
 func TestModelTranscriptRendersMarkdownLinksCompactly(t *testing.T) {
 	t.Parallel()
 
@@ -2205,10 +2302,11 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 		Handoff:        &HandoffHighlight{EngineerName: "Ada", ProjectLabel: "Cursor cleanup"},
 	})
 	got := updated.(Model)
+	got.transcriptTab = bossTranscriptTabFlow
 
 	rendered := got.renderTranscript(120)
 	stripped := ansi.Strip(rendered)
-	want := "Boss> Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation."
+	want := "Flow> Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation."
 	if !strings.Contains(stripped, want) {
 		t.Fatalf("rendered transcript missing compact handoff %q:\n%s", want, stripped)
 	}
@@ -2225,9 +2323,11 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 	}
 
 	loaded := NewEmbedded(context.Background(), nil)
+	loaded.transcriptTab = bossTranscriptTabFlow
 	loaded.messages = []ChatMessage{{
 		Role:    "assistant",
 		Content: "Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation.",
+		Kind:    ChatMessageKindFlow,
 	}}
 	loadedRendered := loaded.renderTranscript(120)
 	for label, want := range map[string]string{

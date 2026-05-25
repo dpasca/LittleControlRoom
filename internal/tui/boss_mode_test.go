@@ -234,6 +234,34 @@ func TestBossViewContextIncludesRuntimeTestingContext(t *testing.T) {
 	}
 }
 
+func TestBossModeTabSwitchesEmbeddedTranscript(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		ctx:             context.Background(),
+		width:           100,
+		height:          30,
+		bossMode:        true,
+		bossModelActive: true,
+		bossModel:       bossui.NewEmbedded(context.Background(), nil),
+	}
+	updatedBoss, _ := m.bossModel.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.bossModel = normalizeBossModel(updatedBoss)
+
+	updated, cmd := m.update(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("boss tab switch should not return a command")
+	}
+	got := updated.(Model)
+	view := ansi.Strip(got.renderBossModeView())
+	if !strings.Contains(view, "Switched to Boss Flow tab") {
+		t.Fatalf("boss mode header should announce tab switch:\n%s", view)
+	}
+	if !strings.Contains(view, "[Flow]") {
+		t.Fatalf("boss mode transcript title should show active Flow tab:\n%s", view)
+	}
+}
+
 func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	t.Parallel()
 
@@ -279,7 +307,7 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 
 	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
-	view := bossChatOnlyText(got.bossModel)
+	view := bossFlowOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
 	for _, want := range []string{
@@ -287,7 +315,7 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 		"Killed the stale dev server on port 5173",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("boss chat transcript missing engineer outcome %q:\n%s", want, view)
+			t.Fatalf("boss flow transcript missing engineer outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
@@ -359,7 +387,7 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 		got = updated.(Model)
 	}
 
-	view := bossChatOnlyText(got.bossModel)
+	view := bossFlowOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, staleIdleSnapshot.ThreadID)
 	for _, want := range []string{
@@ -367,7 +395,7 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 		"The broken preview is caused by the SVG",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("boss chat transcript missing engineer outcome %q:\n%s", want, view)
+			t.Fatalf("boss flow transcript missing engineer outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
@@ -647,7 +675,7 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
 		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)
 	}
-	view := bossChatOnlyText(got.bossModel)
+	view := bossFlowOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
 	for _, want := range []string{
@@ -655,7 +683,7 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 		"No stale roguellm dev server is running now.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("boss transcript missing engineer outcome %q:\n%s", want, view)
+			t.Fatalf("boss flow transcript missing engineer outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
@@ -761,7 +789,7 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	if len(got.pendingBossHostNotices) != 0 {
 		t.Fatalf("pending notices after open = %#v, want drained", got.pendingBossHostNotices)
 	}
-	view := bossChatOnlyText(got.bossModel)
+	view := bossFlowOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	for _, want := range []string{
 		"Ada is back from Cursor cleanup.",
@@ -795,14 +823,14 @@ func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing
 
 	reopened, _ := m.openBossMode()
 	got := reopened.(Model)
-	view := bossChatOnlyText(got.bossModel)
+	view := bossFlowOnlyText(got.bossModel)
 	noticeText := bossOperationalNoticeText(got.bossModel)
 	for _, want := range []string{
 		"Ken is back from ChatNext3.",
 		"No migration needed; DB/schema stayed untouched.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Boss Chat transcript missing queued chat notice %q:\n%s", want, view)
+			t.Fatalf("reopened Boss Flow transcript missing queued chat notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
@@ -833,13 +861,13 @@ func TestBossHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testing.T)
 	if len(got.pendingBossHostNotices) != 0 {
 		t.Fatalf("pending notices = %#v, want hidden active model to receive notice directly", got.pendingBossHostNotices)
 	}
-	view := bossChatOnlyText(got.bossModel)
+	view := bossFlowOnlyText(got.bossModel)
 	for _, want := range []string{
 		"Ada is back from hidden work.",
 		"Everything is ready to review.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("hidden active Boss model transcript missing notice %q:\n%s", want, view)
+			t.Fatalf("hidden active Boss flow transcript missing notice %q:\n%s", want, view)
 		}
 	}
 }
@@ -916,14 +944,14 @@ func TestBossEngineerCompletionWhileClosedPersistsToBossTranscript(t *testing.T)
 		got = updated.(Model)
 	}
 
-	view := bossChatOnlyText(got.bossModel)
+	view := bossFlowOnlyText(got.bossModel)
 	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
 	for _, want := range []string{
 		engineerName + " is back from Project Task:",
 		"Killed the stale dev server on port 5173",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Boss Chat transcript missing persisted hidden completion %q:\n%s", want, view)
+			t.Fatalf("reopened Boss Flow transcript missing persisted hidden completion %q:\n%s", want, view)
 		}
 	}
 }
@@ -1161,6 +1189,12 @@ func bossChatPanelText(view string) string {
 
 func bossChatOnlyText(model bossui.Model) string {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 70, Height: 28})
+	return bossChatPanelText(normalizeBossModel(updated).View())
+}
+
+func bossFlowOnlyText(model bossui.Model) string {
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 70, Height: 28})
+	updated, _ = normalizeBossModel(updated).Update(tea.KeyMsg{Type: tea.KeyTab})
 	return bossChatPanelText(normalizeBossModel(updated).View())
 }
 

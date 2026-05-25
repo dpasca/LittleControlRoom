@@ -25,8 +25,14 @@ type ChatMessage struct {
 	Role    string
 	Content string
 	At      time.Time
+	Kind    string
 	Handoff *HandoffHighlight
 }
+
+const (
+	ChatMessageKindChat = "chat"
+	ChatMessageKindFlow = "flow"
+)
 
 type HandoffHighlight struct {
 	EngineerName string
@@ -188,7 +194,7 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 		Role:    "user",
 		Content: strings.TrimSpace(requestContextBrief(req)),
 	}}
-	for _, message := range trimChatHistory(req.Messages, 16) {
+	for _, message := range trimChatHistory(conversationalChatMessages(req.Messages), 16) {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue

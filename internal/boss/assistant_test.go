@@ -843,6 +843,46 @@ func TestAssistantReplyLimitsChatHistory(t *testing.T) {
 	}
 }
 
+func TestBossPromptHistorySkipsFlowMessages(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "state",
+		Messages: []ChatMessage{{
+			Role:    "user",
+			Content: "Keep the Alpha release topic.",
+		}, {
+			Role:    "assistant",
+			Content: "Ada is back from noisy flow.",
+			Kind:    ChatMessageKindFlow,
+		}, {
+			Role:    "assistant",
+			Content: "Alpha answer from Boss.",
+		}},
+	}
+	directMessages := bossDirectMessages(req)
+	var directText []string
+	for _, message := range directMessages {
+		directText = append(directText, message.Content)
+	}
+	for label, text := range map[string]string{
+		"planner": strings.Join([]string{
+			bossActionPlannerUserText(req, nil, false),
+			bossReadOnlyRouterUserText(req),
+		}, "\n"),
+		"direct": strings.Join(directText, "\n"),
+	} {
+		if strings.Contains(text, "noisy flow") {
+			t.Fatalf("%s prompt should not include flow transcript chatter:\n%s", label, text)
+		}
+		for _, want := range []string{"Keep the Alpha release topic.", "Alpha answer from Boss."} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("%s prompt missing conversational message %q:\n%s", label, want, text)
+			}
+		}
+	}
+}
+
 func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 	t.Parallel()
 
