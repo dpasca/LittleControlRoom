@@ -23501,6 +23501,90 @@ func TestSettingsLCAgentUtilityProviderPickerChoosesOff(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentChoicePickerChoosesRoutePreset(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentRoutePreset)
+
+	rendered := ansi.Strip(m.renderSettingsContent(84, 24))
+	for _, want := range []string{"Individual Fields", "▼"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("route preset row missing %q: %q", want, rendered)
+		}
+	}
+	choiceValue := ansi.Strip(m.renderSettingsChoiceValue(settingsFieldLCAgentRoutePreset, true, 80))
+	if !strings.Contains(choiceValue, "Enter to choose") {
+		t.Fatalf("route preset choice value missing prompt: %q", choiceValue)
+	}
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("route preset picker enter should not save immediately")
+	}
+	if got.settingsChoicePicker == nil {
+		t.Fatalf("route preset enter should open the generic choice picker")
+	}
+	rendered = ansi.Strip(got.renderSettingsChoicePickerContent(56, 18))
+	for _, want := range []string{"LCAgent Route Preset", "> Individual Fields  (current)", "Quality Coding", "Selected: Individual Fields"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("route preset picker missing %q: %q", want, rendered)
+		}
+	}
+
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsChoicePicker != nil {
+		t.Fatalf("route preset picker should close after choosing")
+	}
+	if got.settingsFields[settingsFieldLCAgentRoutePreset].input.Value() != "quality" {
+		t.Fatalf("route preset = %q, want quality", got.settingsFields[settingsFieldLCAgentRoutePreset].input.Value())
+	}
+}
+
+func TestSettingsLCAgentChoicePickerChoosesAdminWrite(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentAdminWrite)
+
+	updated, _ := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.settingsChoicePicker == nil {
+		t.Fatalf("admin write enter should open the generic choice picker")
+	}
+	rendered := ansi.Strip(got.renderSettingsChoicePickerContent(56, 18))
+	for _, want := range []string{"LCAgent Admin Write", "> Off  (current)", "On"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("admin write picker missing %q: %q", want, rendered)
+		}
+	}
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsFields[settingsFieldLCAgentAdminWrite].input.Value() != "true" {
+		t.Fatalf("admin write = %q, want true", got.settingsFields[settingsFieldLCAgentAdminWrite].input.Value())
+	}
+}
+
 func TestSettingsPanelHeightIsCappedOnTallTerminals(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 

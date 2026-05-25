@@ -209,7 +209,7 @@ func Default() AppConfig {
 		LCAgentAuto:             "low",
 		LCAgentToolProfile:      "balanced",
 		LCAgentContextProfile:   "balanced",
-		LCAgentRequestTimeout:   10 * time.Minute,
+		LCAgentRequestTimeout:   60 * time.Minute,
 		LCAgentUtilityProvider:  "main",
 		LCAgentWebSearchBackend: "off",
 		CodexLaunchPreset:       codexcli.DefaultPreset(),

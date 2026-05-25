@@ -50,6 +50,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.settingsLCAgentProviderVisible = false
 	m.settingsLCAgentProviderSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsChoicePicker = nil
 	m.setupStep = setupStepProjectProvider
 	m.setupFocusedRole = setupRoleProjectReports
 	m.setupConfigMode = false
@@ -82,6 +83,7 @@ func (m *Model) closeSetupMode(status string) {
 	m.settingsLCAgentProviderVisible = false
 	m.settingsLCAgentProviderSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsChoicePicker = nil
 	m.blurSettingsFields()
 	if status != "" {
 		m.status = status

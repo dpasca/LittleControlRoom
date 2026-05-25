@@ -368,7 +368,8 @@ func settingsFieldUsesPicker(index int) bool {
 		index == settingsFieldLCAgentProvider ||
 		index == settingsFieldLCAgentUtilityProvider ||
 		index == settingsFieldBrowserAutomation ||
-		index == settingsFieldLCAgentWebSearchBackend
+		index == settingsFieldLCAgentWebSearchBackend ||
+		settingsFieldUsesChoicePicker(index)
 }
 
 func normalizeSettingsChoice(raw string) string {
@@ -414,6 +415,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsChoicePicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
 	m.localModelPickerVisible = false
@@ -446,6 +448,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsChoicePicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
 	m.localModelPickerVisible = false
@@ -486,6 +489,7 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsChoicePicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
 	if status != "" {
@@ -612,6 +616,9 @@ func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
 	case settingsFieldLCAgentWebSearchBackend:
 		return m.openSettingsLCAgentWebSearchPicker()
 	default:
+		if settingsFieldUsesChoicePicker(fieldIndex) {
+			return m.openSettingsChoicePicker(fieldIndex)
+		}
 		return m, nil
 	}
 }
@@ -2310,6 +2317,10 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
 		case settingsFieldLCAgentWebSearchBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentWebSearchValue(selected, inputWidth)
+		default:
+			if settingsFieldUsesChoicePicker(fieldIndex) {
+				row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsChoiceValue(fieldIndex, selected, inputWidth)
+			}
 		}
 		if selected {
 			return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
@@ -2564,7 +2575,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent route preset",
-			"Optional coding route bundle. Accepted values: balanced, quality, cheap-scout. Leave blank to use the individual fields below.",
+			"Press Enter to choose a coding route bundle, or use Individual Fields to tune provider, model, autonomy, and profiles separately.",
 			settings.LCAgentRoutePreset,
 			32,
 			settingsSectionLCAgent,
@@ -2586,42 +2597,42 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Main reasoning",
-			"Optional reasoning effort for experimental LCAgent runs, such as low. Leave blank to omit provider-specific effort controls.",
+			"Press Enter to choose reasoning effort, or use Provider Default to omit provider-specific effort controls.",
 			settings.EmbeddedLCAgentReasoning,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent autonomy",
-			"Accepted values: off, low, medium. Low allows conservative local edits while keeping higher-risk actions constrained.",
+			"Press Enter to choose how much local autonomy LCAgent gets. Low allows conservative local edits while keeping higher-risk actions constrained.",
 			settings.LCAgentAuto,
 			16,
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent admin write",
-			"Accepted values: true, false. True passes --admin-write so LCAgent write tools may edit absolute paths outside the project.",
+			"Press Enter to choose whether LCAgent may use --admin-write for explicit absolute-path edits outside the project.",
 			strconv.FormatBool(settings.LCAgentAdminWrite),
 			8,
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent tool profile",
-			"Accepted values: balanced, generous. Balanced keeps read budgets conservative; generous is useful for large-context model experiments.",
+			"Press Enter to choose file-tool read budgets. Balanced is conservative; generous is useful for large-context model experiments.",
 			settings.LCAgentToolProfile,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent context profile",
-			"Accepted values: balanced, large. Large delays provider-loop compaction when the selected model/provider can use bigger context.",
+			"Press Enter to choose provider-loop context handling. Large delays compaction when the selected model/provider can use bigger context.",
 			settings.LCAgentContextProfile,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"LCAgent timeout",
-			"Provider HTTP request timeout for experimental LCAgent runs, for example 10m.",
+			"Provider HTTP request timeout for experimental LCAgent runs, for example 60m.",
 			formatSettingsDuration(settings.LCAgentRequestTimeout),
 			32,
 			settingsSectionLCAgent,

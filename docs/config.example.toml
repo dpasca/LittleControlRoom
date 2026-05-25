@@ -41,7 +41,7 @@ codex_launch_preset = "yolo"
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"
 # lcagent_context_profile = "balanced"
-# lcagent_request_timeout = "10m"
+# lcagent_request_timeout = "60m"
 
 # Quiet browser automation by default; LCR opens a visible browser only when needed.
 playwright_management_mode = "managed"

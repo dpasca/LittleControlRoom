@@ -64,6 +64,14 @@ func TestDefaultUsesManagedPlaywrightPolicy(t *testing.T) {
 	}
 }
 
+func TestDefaultUsesSixtyMinuteLCAgentRequestTimeout(t *testing.T) {
+	cfg := Default()
+
+	if got, want := cfg.LCAgentRequestTimeout, 60*time.Minute; got != want {
+		t.Fatalf("default lcagent request timeout = %s, want %s", got, want)
+	}
+}
+
 func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	useTempHome(t)
 	dir := t.TempDir()

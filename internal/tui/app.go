@@ -167,6 +167,7 @@ type Model struct {
 	settingsLCAgentSearchPickerVisible  bool
 	settingsLCAgentSearchPickerSelected int
 	settingsLCAgentModelPicker          *settingsLCAgentModelPickerState
+	settingsChoicePicker                *settingsChoicePickerState
 	settingsEmbeddedProject             string
 	settingsEmbeddedProvider            codexapp.Provider
 
@@ -1242,6 +1243,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.settingsLCAgentSearchPickerVisible {
 			return m.updateSettingsLCAgentWebSearchPickerMode(msg)
+		}
+		if m.settingsChoicePicker != nil {
+			return m.updateSettingsChoicePickerMode(msg)
 		}
 		if m.ignoredPickerVisible {
 			return m.updateIgnoredPickerMode(msg)
@@ -3094,6 +3098,9 @@ func (m Model) View() string {
 		if m.settingsLCAgentModelPicker != nil {
 			body = m.renderSettingsLCAgentModelPickerOverlay(body, layout.width, layout.height)
 		}
+		if m.settingsChoicePicker != nil {
+			body = m.renderSettingsChoicePickerOverlay(body, layout.width, layout.height)
+		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 		if m.settingsAIBackendPickerVisible {
@@ -3113,6 +3120,9 @@ func (m Model) View() string {
 		}
 		if m.settingsLCAgentModelPicker != nil {
 			body = m.renderSettingsLCAgentModelPickerOverlay(body, layout.width, layout.height)
+		}
+		if m.settingsChoicePicker != nil {
+			body = m.renderSettingsChoicePickerOverlay(body, layout.width, layout.height)
 		}
 		if m.settingsPrivacyEditor != nil {
 			body = m.renderSettingsPrivacyEditorOverlay(body, layout.width, layout.height)
