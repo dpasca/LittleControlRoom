@@ -2200,6 +2200,51 @@ func TestCompactWaitsForCompletionAndHydratesCompactionEntry(t *testing.T) {
 	}
 }
 
+func TestCompactClearsCompactingStateWhenThreadReadFails(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, _ any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "thread/compact/start" {
+					t.Fatalf("call 1 method = %q, want thread/compact/start", method)
+				}
+				return json.RawMessage(`{}`), nil
+			case 2:
+				if method != "thread/read" {
+					t.Fatalf("call 2 method = %q, want thread/read", method)
+				}
+				return nil, context.DeadlineExceeded
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	err := s.Compact()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Compact() error = %v, want context deadline exceeded", err)
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase == SessionPhaseReconciling {
+		t.Fatalf("phase = %q, want compaction state cleared after read failure", snapshot.Phase)
+	}
+	if snapshot.Status != "Codex error" {
+		t.Fatalf("status = %q, want Codex error", snapshot.Status)
+	}
+	if !strings.Contains(snapshot.LastError, "context deadline exceeded") {
+		t.Fatalf("last error = %q, want deadline error", snapshot.LastError)
+	}
+}
+
 func TestReviewStartsUncommittedChangesReview(t *testing.T) {
 	callCount := 0
 
@@ -2853,6 +2898,36 @@ func TestSnapshotMarksLongSilentBusySessionStalled(t *testing.T) {
 	}
 	if len(snapshot.Entries) == 0 || snapshot.Entries[len(snapshot.Entries)-1].Text != codexReconnectSuggestion {
 		t.Fatalf("entries = %#v, want reconnect guidance appended after hard stall", snapshot.Entries)
+	}
+}
+
+func TestSnapshotMarksSilentCompactionStalledBeforeGenericBusyTimeout(t *testing.T) {
+	staleBusy := time.Now().Add(-(compactionWaitTimeout + time.Second)).Round(0)
+	s := &appServerSession{
+		projectPath:             "/tmp/demo",
+		threadID:                "thread_456",
+		activeTurnID:            "turn_compact",
+		busy:                    true,
+		compacting:              true,
+		contextCompactionActive: true,
+		status:                  "Compacting conversation history...",
+		entryIndex:              make(map[string]int),
+		notify:                  func() {},
+		lastBusyActivityAt:      staleBusy,
+	}
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseStalled {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseStalled)
+	}
+	if snapshot.Status != codexCompactionStuckSuggestion {
+		t.Fatalf("status = %q, want compaction stuck suggestion", snapshot.Status)
+	}
+	if snapshot.LastSystemNotice != codexCompactionStuckSuggestion {
+		t.Fatalf("last system notice = %q, want compaction stuck suggestion", snapshot.LastSystemNotice)
+	}
+	if len(snapshot.Entries) == 0 || snapshot.Entries[len(snapshot.Entries)-1].Text != codexCompactionStuckSuggestion {
+		t.Fatalf("entries = %#v, want compaction stuck guidance appended", snapshot.Entries)
 	}
 }
 
