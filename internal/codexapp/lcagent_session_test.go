@@ -899,6 +899,59 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	}
 }
 
+func TestLCAgentSessionPermissionOverrideKeepsRoutePresetAndAddsAuto(t *testing.T) {
+	root := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:           ProviderLCAgent,
+		ProjectPath:        root,
+		AppDataDir:         t.TempDir(),
+		LCAgentPath:        exe,
+		LCAgentRoutePreset: "quality",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	lcSession := session.(*lcagentSession)
+	if err := lcSession.SetPermissionLevel("medium"); err != nil {
+		t.Fatalf("SetPermissionLevel() error = %v", err)
+	}
+	if err := lcSession.Submit("run with medium permissions"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	waitForLCAgentIdleSnapshot(t, session, notify)
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{"--route-preset", "quality", "--auto", "medium"} {
+		if !lcagentTestStringSliceContains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
+	}
+}
+
 func TestLCAgentSessionContinuesLoadedReplayWithContinueFromArg(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

@@ -55,6 +55,8 @@ type fakeCodexSession struct {
 	toolAnswers      []map[string][]string
 	elicitations     []fakeElicitationResponse
 	statusCalls      int
+	permissionCalls  int
+	permissionLevels []string
 	showGoalCalls    int
 	clearGoalCalls   int
 	goalSetObjective string
@@ -156,6 +158,21 @@ func (s *fakeCodexSession) ShowStatus() error {
 			"usage window: limit=Codex; window=5h; left=85; resetsAt=1773027840",
 		}, "\n"),
 	})
+	return nil
+}
+
+func (s *fakeCodexSession) ShowPermissions() error {
+	s.permissionCalls++
+	s.snapshot.Entries = append(s.snapshot.Entries, codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptStatus,
+		Text: "Embedded LCAgent permissions\ncurrent: Low\nMedium: command execution no longer uses the Low allowlist.",
+	})
+	return nil
+}
+
+func (s *fakeCodexSession) SetPermissionLevel(level string) error {
+	s.permissionLevels = append(s.permissionLevels, strings.TrimSpace(level))
+	s.snapshot.PermissionLevel = strings.TrimSpace(level)
 	return nil
 }
 
@@ -9279,6 +9296,116 @@ func TestVisibleCodexSlashStatusRunsLocally(t *testing.T) {
 	rendered := ansi.Strip(got.renderCodexView())
 	if !strings.Contains(rendered, "Status") || !strings.Contains(rendered, "85% left") {
 		t.Fatalf("rendered view should include the local /status transcript block: %q", rendered)
+	}
+}
+
+func TestVisibleLCAgentSlashPermissionsRunsLocally(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "LCAgent ready",
+			ThreadID: "lca_demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/permissions")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /permissions command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /permissions, got %q", got.codexInput.Value())
+	}
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/permissions returned error = %v", action.err)
+	}
+	if session.permissionCalls != 1 {
+		t.Fatalf("permission calls = %d, want 1", session.permissionCalls)
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("/permissions should not submit a prompt, submissions = %d", len(session.submissions))
+	}
+}
+
+func TestVisibleLCAgentSlashPermissionsMediumSetsSessionLevel(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "LCAgent ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/permissions medium")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /permissions medium command")
+	}
+	if got.status != "Setting embedded LCAgent permissions..." {
+		t.Fatalf("status = %q, want setting notice", got.status)
+	}
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/permissions medium returned error = %v", action.err)
+	}
+	if len(session.permissionLevels) != 1 || session.permissionLevels[0] != "medium" {
+		t.Fatalf("permission levels = %#v, want [medium]", session.permissionLevels)
 	}
 }
 

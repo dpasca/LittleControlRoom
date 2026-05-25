@@ -50,6 +50,7 @@ type lcagentSession struct {
 	routePreset       string
 	provider          string
 	auto              string
+	sessionAuto       string
 	adminWrite        bool
 	toolProfile       string
 	contextProfile    string
@@ -206,11 +207,37 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 func (s *lcagentSession) ShowStatus() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	status := strings.TrimSpace(s.status)
-	if status == "" {
-		status = "LCAgent status unavailable"
+	s.appendEntryLocked(TranscriptStatus, s.statusTextLocked())
+	return nil
+}
+
+func (s *lcagentSession) ShowPermissions() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.appendEntryLocked(TranscriptStatus, s.permissionsTextLocked(false))
+	return nil
+}
+
+func (s *lcagentSession) SetPermissionLevel(level string) error {
+	level, err := lcagentNormalizeAutoLevel(level)
+	if err != nil {
+		return err
 	}
-	s.appendEntryLocked(TranscriptStatus, status)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return fmt.Errorf("LCAgent session is closed")
+	}
+	s.sessionAuto = level
+	message := "LCAgent permission level set to " + lcagentAutoLabel(level) + "."
+	if s.busy {
+		message += " The running turn keeps the level it launched with; the next prompt in this session will use " + lcagentAutoLabel(level) + "."
+	} else {
+		message += " The next prompt in this session will use " + lcagentAutoLabel(level) + "."
+	}
+	s.status = message
+	s.appendEntryLocked(TranscriptStatus, message)
+	s.touchLocked()
 	return nil
 }
 
@@ -697,6 +724,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	s.appendEntryLocked(TranscriptUser, firstNonEmpty(displayPrompt, prompt))
 	provider := firstNonEmpty(s.provider, lcagentDefaultProvider)
 	routePreset := strings.TrimSpace(s.routePreset)
+	autoLevel := lcagentAutoLevel(firstNonEmpty(opts.autoOverride, s.sessionAuto, s.auto))
 	model := strings.TrimSpace(s.model)
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
@@ -752,9 +780,12 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 			"--route-preset", routePreset,
 			"--request-timeout", requestTimeout.String(),
 		)
+		if strings.TrimSpace(s.sessionAuto) != "" {
+			args = append(args, "--auto", autoLevel)
+		}
 	} else {
 		args = append(args,
-			"--auto", lcagentAutoLevel(firstNonEmpty(opts.autoOverride, s.auto)),
+			"--auto", autoLevel,
 			"--provider", provider,
 		)
 		if model != "" {
@@ -1222,6 +1253,71 @@ func (s *lcagentSession) unsupportedNotice(text string) error {
 	return nil
 }
 
+func (s *lcagentSession) statusTextLocked() string {
+	status := strings.TrimSpace(s.status)
+	if status == "" {
+		status = "LCAgent status unavailable"
+	}
+	parts := []string{
+		"Embedded LCAgent status",
+		"status: " + status,
+		"permissions: " + lcagentAutoLabel(s.effectiveAutoLocked()),
+	}
+	if route := strings.TrimSpace(s.routePreset); route != "" {
+		parts = append(parts, "route preset: "+route)
+	}
+	if provider := strings.TrimSpace(firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), s.provider)); provider != "" {
+		parts = append(parts, "provider: "+provider)
+	}
+	if model := strings.TrimSpace(firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider))); model != "" {
+		parts = append(parts, "model: "+model)
+	}
+	if reasoning := strings.TrimSpace(s.reasoningEffort); reasoning != "" {
+		parts = append(parts, "reasoning effort: "+reasoning)
+	}
+	parts = append(parts, "", s.permissionsTextLocked(true))
+	return strings.Join(parts, "\n")
+}
+
+func (s *lcagentSession) permissionsTextLocked(compact bool) string {
+	current := s.effectiveAutoLocked()
+	lines := []string{
+		"LCAgent permissions",
+		"current: " + lcagentAutoLabel(current),
+	}
+	if strings.TrimSpace(s.routePreset) != "" && strings.TrimSpace(s.sessionAuto) == "" {
+		lines = append(lines, "source: route preset "+s.routePreset)
+	}
+	if strings.TrimSpace(s.sessionAuto) != "" {
+		lines = append(lines, "source: this session override")
+	}
+	if s.adminWrite {
+		lines = append(lines, "admin write: on; explicit absolute-path writes outside the workspace are allowed")
+	} else {
+		lines = append(lines, "admin write: off; write tools stay inside the workspace")
+	}
+	lines = append(lines,
+		"",
+		"Off: write tools are denied. Commands are limited to explicit read-only forms.",
+		"Low: project-local file edits are allowed. Commands may inspect, or run approved argv-only verification forms such as go test ./..., npm run test, make test, cargo test, pytest, tsc --noEmit, eslint, ruff, prettier --check, or similar checks. Other commands ask for approval.",
+		"Medium: project-local file edits stay allowed, and command execution no longer uses the Low allowlist, so trusted local setup/build/process commands can run without repeated approval. Write tools still stay inside the workspace unless admin write is on.",
+	)
+	if !compact {
+		lines = append(lines, "", "Change it here with /permissions off, /permissions low, or /permissions medium.")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (s *lcagentSession) effectiveAutoLocked() string {
+	if auto := strings.TrimSpace(s.sessionAuto); auto != "" {
+		return lcagentAutoLevel(auto)
+	}
+	if routeAuto := lcagentRoutePresetAuto(s.routePreset); routeAuto != "" {
+		return routeAuto
+	}
+	return lcagentAutoLevel(s.auto)
+}
+
 func (s *lcagentSession) appendAsync(kind TranscriptKind, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -1534,6 +1630,17 @@ func lcagentRoutePresetModel(preset string) string {
 	}
 }
 
+func lcagentRoutePresetAuto(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "balanced", "quality":
+		return "low"
+	case "cheap-scout":
+		return "off"
+	default:
+		return ""
+	}
+}
+
 func (s *lcagentSession) snapshotLocked() Snapshot {
 	entries := cloneTranscriptEntries(s.entries)
 	transcript := ""
@@ -1570,6 +1677,7 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
 		LastActivityAt:     s.lastActivityAt,
 		CurrentCWD:         s.projectPath,
+		PermissionLevel:    s.effectiveAutoLocked(),
 		Model:              firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
 		ModelProvider:      firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
 		ReasoningEffort:    s.reasoningEffort,
@@ -1611,6 +1719,26 @@ func lcagentAutoLevel(configured string) string {
 		return strings.ToLower(strings.TrimSpace(raw))
 	default:
 		return lcagentDefaultAuto
+	}
+}
+
+func lcagentNormalizeAutoLevel(configured string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(configured)) {
+	case "off", "low", "medium":
+		return strings.ToLower(strings.TrimSpace(configured)), nil
+	default:
+		return "", fmt.Errorf("LCAgent permissions must be one of: off, low, medium")
+	}
+}
+
+func lcagentAutoLabel(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "off":
+		return "Off"
+	case "medium":
+		return "Medium"
+	default:
+		return "Low"
 	}
 }
 

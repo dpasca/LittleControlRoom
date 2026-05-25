@@ -11,17 +11,18 @@ import (
 type Kind string
 
 const (
-	KindNew       Kind = "new"
-	KindResume    Kind = "resume"
-	KindStatus    Kind = "status"
-	KindModel     Kind = "model"
-	KindReconnect Kind = "reconnect"
-	KindCompact   Kind = "compact"
-	KindReview    Kind = "review"
-	KindBoss      Kind = "boss"
-	KindSkills    Kind = "skills"
-	KindGoal      Kind = "goal"
-	KindSettings  Kind = "settings"
+	KindNew         Kind = "new"
+	KindResume      Kind = "resume"
+	KindStatus      Kind = "status"
+	KindModel       Kind = "model"
+	KindReconnect   Kind = "reconnect"
+	KindCompact     Kind = "compact"
+	KindReview      Kind = "review"
+	KindPermissions Kind = "permissions"
+	KindBoss        Kind = "boss"
+	KindSkills      Kind = "skills"
+	KindGoal        Kind = "goal"
+	KindSettings    Kind = "settings"
 )
 
 type Spec = slashcmd.Spec
@@ -42,6 +43,7 @@ type Invocation struct {
 	Kind            Kind
 	Prompt          string
 	SessionID       string
+	PermissionLevel string
 	GoalAction      GoalAction
 	GoalObjective   string
 	GoalTokenBudget *int64
@@ -58,6 +60,7 @@ var specs = []Spec{
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
 	{Name: "compact", Usage: "/compact", Summary: "Compact conversation history to free up context"},
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
+	{Name: "permissions", Usage: "/permissions [off|low|medium]", Summary: "Show or change LCAgent permission level for this session"},
 	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
 	{Name: "goal", Usage: "/goal [status|pause|resume|clear|stop|objective] [--budget N]", Summary: "Show, set, pause, resume, or clear the embedded Codex goal"},
@@ -132,6 +135,12 @@ func Suggestions(input string) []Suggestion {
 			Display: "/review",
 			Summary: "Ask embedded Codex to review uncommitted changes",
 		}}
+	case "permissions", "permission", "perms":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return permissionSuggestions(argPrefix)
 	case "boss":
 		return []Suggestion{{
 			Insert:  "/boss",
@@ -159,6 +168,32 @@ func Suggestions(input string) []Suggestion {
 	default:
 		return slashcmd.NameSuggestions(specs, strings.ToLower(fields[0]))
 	}
+}
+
+func permissionSuggestions(argPrefix string) []Suggestion {
+	choices := []struct {
+		value   string
+		insert  string
+		display string
+		summary string
+	}{
+		{value: "", insert: "/permissions", display: "/permissions", summary: "Show what Off, Low, and Medium allow in LCAgent"},
+		{value: "off", insert: "/permissions off", display: "/permissions off", summary: "Deny file edits and allow only read-only commands"},
+		{value: "low", insert: "/permissions low", display: "/permissions low", summary: "Allow project-local edits plus read-only and approved verification commands"},
+		{value: "medium", insert: "/permissions medium", display: "/permissions medium", summary: "Allow workspace-contained commands without repeated approvals"},
+	}
+	out := make([]Suggestion, 0, len(choices))
+	for _, choice := range choices {
+		if argPrefix != "" && (choice.value == "" || !strings.HasPrefix(choice.value, argPrefix)) {
+			continue
+		}
+		out = append(out, Suggestion{
+			Insert:  choice.insert,
+			Display: choice.display,
+			Summary: choice.summary,
+		})
+	}
+	return out
 }
 
 func goalSuggestions(argPrefix string) []Suggestion {
@@ -296,6 +331,25 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindReview,
 			Canonical: "/review",
+		}, nil
+	case "permissions", "permission", "perms":
+		level := strings.ToLower(strings.TrimSpace(rawArgs))
+		if len(strings.Fields(level)) > 1 {
+			return Invocation{}, fmt.Errorf("usage: /permissions [off|low|medium]")
+		}
+		switch level {
+		case "", "off", "low", "medium":
+		default:
+			return Invocation{}, fmt.Errorf("usage: /permissions [off|low|medium]")
+		}
+		canonical := "/permissions"
+		if level != "" {
+			canonical += " " + level
+		}
+		return Invocation{
+			Kind:            KindPermissions,
+			PermissionLevel: level,
+			Canonical:       canonical,
 		}, nil
 	case "boss":
 		if strings.TrimSpace(rawArgs) != "" {

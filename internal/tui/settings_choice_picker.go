@@ -72,9 +72,9 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 		}
 	case settingsFieldLCAgentAuto:
 		return []settingsChoiceOption{
-			{Value: "off", Label: "Off", Summary: "Ask before write-like actions.", Description: "Good when you want LCAgent to inspect and explain before changing files."},
-			{Value: "low", Label: "Low", Summary: "Allow conservative local edits.", Description: "The default balance for coding work: useful edits without broad authority."},
-			{Value: "medium", Label: "Medium", Summary: "Allow more capable autonomous actions.", Description: "Use for trusted local tasks where fewer approval interruptions are acceptable."},
+			{Value: "off", Label: "Off", Summary: "Deny write tools and allow only read-only commands.", Description: "Good when you want LCAgent to inspect and explain before changing files."},
+			{Value: "low", Label: "Low", Summary: "Allow project-local edits plus read-only and approved verification commands.", Description: "The default coding mode. It can edit files in the workspace, run checks such as tests, lint, typecheck, or build through approved argv forms, and asks before broader commands."},
+			{Value: "medium", Label: "Medium", Summary: "Allow command execution without the Low allowlist.", Description: "Use for trusted local tasks that need setup, custom build commands, managed processes, or fewer repeated approvals. Write tools still stay inside the workspace unless admin write is on."},
 		}
 	case settingsFieldLCAgentAdminWrite:
 		return []settingsChoiceOption{

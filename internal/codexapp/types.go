@@ -479,6 +479,7 @@ type Snapshot struct {
 	ProjectPath              string
 	ThreadID                 string
 	Preset                   codexcli.Preset
+	PermissionLevel          string
 	BrowserActivity          browserctl.SessionActivity
 	ManagedBrowserSessionKey string
 	CurrentBrowserPageURL    string

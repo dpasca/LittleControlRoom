@@ -61,6 +61,11 @@ const (
 	codexDenseBlockFull
 )
 
+type embeddedPermissionSession interface {
+	ShowPermissions() error
+	SetPermissionLevel(level string) error
+}
+
 func (mode codexDenseBlockMode) normalized() codexDenseBlockMode {
 	switch mode {
 	case codexDenseBlockPreview, codexDenseBlockFull:
@@ -1163,6 +1168,57 @@ func (m Model) showVisibleCodexStatusCmd() tea.Cmd {
 	})
 }
 
+func (m Model) showVisibleCodexPermissionsCmd() tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		permissionSession, ok := session.(embeddedPermissionSession)
+		if !ok {
+			return codexActionMsg{projectPath: projectPath, err: fmt.Errorf("%s does not support in-session permission changes", label)}
+		}
+		if err := permissionSession.ShowPermissions(); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " permissions added to the transcript"}
+	})
+}
+
+func (m Model) setVisibleCodexPermissionCmd(level string) tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	level = strings.ToLower(strings.TrimSpace(level))
+	label := "Codex"
+	if snapshot, ok := m.currentCodexSnapshot(); ok {
+		label = embeddedProvider(snapshot).Label()
+	}
+	return m.codexSessionCmd(projectPath, nil, func(session codexapp.Session) tea.Msg {
+		permissionSession, ok := session.(embeddedPermissionSession)
+		if !ok {
+			return codexActionMsg{projectPath: projectPath, err: fmt.Errorf("%s does not support in-session permission changes", label)}
+		}
+		if err := permissionSession.SetPermissionLevel(level); err != nil {
+			return codexActionMsg{projectPath: projectPath, err: err}
+		}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " permissions set to " + titleASCII(level)}
+	})
+}
+
+func titleASCII(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
 func (m Model) showVisibleCodexGoalCmd() tea.Cmd {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if projectPath == "" {
@@ -1722,7 +1778,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
-			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact || inv.Kind == codexslash.KindReview || inv.Kind == codexslash.KindGoal) {
+			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact || inv.Kind == codexslash.KindReview || inv.Kind == codexslash.KindGoal || inv.Kind == codexslash.KindPermissions) {
 				m.status = label + " session is closed. Use /resume, /new, or /reconnect to reopen it."
 				return m, nil
 			}
@@ -1783,6 +1839,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindReview:
 				m.status = "Starting embedded " + label + " review..."
 				return m, m.reviewVisibleCodexSessionCmd()
+			case codexslash.KindPermissions:
+				if strings.TrimSpace(inv.PermissionLevel) == "" {
+					m.status = "Reading embedded " + label + " permissions..."
+					return m, m.showVisibleCodexPermissionsCmd()
+				}
+				m.status = "Setting embedded " + label + " permissions..."
+				return m, m.setVisibleCodexPermissionCmd(inv.PermissionLevel)
 			case codexslash.KindBoss:
 				return m.openBossModeOrSetupPrompt()
 			case codexslash.KindSkills:
@@ -2749,6 +2812,9 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 	if reasoning != "" {
 		segments = append(segments, renderFooterMeta("Reasoning")+" "+renderFooterStatus(reasoning))
 	}
+	if permission := codexSnapshotPermissionLabel(snapshot); permission != "" {
+		segments = append(segments, renderFooterMeta("Perm")+" "+renderFooterStatus(permission))
+	}
 	if context := codexSnapshotContextLeftLabel(snapshot); context != "" {
 		segments = append(segments, renderFooterMeta("Context")+" "+renderFooterStatus(context))
 	}
@@ -2770,6 +2836,22 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 		return ""
 	}
 	return renderFooterLine(width, segments...)
+}
+
+func codexSnapshotPermissionLabel(snapshot codexapp.Snapshot) string {
+	if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(snapshot.PermissionLevel)) {
+	case "off":
+		return "Off"
+	case "low":
+		return "Low"
+	case "medium":
+		return "Medium"
+	default:
+		return ""
+	}
 }
 
 func codexSnapshotShowsPendingModelAsCurrent(snapshot codexapp.Snapshot) bool {
