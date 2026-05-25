@@ -108,6 +108,7 @@ func (m Model) refreshSetupSnapshotCmd(openOnStartup bool) tea.Cmd {
 }
 
 func (m Model) saveSetupCmd(settings config.EditableSettings) tea.Cmd {
+	settings = config.NormalizeEditableSettings(settings)
 	path := m.currentConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)

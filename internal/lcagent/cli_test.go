@@ -1018,6 +1018,7 @@ func TestRunExecDeepSeekUsesDirectProviderEnv(t *testing.T) {
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "deepseek",
+		"--model", "deepseek/deepseek-v4-pro",
 		"--max-turns", "2",
 		"answer directly",
 	}, &stdout, &stderr)
@@ -1035,6 +1036,20 @@ func TestRunExecDeepSeekUsesDirectProviderEnv(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestSearchRefineProfileNormalizesDirectDeepSeekUtilityModel(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+
+	profile := newSearchRefineProfile("deepseek", modeladapter.OpenRouterConfig{
+		Model: "deepseek/deepseek-v4-flash",
+	}, 1, "openrouter", "deepseek/deepseek-v4-pro")
+	if !profile.Enabled {
+		t.Fatalf("search refine profile disabled: %v", profile.DisabledErr)
+	}
+	if profile.Model != "deepseek-v4-flash" {
+		t.Fatalf("utility model = %q, want deepseek-v4-flash", profile.Model)
 	}
 }
 

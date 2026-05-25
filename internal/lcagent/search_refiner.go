@@ -79,6 +79,7 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 		}
 	}
 	cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), defaultMainModelForProvider(provider))
+	cfg.Model = modeladapter.NormalizeModelForProvider(provider, cfg.Model)
 	client, err := newChatProviderClient(provider, cfg)
 	if err != nil {
 		return searchRefineProfile{

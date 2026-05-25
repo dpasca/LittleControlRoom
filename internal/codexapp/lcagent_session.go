@@ -117,6 +117,10 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
+	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
+	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
+	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
+	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
 	session := &lcagentSession{
 		projectPath:       strings.TrimSpace(req.ProjectPath),
 		dataDir:           dataDir,
@@ -133,8 +137,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		toolProfile:       toolProfile,
 		contextProfile:    contextProfile,
 		requestTimeout:    requestTimeout,
-		utilityProvider:   lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider),
-		utilityModel:      lcagentResolvedUtilityModel(routePreset, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel),
+		utilityProvider:   utilityProvider,
+		utilityModel:      utilityModel,
 		webSearchBackend:  lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:   strings.TrimSpace(req.LCAgentWebSearchAPIKey),
 		webSearchEngineID: strings.TrimSpace(req.LCAgentWebSearchEngineID),
@@ -142,7 +146,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		runtimeManager:    req.RuntimeManager,
 		notify:            notify,
 		model:             model,
-		modelProvider:     firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider),
+		modelProvider:     modelProvider,
 		reasoningEffort:   strings.TrimSpace(req.PendingReasoning),
 		status:            "Ready",
 	}
@@ -326,6 +330,7 @@ func LCAgentModelOptions(ctx context.Context, cfg LCAgentModelListConfig) ([]Mod
 	if provider == "" {
 		provider = lcagentDefaultProvider
 	}
+	cfg.Model = modeladapter.NormalizeModelForProvider(provider, cfg.Model)
 	curated := lcagentModelOptionsForProvider(provider)
 	live, err := lcagentProviderModelOptions(ctx, cfg, provider)
 	if err != nil {
@@ -696,6 +701,8 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
+	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
+	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
 	toolProfile := firstNonEmpty(s.toolProfile, lcagentDefaultToolProfile)
 	contextProfile := firstNonEmpty(s.contextProfile, lcagentDefaultContextProfile)
 	adminWrite := s.adminWrite
@@ -704,14 +711,14 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		requestTimeout = lcagentDefaultRequestTimeout
 	}
 	reasoningEffort := strings.TrimSpace(s.reasoningEffort)
-	credentialProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
+	credentialProvider := modelProvider
 	providerAPIKeyName, providerAPIKey := s.providerCredentialLocked(credentialProvider)
 	webSearchBackend := firstNonEmpty(s.webSearchBackend, lcagentDefaultWebSearch)
 	webSearchAPIKey := strings.TrimSpace(s.webSearchAPIKey)
 	webSearchEngineID := strings.TrimSpace(s.webSearchEngineID)
 	webSearchURL := strings.TrimSpace(s.webSearchURL)
 	utilityProvider := firstNonEmpty(s.utilityProvider, lcagentDefaultUtilityProvider)
-	utilityModel := strings.TrimSpace(s.utilityModel)
+	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, s.utilityModel)
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
 	if warning := s.webSearchWarningLocked(); warning != "" {
 		s.appendEntryLocked(TranscriptStatus, warning)

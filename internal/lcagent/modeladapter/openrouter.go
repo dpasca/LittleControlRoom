@@ -257,6 +257,7 @@ func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile)
 	if model == "" {
 		model = profile.DefaultModel
 	}
+	model = NormalizeModelForProvider(profile.Name, model)
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = DefaultOpenRouterMaxTurns
@@ -284,6 +285,31 @@ func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile)
 		temperature:     cfg.Temperature,
 		providerOnly:    openRouterProviderOnly(profile.Name, cfg.ProviderOnly),
 	}, nil
+}
+
+func NormalizeModelForProvider(provider, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return trimProviderModelPrefix(model, "openai/")
+	case "deepseek":
+		return trimProviderModelPrefix(model, "deepseek/")
+	case "moonshot":
+		model = trimProviderModelPrefix(model, "moonshot/")
+		return trimProviderModelPrefix(model, "moonshotai/")
+	default:
+		return model
+	}
+}
+
+func trimProviderModelPrefix(model, prefix string) string {
+	if strings.HasPrefix(strings.ToLower(model), prefix) {
+		return strings.TrimSpace(model[len(prefix):])
+	}
+	return model
 }
 
 func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolDefinition) (Completion, error) {

@@ -1241,6 +1241,7 @@ func (m Model) updateSettingsPrivacyEditorMode(msg tea.KeyMsg) (tea.Model, tea.C
 }
 
 func (m Model) saveSettingsCmd(settings config.EditableSettings) tea.Cmd {
+	settings = config.NormalizeEditableSettings(settings)
 	path := m.currentConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)

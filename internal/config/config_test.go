@@ -564,6 +564,60 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 }
 
+func TestParseNormalizesDirectLCAgentProviderModelPrefixes(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	content := "" +
+		"lcagent_provider = \"deepseek\"\n" +
+		"embedded_lcagent_model = \"deepseek/deepseek-v4-pro\"\n" +
+		"lcagent_utility_provider = \"deepseek\"\n" +
+		"lcagent_utility_model = \"deepseek/deepseek-v4-flash\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	if cfg.EmbeddedLCAgentModel != "deepseek-v4-pro" {
+		t.Fatalf("embedded lcagent model = %q, want deepseek-v4-pro", cfg.EmbeddedLCAgentModel)
+	}
+	if cfg.LCAgentUtilityModel != "deepseek-v4-flash" {
+		t.Fatalf("lcagent utility model = %q, want deepseek-v4-flash", cfg.LCAgentUtilityModel)
+	}
+}
+
+func TestSaveEditableSettingsNormalizesDirectLCAgentProviderModelPrefixes(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	settings := EditableSettingsFromAppConfig(Default())
+	settings.LCAgentProvider = "deepseek"
+	settings.EmbeddedLCAgentModel = "deepseek/deepseek-v4-pro"
+	settings.LCAgentUtilityProvider = "deepseek"
+	settings.LCAgentUtilityModel = "deepseek/deepseek-v4-flash"
+
+	if err := SaveEditableSettings(configPath, settings); err != nil {
+		t.Fatalf("SaveEditableSettings() error = %v", err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"embedded_lcagent_model = \"deepseek-v4-pro\"",
+		"lcagent_utility_model = \"deepseek-v4-flash\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config missing %q: %q", want, text)
+		}
+	}
+	if strings.Contains(text, "deepseek/deepseek") {
+		t.Fatalf("saved config kept provider-prefixed DeepSeek model: %q", text)
+	}
+}
+
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 

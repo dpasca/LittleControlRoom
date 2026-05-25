@@ -963,6 +963,20 @@ func TestDeepSeekClientDefaultsFromEnv(t *testing.T) {
 	}
 }
 
+func TestDirectProviderClientNormalizesProviderPrefixedModel(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "key")
+	t.Setenv("DEEPSEEK_BASE_URL", "https://example.deepseek.test")
+	client, err := NewDeepSeekClient(OpenRouterConfig{
+		Model: "deepseek/deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Model() != "deepseek-v4-flash" {
+		t.Fatalf("Model() = %q, want deepseek-v4-flash", client.Model())
+	}
+}
+
 func TestOpenRouterClientRejectsConflictingReasoningOptions(t *testing.T) {
 	client, err := NewOpenRouterClient(OpenRouterConfig{
 		APIKey:  "key",

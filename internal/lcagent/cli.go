@@ -348,6 +348,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			model = "scripted"
 		}
 	}
+	model = modeladapter.NormalizeModelForProvider(provider, model)
+	finalModel = modeladapter.NormalizeModelForProvider(provider, finalModel)
 	resumeContext, err := loadResumeContext(dataDir, resumeSourceRaw, workspace.Root)
 	if err != nil {
 		return err

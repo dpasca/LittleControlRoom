@@ -296,6 +296,7 @@ func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
 }
 
 func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
+	settings = config.NormalizeEditableSettings(settings)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

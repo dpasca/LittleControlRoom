@@ -623,6 +623,8 @@ func applyConfigFile(cfg *AppConfig) error {
 		cfg.LCAgentUtilityProvider = value
 	}
 	applyOptionalTrimmedString(&cfg.LCAgentUtilityModel, fc.LCAgentUtilityModel)
+	cfg.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider), cfg.EmbeddedLCAgentModel)
+	cfg.LCAgentUtilityModel = normalizeLCAgentModelForProvider(lcagentEffectiveUtilityProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider, cfg.LCAgentUtilityProvider), cfg.LCAgentUtilityModel)
 	if fc.LCAgentWebSearchBackend != nil {
 		value, err := parseLCAgentWebSearchBackend(*fc.LCAgentWebSearchBackend)
 		if err != nil {

@@ -161,6 +161,60 @@ func firstNonEmptyTrimmed(values ...string) string {
 	return ""
 }
 
+func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
+	settings.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider), settings.EmbeddedLCAgentModel)
+	settings.LCAgentUtilityModel = normalizeLCAgentModelForProvider(lcagentEffectiveUtilityProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentUtilityProvider), settings.LCAgentUtilityModel)
+	return settings
+}
+
+func lcagentEffectiveMainProvider(routePreset, provider string) string {
+	return firstNonEmptyTrimmed(lcagentRoutePresetProvider(routePreset), provider, "openrouter")
+}
+
+func lcagentEffectiveUtilityProvider(routePreset, mainProvider, utilityProvider string) string {
+	value, err := parseLCAgentUtilityProvider(utilityProvider)
+	if err != nil || value == "main" {
+		return lcagentEffectiveMainProvider(routePreset, mainProvider)
+	}
+	return value
+}
+
+func lcagentRoutePresetProvider(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "quality":
+		return "openai"
+	case "balanced", "cheap-scout", "cheap", "scout":
+		return "openrouter"
+	default:
+		return ""
+	}
+}
+
+func normalizeLCAgentModelForProvider(provider, model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return trimLCAgentModelProviderPrefix(model, "openai/")
+	case "deepseek":
+		return trimLCAgentModelProviderPrefix(model, "deepseek/")
+	case "moonshot":
+		model = trimLCAgentModelProviderPrefix(model, "moonshot/")
+		return trimLCAgentModelProviderPrefix(model, "moonshotai/")
+	default:
+		return model
+	}
+}
+
+func trimLCAgentModelProviderPrefix(model, prefix string) string {
+	if strings.HasPrefix(strings.ToLower(model), prefix) {
+		return strings.TrimSpace(model[len(prefix):])
+	}
+	return model
+}
+
 func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
@@ -327,10 +381,11 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	if err := validateEditableSettings(settings); err != nil {
 		return EditableSettings{}, err
 	}
-	return settings, nil
+	return NormalizeEditableSettings(settings), nil
 }
 
 func SaveEditableSettings(path string, settings EditableSettings) error {
+	settings = NormalizeEditableSettings(settings)
 	if err := validateEditableSettings(settings); err != nil {
 		return err
 	}
