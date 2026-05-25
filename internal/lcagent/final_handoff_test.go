@@ -51,11 +51,31 @@ func TestCompactOpenRouterFinalMessagesSummarizesToolOutput(t *testing.T) {
 	}
 }
 
+func TestOpenRouterContextProfileBudgets(t *testing.T) {
+	balanced := openRouterContextOptionsForProfile(openRouterContextProfileBalanced)
+	if balanced.LoopCompactionCharThreshold != 200000 || balanced.LoopCompactionTranscriptChars != 80000 {
+		t.Fatalf("balanced loop budget = threshold %d transcript %d, want 200000/80000", balanced.LoopCompactionCharThreshold, balanced.LoopCompactionTranscriptChars)
+	}
+	if balanced.FinalHandoffTranscriptMaxChars != 80000 {
+		t.Fatalf("balanced final handoff transcript budget = %d, want 80000", balanced.FinalHandoffTranscriptMaxChars)
+	}
+	large := openRouterContextOptionsForProfile(openRouterContextProfileLarge)
+	if large.LoopCompactionCharThreshold != 600000 || large.LoopCompactionTranscriptChars != 240000 {
+		t.Fatalf("large loop budget = threshold %d transcript %d, want 600000/240000", large.LoopCompactionCharThreshold, large.LoopCompactionTranscriptChars)
+	}
+	if large.FinalHandoffTranscriptMaxChars != 240000 {
+		t.Fatalf("large final handoff transcript budget = %d, want 240000", large.FinalHandoffTranscriptMaxChars)
+	}
+	if large.LoopCompactionCharThreshold <= balanced.LoopCompactionCharThreshold {
+		t.Fatalf("large threshold = %d, want > balanced threshold %d", large.LoopCompactionCharThreshold, balanced.LoopCompactionCharThreshold)
+	}
+}
+
 func TestCompactOpenRouterLoopMessagesPreservesRequestAndDropsToolRoles(t *testing.T) {
 	var output strings.Builder
 	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
 	for i := 1; i <= 1000; i++ {
-		fmt.Fprintf(&output, "%d | line %04d compact-me compact-me compact-me compact-me compact-me compact-me\n", i, i)
+		fmt.Fprintf(&output, "%d | line %04d %s\n", i, i, strings.Repeat("compact-me ", 24))
 	}
 	result, err := json.Marshal(tools.ToolResult{Success: true, Output: output.String()})
 	if err != nil {
@@ -104,7 +124,7 @@ func TestCompactOpenRouterLoopMessagesIncludesReadLedger(t *testing.T) {
 	var output strings.Builder
 	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
 	for i := 1; i <= 1000; i++ {
-		fmt.Fprintf(&output, "%d | line %04d compact-me compact-me compact-me compact-me compact-me compact-me\n", i, i)
+		fmt.Fprintf(&output, "%d | line %04d %s\n", i, i, strings.Repeat("compact-me ", 24))
 	}
 	result := tools.ToolResult{Success: true, Output: output.String()}
 	resultJSON, err := json.Marshal(result)
@@ -147,7 +167,7 @@ func TestLargeContextProfileDefersLoopCompaction(t *testing.T) {
 	var output strings.Builder
 	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
 	for i := 1; i <= 1000; i++ {
-		fmt.Fprintf(&output, "%d | line %04d compact-me compact-me compact-me compact-me compact-me compact-me\n", i, i)
+		fmt.Fprintf(&output, "%d | line %04d %s\n", i, i, strings.Repeat("compact-me ", 24))
 	}
 	result, err := json.Marshal(tools.ToolResult{Success: true, Output: output.String()})
 	if err != nil {

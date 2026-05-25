@@ -170,6 +170,11 @@ tool evidence before the harness summarizes the transcript. It is especially
 useful when measuring whether a model can reduce duplicate reads once earlier
 tool outputs remain available in context longer.
 
+The `balanced` context profile now compacts provider-loop history at roughly
+200k characters and keeps about 80k characters of transcript evidence in the
+compacted continuation. The `large` profile raises those loop budgets to roughly
+600k and 240k characters respectively.
+
 Summarize the resulting session artifact:
 
 ```sh

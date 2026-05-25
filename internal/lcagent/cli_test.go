@@ -1402,7 +1402,7 @@ func TestRunExecOpenRouterCompactsLargeToolHistoryBeforeNextRequest(t *testing.T
 	root := t.TempDir()
 	var big strings.Builder
 	for i := 1; i <= 1000; i++ {
-		fmt.Fprintf(&big, "line %04d with enough repeated context to force compaction before the next provider request abcdefghijklmnopqrstuvwxyz abcdefghijklmnopqrstuvwxyz\n", i)
+		fmt.Fprintf(&big, "line %04d with enough repeated context to force compaction before the next provider request %s\n", i, strings.Repeat("abcdefghijklmnopqrstuvwxyz ", 8))
 	}
 	if err := os.WriteFile(filepath.Join(root, "BIG.md"), []byte(big.String()), 0o644); err != nil {
 		t.Fatal(err)
