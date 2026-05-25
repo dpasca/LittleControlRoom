@@ -17,6 +17,7 @@ const (
 	FeatureArchiveTask      = "archive_task"
 	FeatureAddTodo          = "add_todo"
 	FeatureCompleteTodo     = "complete_todo"
+	FeatureUpdateSettings   = "update_settings"
 	FeatureApprovalResponse = "approval_response"
 	FeatureReview           = "review"
 	FeatureCompact          = "compact"
@@ -28,6 +29,7 @@ const (
 	HostEffectMaySetProjectArchive     = "may_set_project_archive_state"
 	HostEffectMayCreateProjectTodo     = "may_create_project_todo"
 	HostEffectMayCompleteProjectTodo   = "may_complete_project_todo"
+	HostEffectMayUpdateSettings        = "may_update_settings"
 )
 
 type AgentTaskKind string
@@ -217,6 +219,113 @@ type TodoCompleteInput struct {
 	Evidence    string `json:"evidence,omitempty"`
 }
 
+type SettingsField string
+
+const (
+	SettingsFieldIncludePaths           SettingsField = "include_paths"
+	SettingsFieldExcludePaths           SettingsField = "exclude_paths"
+	SettingsFieldExcludeProjectPatterns SettingsField = "exclude_project_patterns"
+	SettingsFieldPrivacyPatterns        SettingsField = "privacy_patterns"
+	SettingsFieldPrivacyMode            SettingsField = "privacy_mode"
+	SettingsFieldHideReasoningSections  SettingsField = "hide_reasoning_sections"
+	SettingsFieldCodexLaunchPreset      SettingsField = "codex_launch_preset"
+)
+
+func SettingsFieldValues() []SettingsField {
+	return []SettingsField{
+		SettingsFieldIncludePaths,
+		SettingsFieldExcludePaths,
+		SettingsFieldExcludeProjectPatterns,
+		SettingsFieldPrivacyPatterns,
+		SettingsFieldPrivacyMode,
+		SettingsFieldHideReasoningSections,
+		SettingsFieldCodexLaunchPreset,
+	}
+}
+
+func SettingsFieldStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, SettingsFieldValues()...)
+}
+
+func NormalizeSettingsField(value string) SettingsField {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case string(SettingsFieldIncludePaths):
+		return SettingsFieldIncludePaths
+	case string(SettingsFieldExcludePaths):
+		return SettingsFieldExcludePaths
+	case string(SettingsFieldExcludeProjectPatterns):
+		return SettingsFieldExcludeProjectPatterns
+	case string(SettingsFieldPrivacyPatterns), "privacy_filters":
+		return SettingsFieldPrivacyPatterns
+	case string(SettingsFieldPrivacyMode):
+		return SettingsFieldPrivacyMode
+	case string(SettingsFieldHideReasoningSections):
+		return SettingsFieldHideReasoningSections
+	case string(SettingsFieldCodexLaunchPreset):
+		return SettingsFieldCodexLaunchPreset
+	default:
+		return ""
+	}
+}
+
+func (f SettingsField) Normalized() SettingsField {
+	return NormalizeSettingsField(string(f))
+}
+
+type SettingsUpdateOperation string
+
+const (
+	SettingsUpdateSet          SettingsUpdateOperation = "set"
+	SettingsUpdateAppendUnique SettingsUpdateOperation = "append_unique"
+	SettingsUpdateRemove       SettingsUpdateOperation = "remove"
+)
+
+func SettingsUpdateOperationValues() []SettingsUpdateOperation {
+	return []SettingsUpdateOperation{
+		SettingsUpdateSet,
+		SettingsUpdateAppendUnique,
+		SettingsUpdateRemove,
+	}
+}
+
+func SettingsUpdateOperationStrings(includeEmpty bool) []string {
+	return stringValues(includeEmpty, SettingsUpdateOperationValues()...)
+}
+
+func NormalizeSettingsUpdateOperation(value string) SettingsUpdateOperation {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	switch normalized {
+	case string(SettingsUpdateSet):
+		return SettingsUpdateSet
+	case string(SettingsUpdateAppendUnique), "append", "add", "add_unique":
+		return SettingsUpdateAppendUnique
+	case string(SettingsUpdateRemove), "delete":
+		return SettingsUpdateRemove
+	default:
+		return ""
+	}
+}
+
+func (o SettingsUpdateOperation) Normalized() SettingsUpdateOperation {
+	return NormalizeSettingsUpdateOperation(string(o))
+}
+
+type SettingsChange struct {
+	Field     SettingsField           `json:"field"`
+	Operation SettingsUpdateOperation `json:"operation"`
+	Value     string                  `json:"value"`
+	Values    []string                `json:"values"`
+	BoolValue bool                    `json:"bool_value"`
+}
+
+type SettingsUpdateInput struct {
+	RequestID string           `json:"request_id,omitempty"`
+	Changes   []SettingsChange `json:"changes"`
+}
+
 func Capabilities() []Capability {
 	return []Capability{
 		EngineerSendPromptCapability(),
@@ -227,6 +336,7 @@ func Capabilities() []Capability {
 		ScratchTaskArchiveCapability(),
 		TodoAddCapability(),
 		TodoCompleteCapability(),
+		SettingsUpdateCapability(),
 	}
 }
 
@@ -248,6 +358,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return TodoAddCapability(), true
 	case CapabilityTodoComplete:
 		return TodoCompleteCapability(), true
+	case CapabilitySettingsUpdate:
+		return SettingsUpdateCapability(), true
 	default:
 		return Capability{}, false
 	}
@@ -397,6 +509,24 @@ func TodoCompleteCapability() Capability {
 			ID:        ProviderAuto,
 			Available: true,
 			Features:  []string{FeatureCompleteTodo},
+		}},
+	}
+}
+
+func SettingsUpdateCapability() Capability {
+	return Capability{
+		Name:         CapabilitySettingsUpdate,
+		Description:  "Apply confirmed Little Control Room settings changes without delegating through a project engineer session.",
+		InputSchema:  settingsUpdateInputSchema(),
+		OutputSchema: settingsUpdateOutputSchema(),
+		Risk:         RiskWrite,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects:  []string{HostEffectMayUpdateSettings},
+		Providers: []ProviderCapability{{
+			ID:        ProviderAuto,
+			Available: true,
+			Features:  []string{FeatureUpdateSettings},
 		}},
 	}
 }
@@ -561,6 +691,104 @@ func NormalizeTodoCompleteInput(input TodoCompleteInput) (TodoCompleteInput, err
 		return TodoCompleteInput{}, fmt.Errorf("todo_id is required")
 	}
 	return input, nil
+}
+
+func NormalizeSettingsUpdateInput(input SettingsUpdateInput) (SettingsUpdateInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	out := SettingsUpdateInput{
+		RequestID: input.RequestID,
+		Changes:   make([]SettingsChange, 0, len(input.Changes)),
+	}
+	for i, change := range input.Changes {
+		normalized, err := NormalizeSettingsChange(change)
+		if err != nil {
+			return SettingsUpdateInput{}, fmt.Errorf("change %d: %w", i+1, err)
+		}
+		out.Changes = append(out.Changes, normalized)
+	}
+	if len(out.Changes) == 0 {
+		return SettingsUpdateInput{}, fmt.Errorf("at least one settings change is required")
+	}
+	return out, nil
+}
+
+func NormalizeSettingsChange(change SettingsChange) (SettingsChange, error) {
+	rawField := strings.TrimSpace(string(change.Field))
+	change.Field = change.Field.Normalized()
+	if change.Field == "" {
+		return SettingsChange{}, fmt.Errorf("unsupported settings field: %s", rawField)
+	}
+	rawOperation := strings.TrimSpace(string(change.Operation))
+	change.Operation = change.Operation.Normalized()
+	if change.Operation == "" {
+		return SettingsChange{}, fmt.Errorf("unsupported settings operation: %s", rawOperation)
+	}
+	change.Value = strings.TrimSpace(change.Value)
+	values, err := normalizeSettingsValues(change.Values)
+	if err != nil {
+		return SettingsChange{}, err
+	}
+	change.Values = values
+	switch change.Operation {
+	case SettingsUpdateAppendUnique, SettingsUpdateRemove:
+		if len(change.Values) == 0 {
+			return SettingsChange{}, fmt.Errorf("%s needs at least one value", change.Operation)
+		}
+	case SettingsUpdateSet:
+		switch change.Field {
+		case SettingsFieldIncludePaths, SettingsFieldExcludePaths, SettingsFieldExcludeProjectPatterns, SettingsFieldPrivacyPatterns:
+			values, err := normalizeSettingsValues(firstNonEmptySettingsValues(change.Values, change.Value))
+			if err != nil {
+				return SettingsChange{}, err
+			}
+			change.Values = values
+		default:
+			if change.Value == "" && !settingsFieldUsesBoolValue(change.Field) {
+				return SettingsChange{}, fmt.Errorf("set needs a value for %s", change.Field)
+			}
+		}
+	}
+	return change, nil
+}
+
+func normalizeSettingsValues(values []string) ([]string, error) {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if strings.ContainsAny(value, "\r\n") {
+			return nil, fmt.Errorf("settings values must be one line")
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out, nil
+}
+
+func firstNonEmptySettingsValues(values []string, value string) []string {
+	if len(values) > 0 {
+		return values
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return []string{value}
+}
+
+func settingsFieldUsesBoolValue(field SettingsField) bool {
+	switch field {
+	case SettingsFieldPrivacyMode, SettingsFieldHideReasoningSections:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateEngineerSendPromptInvocation(inv Invocation) (Invocation, error) {
@@ -781,6 +1009,34 @@ func validateTodoCompleteInvocation(inv Invocation) (Invocation, error) {
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityTodoComplete, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateSettingsUpdateInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilitySettingsUpdate)
+	}
+	var input SettingsUpdateInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilitySettingsUpdate, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilitySettingsUpdate)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeSettingsUpdateInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilitySettingsUpdate, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -1111,6 +1367,64 @@ func todoCompleteOutputSchema() map[string]any {
 			"status":       map[string]any{"type": "string"},
 		},
 		"required": []string{"project_path", "todo_id", "completed", "status"},
+	}
+}
+
+func settingsUpdateInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id": map[string]any{"type": "string"},
+			"changes": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"field": map[string]any{
+							"type":        "string",
+							"enum":        SettingsFieldStrings(false),
+							"description": "User-facing setting to update.",
+						},
+						"operation": map[string]any{
+							"type":        "string",
+							"enum":        SettingsUpdateOperationStrings(false),
+							"description": "set replaces a value; append_unique adds missing list values; remove removes list values.",
+						},
+						"value": map[string]any{
+							"type":        "string",
+							"description": "Scalar value for set operations; empty for list operations.",
+						},
+						"values": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "List values for list settings.",
+						},
+						"bool_value": map[string]any{
+							"type":        "boolean",
+							"description": "Boolean value for boolean set operations.",
+						},
+					},
+					"required": []string{"field", "operation", "value", "values", "bool_value"},
+				},
+				"description": "One or more settings changes to apply together after confirmation.",
+			},
+		},
+		"required": []string{"changes"},
+	}
+}
+
+func settingsUpdateOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"changed":     map[string]any{"type": "boolean"},
+			"config_path": map[string]any{"type": "string"},
+			"status":      map[string]any{"type": "string"},
+		},
+		"required": []string{"changed", "config_path", "status"},
 	}
 }
 

@@ -198,6 +198,40 @@ func bossActionSchema() map[string]any {
 				"type":        "string",
 				"description": "For todo.complete proposals, concise evidence that the TODO has been satisfied. Otherwise empty.",
 			},
+			"settings_changes": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"field": map[string]any{
+							"type":        "string",
+							"enum":        control.SettingsFieldStrings(false),
+							"description": "For settings.update proposals: the setting to modify.",
+						},
+						"operation": map[string]any{
+							"type":        "string",
+							"enum":        control.SettingsUpdateOperationStrings(false),
+							"description": "For settings.update proposals: set, append_unique, or remove.",
+						},
+						"value": map[string]any{
+							"type":        "string",
+							"description": "Scalar value for set operations; empty for list operations.",
+						},
+						"values": map[string]any{
+							"type":        "array",
+							"items":       map[string]any{"type": "string"},
+							"description": "List values for list settings such as privacy_patterns.",
+						},
+						"bool_value": map[string]any{
+							"type":        "boolean",
+							"description": "Boolean value for boolean settings.",
+						},
+					},
+					"required": []string{"field", "operation", "value", "values", "bool_value"},
+				},
+				"description": "For settings.update proposals, the list of app settings changes to apply. Otherwise empty.",
+			},
 			"engineer_provider": map[string]any{
 				"type":        "string",
 				"enum":        control.ProviderStrings(true),
@@ -348,6 +382,7 @@ func bossActionSchema() map[string]any {
 			"todo_label",
 			"todo_text",
 			"todo_evidence",
+			"settings_changes",
 			"engineer_provider",
 			"session_mode",
 			"prompt",

@@ -218,7 +218,7 @@ var bossPlannerReadOnlyPrompt = []string{
 }
 
 var bossPlannerCapabilityCatalogPrompt = []string{
-	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, or todo.complete.",
+	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, or settings.update.",
 	"Available goal action kind: propose_goal. Supported goal_kind values are agent_task_cleanup and lcagent_task. " +
 		"agent_task_cleanup archives multiple delegated agent task records under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. " +
 		"lcagent_task creates one Boss-owned LCAgent agent task, launches LCAgent with scoped authority, records the handoff, waits for completion, harvests the trace, and verifies LCAgent reported checks.",
@@ -226,6 +226,7 @@ var bossPlannerCapabilityCatalogPrompt = []string{
 
 var bossPlannerControlRoutingPrompt = []string{
 	"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
+	"Use settings.update for user requests to change Little Control Room app settings, including project scope settings, privacy filters/privacy patterns, privacy mode, reasoning visibility, and Codex launch preset. Do not route app settings changes through the Little Control Room repo or an engineer session.",
 	"Boss Chat does not have a native git commit control action or a bridge into the current operator conversation. Do not use engineer.send_prompt merely to create a git commit; for a simple commit-now request, choose answer and explain that it should use the existing commit flow or current operator session unless the user explicitly asks a separate engineer to prepare or review the commit.",
 	"Project implementation requests are not TODO requests. For loaded-project work the user wants handled now, propose engineer.send_prompt with session_mode=new even if that project already has an open idle Codex or OpenCode engineer session.",
 	"Use todo.add only when the user explicitly asks to make a TODO/backlog/queue/reminder, or when same-project active engineer work is in the middle of a turn and the user accepts parking unrelated work for later. An open idle engineer session alone must not cause todo.add.",
@@ -268,6 +269,7 @@ var bossPlannerProposalPayloadPrompt = []string{
 	"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
 	"For project.set_archive_state, include project_path or exact project_name and project_archive_action=archive or unarchive for one target; for a batch, include project_archive_action and resources with kind=project entries instead.",
 	"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
+	"For settings.update, put every app settings change in settings_changes. Use field=\"privacy_patterns\" and operation=\"append_unique\" when the user asks to add a word or pattern to privacy filters. Use values for list settings, value for scalar settings, and bool_value for boolean settings.",
 	"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and the task id is known, propose agent_task.close with task_close_status=archived. This applies to open/review/waiting tasks too; do not downgrade cleanup to task_close_status=waiting.",
 	"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task. For todo.add, leave prompt empty and put the durable backlog item in todo_text. For todo.complete, put the target id in todo_id, known text in todo_text, and concise proof in todo_evidence.",
 	"For prompt-bearing propose_control actions, fill intent_excerpt with a short excerpt of the user's wording that must survive reframing; fill preserved_meaning with source, metric, timeframe, negations, and explicit exclusions; fill success_condition with what the engineer must return or what missing evidence must be reported.",
@@ -382,6 +384,7 @@ var bossActionPlannerForcedInstructions = []string{
 
 	// Work parking and delegation.
 	"For a simple request to make a git commit now, choose kind=\"answer\" and say Boss should use the existing commit flow or current operator session, unless the user explicitly asks a separate engineer to prepare or review the commit.",
+	"If the user asks to change Little Control Room app settings, choose kind=\"propose_control\" with control_capability=\"settings.update\".",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
@@ -419,6 +422,7 @@ var bossActionPlannerNormalInstructions = []string{
 	"If a visible linked task or project can likely answer the question, choose one read-only query before answering.",
 
 	// Work parking and delegation.
+	"If the user asks to change Little Control Room app settings, choose control_capability=\"settings.update\". Use settings.update for privacy filters/privacy patterns instead of delegating work to the Little Control Room repo.",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now and the project is ambiguous, choose a read-only query or ask for the project; when the project is known, choose control_capability=\"todo.add\".",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
@@ -435,7 +439,7 @@ var bossActionPlannerNormalInstructions = []string{
 
 	// Control and goal selection.
 	"For a simple request to make a git commit now, choose kind=\"answer\" and say Boss should use the existing commit flow or current operator session, unless the user explicitly asks a separate engineer to prepare or review the commit.",
-	"Choose kind=\"propose_control\" if the user asked to delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
+	"Choose kind=\"propose_control\" if the user asked to change app settings, delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
 	"Also choose kind=\"propose_control\" if the user wants to archive/unarchive one or more regular loaded projects, or archive/remove a scratch task whose project metadata says kind=scratch_task.",
 	"Also choose kind=\"propose_control\" if the user wants fresh external research from an engineer.",
 	"Also choose kind=\"propose_control\" if fresh gathered data resolves a visible review/waiting agent task and a task id is clear.",

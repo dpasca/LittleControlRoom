@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/codexapp"
+	"lcroom/internal/codexcli"
+	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/model"
 
@@ -122,6 +125,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeTodoCompleteControlWithOutcome(input)
+	case control.CapabilitySettingsUpdate:
+		var input control.SettingsUpdateInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeSettingsUpdateControlWithOutcome(input)
 	default:
 		err := fmt.Errorf("unsupported capability: %s", normalized.Capability)
 		m.status = "Control request unsupported: " + string(normalized.Capability)
@@ -208,12 +218,7 @@ func (m Model) clearBossTrackedTodo(projectPath string, todoID int64) Model {
 func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 	return func() tea.Msg {
 		msg := cmd()
-		status := "Control action completed."
-		var err error
-		if opened, ok := msg.(codexSessionOpenedMsg); ok {
-			status = bossControlOpenedSessionStatus(inv, opened)
-			err = opened.err
-		}
+		status, err := bossControlExecutionStatus(inv, msg)
 		activity := bossControlOpenedSessionActivity(inv, msg)
 		result := bossui.ControlInvocationResultMsg{
 			Invocation:     copyControlInvocationForBoss(inv),
@@ -230,6 +235,77 @@ func bossControlExecutionCmd(inv control.Invocation, cmd tea.Cmd) tea.Cmd {
 			func() tea.Msg { return result },
 		}
 	}
+}
+
+func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, error) {
+	if opened, ok := msg.(codexSessionOpenedMsg); ok {
+		return bossControlOpenedSessionStatus(inv, opened), opened.err
+	}
+	if saved, ok := msg.(settingsSavedMsg); ok && inv.Capability == control.CapabilitySettingsUpdate {
+		return bossSettingsUpdateSavedStatus(inv, saved), saved.err
+	}
+	return "Control action completed.", nil
+}
+
+func bossSettingsUpdateSavedStatus(inv control.Invocation, saved settingsSavedMsg) string {
+	if saved.err != nil {
+		return "Settings save failed"
+	}
+	summary := bossSettingsUpdateSummary(inv)
+	if summary == "" {
+		summary = "Updated settings."
+	}
+	return summary
+}
+
+func bossSettingsUpdateSummary(inv control.Invocation) string {
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil {
+		return ""
+	}
+	var input control.SettingsUpdateInput
+	if err := json.Unmarshal(normalized.Args, &input); err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(input.Changes))
+	for _, change := range input.Changes {
+		if summary := settingsUpdateChangePastTense(change); summary != "" {
+			parts = append(parts, summary)
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "Updated settings: " + strings.Join(parts, "; ") + "."
+}
+
+func settingsUpdateChangePastTense(change control.SettingsChange) string {
+	spec, ok := settingsUpdateFieldSpecs[change.Field]
+	label := strings.ReplaceAll(string(change.Field), "_", " ")
+	if ok && spec.Label != "" {
+		label = spec.Label
+	}
+	switch change.Operation {
+	case control.SettingsUpdateAppendUnique:
+		return fmt.Sprintf("added %s to %s", strings.Join(change.Values, ", "), label)
+	case control.SettingsUpdateRemove:
+		return fmt.Sprintf("removed %s from %s", strings.Join(change.Values, ", "), label)
+	case control.SettingsUpdateSet:
+		if settingsUpdateFieldUsesBoolValue(change.Field) {
+			return fmt.Sprintf("set %s to %t", label, change.BoolValue)
+		}
+		if len(change.Values) > 0 {
+			return fmt.Sprintf("set %s to %s", label, strings.Join(change.Values, ", "))
+		}
+		return fmt.Sprintf("set %s to %s", label, change.Value)
+	default:
+		return ""
+	}
+}
+
+func settingsUpdateFieldUsesBoolValue(field control.SettingsField) bool {
+	spec, ok := settingsUpdateFieldSpecs[field]
+	return ok && spec.Kind == settingsUpdateBool
 }
 
 func bossControlOpenedSessionActivity(inv control.Invocation, msg tea.Msg) *bossui.ViewEngineerActivity {
@@ -1041,6 +1117,324 @@ func (m Model) executeTodoCompleteControlWithOutcome(input control.TodoCompleteI
 	m = m.clearBossTrackedTodo(projectPath, input.TodoID)
 	m.status = fmt.Sprintf("Marked TODO #%d complete in %s", input.TodoID, name)
 	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) executeSettingsUpdateControlWithOutcome(input control.SettingsUpdateInput) controlInvocationOutcome {
+	normalized, err := control.NormalizeSettingsUpdateInput(input)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	settings := m.currentSettingsBaseline()
+	changed, err := applySettingsUpdateChanges(&settings, normalized.Changes)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	if !changed {
+		m.status = "Settings already match the requested update."
+		return controlInvocationOutcome{model: m, inv: settingsUpdateInvocationFromInput(normalized)}
+	}
+	m.status = "Saving settings..."
+	return controlInvocationOutcome{model: m, cmd: m.saveSettingsCmd(settings), inv: settingsUpdateInvocationFromInput(normalized)}
+}
+
+type settingsUpdateValueKind int
+
+const (
+	settingsUpdateList settingsUpdateValueKind = iota
+	settingsUpdateString
+	settingsUpdateBool
+)
+
+type settingsUpdateFieldSpec struct {
+	Label           string
+	Kind            settingsUpdateValueKind
+	GetList         func(config.EditableSettings) []string
+	SetList         func(*config.EditableSettings, []string)
+	NormalizeValues func([]string) ([]string, error)
+	GetString       func(config.EditableSettings) string
+	SetString       func(*config.EditableSettings, string) error
+	GetBool         func(config.EditableSettings) bool
+	SetBool         func(*config.EditableSettings, bool)
+}
+
+var settingsUpdateFieldSpecs = map[control.SettingsField]settingsUpdateFieldSpec{
+	control.SettingsFieldIncludePaths: {
+		Label: "include paths",
+		Kind:  settingsUpdateList,
+		GetList: func(settings config.EditableSettings) []string {
+			return append([]string(nil), settings.IncludePaths...)
+		},
+		SetList: func(settings *config.EditableSettings, values []string) {
+			settings.IncludePaths = append([]string(nil), values...)
+		},
+		NormalizeValues: normalizeSettingsPathValues,
+	},
+	control.SettingsFieldExcludePaths: {
+		Label: "exclude paths",
+		Kind:  settingsUpdateList,
+		GetList: func(settings config.EditableSettings) []string {
+			return append([]string(nil), settings.ExcludePaths...)
+		},
+		SetList: func(settings *config.EditableSettings, values []string) {
+			settings.ExcludePaths = append([]string(nil), values...)
+		},
+		NormalizeValues: normalizeSettingsPathValues,
+	},
+	control.SettingsFieldExcludeProjectPatterns: {
+		Label: "exclude project patterns",
+		Kind:  settingsUpdateList,
+		GetList: func(settings config.EditableSettings) []string {
+			return append([]string(nil), settings.ExcludeProjectPatterns...)
+		},
+		SetList: func(settings *config.EditableSettings, values []string) {
+			settings.ExcludeProjectPatterns = append([]string(nil), values...)
+		},
+		NormalizeValues: normalizeSettingsPatternValues,
+	},
+	control.SettingsFieldPrivacyPatterns: {
+		Label: "privacy patterns",
+		Kind:  settingsUpdateList,
+		GetList: func(settings config.EditableSettings) []string {
+			return append([]string(nil), settings.PrivacyPatterns...)
+		},
+		SetList: func(settings *config.EditableSettings, values []string) {
+			settings.PrivacyPatterns = append([]string(nil), values...)
+		},
+		NormalizeValues: normalizeSettingsPatternValues,
+	},
+	control.SettingsFieldPrivacyMode: {
+		Label: "privacy mode",
+		Kind:  settingsUpdateBool,
+		GetBool: func(settings config.EditableSettings) bool {
+			return settings.PrivacyMode
+		},
+		SetBool: func(settings *config.EditableSettings, value bool) {
+			settings.PrivacyMode = value
+		},
+	},
+	control.SettingsFieldHideReasoningSections: {
+		Label: "hide reasoning sections",
+		Kind:  settingsUpdateBool,
+		GetBool: func(settings config.EditableSettings) bool {
+			return settings.HideReasoningSections
+		},
+		SetBool: func(settings *config.EditableSettings, value bool) {
+			settings.HideReasoningSections = value
+		},
+	},
+	control.SettingsFieldCodexLaunchPreset: {
+		Label: "Codex launch preset",
+		Kind:  settingsUpdateString,
+		GetString: func(settings config.EditableSettings) string {
+			return string(settings.CodexLaunchPreset)
+		},
+		SetString: func(settings *config.EditableSettings, value string) error {
+			preset, err := codexcli.ParsePreset(value)
+			if err != nil {
+				return err
+			}
+			settings.CodexLaunchPreset = preset
+			return nil
+		},
+	},
+}
+
+func applySettingsUpdateChanges(settings *config.EditableSettings, changes []control.SettingsChange) (bool, error) {
+	if settings == nil {
+		return false, errors.New("settings are unavailable")
+	}
+	changed := false
+	for _, change := range changes {
+		applied, err := applySettingsUpdateChange(settings, change)
+		if err != nil {
+			return false, err
+		}
+		changed = changed || applied
+	}
+	return changed, nil
+}
+
+func applySettingsUpdateChange(settings *config.EditableSettings, change control.SettingsChange) (bool, error) {
+	spec, ok := settingsUpdateFieldSpecs[change.Field]
+	if !ok {
+		return false, fmt.Errorf("unsupported settings field: %s", change.Field)
+	}
+	switch spec.Kind {
+	case settingsUpdateList:
+		return applySettingsListChange(settings, spec, change)
+	case settingsUpdateString:
+		if change.Operation != control.SettingsUpdateSet {
+			return false, fmt.Errorf("%s only supports set", spec.Label)
+		}
+		current := strings.TrimSpace(spec.GetString(*settings))
+		next := strings.TrimSpace(change.Value)
+		if current == next {
+			return false, nil
+		}
+		if err := spec.SetString(settings, next); err != nil {
+			return false, err
+		}
+		return true, nil
+	case settingsUpdateBool:
+		if change.Operation != control.SettingsUpdateSet {
+			return false, fmt.Errorf("%s only supports set", spec.Label)
+		}
+		current := spec.GetBool(*settings)
+		if current == change.BoolValue {
+			return false, nil
+		}
+		spec.SetBool(settings, change.BoolValue)
+		return true, nil
+	default:
+		return false, fmt.Errorf("unsupported settings field kind for %s", spec.Label)
+	}
+}
+
+func applySettingsListChange(settings *config.EditableSettings, spec settingsUpdateFieldSpec, change control.SettingsChange) (bool, error) {
+	current, err := spec.NormalizeValues(spec.GetList(*settings))
+	if err != nil {
+		return false, err
+	}
+	values, err := spec.NormalizeValues(change.Values)
+	if err != nil {
+		return false, err
+	}
+	var next []string
+	switch change.Operation {
+	case control.SettingsUpdateSet:
+		next = values
+	case control.SettingsUpdateAppendUnique:
+		next = append([]string(nil), current...)
+		seen := settingsValueSet(next)
+		for _, value := range values {
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			next = append(next, value)
+		}
+	case control.SettingsUpdateRemove:
+		remove := settingsValueSet(values)
+		for _, value := range current {
+			if _, ok := remove[value]; ok {
+				continue
+			}
+			next = append(next, value)
+		}
+	default:
+		return false, fmt.Errorf("%s does not support %s", spec.Label, change.Operation)
+	}
+	if stringSlicesEqual(current, next) {
+		return false, nil
+	}
+	spec.SetList(settings, next)
+	return true, nil
+}
+
+func normalizeSettingsPatternValues(values []string) ([]string, error) {
+	return normalizeSettingsListValues(values, false)
+}
+
+func normalizeSettingsPathValues(values []string) ([]string, error) {
+	normalized, err := normalizeSettingsListValues(values, true)
+	if err != nil {
+		return nil, err
+	}
+	for i, value := range normalized {
+		expanded, err := expandHomeForSettingsUpdate(value)
+		if err != nil {
+			return nil, err
+		}
+		normalized[i] = filepath.Clean(expanded)
+	}
+	return dedupeSettingsValues(normalized), nil
+}
+
+func normalizeSettingsListValues(values []string, rejectComma bool) ([]string, error) {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if strings.ContainsAny(value, "\r\n") {
+			return nil, fmt.Errorf("settings values must be one line")
+		}
+		if rejectComma && strings.Contains(value, ",") {
+			return nil, fmt.Errorf("path settings values must not contain commas")
+		}
+		out = append(out, value)
+	}
+	return dedupeSettingsValues(out), nil
+}
+
+func dedupeSettingsValues(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func settingsValueSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		out[value] = struct{}{}
+	}
+	return out
+}
+
+func stringSlicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func expandHomeForSettingsUpdate(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", nil
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		if path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+	}
+	return path, nil
+}
+
+func settingsUpdateInvocationFromInput(input control.SettingsUpdateInput) control.Invocation {
+	normalized, err := control.NormalizeSettingsUpdateInput(input)
+	if err != nil {
+		normalized = input
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return control.Invocation{}
+	}
+	return control.Invocation{
+		Capability: control.CapabilitySettingsUpdate,
+		RequestID:  strings.TrimSpace(normalized.RequestID),
+		Args:       payload,
+	}
 }
 
 func (m Model) resolveControlTrackedTodo(project model.ProjectSummary, todoID int64, todoText string) (model.TodoItem, error) {

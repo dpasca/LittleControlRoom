@@ -630,6 +630,79 @@ func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 	}
 }
 
+func TestExecuteSettingsUpdateControlAddsPrivacyPattern(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	cfg.ConfigPath = filepath.Join(cfg.DataDir, "config.toml")
+	cfg.ScratchRoot = filepath.Join(cfg.DataDir, "tasks")
+	cfg.PrivacyPatterns = []string{"medical"}
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = st.Close()
+	})
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	m := Model{
+		ctx:             ctx,
+		svc:             svc,
+		privacyPatterns: []string{"medical"},
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationRawForTest(t, control.CapabilitySettingsUpdate, control.SettingsUpdateInput{
+			Changes: []control.SettingsChange{{
+				Field:     control.SettingsFieldPrivacyPatterns,
+				Operation: control.SettingsUpdateAppendUnique,
+				Values:    []string{"visa"},
+			}},
+		}),
+	})
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want settings save command")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var saved settingsSavedMsg
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range msgs {
+		switch typed := msg.(type) {
+		case settingsSavedMsg:
+			saved = typed
+		case bossui.ControlInvocationResultMsg:
+			result = typed
+		}
+	}
+	if saved.err != nil {
+		t.Fatalf("settings save error = %v", saved.err)
+	}
+	if result.Err != nil {
+		t.Fatalf("control result error = %v", result.Err)
+	}
+	if !strings.Contains(result.Status, "added visa to privacy patterns") {
+		t.Fatalf("result status = %q, want privacy pattern update summary", result.Status)
+	}
+	if got, want := saved.settings.PrivacyPatterns, []string{"medical", "visa"}; !stringSlicesEqual(got, want) {
+		t.Fatalf("saved privacy patterns = %#v, want %#v", got, want)
+	}
+	raw, err := os.ReadFile(cfg.ConfigPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if text := string(raw); !strings.Contains(text, `"visa"`) || !strings.Contains(text, `"medical"`) {
+		t.Fatalf("saved config missing privacy patterns: %q", text)
+	}
+
+	got := updated.(Model)
+	updatedAfterSave, _ := got.Update(saved)
+	got = updatedAfterSave.(Model)
+	if got.privacyPatterns == nil || !stringSlicesEqual(got.privacyPatterns, []string{"medical", "visa"}) {
+		t.Fatalf("model privacy patterns = %#v, want saved patterns", got.privacyPatterns)
+	}
+}
+
 func TestExecuteScratchTaskArchiveControlArchivesTask(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Default()

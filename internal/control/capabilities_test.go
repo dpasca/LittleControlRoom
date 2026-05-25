@@ -238,6 +238,25 @@ func TestTodoCompleteCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestSettingsUpdateCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilitySettingsUpdate)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilitySettingsUpdate)
+	}
+	if capability.Name != CapabilitySettingsUpdate {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilitySettingsUpdate)
+	}
+	if capability.Risk != RiskWrite || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected settings update capability metadata: %#v", capability)
+	}
+	if !stringSliceContains(capability.HostEffects, HostEffectMayUpdateSettings) {
+		t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, HostEffectMayUpdateSettings)
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("settings update schemas should be object schemas")
+	}
+}
+
 func TestNormalizeEngineerSendPromptInput(t *testing.T) {
 	input, err := NormalizeEngineerSendPromptInput(EngineerSendPromptInput{
 		RequestID:   " req-1 ",
@@ -492,6 +511,38 @@ func TestValidateInvocationNormalizesTodoCompleteArgs(t *testing.T) {
 		input.TodoText != "Add tracking." ||
 		input.Evidence != "Engineer verified it." {
 		t.Fatalf("normalized todo complete input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesSettingsUpdateArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-settings ",
+		Capability: CapabilitySettingsUpdate,
+		Args: json.RawMessage(`{
+			"changes": [
+				{"field": "privacy_filters", "operation": "add", "value": "", "values": [" visa ", "visa"], "bool_value": false}
+			]
+		}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	if inv.RequestID != "boss-turn-settings" {
+		t.Fatalf("RequestID = %q, want boss-turn-settings", inv.RequestID)
+	}
+	var input SettingsUpdateInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if input.RequestID != "boss-turn-settings" || len(input.Changes) != 1 {
+		t.Fatalf("normalized settings input = %#v", input)
+	}
+	change := input.Changes[0]
+	if change.Field != SettingsFieldPrivacyPatterns ||
+		change.Operation != SettingsUpdateAppendUnique ||
+		len(change.Values) != 1 ||
+		change.Values[0] != "visa" {
+		t.Fatalf("normalized settings change = %#v", change)
 	}
 }
 

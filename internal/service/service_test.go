@@ -123,6 +123,37 @@ func TestApplyEditableSettingsSkipsAIClientRefreshForEmbeddedModelPreferences(t 
 	}
 }
 
+func TestApplyEditableSettingsUpdatesPrivacySettings(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.PrivacyPatterns = []string{"medical"}
+	svc := &Service{
+		cfg:               cfg,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+	}
+
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.PrivacyPatterns = []string{"medical", "visa"}
+	settings.PrivacyMode = true
+	settings.HideReasoningSections = false
+
+	svc.ApplyEditableSettings(settings)
+
+	got := svc.Config()
+	if len(got.PrivacyPatterns) != 2 || got.PrivacyPatterns[1] != "visa" {
+		t.Fatalf("privacy patterns = %#v, want medical, visa", got.PrivacyPatterns)
+	}
+	if !got.PrivacyMode {
+		t.Fatalf("privacy mode = false, want true")
+	}
+	if got.HideReasoningSections {
+		t.Fatalf("hide reasoning sections = true, want false")
+	}
+}
+
 func TestApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges(t *testing.T) {
 	t.Parallel()
 

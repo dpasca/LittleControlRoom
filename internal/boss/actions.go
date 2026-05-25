@@ -48,6 +48,7 @@ func normalizeBossAction(action *bossAction) {
 	action.TodoLabel = strings.TrimSpace(action.TodoLabel)
 	action.TodoText = strings.TrimSpace(action.TodoText)
 	action.TodoEvidence = strings.TrimSpace(action.TodoEvidence)
+	action.SettingsChanges = normalizeBossSettingsChanges(action.SettingsChanges)
 	if provider := control.NormalizeProvider(action.EngineerProvider); provider != "" {
 		action.EngineerProvider = string(provider)
 	} else {
@@ -198,6 +199,23 @@ func normalizeBossActionStringList(values []string) []string {
 		}
 		seen[value] = struct{}{}
 		out = append(out, value)
+	}
+	return out
+}
+
+func normalizeBossSettingsChanges(changes []control.SettingsChange) []control.SettingsChange {
+	out := make([]control.SettingsChange, 0, len(changes))
+	for _, change := range changes {
+		normalized, err := control.NormalizeSettingsChange(change)
+		if err != nil {
+			change.Field = control.SettingsField(strings.TrimSpace(string(change.Field)))
+			change.Operation = control.SettingsUpdateOperation(strings.TrimSpace(string(change.Operation)))
+			change.Value = strings.TrimSpace(change.Value)
+			change.Values = normalizeBossActionStringList(change.Values)
+			out = append(out, change)
+			continue
+		}
+		out = append(out, normalized)
 	}
 	return out
 }

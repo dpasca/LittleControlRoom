@@ -18,6 +18,7 @@ const (
 	CapabilityScratchTaskArchive CapabilityName = "scratch_task.archive"
 	CapabilityTodoAdd            CapabilityName = "todo.add"
 	CapabilityTodoComplete       CapabilityName = "todo.complete"
+	CapabilitySettingsUpdate     CapabilityName = "settings.update"
 )
 
 func CapabilityNameValues() []CapabilityName {
@@ -30,6 +31,7 @@ func CapabilityNameValues() []CapabilityName {
 		CapabilityScratchTaskArchive,
 		CapabilityTodoAdd,
 		CapabilityTodoComplete,
+		CapabilitySettingsUpdate,
 	}
 }
 
@@ -234,6 +236,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateTodoAddInvocation(inv)
 	case CapabilityTodoComplete:
 		return validateTodoCompleteInvocation(inv)
+	case CapabilitySettingsUpdate:
+		return validateSettingsUpdateInvocation(inv)
 	case "":
 		return Invocation{}, fmt.Errorf("capability is required")
 	default:

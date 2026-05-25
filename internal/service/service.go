@@ -323,6 +323,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
 	s.cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
 	s.cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
+	s.cfg.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
 	s.cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	s.cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	s.cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
@@ -337,6 +338,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.LCAgentRoutePreset = strings.TrimSpace(settings.LCAgentRoutePreset)
 	s.cfg.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	s.cfg.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
+	s.cfg.LCAgentAdminWrite = settings.LCAgentAdminWrite
 	s.cfg.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
 	s.cfg.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
 	s.cfg.LCAgentRequestTimeout = settings.LCAgentRequestTimeout
@@ -351,6 +353,8 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.ScanInterval = settings.ScanInterval
 	s.cfg.ActiveThreshold = settings.ActiveThreshold
 	s.cfg.StuckThreshold = settings.StuckThreshold
+	s.cfg.HideReasoningSections = settings.HideReasoningSections
+	s.cfg.PrivacyMode = settings.PrivacyMode
 	if reconfigureAIClients {
 		s.configureAIClientsLocked()
 	}

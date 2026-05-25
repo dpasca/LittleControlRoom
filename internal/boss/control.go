@@ -134,6 +134,11 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			TodoText:    strings.TrimSpace(action.TodoText),
 			Evidence:    strings.TrimSpace(action.TodoEvidence),
 		}
+	case control.CapabilitySettingsUpdate:
+		payload = control.SettingsUpdateInput{
+			RequestID: strings.TrimSpace(action.RequestID),
+			Changes:   append([]control.SettingsChange(nil), action.SettingsChanges...),
+		}
 	default:
 		return control.Invocation{}, "", fmt.Errorf("unsupported control capability: %s", capability)
 	}
@@ -363,8 +368,48 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		}
 		lines = append(lines, "", "Enter confirms; Esc cancels.")
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilitySettingsUpdate:
+		var input control.SettingsUpdateInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		lines := []string{"Update Little Control Room settings?"}
+		for _, change := range input.Changes {
+			lines = append(lines, "- "+controlSettingsChangeSummary(change))
+		}
+		lines = append(lines, "", "Enter saves these settings; Esc cancels.")
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	default:
 		return "", fmt.Errorf("unsupported control capability: %s", inv.Capability)
+	}
+}
+
+func controlSettingsChangeSummary(change control.SettingsChange) string {
+	field := strings.ReplaceAll(string(change.Field), "_", " ")
+	switch change.Operation {
+	case control.SettingsUpdateAppendUnique:
+		return fmt.Sprintf("Add %s to %s", strings.Join(change.Values, ", "), field)
+	case control.SettingsUpdateRemove:
+		return fmt.Sprintf("Remove %s from %s", strings.Join(change.Values, ", "), field)
+	case control.SettingsUpdateSet:
+		if controlSettingsChangeUsesBool(change.Field) {
+			return fmt.Sprintf("Set %s to %t", field, change.BoolValue)
+		}
+		if len(change.Values) > 0 {
+			return fmt.Sprintf("Set %s to %s", field, strings.Join(change.Values, ", "))
+		}
+		return fmt.Sprintf("Set %s to %s", field, change.Value)
+	default:
+		return fmt.Sprintf("Update %s", field)
+	}
+}
+
+func controlSettingsChangeUsesBool(field control.SettingsField) bool {
+	switch field {
+	case control.SettingsFieldPrivacyMode, control.SettingsFieldHideReasoningSections:
+		return true
+	default:
+		return false
 	}
 }
 
