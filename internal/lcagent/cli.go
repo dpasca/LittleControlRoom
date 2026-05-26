@@ -225,7 +225,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var adminWrite bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
-	fs.StringVar(&autoRaw, "auto", defaultAuto, "autonomy: off, low, medium")
+	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
 	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, or cheap-scout; explicit flags override preset values")

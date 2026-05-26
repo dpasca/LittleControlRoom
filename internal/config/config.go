@@ -260,7 +260,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
 	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, or cheap-scout")
 	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, or moonshot")
-	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent autonomy level: off, low, or medium")
+	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent permission level: off, low, or medium")
 	lcagentAdminWrite := fs.Bool("lcagent-admin-write", cfg.LCAgentAdminWrite, "Allow LCAgent write tools to edit absolute paths outside the workspace")
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
 	lcagentContextProfile := fs.String("lcagent-context-profile", cfg.LCAgentContextProfile, "LCAgent provider loop context profile: balanced or large")

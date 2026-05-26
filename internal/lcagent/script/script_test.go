@@ -533,7 +533,7 @@ func TestRunnerProcessApprovalGrantDoesNotReuseRunCommandGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer writer.Close()
-	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAcceptForSession}}
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
 	processes := &fakeProcessBroker{result: tools.ToolResult{Output: "running"}}
 	runner := Runner{
 		Session:   writer,
@@ -722,7 +722,7 @@ func TestRunnerApprovalRequestUsesRequestedCommandCWD(t *testing.T) {
 	}
 }
 
-func TestRunnerApprovedCommandForSessionScopesToExactCommand(t *testing.T) {
+func TestRunnerApprovedCommandForSessionRaisesToMedium(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
 	if err != nil {
@@ -759,17 +759,20 @@ func TestRunnerApprovedCommandForSessionScopesToExactCommand(t *testing.T) {
 		Type: "tool_call",
 		Tool: "run_command",
 		Args: raw(`{"command":"printf other","timeout_ms":1000}`),
-	}); err == nil || !result.Denied {
-		t.Fatalf("third RunTool() = %#v, %v; want denied outside approved scope", result, err)
+	}); err != nil || !result.Success {
+		t.Fatalf("third RunTool() = %#v, %v; want medium session approval to allow another command", result, err)
 	}
-	if approvals.calls != 2 {
-		t.Fatalf("approval should be requested for first and third commands, got %d calls", approvals.calls)
+	if approvals.calls != 1 {
+		t.Fatalf("approval should only be requested before raising the session to medium, got %d calls", approvals.calls)
 	}
-	if runner.Command.Workspace.Auto != policy.AutonomyLow {
-		t.Fatalf("runner command autonomy = %q, want low", runner.Command.Workspace.Auto)
+	if runner.Command.Workspace.Auto != policy.AutonomyMedium {
+		t.Fatalf("runner command autonomy = %q, want medium", runner.Command.Workspace.Auto)
 	}
 	if approvals.requests[0].Scope == "" || !strings.Contains(approvals.requests[0].Scope, "this exact command") {
 		t.Fatalf("approval scope = %#v, want exact command scope", approvals.requests)
+	}
+	if text := stream.String(); !strings.Contains(text, `"type":"permission_level_changed"`) || !strings.Contains(text, `"to":"medium"`) {
+		t.Fatalf("stream missing permission level change:\n%s", text)
 	}
 }
 

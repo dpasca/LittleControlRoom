@@ -72,9 +72,9 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 		}
 	case settingsFieldLCAgentAuto:
 		return []settingsChoiceOption{
-			{Value: "off", Label: "Off", Summary: "Deny write tools and allow only read-only commands.", Description: "Good when you want LCAgent to inspect and explain before changing files."},
-			{Value: "low", Label: "Low", Summary: "Allow project-local edits plus read-only and approved verification commands.", Description: "The default coding mode. It can edit files in the workspace, run checks such as tests, lint, typecheck, or build through approved argv forms, and asks before broader commands."},
-			{Value: "medium", Label: "Medium", Summary: "Allow command execution without the Low allowlist.", Description: "Use for trusted local tasks that need setup, custom build commands, managed processes, or fewer repeated approvals. Write tools still stay inside the workspace unless admin write is on."},
+			{Value: "off", Label: "Off", Summary: "Deny file edits and non-read commands.", Description: "Use when you want LCAgent to inspect and explain before changing files."},
+			{Value: "low", Label: "Low", Summary: "Allow workspace edits plus read-only and verifier commands.", Description: "Default for coding: LCAgent can edit workspace files, run approved checks such as tests, lint, typecheck, or build, and asks before broader command execution."},
+			{Value: "medium", Label: "Medium", Summary: "Allow workspace commands without repeated approvals.", Description: "Use for trusted local tasks that need setup, custom build commands, managed processes, or fewer repeated approvals. Writes still stay inside the workspace unless admin write is enabled."},
 		}
 	case settingsFieldLCAgentAdminWrite:
 		return []settingsChoiceOption{
@@ -306,7 +306,7 @@ func settingsChoiceTitle(fieldIndex int) string {
 	case settingsFieldLCAgentReasoning:
 		return "LCAgent Reasoning"
 	case settingsFieldLCAgentAuto:
-		return "LCAgent Autonomy"
+		return "LCAgent Permissions"
 	case settingsFieldLCAgentAdminWrite:
 		return "LCAgent Admin Write"
 	case settingsFieldLCAgentToolProfile:

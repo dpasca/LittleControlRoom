@@ -38,6 +38,9 @@ codex_launch_preset = "yolo"
 # lcagent_utility_model override.
 # lcagent_utility_provider = "main"
 # lcagent_utility_model = ""
+# LCAgent permissions: "off" denies edits/non-read commands, "low" allows
+# workspace edits plus read-only/verification commands, and "medium" allows
+# workspace-contained commands without repeated approvals.
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"
 # lcagent_context_profile = "balanced" # balanced loop compaction ~200k chars; large ~600k

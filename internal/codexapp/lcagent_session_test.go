@@ -171,8 +171,14 @@ func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 		!strings.Contains(got, `"decision":"acceptForSession"`) {
 		t.Fatalf("approval response payload = %q", got)
 	}
-	if snapshot = session.Snapshot(); !strings.Contains(snapshot.Transcript, "LCAgent approval decision sent: corepack enable") {
+	if snapshot = session.Snapshot(); !strings.Contains(snapshot.Transcript, "LCAgent permission level changed to Medium for this run: corepack enable") {
 		t.Fatalf("transcript missing immediate approval feedback:\n%s", snapshot.Transcript)
+	}
+
+	session.handleEvent([]byte(`{"type":"permission_level_changed","session_id":"lca_approval_session","from":"low","to":"medium","reason":"approval accepted for session"}`))
+	snapshot = session.Snapshot()
+	if snapshot.Status != "LCAgent permission level changed from Low to Medium for this run" {
+		t.Fatalf("status after permission level change = %q", snapshot.Status)
 	}
 
 	session.handleEvent([]byte(`{"type":"approval_resolved","session_id":"lca_approval_session","id":"approval-1","kind":"command","tool":"run_command","command":"corepack enable","scope":"this exact command in /repo","decision":"acceptForSession","status":"approved"}`))
@@ -180,7 +186,7 @@ func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 	if snapshot.PendingApproval != nil {
 		t.Fatalf("PendingApproval after resolution = %#v, want nil", snapshot.PendingApproval)
 	}
-	if !strings.Contains(snapshot.Status, "this exact command in /repo") ||
+	if !strings.Contains(snapshot.Status, "Medium") ||
 		!strings.Contains(snapshot.Transcript, "corepack enable") {
 		t.Fatalf("approval resolution not reflected; status=%q transcript=\n%s", snapshot.Status, snapshot.Transcript)
 	}

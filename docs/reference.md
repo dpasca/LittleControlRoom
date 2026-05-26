@@ -130,6 +130,15 @@ In Little Control Room settings, `lcagent_route_preset` applies the same bundle
 to embedded LCAgent launches; leave it blank to use the individual provider,
 model, autonomy, tool-profile, and context-profile fields.
 
+LCAgent permission levels are set by `lcagent_auto` or the LCAgent Permissions
+field in `/settings`. `off` denies file edits and non-read commands. `low` is
+the default: it allows workspace file edits, read-only command inspection, and
+recognized verifier commands, while broader commands ask in the embedded pane.
+`medium` allows workspace-contained commands without repeated approvals; write
+tools still stay inside the workspace unless `lcagent_admin_write` is enabled.
+When a Low run asks for command approval, `a` approves once and `A` switches the
+current LCAgent run to Medium.
+
 `lcagent metrics <session.jsonl>...` summarizes trace artifacts and includes a
 `continuations` count plus a derived `trace_quality` block with verification
 coverage, tool failures, repair pressure, read overlap, cached-token rate, and
@@ -359,7 +368,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/opencode` resumes the selected project's latest known OpenCode session when available, otherwise it starts a new one.
 - `/opencode-new` always starts a fresh OpenCode session.
 - `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot run with the configured experimental provider.
-- `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, in-pane approval for denied low-autonomy commands, `/permissions` to explain or change session autonomy, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; attachments are not wired yet.
+- `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, in-pane approval for denied low-permission commands, a Medium shortcut for the current run, `/permissions` to explain or change session permissions, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; attachments are not wired yet.
 - While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/sessions` (`/resume` and `/session` aliases), `/reconnect`, `/model`, `/status`, `/permissions`, `/compact`, and `/review`.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
 - `/sessions` with no session ID opens a picker for saved sessions from the current project and provider; `/sessions <session-id>` jumps straight to that session.

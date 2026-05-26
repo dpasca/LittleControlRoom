@@ -647,10 +647,14 @@ func (s *lcagentSession) RespondApproval(decision ApprovalDecision) error {
 	}
 	s.mu.Lock()
 	s.status = "LCAgent approval decision sent"
+	action := "LCAgent approval decision sent"
+	if decision == DecisionAcceptForSession {
+		action = "LCAgent permission level changed to Medium for this run"
+	}
 	if request.Command != "" {
-		s.appendEntryLocked(TranscriptStatus, "LCAgent approval decision sent: "+request.Command)
+		s.appendEntryLocked(TranscriptStatus, action+": "+request.Command)
 	} else {
-		s.appendEntryLocked(TranscriptStatus, "LCAgent approval decision sent")
+		s.appendEntryLocked(TranscriptStatus, action)
 	}
 	s.touchLocked()
 	s.mu.Unlock()
@@ -1028,6 +1032,14 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		if text := lcagentApprovalResolvedText(event); text != "" {
 			s.appendAsync(TranscriptStatus, text)
 		}
+	case "permission_level_changed":
+		if text := lcagentPermissionLevelChangedText(event); text != "" {
+			s.mu.Lock()
+			s.status = text
+			s.touchLocked()
+			s.mu.Unlock()
+			s.appendAsync(TranscriptStatus, text)
+		}
 	case "process_request":
 		s.handleLCAgentProcessRequest(event)
 	case "patch_diff_summary":
@@ -1146,10 +1158,7 @@ func lcagentApprovalRequestFromEvent(event map[string]json.RawMessage, fallbackT
 func lcagentApprovalResolvedStatus(event map[string]json.RawMessage) string {
 	switch rawJSONString(event["decision"]) {
 	case string(DecisionAcceptForSession):
-		if scope := rawJSONString(event["scope"]); scope != "" {
-			return "LCAgent command approval accepted for " + scope
-		}
-		return "LCAgent command approval accepted for this run"
+		return "LCAgent permission level is Medium for this run"
 	case string(DecisionAccept):
 		return "LCAgent command approval accepted"
 	case string(DecisionDecline):
@@ -1167,6 +1176,31 @@ func lcagentApprovalResolvedStatus(event map[string]json.RawMessage) string {
 		default:
 			return ""
 		}
+	}
+}
+
+func lcagentPermissionLevelChangedText(event map[string]json.RawMessage) string {
+	from := strings.ToLower(strings.TrimSpace(rawJSONString(event["from"])))
+	to := strings.ToLower(strings.TrimSpace(rawJSONString(event["to"])))
+	if to == "" {
+		return ""
+	}
+	if from != "" && from != to {
+		return "LCAgent permission level changed from " + lcagentPermissionLevelLabel(from) + " to " + lcagentPermissionLevelLabel(to) + " for this run"
+	}
+	return "LCAgent permission level is " + lcagentPermissionLevelLabel(to) + " for this run"
+}
+
+func lcagentPermissionLevelLabel(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "off":
+		return "Off"
+	case "low":
+		return "Low"
+	case "medium":
+		return "Medium"
+	default:
+		return strings.TrimSpace(level)
 	}
 }
 
