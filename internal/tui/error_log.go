@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"lcroom/internal/codexapp"
+	"lcroom/internal/model"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -211,8 +215,75 @@ func (m Model) updateErrorLogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter", "c":
 		return m, m.copySelectedErrorLogEntry()
+	case "t":
+		return m.startEngineerTaskForSelectedError()
 	}
 	return m, nil
+}
+
+func (m Model) startEngineerTaskForSelectedError() (tea.Model, tea.Cmd) {
+	entry, ok := m.currentErrorLogEntry()
+	if !ok {
+		m.status = "No error selected"
+		return m, nil
+	}
+	if m.svc == nil {
+		m.status = "Engineer task unavailable: service is not connected"
+		return m, nil
+	}
+
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	resources := []model.AgentTaskResource{}
+	if projectPath := strings.TrimSpace(entry.ProjectPath); projectPath != "" {
+		label := strings.TrimSpace(entry.ProjectName)
+		if label == "" {
+			label = "error source project"
+		}
+		resources = append(resources, model.AgentTaskResource{
+			Kind:        model.AgentTaskResourceProject,
+			ProjectPath: projectPath,
+			Label:       label,
+		})
+	}
+
+	task, err := m.svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title:        errorLogEngineerTaskTitle(entry),
+		Kind:         model.AgentTaskKindAgent,
+		Capabilities: []string{"error.explain", "error.solve"},
+		Resources:    resources,
+	})
+	if err != nil {
+		m.reportError("Error engineer task failed", err, entry.ProjectPath)
+		return m, nil
+	}
+	m.upsertOpenAgentTask(task)
+
+	project, err := projectSummaryForAgentTask(task)
+	if err != nil {
+		m.reportError("Error engineer task failed", err, entry.ProjectPath)
+		return m, nil
+	}
+
+	provider := codexapp.ProviderCodex
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, errorLogEngineerPrompt(entry))
+	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
+		forceNew: true,
+		prompt:   prompt,
+		reveal:   true,
+	})
+	m = normalizeUpdateModel(updated)
+	m.errorLogVisible = false
+	if cmd == nil {
+		if strings.TrimSpace(m.status) == "" {
+			m.status = "Created error engineer task " + task.ID
+		}
+		return m, nil
+	}
+	return m, m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task))
 }
 
 func (m Model) renderErrorLogOverlay(body string, bodyW, bodyH int) string {
@@ -241,7 +312,7 @@ func (m Model) renderErrorLogPanel(bodyW, bodyH int) string {
 func (m Model) renderErrorLogContent(width, maxHeight int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Error Log"),
-		commandPaletteHintStyle.Render("↑↓ choose  Enter copy  c copy  Esc close"),
+		errorLogLegendLine(),
 	}
 
 	entries := m.currentErrorLogEntries()
@@ -303,6 +374,15 @@ func (m Model) renderErrorLogContent(width, maxHeight int) string {
 	return strings.Join(lines, "\n")
 }
 
+func errorLogLegendLine() string {
+	return renderHelpPanelActionRow(
+		renderDialogAction("↑↓", "choose", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("Enter/c", "copy", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("t", "ask engineer", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	)
+}
+
 func (m Model) renderErrorLogRow(entry errorLogEntry, selected bool, width int) string {
 	timeLabel := entry.At.Format("01-02 15:04")
 	summary := entry.Status
@@ -347,6 +427,30 @@ func formatErrorLogCopyText(entry errorLogEntry) string {
 		}
 	}
 	lines = append(lines, "", "Full error:", strings.TrimSpace(entry.Message))
+	return strings.Join(lines, "\n")
+}
+
+func errorLogEngineerTaskTitle(entry errorLogEntry) string {
+	summary := strings.TrimSpace(entry.Status)
+	if summary == "" {
+		summary = "Error"
+	}
+	if project := strings.TrimSpace(entry.ProjectName); project != "" {
+		summary += " - " + project
+	}
+	return truncateText("Explain/fix error: "+summary, 96)
+}
+
+func errorLogEngineerPrompt(entry errorLogEntry) string {
+	lines := []string{
+		"Please inspect this Little Control Room error log entry.",
+		"Explain the likely cause in plain language, then try to identify a safe fix or a concrete next step.",
+		"If a project path is included, treat that project as the target context for investigation.",
+		"If you make changes, keep them tightly scoped to solving this error and report exactly what changed.",
+		"",
+		"Selected error log entry:",
+		formatErrorLogCopyText(entry),
+	}
 	return strings.Join(lines, "\n")
 }
 

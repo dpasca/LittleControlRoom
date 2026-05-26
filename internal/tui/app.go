@@ -6846,7 +6846,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}
 	if m.errorLogVisible {
-		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, Esc close", supplementSegments...)
+		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, t ask engineer, Esc close", supplementSegments...)
 	}
 	if m.cpuDialog != nil {
 		return m.renderModalFooter(width, "CPU inspector: ↑↓ select, Space mark, a ask scoped, A ask all, r refresh, Esc close", supplementSegments...)
