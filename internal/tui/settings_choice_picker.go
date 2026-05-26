@@ -72,9 +72,9 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 		}
 	case settingsFieldLCAgentAuto:
 		return []settingsChoiceOption{
-			{Value: "off", Label: "Off", Summary: "Ask before write-like actions.", Description: "Good when you want LCAgent to inspect and explain before changing files."},
-			{Value: "low", Label: "Low", Summary: "Allow conservative local edits.", Description: "The default balance for coding work: useful edits without broad authority."},
-			{Value: "medium", Label: "Medium", Summary: "Allow more capable autonomous actions.", Description: "Use for trusted local tasks where fewer approval interruptions are acceptable."},
+			{Value: "off", Label: "Off", Summary: "Deny file edits and non-read commands.", Description: "Use when you want LCAgent to inspect and explain before changing files."},
+			{Value: "low", Label: "Low", Summary: "Allow project file edits plus read-only and verifier commands.", Description: "Default for coding: LCAgent can edit workspace files, but asks before broader command execution."},
+			{Value: "medium", Label: "Medium", Summary: "Allow workspace commands without repeated approvals.", Description: "Use for trusted local tasks. Writes still stay inside the workspace unless admin write is enabled."},
 		}
 	case settingsFieldLCAgentAdminWrite:
 		return []settingsChoiceOption{
@@ -306,7 +306,7 @@ func settingsChoiceTitle(fieldIndex int) string {
 	case settingsFieldLCAgentReasoning:
 		return "LCAgent Reasoning"
 	case settingsFieldLCAgentAuto:
-		return "LCAgent Autonomy"
+		return "LCAgent Permissions"
 	case settingsFieldLCAgentAdminWrite:
 		return "LCAgent Admin Write"
 	case settingsFieldLCAgentToolProfile:

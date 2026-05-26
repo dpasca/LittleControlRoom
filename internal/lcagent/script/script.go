@@ -694,7 +694,7 @@ func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandS
 	case DecisionAccept:
 		return r.runCommandAtMedium(ctx, spec)
 	case DecisionAcceptForSession:
-		r.commandApprovalGrants = append(r.commandApprovalGrants, grant)
+		r.promoteCommandAutonomyForSession(grant)
 		return r.runCommandAtMedium(ctx, spec)
 	default:
 		return result
@@ -762,10 +762,30 @@ func (r *Runner) processApprovalGranted(ctx context.Context, spec tools.CommandS
 	case DecisionAccept:
 		return true
 	case DecisionAcceptForSession:
-		r.commandApprovalGrants = append(r.commandApprovalGrants, grant)
+		r.promoteCommandAutonomyForSession(grant)
 		return true
 	default:
 		return false
+	}
+}
+
+func (r *Runner) promoteCommandAutonomyForSession(grant commandApprovalGrant) {
+	if r == nil {
+		return
+	}
+	if r.Command.Workspace.Auto == policy.AutonomyMedium {
+		return
+	}
+	r.Command.Workspace.Auto = policy.AutonomyMedium
+	r.commandApprovalGrants = append(r.commandApprovalGrants, grant)
+	if r.Session != nil {
+		_ = r.Session.Write(session.Event{
+			"type":       "permission_level_changed",
+			"session_id": r.SessionID,
+			"from":       string(policy.AutonomyLow),
+			"to":         string(policy.AutonomyMedium),
+			"reason":     "approval accepted for session",
+		})
 	}
 }
 

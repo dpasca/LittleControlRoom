@@ -1669,7 +1669,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = "This approval cannot be accepted for the whole session"
 				return m, nil
 			}
-			m.status = "Approving " + label + " request for this session..."
+			if snapshot.Provider == codexapp.ProviderLCAgent {
+				m.status = "Switching LCAgent to Medium for this run..."
+			} else {
+				m.status = "Approving " + label + " request for this session..."
+			}
 			return m, m.respondVisibleApprovalCmd(codexapp.DecisionAcceptForSession)
 		case "d":
 			m.status = "Declining " + label + " request..."
@@ -2455,9 +2459,13 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 			footerHideAction("Alt+Up", "hide"),
 		}
 		if snapshot.PendingApproval.AllowsDecision(codexapp.DecisionAcceptForSession) {
+			sessionAction := "session"
+			if snapshot.Provider == codexapp.ProviderLCAgent {
+				sessionAction = "medium"
+			}
 			approvalActions = []footerAction{
 				footerPrimaryAction("a", "accept"),
-				footerNavAction("A", "session"),
+				footerNavAction("A", sessionAction),
 				footerExitAction("d", "decline"),
 				footerLowAction("c", "cancel"),
 				footerHideAction("Alt+Up", "hide"),

@@ -78,7 +78,7 @@ LCR session parity:
 
 - LCAgent supports embedded approval prompts for denied low-autonomy
   `run_command` calls. `Allow once` reruns that command at medium autonomy;
-  `Allow for session` raises command autonomy to medium for the rest of the
+  the `Medium` shortcut raises command autonomy to medium for the rest of the
   LCAgent run. Attachments, structured tool input, elicitation, and goal state
   are still not wired in the embedded pane.
 - Embedded `/review` now starts a read-only current-diff LCAgent review run

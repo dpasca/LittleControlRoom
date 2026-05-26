@@ -19977,6 +19977,51 @@ func TestVisibleCodexViewHidesSessionApprovalShortcutForFileChanges(t *testing.T
 	}
 }
 
+func TestVisibleLCAgentCommandApprovalShowsMediumShortcut(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "Waiting for command approval",
+			PendingApproval: &codexapp.ApprovalRequest{
+				ID:      "approval-1",
+				Kind:    codexapp.ApprovalCommandExecution,
+				Command: "pnpm install",
+				CWD:     "/tmp/demo",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	m.syncCodexViewport(true)
+
+	rendered := m.View()
+	if !strings.Contains(rendered, "A medium") {
+		t.Fatalf("LCAgent approval footer should advertise Medium shortcut: %q", rendered)
+	}
+	if strings.Contains(rendered, "A session") {
+		t.Fatalf("LCAgent approval footer should not use vague session label: %q", rendered)
+	}
+}
+
 func TestPendingOpenCodexApprovalCanBeAcceptedImmediately(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -20023,8 +20068,8 @@ func TestPendingOpenCodexApprovalCanBeAcceptedImmediately(t *testing.T) {
 	if got.codexVisibleProject != "/tmp/demo" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
 	}
-	if got.status != "Approving LCAgent request for this session..." {
-		t.Fatalf("status = %q, want approving status", got.status)
+	if got.status != "Switching LCAgent to Medium for this run..." {
+		t.Fatalf("status = %q, want medium switch status", got.status)
 	}
 
 	_ = collectCmdMsgs(cmd)

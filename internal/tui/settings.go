@@ -2603,8 +2603,8 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
-			"LCAgent autonomy",
-			"Press Enter to choose how much local autonomy LCAgent gets. Low allows conservative local edits while keeping higher-risk actions constrained.",
+			"LCAgent permissions",
+			"Press Enter to choose the LCAgent permission level. Low asks before broader commands; Medium runs workspace commands without repeated approvals.",
 			settings.LCAgentAuto,
 			16,
 			settingsSectionLCAgent,
@@ -3014,11 +3014,11 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":
-			return "LCAgent will deny file edits and use the most restrictive command policy."
+			return "Off denies file edits and non-read commands. Use it for inspect-and-explain runs."
 		case "", "low":
-			return "LCAgent will use the default low autonomy policy: project-local edits plus conservative read-only and Go test verification commands."
+			return "Low allows workspace file edits, read-only commands, and recognized verifier commands. Broader commands ask for approval."
 		case "medium":
-			return "LCAgent can run a broader set of workspace-contained actions."
+			return "Medium allows workspace-contained commands without repeated approvals. Writes outside the workspace still require admin write."
 		default:
 			return field.hint
 		}
