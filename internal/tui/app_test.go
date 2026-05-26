@@ -461,8 +461,8 @@ func TestCodexFooterStatusShowsReconcilingState(t *testing.T) {
 		Status: "Codex is working...",
 	}
 
-	if got := codexFooterStatus(snapshot, time.Now()); got != "Rechecking turn status" {
-		t.Fatalf("codexFooterStatus() = %q, want %q", got, "Rechecking turn status")
+	if got := codexFooterStatus(snapshot, time.Now()); got != "Rechecking turn; /reconnect if stuck" {
+		t.Fatalf("codexFooterStatus() = %q, want %q", got, "Rechecking turn; /reconnect if stuck")
 	}
 }
 

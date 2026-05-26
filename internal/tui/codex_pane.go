@@ -1716,7 +1716,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
 				return m, nil
 			}
-			m.status = label + " is rechecking whether the current turn has gone idle. Please wait a moment."
+			m.status = label + " is rechecking whether the current turn has gone idle. If this persists, use /reconnect or /sessions."
 			return m, nil
 		}
 		m.status = "Closing embedded " + label + " session..."
@@ -1963,7 +1963,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
 				return m, refreshCmd
 			}
-			m.status = label + " is rechecking the current turn state. Wait for that to finish before sending another prompt."
+			m.status = label + " is rechecking the current turn state. If this persists, use /reconnect or /sessions before sending another prompt."
 			return m, refreshCmd
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
@@ -3090,6 +3090,8 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	case snapshot.Phase == codexapp.SessionPhaseReconciling:
 		actions = []footerAction{
 			footerHideAction("Alt+Up", "hide"),
+			footerNavAction("/reconnect", "recover"),
+			footerNavAction("/sessions", "inspect"),
 		}
 	case snapshot.Phase == codexapp.SessionPhaseStalled:
 		actions = []footerAction{
@@ -3213,7 +3215,7 @@ func renderCodexFooterStatus(snapshot codexapp.Snapshot, now time.Time, spinnerF
 			renderCodexAnimatedFooterTimer(timer, spinnerFrame, lipgloss.Color("221"))
 	case status == "Finishing":
 		return renderCodexAnimatedFooterLabel("Finishing", spinnerFrame, codexFinishingFooterPalette)
-	case status == "Rechecking turn status":
+	case strings.HasPrefix(status, "Rechecking turn"):
 		return renderCodexAnimatedFooterText(status, spinnerFrame, codexReconcilingFooterPalette)
 	default:
 		return renderFooterStatus(status)
@@ -4546,7 +4548,7 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 		if codexStatusIsCompacting(snapshot.Status) {
 			return "Compacting conversation"
 		}
-		return "Rechecking turn status"
+		return "Rechecking turn; /reconnect if stuck"
 	case codexapp.SessionPhaseStalled:
 		return "Stalled; use /reconnect"
 	case codexapp.SessionPhaseFinishing:
