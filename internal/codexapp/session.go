@@ -91,6 +91,7 @@ type appServerSession struct {
 	threadID                string
 	activeTurnID            string
 	activeItems             map[string]struct{}
+	activeCompactionItems   map[string]struct{}
 	pendingCompletion       *turnCompletionState
 	started                 bool
 	busy                    bool
@@ -878,6 +879,7 @@ func (s *appServerSession) clearBusyLocked(turnID string) {
 	s.busySince = time.Time{}
 	s.lastBusyActivityAt = time.Time{}
 	s.activeItems = nil
+	s.activeCompactionItems = nil
 	s.pendingCompletion = nil
 	s.contextCompactionActive = false
 	if turnID == "" || s.activeTurnID == turnID {
@@ -2964,6 +2966,20 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			s.mu.Unlock()
 			return
 		}
+		hadCompactionState := s.compacting || s.contextCompactionActive
+		s.compacting = false
+		s.contextCompactionActive = false
+		if len(s.activeCompactionItems) > 0 {
+			for itemID := range s.activeCompactionItems {
+				delete(s.activeItems, itemID)
+			}
+			s.activeCompactionItems = nil
+		} else if hadCompactionState {
+			s.activeItems = nil
+		}
+		if hadCompactionState && len(s.activeItems) == 0 {
+			s.clearBusyLocked("")
+		}
 		s.status = "Conversation history compacted"
 		s.lastSystemNotice = "Conversation history compacted"
 		s.mu.Unlock()
@@ -3242,6 +3258,12 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 		s.contextCompactionActive = true
 		s.status = "Compacting conversation history..."
 		s.lastSystemNotice = "Compacting conversation history..."
+		if itemID != "" {
+			if s.activeCompactionItems == nil {
+				s.activeCompactionItems = make(map[string]struct{})
+			}
+			s.activeCompactionItems[itemID] = struct{}{}
+		}
 	}
 	if tracksBusyItemLifecycle(itemType) {
 		s.markItemActiveLocked(msg.TurnID, itemID)
@@ -3301,6 +3323,10 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	s.touchBusyLocked()
 	if itemType == "contextCompaction" {
 		s.contextCompactionActive = false
+		delete(s.activeCompactionItems, itemID)
+		if len(s.activeCompactionItems) == 0 {
+			s.activeCompactionItems = nil
+		}
 		if s.busy && s.pendingCompletion == nil {
 			s.status = "Codex is working..."
 		}

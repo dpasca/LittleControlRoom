@@ -2931,6 +2931,41 @@ func TestSnapshotMarksSilentCompactionStalledBeforeGenericBusyTimeout(t *testing
 	}
 }
 
+func TestThreadCompactedNotificationClearsAutomaticCompactionBusyState(t *testing.T) {
+	s := &appServerSession{
+		projectPath:             "/tmp/demo",
+		threadID:                "thread_456",
+		activeTurnID:            "turn_compact",
+		activeItems:             map[string]struct{}{"item_compact": {}},
+		activeCompactionItems:   map[string]struct{}{"item_compact": {}},
+		busy:                    true,
+		contextCompactionActive: true,
+		status:                  "Compacting conversation history...",
+		entryIndex:              make(map[string]int),
+		notify:                  func() {},
+		lastBusyActivityAt:      time.Now().Add(-time.Minute),
+	}
+
+	s.handleNotification("thread/compacted", json.RawMessage(`{"threadId":"thread_456"}`))
+
+	snapshot := s.Snapshot()
+	if snapshot.Phase != SessionPhaseIdle {
+		t.Fatalf("phase = %q, want %q", snapshot.Phase, SessionPhaseIdle)
+	}
+	if snapshot.Busy {
+		t.Fatalf("busy = true, want false")
+	}
+	if snapshot.ActiveTurnID != "" {
+		t.Fatalf("active turn id = %q, want empty", snapshot.ActiveTurnID)
+	}
+	if snapshot.Status != "Conversation history compacted" {
+		t.Fatalf("status = %q, want conversation compacted", snapshot.Status)
+	}
+	if snapshot.LastSystemNotice != "Conversation history compacted" {
+		t.Fatalf("last system notice = %q, want conversation compacted", snapshot.LastSystemNotice)
+	}
+}
+
 func TestSubmitInputRejectsSteerWhenRecoveredTurnLooksStuck(t *testing.T) {
 	staleBusy := time.Now().Add(-(busyStateUnresponsiveFor + time.Minute)).Round(0)
 	callCount := 0
