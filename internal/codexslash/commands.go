@@ -14,6 +14,7 @@ const (
 	KindNew         Kind = "new"
 	KindResume      Kind = "resume"
 	KindStatus      Kind = "status"
+	KindShowStatus  Kind = "show-status"
 	KindModel       Kind = "model"
 	KindReconnect   Kind = "reconnect"
 	KindCompact     Kind = "compact"
@@ -57,6 +58,8 @@ var specs = []Spec{
 	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /resume", Hidden: true},
 	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for this and future embedded sessions of the same tool, even after restarting LCR"},
 	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
+	{Name: "show-status", Usage: "/show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
+	{Name: "dev-show-status", Usage: "/dev-show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
 	{Name: "compact", Usage: "/compact", Summary: "Compact conversation history to free up context"},
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
@@ -115,6 +118,12 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{{
 			Insert:  "/status",
 			Display: "/status",
+			Summary: "Show embedded session config, limits, and token usage",
+		}}
+	case "show-status", "dev-show-status":
+		return []Suggestion{{
+			Insert:  "/show-status",
+			Display: "/show-status",
 			Summary: "Show embedded session config, limits, and token usage",
 		}}
 	case "reconnect":
@@ -307,6 +316,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindStatus,
 			Canonical: "/status",
+		}, nil
+	case "show-status", "dev-show-status":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /show-status")
+		}
+		return Invocation{
+			Kind:      KindShowStatus,
+			Canonical: "/show-status",
 		}, nil
 	case "reconnect":
 		if strings.TrimSpace(rawArgs) != "" {

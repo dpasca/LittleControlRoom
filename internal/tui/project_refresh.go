@@ -21,6 +21,7 @@ import (
 // classifier work after embedded turns, so they need a bit more budget than
 // raw git metadata reads alone.
 const tuiProjectStatusRefreshTimeout = 30 * time.Second
+const tuiProjectDetailLoadTimeout = 8 * time.Second
 const tuiOpenAgentTaskLimit = 50
 
 type projectsMsg struct {
@@ -93,6 +94,9 @@ func (m *Model) ensureRefreshState() {
 	if m.detailReloadQueued == nil {
 		m.detailReloadQueued = make(map[string]bool)
 	}
+	if m.detailReloadErrors == nil {
+		m.detailReloadErrors = make(map[string]string)
+	}
 	if m.summaryReloadInFlight == nil {
 		m.summaryReloadInFlight = make(map[string]bool)
 	}
@@ -161,6 +165,7 @@ func (m *Model) requestDetailReloadCmd(path string) tea.Cmd {
 		return nil
 	}
 	m.ensureRefreshState()
+	delete(m.detailReloadErrors, path)
 	if m.detailReloadInFlight[path] {
 		m.detailReloadQueued[path] = true
 		return nil
@@ -230,6 +235,7 @@ func (m Model) refreshProjectStatusCmdWithOptions(path string, opts service.Scan
 	if m.isAgentTaskProjectPath(path) || m.svc == nil {
 		return nil
 	}
+	opts.SkipLinkedWorktreeStatusRefresh = true
 	return func() tea.Msg {
 		ctx := m.ctx
 		if ctx == nil {
@@ -491,9 +497,42 @@ func projectSummaryArchived(project model.ProjectSummary) bool {
 func (m Model) loadDetailCmd(path string) tea.Cmd {
 	path = normalizeProjectPath(path)
 	return func() tea.Msg {
-		d, err := m.svc.Store().GetProjectDetail(m.ctx, path, 20)
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		detailCtx, cancel := context.WithTimeout(ctx, tuiProjectDetailLoadTimeout)
+		defer cancel()
+		d, err := m.svc.Store().GetProjectDetail(detailCtx, path, 20)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("timed out after %s", tuiProjectDetailLoadTimeout.Round(time.Millisecond))
+		}
 		return detailMsg{path: path, detail: d, err: err}
 	}
+}
+
+func (m *Model) rememberDetailReloadResult(path string, err error) {
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return
+	}
+	m.ensureRefreshState()
+	if err == nil {
+		delete(m.detailReloadErrors, path)
+		return
+	}
+	m.detailReloadErrors[path] = strings.TrimSpace(err.Error())
+	if m.detailReloadErrors[path] == "" {
+		m.detailReloadErrors[path] = "unknown error"
+	}
+}
+
+func (m Model) detailReloadError(path string) string {
+	path = normalizeProjectPath(path)
+	if path == "" || len(m.detailReloadErrors) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(m.detailReloadErrors[path])
 }
 
 func (m Model) loadProjectSummaryCmd(path string) tea.Cmd {

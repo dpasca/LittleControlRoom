@@ -136,6 +136,32 @@ func TestParseReconnectCommand(t *testing.T) {
 	}
 }
 
+func TestParseShowStatusCommand(t *testing.T) {
+	inv, err := Parse("/show-status")
+	if err != nil {
+		t.Fatalf("Parse(/show-status) error = %v", err)
+	}
+	if inv.Kind != KindShowStatus {
+		t.Fatalf("Parse(/show-status) kind = %q, want %q", inv.Kind, KindShowStatus)
+	}
+	if inv.Canonical != "/show-status" {
+		t.Fatalf("Parse(/show-status) canonical = %q, want /show-status", inv.Canonical)
+	}
+}
+
+func TestParseDevShowStatusCommand(t *testing.T) {
+	inv, err := Parse("/dev-show-status")
+	if err != nil {
+		t.Fatalf("Parse(/dev-show-status) error = %v", err)
+	}
+	if inv.Kind != KindShowStatus {
+		t.Fatalf("Parse(/dev-show-status) kind = %q, want %q", inv.Kind, KindShowStatus)
+	}
+	if inv.Canonical != "/show-status" {
+		t.Fatalf("Parse(/dev-show-status) canonical = %q, want /show-status", inv.Canonical)
+	}
+}
+
 func TestParseReviewCommand(t *testing.T) {
 	inv, err := Parse("/review")
 	if err != nil {

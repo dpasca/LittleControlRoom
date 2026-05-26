@@ -1277,7 +1277,7 @@ func (s *lcagentSession) statusTextLocked() string {
 	if reasoning := strings.TrimSpace(s.reasoningEffort); reasoning != "" {
 		parts = append(parts, "reasoning effort: "+reasoning)
 	}
-	parts = append(parts, "", s.permissionsTextLocked(true))
+	parts = append(parts, s.permissionsTextLocked(true))
 	return strings.Join(parts, "\n")
 }
 

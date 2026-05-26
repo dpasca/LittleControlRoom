@@ -8255,7 +8255,9 @@ func TestHideCodexSessionRefreshesProjectStatusWhenIdle(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	projectPath := filepath.Join(t.TempDir(), "repo")
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	linkedPath := filepath.Join(root, "repo--linked")
 	runTUITestGit(t, "", "init", projectPath)
 	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
 	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
@@ -26155,16 +26157,33 @@ func TestCommitPreviewNoChangesRefreshesProjectStatus(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
+	oldLinkedUpdatedAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	if err := os.MkdirAll(linkedPath, 0o755); err != nil {
+		t.Fatalf("create linked path: %v", err)
+	}
 	if err := st.UpsertProjectState(ctx, model.ProjectState{
 		Path:          projectPath,
 		Name:          "repo",
 		PresentOnDisk: true,
+		WorktreeKind:  model.WorktreeKindMain,
+		WorktreeRootPath: projectPath,
 		InScope:       true,
 		RepoBranch:    "master",
 		RepoDirty:     true,
 		UpdatedAt:     time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("seed stale project state: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             linkedPath,
+		Name:             "repo--linked",
+		PresentOnDisk:    true,
+		WorktreeKind:     model.WorktreeKindLinked,
+		WorktreeRootPath: projectPath,
+		InScope:          true,
+		UpdatedAt:        oldLinkedUpdatedAt,
+	}); err != nil {
+		t.Fatalf("seed linked project state: %v", err)
 	}
 
 	svc := service.New(config.Default(), st, events.NewBus(), nil)
@@ -26304,6 +26323,13 @@ func TestPrepareCommitPreviewCmdRefreshesStaleProjectStatusBeforeNoChangesDialog
 	}
 	if detail.Summary.RepoDirty {
 		t.Fatalf("expected prepare command to clear stale dirty state")
+	}
+	linkedDetail, err := st.GetProjectDetail(ctx, linkedPath, 20)
+	if err != nil {
+		t.Fatalf("get linked detail after prepare refresh: %v", err)
+	}
+	if !linkedDetail.Summary.UpdatedAt.Equal(oldLinkedUpdatedAt) {
+		t.Fatalf("prepare no-changes refresh should not cascade into linked worktrees; linked updated_at = %v, want %v", linkedDetail.Summary.UpdatedAt, oldLinkedUpdatedAt)
 	}
 
 	updated, reloadCmd := m.Update(msg)

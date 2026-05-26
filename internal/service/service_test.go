@@ -3015,6 +3015,120 @@ func TestScanOnceAutoMovesProjectAndCanonicalizesOldPathActivity(t *testing.T) {
 	}
 }
 
+func TestScanOnceConsolidatesStaleMovedFromDuplicate(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	oldPath := filepath.Join(root, "LittleControlRoom--codex-session-compaction-stuck")
+	newPath := filepath.Join(root, "lcroom-codex-permissions-compare")
+	initGitRepo(t, newPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	oldSessionAt := now.Add(-20 * time.Minute)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           oldPath,
+		Name:           filepath.Base(oldPath),
+		Kind:           model.ProjectKindProject,
+		LastActivity:   oldSessionAt,
+		Status:         model.StatusPossiblyStuck,
+		AttentionScore: 60,
+		PresentOnDisk:  false,
+		InScope:        true,
+		Sessions: []model.SessionEvidence{{
+			SessionID:           "ses_stale_moved_from",
+			ProjectPath:         oldPath,
+			DetectedProjectPath: oldPath,
+			SessionFile:         filepath.Join(root, "stale-session.jsonl"),
+			Format:              "modern",
+			StartedAt:           oldSessionAt.Add(-5 * time.Minute),
+			LastEventAt:         oldSessionAt,
+		}},
+		CreatedAt: oldSessionAt,
+		UpdatedAt: oldSessionAt,
+	}); err != nil {
+		t.Fatalf("upsert old stale project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             newPath,
+		Name:             filepath.Base(newPath),
+		Kind:             model.ProjectKindProject,
+		LastActivity:     now.Add(-10 * time.Minute),
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		WorktreeRootPath: root,
+		WorktreeKind:     model.WorktreeKindLinked,
+		RepoBranch:       "(detached)",
+		RepoDirty:        true,
+		InScope:          true,
+		MovedFromPath:    oldPath,
+		MovedAt:          now.Add(-15 * time.Minute),
+		CreatedAt:        now.Add(-15 * time.Minute),
+		UpdatedAt:        now.Add(-15 * time.Minute),
+	}); err != nil {
+		t.Fatalf("upsert moved target project: %v", err)
+	}
+
+	activityAt := now.Add(-5 * time.Minute)
+	detector := &fakeDetector{
+		activities: map[string]*model.DetectorProjectActivity{
+			oldPath: fakeActivity(oldPath, "ses_detected_at_old_path", activityAt),
+		},
+	}
+	cfg := config.Default()
+	cfg.IncludePaths = []string{root}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	var targetState *model.ProjectState
+	for i := range report.States {
+		if report.States[i].Path == oldPath {
+			t.Fatalf("old duplicate path should not be scanned after consolidation: %#v", report.States)
+		}
+		if report.States[i].Path == newPath {
+			targetState = &report.States[i]
+		}
+	}
+	if targetState == nil {
+		t.Fatalf("target project missing after consolidation: %#v", report.States)
+	}
+	if targetState.MovedFromPath != oldPath {
+		t.Fatalf("moved_from_path = %s, want %s", targetState.MovedFromPath, oldPath)
+	}
+
+	if _, err := st.GetProjectDetail(ctx, oldPath, 5); err == nil {
+		t.Fatalf("expected old duplicate project to be absent after consolidation")
+	}
+	detail, err := st.GetProjectDetail(ctx, newPath, 10)
+	if err != nil {
+		t.Fatalf("get consolidated detail: %v", err)
+	}
+	if len(detail.Sessions) == 0 {
+		t.Fatalf("expected sessions to move to target project")
+	}
+	for _, session := range detail.Sessions {
+		if session.ProjectPath != newPath {
+			t.Fatalf("session project path = %s, want %s: %#v", session.ProjectPath, newPath, detail.Sessions)
+		}
+	}
+	aliases, err := st.GetPathAliases(ctx)
+	if err != nil {
+		t.Fatalf("get aliases: %v", err)
+	}
+	if alias, ok := aliases[oldPath]; !ok || alias.NewPath != newPath {
+		t.Fatalf("expected alias %s -> %s, got %#v", oldPath, newPath, aliases)
+	}
+}
+
 func TestScanOnceForgottenMissingProjectStaysHiddenUntilRediscovered(t *testing.T) {
 	t.Parallel()
 
@@ -4985,6 +5099,75 @@ func TestRefreshProjectStatusForRootSkipsForgottenMissingLinkedWorktrees(t *test
 	}
 	if updatedAt != oldUpdatedAt.Unix() {
 		t.Fatalf("missing linked worktree updated_at = %d, want unchanged %d", updatedAt, oldUpdatedAt.Unix())
+	}
+}
+
+func TestRefreshProjectStatusWithOptionsSkipsLinkedWorktreeCascade(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	linkedPath := filepath.Join(root, "repo--linked")
+	initGitRepo(t, projectPath)
+	initGitRepo(t, linkedPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             projectPath,
+		Name:             "repo",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		WorktreeRootPath: projectPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		InScope:          true,
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("seed root project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:             linkedPath,
+		Name:             "repo--linked",
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		WorktreeRootPath: projectPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+		InScope:          true,
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("seed linked project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.gitRepoStatusReader = func(_ context.Context, path string) (scanner.GitRepoStatus, error) {
+		if filepath.Clean(path) == linkedPath {
+			t.Fatalf("linked worktree git status should not be read when cascade is skipped")
+		}
+		return scanner.GitRepoStatus{Branch: "master"}, nil
+	}
+	svc.gitWorktreeInfoReader = func(_ context.Context, path string) (scanner.GitWorktreeInfo, error) {
+		if filepath.Clean(path) == linkedPath {
+			t.Fatalf("linked worktree info should not be read when cascade is skipped")
+		}
+		return scanner.GitWorktreeInfo{
+			RootPath:     projectPath,
+			TopLevelPath: projectPath,
+			Kind:         scanner.GitWorktreeKindMain,
+		}, nil
+	}
+	svc.gitWorktreeListReader = func(context.Context, string) ([]scanner.GitWorktree, error) {
+		t.Fatalf("linked worktree list should not be read when cascade is skipped")
+		return nil, nil
+	}
+
+	if err := svc.RefreshProjectStatusWithOptions(ctx, projectPath, ScanOptions{SkipLinkedWorktreeStatusRefresh: true}); err != nil {
+		t.Fatalf("RefreshProjectStatusWithOptions() error = %v", err)
 	}
 }
 

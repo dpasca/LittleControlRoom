@@ -115,6 +115,7 @@ type ScanReport struct {
 
 type ScanOptions struct {
 	ForceRetryFailedClassifications bool
+	SkipLinkedWorktreeStatusRefresh bool
 }
 
 func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []detectors.Detector) *Service {
@@ -913,6 +914,16 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			return ScanReport{}, fmt.Errorf("reload project state after moves: %w", err)
 		}
 	}
+	consolidatedMovedDuplicates, err := s.consolidateMovedFromProjectDuplicates(ctx, oldMap, now)
+	if err != nil {
+		return ScanReport{}, err
+	}
+	if consolidatedMovedDuplicates > 0 {
+		oldMap, err = s.store.GetProjectSummaryMap(ctx)
+		if err != nil {
+			return ScanReport{}, fmt.Errorf("reload project state after moved duplicate consolidation: %w", err)
+		}
+	}
 
 	aliases, err := s.store.GetPathAliases(ctx)
 	if err != nil {
@@ -1323,6 +1334,50 @@ func (s *Service) currentProjectDetailForScan(ctx context.Context, path string) 
 		return model.ProjectDetail{}, false, fmt.Errorf("reload project state for scan: %w", err)
 	}
 	return detail, true, nil
+}
+
+func (s *Service) consolidateMovedFromProjectDuplicates(ctx context.Context, projects map[string]model.ProjectSummary, now time.Time) (int, error) {
+	targetsByOldPath := map[string][]string{}
+	for targetPath, project := range projects {
+		oldPath := filepath.Clean(strings.TrimSpace(project.MovedFromPath))
+		targetPath = filepath.Clean(targetPath)
+		if oldPath == "" || oldPath == "." || oldPath == targetPath {
+			continue
+		}
+		if _, ok := projects[oldPath]; !ok {
+			continue
+		}
+		targetsByOldPath[oldPath] = append(targetsByOldPath[oldPath], targetPath)
+	}
+
+	oldPaths := make([]string, 0, len(targetsByOldPath))
+	for oldPath := range targetsByOldPath {
+		oldPaths = append(oldPaths, oldPath)
+	}
+	sort.Strings(oldPaths)
+
+	consolidated := 0
+	for _, oldPath := range oldPaths {
+		targets := targetsByOldPath[oldPath]
+		sort.Strings(targets)
+		if len(targets) != 1 || projectPathExists(oldPath) {
+			continue
+		}
+		newPath := targets[0]
+		if err := s.store.ConsolidateProjectPath(ctx, oldPath, newPath, now); err != nil {
+			return consolidated, fmt.Errorf("consolidate moved duplicate %s -> %s: %w", oldPath, newPath, err)
+		}
+		if err := s.store.UpsertPathAlias(ctx, model.PathAlias{
+			OldPath:   oldPath,
+			NewPath:   newPath,
+			Reason:    "moved_from_project_duplicate",
+			UpdatedAt: now,
+		}); err != nil {
+			return consolidated, fmt.Errorf("persist moved duplicate alias %s -> %s: %w", oldPath, newPath, err)
+		}
+		consolidated++
+	}
+	return consolidated, nil
 }
 
 func (s *Service) detectProjectActivities(ctx context.Context, scope scanner.PathScope, internalWorkspaceRoot string) (map[string]*model.DetectorProjectActivity, error) {
@@ -2266,7 +2321,7 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 	}, runtime.cfg, runtime.classifier, opts); err != nil {
 		return err
 	}
-	if worktreeKind == model.WorktreeKindMain {
+	if worktreeKind == model.WorktreeKindMain && !opts.SkipLinkedWorktreeStatusRefresh {
 		return s.refreshLinkedWorktreeStatusesForRoot(ctx, detail.Summary.Path)
 	}
 	return nil

@@ -13,6 +13,8 @@ type codexStatusBlockData struct {
 	ThreadID           string
 	ProjectPath        string
 	CWD                string
+	SessionStatus      string
+	RoutePreset        string
 	Model              string
 	ModelProvider      string
 	ReasoningEffort    string
@@ -22,6 +24,7 @@ type codexStatusBlockData struct {
 	Sandbox            string
 	Network            string
 	WritableRoots      string
+	Permissions        string
 	ContextTokens      int64
 	TotalTokens        int64
 	ModelContextWindow int64
@@ -96,7 +99,7 @@ func parseCodexStatusBlock(body string) (codexStatusBlockData, bool) {
 		return codexStatusBlockData{}, false
 	}
 	switch strings.TrimSpace(lines[0]) {
-	case "Embedded Codex status", "Embedded OpenCode status":
+	case "Embedded Codex status", "Embedded OpenCode status", "Embedded LCAgent status":
 	default:
 		return codexStatusBlockData{}, false
 	}
@@ -122,10 +125,14 @@ func parseCodexStatusBlock(body string) (codexStatusBlockData, bool) {
 		switch key {
 		case "thread":
 			status.ThreadID = value
+		case "status":
+			status.SessionStatus = value
 		case "project":
 			status.ProjectPath = value
 		case "cwd":
 			status.CWD = value
+		case "route preset":
+			status.RoutePreset = value
 		case "model":
 			status.Model = value
 		case "model provider":
@@ -138,6 +145,8 @@ func parseCodexStatusBlock(body string) (codexStatusBlockData, bool) {
 			status.ServiceTier = value
 		case "approval":
 			status.Approval = value
+		case "permissions":
+			status.Permissions = value
 		case "sandbox":
 			status.Sandbox = value
 		case "network":
@@ -240,6 +249,15 @@ func renderCodexStatusSummaryRows(status codexStatusBlockData, width int) []stri
 	}
 	if status.ReasoningEffort != "" {
 		rows = append(rows, renderCodexStatusField("Reasoning", reasoningStyle.Render(status.ReasoningEffort), labelWidth))
+	}
+	if status.RoutePreset != "" {
+		rows = append(rows, renderCodexStatusField("Route", valueStyle.Render(status.RoutePreset), labelWidth))
+	}
+	if status.SessionStatus != "" {
+		rows = append(rows, renderCodexStatusField("Status", valueStyle.Render(status.SessionStatus), labelWidth))
+	}
+	if status.Permissions != "" {
+		rows = append(rows, renderCodexStatusField("Perms", valueStyle.Render(status.Permissions), labelWidth))
 	}
 	if status.Agent != "" {
 		rows = append(rows, renderCodexStatusField("Agent", valueStyle.Render(status.Agent), labelWidth))

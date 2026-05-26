@@ -21,6 +21,8 @@ type codexTranscriptRenderOptions struct {
 	fullHistory bool
 }
 
+const lcAgentStatusCollapsedText = "Embedded LCAgent status is hidden. Use /show-status (or /dev-show-status) to view it."
+
 type codexTranscriptLinkSpan struct {
 	Target    codexArtifactOpenTarget
 	StartLine int
@@ -33,6 +35,9 @@ func (m Model) renderCodexTranscriptEntriesWithLinks(snapshot codexapp.Snapshot,
 
 func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan) {
 	entries := codexTranscriptEntriesFromSnapshot(snapshot)
+	if !m.isCodexLCAgentStatusVisible(snapshot.ProjectPath) {
+		entries = collapseLCAgentStatusEntries(entries)
+	}
 	if len(entries) == 0 {
 		return "", nil
 	}
@@ -113,6 +118,37 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 	// Flush trailing reasoning (model still thinking)
 	flushReasoning()
 	return strings.Join(blocks, ""), links
+}
+
+func collapseLCAgentStatusEntries(entries []codexapp.TranscriptEntry) []codexapp.TranscriptEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	collapsed := make([]codexapp.TranscriptEntry, 0, len(entries))
+	changed := false
+	for _, entry := range entries {
+		if entry.Kind != codexapp.TranscriptStatus || !isLCAgentStatusEntry(entry.Text) {
+			collapsed = append(collapsed, entry)
+			continue
+		}
+		collapsed = append(collapsed, codexapp.TranscriptEntry{
+			Kind: entry.Kind,
+			Text: lcAgentStatusCollapsedText,
+		})
+		changed = true
+	}
+	if !changed {
+		return entries
+	}
+	return collapsed
+}
+
+func isLCAgentStatusEntry(text string) bool {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	if len(lines) == 0 {
+		return false
+	}
+	return strings.TrimSpace(lines[0]) == "Embedded LCAgent status"
 }
 
 func codexTranscriptEntriesFromSnapshot(snapshot codexapp.Snapshot) []codexapp.TranscriptEntry {

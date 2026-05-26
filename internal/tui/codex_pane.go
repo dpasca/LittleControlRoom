@@ -128,6 +128,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexToolAnswers == nil {
 		m.codexToolAnswers = make(map[string]codexToolAnswerState)
 	}
+	if m.codexLCAgentStatusVisible == nil {
+		m.codexLCAgentStatusVisible = make(map[string]struct{})
+	}
 	if m.codexSnapshots == nil {
 		m.codexSnapshots = make(map[string]codexapp.Snapshot)
 	}
@@ -667,6 +670,7 @@ func (m *Model) dropCodexSnapshot(projectPath string) {
 	delete(m.codexSnapshots, projectPath)
 	delete(m.codexTranscriptRev, projectPath)
 	delete(m.codexTranscriptFullHistory, projectPath)
+	delete(m.codexLCAgentStatusVisible, projectPath)
 	m.resetCodexTranscriptCaches(projectPath)
 }
 
@@ -765,6 +769,30 @@ func (m *Model) loadFullCodexTranscriptHistory(projectPath string) {
 	}
 	m.codexTranscriptFullHistory[projectPath] = struct{}{}
 	m.resetCodexTranscriptCaches(projectPath)
+}
+
+func (m Model) isCodexLCAgentStatusVisible(projectPath string) bool {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" || len(m.codexLCAgentStatusVisible) == 0 {
+		return false
+	}
+	_, ok := m.codexLCAgentStatusVisible[projectPath]
+	return ok
+}
+
+func (m *Model) setCodexLCAgentStatusVisible(projectPath string, visible bool) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.codexLCAgentStatusVisible == nil {
+		m.codexLCAgentStatusVisible = make(map[string]struct{})
+	}
+	if visible {
+		m.codexLCAgentStatusVisible[projectPath] = struct{}{}
+		return
+	}
+	delete(m.codexLCAgentStatusVisible, projectPath)
 }
 
 func (m Model) codexTranscriptCacheMatches(projectPath string, width int) bool {
@@ -1778,7 +1806,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
-			if snapshot.Closed && (inv.Kind == codexslash.KindModel || inv.Kind == codexslash.KindStatus || inv.Kind == codexslash.KindCompact || inv.Kind == codexslash.KindReview || inv.Kind == codexslash.KindGoal || inv.Kind == codexslash.KindPermissions) {
+			if snapshot.Closed && (inv.Kind == codexslash.KindModel ||
+				inv.Kind == codexslash.KindStatus ||
+				inv.Kind == codexslash.KindShowStatus ||
+				inv.Kind == codexslash.KindCompact ||
+				inv.Kind == codexslash.KindReview ||
+				inv.Kind == codexslash.KindGoal ||
+				inv.Kind == codexslash.KindPermissions) {
 				m.status = label + " session is closed. Use /resume, /new, or /reconnect to reopen it."
 				return m, nil
 			}
@@ -1805,7 +1839,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.openCodexModelPickerLoading()
 				m.status = "Loading embedded " + label + " models..."
 				return m, m.openCodexModelPickerCmd()
-			case codexslash.KindStatus:
+			case codexslash.KindStatus, codexslash.KindShowStatus:
+				m.setCodexLCAgentStatusVisible(snapshot.ProjectPath, true)
 				m.status = "Reading embedded " + label + " status..."
 				return m, m.showVisibleCodexStatusCmd()
 			case codexslash.KindGoal:

@@ -243,6 +243,7 @@ type Model struct {
 	codexArtifactPicker         *codexArtifactPickerState
 	codexArtifactLinkScans      map[string]codexArtifactLinkScanState
 	codexArtifactLinkScanSeq    int64
+	codexLCAgentStatusVisible   map[string]struct{}
 	codexSlashSelected          int
 	codexToolAnswers            map[string]codexToolAnswerState
 	codexViewport               viewport.Model
@@ -275,6 +276,7 @@ type Model struct {
 	worktreeExpanded        map[string]bool
 	detailReloadInFlight    map[string]bool
 	detailReloadQueued      map[string]bool
+	detailReloadErrors      map[string]string
 	summaryReloadInFlight   map[string]bool
 	summaryReloadQueued     map[string]bool
 	lcagentTraceQuality     map[string]projectLCAgentTraceQuality
@@ -634,6 +636,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		managedBrowserStates:       make(map[string]browserctl.ManagedPlaywrightState),
 		detailReloadInFlight:       make(map[string]bool),
 		detailReloadQueued:         make(map[string]bool),
+		detailReloadErrors:         make(map[string]string),
 		summaryReloadInFlight:      make(map[string]bool),
 		summaryReloadQueued:        make(map[string]bool),
 		nowFn:                      time.Now,
@@ -1500,6 +1503,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCPURemediationTaskCreatedMsg(msg)
 	case detailMsg:
 		reloadCmd := m.finishDetailReloadCmd(msg.path)
+		m.rememberDetailReloadResult(msg.path, msg.err)
 		if targetPath := m.currentDetailTargetPath(); targetPath != "" && normalizeProjectPath(msg.path) != targetPath {
 			return m, reloadCmd
 		}
@@ -5197,7 +5201,7 @@ func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionInte
 		if err != nil {
 			var noChangesErr service.NoChangesToCommitError
 			if errors.As(err, &noChangesErr) {
-				if refreshErr := m.svc.RefreshProjectStatus(m.ctx, path); refreshErr == nil {
+				if _, refreshErr := m.refreshProjectStatusAfterGitAction(path); refreshErr == nil {
 					previewMsg.refreshedProjectState = true
 				}
 			}
@@ -5331,7 +5335,7 @@ func (m Model) resumeCommitPreviewCmd(cached service.CommitPreview, messageOverr
 		if err != nil {
 			var noChangesErr service.NoChangesToCommitError
 			if errors.As(err, &noChangesErr) {
-				if refreshErr := m.svc.RefreshProjectStatus(m.ctx, cached.ProjectPath); refreshErr == nil {
+				if _, refreshErr := m.refreshProjectStatusAfterGitAction(cached.ProjectPath); refreshErr == nil {
 					previewMsg.refreshedProjectState = true
 				}
 			}
@@ -5396,10 +5400,9 @@ func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCom
 		if result.Warning != "" {
 			status = result.Warning
 		}
-		refresh := invalidateProjectData(preview.ProjectPath)
-		if err := m.svc.RefreshProjectStatus(m.ctx, preview.ProjectPath); err != nil {
+		refresh, refreshErr := m.refreshProjectStatusAfterGitAction(preview.ProjectPath)
+		if refreshErr != nil {
 			status = status + ". Repo status will refresh shortly."
-			refresh = invalidateProjectScan(m.visibleDetailPathForProject(preview.ProjectPath), false)
 		}
 		return actionMsg{
 			projectPath:            preview.ProjectPath,
@@ -5421,13 +5424,31 @@ func (m Model) pushCmd(path string) tea.Cmd {
 		if strings.TrimSpace(status) == "" {
 			status = "Push complete"
 		}
-		refresh := invalidateProjectData(path)
-		if err := m.svc.RefreshProjectStatus(m.ctx, path); err != nil {
+		refresh, refreshErr := m.refreshProjectStatusAfterGitAction(path)
+		if refreshErr != nil {
 			status = status + ". Repo status will refresh shortly."
-			refresh = invalidateProjectScan(m.visibleDetailPathForProject(path), false)
 		}
 		return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, refresh: refresh, err: nil}
 	}
+}
+
+func (m Model) refreshProjectStatusAfterGitAction(path string) (projectInvalidationIntent, error) {
+	if m.svc == nil {
+		return invalidateProjectScan(m.visibleDetailPathForProject(path), false), fmt.Errorf("service unavailable")
+	}
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, tuiProjectStatusRefreshTimeout)
+	defer cancel()
+	err := m.svc.RefreshProjectStatusWithOptions(refreshCtx, path, service.ScanOptions{
+		SkipLinkedWorktreeStatusRefresh: true,
+	})
+	if err != nil {
+		return invalidateProjectScan(m.visibleDetailPathForProject(path), false), err
+	}
+	return invalidateProjectData(path), nil
 }
 
 func shortID(id string) string {

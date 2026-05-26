@@ -238,6 +238,9 @@ func (m Model) todoDialogDetailPending(projectPath string) bool {
 	if m.detailReloadInFlight[projectPath] || m.detailReloadQueued[projectPath] {
 		return true
 	}
+	if m.detailReloadError(projectPath) != "" {
+		return false
+	}
 	return normalizeProjectPath(m.detail.Summary.Path) != projectPath
 }
 
@@ -1558,6 +1561,10 @@ func (m Model) renderTodoDialogOverlay(body string, bodyW, bodyH int) string {
 	if len(items) == 0 {
 		if projectSummary.TotalTODOCount > 0 && m.todoDialogDetailPending(dialog.ProjectPath) {
 			lines = append(lines, detailMutedStyle.Render("Loading TODOs..."))
+		} else if errText := m.detailReloadError(dialog.ProjectPath); projectSummary.TotalTODOCount > 0 && errText != "" {
+			lines = append(lines, detailWarningStyle.Render("TODOs could not load"))
+			lines = append(lines, detailMutedStyle.Render(truncateText(errText, panelInnerW)))
+			lines = append(lines, detailMutedStyle.Render("Close and reopen the dialog to retry"))
 		} else if projectSummary.TotalTODOCount > 0 {
 			lines = append(lines, detailWarningStyle.Render(fmt.Sprintf("TODO count says %d total, but the list did not load yet", projectSummary.TotalTODOCount)))
 			lines = append(lines, detailMutedStyle.Render("Close and reopen the dialog to retry"))

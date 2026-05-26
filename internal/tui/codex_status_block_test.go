@@ -87,6 +87,60 @@ func TestRenderCodexTranscriptEntriesRendersOpenCodeStatusCard(t *testing.T) {
 	}
 }
 
+func TestRenderCodexTranscriptEntriesCollapsesLCAgentStatusByDefault(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptStatus,
+				Text: strings.Join([]string{
+					"Embedded LCAgent status",
+					"status: running",
+					"route preset: default",
+					"model: gpt-5.4",
+					"reasoning effort: medium",
+				}, "\n"),
+			},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 80))
+	if !strings.Contains(rendered, "Embedded LCAgent status is hidden") {
+		t.Fatalf("rendered transcript should show collapsed LCAgent status by default: %q", rendered)
+	}
+	if strings.Contains(rendered, "status: running") {
+		t.Fatalf("collapsed transcript should not include raw LCAgent status lines by default: %q", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesShowsLCAgentStatusWhenVisible(t *testing.T) {
+	projectPath := "/tmp/demo"
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptStatus,
+				Text: strings.Join([]string{
+					"Embedded LCAgent status",
+					"status: running",
+					"route preset: default",
+					"permissions: medium",
+					"model: gpt-5.4",
+					"reasoning effort: medium",
+				}, "\n"),
+			},
+		},
+	}
+	m := Model{codexLCAgentStatusVisible: map[string]struct{}{projectPath: {}}}
+
+	rendered := ansi.Strip(m.renderCodexTranscriptEntries(snapshot, 80))
+	if strings.Contains(rendered, lcAgentStatusCollapsedText) {
+		t.Fatalf("rendered transcript should show full LCAgent status when enabled: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Route:") || !strings.Contains(rendered, "default") {
+		t.Fatalf("rendered LCAgent status should include route preset details: %q", rendered)
+	}
+}
+
 func TestRenderCodexTranscriptEntriesRendersGenericLabelsInline(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{

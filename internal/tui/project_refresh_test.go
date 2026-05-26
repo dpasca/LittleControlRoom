@@ -428,6 +428,51 @@ func TestOpenTodoDialogRequestsFreshDetailWhenSummaryHasTodosButDetailIsStale(t 
 	}
 }
 
+func TestTodoDialogShowsDetailLoadErrorInsteadOfLoadingForever(t *testing.T) {
+	projectPath := "/tmp/demo"
+	project := model.ProjectSummary{
+		Path:           projectPath,
+		Name:           "demo",
+		OpenTODOCount:  1,
+		TotalTODOCount: 1,
+	}
+	m := Model{
+		projects: []model.ProjectSummary{project},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/other"},
+		},
+		todoDialog: &todoDialogState{
+			ProjectPath: projectPath,
+			ProjectName: "demo",
+		},
+		detailReloadInFlight: map[string]bool{
+			projectPath: true,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.Update(detailMsg{
+		path: projectPath,
+		err:  fmt.Errorf("timed out after 8s"),
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("failed detail reload should not schedule follow-up work")
+	}
+	if got.todoDialogDetailPending(projectPath) {
+		t.Fatal("failed detail reload should not leave the TODO dialog pending forever")
+	}
+	rendered := ansi.Strip(got.renderTodoDialogOverlay("", 100, 24))
+	if strings.Contains(rendered, "Loading TODOs") {
+		t.Fatalf("dialog should stop showing loading after a detail error, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "TODOs could not load") || !strings.Contains(rendered, "timed out after 8s") {
+		t.Fatalf("dialog should show the detail load error, got %q", rendered)
+	}
+}
+
 func TestSlashTodoUsesRepoRootAndRequestsFreshDetailForLinkedWorktree(t *testing.T) {
 	rootPath := "/tmp/repo"
 	worktreePath := "/tmp/repo--todo-fix"
