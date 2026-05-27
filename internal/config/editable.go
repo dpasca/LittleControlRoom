@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -126,6 +127,25 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		HideReasoningSections:     cfg.HideReasoningSections,
 		PrivacyMode:               cfg.PrivacyMode,
 	}
+}
+
+func AppConfigFromEditableSettings(base AppConfig, settings EditableSettings) AppConfig {
+	cfg := base
+	settingsValue := reflect.ValueOf(settings)
+	cfgValue := reflect.ValueOf(&cfg).Elem()
+	settingsType := settingsValue.Type()
+	for i := 0; i < settingsValue.NumField(); i++ {
+		settingsField := settingsType.Field(i)
+		cfgField := cfgValue.FieldByName(settingsField.Name)
+		if !cfgField.IsValid() || !cfgField.CanSet() {
+			continue
+		}
+		value := settingsValue.Field(i)
+		if value.Type().AssignableTo(cfgField.Type()) {
+			cfgField.Set(value)
+		}
+	}
+	return cfg
 }
 
 func (s EditableSettings) OpenAICompatibleModel(backend AIBackend) string {
@@ -431,26 +451,10 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 }
 
 func validateEditableSettings(settings EditableSettings) error {
-	cfg := Default()
-	cfg.AIBackend = settings.AIBackend
-	cfg.BossChatBackend = settings.BossChatBackend
+	cfg := AppConfigFromEditableSettings(Default(), settings)
 	cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
 	cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
-	cfg.OpenAIAPIKey = settings.OpenAIAPIKey
-	cfg.OpenRouterAPIKey = settings.OpenRouterAPIKey
-	cfg.DeepSeekAPIKey = settings.DeepSeekAPIKey
-	cfg.MoonshotAPIKey = settings.MoonshotAPIKey
-	cfg.MLXBaseURL = settings.MLXBaseURL
-	cfg.MLXAPIKey = settings.MLXAPIKey
-	cfg.MLXModel = settings.MLXModel
-	cfg.OllamaBaseURL = settings.OllamaBaseURL
-	cfg.OllamaAPIKey = settings.OllamaAPIKey
-	cfg.OllamaModel = settings.OllamaModel
-	cfg.IncludePaths = append([]string(nil), settings.IncludePaths...)
-	cfg.ExcludePaths = append([]string(nil), settings.ExcludePaths...)
-	cfg.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
-	cfg.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
 	cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
@@ -460,10 +464,6 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.EmbeddedLCAgentModel = strings.TrimSpace(settings.EmbeddedLCAgentModel)
 	cfg.EmbeddedLCAgentReasoning = strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
-	cfg.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
-	cfg.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
-	cfg.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
-	cfg.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
 	cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
 	cfg.LCAgentRoutePreset = strings.TrimSpace(settings.LCAgentRoutePreset)
@@ -482,12 +482,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	cfg.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
 	cfg.LCAgentWebSearchURL = strings.TrimSpace(settings.LCAgentWebSearchURL)
-	cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
-	cfg.ScanInterval = settings.ScanInterval
-	cfg.ActiveThreshold = settings.ActiveThreshold
-	cfg.StuckThreshold = settings.StuckThreshold
-	cfg.HideReasoningSections = settings.HideReasoningSections
 	return validate(cfg)
 }
 

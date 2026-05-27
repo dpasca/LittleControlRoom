@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const aiStatsFailedProjectLimit = 5
@@ -19,8 +20,8 @@ func (m *Model) openAIStatsDialog() tea.Cmd {
 	m.showPerf = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "AI stats open. Press Esc to close"
-	return nil
+	m.status = "AI stats open. Press c to copy, r to refresh, or Esc to close"
+	return m.refreshSetupSnapshotCmd(false)
 }
 
 func (m *Model) closeAIStatsDialog(status string) {
@@ -32,10 +33,29 @@ func (m *Model) closeAIStatsDialog(status string) {
 
 func (m Model) updateAIStatsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case "c":
+		return m, m.copyAIStatsToClipboard()
+	case "r":
+		m.status = "Refreshing AI backend status..."
+		return m, m.refreshSetupSnapshotCmd(false)
 	case "esc", "enter", "?":
 		m.closeAIStatsDialog("AI stats closed")
 	}
 	return m, nil
+}
+
+func (m *Model) copyAIStatsToClipboard() tea.Cmd {
+	if err := clipboardTextWriter(m.formatAIStatsCopyText()); err != nil {
+		m.reportError("AI stats copy failed", err, "")
+		return nil
+	}
+	m.err = nil
+	m.status = "Copied AI stats to clipboard"
+	return nil
+}
+
+func (m Model) formatAIStatsCopyText() string {
+	return strings.TrimSpace(ansi.Strip(m.renderAIStatsContent(100)))
 }
 
 func (m Model) renderAIStats(bodyW int) string {
@@ -96,11 +116,12 @@ func (m Model) renderAIStatsContent(width int) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, detailSectionStyle.Render("Errors"))
+	lines = append(lines, detailSectionStyle.Render("Assessment Attention"))
 	if totalFailed == 0 {
 		lines = append(lines, detailField("Check", detailValueStyle.Render("none right now")))
 	} else {
 		lines = append(lines, detailField("Check", detailDangerStyle.Render(fmt.Sprintf("%d project(s) need attention", totalFailed))))
+		lines = append(lines, commandPaletteHintStyle.Render("These are project assessment states, not /errors entries."))
 		for _, projectName := range failedProjects {
 			lines = append(lines, detailDangerStyle.Render("- "+truncateText(projectName, max(12, width-4))))
 		}
@@ -113,6 +134,8 @@ func (m Model) renderAIStatsContent(width int) string {
 	lines = append(lines, commandPaletteHintStyle.Render("Open /ai whenever you want these internal counters again."))
 	lines = append(lines, "")
 	lines = append(lines, renderHelpPanelActionRow(
+		renderDialogAction("c", "copy", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	))
 	return strings.Join(lines, "\n")
@@ -142,7 +165,7 @@ func (m Model) aiStatsBackendStatus() (config.AIBackend, aibackend.Status) {
 		return backend, aibackend.Status{
 			Backend: backend,
 			Label:   backend.Label(),
-			Detail:  "Backend status check pending. Open /setup to refresh it now.",
+			Detail:  "Backend status check pending. Press r to refresh it now.",
 		}
 	}
 }

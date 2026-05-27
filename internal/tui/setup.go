@@ -91,22 +91,17 @@ func (m *Model) closeSetupMode(status string) {
 }
 
 func (m Model) refreshSetupSnapshotCmd(openOnStartup bool) tea.Cmd {
-	settings := m.currentSettingsBaseline()
+	cfg := setupDetectionConfig(m.currentSettingsBaseline())
 	return func() tea.Msg {
-		cfg := config.Default()
-		cfg.AIBackend = settings.AIBackend
-		cfg.OpenAIAPIKey = settings.OpenAIAPIKey
-		cfg.MLXBaseURL = settings.MLXBaseURL
-		cfg.MLXAPIKey = settings.MLXAPIKey
-		cfg.MLXModel = settings.MLXModel
-		cfg.OllamaBaseURL = settings.OllamaBaseURL
-		cfg.OllamaAPIKey = settings.OllamaAPIKey
-		cfg.OllamaModel = settings.OllamaModel
 		return setupSnapshotMsg{
 			snapshot:      aibackend.Detect(m.ctx, cfg),
 			openOnStartup: openOnStartup,
 		}
 	}
+}
+
+func setupDetectionConfig(settings config.EditableSettings) config.AppConfig {
+	return config.AppConfigFromEditableSettings(config.Default(), settings)
 }
 
 func (m Model) saveSetupCmd(settings config.EditableSettings) tea.Cmd {

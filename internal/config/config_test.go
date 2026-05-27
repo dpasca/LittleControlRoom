@@ -596,6 +596,65 @@ func TestParseNormalizesDirectLCAgentProviderModelPrefixes(t *testing.T) {
 	}
 }
 
+func TestAppConfigFromEditableSettingsCopiesSharedFields(t *testing.T) {
+	settingsValue := reflect.ValueOf(&EditableSettings{}).Elem()
+	settingsType := settingsValue.Type()
+	for i := 0; i < settingsValue.NumField(); i++ {
+		field := settingsType.Field(i)
+		if _, ok := reflect.TypeOf(AppConfig{}).FieldByName(field.Name); !ok {
+			continue
+		}
+		settingsValue.Field(i).Set(testEditableSettingsValue(t, field.Name, field.Type))
+	}
+
+	settings := settingsValue.Interface().(EditableSettings)
+	cfg := AppConfigFromEditableSettings(Default(), settings)
+	cfgValue := reflect.ValueOf(cfg)
+	for i := 0; i < settingsValue.NumField(); i++ {
+		field := settingsType.Field(i)
+		cfgField := cfgValue.FieldByName(field.Name)
+		if !cfgField.IsValid() {
+			continue
+		}
+		want := settingsValue.Field(i).Interface()
+		got := cfgField.Interface()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s was not copied from EditableSettings to AppConfig: got %#v, want %#v", field.Name, got, want)
+		}
+	}
+}
+
+func testEditableSettingsValue(t *testing.T, fieldName string, typ reflect.Type) reflect.Value {
+	t.Helper()
+	switch typ {
+	case reflect.TypeOf(AIBackend("")):
+		return reflect.ValueOf(AIBackendDeepSeek)
+	case reflect.TypeOf(codexcli.Preset("")):
+		return reflect.ValueOf(codexcli.PresetYolo)
+	case reflect.TypeOf(browserctl.Policy{}):
+		return reflect.ValueOf(browserctl.Policy{
+			ManagementMode:     browserctl.ManagementModeObserve,
+			DefaultBrowserMode: browserctl.BrowserModeHeaded,
+			LoginMode:          browserctl.LoginModePromote,
+			IsolationScope:     browserctl.IsolationScopeProject,
+		})
+	case reflect.TypeOf(time.Duration(0)):
+		return reflect.ValueOf(17 * time.Minute)
+	}
+	switch typ.Kind() {
+	case reflect.String:
+		return reflect.ValueOf("value-for-" + fieldName).Convert(typ)
+	case reflect.Bool:
+		return reflect.ValueOf(true).Convert(typ)
+	case reflect.Slice:
+		if typ.Elem().Kind() == reflect.String {
+			return reflect.ValueOf([]string{"value-for-" + fieldName, "second-" + fieldName}).Convert(typ)
+		}
+	}
+	t.Fatalf("no test value for %s (%s)", fieldName, typ)
+	return reflect.Zero(typ)
+}
+
 func TestSaveEditableSettingsNormalizesDirectLCAgentProviderModelPrefixes(t *testing.T) {
 	useTempHome(t)
 	configPath := filepath.Join(t.TempDir(), "config.toml")

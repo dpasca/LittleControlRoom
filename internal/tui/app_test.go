@@ -21713,6 +21713,37 @@ func TestStartupSetupSnapshotCmdRunsWhenBackendUnset(t *testing.T) {
 	}
 }
 
+func TestSetupDetectionConfigIncludesCloudProviderSettings(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendDeepSeek
+	settings.BossChatBackend = config.AIBackendDeepSeek
+	settings.BossHelmModel = "deepseek-v4-pro"
+	settings.BossUtilityModel = "deepseek-v4-flash"
+	settings.OpenAIAPIKey = "openai-key"
+	settings.OpenRouterAPIKey = "openrouter-key"
+	settings.DeepSeekAPIKey = "deepseek-key"
+	settings.MoonshotAPIKey = "moonshot-key"
+
+	cfg := setupDetectionConfig(settings)
+	if cfg.AIBackend != config.AIBackendDeepSeek {
+		t.Fatalf("AIBackend = %s, want %s", cfg.AIBackend, config.AIBackendDeepSeek)
+	}
+	if cfg.BossChatBackend != config.AIBackendDeepSeek {
+		t.Fatalf("BossChatBackend = %s, want %s", cfg.BossChatBackend, config.AIBackendDeepSeek)
+	}
+	if cfg.BossHelmModel != "deepseek-v4-pro" || cfg.BossUtilityModel != "deepseek-v4-flash" {
+		t.Fatalf("boss models = %q/%q, want DeepSeek models", cfg.BossHelmModel, cfg.BossUtilityModel)
+	}
+	if cfg.OpenAIAPIKey != "openai-key" || cfg.OpenRouterAPIKey != "openrouter-key" || cfg.DeepSeekAPIKey != "deepseek-key" || cfg.MoonshotAPIKey != "moonshot-key" {
+		t.Fatalf("cloud provider keys were not copied into setup detection config")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := aibackend.DetectStatus(ctx, cfg, config.AIBackendDeepSeek); !got.Ready {
+		t.Fatalf("DeepSeek status should be ready with saved key: %#v", got)
+	}
+}
+
 func TestOpenSetupModePrefersReadyBackendOverUnavailableCurrentBackend(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenAIAPI
@@ -27088,11 +27119,49 @@ func TestDispatchAICommandOpensAIStatsDialog(t *testing.T) {
 	if !got.showAIStats {
 		t.Fatalf("dispatchCommand(/ai) should open the AI stats dialog")
 	}
-	if got.status != "AI stats open. Press Esc to close" {
+	if got.status != "AI stats open. Press c to copy, r to refresh, or Esc to close" {
 		t.Fatalf("status = %q, want AI stats open status", got.status)
 	}
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/ai) should refresh backend status")
+	}
+}
+
+func TestUpdateAIStatsModeCopiesDetailsToClipboard(t *testing.T) {
+	prevWriter := clipboardTextWriter
+	var copied string
+	clipboardTextWriter = func(text string) error {
+		copied = text
+		return nil
+	}
+	t.Cleanup(func() {
+		clipboardTextWriter = prevWriter
+	})
+
+	m := Model{
+		showAIStats:  true,
+		setupChecked: true,
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendDeepSeek,
+			DeepSeek: aibackend.Status{
+				Backend: config.AIBackendDeepSeek,
+				Label:   "DeepSeek",
+				Ready:   true,
+				Detail:  "Saved DeepSeek API key ready.",
+			},
+		},
+	}
+
+	updated, cmd := m.updateAIStatsMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("dispatchCommand(/ai) should not return an async command")
+		t.Fatalf("copy should happen synchronously")
+	}
+	if !strings.Contains(copied, "AI Stats - DeepSeek") || !strings.Contains(copied, "Selected: DeepSeek") {
+		t.Fatalf("copied AI stats missing backend details: %q", copied)
+	}
+	if got.status != "Copied AI stats to clipboard" {
+		t.Fatalf("status = %q, want copied confirmation", got.status)
 	}
 }
 
@@ -27138,7 +27207,7 @@ func TestRenderAIStatsOverlayPreservesBackground(t *testing.T) {
 	m.syncDetailViewport(false)
 
 	rendered := ansi.Strip(m.View())
-	if !strings.Contains(rendered, "AI Stats") || !strings.Contains(rendered, "Errors") || !strings.Contains(rendered, "demo") {
+	if !strings.Contains(rendered, "AI Stats") || !strings.Contains(rendered, "Assessment Attention") || !strings.Contains(rendered, "demo") {
 		t.Fatalf("View() should show the AI stats overlay content: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "╭────╭") {
