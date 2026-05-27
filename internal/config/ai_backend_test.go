@@ -43,6 +43,35 @@ func TestParseAIBackendAcceptsMLXAndOllama(t *testing.T) {
 	}
 }
 
+func TestParseAIBackendAcceptsSharedCloudAPIs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		raw  string
+		want AIBackend
+	}{
+		{raw: "openrouter", want: AIBackendOpenRouter},
+		{raw: "deepseek", want: AIBackendDeepSeek},
+		{raw: "moonshot", want: AIBackendMoonshot},
+	}
+	for _, tt := range tests {
+		got, err := ParseAIBackend(tt.raw)
+		if err != nil {
+			t.Fatalf("ParseAIBackend(%q) error = %v", tt.raw, err)
+		}
+		if got != tt.want {
+			t.Fatalf("ParseAIBackend(%q) = %q, want %q", tt.raw, got, tt.want)
+		}
+		boss, err := ParseBossChatBackend(tt.raw)
+		if err != nil {
+			t.Fatalf("ParseBossChatBackend(%q) error = %v", tt.raw, err)
+		}
+		if boss != tt.want {
+			t.Fatalf("ParseBossChatBackend(%q) = %q, want %q", tt.raw, boss, tt.want)
+		}
+	}
+}
+
 func TestAIBackendLocalProviderHelpers(t *testing.T) {
 	t.Parallel()
 
@@ -74,6 +103,9 @@ func TestResolveBossChatBackendIsSeparateFromProjectBackend(t *testing.T) {
 	}
 	if got := ResolveBossChatBackend(AIBackendOllama, ""); got != AIBackendOllama {
 		t.Fatalf("ResolveBossChatBackend(ollama, no key) = %q, want ollama", got)
+	}
+	if got := ResolveBossChatBackend(AIBackendDeepSeek, ""); got != AIBackendDeepSeek {
+		t.Fatalf("ResolveBossChatBackend(deepseek, no key) = %q, want deepseek", got)
 	}
 	if _, err := ParseBossChatBackend("opencode"); err == nil {
 		t.Fatalf("ParseBossChatBackend(opencode) error = nil, want unsupported backend error")

@@ -23192,6 +23192,16 @@ func TestProviderChoicesAreRoleSpecific(t *testing.T) {
 	}
 
 	bossChoices := m.providerChoices(providerChoiceRoleBossChat, settings)
+	foundBossDeepSeek := false
+	for _, choice := range bossChoices {
+		if choice.Value == config.AIBackendDeepSeek {
+			foundBossDeepSeek = true
+			break
+		}
+	}
+	if !foundBossDeepSeek {
+		t.Fatalf("boss chat choices should include direct DeepSeek")
+	}
 	if got := providerChoiceLabel(bossChoices, config.AIBackendUnset, "missing"); got != "Auto" {
 		t.Fatalf("auto boss label = %q, want Auto", got)
 	}

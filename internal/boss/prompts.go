@@ -41,6 +41,8 @@ func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return "Boss chat is not connected yet. Configure an OpenAI API key in /setup, then reopen boss mode."
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+		return "Boss chat is not connected yet. Configure a " + backend.Label() + " API key in /setup, then reopen boss mode."
 	case config.AIBackendMLX:
 		return "Boss chat is not connected yet. Choose MLX in /setup and confirm the local endpoint/model."
 	case config.AIBackendOllama:
@@ -48,9 +50,9 @@ func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	case config.AIBackendDisabled:
 		return "Boss chat is disabled. Use /setup to enable a boss chat backend."
 	case config.AIBackendCodex, config.AIBackendOpenCode, config.AIBackendClaude:
-		return "Boss chat currently uses direct API inference, not embedded engineer sessions. Choose OpenAI API, MLX, or Ollama for boss chat while keeping project reports on your preferred backend."
+		return "Boss chat currently uses direct API inference, not embedded engineer sessions. Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, MLX, or Ollama for boss chat while keeping project reports on your preferred backend."
 	default:
-		return "Boss chat is not connected yet. Boss mode supports direct API chat through OpenAI API, MLX, or Ollama."
+		return "Boss chat is not connected yet. Boss mode supports direct API chat through OpenAI API, OpenRouter, DeepSeek, Moonshot, MLX, or Ollama."
 	}
 }
 

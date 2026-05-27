@@ -34,6 +34,12 @@ func (m Model) bossChatConfigured() bool {
 	switch settings.BossChatBackend {
 	case config.AIBackendOpenAIAPI:
 		return strings.TrimSpace(settings.OpenAIAPIKey) != ""
+	case config.AIBackendOpenRouter:
+		return strings.TrimSpace(settings.OpenRouterAPIKey) != ""
+	case config.AIBackendDeepSeek:
+		return strings.TrimSpace(settings.DeepSeekAPIKey) != ""
+	case config.AIBackendMoonshot:
+		return strings.TrimSpace(settings.MoonshotAPIKey) != ""
 	case config.AIBackendMLX:
 		return strings.TrimSpace(settings.MLXBaseURL) != "" || config.AIBackendMLX.DefaultOpenAICompatibleBaseURL() != ""
 	case config.AIBackendOllama:
@@ -69,6 +75,12 @@ func (m Model) bossSetupPromptReason() string {
 		return "Boss chat is set to Ollama, but the local endpoint still needs setup."
 	case settings.BossChatBackend == config.AIBackendOpenAIAPI && strings.TrimSpace(settings.OpenAIAPIKey) == "":
 		return "Boss chat is set to OpenAI API, but needs a saved OpenAI API key before it can start."
+	case settings.BossChatBackend == config.AIBackendOpenRouter && strings.TrimSpace(settings.OpenRouterAPIKey) == "":
+		return "Boss chat is set to OpenRouter, but needs a saved OpenRouter API key before it can start."
+	case settings.BossChatBackend == config.AIBackendDeepSeek && strings.TrimSpace(settings.DeepSeekAPIKey) == "":
+		return "Boss chat is set to DeepSeek, but needs a saved DeepSeek API key before it can start."
+	case settings.BossChatBackend == config.AIBackendMoonshot && strings.TrimSpace(settings.MoonshotAPIKey) == "":
+		return "Boss chat is set to Moonshot, but needs a saved Moonshot API key before it can start."
 	case settings.BossChatBackend == config.AIBackendUnset:
 		return "Boss chat is not configured yet. Open setup to choose a boss chat backend."
 	case settings.BossChatBackend != config.AIBackendOpenAIAPI:

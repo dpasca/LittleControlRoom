@@ -32,25 +32,31 @@ type Status struct {
 }
 
 type Snapshot struct {
-	Selected  config.AIBackend
-	OpenAIAPI Status
-	Codex     Status
-	OpenCode  Status
-	Claude    Status
-	MLX       Status
-	Ollama    Status
+	Selected   config.AIBackend
+	OpenAIAPI  Status
+	OpenRouter Status
+	DeepSeek   Status
+	Moonshot   Status
+	Codex      Status
+	OpenCode   Status
+	Claude     Status
+	MLX        Status
+	Ollama     Status
 }
 
 func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
 	selected := cfg.EffectiveAIBackend()
 	return Snapshot{
-		Selected:  selected,
-		OpenAIAPI: detectOpenAIAPI(cfg),
-		Codex:     detectCodex(ctx),
-		OpenCode:  detectOpenCode(ctx),
-		Claude:    detectClaudeCode(ctx),
-		MLX:       detectOpenAICompatibleLocal(ctx, cfg, config.AIBackendMLX),
-		Ollama:    detectOpenAICompatibleLocal(ctx, cfg, config.AIBackendOllama),
+		Selected:   selected,
+		OpenAIAPI:  detectOpenAIAPI(cfg),
+		OpenRouter: detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendOpenRouter),
+		DeepSeek:   detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendDeepSeek),
+		Moonshot:   detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendMoonshot),
+		Codex:      detectCodex(ctx),
+		OpenCode:   detectOpenCode(ctx),
+		Claude:     detectClaudeCode(ctx),
+		MLX:        detectOpenAICompatibleLocal(ctx, cfg, config.AIBackendMLX),
+		Ollama:     detectOpenAICompatibleLocal(ctx, cfg, config.AIBackendOllama),
 	}
 }
 
@@ -58,6 +64,8 @@ func DetectStatus(ctx context.Context, cfg config.AppConfig, backend config.AIBa
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return detectOpenAIAPI(cfg)
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+		return detectOpenAICompatibleCloud(ctx, cfg, backend)
 	case config.AIBackendCodex:
 		return detectCodex(ctx)
 	case config.AIBackendOpenCode:
@@ -86,6 +94,12 @@ func (s Snapshot) StatusFor(backend config.AIBackend) Status {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return s.OpenAIAPI
+	case config.AIBackendOpenRouter:
+		return s.OpenRouter
+	case config.AIBackendDeepSeek:
+		return s.DeepSeek
+	case config.AIBackendMoonshot:
+		return s.Moonshot
 	case config.AIBackendCodex:
 		return s.Codex
 	case config.AIBackendOpenCode:
@@ -125,6 +139,52 @@ func detectOpenAIAPI(cfg config.AppConfig) Status {
 	status.Authenticated = true
 	status.Ready = true
 	status.Detail = "Saved OpenAI API key ready."
+	return status
+}
+
+func detectOpenAICompatibleCloud(ctx context.Context, cfg config.AppConfig, backend config.AIBackend) Status {
+	label := backend.Label()
+	apiKey := cfg.OpenAICompatibleAPIKey(backend)
+	baseURL := cfg.OpenAICompatibleBaseURL(backend)
+	status := Status{
+		Backend:  backend,
+		Label:    label,
+		Endpoint: baseURL,
+		Detail:   "No saved " + label + " API key.",
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		status.LoginHint = "Open /settings and save a " + label + " API key."
+		return status
+	}
+	if baseURL == "" {
+		status.LoginHint = "Open /settings and save a base URL for " + label + "."
+		return status
+	}
+	status.Installed = true
+	status.Authenticated = true
+	status.Ready = true
+	status.ActiveModel = cfg.OpenAICompatibleModel(backend)
+	status.Detail = "Saved " + label + " API key ready."
+
+	discovery := llm.NewOpenAICompatibleModelDiscovery(baseURL, apiKey, detectTimeout)
+	if err := discovery.Discover(ctx); err != nil {
+		return status
+	}
+	models := discovery.Models()
+	status.Models = append([]string(nil), models...)
+	configuredModel := strings.TrimSpace(cfg.OpenAICompatibleModel(backend))
+	if configuredModel == "" || len(models) == 0 {
+		return status
+	}
+	for _, model := range models {
+		if strings.EqualFold(strings.TrimSpace(model), configuredModel) {
+			status.ActiveModel = model
+			status.Detail = fmt.Sprintf("%s ready (using %s)", label, model)
+			return status
+		}
+	}
+	status.Detail = fmt.Sprintf("%s key ready; default model %s was not returned by /models.", label, configuredModel)
+	status.LoginHint = "Set an explicit compatible model for this task, or choose another provider."
 	return status
 }
 

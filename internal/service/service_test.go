@@ -405,6 +405,65 @@ func TestBossChatRunnerSupportsLocalOpenAICompatibleBackend(t *testing.T) {
 	}
 }
 
+func TestBossChatRunnerSupportsDirectDeepSeekBackend(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOpenAIAPI
+	cfg.BossChatBackend = config.AIBackendDeepSeek
+	cfg.DeepSeekAPIKey = "ds-test-example"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossTextRunner()
+	if runner == nil {
+		t.Fatalf("NewBossTextRunner() runner = nil, want DeepSeek text runner")
+	}
+	if backend != config.AIBackendDeepSeek {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendDeepSeek)
+	}
+	if modelName != config.DefaultDeepSeekModel {
+		t.Fatalf("boss chat model = %q, want %q", modelName, config.DefaultDeepSeekModel)
+	}
+
+	planner, plannerModel, plannerBackend := svc.NewBossJSONRunner()
+	if planner == nil {
+		t.Fatalf("NewBossJSONRunner() planner = nil, want DeepSeek structured runner")
+	}
+	if plannerBackend != config.AIBackendDeepSeek {
+		t.Fatalf("boss chat planner backend = %s, want %s", plannerBackend, config.AIBackendDeepSeek)
+	}
+	if plannerModel != config.DefaultDeepSeekModel {
+		t.Fatalf("boss chat planner model = %q, want %q", plannerModel, config.DefaultDeepSeekModel)
+	}
+}
+
+func TestProjectReportsSupportDirectDeepSeekBackend(t *testing.T) {
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendDeepSeek
+	cfg.DeepSeekAPIKey = "ds-test-example"
+	svc := &Service{
+		cfg:             cfg,
+		llmUsageTracker: llm.NewUsageTracker(),
+		backendDetector: func(_ context.Context, _ config.AppConfig, backend config.AIBackend) aibackend.Status {
+			return aibackend.Status{Backend: backend, Ready: true, Installed: true, Authenticated: true}
+		},
+	}
+
+	svc.configureAIClientsLocked()
+	if svc.classifier == nil {
+		t.Fatalf("classifier = nil, want DeepSeek-backed classifier manager")
+	}
+	if svc.commitMessageSuggester == nil {
+		t.Fatalf("commitMessageSuggester = nil, want DeepSeek-backed suggester")
+	}
+	if svc.todoSuggester == nil {
+		t.Fatalf("todoSuggester = nil, want DeepSeek-backed todo suggester")
+	}
+}
+
 func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	t.Parallel()
 

@@ -63,6 +63,11 @@ func bossChatRelationshipSummary(settings config.EditableSettings) string {
 			return "Both use the shared OpenAI API connection."
 		}
 		return "Boss chat uses the shared OpenAI API connection; project reports stay separate."
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+		if settings.AIBackend == settings.BossChatBackend {
+			return "Both use " + settings.BossChatBackend.Label() + "."
+		}
+		return "Boss chat uses " + settings.BossChatBackend.Label() + "; project reports stay separate."
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if settings.AIBackend == settings.BossChatBackend {
 			return "Both use " + settings.BossChatBackend.Label() + "."
@@ -120,7 +125,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 		} else {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
-			detail = "Choose OpenAI API, MLX, Ollama, or Off when you want /boss configured."
+			detail = "Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, MLX, Ollama, or Off when you want /boss configured."
 		}
 	}
 	if backend == config.AIBackendDisabled {
@@ -135,6 +140,17 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 			detail = "Uses the same OpenAI API connection as project reports."
 		} else {
 			detail = "Uses the shared OpenAI API connection; project reports stay separate."
+		}
+	}
+	if backend == config.AIBackendOpenRouter || backend == config.AIBackendDeepSeek || backend == config.AIBackendMoonshot {
+		if !cloudBackendAPIKeySaved(settings, backend) {
+			state = "needs setup"
+			stateStyle = detailWarningStyle
+			detail = "Needs a saved " + backend.Label() + " API key."
+		} else if settings.AIBackend == backend {
+			detail = "Uses the same " + backend.Label() + " API connection as project reports."
+		} else {
+			detail = "Uses the shared " + backend.Label() + " API connection; project reports stay separate."
 		}
 	}
 	if backend == config.AIBackendMLX || backend == config.AIBackendOllama {
@@ -175,6 +191,19 @@ func (m Model) inferenceBackendStatus(backend config.AIBackend, settings config.
 		if strings.TrimSpace(status.Detail) == "" {
 			status.Detail = "Saved OpenAI API key ready."
 		}
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+		if !cloudBackendAPIKeySaved(settings, backend) {
+			status.Ready = false
+			status.Detail = "No saved " + backend.Label() + " API key."
+			status.LoginHint = "Open /settings and save a " + backend.Label() + " API key."
+			return status, true
+		}
+		status.Installed = true
+		status.Authenticated = true
+		status.Ready = true
+		if strings.TrimSpace(status.Detail) == "" {
+			status.Detail = "Saved " + backend.Label() + " API key ready."
+		}
 	case config.AIBackendDisabled:
 		status.Ready = true
 		if strings.TrimSpace(status.Detail) == "" {
@@ -190,6 +219,21 @@ func (m Model) inferenceBackendStatus(backend config.AIBackend, settings config.
 		}
 	}
 	return status, known
+}
+
+func cloudBackendAPIKeySaved(settings config.EditableSettings, backend config.AIBackend) bool {
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return strings.TrimSpace(settings.OpenAIAPIKey) != ""
+	case config.AIBackendOpenRouter:
+		return strings.TrimSpace(settings.OpenRouterAPIKey) != ""
+	case config.AIBackendDeepSeek:
+		return strings.TrimSpace(settings.DeepSeekAPIKey) != ""
+	case config.AIBackendMoonshot:
+		return strings.TrimSpace(settings.MoonshotAPIKey) != ""
+	default:
+		return false
+	}
 }
 
 func inferenceStatusKnown(status aibackend.Status) bool {
