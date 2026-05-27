@@ -21,8 +21,11 @@ type EditableSettings struct {
 	BossUtilityModel          string
 	OpenAIAPIKey              string
 	OpenRouterAPIKey          string
+	OpenRouterModel           string
 	DeepSeekAPIKey            string
+	DeepSeekModel             string
 	MoonshotAPIKey            string
+	MoonshotModel             string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -79,8 +82,11 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		BossUtilityModel:          cfg.BossUtilityModel,
 		OpenAIAPIKey:              cfg.OpenAIAPIKey,
 		OpenRouterAPIKey:          cfg.OpenRouterAPIKey,
+		OpenRouterModel:           cfg.OpenRouterModel,
 		DeepSeekAPIKey:            cfg.DeepSeekAPIKey,
+		DeepSeekModel:             cfg.DeepSeekModel,
 		MoonshotAPIKey:            cfg.MoonshotAPIKey,
+		MoonshotModel:             cfg.MoonshotModel,
 		MLXBaseURL:                cfg.MLXBaseURL,
 		MLXAPIKey:                 cfg.MLXAPIKey,
 		MLXModel:                  cfg.MLXModel,
@@ -151,11 +157,11 @@ func AppConfigFromEditableSettings(base AppConfig, settings EditableSettings) Ap
 func (s EditableSettings) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
 	case AIBackendOpenRouter:
-		return DefaultOpenRouterModel
+		return trimmedOrDefault(s.OpenRouterModel, DefaultOpenRouterModel)
 	case AIBackendDeepSeek:
-		return DefaultDeepSeekModel
+		return trimmedOrDefault(s.DeepSeekModel, DefaultDeepSeekModel)
 	case AIBackendMoonshot:
-		return DefaultMoonshotModel
+		return trimmedOrDefault(s.MoonshotModel, DefaultMoonshotModel)
 	case AIBackendMLX:
 		return strings.TrimSpace(s.MLXModel)
 	case AIBackendOllama:
@@ -171,8 +177,12 @@ func (s *EditableSettings) SetOpenAICompatibleModel(backend AIBackend, model str
 	}
 	model = strings.TrimSpace(model)
 	switch backend {
-	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot:
-		return
+	case AIBackendOpenRouter:
+		s.OpenRouterModel = model
+	case AIBackendDeepSeek:
+		s.DeepSeekModel = model
+	case AIBackendMoonshot:
+		s.MoonshotModel = model
 	case AIBackendMLX:
 		s.MLXModel = model
 	case AIBackendOllama:
@@ -455,6 +465,9 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
 	cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
+	cfg.OpenRouterModel = strings.TrimSpace(settings.OpenRouterModel)
+	cfg.DeepSeekModel = strings.TrimSpace(settings.DeepSeekModel)
+	cfg.MoonshotModel = strings.TrimSpace(settings.MoonshotModel)
 	cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
@@ -536,11 +549,20 @@ func renderEditableSettings(settings EditableSettings) string {
 	if settings.OpenRouterAPIKey != "" {
 		lines = append(lines, fmt.Sprintf("openrouter_api_key = %s", strconv.Quote(settings.OpenRouterAPIKey)))
 	}
+	if value := strings.TrimSpace(settings.OpenRouterModel); value != "" {
+		lines = append(lines, fmt.Sprintf("openrouter_model = %s", strconv.Quote(value)))
+	}
 	if settings.DeepSeekAPIKey != "" {
 		lines = append(lines, fmt.Sprintf("deepseek_api_key = %s", strconv.Quote(settings.DeepSeekAPIKey)))
 	}
+	if value := strings.TrimSpace(settings.DeepSeekModel); value != "" {
+		lines = append(lines, fmt.Sprintf("deepseek_model = %s", strconv.Quote(value)))
+	}
 	if settings.MoonshotAPIKey != "" {
 		lines = append(lines, fmt.Sprintf("moonshot_api_key = %s", strconv.Quote(settings.MoonshotAPIKey)))
+	}
+	if value := strings.TrimSpace(settings.MoonshotModel); value != "" {
+		lines = append(lines, fmt.Sprintf("moonshot_model = %s", strconv.Quote(value)))
 	}
 	if value := strings.TrimSpace(settings.MLXBaseURL); value != "" {
 		lines = append(lines, fmt.Sprintf("mlx_base_url = %s", strconv.Quote(value)))
@@ -562,8 +584,11 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if settings.OpenAIAPIKey != "" ||
 		strings.TrimSpace(settings.OpenRouterAPIKey) != "" ||
+		strings.TrimSpace(settings.OpenRouterModel) != "" ||
 		strings.TrimSpace(settings.DeepSeekAPIKey) != "" ||
+		strings.TrimSpace(settings.DeepSeekModel) != "" ||
 		strings.TrimSpace(settings.MoonshotAPIKey) != "" ||
+		strings.TrimSpace(settings.MoonshotModel) != "" ||
 		strings.TrimSpace(settings.MLXBaseURL) != "" ||
 		strings.TrimSpace(settings.MLXAPIKey) != "" ||
 		strings.TrimSpace(settings.MLXModel) != "" ||

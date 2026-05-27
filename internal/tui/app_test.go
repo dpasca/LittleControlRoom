@@ -21081,8 +21081,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 41 {
-		t.Fatalf("settings field count = %d, want 41", len(got.settingsFields))
+	if len(got.settingsFields) != 44 {
+		t.Fatalf("settings field count = %d, want 44", len(got.settingsFields))
 	}
 }
 
@@ -23465,6 +23465,54 @@ func TestSettingsProjectAndBossDrilldownsUseSharedOpenAIConnection(t *testing.T)
 	}
 	bossRendered := ansi.Strip(boss.renderSettingsContent(100, 24))
 	for _, want := range []string{"Boss Chat Setup", "Shared OpenAI Connection", "Boss Models", "Default: gpt-5.5", "Default: gpt-5.4-mini"} {
+		if !strings.Contains(bossRendered, want) {
+			t.Fatalf("boss chat drilldown missing %q: %q", want, bossRendered)
+		}
+	}
+}
+
+func TestSettingsDeepSeekProjectAndBossModelsAreSeparate(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendDeepSeek
+	settings.BossChatBackend = config.AIBackendDeepSeek
+	settings.DeepSeekAPIKey = "ds-shared-example"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            120,
+		height:           30,
+	}
+
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)
+	project := updated.(Model)
+	projectFields := project.visibleSettingsDrilldownFieldOrder(settingsDrilldownProjectReports)
+	if !slices.Contains(projectFields, settingsFieldDeepSeekModel) {
+		t.Fatalf("project report drilldown should include DeepSeek project model field: %#v", projectFields)
+	}
+	projectRendered := ansi.Strip(project.renderSettingsContent(100, 24))
+	for _, want := range []string{"DeepSeek project model", "Default: " + config.DefaultDeepSeekModel} {
+		if !strings.Contains(projectRendered, want) {
+			t.Fatalf("project report drilldown missing %q: %q", want, projectRendered)
+		}
+	}
+
+	updated, _ = project.closeSettingsDrilldown("")
+	back := updated.(Model)
+	updated, _ = back.openSettingsDrilldown(settingsDrilldownBossChat)
+	boss := updated.(Model)
+	bossFields := boss.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
+	if slices.Contains(bossFields, settingsFieldDeepSeekModel) {
+		t.Fatalf("boss chat drilldown should not use the project DeepSeek model field: %#v", bossFields)
+	}
+	bossRendered := ansi.Strip(boss.renderSettingsContent(100, 24))
+	for _, want := range []string{
+		"Boss helm model",
+		"Default: " + config.DefaultDeepSeekProModel + " from DeepSeek",
+		"Boss utility model",
+		"Default: " + config.DefaultDeepSeekModel + " from DeepSeek",
+	} {
 		if !strings.Contains(bossRendered, want) {
 			t.Fatalf("boss chat drilldown missing %q: %q", want, bossRendered)
 		}

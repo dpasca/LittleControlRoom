@@ -608,17 +608,23 @@ func configuredBossHelmModelForBackend(cfg config.AppConfig, backend config.AIBa
 	if modelName := strings.TrimSpace(cfg.BossHelmModel); modelName != "" {
 		return modelName
 	}
-	switch backend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
-		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
-			return modelName
-		}
-	}
 	if modelName := strings.TrimSpace(cfg.BossChatModel); modelName != "" {
 		return modelName
 	}
 	switch backend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter:
+		return config.DefaultOpenRouterModel
+	case config.AIBackendDeepSeek:
+		return config.DefaultDeepSeekProModel
+	case config.AIBackendMoonshot:
+		return config.DefaultMoonshotModel
+	case config.AIBackendMLX, config.AIBackendOllama:
+		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
+			return modelName
+		}
+	}
+	switch backend {
+	case config.AIBackendOpenRouter, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
 		return ""
 	}
 	return config.DefaultBossHelmModel
@@ -632,7 +638,13 @@ func configuredBossUtilityModelForBackend(cfg config.AppConfig, backend config.A
 		return modelName
 	}
 	switch backend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter:
+		return config.DefaultOpenRouterModel
+	case config.AIBackendDeepSeek:
+		return config.DefaultDeepSeekModel
+	case config.AIBackendMoonshot:
+		return config.DefaultMoonshotModel
+	case config.AIBackendMLX, config.AIBackendOllama:
 		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
 			return modelName
 		}

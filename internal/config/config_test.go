@@ -83,8 +83,11 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"boss_utility_model = \"gpt-5.4-mini\"\n" +
 		"openai_api_key = \"sk-live-example\"\n" +
 		"openrouter_api_key = \"or-live-example\"\n" +
+		"openrouter_model = \"deepseek/deepseek-v4-flash\"\n" +
 		"deepseek_api_key = \"ds-live-example\"\n" +
+		"deepseek_model = \"deepseek-v4-flash\"\n" +
 		"moonshot_api_key = \"mk-live-example\"\n" +
+		"moonshot_model = \"kimi-k2.6\"\n" +
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
 		"exclude_project_patterns = [\"quickgame_*\", \"secret-demo\"]\n" +
@@ -127,11 +130,20 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	if got, want := cfg.OpenRouterAPIKey, "or-live-example"; got != want {
 		t.Fatalf("openrouter api key = %q, want %q", got, want)
 	}
+	if got, want := cfg.OpenRouterModel, "deepseek/deepseek-v4-flash"; got != want {
+		t.Fatalf("openrouter model = %q, want %q", got, want)
+	}
 	if got, want := cfg.DeepSeekAPIKey, "ds-live-example"; got != want {
 		t.Fatalf("deepseek api key = %q, want %q", got, want)
 	}
+	if got, want := cfg.DeepSeekModel, "deepseek-v4-flash"; got != want {
+		t.Fatalf("deepseek model = %q, want %q", got, want)
+	}
 	if got, want := cfg.MoonshotAPIKey, "mk-live-example"; got != want {
 		t.Fatalf("moonshot api key = %q, want %q", got, want)
+	}
+	if got, want := cfg.MoonshotModel, "kimi-k2.6"; got != want {
+		t.Fatalf("moonshot model = %q, want %q", got, want)
 	}
 	if got, want := cfg.BossChatBackend, AIBackendOpenAIAPI; got != want {
 		t.Fatalf("boss chat backend = %q, want %q", got, want)
@@ -724,8 +736,11 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		BossUtilityModel:          "gpt-5.4-mini",
 		OpenAIAPIKey:              "sk-test-example",
 		OpenRouterAPIKey:          "or-test-example",
+		OpenRouterModel:           "deepseek/deepseek-v4-flash",
 		DeepSeekAPIKey:            "ds-test-example",
+		DeepSeekModel:             "deepseek-v4-pro",
 		MoonshotAPIKey:            "mk-test-example",
+		MoonshotModel:             "kimi-k2.6",
 		MLXBaseURL:                "http://127.0.0.1:8080/v1",
 		MLXAPIKey:                 "mlx",
 		MLXModel:                  "mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -798,8 +813,11 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	for _, want := range []string{
 		"openrouter_api_key = \"or-test-example\"",
+		"openrouter_model = \"deepseek/deepseek-v4-flash\"",
 		"deepseek_api_key = \"ds-test-example\"",
+		"deepseek_model = \"deepseek-v4-pro\"",
 		"moonshot_api_key = \"mk-test-example\"",
+		"moonshot_model = \"kimi-k2.6\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("saved config should include %q: %q", want, text)

@@ -24,8 +24,11 @@ type AppConfig struct {
 	BossUtilityModel          string
 	OpenAIAPIKey              string
 	OpenRouterAPIKey          string
+	OpenRouterModel           string
 	DeepSeekAPIKey            string
+	DeepSeekModel             string
 	MoonshotAPIKey            string
+	MoonshotModel             string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -94,7 +97,8 @@ const (
 	DefaultBossHelmModel    = "gpt-5.5"
 	DefaultBossUtilityModel = "gpt-5.4-mini"
 	DefaultOpenRouterModel  = "deepseek/deepseek-v4-pro"
-	DefaultDeepSeekModel    = "deepseek-v4-pro"
+	DefaultDeepSeekModel    = "deepseek-v4-flash"
+	DefaultDeepSeekProModel = "deepseek-v4-pro"
 	DefaultMoonshotModel    = "kimi-k2.6"
 )
 
@@ -139,11 +143,11 @@ func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
 	case AIBackendOpenRouter:
-		return DefaultOpenRouterModel
+		return trimmedOrDefault(c.OpenRouterModel, DefaultOpenRouterModel)
 	case AIBackendDeepSeek:
-		return DefaultDeepSeekModel
+		return trimmedOrDefault(c.DeepSeekModel, DefaultDeepSeekModel)
 	case AIBackendMoonshot:
-		return DefaultMoonshotModel
+		return trimmedOrDefault(c.MoonshotModel, DefaultMoonshotModel)
 	case AIBackendMLX:
 		return strings.TrimSpace(c.MLXModel)
 	case AIBackendOllama:
@@ -161,8 +165,11 @@ type fileConfig struct {
 	BossUtilityModel          *string   `toml:"boss_utility_model"`
 	OpenAIAPIKey              *string   `toml:"openai_api_key"`
 	OpenRouterAPIKey          *string   `toml:"openrouter_api_key"`
+	OpenRouterModel           *string   `toml:"openrouter_model"`
 	DeepSeekAPIKey            *string   `toml:"deepseek_api_key"`
+	DeepSeekModel             *string   `toml:"deepseek_model"`
 	MoonshotAPIKey            *string   `toml:"moonshot_api_key"`
+	MoonshotModel             *string   `toml:"moonshot_model"`
 	MLXBaseURL                *string   `toml:"mlx_base_url"`
 	MLXAPIKey                 *string   `toml:"mlx_api_key"`
 	MLXModel                  *string   `toml:"mlx_model"`
@@ -531,8 +538,11 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.BossUtilityModel, fc.BossUtilityModel)
 	applyOptionalTrimmedString(&cfg.OpenAIAPIKey, fc.OpenAIAPIKey)
 	applyOptionalTrimmedString(&cfg.OpenRouterAPIKey, fc.OpenRouterAPIKey)
+	applyOptionalTrimmedString(&cfg.OpenRouterModel, fc.OpenRouterModel)
 	applyOptionalTrimmedString(&cfg.DeepSeekAPIKey, fc.DeepSeekAPIKey)
+	applyOptionalTrimmedString(&cfg.DeepSeekModel, fc.DeepSeekModel)
 	applyOptionalTrimmedString(&cfg.MoonshotAPIKey, fc.MoonshotAPIKey)
+	applyOptionalTrimmedString(&cfg.MoonshotModel, fc.MoonshotModel)
 	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
 	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)
 	applyOptionalTrimmedString(&cfg.MLXModel, fc.MLXModel)

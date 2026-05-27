@@ -424,8 +424,8 @@ func TestBossChatRunnerSupportsDirectDeepSeekBackend(t *testing.T) {
 	if backend != config.AIBackendDeepSeek {
 		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendDeepSeek)
 	}
-	if modelName != config.DefaultDeepSeekModel {
-		t.Fatalf("boss chat model = %q, want %q", modelName, config.DefaultDeepSeekModel)
+	if modelName != config.DefaultDeepSeekProModel {
+		t.Fatalf("boss chat model = %q, want %q", modelName, config.DefaultDeepSeekProModel)
 	}
 
 	planner, plannerModel, plannerBackend := svc.NewBossJSONRunner()
@@ -435,8 +435,19 @@ func TestBossChatRunnerSupportsDirectDeepSeekBackend(t *testing.T) {
 	if plannerBackend != config.AIBackendDeepSeek {
 		t.Fatalf("boss chat planner backend = %s, want %s", plannerBackend, config.AIBackendDeepSeek)
 	}
-	if plannerModel != config.DefaultDeepSeekModel {
-		t.Fatalf("boss chat planner model = %q, want %q", plannerModel, config.DefaultDeepSeekModel)
+	if plannerModel != config.DefaultDeepSeekProModel {
+		t.Fatalf("boss chat planner model = %q, want %q", plannerModel, config.DefaultDeepSeekProModel)
+	}
+
+	utility, utilityModel, utilityBackend := svc.NewBossUtilityJSONRunner()
+	if utility == nil {
+		t.Fatalf("NewBossUtilityJSONRunner() runner = nil, want DeepSeek utility runner")
+	}
+	if utilityBackend != config.AIBackendDeepSeek {
+		t.Fatalf("boss utility backend = %s, want %s", utilityBackend, config.AIBackendDeepSeek)
+	}
+	if utilityModel != config.DefaultDeepSeekModel {
+		t.Fatalf("boss utility model = %q, want %q", utilityModel, config.DefaultDeepSeekModel)
 	}
 }
 

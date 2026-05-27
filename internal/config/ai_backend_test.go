@@ -89,6 +89,19 @@ func TestAIBackendLocalProviderHelpers(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleModelUsesCloudOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg := Default()
+	if got := cfg.OpenAICompatibleModel(AIBackendDeepSeek); got != DefaultDeepSeekModel {
+		t.Fatalf("default DeepSeek project model = %q, want %q", got, DefaultDeepSeekModel)
+	}
+	cfg.DeepSeekModel = DefaultDeepSeekProModel
+	if got := cfg.OpenAICompatibleModel(AIBackendDeepSeek); got != DefaultDeepSeekProModel {
+		t.Fatalf("configured DeepSeek project model = %q, want %q", got, DefaultDeepSeekProModel)
+	}
+}
+
 func TestResolveBossChatBackendIsSeparateFromProjectBackend(t *testing.T) {
 	t.Parallel()
 

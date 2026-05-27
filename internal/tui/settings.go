@@ -23,8 +23,11 @@ import (
 const (
 	settingsFieldOpenAIAPIKey = iota
 	settingsFieldOpenRouterAPIKey
+	settingsFieldOpenRouterModel
 	settingsFieldDeepSeekAPIKey
+	settingsFieldDeepSeekModel
 	settingsFieldMoonshotAPIKey
+	settingsFieldMoonshotModel
 	settingsFieldBossChatBackend
 	settingsFieldBossChatModel
 	settingsFieldBossUtilityModel
@@ -684,6 +687,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.status = err.Error()
 		return m, nil
 	}
+	settings.OpenRouterModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldOpenRouterModel))
+	settings.DeepSeekModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldDeepSeekModel))
+	settings.MoonshotModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldMoonshotModel))
 	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
 	settings.EmbeddedLCAgentModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentModel))
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentReasoning))
@@ -913,16 +919,25 @@ func (m Model) settingsFieldVisible(index int) bool {
 			settings.BossChatBackend == config.AIBackendOpenRouter ||
 			settingsLCAgentCredentialFieldRelevant(settings, "openrouter") ||
 			strings.TrimSpace(settings.OpenRouterAPIKey) != ""
+	case settingsFieldOpenRouterModel:
+		return settings.AIBackend == config.AIBackendOpenRouter ||
+			strings.TrimSpace(settings.OpenRouterModel) != ""
 	case settingsFieldDeepSeekAPIKey:
 		return settings.AIBackend == config.AIBackendDeepSeek ||
 			settings.BossChatBackend == config.AIBackendDeepSeek ||
 			settingsLCAgentCredentialFieldRelevant(settings, "deepseek") ||
 			strings.TrimSpace(settings.DeepSeekAPIKey) != ""
+	case settingsFieldDeepSeekModel:
+		return settings.AIBackend == config.AIBackendDeepSeek ||
+			strings.TrimSpace(settings.DeepSeekModel) != ""
 	case settingsFieldMoonshotAPIKey:
 		return settings.AIBackend == config.AIBackendMoonshot ||
 			settings.BossChatBackend == config.AIBackendMoonshot ||
 			settingsLCAgentCredentialFieldRelevant(settings, "moonshot") ||
 			strings.TrimSpace(settings.MoonshotAPIKey) != ""
+	case settingsFieldMoonshotModel:
+		return settings.AIBackend == config.AIBackendMoonshot ||
+			strings.TrimSpace(settings.MoonshotModel) != ""
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 		return settingsBossModelFieldsRelevant(settings)
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
@@ -982,6 +997,10 @@ func settingsOpenAICompatibleFieldsRelevant(settings config.EditableSettings, ba
 	return settings.AIBackend == backend || settings.BossChatBackend == backend
 }
 
+func settingsProjectOpenAICompatibleFieldsRelevant(settings config.EditableSettings, backend config.AIBackend) bool {
+	return settings.AIBackend == backend
+}
+
 func (m Model) focusSettingsProviderDetail(backend config.AIBackend) (tea.Model, tea.Cmd) {
 	fieldIndex := settingsProviderDetailField(backend)
 	if fieldIndex < 0 || len(m.settingsFields) == 0 || !m.settingsFieldVisible(fieldIndex) {
@@ -1026,11 +1045,11 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 	switch drilldown {
 	case settingsDrilldownProjectReports:
 		fields := []int{settingsFieldAIBackend}
-		fields = append(fields, settingsProviderConnectionFields(settings.AIBackend)...)
+		fields = append(fields, settingsProjectProviderConnectionFields(settings.AIBackend)...)
 		return fields
 	case settingsDrilldownBossChat:
 		fields := []int{settingsFieldBossChatBackend}
-		fields = append(fields, settingsProviderConnectionFields(settings.BossChatBackend)...)
+		fields = append(fields, settingsBossProviderConnectionFields(settings.BossChatBackend)...)
 		if settingsBossModelFieldsRelevant(settings) {
 			fields = append(fields, settingsFieldBossChatModel, settingsFieldBossUtilityModel)
 		}
@@ -1065,6 +1084,29 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 }
 
 func settingsProviderConnectionFields(backend config.AIBackend) []int {
+	return settingsProjectProviderConnectionFields(backend)
+}
+
+func settingsProjectProviderConnectionFields(backend config.AIBackend) []int {
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return []int{settingsFieldOpenAIAPIKey}
+	case config.AIBackendOpenRouter:
+		return []int{settingsFieldOpenRouterAPIKey, settingsFieldOpenRouterModel}
+	case config.AIBackendDeepSeek:
+		return []int{settingsFieldDeepSeekAPIKey, settingsFieldDeepSeekModel}
+	case config.AIBackendMoonshot:
+		return []int{settingsFieldMoonshotAPIKey, settingsFieldMoonshotModel}
+	case config.AIBackendMLX:
+		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
+	case config.AIBackendOllama:
+		return []int{settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel}
+	default:
+		return nil
+	}
+}
+
+func settingsBossProviderConnectionFields(backend config.AIBackend) []int {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return []int{settingsFieldOpenAIAPIKey}
@@ -1378,8 +1420,11 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
 	settings.OpenRouterAPIKey = m.settingsFieldValue(settingsFieldOpenRouterAPIKey)
+	settings.OpenRouterModel = m.settingsFieldValue(settingsFieldOpenRouterModel)
 	settings.DeepSeekAPIKey = m.settingsFieldValue(settingsFieldDeepSeekAPIKey)
+	settings.DeepSeekModel = m.settingsFieldValue(settingsFieldDeepSeekModel)
 	settings.MoonshotAPIKey = m.settingsFieldValue(settingsFieldMoonshotAPIKey)
+	settings.MoonshotModel = m.settingsFieldValue(settingsFieldMoonshotModel)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
 	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
 	settings.MLXModel = m.settingsFieldValue(settingsFieldMLXModel)
@@ -1712,11 +1757,11 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Report Runner"
 		case settingsFieldOpenAIAPIKey:
 			return "Shared OpenAI Connection"
-		case settingsFieldOpenRouterAPIKey:
+		case settingsFieldOpenRouterAPIKey, settingsFieldOpenRouterModel:
 			return "Shared OpenRouter Connection"
-		case settingsFieldDeepSeekAPIKey:
+		case settingsFieldDeepSeekAPIKey, settingsFieldDeepSeekModel:
 			return "Shared DeepSeek Connection"
-		case settingsFieldMoonshotAPIKey:
+		case settingsFieldMoonshotAPIKey, settingsFieldMoonshotModel:
 			return "Shared Moonshot Connection"
 		case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
 			return "Shared MLX Connection"
@@ -2106,7 +2151,11 @@ func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
 		return modelName + " from " + brand.BossAssistantModelEnvVar
 	}
 	switch settings.BossChatBackend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter, config.AIBackendMoonshot:
+		return config.Default().OpenAICompatibleModel(settings.BossChatBackend) + " from " + settings.BossChatBackend.Label()
+	case config.AIBackendDeepSeek:
+		return config.DefaultDeepSeekProModel + " from " + settings.BossChatBackend.Label()
+	case config.AIBackendMLX, config.AIBackendOllama:
 		if modelName := settingsOpenAICompatibleModel(settings, settings.BossChatBackend); modelName != "" {
 			return modelName + " from " + settings.BossChatBackend.Label()
 		}
@@ -2121,7 +2170,11 @@ func settingsBossUtilityDefaultLabel(settings config.EditableSettings) string {
 		return modelName + " from " + brand.BossAssistantModelEnvVar
 	}
 	switch settings.BossChatBackend {
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter, config.AIBackendMoonshot:
+		return config.Default().OpenAICompatibleModel(settings.BossChatBackend) + " from " + settings.BossChatBackend.Label()
+	case config.AIBackendDeepSeek:
+		return config.DefaultDeepSeekModel + " from " + settings.BossChatBackend.Label()
+	case config.AIBackendMLX, config.AIBackendOllama:
 		if modelName := settingsOpenAICompatibleModel(settings, settings.BossChatBackend); modelName != "" {
 			return modelName + " from " + settings.BossChatBackend.Label()
 		}
@@ -2134,11 +2187,11 @@ func settingsBossUtilityDefaultLabel(settings config.EditableSettings) string {
 func settingsOpenAICompatibleModel(settings config.EditableSettings, backend config.AIBackend) string {
 	switch backend {
 	case config.AIBackendOpenRouter:
-		return config.DefaultOpenRouterModel
+		return strings.TrimSpace(settings.OpenRouterModel)
 	case config.AIBackendDeepSeek:
-		return config.DefaultDeepSeekModel
+		return strings.TrimSpace(settings.DeepSeekModel)
 	case config.AIBackendMoonshot:
-		return config.DefaultMoonshotModel
+		return strings.TrimSpace(settings.MoonshotModel)
 	case config.AIBackendMLX:
 		return strings.TrimSpace(settings.MLXModel)
 	case config.AIBackendOllama:
@@ -2422,6 +2475,12 @@ func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
 		return "Default: " + settingsBossHelmDefaultLabel(settings)
 	case settingsFieldBossUtilityModel:
 		return "Default: " + settingsBossUtilityDefaultLabel(settings)
+	case settingsFieldOpenRouterModel:
+		return "Default: " + config.DefaultOpenRouterModel
+	case settingsFieldDeepSeekModel:
+		return "Default: " + config.DefaultDeepSeekModel
+	case settingsFieldMoonshotModel:
+		return "Default: " + config.DefaultMoonshotModel
 	case settingsFieldLCAgentModel:
 		return "Default: " + settingsLCAgentMainModel(settings)
 	case settingsFieldLCAgentUtilityModel:
@@ -2551,6 +2610,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Paste OpenRouter API key",
 			settingsSectionLCAgent,
 		),
+		newSettingsFieldWithPlaceholder(
+			"OpenRouter project model",
+			"Model ID used by OpenRouter for project reports, summaries, classification, commit messages, and TODO suggestions. Boss chat has separate model fields.",
+			settings.OpenRouterModel,
+			128,
+			"Default: "+config.DefaultOpenRouterModel,
+			settingsSectionAI,
+		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"DeepSeek API key",
 			"Shared by Project reports, Boss chat, and LCAgent when they use direct DeepSeek.",
@@ -2559,6 +2626,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			"Paste DeepSeek API key",
 			settingsSectionLCAgent,
 		),
+		newSettingsFieldWithPlaceholder(
+			"DeepSeek project model",
+			"Model ID used by direct DeepSeek for project reports, summaries, classification, commit messages, and TODO suggestions. Boss chat has separate model fields.",
+			settings.DeepSeekModel,
+			128,
+			"Default: "+config.DefaultDeepSeekModel,
+			settingsSectionAI,
+		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"Moonshot API key",
 			"Shared by Project reports, Boss chat, and LCAgent when they use direct Moonshot/Kimi.",
@@ -2566,6 +2641,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			512,
 			"Paste Moonshot API key",
 			settingsSectionLCAgent,
+		),
+		newSettingsFieldWithPlaceholder(
+			"Moonshot project model",
+			"Model ID used by Moonshot for project reports, summaries, classification, commit messages, and TODO suggestions. Boss chat has separate model fields.",
+			settings.MoonshotModel,
+			128,
+			"Default: "+config.DefaultMoonshotModel,
+			settingsSectionAI,
 		),
 		newSettingsField(
 			"Boss chat",
@@ -2885,8 +2968,11 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	settings.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	settings.OpenRouterAPIKey = strings.TrimSpace(settings.OpenRouterAPIKey)
+	settings.OpenRouterModel = strings.TrimSpace(settings.OpenRouterModel)
 	settings.DeepSeekAPIKey = strings.TrimSpace(settings.DeepSeekAPIKey)
+	settings.DeepSeekModel = strings.TrimSpace(settings.DeepSeekModel)
 	settings.MoonshotAPIKey = strings.TrimSpace(settings.MoonshotAPIKey)
+	settings.MoonshotModel = strings.TrimSpace(settings.MoonshotModel)
 	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
 	settings.MLXModel = strings.TrimSpace(settings.MLXModel)
@@ -2977,6 +3063,21 @@ func (m Model) settingsFieldHint(index int) string {
 			return field.hint + " The selected Moonshot path still needs a saved key."
 		}
 		return field.hint
+	case settingsFieldOpenRouterModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "Project reports and background helpers will request OpenRouter model " + model + ". Boss chat model fields remain separate."
+		}
+		return "Blank uses " + config.DefaultOpenRouterModel + " for project reports and background helpers."
+	case settingsFieldDeepSeekModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "Project reports and background helpers will request DeepSeek model " + model + ". Boss chat model fields remain separate."
+		}
+		return "Blank uses " + config.DefaultDeepSeekModel + " for project reports and background helpers."
+	case settingsFieldMoonshotModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "Project reports and background helpers will request Moonshot model " + model + ". Boss chat model fields remain separate."
+		}
+		return "Blank uses " + config.DefaultMoonshotModel + " for project reports and background helpers."
 	case settingsFieldBossChatBackend:
 		switch config.AIBackend(strings.TrimSpace(field.input.Value())) {
 		case config.AIBackendOpenAIAPI:

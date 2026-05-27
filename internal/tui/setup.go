@@ -516,11 +516,11 @@ func (m Model) setupConfigFieldIndexes() []int {
 	case config.AIBackendOpenAIAPI:
 		return []int{settingsFieldOpenAIAPIKey}
 	case config.AIBackendOpenRouter:
-		return []int{settingsFieldOpenRouterAPIKey}
+		return []int{settingsFieldOpenRouterAPIKey, settingsFieldOpenRouterModel}
 	case config.AIBackendDeepSeek:
-		return []int{settingsFieldDeepSeekAPIKey}
+		return []int{settingsFieldDeepSeekAPIKey, settingsFieldDeepSeekModel}
 	case config.AIBackendMoonshot:
-		return []int{settingsFieldMoonshotAPIKey}
+		return []int{settingsFieldMoonshotAPIKey, settingsFieldMoonshotModel}
 	case config.AIBackendMLX:
 		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 	case config.AIBackendOllama:
@@ -555,8 +555,11 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	}
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
 	settings.OpenRouterAPIKey = m.settingsFieldValue(settingsFieldOpenRouterAPIKey)
+	settings.OpenRouterModel = m.settingsFieldValue(settingsFieldOpenRouterModel)
 	settings.DeepSeekAPIKey = m.settingsFieldValue(settingsFieldDeepSeekAPIKey)
+	settings.DeepSeekModel = m.settingsFieldValue(settingsFieldDeepSeekModel)
 	settings.MoonshotAPIKey = m.settingsFieldValue(settingsFieldMoonshotAPIKey)
+	settings.MoonshotModel = m.settingsFieldValue(settingsFieldMoonshotModel)
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
