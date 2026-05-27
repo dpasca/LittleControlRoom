@@ -210,7 +210,8 @@ func NewOpenAICompatibleResponsesRunner(baseURL, apiKey, defaultModel string, ti
 func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OpenAICompatibleResponsesRunnerOptions) JSONSchemaRunner {
 	responsesClient := NewResponsesClientWithBaseURL(apiKey, baseURL, timeout, usage)
 	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURL(apiKey, baseURL, timeout, usage)
-	baseRunner := NewOpenAICompatibleStructuredOutputRunnerWithOptions(responsesClient, chatClient, OpenAICompatibleStructuredOutputOptions{
+	jsonModeChatClient := NewOpenAICompatibleChatCompletionsJSONModeClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	baseRunner := NewOpenAICompatibleStructuredOutputRunnerWithJSONModeFallback(responsesClient, chatClient, jsonModeChatClient, OpenAICompatibleStructuredOutputOptions{
 		PreferChatCompletions: opts.PreferChatCompletions,
 	})
 	if baseRunner == nil {

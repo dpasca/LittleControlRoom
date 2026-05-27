@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -503,6 +504,106 @@ func TestOpenAICompatibleResponsesRunnerCanPreferChatFromStart(t *testing.T) {
 	}
 	if chatCalls != 2 {
 		t.Fatalf("chat completions endpoint calls = %d, want 2", chatCalls)
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerFallsBackToJSONModeWhenJSONSchemaUnsupported(t *testing.T) {
+	t.Parallel()
+
+	var schemaChatCalls int
+	var jsonModeCalls int
+	var responsesCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/responses":
+			responsesCalls++
+			t.Fatalf("responses endpoint should not be called when chat is preferred")
+		case "/v1/chat/completions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode chat request: %v", err)
+			}
+			responseFormat, _ := body["response_format"].(map[string]any)
+			switch responseFormat["type"] {
+			case "json_schema":
+				schemaChatCalls++
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":{"message":"This response_format type is unavailable now","type":"invalid_request_error","code":"invalid_request_error"}}`))
+			case "json_object":
+				jsonModeCalls++
+				messages, _ := body["messages"].([]any)
+				if len(messages) < 2 {
+					t.Fatalf("json mode request missing messages: %#v", body)
+				}
+				user, _ := messages[1].(map[string]any)
+				if !strings.Contains(strings.ToLower(fmt.Sprint(user["content"])), "json") {
+					t.Fatalf("json mode prompt should ask for JSON: %#v", user["content"])
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{
+					"model":"qwen-local",
+					"choices":[
+						{
+							"message":{
+								"role":"assistant",
+								"content":"{\"message\":\"Use json object fallback\"}"
+							}
+						}
+					]
+				}`))
+			default:
+				t.Fatalf("unexpected response_format %#v", responseFormat)
+			}
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen-local"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "local-key", "qwen-local", time.Second, nil, OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	if runner == nil {
+		t.Fatalf("expected runner")
+	}
+
+	req := JSONSchemaRequest{
+		Model:      "qwen-local",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type": "object",
+		},
+	}
+
+	first, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first RunJSONSchema() error = %v", err)
+	}
+	if first.OutputText != "{\"message\":\"Use json object fallback\"}" {
+		t.Fatalf("first OutputText = %q, want JSON mode payload", first.OutputText)
+	}
+
+	second, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second RunJSONSchema() error = %v", err)
+	}
+	if second.OutputText != "{\"message\":\"Use json object fallback\"}" {
+		t.Fatalf("second OutputText = %q, want JSON mode payload", second.OutputText)
+	}
+	if schemaChatCalls != 1 {
+		t.Fatalf("json_schema chat calls = %d, want 1 after caching JSON mode fallback", schemaChatCalls)
+	}
+	if jsonModeCalls != 2 {
+		t.Fatalf("json_object chat calls = %d, want 2", jsonModeCalls)
+	}
+	if responsesCalls != 0 {
+		t.Fatalf("responses endpoint calls = %d, want 0", responsesCalls)
 	}
 }
 
