@@ -141,6 +141,56 @@ func TestRenderCodexTranscriptEntriesShowsLCAgentStatusWhenVisible(t *testing.T)
 	}
 }
 
+func TestRenderCodexTranscriptEntriesSuppressesLCAgentBoilerplateStatusByDefault(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptUser, Text: "which one would you suggest?"},
+			{Kind: codexapp.TranscriptStatus, Text: "Continuing LCAgent thread lct_2b918f1c9d245c160500a0e2."},
+			{Kind: codexapp.TranscriptStatus, Text: "Continuing LCAgent from lct_2b918f1c9d245c160500a0e2 [depth 1; reason continue_from; handoff assistant_message; exact replay 100 messages]"},
+			{Kind: codexapp.TranscriptStatus, Text: "Loaded exact LCAgent context from lct_2b918f1c9d245c160500a0e2 [depth 1; handoff assistant_message; 100 replay messages]"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent web search enabled: exa"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent oversized search refinement enabled: deepseek deepseek-v4-flash"},
+			{Kind: codexapp.TranscriptAgent, Text: "I would choose the simple option."},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 100))
+	for _, hidden := range []string{
+		"Continuing LCAgent",
+		"Loaded exact LCAgent context",
+		"LCAgent web search enabled",
+		"LCAgent oversized search refinement enabled",
+	} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("rendered transcript should suppress %q by default: %q", hidden, rendered)
+		}
+	}
+	for _, want := range []string{"which one would you suggest?", "I would choose the simple option."} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered transcript missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestRenderCodexTranscriptEntriesShowsLCAgentBoilerplateStatusWhenVisible(t *testing.T) {
+	projectPath := "/tmp/demo"
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptStatus, Text: "Continuing LCAgent from lct_2b918f1c9d245c160500a0e2 [depth 1; exact replay 100 messages]"},
+			{Kind: codexapp.TranscriptStatus, Text: "LCAgent web search enabled: exa"},
+		},
+	}
+	m := Model{codexLCAgentStatusVisible: map[string]struct{}{projectPath: {}}}
+
+	rendered := ansi.Strip(m.renderCodexTranscriptEntries(snapshot, 100))
+	for _, want := range []string{"Continuing LCAgent from lct_2b918f1c9d245c160500a0e2", "LCAgent web search enabled: exa"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered transcript should show %q when status is visible: %q", want, rendered)
+		}
+	}
+}
+
 func TestRenderCodexTranscriptEntriesRendersGenericLabelsInline(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Entries: []codexapp.TranscriptEntry{
