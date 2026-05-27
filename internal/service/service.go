@@ -570,9 +570,7 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
-		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, llm.OpenAICompatibleResponsesRunnerOptions{
-			PreferChatCompletions: backend.UsesCloudAPIKey(),
-		}), modelName, backend
+		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
 	}
@@ -593,9 +591,7 @@ func (s *Service) NewBossUtilityJSONRunner() (llm.JSONSchemaRunner, string, conf
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
-		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, llm.OpenAICompatibleResponsesRunnerOptions{
-			PreferChatCompletions: backend.UsesCloudAPIKey(),
-		}), modelName, backend
+		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
 	}
@@ -643,6 +639,12 @@ func configuredBossUtilityModelForBackend(cfg config.AppConfig, backend config.A
 		return ""
 	}
 	return config.DefaultBossUtilityModel
+}
+
+func openAICompatibleResponsesRunnerOptions(backend config.AIBackend, modelName string, preferChatCompletions bool) llm.OpenAICompatibleResponsesRunnerOptions {
+	return llm.OpenAICompatibleResponsesRunnerOptionsForProviderModel(string(backend), modelName, llm.OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: preferChatCompletions,
+	})
 }
 
 func (s *Service) configureAIClientsLocked() {
@@ -694,9 +696,10 @@ func (s *Service) configureAIClientsLocked() {
 			baseURL := s.cfg.OpenAICompatibleBaseURL(selectedBackend)
 			apiKey := s.cfg.OpenAICompatibleAPIKey(selectedBackend)
 			model := s.cfg.OpenAICompatibleModel(selectedBackend)
-			commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTracker(baseURL, apiKey, model, s.llmUsageTracker)
-			client = sessionclassify.NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, model, s.llmUsageTracker)
-			todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, model, s.llmUsageTracker)
+			opts := openAICompatibleResponsesRunnerOptions(selectedBackend, model, true)
+			commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
+			client = sessionclassify.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
+			todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
 		}
 	}
 	unavailableReason := ""

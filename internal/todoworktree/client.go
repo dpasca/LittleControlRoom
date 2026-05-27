@@ -73,15 +73,19 @@ func NewOpenAIClientWithUsageTracker(apiKey string, usage *llm.UsageTracker) *Op
 }
 
 func NewOpenAICompatibleClientWithUsageTracker(baseURL, apiKey, preferredModel string, usage *llm.UsageTracker) *OpenAIClient {
+	return NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, preferredModel, usage, llm.OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+}
+
+func NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, preferredModel string, usage *llm.UsageTracker, opts llm.OpenAICompatibleResponsesRunnerOptions) *OpenAIClient {
 	model := strings.TrimSpace(preferredModel)
 	if model == "" {
 		model = strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar))
 	}
 	return &OpenAIClient{
-		model: model,
-		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, suggestionHTTPTimeout, usage, llm.OpenAICompatibleResponsesRunnerOptions{
-			PreferChatCompletions: true,
-		}),
+		model:     model,
+		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, suggestionHTTPTimeout, usage, opts),
 	}
 }
 

@@ -21,7 +21,7 @@ type OpenAICompatibleChatCompletionsClient struct {
 	endpoint           string
 	httpClient         *http.Client
 	usage              *UsageTracker
-	responseFormatType string
+	responseFormatType OpenAICompatibleChatResponseFormat
 }
 
 type OpenAICompatibleStructuredOutputRunner struct {
@@ -50,23 +50,27 @@ func ChatCompletionsEndpointFromBaseURL(baseURL string) string {
 }
 
 func NewOpenAICompatibleChatCompletionsClientWithBaseURL(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker) *OpenAICompatibleChatCompletionsClient {
+	return NewOpenAICompatibleChatCompletionsClientWithBaseURLAndResponseFormat(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONSchema)
+}
+
+func NewOpenAICompatibleChatCompletionsClientWithBaseURLAndResponseFormat(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker, responseFormat OpenAICompatibleChatResponseFormat) *OpenAICompatibleChatCompletionsClient {
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
-	return NewOpenAICompatibleChatCompletionsClientWithHTTPClient(
+	client := NewOpenAICompatibleChatCompletionsClientWithHTTPClient(
 		apiKey,
 		ChatCompletionsEndpointFromBaseURL(baseURL),
 		&http.Client{Timeout: timeout},
 		usage,
 	)
+	if client != nil {
+		client.responseFormatType = normalizeOpenAICompatibleChatResponseFormat(responseFormat)
+	}
+	return client
 }
 
 func NewOpenAICompatibleChatCompletionsJSONModeClientWithBaseURL(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker) *OpenAICompatibleChatCompletionsClient {
-	client := NewOpenAICompatibleChatCompletionsClientWithBaseURL(apiKey, baseURL, timeout, usage)
-	if client != nil {
-		client.responseFormatType = "json_object"
-	}
-	return client
+	return NewOpenAICompatibleChatCompletionsClientWithBaseURLAndResponseFormat(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONObject)
 }
 
 func NewOpenAICompatibleChatCompletionsClientWithHTTPClient(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker) *OpenAICompatibleChatCompletionsClient {
@@ -87,7 +91,7 @@ func NewOpenAICompatibleChatCompletionsClientWithHTTPClient(apiKey, endpoint str
 		endpoint:           endpoint,
 		httpClient:         httpClientToUse,
 		usage:              usage,
-		responseFormatType: "json_schema",
+		responseFormatType: OpenAICompatibleChatResponseFormatJSONSchema,
 	}
 }
 
@@ -98,11 +102,8 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 
 	systemText := req.SystemText
 	userText := req.UserText
-	responseFormatType := strings.TrimSpace(c.responseFormatType)
-	if responseFormatType == "" {
-		responseFormatType = "json_schema"
-	}
-	if responseFormatType == "json_object" {
+	responseFormatType := normalizeOpenAICompatibleChatResponseFormat(c.responseFormatType)
+	if responseFormatType == OpenAICompatibleChatResponseFormatJSONObject {
 		systemText = strings.TrimSpace(req.SystemText + "\n\nReturn only valid JSON. Do not wrap the JSON in markdown.")
 		userText = buildSchemaPrompt(req, false)
 	}
@@ -120,7 +121,7 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 			},
 		},
 	}
-	if responseFormatType == "json_object" {
+	if responseFormatType == OpenAICompatibleChatResponseFormatJSONObject {
 		reqBody["response_format"] = map[string]any{
 			"type": "json_object",
 		}

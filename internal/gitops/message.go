@@ -100,15 +100,19 @@ func NewOpenAICommitMessageClientWithUsageTracker(apiKey string, usage *llm.Usag
 }
 
 func NewOpenAICompatibleCommitMessageClientWithUsageTracker(baseURL, apiKey, preferredModel string, usage *llm.UsageTracker) *OpenAICommitMessageClient {
+	return NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, preferredModel, usage, llm.OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+}
+
+func NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, preferredModel string, usage *llm.UsageTracker, opts llm.OpenAICompatibleResponsesRunnerOptions) *OpenAICommitMessageClient {
 	model := strings.TrimSpace(preferredModel)
 	if model == "" {
 		model = strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
 	}
 	return &OpenAICommitMessageClient{
-		model: model,
-		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, commitAssistantHTTPTimeout, usage, llm.OpenAICompatibleResponsesRunnerOptions{
-			PreferChatCompletions: true,
-		}),
+		model:     model,
+		responses: llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, commitAssistantHTTPTimeout, usage, opts),
 	}
 }
 

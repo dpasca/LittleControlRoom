@@ -507,6 +507,108 @@ func TestOpenAICompatibleResponsesRunnerCanPreferChatFromStart(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleProviderModelProfileMapsDeepSeekToJSONMode(t *testing.T) {
+	t.Parallel()
+
+	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("deepseek", "deepseek-v4-pro", OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	if opts.ChatResponseFormat != OpenAICompatibleChatResponseFormatJSONObject {
+		t.Fatalf("DeepSeek chat response format = %q, want %q", opts.ChatResponseFormat, OpenAICompatibleChatResponseFormatJSONObject)
+	}
+
+	openRouter := OpenAICompatibleResponsesRunnerOptionsForProviderModel("openrouter", "deepseek/deepseek-v4-pro", OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	if openRouter.ChatResponseFormat != OpenAICompatibleChatResponseFormatJSONSchema {
+		t.Fatalf("OpenRouter chat response format = %q, want %q", openRouter.ChatResponseFormat, OpenAICompatibleChatResponseFormatJSONSchema)
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerUsesConfiguredJSONMode(t *testing.T) {
+	t.Parallel()
+
+	var jsonModeCalls int
+	var schemaChatCalls int
+	var responsesCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/responses":
+			responsesCalls++
+			t.Fatalf("responses endpoint should not be called when chat is preferred")
+		case "/v1/chat/completions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode chat request: %v", err)
+			}
+			responseFormat, _ := body["response_format"].(map[string]any)
+			switch responseFormat["type"] {
+			case "json_schema":
+				schemaChatCalls++
+				t.Fatalf("json_schema should not be used for configured JSON mode")
+			case "json_object":
+				jsonModeCalls++
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{
+					"model":"deepseek-v4-pro",
+					"choices":[
+						{
+							"message":{
+								"role":"assistant",
+								"content":"{\"message\":\"Use configured json object\"}"
+							}
+						}
+					]
+				}`))
+			default:
+				t.Fatalf("unexpected response_format %#v", responseFormat)
+			}
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"deepseek-v4-pro"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("deepseek", "deepseek-v4-pro", OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "local-key", "deepseek-v4-pro", time.Second, nil, opts)
+	if runner == nil {
+		t.Fatalf("expected runner")
+	}
+
+	req := JSONSchemaRequest{
+		Model:      "deepseek-v4-pro",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type": "object",
+		},
+	}
+
+	response, err := runner.RunJSONSchema(context.Background(), req)
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	if response.OutputText != "{\"message\":\"Use configured json object\"}" {
+		t.Fatalf("OutputText = %q, want JSON mode payload", response.OutputText)
+	}
+	if jsonModeCalls != 1 {
+		t.Fatalf("json_object chat calls = %d, want 1", jsonModeCalls)
+	}
+	if schemaChatCalls != 0 {
+		t.Fatalf("json_schema chat calls = %d, want 0", schemaChatCalls)
+	}
+	if responsesCalls != 0 {
+		t.Fatalf("responses endpoint calls = %d, want 0", responsesCalls)
+	}
+}
+
 func TestOpenAICompatibleResponsesRunnerFallsBackToJSONModeWhenJSONSchemaUnsupported(t *testing.T) {
 	t.Parallel()
 

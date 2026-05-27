@@ -15,6 +15,7 @@ const defaultOpenAICompatibleCacheDuration = 30 * time.Second
 
 type OpenAICompatibleResponsesRunnerOptions struct {
 	PreferChatCompletions bool
+	ChatResponseFormat    OpenAICompatibleChatResponseFormat
 }
 
 type OpenAICompatibleModelDiscovery struct {
@@ -209,8 +210,12 @@ func NewOpenAICompatibleResponsesRunner(baseURL, apiKey, defaultModel string, ti
 
 func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OpenAICompatibleResponsesRunnerOptions) JSONSchemaRunner {
 	responsesClient := NewResponsesClientWithBaseURL(apiKey, baseURL, timeout, usage)
-	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	chatFormat := normalizeOpenAICompatibleChatResponseFormat(opts.ChatResponseFormat)
+	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndResponseFormat(apiKey, baseURL, timeout, usage, chatFormat)
 	jsonModeChatClient := NewOpenAICompatibleChatCompletionsJSONModeClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	if chatFormat == OpenAICompatibleChatResponseFormatJSONObject {
+		jsonModeChatClient = chatClient
+	}
 	baseRunner := NewOpenAICompatibleStructuredOutputRunnerWithJSONModeFallback(responsesClient, chatClient, jsonModeChatClient, OpenAICompatibleStructuredOutputOptions{
 		PreferChatCompletions: opts.PreferChatCompletions,
 	})
