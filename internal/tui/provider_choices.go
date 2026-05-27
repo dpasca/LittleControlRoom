@@ -105,6 +105,24 @@ func (m Model) projectReportsProviderChoices(settings config.EditableSettings) [
 			Description: "The Ollama server must be running at the configured endpoint. Leave the model blank to use the first discovered local model.",
 		},
 		{
+			Value:       config.AIBackendOpenRouter,
+			Label:       "OpenRouter",
+			Summary:     "Writes project summaries and helper output through the shared OpenRouter API connection.",
+			Description: "Uses the saved OpenRouter API key and the default OpenRouter model route.",
+		},
+		{
+			Value:       config.AIBackendDeepSeek,
+			Label:       "DeepSeek",
+			Summary:     "Writes project summaries and helper output through the direct DeepSeek API.",
+			Description: "Uses the saved DeepSeek API key and direct DeepSeek model IDs.",
+		},
+		{
+			Value:       config.AIBackendMoonshot,
+			Label:       "Moonshot",
+			Summary:     "Writes project summaries and helper output through the direct Moonshot/Kimi API.",
+			Description: "Uses the saved Moonshot API key and Kimi model IDs.",
+		},
+		{
 			Value:       config.AIBackendOpenAIAPI,
 			Label:       "OpenAI API",
 			Summary:     "Writes project summaries and helper output directly through the shared OpenAI API connection.",
@@ -139,6 +157,24 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 			Label:       "OpenAI API",
 			Summary:     "Lets /boss answer through direct OpenAI API inference.",
 			Description: "A saved OpenAI API key is required. Project reports can still use Codex, OpenCode, Claude Code, MLX, Ollama, or another provider.",
+		},
+		{
+			Value:       config.AIBackendOpenRouter,
+			Label:       "OpenRouter",
+			Summary:     "Lets /boss answer through the shared OpenRouter API connection.",
+			Description: "A saved OpenRouter API key is required. This keeps Boss Chat direct while project reports can use a different backend.",
+		},
+		{
+			Value:       config.AIBackendDeepSeek,
+			Label:       "DeepSeek",
+			Summary:     "Lets /boss answer through the direct DeepSeek API.",
+			Description: "A saved DeepSeek API key is required. This reuses the same connection LCAgent can use directly.",
+		},
+		{
+			Value:       config.AIBackendMoonshot,
+			Label:       "Moonshot",
+			Summary:     "Lets /boss answer through the direct Moonshot/Kimi API.",
+			Description: "A saved Moonshot API key is required. This reuses the same connection LCAgent can use directly.",
 		},
 		{
 			Value:       config.AIBackendMLX,
@@ -210,6 +246,12 @@ func projectReportsProviderNextStep(backend config.AIBackend, status aibackend.S
 		return "Save to use this for project reports."
 	case backend == config.AIBackendOpenAIAPI:
 		return "Paste and save an OpenAI API key."
+	case backend == config.AIBackendOpenRouter:
+		return "Paste and save an OpenRouter API key."
+	case backend == config.AIBackendDeepSeek:
+		return "Paste and save a DeepSeek API key."
+	case backend == config.AIBackendMoonshot:
+		return "Paste and save a Moonshot API key."
 	case !known:
 		return "Refresh availability, then save if this is the provider you want."
 	case !status.Installed && backend.RequiresCLIInstallHint():
@@ -235,6 +277,21 @@ func bossChatProviderNextStep(choice providerChoice, settings config.EditableSet
 			return "Paste and save an OpenAI API key."
 		}
 		return "Save to use OpenAI API for boss chat."
+	case config.AIBackendOpenRouter:
+		if strings.TrimSpace(settings.OpenRouterAPIKey) == "" {
+			return "Paste and save an OpenRouter API key."
+		}
+		return "Save to use OpenRouter for boss chat."
+	case config.AIBackendDeepSeek:
+		if strings.TrimSpace(settings.DeepSeekAPIKey) == "" {
+			return "Paste and save a DeepSeek API key."
+		}
+		return "Save to use DeepSeek for boss chat."
+	case config.AIBackendMoonshot:
+		if strings.TrimSpace(settings.MoonshotAPIKey) == "" {
+			return "Paste and save a Moonshot API key."
+		}
+		return "Save to use Moonshot for boss chat."
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if choice.State == "ready" {
 			return "Save to use this local backend for boss chat."

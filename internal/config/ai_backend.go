@@ -8,14 +8,17 @@ import (
 type AIBackend string
 
 const (
-	AIBackendUnset     AIBackend = ""
-	AIBackendDisabled  AIBackend = "disabled"
-	AIBackendOpenAIAPI AIBackend = "openai_api"
-	AIBackendCodex     AIBackend = "codex"
-	AIBackendOpenCode  AIBackend = "opencode"
-	AIBackendClaude    AIBackend = "claude_code"
-	AIBackendMLX       AIBackend = "mlx"
-	AIBackendOllama    AIBackend = "ollama"
+	AIBackendUnset      AIBackend = ""
+	AIBackendDisabled   AIBackend = "disabled"
+	AIBackendOpenAIAPI  AIBackend = "openai_api"
+	AIBackendOpenRouter AIBackend = "openrouter"
+	AIBackendDeepSeek   AIBackend = "deepseek"
+	AIBackendMoonshot   AIBackend = "moonshot"
+	AIBackendCodex      AIBackend = "codex"
+	AIBackendOpenCode   AIBackend = "opencode"
+	AIBackendClaude     AIBackend = "claude_code"
+	AIBackendMLX        AIBackend = "mlx"
+	AIBackendOllama     AIBackend = "ollama"
 )
 
 var selectableAIBackends = []AIBackend{
@@ -25,6 +28,9 @@ var selectableAIBackends = []AIBackend{
 	AIBackendMLX,
 	AIBackendOllama,
 	AIBackendOpenAIAPI,
+	AIBackendOpenRouter,
+	AIBackendDeepSeek,
+	AIBackendMoonshot,
 	AIBackendDisabled,
 }
 
@@ -57,6 +63,12 @@ func ParseAIBackend(raw string) (AIBackend, error) {
 		return AIBackendDisabled, nil
 	case string(AIBackendOpenAIAPI):
 		return AIBackendOpenAIAPI, nil
+	case string(AIBackendOpenRouter):
+		return AIBackendOpenRouter, nil
+	case string(AIBackendDeepSeek):
+		return AIBackendDeepSeek, nil
+	case string(AIBackendMoonshot):
+		return AIBackendMoonshot, nil
 	case string(AIBackendCodex):
 		return AIBackendCodex, nil
 	case string(AIBackendOpenCode):
@@ -68,7 +80,7 @@ func ParseAIBackend(raw string) (AIBackend, error) {
 	case string(AIBackendOllama):
 		return AIBackendOllama, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, codex, opencode, claude_code, mlx, or ollama")
+		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, codex, opencode, claude_code, mlx, or ollama")
 	}
 }
 
@@ -90,12 +102,18 @@ func ParseBossChatBackend(raw string) (AIBackend, error) {
 		return AIBackendDisabled, nil
 	case string(AIBackendOpenAIAPI):
 		return AIBackendOpenAIAPI, nil
+	case string(AIBackendOpenRouter):
+		return AIBackendOpenRouter, nil
+	case string(AIBackendDeepSeek):
+		return AIBackendDeepSeek, nil
+	case string(AIBackendMoonshot):
+		return AIBackendMoonshot, nil
 	case string(AIBackendMLX):
 		return AIBackendMLX, nil
 	case string(AIBackendOllama):
 		return AIBackendOllama, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled, openai_api, mlx, or ollama")
+		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, mlx, or ollama")
 	}
 }
 
@@ -115,6 +133,12 @@ func (b AIBackend) Label() string {
 		return "Disabled"
 	case AIBackendOpenAIAPI:
 		return "OpenAI API"
+	case AIBackendOpenRouter:
+		return "OpenRouter"
+	case AIBackendDeepSeek:
+		return "DeepSeek"
+	case AIBackendMoonshot:
+		return "Moonshot"
 	case AIBackendCodex:
 		return "Codex"
 	case AIBackendOpenCode:
@@ -160,6 +184,12 @@ func (b AIBackend) RequiresCLIInstallHint() bool {
 
 func (b AIBackend) DefaultOpenAICompatibleBaseURL() string {
 	switch b {
+	case AIBackendOpenRouter:
+		return "https://openrouter.ai/api/v1"
+	case AIBackendDeepSeek:
+		return "https://api.deepseek.com"
+	case AIBackendMoonshot:
+		return "https://api.moonshot.ai/v1"
 	case AIBackendMLX:
 		return "http://127.0.0.1:8080/v1"
 	case AIBackendOllama:
@@ -177,5 +207,23 @@ func (b AIBackend) DefaultOpenAICompatibleAPIKey() string {
 		return "ollama"
 	default:
 		return ""
+	}
+}
+
+func (b AIBackend) UsesOpenAICompatibleAPI() bool {
+	switch b {
+	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendMLX, AIBackendOllama:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b AIBackend) UsesCloudAPIKey() bool {
+	switch b {
+	case AIBackendOpenAIAPI, AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot:
+		return true
+	default:
+		return false
 	}
 }

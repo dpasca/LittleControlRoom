@@ -93,6 +93,9 @@ type AppConfig struct {
 const (
 	DefaultBossHelmModel    = "gpt-5.5"
 	DefaultBossUtilityModel = "gpt-5.4-mini"
+	DefaultOpenRouterModel  = "deepseek/deepseek-v4-pro"
+	DefaultDeepSeekModel    = "deepseek-v4-pro"
+	DefaultMoonshotModel    = "kimi-k2.6"
 )
 
 func (c AppConfig) EffectiveAIBackend() AIBackend {
@@ -105,6 +108,8 @@ func (c AppConfig) EffectiveBossChatBackend() AIBackend {
 
 func (c AppConfig) OpenAICompatibleBaseURL(backend AIBackend) string {
 	switch backend {
+	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot:
+		return backend.DefaultOpenAICompatibleBaseURL()
 	case AIBackendMLX:
 		return trimmedOrDefault(c.MLXBaseURL, backend.DefaultOpenAICompatibleBaseURL())
 	case AIBackendOllama:
@@ -116,6 +121,12 @@ func (c AppConfig) OpenAICompatibleBaseURL(backend AIBackend) string {
 
 func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 	switch backend {
+	case AIBackendOpenRouter:
+		return strings.TrimSpace(c.OpenRouterAPIKey)
+	case AIBackendDeepSeek:
+		return strings.TrimSpace(c.DeepSeekAPIKey)
+	case AIBackendMoonshot:
+		return strings.TrimSpace(c.MoonshotAPIKey)
 	case AIBackendMLX:
 		return trimmedOrDefault(c.MLXAPIKey, backend.DefaultOpenAICompatibleAPIKey())
 	case AIBackendOllama:
@@ -127,6 +138,12 @@ func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 
 func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
+	case AIBackendOpenRouter:
+		return DefaultOpenRouterModel
+	case AIBackendDeepSeek:
+		return DefaultDeepSeekModel
+	case AIBackendMoonshot:
+		return DefaultMoonshotModel
 	case AIBackendMLX:
 		return strings.TrimSpace(c.MLXModel)
 	case AIBackendOllama:

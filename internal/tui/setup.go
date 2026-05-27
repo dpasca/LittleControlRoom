@@ -503,6 +503,12 @@ func (m Model) setupConfigFieldIndexes() []int {
 		switch m.setupSelectedBossBackend() {
 		case config.AIBackendUnset, config.AIBackendOpenAIAPI:
 			return []int{settingsFieldOpenAIAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
+		case config.AIBackendOpenRouter:
+			return []int{settingsFieldOpenRouterAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
+		case config.AIBackendDeepSeek:
+			return []int{settingsFieldDeepSeekAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
+		case config.AIBackendMoonshot:
+			return []int{settingsFieldMoonshotAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
 		case config.AIBackendMLX:
 			return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 		case config.AIBackendOllama:
@@ -514,6 +520,12 @@ func (m Model) setupConfigFieldIndexes() []int {
 	switch m.setupSelectedBackend() {
 	case config.AIBackendOpenAIAPI:
 		return []int{settingsFieldOpenAIAPIKey}
+	case config.AIBackendOpenRouter:
+		return []int{settingsFieldOpenRouterAPIKey}
+	case config.AIBackendDeepSeek:
+		return []int{settingsFieldDeepSeekAPIKey}
+	case config.AIBackendMoonshot:
+		return []int{settingsFieldMoonshotAPIKey}
 	case config.AIBackendMLX:
 		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 	case config.AIBackendOllama:
@@ -1070,7 +1082,7 @@ func (m Model) renderBossChatSetupHint(width int) string {
 	switch selected {
 	case config.AIBackendUnset:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			hint = "Auto leaves boss chat unconfigured for now. Choose MLX, Ollama, OpenAI API, or Off when you want a specific path."
+			hint = "Auto leaves boss chat unconfigured for now. Choose a listed API backend, a local endpoint, or Off when you want a specific path."
 		} else {
 			hint = "Auto will use the shared OpenAI API connection for boss chat."
 		}
@@ -1083,6 +1095,14 @@ func (m Model) renderBossChatSetupHint(width int) string {
 			hint = "Boss chat will use the shared OpenAI API connection. Project reports are also using OpenAI API."
 		} else {
 			hint = "Boss chat will use the shared OpenAI API connection. Project reports stay on " + settings.AIBackend.Label() + "."
+		}
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+		if !cloudBackendAPIKeySaved(settings, selected) {
+			hint = "Boss chat uses direct " + selected.Label() + " API inference. Press Enter to add the API key here."
+		} else if settings.AIBackend == selected {
+			hint = "Boss chat will use the shared " + selected.Label() + " API connection. Project reports are also using " + selected.Label() + "."
+		} else {
+			hint = "Boss chat will use the shared " + selected.Label() + " API connection. Project reports stay on " + settings.AIBackend.Label() + "."
 		}
 	case config.AIBackendMLX:
 		hint = "Boss chat will use your MLX OpenAI-compatible endpoint. Press Enter to select and configure it, or m to pick a discovered model."

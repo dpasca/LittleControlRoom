@@ -132,6 +132,8 @@ func (a *Assistant) Label() string {
 		switch a.backend {
 		case config.AIBackendOpenAIAPI:
 			return "Boss chat needs an OpenAI API key"
+		case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+			return "Boss chat needs a " + a.backend.Label() + " API key"
 		case config.AIBackendMLX, config.AIBackendOllama:
 			return "Boss chat needs " + a.backend.Label()
 		case config.AIBackendUnset:

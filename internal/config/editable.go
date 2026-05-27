@@ -130,6 +130,12 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 
 func (s EditableSettings) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
+	case AIBackendOpenRouter:
+		return DefaultOpenRouterModel
+	case AIBackendDeepSeek:
+		return DefaultDeepSeekModel
+	case AIBackendMoonshot:
+		return DefaultMoonshotModel
 	case AIBackendMLX:
 		return strings.TrimSpace(s.MLXModel)
 	case AIBackendOllama:
@@ -145,6 +151,8 @@ func (s *EditableSettings) SetOpenAICompatibleModel(backend AIBackend, model str
 	}
 	model = strings.TrimSpace(model)
 	switch backend {
+	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot:
+		return
 	case AIBackendMLX:
 		s.MLXModel = model
 	case AIBackendOllama:
