@@ -208,29 +208,7 @@ func renderCodexMonospaceBlock(label, body string, accent lipgloss.Color, width 
 	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(label)
 	renderedLines := make([]string, 0, len(strings.Split(body, "\n")))
 	for _, line := range strings.Split(body, "\n") {
-		switch {
-		case strings.HasPrefix(line, "$ "):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true).Render(line))
-		case strings.HasPrefix(line, "diff --git "), strings.HasPrefix(line, "index "):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(line))
-		case strings.HasPrefix(line, "@@"):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(line))
-		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "+"):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(line))
-		case strings.HasPrefix(line, "---"), strings.HasPrefix(line, "-"):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(line))
-		case strings.HasPrefix(line, "# "):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line))
-		case strings.HasPrefix(line, "[command ") && !strings.Contains(line, "exit 0]"):
-			// Non-zero exit — render as warning
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true).Render(line))
-		case strings.HasPrefix(line, "[command "):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line))
-		case strings.HasPrefix(line, "[file changes "):
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("149")).Bold(true).Render(line))
-		default:
-			renderedLines = append(renderedLines, lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(line))
-		}
+		renderedLines = append(renderedLines, renderCodexMonospaceLine(line))
 	}
 	bodyText := strings.Join(renderedLines, "\n")
 	if strings.TrimSpace(bodyText) == "" {
@@ -265,7 +243,34 @@ func renderCodexDenseBlock(label, body string, accent lipgloss.Color, width int,
 	if hidden > 0 {
 		title = codexDenseBlockHiddenTitle(label, hidden, blockMode)
 	}
+	if hidden > 0 && len(lines) > 0 && isCodexDenseSummaryLine(lines[0]) {
+		return renderCodexDenseBlockWithInlineSummary(title, lines, accent, width)
+	}
 	return renderCodexMonospaceBlock(title, strings.Join(lines, "\n"), accent, width)
+}
+
+func renderCodexDenseBlockWithInlineSummary(label string, lines []string, accent lipgloss.Color, width int) string {
+	contentWidth := max(10, width-2)
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(label)
+	firstLine := renderCodexMonospaceLine(lines[0])
+	inline := lipgloss.NewStyle().Width(contentWidth).Render(title + " -> " + firstLine)
+	if len(lines) == 1 {
+		return lipgloss.NewStyle().
+			BorderLeft(true).
+			BorderForeground(accent).
+			PaddingLeft(0).
+			Render(inline)
+	}
+	bodyLines := make([]string, 0, len(lines)-1)
+	for _, line := range lines[1:] {
+		bodyLines = append(bodyLines, renderCodexMonospaceLine(line))
+	}
+	bodyBlock := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(bodyLines, "\n"))
+	return lipgloss.NewStyle().
+		BorderLeft(true).
+		BorderForeground(accent).
+		PaddingLeft(0).
+		Render(inline + "\n" + bodyBlock)
 }
 
 func visibleCodexDenseBlockLines(lines []string, blockMode codexDenseBlockMode) ([]string, int) {
@@ -302,6 +307,31 @@ func visibleCodexDenseBlockLines(lines []string, blockMode codexDenseBlockMode) 
 		}
 	}
 	return visible, hidden
+}
+
+func renderCodexMonospaceLine(line string) string {
+	switch {
+	case strings.HasPrefix(line, "$ "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true).Render(line)
+	case strings.HasPrefix(line, "diff --git "), strings.HasPrefix(line, "index "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("111")).Bold(true).Render(line)
+	case strings.HasPrefix(line, "@@"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render(line)
+	case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "+"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(line)
+	case strings.HasPrefix(line, "---"), strings.HasPrefix(line, "-"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(line)
+	case strings.HasPrefix(line, "# "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line)
+	case strings.HasPrefix(line, "[command ") && !strings.Contains(line, "exit 0]"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true).Render(line)
+	case strings.HasPrefix(line, "[command "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line)
+	case strings.HasPrefix(line, "[file changes "):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("149")).Bold(true).Render(line)
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(line)
+	}
 }
 
 func isCodexDenseSummaryLine(line string) bool {

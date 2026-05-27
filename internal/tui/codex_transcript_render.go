@@ -303,6 +303,8 @@ func codexTranscriptEntrySeparator(previous, current codexapp.TranscriptKind) st
 		return "\n"
 	case previous == codexapp.TranscriptCommand && current == codexapp.TranscriptTool:
 		return "\n"
+	case previous == codexapp.TranscriptCommand && current == codexapp.TranscriptCommand:
+		return "\n"
 	case previous == codexapp.TranscriptTool && current == codexapp.TranscriptFileChange:
 		return "\n"
 	case previous == codexapp.TranscriptFileChange && current == codexapp.TranscriptTool:
@@ -310,6 +312,8 @@ func codexTranscriptEntrySeparator(previous, current codexapp.TranscriptKind) st
 	case previous == codexapp.TranscriptCommand && current == codexapp.TranscriptFileChange:
 		return "\n"
 	case previous == codexapp.TranscriptFileChange && current == codexapp.TranscriptCommand:
+		return "\n"
+	case previous == codexapp.TranscriptFileChange && current == codexapp.TranscriptFileChange:
 		return "\n"
 	case previous == codexapp.TranscriptReasoning && current == codexapp.TranscriptReasoning:
 		return "\n"
@@ -744,6 +748,9 @@ func codexTranscriptLiveEntryApproxLineCount(entry codexapp.TranscriptEntry, blo
 		lines := strings.Split(strings.TrimSpace(entry.Text), "\n")
 		visible, hidden := visibleCodexDenseBlockLines(lines, blockMode)
 		if hidden > 0 || len(visible) > 0 {
+			if hidden > 0 && len(visible) > 0 && isCodexDenseSummaryLine(visible[0]) {
+				return max(1, len(visible))
+			}
 			return max(1, 1+len(visible))
 		}
 		return 1
