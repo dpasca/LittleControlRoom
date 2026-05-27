@@ -127,15 +127,23 @@ func collapseLCAgentStatusEntries(entries []codexapp.TranscriptEntry) []codexapp
 	collapsed := make([]codexapp.TranscriptEntry, 0, len(entries))
 	changed := false
 	for _, entry := range entries {
-		if entry.Kind != codexapp.TranscriptStatus || !isLCAgentStatusEntry(entry.Text) {
+		if entry.Kind != codexapp.TranscriptStatus {
 			collapsed = append(collapsed, entry)
 			continue
 		}
-		collapsed = append(collapsed, codexapp.TranscriptEntry{
-			Kind: entry.Kind,
-			Text: lcAgentStatusCollapsedText,
-		})
-		changed = true
+		if isLCAgentStatusEntry(entry.Text) {
+			collapsed = append(collapsed, codexapp.TranscriptEntry{
+				Kind: entry.Kind,
+				Text: lcAgentStatusCollapsedText,
+			})
+			changed = true
+			continue
+		}
+		if isLCAgentBoilerplateStatusEntry(entry.Text) {
+			changed = true
+			continue
+		}
+		collapsed = append(collapsed, entry)
 	}
 	if !changed {
 		return entries
@@ -149,6 +157,29 @@ func isLCAgentStatusEntry(text string) bool {
 		return false
 	}
 	return strings.TrimSpace(lines[0]) == "Embedded LCAgent status"
+}
+
+func isLCAgentBoilerplateStatusEntry(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	for _, prefix := range []string{
+		"Starting a continuing LCAgent run from thread ",
+		"Continuing LCAgent thread ",
+		"Continuing LCAgent from ",
+		"Loaded exact LCAgent context from ",
+		"Loaded summarized LCAgent context from ",
+		"LCAgent web search enabled: ",
+		"LCAgent oversized search refinement enabled: ",
+	} {
+		if strings.HasPrefix(text, prefix) {
+			return true
+		}
+	}
+	return text == "Continuing LCAgent" ||
+		text == "Loaded exact LCAgent context" ||
+		text == "Loaded summarized LCAgent context"
 }
 
 func codexTranscriptEntriesFromSnapshot(snapshot codexapp.Snapshot) []codexapp.TranscriptEntry {
