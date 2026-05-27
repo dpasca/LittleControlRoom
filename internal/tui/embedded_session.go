@@ -60,6 +60,7 @@ type codexActionMsg struct {
 	model        string
 	reasoning    string
 	awaitSettle  bool
+	refreshView  bool
 	renamedTask  bool
 	renameErr    error
 	err          error
@@ -196,6 +197,26 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 	if msg.status != "" {
 		m.status = msg.status
 	}
+	refreshCmd := tea.Cmd(nil)
+	linkScanCmd := tea.Cmd(nil)
+	if msg.refreshView && strings.TrimSpace(msg.projectPath) != "" {
+		prevSnapshot, hadPrevSnapshot := m.codexSnapshots[strings.TrimSpace(msg.projectPath)]
+		snapshot, ok, needsAsync := m.refreshCodexSnapshot(msg.projectPath)
+		if needsAsync {
+			refreshCmd = m.deferredCodexSnapshotCmd(msg.projectPath)
+		}
+		if ok {
+			transcriptChanged := !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
+			if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) {
+				m.resetCodexToolAnswerState(msg.projectPath)
+				m.syncCodexViewport(transcriptChanged)
+				linkScanCmd = m.maybeStartCodexArtifactLinkScan(msg.projectPath, snapshot)
+			}
+			if !snapshot.Closed {
+				m.markCodexSessionLive(msg.projectPath)
+			}
+		}
+	}
 	if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 		var asyncCmd tea.Cmd
 		if msg.awaitSettle {
@@ -227,7 +248,7 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 		refresh := invalidateProjectScan(m.visibleDetailPathForProject(msg.projectPath), false)
 		return m, m.markProjectSessionSeenWithRefresh(msg.projectPath, refresh)
 	}
-	return m, renameRefreshCmd
+	return m, batchCmds(renameRefreshCmd, refreshCmd, linkScanCmd)
 }
 
 func (m *Model) scratchTaskRenameRefreshCmd(projectPath string, renamed bool, err error) tea.Cmd {

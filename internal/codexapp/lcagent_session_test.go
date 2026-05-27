@@ -958,6 +958,35 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	}
 }
 
+func TestLCAgentSessionShowPermissionsNotifiesAndAppendsTranscript(t *testing.T) {
+	notify := make(chan struct{}, 2)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: t.TempDir(),
+		AppDataDir:  t.TempDir(),
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	if err := session.(*lcagentSession).ShowPermissions(); err != nil {
+		t.Fatalf("ShowPermissions() error = %v", err)
+	}
+	select {
+	case <-notify:
+	case <-time.After(time.Second):
+		t.Fatalf("ShowPermissions() did not notify listeners")
+	}
+	snapshot := session.Snapshot()
+	if len(snapshot.Entries) == 0 || !strings.Contains(snapshot.Entries[len(snapshot.Entries)-1].Text, "LCAgent permissions") {
+		t.Fatalf("ShowPermissions() did not append permissions transcript entry: %#v", snapshot.Entries)
+	}
+}
+
 func TestLCAgentSessionContinuesLoadedReplayWithContinueFromArg(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

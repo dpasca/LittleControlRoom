@@ -1192,7 +1192,7 @@ func (m Model) showVisibleCodexStatusCmd() tea.Cmd {
 		if err := session.ShowStatus(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " status added to the transcript"}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " status added to the transcript", refreshView: true}
 	})
 }
 
@@ -1213,7 +1213,7 @@ func (m Model) showVisibleCodexPermissionsCmd() tea.Cmd {
 		if err := permissionSession.ShowPermissions(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " permissions added to the transcript"}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " permissions added to the transcript", refreshView: true}
 	})
 }
 
@@ -1235,7 +1235,7 @@ func (m Model) setVisibleCodexPermissionCmd(level string) tea.Cmd {
 		if err := permissionSession.SetPermissionLevel(level); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " permissions set to " + titleASCII(level)}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " permissions set to " + titleASCII(level), refreshView: true}
 	})
 }
 
@@ -1260,7 +1260,7 @@ func (m Model) showVisibleCodexGoalCmd() tea.Cmd {
 		if err := session.ShowGoal(); err != nil {
 			return codexActionMsg{projectPath: projectPath, err: err}
 		}
-		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal added to the transcript"}
+		return codexActionMsg{projectPath: projectPath, status: "Embedded " + label + " goal added to the transcript", refreshView: true}
 	})
 }
 
@@ -2789,10 +2789,10 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 		actions = append(actions, footerNavAction("Alt+O", "links"))
 	}
 	actions = append(actions, footerLowAction("Alt+L", "blocks"))
-	overlay := ""
+	overlay := codexBannerRightStatus(snapshot)
 	contentWidth := width
-	if snapshot.Preset == codexcli.PresetYolo && !snapshot.Closed {
-		overlay = "  " + detailDangerStyle.Render("YOLO MODE")
+	if overlay != "" {
+		overlay = "  " + overlay
 		if overlayWidth := lipgloss.Width(overlay); overlayWidth >= width {
 			return ansi.Cut(overlay, max(0, overlayWidth-width), overlayWidth)
 		} else if width > 0 {
@@ -2805,6 +2805,35 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 		return banner + overlay
 	}
 	return banner
+}
+
+func codexBannerRightStatus(snapshot codexapp.Snapshot) string {
+	if snapshot.Closed {
+		return ""
+	}
+	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
+		if label := codexSnapshotPermissionLabel(snapshot); label != "" {
+			return codexPermissionBadgeStyle(label).Render("PERM " + strings.ToUpper(label))
+		}
+		return ""
+	}
+	if snapshot.Preset == codexcli.PresetYolo {
+		return detailDangerStyle.Render("YOLO MODE")
+	}
+	return ""
+}
+
+func codexPermissionBadgeStyle(label string) lipgloss.Style {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "off":
+		return detailDangerStyle
+	case "medium":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	case "low":
+		return detailWarningStyle
+	default:
+		return detailMutedStyle
+	}
 }
 
 func overlayCodexBannerRight(base, overlay string, width int) string {
@@ -2854,9 +2883,6 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 	}
 	if reasoning != "" {
 		segments = append(segments, renderFooterMeta("Reasoning")+" "+renderFooterStatus(reasoning))
-	}
-	if permission := codexSnapshotPermissionLabel(snapshot); permission != "" {
-		segments = append(segments, renderFooterMeta("Perm")+" "+renderFooterStatus(permission))
 	}
 	if context := codexSnapshotContextLeftLabel(snapshot); context != "" {
 		segments = append(segments, renderFooterMeta("Context")+" "+renderFooterStatus(context))

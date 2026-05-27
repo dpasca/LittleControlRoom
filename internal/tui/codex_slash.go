@@ -142,6 +142,14 @@ func (m Model) resolvedCodexSlashInput() string {
 	if raw == "" {
 		return raw
 	}
+
+	if _, err := codexslash.Parse(raw); err == nil {
+		return raw
+	}
+	if _, ok := codexHostSlashCommand(raw); ok {
+		return raw
+	}
+
 	suggestion, ok := m.selectedCodexSlashSuggestion()
 	return slashcmd.ResolveInput(raw, suggestion, ok, func(input string) bool {
 		if _, err := codexslash.Parse(input); err == nil {
@@ -183,7 +191,12 @@ func (m Model) renderCodexSlashBlocks(width int) []string {
 	}
 
 	if selected, ok := m.selectedCodexSlashSuggestion(); ok && strings.TrimSpace(selected.Summary) != "" {
-		lines = append(lines, commandPaletteHintStyle.Render(selected.Summary))
+		summary := renderWrappedDialogTextLines(commandPaletteHintStyle, contentWidth, strings.TrimSpace(selected.Summary))
+		if len(summary) == 0 {
+			lines = append(lines, commandPaletteHintStyle.Render(selected.Summary))
+		} else {
+			lines = append(lines, summary...)
+		}
 	}
 
 	return []string{
@@ -196,11 +209,24 @@ func (m Model) renderCodexSlashBlocks(width int) []string {
 }
 
 func (m Model) renderCodexSlashSuggestionRow(s codexslash.Suggestion, selected bool, width int) string {
-	return m.renderCommandSuggestionRow(commands.Suggestion{
-		Insert:  s.Insert,
-		Display: s.Display,
-		Summary: s.Summary,
-	}, selected, width)
+	_ = width
+	left := s.Display
+	if left == "" {
+		left = s.Insert
+	}
+	right := strings.TrimSpace(s.Summary)
+	marker := " "
+	if selected {
+		marker = ">"
+	}
+	row := marker + " " + left
+	if right != "" {
+		row += "  " + right
+	}
+	if selected {
+		return commandPaletteSelectStyle.Render(row)
+	}
+	return commandPaletteRowStyle.Render(row)
 }
 
 func codexSlashSuggestionIndex(suggestions []codexslash.Suggestion, raw string) int {

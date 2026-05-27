@@ -8804,6 +8804,43 @@ func TestVisibleCodexSlashSuggestionsRender(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexSlashPermissionsSummaryNotClippedByEllipsis(t *testing.T) {
+	input := newCodexTextarea()
+	input.SetValue("/permissions ")
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexInput:          input,
+		width:               120,
+		height:              24,
+	}
+	blocks := m.renderCodexSlashBlocks(120)
+	rendered := ansi.Strip(strings.Join(blocks, "\n"))
+	if !strings.Contains(rendered, "Show what Off, Low, and Medium allow in LCAgent") {
+		t.Fatalf("expected full /permissions summary to render: %q", rendered)
+	}
+}
+
+func TestVisibleCodexSlashSuggestionRowNotClippedByEllipsis(t *testing.T) {
+	input := newCodexTextarea()
+	input.SetValue("/permissions ")
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexInput:          input,
+		width:               48,
+		height:              24,
+	}
+	blocks := m.renderCodexSlashBlocks(48)
+	rendered := ansi.Strip(strings.Join(blocks, "\n"))
+	if !strings.Contains(rendered, "Show what Off, Low, and Medium allow in LCAgent") {
+		t.Fatalf("expected untruncated /permissions row summary: %q", rendered)
+	}
+	if strings.Contains(rendered, "...") {
+		t.Fatalf("unexpected ellipsis remains in /permissions row: %q", rendered)
+	}
+}
+
 func TestVisibleCodexSlashSuggestsHostTaskActions(t *testing.T) {
 	input := newCodexTextarea()
 	input.SetValue("/task")
@@ -9349,8 +9386,81 @@ func TestVisibleLCAgentSlashPermissionsRunsLocally(t *testing.T) {
 	if action.err != nil {
 		t.Fatalf("/permissions returned error = %v", action.err)
 	}
+	applied, _ := got.Update(action)
+	appliedModel := applied.(Model)
+	snapshot, ok := appliedModel.codexCachedSnapshot("/tmp/demo")
+	if !ok {
+		t.Fatalf("expected /permissions action to refresh the cached embedded snapshot")
+	}
+	if len(snapshot.Entries) == 0 || !strings.Contains(snapshot.Entries[len(snapshot.Entries)-1].Text, "Embedded LCAgent permissions") {
+		t.Fatalf("expected /permissions action to echo permissions in the transcript, entries = %#v", snapshot.Entries)
+	}
 	if session.permissionCalls != 1 {
 		t.Fatalf("permission calls = %d, want 1", session.permissionCalls)
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("/permissions should not submit a prompt, submissions = %d", len(session.submissions))
+	}
+}
+
+func TestVisibleLCAgentSlashPermissionsRunsLocallyWhenSuggestionWouldResolveToArg(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Status:   "LCAgent ready",
+			ThreadID: "lca_demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/permissions")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+		codexSlashSelected:  2,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should run the embedded /permissions command")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /permissions, got %q", got.codexInput.Value())
+	}
+	if got.status != "Reading embedded LCAgent permissions..." {
+		t.Fatalf("status = %q, want reading notice", got.status)
+	}
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/permissions returned error = %v", action.err)
+	}
+	if session.permissionCalls != 1 {
+		t.Fatalf("permission calls = %d, want 1", session.permissionCalls)
+	}
+	if len(session.permissionLevels) != 0 {
+		t.Fatalf("permission level changes = %#v, want none", session.permissionLevels)
 	}
 	if len(session.submissions) != 0 {
 		t.Fatalf("/permissions should not submit a prompt, submissions = %d", len(session.submissions))
@@ -17744,6 +17854,55 @@ func TestVisibleOpenCodeViewShowsBannerAndYoloWarning(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "YOLO MODE") {
 		t.Fatalf("embedded OpenCode view should show YOLO warning: %q", rendered)
+	}
+}
+
+func TestVisibleLCAgentViewShowsPermissionBadgeInBanner(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider:        codexapp.ProviderLCAgent,
+			Started:         true,
+			Status:          "LCAgent session ready",
+			Model:           "deepseek-chat",
+			PermissionLevel: "low",
+			Transcript:      "LCAgent: hello",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	m.syncCodexViewport(true)
+
+	rendered := ansi.Strip(m.View())
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("rendered view should have lines")
+	}
+	if !strings.Contains(lines[0], "PERM LOW") {
+		t.Fatalf("LCAgent permission should live on the top banner: %q", lines[0])
+	}
+	if !strings.HasSuffix(strings.TrimRight(lines[0], " "), "PERM LOW") {
+		t.Fatalf("LCAgent permission badge should be overlaid at the banner's right edge: %q", lines[0])
+	}
+	if strings.Contains(rendered, "Perm Low") {
+		t.Fatalf("LCAgent permission should not be repeated beside the model meta: %q", rendered)
 	}
 }
 

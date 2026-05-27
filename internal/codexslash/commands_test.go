@@ -191,6 +191,22 @@ func TestParsePermissionsCommand(t *testing.T) {
 	}
 }
 
+func TestParsePermissionsHelpCommand(t *testing.T) {
+	inv, err := Parse("/permissions")
+	if err != nil {
+		t.Fatalf("Parse(/permissions) error = %v", err)
+	}
+	if inv.Kind != KindPermissions {
+		t.Fatalf("Parse(/permissions) kind = %q, want %q", inv.Kind, KindPermissions)
+	}
+	if inv.PermissionLevel != "" {
+		t.Fatalf("Parse(/permissions) level = %q, want empty", inv.PermissionLevel)
+	}
+	if inv.Canonical != "/permissions" {
+		t.Fatalf("Parse(/permissions) canonical = %q, want /permissions", inv.Canonical)
+	}
+}
+
 func TestParseBossCommand(t *testing.T) {
 	inv, err := Parse("/boss")
 	if err != nil {

@@ -206,15 +206,21 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 
 func (s *lcagentSession) ShowStatus() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.appendEntryLocked(TranscriptStatus, s.statusTextLocked())
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
 	return nil
 }
 
 func (s *lcagentSession) ShowPermissions() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.appendEntryLocked(TranscriptStatus, s.permissionsTextLocked(false))
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
 	return nil
 }
 
@@ -224,8 +230,8 @@ func (s *lcagentSession) SetPermissionLevel(level string) error {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return fmt.Errorf("LCAgent session is closed")
 	}
 	s.sessionAuto = level
@@ -238,6 +244,10 @@ func (s *lcagentSession) SetPermissionLevel(level string) error {
 	s.status = message
 	s.appendEntryLocked(TranscriptStatus, message)
 	s.touchLocked()
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
 	return nil
 }
 
