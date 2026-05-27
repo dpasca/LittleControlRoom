@@ -18625,6 +18625,9 @@ func TestRenderCodexDenseBlockHidesOutputByDefault(t *testing.T) {
 	if !strings.Contains(rendered, "2 lines hidden") || !strings.Contains(rendered, "Alt+L previews") {
 		t.Fatalf("summary command block should mention hidden previewable lines: %q", rendered)
 	}
+	if !strings.Contains(rendered, "Command (2 lines hidden; Alt+L previews) -> $ git status") {
+		t.Fatalf("summary command block should keep the title and command on one line: %q", rendered)
+	}
 }
 
 func TestRenderCodexDenseBlockPreviewShowsFiveOutputLines(t *testing.T) {
@@ -18642,6 +18645,9 @@ func TestRenderCodexDenseBlockPreviewShowsFiveOutputLines(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "2 lines hidden") || !strings.Contains(rendered, "Alt+L expands") {
 		t.Fatalf("preview command block should mention remaining hidden lines: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Command (2 lines hidden; Alt+L expands) -> $ demo") {
+		t.Fatalf("preview command block should keep the title and command on one line: %q", rendered)
 	}
 }
 
@@ -18674,6 +18680,11 @@ func TestCodexTranscriptEntrySeparatorTightensToolCommandTransitions(t *testing.
 	sep = codexTranscriptEntrySeparator(codexapp.TranscriptCommand, codexapp.TranscriptTool)
 	if sep != "\n" {
 		t.Fatalf("command→tool should use tight separator, got %q", sep)
+	}
+	// command→command should be tight
+	sep = codexTranscriptEntrySeparator(codexapp.TranscriptCommand, codexapp.TranscriptCommand)
+	if sep != "\n" {
+		t.Fatalf("command→command should use tight separator, got %q", sep)
 	}
 	// agent→tool should still be double
 	sep = codexTranscriptEntrySeparator(codexapp.TranscriptAgent, codexapp.TranscriptTool)
