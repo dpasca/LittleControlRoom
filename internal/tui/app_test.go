@@ -23475,6 +23475,7 @@ func TestSettingsDeepSeekProjectAndBossModelsAreSeparate(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendDeepSeek
 	settings.BossChatBackend = config.AIBackendDeepSeek
+	settings.LCAgentProvider = "deepseek"
 	settings.DeepSeekAPIKey = "ds-shared-example"
 
 	m := Model{
@@ -23491,10 +23492,14 @@ func TestSettingsDeepSeekProjectAndBossModelsAreSeparate(t *testing.T) {
 		"DeepSeek / " + config.DefaultDeepSeekModel,
 		"Boss chat",
 		"DeepSeek / " + config.DefaultDeepSeekProModel,
+		"LCAgent",
 	} {
 		if !strings.Contains(overview, want) {
 			t.Fatalf("getting started overview missing %q: %q", want, overview)
 		}
+	}
+	if got := m.settingsGettingStartedSteps()[2].Value; got != "DeepSeek / "+lcagentDefaultModelForProvider("deepseek") {
+		t.Fatalf("LCAgent overview value = %q, want DeepSeek label with model", got)
 	}
 
 	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)

@@ -2046,11 +2046,12 @@ func settingsLCAgentStepState(settings config.EditableSettings) (string, string,
 		return "preset " + preset, state, style, detail
 	}
 	provider := settingsLCAgentMainProvider(settings)
+	providerLabel := settingsLCAgentProviderOptionLabel(provider)
 	model := settingsLCAgentMainModel(settings)
 	state, style, detail := lcagentCredentialSmokeCheck(settings)
-	value := provider + " / " + model
+	value := providerLabel + " / " + model
 	if state == "optional" {
-		value = provider
+		value = providerLabel
 	}
 	return value, state, style, detail
 }
@@ -2182,7 +2183,8 @@ func settingsLCAgentUtilityDefaultLabel(settings config.EditableSettings) string
 		return "off"
 	}
 	if provider == "main" {
-		return "same as Main Model (" + settingsLCAgentMainProvider(settings) + " / " + settingsLCAgentMainModel(settings) + ")"
+		mainProvider := settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings))
+		return "same as Main Model (" + mainProvider + " / " + settingsLCAgentMainModel(settings) + ")"
 	}
 	return lcagentDefaultModelForProvider(provider)
 }
