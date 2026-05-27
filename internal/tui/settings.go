@@ -1937,13 +1937,15 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 	settings := m.settingsDraftForInferenceStatus()
 	projectChoice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
 	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
+	projectValue := settingsProjectReportsOverviewValue(settings, projectChoice)
+	bossValue := settingsBossChatOverviewValue(settings, bossChoice)
 	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := settingsLCAgentStepState(settings)
 	rootsValue, rootsState, rootsStyle, rootsDetail := m.settingsProjectRootsStepState()
 	return []settingsGettingStartedStep{
 		{
 			Number:     "1",
 			Title:      "Project reports",
-			Value:      firstNonEmptyTrimmed(projectChoice.Label, "Not configured"),
+			Value:      projectValue,
 			State:      firstNonEmptyTrimmed(projectChoice.State, "needs setup"),
 			StateStyle: projectChoice.StateStyle,
 			Detail:     firstNonEmptyTrimmed(projectChoice.NextStep, projectChoice.Detail),
@@ -1952,7 +1954,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 		{
 			Number:     "2",
 			Title:      "Boss chat",
-			Value:      firstNonEmptyTrimmed(bossChoice.Label, "Auto"),
+			Value:      bossValue,
 			State:      firstNonEmptyTrimmed(bossChoice.State, "needs setup"),
 			StateStyle: bossChoice.StateStyle,
 			Detail:     firstNonEmptyTrimmed(bossChoice.NextStep, bossChoice.Detail),
@@ -1976,6 +1978,57 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 			Detail:     rootsDetail,
 			FieldIndex: settingsFieldIncludePaths,
 		},
+	}
+}
+
+func settingsProjectReportsOverviewValue(settings config.EditableSettings, choice providerChoice) string {
+	label := firstNonEmptyTrimmed(choice.Label, "Not configured")
+	switch settings.AIBackend {
+	case config.AIBackendUnset, config.AIBackendDisabled:
+		return label
+	default:
+		modelName := strings.TrimSpace(settings.OpenAICompatibleModel(settings.AIBackend))
+		if modelName == "" {
+			return label
+		}
+		return label + " / " + modelName
+	}
+}
+
+func settingsBossChatOverviewValue(settings config.EditableSettings, choice providerChoice) string {
+	label := firstNonEmptyTrimmed(choice.Label, "Auto")
+	switch settings.BossChatBackend {
+	case config.AIBackendUnset, config.AIBackendDisabled:
+		return label
+	default:
+		if modelName := settingsBossHelmOverviewModel(settings); modelName != "" {
+			return label + " / " + modelName
+		}
+		return label
+	}
+}
+
+func settingsBossHelmOverviewModel(settings config.EditableSettings) string {
+	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
+		return modelName
+	}
+	if modelName := strings.TrimSpace(settings.BossHelmModel); modelName != "" {
+		return modelName
+	}
+	if modelName := strings.TrimSpace(settings.BossChatModel); modelName != "" {
+		return modelName
+	}
+	switch settings.BossChatBackend {
+	case config.AIBackendOpenRouter:
+		return config.DefaultOpenRouterModel
+	case config.AIBackendDeepSeek:
+		return config.DefaultDeepSeekProModel
+	case config.AIBackendMoonshot:
+		return config.DefaultMoonshotModel
+	case config.AIBackendMLX, config.AIBackendOllama:
+		return strings.TrimSpace(settings.OpenAICompatibleModel(settings.BossChatBackend))
+	default:
+		return config.DefaultBossHelmModel
 	}
 }
 

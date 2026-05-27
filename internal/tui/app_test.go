@@ -23485,6 +23485,18 @@ func TestSettingsDeepSeekProjectAndBossModelsAreSeparate(t *testing.T) {
 		height:           30,
 	}
 
+	overview := ansi.Strip(strings.Join(m.renderSettingsGettingStartedGuide(100), "\n"))
+	for _, want := range []string{
+		"Project reports",
+		"DeepSeek / " + config.DefaultDeepSeekModel,
+		"Boss chat",
+		"DeepSeek / " + config.DefaultDeepSeekProModel,
+	} {
+		if !strings.Contains(overview, want) {
+			t.Fatalf("getting started overview missing %q: %q", want, overview)
+		}
+	}
+
 	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)
 	project := updated.(Model)
 	projectFields := project.visibleSettingsDrilldownFieldOrder(settingsDrilldownProjectReports)
