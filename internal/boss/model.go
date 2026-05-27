@@ -658,7 +658,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.applyAssistantReply(msg.envelope.response, msg.envelope.err, msg.envelope.snapshot, msg.envelope.stateErr, msg.envelope.stateRefreshed)
 		}
 		m.applyAssistantStreamEvent(msg.envelope.event)
-		m.syncLayout(true)
+		// Defer layout sync to TickMsg to avoid saturating the
+		// render path during fast streaming; streaming-text may
+		// lag by up to one tick (~600 ms).
 		return m, waitAssistantStreamCmd(msg.streamID, msg.events)
 	case bossSessionLoadedMsg:
 		m.sessionLoaded = true
@@ -701,7 +703,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pruneSummaryFlashes()
 		m.pruneTransientEngineerActivities()
 		if m.sending || len(m.supervisorItems(m.now())) > 0 {
-			m.syncLayout(false)
+			m.syncLayout(m.sending)
 		}
 		cmds := []tea.Cmd{bossTickCmd()}
 		if m.shouldRefreshSupervisorState() {
