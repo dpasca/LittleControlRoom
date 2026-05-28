@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	"lcroom/internal/lcagent"
 	"lcroom/internal/lcagent/modeladapter"
 	lcrmodel "lcroom/internal/model"
 	"lcroom/internal/projectrun"
@@ -938,6 +939,12 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		resumeID = ""
 	}
 	if resumeID != "" {
+		// Force-stabilize the thread state if it's stuck in a non-stable status
+		// (e.g. in_flight_model_response from a previous crashed run).
+		if err := lcagent.ForceStabilizeThreadState(s.dataDir, resumeID, s.projectPath); err != nil {
+			s.mu.Unlock()
+			return fmt.Errorf("LCAgent resume stabilize: %w", err)
+		}
 		if s.replayLoaded && len(s.entries) > 0 {
 			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run from thread "+resumeID+".")
 		} else {

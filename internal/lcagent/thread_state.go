@@ -94,6 +94,23 @@ func LoadThreadStateInfo(dataDir, threadID, workspaceRoot string) (ThreadStateIn
 	return threadStateInfo(*state), true, nil
 }
 
+// ForceStabilizeThreadState loads the thread state and, if it is stuck in a
+// non-stable status (e.g. in_flight_model_response from a crashed run),
+// force-saves it as stable so the thread can be resumed.
+func ForceStabilizeThreadState(dataDir, threadID, workspaceRoot string) error {
+	state, ok, err := loadThreadState(dataDir, threadID, workspaceRoot)
+	if err != nil || !ok {
+		return err
+	}
+	status := strings.TrimSpace(state.Status)
+	if status == "" || status == threadStateStatusStable {
+		return nil
+	}
+	state.Status = threadStateStatusStable
+	state.PendingReason = ""
+	return saveThreadState(dataDir, *state)
+}
+
 func LatestThreadStateInfo(dataDir, projectPath string) (ThreadStateInfo, bool, error) {
 	state, ok, err := latestThreadState(dataDir, projectPath)
 	if err != nil || !ok {
