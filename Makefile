@@ -32,7 +32,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test lcagent-eval lcagent-live-eval lcagent-live-smoke build build-agent build-all install clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test lcagent-eval lcagent-live-eval lcagent-live-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -46,7 +46,10 @@ help:
 	@echo "  make build           - build ./$(APP)"
 	@echo "  make build-agent     - build ./lcagent"
 	@echo "  make build-all       - build lcroom and lcagent"
-	@echo "  make install         - go install the CLI"
+	@echo "  make deploy-bins     - rebuild repo-local ./lcroom and ./lcagent, then smoke check them"
+	@echo "  make install         - go install lcroom"
+	@echo "  make install-agent   - go install lcagent"
+	@echo "  make install-all     - go install lcroom and lcagent"
 	@echo "  make clean           - remove local build output"
 	@echo "  make scope           - print effective scope for this run"
 	@echo "  make scan            - one-shot scan/update"
@@ -107,8 +110,18 @@ build-agent:
 
 build-all: build build-agent
 
+deploy-bins: build-all
+	./$(APP) --version
+	./lcagent --help >/dev/null
+	@echo "deployed repo-local binaries: ./$(APP) ./lcagent"
+
 install:
 	$(GO) install ./cmd/$(APP)
+
+install-agent:
+	$(GO) install ./cmd/lcagent
+
+install-all: install install-agent
 
 clean:
 	rm -f ./$(APP) ./lcagent
