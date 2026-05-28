@@ -96,6 +96,8 @@ func TestSettingsLCAgentModelPickerJKTypeIntoFilter(t *testing.T) {
 			Provider:       "openrouter",
 			Models:         models,
 			FilteredModels: models,
+			Rows:           buildSettingsLCAgentPickerRows(models, "openrouter"),
+			FilterInput:    newSettingsLCAgentModelPickerFilterInput(),
 			Selected:       0,
 		},
 	}
@@ -106,16 +108,18 @@ func TestSettingsLCAgentModelPickerJKTypeIntoFilter(t *testing.T) {
 	if state == nil {
 		t.Fatal("model picker closed unexpectedly")
 	}
-	if state.FilterText != "j" {
-		t.Fatalf("filter after j = %q, want j", state.FilterText)
+	if state.FilterInput.Value() != "j" {
+		t.Fatalf("filter after j = %q, want j", state.FilterInput.Value())
 	}
-	if state.Selected != 1 {
-		t.Fatalf("selected after j = %d, want first matching model row", state.Selected)
+	// After filtering to "j", only "joker/model" remains. With provider grouping
+	// the display is: [0]=Auto, [1]=provider header, [2]=first model row.
+	if state.Selected != 2 {
+		t.Fatalf("selected after j = %d, want 2 (first model row after provider header)", state.Selected)
 	}
 
 	gotModel, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
 	got = gotModel.(Model)
-	if got.settingsLCAgentModelPicker.FilterText != "jk" {
-		t.Fatalf("filter after k = %q, want jk", got.settingsLCAgentModelPicker.FilterText)
+	if got.settingsLCAgentModelPicker.FilterInput.Value() != "jk" {
+		t.Fatalf("filter after k = %q, want jk", got.settingsLCAgentModelPicker.FilterInput.Value())
 	}
 }
