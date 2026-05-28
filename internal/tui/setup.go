@@ -33,6 +33,20 @@ const (
 	setupStepSave
 )
 
+type setupSectionMenuRow struct {
+	step  setupStep
+	label string
+}
+
+func setupSectionMenuRows() []setupSectionMenuRow {
+	return []setupSectionMenuRow{
+		{setupStepProjectProvider, "Project reports"},
+		{setupStepBossProvider, "Boss chat"},
+		{setupStepLCAgentConfig, "LCAgent"},
+		{setupStepSave, "Save"},
+	}
+}
+
 func (m *Model) openSetupMode() tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	m.settingsFields = newSettingsFields(settings)
@@ -46,6 +60,9 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.err = nil
 	m.setupSaving = false
 	m.setupReviewMode = false
+	m.setupSectionNavigation = true
+	m.setupSectionMenu = true
+	m.setupSectionSelected = 0
 	m.localModelPickerVisible = false
 	m.settingsLCAgentProviderVisible = false
 	m.settingsLCAgentProviderSelected = 0
@@ -60,7 +77,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	tier, _ := config.ParseModelTier(m.currentSettingsBaseline().OpenCodeModelTier)
 	m.setupModelTier = tier
 	m.setupLoading = true
-	m.status = "Setup wizard open. Press Enter to accept each page and continue."
+	m.status = "Setup open. Choose a section, then press Enter."
 	return m.refreshSetupSnapshotCmd(false)
 }
 
@@ -76,6 +93,9 @@ func (m *Model) closeSetupMode(status string) {
 	m.setupLoading = false
 	m.setupSaving = false
 	m.setupReviewMode = false
+	m.setupSectionNavigation = false
+	m.setupSectionMenu = false
+	m.setupSectionSelected = 0
 	m.setupConfigMode = false
 	m.setupStep = setupStepProjectProvider
 	m.setupConfigSelected = 0
@@ -123,6 +143,9 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.setupConfigMode {
 		return m.updateSetupConfigMode(msg)
 	}
+	if m.setupSectionMenu {
+		return m.updateSetupSectionMenuMode(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		return m.setupGoBack()
@@ -161,6 +184,9 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		if m.setupSectionNavigation {
+			return m.closeSetupSectionDialog("Back to setup sections.")
+		}
 		return m.setupGoBack()
 	case "tab", "down", "ctrl+n":
 		cmd := m.moveSetupConfigSelection(1)
@@ -197,6 +223,9 @@ func (m Model) updateSetupReviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", "ctrl+s":
 		return m.saveSetupFromCurrentChoices()
 	case "esc":
+		if m.setupSectionNavigation {
+			return m.closeSetupSectionDialog("Back to setup sections.")
+		}
 		return m.setupGoBack()
 	case "left", "[":
 		return m.setupGoBack()
@@ -206,6 +235,32 @@ func (m Model) updateSetupReviewMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.refreshSetupSnapshotCmd(false)
 	}
 	return m, nil
+}
+
+func (m Model) updateSetupSectionMenuMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.closeSetupMode("Setup skipped for now. Run /setup anytime.")
+		return m, nil
+	case "tab", "down", "j", "ctrl+n":
+		m.moveSetupSectionSelection(1)
+		return m, nil
+	case "shift+tab", "up", "k", "ctrl+p":
+		m.moveSetupSectionSelection(-1)
+		return m, nil
+	case "r":
+		m.setupLoading = true
+		m.status = "Refreshing AI backend checks..."
+		return m, m.refreshSetupSnapshotCmd(false)
+	case "enter":
+		return m.openSetupSectionDialog()
+	}
+	return m, nil
+}
+
+func (m *Model) moveSetupSectionSelection(delta int) {
+	m.setupSectionSelected = wrapIndex(m.setupSectionSelected+delta, len(setupSectionMenuRows()))
+	m.blurSettingsFields()
 }
 
 func (m Model) cycleModelTier(tier config.ModelTier) config.ModelTier {
@@ -264,6 +319,9 @@ func wrapIndex(index, count int) int {
 }
 
 func (m Model) setupAdvance() (tea.Model, tea.Cmd) {
+	if m.setupSectionNavigation {
+		return m.setupAdvanceSectionDialog()
+	}
 	switch m.setupStep {
 	case setupStepProjectProvider:
 		return m.enterSetupStep(m.nextSetupStepAfterProjectProvider(), "Project reports selected. Press Enter to continue.")
@@ -283,6 +341,9 @@ func (m Model) setupAdvance() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) setupGoBack() (tea.Model, tea.Cmd) {
+	if m.setupSectionNavigation && !m.setupSectionMenu {
+		return m.closeSetupSectionDialog("Back to setup sections.")
+	}
 	switch m.setupStep {
 	case setupStepProjectProvider:
 		m.closeSetupMode("Setup skipped for now. Run /setup anytime.")
@@ -301,6 +362,60 @@ func (m Model) setupGoBack() (tea.Model, tea.Cmd) {
 		m.closeSetupMode("Setup skipped for now. Run /setup anytime.")
 		return m, nil
 	}
+}
+
+func (m Model) setupAdvanceSectionDialog() (tea.Model, tea.Cmd) {
+	switch m.setupStep {
+	case setupStepProjectProvider:
+		if m.setupStepNeedsConfig(setupStepProjectConfig) {
+			return m.enterSetupStep(setupStepProjectConfig, "Project reports details. Press Enter to return to setup sections.")
+		}
+		return m.closeSetupSectionDialog("Project reports setup updated.")
+	case setupStepProjectConfig:
+		return m.closeSetupSectionDialog("Project reports setup updated.")
+	case setupStepBossProvider:
+		if m.setupStepNeedsConfig(setupStepBossConfig) {
+			return m.enterSetupStep(setupStepBossConfig, "Boss chat details. Press Enter to return to setup sections.")
+		}
+		return m.closeSetupSectionDialog("Boss chat setup updated.")
+	case setupStepBossConfig:
+		return m.closeSetupSectionDialog("Boss chat setup updated.")
+	case setupStepLCAgentConfig:
+		return m.closeSetupSectionDialog("LCAgent setup updated.")
+	case setupStepSave:
+		return m.saveSetupFromCurrentChoices()
+	default:
+		return m.closeSetupSectionDialog("Back to setup sections.")
+	}
+}
+
+func (m Model) openSetupSectionDialog() (tea.Model, tea.Cmd) {
+	m.setupSectionSelected = wrapIndex(m.setupSectionSelected, len(setupSectionMenuRows()))
+	m.setupSectionMenu = false
+	switch setupSectionMenuRows()[m.setupSectionSelected].step {
+	case setupStepProjectProvider:
+		return m.enterSetupStep(setupStepProjectProvider, "Project reports setup. Choose a runner, then press Enter.")
+	case setupStepBossProvider:
+		return m.enterSetupStep(setupStepBossProvider, "Boss chat setup. Choose a realtime backend, then press Enter.")
+	case setupStepLCAgentConfig:
+		return m.enterSetupStep(setupStepLCAgentConfig, "LCAgent setup. Press Enter to return to setup sections.")
+	case setupStepSave:
+		return m.enterSetupStep(setupStepSave, "Review setup. Enter saves, Esc returns to setup sections.")
+	default:
+		return m, nil
+	}
+}
+
+func (m Model) closeSetupSectionDialog(status string) (tea.Model, tea.Cmd) {
+	m.setupSectionMenu = true
+	m.setupReviewMode = false
+	m.setupConfigMode = false
+	m.setupConfigSelected = 0
+	m.blurSettingsFields()
+	if status != "" {
+		m.status = status
+	}
+	return m, nil
 }
 
 func (m Model) setupEnterConfigStep() (tea.Model, tea.Cmd) {
@@ -693,6 +808,15 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteHintStyle.Render("Saving AI setup..."))
 	}
+	if m.setupSectionMenu {
+		lines = append(lines, "")
+		lines = append(lines, m.renderSetupSectionMenu(width, maxHeight)...)
+		if actions := m.renderSetupActionLines(width); len(actions) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, actions...)
+		}
+		return strings.Join(lines, "\n")
+	}
 	if m.setupReviewMode {
 		lines = append(lines, "")
 		lines = append(lines, m.renderSetupReview(width))
@@ -740,6 +864,66 @@ func (m Model) renderSetupContent(width, maxHeight int) string {
 		lines = append(lines, hintLines...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderSetupSectionMenu(width, maxHeight int) []string {
+	rows := setupSectionMenuRows()
+	lines := []string{
+		detailSectionStyle.Render("Sections"),
+		commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render("Open one setup area at a time. Enter saves only from the Save section.")),
+	}
+	limit := max(1, maxHeight-12)
+	start, end := settingsSectionMenuWindow(len(rows), wrapIndex(m.setupSectionSelected, len(rows)), limit)
+	if start > 0 {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
+	}
+	for i := start; i < end; i++ {
+		lines = append(lines, m.renderSetupSectionMenuRow(rows[i], i == wrapIndex(m.setupSectionSelected, len(rows)), width))
+	}
+	if end < len(rows) {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(rows)-end)))
+	}
+	return lines
+}
+
+func (m Model) renderSetupSectionMenuRow(row setupSectionMenuRow, selected bool, width int) string {
+	titleStyle := detailValueStyle.Bold(true)
+	summaryStyle := detailMutedStyle
+	marker := " "
+	if selected {
+		titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+		summaryStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230"))
+		marker = ">"
+	}
+	titleWidth := min(22, max(12, width/3))
+	summaryWidth := max(8, width-titleWidth-4)
+	summary := m.setupSectionMenuSummary(row.step)
+	line := marker + " " +
+		titleStyle.Width(titleWidth).Render(truncateText(row.label, titleWidth)) + " " +
+		summaryStyle.Width(summaryWidth).Render(truncateText(summary, summaryWidth))
+	line = fitFooterWidth(line, width)
+	if selected {
+		return dialogSelectedRowStyle.Width(width).Render(line)
+	}
+	return lipgloss.NewStyle().Width(width).Render(line)
+}
+
+func (m Model) setupSectionMenuSummary(step setupStep) string {
+	settings := m.setupSettingsFromCurrentChoices()
+	switch step {
+	case setupStepProjectProvider:
+		choice := m.selectedSettingsProviderChoice(providerChoiceRoleProjectReports, settings.AIBackend, settings)
+		return m.setupReviewChoiceSummary(choice)
+	case setupStepBossProvider:
+		choice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
+		return m.setupReviewChoiceSummary(choice)
+	case setupStepLCAgentConfig:
+		return m.setupReviewLCAgentSummary(settings)
+	case setupStepSave:
+		return "Review and write config.toml"
+	default:
+		return ""
+	}
 }
 
 func (m Model) renderSetupWizardProgress(width int) string {
@@ -1181,6 +1365,14 @@ func (m Model) renderSetupActionLines(width int) []string {
 }
 
 func (m Model) setupActionSegments() []string {
+	if m.setupSectionMenu {
+		return []string{
+			renderDialogAction("Enter", "open", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("Up/Down", "section", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+		}
+	}
 	if m.setupReviewMode {
 		return []string{
 			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
@@ -1224,6 +1416,9 @@ func (m Model) setupActionSegments() []string {
 }
 
 func (m Model) setupBackActionLabel() string {
+	if m.setupSectionNavigation {
+		return "sections"
+	}
 	if m.setupStep == setupStepProjectProvider {
 		return "close"
 	}

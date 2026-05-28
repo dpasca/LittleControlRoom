@@ -136,6 +136,9 @@ type Model struct {
 	setupLoading                        bool
 	setupSaving                         bool
 	setupReviewMode                     bool
+	setupSectionNavigation              bool
+	setupSectionMenu                    bool
+	setupSectionSelected                int
 	setupStep                           setupStep
 	setupFocusedRole                    setupRole
 	setupSelected                       int
@@ -150,6 +153,7 @@ type Model struct {
 	settingsMode                        bool
 	settingsSaving                      bool
 	settingsFields                      []settingsField
+	settingsSectionMenu                 bool
 	settingsSectionSelected             int
 	settingsSelected                    int
 	settingsDrilldown                   settingsDrilldownID

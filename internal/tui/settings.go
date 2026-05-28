@@ -408,6 +408,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsBaseline = &saved
 	m.settingsMode = true
 	m.settingsSaving = false
+	m.settingsSectionMenu = false
 	m.settingsRevealPrivacy = false
 	m.settingsPrivacyEditor = nil
 	m.settingsDrilldown = settingsDrilldownNone
@@ -440,6 +441,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsBaseline = &saved
 	m.settingsMode = true
 	m.settingsSaving = false
+	m.settingsSectionMenu = true
 	m.settingsSectionSelected = 0
 	m.settingsRevealPrivacy = false
 	m.settingsPrivacyEditor = nil
@@ -463,7 +465,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.commandMode = false
 	m.showHelp = false
 	m.err = nil
-	m.status = "Settings open. Getting Started is the short setup guide; Enter chooses pickers, ctrl+s saves, Esc cancels."
+	m.status = "Settings open. Choose a section, then press Enter."
 	if issue := settingsLocalFileIssue(saved); issue != nil {
 		m.appendSettingsConfigIssue(issue)
 		m.status = errorStatusWithHint(settingsConfigIssueStatus)
@@ -483,6 +485,7 @@ func (m *Model) closeSettingsMode(status string) {
 	m.blurSettingsFields()
 	m.settingsMode = false
 	m.settingsSaving = false
+	m.settingsSectionMenu = false
 	m.settingsDrilldown = settingsDrilldownNone
 	m.settingsPrivacyEditor = nil
 	m.settingsAIBackendPickerVisible = false
@@ -511,17 +514,15 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.settingsPrivacyEditor != nil {
 		return m.updateSettingsPrivacyEditorMode(msg)
 	}
+	if m.settingsSectionMenu {
+		return m.updateSettingsSectionMenuMode(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		if m.settingsDrilldown != settingsDrilldownNone {
 			return m.closeSettingsDrilldown("Back to Getting Started.")
 		}
-		m.closeSettingsMode("Settings edit canceled")
-		return m, nil
-	case "pgup", "[", "ctrl+b":
-		return m, m.moveSettingsSection(-1)
-	case "pgdown", "]", "ctrl+f":
-		return m, m.moveSettingsSection(1)
+		return m.closeSettingsSectionDialog("Back to Settings sections.")
 	case "tab", "down", "ctrl+n":
 		return m, m.moveSettingsSelection(1)
 	case "shift+tab", "up", "ctrl+p":
@@ -563,6 +564,23 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) updateSettingsSectionMenuMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.closeSettingsMode("Settings edit canceled")
+		return m, nil
+	case "tab", "down", "j", "ctrl+n":
+		return m, m.moveSettingsSectionMenu(1)
+	case "shift+tab", "up", "k", "ctrl+p":
+		return m, m.moveSettingsSectionMenu(-1)
+	case "ctrl+s":
+		return m.saveSettingsFromFields()
+	case "enter":
+		return m.openSettingsSectionDialog()
+	}
+	return m, nil
+}
+
 func settingsDrilldownForField(fieldIndex int) settingsDrilldownID {
 	switch fieldIndex {
 	case settingsFieldAIBackend:
@@ -582,6 +600,7 @@ func (m Model) openSettingsDrilldown(drilldown settingsDrilldownID) (tea.Model, 
 	if drilldown == settingsDrilldownNone {
 		return m, nil
 	}
+	m.settingsSectionMenu = false
 	m.settingsDrilldown = drilldown
 	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionGettingStarted)
 	fields := m.visibleSettingsDrilldownFieldOrder(drilldown)
@@ -606,6 +625,45 @@ func (m Model) closeSettingsDrilldown(status string) (tea.Model, tea.Cmd) {
 		m.status = status
 	}
 	return m, m.setSettingsSelection(target)
+}
+
+func (m Model) openSettingsSectionDialog() (tea.Model, tea.Cmd) {
+	sections := settingsSections()
+	if len(sections) == 0 {
+		return m, nil
+	}
+	index := wrapIndex(m.settingsSectionSelected, len(sections))
+	m.settingsSectionSelected = index
+	m.settingsSectionMenu = false
+	m.settingsDrilldown = settingsDrilldownNone
+	fields := m.visibleSettingsFieldOrder(sections[index])
+	if len(fields) == 0 {
+		m.status = "No settings are available in this section."
+		return m, nil
+	}
+	m.status = sections[index].label + " settings open. Press Esc to go back to sections."
+	return m, m.setSettingsSelection(fields[0])
+}
+
+func (m Model) closeSettingsSectionDialog(status string) (tea.Model, tea.Cmd) {
+	m.settingsSectionMenu = true
+	m.settingsDrilldown = settingsDrilldownNone
+	m.blurSettingsFields()
+	if status != "" {
+		m.status = status
+	}
+	return m, nil
+}
+
+func (m *Model) moveSettingsSectionMenu(delta int) tea.Cmd {
+	sections := settingsSections()
+	if len(sections) == 0 || delta == 0 {
+		return nil
+	}
+	m.settingsDrilldown = settingsDrilldownNone
+	m.settingsSectionSelected = wrapIndex(m.settingsSectionSelected+delta, len(sections))
+	m.blurSettingsFields()
+	return nil
 }
 
 func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
@@ -1551,25 +1609,93 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	}
 	lines = append(lines, m.renderCompactInferenceSetupSummary(width))
 	lines = append(lines, "")
-	lines = append(lines, splitLines(m.renderSettingsSectionLayout(width, maxHeight))...)
-	if hint := m.renderSelectedSettingsHint(width); hint != "" {
-		lines = append(lines, "")
-		lines = append(lines, hint)
+	if m.settingsSectionMenu {
+		lines = append(lines, m.renderSettingsSectionMenu(width, maxHeight)...)
+	} else {
+		lines = append(lines, splitLines(m.renderSettingsSectionLayout(width, maxHeight))...)
+	}
+	if !m.settingsSectionMenu {
+		if hint := m.renderSelectedSettingsHint(width); hint != "" {
+			lines = append(lines, "")
+			lines = append(lines, hint)
+		}
 	}
 	lines = append(lines, "")
 	lines = append(lines, m.renderSettingsActions())
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) renderSettingsSectionMenu(width, maxHeight int) []string {
+	sections := settingsSections()
+	lines := []string{
+		detailSectionStyle.Render("Sections"),
+		commandPaletteHintStyle.Render(lipgloss.NewStyle().Width(max(18, width)).Render("Open one area at a time. Each section gets the full dialog width, and Esc returns here.")),
+	}
+	limit := max(1, maxHeight-12)
+	start, end := settingsSectionMenuWindow(len(sections), wrapIndex(m.settingsSectionSelected, len(sections)), limit)
+	if start > 0 {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d above", start)))
+	}
+	for i := start; i < end; i++ {
+		lines = append(lines, m.renderSettingsSectionMenuRow(sections[i], i == wrapIndex(m.settingsSectionSelected, len(sections)), width))
+	}
+	if end < len(sections) {
+		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(sections)-end)))
+	}
+	return lines
+}
+
+func settingsSectionMenuWindow(total, selected, limit int) (int, int) {
+	if total == 0 || limit <= 0 || total <= limit {
+		return 0, total
+	}
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= total {
+		selected = total - 1
+	}
+	start := selected - limit/2
+	if start < 0 {
+		start = 0
+	}
+	maxStart := total - limit
+	if start > maxStart {
+		start = maxStart
+	}
+	return start, start + limit
+}
+
+func (m Model) renderSettingsSectionMenuRow(section settingsSection, selected bool, width int) string {
+	marker := " "
+	titleStyle := detailValueStyle.Bold(true)
+	hintStyle := detailMutedStyle
+	if selected {
+		marker = ">"
+		titleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+		hintStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230"))
+	}
+	titleWidth := min(24, max(12, width/3))
+	hintWidth := max(8, width-titleWidth-4)
+	row := marker + " " +
+		titleStyle.Width(titleWidth).Render(truncateText(section.label, titleWidth)) + " " +
+		hintStyle.Width(hintWidth).Render(truncateText(section.hint, hintWidth))
+	row = fitFooterWidth(row, width)
+	if selected {
+		return dialogSelectedRowStyle.Width(width).Render(row)
+	}
+	return lipgloss.NewStyle().Width(width).Render(row)
+}
+
 func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 	activeSection := m.activeSettingsSection()
-	sidebarWidth := settingsSectionSidebarWidth(width)
-	separatorWidth := 3
-	contentWidth := max(18, width-sidebarWidth-separatorWidth)
+	contentWidth := max(18, width)
 
 	gettingStartedGuide := activeSection.id == settingsSectionGettingStarted && m.settingsDrilldown == settingsDrilldownNone && maxHeight >= 20
 	gettingStartedDrilldown := activeSection.id == settingsSectionGettingStarted && m.settingsDrilldown != settingsDrilldownNone
-	mainLines := []string{}
+	mainLines := []string{
+		detailSectionStyle.Render(activeSection.label),
+	}
 	if gettingStartedDrilldown {
 		mainLines = append(mainLines, m.renderSettingsDrilldown(contentWidth, maxHeight)...)
 	} else if gettingStartedGuide {
@@ -1612,10 +1738,8 @@ func (m Model) renderSettingsSectionLayout(width, maxHeight int) string {
 		mainLines = append(mainLines, m.renderBrowserSettingsStatus(contentWidth)...)
 	}
 
-	sidebar := m.renderSettingsSectionSidebar(sidebarWidth)
-	separator := detailMutedStyle.Render("│")
 	main := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(mainLines, "\n"))
-	return lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " ", separator, " ", main)
+	return main
 }
 
 func (m Model) settingsVisibleFieldCount(maxHeight int) int {
@@ -2691,11 +2815,21 @@ func (m Model) selectedSettingsGettingStartedStep() settingsGettingStartedStep {
 }
 
 func (m Model) renderSettingsActions() string {
+	if m.settingsSectionMenu {
+		return strings.Join([]string{
+			strings.Join([]string{
+				renderDialogAction("Enter", "open", navigateActionKeyStyle, navigateActionTextStyle),
+				renderDialogAction("Up/Down", "section", pushActionKeyStyle, pushActionTextStyle),
+				renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
+				renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+			}, "   "),
+		}, "\n")
+	}
 	actions := []string{
 		renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Tab", "next", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Up/Down", "move", pushActionKeyStyle, pushActionTextStyle),
-		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
+		renderDialogAction("Esc", "sections", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	if m.settingsDrilldown != settingsDrilldownNone {
 		actions[len(actions)-1] = renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle)
@@ -2722,7 +2856,7 @@ func (m Model) renderSettingsActions() string {
 	}
 	return strings.Join([]string{
 		strings.Join(actions, "   "),
-		renderDialogAction("Page Up/Page Down", "changes section", pushActionKeyStyle, pushActionTextStyle),
+		renderDialogAction("Esc", "returns to section list", pushActionKeyStyle, pushActionTextStyle),
 	}, "\n")
 }
 

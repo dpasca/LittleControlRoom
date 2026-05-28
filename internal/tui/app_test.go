@@ -21630,8 +21630,11 @@ func TestDispatchSetupOpensSetupWizard(t *testing.T) {
 	if got.settingsMode {
 		t.Fatalf("/setup should leave the full settings editor closed")
 	}
-	if got.status != "Setup wizard open. Press Enter to accept each page and continue." {
+	if got.status != "Setup open. Choose a section, then press Enter." {
 		t.Fatalf("status = %q, want setup wizard status", got.status)
+	}
+	if !got.setupSectionMenu {
+		t.Fatalf("/setup should start at the section chooser")
 	}
 	if cmd == nil {
 		t.Fatalf("/setup should refresh backend availability")
@@ -21730,8 +21733,11 @@ func TestStartupUnconfiguredAIBackendOpensSetupWizard(t *testing.T) {
 	if got.settingsMode {
 		t.Fatalf("startup setup should not open full settings mode")
 	}
-	if got.status != "Setup wizard open. Press Enter to accept each page and continue." {
+	if got.status != "Setup open. Choose a section, then press Enter." {
 		t.Fatalf("status = %q, want setup wizard explanation", got.status)
+	}
+	if !got.setupSectionMenu {
+		t.Fatalf("startup setup should start at the section chooser")
 	}
 	if cmd == nil {
 		t.Fatalf("opening setup should refresh backend availability")
@@ -22982,8 +22988,8 @@ func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 	if !strings.Contains(rendered, "Config:") {
 		t.Fatalf("View() missing config path context: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Page Up/Page Down") || !strings.Contains(rendered, "changes section") {
-		t.Fatalf("View() should keep the settings section legend visible at 24 rows: %q", rendered)
+	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "section") {
+		t.Fatalf("View() should keep the settings section/back legend visible at 24 rows: %q", rendered)
 	}
 	if !strings.Contains(rendered, "│  [") || !strings.Contains(rendered, "│ Pa") {
 		t.Fatalf("View() should preserve background list and detail context under the settings modal: %q", rendered)
@@ -23014,14 +23020,14 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	if !strings.Contains(rendered, "Tab") || !strings.Contains(rendered, "next") {
 		t.Fatalf("settings modal should render Tab next action: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Page Up/Page Down") || !strings.Contains(rendered, "changes section") {
-		t.Fatalf("settings modal should clearly render Page Up/Page Down changes section action: %q", rendered)
+	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "returns to section list") {
+		t.Fatalf("settings modal should clearly render the section-list back action: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Up/Down") || !strings.Contains(rendered, "move") {
 		t.Fatalf("settings modal should render Up/Down move action: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "cancel") {
-		t.Fatalf("settings modal should render Esc cancel action: %q", rendered)
+	if !strings.Contains(rendered, "Esc") || !strings.Contains(rendered, "sections") {
+		t.Fatalf("settings modal should render Esc sections action: %q", rendered)
 	}
 }
 
@@ -23158,10 +23164,11 @@ func TestSettingsPrivacyPatternsEditorEscCancels(t *testing.T) {
 
 func TestSettingsModalShowsEscCancel(t *testing.T) {
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:        true,
+		settingsSectionMenu: true,
+		settingsFields:      newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:               100,
+		height:              24,
 	}
 	_ = m.setSettingsSelection(0)
 
@@ -23643,35 +23650,35 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 		width:            100,
 		height:           24,
 	}
-	_ = m.setSettingsSection(1)
-	_ = m.setSettingsSelection(settingsFieldCodexLaunchPreset)
+	m.settingsSectionMenu = true
+	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionAI)
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyPgDown})
-	if cmd == nil {
-		t.Fatalf("PgDn should move to the next settings section")
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyDown})
+	if cmd != nil {
+		t.Fatalf("moving in the top-level settings menu should not queue work")
 	}
 	got := updated.(Model)
-	if got.settingsSelected != settingsFieldLCAgentProvider {
-		t.Fatalf("settingsSelected = %d, want LCAgent provider field", got.settingsSelected)
+	if got.settingsSectionSelected != settingsSectionIndexByID(settingsSectionLCAgent) {
+		t.Fatalf("settingsSectionSelected = %d, want LCAgent section", got.settingsSectionSelected)
 	}
 
 	rendered := ansi.Strip(got.renderSettingsContent(72, 18))
-	if !strings.Contains(rendered, "Sections:") || !strings.Contains(rendered, "LCAgent") {
-		t.Fatalf("settings modal should make the section switcher obvious: %q", rendered)
+	if !strings.Contains(rendered, "Sections") || !strings.Contains(rendered, "> LCAgent") {
+		t.Fatalf("settings modal should make the top-level section chooser obvious: %q", rendered)
 	}
-	if !strings.Contains(rendered, "> LCAgent") {
-		t.Fatalf("settings modal should render a dedicated selected section row: %q", rendered)
+
+	updated, cmd = got.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("opening a settings section should focus the first field")
 	}
-	foundColumnRow := false
-	for _, line := range strings.Split(rendered, "\n") {
-		if strings.Contains(line, "Sections:") && strings.Contains(line, "LCAgent section.") {
-			foundColumnRow = true
-			break
-		}
+	got = updated.(Model)
+	if got.settingsSectionMenu {
+		t.Fatalf("opening a settings section should leave the top-level menu")
 	}
-	if !foundColumnRow {
-		t.Fatalf("settings modal should place sections in a left column beside section content: %q", rendered)
+	if got.settingsSelected != settingsFieldLCAgentProvider {
+		t.Fatalf("settingsSelected = %d, want LCAgent provider field", got.settingsSelected)
 	}
+	rendered = ansi.Strip(got.renderSettingsContent(72, 18))
 	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
@@ -25219,10 +25226,11 @@ func TestCodexActionMsgPersistsEmbeddedModelPreferencesToConfig(t *testing.T) {
 
 func TestSettingsEscCancelsWithoutQuitting(t *testing.T) {
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:        true,
+		settingsSectionMenu: true,
+		settingsFields:      newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:               100,
+		height:              24,
 	}
 	_ = m.setSettingsSelection(0)
 
