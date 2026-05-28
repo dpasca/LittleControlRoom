@@ -93,7 +93,7 @@ codex_launch_preset = "yolo"
 # process environment variables; lcagent_env_file is an advanced fallback.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
 # lcagent_env_file = "~/path/to/openrouter.env"
-# lcagent_route_preset = "balanced" # optional: balanced, quality, cheap-scout
+# lcagent_route_preset = "balanced" # optional: balanced, quality, mimo-2.5-pro-low/high/max, cheap-scout
 # lcagent_provider = "openrouter"
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"
@@ -114,8 +114,8 @@ root session, chain depth, handoff source, context mode, and pending verificatio
 state when available.
 
 For direct CLI use, `lcagent presets` lists coding route presets. `lcagent exec
---route-preset balanced|quality|cheap-scout` and `lcagent live-eval
---route-preset balanced|quality|cheap-scout` apply a provider, model, autonomy,
+--route-preset balanced|quality|mimo-2.5-pro-low|mimo-2.5-pro-high|mimo-2.5-pro-max|cheap-scout` and `lcagent live-eval
+--route-preset balanced|quality|mimo-2.5-pro-low|mimo-2.5-pro-high|mimo-2.5-pro-max|cheap-scout` apply a provider, model, autonomy,
 reasoning, tool-profile, context-profile, timeout, and temperature bundle where
 the command supports those knobs; any explicit flag such as `--model` or
 `--context-profile` still wins. The balanced DeepSeek lane sends explicit high

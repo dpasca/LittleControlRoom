@@ -91,7 +91,7 @@ func runLiveEval(args []string, stdout io.Writer) error {
 	var requestTimeout time.Duration
 	var maxTurns int
 	var keepTemp, listOnly bool
-	fs.StringVar(&routePresetRaw, "route-preset", "", "coding route preset: balanced, quality, or cheap-scout; explicit flags override preset values")
+	fs.StringVar(&routePresetRaw, "route-preset", "", "coding route preset: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout; explicit flags override preset values")
 	fs.StringVar(&provider, "provider", "openrouter", "provider: openrouter, openai, deepseek, or moonshot")
 	fs.StringVar(&model, "model", "", "optional model name; blank uses provider default")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")

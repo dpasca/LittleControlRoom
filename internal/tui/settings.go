@@ -2116,7 +2116,7 @@ func lcagentProviderForRoutePreset(preset string) string {
 	switch strings.ToLower(strings.TrimSpace(preset)) {
 	case "quality":
 		return "openai"
-	case "balanced", "cheap-scout", "cheap", "scout":
+	case "balanced", "mimo-2.5-pro", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo", "cheap-scout", "cheap", "scout":
 		return "openrouter"
 	default:
 		return ""
@@ -2129,6 +2129,8 @@ func lcagentModelForRoutePreset(preset string) string {
 		return "gpt-5.5"
 	case "balanced":
 		return "deepseek/deepseek-v4-pro"
+	case "mimo-2.5-pro", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
+		return "xiaomi/mimo-v2.5-pro"
 	case "cheap-scout", "cheap", "scout":
 		return "deepseek/deepseek-v4-flash"
 	default:
@@ -3038,7 +3040,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	settings.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	settings.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
-	settings.LCAgentRoutePreset = strings.TrimSpace(settings.LCAgentRoutePreset)
+	settings.LCAgentRoutePreset = settingsChoiceOptionValueForField(settingsFieldLCAgentRoutePreset, settings.LCAgentRoutePreset)
 	settings.LCAgentProvider = strings.TrimSpace(settings.LCAgentProvider)
 	settings.LCAgentAuto = strings.TrimSpace(settings.LCAgentAuto)
 	settings.LCAgentToolProfile = strings.TrimSpace(settings.LCAgentToolProfile)
@@ -3204,6 +3206,14 @@ func (m Model) settingsFieldHint(index int) string {
 			return "Balanced uses DeepSeek V4 Pro through OpenRouter with conservative coding budgets."
 		case "quality":
 			return "Quality uses GPT-5.5 through the direct OpenAI route with low reasoning and larger retained context."
+		case "mimo-2.5-pro", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
+			return "MiMo 2.5 Pro low uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning and larger retained context."
+		case "mimo-2.5-pro-low":
+			return "MiMo 2.5 Pro low uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning and larger retained context."
+		case "mimo-2.5-pro-high":
+			return "MiMo 2.5 Pro high uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning and larger retained context."
+		case "mimo-2.5-pro-max":
+			return "MiMo 2.5 Pro max uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning, xhigh reasoning, and larger retained context."
 		case "cheap-scout", "cheap", "scout":
 			return "Cheap scout uses a lower-cost DeepSeek V4 Flash route for bounded read-first work."
 		default:

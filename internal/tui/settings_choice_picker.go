@@ -57,6 +57,24 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 				Description: "Use this for important edits, reviews, or work where model quality matters more than cost.",
 			},
 			{
+				Value:       "mimo-2.5-pro-low",
+				Label:       "MiMo 2.5 Pro Low",
+				Summary:     "Xiaomi MiMo-V2.5-Pro low-reasoning benchmark lane.",
+				Description: "Useful as the baseline MiMo comparison against existing LCAgent coding routes.",
+			},
+			{
+				Value:       "mimo-2.5-pro-high",
+				Label:       "MiMo 2.5 Pro High",
+				Summary:     "Xiaomi MiMo-V2.5-Pro high-reasoning benchmark lane.",
+				Description: "Use this to test whether extra reasoning improves MiMo's coding-agent score.",
+			},
+			{
+				Value:       "mimo-2.5-pro-max",
+				Label:       "MiMo 2.5 Pro Max",
+				Summary:     "Xiaomi MiMo-V2.5-Pro max-reasoning benchmark lane.",
+				Description: "Use this as the deepest MiMo comparison while it remains price-competitive.",
+			},
+			{
 				Value:       "cheap-scout",
 				Label:       "Cheap Scout",
 				Summary:     "Lower-cost read-first lane for bounded exploration.",
@@ -264,6 +282,8 @@ func settingsChoiceOptionValueForField(fieldIndex int, raw string) string {
 		switch normalized {
 		case "scout", "cheap", "cheapscout":
 			return "cheap-scout"
+		case "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "mimo-2.5-pro", "xiaomi", "xiaomi-mimo":
+			return "mimo-2.5-pro-low"
 		}
 		return normalized
 	case settingsFieldLCAgentAdminWrite:

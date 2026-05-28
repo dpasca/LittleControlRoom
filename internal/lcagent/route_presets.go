@@ -53,6 +53,9 @@ func lcagentRoutePresets() []lcagentRoutePreset {
 			RequestTimeout:  10 * time.Minute,
 			Temperature:     "omitted",
 		},
+		mimo25ProRoutePreset("low"),
+		mimo25ProRoutePreset("high"),
+		mimo25ProRoutePreset("max"),
 		{
 			Name:           "cheap-scout",
 			DisplayName:    "Cheap Scout",
@@ -76,6 +79,8 @@ func lcagentRoutePresetByName(name string) (lcagentRoutePreset, bool) {
 		return lcagentRoutePreset{}, false
 	case "scout", "cheap", "cheapscout":
 		normalized = "cheap-scout"
+	case "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "mimo-2.5-pro", "xiaomi", "xiaomi-mimo":
+		normalized = "mimo-2.5-pro-low"
 	}
 	for _, preset := range lcagentRoutePresets() {
 		if preset.Name == normalized {
@@ -83,6 +88,31 @@ func lcagentRoutePresetByName(name string) (lcagentRoutePreset, bool) {
 		}
 	}
 	return lcagentRoutePreset{}, false
+}
+
+func mimo25ProRoutePreset(reasoningEffort string) lcagentRoutePreset {
+	reasoningEffort = strings.ToLower(strings.TrimSpace(reasoningEffort))
+	if reasoningEffort == "" {
+		reasoningEffort = "low"
+	}
+	requestEffort := reasoningEffort
+	if reasoningEffort == "max" {
+		requestEffort = "xhigh"
+	}
+	return lcagentRoutePreset{
+		Name:            "mimo-2.5-pro-" + reasoningEffort,
+		DisplayName:     "MiMo 2.5 Pro " + strings.ToUpper(reasoningEffort[:1]) + reasoningEffort[1:],
+		Description:     "Xiaomi MiMo-V2.5-Pro " + reasoningEffort + "-reasoning benchmark lane through OpenRouter with Xiaomi provider pinning and larger retained context.",
+		Provider:        "openrouter",
+		Model:           "xiaomi/mimo-v2.5-pro",
+		ReasoningEffort: requestEffort,
+		Auto:            "low",
+		ToolProfile:     "balanced",
+		ContextProfile:  "large",
+		RequestTimeout:  10 * time.Minute,
+		ProviderOnly:    []string{"xiaomi"},
+		Temperature:     "0.2",
+	}
 }
 
 func lcagentRoutePresetNames() string {

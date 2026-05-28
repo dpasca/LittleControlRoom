@@ -221,7 +221,7 @@ func lcagentRoutePresetProvider(preset string) string {
 	switch strings.ToLower(strings.TrimSpace(preset)) {
 	case "quality":
 		return "openai"
-	case "balanced", "cheap-scout", "cheap", "scout":
+	case "balanced", "mimo-2.5-pro", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo", "cheap-scout", "cheap", "scout":
 		return "openrouter"
 	default:
 		return ""

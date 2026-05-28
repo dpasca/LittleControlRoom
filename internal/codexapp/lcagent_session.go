@@ -482,6 +482,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		return []ModelOption{
 			option(modeladapter.DefaultOpenRouterModel, "Balanced: DeepSeek V4 Pro", "Recommended balanced OpenRouter coding route.", "", defaultModel == modeladapter.DefaultOpenRouterModel),
 			option("openai/gpt-5.5", "Quality: GPT-5.5", "Higher-quality OpenRouter coding route.", "low", defaultModel == "openai/gpt-5.5"),
+			option("xiaomi/mimo-v2.5-pro", "Benchmark: MiMo 2.5 Pro", "Xiaomi MiMo-V2.5-Pro benchmark route through OpenRouter.", "low", defaultModel == "xiaomi/mimo-v2.5-pro"),
 			option("deepseek/deepseek-v4-flash", "Cheap Scout: DeepSeek V4 Flash", "Lower-cost route for bounded read-first exploration.", "", defaultModel == "deepseek/deepseek-v4-flash"),
 		}
 	case "deepseek":
@@ -1519,10 +1520,12 @@ func lcagentRoutePresetValue(configured string) (string, error) {
 		return "", nil
 	case "scout", "cheap", "cheapscout":
 		return "cheap-scout", nil
-	case "balanced", "quality", "cheap-scout":
+	case "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "mimo-2.5-pro", "xiaomi", "xiaomi-mimo":
+		return "mimo-2.5-pro-low", nil
+	case "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "cheap-scout":
 		return value, nil
 	default:
-		return "", fmt.Errorf("LCAgent route preset must be blank or one of: balanced, quality, cheap-scout")
+		return "", fmt.Errorf("LCAgent route preset must be blank or one of: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, cheap-scout")
 	}
 }
 
@@ -1656,7 +1659,7 @@ func lcagentRoutePresetProvider(preset string) string {
 	switch strings.ToLower(strings.TrimSpace(preset)) {
 	case "quality":
 		return "openai"
-	case "balanced", "cheap-scout":
+	case "balanced", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "cheap-scout":
 		return "openrouter"
 	default:
 		return ""
@@ -1669,6 +1672,8 @@ func lcagentRoutePresetModel(preset string) string {
 		return modeladapter.DefaultOpenAIModel
 	case "balanced":
 		return modeladapter.DefaultOpenRouterModel
+	case "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max":
+		return "xiaomi/mimo-v2.5-pro"
 	case "cheap-scout":
 		return "deepseek/deepseek-v4-flash"
 	default:
@@ -1678,7 +1683,7 @@ func lcagentRoutePresetModel(preset string) string {
 
 func lcagentRoutePresetAuto(preset string) string {
 	switch strings.ToLower(strings.TrimSpace(preset)) {
-	case "balanced", "quality":
+	case "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max":
 		return "low"
 	case "cheap-scout":
 		return "off"
