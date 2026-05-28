@@ -1629,6 +1629,7 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	if s == nil || replay == nil {
 		return
 	}
+	openedAt := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.threadID = firstNonEmpty(strings.TrimSpace(replay.threadID), strings.TrimSpace(replay.sessionID))
@@ -1659,7 +1660,6 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.entries = nil
 	s.revision = 0
 	s.cache.ready = false
-	replayActivityAt := s.lastActivityAt
 	s.appendEntryLocked(TranscriptStatus, "Loaded LCAgent thread "+label+" from disk. Sending a prompt starts a continuing run from canonical thread state.")
 	for _, entry := range replay.entries {
 		text := strings.TrimSpace(entry.Text)
@@ -1673,7 +1673,7 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 			DisplayText: strings.TrimSpace(entry.DisplayText),
 		})
 	}
-	s.lastActivityAt = replayActivityAt
+	s.lastActivityAt = openedAt
 	s.cache.invalidate(&s.revision)
 }
 

@@ -639,6 +639,7 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 		},
 	})
 
+	openedAt := time.Now()
 	session, err := newLCAgentSession(LaunchRequest{
 		Provider:    ProviderLCAgent,
 		ProjectPath: root,
@@ -659,8 +660,8 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	if snapshot.Status != "Loaded LCAgent thread "+sessionID+" from disk" {
 		t.Fatalf("Status = %q", snapshot.Status)
 	}
-	if !snapshot.LastActivityAt.Equal(last) {
-		t.Fatalf("LastActivityAt = %s, want %s", snapshot.LastActivityAt, last)
+	if snapshot.LastActivityAt.Before(openedAt) {
+		t.Fatalf("LastActivityAt = %s, want refreshed embedded activity at or after %s", snapshot.LastActivityAt, openedAt)
 	}
 	if snapshot.Model != "deepseek/replay-model" || snapshot.ModelProvider != "openrouter" {
 		t.Fatalf("model = %q/%q, want openrouter/deepseek replay model", snapshot.ModelProvider, snapshot.Model)
