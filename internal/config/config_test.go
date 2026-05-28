@@ -896,7 +896,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	if !strings.Contains(text, "embedded_opencode_reasoning_effort = \"medium\"") {
 		t.Fatalf("saved config should include embedded opencode reasoning: %q", text)
 	}
-	if !strings.Contains(text, "embedded_lcagent_model = \"deepseek/deepseek-v4-pro\"") {
+	if !strings.Contains(text, "embedded_lcagent_model = \"deepseek-v4-pro\"") {
 		t.Fatalf("saved config should include embedded lcagent model: %q", text)
 	}
 	if !strings.Contains(text, "embedded_lcagent_reasoning_effort = \"low\"") {

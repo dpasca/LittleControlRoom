@@ -48,7 +48,7 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 				Value:       "balanced",
 				Label:       "Balanced Coding",
 				Summary:     "Default coding lane with conservative tool and context budgets.",
-				Description: "Good everyday choice for normal LCAgent coding work.",
+				Description: "Good everyday direct DeepSeek choice for normal LCAgent coding work.",
 			},
 			{
 				Value:       "quality",
@@ -60,19 +60,19 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 				Value:       "mimo-2.5-pro-low",
 				Label:       "MiMo 2.5 Pro Low",
 				Summary:     "Xiaomi MiMo-V2.5-Pro low-reasoning benchmark lane.",
-				Description: "Useful as the baseline MiMo comparison against existing LCAgent coding routes.",
+				Description: "Useful as the baseline direct Xiaomi MiMo coding route.",
 			},
 			{
 				Value:       "mimo-2.5-pro-high",
 				Label:       "MiMo 2.5 Pro High",
 				Summary:     "Xiaomi MiMo-V2.5-Pro high-reasoning benchmark lane.",
-				Description: "Use this to test whether extra reasoning improves MiMo's coding-agent score.",
+				Description: "Use this to test whether extra reasoning improves direct Xiaomi MiMo coding work.",
 			},
 			{
 				Value:       "mimo-2.5-pro-max",
 				Label:       "MiMo 2.5 Pro Max",
 				Summary:     "Xiaomi MiMo-V2.5-Pro max-reasoning benchmark lane.",
-				Description: "Use this as the deepest MiMo comparison while it remains price-competitive.",
+				Description: "Use this as the deepest direct Xiaomi MiMo route while it remains price-competitive.",
 			},
 			{
 				Value:       "cheap-scout",

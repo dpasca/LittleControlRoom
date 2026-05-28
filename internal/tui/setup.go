@@ -608,13 +608,18 @@ func (m Model) setupConfigFieldIndexes() []int {
 	}
 	if m.setupFocusedRole == setupRoleLCAgent {
 		settings := m.setupDraftSettingsForProviderChoices()
-		fields := []int{
-			settingsFieldLCAgentProvider,
-			settingsFieldLCAgentModel,
-			settingsFieldLCAgentReasoning,
+		fields := []int{settingsFieldLCAgentRoutePreset}
+		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+			fields = append(fields,
+				settingsFieldLCAgentProvider,
+				settingsFieldLCAgentModel,
+				settingsFieldLCAgentReasoning,
+			)
+		}
+		fields = append(fields,
 			settingsFieldLCAgentUtilityProvider,
 			settingsFieldLCAgentUtilityModel,
-		}
+		)
 		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
 			fields = append(fields, credentialField)
 		}
@@ -623,12 +628,14 @@ func (m Model) setupConfigFieldIndexes() []int {
 		}
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
-		fields = append(fields,
-			settingsFieldLCAgentAuto,
-			settingsFieldLCAgentToolProfile,
-			settingsFieldLCAgentContextProfile,
-			settingsFieldLCAgentRequestTimeout,
-		)
+		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+			fields = append(fields,
+				settingsFieldLCAgentAuto,
+				settingsFieldLCAgentToolProfile,
+				settingsFieldLCAgentContextProfile,
+			)
+		}
+		fields = append(fields, settingsFieldLCAgentRequestTimeout)
 		return fields
 	}
 	if m.setupFocusedRole == setupRoleBossChat {
@@ -1045,7 +1052,7 @@ func (m Model) renderSetupReview(width int) string {
 func (m Model) setupReviewLCAgentSummary(settings config.EditableSettings) string {
 	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
 		state, _, detail := lcagentCredentialSmokeCheck(settings)
-		parts := []string{"preset " + preset, "(" + state + ")"}
+		parts := []string{settingsChoiceOptionLabelForField(settingsFieldLCAgentRoutePreset, preset), "(" + state + ")"}
 		if detail != "" && state != "ready" {
 			parts = append(parts, "- "+detail)
 		}

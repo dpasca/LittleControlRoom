@@ -297,7 +297,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentPath := fs.String("lcagent-path", cfg.LCAgentPath, "Path to lcagent executable")
 	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
 	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout")
-	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, or moonshot")
+	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, moonshot, or xiaomi")
 	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent permission level: off, low, or medium")
 	lcagentAdminWrite := fs.Bool("lcagent-admin-write", cfg.LCAgentAdminWrite, "Allow LCAgent write tools to edit absolute paths outside the workspace")
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")

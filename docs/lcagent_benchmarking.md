@@ -125,13 +125,12 @@ record both the preset name and any overrides in benchmark notes. The balanced
 DeepSeek lane uses explicit high reasoning because the model is inexpensive
 enough that eval reliability is usually worth the extra tokens.
 
-The MiMo lanes use OpenRouter model `xiaomi/mimo-v2.5-pro`,
-`provider.only=xiaomi`, `temperature=0.2`, and the `large` context profile.
+The MiMo lanes use direct Xiaomi model `mimo-v2.5-pro`, `temperature=0.2`,
+and the `large` context profile.
 Run `mimo-2.5-pro-low`, `mimo-2.5-pro-high`, and `mimo-2.5-pro-max` when
-comparing reasoning effort. The `max` lane sends OpenRouter's accepted top
-reasoning value, `xhigh`. Keep that provider pin enabled when comparing with
-the archived model-routing runs so the result measures Xiaomi MiMo-V2.5-Pro
-rather than OpenRouter fallback behavior.
+comparing reasoning effort. The `max` lane sends the accepted top reasoning
+value, `xhigh`. When comparing with archived OpenRouter-pinned runs, record
+the provider path because latency, routing, and billing may differ.
 
 Each case reports correctness, recorded verification, the observed and expected
 verification status, expected files touched, failed tool results, permission

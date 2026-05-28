@@ -209,6 +209,7 @@ func settingsSections() []settingsSection {
 			summary: "Native worker",
 			hint:    "Configure the experimental LCR-native worker separately from project reports and Boss chat.",
 			fieldOrder: []int{
+				settingsFieldLCAgentRoutePreset,
 				settingsFieldLCAgentProvider,
 				settingsFieldLCAgentModel,
 				settingsFieldLCAgentReasoning,
@@ -230,7 +231,6 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentRequestTimeout,
 				settingsFieldLCAgentPath,
 				settingsFieldLCAgentEnvFile,
-				settingsFieldLCAgentRoutePreset,
 			},
 		},
 		{
@@ -1026,6 +1026,9 @@ func (m Model) settingsFieldVisible(index int) bool {
 			strings.TrimSpace(settings.XiaomiModel) != ""
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 		return settingsBossModelFieldsRelevant(settings)
+	case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning,
+		settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile:
+		return strings.TrimSpace(settings.LCAgentRoutePreset) == ""
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendMLX)
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
@@ -1143,13 +1146,18 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		}
 		return fields
 	case settingsDrilldownLCAgent:
-		fields := []int{
-			settingsFieldLCAgentProvider,
-			settingsFieldLCAgentModel,
-			settingsFieldLCAgentReasoning,
+		fields := []int{settingsFieldLCAgentRoutePreset}
+		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+			fields = append(fields,
+				settingsFieldLCAgentProvider,
+				settingsFieldLCAgentModel,
+				settingsFieldLCAgentReasoning,
+			)
+		}
+		fields = append(fields,
 			settingsFieldLCAgentUtilityProvider,
 			settingsFieldLCAgentUtilityModel,
-		}
+		)
 		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
 			fields = append(fields, credentialField)
 		}
@@ -1980,6 +1988,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 		}
 	case settingsDrilldownLCAgent:
 		switch fieldIndex {
+		case settingsFieldLCAgentRoutePreset:
+			return "Coding Route"
 		case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
 			return "Main Model"
 		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiAPIKey:
@@ -1990,7 +2000,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Web Search"
 		case settingsFieldLCAgentAuto, settingsFieldLCAgentAdminWrite, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
 			return "Runtime Policy"
-		case settingsFieldLCAgentRoutePreset, settingsFieldLCAgentPath:
+		case settingsFieldLCAgentPath:
 			return "Advanced"
 		}
 	case settingsDrilldownProjectScope:
@@ -2242,7 +2252,7 @@ func (m Model) selectedSettingsProviderChoice(role providerChoiceRole, backend c
 func settingsLCAgentStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
 	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
 		state, style, detail := lcagentCredentialSmokeCheck(settings)
-		return "preset " + preset, state, style, detail
+		return settingsChoiceOptionLabelForField(settingsFieldLCAgentRoutePreset, preset), state, style, detail
 	}
 	provider := settingsLCAgentMainProvider(settings)
 	providerLabel := settingsLCAgentProviderOptionLabel(provider)
@@ -2327,7 +2337,7 @@ func lcagentProviderForRoutePreset(preset string) string {
 	case "mimo-2.5-pro", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
 		return "xiaomi"
 	case "balanced", "cheap-scout", "cheap", "scout":
-		return "openrouter"
+		return "deepseek"
 	default:
 		return ""
 	}
@@ -2338,11 +2348,11 @@ func lcagentModelForRoutePreset(preset string) string {
 	case "quality":
 		return "gpt-5.5"
 	case "balanced":
-		return "deepseek/deepseek-v4-pro"
+		return "deepseek-v4-pro"
 	case "mimo-2.5-pro", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
-		return "xiaomi/mimo-v2.5-pro"
+		return "mimo-v2.5-pro"
 	case "cheap-scout", "cheap", "scout":
-		return "deepseek/deepseek-v4-flash"
+		return "deepseek-v4-flash"
 	default:
 		return ""
 	}
@@ -3483,19 +3493,19 @@ func (m Model) settingsFieldHint(index int) string {
 		case "":
 			return "LCAgent launches will use the individual provider, model, autonomy, tool, and context fields below."
 		case "balanced":
-			return "Balanced uses DeepSeek V4 Pro through OpenRouter with conservative coding budgets."
+			return "Balanced uses direct DeepSeek V4 Pro with conservative coding budgets."
 		case "quality":
 			return "Quality uses GPT-5.5 through the direct OpenAI route with low reasoning and larger retained context."
 		case "mimo-2.5-pro", "mimo", "mimo-pro", "mimo25pro", "mimo-25-pro", "xiaomi", "xiaomi-mimo":
-			return "MiMo 2.5 Pro low uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning and larger retained context."
+			return "MiMo 2.5 Pro low uses direct Xiaomi MiMo-V2.5-Pro with larger retained context."
 		case "mimo-2.5-pro-low":
-			return "MiMo 2.5 Pro low uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning and larger retained context."
+			return "MiMo 2.5 Pro low uses direct Xiaomi MiMo-V2.5-Pro with larger retained context."
 		case "mimo-2.5-pro-high":
-			return "MiMo 2.5 Pro high uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning and larger retained context."
+			return "MiMo 2.5 Pro high uses direct Xiaomi MiMo-V2.5-Pro with larger retained context."
 		case "mimo-2.5-pro-max":
-			return "MiMo 2.5 Pro max uses Xiaomi MiMo-V2.5-Pro through OpenRouter with Xiaomi provider pinning, xhigh reasoning, and larger retained context."
+			return "MiMo 2.5 Pro max uses direct Xiaomi MiMo-V2.5-Pro with xhigh reasoning and larger retained context."
 		case "cheap-scout", "cheap", "scout":
-			return "Cheap scout uses a lower-cost DeepSeek V4 Flash route for bounded read-first work."
+			return "Cheap scout uses direct DeepSeek V4 Flash for bounded read-first work."
 		default:
 			return field.hint
 		}

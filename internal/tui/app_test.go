@@ -23675,14 +23675,14 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if got.settingsSectionMenu {
 		t.Fatalf("opening a settings section should leave the top-level menu")
 	}
-	if got.settingsSelected != settingsFieldLCAgentProvider {
-		t.Fatalf("settingsSelected = %d, want LCAgent provider field", got.settingsSelected)
+	if got.settingsSelected != settingsFieldLCAgentRoutePreset {
+		t.Fatalf("settingsSelected = %d, want LCAgent route preset field", got.settingsSelected)
 	}
 	rendered = ansi.Strip(got.renderSettingsContent(72, 18))
 	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Main model provider") || !strings.Contains(rendered, "Utility model provider") {
+	if !strings.Contains(rendered, "LCAgent route preset") || !strings.Contains(rendered, "Main model provider") {
 		t.Fatalf("settings modal should show LCAgent fields after switching sections: %q", rendered)
 	}
 	if strings.Contains(rendered, "Boss helm model") {
@@ -23861,6 +23861,7 @@ func TestSettingsLCAgentProviderEnterOpensPicker(t *testing.T) {
 	}
 	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
 	m = updated.(Model)
+	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
@@ -23899,14 +23900,41 @@ func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
 		t.Fatalf("top-level Getting Started Enter should open the setup panel before the picker")
 	}
 	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
-	for _, want := range []string{"LCAgent Setup", "Main Model", "Utility Model", "Provider Credentials", "OpenRouter API key", "Web Search"} {
+	for _, want := range []string{"LCAgent Setup", "Coding Route", "Main Model", "Utility Model", "Provider Credentials", "OpenRouter API key", "Web Search"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("LCAgent setup panel missing %q: %q", want, rendered)
 		}
 	}
-	for _, hidden := range []string{"Runtime Policy", "LCAgent admin write", "LCAgent timeout", "LCAgent route preset", "LCAgent executable", "LCAgent env file"} {
+	for _, hidden := range []string{"Runtime Policy", "LCAgent admin write", "LCAgent timeout", "LCAgent executable", "LCAgent env file"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("LCAgent setup panel should keep advanced field %q out of the first setup panel: %q", hidden, rendered)
+		}
+	}
+}
+
+func TestSettingsLCAgentPresetHidesOverriddenMainModelFields(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = "mimo-2.5-pro-low"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
+	got := updated.(Model)
+
+	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
+	for _, want := range []string{"LCAgent route preset", "Xiaomi API key"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("LCAgent preset setup panel missing %q: %q", want, rendered)
+		}
+	}
+	for _, hidden := range []string{"Main model provider", "Main model", "Main reasoning"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("LCAgent preset setup panel should hide overridden field %q: %q", hidden, rendered)
 		}
 	}
 }
@@ -24957,6 +24985,25 @@ func TestSettingsTreatsMimoRoutePresetAsXiaomiProvider(t *testing.T) {
 	}
 	if users := strings.Join(settingsProviderUsers(settings, config.AIBackendXiaomi), ", "); !strings.Contains(users, "LCAgent") {
 		t.Fatalf("Xiaomi provider users = %q, want LCAgent included", users)
+	}
+}
+
+func TestSettingsTreatsDeepSeekRoutePresetAsDeepSeekProvider(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = "balanced"
+	settings.DeepSeekAPIKey = "ds-test-example"
+
+	if got := settingsLCAgentMainProvider(settings); got != "deepseek" {
+		t.Fatalf("settingsLCAgentMainProvider() = %q, want deepseek", got)
+	}
+	if settingsLCAgentCredentialField(settings) != settingsFieldDeepSeekAPIKey {
+		t.Fatalf("settingsLCAgentCredentialField() = %d, want %d", settingsLCAgentCredentialField(settings), settingsFieldDeepSeekAPIKey)
+	}
+	if got := settingsCloudConnectionState(settings, config.AIBackendDeepSeek); got != "ready" {
+		t.Fatalf("settingsCloudConnectionState() = %q, want ready", got)
+	}
+	if users := strings.Join(settingsProviderUsers(settings, config.AIBackendDeepSeek), ", "); !strings.Contains(users, "LCAgent") {
+		t.Fatalf("DeepSeek provider users = %q, want LCAgent included", users)
 	}
 }
 

@@ -1615,7 +1615,7 @@ func lcagentUtilityProviderValue(configured string) string {
 	switch value {
 	case "main", "same", "same-as-main":
 		return lcagentDefaultUtilityProvider
-	case "off", "openai", "deepseek", "moonshot":
+	case "off", "openai", "deepseek", "moonshot", "xiaomi":
 		return value
 	case "openrouter":
 		return "openrouter"
@@ -1705,8 +1705,10 @@ func lcagentRoutePresetProvider(preset string) string {
 	switch strings.ToLower(strings.TrimSpace(preset)) {
 	case "quality":
 		return "openai"
-	case "balanced", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "cheap-scout":
-		return "openrouter"
+	case "balanced", "cheap-scout":
+		return "deepseek"
+	case "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max":
+		return "xiaomi"
 	default:
 		return ""
 	}
@@ -1717,11 +1719,11 @@ func lcagentRoutePresetModel(preset string) string {
 	case "quality":
 		return modeladapter.DefaultOpenAIModel
 	case "balanced":
-		return modeladapter.DefaultOpenRouterModel
+		return modeladapter.DefaultDeepSeekModel
 	case "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max":
-		return "xiaomi/mimo-v2.5-pro"
+		return modeladapter.DefaultXiaomiModel
 	case "cheap-scout":
-		return "deepseek/deepseek-v4-flash"
+		return "deepseek-v4-flash"
 	default:
 		return ""
 	}

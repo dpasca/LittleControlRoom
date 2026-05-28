@@ -324,7 +324,7 @@ func TestLiveEvalRoutePresetAppliesBalancedReasoning(t *testing.T) {
 
 	applyLiveEvalRoutePreset(preset, map[string]bool{}, &provider, &model, &reasoningEffort, &autoRaw, &toolProfile, &contextProfile, &requestTimeout)
 
-	if provider != "openrouter" || model != "deepseek/deepseek-v4-pro" || reasoningEffort != "high" || autoRaw != "low" || toolProfile != "balanced" || contextProfile != "balanced" || requestTimeout != 10*time.Minute {
+	if provider != "deepseek" || model != "deepseek-v4-pro" || reasoningEffort != "high" || autoRaw != "low" || toolProfile != "balanced" || contextProfile != "balanced" || requestTimeout != 10*time.Minute {
 		t.Fatalf("live eval preset result provider=%q model=%q reasoning=%q auto=%q tool=%q context=%q timeout=%s", provider, model, reasoningEffort, autoRaw, toolProfile, contextProfile, requestTimeout)
 	}
 
@@ -335,50 +335,40 @@ func TestLiveEvalRoutePresetAppliesBalancedReasoning(t *testing.T) {
 	}
 }
 
-func TestRunExecRoutePresetAppliesMimoMaxProviderPin(t *testing.T) {
+func TestRunExecRoutePresetAppliesMimoMaxDirectXiaomi(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
 		}
+		if got := r.Header.Get("api-key"); got != "test-xiaomi-key" {
+			t.Fatalf("api-key = %q, want Xiaomi test key", got)
+		}
 		var body struct {
 			Model       string  `json:"model"`
 			Temperature float64 `json:"temperature"`
-			Reasoning   struct {
-				Effort string `json:"effort"`
-			} `json:"reasoning"`
-			Provider struct {
-				Only              []string `json:"only"`
-				AllowFallbacks    bool     `json:"allow_fallbacks"`
-				RequireParameters bool     `json:"require_parameters"`
-			} `json:"provider"`
+			Thinking    struct {
+				Type            string `json:"type"`
+				ReasoningEffort string `json:"reasoning_effort"`
+			} `json:"thinking"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		if body.Model != "xiaomi/mimo-v2.5-pro" {
+		if body.Model != "mimo-v2.5-pro" {
 			t.Fatalf("model = %q, want Xiaomi MiMo", body.Model)
 		}
 		if body.Temperature != 0.2 {
 			t.Fatalf("temperature = %f, want 0.2", body.Temperature)
 		}
-		if body.Reasoning.Effort != "xhigh" {
-			t.Fatalf("reasoning effort = %q, want xhigh", body.Reasoning.Effort)
-		}
-		if strings.Join(body.Provider.Only, ",") != "xiaomi" {
-			t.Fatalf("provider.only = %#v, want xiaomi", body.Provider.Only)
-		}
-		if body.Provider.AllowFallbacks {
-			t.Fatalf("provider.allow_fallbacks = true, want false")
-		}
-		if !body.Provider.RequireParameters {
-			t.Fatalf("provider.require_parameters = false, want true")
+		if body.Thinking.Type != "enabled" || body.Thinking.ReasoningEffort != "xhigh" {
+			t.Fatalf("thinking = %#v, want xhigh enabled", body.Thinking)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"resp_mimo",
-			"model":"xiaomi/mimo-v2.5-pro",
+			"model":"mimo-v2.5-pro",
 			"choices":[{
 				"finish_reason":"stop",
 				"message":{"role":"assistant","content":"done from mimo route"}
@@ -387,8 +377,8 @@ func TestRunExecRoutePresetAppliesMimoMaxProviderPin(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+	t.Setenv("XIAOMI_API_KEY", "test-xiaomi-key")
+	t.Setenv("XIAOMI_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
@@ -405,8 +395,8 @@ func TestRunExecRoutePresetAppliesMimoMaxProviderPin(t *testing.T) {
 	}
 	text := stdout.String()
 	for _, want := range []string{
-		`"provider":"openrouter"`,
-		`"model":"xiaomi/mimo-v2.5-pro"`,
+		`"provider":"xiaomi"`,
+		`"model":"mimo-v2.5-pro"`,
 		`"type":"route_preset"`,
 		`"name":"mimo-2.5-pro-max"`,
 		`"context_profile":"large"`,
@@ -501,7 +491,7 @@ func TestRunScoutUsesCheapScoutDefaultsAndPromptContract(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		if body["model"] != "deepseek/deepseek-v4-flash" {
+		if body["model"] != "deepseek-v4-flash" {
 			t.Fatalf("model = %q, want cheap scout flash model", body["model"])
 		}
 		messages, _ := body["messages"].([]any)
@@ -526,8 +516,8 @@ func TestRunScoutUsesCheapScoutDefaultsAndPromptContract(t *testing.T) {
 	}))
 	defer server.Close()
 
-	t.Setenv("OPENROUTER_API_KEY", "test-key")
-	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("DEEPSEEK_BASE_URL", server.URL)
 
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
@@ -552,8 +542,8 @@ func TestRunScoutUsesCheapScoutDefaultsAndPromptContract(t *testing.T) {
 	}
 	text := stdout.String()
 	for _, want := range []string{
-		`"provider":"openrouter"`,
-		`"model":"deepseek/deepseek-v4-flash"`,
+		`"provider":"deepseek"`,
+		`"model":"deepseek-v4-flash"`,
 		`"type":"route_preset"`,
 		`"name":"cheap-scout"`,
 		`"type":"delegation_mode"`,
