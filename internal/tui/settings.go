@@ -2390,6 +2390,15 @@ func lcagentDefaultModelForProvider(provider string) string {
 	}
 }
 
+func lcagentDefaultUtilityModelForProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xiaomi":
+		return "mimo-v2.5"
+	default:
+		return lcagentDefaultModelForProvider(provider)
+	}
+}
+
 func settingsLCAgentMainProvider(settings config.EditableSettings) string {
 	return firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
 }
@@ -2410,9 +2419,12 @@ func settingsLCAgentUtilityDefaultLabel(settings config.EditableSettings) string
 	}
 	if provider == "main" {
 		mainProvider := settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings))
+		if strings.EqualFold(settingsLCAgentMainProvider(settings), "xiaomi") {
+			return "same provider utility default (" + mainProvider + " / " + lcagentDefaultUtilityModelForProvider("xiaomi") + ")"
+		}
 		return "same as Main Model (" + mainProvider + " / " + settingsLCAgentMainModel(settings) + ")"
 	}
-	return lcagentDefaultModelForProvider(provider)
+	return lcagentDefaultUtilityModelForProvider(provider)
 }
 
 func settingsLCAgentUtilityProviderValue(raw string) string {

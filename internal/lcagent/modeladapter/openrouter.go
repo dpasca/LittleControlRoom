@@ -21,7 +21,7 @@ const (
 	DefaultDeepSeekModel      = "deepseek-v4-pro"
 	DefaultMoonshotModel      = "kimi-k2.6"
 	DefaultXiaomiModel        = "mimo-v2.5-pro"
-	DefaultXiaomiUtilityModel = "mimo-v2-flash"
+	DefaultXiaomiUtilityModel = "mimo-v2.5"
 	DefaultOpenRouterMaxTurns = 48
 	DefaultChatTemperature    = 0.2
 )

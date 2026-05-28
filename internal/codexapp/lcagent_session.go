@@ -124,7 +124,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
-	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
+	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
 	session := &lcagentSession{
 		projectPath:       strings.TrimSpace(req.ProjectPath),
 		dataDir:           dataDir,
@@ -1632,13 +1632,18 @@ func lcagentResolvedUtilityProvider(routePreset string, mainProvider string, con
 	return firstNonEmpty(lcagentRoutePresetProvider(routePreset), mainProvider, lcagentDefaultProvider)
 }
 
-func lcagentResolvedUtilityModel(routePreset string, mainModel string, configuredProvider string, configuredModel string) string {
+func lcagentResolvedUtilityModel(routePreset string, mainProvider string, mainModel string, configuredProvider string, configuredModel string) string {
 	model := strings.TrimSpace(configuredModel)
 	if model != "" {
 		return model
 	}
-	if lcagentUtilityProviderValue(configuredProvider) != lcagentDefaultUtilityProvider {
+	utilityProvider := lcagentUtilityProviderValue(configuredProvider)
+	if utilityProvider != lcagentDefaultUtilityProvider {
 		return ""
+	}
+	resolvedProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), mainProvider, lcagentDefaultProvider)
+	if strings.EqualFold(strings.TrimSpace(resolvedProvider), "xiaomi") {
+		return modeladapter.DefaultXiaomiUtilityModel
 	}
 	return firstNonEmpty(lcagentRoutePresetModel(routePreset), mainModel)
 }

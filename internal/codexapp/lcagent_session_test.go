@@ -1612,3 +1612,10 @@ func lcagentTestStringSliceContains(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestLCAgentResolvedUtilityModelUsesXiaomiUtilityDefault(t *testing.T) {
+	got := lcagentResolvedUtilityModel("mimo-2.5-pro-low", "xiaomi", "mimo-v2.5-pro", "main", "")
+	if got != "mimo-v2.5" {
+		t.Fatalf("lcagentResolvedUtilityModel() = %q, want mimo-v2.5", got)
+	}
+}

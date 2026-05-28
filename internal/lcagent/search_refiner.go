@@ -68,7 +68,11 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 	sameAsMain := provider == "main"
 	if sameAsMain {
 		provider = normalizeMainProvider(mainProvider)
-		cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), strings.TrimSpace(mainModel), defaultMainModelForProvider(provider))
+		if provider == "xiaomi" {
+			cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), defaultMainModelForProvider(provider))
+		} else {
+			cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), strings.TrimSpace(mainModel), defaultMainModelForProvider(provider))
+		}
 	}
 	if provider == "off" {
 		return searchRefineProfile{

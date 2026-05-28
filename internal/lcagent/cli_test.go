@@ -1127,6 +1127,18 @@ func TestSearchRefineProfileNormalizesDirectDeepSeekUtilityModel(t *testing.T) {
 	}
 }
 
+func TestSearchRefineProfileUsesXiaomiUtilityDefaultForSameAsMain(t *testing.T) {
+	t.Setenv("XIAOMI_API_KEY", "test-xiaomi-key")
+
+	profile := newSearchRefineProfile("main", modeladapter.OpenRouterConfig{}, 1, "xiaomi", "mimo-v2.5-pro")
+	if !profile.Enabled {
+		t.Fatalf("search refine profile disabled: %v", profile.DisabledErr)
+	}
+	if profile.Model != modeladapter.DefaultXiaomiUtilityModel {
+		t.Fatalf("utility model = %q, want %q", profile.Model, modeladapter.DefaultXiaomiUtilityModel)
+	}
+}
+
 func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

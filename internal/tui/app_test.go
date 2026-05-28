@@ -25007,6 +25007,17 @@ func TestSettingsTreatsDeepSeekRoutePresetAsDeepSeekProvider(t *testing.T) {
 	}
 }
 
+func TestSettingsXiaomiUtilityDefaultUsesNonProModel(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = "mimo-2.5-pro-low"
+	settings.LCAgentUtilityProvider = "main"
+
+	got := settingsLCAgentUtilityDefaultLabel(settings)
+	if !strings.Contains(got, "mimo-v2.5") || strings.Contains(got, "mimo-v2.5-pro") {
+		t.Fatalf("settingsLCAgentUtilityDefaultLabel() = %q, want non-Pro Xiaomi 2.5", got)
+	}
+}
+
 func TestNewWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "missing.env")
 	cfg := config.Default()
