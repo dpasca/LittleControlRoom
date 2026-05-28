@@ -104,8 +104,8 @@ func TestOpenAICompatibleModelUsesCloudOverrides(t *testing.T) {
 	if got := cfg.OpenAICompatibleModel(AIBackendXiaomi); got != DefaultXiaomiModel {
 		t.Fatalf("default Xiaomi project model = %q, want %q", got, DefaultXiaomiModel)
 	}
-	if DefaultXiaomiModel == DefaultXiaomiProModel {
-		t.Fatalf("default Xiaomi project and pro models should differ")
+	if DefaultXiaomiModel != DefaultXiaomiProModel {
+		t.Fatalf("default Xiaomi project model = %q, want pro default %q", DefaultXiaomiModel, DefaultXiaomiProModel)
 	}
 	cfg.XiaomiModel = "mimo-v2.5-pro-preview"
 	if got := cfg.OpenAICompatibleModel(AIBackendXiaomi); got != "mimo-v2.5-pro-preview" {

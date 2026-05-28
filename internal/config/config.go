@@ -103,7 +103,7 @@ const (
 	DefaultDeepSeekModel    = "deepseek-v4-flash"
 	DefaultDeepSeekProModel = "deepseek-v4-pro"
 	DefaultMoonshotModel    = "kimi-k2.6"
-	DefaultXiaomiModel      = "mimo-v2-flash"
+	DefaultXiaomiModel      = "mimo-v2.5-pro"
 	DefaultXiaomiProModel   = "mimo-v2.5-pro"
 )
 

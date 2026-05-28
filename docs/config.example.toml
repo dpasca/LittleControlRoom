@@ -20,7 +20,7 @@ openai_api_key = "sk-your-openai-api-key"
 # Xiaomi subscription management, not the regular pay-as-you-go API URL.
 # xiaomi_base_url = "https://token-plan-sgp.xiaomimimo.com/v1"
 # xiaomi_api_key = ""
-# xiaomi_model = "mimo-v2-flash"
+# xiaomi_model = "mimo-v2.5-pro"
 
 include_paths = [
   "~/dev/repos",
