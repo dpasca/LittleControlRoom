@@ -333,6 +333,32 @@ func trimProviderModelPrefix(model, prefix string) string {
 	return model
 }
 
+// ModelIsKnownForProvider reports whether model is a recognized model ID
+// for the given direct provider. For openrouter or unknown providers it
+// returns true (anything is routable). For direct providers (deepseek,
+// xiaomi, moonshot, openai) it checks against the known model set.
+func ModelIsKnownForProvider(provider, model string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	switch provider {
+	case "openrouter", "":
+		return true // anything can be routed through openrouter
+	case "openai":
+		return model == DefaultOpenAIModel
+	case "deepseek":
+		return model == DefaultDeepSeekModel || model == "deepseek-v4-flash"
+	case "moonshot":
+		return model == DefaultMoonshotModel
+	case "xiaomi":
+		return model == DefaultXiaomiModel
+	default:
+		return true
+	}
+}
+
 func normalizeAuthHeader(header string) string {
 	switch strings.ToLower(strings.TrimSpace(header)) {
 	case "api-key":

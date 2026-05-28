@@ -781,6 +781,10 @@ func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEf
 	}
 	if strings.TrimSpace(model) != "" {
 		s.model = strings.TrimSpace(model)
+	} else if provider != "" {
+		// Provider changed without an explicit model; clear stale model
+		// so the next run defaults to the correct model for the new provider.
+		s.model = ""
 	}
 	s.reasoningEffort = strings.TrimSpace(reasoningEffort)
 	return nil
@@ -951,6 +955,9 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	}
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
+	if routePreset == "" && !modeladapter.ModelIsKnownForProvider(modelProvider, model) {
+		model = lcagentDefaultModel(modelProvider)
+	}
 	toolProfile := firstNonEmpty(s.toolProfile, lcagentDefaultToolProfile)
 	contextProfile := firstNonEmpty(s.contextProfile, lcagentDefaultContextProfile)
 	adminWrite := s.adminWrite
@@ -1652,6 +1659,12 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	}
 	if provider := strings.TrimSpace(replay.modelProvider); provider != "" {
 		s.modelProvider = provider
+	}
+	// If the restored model doesn't belong to the session's current provider,
+	// clear it so the next run defaults to the correct model.
+	sessionProvider := firstNonEmpty(s.provider, lcagentDefaultProvider)
+	if s.model != "" && !modeladapter.ModelIsKnownForProvider(sessionProvider, s.model) {
+		s.model = ""
 	}
 	s.tokenUsage = cloneThreadTokenUsage(replay.tokenUsage)
 	label := firstNonEmpty(s.threadID, "history")
