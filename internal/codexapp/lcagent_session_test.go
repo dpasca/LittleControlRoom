@@ -859,6 +859,46 @@ func TestLCAgentSessionListModelsReturnsCuratedCodingRoutes(t *testing.T) {
 	}
 }
 
+func TestLCAgentModelOptionsForProviderMoonshotHasNoReasoningControls(t *testing.T) {
+	options := lcagentModelOptionsForProvider("moonshot")
+	if len(options) != 1 {
+		t.Fatalf("provider options = %#v, want one moonshot option", options)
+	}
+	if options[0].Model != "kimi-k2.6" {
+		t.Fatalf("moonshot model = %q, want kimi-k2.6", options[0].Model)
+	}
+	if len(options[0].SupportedReasoningEfforts) != 0 {
+		t.Fatalf("reasoning options = %#v, want none", options[0].SupportedReasoningEfforts)
+	}
+}
+
+func TestLCAgentProviderModelOptionsMoonshotHasNoReasoningControls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %q, want /models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"kimi-k2.6","name":"Kimi K2.6","description":"Moonshot direct coding model"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("MOONSHOT_BASE_URL", server.URL)
+
+	models, err := lcagentProviderModelOptions(context.Background(), LCAgentModelListConfig{
+		MoonshotAPIKey: "moonshot-key",
+	}, "moonshot")
+	if err != nil {
+		t.Fatalf("LCAgentProviderModelOptions() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("models = %#v, want one moonshot model option", models)
+	}
+	if len(models[0].SupportedReasoningEfforts) != 0 {
+		t.Fatalf("reasoning options = %#v, want none for moonshot", models[0].SupportedReasoningEfforts)
+	}
+	if models[0].DefaultReasoningEffort != "" {
+		t.Fatalf("default reasoning = %q, want empty", models[0].DefaultReasoningEffort)
+	}
+}
+
 func TestLCAgentSessionListModelsKeepsCustomCurrentModel(t *testing.T) {
 	session, err := newLCAgentSession(LaunchRequest{
 		Provider:        ProviderLCAgent,

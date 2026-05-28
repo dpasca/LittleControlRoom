@@ -332,6 +332,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if searchRefineMinBytes < 0 {
 		return fmt.Errorf("search-refine-min-bytes must be >= 0")
 	}
+	reasoningEffort = openRouterReasoningEffortForProvider(provider, reasoningEffort)
 	contextOptions := openRouterContextOptionsForProfile(contextProfile)
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
 	if err != nil {
@@ -1128,6 +1129,16 @@ func validateVisibleCompletion(provider string) func(modeladapter.Completion) er
 			Message:   "response had no content or tool calls",
 			Retryable: true,
 		}
+	}
+}
+
+func openRouterReasoningEffortForProvider(provider, reasoningEffort string) string {
+	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "moonshot":
+		return ""
+	default:
+		return reasoningEffort
 	}
 }
 

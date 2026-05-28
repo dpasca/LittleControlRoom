@@ -389,10 +389,10 @@ func LCAgentModelOptions(ctx context.Context, cfg LCAgentModelListConfig) ([]Mod
 	curated := lcagentModelOptionsForProvider(provider)
 	live, err := lcagentProviderModelOptions(ctx, cfg, provider)
 	if err != nil {
-		return lcagentModelOptionsWithCurrent(curated, cfg.Model, false), err
+		return lcagentModelOptionsWithCurrent(curated, cfg.Model, false, provider), err
 	}
 	merged := mergeLCAgentModelOptions(curated, live)
-	return lcagentModelOptionsWithCurrent(merged, cfg.Model, true), nil
+	return lcagentModelOptionsWithCurrent(merged, cfg.Model, true, provider), nil
 }
 
 func CheckLCAgentProviderAccess(ctx context.Context, req LaunchRequest) error {
@@ -536,6 +536,7 @@ func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig
 	}
 	defaultModel := lcagentDefaultModel(provider)
 	options := make([]ModelOption, 0, len(listed))
+	supportedReasoningEfforts := lcagentReasoningEffortOptionsForProvider(provider)
 	for _, item := range listed {
 		id := strings.TrimSpace(item.ID)
 		if id == "" {
@@ -555,7 +556,7 @@ func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig
 			ModelProvider:             provider,
 			DisplayName:               displayName,
 			Description:               description,
-			SupportedReasoningEfforts: lcagentReasoningEffortOptions(),
+			SupportedReasoningEfforts: supportedReasoningEfforts,
 			DefaultReasoningEffort:    lcagentDefaultReasoningEffort(provider, id),
 			IsDefault:                 strings.EqualFold(id, defaultModel),
 		})
@@ -626,7 +627,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		provider = lcagentDefaultProvider
 	}
 	defaultModel := lcagentDefaultModel(provider)
-	reasoning := lcagentReasoningEffortOptions()
+	reasoning := lcagentReasoningEffortOptionsForProvider(provider)
 	option := func(model, displayName, description, defaultReasoning string, isDefault bool) ModelOption {
 		return ModelOption{
 			ID:                        model,
@@ -679,6 +680,13 @@ func lcagentReasoningEffortOptions() []ReasoningEffortOption {
 	}
 }
 
+func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {
+	if strings.EqualFold(strings.TrimSpace(provider), "moonshot") {
+		return nil
+	}
+	return lcagentReasoningEffortOptions()
+}
+
 func lcagentDefaultReasoningEffort(provider, model string) string {
 	if strings.EqualFold(strings.TrimSpace(provider), "openai") ||
 		strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "openai/") {
@@ -721,11 +729,12 @@ func mergeLCAgentModelOptions(curated, discovered []ModelOption) []ModelOption {
 	return merged
 }
 
-func lcagentModelOptionsWithCurrent(models []ModelOption, current string, checkedProviderList bool) []ModelOption {
+func lcagentModelOptionsWithCurrent(models []ModelOption, current string, checkedProviderList bool, provider string) []ModelOption {
 	current = strings.TrimSpace(current)
 	if current == "" || lcagentModelOptionExists(models, current) {
 		return models
 	}
+	reasoningEfforts := lcagentReasoningEffortOptionsForProvider(provider)
 	description := "Custom LCAgent model."
 	if checkedProviderList {
 		description = "Custom LCAgent model. The provider model list did not return this ID."
@@ -733,11 +742,11 @@ func lcagentModelOptionsWithCurrent(models []ModelOption, current string, checke
 	return append([]ModelOption{{
 		ID:                        current,
 		Model:                     current,
-		ModelProvider:             "",
+		ModelProvider:             provider,
 		DisplayName:               current,
 		Description:               description,
-		SupportedReasoningEfforts: lcagentReasoningEffortOptions(),
-		DefaultReasoningEffort:    lcagentDefaultReasoningEffort("", current),
+		SupportedReasoningEfforts: reasoningEfforts,
+		DefaultReasoningEffort:    lcagentDefaultReasoningEffort(provider, current),
 	}}, models...)
 }
 

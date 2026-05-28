@@ -1208,6 +1208,75 @@ func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
 	}
 }
 
+func TestRunExecMoonshotSkipsUnsupportedReasoningEffort(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-moonshot-key" {
+			t.Fatalf("authorization = %q, want bearer test key", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body["model"] != "kimi-k2.6" {
+			t.Fatalf("model = %q, want kimi-k2.6", body["model"])
+		}
+		if _, ok := body["reasoning"]; ok {
+			t.Fatalf("moonshot request should not include reasoning: %#v", body["reasoning"])
+		}
+		if _, ok := body["thinking"]; ok {
+			t.Fatalf("moonshot request should not include thinking: %#v", body["thinking"])
+		}
+		if _, ok := body["temperature"]; ok {
+			t.Fatalf("moonshot request should not include temperature: %#v", body["temperature"])
+		}
+		if _, ok := body["max_tokens"]; ok {
+			t.Fatalf("moonshot request should not include max_tokens: %#v", body["max_tokens"])
+		}
+		if _, ok := body["max_completion_tokens"]; ok {
+			t.Fatalf("moonshot request should not include max_completion_tokens: %#v", body["max_completion_tokens"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_moonshot_skip_reasoning",
+			"model":"kimi-k2.6",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done from direct moonshot"}
+			}],
+			"usage":{"prompt_tokens":7,"cached_tokens":2,"completion_tokens":3,"total_tokens":10}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("MOONSHOT_API_KEY", "test-moonshot-key")
+	t.Setenv("MOONSHOT_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "moonshot",
+		"--reasoning-effort", "low",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	if !strings.Contains(text, `"response_id":"resp_moonshot_skip_reasoning"`) {
+		t.Fatalf("stdout missing response id:\n%s", text)
+	}
+}
+
 func TestRunExecOpenRouterPassesReasoningEffort(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

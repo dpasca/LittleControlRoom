@@ -654,9 +654,13 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 		m.closeCodexModelPickerAndReturnToTodo("No embedded " + m.currentEmbeddedSessionLabel() + " models are available")
 		return m, nil
 	}
-	effort := strings.TrimSpace(modelOption.DefaultReasoningEffort)
-	if selectedEffort, ok := m.currentCodexReasoningOption(); ok {
-		effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
+	effort := ""
+	reasoningOptions := codexReasoningOptionsFor(modelOption)
+	if len(reasoningOptions) > 0 {
+		effort = strings.TrimSpace(modelOption.DefaultReasoningEffort)
+		if selectedEffort, ok := m.currentCodexReasoningOption(); ok {
+			effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
+		}
 	}
 	modelName := strings.TrimSpace(modelOption.Model)
 	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
@@ -668,7 +672,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	}
 	perfOpID := m.beginAILatencyOp("Model apply", projectPath, strings.TrimSpace(provider.Label()+" "+modelName+" "+effort))
 	m.closeCodexModelPicker("")
-	m.status = fmt.Sprintf("Staging %s (%s)...", modelName, effort)
+	m.status = "Staging " + modelName + "..."
 	manager := m.codexManager
 	return m, func() tea.Msg {
 		startedAt := time.Now()
@@ -718,16 +722,28 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 				err:          err,
 			}
 		}
-		status := fmt.Sprintf("Embedded model set to %s with %s reasoning for the next prompt", modelName, effort)
+		status := "Embedded model set to " + modelName
+		if effort != "" {
+			status += " with " + effort + " reasoning for the next prompt"
+		} else {
+			status += " for the next prompt"
+		}
 		awaitSettle := true
 		if snapshot.Busy {
-			status = fmt.Sprintf("Embedded model change to %s (%s) is staged for the next fresh prompt", modelName, effort)
+			status = "Embedded model change to " + modelName
+			if effort != "" {
+				status += " (" + effort + ")"
+			}
+			status += " is staged for the next fresh prompt"
 		}
 		if strings.EqualFold(strings.TrimSpace(snapshot.Model), modelName) &&
 			strings.EqualFold(strings.TrimSpace(snapshot.ReasoningEffort), effort) &&
 			strings.TrimSpace(snapshot.PendingModel) == "" &&
 			strings.TrimSpace(snapshot.PendingReasoning) == "" {
-			status = fmt.Sprintf("Embedded model remains %s with %s reasoning", modelName, effort)
+			status = "Embedded model remains " + modelName
+			if effort != "" {
+				status += " with " + effort + " reasoning"
+			}
 			awaitSettle = false
 		}
 		return codexActionMsg{
@@ -787,8 +803,16 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		current := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 		currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
+		currentReasoningOption := ""
+		if options := m.currentCodexReasoningOptions(); len(options) > 0 {
+			currentReasoningOption = firstNonEmptyTrimmed(currentReasoning)
+		}
 		if current != "" {
-			header = append(header, detailValueStyle.Render("Current: "+current+"  Reasoning: "+currentReasoning))
+			parts := []string{"Current: " + current}
+			if currentReasoningOption != "" {
+				parts = append(parts, "Reasoning: "+currentReasoningOption)
+			}
+			header = append(header, detailValueStyle.Render(strings.Join(parts, "  ")))
 			header = append(header, "")
 		}
 	}
@@ -848,14 +872,11 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		}
 	}
 
-	// ── Right column: reasoning + about ──
 	rightLines := []string{}
 
 	options := m.currentCodexReasoningOptions()
-	rightLines = append(rightLines, commandPaletteTitleStyle.Render("Reasoning"))
-	if len(options) == 0 {
-		rightLines = append(rightLines, commandPaletteHintStyle.Render("No reasoning controls."))
-	} else {
+	if len(options) > 0 {
+		rightLines = append(rightLines, commandPaletteTitleStyle.Render("Reasoning"))
 		for i, option := range options {
 			rightLines = append(rightLines, m.renderCodexReasoningPickerRow(option, i == state.EffortIndex, rightWidth))
 		}

@@ -10047,6 +10047,107 @@ func TestVisibleCodexSlashModelKeepsRecentSelectionWhenChoosingReasoning(t *test
 	}
 }
 
+func TestVisibleCodexSlashModelSkipsReasoningSelectionWhenUnsupported(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			ThreadID:         "thread-demo",
+			Started:          true,
+			Preset:           codexcli.PresetYolo,
+			Status:           "Codex ready",
+			Model:            "kimi-k2.6",
+			ReasoningEffort:  "high",
+			PendingModel:     "",
+			PendingReasoning: "",
+		},
+		models: []codexapp.ModelOption{
+			{
+				ID:          "kimi-k2.6",
+				Model:       "kimi-k2.6",
+				ModelProvider: "moonshot",
+				DisplayName: "Balanced: Kimi K2.6",
+				Description: "Direct Moonshot/Kimi coding route.",
+				IsDefault:   true,
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/model")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              28,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should open the embedded /model picker")
+	}
+	msg := cmd()
+	listMsg, ok := msg.(codexModelListMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexModelListMsg", msg)
+	}
+	updated, _ = got.Update(listMsg)
+	got = updated.(Model)
+	if !got.codexModelPickerVisible() || got.codexModelPicker.Loading {
+		t.Fatalf("model picker should be visible with loaded models")
+	}
+	if got.codexModelPicker.Focus != codexModelPickerFocusFilter {
+		t.Fatalf("initial picker focus = %q, want filter", got.codexModelPicker.Focus)
+	}
+
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.codexModelPicker.Focus != codexModelPickerFocusModels {
+		t.Fatalf("picker focus after enter from filter = %q, want models", got.codexModelPicker.Focus)
+	}
+	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("enter should apply the selected model without reasoning controls")
+	}
+	got = updated.(Model)
+	msg = cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/model returned error = %v", action.err)
+	}
+	if len(session.modelStages) != 1 {
+		t.Fatalf("model stages = %d, want 1", len(session.modelStages))
+	}
+	if got.codexModelPicker != nil {
+		t.Fatalf("model picker should close after applying")
+	}
+	if session.modelStages[0].Model != "kimi-k2.6" {
+		t.Fatalf("staged model = %q, want kimi-k2.6", session.modelStages[0].Model)
+	}
+	if session.modelStages[0].Reasoning != "" {
+		t.Fatalf("staged reasoning = %q, want empty", session.modelStages[0].Reasoning)
+	}
+	if action.status != "Embedded model set to kimi-k2.6 for the next prompt" {
+		t.Fatalf("status = %q, want Embedded model set to kimi-k2.6 for the next prompt", action.status)
+	}
+}
+
 func TestVisibleCodexSlashModelArrowDownEntersRecentModels(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
