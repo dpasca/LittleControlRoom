@@ -34,16 +34,38 @@ const (
 )
 
 type setupSectionMenuRow struct {
-	step  setupStep
-	label string
+	step    setupStep
+	label   string
+	summary string
+	detail  string
 }
 
 func setupSectionMenuRows() []setupSectionMenuRow {
 	return []setupSectionMenuRow{
-		{setupStepProjectProvider, "Project reports"},
-		{setupStepBossProvider, "Boss chat"},
-		{setupStepLCAgentConfig, "LCAgent"},
-		{setupStepSave, "Save"},
+		{
+			step:    setupStepProjectProvider,
+			label:   "Project reports",
+			summary: "Background AI",
+			detail:  "Choose the runner for background summaries, classification, TODO help, commit help, and other project-reporting work.",
+		},
+		{
+			step:    setupStepBossProvider,
+			label:   "Boss chat",
+			summary: "Realtime chat",
+			detail:  "Choose the backend for /boss. This is separate from background project reports so chat can use a faster or higher-grade model.",
+		},
+		{
+			step:    setupStepLCAgentConfig,
+			label:   "LCAgent",
+			summary: "Native worker",
+			detail:  "Configure the LCR-native worker essentials: main model, utility model, credentials, and web search.",
+		},
+		{
+			step:    setupStepSave,
+			label:   "Save",
+			summary: "Write config",
+			detail:  "Review the selected setup choices and write them to config.toml.",
+		},
 	}
 }
 
@@ -883,6 +905,14 @@ func (m Model) renderSetupSectionMenu(width, maxHeight int) []string {
 	if end < len(rows) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(rows)-end)))
 	}
+	if len(rows) > 0 {
+		selected := rows[wrapIndex(m.setupSectionSelected, len(rows))]
+		lines = append(lines, "")
+		lines = append(lines, renderWrappedDetailField("About", detailValueStyle, width, selected.detail))
+		if status := strings.TrimSpace(m.setupSectionMenuStatus(selected.step)); status != "" {
+			lines = append(lines, renderWrappedDetailField("Current", detailValueStyle, width, status))
+		}
+	}
 	return lines
 }
 
@@ -897,7 +927,7 @@ func (m Model) renderSetupSectionMenuRow(row setupSectionMenuRow, selected bool,
 	}
 	titleWidth := min(22, max(12, width/3))
 	summaryWidth := max(8, width-titleWidth-4)
-	summary := m.setupSectionMenuSummary(row.step)
+	summary := row.summary
 	line := marker + " " +
 		titleStyle.Width(titleWidth).Render(truncateText(row.label, titleWidth)) + " " +
 		summaryStyle.Width(summaryWidth).Render(truncateText(summary, summaryWidth))
@@ -908,7 +938,7 @@ func (m Model) renderSetupSectionMenuRow(row setupSectionMenuRow, selected bool,
 	return lipgloss.NewStyle().Width(width).Render(line)
 }
 
-func (m Model) setupSectionMenuSummary(step setupStep) string {
+func (m Model) setupSectionMenuStatus(step setupStep) string {
 	settings := m.setupSettingsFromCurrentChoices()
 	switch step {
 	case setupStepProjectProvider:

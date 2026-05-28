@@ -96,6 +96,7 @@ const settingsConfigIssueStatus = "LCAgent env file warning"
 type settingsSection struct {
 	id         settingsSectionID
 	label      string
+	summary    string
 	hint       string
 	fieldOrder []int
 }
@@ -181,9 +182,10 @@ func invertBoolString(s string) string {
 func settingsSections() []settingsSection {
 	return []settingsSection{
 		{
-			id:    settingsSectionGettingStarted,
-			label: "Getting Started",
-			hint:  "I only need two decisions first: who writes project reports, and whether /boss should answer. Everything else can wait.",
+			id:      settingsSectionGettingStarted,
+			label:   "Getting Started",
+			summary: "Quick setup",
+			hint:    "I only need two decisions first: who writes project reports, and whether /boss should answer. Everything else can wait.",
 			fieldOrder: []int{
 				settingsFieldAIBackend,
 				settingsFieldBossChatBackend,
@@ -192,18 +194,20 @@ func settingsSections() []settingsSection {
 			},
 		},
 		{
-			id:    settingsSectionAI,
-			label: "Providers & Models",
-			hint:  "A compact inventory of shared provider connections and global model display defaults. Use Getting Started for feature setup.",
+			id:      settingsSectionAI,
+			label:   "Providers & Models",
+			summary: "Shared provider defaults",
+			hint:    "A compact inventory of shared provider connections and global model display defaults. Use Getting Started for feature setup.",
 			fieldOrder: []int{
 				settingsFieldCodexLaunchPreset,
 				settingsFieldHideReasoningSections,
 			},
 		},
 		{
-			id:    settingsSectionLCAgent,
-			label: "LCAgent",
-			hint:  "Configure the experimental LCR-native worker separately from project reports and Boss chat.",
+			id:      settingsSectionLCAgent,
+			label:   "LCAgent",
+			summary: "Native worker",
+			hint:    "Configure the experimental LCR-native worker separately from project reports and Boss chat.",
 			fieldOrder: []int{
 				settingsFieldLCAgentProvider,
 				settingsFieldLCAgentModel,
@@ -230,9 +234,10 @@ func settingsSections() []settingsSection {
 			},
 		},
 		{
-			id:    settingsSectionScope,
-			label: "Project Scope",
-			hint:  "Choose which folders stay visible and which names should stay hidden or masked in demos.",
+			id:      settingsSectionScope,
+			label:   "Project Scope",
+			summary: "Discovery and privacy",
+			hint:    "Choose which folders stay visible and which names should stay hidden or masked in demos.",
 			fieldOrder: []int{
 				settingsFieldExcludePaths,
 				settingsFieldExcludeProjectPatterns,
@@ -240,17 +245,19 @@ func settingsSections() []settingsSection {
 			},
 		},
 		{
-			id:    settingsSectionBrowser,
-			label: "Browser",
-			hint:  "Keep browser work out of the way by default, or choose to always show browser windows when you prefer to watch every step.",
+			id:      settingsSectionBrowser,
+			label:   "Browser",
+			summary: "Window behavior",
+			hint:    "Keep browser work out of the way by default, or choose to always show browser windows when you prefer to watch every step.",
 			fieldOrder: []int{
 				settingsFieldBrowserAutomation,
 			},
 		},
 		{
-			id:    settingsSectionAdvanced,
-			label: "Advanced",
-			hint:  "Refresh timing and other low-level tuning knobs. Most users can leave these alone.",
+			id:      settingsSectionAdvanced,
+			label:   "Advanced",
+			summary: "Timing knobs",
+			hint:    "Refresh timing and other low-level tuning knobs. Most users can leave these alone.",
 			fieldOrder: []int{
 				settingsFieldActiveThreshold,
 				settingsFieldStuckThreshold,
@@ -1642,6 +1649,11 @@ func (m Model) renderSettingsSectionMenu(width, maxHeight int) []string {
 	if end < len(sections) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d below", len(sections)-end)))
 	}
+	if len(sections) > 0 {
+		selected := sections[wrapIndex(m.settingsSectionSelected, len(sections))]
+		lines = append(lines, "")
+		lines = append(lines, renderWrappedDetailField("About", detailValueStyle, width, selected.hint))
+	}
 	return lines
 }
 
@@ -1679,7 +1691,7 @@ func (m Model) renderSettingsSectionMenuRow(section settingsSection, selected bo
 	hintWidth := max(8, width-titleWidth-4)
 	row := marker + " " +
 		titleStyle.Width(titleWidth).Render(truncateText(section.label, titleWidth)) + " " +
-		hintStyle.Width(hintWidth).Render(truncateText(section.hint, hintWidth))
+		hintStyle.Width(hintWidth).Render(truncateText(section.summary, hintWidth))
 	row = fitFooterWidth(row, width)
 	if selected {
 		return dialogSelectedRowStyle.Width(width).Render(row)
