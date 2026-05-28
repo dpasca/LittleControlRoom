@@ -372,6 +372,62 @@ func TestOpenAICommitMessageClientSuggestRetriesRetryableHTTPError(t *testing.T)
 	}
 }
 
+func TestOpenAICommitMessageClientSuggestRetriesEmptyMessage(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedJSONSchemaRunner{
+		results: []scriptedJSONSchemaResult{
+			{
+				response: llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "gpt-5.4-mini",
+					OutputText: `{"message":""}`,
+				},
+			},
+			{
+				response: llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "gpt-5.4-mini",
+					OutputText: `{"message":"Refresh LCAgent replay activity"}`,
+				},
+			},
+		},
+	}
+
+	client := &OpenAICommitMessageClient{
+		model:     "gpt-5.4-mini",
+		responses: runner,
+	}
+
+	suggestion, err := client.Suggest(context.Background(), CommitMessageInput{
+		Intent:        "commit",
+		ProjectName:   "Little Control Room",
+		Branch:        "master",
+		StageMode:     "staged_only",
+		IncludedFiles: []string{"internal/codexapp/lcagent_session.go"},
+	})
+	if err != nil {
+		t.Fatalf("suggest: %v", err)
+	}
+	if suggestion.Message != "Refresh LCAgent replay activity" {
+		t.Fatalf("message = %q, want retried suggestion", suggestion.Message)
+	}
+	if len(runner.requests) != 2 {
+		t.Fatalf("requests = %d, want retry", len(runner.requests))
+	}
+	props, ok := runner.requests[0].Schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties = %#v", runner.requests[0].Schema["properties"])
+	}
+	messageSchema, ok := props["message"].(map[string]any)
+	if !ok {
+		t.Fatalf("message schema = %#v", props["message"])
+	}
+	if messageSchema["minLength"] != 1 {
+		t.Fatalf("message minLength = %#v, want 1", messageSchema["minLength"])
+	}
+}
+
 func TestOpenAICommitMessageClientRecommendUntrackedRetriesRetryableHTTPError(t *testing.T) {
 	t.Parallel()
 

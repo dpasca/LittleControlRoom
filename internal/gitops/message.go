@@ -32,6 +32,8 @@ var commitAssistantAttemptPlan = []commitAssistantAttemptConfig{
 	{ReasoningEffort: defaultCommitReasoningEffort},
 }
 
+var errEmptyCommitMessageSuggestion = errors.New("commit message suggestion was empty")
+
 type commitAssistantAttemptConfig struct {
 	ReasoningEffort string
 }
@@ -195,33 +197,43 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 		instructions += "\n" + commitMessageTodoInstructions
 	}
 
-	response, err := c.runJSONSchemaPrompt(
-		ctx,
-		instructions,
-		"Draft a git commit subject for this coding task snapshot:\n\n"+string(payload),
-		"git_commit_message",
-		schema,
-	)
-	if err != nil {
-		return CommitMessageSuggestion{}, err
-	}
+	var lastEmptyErr error
+	for attemptIndex := range commitAssistantAttemptPlan {
+		response, err := c.runJSONSchemaPrompt(
+			ctx,
+			instructions,
+			"Draft a git commit subject for this coding task snapshot:\n\n"+string(payload),
+			"git_commit_message",
+			schema,
+		)
+		if err != nil {
+			return CommitMessageSuggestion{}, err
+		}
 
-	var decoded struct {
-		Message          string  `json:"message"`
-		CompletedTodoIDs []int64 `json:"completed_todo_ids"`
+		var decoded struct {
+			Message          string  `json:"message"`
+			CompletedTodoIDs []int64 `json:"completed_todo_ids"`
+		}
+		if err := llm.DecodeJSONObjectOutput(response.OutputText, &decoded); err != nil {
+			return CommitMessageSuggestion{}, fmt.Errorf("decode commit message result: %w", err)
+		}
+		message := strings.TrimSpace(decoded.Message)
+		if message != "" {
+			return CommitMessageSuggestion{
+				Message:          message,
+				Model:            response.Model,
+				CompletedTodoIDs: decoded.CompletedTodoIDs,
+			}, nil
+		}
+		lastEmptyErr = errEmptyCommitMessageSuggestion
+		if attemptIndex < len(commitAssistantAttemptPlan)-1 {
+			continue
+		}
 	}
-	if err := llm.DecodeJSONObjectOutput(response.OutputText, &decoded); err != nil {
-		return CommitMessageSuggestion{}, fmt.Errorf("decode commit message result: %w", err)
+	if lastEmptyErr != nil {
+		return CommitMessageSuggestion{}, lastEmptyErr
 	}
-	message := strings.TrimSpace(decoded.Message)
-	if message == "" {
-		return CommitMessageSuggestion{}, errors.New("commit message suggestion was empty")
-	}
-	return CommitMessageSuggestion{
-		Message:          message,
-		Model:            response.Model,
-		CompletedTodoIDs: decoded.CompletedTodoIDs,
-	}, nil
+	return CommitMessageSuggestion{}, errors.New("commit assistant attempt plan exhausted")
 }
 
 func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, systemText, userText, schemaName string, schema map[string]any) (llm.JSONSchemaResponse, error) {
@@ -435,6 +447,7 @@ func commitMessageSchema(includeTodos bool) map[string]any {
 		"message": map[string]any{
 			"type":        "string",
 			"description": "One concise git commit subject line.",
+			"minLength":   1,
 		},
 	}
 	required := []string{"message"}
