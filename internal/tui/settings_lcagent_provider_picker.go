@@ -34,6 +34,12 @@ func settingsLCAgentProviderOptions() []settingsLCAgentProviderOption {
 			Summary:     "Use the direct Moonshot/Kimi route for LCAgent.",
 			Description: "Uses the saved Moonshot API key, with env file or process environment as an advanced fallback.",
 		},
+		{
+			Value:       "xiaomi",
+			Label:       "Xiaomi",
+			Summary:     "Use the direct Xiaomi MiMo route for LCAgent.",
+			Description: "Uses the saved Xiaomi API key, with env file or process environment as an advanced fallback.",
+		},
 	}
 }
 
@@ -74,6 +80,12 @@ func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
 			Label:       "Moonshot",
 			Summary:     "Use the direct Moonshot/Kimi route for utility work.",
 			Description: "Uses the saved Moonshot API key. Leave Utility Model blank to use the standard Moonshot LCAgent model default.",
+		},
+		{
+			Value:       "xiaomi",
+			Label:       "Xiaomi",
+			Summary:     "Use the direct Xiaomi MiMo route for utility work.",
+			Description: "Uses the saved Xiaomi API key. Leave Utility Model blank to use the standard Xiaomi LCAgent model default.",
 		},
 	}
 }
@@ -208,14 +220,13 @@ func (m Model) renderSettingsLCAgentProviderPickerContent(width, bodyH int) stri
 		lines = append(lines, renderSettingsLCAgentProviderPickerRow(option, i == m.settingsLCAgentProviderSelected, option.Value == currentValue, width))
 	}
 	selected := options[m.settingsLCAgentProviderSelected]
-	lines = append(lines, "", detailSectionStyle.Render("About"))
+	lines = append(lines, "", detailField("Selected", detailValueStyle.Render(selected.Label)), "", detailSectionStyle.Render("About"))
 	if strings.TrimSpace(selected.Summary) != "" {
 		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(18, width), selected.Summary)...)
 	}
 	if strings.TrimSpace(selected.Description) != "" {
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(18, width), selected.Description)...)
 	}
-	lines = append(lines, detailField("Selected", detailValueStyle.Render(selected.Label)))
 	if len(lines) > bodyH {
 		lines = lines[:bodyH]
 	}

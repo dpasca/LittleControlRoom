@@ -26,6 +26,9 @@ type EditableSettings struct {
 	DeepSeekModel             string
 	MoonshotAPIKey            string
 	MoonshotModel             string
+	XiaomiBaseURL             string
+	XiaomiAPIKey              string
+	XiaomiModel               string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -87,6 +90,9 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		DeepSeekModel:             cfg.DeepSeekModel,
 		MoonshotAPIKey:            cfg.MoonshotAPIKey,
 		MoonshotModel:             cfg.MoonshotModel,
+		XiaomiBaseURL:             cfg.XiaomiBaseURL,
+		XiaomiAPIKey:              cfg.XiaomiAPIKey,
+		XiaomiModel:               cfg.XiaomiModel,
 		MLXBaseURL:                cfg.MLXBaseURL,
 		MLXAPIKey:                 cfg.MLXAPIKey,
 		MLXModel:                  cfg.MLXModel,
@@ -157,11 +163,13 @@ func AppConfigFromEditableSettings(base AppConfig, settings EditableSettings) Ap
 func (s EditableSettings) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
 	case AIBackendOpenRouter:
-		return trimmedOrDefault(s.OpenRouterModel, DefaultOpenRouterModel)
+		return trimmedOrDefault(s.OpenRouterModel, backend.DefaultProjectModel())
 	case AIBackendDeepSeek:
-		return trimmedOrDefault(s.DeepSeekModel, DefaultDeepSeekModel)
+		return trimmedOrDefault(s.DeepSeekModel, backend.DefaultProjectModel())
 	case AIBackendMoonshot:
-		return trimmedOrDefault(s.MoonshotModel, DefaultMoonshotModel)
+		return trimmedOrDefault(s.MoonshotModel, backend.DefaultProjectModel())
+	case AIBackendXiaomi:
+		return trimmedOrDefault(s.XiaomiModel, backend.DefaultProjectModel())
 	case AIBackendMLX:
 		return strings.TrimSpace(s.MLXModel)
 	case AIBackendOllama:
@@ -183,6 +191,8 @@ func (s *EditableSettings) SetOpenAICompatibleModel(backend AIBackend, model str
 		s.DeepSeekModel = model
 	case AIBackendMoonshot:
 		s.MoonshotModel = model
+	case AIBackendXiaomi:
+		s.XiaomiModel = model
 	case AIBackendMLX:
 		s.MLXModel = model
 	case AIBackendOllama:
@@ -253,7 +263,7 @@ func trimLCAgentModelProviderPrefix(model, prefix string) string {
 	return model
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -266,6 +276,9 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	openRouterAPIKey := strings.TrimSpace(openRouterAPIKeyRaw)
 	deepSeekAPIKey := strings.TrimSpace(deepSeekAPIKeyRaw)
 	moonshotAPIKey := strings.TrimSpace(moonshotAPIKeyRaw)
+	xiaomiBaseURL := strings.TrimSpace(xiaomiBaseURLRaw)
+	xiaomiAPIKey := strings.TrimSpace(xiaomiAPIKeyRaw)
+	xiaomiModel := strings.TrimSpace(xiaomiModelRaw)
 	bossHelmModel := strings.TrimSpace(bossHelmModelRaw)
 	bossUtilityModel := strings.TrimSpace(bossUtilityModelRaw)
 	mlxBaseURL := strings.TrimSpace(mlxBaseURLRaw)
@@ -377,6 +390,9 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		OpenRouterAPIKey:       openRouterAPIKey,
 		DeepSeekAPIKey:         deepSeekAPIKey,
 		MoonshotAPIKey:         moonshotAPIKey,
+		XiaomiBaseURL:          xiaomiBaseURL,
+		XiaomiAPIKey:           xiaomiAPIKey,
+		XiaomiModel:            xiaomiModel,
 		MLXBaseURL:             mlxBaseURL,
 		MLXAPIKey:              mlxAPIKey,
 		MLXModel:               mlxModel,
@@ -468,6 +484,8 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.OpenRouterModel = strings.TrimSpace(settings.OpenRouterModel)
 	cfg.DeepSeekModel = strings.TrimSpace(settings.DeepSeekModel)
 	cfg.MoonshotModel = strings.TrimSpace(settings.MoonshotModel)
+	cfg.XiaomiBaseURL = strings.TrimSpace(settings.XiaomiBaseURL)
+	cfg.XiaomiModel = strings.TrimSpace(settings.XiaomiModel)
 	cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
@@ -564,6 +582,15 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.MoonshotModel); value != "" {
 		lines = append(lines, fmt.Sprintf("moonshot_model = %s", strconv.Quote(value)))
 	}
+	if value := strings.TrimSpace(settings.XiaomiBaseURL); value != "" {
+		lines = append(lines, fmt.Sprintf("xiaomi_base_url = %s", strconv.Quote(value)))
+	}
+	if settings.XiaomiAPIKey != "" {
+		lines = append(lines, fmt.Sprintf("xiaomi_api_key = %s", strconv.Quote(settings.XiaomiAPIKey)))
+	}
+	if value := strings.TrimSpace(settings.XiaomiModel); value != "" {
+		lines = append(lines, fmt.Sprintf("xiaomi_model = %s", strconv.Quote(value)))
+	}
 	if value := strings.TrimSpace(settings.MLXBaseURL); value != "" {
 		lines = append(lines, fmt.Sprintf("mlx_base_url = %s", strconv.Quote(value)))
 	}
@@ -589,6 +616,9 @@ func renderEditableSettings(settings EditableSettings) string {
 		strings.TrimSpace(settings.DeepSeekModel) != "" ||
 		strings.TrimSpace(settings.MoonshotAPIKey) != "" ||
 		strings.TrimSpace(settings.MoonshotModel) != "" ||
+		strings.TrimSpace(settings.XiaomiBaseURL) != "" ||
+		strings.TrimSpace(settings.XiaomiAPIKey) != "" ||
+		strings.TrimSpace(settings.XiaomiModel) != "" ||
 		strings.TrimSpace(settings.MLXBaseURL) != "" ||
 		strings.TrimSpace(settings.MLXAPIKey) != "" ||
 		strings.TrimSpace(settings.MLXModel) != "" ||

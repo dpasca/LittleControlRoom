@@ -229,7 +229,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
 	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout; explicit flags override preset values")
-	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, or moonshot")
+	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
 	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "approval mode for denied low-autonomy commands: deny or ask")
@@ -237,7 +237,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
-	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, or moonshot")
+	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
@@ -347,6 +347,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			model = modeladapter.DefaultDeepSeekModel
 		case "moonshot":
 			model = modeladapter.DefaultMoonshotModel
+		case "xiaomi":
+			model = modeladapter.DefaultXiaomiModel
 		default:
 			model = "scripted"
 		}
@@ -521,7 +523,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			return err
 		}
 		runErr = runner.Run(context.Background(), actions)
-	case "openrouter", "openai", "deepseek", "moonshot":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
 		runErr = runOpenRouter(context.Background(), writer, runner, threadStore, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
 			Model:           model,
 			FinalModel:      finalModel,
@@ -871,6 +873,8 @@ func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (
 		return modeladapter.NewDeepSeekClient(cfg)
 	case "moonshot":
 		return modeladapter.NewMoonshotClient(cfg)
+	case "xiaomi":
+		return modeladapter.NewXiaomiClient(cfg)
 	default:
 		return modeladapter.NewOpenRouterClient(cfg)
 	}

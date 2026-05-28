@@ -314,8 +314,14 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.OpenRouterAPIKey = strings.TrimSpace(settings.OpenRouterAPIKey)
+	s.cfg.OpenRouterModel = strings.TrimSpace(settings.OpenRouterModel)
 	s.cfg.DeepSeekAPIKey = strings.TrimSpace(settings.DeepSeekAPIKey)
+	s.cfg.DeepSeekModel = strings.TrimSpace(settings.DeepSeekModel)
 	s.cfg.MoonshotAPIKey = strings.TrimSpace(settings.MoonshotAPIKey)
+	s.cfg.MoonshotModel = strings.TrimSpace(settings.MoonshotModel)
+	s.cfg.XiaomiBaseURL = strings.TrimSpace(settings.XiaomiBaseURL)
+	s.cfg.XiaomiAPIKey = strings.TrimSpace(settings.XiaomiAPIKey)
+	s.cfg.XiaomiModel = strings.TrimSpace(settings.XiaomiModel)
 	s.cfg.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	s.cfg.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
 	s.cfg.MLXModel = strings.TrimSpace(settings.MLXModel)
@@ -388,6 +394,17 @@ func editableSettingsRequireAIClientRefresh(current config.AppConfig, settings c
 		return true
 	}
 	if strings.TrimSpace(current.OpenAIAPIKey) != strings.TrimSpace(settings.OpenAIAPIKey) {
+		return true
+	}
+	if strings.TrimSpace(current.OpenRouterAPIKey) != strings.TrimSpace(settings.OpenRouterAPIKey) ||
+		strings.TrimSpace(current.OpenRouterModel) != strings.TrimSpace(settings.OpenRouterModel) ||
+		strings.TrimSpace(current.DeepSeekAPIKey) != strings.TrimSpace(settings.DeepSeekAPIKey) ||
+		strings.TrimSpace(current.DeepSeekModel) != strings.TrimSpace(settings.DeepSeekModel) ||
+		strings.TrimSpace(current.MoonshotAPIKey) != strings.TrimSpace(settings.MoonshotAPIKey) ||
+		strings.TrimSpace(current.MoonshotModel) != strings.TrimSpace(settings.MoonshotModel) ||
+		strings.TrimSpace(current.XiaomiBaseURL) != strings.TrimSpace(settings.XiaomiBaseURL) ||
+		strings.TrimSpace(current.XiaomiAPIKey) != strings.TrimSpace(settings.XiaomiAPIKey) ||
+		strings.TrimSpace(current.XiaomiModel) != strings.TrimSpace(settings.XiaomiModel) {
 		return true
 	}
 	if strings.TrimSpace(current.MLXBaseURL) != strings.TrimSpace(settings.MLXBaseURL) {
@@ -466,6 +483,14 @@ func (s *Service) HasTodoWorktreeSuggester() bool {
 		return false
 	}
 	return suggester.Enabled()
+}
+
+func (s *Service) TodoWorktreeSuggesterUnavailableReason() string {
+	suggester := s.currentTodoSuggester()
+	if suggester == nil {
+		return ""
+	}
+	return suggester.UnavailableReason()
 }
 
 func (s *Service) HasSessionClassifier() bool {
@@ -548,8 +573,8 @@ func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend)
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
-		return llm.NewOpenAICompatibleTextRunner(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
+		return llm.NewOpenAICompatibleTextRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
 	}
@@ -569,7 +594,7 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
 		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
@@ -590,7 +615,7 @@ func (s *Service) NewBossUtilityJSONRunner() (llm.JSONSchemaRunner, string, conf
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
 		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
@@ -612,19 +637,15 @@ func configuredBossHelmModelForBackend(cfg config.AppConfig, backend config.AIBa
 		return modelName
 	}
 	switch backend {
-	case config.AIBackendOpenRouter:
-		return config.DefaultOpenRouterModel
-	case config.AIBackendDeepSeek:
-		return config.DefaultDeepSeekProModel
-	case config.AIBackendMoonshot:
-		return config.DefaultMoonshotModel
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+		return backend.DefaultBossHelmModel()
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
 			return modelName
 		}
 	}
 	switch backend {
-	case config.AIBackendOpenRouter, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
 		return ""
 	}
 	return config.DefaultBossHelmModel
@@ -638,12 +659,8 @@ func configuredBossUtilityModelForBackend(cfg config.AppConfig, backend config.A
 		return modelName
 	}
 	switch backend {
-	case config.AIBackendOpenRouter:
-		return config.DefaultOpenRouterModel
-	case config.AIBackendDeepSeek:
-		return config.DefaultDeepSeekModel
-	case config.AIBackendMoonshot:
-		return config.DefaultMoonshotModel
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
+		return backend.DefaultBossUtilityModel()
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if modelName := strings.TrimSpace(cfg.OpenAICompatibleModel(backend)); modelName != "" {
 			return modelName
@@ -703,7 +720,7 @@ func (s *Service) configureAIClientsLocked() {
 			client = sessionclassify.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			todoClient = todoworktree.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 		}
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendMLX, config.AIBackendOllama:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
 		if selectedStatus.Ready {
 			baseURL := s.cfg.OpenAICompatibleBaseURL(selectedBackend)
 			apiKey := s.cfg.OpenAICompatibleAPIKey(selectedBackend)
@@ -733,11 +750,12 @@ func (s *Service) configureAIClientsLocked() {
 	}
 	if s.todoSuggester == nil {
 		s.todoSuggester = todoworktree.NewManager(s.store, s.bus, todoworktree.Options{
-			Client: todoClient,
+			Client:            todoClient,
+			UnavailableReason: unavailableReason,
 		})
 		return
 	}
-	s.todoSuggester.ConfigureClient(todoClient)
+	s.todoSuggester.ConfigureClientWithUnavailableReason(todoClient, unavailableReason)
 }
 
 func sessionClassifierUnavailableReason(backend config.AIBackend, status aibackend.Status) string {

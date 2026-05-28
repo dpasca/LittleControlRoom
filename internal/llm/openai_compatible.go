@@ -16,11 +16,13 @@ const defaultOpenAICompatibleCacheDuration = 30 * time.Second
 type OpenAICompatibleResponsesRunnerOptions struct {
 	PreferChatCompletions bool
 	ChatResponseFormat    OpenAICompatibleChatResponseFormat
+	AuthHeader            OpenAICompatibleAuthHeader
 }
 
 type OpenAICompatibleModelDiscovery struct {
 	baseURL       string
 	apiKey        string
+	authHeader    OpenAICompatibleAuthHeader
 	httpClient    *http.Client
 	cacheDuration time.Duration
 
@@ -37,12 +39,17 @@ type AutoModelRunner struct {
 }
 
 func NewOpenAICompatibleModelDiscovery(baseURL, apiKey string, timeout time.Duration) *OpenAICompatibleModelDiscovery {
+	return NewOpenAICompatibleModelDiscoveryWithAuthHeader(baseURL, apiKey, timeout, OpenAICompatibleAuthHeaderBearer)
+}
+
+func NewOpenAICompatibleModelDiscoveryWithAuthHeader(baseURL, apiKey string, timeout time.Duration, authHeader OpenAICompatibleAuthHeader) *OpenAICompatibleModelDiscovery {
 	if timeout <= 0 {
 		timeout = 15 * time.Second
 	}
 	return &OpenAICompatibleModelDiscovery{
 		baseURL:       strings.TrimRight(strings.TrimSpace(baseURL), "/"),
 		apiKey:        strings.TrimSpace(apiKey),
+		authHeader:    normalizeOpenAICompatibleAuthHeader(authHeader),
 		httpClient:    &http.Client{Timeout: timeout},
 		cacheDuration: defaultOpenAICompatibleCacheDuration,
 	}
@@ -103,7 +110,7 @@ func (d *OpenAICompatibleModelDiscovery) Discover(ctx context.Context) error {
 		return fmt.Errorf("create model list request: %w", err)
 	}
 	if d.apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+d.apiKey)
+		setOpenAICompatibleAPIKeyHeader(req.Header, d.apiKey, d.authHeader)
 	}
 
 	resp, err := d.httpClient.Do(req)
@@ -209,10 +216,11 @@ func NewOpenAICompatibleResponsesRunner(baseURL, apiKey, defaultModel string, ti
 }
 
 func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OpenAICompatibleResponsesRunnerOptions) JSONSchemaRunner {
-	responsesClient := NewResponsesClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	authHeader := normalizeOpenAICompatibleAuthHeader(opts.AuthHeader)
+	responsesClient := NewResponsesClientWithBaseURLAndAuthHeader(apiKey, baseURL, timeout, usage, authHeader)
 	chatFormat := normalizeOpenAICompatibleChatResponseFormat(opts.ChatResponseFormat)
-	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndResponseFormat(apiKey, baseURL, timeout, usage, chatFormat)
-	jsonModeChatClient := NewOpenAICompatibleChatCompletionsJSONModeClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, chatFormat, authHeader)
+	jsonModeChatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONObject, authHeader)
 	if chatFormat == OpenAICompatibleChatResponseFormatJSONObject {
 		jsonModeChatClient = chatClient
 	}
@@ -222,6 +230,6 @@ func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel
 	if baseRunner == nil {
 		return nil
 	}
-	discovery := NewOpenAICompatibleModelDiscovery(baseURL, apiKey, timeout)
+	discovery := NewOpenAICompatibleModelDiscoveryWithAuthHeader(baseURL, apiKey, timeout, authHeader)
 	return NewAutoModelRunner(discovery, baseRunner, defaultModel)
 }

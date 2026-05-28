@@ -967,6 +967,64 @@ func TestMoonshotClientDefaultsFromEnv(t *testing.T) {
 	}
 }
 
+func TestXiaomiClientUsesAPIKeyHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("api-key"); got != "xiaomi-key" {
+			t.Fatalf("api-key = %q, want xiaomi-key", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want empty", got)
+		}
+		var req struct {
+			Model     string `json:"model"`
+			MaxTokens int    `json:"max_tokens"`
+			Thinking  struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Model != "mimo-v2.5-pro" {
+			t.Fatalf("model = %q", req.Model)
+		}
+		if req.MaxTokens != 321 {
+			t.Fatalf("max_tokens = %d, want 321", req.MaxTokens)
+		}
+		if req.Thinking.Type != "disabled" {
+			t.Fatalf("thinking.type = %q, want disabled", req.Thinking.Type)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"xiaomi_resp",
+			"model":"mimo-v2.5-pro",
+			"choices":[{"message":{"role":"assistant","content":"done"}}]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := NewXiaomiClient(OpenRouterConfig{
+		APIKey:  "xiaomi-key",
+		BaseURL: server.URL,
+		Model:   "xiaomi/mimo-v2.5-pro",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := client.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{
+		MaxCompletionTokens: 321,
+		DisableThinking:     true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion.ID != "xiaomi_resp" || completion.Model != "mimo-v2.5-pro" || completion.Message.Content != "done" {
+		t.Fatalf("completion = %+v", completion)
+	}
+}
+
 func TestDeepSeekClientDefaultsFromEnv(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "key")
 	t.Setenv("DEEPSEEK_BASE_URL", "https://example.deepseek.test")

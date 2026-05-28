@@ -21123,8 +21123,8 @@ func TestCommandEnterOpensSettingsMode(t *testing.T) {
 	if got.commandMode {
 		t.Fatalf("command mode should close after /settings")
 	}
-	if len(got.settingsFields) != 44 {
-		t.Fatalf("settings field count = %d, want 44", len(got.settingsFields))
+	if len(got.settingsFields) != 47 {
+		t.Fatalf("settings field count = %d, want 47", len(got.settingsFields))
 	}
 }
 
@@ -24908,6 +24908,29 @@ func TestSettingsOpenWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
 	}
 	if !m.settingsMode {
 		t.Fatalf("settings mode should be open")
+	}
+}
+
+func TestSettingsWarnsWhenXiaomiTokenPlanKeyUsesRegularURL(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendXiaomi
+	settings.LCAgentProvider = "xiaomi"
+	settings.XiaomiAPIKey = "TC_example"
+	settings.XiaomiBaseURL = ""
+
+	warning := settingsXiaomiTokenPlanBaseURLWarning(settings)
+	if !strings.Contains(warning, "Token Plan key") || !strings.Contains(warning, "regular API URL") {
+		t.Fatalf("warning = %q, want obvious Token Plan URL warning", warning)
+	}
+	if got := settingsCloudConnectionState(settings, config.AIBackendXiaomi); got != "blocked" {
+		t.Fatalf("settingsCloudConnectionState() = %q, want blocked", got)
+	}
+	if users := strings.Join(settingsProviderUsers(settings, config.AIBackendXiaomi), ", "); !strings.Contains(users, "LCAgent") {
+		t.Fatalf("Xiaomi provider users = %q, want LCAgent included", users)
+	}
+	state, _, detail := lcagentCredentialSmokeCheck(settings)
+	if state != "blocked" || !strings.Contains(detail, "token-plan base URL") {
+		t.Fatalf("lcagentCredentialSmokeCheck() = (%q, %q), want blocked token-plan URL detail", state, detail)
 	}
 }
 

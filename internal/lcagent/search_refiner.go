@@ -114,10 +114,10 @@ func normalizeUtilityProvider(raw string) (string, error) {
 	switch value {
 	case "main", "same", "same-as-main":
 		return "main", nil
-	case "off", "openrouter", "openai", "deepseek", "moonshot":
+	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
 		return value, nil
 	default:
-		return "", fmt.Errorf("utility provider must be one of: main, off, openrouter, openai, deepseek, moonshot")
+		return "", fmt.Errorf("utility provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi")
 	}
 }
 
@@ -129,6 +129,8 @@ func normalizeMainProvider(provider string) string {
 		return "deepseek"
 	case "moonshot":
 		return "moonshot"
+	case "xiaomi":
+		return "xiaomi"
 	default:
 		return "openrouter"
 	}
@@ -142,6 +144,8 @@ func defaultMainModelForProvider(provider string) string {
 		return modeladapter.DefaultDeepSeekModel
 	case "moonshot":
 		return modeladapter.DefaultMoonshotModel
+	case "xiaomi":
+		return modeladapter.DefaultXiaomiUtilityModel
 	default:
 		return modeladapter.DefaultOpenRouterModel
 	}

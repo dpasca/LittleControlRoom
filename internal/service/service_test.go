@@ -451,6 +451,41 @@ func TestBossChatRunnerSupportsDirectDeepSeekBackend(t *testing.T) {
 	}
 }
 
+func TestBossChatRunnerUsesXiaomiProAndUtilityDefaults(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	cfg := config.Default()
+	cfg.BossChatBackend = config.AIBackendXiaomi
+	cfg.XiaomiAPIKey = "tc-test-example"
+	cfg.XiaomiBaseURL = "https://token-plan-sgp.xiaomimimo.com/v1"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	runner, modelName, backend := svc.NewBossTextRunner()
+	if runner == nil {
+		t.Fatalf("NewBossTextRunner() runner = nil, want Xiaomi text runner")
+	}
+	if backend != config.AIBackendXiaomi {
+		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendXiaomi)
+	}
+	if modelName != config.DefaultXiaomiProModel {
+		t.Fatalf("boss chat model = %q, want %q", modelName, config.DefaultXiaomiProModel)
+	}
+
+	utility, utilityModel, utilityBackend := svc.NewBossUtilityJSONRunner()
+	if utility == nil {
+		t.Fatalf("NewBossUtilityJSONRunner() runner = nil, want Xiaomi utility runner")
+	}
+	if utilityBackend != config.AIBackendXiaomi {
+		t.Fatalf("boss utility backend = %s, want %s", utilityBackend, config.AIBackendXiaomi)
+	}
+	if utilityModel != config.DefaultXiaomiModel {
+		t.Fatalf("boss utility model = %q, want %q", utilityModel, config.DefaultXiaomiModel)
+	}
+}
+
 func TestProjectReportsSupportDirectDeepSeekBackend(t *testing.T) {
 	cfg := config.Default()
 	cfg.AIBackend = config.AIBackendDeepSeek

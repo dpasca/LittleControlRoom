@@ -756,6 +756,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		LCAgentOpenRouterAPIKey:  m.openRouterAPIKey(),
 		LCAgentDeepSeekAPIKey:    m.deepSeekAPIKey(),
 		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
+		LCAgentXiaomiAPIKey:      m.xiaomiAPIKey(),
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
 		LCAgentAuto:              m.lcagentAuto(),
@@ -845,6 +846,7 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		strings.TrimSpace(previous.OpenRouterAPIKey) != strings.TrimSpace(saved.OpenRouterAPIKey) ||
 		strings.TrimSpace(previous.DeepSeekAPIKey) != strings.TrimSpace(saved.DeepSeekAPIKey) ||
 		strings.TrimSpace(previous.MoonshotAPIKey) != strings.TrimSpace(saved.MoonshotAPIKey) ||
+		strings.TrimSpace(previous.XiaomiAPIKey) != strings.TrimSpace(saved.XiaomiAPIKey) ||
 		strings.TrimSpace(previous.LCAgentRoutePreset) != strings.TrimSpace(saved.LCAgentRoutePreset) ||
 		strings.TrimSpace(previous.LCAgentProvider) != strings.TrimSpace(saved.LCAgentProvider) ||
 		strings.TrimSpace(previous.EmbeddedLCAgentModel) != strings.TrimSpace(saved.EmbeddedLCAgentModel) ||
@@ -877,6 +879,7 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentOpenRouterAPIKey:  strings.TrimSpace(settings.OpenRouterAPIKey),
 		LCAgentDeepSeekAPIKey:    strings.TrimSpace(settings.DeepSeekAPIKey),
 		LCAgentMoonshotAPIKey:    strings.TrimSpace(settings.MoonshotAPIKey),
+		LCAgentXiaomiAPIKey:      strings.TrimSpace(settings.XiaomiAPIKey),
 		LCAgentRoutePreset:       strings.TrimSpace(settings.LCAgentRoutePreset),
 		LCAgentProvider:          strings.TrimSpace(settings.LCAgentProvider),
 		LCAgentAuto:              strings.TrimSpace(settings.LCAgentAuto),
@@ -989,6 +992,10 @@ func (m Model) deepSeekAPIKey() string {
 
 func (m Model) moonshotAPIKey() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().MoonshotAPIKey)
+}
+
+func (m Model) xiaomiAPIKey() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().XiaomiAPIKey)
 }
 
 func (m Model) lcagentPath() string {

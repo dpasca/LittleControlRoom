@@ -1119,10 +1119,15 @@ func (m Model) regenerateTodoWorktreeSuggestionCmd(projectPath string, todoID in
 		}
 	}
 	if !m.svc.HasTodoWorktreeSuggester() {
+		reason := strings.TrimSpace(m.svc.TodoWorktreeSuggesterUnavailableReason())
+		status := "Worktree suggestions are unavailable right now. Press e to enter names manually."
+		if reason != "" {
+			status = "Worktree suggestions unavailable: " + reason
+		}
 		return func() tea.Msg {
 			return todoActionMsg{
 				projectPath: projectPath,
-				status:      "Worktree suggestions are unavailable right now. Press e to enter names manually.",
+				status:      status,
 			}
 		}
 	}
@@ -1215,6 +1220,7 @@ func (m Model) openPinnedTodoWorkSession(item model.TodoItem) (tea.Model, tea.Cm
 		LCAgentOpenRouterAPIKey:  m.openRouterAPIKey(),
 		LCAgentDeepSeekAPIKey:    m.deepSeekAPIKey(),
 		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
+		LCAgentXiaomiAPIKey:      m.xiaomiAPIKey(),
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
 		LCAgentAuto:              m.lcagentAuto(),
@@ -1381,6 +1387,7 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 		LCAgentOpenRouterAPIKey:  m.openRouterAPIKey(),
 		LCAgentDeepSeekAPIKey:    m.deepSeekAPIKey(),
 		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
+		LCAgentXiaomiAPIKey:      m.xiaomiAPIKey(),
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
 		LCAgentAuto:              m.lcagentAuto(),

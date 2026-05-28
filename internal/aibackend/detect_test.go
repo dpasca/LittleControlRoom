@@ -110,6 +110,21 @@ func TestDetectOpenAICompatibleLocalConfiguredModelMustExist(t *testing.T) {
 	}
 }
 
+func TestDetectXiaomiTokenPlanKeyNeedsTokenPlanBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.XiaomiAPIKey = "TC_example"
+
+	status := detectOpenAICompatibleCloud(context.Background(), cfg, config.AIBackendXiaomi)
+	if status.Ready {
+		t.Fatalf("status.Ready = true, want false for Token Plan key on regular API URL")
+	}
+	if status.Detail == "" || status.LoginHint == "" {
+		t.Fatalf("status should explain Token Plan URL mismatch: %+v", status)
+	}
+}
+
 func TestOpenCodeProviderStatusRecognizesNonOpenAIProviders(t *testing.T) {
 	t.Parallel()
 

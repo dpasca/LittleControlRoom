@@ -61,6 +61,7 @@ type OpenAICompatibleChatTextClient struct {
 	endpoint   string
 	httpClient *http.Client
 	usage      *UsageTracker
+	authHeader OpenAICompatibleAuthHeader
 }
 
 type AutoTextRunner struct {
@@ -117,18 +118,27 @@ func NewResponsesTextClientWithHTTPClient(apiKey, endpoint string, httpClient *h
 }
 
 func NewOpenAICompatibleChatTextClientWithBaseURL(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker) *OpenAICompatibleChatTextClient {
+	return NewOpenAICompatibleChatTextClientWithBaseURLAndAuthHeader(apiKey, baseURL, timeout, usage, OpenAICompatibleAuthHeaderBearer)
+}
+
+func NewOpenAICompatibleChatTextClientWithBaseURLAndAuthHeader(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker, authHeader OpenAICompatibleAuthHeader) *OpenAICompatibleChatTextClient {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	return NewOpenAICompatibleChatTextClientWithHTTPClient(
+	return NewOpenAICompatibleChatTextClientWithHTTPClientAndAuthHeader(
 		apiKey,
 		ChatCompletionsEndpointFromBaseURL(baseURL),
 		&http.Client{Timeout: timeout},
 		usage,
+		authHeader,
 	)
 }
 
 func NewOpenAICompatibleChatTextClientWithHTTPClient(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker) *OpenAICompatibleChatTextClient {
+	return NewOpenAICompatibleChatTextClientWithHTTPClientAndAuthHeader(apiKey, endpoint, httpClient, usage, OpenAICompatibleAuthHeaderBearer)
+}
+
+func NewOpenAICompatibleChatTextClientWithHTTPClientAndAuthHeader(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker, authHeader OpenAICompatibleAuthHeader) *OpenAICompatibleChatTextClient {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
@@ -146,6 +156,7 @@ func NewOpenAICompatibleChatTextClientWithHTTPClient(apiKey, endpoint string, ht
 		endpoint:   endpoint,
 		httpClient: httpClientToUse,
 		usage:      usage,
+		authHeader: normalizeOpenAICompatibleAuthHeader(authHeader),
 	}
 }
 
@@ -158,11 +169,16 @@ func NewAutoTextRunner(discovery *OpenAICompatibleModelDiscovery, baseRunner Tex
 }
 
 func NewOpenAICompatibleTextRunner(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker) TextRunner {
-	baseRunner := NewOpenAICompatibleChatTextClientWithBaseURL(apiKey, baseURL, timeout, usage)
+	return NewOpenAICompatibleTextRunnerWithOptions(baseURL, apiKey, defaultModel, timeout, usage, OpenAICompatibleResponsesRunnerOptions{})
+}
+
+func NewOpenAICompatibleTextRunnerWithOptions(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OpenAICompatibleResponsesRunnerOptions) TextRunner {
+	authHeader := normalizeOpenAICompatibleAuthHeader(opts.AuthHeader)
+	baseRunner := NewOpenAICompatibleChatTextClientWithBaseURLAndAuthHeader(apiKey, baseURL, timeout, usage, authHeader)
 	if baseRunner == nil {
 		return nil
 	}
-	discovery := NewOpenAICompatibleModelDiscovery(baseURL, apiKey, timeout)
+	discovery := NewOpenAICompatibleModelDiscoveryWithAuthHeader(baseURL, apiKey, timeout, authHeader)
 	return NewAutoTextRunner(discovery, baseRunner, defaultModel)
 }
 
@@ -550,7 +566,7 @@ func (c *OpenAICompatibleChatTextClient) RunTextStream(ctx context.Context, req 
 	if err != nil {
 		return TextResponse{}, fmt.Errorf("create openai-compatible chat text request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	setOpenAICompatibleAPIKeyHeader(httpReq.Header, c.apiKey, c.authHeader)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 

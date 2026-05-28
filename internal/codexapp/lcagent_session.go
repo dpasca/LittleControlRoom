@@ -26,7 +26,7 @@ const (
 	lcagentDefaultProvider        = "openrouter"
 	lcagentDefaultToolProfile     = "balanced"
 	lcagentDefaultContextProfile  = "balanced"
-	lcagentDefaultRequestTimeout  = 60 * time.Minute
+	lcagentDefaultRequestTimeout  = 10 * time.Minute
 	lcagentDefaultUtilityProvider = "main"
 	lcagentDefaultWebSearch       = "off"
 )
@@ -47,6 +47,7 @@ type lcagentSession struct {
 	openRouterAPIKey  string
 	deepSeekAPIKey    string
 	moonshotAPIKey    string
+	xiaomiAPIKey      string
 	routePreset       string
 	provider          string
 	auto              string
@@ -131,6 +132,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		openRouterAPIKey:  strings.TrimSpace(req.LCAgentOpenRouterAPIKey),
 		deepSeekAPIKey:    strings.TrimSpace(req.LCAgentDeepSeekAPIKey),
 		moonshotAPIKey:    strings.TrimSpace(req.LCAgentMoonshotAPIKey),
+		xiaomiAPIKey:      strings.TrimSpace(req.LCAgentXiaomiAPIKey),
 		routePreset:       routePreset,
 		provider:          provider,
 		auto:              strings.TrimSpace(req.LCAgentAuto),
@@ -341,6 +343,7 @@ func (s *lcagentSession) ListModels() ([]ModelOption, error) {
 		OpenRouterAPIKey: s.openRouterAPIKey,
 		DeepSeekAPIKey:   s.deepSeekAPIKey,
 		MoonshotAPIKey:   s.moonshotAPIKey,
+		XiaomiAPIKey:     s.xiaomiAPIKey,
 		RequestTimeout:   s.requestTimeout,
 	}
 	s.mu.Unlock()
@@ -359,6 +362,7 @@ type LCAgentModelListConfig struct {
 	OpenRouterAPIKey string
 	DeepSeekAPIKey   string
 	MoonshotAPIKey   string
+	XiaomiAPIKey     string
 	RequestTimeout   time.Duration
 }
 
@@ -431,6 +435,8 @@ func lcagentModelListClient(provider string, cfg LCAgentModelListConfig) (*model
 		return modeladapter.NewDeepSeekClient(adapterCfg)
 	case "moonshot":
 		return modeladapter.NewMoonshotClient(adapterCfg)
+	case "xiaomi":
+		return modeladapter.NewXiaomiClient(adapterCfg)
 	default:
 		return modeladapter.NewOpenRouterClient(adapterCfg)
 	}
@@ -444,6 +450,8 @@ func lcagentModelListAPIKey(provider string, cfg LCAgentModelListConfig) string 
 		return strings.TrimSpace(cfg.DeepSeekAPIKey)
 	case "moonshot":
 		return strings.TrimSpace(cfg.MoonshotAPIKey)
+	case "xiaomi":
+		return strings.TrimSpace(cfg.XiaomiAPIKey)
 	default:
 		return strings.TrimSpace(cfg.OpenRouterAPIKey)
 	}
@@ -493,6 +501,10 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 	case "moonshot":
 		return []ModelOption{
 			option(modeladapter.DefaultMoonshotModel, "Balanced: Kimi K2.6", "Direct Moonshot/Kimi coding route.", "", true),
+		}
+	case "xiaomi":
+		return []ModelOption{
+			option(modeladapter.DefaultXiaomiModel, "Balanced: MiMo 2.5 Pro", "Direct Xiaomi MiMo coding route.", "low", true),
 		}
 	case "openai":
 		return []ModelOption{
@@ -582,6 +594,8 @@ func lcagentProviderDisplayName(provider string) string {
 		return "DeepSeek"
 	case "moonshot":
 		return "Moonshot"
+	case "xiaomi":
+		return "Xiaomi"
 	default:
 		return "OpenRouter"
 	}
@@ -923,6 +937,8 @@ func (s *lcagentSession) providerCredentialLocked(provider string) (string, stri
 		return "DEEPSEEK_API_KEY", strings.TrimSpace(s.deepSeekAPIKey)
 	case "moonshot":
 		return "MOONSHOT_API_KEY", strings.TrimSpace(s.moonshotAPIKey)
+	case "xiaomi":
+		return "XIAOMI_API_KEY", strings.TrimSpace(s.xiaomiAPIKey)
 	default:
 		return "", ""
 	}
@@ -1505,10 +1521,10 @@ func lcagentProviderValue(configured string) (string, error) {
 		return lcagentDefaultProvider, nil
 	}
 	switch value {
-	case "openrouter", "openai", "deepseek", "moonshot":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
 		return value, nil
 	default:
-		return "", fmt.Errorf("LCAgent provider must be one of: openrouter, openai, deepseek, moonshot")
+		return "", fmt.Errorf("LCAgent provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi")
 	}
 }
 
@@ -1650,6 +1666,8 @@ func lcagentDefaultModel(provider string) string {
 		return modeladapter.DefaultDeepSeekModel
 	case "moonshot":
 		return modeladapter.DefaultMoonshotModel
+	case "xiaomi":
+		return modeladapter.DefaultXiaomiModel
 	default:
 		return modeladapter.DefaultOpenRouterModel
 	}

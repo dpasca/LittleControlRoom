@@ -2,7 +2,8 @@ openai_api_key = "sk-your-openai-api-key"
 
 # Boss chat is separate from project-analysis inference.
 # Leave boss_chat_backend blank to auto-use openai_api when an OpenAI key exists.
-# You can also use local OpenAI-compatible backends: "mlx" or "ollama".
+# You can also use direct providers like "openrouter", "deepseek", "moonshot",
+# or "xiaomi", plus local OpenAI-compatible backends: "mlx" or "ollama".
 # boss_chat_backend = "openai_api"
 # boss_helm_model = "gpt-5.5"
 # boss_utility_model = "gpt-5.4-mini"
@@ -15,6 +16,12 @@ openai_api_key = "sk-your-openai-api-key"
 # ollama_base_url = "http://127.0.0.1:11434/v1"
 # ollama_api_key = "ollama"
 
+# Xiaomi direct API. Token Plan keys need the regional token-plan URL shown in
+# Xiaomi subscription management, not the regular pay-as-you-go API URL.
+# xiaomi_base_url = "https://token-plan-sgp.xiaomimimo.com/v1"
+# xiaomi_api_key = ""
+# xiaomi_model = "mimo-v2-flash"
+
 include_paths = [
   "~/dev/repos",
 ]
@@ -25,7 +32,7 @@ codex_launch_preset = "yolo"
 
 # Experimental LCAgent provider. Leave lcagent_path blank to use the bundled
 # sibling binary, PATH lookup, or local go run fallback. The env file can
-# contain OPENROUTER_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, or
+# contain OPENROUTER_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, XIAOMI_API_KEY, or
 # OPENAI_API_KEY; key contents are not copied into this config.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
 # embedded_lcagent_reasoning_effort = "low"
@@ -34,7 +41,7 @@ codex_launch_preset = "yolo"
 # lcagent_provider = "openrouter"
 # Utility Model defaults to the same provider/model as the Main Model.
 # Set to "off" to disable utility-model search refinement, or choose
-# "openrouter", "openai", "deepseek", or "moonshot" with an optional
+# "openrouter", "openai", "deepseek", "moonshot", or "xiaomi" with an optional
 # lcagent_utility_model override.
 # lcagent_utility_provider = "main"
 # lcagent_utility_model = ""

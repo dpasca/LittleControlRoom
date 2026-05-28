@@ -19,6 +19,7 @@ const (
 	AIBackendClaude     AIBackend = "claude_code"
 	AIBackendMLX        AIBackend = "mlx"
 	AIBackendOllama     AIBackend = "ollama"
+	AIBackendXiaomi     AIBackend = "xiaomi"
 )
 
 var selectableAIBackends = []AIBackend{
@@ -31,6 +32,7 @@ var selectableAIBackends = []AIBackend{
 	AIBackendOpenRouter,
 	AIBackendDeepSeek,
 	AIBackendMoonshot,
+	AIBackendXiaomi,
 	AIBackendDisabled,
 }
 
@@ -69,6 +71,8 @@ func ParseAIBackend(raw string) (AIBackend, error) {
 		return AIBackendDeepSeek, nil
 	case string(AIBackendMoonshot):
 		return AIBackendMoonshot, nil
+	case string(AIBackendXiaomi):
+		return AIBackendXiaomi, nil
 	case string(AIBackendCodex):
 		return AIBackendCodex, nil
 	case string(AIBackendOpenCode):
@@ -80,7 +84,7 @@ func ParseAIBackend(raw string) (AIBackend, error) {
 	case string(AIBackendOllama):
 		return AIBackendOllama, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, codex, opencode, claude_code, mlx, or ollama")
+		return AIBackendUnset, fmt.Errorf("ai_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, xiaomi, codex, opencode, claude_code, mlx, or ollama")
 	}
 }
 
@@ -108,12 +112,14 @@ func ParseBossChatBackend(raw string) (AIBackend, error) {
 		return AIBackendDeepSeek, nil
 	case string(AIBackendMoonshot):
 		return AIBackendMoonshot, nil
+	case string(AIBackendXiaomi):
+		return AIBackendXiaomi, nil
 	case string(AIBackendMLX):
 		return AIBackendMLX, nil
 	case string(AIBackendOllama):
 		return AIBackendOllama, nil
 	default:
-		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, mlx, or ollama")
+		return AIBackendUnset, fmt.Errorf("boss_chat_backend must be one of disabled, openai_api, openrouter, deepseek, moonshot, xiaomi, mlx, or ollama")
 	}
 }
 
@@ -149,6 +155,8 @@ func (b AIBackend) Label() string {
 		return "MLX"
 	case AIBackendOllama:
 		return "Ollama"
+	case AIBackendXiaomi:
+		return "Xiaomi MiMo"
 	default:
 		return "Not configured"
 	}
@@ -194,6 +202,8 @@ func (b AIBackend) DefaultOpenAICompatibleBaseURL() string {
 		return "http://127.0.0.1:8080/v1"
 	case AIBackendOllama:
 		return "http://127.0.0.1:11434/v1"
+	case AIBackendXiaomi:
+		return "https://api.xiaomimimo.com/v1"
 	default:
 		return ""
 	}
@@ -210,9 +220,74 @@ func (b AIBackend) DefaultOpenAICompatibleAPIKey() string {
 	}
 }
 
+func (b AIBackend) DefaultProjectModel() string {
+	switch b {
+	case AIBackendOpenRouter:
+		return DefaultOpenRouterModel
+	case AIBackendDeepSeek:
+		return DefaultDeepSeekModel
+	case AIBackendMoonshot:
+		return DefaultMoonshotModel
+	case AIBackendXiaomi:
+		return DefaultXiaomiModel
+	default:
+		return ""
+	}
+}
+
+func (b AIBackend) DefaultBossHelmModel() string {
+	switch b {
+	case AIBackendOpenRouter:
+		return DefaultOpenRouterModel
+	case AIBackendDeepSeek:
+		return DefaultDeepSeekProModel
+	case AIBackendMoonshot:
+		return DefaultMoonshotModel
+	case AIBackendXiaomi:
+		return DefaultXiaomiProModel
+	default:
+		return DefaultBossHelmModel
+	}
+}
+
+func (b AIBackend) DefaultBossUtilityModel() string {
+	switch b {
+	case AIBackendOpenRouter:
+		return DefaultOpenRouterModel
+	case AIBackendDeepSeek:
+		return DefaultDeepSeekModel
+	case AIBackendMoonshot:
+		return DefaultMoonshotModel
+	case AIBackendXiaomi:
+		return DefaultXiaomiModel
+	default:
+		return DefaultBossUtilityModel
+	}
+}
+
+func LooksLikeXiaomiTokenPlanAPIKey(apiKey string) bool {
+	key := strings.ToLower(strings.TrimSpace(apiKey))
+	return strings.HasPrefix(key, "tc") || strings.HasPrefix(key, "tp-") || strings.HasPrefix(key, "tp_")
+}
+
+func LooksLikeXiaomiTokenPlanBaseURL(baseURL string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(baseURL))
+	return strings.Contains(normalized, "token-plan-") && strings.Contains(normalized, "xiaomimimo.com")
+}
+
+func LooksLikeRegularXiaomiBaseURL(baseURL string) bool {
+	normalized := strings.TrimRight(strings.ToLower(strings.TrimSpace(baseURL)), "/")
+	regular := strings.TrimRight(strings.ToLower(AIBackendXiaomi.DefaultOpenAICompatibleBaseURL()), "/")
+	return normalized == "" || normalized == regular
+}
+
+func XiaomiTokenPlanBaseURLHint() string {
+	return "Use the regional Token Plan base URL from Xiaomi subscription management, for example https://token-plan-sgp.xiaomimimo.com/v1."
+}
+
 func (b AIBackend) UsesOpenAICompatibleAPI() bool {
 	switch b {
-	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendMLX, AIBackendOllama:
+	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendMLX, AIBackendOllama, AIBackendXiaomi:
 		return true
 	default:
 		return false
@@ -221,7 +296,7 @@ func (b AIBackend) UsesOpenAICompatibleAPI() bool {
 
 func (b AIBackend) UsesCloudAPIKey() bool {
 	switch b {
-	case AIBackendOpenAIAPI, AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot:
+	case AIBackendOpenAIAPI, AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot, AIBackendXiaomi:
 		return true
 	default:
 		return false

@@ -22,6 +22,7 @@ type OpenAICompatibleChatCompletionsClient struct {
 	httpClient         *http.Client
 	usage              *UsageTracker
 	responseFormatType OpenAICompatibleChatResponseFormat
+	authHeader         OpenAICompatibleAuthHeader
 }
 
 type OpenAICompatibleStructuredOutputRunner struct {
@@ -54,14 +55,19 @@ func NewOpenAICompatibleChatCompletionsClientWithBaseURL(apiKey, baseURL string,
 }
 
 func NewOpenAICompatibleChatCompletionsClientWithBaseURLAndResponseFormat(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker, responseFormat OpenAICompatibleChatResponseFormat) *OpenAICompatibleChatCompletionsClient {
+	return NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, responseFormat, OpenAICompatibleAuthHeaderBearer)
+}
+
+func NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker, responseFormat OpenAICompatibleChatResponseFormat, authHeader OpenAICompatibleAuthHeader) *OpenAICompatibleChatCompletionsClient {
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
-	client := NewOpenAICompatibleChatCompletionsClientWithHTTPClient(
+	client := NewOpenAICompatibleChatCompletionsClientWithHTTPClientAndAuthHeader(
 		apiKey,
 		ChatCompletionsEndpointFromBaseURL(baseURL),
 		&http.Client{Timeout: timeout},
 		usage,
+		authHeader,
 	)
 	if client != nil {
 		client.responseFormatType = normalizeOpenAICompatibleChatResponseFormat(responseFormat)
@@ -74,6 +80,10 @@ func NewOpenAICompatibleChatCompletionsJSONModeClientWithBaseURL(apiKey, baseURL
 }
 
 func NewOpenAICompatibleChatCompletionsClientWithHTTPClient(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker) *OpenAICompatibleChatCompletionsClient {
+	return NewOpenAICompatibleChatCompletionsClientWithHTTPClientAndAuthHeader(apiKey, endpoint, httpClient, usage, OpenAICompatibleAuthHeaderBearer)
+}
+
+func NewOpenAICompatibleChatCompletionsClientWithHTTPClientAndAuthHeader(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker, authHeader OpenAICompatibleAuthHeader) *OpenAICompatibleChatCompletionsClient {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
@@ -92,6 +102,7 @@ func NewOpenAICompatibleChatCompletionsClientWithHTTPClient(apiKey, endpoint str
 		httpClient:         httpClientToUse,
 		usage:              usage,
 		responseFormatType: OpenAICompatibleChatResponseFormatJSONSchema,
+		authHeader:         normalizeOpenAICompatibleAuthHeader(authHeader),
 	}
 }
 
@@ -145,7 +156,7 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 	if err != nil {
 		return JSONSchemaResponse{}, fmt.Errorf("create openai-compatible chat completion request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	setOpenAICompatibleAPIKeyHeader(httpReq.Header, c.apiKey, c.authHeader)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	if c.usage != nil {

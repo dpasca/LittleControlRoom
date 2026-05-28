@@ -63,7 +63,7 @@ func bossChatRelationshipSummary(settings config.EditableSettings) string {
 			return "Both use the shared OpenAI API connection."
 		}
 		return "Boss chat uses the shared OpenAI API connection; project reports stay separate."
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
 		if settings.AIBackend == settings.BossChatBackend {
 			return "Both use " + settings.BossChatBackend.Label() + "."
 		}
@@ -125,7 +125,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 		} else {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
-			detail = "Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, MLX, Ollama, or Off when you want /boss configured."
+			detail = "Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, Xiaomi, MLX, Ollama, or Off when you want /boss configured."
 		}
 	}
 	if backend == config.AIBackendDisabled {
@@ -142,7 +142,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 			detail = "Uses the shared OpenAI API connection; project reports stay separate."
 		}
 	}
-	if backend == config.AIBackendOpenRouter || backend == config.AIBackendDeepSeek || backend == config.AIBackendMoonshot {
+	if backend == config.AIBackendOpenRouter || backend == config.AIBackendDeepSeek || backend == config.AIBackendMoonshot || backend == config.AIBackendXiaomi {
 		if !cloudBackendAPIKeySaved(settings, backend) {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
@@ -191,7 +191,7 @@ func (m Model) inferenceBackendStatus(backend config.AIBackend, settings config.
 		if strings.TrimSpace(status.Detail) == "" {
 			status.Detail = "Saved OpenAI API key ready."
 		}
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
 		if !cloudBackendAPIKeySaved(settings, backend) {
 			status.Ready = false
 			status.Detail = "No saved " + backend.Label() + " API key."
@@ -231,6 +231,8 @@ func cloudBackendAPIKeySaved(settings config.EditableSettings, backend config.AI
 		return strings.TrimSpace(settings.DeepSeekAPIKey) != ""
 	case config.AIBackendMoonshot:
 		return strings.TrimSpace(settings.MoonshotAPIKey) != ""
+	case config.AIBackendXiaomi:
+		return strings.TrimSpace(settings.XiaomiAPIKey) != ""
 	default:
 		return false
 	}

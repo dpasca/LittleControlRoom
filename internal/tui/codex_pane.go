@@ -926,6 +926,9 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentMoonshotAPIKey) == "" {
 			req.LCAgentMoonshotAPIKey = m.moonshotAPIKey()
 		}
+		if strings.TrimSpace(req.LCAgentXiaomiAPIKey) == "" {
+			req.LCAgentXiaomiAPIKey = m.xiaomiAPIKey()
+		}
 		if strings.TrimSpace(req.LCAgentRoutePreset) == "" {
 			req.LCAgentRoutePreset = m.lcagentRoutePreset()
 		}

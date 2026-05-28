@@ -37,6 +37,7 @@ type Snapshot struct {
 	OpenRouter Status
 	DeepSeek   Status
 	Moonshot   Status
+	Xiaomi     Status
 	Codex      Status
 	OpenCode   Status
 	Claude     Status
@@ -52,6 +53,7 @@ func Detect(ctx context.Context, cfg config.AppConfig) Snapshot {
 		OpenRouter: detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendOpenRouter),
 		DeepSeek:   detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendDeepSeek),
 		Moonshot:   detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendMoonshot),
+		Xiaomi:     detectOpenAICompatibleCloud(ctx, cfg, config.AIBackendXiaomi),
 		Codex:      detectCodex(ctx),
 		OpenCode:   detectOpenCode(ctx),
 		Claude:     detectClaudeCode(ctx),
@@ -64,7 +66,7 @@ func DetectStatus(ctx context.Context, cfg config.AppConfig, backend config.AIBa
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return detectOpenAIAPI(cfg)
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
 		return detectOpenAICompatibleCloud(ctx, cfg, backend)
 	case config.AIBackendCodex:
 		return detectCodex(ctx)
@@ -100,6 +102,8 @@ func (s Snapshot) StatusFor(backend config.AIBackend) Status {
 		return s.DeepSeek
 	case config.AIBackendMoonshot:
 		return s.Moonshot
+	case config.AIBackendXiaomi:
+		return s.Xiaomi
 	case config.AIBackendCodex:
 		return s.Codex
 	case config.AIBackendOpenCode:
@@ -160,19 +164,28 @@ func detectOpenAICompatibleCloud(ctx context.Context, cfg config.AppConfig, back
 		status.LoginHint = "Open /settings and save a base URL for " + label + "."
 		return status
 	}
+	if backend == config.AIBackendXiaomi &&
+		config.LooksLikeXiaomiTokenPlanAPIKey(apiKey) &&
+		config.LooksLikeRegularXiaomiBaseURL(baseURL) {
+		status.Detail = "Token Plan Xiaomi key detected, but the base URL is the regular Xiaomi API endpoint."
+		status.LoginHint = "Open /settings and set Xiaomi base URL. " + config.XiaomiTokenPlanBaseURLHint()
+		return status
+	}
 	status.Installed = true
 	status.Authenticated = true
 	status.Ready = true
 	status.ActiveModel = cfg.OpenAICompatibleModel(backend)
 	status.Detail = "Saved " + label + " API key ready."
 
-	discovery := llm.NewOpenAICompatibleModelDiscovery(baseURL, apiKey, detectTimeout)
+	model := cfg.OpenAICompatibleModel(backend)
+	profile := llm.OpenAICompatibleProviderModelProfileForProviderModel(string(backend), model)
+	discovery := llm.NewOpenAICompatibleModelDiscoveryWithAuthHeader(baseURL, apiKey, detectTimeout, profile.AuthHeader)
 	if err := discovery.Discover(ctx); err != nil {
 		return status
 	}
 	models := discovery.Models()
 	status.Models = append([]string(nil), models...)
-	configuredModel := strings.TrimSpace(cfg.OpenAICompatibleModel(backend))
+	configuredModel := strings.TrimSpace(model)
 	if configuredModel == "" || len(models) == 0 {
 		return status
 	}
@@ -335,7 +348,9 @@ func detectOpenAICompatibleLocal(ctx context.Context, cfg config.AppConfig, back
 	status.LoginHint = fmt.Sprintf("Start your %s OpenAI-compatible server, then press r to refresh. Use /settings if you need a different base URL or API key.", label)
 	status.Installed = true
 
-	discovery := llm.NewOpenAICompatibleModelDiscovery(baseURL, cfg.OpenAICompatibleAPIKey(backend), detectTimeout)
+	model := cfg.OpenAICompatibleModel(backend)
+	profile := llm.OpenAICompatibleProviderModelProfileForProviderModel(string(backend), model)
+	discovery := llm.NewOpenAICompatibleModelDiscoveryWithAuthHeader(baseURL, cfg.OpenAICompatibleAPIKey(backend), detectTimeout, profile.AuthHeader)
 	if err := discovery.Discover(ctx); err != nil {
 		return status
 	}

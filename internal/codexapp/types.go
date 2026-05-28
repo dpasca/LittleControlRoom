@@ -561,6 +561,7 @@ type LaunchRequest struct {
 	LCAgentOpenRouterAPIKey  string
 	LCAgentDeepSeekAPIKey    string
 	LCAgentMoonshotAPIKey    string
+	LCAgentXiaomiAPIKey      string
 	LCAgentRoutePreset       string
 	LCAgentProvider          string
 	LCAgentAuto              string

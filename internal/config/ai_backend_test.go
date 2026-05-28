@@ -53,6 +53,7 @@ func TestParseAIBackendAcceptsSharedCloudAPIs(t *testing.T) {
 		{raw: "openrouter", want: AIBackendOpenRouter},
 		{raw: "deepseek", want: AIBackendDeepSeek},
 		{raw: "moonshot", want: AIBackendMoonshot},
+		{raw: "xiaomi", want: AIBackendXiaomi},
 	}
 	for _, tt := range tests {
 		got, err := ParseAIBackend(tt.raw)
@@ -99,6 +100,46 @@ func TestOpenAICompatibleModelUsesCloudOverrides(t *testing.T) {
 	cfg.DeepSeekModel = DefaultDeepSeekProModel
 	if got := cfg.OpenAICompatibleModel(AIBackendDeepSeek); got != DefaultDeepSeekProModel {
 		t.Fatalf("configured DeepSeek project model = %q, want %q", got, DefaultDeepSeekProModel)
+	}
+	if got := cfg.OpenAICompatibleModel(AIBackendXiaomi); got != DefaultXiaomiModel {
+		t.Fatalf("default Xiaomi project model = %q, want %q", got, DefaultXiaomiModel)
+	}
+	if DefaultXiaomiModel == DefaultXiaomiProModel {
+		t.Fatalf("default Xiaomi project and pro models should differ")
+	}
+	cfg.XiaomiModel = "mimo-v2.5-pro-preview"
+	if got := cfg.OpenAICompatibleModel(AIBackendXiaomi); got != "mimo-v2.5-pro-preview" {
+		t.Fatalf("configured Xiaomi project model = %q", got)
+	}
+}
+
+func TestBackendDefaultBossModelsSplitFastAndPro(t *testing.T) {
+	t.Parallel()
+
+	if got := AIBackendXiaomi.DefaultBossHelmModel(); got != DefaultXiaomiProModel {
+		t.Fatalf("Xiaomi helm default = %q, want %q", got, DefaultXiaomiProModel)
+	}
+	if got := AIBackendXiaomi.DefaultBossUtilityModel(); got != DefaultXiaomiModel {
+		t.Fatalf("Xiaomi utility default = %q, want %q", got, DefaultXiaomiModel)
+	}
+}
+
+func TestXiaomiTokenPlanHints(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"TC_example", "tp-example", "tp_example"} {
+		if !LooksLikeXiaomiTokenPlanAPIKey(key) {
+			t.Fatalf("LooksLikeXiaomiTokenPlanAPIKey(%q) = false, want true", key)
+		}
+	}
+	if LooksLikeXiaomiTokenPlanAPIKey("sk-example") {
+		t.Fatalf("LooksLikeXiaomiTokenPlanAPIKey() accepted regular key")
+	}
+	if !LooksLikeRegularXiaomiBaseURL("") || !LooksLikeRegularXiaomiBaseURL("https://api.xiaomimimo.com/v1/") {
+		t.Fatalf("regular Xiaomi base URL was not recognized")
+	}
+	if !LooksLikeXiaomiTokenPlanBaseURL("https://token-plan-sgp.xiaomimimo.com/v1") {
+		t.Fatalf("token-plan Xiaomi base URL was not recognized")
 	}
 }
 

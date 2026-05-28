@@ -13,6 +13,7 @@ type OpenAICompatibleProviderModelProfile struct {
 	ProviderID         string
 	Model              string
 	ChatResponseFormat OpenAICompatibleChatResponseFormat
+	AuthHeader         OpenAICompatibleAuthHeader
 }
 
 type openAICompatibleProviderModelRule struct {
@@ -20,12 +21,17 @@ type openAICompatibleProviderModelRule struct {
 	model              string
 	modelPrefix        string
 	chatResponseFormat OpenAICompatibleChatResponseFormat
+	authHeader         OpenAICompatibleAuthHeader
 }
 
 var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
 	{
 		providerID:         "deepseek",
 		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
+	},
+	{
+		providerID: "xiaomi",
+		authHeader: OpenAICompatibleAuthHeaderAPIKey,
 	},
 }
 
@@ -36,6 +42,7 @@ func OpenAICompatibleProviderModelProfileForProviderModel(providerID, model stri
 		ProviderID:         providerID,
 		Model:              model,
 		ChatResponseFormat: OpenAICompatibleChatResponseFormatJSONSchema,
+		AuthHeader:         OpenAICompatibleAuthHeaderBearer,
 	}
 
 	for _, rule := range openAICompatibleProviderModelRules {
@@ -44,6 +51,9 @@ func OpenAICompatibleProviderModelProfileForProviderModel(providerID, model stri
 		}
 		if rule.chatResponseFormat != "" {
 			profile.ChatResponseFormat = rule.chatResponseFormat
+		}
+		if rule.authHeader != "" {
+			profile.AuthHeader = rule.authHeader
 		}
 	}
 
@@ -54,6 +64,9 @@ func OpenAICompatibleResponsesRunnerOptionsForProviderModel(providerID, model st
 	profile := OpenAICompatibleProviderModelProfileForProviderModel(providerID, model)
 	if profile.ChatResponseFormat != "" {
 		opts.ChatResponseFormat = profile.ChatResponseFormat
+	}
+	if profile.AuthHeader != "" {
+		opts.AuthHeader = profile.AuthHeader
 	}
 	return opts
 }

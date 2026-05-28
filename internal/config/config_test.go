@@ -64,10 +64,10 @@ func TestDefaultUsesManagedPlaywrightPolicy(t *testing.T) {
 	}
 }
 
-func TestDefaultUsesSixtyMinuteLCAgentRequestTimeout(t *testing.T) {
+func TestDefaultUsesTenMinuteLCAgentRequestTimeout(t *testing.T) {
 	cfg := Default()
 
-	if got, want := cfg.LCAgentRequestTimeout, 60*time.Minute; got != want {
+	if got, want := cfg.LCAgentRequestTimeout, 10*time.Minute; got != want {
 		t.Fatalf("default lcagent request timeout = %s, want %s", got, want)
 	}
 }
@@ -88,6 +88,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"deepseek_model = \"deepseek-v4-flash\"\n" +
 		"moonshot_api_key = \"mk-live-example\"\n" +
 		"moonshot_model = \"kimi-k2.6\"\n" +
+		"xiaomi_base_url = \"https://token-plan-sgp.xiaomimimo.com/v1\"\n" +
+		"xiaomi_api_key = \"xm-live-example\"\n" +
+		"xiaomi_model = \"mimo-v2.5-pro\"\n" +
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
 		"exclude_project_patterns = [\"quickgame_*\", \"secret-demo\"]\n" +
@@ -144,6 +147,15 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.MoonshotModel, "kimi-k2.6"; got != want {
 		t.Fatalf("moonshot model = %q, want %q", got, want)
+	}
+	if got, want := cfg.XiaomiAPIKey, "xm-live-example"; got != want {
+		t.Fatalf("xiaomi api key = %q, want %q", got, want)
+	}
+	if got, want := cfg.XiaomiBaseURL, "https://token-plan-sgp.xiaomimimo.com/v1"; got != want {
+		t.Fatalf("xiaomi base url = %q, want %q", got, want)
+	}
+	if got, want := cfg.XiaomiModel, "mimo-v2.5-pro"; got != want {
+		t.Fatalf("xiaomi model = %q, want %q", got, want)
 	}
 	if got, want := cfg.BossChatBackend, AIBackendOpenAIAPI; got != want {
 		t.Fatalf("boss chat backend = %q, want %q", got, want)
@@ -482,7 +494,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "off", "", "", "", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "off", "", "", "", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -506,6 +518,15 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 	if got, want := settings.MoonshotAPIKey, "sk-moonshot"; got != want {
 		t.Fatalf("moonshot api key = %q, want %q", got, want)
+	}
+	if got, want := settings.XiaomiAPIKey, "sk-xiaomi"; got != want {
+		t.Fatalf("xiaomi api key = %q, want %q", got, want)
+	}
+	if got, want := settings.XiaomiBaseURL, "https://token-plan-sgp.xiaomimimo.com/v1"; got != want {
+		t.Fatalf("xiaomi base url = %q, want %q", got, want)
+	}
+	if got, want := settings.XiaomiModel, "mimo-v2.5-pro"; got != want {
+		t.Fatalf("xiaomi model = %q, want %q", got, want)
 	}
 	if got, want := settings.BossChatBackend, AIBackendOpenAIAPI; got != want {
 		t.Fatalf("boss chat backend = %q, want %q", got, want)
@@ -700,7 +721,7 @@ func TestSaveEditableSettingsNormalizesDirectLCAgentProviderModelPrefixes(t *tes
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -708,7 +729,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -716,7 +737,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -741,6 +762,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		DeepSeekModel:             "deepseek-v4-pro",
 		MoonshotAPIKey:            "mk-test-example",
 		MoonshotModel:             "kimi-k2.6",
+		XiaomiBaseURL:             "https://token-plan-sgp.xiaomimimo.com/v1",
+		XiaomiAPIKey:              "xm-test-example",
+		XiaomiModel:               "mimo-v2.5-pro",
 		MLXBaseURL:                "http://127.0.0.1:8080/v1",
 		MLXAPIKey:                 "mlx",
 		MLXModel:                  "mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -818,6 +842,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		"deepseek_model = \"deepseek-v4-pro\"",
 		"moonshot_api_key = \"mk-test-example\"",
 		"moonshot_model = \"kimi-k2.6\"",
+		"xiaomi_base_url = \"https://token-plan-sgp.xiaomimimo.com/v1\"",
+		"xiaomi_api_key = \"xm-test-example\"",
+		"xiaomi_model = \"mimo-v2.5-pro\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("saved config should include %q: %q", want, text)

@@ -525,6 +525,76 @@ func TestOpenAICompatibleProviderModelProfileMapsDeepSeekToJSONMode(t *testing.T
 	}
 }
 
+func TestOpenAICompatibleProviderModelProfileMapsXiaomiToAPIKeyHeader(t *testing.T) {
+	t.Parallel()
+
+	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("xiaomi", "mimo-v2.5-pro", OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	if opts.AuthHeader != OpenAICompatibleAuthHeaderAPIKey {
+		t.Fatalf("Xiaomi auth header = %q, want %q", opts.AuthHeader, OpenAICompatibleAuthHeaderAPIKey)
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerUsesConfiguredAPIKeyHeader(t *testing.T) {
+	t.Parallel()
+
+	var chatCalls int
+	var modelCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("api-key"); got != "local-key" {
+			t.Fatalf("api-key = %q, want local-key", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want empty", got)
+		}
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			chatCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"model":"mimo-v2.5-pro",
+				"choices":[{"message":{"role":"assistant","content":"{\"message\":\"xiaomi auth ok\"}"}}]
+			}`))
+		case "/v1/models":
+			modelCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"mimo-v2.5-pro"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("xiaomi", "mimo-v2.5-pro", OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "local-key", "", time.Second, nil, opts)
+	if runner == nil {
+		t.Fatalf("expected runner")
+	}
+	response, err := runner.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type": "object",
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	if response.OutputText != "{\"message\":\"xiaomi auth ok\"}" {
+		t.Fatalf("OutputText = %q, want Xiaomi payload", response.OutputText)
+	}
+	if chatCalls != 1 {
+		t.Fatalf("chat calls = %d, want 1", chatCalls)
+	}
+	if modelCalls != 1 {
+		t.Fatalf("model calls = %d, want 1", modelCalls)
+	}
+}
+
 func TestOpenAICompatibleResponsesRunnerUsesConfiguredJSONMode(t *testing.T) {
 	t.Parallel()
 

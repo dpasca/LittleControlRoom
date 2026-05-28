@@ -20,6 +20,8 @@ const (
 	DefaultOpenAIModel        = "gpt-5.5"
 	DefaultDeepSeekModel      = "deepseek-v4-pro"
 	DefaultMoonshotModel      = "kimi-k2.6"
+	DefaultXiaomiModel        = "mimo-v2.5-pro"
+	DefaultXiaomiUtilityModel = "mimo-v2-flash"
 	DefaultOpenRouterMaxTurns = 48
 	DefaultChatTemperature    = 0.2
 )
@@ -48,6 +50,7 @@ type Client struct {
 	httpClient         *http.Client
 	providerName       string
 	extraHeaders       map[string]string
+	authHeader         string
 	maxTokensField     string
 	reasoningStyle     string
 	omitTemperature    bool
@@ -221,12 +224,27 @@ func NewMoonshotClient(cfg OpenRouterConfig) (*Client, error) {
 	})
 }
 
+func NewXiaomiClient(cfg OpenRouterConfig) (*Client, error) {
+	return newChatCompletionsClient(cfg, chatProviderProfile{
+		Name:           "xiaomi",
+		APIKeyEnv:      "XIAOMI_API_KEY",
+		BaseURLEnv:     "XIAOMI_BASE_URL",
+		DefaultBaseURL: "https://api.xiaomimimo.com/v1",
+		DefaultModel:   DefaultXiaomiModel,
+		AuthHeader:     "api-key",
+		MaxTokensField: "max_tokens",
+		ReasoningStyle: "deepseek",
+		ExtraHeaders:   map[string]string{},
+	})
+}
+
 type chatProviderProfile struct {
 	Name            string
 	APIKeyEnv       string
 	BaseURLEnv      string
 	DefaultBaseURL  string
 	DefaultModel    string
+	AuthHeader      string
 	MaxTokensField  string
 	ReasoningStyle  string
 	ExtraHeaders    map[string]string
@@ -279,6 +297,7 @@ func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile)
 		httpClient:      httpClient,
 		providerName:    profile.Name,
 		extraHeaders:    profile.ExtraHeaders,
+		authHeader:      normalizeAuthHeader(profile.AuthHeader),
 		maxTokensField:  firstNonEmpty(profile.MaxTokensField, "max_completion_tokens"),
 		reasoningStyle:  profile.ReasoningStyle,
 		omitTemperature: profile.OmitTemperature || cfg.OmitTemperature,
@@ -300,6 +319,8 @@ func NormalizeModelForProvider(provider, model string) string {
 	case "moonshot":
 		model = trimProviderModelPrefix(model, "moonshot/")
 		return trimProviderModelPrefix(model, "moonshotai/")
+	case "xiaomi":
+		return trimProviderModelPrefix(model, "xiaomi/")
 	default:
 		return model
 	}
@@ -310,6 +331,31 @@ func trimProviderModelPrefix(model, prefix string) string {
 		return strings.TrimSpace(model[len(prefix):])
 	}
 	return model
+}
+
+func normalizeAuthHeader(header string) string {
+	switch strings.ToLower(strings.TrimSpace(header)) {
+	case "api-key":
+		return "api-key"
+	default:
+		return "bearer"
+	}
+}
+
+func (c *Client) setAPIKeyHeader(header http.Header) {
+	if c == nil {
+		return
+	}
+	apiKey := strings.TrimSpace(c.apiKey)
+	if apiKey == "" {
+		return
+	}
+	switch normalizeAuthHeader(c.authHeader) {
+	case "api-key":
+		header.Set("api-key", apiKey)
+	default:
+		header.Set("Authorization", "Bearer "+apiKey)
+	}
 }
 
 func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolDefinition) (Completion, error) {
@@ -329,7 +375,7 @@ func (c *Client) ListModels(ctx context.Context) ([]ListedModel, error) {
 		return nil, err
 	}
 	if strings.TrimSpace(c.apiKey) != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		c.setAPIKeyHeader(req.Header)
 	}
 	for key, value := range c.extraHeaders {
 		req.Header.Set(key, value)
@@ -481,7 +527,7 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 	if err != nil {
 		return Completion{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	c.setAPIKeyHeader(req.Header)
 	req.Header.Set("Content-Type", "application/json")
 	for key, value := range c.extraHeaders {
 		req.Header.Set(key, value)
@@ -574,7 +620,7 @@ func (c *Client) completeResponses(ctx context.Context, messages []Message, tool
 	if err != nil {
 		return Completion{}, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	c.setAPIKeyHeader(req.Header)
 	req.Header.Set("Content-Type", "application/json")
 	for key, value := range c.extraHeaders {
 		req.Header.Set(key, value)

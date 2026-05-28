@@ -29,6 +29,9 @@ type AppConfig struct {
 	DeepSeekModel             string
 	MoonshotAPIKey            string
 	MoonshotModel             string
+	XiaomiBaseURL             string
+	XiaomiAPIKey              string
+	XiaomiModel               string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -100,6 +103,8 @@ const (
 	DefaultDeepSeekModel    = "deepseek-v4-flash"
 	DefaultDeepSeekProModel = "deepseek-v4-pro"
 	DefaultMoonshotModel    = "kimi-k2.6"
+	DefaultXiaomiModel      = "mimo-v2-flash"
+	DefaultXiaomiProModel   = "mimo-v2.5-pro"
 )
 
 func (c AppConfig) EffectiveAIBackend() AIBackend {
@@ -114,6 +119,8 @@ func (c AppConfig) OpenAICompatibleBaseURL(backend AIBackend) string {
 	switch backend {
 	case AIBackendOpenRouter, AIBackendDeepSeek, AIBackendMoonshot:
 		return backend.DefaultOpenAICompatibleBaseURL()
+	case AIBackendXiaomi:
+		return trimmedOrDefault(c.XiaomiBaseURL, backend.DefaultOpenAICompatibleBaseURL())
 	case AIBackendMLX:
 		return trimmedOrDefault(c.MLXBaseURL, backend.DefaultOpenAICompatibleBaseURL())
 	case AIBackendOllama:
@@ -131,6 +138,8 @@ func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 		return strings.TrimSpace(c.DeepSeekAPIKey)
 	case AIBackendMoonshot:
 		return strings.TrimSpace(c.MoonshotAPIKey)
+	case AIBackendXiaomi:
+		return strings.TrimSpace(c.XiaomiAPIKey)
 	case AIBackendMLX:
 		return trimmedOrDefault(c.MLXAPIKey, backend.DefaultOpenAICompatibleAPIKey())
 	case AIBackendOllama:
@@ -143,11 +152,13 @@ func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
 	case AIBackendOpenRouter:
-		return trimmedOrDefault(c.OpenRouterModel, DefaultOpenRouterModel)
+		return trimmedOrDefault(c.OpenRouterModel, backend.DefaultProjectModel())
 	case AIBackendDeepSeek:
-		return trimmedOrDefault(c.DeepSeekModel, DefaultDeepSeekModel)
+		return trimmedOrDefault(c.DeepSeekModel, backend.DefaultProjectModel())
 	case AIBackendMoonshot:
-		return trimmedOrDefault(c.MoonshotModel, DefaultMoonshotModel)
+		return trimmedOrDefault(c.MoonshotModel, backend.DefaultProjectModel())
+	case AIBackendXiaomi:
+		return trimmedOrDefault(c.XiaomiModel, backend.DefaultProjectModel())
 	case AIBackendMLX:
 		return strings.TrimSpace(c.MLXModel)
 	case AIBackendOllama:
@@ -170,6 +181,9 @@ type fileConfig struct {
 	DeepSeekModel             *string   `toml:"deepseek_model"`
 	MoonshotAPIKey            *string   `toml:"moonshot_api_key"`
 	MoonshotModel             *string   `toml:"moonshot_model"`
+	XiaomiBaseURL             *string   `toml:"xiaomi_base_url"`
+	XiaomiAPIKey              *string   `toml:"xiaomi_api_key"`
+	XiaomiModel               *string   `toml:"xiaomi_model"`
 	MLXBaseURL                *string   `toml:"mlx_base_url"`
 	MLXAPIKey                 *string   `toml:"mlx_api_key"`
 	MLXModel                  *string   `toml:"mlx_model"`
@@ -233,7 +247,7 @@ func Default() AppConfig {
 		LCAgentAuto:             "low",
 		LCAgentToolProfile:      "balanced",
 		LCAgentContextProfile:   "balanced",
-		LCAgentRequestTimeout:   60 * time.Minute,
+		LCAgentRequestTimeout:   10 * time.Minute,
 		LCAgentUtilityProvider:  "main",
 		LCAgentWebSearchBackend: "off",
 		CodexLaunchPreset:       codexcli.DefaultPreset(),
@@ -543,6 +557,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.DeepSeekModel, fc.DeepSeekModel)
 	applyOptionalTrimmedString(&cfg.MoonshotAPIKey, fc.MoonshotAPIKey)
 	applyOptionalTrimmedString(&cfg.MoonshotModel, fc.MoonshotModel)
+	applyOptionalTrimmedString(&cfg.XiaomiBaseURL, fc.XiaomiBaseURL)
+	applyOptionalTrimmedString(&cfg.XiaomiAPIKey, fc.XiaomiAPIKey)
+	applyOptionalTrimmedString(&cfg.XiaomiModel, fc.XiaomiModel)
 	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
 	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)
 	applyOptionalTrimmedString(&cfg.MLXModel, fc.MLXModel)
@@ -788,10 +805,10 @@ func parseLCAgentProvider(raw string) (string, error) {
 		return "openrouter", nil
 	}
 	switch value {
-	case "openrouter", "openai", "deepseek", "moonshot":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-provider must be one of: openrouter, openai, deepseek, moonshot")
+		return "", fmt.Errorf("lcagent-provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi")
 	}
 }
 
@@ -843,10 +860,10 @@ func parseLCAgentUtilityProvider(raw string) (string, error) {
 	switch value {
 	case "main", "same", "same-as-main":
 		return "main", nil
-	case "off", "openrouter", "openai", "deepseek", "moonshot":
+	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-utility-provider must be one of: main, off, openrouter, openai, deepseek, moonshot")
+		return "", fmt.Errorf("lcagent-utility-provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi")
 	}
 }
 

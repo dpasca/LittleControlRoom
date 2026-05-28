@@ -20,6 +20,7 @@ type ResponsesClient struct {
 	endpoint   string
 	httpClient *http.Client
 	usage      *UsageTracker
+	authHeader OpenAICompatibleAuthHeader
 }
 
 type JSONSchemaRequest struct {
@@ -94,6 +95,17 @@ func NewResponsesClientWithBaseURLAndHTTPClient(apiKey, baseURL string, httpClie
 }
 
 func NewResponsesClientWithHTTPClient(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker) *ResponsesClient {
+	return NewResponsesClientWithHTTPClientAndAuthHeader(apiKey, endpoint, httpClient, usage, OpenAICompatibleAuthHeaderBearer)
+}
+
+func NewResponsesClientWithBaseURLAndAuthHeader(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker, authHeader OpenAICompatibleAuthHeader) *ResponsesClient {
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	return NewResponsesClientWithHTTPClientAndAuthHeader(apiKey, ResponsesEndpointFromBaseURL(baseURL), &http.Client{Timeout: timeout}, usage, authHeader)
+}
+
+func NewResponsesClientWithHTTPClientAndAuthHeader(apiKey, endpoint string, httpClient *http.Client, usage *UsageTracker, authHeader OpenAICompatibleAuthHeader) *ResponsesClient {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil
@@ -111,6 +123,7 @@ func NewResponsesClientWithHTTPClient(apiKey, endpoint string, httpClient *http.
 		endpoint:   endpoint,
 		httpClient: httpClientToUse,
 		usage:      usage,
+		authHeader: normalizeOpenAICompatibleAuthHeader(authHeader),
 	}
 }
 
@@ -166,7 +179,7 @@ func (c *ResponsesClient) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 	if err != nil {
 		return JSONSchemaResponse{}, fmt.Errorf("create openai request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	setOpenAICompatibleAPIKeyHeader(httpReq.Header, c.apiKey, c.authHeader)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	if c.usage != nil {

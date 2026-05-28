@@ -97,6 +97,7 @@ func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex
 		OpenRouterAPIKey: settings.OpenRouterAPIKey,
 		DeepSeekAPIKey:   settings.DeepSeekAPIKey,
 		MoonshotAPIKey:   settings.MoonshotAPIKey,
+		XiaomiAPIKey:     settings.XiaomiAPIKey,
 		RequestTimeout:   settings.LCAgentRequestTimeout,
 	}
 	return cfg, provider, current, true
@@ -381,6 +382,8 @@ func settingsLCAgentModelPickerProviderLabel(provider string) string {
 		return "DeepSeek"
 	case "moonshot":
 		return "Moonshot"
+	case "xiaomi":
+		return "Xiaomi"
 	default:
 		return "OpenRouter"
 	}

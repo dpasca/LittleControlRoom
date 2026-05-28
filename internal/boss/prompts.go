@@ -41,7 +41,7 @@ func unconfiguredAssistantMessage(backend config.AIBackend) string {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
 		return "Boss chat is not connected yet. Configure an OpenAI API key in /setup, then reopen boss mode."
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
 		return "Boss chat is not connected yet. Configure a " + backend.Label() + " API key in /setup, then reopen boss mode."
 	case config.AIBackendMLX:
 		return "Boss chat is not connected yet. Choose MLX in /setup and confirm the local endpoint/model."

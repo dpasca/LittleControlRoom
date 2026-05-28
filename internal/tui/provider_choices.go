@@ -123,6 +123,12 @@ func (m Model) projectReportsProviderChoices(settings config.EditableSettings) [
 			Description: "Uses the saved Moonshot API key and Kimi model IDs.",
 		},
 		{
+			Value:       config.AIBackendXiaomi,
+			Label:       "Xiaomi",
+			Summary:     "Writes project summaries and helper output through the direct Xiaomi MiMo API.",
+			Description: "Uses the saved Xiaomi API key and MiMo model IDs.",
+		},
+		{
 			Value:       config.AIBackendOpenAIAPI,
 			Label:       "OpenAI API",
 			Summary:     "Writes project summaries and helper output directly through the shared OpenAI API connection.",
@@ -175,6 +181,12 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 			Label:       "Moonshot",
 			Summary:     "Lets /boss answer through the direct Moonshot/Kimi API.",
 			Description: "A saved Moonshot API key is required. This reuses the same connection LCAgent can use directly.",
+		},
+		{
+			Value:       config.AIBackendXiaomi,
+			Label:       "Xiaomi",
+			Summary:     "Lets /boss answer through the direct Xiaomi MiMo API.",
+			Description: "A saved Xiaomi API key is required. This reuses the same connection LCAgent can use directly.",
 		},
 		{
 			Value:       config.AIBackendMLX,
@@ -292,6 +304,11 @@ func bossChatProviderNextStep(choice providerChoice, settings config.EditableSet
 			return "Paste and save a Moonshot API key."
 		}
 		return "Save to use Moonshot for boss chat."
+	case config.AIBackendXiaomi:
+		if strings.TrimSpace(settings.XiaomiAPIKey) == "" {
+			return "Paste and save a Xiaomi API key."
+		}
+		return "Save to use Xiaomi for boss chat."
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if choice.State == "ready" {
 			return "Save to use this local backend for boss chat."

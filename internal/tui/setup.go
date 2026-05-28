@@ -504,6 +504,8 @@ func (m Model) setupConfigFieldIndexes() []int {
 			return []int{settingsFieldDeepSeekAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
 		case config.AIBackendMoonshot:
 			return []int{settingsFieldMoonshotAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
+		case config.AIBackendXiaomi:
+			return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldBossChatModel, settingsFieldBossUtilityModel}
 		case config.AIBackendMLX:
 			return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 		case config.AIBackendOllama:
@@ -521,6 +523,8 @@ func (m Model) setupConfigFieldIndexes() []int {
 		return []int{settingsFieldDeepSeekAPIKey, settingsFieldDeepSeekModel}
 	case config.AIBackendMoonshot:
 		return []int{settingsFieldMoonshotAPIKey, settingsFieldMoonshotModel}
+	case config.AIBackendXiaomi:
+		return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldXiaomiModel}
 	case config.AIBackendMLX:
 		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 	case config.AIBackendOllama:
@@ -560,6 +564,9 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.DeepSeekModel = m.settingsFieldValue(settingsFieldDeepSeekModel)
 	settings.MoonshotAPIKey = m.settingsFieldValue(settingsFieldMoonshotAPIKey)
 	settings.MoonshotModel = m.settingsFieldValue(settingsFieldMoonshotModel)
+	settings.XiaomiBaseURL = m.settingsFieldValue(settingsFieldXiaomiBaseURL)
+	settings.XiaomiAPIKey = m.settingsFieldValue(settingsFieldXiaomiAPIKey)
+	settings.XiaomiModel = m.settingsFieldValue(settingsFieldXiaomiModel)
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
@@ -985,6 +992,9 @@ func (m Model) renderSetupConfigContent(width int) string {
 		detailSectionStyle.Render("Configure " + title),
 		commandPaletteHintStyle.Render("Edit only what this branch needs, then press Enter to continue."),
 	}
+	if warning := settingsXiaomiTokenPlanBaseURLWarning(m.setupDraftSettingsForProviderChoices()); warning != "" {
+		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, warning))
+	}
 	if m.setupFocusedRole == setupRoleLCAgent {
 		lines = append(lines, renderWrappedDetailField("Credential smoke", detailValueStyle, width, m.lcagentSetupSmokeText()))
 	}
@@ -1094,7 +1104,7 @@ func (m Model) renderBossChatSetupHint(width int) string {
 		} else {
 			hint = "Boss chat will use the shared OpenAI API connection. Project reports stay on " + settings.AIBackend.Label() + "."
 		}
-	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot:
+	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
 		if !cloudBackendAPIKeySaved(settings, selected) {
 			hint = "Boss chat uses direct " + selected.Label() + " API inference. Press Enter to add the API key here."
 		} else if settings.AIBackend == selected {

@@ -14,23 +14,25 @@ import (
 )
 
 type Options struct {
-	Client     Suggester
-	Workers    int
-	Debounce   time.Duration
-	StaleAfter time.Duration
+	Client            Suggester
+	UnavailableReason string
+	Workers           int
+	Debounce          time.Duration
+	StaleAfter        time.Duration
 }
 
 type Manager struct {
-	store      *store.Store
-	bus        *events.Bus
-	mu         sync.RWMutex
-	client     Suggester
-	modelName  string
-	workers    int
-	debounce   time.Duration
-	staleAfter time.Duration
-	notifyCh   chan struct{}
-	startOnce  sync.Once
+	store             *store.Store
+	bus               *events.Bus
+	mu                sync.RWMutex
+	client            Suggester
+	modelName         string
+	unavailableReason string
+	workers           int
+	debounce          time.Duration
+	staleAfter        time.Duration
+	notifyCh          chan struct{}
+	startOnce         sync.Once
 }
 
 func NewManager(st *store.Store, bus *events.Bus, opts Options) *Manager {
@@ -51,18 +53,23 @@ func NewManager(st *store.Store, bus *events.Bus, opts Options) *Manager {
 		modelName = strings.TrimSpace(named.ModelName())
 	}
 	return &Manager{
-		store:      st,
-		bus:        bus,
-		client:     opts.Client,
-		modelName:  modelName,
-		workers:    workers,
-		debounce:   debounce,
-		staleAfter: staleAfter,
-		notifyCh:   make(chan struct{}, 1),
+		store:             st,
+		bus:               bus,
+		client:            opts.Client,
+		modelName:         modelName,
+		unavailableReason: strings.TrimSpace(opts.UnavailableReason),
+		workers:           workers,
+		debounce:          debounce,
+		staleAfter:        staleAfter,
+		notifyCh:          make(chan struct{}, 1),
 	}
 }
 
 func (m *Manager) ConfigureClient(client Suggester) {
+	m.ConfigureClientWithUnavailableReason(client, "")
+}
+
+func (m *Manager) ConfigureClientWithUnavailableReason(client Suggester, unavailableReason string) {
 	if m == nil {
 		return
 	}
@@ -73,10 +80,20 @@ func (m *Manager) ConfigureClient(client Suggester) {
 	m.mu.Lock()
 	m.client = client
 	m.modelName = modelName
+	m.unavailableReason = strings.TrimSpace(unavailableReason)
 	m.mu.Unlock()
 	if client != nil {
 		m.Notify()
 	}
+}
+
+func (m *Manager) UnavailableReason() string {
+	if m == nil {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return strings.TrimSpace(m.unavailableReason)
 }
 
 func (m *Manager) currentClient() (Suggester, string) {
