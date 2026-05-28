@@ -1184,16 +1184,15 @@ func (m Model) openPinnedTodoWorkSession(item model.TodoItem) (tea.Model, tea.Cm
 		m.status = fmt.Sprintf("Pinned TODO #%d %s session is no longer available", item.ID, provider.Label())
 		return m, nil, true
 	}
+	if !project.PresentOnDisk {
+		return m, nil, false
+	}
 	if block, blocked := m.embeddedLaunchBlock(project, provider, false); blocked {
 		m.status = block.Message
 		return m, nil, true
 	}
 	if snapshot, ok := m.liveEmbeddedSnapshotForProject(project.Path, provider); ok && !todoWorkSessionIDMatches(provider, item.WorkSessionID, snapshot.ThreadID) {
 		m.status = fmt.Sprintf("Another embedded %s session is open for this TODO lane. Finish or close it before opening TODO #%d's pinned session.", provider.Label(), item.ID)
-		return m, nil, true
-	}
-	if !project.PresentOnDisk {
-		m.status = fmt.Sprintf("Pinned TODO #%d %s session path is not present on disk", item.ID, provider.Label())
 		return m, nil, true
 	}
 	resumeID := todoWorkExternalSessionID(provider, item.WorkSessionID)

@@ -1215,6 +1215,24 @@ func TestTodoWorkSessionStateLifecycle(t *testing.T) {
 		t.Fatalf("older update changed work state = %q at %v, want waiting at %v", got.WorkState, got.WorkStateAt, waitingAt)
 	}
 
+	cleared, err := st.ClearTodoWorkForProjectPath(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("clear todo work state: %v", err)
+	}
+	if cleared != 1 {
+		t.Fatalf("cleared rows = %d, want 1", cleared)
+	}
+	got, err = st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo after clear: %v", err)
+	}
+	if got.WorkProvider != "" || got.WorkProjectPath != "" || got.WorkSessionID != "" || got.WorkState != "" || !got.WorkClaimedAt.IsZero() || !got.WorkStateAt.IsZero() {
+		t.Fatalf("cleared todo kept work metadata: %#v", got)
+	}
+
+	if err := st.AttachTodoWorkSession(ctx, item.ID, projectPath, model.SessionSourceCodex, "codex:thread-demo-2", model.TodoWorkStateWorking, waitingAt); err != nil {
+		t.Fatalf("reattach todo work session: %v", err)
+	}
 	if err := st.ToggleTodoDone(ctx, item.ID, true); err != nil {
 		t.Fatalf("toggle todo done: %v", err)
 	}

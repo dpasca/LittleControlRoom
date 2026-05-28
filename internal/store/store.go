@@ -4436,6 +4436,41 @@ func (s *Store) UpdateTodoWorkStateForSession(ctx context.Context, workProjectPa
 	return int(rowsAffected), nil
 }
 
+func (s *Store) ClearTodoWorkForProjectPath(ctx context.Context, workProjectPath string) (int, error) {
+	workProjectPath = strings.TrimSpace(workProjectPath)
+	if workProjectPath == "" {
+		return 0, nil
+	}
+	now := time.Now()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE project_todos
+		SET work_provider = '',
+			work_project_path = '',
+			work_session_id = '',
+			work_claimed_at = NULL,
+			work_state = '',
+			work_state_at = NULL,
+			updated_at = ?
+		WHERE done = 0
+		  AND work_project_path = ?
+		  AND (
+			work_provider <> ''
+			OR work_session_id <> ''
+			OR work_claimed_at IS NOT NULL
+			OR work_state <> ''
+			OR work_state_at IS NOT NULL
+		  )
+	`, now.Unix(), workProjectPath)
+	if err != nil {
+		return 0, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(rowsAffected), nil
+}
+
 func (s *Store) TodoProjectPathsForWorkSession(ctx context.Context, workProjectPath string, provider model.SessionSource, sessionID string) ([]string, error) {
 	workProjectPath = strings.TrimSpace(workProjectPath)
 	sessionID = strings.TrimSpace(sessionID)

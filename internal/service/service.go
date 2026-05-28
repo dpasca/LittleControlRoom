@@ -1196,6 +1196,12 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				unlockProjectState()
 				return ScanReport{}, fmt.Errorf("mark missing worktree: %w", err)
 			}
+			if worktreeKind == model.WorktreeKindLinked {
+				if _, err := s.store.ClearTodoWorkForProjectPath(ctx, path); err != nil {
+					unlockProjectState()
+					return ScanReport{}, fmt.Errorf("clear TODO work session for missing worktree: %w", err)
+				}
+			}
 			unlockProjectState()
 			continue
 		}

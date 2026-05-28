@@ -11897,6 +11897,48 @@ func TestTodoDialogEnterReopensPinnedLiveEngineerSession(t *testing.T) {
 	}
 }
 
+func TestTodoDialogEnterIgnoresPinnedSessionWhenWorktreeIsMissing(t *testing.T) {
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--feat-gone"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{Path: rootPath, Name: "repo", PresentOnDisk: true},
+			{Path: worktreePath, Name: "repo--feat-gone", PresentOnDisk: false, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, WorktreeOriginTodoID: 42},
+		},
+		projects: []model.ProjectSummary{
+			{Path: rootPath, Name: "repo", PresentOnDisk: true},
+			{Path: worktreePath, Name: "repo--feat-gone", PresentOnDisk: false, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, WorktreeOriginTodoID: 42},
+		},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: rootPath},
+			Todos: []model.TodoItem{{
+				ID:              42,
+				ProjectPath:     rootPath,
+				Text:            "Restart after deleting the old worktree",
+				WorkProvider:    model.SessionSourceCodex,
+				WorkProjectPath: worktreePath,
+				WorkSessionID:   "codex:thread-gone",
+				WorkState:       model.TodoWorkStateWorking,
+			}},
+		},
+		todoDialog: &todoDialogState{ProjectPath: rootPath, ProjectName: "repo"},
+		width:      100,
+		height:     24,
+	}
+
+	updated, cmd := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("missing pinned worktree should fall through to the normal launcher without a command")
+	}
+	if got.todoDialog == nil || got.todoCopyDialog == nil {
+		t.Fatalf("missing pinned worktree should open TODO launcher, todo=%#v copy=%#v", got.todoDialog, got.todoCopyDialog)
+	}
+	if got.todoCopyDialog.TodoID != 42 || got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
+		t.Fatalf("copy dialog = %#v, want TODO #42 in new-worktree mode", got.todoCopyDialog)
+	}
+}
+
 func TestTodoDialogEnterResumesPinnedEngineerSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

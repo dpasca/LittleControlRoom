@@ -761,6 +761,10 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 		unlockProjectState()
 		return fmt.Errorf("record removed worktree presence: %w", err)
 	}
+	if _, err := s.store.ClearTodoWorkForProjectPath(ctx, projectPath); err != nil {
+		unlockProjectState()
+		return fmt.Errorf("clear TODO work session for removed worktree: %w", err)
+	}
 	unlockProjectState()
 
 	now := time.Now()

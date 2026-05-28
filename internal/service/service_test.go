@@ -3527,6 +3527,65 @@ func TestScanOnceMarksPrunedLinkedWorktreeAsForgotten(t *testing.T) {
 	}
 }
 
+func TestScanOnceClearsTodoWorkSessionForPrunedLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--feature")
+
+	initGitRepo(t, projectPath)
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feature", worktreePath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo--feature",
+	}); err != nil {
+		t.Fatalf("track worktree: %v", err)
+	}
+	todo, err := st.AddTodo(ctx, projectPath, "Restart this after the old lane is gone")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	if err := st.AttachTodoWorkSession(ctx, todo.ID, worktreePath, model.SessionSourceCodex, "codex:thread-gone", model.TodoWorkStateWorking, time.Now()); err != nil {
+		t.Fatalf("attach todo work session: %v", err)
+	}
+
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("remove worktree path: %v", err)
+	}
+	if err := svc.PruneWorktrees(ctx, projectPath); err != nil {
+		t.Fatalf("prune worktrees: %v", err)
+	}
+	if _, err := svc.ScanOnce(ctx); err != nil {
+		t.Fatalf("scan after prune: %v", err)
+	}
+
+	got, err := st.GetTodo(ctx, todo.ID)
+	if err != nil {
+		t.Fatalf("get todo after scan: %v", err)
+	}
+	if got.WorkProvider != "" || got.WorkProjectPath != "" || got.WorkSessionID != "" || got.WorkState != "" || !got.WorkClaimedAt.IsZero() || !got.WorkStateAt.IsZero() {
+		t.Fatalf("pruned worktree TODO kept work metadata: %#v", got)
+	}
+}
+
 func TestScanOnceMarksMissingProjectWithoutFreshActivity(t *testing.T) {
 	t.Parallel()
 
