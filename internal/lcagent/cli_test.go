@@ -299,7 +299,7 @@ func TestRunPresetsListsCodingRoutes(t *testing.T) {
 			t.Fatalf("balanced reasoning effort = %q, want high: %#v", preset.ReasoningEffort, presets)
 		}
 	}
-	for _, name := range []string{"balanced", "quality", "cheap-scout"} {
+	for _, name := range []string{"balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max", "cheap-scout"} {
 		if got[name] == "/" {
 			t.Fatalf("preset %s missing provider/model: %#v", name, presets)
 		}
@@ -332,6 +332,90 @@ func TestLiveEvalRoutePresetAppliesBalancedReasoning(t *testing.T) {
 	applyLiveEvalRoutePreset(preset, map[string]bool{"reasoning-effort": true}, &provider, &model, &reasoningEffort, &autoRaw, &toolProfile, &contextProfile, &requestTimeout)
 	if reasoningEffort != "low" {
 		t.Fatalf("explicit reasoning effort was overwritten: %q", reasoningEffort)
+	}
+}
+
+func TestRunExecRoutePresetAppliesMimoMaxProviderPin(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body struct {
+			Model       string  `json:"model"`
+			Temperature float64 `json:"temperature"`
+			Reasoning   struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
+			Provider struct {
+				Only              []string `json:"only"`
+				AllowFallbacks    bool     `json:"allow_fallbacks"`
+				RequireParameters bool     `json:"require_parameters"`
+			} `json:"provider"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if body.Model != "xiaomi/mimo-v2.5-pro" {
+			t.Fatalf("model = %q, want Xiaomi MiMo", body.Model)
+		}
+		if body.Temperature != 0.2 {
+			t.Fatalf("temperature = %f, want 0.2", body.Temperature)
+		}
+		if body.Reasoning.Effort != "xhigh" {
+			t.Fatalf("reasoning effort = %q, want xhigh", body.Reasoning.Effort)
+		}
+		if strings.Join(body.Provider.Only, ",") != "xiaomi" {
+			t.Fatalf("provider.only = %#v, want xiaomi", body.Provider.Only)
+		}
+		if body.Provider.AllowFallbacks {
+			t.Fatalf("provider.allow_fallbacks = true, want false")
+		}
+		if !body.Provider.RequireParameters {
+			t.Fatalf("provider.require_parameters = false, want true")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_mimo",
+			"model":"xiaomi/mimo-v2.5-pro",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done from mimo route"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--route-preset", "mimo-2.5-pro-max",
+		"--output", "stream-json",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"provider":"openrouter"`,
+		`"model":"xiaomi/mimo-v2.5-pro"`,
+		`"type":"route_preset"`,
+		`"name":"mimo-2.5-pro-max"`,
+		`"context_profile":"large"`,
+		`"reasoning_effort":"xhigh"`,
+		`"summary":"done from mimo route"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
 	}
 }
 

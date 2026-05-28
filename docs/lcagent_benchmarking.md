@@ -117,13 +117,21 @@ go run ./cmd/lcagent live-eval \
 ```
 
 For route-level comparisons, `lcagent exec --route-preset
-balanced|quality|cheap-scout ...` and `lcagent live-eval --route-preset
-balanced|quality|cheap-scout ...` apply the provider, model, autonomy,
+balanced|quality|mimo-2.5-pro-low|mimo-2.5-pro-high|mimo-2.5-pro-max|cheap-scout ...` and `lcagent live-eval --route-preset
+balanced|quality|mimo-2.5-pro-low|mimo-2.5-pro-high|mimo-2.5-pro-max|cheap-scout ...` apply the provider, model, autonomy,
 reasoning, tool/context profile, timeout, and temperature bundle where the
 command supports those knobs. Explicit flags still override preset values, so
 record both the preset name and any overrides in benchmark notes. The balanced
 DeepSeek lane uses explicit high reasoning because the model is inexpensive
 enough that eval reliability is usually worth the extra tokens.
+
+The MiMo lanes use OpenRouter model `xiaomi/mimo-v2.5-pro`,
+`provider.only=xiaomi`, `temperature=0.2`, and the `large` context profile.
+Run `mimo-2.5-pro-low`, `mimo-2.5-pro-high`, and `mimo-2.5-pro-max` when
+comparing reasoning effort. The `max` lane sends OpenRouter's accepted top
+reasoning value, `xhigh`. Keep that provider pin enabled when comparing with
+the archived model-routing runs so the result measures Xiaomi MiMo-V2.5-Pro
+rather than OpenRouter fallback behavior.
 
 Each case reports correctness, recorded verification, the observed and expected
 verification status, expected files touched, failed tool results, permission
@@ -140,8 +148,8 @@ BENCH_ROOT=$(mktemp -d /tmp/lcagent-bench-XXXXXX)
 git worktree add --detach "$BENCH_ROOT/repo" "$BENCH_REF"
 ```
 
-Run LCAgent against that checked-out snapshot, writing artifacts to a separate
-data dir:
+Run one MiMo lane against that checked-out snapshot, writing artifacts to a
+separate data dir:
 
 ```sh
 BENCH_DATA="$BENCH_ROOT/data"
@@ -150,11 +158,14 @@ go run ./cmd/lcagent exec \
   --data-dir "$BENCH_DATA" \
   --auto off \
   --output stream-json \
-  --provider openrouter \
-  --model deepseek/deepseek-v4-pro \
-  --tool-profile balanced \
+  --route-preset mimo-2.5-pro-max \
   "review lcagent and compare it with the design docs"
 ```
+
+For the three-way MiMo effort comparison, repeat that command with
+`mimo-2.5-pro-low`, `mimo-2.5-pro-high`, and `mimo-2.5-pro-max`, keeping the
+target commit, prompt, tool profile, context profile, timeout, and data-dir
+freshness otherwise fixed.
 
 Use `--tool-profile generous` for a qualitative read-budget lane. The default
 `balanced` profile keeps read/list/search/outline output conservative. The

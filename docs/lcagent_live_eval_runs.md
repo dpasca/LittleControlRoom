@@ -4,6 +4,75 @@ This file records selected live-provider eval runs that are useful for route
 calibration and harness priorities. Keep raw provider secrets out of this file;
 record only commands, artifact locations, scores, and conclusions.
 
+## 2026-05-28 Xiaomi MiMo 2.5 Pro Reasoning Sweep
+
+Purpose:
+
+- Add Xiaomi MiMo-V2.5-Pro to the comparable LCAgent coding route presets.
+- Compare low, high, and max reasoning effort on the full 9-case live suite.
+
+Command shape:
+
+```sh
+go run ./cmd/lcagent live-eval \
+  --route-preset mimo-2.5-pro-low|mimo-2.5-pro-high|mimo-2.5-pro-max \
+  --env-file /path/to/provider.env \
+  --data-dir /tmp/lcagent-mimo-live-hL9YE5/<lane>-data \
+  --output json
+```
+
+Local run root:
+
+- `/tmp/lcagent-mimo-live-hL9YE5`
+
+Route:
+
+- Provider: `openrouter`
+- Model: `xiaomi/mimo-v2.5-pro`
+- Provider pin: `provider.only=xiaomi`
+- Autonomy: `low`
+- Tool profile: `balanced`
+- Context profile: `large`
+- Temperature: `0.2`
+- Max lane: route name `mimo-2.5-pro-max`, OpenRouter effort `xhigh`
+
+Summary:
+
+| Route | Cases Passed | Duration Sum | Tokens | Estimated Cost | Avg Trace Quality | Failed Tool Results |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `mimo-2.5-pro-low` | 9 / 9 | 268.247s | 288,877 | `$0.041184` | 92.22 | 6 |
+| `mimo-2.5-pro-high` | 9 / 9 | 267.234s | 295,604 | `$0.034671` | 92.78 | 5 |
+| `mimo-2.5-pro-max` | 9 / 9 | 306.372s | 286,443 | `$0.034616` | 93.33 | 4 |
+
+Per-case notes:
+
+- All three lanes passed all nine cases.
+- `current_diff_review` passed in all lanes with expected failed
+  verification, so its trace grade remained `mixed`.
+- `mimo-2.5-pro-max` was slower but had the best aggregate trace-quality score
+  and the fewest failed tool results in this run.
+- OpenRouter rejected literal `reasoning.effort=max`; the route preset now keeps
+  the user-facing `max` name while sending OpenRouter's accepted top effort,
+  `xhigh`.
+
+Artifacts:
+
+- Low report: `/tmp/lcagent-mimo-live-hL9YE5/mimo-2.5-pro-low.json`
+- Low data dir: `/tmp/lcagent-mimo-live-hL9YE5/low-data`
+- High report: `/tmp/lcagent-mimo-live-hL9YE5/mimo-2.5-pro-high.json`
+- High data dir: `/tmp/lcagent-mimo-live-hL9YE5/high-data`
+- Max report: `/tmp/lcagent-mimo-live-hL9YE5/mimo-2.5-pro-max.json`
+- Max data dir: `/tmp/lcagent-mimo-live-hL9YE5/max-retry-data`
+
+Conclusion:
+
+- MiMo 2.5 Pro is viable enough to keep in the internal coding eval matrix.
+- In this one sweep, high and max were slightly cheaper than low, likely due to
+  shorter completions and fewer repair/tool failures rather than provider unit
+  price differences.
+- Use high as the practical comparison lane and max/xhigh when measuring
+  whether extra deliberation improves harder tasks.
+
 ## 2026-05-16 Expanded Tough Cases
 
 Purpose:
