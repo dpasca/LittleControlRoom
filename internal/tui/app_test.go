@@ -24941,6 +24941,25 @@ func TestSettingsWarnsWhenXiaomiTokenPlanKeyUsesRegularURL(t *testing.T) {
 	}
 }
 
+func TestSettingsTreatsMimoRoutePresetAsXiaomiProvider(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = "mimo-2.5-pro-low"
+	settings.XiaomiAPIKey = "xm-test-example"
+
+	if got := settingsLCAgentMainProvider(settings); got != "xiaomi" {
+		t.Fatalf("settingsLCAgentMainProvider() = %q, want xiaomi", got)
+	}
+	if settingsLCAgentCredentialField(settings) != settingsFieldXiaomiAPIKey {
+		t.Fatalf("settingsLCAgentCredentialField() = %d, want %d", settingsLCAgentCredentialField(settings), settingsFieldXiaomiAPIKey)
+	}
+	if got := settingsCloudConnectionState(settings, config.AIBackendXiaomi); got != "ready" {
+		t.Fatalf("settingsCloudConnectionState() = %q, want ready", got)
+	}
+	if users := strings.Join(settingsProviderUsers(settings, config.AIBackendXiaomi), ", "); !strings.Contains(users, "LCAgent") {
+		t.Fatalf("Xiaomi provider users = %q, want LCAgent included", users)
+	}
+}
+
 func TestNewWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
 	missingPath := filepath.Join(t.TempDir(), "missing.env")
 	cfg := config.Default()
