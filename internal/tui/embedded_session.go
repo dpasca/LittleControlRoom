@@ -50,20 +50,21 @@ type codexUpdateMsg struct {
 }
 
 type codexActionMsg struct {
-	projectPath  string
-	perfOpID     int64
-	perfDuration time.Duration
-	status       string
-	closed       bool
-	restoreDraft codexDraft
-	provider     codexapp.Provider
-	model        string
-	reasoning    string
-	awaitSettle  bool
-	refreshView  bool
-	renamedTask  bool
-	renameErr    error
-	err          error
+	projectPath   string
+	perfOpID      int64
+	perfDuration  time.Duration
+	status        string
+	closed        bool
+	restoreDraft  codexDraft
+	provider      codexapp.Provider
+	model         string
+	modelProvider string
+	reasoning     string
+	awaitSettle   bool
+	refreshView   bool
+	renamedTask   bool
+	renameErr     error
+	err           error
 }
 
 type codexModelListMsg struct {
@@ -227,6 +228,11 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 			m.markCodexSkipNextLiveRefresh(msg.projectPath)
 		}
 		m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
+		if msg.provider == codexapp.ProviderLCAgent && strings.TrimSpace(msg.modelProvider) != "" {
+			pref := m.embeddedModelPrefs[codexapp.ProviderLCAgent]
+			pref.ModelProvider = strings.TrimSpace(msg.modelProvider)
+			m.embeddedModelPrefs[codexapp.ProviderLCAgent] = pref
+		}
 		m.recordRecentModel(msg.provider, msg.model)
 		m.returnToTodoFromModelPicker()
 		if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
@@ -757,6 +763,8 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		LCAgentDeepSeekAPIKey:    m.deepSeekAPIKey(),
 		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
 		LCAgentXiaomiAPIKey:      m.xiaomiAPIKey(),
+		LCAgentXiaomiBaseURL:     m.xiaomiBaseURL(),
+		LCAgentPreflightAccess:   true,
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
 		LCAgentAuto:              m.lcagentAuto(),
@@ -847,6 +855,7 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		strings.TrimSpace(previous.DeepSeekAPIKey) != strings.TrimSpace(saved.DeepSeekAPIKey) ||
 		strings.TrimSpace(previous.MoonshotAPIKey) != strings.TrimSpace(saved.MoonshotAPIKey) ||
 		strings.TrimSpace(previous.XiaomiAPIKey) != strings.TrimSpace(saved.XiaomiAPIKey) ||
+		strings.TrimSpace(previous.XiaomiBaseURL) != strings.TrimSpace(saved.XiaomiBaseURL) ||
 		strings.TrimSpace(previous.LCAgentRoutePreset) != strings.TrimSpace(saved.LCAgentRoutePreset) ||
 		strings.TrimSpace(previous.LCAgentProvider) != strings.TrimSpace(saved.LCAgentProvider) ||
 		strings.TrimSpace(previous.EmbeddedLCAgentModel) != strings.TrimSpace(saved.EmbeddedLCAgentModel) ||
@@ -880,6 +889,8 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentDeepSeekAPIKey:    strings.TrimSpace(settings.DeepSeekAPIKey),
 		LCAgentMoonshotAPIKey:    strings.TrimSpace(settings.MoonshotAPIKey),
 		LCAgentXiaomiAPIKey:      strings.TrimSpace(settings.XiaomiAPIKey),
+		LCAgentXiaomiBaseURL:     strings.TrimSpace(settings.XiaomiBaseURL),
+		LCAgentPreflightAccess:   true,
 		LCAgentRoutePreset:       strings.TrimSpace(settings.LCAgentRoutePreset),
 		LCAgentProvider:          strings.TrimSpace(settings.LCAgentProvider),
 		LCAgentAuto:              strings.TrimSpace(settings.LCAgentAuto),
@@ -996,6 +1007,10 @@ func (m Model) moonshotAPIKey() string {
 
 func (m Model) xiaomiAPIKey() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().XiaomiAPIKey)
+}
+
+func (m Model) xiaomiBaseURL() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().XiaomiBaseURL)
 }
 
 func (m Model) lcagentPath() string {

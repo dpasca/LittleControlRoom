@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -905,6 +906,7 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		provider = codexapp.ProviderCodex
 	}
 	if provider == codexapp.ProviderLCAgent {
+		req.LCAgentPreflightAccess = true
 		if req.RuntimeManager == nil {
 			req.RuntimeManager = m.runtimeManager
 		}
@@ -928,6 +930,9 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		}
 		if strings.TrimSpace(req.LCAgentXiaomiAPIKey) == "" {
 			req.LCAgentXiaomiAPIKey = m.xiaomiAPIKey()
+		}
+		if strings.TrimSpace(req.LCAgentXiaomiBaseURL) == "" {
+			req.LCAgentXiaomiBaseURL = m.xiaomiBaseURL()
 		}
 		if strings.TrimSpace(req.LCAgentRoutePreset) == "" {
 			req.LCAgentRoutePreset = m.lcagentRoutePreset()
@@ -994,6 +999,16 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 				perfOpID:     perfOpID,
 				perfDuration: time.Since(startedAt),
 				err:          fmt.Errorf("%s manager unavailable", label),
+			}
+		}
+		if provider == codexapp.ProviderLCAgent && strings.TrimSpace(req.Prompt) != "" {
+			if err := codexapp.CheckLCAgentProviderAccess(context.Background(), req); err != nil {
+				return codexSessionOpenedMsg{
+					projectPath:  req.ProjectPath,
+					perfOpID:     perfOpID,
+					perfDuration: time.Since(startedAt),
+					err:          err,
+				}
 			}
 		}
 		attemptLimit := 1

@@ -1000,6 +1000,109 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	}
 }
 
+func TestLCAgentSessionPassesXiaomiBaseURLForDirectRoute(t *testing.T) {
+	root := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	envCapturePath := filepath.Join(t.TempDir(), "env.txt")
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+{
+  printf 'key=%s\n' "$XIAOMI_API_KEY"
+  printf 'base=%s\n' "$XIAOMI_BASE_URL"
+} > "$LCAGENT_ENV_CAPTURE_FILE"
+printf '%s\n' '{"type":"session_meta","id":"lca_xiaomi_route_session","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"turn_complete","summary":"xiaomi route run"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+	t.Setenv("LCAGENT_ENV_CAPTURE_FILE", envCapturePath)
+	t.Setenv("XIAOMI_API_KEY", "process-xiaomi-key")
+	t.Setenv("XIAOMI_BASE_URL", "https://api.xiaomimimo.com/v1")
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:              ProviderLCAgent,
+		ProjectPath:           root,
+		AppDataDir:            t.TempDir(),
+		LCAgentPath:           exe,
+		LCAgentXiaomiAPIKey:   "saved-xiaomi-key",
+		LCAgentXiaomiBaseURL:  "https://token-plan-sgp.xiaomimimo.com/v1",
+		LCAgentRoutePreset:    "mimo-2.5-pro-low",
+		LCAgentProvider:       "openrouter",
+		LCAgentRequestTimeout: 10 * time.Minute,
+		Prompt:                "use the xiaomi route",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	if snapshot.Model != "mimo-v2.5-pro" || snapshot.ModelProvider != "xiaomi" {
+		t.Fatalf("snapshot model/provider = %q/%q, want xiaomi route", snapshot.Model, snapshot.ModelProvider)
+	}
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{"--route-preset", "mimo-2.5-pro-low", "use the xiaomi route"} {
+		if !lcagentTestStringSliceContains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
+	}
+	envBytes, err := os.ReadFile(envCapturePath)
+	if err != nil {
+		t.Fatalf("read captured env: %v", err)
+	}
+	envText := string(envBytes)
+	for _, want := range []string{"key=saved-xiaomi-key", "base=https://token-plan-sgp.xiaomimimo.com/v1"} {
+		if !strings.Contains(envText, want) {
+			t.Fatalf("captured env missing %q:\n%s", want, envText)
+		}
+	}
+}
+
+func TestCheckLCAgentProviderAccessUsesXiaomiBaseURL(t *testing.T) {
+	var sawModels bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %q, want /models", r.URL.Path)
+		}
+		sawModels = true
+		if got := r.Header.Get("api-key"); got != "saved-xiaomi-key" {
+			t.Fatalf("api-key = %q, want saved-xiaomi-key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"mimo-v2.5-pro","name":"MiMo"}]}`))
+	}))
+	defer server.Close()
+
+	err := CheckLCAgentProviderAccess(context.Background(), LaunchRequest{
+		Provider:             ProviderLCAgent,
+		ProjectPath:          t.TempDir(),
+		LCAgentRoutePreset:   "mimo-2.5-pro-low",
+		LCAgentXiaomiAPIKey:  "saved-xiaomi-key",
+		LCAgentXiaomiBaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("CheckLCAgentProviderAccess() error = %v", err)
+	}
+	if !sawModels {
+		t.Fatalf("provider access check did not call Xiaomi model list")
+	}
+}
+
 func TestLCAgentSessionPermissionOverrideKeepsRoutePresetAndAddsAuto(t *testing.T) {
 	root := t.TempDir()
 	argsPath := filepath.Join(t.TempDir(), "args.txt")

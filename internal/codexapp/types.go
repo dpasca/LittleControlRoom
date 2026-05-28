@@ -465,6 +465,7 @@ type ReasoningEffortOption struct {
 type ModelOption struct {
 	ID                        string
 	Model                     string
+	ModelProvider             string
 	DisplayName               string
 	Description               string
 	Hidden                    bool
@@ -562,6 +563,8 @@ type LaunchRequest struct {
 	LCAgentDeepSeekAPIKey    string
 	LCAgentMoonshotAPIKey    string
 	LCAgentXiaomiAPIKey      string
+	LCAgentXiaomiBaseURL     string
+	LCAgentPreflightAccess   bool
 	LCAgentRoutePreset       string
 	LCAgentProvider          string
 	LCAgentAuto              string

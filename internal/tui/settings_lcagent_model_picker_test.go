@@ -43,7 +43,7 @@ func TestSettingsLCAgentModelPickerSelectionUpdatesField(t *testing.T) {
 		},
 	}
 
-	gotModel, _ := m.applySettingsLCAgentModelPickerSelection("openai/gpt-5.5")
+	gotModel, _ := m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{Model: "openai/gpt-5.5"})
 	got := gotModel.(Model)
 	if value := got.settingsFieldValue(settingsFieldLCAgentModel); value != "openai/gpt-5.5" {
 		t.Fatalf("Main model field = %q, want openai/gpt-5.5", value)
@@ -53,6 +53,35 @@ func TestSettingsLCAgentModelPickerSelectionUpdatesField(t *testing.T) {
 	}
 	if !strings.Contains(got.status, "Press ctrl+s") {
 		t.Fatalf("status = %q, want save hint", got.status)
+	}
+}
+
+func TestSettingsLCAgentModelPickerSelectionUpdatesMainProvider(t *testing.T) {
+	settings := config.EditableSettings{
+		LCAgentRoutePreset: "mimo-2.5-pro-low",
+		LCAgentProvider:    "xiaomi",
+	}
+	m := Model{
+		settingsFields: newSettingsFields(settings),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex: settingsFieldLCAgentModel,
+			Provider:   "xiaomi",
+		},
+	}
+
+	gotModel, _ := m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{
+		Model:         "deepseek-v4-pro",
+		ModelProvider: "deepseek",
+	})
+	got := gotModel.(Model)
+	if value := got.settingsFieldValue(settingsFieldLCAgentModel); value != "deepseek-v4-pro" {
+		t.Fatalf("Main model field = %q, want deepseek-v4-pro", value)
+	}
+	if value := got.settingsFieldValue(settingsFieldLCAgentProvider); value != "deepseek" {
+		t.Fatalf("LCAgent provider = %q, want deepseek", value)
+	}
+	if value := got.settingsFieldValue(settingsFieldLCAgentRoutePreset); value != "" {
+		t.Fatalf("LCAgent route preset = %q, want cleared", value)
 	}
 }
 

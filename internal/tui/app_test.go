@@ -24281,6 +24281,7 @@ func TestOpenLCAgentSessionFillsWebSearchSettings(t *testing.T) {
 	settings.LCAgentWebSearchURL = "http://127.0.0.1:8888"
 	settings.LCAgentProvider = "openai"
 	settings.LCAgentAdminWrite = true
+	settings.XiaomiBaseURL = "https://token-plan-sgp.xiaomimimo.com/v1"
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -24329,6 +24330,9 @@ func TestOpenLCAgentSessionFillsWebSearchSettings(t *testing.T) {
 	}
 	if captured.LCAgentProvider != "openai" {
 		t.Fatalf("lcagent provider = %q, want openai", captured.LCAgentProvider)
+	}
+	if captured.LCAgentXiaomiBaseURL != "https://token-plan-sgp.xiaomimimo.com/v1" {
+		t.Fatalf("xiaomi base URL = %q, want token plan URL", captured.LCAgentXiaomiBaseURL)
 	}
 	if !captured.LCAgentAdminWrite {
 		t.Fatalf("lcagent admin write = false, want true")

@@ -92,12 +92,14 @@ func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex
 	cfg := codexapp.LCAgentModelListConfig{
 		Provider:         provider,
 		Model:            current,
+		IncludeAvailable: fieldIndex == settingsFieldLCAgentModel,
 		EnvFile:          settings.LCAgentEnvFile,
 		OpenAIAPIKey:     settings.OpenAIAPIKey,
 		OpenRouterAPIKey: settings.OpenRouterAPIKey,
 		DeepSeekAPIKey:   settings.DeepSeekAPIKey,
 		MoonshotAPIKey:   settings.MoonshotAPIKey,
 		XiaomiAPIKey:     settings.XiaomiAPIKey,
+		XiaomiBaseURL:    settings.XiaomiBaseURL,
 		RequestTimeout:   settings.LCAgentRequestTimeout,
 	}
 	return cfg, provider, current, true
@@ -207,11 +209,11 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		return m, nil
 	case "enter":
 		if state.Selected == 0 {
-			return m.applySettingsLCAgentModelPickerSelection("")
+			return m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{})
 		}
 		index := state.Selected - 1
 		if index >= 0 && index < len(state.FilteredModels) {
-			return m.applySettingsLCAgentModelPickerSelection(state.FilteredModels[index].Model)
+			return m.applySettingsLCAgentModelPickerSelection(state.FilteredModels[index])
 		}
 		return m, nil
 	default:
@@ -242,15 +244,31 @@ func (m *Model) applySettingsLCAgentModelPickerFilter() {
 	}
 }
 
-func (m Model) applySettingsLCAgentModelPickerSelection(model string) (tea.Model, tea.Cmd) {
+func (m Model) applySettingsLCAgentModelPickerSelection(option codexapp.ModelOption) (tea.Model, tea.Cmd) {
 	state := m.settingsLCAgentModelPicker
 	if state == nil {
 		return m, nil
 	}
+	model := strings.TrimSpace(option.Model)
 	fieldIndex := state.FieldIndex
 	if fieldIndex >= 0 && fieldIndex < len(m.settingsFields) {
-		m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(model))
+		m.settingsFields[fieldIndex].input.SetValue(model)
 		m.settingsFields[fieldIndex].input.CursorEnd()
+	}
+	if model != "" && strings.TrimSpace(option.ModelProvider) != "" {
+		switch fieldIndex {
+		case settingsFieldLCAgentModel:
+			if len(m.settingsFields) > settingsFieldLCAgentRoutePreset {
+				m.settingsFields[settingsFieldLCAgentRoutePreset].input.SetValue("")
+			}
+			if len(m.settingsFields) > settingsFieldLCAgentProvider {
+				m.settingsFields[settingsFieldLCAgentProvider].input.SetValue(strings.TrimSpace(option.ModelProvider))
+			}
+		case settingsFieldLCAgentUtilityModel:
+			if len(m.settingsFields) > settingsFieldLCAgentUtilityProvider {
+				m.settingsFields[settingsFieldLCAgentUtilityProvider].input.SetValue(strings.TrimSpace(option.ModelProvider))
+			}
+		}
 	}
 	label := "Main model"
 	if fieldIndex == settingsFieldLCAgentUtilityModel {

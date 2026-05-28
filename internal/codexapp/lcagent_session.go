@@ -48,6 +48,8 @@ type lcagentSession struct {
 	deepSeekAPIKey    string
 	moonshotAPIKey    string
 	xiaomiAPIKey      string
+	xiaomiBaseURL     string
+	preflightAccess   bool
 	routePreset       string
 	provider          string
 	auto              string
@@ -135,6 +137,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		deepSeekAPIKey:    strings.TrimSpace(req.LCAgentDeepSeekAPIKey),
 		moonshotAPIKey:    strings.TrimSpace(req.LCAgentMoonshotAPIKey),
 		xiaomiAPIKey:      strings.TrimSpace(req.LCAgentXiaomiAPIKey),
+		xiaomiBaseURL:     strings.TrimSpace(req.LCAgentXiaomiBaseURL),
+		preflightAccess:   req.LCAgentPreflightAccess,
 		routePreset:       routePreset,
 		provider:          provider,
 		auto:              strings.TrimSpace(req.LCAgentAuto),
@@ -340,12 +344,14 @@ func (s *lcagentSession) ListModels() ([]ModelOption, error) {
 	cfg := LCAgentModelListConfig{
 		Provider:         s.provider,
 		Model:            s.model,
+		IncludeAvailable: true,
 		EnvFile:          s.envFile,
 		OpenAIAPIKey:     s.openAIAPIKey,
 		OpenRouterAPIKey: s.openRouterAPIKey,
 		DeepSeekAPIKey:   s.deepSeekAPIKey,
 		MoonshotAPIKey:   s.moonshotAPIKey,
 		XiaomiAPIKey:     s.xiaomiAPIKey,
+		XiaomiBaseURL:    s.xiaomiBaseURL,
 		RequestTimeout:   s.requestTimeout,
 	}
 	s.mu.Unlock()
@@ -359,12 +365,14 @@ func (s *lcagentSession) ListModels() ([]ModelOption, error) {
 type LCAgentModelListConfig struct {
 	Provider         string
 	Model            string
+	IncludeAvailable bool
 	EnvFile          string
 	OpenAIAPIKey     string
 	OpenRouterAPIKey string
 	DeepSeekAPIKey   string
 	MoonshotAPIKey   string
 	XiaomiAPIKey     string
+	XiaomiBaseURL    string
 	RequestTimeout   time.Duration
 }
 
@@ -372,6 +380,9 @@ func LCAgentModelOptions(ctx context.Context, cfg LCAgentModelListConfig) ([]Mod
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	if provider == "" {
 		provider = lcagentDefaultProvider
+	}
+	if cfg.IncludeAvailable {
+		return lcagentAvailableModelOptions(ctx, cfg, provider)
 	}
 	cfg.Model = modeladapter.NormalizeModelForProvider(provider, cfg.Model)
 	curated := lcagentModelOptionsForProvider(provider)
@@ -381,6 +392,136 @@ func LCAgentModelOptions(ctx context.Context, cfg LCAgentModelListConfig) ([]Mod
 	}
 	merged := mergeLCAgentModelOptions(curated, live)
 	return lcagentModelOptionsWithCurrent(merged, cfg.Model, true), nil
+}
+
+func CheckLCAgentProviderAccess(ctx context.Context, req LaunchRequest) error {
+	provider, err := lcagentProviderValue(req.LCAgentProvider)
+	if err != nil {
+		return err
+	}
+	routePreset, err := lcagentRoutePresetValue(req.LCAgentRoutePreset)
+	if err != nil {
+		return err
+	}
+	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
+	model := modeladapter.NormalizeModelForProvider(modelProvider, req.PendingModel)
+	if model == "" {
+		model = lcagentDefaultModel(modelProvider)
+	}
+	if !lcagentLaunchHasCredential(req, modelProvider) {
+		return nil
+	}
+	cfg := LCAgentModelListConfig{
+		Provider:         modelProvider,
+		Model:            model,
+		EnvFile:          req.LCAgentEnvFile,
+		OpenAIAPIKey:     req.LCAgentOpenAIAPIKey,
+		OpenRouterAPIKey: req.LCAgentOpenRouterAPIKey,
+		DeepSeekAPIKey:   req.LCAgentDeepSeekAPIKey,
+		MoonshotAPIKey:   req.LCAgentMoonshotAPIKey,
+		XiaomiAPIKey:     req.LCAgentXiaomiAPIKey,
+		XiaomiBaseURL:    req.LCAgentXiaomiBaseURL,
+		RequestTimeout:   req.LCAgentRequestTimeout,
+	}
+	checkCtx := ctx
+	cancel := func() {}
+	if _, ok := ctx.Deadline(); !ok {
+		checkCtx, cancel = context.WithTimeout(ctx, lcagentModelListTimeout(req.LCAgentRequestTimeout))
+	}
+	defer cancel()
+	if _, err := LCAgentModelOptions(checkCtx, cfg); err != nil {
+		return fmt.Errorf("LCAgent %s provider check failed before launch: %w", lcagentProviderDisplayName(modelProvider), err)
+	}
+	return nil
+}
+
+func lcagentLaunchHasCredential(req LaunchRequest, provider string) bool {
+	if strings.TrimSpace(req.LCAgentEnvFile) != "" {
+		return true
+	}
+	keyName, key := lcagentLaunchCredential(req, provider)
+	if strings.TrimSpace(key) != "" {
+		return true
+	}
+	return keyName != "" && strings.TrimSpace(os.Getenv(keyName)) != ""
+}
+
+func lcagentLaunchCredential(req LaunchRequest, provider string) (string, string) {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return "OPENAI_API_KEY", strings.TrimSpace(req.LCAgentOpenAIAPIKey)
+	case "", "openrouter":
+		return "OPENROUTER_API_KEY", strings.TrimSpace(req.LCAgentOpenRouterAPIKey)
+	case "deepseek":
+		return "DEEPSEEK_API_KEY", strings.TrimSpace(req.LCAgentDeepSeekAPIKey)
+	case "moonshot":
+		return "MOONSHOT_API_KEY", strings.TrimSpace(req.LCAgentMoonshotAPIKey)
+	case "xiaomi":
+		return "XIAOMI_API_KEY", strings.TrimSpace(req.LCAgentXiaomiAPIKey)
+	default:
+		return "", ""
+	}
+}
+
+func lcagentAvailableModelOptions(ctx context.Context, cfg LCAgentModelListConfig, selectedProvider string) ([]ModelOption, error) {
+	providers := lcagentAvailableModelProviders(cfg, selectedProvider)
+	var merged []ModelOption
+	var firstErr error
+	for _, provider := range providers {
+		providerCfg := cfg
+		providerCfg.Provider = provider
+		providerCfg.IncludeAvailable = false
+		providerCfg.Model = ""
+		if provider == selectedProvider {
+			providerCfg.Model = modeladapter.NormalizeModelForProvider(provider, cfg.Model)
+		}
+		options, err := LCAgentModelOptions(ctx, providerCfg)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		for _, option := range options {
+			if strings.TrimSpace(option.ModelProvider) == "" {
+				option.ModelProvider = provider
+			}
+			if provider != selectedProvider && option.IsDefault {
+				option.IsDefault = false
+			}
+			if provider != selectedProvider {
+				option.DisplayName = lcagentProviderDisplayName(provider) + ": " + strings.TrimSpace(firstNonEmpty(option.DisplayName, option.Model))
+			}
+			merged = append(merged, option)
+		}
+	}
+	if len(merged) == 0 {
+		return nil, firstErr
+	}
+	return merged, firstErr
+}
+
+func lcagentAvailableModelProviders(cfg LCAgentModelListConfig, selectedProvider string) []string {
+	selectedProvider = strings.ToLower(strings.TrimSpace(selectedProvider))
+	if selectedProvider == "" {
+		selectedProvider = lcagentDefaultProvider
+	}
+	hasEnvFile := strings.TrimSpace(cfg.EnvFile) != ""
+	hasKey := func(provider string) bool {
+		if provider == selectedProvider {
+			return true
+		}
+		if hasEnvFile {
+			return true
+		}
+		return strings.TrimSpace(lcagentModelListAPIKey(provider, cfg)) != ""
+	}
+	all := []string{"openrouter", "openai", "deepseek", "moonshot", "xiaomi"}
+	out := []string{selectedProvider}
+	for _, provider := range all {
+		if provider == selectedProvider || !hasKey(provider) {
+			continue
+		}
+		out = append(out, provider)
+	}
+	return out
 }
 
 func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig, provider string) ([]ModelOption, error) {
@@ -410,6 +551,7 @@ func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig
 		options = append(options, ModelOption{
 			ID:                        id,
 			Model:                     id,
+			ModelProvider:             provider,
 			DisplayName:               displayName,
 			Description:               description,
 			SupportedReasoningEfforts: lcagentReasoningEffortOptions(),
@@ -426,6 +568,7 @@ func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig
 func lcagentModelListClient(provider string, cfg LCAgentModelListConfig) (*modeladapter.Client, error) {
 	adapterCfg := modeladapter.OpenRouterConfig{
 		APIKey:         lcagentModelListAPIKey(provider, cfg),
+		BaseURL:        lcagentModelListBaseURL(provider, cfg),
 		Model:          firstNonEmpty(strings.TrimSpace(cfg.Model), lcagentDefaultModel(provider)),
 		EnvFile:        strings.TrimSpace(cfg.EnvFile),
 		RequestTimeout: lcagentModelListTimeout(cfg.RequestTimeout),
@@ -442,6 +585,13 @@ func lcagentModelListClient(provider string, cfg LCAgentModelListConfig) (*model
 	default:
 		return modeladapter.NewOpenRouterClient(adapterCfg)
 	}
+}
+
+func lcagentModelListBaseURL(provider string, cfg LCAgentModelListConfig) string {
+	if strings.EqualFold(strings.TrimSpace(provider), "xiaomi") {
+		return strings.TrimSpace(cfg.XiaomiBaseURL)
+	}
+	return ""
 }
 
 func lcagentModelListAPIKey(provider string, cfg LCAgentModelListConfig) string {
@@ -480,6 +630,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		return ModelOption{
 			ID:                        model,
 			Model:                     model,
+			ModelProvider:             provider,
 			DisplayName:               displayName,
 			Description:               description,
 			SupportedReasoningEfforts: reasoning,
@@ -581,6 +732,7 @@ func lcagentModelOptionsWithCurrent(models []ModelOption, current string, checke
 	return append([]ModelOption{{
 		ID:                        current,
 		Model:                     current,
+		ModelProvider:             "",
 		DisplayName:               current,
 		Description:               description,
 		SupportedReasoningEfforts: lcagentReasoningEffortOptions(),
@@ -614,8 +766,19 @@ func lcagentModelOptionExists(models []ModelOption, id string) bool {
 }
 
 func (s *lcagentSession) StageModelOverride(model, reasoningEffort string) error {
+	return s.StageModelProviderOverride("", model, reasoningEffort)
+}
+
+func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEffort string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider != "" {
+		s.provider = provider
+		s.modelProvider = provider
+		s.routePreset = ""
+		model = modeladapter.NormalizeModelForProvider(provider, model)
+	}
 	if strings.TrimSpace(model) != "" {
 		s.model = strings.TrimSpace(model)
 	}
@@ -799,10 +962,27 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	reasoningEffort := strings.TrimSpace(s.reasoningEffort)
 	credentialProvider := modelProvider
 	providerAPIKeyName, providerAPIKey := s.providerCredentialLocked(credentialProvider)
+	preflightAccess := s.preflightAccess
+	preflightReq := LaunchRequest{
+		Provider:                ProviderLCAgent,
+		ProjectPath:             s.projectPath,
+		PendingModel:            model,
+		LCAgentEnvFile:          s.envFile,
+		LCAgentOpenAIAPIKey:     s.openAIAPIKey,
+		LCAgentOpenRouterAPIKey: s.openRouterAPIKey,
+		LCAgentDeepSeekAPIKey:   s.deepSeekAPIKey,
+		LCAgentMoonshotAPIKey:   s.moonshotAPIKey,
+		LCAgentXiaomiAPIKey:     s.xiaomiAPIKey,
+		LCAgentXiaomiBaseURL:    s.xiaomiBaseURL,
+		LCAgentRoutePreset:      routePreset,
+		LCAgentProvider:         provider,
+		LCAgentRequestTimeout:   requestTimeout,
+	}
 	webSearchBackend := firstNonEmpty(s.webSearchBackend, lcagentDefaultWebSearch)
 	webSearchAPIKey := strings.TrimSpace(s.webSearchAPIKey)
 	webSearchEngineID := strings.TrimSpace(s.webSearchEngineID)
 	webSearchURL := strings.TrimSpace(s.webSearchURL)
+	xiaomiBaseURL := strings.TrimSpace(s.xiaomiBaseURL)
 	utilityProvider := firstNonEmpty(s.utilityProvider, lcagentDefaultUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, s.utilityModel)
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
@@ -810,6 +990,13 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		s.appendEntryLocked(TranscriptStatus, warning)
 	}
 	s.mu.Unlock()
+
+	if preflightAccess {
+		if err := CheckLCAgentProviderAccess(context.Background(), preflightReq); err != nil {
+			s.finishRun("", false, err)
+			return err
+		}
+	}
 
 	spec, err := lcagentCommandSpec(s.execPath)
 	if err != nil {
@@ -881,6 +1068,9 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	}
 	if utilityAPIKeyName != "" && utilityAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, utilityAPIKeyName, utilityAPIKey)
+	}
+	if xiaomiBaseURL != "" && (strings.EqualFold(credentialProvider, "xiaomi") || strings.EqualFold(utilityProvider, "xiaomi")) {
+		cmd.Env = setCommandEnv(cmd.Env, "XIAOMI_BASE_URL", xiaomiBaseURL)
 	}
 	if webSearchAPIKey != "" {
 		switch webSearchBackend {

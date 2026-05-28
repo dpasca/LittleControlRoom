@@ -643,6 +643,8 @@ func (m Model) openCodexSessionChoice(choice codexSessionChoice) (tea.Model, tea
 		LCAgentDeepSeekAPIKey:   m.deepSeekAPIKey(),
 		LCAgentMoonshotAPIKey:   m.moonshotAPIKey(),
 		LCAgentXiaomiAPIKey:     m.xiaomiAPIKey(),
+		LCAgentXiaomiBaseURL:    m.xiaomiBaseURL(),
+		LCAgentPreflightAccess:  true,
 		LCAgentRoutePreset:      m.lcagentRoutePreset(),
 		LCAgentProvider:         m.lcagentProvider(),
 		LCAgentAuto:             m.lcagentAuto(),

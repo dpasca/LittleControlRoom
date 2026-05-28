@@ -659,6 +659,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 		effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
 	}
 	modelName := strings.TrimSpace(modelOption.Model)
+	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	snapshot, _ := m.currentCodexSnapshot()
 	provider := embeddedProvider(snapshot)
@@ -688,7 +689,28 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 				err:          errors.New("embedded session unavailable"),
 			}
 		}
-		if err := session.StageModelOverride(modelName, effort); err != nil {
+		if provider == codexapp.ProviderLCAgent && modelProvider != "" {
+			if staged, ok := session.(interface {
+				StageModelProviderOverride(string, string, string) error
+			}); ok {
+				err := staged.StageModelProviderOverride(modelProvider, modelName, effort)
+				if err != nil {
+					return codexActionMsg{
+						projectPath:  projectPath,
+						perfOpID:     perfOpID,
+						perfDuration: time.Since(startedAt),
+						err:          err,
+					}
+				}
+			} else if err := session.StageModelOverride(modelName, effort); err != nil {
+				return codexActionMsg{
+					projectPath:  projectPath,
+					perfOpID:     perfOpID,
+					perfDuration: time.Since(startedAt),
+					err:          err,
+				}
+			}
+		} else if err := session.StageModelOverride(modelName, effort); err != nil {
 			return codexActionMsg{
 				projectPath:  projectPath,
 				perfOpID:     perfOpID,
@@ -709,14 +731,15 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			awaitSettle = false
 		}
 		return codexActionMsg{
-			projectPath:  projectPath,
-			status:       status,
-			provider:     provider,
-			model:        modelName,
-			reasoning:    effort,
-			awaitSettle:  awaitSettle,
-			perfOpID:     perfOpID,
-			perfDuration: time.Since(startedAt),
+			projectPath:   projectPath,
+			status:        status,
+			provider:      provider,
+			model:         modelName,
+			modelProvider: modelProvider,
+			reasoning:     effort,
+			awaitSettle:   awaitSettle,
+			perfOpID:      perfOpID,
+			perfDuration:  time.Since(startedAt),
 		}
 	}
 }

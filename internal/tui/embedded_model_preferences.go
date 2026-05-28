@@ -8,8 +8,9 @@ import (
 )
 
 type embeddedModelPreference struct {
-	Model     string
-	Reasoning string
+	Model         string
+	ModelProvider string
+	Reasoning     string
 }
 
 func embeddedModelPreferencesFromSettings(settings config.EditableSettings) map[codexapp.Provider]embeddedModelPreference {
@@ -34,8 +35,9 @@ func embeddedModelPreferencesFromSettings(settings config.EditableSettings) map[
 	}
 	if model := strings.TrimSpace(settings.EmbeddedLCAgentModel); model != "" || strings.TrimSpace(settings.EmbeddedLCAgentReasoning) != "" {
 		prefs[codexapp.ProviderLCAgent] = embeddedModelPreference{
-			Model:     model,
-			Reasoning: strings.TrimSpace(settings.EmbeddedLCAgentReasoning),
+			Model:         model,
+			ModelProvider: strings.TrimSpace(settings.LCAgentProvider),
+			Reasoning:     strings.TrimSpace(settings.EmbeddedLCAgentReasoning),
 		}
 	}
 	if len(prefs) == 0 {
@@ -71,6 +73,10 @@ func applyEmbeddedModelPreferencesToSettings(settings *config.EditableSettings, 
 	if pref, ok := prefs[codexapp.ProviderLCAgent]; ok {
 		settings.EmbeddedLCAgentModel = strings.TrimSpace(pref.Model)
 		settings.EmbeddedLCAgentReasoning = strings.TrimSpace(pref.Reasoning)
+		if provider := strings.TrimSpace(pref.ModelProvider); provider != "" {
+			settings.LCAgentRoutePreset = ""
+			settings.LCAgentProvider = provider
+		}
 	}
 }
 
@@ -158,6 +164,8 @@ func embeddedModelSettingsEqual(left, right config.EditableSettings) bool {
 		strings.TrimSpace(left.EmbeddedOpenCodeReasoning) == strings.TrimSpace(right.EmbeddedOpenCodeReasoning) &&
 		strings.TrimSpace(left.EmbeddedLCAgentModel) == strings.TrimSpace(right.EmbeddedLCAgentModel) &&
 		strings.TrimSpace(left.EmbeddedLCAgentReasoning) == strings.TrimSpace(right.EmbeddedLCAgentReasoning) &&
+		strings.TrimSpace(left.LCAgentRoutePreset) == strings.TrimSpace(right.LCAgentRoutePreset) &&
+		strings.TrimSpace(left.LCAgentProvider) == strings.TrimSpace(right.LCAgentProvider) &&
 		trimmedStringSlicesEqual(left.RecentCodexModels, right.RecentCodexModels) &&
 		trimmedStringSlicesEqual(left.RecentClaudeModels, right.RecentClaudeModels) &&
 		trimmedStringSlicesEqual(left.RecentOpenCodeModels, right.RecentOpenCodeModels) &&
