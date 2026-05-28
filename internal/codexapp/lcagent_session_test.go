@@ -141,6 +141,101 @@ func TestLCAgentSessionWarnsWhenWebSearchUnavailable(t *testing.T) {
 	}
 }
 
+func TestLCAgentSessionCloseDueToInactivity(t *testing.T) {
+	notify := make(chan struct{}, 1)
+	rawCtx, cancel := context.WithCancel(context.Background())
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		started:     true,
+		status:      "LCAgent idle",
+		cancel:      cancel,
+		notify: func() {
+			select {
+			case notify <- struct{}{}:
+			default:
+			}
+		},
+		lastActivityAt: time.Now().Add(-2 * time.Minute),
+	}
+
+	if err := session.CloseDueToInactivity(); err != nil {
+		t.Fatalf("CloseDueToInactivity() error = %v", err)
+	}
+
+	select {
+	case <-notify:
+	default:
+		t.Fatalf("close should queue a notify callback")
+	}
+	select {
+	case <-rawCtx.Done():
+	default:
+		t.Fatalf("close should cancel session context")
+	}
+
+	snapshot := session.Snapshot()
+	if !snapshot.Closed {
+		t.Fatalf("snapshot.Closed = %v, want true", snapshot.Closed)
+	}
+	if snapshot.Status != lcagentIdleShutdownNotice {
+		t.Fatalf("snapshot.Status = %q, want %q", snapshot.Status, lcagentIdleShutdownNotice)
+	}
+	if !strings.Contains(snapshot.Transcript, lcagentIdleShutdownNotice) {
+		t.Fatalf("snapshot.Transcript missing inactivity close notice: %q", snapshot.Transcript)
+	}
+}
+
+func TestLCAgentSessionCloseDueToInactivitySkipsBusySession(t *testing.T) {
+	prior := time.Now().Add(-2 * time.Minute)
+	session := &lcagentSession{
+		projectPath:    t.TempDir(),
+		started:        true,
+		busy:           true,
+		status:         "LCAgent run",
+		lastActivityAt: prior,
+	}
+
+	if err := session.CloseDueToInactivity(); err != nil {
+		t.Fatalf("CloseDueToInactivity() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Closed {
+		t.Fatalf("busy session should not close")
+	}
+	if snapshot.LastActivityAt.Equal(prior) {
+		t.Fatalf("busy session inactivity close should touch last activity")
+	}
+}
+
+func TestLCAgentSessionCloseDueToInactivitySkipsPendingApproval(t *testing.T) {
+	prior := time.Now().Add(-2 * time.Minute)
+	session := &lcagentSession{
+		projectPath:    t.TempDir(),
+		started:        true,
+		status:         "Waiting for approval",
+		lastActivityAt: prior,
+		pendingApproval: &ApprovalRequest{
+			ID:       "pending-1",
+			Kind:     ApprovalCommandExecution,
+			Command:  "echo hi",
+			ThreadID: "thread-1",
+		},
+	}
+
+	if err := session.CloseDueToInactivity(); err != nil {
+		t.Fatalf("CloseDueToInactivity() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Closed {
+		t.Fatalf("pending approval session should not close")
+	}
+	if snapshot.LastActivityAt.Equal(prior) {
+		t.Fatalf("pending approval inactivity close should touch last activity")
+	}
+}
+
 func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	session := &lcagentSession{

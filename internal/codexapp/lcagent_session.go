@@ -90,6 +90,8 @@ type lcagentSession struct {
 	cache              transcriptExportCache
 }
 
+const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
+
 func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -707,6 +709,32 @@ func (s *lcagentSession) Close() error {
 	s.status = "Closed"
 	cancel := s.cancel
 	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if s.notify != nil {
+		s.notify()
+	}
+	return nil
+}
+
+func (s *lcagentSession) CloseDueToInactivity() error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.busy || s.pendingApproval != nil {
+		s.touchLocked()
+		s.mu.Unlock()
+		return nil
+	}
+	s.closed = true
+	s.status = lcagentIdleShutdownNotice
+	s.appendEntryLocked(TranscriptSystem, lcagentIdleShutdownNotice)
+	cancel := s.cancel
+	s.mu.Unlock()
+
 	if cancel != nil {
 		cancel()
 	}
