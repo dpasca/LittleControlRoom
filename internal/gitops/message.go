@@ -212,12 +212,13 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 
 		var decoded struct {
 			Message          string  `json:"message"`
+			Subject          string  `json:"subject"`
 			CompletedTodoIDs []int64 `json:"completed_todo_ids"`
 		}
 		if err := llm.DecodeJSONObjectOutput(response.OutputText, &decoded); err != nil {
 			return CommitMessageSuggestion{}, fmt.Errorf("decode commit message result: %w", err)
 		}
-		message := strings.TrimSpace(decoded.Message)
+		message := firstNonEmptyString(decoded.Message, decoded.Subject)
 		if message != "" {
 			return CommitMessageSuggestion{
 				Message:          message,
@@ -268,6 +269,15 @@ func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, sys
 		return response, nil
 	}
 	return llm.JSONSchemaResponse{}, errors.New("commit assistant attempt plan exhausted")
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (c *OpenAICommitMessageClient) responsesClient() llm.JSONSchemaRunner {

@@ -428,6 +428,44 @@ func TestOpenAICommitMessageClientSuggestRetriesEmptyMessage(t *testing.T) {
 	}
 }
 
+func TestOpenAICommitMessageClientSuggestAcceptsSubjectField(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedJSONSchemaRunner{
+		results: []scriptedJSONSchemaResult{
+			{
+				response: llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "mimo-v2.5",
+					OutputText: `{"subject":"Enhance LCAgent model picker"}`,
+				},
+			},
+		},
+	}
+
+	client := &OpenAICommitMessageClient{
+		model:     "mimo-v2.5",
+		responses: runner,
+	}
+
+	suggestion, err := client.Suggest(context.Background(), CommitMessageInput{
+		Intent:        "commit",
+		ProjectName:   "Little Control Room",
+		Branch:        "master",
+		StageMode:     "staged_only",
+		IncludedFiles: []string{"internal/tui/settings_lcagent_model_picker.go"},
+	})
+	if err != nil {
+		t.Fatalf("suggest: %v", err)
+	}
+	if suggestion.Message != "Enhance LCAgent model picker" {
+		t.Fatalf("message = %q, want subject fallback", suggestion.Message)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("requests = %d, want no retry", len(runner.requests))
+	}
+}
+
 func TestOpenAICommitMessageClientRecommendUntrackedRetriesRetryableHTTPError(t *testing.T) {
 	t.Parallel()
 
