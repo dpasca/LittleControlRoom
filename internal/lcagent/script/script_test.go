@@ -170,6 +170,50 @@ func TestRunnerRefinesOversizedSearchWithIntent(t *testing.T) {
 	}
 }
 
+func TestRunnerScoutsFilesWithUtilityModel(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("package demo\n\nfunc updateCodexMode() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	scout := &fakeCodeScout{}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Files:     tools.FileTools{Workspace: w},
+		CodeScout: scout,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "scout_files",
+		Args: raw(`{"question":"Where is embedded Enter handled?","path":".","file_glob":"*.go","max_files":5,"max_lines_per_file":80}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v", err)
+	}
+	if !strings.Contains(result.Output, "scout_files: true") || !strings.Contains(result.Output, "app.go:3") {
+		t.Fatalf("scout output =\n%s", result.Output)
+	}
+	if scout.request.Question != "Where is embedded Enter handled?" || !strings.Contains(scout.request.FilePack, "func updateCodexMode") {
+		t.Fatalf("scout request = %#v", scout.request)
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"scout_files"`, `"phase":"scout_files"`, `"type":"scout_files_result"`, `"model":"fake-scout"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
 type fakeSearchRefiner struct {
 	request SearchRefineRequest
 }
@@ -181,6 +225,20 @@ func (f *fakeSearchRefiner) RefineSearch(_ context.Context, request SearchRefine
 		Provider:     "fake",
 		Model:        "fake-cheap",
 		UsageSummary: lcrmodel.LLMUsage{InputTokens: 10, OutputTokens: 5, TotalTokens: 15},
+	}, nil
+}
+
+type fakeCodeScout struct {
+	request ScoutFilesRequest
+}
+
+func (f *fakeCodeScout) ScoutFiles(_ context.Context, request ScoutFilesRequest) (ScoutFilesResult, error) {
+	f.request = request
+	return ScoutFilesResult{
+		Output:       "scout_files: true\nlikely_relevant:\n- app.go:3 confidence=high reason=contains updateCodexMode\n",
+		Provider:     "fake",
+		Model:        "fake-scout",
+		UsageSummary: lcrmodel.LLMUsage{InputTokens: 20, OutputTokens: 7, TotalTokens: 27},
 	}, nil
 }
 

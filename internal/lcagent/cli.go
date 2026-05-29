@@ -589,6 +589,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	searchRefine := newSearchRefineProfile(utilityProvider, utilityCfg, searchRefineMinBytes, providerLabel, client.Model())
 	if searchRefine.Enabled {
 		runner.SearchRefiner = searchRefine.Refiner
+		runner.CodeScout = searchRefine.Scout
 		runner.SearchRefineMinBytes = searchRefine.MinBytes
 	}
 	if err := writer.Write(session.Event{

@@ -22,6 +22,7 @@ type searchRefineProfile struct {
 	MinBytes    int
 	Message     string
 	Refiner     script.SearchRefiner
+	Scout       script.CodeScout
 	DisabledErr error
 }
 
@@ -99,13 +100,15 @@ func newSearchRefineProfile(provider string, cfg modeladapter.OpenRouterConfig, 
 	if sameAsMain {
 		message = "LCAgent utility model uses the Main Model."
 	}
+	refiner := utilitySearchRefiner{provider: provider, client: client}
 	return searchRefineProfile{
 		Enabled:  true,
 		Provider: provider,
 		Model:    client.Model(),
 		MinBytes: minBytes,
 		Message:  message,
-		Refiner:  utilitySearchRefiner{provider: provider, client: client},
+		Refiner:  refiner,
+		Scout:    refiner,
 	}
 }
 
@@ -187,6 +190,38 @@ func (r utilitySearchRefiner) RefineSearch(ctx context.Context, req script.Searc
 	}, nil
 }
 
+func (r utilitySearchRefiner) ScoutFiles(ctx context.Context, req script.ScoutFilesRequest) (script.ScoutFilesResult, error) {
+	if r.client == nil {
+		return script.ScoutFilesResult{}, fmt.Errorf("code scout client is not configured")
+	}
+	messages := []modeladapter.Message{
+		{Role: "system", Content: codeScoutSystemPrompt()},
+		{Role: "user", Content: codeScoutUserPrompt(req)},
+	}
+	options := modeladapter.CompletionOptions{
+		MaxCompletionTokens: 1800,
+	}
+	if !strings.EqualFold(r.provider, "openai") {
+		options.DisableThinking = true
+	}
+	completion, err := r.client.CompleteWithOptions(ctx, messages, nil, options)
+	if err != nil {
+		return script.ScoutFilesResult{}, err
+	}
+	payload, err := parseSearchRefinePayload(completion.Message.Content)
+	if err != nil {
+		return script.ScoutFilesResult{}, err
+	}
+	output := formatCodeScoutOutput(req, payload, r.provider, completion.Model)
+	return script.ScoutFilesResult{
+		Output:       output,
+		Provider:     r.provider,
+		Model:        firstNonEmptyString(strings.TrimSpace(completion.Model), r.client.Model()),
+		Usage:        append(json.RawMessage(nil), completion.Usage...),
+		UsageSummary: completion.UsageSummary,
+	}, nil
+}
+
 func searchRefinerSystemPrompt() string {
 	return strings.Join([]string{
 		"You are a search-result condenser for a coding agent.",
@@ -198,6 +233,38 @@ func searchRefinerSystemPrompt() string {
 		"The JSON shape is:",
 		`{"summary":"short task-focused summary","likely_relevant":[{"path":"relative/or/absolute/path","line":"12 or 12-18","reason":"why this match is relevant","confidence":"high|medium|low"}],"suggested_next_searches":[{"query":"literal substring","path":"optional path","file_glob":"optional glob","intent":"why this narrower search helps"}],"discard_notes":["short notes about large low-value clusters"]}`,
 	}, "\n")
+}
+
+func codeScoutSystemPrompt() string {
+	return strings.Join([]string{
+		"You are a codebase scout for a coding agent.",
+		"Input is a bounded deterministic pack of repository files selected by path/glob plus the user's question.",
+		"Return only JSON. Do not use markdown.",
+		"Rank files and line ranges likely to help the main agent answer the question or make the next code change.",
+		"Do not invent files, line numbers, APIs, or conclusions that are not present in the file pack.",
+		"Prefer concrete next reads over broad advice. Mention when the pack is insufficient and suggest narrower literal searches if needed.",
+		"The JSON shape is:",
+		`{"summary":"short task-focused summary","likely_relevant":[{"path":"relative/or/absolute/path","line":"12 or 12-18","reason":"why this range matters","confidence":"high|medium|low"}],"suggested_next_searches":[{"query":"literal substring","path":"optional path","file_glob":"optional glob","intent":"why this narrower search helps"}],"discard_notes":["short notes about irrelevant files or missing evidence"]}`,
+	}, "\n")
+}
+
+func codeScoutUserPrompt(req script.ScoutFilesRequest) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "question: %s\n", strings.TrimSpace(req.Question))
+	if path := strings.TrimSpace(req.Path); path != "" {
+		fmt.Fprintf(&b, "path: %s\n", path)
+	}
+	if fileGlob := strings.TrimSpace(req.FileGlob); fileGlob != "" {
+		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
+	}
+	fmt.Fprintf(&b, "max_files: %d\n", req.MaxFiles)
+	fmt.Fprintf(&b, "max_lines_per_file: %d\n", req.MaxLinesPerFile)
+	fmt.Fprintf(&b, "file_pack_bytes: %d\n", req.PackBytes)
+	fmt.Fprintf(&b, "truncated: %t\n\n", req.Truncated)
+	b.WriteString("file_pack:\n")
+	b.WriteString(strings.TrimSpace(req.FilePack))
+	b.WriteByte('\n')
+	return b.String()
 }
 
 func searchRefinerUserPrompt(req script.SearchRefineRequest) string {
@@ -221,6 +288,80 @@ func searchRefinerUserPrompt(req script.SearchRefineRequest) string {
 	b.WriteString("search_output:\n")
 	b.WriteString(strings.TrimSpace(req.SearchOutput))
 	b.WriteByte('\n')
+	return b.String()
+}
+
+func formatCodeScoutOutput(req script.ScoutFilesRequest, payload searchRefinePayload, provider, model string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "scout_files: true\n")
+	fmt.Fprintf(&b, "provider: %s\n", strings.TrimSpace(provider))
+	fmt.Fprintf(&b, "model: %s\n", strings.TrimSpace(model))
+	fmt.Fprintf(&b, "question: %s\n", strings.TrimSpace(req.Question))
+	if path := strings.TrimSpace(req.Path); path != "" {
+		fmt.Fprintf(&b, "path: %s\n", path)
+	}
+	if fileGlob := strings.TrimSpace(req.FileGlob); fileGlob != "" {
+		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
+	}
+	fmt.Fprintf(&b, "file_pack_bytes: %d\n", req.PackBytes)
+	fmt.Fprintf(&b, "evidence_note: This is a routing summary from a utility model; use read_file on relevant ranges before making final claims.\n")
+	if summary := strings.TrimSpace(payload.Summary); summary != "" {
+		fmt.Fprintf(&b, "\nsummary: %s\n", summary)
+	}
+	b.WriteString("\nlikely_relevant:\n")
+	if len(payload.LikelyRelevant) == 0 {
+		b.WriteString("- none\n")
+	} else {
+		for _, candidate := range payload.LikelyRelevant {
+			path := strings.TrimSpace(candidate.Path)
+			line := strings.TrimSpace(candidate.Line)
+			reason := strings.TrimSpace(candidate.Reason)
+			confidence := strings.TrimSpace(candidate.Confidence)
+			if path == "" {
+				continue
+			}
+			if confidence == "" {
+				confidence = "unknown"
+			}
+			if line != "" {
+				fmt.Fprintf(&b, "- %s:%s confidence=%s", path, line, confidence)
+			} else {
+				fmt.Fprintf(&b, "- %s confidence=%s", path, confidence)
+			}
+			if reason != "" {
+				fmt.Fprintf(&b, " reason=%s", reason)
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if len(payload.SuggestedNextSearches) > 0 {
+		b.WriteString("\nsuggested_next_searches:\n")
+		for _, suggested := range payload.SuggestedNextSearches {
+			query := strings.TrimSpace(suggested.Query)
+			if query == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "- query=%q", query)
+			if path := strings.TrimSpace(suggested.Path); path != "" {
+				fmt.Fprintf(&b, " path=%q", path)
+			}
+			if fileGlob := strings.TrimSpace(suggested.FileGlob); fileGlob != "" {
+				fmt.Fprintf(&b, " file_glob=%q", fileGlob)
+			}
+			if intent := strings.TrimSpace(suggested.Intent); intent != "" {
+				fmt.Fprintf(&b, " intent=%q", intent)
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if len(payload.DiscardNotes) > 0 {
+		b.WriteString("\ndiscard_notes:\n")
+		for _, note := range payload.DiscardNotes {
+			if note = strings.TrimSpace(note); note != "" {
+				fmt.Fprintf(&b, "- %s\n", note)
+			}
+		}
+	}
 	return b.String()
 }
 

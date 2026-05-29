@@ -94,6 +94,42 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 	}
 }
 
+func TestFileToolsScoutPackReadsBoundedGlob(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "tui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "tui", "app.go"), []byte("package tui\n\nfunc updateCodexMode() {}\nfunc other() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "tui", "note.md"), []byte("# note\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	pack := files.ScoutPack("internal/tui", ScoutPackOptions{
+		FileGlob:        "*.go",
+		MaxFiles:        5,
+		MaxLinesPerFile: 3,
+		Question:        "find embedded Enter handling",
+	})
+	if !pack.Success {
+		t.Fatalf("ScoutPack failed: %s", pack.Error)
+	}
+	for _, want := range []string{"scout_pack: true", "question: find embedded Enter handling", "## internal/tui/app.go", "3 | func updateCodexMode()"} {
+		if !strings.Contains(pack.Output, want) {
+			t.Fatalf("ScoutPack missing %q:\n%s", want, pack.Output)
+		}
+	}
+	if strings.Contains(pack.Output, "note.md") || strings.Contains(pack.Output, "func other") {
+		t.Fatalf("ScoutPack should obey glob and line bounds:\n%s", pack.Output)
+	}
+}
+
 func TestFileToolsHonorsCustomReadLimits(t *testing.T) {
 	root := t.TempDir()
 	var body strings.Builder

@@ -36,7 +36,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 		names[tool.Function.Name] = true
 		descriptions[tool.Function.Name] = tool.Function.Description
 	}
-	for _, want := range []string{"read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "load_skill", "run_command", "apply_patch", "replace_text", "update_plan", "final_response"} {
+	for _, want := range []string{"read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "load_skill", "run_command", "apply_patch", "replace_text", "update_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
@@ -73,6 +73,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	}
 	if !strings.Contains(descriptions["search"], "literal substring") || !strings.Contains(descriptions["search"], "not a regex") {
 		t.Fatalf("search description should explain literal matching: %q", descriptions["search"])
+	}
+	if !strings.Contains(descriptions["scout_files"], "utility/scout model") || !strings.Contains(descriptions["scout_files"], "read-only") {
+		t.Fatalf("scout_files description should explain utility model routing: %q", descriptions["scout_files"])
 	}
 	if !strings.Contains(descriptions["update_plan"], "continue with the in_progress step") {
 		t.Fatalf("update_plan description should keep plans tied to execution: %q", descriptions["update_plan"])
@@ -173,6 +176,12 @@ func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {
 	overviewProps := overviewSpec.Parameters["properties"].(map[string]any)
 	if got := overviewProps["max_files"].(map[string]any)["maximum"]; got != 500 {
 		t.Fatalf("repo_overview max_files max = %#v, want 500", got)
+	}
+
+	scoutSpec := toolSpec(t, tools, "scout_files")
+	scoutProps := scoutSpec.Parameters["properties"].(map[string]any)
+	if got := scoutProps["max_lines_per_file"].(map[string]any)["maximum"]; got != 2500 {
+		t.Fatalf("scout_files max_lines_per_file max = %#v, want 2500", got)
 	}
 }
 

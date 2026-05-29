@@ -31,6 +31,9 @@ const (
 	defaultOutlineFileLimit = 30
 	maxOutlineFileLimit     = 80
 	maxModuleOutlineChars   = 24000
+	defaultScoutFileLimit   = 12
+	maxScoutFileLimit       = 40
+	defaultScoutLineLimit   = 120
 	fileScannerInitialSize  = 64 * 1024
 	fileScannerMaxToken     = 1024 * 1024
 )
@@ -72,6 +75,14 @@ type SearchOptions struct {
 
 type ModuleOutlineOptions struct {
 	IncludeHidden bool
+}
+
+type ScoutPackOptions struct {
+	FileGlob        string
+	MaxFiles        int
+	MaxLinesPerFile int
+	IncludeHidden   bool
+	Question        string
 }
 
 func ParseFileProfile(raw string) (FileProfile, error) {
@@ -559,6 +570,129 @@ func (t FileTools) ModuleOutlineWithOptions(path, fileGlob string, maxFiles int,
 	}
 	if len(candidates) == 0 {
 		b.WriteString("No supported source or Markdown files found.\n")
+	}
+	return ToolResult{Success: true, Output: b.String(), Truncated: truncated}
+}
+
+func (t FileTools) ScoutPack(path string, opts ScoutPackOptions) ToolResult {
+	limits := t.limits()
+	target, rel, err := t.resolve(defaultPath(path))
+	if err != nil {
+		return failureResult(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	fileGlob := strings.TrimSpace(opts.FileGlob)
+	maxFiles := clampInt(opts.MaxFiles, defaultScoutFileLimit, maxScoutFileLimit)
+	maxLines := clampInt(opts.MaxLinesPerFile, defaultScoutLineLimit, limits.MaxReadLineLimit)
+	if maxLines > limits.MaxReadLineLimit {
+		maxLines = limits.MaxReadLineLimit
+	}
+
+	candidates := []string{}
+	hiddenDirs := []string{}
+	truncated := false
+	addCandidate := func(path string) {
+		if truncated {
+			return
+		}
+		display := t.displayPath(path)
+		if fileGlob != "" && !fileGlobMatches(fileGlob, display) {
+			return
+		}
+		candidates = append(candidates, path)
+		if len(candidates) >= maxFiles {
+			truncated = true
+		}
+	}
+	addHiddenDir := func(path string, entry fs.DirEntry) {
+		display := t.displayPath(path)
+		if entry == nil || entry.IsDir() {
+			display = strings.TrimSuffix(display, "/") + "/"
+		}
+		hiddenDirs = append(hiddenDirs, display)
+	}
+
+	if !opts.IncludeHidden && rel != "." && pathHasDefaultHiddenSegment(rel) {
+		addHiddenDir(target, nil)
+	} else if !info.IsDir() {
+		addCandidate(target)
+	} else {
+		err = filepath.WalkDir(target, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return nil
+			}
+			if path == target || entry == nil {
+				return nil
+			}
+			if entry.IsDir() {
+				if !opts.IncludeHidden && defaultHiddenDir(entry.Name()) {
+					addHiddenDir(path, entry)
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			addCandidate(path)
+			if truncated {
+				return filepath.SkipDir
+			}
+			return nil
+		})
+		if err != nil {
+			return ToolResult{Success: false, Error: err.Error()}
+		}
+	}
+	sort.Strings(candidates)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "scout_pack: true\n")
+	fmt.Fprintf(&b, "path: %s\n", rel)
+	if fileGlob != "" {
+		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
+	}
+	if question := strings.TrimSpace(opts.Question); question != "" {
+		fmt.Fprintf(&b, "question: %s\n", question)
+	}
+	fmt.Fprintf(&b, "files: %d\n", len(candidates))
+	fmt.Fprintf(&b, "max_lines_per_file: %d\n", maxLines)
+	if len(hiddenDirs) > 0 {
+		fmt.Fprintf(&b, "hidden_dirs_skipped: %d (%s)\n", len(hiddenDirs), strings.Join(trimStrings(hiddenDirs, 12), ", "))
+		fmt.Fprintf(&b, "hidden_note: set include_hidden=true only if hidden/generated contents are directly relevant.\n")
+	}
+	if truncated {
+		fmt.Fprintf(&b, "truncated: true\n")
+	}
+	b.WriteByte('\n')
+
+	for _, candidate := range candidates {
+		display := t.displayPath(candidate)
+		lines, totalLines, binary, err := readTextFileRange(candidate, 1, maxLines)
+		switch {
+		case err != nil:
+			fmt.Fprintf(&b, "## %s\nread_error: %s\n\n", display, err.Error())
+			continue
+		case binary:
+			fmt.Fprintf(&b, "## %s\nbinary: true\n\n", display)
+			continue
+		}
+		hasMore := len(lines) > 0 && len(lines) < totalLines
+		fmt.Fprintf(&b, "## %s\n", display)
+		fmt.Fprintf(&b, "total_lines: %d\n", totalLines)
+		fmt.Fprintf(&b, "included_lines: 1-%d\n\n", min(len(lines), totalLines))
+		if len(lines) > 0 {
+			b.WriteString(strings.Join(lines, "\n"))
+			b.WriteByte('\n')
+		}
+		if hasMore {
+			fmt.Fprintf(&b, "--- file truncated after %d lines; use read_file path=%q offset=%d ---\n", maxLines, display, maxLines+1)
+			truncated = true
+		}
+		b.WriteByte('\n')
+	}
+	if len(candidates) == 0 {
+		b.WriteString("No matching readable files found.\n")
 	}
 	return ToolResult{Success: true, Output: b.String(), Truncated: truncated}
 }

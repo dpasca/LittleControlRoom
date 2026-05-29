@@ -29,6 +29,7 @@ type Runner struct {
 	WebSearch            tools.WebSearchRunner
 	WebSearchOn          bool
 	SearchRefiner        SearchRefiner
+	CodeScout            CodeScout
 	SearchRefineMinBytes int
 	Approvals            ApprovalBroker
 	Processes            ProcessBroker
@@ -46,6 +47,10 @@ type SearchRefiner interface {
 	RefineSearch(context.Context, SearchRefineRequest) (SearchRefineResult, error)
 }
 
+type CodeScout interface {
+	ScoutFiles(context.Context, ScoutFilesRequest) (ScoutFilesResult, error)
+}
+
 type SearchRefineRequest struct {
 	Query               string
 	Intent              string
@@ -56,6 +61,25 @@ type SearchRefineRequest struct {
 	OriginalOutputBytes int
 	CompactOutputBytes  int
 	Truncated           bool
+}
+
+type ScoutFilesRequest struct {
+	Question        string
+	Path            string
+	FileGlob        string
+	MaxFiles        int
+	MaxLinesPerFile int
+	FilePack        string
+	PackBytes       int
+	Truncated       bool
+}
+
+type ScoutFilesResult struct {
+	Output       string
+	Provider     string
+	Model        string
+	Usage        json.RawMessage
+	UsageSummary lcrmodel.LLMUsage
 }
 
 type SearchRefineResult struct {
@@ -314,6 +338,15 @@ type moduleOutlineArgs struct {
 	IncludeHidden bool   `json:"include_hidden"`
 }
 
+type scoutFilesArgs struct {
+	Question        string `json:"question"`
+	Path            string `json:"path"`
+	FileGlob        string `json:"file_glob"`
+	MaxFiles        int    `json:"max_files"`
+	MaxLinesPerFile int    `json:"max_lines_per_file"`
+	IncludeHidden   bool   `json:"include_hidden"`
+}
+
 type loadSkillArgs struct {
 	Name string `json:"name"`
 }
@@ -472,6 +505,17 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 		var err error
 		result, err = r.runSearch(ctx, args)
+		if err != nil {
+			return tools.ToolResult{}, err
+		}
+	case "scout_files":
+		var args scoutFilesArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		var err error
+		result, err = r.runScoutFiles(ctx, args)
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
@@ -1189,7 +1233,7 @@ func (r *Runner) maybeRefineSearch(ctx context.Context, args searchArgs, result 
 		compact.Truncated = true
 		return compact, nil
 	}
-	if err := r.writeUtilityModelResponseEvent(refined); err != nil {
+	if err := r.writeUtilityModelResponseEvent("search_refine", refined); err != nil {
 		return tools.ToolResult{}, err
 	}
 	if err := r.writeSearchRefineResultEvent(true, "", refined); err != nil {
@@ -1198,6 +1242,71 @@ func (r *Runner) maybeRefineSearch(ctx context.Context, args searchArgs, result 
 	result.Output = strings.TrimSpace(refined.Output) + "\n"
 	result.Truncated = true
 	return result, nil
+}
+
+func (r *Runner) runScoutFiles(ctx context.Context, args scoutFilesArgs) (tools.ToolResult, error) {
+	question := strings.TrimSpace(args.Question)
+	if question == "" {
+		return tools.ToolResult{Success: false, Error: "question is required"}, nil
+	}
+	pack := r.Files.ScoutPack(args.Path, tools.ScoutPackOptions{
+		FileGlob:        args.FileGlob,
+		MaxFiles:        args.MaxFiles,
+		MaxLinesPerFile: args.MaxLinesPerFile,
+		IncludeHidden:   args.IncludeHidden,
+		Question:        question,
+	})
+	if !pack.Success {
+		return pack, nil
+	}
+	if r.CodeScout == nil {
+		pack.Output = annotateSearchOutput(pack.Output,
+			"scout_model_unavailable: true",
+			"scout_note: Returning the deterministic file pack because no utility scout model is configured. Use file_outline, search, or read_file to inspect likely relevant files.",
+		)
+		pack.Truncated = true
+		return pack, nil
+	}
+	if err := r.writeScoutFilesEvent(args, len(pack.Output), pack.Truncated); err != nil {
+		return tools.ToolResult{}, err
+	}
+	scouted, err := r.CodeScout.ScoutFiles(ctx, ScoutFilesRequest{
+		Question:        question,
+		Path:            args.Path,
+		FileGlob:        args.FileGlob,
+		MaxFiles:        args.MaxFiles,
+		MaxLinesPerFile: args.MaxLinesPerFile,
+		FilePack:        pack.Output,
+		PackBytes:       len(pack.Output),
+		Truncated:       pack.Truncated,
+	})
+	if err != nil || strings.TrimSpace(scouted.Output) == "" {
+		message := "scout failed"
+		if err != nil {
+			message = err.Error()
+		}
+		if writeErr := r.writeScoutFilesResultEvent(false, message, scouted); writeErr != nil {
+			return tools.ToolResult{}, writeErr
+		}
+		pack.Output = annotateSearchOutput(pack.Output,
+			"scout_failed: true",
+			"scout_note: Returning the deterministic file pack because the utility scout was unavailable. Use read_file on relevant lines before making final claims.",
+		)
+		pack.Truncated = true
+		return pack, nil
+	}
+	if err := r.writeUtilityModelResponseEvent("scout_files", ScoutFilesResult{
+		Provider:     scouted.Provider,
+		Model:        scouted.Model,
+		Usage:        scouted.Usage,
+		UsageSummary: scouted.UsageSummary,
+	}); err != nil {
+		return tools.ToolResult{}, err
+	}
+	if err := r.writeScoutFilesResultEvent(true, "", scouted); err != nil {
+		return tools.ToolResult{}, err
+	}
+	return tools.ToolResult{Success: true, Output: strings.TrimSpace(scouted.Output) + "\n", Truncated: true}, nil
 }
 
 func annotateSearchOutput(output string, headerLines ...string) string {
@@ -1246,18 +1355,78 @@ func (r *Runner) writeSearchRefineResultEvent(success bool, message string, resu
 	})
 }
 
-func (r *Runner) writeUtilityModelResponseEvent(result SearchRefineResult) error {
+func (r *Runner) writeScoutFilesEvent(args scoutFilesArgs, packBytes int, truncated bool) error {
 	if r == nil || r.Session == nil {
 		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":                "scout_files",
+		"session_id":          r.SessionID,
+		"question":            strings.TrimSpace(args.Question),
+		"path":                strings.TrimSpace(args.Path),
+		"file_glob":           strings.TrimSpace(args.FileGlob),
+		"max_files":           args.MaxFiles,
+		"max_lines_per_file":  args.MaxLinesPerFile,
+		"file_pack_bytes":     packBytes,
+		"file_pack_truncated": truncated,
+		"include_hidden":      args.IncludeHidden,
+	})
+}
+
+func (r *Runner) writeScoutFilesResultEvent(success bool, message string, result ScoutFilesResult) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":         "scout_files_result",
+		"session_id":   r.SessionID,
+		"success":      success,
+		"message":      strings.TrimSpace(message),
+		"provider":     strings.TrimSpace(result.Provider),
+		"model":        strings.TrimSpace(result.Model),
+		"output_bytes": len(result.Output),
+	})
+}
+
+type utilityModelEvent interface {
+	ProviderName() string
+	ModelName() string
+	UsagePayload() json.RawMessage
+	UsageSummaryPayload() lcrmodel.LLMUsage
+}
+
+func (r SearchRefineResult) ProviderName() string { return r.Provider }
+func (r SearchRefineResult) ModelName() string    { return r.Model }
+func (r SearchRefineResult) UsagePayload() json.RawMessage {
+	return r.Usage
+}
+func (r SearchRefineResult) UsageSummaryPayload() lcrmodel.LLMUsage {
+	return r.UsageSummary
+}
+func (r ScoutFilesResult) ProviderName() string { return r.Provider }
+func (r ScoutFilesResult) ModelName() string    { return r.Model }
+func (r ScoutFilesResult) UsagePayload() json.RawMessage {
+	return r.Usage
+}
+func (r ScoutFilesResult) UsageSummaryPayload() lcrmodel.LLMUsage {
+	return r.UsageSummary
+}
+
+func (r *Runner) writeUtilityModelResponseEvent(phase string, result utilityModelEvent) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	if strings.TrimSpace(phase) == "" {
+		phase = "search_refine"
 	}
 	event := session.Event{
 		"type":          "model_response",
 		"session_id":    r.SessionID,
-		"phase":         "search_refine",
-		"provider":      strings.TrimSpace(result.Provider),
-		"model":         strings.TrimSpace(result.Model),
-		"usage":         result.Usage,
-		"usage_summary": result.UsageSummary,
+		"phase":         phase,
+		"provider":      strings.TrimSpace(result.ProviderName()),
+		"model":         strings.TrimSpace(result.ModelName()),
+		"usage":         result.UsagePayload(),
+		"usage_summary": result.UsageSummaryPayload(),
 	}
 	return r.Session.Write(event)
 }

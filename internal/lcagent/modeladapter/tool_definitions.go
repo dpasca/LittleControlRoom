@@ -147,6 +147,26 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "scout_files",
+				Description: "Ask the configured utility/scout model to inspect a bounded pack of matching files and rank likely relevant files, line ranges, and next reads. Use this when a symbol name is unknown, broad literal search would be noisy, or a directory/glob is probably relevant but you need help routing attention. This is read-only and advisory; read_file must still verify evidence before final claims.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"question":           map[string]any{"type": "string", "description": "Natural-language question for the scout, for example 'Where is Enter handled for embedded LCAgent sessions?'"},
+						"path":               map[string]any{"type": "string", "description": "Workspace-relative directory or file to pack for scouting. Defaults to workspace root."},
+						"file_glob":          map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename, for example *.go or internal/tui/*.go."},
+						"max_files":          map[string]any{"type": "integer", "minimum": 1, "maximum": 40, "description": "Maximum files to include in the scout pack. Defaults to 12."},
+						"max_lines_per_file": map[string]any{"type": "integer", "minimum": 20, "maximum": opts.MaxReadLineLimit, "description": "Maximum leading lines to include for each file. Defaults to 120."},
+						"include_hidden":     map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories. Defaults to false; only enable when directly relevant."},
+					},
+					"required": []string{"question"},
+				},
+			},
+		},
 	}
 	if opts.WebSearchEnabled {
 		defs = append(defs, ToolDefinition{
