@@ -210,6 +210,25 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 	if input.Empty() {
 		return nil
 	}
+	s.mu.Lock()
+	if s.busy && s.stdin != nil {
+		stdin := s.stdin
+		s.mu.Unlock()
+		payload, err := json.Marshal(map[string]string{
+			"type":    "steer",
+			"message": input.TranscriptText(),
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(stdin, string(payload)); err != nil {
+			s.appendAsync(TranscriptError, "LCAgent steer failed: "+err.Error())
+			return err
+		}
+		s.appendAsync(TranscriptStatus, "Steer sent to LCAgent")
+		return nil
+	}
+	s.mu.Unlock()
 	return s.startRun(input.TranscriptText(), input.TranscriptDisplayText())
 }
 

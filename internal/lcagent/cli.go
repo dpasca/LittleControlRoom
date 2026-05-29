@@ -511,6 +511,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		broker := newStdioApprovalBroker(writer, sessionID, workspace.Root, os.Stdin)
 		runner.Approvals = broker
 		runner.Processes = broker
+		runner.SteerMessages = broker.steerMessages
 	}
 
 	var runErr error
@@ -525,7 +526,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		}
 		runErr = runner.Run(context.Background(), actions)
 	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
-		runErr = runOpenRouter(context.Background(), writer, runner, threadStore, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
+		runErr = runChatLoop(context.Background(), writer, runner, threadStore, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
 			Model:           model,
 			FinalModel:      finalModel,
 			EnvFile:         envFile,
@@ -562,7 +563,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -654,6 +655,20 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 	finalVerificationFeedbacks := 0
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
+		select {
+		case steerMsg := <-runner.SteerMessages:
+			if strings.TrimSpace(steerMsg) != "" {
+				if err := writer.Write(session.Event{
+					"type":       "user_message",
+					"session_id": runner.SessionID,
+					"message":    steerMsg,
+				}); err != nil {
+					return err
+				}
+				messages = append(messages, modeladapter.Message{Role: "user", Content: steerMsg})
+			}
+		default:
+		}
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{
 				"type":       "context_compacted",
@@ -864,7 +879,7 @@ func runOpenRouter(ctx context.Context, writer *session.Writer, runner script.Ru
 			return err
 		}
 	}
-	return finalizeOpenRouterAfterMaxTurns(ctx, writer, runner, threadStore, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)
+	return finalizeChatLoopAfterMaxTurns(ctx, writer, runner, threadStore, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)
 }
 
 func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (*modeladapter.Client, error) {
@@ -908,7 +923,7 @@ func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) st
 	return strings.TrimSpace(os.Getenv("OPENROUTER_FINAL_MODEL"))
 }
 
-func finalizeOpenRouterAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
+func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
 	maxTurns := client.MaxTurns()
 	filesChanged := runner.FilesTouched()
 	verification := runner.VerificationDetails()

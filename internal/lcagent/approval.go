@@ -38,6 +38,7 @@ type stdioApprovalBroker struct {
 	cwd              string
 	responses        <-chan approvalResponse
 	processResponses <-chan processResponse
+	steerMessages    <-chan string
 	nextID           int64
 }
 
@@ -55,19 +56,22 @@ func normalizeApprovalMode(raw string) (string, error) {
 func newStdioApprovalBroker(writer *session.Writer, sessionID, cwd string, input io.Reader) *stdioApprovalBroker {
 	responses := make(chan approvalResponse, 8)
 	processResponses := make(chan processResponse, 8)
-	go readStdioResponses(input, responses, processResponses)
+	steerMessages := make(chan string, 8)
+	go readStdioResponses(input, responses, processResponses, steerMessages)
 	return &stdioApprovalBroker{
 		writer:           writer,
 		sessionID:        strings.TrimSpace(sessionID),
 		cwd:              strings.TrimSpace(cwd),
 		responses:        responses,
 		processResponses: processResponses,
+		steerMessages:    steerMessages,
 	}
 }
 
-func readStdioResponses(input io.Reader, approvalResponses chan<- approvalResponse, processResponses chan<- processResponse) {
+func readStdioResponses(input io.Reader, approvalResponses chan<- approvalResponse, processResponses chan<- processResponse, steerMessages chan<- string) {
 	defer close(approvalResponses)
 	defer close(processResponses)
+	defer close(steerMessages)
 	if input == nil {
 		return
 	}
@@ -102,6 +106,16 @@ func readStdioResponses(input io.Reader, approvalResponses chan<- approvalRespon
 				continue
 			}
 			processResponses <- response
+		case "steer":
+			var response struct {
+				Message string `json:"message"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+				continue
+			}
+			if strings.TrimSpace(response.Message) != "" {
+				steerMessages <- strings.TrimSpace(response.Message)
+			}
 		}
 	}
 }

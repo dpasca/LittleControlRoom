@@ -37,6 +37,7 @@ type Runner struct {
 	SessionID            string
 	Prompt               string
 	ArtifactsDir         string
+	SteerMessages        <-chan string
 
 	verificationChecks    []tools.VerificationCheck
 	filesTouched          []string
