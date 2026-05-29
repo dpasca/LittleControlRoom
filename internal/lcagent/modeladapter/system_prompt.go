@@ -68,6 +68,8 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 			"For requests to start, launch, run, or keep a local app/server/watch process alive, call start_process first. Do not try a dev server or watcher with run_command before start_process.",
 			"Use start_process for long-running dev servers or watchers that should keep running after the tool returns. After start_process, use list_processes to report the managed process state, PID, URL/ports, and recent output; use stop_process only when the user asks to stop it.",
 			"Do not call stop_process before start_process just to launch or relaunch an app; start_process will report whether a managed process is already running.",
+			"If final_response leaves a managed process running, make the handoff explicit: say the process continues under Little Control Room after this turn ends, report the latest observed state, and do not promise that you will keep watching or notify the user later.",
+			"In user-facing final_response text, prefer natural phrases like \"ask me for a progress check\" over naming internal tools such as list_processes, unless the user specifically asks for the tool name.",
 		)
 	}
 	lines = append(lines,

@@ -243,7 +243,14 @@ func TestSystemPromptIncludesGenerousToolProfile(t *testing.T) {
 
 func TestSystemPromptIncludesManagedProcessGuidanceWhenEnabled(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{ManagedProcessesEnabled: true})
-	for _, want := range []string{"call start_process first", "list_processes", "stop_process"} {
+	for _, want := range []string{
+		"call start_process first",
+		"list_processes",
+		"stop_process",
+		"continues under Little Control Room after this turn ends",
+		"do not promise that you will keep watching",
+		"prefer natural phrases like \"ask me for a progress check\"",
+	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("managed-process prompt missing %q:\n%s", want, prompt)
 		}
