@@ -1684,6 +1684,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	label := embeddedProvider(snapshot).Label()
 
+	if msg.String() == "alt+up" {
+		return m.hideCodexSession()
+	}
+
 	if m.codexInputCopyDialog != nil {
 		return m.updateCodexInputCopyDialogMode(msg)
 	}
@@ -1695,7 +1699,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "f3":
 		return m.cycleCodexSession(1)
-	case "alt+up", "esc":
+	case "esc":
 		return m.hideCodexSession()
 	case "alt+[":
 		return m.cycleCodexSession(-1)

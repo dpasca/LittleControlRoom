@@ -16609,6 +16609,41 @@ func TestVisibleCodexAltUpHidesSession(t *testing.T) {
 	}
 }
 
+func TestVisibleClosedLCAgentAltUpHidesWithStaleInputSelection(t *testing.T) {
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider: codexapp.ProviderLCAgent,
+				Started:  true,
+				Closed:   true,
+				Status:   "Closed embedded LCAgent session after 1 hour of inactivity.",
+			},
+		},
+		codexInput:          newCodexTextarea(),
+		codexInputSelection: &codexInputSelectionState{},
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("alt+up hide should not queue a command")
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
+	}
+	if got.codexInputSelection != nil {
+		t.Fatalf("codex input selection should be cleared when hiding")
+	}
+	if got.status != "Embedded LCAgent session hidden." {
+		t.Fatalf("status = %q, want LCAgent hide notice", got.status)
+	}
+}
+
 func TestVisibleCodexEscHidesSession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
