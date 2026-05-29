@@ -2330,6 +2330,8 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
+	fixed := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
+	m.nowFn = func() time.Time { return fixed }
 	updated, _ := m.Update(HostNoticeMsg{
 		Content:        "Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation.",
 		AnnounceInChat: true,
@@ -2340,7 +2342,7 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 
 	rendered := got.renderTranscript(120)
 	stripped := ansi.Strip(rendered)
-	want := "Flow> Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation."
+	want := "14:30:00 Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation."
 	if !strings.Contains(stripped, want) {
 		t.Fatalf("rendered transcript missing compact handoff %q:\n%s", want, stripped)
 	}
@@ -2371,6 +2373,28 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 		if !strings.Contains(loadedRendered, want) {
 			t.Fatalf("loaded transcript missing %s highlight:\n%s", label, ansi.Strip(loadedRendered))
 		}
+	}
+}
+
+func TestModelTranscriptFlowDateSeparator(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.transcriptTab = bossTranscriptTabFlow
+	m.messages = []ChatMessage{
+		{Role: "assistant", Content: "First day message.", Kind: ChatMessageKindFlow, At: time.Date(2024, 6, 14, 23, 59, 0, 0, time.UTC)},
+		{Role: "assistant", Content: "Second day message.", Kind: ChatMessageKindFlow, At: time.Date(2024, 6, 15, 0, 1, 0, 0, time.UTC)},
+	}
+
+	rendered := ansi.Strip(m.renderTranscript(120))
+	if !strings.Contains(rendered, "23:59:00 First day message.") {
+		t.Fatalf("missing first message:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Saturday, June 15, 2024") {
+		t.Fatalf("missing date separator:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "00:01:00 Second day message.") {
+		t.Fatalf("missing second message:\n%s", rendered)
 	}
 }
 

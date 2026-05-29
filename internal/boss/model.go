@@ -1786,6 +1786,7 @@ func (m Model) renderTranscript(width int) string {
 	var blocks []string
 	projectHighlights := m.chatProjectHighlights()
 	activeTab := m.normalizedTranscriptTab()
+	var lastFlowDate time.Time
 	for _, message := range m.messages {
 		if activeTab == bossTranscriptTabChat && chatMessageIsFlow(message) {
 			continue
@@ -1794,6 +1795,13 @@ func (m Model) renderTranscript(width int) string {
 			continue
 		}
 		if activeTab == bossTranscriptTabFlow {
+			if !message.At.IsZero() {
+				msgDate := time.Date(message.At.Year(), message.At.Month(), message.At.Day(), 0, 0, 0, 0, message.At.Location())
+				if !lastFlowDate.IsZero() && !msgDate.Equal(lastFlowDate) {
+					blocks = append(blocks, bossMutedStyle.Render(fitLine(msgDate.Format("Monday, January 2, 2006"), width)))
+				}
+				lastFlowDate = msgDate
+			}
 			blocks = append(blocks, renderFlowNoticeMessage(message, width, projectHighlights))
 			continue
 		}
@@ -2074,7 +2082,11 @@ func renderAssistantChatMessage(message ChatMessage, width int, projectHighlight
 
 func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
 	highlights := handoffMessageHighlights(message.Content, message.Handoff)
-	return renderPrefixedMessageWithProjectHighlights(message.Content, "Flow> ", bossPanelText, bossToolCallStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
+	prefix := "Flow> "
+	if !message.At.IsZero() {
+		prefix = message.At.Format("15:04:05") + " "
+	}
+	return renderPrefixedMessageWithProjectHighlights(message.Content, prefix, bossPanelText, bossToolCallStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
 }
 
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
