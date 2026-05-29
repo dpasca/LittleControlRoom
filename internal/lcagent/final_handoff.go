@@ -391,13 +391,19 @@ func compactToolResultEntry(toolName, args, content string, outputLimit int) str
 	if strings.TrimSpace(result.Output) == "" {
 		return status
 	}
-	return status + "\noutput:\n" + indentBlock(compactToolOutput(toolName, result.Output, outputLimit))
+	return status + "\noutput:\n" + indentBlock(compactToolOutput(toolName, result, outputLimit))
 }
 
-func compactToolOutput(toolName, output string, limit int) string {
+func compactToolOutput(toolName string, result tools.ToolResult, limit int) string {
+	output := result.Output
 	output = strings.TrimSpace(strings.ReplaceAll(output, "\r\n", "\n"))
 	if output == "" {
 		return ""
+	}
+	if toolName == "run_command" {
+		if compacted, ok := compactCommandOutput(result, limit); ok {
+			return compacted
+		}
 	}
 	if len(output) <= limit {
 		return output
@@ -411,6 +417,237 @@ func compactToolOutput(toolName, output string, limit int) string {
 		}
 	}
 	return truncateMiddle(output, limit)
+}
+
+func compactCommandOutput(result tools.ToolResult, limit int) (string, bool) {
+	output := strings.TrimSpace(strings.ReplaceAll(result.Output, "\r\n", "\n"))
+	if output == "" {
+		return "", false
+	}
+	command := strings.TrimSpace(result.Command)
+	if commandLooksLikeGitStatus(command) {
+		return compactGitStatusOutput(result, limit), true
+	}
+	if !result.Truncated && !commandOutputHasNoisyPath(output) {
+		return "", false
+	}
+	var lines []string
+	lines = append(lines, "command output compacted")
+	if result.Truncated {
+		lines = append(lines, "truncated: true")
+	}
+	if artifact := strings.TrimSpace(result.ArtifactPath); artifact != "" {
+		lines = append(lines, "full_output: "+artifact)
+		lines = append(lines, "explore: tail -100 "+artifact)
+	}
+	if noisy := noisyPathSummary(output, 8); len(noisy) > 0 {
+		lines = append(lines, "noisy_paths_omitted:")
+		for _, path := range noisy {
+			lines = append(lines, "- "+path)
+		}
+	}
+	if head := compactCommandInterestingHead(output, 8); len(head) > 0 {
+		lines = append(lines, "sample:")
+		for _, line := range head {
+			lines = append(lines, "  "+line)
+		}
+	}
+	return truncateMiddle(strings.Join(lines, "\n"), limit), true
+}
+
+func commandLooksLikeGitStatus(command string) bool {
+	fields := strings.Fields(command)
+	return len(fields) >= 2 && fields[0] == "git" && fields[1] == "status"
+}
+
+func compactGitStatusOutput(result tools.ToolResult, limit int) string {
+	output := strings.TrimSpace(strings.ReplaceAll(result.Output, "\r\n", "\n"))
+	statusLines := gitStatusHeaderLines(output, 8)
+	roots, noisy := gitStatusPathSummaries(output, 16)
+	var lines []string
+	lines = append(lines, "git status output compacted")
+	if result.Truncated {
+		lines = append(lines, "truncated: true")
+	}
+	if artifact := strings.TrimSpace(result.ArtifactPath); artifact != "" {
+		lines = append(lines, "full_output: "+artifact)
+		lines = append(lines, "explore: tail -100 "+artifact)
+	}
+	if len(statusLines) > 0 {
+		lines = append(lines, "status:")
+		for _, line := range statusLines {
+			lines = append(lines, "  "+line)
+		}
+	}
+	if len(roots) > 0 {
+		lines = append(lines, "changed_or_untracked_roots:")
+		for _, root := range roots {
+			lines = append(lines, "- "+root)
+		}
+	}
+	if len(noisy) > 0 {
+		lines = append(lines, "noisy_subtrees_omitted:")
+		for _, root := range noisy {
+			lines = append(lines, "- "+root)
+		}
+	}
+	return truncateMiddle(strings.Join(lines, "\n"), limit)
+}
+
+func gitStatusHeaderLines(output string, maxLines int) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := gitStatusPathFromLine(line); ok {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "(") || strings.HasPrefix(trimmed, "--- output truncated") || strings.HasPrefix(trimmed, "Full output:") || strings.HasPrefix(trimmed, "Explore:") || strings.HasPrefix(trimmed, "[exit:") {
+			continue
+		}
+		lines = append(lines, trimmed)
+		if len(lines) >= maxLines {
+			break
+		}
+	}
+	return lines
+}
+
+func gitStatusPathSummaries(output string, limit int) ([]string, []string) {
+	rootsSeen := map[string]bool{}
+	noisySeen := map[string]bool{}
+	var roots []string
+	var noisy []string
+	for _, line := range strings.Split(output, "\n") {
+		path, ok := gitStatusPathFromLine(line)
+		if !ok {
+			continue
+		}
+		root, noisyRoot, isNoisy := compactPathRoot(path)
+		if isNoisy {
+			if !noisySeen[noisyRoot] && len(noisy) < limit {
+				noisySeen[noisyRoot] = true
+				noisy = append(noisy, noisyRoot)
+			}
+			root = parentPathRoot(noisyRoot)
+		}
+		if root != "" && !rootsSeen[root] && len(roots) < limit {
+			rootsSeen[root] = true
+			roots = append(roots, root)
+		}
+	}
+	return roots, noisy
+}
+
+func gitStatusPathFromLine(line string) (string, bool) {
+	raw := strings.TrimSpace(line)
+	if raw == "" || strings.HasPrefix(raw, "(") || strings.HasPrefix(raw, "On branch ") || strings.HasPrefix(raw, "Your branch ") {
+		return "", false
+	}
+	if strings.HasPrefix(raw, "?? ") || strings.HasPrefix(raw, "A  ") || strings.HasPrefix(raw, "M  ") || strings.HasPrefix(raw, "D  ") || strings.HasPrefix(raw, "R  ") || strings.HasPrefix(raw, "C  ") {
+		raw = strings.TrimSpace(raw[3:])
+	} else if strings.HasPrefix(line, "\t") {
+		raw = strings.TrimSpace(line)
+	} else {
+		return "", false
+	}
+	raw = strings.Trim(raw, `"`)
+	if raw == "" || strings.HasSuffix(raw, ":") {
+		return "", false
+	}
+	return filepathSlash(raw), true
+}
+
+func compactPathRoot(path string) (root, noisyRoot string, noisy bool) {
+	path = filepathSlash(path)
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		if noisyPathSegment(part) {
+			rootEnd := i
+			if rootEnd < 1 {
+				rootEnd = 1
+			}
+			return joinPathParts(parts[:rootEnd]), joinPathParts(parts[:i+1]) + "/", true
+		}
+	}
+	if len(parts) >= 2 {
+		return joinPathParts(parts[:2]) + "/", "", false
+	}
+	if len(parts) == 1 {
+		return parts[0], "", false
+	}
+	return "", "", false
+}
+
+func parentPathRoot(path string) string {
+	path = strings.TrimSuffix(filepathSlash(path), "/")
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) <= 1 {
+		return path
+	}
+	return joinPathParts(parts[:len(parts)-1]) + "/"
+}
+
+func commandOutputHasNoisyPath(output string) bool {
+	return len(noisyPathSummary(output, 1)) > 0
+}
+
+func noisyPathSummary(output string, limit int) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		for _, field := range strings.Fields(line) {
+			_, noisyRoot, noisy := compactPathRoot(strings.Trim(field, "`'\",:;()"))
+			if !noisy {
+				continue
+			}
+			if !seen[noisyRoot] {
+				seen[noisyRoot] = true
+				out = append(out, noisyRoot)
+				if len(out) >= limit {
+					return out
+				}
+			}
+		}
+	}
+	return out
+}
+
+func compactCommandInterestingHead(output string, limit int) []string {
+	var out []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "/node_modules/") || strings.Contains(line, "/.git/") || strings.Contains(line, "/vendor/") {
+			continue
+		}
+		out = append(out, line)
+		if len(out) >= limit {
+			return out
+		}
+	}
+	return out
+}
+
+func noisyPathSegment(segment string) bool {
+	switch strings.TrimSpace(segment) {
+	case ".git", ".hg", ".svn", ".venv", "venv", "node_modules", "vendor", "dist", "build", "coverage", ".next", "out", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache":
+		return true
+	default:
+		return false
+	}
+}
+
+func filepathSlash(path string) string {
+	return strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
+}
+
+func joinPathParts(parts []string) string {
+	return strings.Join(parts, "/")
 }
 
 func compactRawJSON(raw json.RawMessage, limit int) string {

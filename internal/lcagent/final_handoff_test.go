@@ -163,6 +163,44 @@ func TestCompactOpenRouterLoopMessagesIncludesReadLedger(t *testing.T) {
 	}
 }
 
+func TestCompactRunCommandGitStatusOmitsNoisyUntrackedSubtrees(t *testing.T) {
+	output := strings.Join([]string{
+		"On branch master",
+		"Your branch is up to date with 'origin/master'.",
+		"",
+		"Untracked files:",
+		"  (use \"git add <file>...\" to include in what will be committed)",
+		"\tTools/render_sprites/README.md",
+		"\tTools/render_sprites/node_modules/chromium-bidi/lib/cjs/bidiMapper/modules/cdp/CdpTarget.d.ts",
+		"\tTools/render_sprites/node_modules/chromium-bidi/lib/cjs/bidiMapper/modules/cdp/CdpTarget.js",
+		"\t_inspect_sprites/frame.png",
+		"",
+		"--- output truncated (296820 bytes) ---",
+		"Full output: /tmp/command-output.txt",
+		"Explore: tail -100 /tmp/command-output.txt",
+		"[exit:0 | 199ms]",
+	}, "\n")
+	resultJSON, err := json.Marshal(tools.ToolResult{
+		Success:      true,
+		Output:       output,
+		Command:      "git status --untracked-files=all",
+		Truncated:    true,
+		ArtifactPath: "/tmp/command-output.txt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	compacted := compactToolResultEntry("run_command", `{"argv":["git","status","--untracked-files=all"]}`, string(resultJSON), 1400)
+	for _, want := range []string{"git status output compacted", "changed_or_untracked_roots:", "- Tools/render_sprites/", "- _inspect_sprites/", "noisy_subtrees_omitted:", "- Tools/render_sprites/node_modules/", "full_output: /tmp/command-output.txt"} {
+		if !strings.Contains(compacted, want) {
+			t.Fatalf("compacted status missing %q:\n%s", want, compacted)
+		}
+	}
+	if strings.Contains(compacted, "chromium-bidi") || strings.Contains(compacted, "CdpTarget") {
+		t.Fatalf("compacted status kept noisy node_modules detail:\n%s", compacted)
+	}
+}
+
 func TestLargeContextProfileDefersLoopCompaction(t *testing.T) {
 	var output strings.Builder
 	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
