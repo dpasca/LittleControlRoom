@@ -289,6 +289,48 @@ type planArgs struct {
 	Items []tools.PlanItem `json:"items"`
 }
 
+func (p *planArgs) UnmarshalJSON(raw []byte) error {
+	var args struct {
+		Items *[]tools.PlanItem `json:"items"`
+		Todos *[]tools.PlanItem `json:"todos"`
+		Plan  *[]tools.PlanItem `json:"plan"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values")
+		}
+		return err
+	}
+
+	var provided []string
+	if args.Items != nil {
+		provided = append(provided, "items")
+		p.Items = *args.Items
+	}
+	if args.Todos != nil {
+		provided = append(provided, "todos")
+		p.Items = *args.Todos
+	}
+	if args.Plan != nil {
+		provided = append(provided, "plan")
+		p.Items = *args.Plan
+	}
+	switch len(provided) {
+	case 0:
+		return fmt.Errorf(`missing plan items; expected {"items":[{"step":"Inspect","status":"in_progress"}]}`)
+	case 1:
+		return nil
+	default:
+		return fmt.Errorf(`provide only one of "items", "todos", or "plan" for update_plan; got %s`, strings.Join(provided, ", "))
+	}
+}
+
 type readFileArgs struct {
 	Path   string `json:"path"`
 	Offset int    `json:"offset"`
@@ -368,10 +410,24 @@ func decodeToolArgs(tool string, raw json.RawMessage, dst any) (tools.ToolResult
 	if err := decodeStrictJSON(raw, dst); err != nil {
 		return tools.ToolResult{
 			Success: false,
-			Error:   fmt.Sprintf("invalid %s arguments: %v", firstNonEmpty(tool, "tool"), err),
+			Error:   fmt.Sprintf("invalid %s arguments: %v", firstNonEmpty(tool, "tool"), toolArgumentErrorHint(tool, err)),
 		}, false
 	}
 	return tools.ToolResult{}, true
+}
+
+func toolArgumentErrorHint(tool string, err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch tool {
+	case "update_plan":
+		if strings.Contains(msg, "unknown field") || strings.Contains(msg, "missing plan items") {
+			return msg + `; expected {"items":[{"step":"Inspect","status":"pending|in_progress|completed"}]}; legacy aliases "todos" and "plan" are also accepted`
+		}
+	}
+	return msg
 }
 
 func decodeStrictJSON(raw json.RawMessage, dst any) error {

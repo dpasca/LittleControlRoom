@@ -699,6 +699,66 @@ func TestRunnerRejectsUnknownToolArgument(t *testing.T) {
 	}
 }
 
+func TestRunnerUpdatePlanAcceptsLegacyAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{name: "todos", args: `{"todos":[{"step":"Inspect","status":"completed"},{"step":"Patch","status":"in_progress"}]}`},
+		{name: "plan", args: `{"plan":[{"step":"Inspect","status":"completed"},{"step":"Patch","status":"in_progress"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stream bytes.Buffer
+			writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.Close()
+			runner := Runner{Session: writer, SessionID: sessionID}
+			result, err := runner.RunTool(context.Background(), Action{
+				Type: "tool_call",
+				Tool: "update_plan",
+				Args: raw(tc.args),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Success {
+				t.Fatalf("result = %#v", result)
+			}
+			text := stream.String()
+			for _, want := range []string{`"type":"plan_update"`, `"step":"Patch"`, `"status":"in_progress"`} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("stream missing %s:\n%s", want, text)
+				}
+			}
+		})
+	}
+}
+
+func TestRunnerUpdatePlanInvalidArgsIncludeExpectedShape(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{Session: writer, SessionID: sessionID}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_plan",
+		Args: raw(`{"surprise":true}`),
+	})
+	if err == nil {
+		t.Fatal("RunTool succeeded, want invalid argument failure")
+	}
+	for _, want := range []string{`unknown field "surprise"`, `expected {"items":[{"step":"Inspect"`, `legacy aliases "todos" and "plan" are also accepted`} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("error %q missing %q", result.Error, want)
+		}
+	}
+}
+
 func TestDecodeFinalResponseArgsRejectsUnknownField(t *testing.T) {
 	_, err := DecodeFinalResponseArgs(raw(`{"summary":"done","files_changed":[],"verification":[],"extra":true}`))
 	if err == nil || !strings.Contains(err.Error(), `unknown field "extra"`) {

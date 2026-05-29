@@ -80,6 +80,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["update_plan"], "continue with the in_progress step") {
 		t.Fatalf("update_plan description should keep plans tied to execution: %q", descriptions["update_plan"])
 	}
+	if !strings.Contains(descriptions["update_plan"], `{"items":[{"step":"Inspect files","status":"completed"}`) {
+		t.Fatalf("update_plan description should include a concrete args example: %q", descriptions["update_plan"])
+	}
 	if names["web_search"] {
 		t.Fatalf("Tools() should not expose web_search unless it is enabled")
 	}
