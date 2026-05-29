@@ -53,8 +53,8 @@ func TestCompactOpenRouterFinalMessagesSummarizesToolOutput(t *testing.T) {
 
 func TestOpenRouterContextProfileBudgets(t *testing.T) {
 	balanced := openRouterContextOptionsForProfile(openRouterContextProfileBalanced)
-	if balanced.LoopCompactionCharThreshold != 200000 || balanced.LoopCompactionTranscriptChars != 80000 {
-		t.Fatalf("balanced loop budget = threshold %d transcript %d, want 200000/80000", balanced.LoopCompactionCharThreshold, balanced.LoopCompactionTranscriptChars)
+	if balanced.LoopCompactionCharThreshold != 200000 || balanced.LoopCompactionTranscriptChars != 50000 {
+		t.Fatalf("balanced loop budget = threshold %d transcript %d, want 200000/50000", balanced.LoopCompactionCharThreshold, balanced.LoopCompactionTranscriptChars)
 	}
 	if balanced.FinalHandoffTranscriptMaxChars != 80000 {
 		t.Fatalf("balanced final handoff transcript budget = %d, want 80000", balanced.FinalHandoffTranscriptMaxChars)
