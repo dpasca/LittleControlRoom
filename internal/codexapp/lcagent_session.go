@@ -803,9 +803,17 @@ func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEf
 func (s *lcagentSession) Interrupt() error {
 	s.mu.Lock()
 	cancel := s.cancel
+	cmd := s.cmd
 	s.mu.Unlock()
+	return cancelLCAgentRun(cancel, cmd)
+}
+
+func cancelLCAgentRun(cancel context.CancelFunc, cmd *exec.Cmd) error {
 	if cancel != nil {
 		cancel()
+	}
+	if cmd != nil {
+		return terminateAppServerCommand(cmd)
 	}
 	return nil
 }
@@ -885,14 +893,13 @@ func (s *lcagentSession) Close() error {
 	s.closed = true
 	s.status = "Closed"
 	cancel := s.cancel
+	cmd := s.cmd
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
-	}
+	err := cancelLCAgentRun(cancel, cmd)
 	if s.notify != nil {
 		s.notify()
 	}
-	return nil
+	return err
 }
 
 func (s *lcagentSession) CloseDueToInactivity() error {
@@ -910,15 +917,14 @@ func (s *lcagentSession) CloseDueToInactivity() error {
 	s.status = lcagentIdleShutdownNotice
 	s.appendEntryLocked(TranscriptSystem, lcagentIdleShutdownNotice)
 	cancel := s.cancel
+	cmd := s.cmd
 	s.mu.Unlock()
 
-	if cancel != nil {
-		cancel()
-	}
+	err := cancelLCAgentRun(cancel, cmd)
 	if s.notify != nil {
 		s.notify()
 	}
-	return nil
+	return err
 }
 
 func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
@@ -1084,6 +1090,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	}
 	args = append(args, prompt)
 	cmd := exec.CommandContext(ctx, spec.Command, args...)
+	configureAppServerCommand(cmd)
 	cmd.Dir = spec.Dir
 	cmd.Env = os.Environ()
 	if providerAPIKeyName != "" && providerAPIKey != "" {
