@@ -84,6 +84,27 @@ func TestHydrateResumedThreadBuildsTranscript(t *testing.T) {
 	}
 }
 
+func TestCloseExitChKeepsCodexHomeOverlayForResumedSkillPaths(t *testing.T) {
+	overlay := filepath.Join(t.TempDir(), "lcroom-codex-home-test")
+	if err := os.MkdirAll(filepath.Join(overlay, "skills", "playwright"), 0o700); err != nil {
+		t.Fatalf("mkdir overlay: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(overlay, "skills", "playwright", "SKILL.md"), []byte("shadow skill"), 0o644); err != nil {
+		t.Fatalf("write shadow skill: %v", err)
+	}
+
+	s := &appServerSession{
+		codexHomeOverlay: overlay,
+		exitCh:           make(chan struct{}),
+	}
+
+	s.closeExitCh()
+
+	if _, err := os.Stat(filepath.Join(overlay, "skills", "playwright", "SKILL.md")); err != nil {
+		t.Fatalf("expected overlay skill to remain after session exit: %v", err)
+	}
+}
+
 func TestHydrateResumedThreadMaterializesGeneratedImages(t *testing.T) {
 	dataDir := t.TempDir()
 	imageBytes := mustGeneratedImageTestPNG(t)

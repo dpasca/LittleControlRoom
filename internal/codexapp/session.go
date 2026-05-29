@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -2788,9 +2787,6 @@ func (s *appServerSession) closeExitCh() {
 		return
 	}
 	s.exitOnce.Do(func() {
-		if strings.TrimSpace(s.codexHomeOverlay) != "" {
-			_ = os.RemoveAll(s.codexHomeOverlay)
-		}
 		if s.exitCh != nil {
 			close(s.exitCh)
 		}

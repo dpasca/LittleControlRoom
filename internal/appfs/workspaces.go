@@ -13,6 +13,7 @@ const internalWorkspaceDirName = "internal-workspaces"
 
 var persistentWorkspacePrefixes = []string{
 	"lcroom-agent-task-",
+	"lcroom-codex-home-",
 }
 
 var reservedWorkspacePrefixes = []string{
