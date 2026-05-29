@@ -1717,7 +1717,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = label + " is compacting conversation history. Wait for it to finish or hide it with Alt+Up."
 			return m, nil
 		}
-		if codexSnapshotCanSteer(snapshot) {
+		if codexSnapshotCanInterruptActiveTurn(snapshot) {
 			m.status = "Interrupting " + label + " turn..."
 			return m, m.interruptVisibleCodexCmd()
 		}
@@ -1986,6 +1986,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
 			m.status = label + " looks stuck or disconnected. Interrupt the current turn with ctrl+c or use /reconnect before sending another prompt."
+			return m, refreshCmd
+		}
+		if snapshot.Busy && !codexSnapshotCanSubmitBusyInput(snapshot) {
+			m.status = label + " is already running. Wait for it to finish before sending another prompt."
 			return m, refreshCmd
 		}
 		m.clearCodexDraft(m.codexVisibleProject)
@@ -4575,6 +4579,13 @@ func codexSnapshotNeedsSubmitRefresh(snapshot codexapp.Snapshot) bool {
 }
 
 func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
+	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
+		return false
+	}
+	return codexSnapshotCanInterruptActiveTurn(snapshot)
+}
+
+func codexSnapshotCanInterruptActiveTurn(snapshot codexapp.Snapshot) bool {
 	if codexSnapshotGoalPausesOnPrompt(snapshot) {
 		return false
 	}
@@ -4584,6 +4595,16 @@ func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
 	default:
 		return false
 	}
+}
+
+func codexSnapshotCanSubmitBusyInput(snapshot codexapp.Snapshot) bool {
+	if !snapshot.Busy {
+		return true
+	}
+	if snapshot.BusyExternal {
+		return false
+	}
+	return embeddedProvider(snapshot) != codexapp.ProviderLCAgent
 }
 
 func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {

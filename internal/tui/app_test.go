@@ -10062,12 +10062,12 @@ func TestVisibleCodexSlashModelSkipsReasoningSelectionWhenUnsupported(t *testing
 		},
 		models: []codexapp.ModelOption{
 			{
-				ID:          "kimi-k2.6",
-				Model:       "kimi-k2.6",
+				ID:            "kimi-k2.6",
+				Model:         "kimi-k2.6",
 				ModelProvider: "moonshot",
-				DisplayName: "Balanced: Kimi K2.6",
-				Description: "Direct Moonshot/Kimi coding route.",
-				IsDefault:   true,
+				DisplayName:   "Balanced: Kimi K2.6",
+				Description:   "Direct Moonshot/Kimi coding route.",
+				IsDefault:     true,
 			},
 		},
 	}
@@ -16304,6 +16304,59 @@ func TestVisibleCodexCtrlCInterruptsStalledBusySession(t *testing.T) {
 	}
 }
 
+func TestVisibleLCAgentCtrlCInterruptsBusySession(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+			Status:   "LCAgent is working...",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+c should interrupt a busy LCAgent session")
+	}
+	if got.status != "Interrupting LCAgent turn..." {
+		t.Fatalf("status = %q, want LCAgent interrupt notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("interrupt action error = %v, want nil", action.err)
+	}
+	if !session.interrupted {
+		t.Fatalf("session should be interrupted")
+	}
+}
+
 func TestVisibleCodexEnterDoesNotSteerExternalBusySession(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -16352,6 +16405,56 @@ func TestVisibleCodexEnterDoesNotSteerExternalBusySession(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(got.status), "another process") {
 		t.Fatalf("status = %q, want clear busy-elsewhere message", got.status)
+	}
+}
+
+func TestVisibleLCAgentEnterDoesNotSubmitWhileBusy(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+			Status:   "LCAgent is working...",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderLCAgent,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("please continue")
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("enter should not submit to a busy LCAgent session")
+	}
+	if len(session.submissions) != 0 {
+		t.Fatalf("submissions = %d, want 0", len(session.submissions))
+	}
+	if got.codexInput.Value() != "please continue" {
+		t.Fatalf("composer = %q, want draft preserved", got.codexInput.Value())
+	}
+	if !strings.Contains(got.status, "LCAgent is already running") {
+		t.Fatalf("status = %q, want busy LCAgent guidance", got.status)
 	}
 }
 
