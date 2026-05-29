@@ -1162,11 +1162,21 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		worktreeKind := old.WorktreeKind
 		worktreeParentBranch := old.WorktreeParentBranch
 		worktreeMergeStatus := old.WorktreeMergeStatus
+		inferredMissingLinkedWorktree := false
 		if presentOnDisk && !isGitRepo {
 			worktreeRootPath = ""
 			worktreeKind = model.WorktreeKindNone
 			worktreeParentBranch = ""
 			worktreeMergeStatus = model.WorktreeMergeStatus("")
+		} else if !presentOnDisk {
+			if worktreeKind == model.WorktreeKindNone || strings.TrimSpace(worktreeRootPath) == "" {
+				if inferredRootPath, ok := inferMissingLinkedWorktreeRoot(path); ok {
+					worktreeRootPath = inferredRootPath
+					worktreeKind = model.WorktreeKindLinked
+					worktreeMergeStatus = model.WorktreeMergeStatus("")
+					inferredMissingLinkedWorktree = true
+				}
+			}
 		}
 		repoBranch := ""
 		repoDirty := false
@@ -1202,10 +1212,19 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			staleLinkedWorktree = true
 			forgotten = true
 		}
+		if inferredMissingLinkedWorktree {
+			forgotten = true
+		}
 		if presentOnDisk && forgotten && scope.Allows(path) && !staleLinkedWorktree {
 			forgotten = false
 		}
 		if forgotten && !presentOnDisk {
+			if inferredMissingLinkedWorktree {
+				if err := s.store.SetProjectWorktreeInfo(ctx, path, worktreeRootPath, worktreeKind); err != nil {
+					unlockProjectState()
+					return ScanReport{}, fmt.Errorf("record inferred missing worktree info: %w", err)
+				}
+			}
 			if err := s.store.SetForgotten(ctx, path, true); err != nil {
 				unlockProjectState()
 				return ScanReport{}, fmt.Errorf("mark forgotten worktree: %w", err)
@@ -1568,6 +1587,27 @@ func liveLinkedWorktreeMissing(livePathsByRoot map[string]map[string]struct{}, r
 	}
 	_, ok := livePaths[projectPath]
 	return !ok
+}
+
+func inferMissingLinkedWorktreeRoot(projectPath string) (string, bool) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." || projectPathExists(projectPath) {
+		return "", false
+	}
+	dir := filepath.Dir(projectPath)
+	name := filepath.Base(projectPath)
+	searchUntil := len(name)
+	for {
+		idx := strings.LastIndex(name[:searchUntil], "--")
+		if idx <= 0 {
+			return "", false
+		}
+		candidate := filepath.Clean(filepath.Join(dir, name[:idx]))
+		if candidate != projectPath && projectPathExists(candidate) && projectIsGitRepo(candidate) {
+			return candidate, true
+		}
+		searchUntil = idx
+	}
 }
 
 func (s *Service) staleLinkedWorktreeOnDisk(ctx context.Context, rootPath string, kind model.WorktreeKind, projectPath string) bool {

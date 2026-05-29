@@ -4663,6 +4663,11 @@ func (s *Store) SetWorktreeOriginTodoID(ctx context.Context, path string, todoID
 	return err
 }
 
+func (s *Store) SetProjectWorktreeInfo(ctx context.Context, path, rootPath string, kind model.WorktreeKind) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET worktree_root_path = ?, worktree_kind = ?, worktree_merge_status = '', updated_at = ? WHERE path = ?`, strings.TrimSpace(rootPath), string(kind), time.Now().Unix(), path)
+	return err
+}
+
 func (s *Store) SetForgotten(ctx context.Context, path string, forgotten bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET forgotten = ?, updated_at = ? WHERE path = ?`, boolToInt(forgotten), time.Now().Unix(), path)
 	return err

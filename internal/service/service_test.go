@@ -3562,6 +3562,82 @@ func TestScanOnceMarksPrunedLinkedWorktreeAsForgotten(t *testing.T) {
 	}
 }
 
+func TestScanOnceForgetsMissingLinkedWorktreeWithLostMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	worktreePath := filepath.Join(root, "repo--old-task")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, state := range []model.ProjectState{
+		{
+			Path:          projectPath,
+			Name:          "repo",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+			InScope:       true,
+			UpdatedAt:     now,
+		},
+		{
+			Path:          worktreePath,
+			Name:          "repo--old-task",
+			Status:        model.StatusIdle,
+			PresentOnDisk: false,
+			Forgotten:     false,
+			InScope:       true,
+			UpdatedAt:     now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("seed project state %s: %v", state.Path, err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("ScanOnce() error = %v", err)
+	}
+	for _, state := range report.States {
+		if state.Path == worktreePath {
+			t.Fatalf("missing inferred worktree should be hidden from scan states, got %#v", report.States)
+		}
+	}
+
+	detail, err := st.GetProjectDetail(ctx, worktreePath, 5)
+	if err != nil {
+		t.Fatalf("get inferred missing worktree detail: %v", err)
+	}
+	if !detail.Summary.Forgotten {
+		t.Fatalf("expected inferred missing worktree to be marked forgotten: %#v", detail.Summary)
+	}
+	if detail.Summary.PresentOnDisk {
+		t.Fatalf("expected inferred missing worktree to remain missing on disk: %#v", detail.Summary)
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked || detail.Summary.WorktreeRootPath != projectPath {
+		t.Fatalf("expected inferred worktree metadata root=%s kind=%s, got root=%s kind=%s", projectPath, model.WorktreeKindLinked, detail.Summary.WorktreeRootPath, detail.Summary.WorktreeKind)
+	}
+
+	visibleProjects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list visible projects: %v", err)
+	}
+	if len(visibleProjects) != 1 || visibleProjects[0].Path != projectPath {
+		t.Fatalf("visible projects after inferred missing worktree cleanup = %#v, want only root", visibleProjects)
+	}
+}
+
 func TestScanOnceClearsTodoWorkSessionForPrunedLinkedWorktree(t *testing.T) {
 	t.Parallel()
 
