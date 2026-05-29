@@ -19,6 +19,7 @@ const (
 	KindReconnect   Kind = "reconnect"
 	KindCompact     Kind = "compact"
 	KindReview      Kind = "review"
+	KindDevLCReview Kind = "dev-lcreview"
 	KindPermissions Kind = "permissions"
 	KindBoss        Kind = "boss"
 	KindSkills      Kind = "skills"
@@ -63,6 +64,7 @@ var specs = []Spec{
 	{Name: "reconnect", Usage: "/reconnect", Summary: "Restart the embedded provider helper and reconnect to the current session"},
 	{Name: "compact", Usage: "/compact", Summary: "Compact conversation history to free up context"},
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
+	{Name: "dev-lcreview", Usage: "/dev-lcreview", Summary: "Add an LCAgent trace-quality review TODO to the Little Control Room project", Hidden: true},
 	{Name: "permissions", Usage: "/permissions [off|low|medium]", Summary: "Show or change LCAgent permission level for this session"},
 	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
@@ -143,6 +145,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/review",
 			Display: "/review",
 			Summary: "Ask embedded Codex to review uncommitted changes",
+		}}
+	case "dev-lcreview":
+		return []Suggestion{{
+			Insert:  "/dev-lcreview",
+			Display: "/dev-lcreview",
+			Summary: "Add an LCAgent trace-quality review TODO to the Little Control Room project",
 		}}
 	case "permissions", "permission", "perms":
 		argPrefix := ""
@@ -348,6 +356,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindReview,
 			Canonical: "/review",
+		}, nil
+	case "dev-lcreview":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /dev-lcreview")
+		}
+		return Invocation{
+			Kind:      KindDevLCReview,
+			Canonical: "/dev-lcreview",
 		}, nil
 	case "permissions", "permission", "perms":
 		level := strings.ToLower(strings.TrimSpace(rawArgs))

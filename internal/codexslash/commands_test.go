@@ -44,6 +44,20 @@ func TestSuggestionsIncludeReviewCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeDevLCReviewCommandWhenPrefixed(t *testing.T) {
+	suggestions := Suggestions("/dev")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/dev-lcreview" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/dev) should include /dev-lcreview: %#v", suggestions)
+	}
+}
+
 func TestSuggestionsIncludeBossCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false
@@ -172,6 +186,19 @@ func TestParseReviewCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/review" {
 		t.Fatalf("Parse(/review) canonical = %q, want /review", inv.Canonical)
+	}
+}
+
+func TestParseDevLCReviewCommand(t *testing.T) {
+	inv, err := Parse("/dev-lcreview")
+	if err != nil {
+		t.Fatalf("Parse(/dev-lcreview) error = %v", err)
+	}
+	if inv.Kind != KindDevLCReview {
+		t.Fatalf("Parse(/dev-lcreview) kind = %q, want %q", inv.Kind, KindDevLCReview)
+	}
+	if inv.Canonical != "/dev-lcreview" {
+		t.Fatalf("Parse(/dev-lcreview) canonical = %q, want /dev-lcreview", inv.Canonical)
 	}
 }
 

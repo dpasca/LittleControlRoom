@@ -1900,6 +1900,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindReview:
 				m.status = "Starting embedded " + label + " review..."
 				return m, m.reviewVisibleCodexSessionCmd()
+			case codexslash.KindDevLCReview:
+				if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+					m.status = "/dev-lcreview is only available for embedded LCAgent sessions"
+					return m, nil
+				}
+				m.status = "Adding LCAgent review TODO..."
+				return m, m.addDevLCAgentReviewTodoCmd(snapshot)
 			case codexslash.KindPermissions:
 				if strings.TrimSpace(inv.PermissionLevel) == "" {
 					m.status = "Reading embedded " + label + " permissions..."
