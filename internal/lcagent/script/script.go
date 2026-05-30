@@ -100,6 +100,7 @@ type VerificationFeedback struct {
 
 type FinalResponseAudit struct {
 	Outcome            string `json:"outcome"`
+	FinalOutcome       string `json:"final_outcome,omitempty"`
 	VerificationStatus string `json:"verification_status,omitempty"`
 	Message            string `json:"message"`
 	Blocking           bool   `json:"blocking,omitempty"`
@@ -118,6 +119,7 @@ type Action struct {
 	Tool         string          `json:"tool,omitempty"`
 	Args         json.RawMessage `json:"args,omitempty"`
 	Summary      string          `json:"summary,omitempty"`
+	Outcome      string          `json:"outcome,omitempty"`
 	FilesChanged []string        `json:"files_changed,omitempty"`
 	Verification []string        `json:"verification,omitempty"`
 }
@@ -131,6 +133,7 @@ type replaceTextArgs struct {
 
 type finalResponseArgs struct {
 	Summary      string   `json:"summary"`
+	Outcome      string   `json:"outcome"`
 	FilesChanged []string `json:"files_changed"`
 	Verification []string `json:"verification"`
 }
@@ -197,6 +200,7 @@ func (r *Runner) VerificationFeedbackForFinal(action Action) (VerificationFeedba
 func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	action.FilesChanged = cleanStringList(action.FilesChanged)
 	action.Verification = cleanStringList(action.Verification)
+	finalOutcome := normalizeFinalResponseOutcome(action.Outcome)
 	var verificationChecks []tools.VerificationCheck
 	toolFailures := 0
 	if r != nil {
@@ -206,6 +210,7 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, verificationChecks)
 	audit := FinalResponseAudit{
 		Outcome:            "pass",
+		FinalOutcome:       finalOutcome,
 		VerificationStatus: verificationStatus,
 		Message:            "Final response audit passed.",
 		ToolFailures:       toolFailures,
@@ -219,6 +224,11 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	if verificationStatus == "failed" {
 		audit.Outcome = "warn"
 		audit.Message = "Final response audit warning: verification evidence did not pass. The final response must present this as failed, timed out, denied, or blocked rather than completed. " + verificationMessage
+		if finalOutcome == "completed" {
+			audit.Outcome = "block"
+			audit.Blocking = true
+			audit.Message = "final_response outcome was completed, but verification evidence did not pass. Set outcome to failed, blocked, or partial and explain the failed, timed-out, or denied verification before calling final_response again. " + verificationMessage
+		}
 		return audit
 	}
 	if toolFailures > 0 {
@@ -226,6 +236,15 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		audit.Message = fmt.Sprintf("Final response audit warning: %d tool failure(s) occurred in this turn; the final response must not imply failed actions succeeded.", toolFailures)
 	}
 	return audit
+}
+
+func normalizeFinalResponseOutcome(outcome string) string {
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "completed", "blocked", "failed", "partial":
+		return strings.ToLower(strings.TrimSpace(outcome))
+	default:
+		return "unknown"
+	}
 }
 
 func (a FinalResponseAudit) VerificationFeedback() (VerificationFeedback, bool) {
@@ -460,6 +479,7 @@ func DecodeFinalResponseArgs(raw json.RawMessage) (Action, error) {
 	return Action{
 		Type:         "final_response",
 		Summary:      args.Summary,
+		Outcome:      args.Outcome,
 		FilesChanged: args.FilesChanged,
 		Verification: args.Verification,
 	}, nil
@@ -1592,6 +1612,7 @@ func formatLoadedSkill(loaded skillcatalog.LoadedSkill) string {
 func (r *Runner) Final(action Action) error {
 	action.FilesChanged = cleanStringList(action.FilesChanged)
 	action.Verification = cleanStringList(action.Verification)
+	finalOutcome := normalizeFinalResponseOutcome(action.Outcome)
 	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, r.verificationChecks)
 	if err := r.WriteFinalResponseAudit(r.FinalResponseAudit(action)); err != nil {
 		return err
@@ -1611,6 +1632,7 @@ func (r *Runner) Final(action Action) error {
 		"type":          "assistant_message",
 		"session_id":    r.SessionID,
 		"message":       action.Summary,
+		"final_outcome": finalOutcome,
 		"files_changed": action.FilesChanged,
 		"verification":  action.Verification,
 	}); err != nil {
@@ -1620,6 +1642,7 @@ func (r *Runner) Final(action Action) error {
 		"type":                "turn_complete",
 		"session_id":          r.SessionID,
 		"summary":             action.Summary,
+		"final_outcome":       finalOutcome,
 		"files_changed":       action.FilesChanged,
 		"verification":        action.Verification,
 		"verification_status": verificationStatus,
@@ -1636,6 +1659,7 @@ func finalResponseAuditEvent(sessionID string, audit FinalResponseAudit) session
 		"type":                "final_response_audit",
 		"session_id":          sessionID,
 		"outcome":             outcome,
+		"final_outcome":       audit.FinalOutcome,
 		"verification_status": strings.TrimSpace(audit.VerificationStatus),
 		"message":             strings.TrimSpace(audit.Message),
 		"blocking":            audit.Blocking,

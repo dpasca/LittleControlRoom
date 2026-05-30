@@ -127,8 +127,10 @@ Add a lightweight audit boundary for final responses on operational tasks.
 Current status:
 
 - A deterministic audit event exists for every accepted final response.
+- `final_response` now carries structured outcome metadata: `completed`, `blocked`, `failed`, or `partial`.
 - The audit blocks missing actual verification for changed files in live model loops.
-- The audit warns, but does not block, when prior verification evidence failed, timed out, or was denied. This avoids parsing prose to decide whether the final response honestly reported the failure.
+- The audit blocks a structured `completed` final response when prior verification evidence failed, timed out, or was denied.
+- The audit warns, but does not block, when failed evidence is paired with `blocked`, `failed`, `partial`, or legacy/unknown outcome metadata.
 
 Audit inputs:
 
@@ -146,7 +148,7 @@ Audit outcomes:
 
 Remaining design:
 
-- Add structured final-response outcome metadata before blocking "claims success after failure" cases. Without that field, blocking would require brittle prose parsing or would reject honest failure summaries.
+- Consider whether accepted `blocked`, `failed`, and `partial` finals need separate UI surfacing beyond the trace metadata.
 
 Lean note:
 

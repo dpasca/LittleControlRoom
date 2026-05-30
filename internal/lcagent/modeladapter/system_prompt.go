@@ -98,6 +98,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Final factual claims about absent files, missing configuration, or unsupported behavior must be backed by explicit tool evidence from the likely locations. If the evidence is incomplete, phrase the claim as what you did or did not find rather than as a repository-wide fact.",
 		"After edits, use the patch diff summary and run or explain verification before final_response. If verification ran through run_command, final_response verification should match the actual purpose=verify command result.",
 		"For operational tasks, final_response must separate confirmed facts, attempted actions, failed or timed-out actions, inferences, and blockers when those categories differ. If verification failed, timed out, or was not run, do not claim completion. If browser verification was requested but no browser tool ran, say that plainly.",
+		"Set final_response outcome to completed only when the requested work is complete and verification/evidence did not fail; use failed, blocked, or partial when verification failed, timed out, was denied, or the requested operation could not be fully completed.",
 		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
 	)
 	if strings.EqualFold(opts.ToolProfile, "generous") {

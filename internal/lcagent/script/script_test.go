@@ -493,6 +493,30 @@ func TestRunnerFinalResponseAuditWarnsOnFailedVerification(t *testing.T) {
 	}
 }
 
+func TestRunnerFinalResponseAuditBlocksCompletedAfterFailedVerification(t *testing.T) {
+	runner := Runner{
+		verificationChecks: []tools.VerificationCheck{{
+			Command:  "go test ./...",
+			Status:   tools.VerificationStatusFailed,
+			ExitCode: 1,
+		}},
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:         "final_response",
+		Summary:      "done",
+		Outcome:      "completed",
+		FilesChanged: nil,
+		Verification: []string{"go test ./..."},
+	})
+	if audit.Outcome != "block" || !audit.Blocking || audit.FinalOutcome != "completed" || audit.VerificationStatus != "failed" {
+		t.Fatalf("audit = %#v, want blocking completed-after-failed-verification", audit)
+	}
+	feedback, ok := audit.VerificationFeedback()
+	if !ok || !strings.Contains(feedback.Message, "outcome was completed") {
+		t.Fatalf("feedback = %#v ok=%v, want outcome feedback", feedback, ok)
+	}
+}
+
 func TestRunnerEmitsPermissionDeniedEvent(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyOff)

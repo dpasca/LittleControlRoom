@@ -1752,12 +1752,32 @@ func TestRunExecOpenRouterFeedsFailedVerificationBackToModel(t *testing.T) {
 		if !feedbackSeen {
 			t.Fatalf("second request missing verification feedback: %#v", body.Messages)
 		}
+		if requests == 2 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_bad_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final_bad","type":"function","function":{"name":"final_response","arguments":{"summary":"verification failed but marking complete","outcome":"completed","files_changed":[],"verification":["go test ./... failed"]}}}]}
+				}]
+			}`))
+			return
+		}
+		finalOutcomeFeedbackSeen := false
+		for _, msg := range body.Messages {
+			if msg.Role == "user" && strings.Contains(msg.Content, "outcome was completed") && strings.Contains(msg.Content, "verification evidence did not pass") {
+				finalOutcomeFeedbackSeen = true
+			}
+		}
+		if !finalOutcomeFeedbackSeen {
+			t.Fatalf("third request missing final outcome feedback: %#v", body.Messages)
+		}
 		_, _ = w.Write([]byte(`{
 			"id":"resp_final",
 			"model":"deepseek/test-model",
 			"choices":[{
 				"finish_reason":"tool_calls",
-				"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"verification failed and needs a fix","files_changed":[],"verification":["go test ./... failed"]}}}]}
+				"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"verification failed and needs a fix","outcome":"failed","files_changed":[],"verification":["go test ./... failed"]}}}]}
 			}]
 		}`))
 	}))
@@ -1787,15 +1807,17 @@ func TestRunExecOpenRouterFeedsFailedVerificationBackToModel(t *testing.T) {
 		`"status":"failed"`,
 		`"type":"verification_feedback"`,
 		`"type":"final_response_audit"`,
-		`"outcome":"warn"`,
+		`"outcome":"block"`,
+		`"final_outcome":"completed"`,
 		`"verification_status":"failed"`,
+		`"summary":"verification failed and needs a fix"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
 	}
-	if requests != 2 {
-		t.Fatalf("requests = %d, want 2", requests)
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
 	}
 }
 
@@ -1824,7 +1846,7 @@ func TestRunExecOpenRouterBouncesFinalAfterChangedFilesWithoutActualVerification
 				"model":"deepseek/test-model",
 				"choices":[{
 					"finish_reason":"tool_calls",
-					"message":{"role":"assistant","tool_calls":[{"id":"call_final_1","type":"function","function":{"name":"final_response","arguments":{"summary":"changed README","files_changed":["README.md"],"verification":["go test ./..."]}}}]}
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final_1","type":"function","function":{"name":"final_response","arguments":{"summary":"changed README","outcome":"completed","files_changed":["README.md"],"verification":["go test ./..."]}}}]}
 				}]
 			}`))
 			return
@@ -1843,7 +1865,7 @@ func TestRunExecOpenRouterBouncesFinalAfterChangedFilesWithoutActualVerification
 			"model":"deepseek/test-model",
 			"choices":[{
 				"finish_reason":"tool_calls",
-				"message":{"role":"assistant","tool_calls":[{"id":"call_final_2","type":"function","function":{"name":"final_response","arguments":{"summary":"verification blocked after one reminder","files_changed":["README.md"],"verification":["not run: no applicable check"]}}}]}
+				"message":{"role":"assistant","tool_calls":[{"id":"call_final_2","type":"function","function":{"name":"final_response","arguments":{"summary":"verification blocked after one reminder","outcome":"blocked","files_changed":["README.md"],"verification":["not run: no applicable check"]}}}]}
 			}]
 		}`))
 	}))
