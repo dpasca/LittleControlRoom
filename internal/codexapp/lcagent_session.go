@@ -1445,6 +1445,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		}
 		s.touchLocked()
 		s.mu.Unlock()
+	case "user_message":
+		s.appendAsync(TranscriptUser, rawJSONString(event["message"]))
 	case "tool_call":
 		tool := rawJSONString(event["tool"])
 		s.appendAsync(TranscriptTool, lcagentToolCallText(tool, event["args"]))

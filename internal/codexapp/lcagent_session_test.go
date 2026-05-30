@@ -34,6 +34,7 @@ func TestLCAgentSessionLaunchesConfiguredCommandAndStreamsTranscript(t *testing.
 } > "$LCAGENT_ARGS_FILE"
 printf '%s\n' '{"type":"session_meta","id":"lca_fake_session","cwd":"/tmp/demo"}'
 printf '%s\n' '{"type":"model_response","model":"test-model","usage":{"prompt_tokens":120,"prompt_tokens_details":{"cached_tokens":40},"completion_tokens":30,"total_tokens":150},"usage_summary":{"input_tokens":120,"output_tokens":30,"total_tokens":150,"cached_input_tokens":40}}'
+printf '%s\n' '{"type":"user_message","message":"I logged in"}'
 printf '%s\n' '{"type":"tool_call","tool":"run_command"}'
 printf '%s\n' '{"type":"tool_result","tool":"run_command","result":{"success":true,"output":"command ok"}}'
 printf '%s\n' '{"type":"plan_update","items":[{"step":"exercise fake agent","status":"completed"}]}'
@@ -90,7 +91,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 120 || snapshot.TokenUsage.Last.OutputTokens != 30 || snapshot.TokenUsage.Last.CachedInputTokens != 40 || snapshot.TokenUsage.Total.TotalTokens != 150 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
-	for _, want := range []string{"please run the fake agent", "Tool run_command running", "command ok", "Plan:\n[x] exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
+	for _, want := range []string{"please run the fake agent", "I logged in", "Tool run_command running", "command ok", "Plan:\n[x] exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
 		}
