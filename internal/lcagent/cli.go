@@ -1465,7 +1465,7 @@ func openRouterSynthesisFinalPrompt(guidance openRouterProgressGuidance) string 
 
 Tools are unavailable for this request. Produce the final user-facing answer now from the gathered evidence:
 - Do not say the turn budget was reached.
-- Answer the original user request directly.
+- Answer the current user request directly.
 - Distinguish confirmed gaps from unverified items.
 - A feature is not missing merely because there is no same-named file; it may be implemented inline in CLI, script, model adapter, or orchestration code.
 - Keep uncertainty where it is honest, but do not ask the user to continue unless a concrete blocker remains.

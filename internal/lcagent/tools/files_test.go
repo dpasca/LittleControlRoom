@@ -94,6 +94,44 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 	}
 }
 
+func TestFileToolsListGlobCaseSensitivity(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Tools", "render_sprites")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "HANDOFF.md"), []byte("# Handoff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	exact := files.List(".", "**/handoff.md", 20)
+	if !exact.Success {
+		t.Fatalf("exact list failed: %s", exact.Error)
+	}
+	if strings.Contains(exact.Output, "Tools/render_sprites/HANDOFF.md") {
+		t.Fatalf("case-sensitive glob should not match different case:\n%s", exact.Output)
+	}
+	if !strings.Contains(exact.Output, "match_type: glob_case_sensitive") {
+		t.Fatalf("case-sensitive list missing match type:\n%s", exact.Output)
+	}
+
+	caseSensitive := false
+	forgiving := files.ListWithOptions(".", "**/handoff.md", 20, ListOptions{CaseSensitive: &caseSensitive})
+	if !forgiving.Success {
+		t.Fatalf("case-insensitive list failed: %s", forgiving.Error)
+	}
+	for _, want := range []string{"match_type: glob_case_insensitive", "Tools/render_sprites/HANDOFF.md"} {
+		if !strings.Contains(forgiving.Output, want) {
+			t.Fatalf("case-insensitive list missing %q:\n%s", want, forgiving.Output)
+		}
+	}
+}
+
 func TestFileToolsScoutPackReadsBoundedGlob(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "internal", "tui"), 0o755); err != nil {

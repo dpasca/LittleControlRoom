@@ -2110,6 +2110,124 @@ func TestRunExecOpenRouterCompactsLargeToolHistoryBeforeNextRequest(t *testing.T
 	}
 }
 
+func TestRunExecOpenRouterCompactionKeepsCurrentPromptAfterResume(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	var big strings.Builder
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&big, "line %04d with enough repeated context to force compaction after resume %s\n", i, strings.Repeat("abcdefghijklmnopqrstuvwxyz ", 8))
+	}
+	if err := os.WriteFile(filepath.Join(root, "BIG.md"), []byte(big.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	threadID := "lct_compact_resume"
+	store := newThreadStateStore(dataDir, threadID, root, "lca_previous", time.Date(2026, 5, 31, 1, 0, 0, 0, time.UTC))
+	if err := store.SaveCheckpoint("final_response", []modeladapter.Message{
+		{Role: "system", Content: "previous system prompt"},
+		{Role: "user", Content: "please check the handoff.md"},
+		{Role: "assistant", Content: "handoff summary"},
+	}, false); err != nil {
+		t.Fatalf("write thread state: %v", err)
+	}
+
+	currentPrompt := "build and run original FF, then FF with the new sprites"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []modeladapter.Message `json:"messages"`
+			Tools    []any                  `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			foundCurrent := false
+			for _, msg := range body.Messages {
+				if msg.Role == "user" && msg.Content == currentPrompt {
+					foundCurrent = true
+				}
+			}
+			if !foundCurrent {
+				t.Fatalf("first resumed request missing current prompt: %#v", body.Messages)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"BIG.md\",\"limit\":1000}"}}]}
+				}]
+			}`))
+		case 2:
+			if len(body.Tools) == 0 {
+				t.Fatalf("compacted continuation request should still include tools: %#v", body)
+			}
+			currentStandalone := false
+			staleStandalone := false
+			compactedContextSeen := false
+			for _, msg := range body.Messages {
+				if msg.Role == "tool" {
+					t.Fatalf("compacted resumed request should not contain raw tool messages: %#v", body.Messages)
+				}
+				if msg.Role == "user" && msg.Content == currentPrompt {
+					currentStandalone = true
+				}
+				if msg.Role == "user" && msg.Content == "please check the handoff.md" {
+					staleStandalone = true
+				}
+				if strings.Contains(msg.Content, loopCompactedContextPrefix) && strings.Contains(msg.Content, "latest real user request above") {
+					compactedContextSeen = true
+				}
+			}
+			if !currentStandalone || staleStandalone || !compactedContextSeen {
+				t.Fatalf("compacted resumed request current=%v stale=%v compacted=%v messages=%#v", currentStandalone, staleStandalone, compactedContextSeen, body.Messages)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":"continued current prompt after compaction"}
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--continue-from", threadID,
+		"--max-turns", "3",
+		currentPrompt,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	if !strings.Contains(stdout.String(), `"type":"context_compacted"`) || !strings.Contains(stdout.String(), `"summary":"continued current prompt after compaction"`) {
+		t.Fatalf("stdout missing compaction/final evidence:\n%s", stdout.String())
+	}
+}
+
 func TestRunExecOpenRouterFinalResponseToolIsCanonical(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -2931,7 +3049,7 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 			}
 			joined := fmt.Sprint(body.Messages)
 			for _, want := range []string{
-				"Original user request",
+				"Current user request",
 				"patch README then continue later",
 				"Turn budget reached. README.md was changed",
 				"continue from the handoff",
@@ -3073,7 +3191,7 @@ func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 		}
 		last := fmt.Sprint(messages[len(messages)-1])
 		for _, want := range []string{
-			"Original user request",
+			"Current user request",
 			"keep reading until synthesis",
 			"Compact transcript of work so far",
 			"planned synthesis checkpoint",

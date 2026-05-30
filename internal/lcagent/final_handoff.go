@@ -185,8 +185,8 @@ func compactOpenRouterFinalMessagesWithOptions(messages []modeladapter.Message, 
 		OriginalChars:    messagesApproxChars(messages),
 	}
 	stats.ReadLedgerFiles, stats.ReadLedgerRanges = ledger.Stats()
-	systemContent, originalRequest, originalUserIndex := openRouterMessageAnchors(messages)
-	transcript, toolResults := compactOpenRouterTranscript(messages, originalUserIndex, openRouterCompactionOptions{
+	systemContent, currentRequest, currentUserIndex := openRouterCurrentTaskMessageAnchors(messages)
+	transcript, toolResults := compactOpenRouterTranscript(messages, currentUserIndex, openRouterCompactionOptions{
 		TranscriptMaxChars: contextOpts.FinalHandoffTranscriptMaxChars,
 		AssistantMaxChars:  contextOpts.FinalHandoffAssistantMaxChars,
 		ArgsMaxChars:       contextOpts.FinalHandoffArgsMaxChars,
@@ -197,8 +197,8 @@ func compactOpenRouterFinalMessagesWithOptions(messages []modeladapter.Message, 
 	stats.ToolResults = toolResults
 
 	var user strings.Builder
-	user.WriteString("Original user request:\n")
-	user.WriteString(indentBlock(strings.TrimSpace(originalRequest)))
+	user.WriteString("Current user request:\n")
+	user.WriteString(indentBlock(strings.TrimSpace(currentRequest)))
 	user.WriteString("\n\nCompact transcript of work so far. Tool outputs have been summarized to keep the final handoff small:\n")
 	user.WriteString(indentBlock(transcript))
 	if ledgerText := ledger.Format(readLedgerMaxChars); ledgerText != "" {
@@ -240,8 +240,8 @@ func compactOpenRouterLoopMessagesWithOptions(messages []modeladapter.Message, l
 		return messages, stats, false
 	}
 	stats.ReadLedgerFiles, stats.ReadLedgerRanges = ledger.Stats()
-	systemContent, originalRequest, originalUserIndex := openRouterMessageAnchors(messages)
-	transcript, toolResults := compactOpenRouterTranscript(messages, originalUserIndex, openRouterCompactionOptions{
+	systemContent, currentRequest, currentUserIndex := openRouterCurrentTaskMessageAnchors(messages)
+	transcript, toolResults := compactOpenRouterTranscript(messages, currentUserIndex, openRouterCompactionOptions{
 		TranscriptMaxChars: contextOpts.LoopCompactionTranscriptChars,
 		AssistantMaxChars:  contextOpts.LoopCompactionAssistantChars,
 		ArgsMaxChars:       contextOpts.LoopCompactionArgsChars,
@@ -254,7 +254,7 @@ func compactOpenRouterLoopMessagesWithOptions(messages []modeladapter.Message, l
 	var context strings.Builder
 	context.WriteString(loopCompactedContextPrefix)
 	context.WriteString("\n\n")
-	context.WriteString("This is not a new user request. Continue the original task using the compacted evidence below.")
+	context.WriteString("This is not a new user request. Continue the latest real user request above using the compacted evidence below.")
 	context.WriteString("\n\nTranscript summary:\n")
 	context.WriteString(indentBlock(transcript))
 	if ledgerText := ledger.Format(readLedgerMaxChars); ledgerText != "" {
@@ -271,8 +271,8 @@ func compactOpenRouterLoopMessagesWithOptions(messages []modeladapter.Message, l
 	if strings.TrimSpace(systemContent) != "" {
 		compacted = append(compacted, modeladapter.Message{Role: "system", Content: systemContent})
 	}
-	if strings.TrimSpace(originalRequest) != "" {
-		compacted = append(compacted, modeladapter.Message{Role: "user", Content: originalRequest})
+	if strings.TrimSpace(currentRequest) != "" {
+		compacted = append(compacted, modeladapter.Message{Role: "user", Content: currentRequest})
 	}
 	compacted = append(compacted, modeladapter.Message{Role: "user", Content: context.String()})
 	stats.CompactedMessages = len(compacted)
@@ -280,21 +280,49 @@ func compactOpenRouterLoopMessagesWithOptions(messages []modeladapter.Message, l
 	return compacted, stats, true
 }
 
-func openRouterMessageAnchors(messages []modeladapter.Message) (string, string, int) {
+func openRouterCurrentTaskMessageAnchors(messages []modeladapter.Message) (string, string, int) {
 	systemContent := ""
-	originalRequest := ""
-	originalUserIndex := -1
+	currentRequest := ""
+	currentUserIndex := -1
 	for i, msg := range messages {
 		if systemContent == "" && msg.Role == "system" {
 			systemContent = msg.Content
 			continue
 		}
-		if originalRequest == "" && msg.Role == "user" {
-			originalRequest = msg.Content
-			originalUserIndex = i
+		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" && !isOpenRouterHarnessUserMessage(msg.Content) {
+			currentRequest = msg.Content
+			currentUserIndex = i
 		}
 	}
-	return systemContent, originalRequest, originalUserIndex
+	if currentRequest != "" {
+		return systemContent, currentRequest, currentUserIndex
+	}
+	for i, msg := range messages {
+		if msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+			return systemContent, msg.Content, i
+		}
+	}
+	return systemContent, "", -1
+}
+
+func isOpenRouterHarnessUserMessage(content string) bool {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return true
+	}
+	for _, prefix := range []string{
+		loopCompactedContextPrefix,
+		openRouterProgressNotePrefix,
+		"Final response feedback:",
+		"Verification feedback:",
+		"Patch feedback:",
+		"Patch retry guidance:",
+	} {
+		if strings.HasPrefix(content, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(content, "This is not a new user request.")
 }
 
 func compactOpenRouterTranscript(messages []modeladapter.Message, originalUserIndex int, opts openRouterCompactionOptions) (string, int) {

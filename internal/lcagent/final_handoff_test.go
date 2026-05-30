@@ -41,7 +41,7 @@ func TestCompactOpenRouterFinalMessagesSummarizesToolOutput(t *testing.T) {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
 	finalContent := compacted[len(compacted)-1].Content
-	for _, want := range []string{"Original user request", "review the module", "tool_result: read_file", "file: big.go", "omitted", "Do not call more tools."} {
+	for _, want := range []string{"Current user request", "review the module", "tool_result: read_file", "file: big.go", "omitted", "Do not call more tools."} {
 		if !strings.Contains(finalContent, want) {
 			t.Fatalf("compacted content missing %q:\n%s", want, finalContent)
 		}
@@ -116,6 +116,88 @@ func TestCompactOpenRouterLoopMessagesPreservesRequestAndDropsToolRoles(t *testi
 	for _, want := range []string{loopCompactedContextPrefix, "tool_result: read_file", "file: big.go", "omitted", "call final_response"} {
 		if !strings.Contains(context, want) {
 			t.Fatalf("compacted loop context missing %q:\n%s", want, context)
+		}
+	}
+}
+
+func TestCompactOpenRouterLoopMessagesUsesLatestRealUserRequest(t *testing.T) {
+	var output strings.Builder
+	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&output, "%d | line %04d %s\n", i, i, strings.Repeat("compact-me ", 24))
+	}
+	result, err := json.Marshal(tools.ToolResult{Success: true, Output: output.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestRequest := "build and run original FF, then FF with the new sprites"
+	messages := []modeladapter.Message{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "please check the handoff.md"},
+		{Role: "assistant", Content: "handoff summary"},
+		{Role: "user", Content: latestRequest},
+		{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+			ID: "call_read",
+			Function: modeladapter.FunctionCall{
+				Name:      "read_file",
+				Arguments: json.RawMessage(`{"path":"big.go","limit":1000}`),
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_read", Content: string(result)},
+	}
+
+	compacted, _, ok := compactOpenRouterLoopMessages(messages)
+	if !ok {
+		t.Fatal("compactOpenRouterLoopMessages() ok = false, want true")
+	}
+	if compacted[1].Role != "user" || compacted[1].Content != latestRequest {
+		t.Fatalf("compacted active request = %#v, want latest request %q", compacted[1], latestRequest)
+	}
+	context := compacted[2].Content
+	for _, want := range []string{"latest real user request above", "user_note:", "please check the handoff.md", "tool_result: read_file"} {
+		if !strings.Contains(context, want) {
+			t.Fatalf("compacted context missing %q:\n%s", want, context)
+		}
+	}
+}
+
+func TestCompactOpenRouterLoopMessagesIgnoresHarnessFeedbackAsActiveRequest(t *testing.T) {
+	var output strings.Builder
+	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
+	for i := 1; i <= 1000; i++ {
+		fmt.Fprintf(&output, "%d | line %04d %s\n", i, i, strings.Repeat("compact-me ", 24))
+	}
+	result, err := json.Marshal(tools.ToolResult{Success: true, Output: output.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	latestRequest := "build and run original FF"
+	messages := []modeladapter.Message{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: latestRequest},
+		{Role: "assistant", ToolCalls: []modeladapter.ToolCall{{
+			ID: "call_read",
+			Function: modeladapter.FunctionCall{
+				Name:      "read_file",
+				Arguments: json.RawMessage(`{"path":"big.go","limit":1000}`),
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_read", Content: string(result)},
+		{Role: "user", Content: "Verification feedback: ./build.sh -b failed. Rerun a purpose=verify check after fixing it."},
+		{Role: "user", Content: "Patch feedback: README.md failed during apply: hunk context not found."},
+	}
+
+	compacted, _, ok := compactOpenRouterLoopMessages(messages)
+	if !ok {
+		t.Fatal("compactOpenRouterLoopMessages() ok = false, want true")
+	}
+	if compacted[1].Role != "user" || compacted[1].Content != latestRequest {
+		t.Fatalf("compacted active request = %#v, want latest request %q", compacted[1], latestRequest)
+	}
+	context := compacted[2].Content
+	for _, want := range []string{"Verification feedback:", "Patch feedback:", "tool_result: read_file"} {
+		if !strings.Contains(context, want) {
+			t.Fatalf("compacted context missing %q:\n%s", want, context)
 		}
 	}
 }

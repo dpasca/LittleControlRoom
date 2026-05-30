@@ -112,14 +112,15 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "list_files",
-				Description: "List files under a workspace path, optionally filtered by a simple glob. Hidden/generated directories are listed as placeholders but not descended into by default; set include_hidden=true only when those contents are directly relevant.",
+				Description: "List files under a workspace path, optionally filtered by a simple glob. Glob matching is case-sensitive by default; set case_sensitive=false when a user-provided filename may differ in case. Hidden/generated directories are listed as placeholders but not descended into by default; set include_hidden=true only when those contents are directly relevant.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"path":           map[string]any{"type": "string", "description": "Workspace-relative directory or file to list, or absolute path for read-only inspection. Defaults to workspace root."},
-						"glob":           map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename."},
+						"glob":           map[string]any{"type": "string", "description": "Optional filepath glob matched against relative path or basename. Supports ** as a recursive path segment."},
 						"max_entries":    map[string]any{"type": "integer", "minimum": 1, "maximum": opts.MaxListEntryLimit},
+						"case_sensitive": map[string]any{"type": "boolean", "description": "Whether glob matching is case-sensitive. Defaults to true; set false for forgiving filename lookup."},
 						"include_hidden": map[string]any{"type": "boolean", "description": "Descend into normally hidden/generated directories such as .git, .venv, node_modules, vendor, dist, or build. Defaults to false."},
 					},
 				},

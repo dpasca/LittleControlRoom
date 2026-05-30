@@ -511,6 +511,7 @@ type listFilesArgs struct {
 	Glob          string `json:"glob"`
 	MaxEntries    int    `json:"max_entries"`
 	IncludeHidden bool   `json:"include_hidden"`
+	CaseSensitive *bool  `json:"case_sensitive"`
 }
 
 type repoOverviewArgs struct {
@@ -762,7 +763,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = invalid
 			break
 		}
-		result = r.Files.ListWithOptions(args.Path, args.Glob, args.MaxEntries, tools.ListOptions{IncludeHidden: args.IncludeHidden})
+		result = r.Files.ListWithOptions(args.Path, args.Glob, args.MaxEntries, tools.ListOptions{IncludeHidden: args.IncludeHidden, CaseSensitive: args.CaseSensitive})
 	case "repo_overview":
 		var args repoOverviewArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {

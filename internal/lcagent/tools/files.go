@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -65,6 +66,7 @@ type FileTools struct {
 
 type ListOptions struct {
 	IncludeHidden bool
+	CaseSensitive *bool
 }
 
 type SearchOptions struct {
@@ -250,6 +252,10 @@ func (t FileTools) ListWithOptions(path, glob string, maxEntries int, opts ListO
 	}
 	maxEntries = clampInt(maxEntries, limits.DefaultListEntryLimit, limits.MaxListEntryLimit)
 	glob = strings.TrimSpace(glob)
+	caseSensitive := true
+	if opts.CaseSensitive != nil {
+		caseSensitive = *opts.CaseSensitive
+	}
 
 	entries := []string{}
 	hiddenDirs := []string{}
@@ -262,7 +268,7 @@ func (t FileTools) ListWithOptions(path, glob string, maxEntries int, opts ListO
 		if entry != nil && entry.IsDir() && display != "." {
 			display += "/"
 		}
-		if glob != "" && !fileGlobMatches(glob, display) {
+		if glob != "" && !fileGlobMatchesWithCase(glob, display, caseSensitive) {
 			return
 		}
 		if len(entries) >= maxEntries {
@@ -276,7 +282,7 @@ func (t FileTools) ListWithOptions(path, glob string, maxEntries int, opts ListO
 		if entry != nil && entry.IsDir() && display != "." {
 			display += "/"
 		}
-		if glob != "" && !fileGlobMatches(glob, display) {
+		if glob != "" && !fileGlobMatchesWithCase(glob, display, caseSensitive) {
 			return
 		}
 		if len(entries) >= maxEntries {
@@ -322,6 +328,11 @@ func (t FileTools) ListWithOptions(path, glob string, maxEntries int, opts ListO
 	fmt.Fprintf(&b, "path: %s\n", rel)
 	if glob != "" {
 		fmt.Fprintf(&b, "glob: %s\n", glob)
+		if !caseSensitive {
+			b.WriteString("match_type: glob_case_insensitive\n")
+		} else {
+			b.WriteString("match_type: glob_case_sensitive\n")
+		}
 	}
 	fmt.Fprintf(&b, "entries: %d\n\n", len(entries))
 	if len(hiddenDirs) > 0 {
@@ -1151,18 +1162,63 @@ func fileLooksBinary(file *os.File) (bool, error) {
 }
 
 func fileGlobMatches(glob, path string) bool {
+	return fileGlobMatchesWithCase(glob, path, true)
+}
+
+func fileGlobMatchesWithCase(glob, path string, caseSensitive bool) bool {
 	glob = filepath.ToSlash(strings.TrimSpace(glob))
 	path = filepath.ToSlash(strings.TrimSpace(path))
 	if glob == "" {
 		return true
 	}
-	if ok, _ := filepath.Match(glob, path); ok {
+	if !caseSensitive {
+		glob = strings.ToLower(glob)
+		path = strings.ToLower(path)
+	}
+	if pathGlobMatch(glob, path) {
 		return true
 	}
-	if ok, _ := filepath.Match(glob, filepath.Base(path)); ok {
+	if pathGlobMatch(glob, filepath.Base(path)) {
 		return true
 	}
 	return false
+}
+
+func pathGlobMatch(pattern, value string) bool {
+	if ok, _ := path.Match(pattern, value); ok {
+		return true
+	}
+	if !strings.Contains(pattern, "**") {
+		return false
+	}
+	return pathGlobSegmentsMatch(splitGlobPath(pattern), splitGlobPath(value))
+}
+
+func splitGlobPath(value string) []string {
+	value = strings.Trim(value, "/")
+	if value == "" {
+		return nil
+	}
+	return strings.Split(value, "/")
+}
+
+func pathGlobSegmentsMatch(pattern, value []string) bool {
+	if len(pattern) == 0 {
+		return len(value) == 0
+	}
+	if pattern[0] == "**" {
+		if pathGlobSegmentsMatch(pattern[1:], value) {
+			return true
+		}
+		return len(value) > 0 && pathGlobSegmentsMatch(pattern, value[1:])
+	}
+	if len(value) == 0 {
+		return false
+	}
+	if ok, _ := path.Match(pattern[0], value[0]); !ok {
+		return false
+	}
+	return pathGlobSegmentsMatch(pattern[1:], value[1:])
 }
 
 func defaultHiddenDir(name string) bool {
