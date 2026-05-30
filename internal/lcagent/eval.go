@@ -25,6 +25,7 @@ type evalCase struct {
 	ExpectError bool
 	Setup       func(cwd, dataDir string) ([]string, error)
 	Check       func(sessionmetrics.Summary) error
+	CheckFiles  func([]string) error
 }
 
 type evalReport struct {
@@ -171,6 +172,12 @@ func runEvalCase(root, dataDir string, tc evalCase) (evalCaseResult, []string) {
 	result.Metrics = summary
 	if tc.Check != nil {
 		if err := tc.Check(summary); err != nil {
+			result.Error = err.Error()
+			return result, files
+		}
+	}
+	if tc.CheckFiles != nil {
+		if err := tc.CheckFiles(files); err != nil {
 			result.Error = err.Error()
 			return result, files
 		}
@@ -361,6 +368,40 @@ func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
 			},
 		},
 		{
+			Name:   "fresh_objective_supersedes_resume_trace",
+			Prompt: "inspect local device state only",
+			Auto:   "low",
+			Script: `{"type":"final_response","summary":"reported local device state only","files_changed":[],"verification":[]}
+`,
+			Setup: func(cwd, dataDir string) ([]string, error) {
+				sessionID := "lca_eval_old_operational_context"
+				started := time.Date(2026, 5, 12, 10, 0, 0, 0, time.UTC)
+				if err := writeLCAgentEvalResumeArtifact(dataDir, cwd, sessionID, started); err != nil {
+					return nil, err
+				}
+				return []string{"--resume", sessionID}, nil
+			},
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.Continuations < 1 || summary.ResumeContexts < 1 {
+					return fmt.Errorf("continuations/resume contexts = %d/%d, want >= 1", summary.Continuations, summary.ResumeContexts)
+				}
+				return nil
+			},
+			CheckFiles: func(files []string) error {
+				text, err := lcagentEvalReadFiles(files)
+				if err != nil {
+					return err
+				}
+				if !strings.Contains(text, `"type":"active_objective"`) || !strings.Contains(text, `"objective":"inspect local device state only"`) {
+					return fmt.Errorf("session trace missing latest active objective:\n%s", text)
+				}
+				if strings.Contains(text, `"objective":"previous eval task"`) {
+					return fmt.Errorf("session trace reused old objective as active objective:\n%s", text)
+				}
+				return nil
+			},
+		},
+		{
 			Name:   "max_turn_handoff_continuation_trace",
 			Prompt: "continue from a max-turn handoff",
 			Auto:   "low",
@@ -386,6 +427,49 @@ func TestSmoke(t *testing.T) { t.Fatal("intentional failure") }
 				}
 				if summary.VerificationStatuses["not_run"] < 1 {
 					return fmt.Errorf("verification not_run count = %d, want >= 1", summary.VerificationStatuses["not_run"])
+				}
+				return nil
+			},
+		},
+		{
+			Name:        "managed_process_unavailable_trace",
+			Prompt:      "start a long-running operational process",
+			Auto:        "medium",
+			ExpectError: true,
+			Script: `{"type":"tool_call","tool":"start_process","args":{"command":"sleep 1","name":"fake-operation"}}
+{"type":"final_response","summary":"should not reach final","files_changed":[],"verification":[]}
+`,
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.ToolCalls["start_process"] < 1 || summary.ToolFailures["start_process"] < 1 {
+					return fmt.Errorf("start_process calls/failures = %d/%d, want >= 1", summary.ToolCalls["start_process"], summary.ToolFailures["start_process"])
+				}
+				return nil
+			},
+			CheckFiles: func(files []string) error {
+				text, err := lcagentEvalReadFiles(files)
+				if err != nil {
+					return err
+				}
+				if !strings.Contains(text, "managed background process tools are unavailable") {
+					return fmt.Errorf("session trace missing unavailable-process capability error:\n%s", text)
+				}
+				return nil
+			},
+		},
+		{
+			Name:        "timed_out_verification_trace",
+			Prompt:      "run a bounded verification that times out",
+			Auto:        "medium",
+			ExpectError: true,
+			Script: `{"type":"tool_call","tool":"run_command","args":{"argv":["sh","-c","sleep 1"],"timeout_ms":10,"purpose":"verify"}}
+{"type":"final_response","summary":"should not reach final","files_changed":[],"verification":["sh -c sleep 1"]}
+`,
+			Check: func(summary sessionmetrics.Summary) error {
+				if summary.VerificationCheckStatuses["timed_out"] < 1 {
+					return fmt.Errorf("verification timed_out count = %d, want >= 1", summary.VerificationCheckStatuses["timed_out"])
+				}
+				if summary.VerificationFeedback < 1 {
+					return fmt.Errorf("verification feedback count = %d, want >= 1", summary.VerificationFeedback)
 				}
 				return nil
 			},
@@ -475,6 +559,21 @@ func lcagentEvalSessionFiles(dataDir string) ([]string, error) {
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+func lcagentEvalReadFiles(paths []string) (string, error) {
+	var b strings.Builder
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		b.Write(body)
+		if len(body) > 0 && body[len(body)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+	}
+	return b.String(), nil
 }
 
 func writeLCAgentEvalResumeArtifact(dataDir, cwd, sessionID string, started time.Time) error {

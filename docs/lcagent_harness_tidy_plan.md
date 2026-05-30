@@ -50,6 +50,13 @@ Implemented in `06403a9`:
 - Command guard allowance for stderr discard to `/dev/null`, while preserving write denials.
 - Focused Go regression tests for the above.
 
+Implemented after `06403a9`:
+
+- Generic deterministic eval coverage for fresh active objectives superseding resumed context.
+- Generic deterministic eval coverage for unavailable managed-process capability traces.
+- Generic deterministic eval coverage for timed-out verification traces.
+- Active-objective trace emission for scripted LCAgent runs, keeping scripted eval artifacts aligned with live-provider traces.
+
 ## Phase 1: Generic Regression Evals
 
 Create deterministic evals that fail on this class of behavior without depending on any real external service.
@@ -77,6 +84,11 @@ Scenarios:
 5. Timeout is not success.
    - An action times out and the process group is terminated.
    - Expected: final response leads with the timeout/blocker and does not claim the action completed.
+
+Remaining useful coverage:
+
+- A model-facing eval or replay that verifies the model chooses the right tool path, not only that scripted traces record the right evidence.
+- A final-response audit eval once the audit boundary exists.
 
 Likely files:
 

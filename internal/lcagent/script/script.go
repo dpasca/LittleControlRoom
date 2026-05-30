@@ -482,6 +482,15 @@ func (r *Runner) Run(ctx context.Context, actions []Action) error {
 	}); err != nil {
 		return err
 	}
+	if objective := strings.TrimSpace(r.Prompt); objective != "" {
+		if err := r.Session.Write(session.Event{
+			"type":       "active_objective",
+			"session_id": r.SessionID,
+			"objective":  objective,
+		}); err != nil {
+			return err
+		}
+	}
 	for _, action := range actions {
 		switch action.Type {
 		case "tool_call":
