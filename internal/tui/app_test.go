@@ -763,7 +763,7 @@ func TestBrowserAttentionHighlightsProjectListRow(t *testing.T) {
 		projects:     []model.ProjectSummary{project},
 		codexManager: manager,
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, UpdatedAt: time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC)},
 		},
 		width:        140,
 		height:       10,
@@ -1166,9 +1166,10 @@ func TestProjectAttentionScoreUsesBrowserAttentionBeforeGenericQuestion(t *testi
 	}
 
 	m := Model{
+		nowFn:        func() time.Time { return time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC) },
 		codexManager: manager,
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, UpdatedAt: time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC)},
 		},
 	}
 	if got := m.projectAttentionScore(project); got != project.AttentionScore+embeddedBrowserAttentionWeight {
@@ -1469,8 +1470,9 @@ func TestRenderDetailContentShowsBrowserAttention(t *testing.T) {
 			Summary: model.ProjectSummary{Path: project.Path},
 		},
 		codexManager: manager,
+		nowFn:        func() time.Time { return time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC) },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, UpdatedAt: time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC)},
 		},
 	}
 
@@ -11976,6 +11978,7 @@ func TestVisibleLCAgentBrowserWaitExplainsContinueAndExitChoices(t *testing.T) {
 }
 
 func TestVisibleLCAgentBrowserWaitShowsBrowserActionAfterStateHydrates(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	snapshot := codexapp.Snapshot{
 		Provider:                 codexapp.ProviderLCAgent,
 		Started:                  true,
@@ -11993,8 +11996,9 @@ func TestVisibleLCAgentBrowserWaitShowsBrowserActionAfterStateHydrates(t *testin
 	}
 	m := Model{
 		codexVisibleProject: "/tmp/lcagent-browser-wait",
+		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-login": {SessionKey: "managed-login", BrowserPID: 123, Hidden: true},
+			"managed-login": {SessionKey: "managed-login", BrowserPID: 123, Hidden: true, UpdatedAt: now},
 		},
 	}
 
@@ -17930,6 +17934,7 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 }
 
 func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -17969,8 +17974,9 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 		codexHiddenProject:  "/tmp/demo",
 		codexInput:          newCodexTextarea(),
 		codexViewport:       viewport.New(0, 0),
+		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true, UpdatedAt: now},
 		},
 		width:  100,
 		height: 24,
@@ -18138,6 +18144,7 @@ func TestVisibleCodexURLBasedElicitationHintsOpenBrowser(t *testing.T) {
 }
 
 func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	snapshot := codexapp.Snapshot{
 		Provider:                 codexapp.ProviderCodex,
 		Started:                  true,
@@ -18149,8 +18156,9 @@ func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
+		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true, UpdatedAt: now},
 		},
 	}
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
@@ -18168,6 +18176,7 @@ func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 }
 
 func TestVisibleCodexCurrentBackgroundBrowserPageUsesVisibleBrowserCopyWhenCachedVisible(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	snapshot := codexapp.Snapshot{
 		Provider:                 codexapp.ProviderCodex,
 		Started:                  true,
@@ -18179,11 +18188,13 @@ func TestVisibleCodexCurrentBackgroundBrowserPageUsesVisibleBrowserCopyWhenCache
 
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
+		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
 			"managed-demo": {
 				SessionKey: "managed-demo",
 				BrowserPID: 123,
 				Hidden:     false,
+				UpdatedAt:  now,
 			},
 		},
 	}
@@ -18258,6 +18269,42 @@ func TestVisibleCodexStaleResumedBrowserPageDoesNotRenderPersistentNoticeOrOffer
 	}
 	if !strings.Contains(got.status, "came from the resumed transcript") {
 		t.Fatalf("status = %q, want stale browser page guidance", got.status)
+	}
+}
+
+func TestVisibleLCAgentFinishedBrowserPageDoesNotOfferExpiredReveal(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Status:                   "LCAgent run complete",
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://play.google.com/console/",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+	}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		nowFn:               func() time.Time { return now },
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {
+				SessionKey: "managed-demo",
+				BrowserPID: 123,
+				Hidden:     true,
+				UpdatedAt:  now.Add(-managedBrowserStateFreshWindow - time.Second),
+			},
+		},
+	}
+
+	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 140))
+	if !strings.Contains(renderedBlocks, "Background browser page: https://play.google.com/console/") {
+		t.Fatalf("renderCodexBrowserPanel() should still show last browser page: %q", renderedBlocks)
+	}
+	if strings.Contains(renderedBlocks, "Press ctrl+o") {
+		t.Fatalf("renderCodexBrowserPanel() offered expired browser reveal: %q", renderedBlocks)
+	}
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if strings.Contains(footer, "ctrl+o show browser") || strings.Contains(footer, "ctrl+o focus browser") {
+		t.Fatalf("renderCodexFooter() offered expired browser action: %q", footer)
 	}
 }
 
@@ -18352,6 +18399,7 @@ func TestVisibleCodexBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttached
 }
 
 func TestVisibleOpenCodeCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	snapshot := codexapp.Snapshot{
 		Provider:                 codexapp.ProviderOpenCode,
 		Started:                  true,
@@ -18363,8 +18411,9 @@ func TestVisibleOpenCodeCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) 
 
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
+		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true, UpdatedAt: now},
 		},
 	}
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
@@ -18382,6 +18431,7 @@ func TestVisibleOpenCodeCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) 
 }
 
 func TestVisibleLCAgentCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	snapshot := codexapp.Snapshot{
 		Provider:                 codexapp.ProviderLCAgent,
 		Started:                  true,
@@ -18393,8 +18443,9 @@ func TestVisibleLCAgentCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
+		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true, UpdatedAt: now},
 		},
 	}
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
@@ -18446,6 +18497,7 @@ func TestVisibleOpenCodeBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttac
 }
 
 func TestVisibleOpenCodePendingToolInputKeepsShowBrowserAction(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	snapshot := codexapp.Snapshot{
 		Provider:                 codexapp.ProviderOpenCode,
 		Started:                  true,
@@ -18469,8 +18521,9 @@ func TestVisibleOpenCodePendingToolInputKeepsShowBrowserAction(t *testing.T) {
 
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
+		nowFn:               func() time.Time { return now },
 		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
-			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true, UpdatedAt: now},
 		},
 	}
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))

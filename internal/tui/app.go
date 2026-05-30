@@ -1769,6 +1769,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.browserLeaseSnapshot = msg.browserLeaseSnapshot
 		}
 		if msg.managedBrowserStateSet {
+			if msg.managedBrowserState.UpdatedAt.IsZero() {
+				msg.managedBrowserState.UpdatedAt = m.currentTime()
+			}
 			m.rememberManagedBrowserState(msg.managedBrowserState)
 		}
 		if msg.err != nil {
@@ -1786,6 +1789,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case managedBrowserStateMsg:
 		if msg.err == nil {
 			m.rememberManagedBrowserState(msg.state)
+		} else {
+			m.forgetManagedBrowserState(msg.sessionKey)
 		}
 		return m, nil
 	case codexArtifactPreviewMsg:

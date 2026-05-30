@@ -3260,7 +3260,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 
 func (m Model) managedBrowserCurrentPageLabel(snapshot codexapp.Snapshot) string {
 	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && state.RevealSupported && !state.Hidden {
+	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) && !state.Normalize().Hidden {
 		return "Managed browser page: "
 	}
 	return "Background browser page: "
@@ -3279,7 +3279,7 @@ func (m Model) managedBrowserCurrentPageHint(snapshot codexapp.Snapshot) string 
 
 func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) string {
 	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && state.RevealSupported && !state.Hidden {
+	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) && !state.Normalize().Hidden {
 		return "focus browser"
 	}
 	return "show browser"
@@ -3290,7 +3290,7 @@ func (m Model) managedBrowserCanReveal(snapshot codexapp.Snapshot) bool {
 		return false
 	}
 	state, ok := m.cachedManagedBrowserState(snapshot.ManagedBrowserSessionKey)
-	return ok && state.Normalize().RevealSupported
+	return ok && managedBrowserStateFreshForUI(state, m.currentTime())
 }
 
 func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.Cmd {
@@ -3301,7 +3301,7 @@ func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.C
 	if managedBrowserCurrentPageURL(snapshot) == "" && snapshot.PendingElicitation == nil {
 		return nil
 	}
-	if _, ok := m.cachedManagedBrowserState(sessionKey); ok {
+	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) {
 		return nil
 	}
 	return m.readManagedBrowserStateCmd(sessionKey)

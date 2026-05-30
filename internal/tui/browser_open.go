@@ -95,6 +95,14 @@ func (m *Model) rememberManagedBrowserState(state browserctl.ManagedPlaywrightSt
 	m.managedBrowserStates[sessionKey] = state.Normalize()
 }
 
+func (m *Model) forgetManagedBrowserState(sessionKey string) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" || len(m.managedBrowserStates) == 0 {
+		return
+	}
+	delete(m.managedBrowserStates, sessionKey)
+}
+
 func (m Model) cachedManagedBrowserState(sessionKey string) (browserctl.ManagedPlaywrightState, bool) {
 	if len(m.managedBrowserStates) == 0 {
 		return browserctl.ManagedPlaywrightState{}, false
