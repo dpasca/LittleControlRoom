@@ -34,6 +34,7 @@ type Options struct {
 	CodexHome           string
 	AgentsHome          string
 	IncludeProjectCodex bool
+	BrowserMode         BrowserMode
 }
 
 type Catalog struct {
@@ -54,6 +55,14 @@ type LoadedSkill struct {
 	Body      string
 	Truncated bool
 }
+
+type BrowserMode string
+
+const (
+	BrowserModePassthrough BrowserMode = ""
+	BrowserModeUnavailable BrowserMode = "unavailable"
+	BrowserModeNativeTools BrowserMode = "native-tools"
+)
 
 func DefaultOptions(workspaceRoot string) Options {
 	return Options{
@@ -109,6 +118,7 @@ func Discover(ctx context.Context, opts Options) (Catalog, error) {
 		return strings.ToLower(catalog.Skills[i].Name) < strings.ToLower(catalog.Skills[j].Name)
 	})
 	catalog.reindex()
+	catalog.ApplyBrowserMode(opts.BrowserMode)
 	return catalog, nil
 }
 
@@ -222,6 +232,55 @@ func (c *Catalog) UpsertSyntheticSkill(name, description, body string) {
 	c.synthetic[key] = strings.TrimSpace(body)
 	c.reindex()
 }
+
+func (c *Catalog) ApplyBrowserMode(mode BrowserMode) {
+	if c == nil {
+		return
+	}
+	switch mode.Normalize() {
+	case BrowserModeUnavailable:
+		c.UpsertSyntheticSkill(
+			"playwright",
+			"Browser control is unavailable for this LCAgent run.",
+			playwrightUnavailableSkillBody,
+		)
+	case BrowserModeNativeTools:
+		c.UpsertSyntheticSkill(
+			"playwright",
+			"LCR-managed browser control for LCAgent runs; use native browser tools.",
+			playwrightNativeToolsSkillBody,
+		)
+	}
+}
+
+func (m BrowserMode) Normalize() BrowserMode {
+	switch strings.ToLower(strings.TrimSpace(string(m))) {
+	case string(BrowserModeUnavailable):
+		return BrowserModeUnavailable
+	case string(BrowserModeNativeTools), "native", "managed":
+		return BrowserModeNativeTools
+	default:
+		return BrowserModePassthrough
+	}
+}
+
+const playwrightUnavailableSkillBody = `# Playwright
+
+Browser control is not available in this LCAgent run.
+
+Do not run Playwright CLI, playwright-mcp, npx @playwright/mcp, playwright-cli, playwright_cli.sh, MCP setup commands, or any other terminal browser wrapper.
+
+If the user asked for browser work, report the browser-tooling blocker and use non-browser evidence only when it actually answers the task.`
+
+const playwrightNativeToolsSkillBody = `# Playwright
+
+This LCAgent run has native browser tools managed by Little Control Room.
+
+Use browser_navigate, browser_snapshot, browser_click, browser_fill, browser_press, browser_screenshot, and browser_current_page from the tool schema.
+
+Do not launch a separate browser from the terminal. Do not run npx, playwright-mcp, playwright-cli, playwright_cli.sh, MCP setup commands, or provider-specific Playwright wrappers.
+
+If login, MFA, payment, CAPTCHA, or human judgment is required, stop browser automation, report the current page, and ask the user to reveal and finish the managed browser flow in Little Control Room.`
 
 type skillRoot struct {
 	Dir    string

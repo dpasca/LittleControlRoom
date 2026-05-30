@@ -86,6 +86,73 @@ func TestProjectCodexSkillsRequireOptIn(t *testing.T) {
 	}
 }
 
+func TestBrowserModeShadowsPlaywrightUnavailable(t *testing.T) {
+	codexHome := t.TempDir()
+	writeSkill(t, filepath.Join(codexHome, "skills", "playwright", "SKILL.md"), "playwright", "Stale Playwright", "Run playwright_cli.sh from the terminal.")
+
+	catalog, err := Discover(context.Background(), Options{
+		CodexHome:   codexHome,
+		BrowserMode: BrowserModeUnavailable,
+	})
+	if err != nil {
+		t.Fatalf("discover skills: %v", err)
+	}
+	loaded, err := catalog.Load("playwright")
+	if err != nil {
+		t.Fatalf("load playwright: %v", err)
+	}
+	if !strings.Contains(loaded.Body, "Browser control is not available in this LCAgent run") {
+		t.Fatalf("loaded body missing unavailable guidance:\n%s", loaded.Body)
+	}
+	if strings.Contains(loaded.Body, "Run playwright_cli.sh from the terminal.") {
+		t.Fatalf("loaded body kept stale global skill:\n%s", loaded.Body)
+	}
+	index := catalog.PromptIndex(10)
+	if !strings.Contains(index, "Browser control is unavailable") {
+		t.Fatalf("prompt index missing unavailable description:\n%s", index)
+	}
+}
+
+func TestBrowserModeShadowsPlaywrightNativeTools(t *testing.T) {
+	catalog := Catalog{}
+	catalog.ApplyBrowserMode(BrowserModeNativeTools)
+
+	loaded, err := catalog.Load("playwright")
+	if err != nil {
+		t.Fatalf("load playwright: %v", err)
+	}
+	for _, want := range []string{
+		"This LCAgent run has native browser tools",
+		"Use browser_navigate",
+		"Do not launch a separate browser from the terminal",
+		"ask the user to reveal and finish the managed browser flow",
+	} {
+		if !strings.Contains(loaded.Body, want) {
+			t.Fatalf("loaded body missing %q:\n%s", want, loaded.Body)
+		}
+	}
+}
+
+func TestBrowserModePassthroughKeepsPlaywrightSkill(t *testing.T) {
+	codexHome := t.TempDir()
+	writeSkill(t, filepath.Join(codexHome, "skills", "playwright", "SKILL.md"), "playwright", "Original Playwright", "Original body")
+
+	catalog, err := Discover(context.Background(), Options{
+		CodexHome:   codexHome,
+		BrowserMode: BrowserModePassthrough,
+	})
+	if err != nil {
+		t.Fatalf("discover skills: %v", err)
+	}
+	loaded, err := catalog.Load("playwright")
+	if err != nil {
+		t.Fatalf("load playwright: %v", err)
+	}
+	if !strings.Contains(loaded.Body, "Original body") {
+		t.Fatalf("loaded body =\n%s", loaded.Body)
+	}
+}
+
 func writeSkill(t *testing.T, path, name, description, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

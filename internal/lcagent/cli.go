@@ -149,25 +149,6 @@ func resolveBrowserCapability(controlRaw, sessionKeyRaw, profileKeyRaw, launchMo
 	}
 }
 
-func shadowPlaywrightSkill(catalog *skillcatalog.Catalog, browserEnabled bool) {
-	if catalog == nil {
-		return
-	}
-	if browserEnabled {
-		catalog.UpsertSyntheticSkill(
-			"playwright",
-			"LCR-managed browser control for LCAgent runs; do not use terminal Playwright wrappers.",
-			"# Playwright\n\nBrowser control for this LCAgent run is managed by Little Control Room. Use the explicit `browser_*` tools exposed in the tool schema. Do not run `npx`, `playwright-mcp`, `playwright-cli`, `playwright_cli.sh`, or MCP server commands from the shell.",
-		)
-		return
-	}
-	catalog.UpsertSyntheticSkill(
-		"playwright",
-		"Browser control is unavailable for this LCAgent run.",
-		"# Playwright\n\nBrowser control is not available in this LCAgent run. Do not run terminal Playwright wrappers, MCP server commands, `npx`, `playwright-mcp`, `playwright-cli`, or `playwright_cli.sh`. If the user asked for browser work, report the browser-tooling blocker and use non-browser evidence only when it actually answers the task.",
-	)
-}
-
 type lcagentBrowserRunner struct {
 	session browserctl.BrowserSession
 }
@@ -459,11 +440,16 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if err != nil {
 		return fmt.Errorf("load project instructions: %w", err)
 	}
-	catalog, err := skillcatalog.Discover(context.Background(), skillcatalog.DefaultOptions(workspace.Root))
+	skillOptions := skillcatalog.DefaultOptions(workspace.Root)
+	if browserCapability.Enabled {
+		skillOptions.BrowserMode = skillcatalog.BrowserModeNativeTools
+	} else {
+		skillOptions.BrowserMode = skillcatalog.BrowserModeUnavailable
+	}
+	catalog, err := skillcatalog.Discover(context.Background(), skillOptions)
 	if err != nil {
 		return fmt.Errorf("load skills: %w", err)
 	}
-	shadowPlaywrightSkill(&catalog, browserCapability.Enabled)
 	if dataDir == "" {
 		dataDir = defaultDataDir()
 	}

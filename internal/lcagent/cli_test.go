@@ -100,12 +100,61 @@ func TestRunExecEmitsManagedBrowserCapability(t *testing.T) {
 		`"launch_mode":"background"`,
 		`"session_key":"session-demo"`,
 		`"profile_key":"profile-demo"`,
-		`Use the explicit ` + "`browser_*`" + ` tools`,
-		`Do not run ` + "`npx`",
+		`This LCAgent run has native browser tools`,
+		`Use browser_navigate`,
+		`Do not run npx`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunExecShadowsPlaywrightSkillWhenBrowserUnavailable(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	codexHome := os.Getenv("CODEX_HOME")
+	if err := os.MkdirAll(filepath.Join(codexHome, "skills", "playwright"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleBody := "Run playwright_cli.sh from the terminal."
+	if err := os.WriteFile(filepath.Join(codexHome, "skills", "playwright", "SKILL.md"), []byte("---\nname: playwright\ndescription: stale browser workflow\n---\n"+staleBody+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(t.TempDir(), "script.jsonl")
+	script := `{"type":"tool_call","tool":"load_skill","args":{"name":"playwright"}}
+{"type":"final_response","summary":"done","files_changed":[],"verification":[]}
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--script", scriptPath,
+		"browser unavailable",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s", code, stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"browser_capability"`,
+		`"enabled":false`,
+		`Browser control is not available in this LCAgent run`,
+		`Do not run Playwright CLI`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, staleBody) {
+		t.Fatalf("stdout kept stale playwright skill body:\n%s", text)
 	}
 }
 
