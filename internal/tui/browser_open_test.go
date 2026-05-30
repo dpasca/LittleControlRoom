@@ -2,7 +2,9 @@ package tui
 
 import (
 	"testing"
+	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/commands"
 	"lcroom/internal/model"
 )
@@ -42,6 +44,30 @@ func TestOpenRuntimeURLInBrowserUsesRawURL(t *testing.T) {
 	}
 	if called != "http://127.0.0.1:3000/" {
 		t.Fatalf("opened URL = %q, want runtime URL", called)
+	}
+}
+
+func TestManagedBrowserStateFreshForUIRejectsStaleState(t *testing.T) {
+	now := time.Date(2026, time.May, 30, 17, 0, 0, 0, time.UTC)
+	fresh := browserctl.ManagedPlaywrightState{
+		SessionKey: "managed-demo",
+		BrowserPID: 123,
+		UpdatedAt:  now.Add(-5 * time.Second),
+	}
+	if !managedBrowserStateFreshForUI(fresh, now) {
+		t.Fatal("fresh managed browser state should be accepted")
+	}
+
+	stale := fresh
+	stale.UpdatedAt = now.Add(-time.Hour)
+	if managedBrowserStateFreshForUI(stale, now) {
+		t.Fatal("stale managed browser state should be rejected")
+	}
+
+	missingBrowser := fresh
+	missingBrowser.BrowserPID = 0
+	if managedBrowserStateFreshForUI(missingBrowser, now) {
+		t.Fatal("state without a revealable browser should be rejected")
 	}
 }
 

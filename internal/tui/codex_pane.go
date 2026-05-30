@@ -1965,6 +1965,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if !m.managedBrowserCanReveal(snapshot) {
+			m.status = "Managed browser window is not attached to this session. Use /reconnect or start a fresh session if you need the browser again."
+			return m, nil
+		}
 		m.status = "Showing the managed browser window..."
 		return m, m.revealManagedBrowserCmd(
 			sessionKey,
@@ -2766,13 +2770,6 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 	if hint := m.managedBrowserCurrentPageHint(snapshot); hint != "" {
 		lines = append(lines, fitFooterWidth(hint, width))
 	}
-	if codexSnapshotBrowserWaitingForUser(snapshot) {
-		lines = append(lines,
-			fitFooterWidth("Type a note below, then press Enter to continue.", width),
-			fitFooterWidth("Do not want to log in? Press ctrl+c to stop the turn.", width),
-			fitFooterWidth("Esc or Alt+Up hides this session without stopping it.", width),
-		)
-	}
 	return lines
 }
 
@@ -3125,7 +3122,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		if len(snapshot.PendingToolInput.Questions) > 1 {
 			actions = append(actions, footerNavAction("Tab", "next"))
 		}
-		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && !snapshot.CurrentBrowserPageStale {
+		if m.managedBrowserCanReveal(snapshot) {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeForm:
@@ -3199,7 +3196,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "continue"),
 		}
-		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && !snapshot.CurrentBrowserPageStale {
+		if m.managedBrowserCanReveal(snapshot) {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 		actions = append(actions,
@@ -3236,7 +3233,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerNavAction("ctrl+v", "image"),
 			footerLowAction("Alt+C", "copy menu"),
 		}
-		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && !snapshot.CurrentBrowserPageStale {
+		if m.managedBrowserCanReveal(snapshot) {
 			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
 		}
 	}
@@ -3267,14 +3264,12 @@ func (m Model) managedBrowserCurrentPageLabel(snapshot codexapp.Snapshot) string
 }
 
 func (m Model) managedBrowserCurrentPageHint(snapshot codexapp.Snapshot) string {
-	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-	if sessionKey == "" {
+	if !m.managedBrowserCanReveal(snapshot) {
 		return ""
 	}
-	if state, ok := m.cachedManagedBrowserState(sessionKey); ok {
-		if !state.RevealSupported || !state.Hidden {
-			return ""
-		}
+	state, ok := m.cachedManagedBrowserState(snapshot.ManagedBrowserSessionKey)
+	if !ok || !state.Normalize().Hidden {
+		return ""
 	}
 	return "Press ctrl+o to reveal the managed browser window for this same session."
 }
@@ -3285,6 +3280,28 @@ func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) 
 		return "focus browser"
 	}
 	return "show browser"
+}
+
+func (m Model) managedBrowserCanReveal(snapshot codexapp.Snapshot) bool {
+	if managedBrowserCurrentPageURL(snapshot) == "" || strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" || snapshot.CurrentBrowserPageStale {
+		return false
+	}
+	state, ok := m.cachedManagedBrowserState(snapshot.ManagedBrowserSessionKey)
+	return ok && state.Normalize().RevealSupported
+}
+
+func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.Cmd {
+	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
+	if sessionKey == "" || snapshot.CurrentBrowserPageStale {
+		return nil
+	}
+	if managedBrowserCurrentPageURL(snapshot) == "" && snapshot.PendingElicitation == nil {
+		return nil
+	}
+	if _, ok := m.cachedManagedBrowserState(sessionKey); ok {
+		return nil
+	}
+	return m.readManagedBrowserStateCmd(sessionKey)
 }
 
 func compactNonEmptyStrings(lines []string) []string {

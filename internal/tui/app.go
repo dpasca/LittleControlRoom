@@ -332,6 +332,12 @@ type browserOpenMsg struct {
 	managedBrowserStateSet  bool
 }
 
+type managedBrowserStateMsg struct {
+	sessionKey string
+	state      browserctl.ManagedPlaywrightState
+	err        error
+}
+
 type codexArtifactPreviewMsg struct {
 	projectPath string
 	path        string
@@ -1775,6 +1781,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var hostCmd tea.Cmd
 			m, hostCmd = m.updateBossHostNotice("Browser handoff: " + strings.TrimSpace(msg.status))
 			return m, hostCmd
+		}
+		return m, nil
+	case managedBrowserStateMsg:
+		if msg.err == nil {
+			m.rememberManagedBrowserState(msg.state)
 		}
 		return m, nil
 	case codexArtifactPreviewMsg:

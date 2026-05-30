@@ -11292,8 +11292,11 @@ func TestCodexUpdateAfterModelApplyDefersLiveSnapshotRefresh(t *testing.T) {
 		codexHiddenProject:  "/tmp/demo",
 		codexInput:          newCodexTextarea(),
 		codexViewport:       viewport.New(0, 0),
-		width:               100,
-		height:              24,
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+		width:  100,
+		height: 24,
 	}
 	if _, ok, _ := m.refreshCodexSnapshot("/tmp/demo"); !ok {
 		t.Fatalf("refreshCodexSnapshot() failed")
@@ -11883,20 +11886,99 @@ func TestVisibleLCAgentBrowserWaitExplainsContinueAndExitChoices(t *testing.T) {
 	for _, want := range []string{
 		"browser_wait_for_user",
 		"Background browser page: https://accounts.google.com/",
-		"Type a note below, then press Enter to continue.",
-		"Press ctrl+c to stop the turn",
-		"Esc or Alt+Up hides this session",
 	} {
 		if !strings.Contains(renderedPanel, want) {
 			t.Fatalf("renderCodexBrowserPanel() missing %q during LCAgent browser wait: %q", want, renderedPanel)
 		}
 	}
+	for _, unwanted := range []string{
+		"Type a note below",
+		"Press ctrl+c to stop the turn",
+		"Esc or Alt+Up",
+		"Press ctrl+o",
+	} {
+		if strings.Contains(renderedPanel, unwanted) {
+			t.Fatalf("renderCodexBrowserPanel() should keep browser-wait copy compact, found %q in %q", unwanted, renderedPanel)
+		}
+	}
 
 	renderedFooter := ansi.Strip(m.renderCodexFooter(snapshot, 160))
-	for _, want := range []string{"Enter continue", "ctrl+o show browser", "ctrl+c stop", "Alt+Up hide", "Esc hide"} {
+	for _, want := range []string{"Enter continue", "ctrl+c stop", "Alt+Up hide", "Esc hide"} {
 		if !strings.Contains(renderedFooter, want) {
 			t.Fatalf("renderCodexFooter() missing %q during LCAgent browser wait: %q", want, renderedFooter)
 		}
+	}
+	if strings.Contains(renderedFooter, "ctrl+o") {
+		t.Fatalf("renderCodexFooter() should not offer ctrl+o before browser state is confirmed: %q", renderedFooter)
+	}
+}
+
+func TestVisibleLCAgentBrowserWaitShowsBrowserActionAfterStateHydrates(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Busy:                     true,
+		Phase:                    codexapp.SessionPhaseRunning,
+		Status:                   "Browser waiting for user input",
+		ManagedBrowserSessionKey: "managed-login",
+		CurrentBrowserPageURL:    "https://accounts.google.com/",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_wait_for_user",
+		},
+	}
+	m := Model{
+		codexVisibleProject: "/tmp/lcagent-browser-wait",
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-login": {SessionKey: "managed-login", BrowserPID: 123, Hidden: true},
+		},
+	}
+
+	renderedPanel := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 140))
+	if !strings.Contains(renderedPanel, "Press ctrl+o to reveal the managed browser window") {
+		t.Fatalf("renderCodexBrowserPanel() should offer ctrl+o after browser state hydrates: %q", renderedPanel)
+	}
+	renderedFooter := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(renderedFooter, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() should offer ctrl+o after browser state hydrates: %q", renderedFooter)
+	}
+}
+
+func TestVisibleLCAgentBrowserWaitDoesNotOpenUnhydratedOldBrowser(t *testing.T) {
+	projectPath := "/tmp/lcagent-browser-old"
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Busy:                     true,
+		Phase:                    codexapp.SessionPhaseRunning,
+		Status:                   "Browser waiting for user input",
+		ManagedBrowserSessionKey: "managed-login",
+		CurrentBrowserPageURL:    "https://accounts.google.com/",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_wait_for_user",
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: snapshot,
+		},
+		codexInput: newCodexTextarea(),
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+o should not queue a browser-open command before browser state is confirmed")
+	}
+	if !strings.Contains(got.status, "not attached") {
+		t.Fatalf("status = %q, want detached browser guidance", got.status)
 	}
 }
 
@@ -16105,8 +16187,11 @@ func TestRenderCodexTranscriptShowsFullTypedText(t *testing.T) {
 		codexHiddenProject:  "/tmp/demo",
 		codexInput:          newCodexTextarea(),
 		codexViewport:       viewport.New(0, 0),
-		width:               100,
-		height:              24,
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+		width:  100,
+		height: 24,
 	}
 
 	rendered := ansi.Strip(m.renderCodexView())
@@ -16143,8 +16228,11 @@ func TestVisibleCodexCtrlCClosesIdleSession(t *testing.T) {
 		codexHiddenProject:  "/tmp/demo",
 		codexInput:          newCodexTextarea(),
 		codexViewport:       viewport.New(0, 0),
-		width:               100,
-		height:              24,
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+		width:  100,
+		height: 24,
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -17819,8 +17907,11 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 		codexHiddenProject:  "/tmp/demo",
 		codexInput:          newCodexTextarea(),
 		codexViewport:       viewport.New(0, 0),
-		width:               100,
-		height:              24,
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+		width:  100,
+		height: 24,
 	}
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
@@ -17994,7 +18085,12 @@ func TestVisibleCodexCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 		CurrentBrowserPageURL:    "https://chartboost.us.auth0.com/u/login?state=demo",
 	}
 
-	m := Model{codexVisibleProject: "/tmp/demo"}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+	}
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
 	if !strings.Contains(renderedBlocks, "Background browser page: https://chartboost.us.auth0.com/u/login?state=demo") {
 		t.Fatalf("renderCodexBrowserPanel() missing current background page: %q", renderedBlocks)
@@ -18203,7 +18299,12 @@ func TestVisibleOpenCodeCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) 
 		CurrentBrowserPageURL:    "https://example.com/",
 	}
 
-	m := Model{codexVisibleProject: "/tmp/demo"}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+	}
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
 	if !strings.Contains(renderedBlocks, "Background browser page: https://example.com/") {
 		t.Fatalf("renderCodexBrowserPanel() missing current background page for OpenCode: %q", renderedBlocks)
@@ -18228,7 +18329,12 @@ func TestVisibleLCAgentCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
 		CurrentBrowserPageURL:    "https://example.com/",
 	}
 
-	m := Model{codexVisibleProject: "/tmp/demo"}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+	}
 	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
 	if !strings.Contains(renderedBlocks, "Background browser page: https://example.com/") {
 		t.Fatalf("renderCodexBrowserPanel() missing current background page for LCAgent: %q", renderedBlocks)
@@ -18299,7 +18405,12 @@ func TestVisibleOpenCodePendingToolInputKeepsShowBrowserAction(t *testing.T) {
 		},
 	}
 
-	m := Model{codexVisibleProject: "/tmp/demo"}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true},
+		},
+	}
 	footer := ansi.Strip(m.renderCodexFooter(snapshot, 180))
 	for _, want := range []string{"Enter answer", "ctrl+o show browser"} {
 		if !strings.Contains(footer, want) {

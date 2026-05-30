@@ -719,20 +719,22 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 		m.questionNotify = nil
 	}
 	m.loadCodexDraft(projectPath)
-	_, ok, needsAsync := m.refreshCodexSnapshot(projectPath)
+	snapshot, ok, needsAsync := m.refreshCodexSnapshot(projectPath)
 	asyncCmd := tea.Cmd(nil)
 	if needsAsync {
 		asyncCmd = m.deferredCodexSnapshotCmd(projectPath)
 	}
+	browserStateCmd := tea.Cmd(nil)
 	if ok {
 		m.syncCodexViewport(true)
+		browserStateCmd = m.maybeReadManagedBrowserStateCmd(snapshot)
 	}
 	seenCmd := m.markProjectSessionSeen(projectPath)
 	if strings.TrimSpace(status) != "" {
 		m.status = status
 	}
 	focusCmd := m.focusProjectPath(projectPath)
-	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath), seenCmd, asyncCmd)
+	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath), seenCmd, asyncCmd, browserStateCmd)
 }
 
 func (m *Model) focusProjectPath(projectPath string) tea.Cmd {

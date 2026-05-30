@@ -8,13 +8,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"lcroom/internal/browserctl"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 var externalBrowserOpener = openExternalBrowserURL
 var externalPathOpener = openExternalPath
 var managedBrowserSessionRevealer = browserctl.RevealManagedPlaywrightSession
+var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
+
+const managedBrowserStateFreshWindow = 30 * time.Second
 
 func openProjectDirInBrowser(path string) error {
 	if strings.TrimSpace(path) == "" {
@@ -98,6 +104,36 @@ func (m Model) cachedManagedBrowserState(sessionKey string) (browserctl.ManagedP
 		return browserctl.ManagedPlaywrightState{}, false
 	}
 	return state.Normalize(), true
+}
+
+func (m Model) readManagedBrowserStateCmd(sessionKey string) tea.Cmd {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return nil
+	}
+	dataDir := m.appDataDir()
+	return func() tea.Msg {
+		state, err := managedBrowserStateReader(dataDir, sessionKey)
+		if err == nil && !managedBrowserStateFreshForUI(state, time.Now()) {
+			return managedBrowserStateMsg{sessionKey: sessionKey, err: fmt.Errorf("managed browser state is stale")}
+		}
+		return managedBrowserStateMsg{sessionKey: sessionKey, state: state, err: err}
+	}
+}
+
+func managedBrowserStateFreshForUI(state browserctl.ManagedPlaywrightState, now time.Time) bool {
+	state = state.Normalize()
+	if !state.RevealSupported {
+		return false
+	}
+	if state.UpdatedAt.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	age := now.Sub(state.UpdatedAt)
+	return age >= 0 && age <= managedBrowserStateFreshWindow
 }
 
 func openExternalBrowserURL(rawURL string) error {

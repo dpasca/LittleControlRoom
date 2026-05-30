@@ -179,9 +179,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.status = status
 	}
 	if focusInput {
-		return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd, m.codexInput.Focus())
+		return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot), m.codexInput.Focus())
 	}
-	return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd)
+	return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot))
 }
 
 func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
@@ -352,6 +352,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
 		if ok {
 			cmds = append(cmds, m.maybeStartCodexArtifactLinkScan(msg.projectPath, snapshot))
+			cmds = append(cmds, m.maybeReadManagedBrowserStateCmd(snapshot))
 			if codexSnapshotBrowserWaitingForUser(snapshot) {
 				cmds = append(cmds, m.codexInput.Focus())
 			}
@@ -438,12 +439,13 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 	if m.codexVisibleProject == projectPath {
 		linkScanCmd = m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
 	}
+	browserStateCmd := m.maybeReadManagedBrowserStateCmd(snapshot)
 	m.completeModelSettleLatency(projectPath, snapshot)
 	if !snapshot.Closed {
 		m.markCodexSessionLive(projectPath)
 		m.detectBrowserAttentionNotification(projectPath, snapshot)
 		m.detectQuestionNotification(projectPath, snapshot)
-		return m, batchCmds(statusRefreshCmd, linkScanCmd, bossNoticeCmd)
+		return m, batchCmds(statusRefreshCmd, linkScanCmd, browserStateCmd, bossNoticeCmd)
 	}
 	m.removeManagedBrowserLease(projectPath, snapshot)
 	m.cancelModelSettleLatency(projectPath, "session closed")
@@ -459,7 +461,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		m.status = snapshot.Status
 	}
 	m.loading = true
-	cmds := []tea.Cmd{linkScanCmd, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))}
+	cmds := []tea.Cmd{linkScanCmd, browserStateCmd, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))}
 	if shouldRecordEmbeddedSessionSettledAfterClose(hadPrev, prevSnapshot, snapshot) {
 		cmds = append([]tea.Cmd{m.recordEmbeddedSessionSettledCmd(projectPath, snapshot)}, cmds...)
 	}
