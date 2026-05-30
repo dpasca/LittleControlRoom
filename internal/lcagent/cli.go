@@ -638,7 +638,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	artifactDir := filepath.Join(filepath.Dir(writer.Path()), sessionID+"-artifacts")
 	var browserRunner script.BrowserRunner
 	if browserCapability.Enabled {
-		browserSession, err := browserctl.NewPlaywrightBrowserSession(browserctl.BrowserSessionConfig{
+		browserSession, err := browserctl.NewPlaywrightMCPBrowserSession(browserctl.BrowserSessionConfig{
 			DataDir:     dataDir,
 			Provider:    "lcagent",
 			ProjectPath: workspace.Root,

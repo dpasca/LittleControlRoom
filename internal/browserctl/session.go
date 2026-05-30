@@ -31,4 +31,5 @@ type BrowserSessionConfig struct {
 	LaunchMode     ManagedLaunchMode
 	Policy         Policy
 	BrowserChannel string
+	BrowserPath    string
 }

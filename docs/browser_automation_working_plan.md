@@ -22,7 +22,7 @@ It is intentionally different from `STATUS.md`:
 - Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows only the `playwright` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
 - OpenCode sessions now track their live Playwright tool activity plus the current managed browser page URL, so the shared browser strip/reveal UI can surface the same current-page and reconnect guidance patterns that Codex already uses.
 - OpenCode browser-backed question waits now reuse that same managed browser state, so when OpenCode pauses for user input the session can stay in a `waiting for user` browser state and keep `ctrl+o` available to reveal or refocus the managed browser window.
-- LCAgent now exposes native `browser_*` tools backed by an LCR-managed Playwright worker, tracks current page state in the embedded UI, and shadows the `playwright` skill by browser capability.
+- LCAgent now exposes native `browser_*` tools backed by an LCR-managed Playwright MCP process, tracks current page state in the embedded UI, and shadows the `playwright` skill by browser capability.
 - Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
 - Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal.
@@ -135,7 +135,7 @@ Make browser automation feel quiet and predictable by default:
 
 ### LCAgent
 
-- Native LCAgent `browser_*` tools are available when managed browser mode is enabled.
+- Native LCAgent `browser_*` tools are available when managed browser mode is enabled, with calls routed through an LCR-owned `mcp-server-playwright` process so LCAgent uses the same mature browser backend shape as Codex/OpenCode.
 - Browser activity and current page URL flow into the shared embedded browser UI, including current-page reveal/focus affordances.
 - The `playwright` skill is capability-aware: unavailable runs report the blocker, while managed runs point to native `browser_*` tools instead of CLI/MCP shell commands.
 - `make lcagent-browser-smoke` runs a scripted local managed-browser smoke against an HTTP fixture and verifies snapshot, screenshot artifact, managed state, and process cleanup.
