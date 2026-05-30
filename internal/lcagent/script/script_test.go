@@ -226,6 +226,9 @@ func TestRunnerFinalResponseAuditBlocksUnknownBrowserOutcomeBeforeUserWait(t *te
 	if !strings.Contains(audit.Message, "browser_wait_for_user") {
 		t.Fatalf("audit message missing browser_wait_for_user guidance: %q", audit.Message)
 	}
+	if audit.Code != "browser_wait_required" {
+		t.Fatalf("audit.Code = %q, want browser_wait_required", audit.Code)
+	}
 
 	runner.browserWaitForUserUsed = true
 	audit = runner.FinalResponseAudit(Action{

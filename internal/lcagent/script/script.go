@@ -111,6 +111,7 @@ type FinalResponseAudit struct {
 	Outcome            string `json:"outcome"`
 	FinalOutcome       string `json:"final_outcome,omitempty"`
 	VerificationStatus string `json:"verification_status,omitempty"`
+	Code               string `json:"code,omitempty"`
 	Message            string `json:"message"`
 	Blocking           bool   `json:"blocking,omitempty"`
 	ToolFailures       int    `json:"tool_failures,omitempty"`
@@ -263,6 +264,7 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	if finalOutcome == "unknown" && r != nil && r.BrowserAvailable && r.browserToolsUsed && !r.browserWaitForUserUsed {
 		audit.Outcome = "block"
 		audit.Blocking = true
+		audit.Code = "browser_wait_required"
 		audit.Message = "final_response outcome was unknown after using the managed browser. If login, MFA, CAPTCHA, payment, or human judgment may unblock the browser task, call browser_wait_for_user instead of ending the turn. Otherwise set outcome to blocked, failed, partial, or completed and explain the concrete browser evidence."
 		return audit
 	}
@@ -2031,6 +2033,7 @@ func finalResponseAuditEvent(sessionID string, audit FinalResponseAudit) session
 		"outcome":             outcome,
 		"final_outcome":       audit.FinalOutcome,
 		"verification_status": strings.TrimSpace(audit.VerificationStatus),
+		"code":                strings.TrimSpace(audit.Code),
 		"message":             strings.TrimSpace(audit.Message),
 		"blocking":            audit.Blocking,
 		"tool_failures":       audit.ToolFailures,

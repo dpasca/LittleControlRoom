@@ -2363,6 +2363,25 @@ func TestRunExecOpenRouterBouncesFinalAfterChangedFilesWithoutActualVerification
 	}
 }
 
+func TestShouldBounceFinalAuditAlwaysBouncesBrowserWaitRequirement(t *testing.T) {
+	audit := script.FinalResponseAudit{Blocking: true, Code: "browser_wait_required"}
+	if !shouldBounceFinalAudit(audit, 0) {
+		t.Fatal("browser wait audit should bounce before any feedback")
+	}
+	if !shouldBounceFinalAudit(audit, 3) {
+		t.Fatal("browser wait audit should keep bouncing even after prior final feedback")
+	}
+	if shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: false, Code: "browser_wait_required"}, 0) {
+		t.Fatal("non-blocking audit should not bounce")
+	}
+	if !shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: true}, 0) {
+		t.Fatal("ordinary blocking audit should bounce once")
+	}
+	if shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: true}, 1) {
+		t.Fatal("ordinary blocking audit should keep the existing one-feedback limit")
+	}
+}
+
 func TestRunExecOpenRouterFeedsPatchFailureBackToModel(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

@@ -966,6 +966,19 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				Type:    "final_response",
 				Summary: msg.Content,
 			}
+			audit := runner.FinalResponseAudit(final)
+			if shouldBounceFinalAudit(audit, finalVerificationFeedbacks) {
+				finalVerificationFeedbacks++
+				if err := runner.WriteFinalResponseAudit(audit); err != nil {
+					return err
+				}
+				feedback, _ := audit.VerificationFeedback()
+				if err := runner.WriteVerificationFeedback(feedback); err != nil {
+					return err
+				}
+				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
+				continue
+			}
 			if err := runner.Final(final); err != nil {
 				return err
 			}
@@ -1003,7 +1016,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode final_response arguments: %w", err))
 				}
 				audit := runner.FinalResponseAudit(final)
-				if audit.Blocking && finalVerificationFeedbacks == 0 {
+				if shouldBounceFinalAudit(audit, finalVerificationFeedbacks) {
 					finalVerificationFeedbacks++
 					if err := writer.Write(session.Event{
 						"type":       "tool_call",
@@ -1149,6 +1162,16 @@ func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) st
 		return strings.TrimSpace(os.Getenv("MOONSHOT_FINAL_MODEL"))
 	}
 	return strings.TrimSpace(os.Getenv("OPENROUTER_FINAL_MODEL"))
+}
+
+func shouldBounceFinalAudit(audit script.FinalResponseAudit, feedbackCount int) bool {
+	if !audit.Blocking {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(audit.Code), "browser_wait_required") {
+		return true
+	}
+	return feedbackCount == 0
 }
 
 func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
