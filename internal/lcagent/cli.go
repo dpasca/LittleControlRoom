@@ -810,7 +810,8 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				if err != nil {
 					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode final_response arguments: %w", err))
 				}
-				if feedback, ok := runner.VerificationFeedbackForFinal(final); ok && finalVerificationFeedbacks == 0 {
+				audit := runner.FinalResponseAudit(final)
+				if audit.Blocking && finalVerificationFeedbacks == 0 {
 					finalVerificationFeedbacks++
 					if err := writer.Write(session.Event{
 						"type":       "tool_call",
@@ -820,6 +821,10 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					}); err != nil {
 						return err
 					}
+					if err := runner.WriteFinalResponseAudit(audit); err != nil {
+						return err
+					}
+					feedback, _ := audit.VerificationFeedback()
 					if err := runner.WriteVerificationFeedback(feedback); err != nil {
 						return err
 					}

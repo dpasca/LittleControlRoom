@@ -56,6 +56,9 @@ Implemented after `06403a9`:
 - Generic deterministic eval coverage for unavailable managed-process capability traces.
 - Generic deterministic eval coverage for timed-out verification traces.
 - Active-objective trace emission for scripted LCAgent runs, keeping scripted eval artifacts aligned with live-provider traces.
+- Lightweight final-response audit events derived from structured tool and verification metadata.
+- Final-response audit metrics in LCAgent session metrics.
+- OpenRouter final-response bounce now uses the audit boundary for missing-verification blockers.
 
 ## Phase 1: Generic Regression Evals
 
@@ -88,7 +91,7 @@ Scenarios:
 Remaining useful coverage:
 
 - A model-facing eval or replay that verifies the model chooses the right tool path, not only that scripted traces record the right evidence.
-- A final-response audit eval once the audit boundary exists.
+- Stronger final-response audit coverage once final responses carry a structured outcome field such as completed/blocked/failed.
 
 Likely files:
 
@@ -121,6 +124,12 @@ Lean note:
 
 Add a lightweight audit boundary for final responses on operational tasks.
 
+Current status:
+
+- A deterministic audit event exists for every accepted final response.
+- The audit blocks missing actual verification for changed files in live model loops.
+- The audit warns, but does not block, when prior verification evidence failed, timed out, or was denied. This avoids parsing prose to decide whether the final response honestly reported the failure.
+
 Audit inputs:
 
 - Tool calls and results in the current turn.
@@ -134,6 +143,10 @@ Audit outcomes:
 - Pass: final response is consistent with evidence.
 - Warn and trace: final response is ambiguous but not clearly false.
 - Block with corrective feedback: final response claims success after timeout, denied action, missing verification, or unavailable requested capability.
+
+Remaining design:
+
+- Add structured final-response outcome metadata before blocking "claims success after failure" cases. Without that field, blocking would require brittle prose parsing or would reject honest failure summaries.
 
 Lean note:
 

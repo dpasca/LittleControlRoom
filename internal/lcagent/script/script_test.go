@@ -76,7 +76,7 @@ func TestRunnerExecutesScriptedMiniSession(t *testing.T) {
 		t.Fatalf("README = %q", data)
 	}
 	text := stream.String()
-	for _, eventType := range []string{"user_message", "tool_call", "tool_result", "skill_loaded", "plan_update", "files_touched", "patch_diff_summary", "verification_summary", "turn_complete"} {
+	for _, eventType := range []string{"user_message", "tool_call", "tool_result", "skill_loaded", "plan_update", "files_touched", "patch_diff_summary", "final_response_audit", "verification_summary", "turn_complete"} {
 		if !strings.Contains(text, `"type":"`+eventType+`"`) {
 			t.Fatalf("stream missing %s:\n%s", eventType, text)
 		}
@@ -462,6 +462,34 @@ func TestRunnerFinalVerificationFeedbackAfterChangedFiles(t *testing.T) {
 	}
 	if feedback.Status != "reported_only" || !strings.Contains(feedback.Message, "no run_command check marked purpose=verify") {
 		t.Fatalf("feedback = %#v", feedback)
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:         "final_response",
+		Summary:      "done",
+		FilesChanged: []string{"README.md"},
+		Verification: []string{"go test ./..."},
+	})
+	if audit.Outcome != "block" || !audit.Blocking || audit.VerificationStatus != "reported_only" {
+		t.Fatalf("audit = %#v, want blocking reported_only", audit)
+	}
+}
+
+func TestRunnerFinalResponseAuditWarnsOnFailedVerification(t *testing.T) {
+	runner := Runner{
+		verificationChecks: []tools.VerificationCheck{{
+			Command:  "go test ./...",
+			Status:   tools.VerificationStatusTimedOut,
+			TimedOut: true,
+		}},
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:         "final_response",
+		Summary:      "verification timed out",
+		FilesChanged: nil,
+		Verification: []string{"go test ./... timed out"},
+	})
+	if audit.Outcome != "warn" || audit.Blocking || audit.VerificationStatus != "failed" || !strings.Contains(audit.Message, "verification evidence did not pass") {
+		t.Fatalf("audit = %#v, want non-blocking failed-verification warning", audit)
 	}
 }
 

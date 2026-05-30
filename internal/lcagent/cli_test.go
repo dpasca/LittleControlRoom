@@ -1786,6 +1786,8 @@ func TestRunExecOpenRouterFeedsFailedVerificationBackToModel(t *testing.T) {
 		`"type":"verification_check"`,
 		`"status":"failed"`,
 		`"type":"verification_feedback"`,
+		`"type":"final_response_audit"`,
+		`"outcome":"warn"`,
 		`"verification_status":"failed"`,
 	} {
 		if !strings.Contains(text, want) {
@@ -1867,6 +1869,8 @@ func TestRunExecOpenRouterBouncesFinalAfterChangedFilesWithoutActualVerification
 	}
 	text := stdout.String()
 	for _, want := range []string{
+		`"type":"final_response_audit"`,
+		`"outcome":"block"`,
 		`"type":"verification_feedback"`,
 		`"status":"reported_only"`,
 		`"summary":"verification blocked after one reminder"`,
@@ -2735,7 +2739,9 @@ func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
 		report.Summary.VerificationCheckStatuses["failed"] < 1 ||
 		report.Summary.VerificationCheckStatuses["denied"] < 1 ||
 		report.Summary.VerificationCheckStatuses["timed_out"] < 1 ||
-		report.Summary.ToolFailures["start_process"] < 1 {
+		report.Summary.ToolFailures["start_process"] < 1 ||
+		report.Summary.FinalResponseAudits < 1 ||
+		report.Summary.FinalResponseAuditOutcomes["pass"] < 1 {
 		t.Fatalf("eval summary missing expected trace metrics: %#v", report.Summary)
 	}
 	if report.Summary.TraceQuality.Score == 0 || report.Summary.TraceQuality.ToolFailures == 0 {

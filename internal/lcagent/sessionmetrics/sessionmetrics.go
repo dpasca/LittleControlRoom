@@ -48,6 +48,8 @@ type Summary struct {
 	VerificationFeedback        int                `json:"verification_feedback"`
 	VerificationCheckStatuses   map[string]int     `json:"verification_check_statuses,omitempty"`
 	VerificationStatuses        map[string]int     `json:"verification_statuses,omitempty"`
+	FinalResponseAudits         int                `json:"final_response_audits,omitempty"`
+	FinalResponseAuditOutcomes  map[string]int     `json:"final_response_audit_outcomes,omitempty"`
 	ContextCompactions          int                `json:"context_compactions,omitempty"`
 	ReadFileCalls               int                `json:"read_file_calls"`
 	ReadFileLines               int                `json:"read_file_lines"`
@@ -239,6 +241,9 @@ func (s *Summary) init() {
 	if s.VerificationCheckStatuses == nil {
 		s.VerificationCheckStatuses = map[string]int{}
 	}
+	if s.FinalResponseAuditOutcomes == nil {
+		s.FinalResponseAuditOutcomes = map[string]int{}
+	}
 	if s.rangesByFile == nil {
 		s.rangesByFile = map[string][]lineRange{}
 	}
@@ -381,6 +386,13 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			status = "unknown"
 		}
 		s.VerificationStatuses[status]++
+	case "final_response_audit":
+		s.FinalResponseAudits++
+		outcome := rawString(event["outcome"])
+		if outcome == "" {
+			outcome = "unknown"
+		}
+		s.FinalResponseAuditOutcomes[outcome]++
 	case "tool_call":
 		tool := rawString(event["tool"])
 		if tool == "" {

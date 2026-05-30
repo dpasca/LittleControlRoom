@@ -42,6 +42,7 @@ type Runner struct {
 	verificationChecks    []tools.VerificationCheck
 	filesTouched          []string
 	commandApprovalGrants []commandApprovalGrant
+	toolFailures          []tools.ToolResult
 }
 
 type SearchRefiner interface {
@@ -95,6 +96,14 @@ type VerificationFeedback struct {
 	Status  string `json:"status"`
 	Command string `json:"command,omitempty"`
 	Message string `json:"message"`
+}
+
+type FinalResponseAudit struct {
+	Outcome            string `json:"outcome"`
+	VerificationStatus string `json:"verification_status,omitempty"`
+	Message            string `json:"message"`
+	Blocking           bool   `json:"blocking,omitempty"`
+	ToolFailures       int    `json:"tool_failures,omitempty"`
 }
 
 type PatchFeedback struct {
@@ -181,20 +190,62 @@ func verificationStatusPhrase(status string) string {
 }
 
 func (r *Runner) VerificationFeedbackForFinal(action Action) (VerificationFeedback, bool) {
+	audit := r.FinalResponseAudit(action)
+	return audit.VerificationFeedback()
+}
+
+func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	action.FilesChanged = cleanStringList(action.FilesChanged)
 	action.Verification = cleanStringList(action.Verification)
-	if len(action.FilesChanged) == 0 || len(r.verificationChecks) > 0 {
+	var verificationChecks []tools.VerificationCheck
+	toolFailures := 0
+	if r != nil {
+		verificationChecks = r.verificationChecks
+		toolFailures = len(r.toolFailures)
+	}
+	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, verificationChecks)
+	audit := FinalResponseAudit{
+		Outcome:            "pass",
+		VerificationStatus: verificationStatus,
+		Message:            "Final response audit passed.",
+		ToolFailures:       toolFailures,
+	}
+	if len(action.FilesChanged) > 0 && len(verificationChecks) == 0 && (verificationStatus == "missing_after_changes" || verificationStatus == "reported_only") {
+		audit.Outcome = "block"
+		audit.Blocking = true
+		audit.Message = finalAuditBlockingMessage(verificationStatus)
+		return audit
+	}
+	if verificationStatus == "failed" {
+		audit.Outcome = "warn"
+		audit.Message = "Final response audit warning: verification evidence did not pass. The final response must present this as failed, timed out, denied, or blocked rather than completed. " + verificationMessage
+		return audit
+	}
+	if toolFailures > 0 {
+		audit.Outcome = "warn"
+		audit.Message = fmt.Sprintf("Final response audit warning: %d tool failure(s) occurred in this turn; the final response must not imply failed actions succeeded.", toolFailures)
+	}
+	return audit
+}
+
+func (a FinalResponseAudit) VerificationFeedback() (VerificationFeedback, bool) {
+	if !a.Blocking {
 		return VerificationFeedback{}, false
 	}
-	status, _ := finalVerificationStatus(action.FilesChanged, action.Verification, r.verificationChecks)
-	if status != "missing_after_changes" && status != "reported_only" {
-		return VerificationFeedback{}, false
+	message := strings.TrimSpace(a.Message)
+	if !strings.HasPrefix(message, "Verification feedback:") {
+		message = "Verification feedback: " + message
 	}
-	message := "Verification feedback: final_response listed changed files, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
-	if status == "reported_only" {
-		message = "Verification feedback: final_response reported verification, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
+	return VerificationFeedback{Status: a.VerificationStatus, Message: message}, true
+}
+
+func finalAuditBlockingMessage(status string) string {
+	switch status {
+	case "reported_only":
+		return "final_response reported verification, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
+	default:
+		return "final_response listed changed files, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
 	}
-	return VerificationFeedback{Status: status, Message: message}, true
 }
 
 func (f VerificationFeedback) ModelMessage() string {
@@ -203,6 +254,13 @@ func (f VerificationFeedback) ModelMessage() string {
 
 func (r *Runner) WriteVerificationFeedback(feedback VerificationFeedback) error {
 	return r.Session.Write(verificationFeedbackEvent(r.SessionID, feedback))
+}
+
+func (r *Runner) WriteFinalResponseAudit(audit FinalResponseAudit) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(finalResponseAuditEvent(r.SessionID, audit))
 }
 
 func PatchFeedbackForResult(result tools.ToolResult) (PatchFeedback, bool) {
@@ -774,6 +832,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		return tools.ToolResult{}, err
 	}
 	if !result.Success {
+		r.toolFailures = append(r.toolFailures, result)
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
@@ -1534,6 +1593,9 @@ func (r *Runner) Final(action Action) error {
 	action.FilesChanged = cleanStringList(action.FilesChanged)
 	action.Verification = cleanStringList(action.Verification)
 	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, r.verificationChecks)
+	if err := r.WriteFinalResponseAudit(r.FinalResponseAudit(action)); err != nil {
+		return err
+	}
 	if err := r.Session.Write(session.Event{
 		"type":                "verification_summary",
 		"session_id":          r.SessionID,
@@ -1563,6 +1625,22 @@ func (r *Runner) Final(action Action) error {
 		"verification_status": verificationStatus,
 		"actual_checks":       append([]tools.VerificationCheck(nil), r.verificationChecks...),
 	})
+}
+
+func finalResponseAuditEvent(sessionID string, audit FinalResponseAudit) session.Event {
+	outcome := strings.TrimSpace(audit.Outcome)
+	if outcome == "" {
+		outcome = "pass"
+	}
+	return session.Event{
+		"type":                "final_response_audit",
+		"session_id":          sessionID,
+		"outcome":             outcome,
+		"verification_status": strings.TrimSpace(audit.VerificationStatus),
+		"message":             strings.TrimSpace(audit.Message),
+		"blocking":            audit.Blocking,
+		"tool_failures":       audit.ToolFailures,
+	}
 }
 
 func verificationCheckEvent(sessionID string, check tools.VerificationCheck) session.Event {
