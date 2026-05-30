@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/projectrun"
 )
 
@@ -1115,6 +1116,70 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	}
 	if got := strings.TrimSpace(string(envBytes)); got != "saved-openai-key" {
 		t.Fatalf("OPENAI_API_KEY passed to route preset = %q, want saved settings key", got)
+	}
+}
+
+func TestLCAgentSessionLaunchPassesManagedBrowserFlags(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	exe := filepath.Join(t.TempDir(), "fake-lcagent-browser")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+printf '%s\n' '{"type":"session_meta","id":"lca_browser_session","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"turn_complete","summary":"browser flags captured"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: root,
+		AppDataDir:  dataDir,
+		LCAgentPath: exe,
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode:     browserctl.ManagementModeManaged,
+			DefaultBrowserMode: browserctl.BrowserModeHeaded,
+			LoginMode:          browserctl.LoginModeManual,
+			IsolationScope:     browserctl.IsolationScopeTask,
+		},
+		ManagedBrowserSessionKey: "session-demo",
+		Prompt:                   "use the browser",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	if got := snapshot.ManagedBrowserSessionKey; got != "session-demo" {
+		t.Fatalf("ManagedBrowserSessionKey = %q, want session-demo", got)
+	}
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{
+		"--browser-control", "managed",
+		"--browser-session-key", "session-demo",
+		"--browser-profile-key",
+		"--browser-launch-mode", "headed",
+	} {
+		if !lcagentTestStringSliceContains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
 	}
 }
 

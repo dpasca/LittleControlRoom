@@ -20,7 +20,7 @@ func applyPlaywrightPolicyEnvironment(cmd *exec.Cmd, provider Provider, policy b
 
 func providerSupportsManagedPlaywright(provider Provider) bool {
 	switch provider.Normalized() {
-	case ProviderCodex, ProviderOpenCode:
+	case ProviderCodex, ProviderOpenCode, ProviderLCAgent:
 		return true
 	default:
 		return false

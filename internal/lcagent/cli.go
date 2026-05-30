@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/buildinfo"
 	projectinstructions "lcroom/internal/lcagent/instructions"
 	"lcroom/internal/lcagent/modeladapter"
@@ -104,6 +105,67 @@ type execRunOptions struct {
 	DelegationMode        string
 	DelegationDescription string
 	PromptTransform       func(string) string
+}
+
+type browserCapabilityConfig struct {
+	Enabled        bool
+	SessionKey     string
+	ProfileKey     string
+	LaunchMode     browserctl.ManagedLaunchMode
+	DisabledReason string
+	Err            error
+}
+
+func resolveBrowserCapability(controlRaw, sessionKeyRaw, profileKeyRaw, launchModeRaw string) browserCapabilityConfig {
+	control := strings.ToLower(strings.TrimSpace(controlRaw))
+	if control == "" {
+		control = "off"
+	}
+	launchMode := browserctl.ManagedLaunchMode(launchModeRaw).Normalize()
+	if control == "off" {
+		return browserCapabilityConfig{
+			LaunchMode:     launchMode,
+			DisabledReason: "browser control disabled",
+		}
+	}
+	if control != "managed" {
+		return browserCapabilityConfig{Err: fmt.Errorf("browser-control must be one of: off, managed")}
+	}
+	sessionKey := strings.TrimSpace(sessionKeyRaw)
+	profileKey := strings.TrimSpace(profileKeyRaw)
+	if sessionKey == "" || profileKey == "" {
+		return browserCapabilityConfig{
+			LaunchMode:     launchMode,
+			SessionKey:     sessionKey,
+			ProfileKey:     profileKey,
+			DisabledReason: "managed browser session and profile keys are required",
+		}
+	}
+	return browserCapabilityConfig{
+		Enabled:    true,
+		SessionKey: sessionKey,
+		ProfileKey: profileKey,
+		LaunchMode: launchMode,
+	}
+}
+
+func shadowPlaywrightSkill(catalog *skillcatalog.Catalog, browserEnabled bool) {
+	if catalog == nil {
+		return
+	}
+	if browserEnabled {
+		catalog.UpsertSyntheticSkill(
+			"playwright",
+			"LCR-managed browser control for LCAgent runs; do not use terminal Playwright wrappers.",
+			"# Playwright\n\nBrowser control for this LCAgent run is managed by Little Control Room. Use the explicit `browser_*` tools exposed in the tool schema. Do not run `npx`, `playwright-mcp`, `playwright-cli`, `playwright_cli.sh`, or MCP server commands from the shell.",
+		)
+		return
+	}
+	catalog.UpsertSyntheticSkill(
+		"playwright",
+		"Browser control is unavailable for this LCAgent run.",
+		"# Playwright\n\nBrowser control is not available in this LCAgent run. Do not run terminal Playwright wrappers, MCP server commands, `npx`, `playwright-mcp`, `playwright-cli`, or `playwright_cli.sh`. If the user asked for browser work, report the browser-tooling blocker and use non-browser evidence only when it actually answers the task.",
+	)
 }
 
 func runPresets(args []string, stdout io.Writer) error {
@@ -219,6 +281,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw string
 	var utilityProviderRaw, utilityModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
+	var browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw string
 	var requestTimeout time.Duration
 	var maxTurns int
 	var searchRefineMinBytes int
@@ -249,6 +312,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&webSearchAPIKey, "web-search-api-key", "", "optional web search API key, used by exa or google")
 	fs.StringVar(&webSearchEngineID, "web-search-engine-id", "", "optional Google Programmable Search engine ID")
 	fs.StringVar(&webSearchURL, "web-search-url", "", "optional web search endpoint URL, used by searxng")
+	fs.StringVar(&browserControlRaw, "browser-control", "off", "browser control: off or managed")
+	fs.StringVar(&browserSessionKey, "browser-session-key", "", "managed browser session key")
+	fs.StringVar(&browserProfileKey, "browser-profile-key", "", "managed browser profile key")
+	fs.StringVar(&browserLaunchModeRaw, "browser-launch-mode", string(browserctl.ManagedLaunchModeHeadless), "managed browser launch mode: headless, headed, or background")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
 	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
@@ -276,6 +343,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	if opts.PromptTransform != nil {
 		prompt = strings.TrimSpace(opts.PromptTransform(prompt))
+	}
+	browserCapability := resolveBrowserCapability(browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw)
+	if browserCapability.Err != nil {
+		return browserCapability.Err
 	}
 	resumeSourceRaw := strings.TrimSpace(resumeRaw)
 	continueSourceRaw := strings.TrimSpace(continueRaw)
@@ -306,6 +377,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if err != nil {
 		return fmt.Errorf("load skills: %w", err)
 	}
+	shadowPlaywrightSkill(&catalog, browserCapability.Enabled)
 	if dataDir == "" {
 		dataDir = defaultDataDir()
 	}
@@ -434,6 +506,17 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		}
 	}
 	if err := writer.Write(session.Event{
+		"type":            "browser_capability",
+		"session_id":      sessionID,
+		"enabled":         browserCapability.Enabled,
+		"launch_mode":     string(browserCapability.LaunchMode),
+		"session_key":     browserCapability.SessionKey,
+		"profile_key":     browserCapability.ProfileKey,
+		"disabled_reason": browserCapability.DisabledReason,
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
 		"type":         "tool_profile",
 		"session_id":   sessionID,
 		"profile":      string(toolProfile),
@@ -498,16 +581,17 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	runner := script.Runner{
-		Session:      writer,
-		Command:      tools.CommandRunner{Workspace: workspace, ArtifactDir: artifactDir},
-		Patch:        tools.PatchApplier{Workspace: workspace},
-		Files:        tools.FileTools{Workspace: workspace, Limits: fileLimits},
-		WebSearch:    webSearch,
-		WebSearchOn:  webSearchStatus.Enabled,
-		Skills:       catalog,
-		SessionID:    sessionID,
-		Prompt:       prompt,
-		ArtifactsDir: artifactDir,
+		Session:          writer,
+		Command:          tools.CommandRunner{Workspace: workspace, ArtifactDir: artifactDir},
+		Patch:            tools.PatchApplier{Workspace: workspace},
+		Files:            tools.FileTools{Workspace: workspace, Limits: fileLimits},
+		WebSearch:        webSearch,
+		WebSearchOn:      webSearchStatus.Enabled,
+		BrowserAvailable: browserCapability.Enabled,
+		Skills:           catalog,
+		SessionID:        sessionID,
+		Prompt:           prompt,
+		ArtifactsDir:     artifactDir,
 	}
 	if approvalMode == approvalModeAsk {
 		broker := newStdioApprovalBroker(writer, sessionID, workspace.Root, os.Stdin)
@@ -632,6 +716,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.WebSearchEnabled = webSearchEnabled
 	systemPromptOptions.ManagedProcessesEnabled = runner.Processes != nil
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
+	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
 	if resumeSection := resumeContext.systemPromptSection(); resumeSection != "" {
 		projectInstructionPrompt = strings.TrimSpace(projectInstructionPrompt + "\n\n" + resumeSection)
 	}
@@ -670,6 +755,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.WebSearchEnabled = webSearchEnabled
 	toolOptions.ManagedProcessesEnabled = runner.Processes != nil
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
+	toolOptions.BrowserAvailable = runner.BrowserAvailable
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0

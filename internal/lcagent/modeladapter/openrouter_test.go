@@ -260,6 +260,16 @@ func TestSystemPromptIncludesManagedProcessGuidanceWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestSystemPromptIncludesBrowserAvailability(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{BrowserAvailable: true})
+	if !strings.Contains(prompt, "browser control available: yes") {
+		t.Fatalf("prompt missing browser availability:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Browser control is not available") {
+		t.Fatalf("available browser prompt should not include unavailable blocker:\n%s", prompt)
+	}
+}
+
 func TestSystemPromptIncludesAdminWriteMode(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{AdminWrite: true})
 	if !strings.Contains(prompt, "admin-write enabled") || !strings.Contains(prompt, "absolute paths outside the workspace") {

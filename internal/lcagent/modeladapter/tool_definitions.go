@@ -20,6 +20,7 @@ type ToolOptions struct {
 	WebSearchEnabled        bool
 	ManagedProcessesEnabled bool
 	AdminWrite              bool
+	BrowserAvailable        bool
 }
 
 func Tools() []ToolDefinition {

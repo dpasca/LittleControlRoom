@@ -37,8 +37,9 @@ type Options struct {
 }
 
 type Catalog struct {
-	Skills []Skill
-	byName map[string]int
+	Skills    []Skill
+	byName    map[string]int
+	synthetic map[string]string
 }
 
 type Skill struct {
@@ -155,6 +156,9 @@ func (c Catalog) Load(name string) (LoadedSkill, error) {
 		return LoadedSkill{}, fmt.Errorf("skill not found: %s", name)
 	}
 	skill := c.Skills[index]
+	if body, ok := c.synthetic[key]; ok {
+		return LoadedSkill{Skill: skill, Body: body}, nil
+	}
 	file, err := os.Open(skill.Path)
 	if err != nil {
 		return LoadedSkill{}, err
@@ -178,12 +182,45 @@ func (c *Catalog) reindex() {
 	if c == nil {
 		return
 	}
+	synthetic := c.synthetic
+	if synthetic == nil {
+		synthetic = map[string]string{}
+	}
 	c.byName = map[string]int{}
 	for i, skill := range c.Skills {
 		if key := normalizeName(skill.Name); key != "" {
 			c.byName[key] = i
 		}
 	}
+	c.synthetic = synthetic
+}
+
+func (c *Catalog) UpsertSyntheticSkill(name, description, body string) {
+	if c == nil {
+		return
+	}
+	c.reindex()
+	name = strings.TrimSpace(name)
+	key := normalizeName(name)
+	if key == "" {
+		return
+	}
+	skill := Skill{
+		Name:        name,
+		Description: strings.TrimSpace(description),
+		Source:      SourceCodexSystem,
+	}
+	if index, ok := c.byName[key]; ok {
+		skill.Path = c.Skills[index].Path
+		c.Skills[index] = skill
+	} else {
+		c.Skills = append(c.Skills, skill)
+		sort.SliceStable(c.Skills, func(i, j int) bool {
+			return strings.ToLower(c.Skills[i].Name) < strings.ToLower(c.Skills[j].Name)
+		})
+	}
+	c.synthetic[key] = strings.TrimSpace(body)
+	c.reindex()
 }
 
 type skillRoot struct {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/lcagent"
 	"lcroom/internal/lcagent/modeladapter"
 	lcrmodel "lcroom/internal/model"
@@ -67,30 +68,37 @@ type lcagentSession struct {
 	webSearchURL      string
 	runtimeManager    *projectrun.Manager
 	notify            func()
+	playwrightPolicy  browserctl.Policy
 
-	mu                 sync.Mutex
-	cmd                *exec.Cmd
-	stdin              io.WriteCloser
-	cancel             context.CancelFunc
-	threadID           string
-	runID              string
-	started            bool
-	busy               bool
-	closed             bool
-	busySince          time.Time
-	lastBusyActivityAt time.Time
-	lastActivityAt     time.Time
-	status             string
-	lastError          string
-	model              string
-	modelProvider      string
-	reasoningEffort    string
-	tokenUsage         *threadTokenUsage
-	pendingApproval    *ApprovalRequest
-	replayLoaded       bool
-	entries            []TranscriptEntry
-	revision           uint64
-	cache              transcriptExportCache
+	mu                       sync.Mutex
+	cmd                      *exec.Cmd
+	stdin                    io.WriteCloser
+	cancel                   context.CancelFunc
+	threadID                 string
+	runID                    string
+	started                  bool
+	busy                     bool
+	closed                   bool
+	busySince                time.Time
+	lastBusyActivityAt       time.Time
+	lastActivityAt           time.Time
+	status                   string
+	lastError                string
+	model                    string
+	modelProvider            string
+	reasoningEffort          string
+	tokenUsage               *threadTokenUsage
+	pendingApproval          *ApprovalRequest
+	replayLoaded             bool
+	managedBrowserSessionKey string
+	browserProfileKey        string
+	browserLaunchMode        browserctl.ManagedLaunchMode
+	browserActivity          browserctl.SessionActivity
+	currentBrowserPageURL    string
+	currentBrowserPageStale  bool
+	entries                  []TranscriptEntry
+	revision                 uint64
+	cache                    transcriptExportCache
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
@@ -98,6 +106,14 @@ const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour 
 func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
+	}
+	ensureManagedPlaywrightSessionKey(&req)
+	playwrightPolicy := req.PlaywrightPolicy.Normalize()
+	managedSessionKey := strings.TrimSpace(req.ManagedBrowserSessionKey)
+	browserLaunchMode := browserctl.ManagedLaunchModeForPolicy(playwrightPolicy)
+	browserProfileKey := ""
+	if managedSessionKey != "" && playwrightPolicy.ManagementMode == browserctl.ManagementModeManaged {
+		browserProfileKey = browserctl.ManagedProfileKey(playwrightPolicy, string(ProviderLCAgent), req.ProjectPath, req.ResumeID, managedSessionKey)
 	}
 	dataDir := strings.TrimSpace(req.AppDataDir)
 	if dataDir == "" {
@@ -129,36 +145,41 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
 	session := &lcagentSession{
-		projectPath:       strings.TrimSpace(req.ProjectPath),
-		dataDir:           dataDir,
-		execPath:          strings.TrimSpace(req.LCAgentPath),
-		envFile:           strings.TrimSpace(req.LCAgentEnvFile),
-		openAIAPIKey:      strings.TrimSpace(req.LCAgentOpenAIAPIKey),
-		openRouterAPIKey:  strings.TrimSpace(req.LCAgentOpenRouterAPIKey),
-		deepSeekAPIKey:    strings.TrimSpace(req.LCAgentDeepSeekAPIKey),
-		moonshotAPIKey:    strings.TrimSpace(req.LCAgentMoonshotAPIKey),
-		xiaomiAPIKey:      strings.TrimSpace(req.LCAgentXiaomiAPIKey),
-		xiaomiBaseURL:     strings.TrimSpace(req.LCAgentXiaomiBaseURL),
-		preflightAccess:   req.LCAgentPreflightAccess,
-		routePreset:       routePreset,
-		provider:          provider,
-		auto:              strings.TrimSpace(req.LCAgentAuto),
-		adminWrite:        req.LCAgentAdminWrite,
-		toolProfile:       toolProfile,
-		contextProfile:    contextProfile,
-		requestTimeout:    requestTimeout,
-		utilityProvider:   utilityProvider,
-		utilityModel:      utilityModel,
-		webSearchBackend:  lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
-		webSearchAPIKey:   strings.TrimSpace(req.LCAgentWebSearchAPIKey),
-		webSearchEngineID: strings.TrimSpace(req.LCAgentWebSearchEngineID),
-		webSearchURL:      strings.TrimSpace(req.LCAgentWebSearchURL),
-		runtimeManager:    req.RuntimeManager,
-		notify:            notify,
-		model:             model,
-		modelProvider:     modelProvider,
-		reasoningEffort:   strings.TrimSpace(req.PendingReasoning),
-		status:            "Ready",
+		projectPath:              strings.TrimSpace(req.ProjectPath),
+		dataDir:                  dataDir,
+		execPath:                 strings.TrimSpace(req.LCAgentPath),
+		envFile:                  strings.TrimSpace(req.LCAgentEnvFile),
+		openAIAPIKey:             strings.TrimSpace(req.LCAgentOpenAIAPIKey),
+		openRouterAPIKey:         strings.TrimSpace(req.LCAgentOpenRouterAPIKey),
+		deepSeekAPIKey:           strings.TrimSpace(req.LCAgentDeepSeekAPIKey),
+		moonshotAPIKey:           strings.TrimSpace(req.LCAgentMoonshotAPIKey),
+		xiaomiAPIKey:             strings.TrimSpace(req.LCAgentXiaomiAPIKey),
+		xiaomiBaseURL:            strings.TrimSpace(req.LCAgentXiaomiBaseURL),
+		preflightAccess:          req.LCAgentPreflightAccess,
+		routePreset:              routePreset,
+		provider:                 provider,
+		auto:                     strings.TrimSpace(req.LCAgentAuto),
+		adminWrite:               req.LCAgentAdminWrite,
+		toolProfile:              toolProfile,
+		contextProfile:           contextProfile,
+		requestTimeout:           requestTimeout,
+		utilityProvider:          utilityProvider,
+		utilityModel:             utilityModel,
+		webSearchBackend:         lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
+		webSearchAPIKey:          strings.TrimSpace(req.LCAgentWebSearchAPIKey),
+		webSearchEngineID:        strings.TrimSpace(req.LCAgentWebSearchEngineID),
+		webSearchURL:             strings.TrimSpace(req.LCAgentWebSearchURL),
+		runtimeManager:           req.RuntimeManager,
+		notify:                   notify,
+		playwrightPolicy:         playwrightPolicy,
+		model:                    model,
+		modelProvider:            modelProvider,
+		reasoningEffort:          strings.TrimSpace(req.PendingReasoning),
+		status:                   "Ready",
+		managedBrowserSessionKey: managedSessionKey,
+		browserProfileKey:        browserProfileKey,
+		browserLaunchMode:        browserLaunchMode,
+		browserActivity:          browserctl.DefaultSessionActivity(playwrightPolicy),
 	}
 	if replay, err := loadLCAgentReplay(req); err != nil {
 		return nil, err
@@ -994,6 +1015,10 @@ type lcagentPreparedRun struct {
 	utilityModel       string
 	utilityAPIKeyName  string
 	utilityAPIKey      string
+	browserControl     string
+	browserSessionKey  string
+	browserProfileKey  string
+	browserLaunchMode  browserctl.ManagedLaunchMode
 }
 
 func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts lcagentRunOptions) error {
@@ -1094,6 +1119,13 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	utilityProvider := firstNonEmpty(s.utilityProvider, lcagentDefaultUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, s.utilityModel)
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
+	browserControl := "off"
+	browserSessionKey := strings.TrimSpace(s.managedBrowserSessionKey)
+	browserProfileKey := strings.TrimSpace(s.browserProfileKey)
+	browserLaunchMode := s.browserLaunchMode.Normalize()
+	if s.playwrightPolicy.Normalize().ManagementMode == browserctl.ManagementModeManaged && browserSessionKey != "" && browserProfileKey != "" {
+		browserControl = "managed"
+	}
 	if warning := s.webSearchWarningLocked(); warning != "" {
 		s.appendEntryLocked(TranscriptStatus, warning)
 	}
@@ -1133,6 +1165,10 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		utilityModel:       utilityModel,
 		utilityAPIKeyName:  utilityAPIKeyName,
 		utilityAPIKey:      utilityAPIKey,
+		browserControl:     browserControl,
+		browserSessionKey:  browserSessionKey,
+		browserProfileKey:  browserProfileKey,
+		browserLaunchMode:  browserLaunchMode,
 	}, nil
 }
 
@@ -1178,8 +1214,16 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--approval-mode", "ask",
 		"--utility-provider", prepared.utilityProvider,
 		"--web-search-backend", prepared.webSearchBackend,
+		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
 	)
+	if prepared.browserControl == "managed" {
+		args = append(args,
+			"--browser-session-key", prepared.browserSessionKey,
+			"--browser-profile-key", prepared.browserProfileKey,
+			"--browser-launch-mode", string(prepared.browserLaunchMode),
+		)
+	}
 	if prepared.utilityModel != "" {
 		args = append(args, "--utility-model", prepared.utilityModel)
 	}
@@ -1228,7 +1272,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	cmd := exec.CommandContext(ctx, spec.Command, args...)
 	configureAppServerCommand(cmd)
 	cmd.Dir = spec.Dir
-	cmd.Env = os.Environ()
+	cmd.Env = browserctl.AppendEnv(os.Environ(), string(ProviderLCAgent), s.playwrightPolicy)
 	if prepared.providerAPIKeyName != "" && prepared.providerAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, prepared.providerAPIKeyName, prepared.providerAPIKey)
 	}
@@ -2133,26 +2177,30 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		phase = SessionPhaseRunning
 	}
 	return Snapshot{
-		Provider:           ProviderLCAgent,
-		ProjectPath:        s.projectPath,
-		ThreadID:           s.threadID,
-		TranscriptRevision: s.revision,
-		Phase:              phase,
-		Started:            s.started,
-		Busy:               s.busy,
-		BusySince:          s.busySince,
-		LastBusyActivityAt: s.lastBusyActivityAt,
-		Closed:             s.closed,
-		Status:             s.status,
-		LastError:          s.lastError,
-		PendingApproval:    cloneApprovalRequest(s.pendingApproval),
-		LastActivityAt:     s.lastActivityAt,
-		CurrentCWD:         s.projectPath,
-		PermissionLevel:    s.effectiveAutoLocked(),
-		Model:              firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
-		ModelProvider:      firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
-		ReasoningEffort:    s.reasoningEffort,
-		TokenUsage:         exportedTokenUsageSnapshot(s.tokenUsage),
+		Provider:                 ProviderLCAgent,
+		ProjectPath:              s.projectPath,
+		ThreadID:                 s.threadID,
+		BrowserActivity:          s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
+		CurrentBrowserPageStale:  s.currentBrowserPageStale,
+		TranscriptRevision:       s.revision,
+		Phase:                    phase,
+		Started:                  s.started,
+		Busy:                     s.busy,
+		BusySince:                s.busySince,
+		LastBusyActivityAt:       s.lastBusyActivityAt,
+		Closed:                   s.closed,
+		Status:                   s.status,
+		LastError:                s.lastError,
+		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
+		LastActivityAt:           s.lastActivityAt,
+		CurrentCWD:               s.projectPath,
+		PermissionLevel:          s.effectiveAutoLocked(),
+		Model:                    firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
+		ModelProvider:            firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
+		ReasoningEffort:          s.reasoningEffort,
+		TokenUsage:               exportedTokenUsageSnapshot(s.tokenUsage),
 	}
 }
 

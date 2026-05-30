@@ -28,6 +28,7 @@ type Runner struct {
 	Files                tools.FileTools
 	WebSearch            tools.WebSearchRunner
 	WebSearchOn          bool
+	BrowserAvailable     bool
 	SearchRefiner        SearchRefiner
 	CodeScout            CodeScout
 	SearchRefineMinBytes int

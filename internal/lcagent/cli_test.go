@@ -66,6 +66,49 @@ func TestRunExecScriptedStreamJSON(t *testing.T) {
 	}
 }
 
+func TestRunExecEmitsManagedBrowserCapability(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	scriptPath := filepath.Join(t.TempDir(), "script.jsonl")
+	script := `{"type":"tool_call","tool":"load_skill","args":{"name":"playwright"}}
+{"type":"final_response","summary":"done","files_changed":[],"verification":[]}
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--script", scriptPath,
+		"--browser-control", "managed",
+		"--browser-session-key", "session-demo",
+		"--browser-profile-key", "profile-demo",
+		"--browser-launch-mode", "background",
+		"browser capable",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s", code, stderr.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"browser_capability"`,
+		`"enabled":true`,
+		`"launch_mode":"background"`,
+		`"session_key":"session-demo"`,
+		`"profile_key":"profile-demo"`,
+		`Use the explicit ` + "`browser_*`" + ` tools`,
+		`Do not run ` + "`npx`",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
