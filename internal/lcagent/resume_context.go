@@ -30,6 +30,7 @@ type resumeContext struct {
 	SourcePath         string
 	ProjectPath        string
 	RootSessionID      string
+	ActiveObjective    string
 	ChainDepth         int
 	HandoffSource      string
 	StartedAt          time.Time
@@ -216,6 +217,8 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 			ctx.InheritedSummaries = appendResumeText(ctx.InheritedSummaries, resumeJSONString(event["summary"]))
 		case "user_message":
 			ctx.UserMessages = appendResumeText(ctx.UserMessages, resumeJSONString(event["message"]))
+		case "active_objective":
+			ctx.ActiveObjective = firstResumeNonEmpty(resumeJSONString(event["objective"]), ctx.ActiveObjective)
 		case "assistant_message":
 			ctx.AssistantMessages = appendResumeText(ctx.AssistantMessages, resumeJSONString(event["message"]))
 			if ctx.HandoffSource == "" && resumeJSONString(event["message"]) != "" {
@@ -296,6 +299,7 @@ func resumeContextFromThreadState(state *threadState) (*resumeContext, error) {
 		LastRunID:         strings.TrimSpace(state.LastRunID),
 		ProjectPath:       strings.TrimSpace(state.ProjectPath),
 		RootSessionID:     strings.TrimSpace(state.ThreadID),
+		ActiveObjective:   strings.TrimSpace(state.ActiveObjective),
 		HandoffSource:     firstResumeNonEmpty(strings.TrimSpace(state.LastStablePoint), "thread_state"),
 		StartedAt:         state.CreatedAt,
 		LastActivityAt:    state.UpdatedAt,
@@ -371,6 +375,7 @@ func (c *resumeContext) event(currentSessionID, reason string) session.Event {
 		"source_session_id":    c.SourceSessionID,
 		"parent_session_id":    c.SourceSessionID,
 		"root_session_id":      c.rootSessionID(),
+		"active_objective":     c.ActiveObjective,
 		"chain_depth":          c.nextChainDepth(),
 		"continuation_reason":  firstResumeNonEmpty(reason, "resume_context"),
 		"handoff_source":       c.HandoffSource,
@@ -407,6 +412,7 @@ func (c *resumeContext) continuationEvent(currentSessionID, reason string) sessi
 		"continued_run_id":       c.LastRunID,
 		"parent_session_id":      c.SourceSessionID,
 		"root_session_id":        c.rootSessionID(),
+		"active_objective":       c.ActiveObjective,
 		"chain_depth":            c.nextChainDepth(),
 		"continuation_reason":    firstResumeNonEmpty(reason, "resume_context"),
 		"handoff_source":         c.HandoffSource,
@@ -505,6 +511,9 @@ func (c *resumeContext) systemPromptSection() string {
 	if c.HandoffSource != "" {
 		fmt.Fprintf(&b, "- Handoff source: %s\n", c.HandoffSource)
 	}
+	if c.ActiveObjective != "" {
+		fmt.Fprintf(&b, "- Previous active objective: %s\n", trimResumeText(c.ActiveObjective))
+	}
 	appendResumePromptList(&b, "Inherited continuation context", lastResumeItems(c.InheritedSummaries, 3))
 	appendResumePromptList(&b, "Previous user request(s)", lastResumeItems(c.UserMessages, 3))
 	if c.FinalSummary != "" {
@@ -524,7 +533,8 @@ func (c *resumeContext) systemPromptSection() string {
 	if c.LastError != "" {
 		fmt.Fprintf(&b, "- Previous run error: %s\n", trimResumeText(c.LastError))
 	}
-	b.WriteString("- Treat this as background for continuity. The current user request below controls the turn, and exact file contents should be re-read before editing or asserting details.\n")
+	b.WriteString("- Treat this as background for continuity. The latest current user request below is authoritative; if it conflicts with compacted or resumed context, follow the latest request.\n")
+	b.WriteString("- Exact file contents should be re-read before editing or asserting details.\n")
 	return strings.TrimSpace(b.String())
 }
 
@@ -541,6 +551,8 @@ func (c *resumeContext) summaryText() string {
 	}
 	if c.FinalSummary != "" {
 		parts = append(parts, "summary: "+trimResumeText(c.FinalSummary))
+	} else if c.ActiveObjective != "" {
+		parts = append(parts, "active objective: "+trimResumeText(c.ActiveObjective))
 	} else if len(c.AssistantMessages) > 0 {
 		parts = append(parts, "assistant: "+trimResumeText(c.AssistantMessages[len(c.AssistantMessages)-1]))
 	} else if len(c.InheritedSummaries) > 0 {
@@ -556,6 +568,10 @@ func (c *resumeContext) summaryText() string {
 		parts = append(parts, "error: "+trimResumeText(c.LastError))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func trimActiveObjective(value string) string {
+	return trimResumeText(value)
 }
 
 func appendResumePromptList(b *strings.Builder, label string, values []string) {

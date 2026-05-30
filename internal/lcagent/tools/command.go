@@ -313,6 +313,9 @@ func shellContainsFileRedirection(command string) bool {
 			if i+1 < len(command) && (command[i+1] == '&' || command[i+1] == '(') {
 				continue
 			}
+			if shellStderrDiscardRedirection(command, i) {
+				continue
+			}
 			return true
 		case '&':
 			if inSingle || inDouble {
@@ -324,6 +327,35 @@ func shellContainsFileRedirection(command string) bool {
 		}
 	}
 	return false
+}
+
+func shellStderrDiscardRedirection(command string, redirectIndex int) bool {
+	if redirectIndex <= 0 || command[redirectIndex] != '>' || command[redirectIndex-1] != '2' {
+		return false
+	}
+	if redirectIndex+1 < len(command) && command[redirectIndex+1] == '>' {
+		return false
+	}
+	if redirectIndex >= 2 {
+		before := command[redirectIndex-2]
+		if before >= '0' && before <= '9' {
+			return false
+		}
+	}
+	targetStart := redirectIndex + 1
+	for targetStart < len(command) && (command[targetStart] == ' ' || command[targetStart] == '\t') {
+		targetStart++
+	}
+	const devNull = "/dev/null"
+	if !strings.HasPrefix(command[targetStart:], devNull) {
+		return false
+	}
+	targetEnd := targetStart + len(devNull)
+	if targetEnd >= len(command) {
+		return true
+	}
+	next := command[targetEnd]
+	return next == ' ' || next == '\t' || next == '\n' || next == ';' || next == '&' || next == '|'
 }
 
 func shellCommandSegments(command string) []string {

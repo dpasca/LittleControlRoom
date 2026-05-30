@@ -95,6 +95,21 @@ func modelMessagesHaveSystem(messages []modeladapter.Message) bool {
 	return false
 }
 
+func withCurrentSystemMessage(messages []modeladapter.Message, systemPrompt string) []modeladapter.Message {
+	systemPrompt = strings.TrimSpace(systemPrompt)
+	if systemPrompt == "" {
+		return cloneModelMessages(messages)
+	}
+	out := cloneModelMessages(messages)
+	for i := range out {
+		if out[i].Role == "system" {
+			out[i].Content = systemPrompt
+			return out
+		}
+	}
+	return append([]modeladapter.Message{{Role: "system", Content: systemPrompt}}, out...)
+}
+
 func observeReadLedgerMessages(ledger *readLedger, messages []modeladapter.Message) {
 	if ledger == nil {
 		return

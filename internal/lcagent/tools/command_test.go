@@ -116,6 +116,55 @@ func TestCommandRunnerDeniesShellWorkspaceWriteAtMedium(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerAllowsStderrDiscardAtMedium(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		"ls missing 2>/dev/null; printf ok",
+		"ls missing 2> /dev/null; printf ok",
+	} {
+		t.Run(command, func(t *testing.T) {
+			result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+				Command:   command,
+				Shell:     true,
+				TimeoutMS: 1000,
+			})
+			if !result.Success || result.Denied || !strings.Contains(result.Output, "ok") {
+				t.Fatalf("result = %#v, want allowed stderr discard", result)
+			}
+		})
+	}
+}
+
+func TestCommandRunnerStillDeniesFileRedirectionAtMedium(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []string{
+		"printf hi > created.txt",
+		"printf hi >> created.txt",
+		"printf bad 2> errors.txt",
+		"printf hi | tee created.txt",
+	} {
+		t.Run(command, func(t *testing.T) {
+			result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+				Command:   command,
+				Shell:     true,
+				TimeoutMS: 1000,
+			})
+			if result.Success || !result.Denied {
+				t.Fatalf("result = %#v, want denied file write", result)
+			}
+			if !strings.Contains(result.DenialReason, CommandWorkspaceWriteDenialReason) {
+				t.Fatalf("denial reason = %q", result.DenialReason)
+			}
+		})
+	}
+}
+
 func TestCommandRunnerDeniesArgvTeeAtMedium(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
 	if err != nil {

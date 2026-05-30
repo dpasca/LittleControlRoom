@@ -611,19 +611,36 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	}); err != nil {
 		return err
 	}
+	activeObjective := trimActiveObjective(runner.Prompt)
+	if threadStore != nil {
+		threadStore.SetActiveObjective(activeObjective)
+	}
+	if activeObjective != "" {
+		if err := writer.Write(session.Event{
+			"type":       "active_objective",
+			"session_id": runner.SessionID,
+			"thread_id":  firstResumeNonEmpty(threadStoreThreadID(threadStore), runner.SessionID),
+			"objective":  activeObjective,
+		}); err != nil {
+			return err
+		}
+	}
 
 	systemPromptOptions := modelSystemPromptOptions(toolProfile, fileLimits)
 	systemPromptOptions.WebSearchEnabled = webSearchEnabled
 	systemPromptOptions.ManagedProcessesEnabled = runner.Processes != nil
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
+	if resumeSection := resumeContext.systemPromptSection(); resumeSection != "" {
+		projectInstructionPrompt = strings.TrimSpace(projectInstructionPrompt + "\n\n" + resumeSection)
+	}
 	systemPrompt := modeladapter.SystemPromptWithOptions(runner.Skills.PromptIndex(0), projectInstructionPrompt, systemPromptOptions)
 	readLedger := newReadLedger()
 	var messages []modeladapter.Message
 	contextCompacted := resumeContext != nil && strings.EqualFold(strings.TrimSpace(resumeContext.ThreadContextMode), threadContextModeCompacted)
 	if resumeContext != nil && resumeContext.hasExactMessages() {
 		messages = resumeContext.exactMessages()
-		if !modelMessagesHaveSystem(messages) && strings.TrimSpace(systemPrompt) != "" {
-			messages = append([]modeladapter.Message{{Role: "system", Content: systemPrompt}}, messages...)
+		if strings.TrimSpace(systemPrompt) != "" {
+			messages = withCurrentSystemMessage(messages, systemPrompt)
 		}
 		observeReadLedgerMessages(readLedger, messages)
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
@@ -658,12 +675,26 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		select {
 		case steerMsg := <-runner.SteerMessages:
 			if strings.TrimSpace(steerMsg) != "" {
+				activeObjective = trimActiveObjective(steerMsg)
+				if threadStore != nil {
+					threadStore.SetActiveObjective(activeObjective)
+				}
 				if err := writer.Write(session.Event{
 					"type":       "user_message",
 					"session_id": runner.SessionID,
 					"message":    steerMsg,
 				}); err != nil {
 					return err
+				}
+				if activeObjective != "" {
+					if err := writer.Write(session.Event{
+						"type":       "active_objective",
+						"session_id": runner.SessionID,
+						"thread_id":  firstResumeNonEmpty(threadStoreThreadID(threadStore), runner.SessionID),
+						"objective":  activeObjective,
+					}); err != nil {
+						return err
+					}
 				}
 				messages = append(messages, modeladapter.Message{Role: "user", Content: steerMsg})
 			}

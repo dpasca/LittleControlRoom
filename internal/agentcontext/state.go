@@ -30,6 +30,7 @@ type State[M any, C any] struct {
 	LastRunID        string    `json:"last_run_id,omitempty"`
 	Status           string    `json:"status"`
 	ContextMode      string    `json:"context_mode"`
+	ActiveObjective  string    `json:"active_objective,omitempty"`
 	LastStablePoint  string    `json:"last_stable_point,omitempty"`
 	Summary          string    `json:"summary,omitempty"`
 	SummaryCount     int       `json:"summary_count,omitempty"`
@@ -50,12 +51,13 @@ type Info struct {
 }
 
 type Store[M any, C any] struct {
-	DataDir     string
-	Namespace   string
-	ThreadID    string
-	ProjectPath string
-	RunID       string
-	CreatedAt   time.Time
+	DataDir         string
+	Namespace       string
+	ThreadID        string
+	ProjectPath     string
+	RunID           string
+	CreatedAt       time.Time
+	ActiveObjective string
 
 	ApproxChars   func([]M) int
 	CloneMessages func([]M) []M
@@ -114,6 +116,7 @@ func (s *Store[M, C]) write(status, source string, messages []M, compacted bool,
 		LastRunID:        strings.TrimSpace(s.RunID),
 		Status:           NormalizeStatus(status),
 		ContextMode:      contextMode,
+		ActiveObjective:  strings.TrimSpace(s.ActiveObjective),
 		LastStablePoint:  strings.TrimSpace(source),
 		Messages:         cloneSlice(messages, s.CloneMessages),
 		MessageCount:     len(messages),

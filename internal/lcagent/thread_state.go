@@ -25,11 +25,12 @@ type threadState = agentcontext.State[modeladapter.Message, modeladapter.ToolCal
 type ThreadStateInfo = agentcontext.Info
 
 type threadStateStore struct {
-	DataDir     string
-	ThreadID    string
-	ProjectPath string
-	RunID       string
-	CreatedAt   time.Time
+	DataDir         string
+	ThreadID        string
+	ProjectPath     string
+	RunID           string
+	CreatedAt       time.Time
+	ActiveObjective string
 }
 
 func newThreadStateStore(dataDir, threadID, projectPath, runID string, createdAt time.Time) *threadStateStore {
@@ -50,6 +51,13 @@ func newLCAgentThreadID() (string, error) {
 	return "lct_" + strings.TrimPrefix(id, "lca_"), nil
 }
 
+func threadStoreThreadID(store *threadStateStore) string {
+	if store == nil {
+		return ""
+	}
+	return strings.TrimSpace(store.ThreadID)
+}
+
 func (s *threadStateStore) MarkInFlight(source string, messages []modeladapter.Message, compacted bool) error {
 	return s.store().MarkInFlight(source, messages, compacted)
 }
@@ -60,6 +68,13 @@ func (s *threadStateStore) MarkPendingTools(source string, messages []modeladapt
 
 func (s *threadStateStore) SaveCheckpoint(source string, messages []modeladapter.Message, compacted bool) error {
 	return s.store().SaveCheckpoint(source, messages, compacted)
+}
+
+func (s *threadStateStore) SetActiveObjective(objective string) {
+	if s == nil {
+		return
+	}
+	s.ActiveObjective = trimActiveObjective(objective)
 }
 
 func loadThreadState(dataDir, threadID, workspaceRoot string) (*threadState, bool, error) {
@@ -137,16 +152,17 @@ func (s *threadStateStore) store() *agentcontext.Store[modeladapter.Message, mod
 		return nil
 	}
 	return &agentcontext.Store[modeladapter.Message, modeladapter.ToolCall]{
-		DataDir:       strings.TrimSpace(s.DataDir),
-		Namespace:     lcagentContextNamespace,
-		ThreadID:      strings.TrimSpace(s.ThreadID),
-		ProjectPath:   strings.TrimSpace(s.ProjectPath),
-		RunID:         strings.TrimSpace(s.RunID),
-		CreatedAt:     s.CreatedAt,
-		ApproxChars:   messagesApproxChars,
-		CloneMessages: cloneModelMessages,
-		CloneCalls:    cloneThreadStateToolCalls,
-		SameWorkspace: sameCleanPath,
+		DataDir:         strings.TrimSpace(s.DataDir),
+		Namespace:       lcagentContextNamespace,
+		ThreadID:        strings.TrimSpace(s.ThreadID),
+		ProjectPath:     strings.TrimSpace(s.ProjectPath),
+		RunID:           strings.TrimSpace(s.RunID),
+		CreatedAt:       s.CreatedAt,
+		ActiveObjective: strings.TrimSpace(s.ActiveObjective),
+		ApproxChars:     messagesApproxChars,
+		CloneMessages:   cloneModelMessages,
+		CloneCalls:      cloneThreadStateToolCalls,
+		SameWorkspace:   sameCleanPath,
 	}
 }
 

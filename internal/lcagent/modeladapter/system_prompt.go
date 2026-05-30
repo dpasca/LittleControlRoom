@@ -12,6 +12,7 @@ type SystemPromptOptions struct {
 	WebSearchEnabled        bool
 	ManagedProcessesEnabled bool
 	AdminWrite              bool
+	BrowserAvailable        bool
 }
 
 func SystemPrompt(skillIndex, projectInstructions string) string {
@@ -35,7 +36,13 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	}
 	lines := []string{
 		"You are lcagent, a small local coding-agent harness controlled by Little Control Room.",
+		"Capability status for this run:",
+		fmt.Sprintf("- browser control available: %s", yesNo(opts.BrowserAvailable)),
+		fmt.Sprintf("- managed background processes available: %s", yesNo(opts.ManagedProcessesEnabled)),
+		fmt.Sprintf("- admin write available: %s", yesNo(opts.AdminWrite)),
+		fmt.Sprintf("- public web search available: %s", yesNo(opts.WebSearchEnabled)),
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
+		"The latest user request is the active objective for this turn. Treat compacted, resumed, or inherited context as background; when it conflicts with the latest request, follow the latest request.",
 		"When the current user request asks you to carry out a proposed plan or selected option, start executing it within the current autonomy and tool policy unless a concrete blocker or unsafe ambiguity remains.",
 		"If you update a plan for execution work, continue with the in_progress step whenever tools and autonomy allow.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
@@ -55,6 +62,11 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 			"Use web_search for current public web information or documentation discovery when workspace evidence is not enough; cite URLs from the tool result in final_response when web evidence affects the answer.",
 		)
 	}
+	if !opts.BrowserAvailable {
+		lines = append(lines,
+			"Browser control is not available in this run. If the user asks for browser verification or asks you to open a web console, say plainly that browser tooling is unavailable; use the nearest valid evidence only if useful, and do not imply a browser was used.",
+		)
+	}
 	lines = append(lines,
 		"Use workspace-relative paths for project files; read-only file inspection tools may use absolute paths when the user asks for system/admin inspection outside the workspace.",
 		writePathLine,
@@ -63,11 +75,13 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"When running a command for a package or subproject, set run_command cwd to a workspace-relative directory such as \"frontend\" instead of using shell cd.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
 		"run_command is for bounded commands. If a run_command times out, LCAgent terminated that command's process group; do not claim a dev server, watcher, or other long-running process is still running from pre-timeout output. Use a later bounded probe for liveness, or say the process was not kept running.",
+		"For deploy, publish, promote, upload, release, or store-rollout operations, treat the action as long-running operational work: capture the command, process label, PID when available, exit status, recent output, and output artifact path; after it exits, run a separate verification probe before claiming success.",
 	)
 	if opts.ManagedProcessesEnabled {
 		lines = append(lines,
 			"For requests to start, launch, run, or keep a local app/server/watch process alive, call start_process first. Do not try a dev server or watcher with run_command before start_process.",
 			"Use start_process for long-running dev servers or watchers that should keep running after the tool returns. After start_process, use list_processes to report the managed process state, PID, URL/ports, and recent output; use stop_process only when the user asks to stop it.",
+			"For long-running deploy, publish, promote, upload, release, or store-rollout commands, prefer managed process support over bounded run_command when the operation may exceed the run_command timeout or must remain inspectable.",
 			"Do not call stop_process before start_process just to launch or relaunch an app; start_process will report whether a managed process is already running.",
 			"If final_response leaves a managed process running, make the handoff explicit: say the process continues under Little Control Room after this turn ends, report the latest observed state, and do not promise that you will keep watching or notify the user later.",
 			"In user-facing final_response text, prefer natural phrases like \"ask me for a progress check\" over naming internal tools such as list_processes, unless the user specifically asks for the tool name.",
@@ -83,6 +97,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"If apply_patch fails, follow patch feedback before retrying: when a suggested read_file range is provided, read that exact range first, then preserve unchanged context and use a smaller hunk when context was stale. For small edits where patch syntax keeps failing, use replace_text with an exact unique old_text copied from the current file.",
 		"Final factual claims about absent files, missing configuration, or unsupported behavior must be backed by explicit tool evidence from the likely locations. If the evidence is incomplete, phrase the claim as what you did or did not find rather than as a repository-wide fact.",
 		"After edits, use the patch diff summary and run or explain verification before final_response. If verification ran through run_command, final_response verification should match the actual purpose=verify command result.",
+		"For operational tasks, final_response must separate confirmed facts, attempted actions, failed or timed-out actions, inferences, and blockers when those categories differ. If verification failed, timed out, or was not run, do not claim completion. If browser verification was requested but no browser tool ran, say that plainly.",
 		"When done, call final_response exactly once. Its summary must contain the full answer, changed files, and verification outcome. The verification array must name checks run or say not run with the reason; it is only supporting evidence.",
 	)
 	if strings.EqualFold(opts.ToolProfile, "generous") {
@@ -97,4 +112,11 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		lines = append(lines, "", strings.TrimSpace(projectInstructions))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func yesNo(value bool) string {
+	if value {
+		return "yes"
+	}
+	return "no"
 }

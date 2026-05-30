@@ -718,13 +718,11 @@ func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
 		if len(body.Messages) < len(exactMessages)+1 {
 			t.Fatalf("request missing replay messages: %#v", body.Messages)
 		}
-		if body.Messages[0].Role != "system" || body.Messages[0].Content != "previous system prompt" {
-			t.Fatalf("first message = %#v, want exact previous system", body.Messages[0])
+		if body.Messages[0].Role != "system" || !strings.Contains(body.Messages[0].Content, "Capability status for this run") {
+			t.Fatalf("first message = %#v, want refreshed current system prompt", body.Messages[0])
 		}
-		for _, msg := range body.Messages {
-			if msg.Role == "system" && strings.Contains(msg.Content, "Previous LCAgent session context") {
-				t.Fatalf("request used summarized resume context instead of exact snapshot:\n%#v", body.Messages)
-			}
+		if !strings.Contains(body.Messages[0].Content, "Previous LCAgent session context") || !strings.Contains(body.Messages[0].Content, "latest current user request below is authoritative") {
+			t.Fatalf("refreshed system prompt missing resume boundary:\n%s", body.Messages[0].Content)
 		}
 		if body.Messages[1].Role != "user" || body.Messages[1].Content != "first request" {
 			t.Fatalf("previous user message = %#v", body.Messages[1])
@@ -828,10 +826,8 @@ func TestRunExecOpenRouterResumesCanonicalThreadState(t *testing.T) {
 					t.Fatalf("resumed request missing %#v in %#v", want, body.Messages)
 				}
 			}
-			for _, msg := range body.Messages {
-				if msg.Role == "system" && strings.Contains(msg.Content, "Previous LCAgent session context") {
-					t.Fatalf("thread resume should use canonical messages, not summary prompt: %#v", body.Messages)
-				}
+			if body.Messages[0].Role != "system" || !strings.Contains(body.Messages[0].Content, "Previous LCAgent session context") {
+				t.Fatalf("thread resume should refresh the system prompt with a resume boundary: %#v", body.Messages)
 			}
 			_, _ = w.Write([]byte(`{
 				"id":"resp_thread_second",
@@ -2428,10 +2424,8 @@ func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 			if len(body.Messages) == 0 {
 				t.Fatalf("continuation request missing messages: %#v", body)
 			}
-			for _, msg := range body.Messages {
-				if msg.Role == "system" && strings.Contains(msg.Content, "Previous LCAgent session context") {
-					t.Fatalf("continuation request used summary fallback instead of exact snapshot:\n%#v", body.Messages)
-				}
+			if body.Messages[0].Role != "system" || !strings.Contains(body.Messages[0].Content, "Previous LCAgent session context") {
+				t.Fatalf("continuation request missing refreshed resume boundary:\n%#v", body.Messages)
 			}
 			joined := fmt.Sprint(body.Messages)
 			for _, want := range []string{

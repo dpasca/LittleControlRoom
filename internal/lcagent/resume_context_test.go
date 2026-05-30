@@ -77,6 +77,7 @@ func TestLoadResumeContextReadsCanonicalThreadState(t *testing.T) {
 		{Role: "assistant", Content: "The dev server is running at http://localhost:3001."},
 	}
 	store := newThreadStateStore(dataDir, threadID, root, "lca_resume_run", started)
+	store.SetActiveObjective("install the app on the connected phone")
 	if err := store.SaveCheckpoint("tool_result", messages, false); err != nil {
 		t.Fatalf("write thread state: %v", err)
 	}
@@ -91,9 +92,15 @@ func TestLoadResumeContextReadsCanonicalThreadState(t *testing.T) {
 	if got := ctx.ExactMessages[1].Content; got != "launch the site locally" {
 		t.Fatalf("thread exact user message = %q", got)
 	}
+	if ctx.ActiveObjective != "install the app on the connected phone" {
+		t.Fatalf("ActiveObjective = %q", ctx.ActiveObjective)
+	}
 	section := ctx.systemPromptSection()
 	if !strings.Contains(section, threadID) || !strings.Contains(section, "http://localhost:3001") {
 		t.Fatalf("systemPromptSection() missing thread context:\n%s", section)
+	}
+	if !strings.Contains(section, "Previous active objective: install the app on the connected phone") || !strings.Contains(section, "latest current user request below is authoritative") {
+		t.Fatalf("systemPromptSection() missing active-objective boundary:\n%s", section)
 	}
 	if summary := ctx.summaryText(); !strings.Contains(summary, "http://localhost:3001") {
 		t.Fatalf("summaryText() = %q, want thread context", summary)

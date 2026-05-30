@@ -208,7 +208,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
-				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use apply_patch or replace_text.",
+				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use apply_patch or replace_text. Do not use bounded run_command for deploy/publish/promote/upload/release operations that may exceed the timeout when managed process support is available.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -227,7 +227,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "start_process",
-				Description: "Start a long-running managed background process through Little Control Room, for dev servers or watchers that should remain inspectable and stoppable after the tool returns. Use this instead of run_command for processes expected to keep running.",
+				Description: "Start a long-running managed background process through Little Control Room, for dev servers, watchers, and long deploy/publish/promote/upload/release operations that should remain inspectable after the tool returns. Use this instead of run_command for processes expected to keep running or exceed bounded command timeouts.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -329,7 +329,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "final_response",
-				Description: "Finish the session. The summary must be the complete user-facing answer, including findings, caveats, changed files, verification outcome, and next steps; do not put essential answer content only in verification.",
+				Description: "Finish the session. The summary must be the complete user-facing answer, including findings, caveats, changed files, verification outcome, and next steps; do not put essential answer content only in verification. For operational tasks, separate confirmed facts, attempted actions, failures/timeouts, inferences, and blockers when they differ.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

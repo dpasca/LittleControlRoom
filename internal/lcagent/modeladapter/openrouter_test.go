@@ -110,6 +110,9 @@ func TestToolsWithOptionsExposeManagedProcessesWhenEnabled(t *testing.T) {
 	if !strings.Contains(startSpec.Description, "long-running managed background process") {
 		t.Fatalf("start_process description = %q", startSpec.Description)
 	}
+	if !strings.Contains(startSpec.Description, "deploy/publish/promote/upload/release") {
+		t.Fatalf("start_process description missing operational guidance: %q", startSpec.Description)
+	}
 	startProps := startSpec.Parameters["properties"].(map[string]any)
 	if _, ok := startProps["name"]; !ok {
 		t.Fatalf("start_process missing name property: %#v", startProps)
@@ -261,6 +264,30 @@ func TestSystemPromptIncludesAdminWriteMode(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{AdminWrite: true})
 	if !strings.Contains(prompt, "admin-write enabled") || !strings.Contains(prompt, "absolute paths outside the workspace") {
 		t.Fatalf("prompt missing admin-write guidance:\n%s", prompt)
+	}
+}
+
+func TestSystemPromptIncludesCapabilityAndOperationalHonesty(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{
+		WebSearchEnabled:        true,
+		ManagedProcessesEnabled: true,
+		AdminWrite:              false,
+	})
+	for _, want := range []string{
+		"Capability status for this run",
+		"browser control available: no",
+		"managed background processes available: yes",
+		"public web search available: yes",
+		"latest user request is the active objective",
+		"Browser control is not available",
+		"do not imply a browser was used",
+		"deploy, publish, promote, upload, release",
+		"run a separate verification probe before claiming success",
+		"separate confirmed facts, attempted actions, failed or timed-out actions, inferences, and blockers",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 
