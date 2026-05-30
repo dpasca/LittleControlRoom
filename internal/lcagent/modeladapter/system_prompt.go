@@ -59,6 +59,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"Use workspace-relative paths for project files; read-only file inspection tools may use absolute paths when the user asks for system/admin inspection outside the workspace.",
 		writePathLine,
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
+		"Do not use run_command to write workspace files through shell redirects, heredocs, tee, in-place rewrites, or mutating file commands. Use apply_patch for source edits, or replace_text for small exact substitutions when patch syntax keeps failing.",
 		"When running a command for a package or subproject, set run_command cwd to a workspace-relative directory such as \"frontend\" instead of using shell cd.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
 		"run_command is for bounded commands. If a run_command times out, LCAgent terminated that command's process group; do not claim a dev server, watcher, or other long-running process is still running from pre-timeout output. Use a later bounded probe for liveness, or say the process was not kept running.",

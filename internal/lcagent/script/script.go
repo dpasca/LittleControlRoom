@@ -772,6 +772,9 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 
 func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandSpec) tools.ToolResult {
 	result := r.Command.RunSpec(ctx, spec)
+	if tools.IsWorkspaceWriteCommandDenied(result) {
+		return result
+	}
 	if !result.Denied || r.Approvals == nil || r.Command.Workspace.Auto != policy.AutonomyLow {
 		return result
 	}

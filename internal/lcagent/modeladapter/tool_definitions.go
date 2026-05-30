@@ -208,7 +208,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
-				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed.",
+				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use apply_patch or replace_text.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

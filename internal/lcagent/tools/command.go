@@ -18,6 +18,8 @@ import (
 const (
 	defaultCommandTimeout = 10 * time.Second
 	maxCommandTimeout     = 60 * time.Second
+
+	CommandWorkspaceWriteDenialReason = "run_command appears to write workspace files"
 )
 
 type CommandRunner struct {
@@ -55,6 +57,18 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 			result.DenialReason = policy.DenialReason(err)
 		}
 		return result
+	}
+	if reason := commandWorkspaceWriteDenialReason(spec); reason != "" {
+		return ToolResult{
+			Success:      false,
+			Error:        reason,
+			Denied:       true,
+			DenialReason: reason,
+			Command:      commandLabelFromSpec(spec),
+			Argv:         cleanArgv(spec.Argv),
+			CWD:          cwd,
+			Purpose:      normalizeCommandPurpose(spec.Purpose),
+		}
 	}
 	if err := r.Workspace.AllowCommandSpec(spec.Argv, spec.Command, spec.Shell); err != nil {
 		result := ToolResult{
@@ -119,6 +133,233 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 		Binary:       p.Binary,
 		ArtifactPath: p.ArtifactPath,
 	}
+}
+
+func IsWorkspaceWriteCommandDenied(result ToolResult) bool {
+	return result.Denied && strings.HasPrefix(result.DenialReason, CommandWorkspaceWriteDenialReason)
+}
+
+func commandWorkspaceWriteDenialReason(spec CommandSpec) string {
+	detail := ""
+	if len(cleanArgv(spec.Argv)) > 0 {
+		detail = argvWorkspaceWriteDetail(cleanArgv(spec.Argv))
+	} else {
+		detail = shellWorkspaceWriteDetail(spec.Command)
+	}
+	if detail == "" {
+		return ""
+	}
+	return CommandWorkspaceWriteDenialReason + " (" + detail + "); use apply_patch or replace_text for source edits instead"
+}
+
+func argvWorkspaceWriteDetail(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	name := strings.ToLower(filepath.Base(argv[0]))
+	switch {
+	case name == "sh" || name == "bash" || name == "zsh":
+		if script := shellScriptArg(argv); script != "" {
+			return shellWorkspaceWriteDetail(script)
+		}
+	case name == "tee" || name == "rm" || name == "mv" || name == "cp" || name == "install":
+		return "detected workspace-mutating command " + name
+	case name == "sed":
+		for _, arg := range argv[1:] {
+			if arg == "-i" || arg == "--in-place" || strings.HasPrefix(arg, "-i") {
+				return "detected in-place sed edit"
+			}
+		}
+	case name == "perl":
+		for _, arg := range argv[1:] {
+			if strings.HasPrefix(arg, "-pi") || (strings.HasPrefix(arg, "-p") && strings.Contains(arg, "i")) {
+				return "detected in-place perl edit"
+			}
+		}
+	case strings.HasPrefix(name, "python") || name == "node" || name == "ruby":
+		if inline := inlineProgramArg(argv); inline != "" && inlineProgramWritesFiles(name, inline) {
+			return "detected inline program file write"
+		}
+	}
+	return ""
+}
+
+func shellScriptArg(argv []string) string {
+	for i := 1; i < len(argv); i++ {
+		if strings.HasPrefix(argv[i], "-") && strings.Contains(argv[i], "c") && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	return ""
+}
+
+func inlineProgramArg(argv []string) string {
+	for i := 1; i < len(argv); i++ {
+		switch argv[i] {
+		case "-c", "-e":
+			if i+1 < len(argv) {
+				return argv[i+1]
+			}
+		}
+	}
+	return ""
+}
+
+func inlineProgramWritesFiles(name, program string) bool {
+	lower := strings.ToLower(program)
+	if strings.HasPrefix(name, "python") || name == "ruby" {
+		return strings.Contains(lower, "write_text(") ||
+			strings.Contains(lower, "write_bytes(") ||
+			(strings.Contains(lower, "open(") && inlineOpenUsesWriteMode(lower))
+	}
+	if name == "node" {
+		return strings.Contains(lower, "writefile") ||
+			strings.Contains(lower, "appendfile") ||
+			strings.Contains(lower, "createwritestream")
+	}
+	return false
+}
+
+func inlineOpenUsesWriteMode(program string) bool {
+	for _, marker := range []string{
+		`,"w`, `,'w`, `, "w`, `, 'w`,
+		`,"a`, `,'a`, `, "a`, `, 'a`,
+		`,"x`, `,'x`, `, "x`, `, 'x`,
+		`, mode="w`, `, mode='w`,
+		`, mode="a`, `, mode='a`,
+		`, mode="x`, `, mode='x`,
+	} {
+		if strings.Contains(program, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func shellWorkspaceWriteDetail(command string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return ""
+	}
+	if shellContainsHeredoc(command) {
+		return "detected shell heredoc"
+	}
+	if shellContainsFileRedirection(command) {
+		return "detected shell file redirection"
+	}
+	for _, segment := range shellCommandSegments(command) {
+		if detail := shellSegmentWorkspaceWriteDetail(segment); detail != "" {
+			return detail
+		}
+	}
+	return ""
+}
+
+func shellContainsHeredoc(command string) bool {
+	inSingle, inDouble, escaped := false, false, false
+	for i := 0; i < len(command)-1; i++ {
+		ch := command[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		switch ch {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '<':
+			if !inSingle && !inDouble && command[i+1] == '<' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func shellContainsFileRedirection(command string) bool {
+	inSingle, inDouble, escaped := false, false, false
+	for i := 0; i < len(command); i++ {
+		ch := command[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+		switch ch {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '>':
+			if inSingle || inDouble {
+				continue
+			}
+			if i+1 < len(command) && (command[i+1] == '&' || command[i+1] == '(') {
+				continue
+			}
+			return true
+		case '&':
+			if inSingle || inDouble {
+				continue
+			}
+			if i+1 < len(command) && command[i+1] == '>' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func shellCommandSegments(command string) []string {
+	replacer := strings.NewReplacer("\n", ";", "&&", ";", "||", ";", "|", ";")
+	raw := strings.Split(replacer.Replace(command), ";")
+	segments := make([]string, 0, len(raw))
+	for _, segment := range raw {
+		segment = strings.TrimSpace(segment)
+		if segment != "" {
+			segments = append(segments, segment)
+		}
+	}
+	return segments
+}
+
+func shellSegmentWorkspaceWriteDetail(segment string) string {
+	fields := strings.Fields(segment)
+	for len(fields) > 0 && isShellPrefixWord(fields[0]) {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return ""
+	}
+	return argvWorkspaceWriteDetail(fields)
+}
+
+func isShellPrefixWord(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "command" || value == "sudo" {
+		return true
+	}
+	if strings.Contains(value, "=") {
+		parts := strings.SplitN(value, "=", 2)
+		return parts[0] != "" && !strings.ContainsAny(parts[0], `/\`)
+	}
+	return false
 }
 
 func commandLabelFromSpec(spec CommandSpec) string {

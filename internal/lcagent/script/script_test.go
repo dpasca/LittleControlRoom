@@ -535,6 +535,45 @@ func TestRunnerApprovedCommandRunsOnceAtMediumAutonomy(t *testing.T) {
 	}
 }
 
+func TestRunnerRunCommandDeniesWorkspaceWriteAtMedium(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"cat > created.txt << 'EOF'\nhello\nEOF","timeout_ms":1000}`),
+	})
+	if err == nil {
+		t.Fatalf("RunTool succeeded, want denial; result=%#v", result)
+	}
+	if !result.Denied || result.Success || !strings.Contains(result.DenialReason, tools.CommandWorkspaceWriteDenialReason) {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(w.Root, "created.txt")); !os.IsNotExist(err) {
+		t.Fatalf("created.txt stat error = %v, want not exist", err)
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"permission_denied"`, `"tool":"run_command"`, `"type":"tool_result"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
