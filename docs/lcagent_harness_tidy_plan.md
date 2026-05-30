@@ -64,6 +64,7 @@ Implemented after `06403a9`:
 - Final-response audit enforcement for completed managed start/stop actions without later verification.
 - Model-facing live-eval case for unavailable managed-process handoff, scored through structured final outcome metadata.
 - Model-facing replay coverage for available managed-process support, verifying the model chooses `start_process`/`list_processes` instead of bounded `run_command`.
+- Model-facing replay coverage for completed managed operations, verifying an early `completed` final is bounced until a later `purpose=verify` probe runs.
 
 ## Phase 1: Generic Regression Evals
 
@@ -95,7 +96,7 @@ Scenarios:
 
 Remaining useful coverage:
 
-- Live provider coverage for completed managed operations that require a later verification probe.
+- Optional live-provider run of the completed managed-operation replay shape, if mocked replay coverage stops catching real model drift.
 
 Likely files:
 

@@ -335,6 +335,129 @@ func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	var providerRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerRequests++
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch providerRequests {
+		case 1:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_start",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_start","type":"function","function":{"name":"start_process","arguments":{"command":"npm run dev","name":"dev-server"}}}]}
+				}]
+			}`))
+		case 2:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_bad_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final_bad","type":"function","function":{"name":"final_response","arguments":{"summary":"started and done","outcome":"completed","files_changed":[],"verification":["dev server is running"]}}}]}
+				}]
+			}`))
+		case 3:
+			feedbackSeen := false
+			for _, msg := range body.Messages {
+				if msg.Role == "user" && strings.Contains(msg.Content, "managed process action") && strings.Contains(msg.Content, "no later run_command check marked purpose=verify") {
+					feedbackSeen = true
+				}
+			}
+			if !feedbackSeen {
+				t.Fatalf("third request missing managed-process verification feedback: %#v", body.Messages)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_verify",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_verify","type":"function","function":{"name":"run_command","arguments":{"argv":["sh","-c","exit 0"],"shell":false,"purpose":"verify","timeout_ms":120000}}}]}
+				}]
+			}`))
+		case 4:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"Started dev-server under Little Control Room and verified it with a separate probe.","outcome":"completed","files_changed":[],"verification":["sh -c exit 0"]}}}]}
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected provider request %d", providerRequests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(dataDir, time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	workspace, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processes := &lcagentCLITestProcessBroker{}
+	runner := script.Runner{
+		Session:   writer,
+		Command:   tools.CommandRunner{Workspace: workspace},
+		Patch:     tools.PatchApplier{Workspace: workspace},
+		Files:     tools.FileTools{Workspace: workspace, Limits: tools.FileLimitsForProfile(tools.FileProfileBalanced)},
+		Processes: processes,
+		Skills:    skillcatalog.Catalog{},
+		SessionID: sessionID,
+		Prompt:    "Start the dev server, verify it, and report completion only after verification.",
+	}
+	err = runChatLoop(context.Background(), writer, runner, nil, "", nil,
+		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 5, RequestTimeout: time.Minute},
+		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
+		"openrouter", "main", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
+	if err != nil {
+		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
+	}
+	text := stream.String()
+	for _, want := range []string{
+		`"tool":"start_process"`,
+		`"type":"final_response_audit"`,
+		`"outcome":"block"`,
+		`managed process action \"start\" has no later run_command check marked purpose=verify`,
+		`"type":"verification_feedback"`,
+		`"tool":"run_command"`,
+		`"type":"verification_check"`,
+		`"status":"passed"`,
+		`"outcome":"pass"`,
+		`"final_outcome":"completed"`,
+		`"summary":"Started dev-server under Little Control Room and verified it with a separate probe."`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %q:\n%s", want, text)
+		}
+	}
+	if providerRequests != 4 {
+		t.Fatalf("provider requests = %d, want 4", providerRequests)
+	}
+}
+
 type lcagentCLITestProcessBroker struct {
 	requests []script.ProcessRequest
 }
