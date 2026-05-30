@@ -1452,6 +1452,18 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		tool := rawJSONString(event["tool"])
 		text := lcagentToolResultText(tool, event["result"])
 		s.appendAsync(TranscriptTool, text)
+	case "browser_activity_started":
+		s.handleBrowserActivityEvent(event, browserctl.SessionActivityStateActive)
+	case "browser_activity_finished":
+		s.handleBrowserActivityEvent(event, browserctl.SessionActivityStateIdle)
+	case "browser_waiting_for_user":
+		s.handleBrowserActivityEvent(event, browserctl.SessionActivityStateWaitingForUser)
+		s.handleBrowserPageEvent(event)
+		if text := lcagentBrowserWaitingText(event); text != "" {
+			s.appendAsync(TranscriptStatus, text)
+		}
+	case "browser_page":
+		s.handleBrowserPageEvent(event)
 	case "permission_denied":
 		reason := rawJSONString(event["reason"])
 		tool := rawJSONString(event["tool"])
@@ -1592,6 +1604,55 @@ func (s *lcagentSession) handleEvent(line []byte) {
 	if s.notify != nil {
 		s.notify()
 	}
+}
+
+func (s *lcagentSession) handleBrowserActivityEvent(event map[string]json.RawMessage, state browserctl.SessionActivityState) {
+	s.mu.Lock()
+	activity := s.browserActivity.Normalize()
+	activity.Policy = s.playwrightPolicy.Normalize()
+	activity.State = state
+	activity.ServerName = firstNonEmpty(rawJSONString(event["server_name"]), "playwright")
+	activity.ToolName = firstNonEmpty(rawJSONString(event["tool"]), rawJSONString(event["tool_name"]), activity.ToolName)
+	activity.LastEventAt = rawJSONTime(event["timestamp"])
+	if activity.LastEventAt.IsZero() {
+		activity.LastEventAt = time.Now()
+	}
+	s.browserActivity = activity.Normalize()
+	if state == browserctl.SessionActivityStateWaitingForUser {
+		s.status = "Browser waiting for user input"
+	}
+	s.touchLocked()
+	s.mu.Unlock()
+}
+
+func (s *lcagentSession) handleBrowserPageEvent(event map[string]json.RawMessage) {
+	url := strings.TrimSpace(rawJSONString(event["url"]))
+	if url == "" {
+		return
+	}
+	fresh := true
+	if _, ok := event["fresh"]; ok {
+		fresh = rawJSONBool(event["fresh"])
+	}
+	s.mu.Lock()
+	s.currentBrowserPageURL = url
+	s.currentBrowserPageStale = !fresh
+	if key := strings.TrimSpace(rawJSONString(event["session_key"])); key != "" {
+		s.managedBrowserSessionKey = key
+	}
+	s.touchLocked()
+	s.mu.Unlock()
+}
+
+func lcagentBrowserWaitingText(event map[string]json.RawMessage) string {
+	message := strings.TrimSpace(rawJSONString(event["message"]))
+	if message != "" {
+		return message
+	}
+	if url := strings.TrimSpace(rawJSONString(event["url"])); url != "" {
+		return "Browser waiting for user input: " + url
+	}
+	return "Browser waiting for user input"
 }
 
 func lcagentApprovalRequestFromEvent(event map[string]json.RawMessage, fallbackThreadID string) *ApprovalRequest {
@@ -1857,6 +1918,15 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 		s.lastActivityAt = time.Now()
 	}
 	s.lastError = strings.TrimSpace(replay.lastError)
+	if activity := replay.browserActivity.Normalize(); activity.State != "" || activity.ServerName != "" || activity.ToolName != "" {
+		activity.Policy = s.playwrightPolicy.Normalize()
+		s.browserActivity = activity.Normalize()
+	}
+	if key := strings.TrimSpace(replay.managedBrowserSessionKey); key != "" {
+		s.managedBrowserSessionKey = key
+	}
+	s.currentBrowserPageURL = strings.TrimSpace(replay.currentBrowserPageURL)
+	s.currentBrowserPageStale = replay.currentBrowserPageStale
 	if model := strings.TrimSpace(replay.model); model != "" {
 		s.model = model
 	}

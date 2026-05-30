@@ -66,6 +66,11 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		lines = append(lines,
 			"Browser control is not available in this run. If the user asks for browser verification or asks you to open a web console, say plainly that browser tooling is unavailable; use the nearest valid evidence only if useful, and do not imply a browser was used.",
 		)
+	} else {
+		lines = append(lines,
+			"Use native browser_* tools for browser work. Do not launch Playwright, MCP servers, or browser automation wrappers from run_command.",
+			"If a browser step needs login, MFA, payment, CAPTCHA, or human judgment, stop browser automation, report the current page, and ask the user to reveal and finish the managed browser flow in Little Control Room.",
+		)
 	}
 	lines = append(lines,
 		"Use workspace-relative paths for project files; read-only file inspection tools may use absolute paths when the user asks for system/admin inspection outside the workspace.",

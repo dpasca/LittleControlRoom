@@ -149,7 +149,16 @@ func TestRunnerDispatchesBrowserToolsThroughBrowserRunner(t *testing.T) {
 		t.Fatalf("browser calls = %q", got)
 	}
 	text := stream.String()
-	for _, want := range []string{`"tool":"browser_navigate"`, `"tool":"browser_snapshot"`, "url: https://example.test/", `button \"Continue\"`} {
+	for _, want := range []string{
+		`"type":"browser_activity_started"`,
+		`"type":"browser_page"`,
+		`"type":"browser_activity_finished"`,
+		`"tool":"browser_navigate"`,
+		`"tool":"browser_snapshot"`,
+		`"url":"https://example.test/"`,
+		"title: Example",
+		`button \"Continue\"`,
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %q:\n%s", want, text)
 		}

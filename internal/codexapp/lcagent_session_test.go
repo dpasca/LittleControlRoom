@@ -1195,6 +1195,99 @@ printf '%s\n' '{"type":"turn_complete","summary":"browser flags captured"}'
 	}
 }
 
+func TestLCAgentSessionTracksBrowserEvents(t *testing.T) {
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: t.TempDir(),
+		AppDataDir:  t.TempDir(),
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode: browserctl.ManagementModeManaged,
+			LoginMode:      browserctl.LoginModePromote,
+		},
+		ManagedBrowserSessionKey: "session-demo",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	lca, ok := session.(*lcagentSession)
+	if !ok {
+		t.Fatalf("session type = %T, want *lcagentSession", session)
+	}
+
+	lca.handleEvent([]byte(`{"type":"browser_activity_started","server_name":"playwright","tool":"browser_navigate"}`))
+	lca.handleEvent([]byte(`{"type":"browser_page","url":"https://example.test/login","title":"Login","fresh":true}`))
+	snapshot := lca.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateActive; got != want {
+		t.Fatalf("BrowserActivity.State = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ToolName, "browser_navigate"; got != want {
+		t.Fatalf("BrowserActivity.ToolName = %q, want %q", got, want)
+	}
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.test/login"; got != want {
+		t.Fatalf("CurrentBrowserPageURL = %q, want %q", got, want)
+	}
+	if snapshot.CurrentBrowserPageStale {
+		t.Fatalf("CurrentBrowserPageStale = true, want false")
+	}
+
+	lca.handleEvent([]byte(`{"type":"browser_waiting_for_user","url":"https://example.test/login","message":"Finish login"}`))
+	snapshot = lca.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("BrowserActivity.State after wait = %q, want %q", got, want)
+	}
+	if !strings.Contains(snapshot.Transcript, "Finish login") {
+		t.Fatalf("transcript missing browser wait message: %q", snapshot.Transcript)
+	}
+
+	lca.handleEvent([]byte(`{"type":"browser_activity_finished","server_name":"playwright","tool":"browser_navigate","success":true}`))
+	snapshot = lca.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("BrowserActivity.State after finish = %q, want %q", got, want)
+	}
+}
+
+func TestLCAgentReplayRestoresBrowserPageEvents(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := strings.Join([]string{
+		`{"type":"session_meta","id":"lca_replay","cwd":"/tmp/demo"}`,
+		`{"type":"browser_activity_started","server_name":"playwright","tool":"browser_navigate"}`,
+		`{"type":"browser_page","session_key":"session-demo","url":"https://example.test/","fresh":true}`,
+		`{"type":"browser_activity_finished","server_name":"playwright","tool":"browser_navigate","success":true}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write replay: %v", err)
+	}
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
+	}
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:    ProviderLCAgent,
+		ProjectPath: t.TempDir(),
+		AppDataDir:  t.TempDir(),
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode: browserctl.ManagementModeManaged,
+			LoginMode:      browserctl.LoginModePromote,
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	lca := session.(*lcagentSession)
+	lca.applyReplay(replay)
+	snapshot := lca.Snapshot()
+	if got, want := snapshot.ManagedBrowserSessionKey, "session-demo"; got != want {
+		t.Fatalf("ManagedBrowserSessionKey = %q, want %q", got, want)
+	}
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.test/"; got != want {
+		t.Fatalf("CurrentBrowserPageURL = %q, want %q", got, want)
+	}
+	if snapshot.CurrentBrowserPageStale {
+		t.Fatalf("CurrentBrowserPageStale = true, want false")
+	}
+}
+
 func TestLCAgentSessionPassesXiaomiBaseURLForDirectRoute(t *testing.T) {
 	root := t.TempDir()
 	argsPath := filepath.Join(t.TempDir(), "args.txt")

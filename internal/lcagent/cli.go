@@ -240,6 +240,7 @@ func browserToolResult(result browserctl.BrowserActionResult) tools.ToolResult {
 	if strings.TrimSpace(result.Title) != "" {
 		lines = append(lines, "title: "+strings.TrimSpace(result.Title))
 	}
+	lines = append(lines, "fresh: "+strconv.FormatBool(result.Fresh))
 	if strings.TrimSpace(result.Snapshot) != "" {
 		lines = append(lines, strings.TrimSpace(result.Snapshot))
 	}

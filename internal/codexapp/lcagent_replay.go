@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lcroom/internal/appfs"
+	"lcroom/internal/browserctl"
 	lcagentcore "lcroom/internal/lcagent"
 	lcrmodel "lcroom/internal/model"
 )
@@ -19,17 +20,21 @@ import (
 const lcagentReplayMaxDepth = 20
 
 type lcagentReplay struct {
-	sessionID      string
-	threadID       string
-	parentID       string
-	projectPath    string
-	model          string
-	modelProvider  string
-	startedAt      time.Time
-	lastActivityAt time.Time
-	lastError      string
-	tokenUsage     *threadTokenUsage
-	entries        []TranscriptEntry
+	sessionID                string
+	threadID                 string
+	parentID                 string
+	projectPath              string
+	model                    string
+	modelProvider            string
+	startedAt                time.Time
+	lastActivityAt           time.Time
+	lastError                string
+	tokenUsage               *threadTokenUsage
+	browserActivity          browserctl.SessionActivity
+	managedBrowserSessionKey string
+	currentBrowserPageURL    string
+	currentBrowserPageStale  bool
+	entries                  []TranscriptEntry
 }
 
 func loadLCAgentReplay(req LaunchRequest) (*lcagentReplay, error) {
@@ -153,6 +158,14 @@ func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (
 		}
 		if replay.lastError != "" {
 			combined.lastError = replay.lastError
+		}
+		combined.browserActivity = replay.browserActivity
+		if replay.managedBrowserSessionKey != "" {
+			combined.managedBrowserSessionKey = replay.managedBrowserSessionKey
+		}
+		if replay.currentBrowserPageURL != "" {
+			combined.currentBrowserPageURL = replay.currentBrowserPageURL
+			combined.currentBrowserPageStale = replay.currentBrowserPageStale
 		}
 		combined.entries = appendReplayEntries(combined.entries, replay.entries)
 		combined.tokenUsage = mergeReplayTokenUsage(combined.tokenUsage, replay.tokenUsage)
@@ -417,6 +430,16 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 		case "tool_result":
 			tool := rawJSONString(event["tool"])
 			replay.appendEntry(TranscriptTool, lcagentToolResultText(tool, event["result"]))
+		case "browser_activity_started":
+			replay.browserActivity = lcagentReplayBrowserActivity(event, replay.browserActivity, browserctl.SessionActivityStateActive)
+		case "browser_activity_finished":
+			replay.browserActivity = lcagentReplayBrowserActivity(event, replay.browserActivity, browserctl.SessionActivityStateIdle)
+		case "browser_waiting_for_user":
+			replay.browserActivity = lcagentReplayBrowserActivity(event, replay.browserActivity, browserctl.SessionActivityStateWaitingForUser)
+			replay.observeBrowserPage(event)
+			replay.appendEntry(TranscriptStatus, lcagentBrowserWaitingText(event))
+		case "browser_page":
+			replay.observeBrowserPage(event)
 		case "plan_update":
 			replay.appendEntry(TranscriptPlan, lcagentPlanText(event["items"]))
 		case "assistant_message":
@@ -491,6 +514,34 @@ func (r *lcagentReplay) addTokenUsage(usage lcrmodel.LLMUsage) {
 	r.tokenUsage.Total.OutputTokens += breakdown.OutputTokens
 	r.tokenUsage.Total.ReasoningOutputTokens += breakdown.ReasoningOutputTokens
 	r.tokenUsage.Total.TotalTokens += breakdown.TotalTokens
+}
+
+func lcagentReplayBrowserActivity(event map[string]json.RawMessage, current browserctl.SessionActivity, state browserctl.SessionActivityState) browserctl.SessionActivity {
+	activity := current.Normalize()
+	activity.State = state
+	activity.ServerName = firstNonEmpty(rawJSONString(event["server_name"]), "playwright")
+	activity.ToolName = firstNonEmpty(rawJSONString(event["tool"]), rawJSONString(event["tool_name"]), activity.ToolName)
+	activity.LastEventAt = rawJSONTime(event["timestamp"])
+	return activity.Normalize()
+}
+
+func (r *lcagentReplay) observeBrowserPage(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	url := strings.TrimSpace(rawJSONString(event["url"]))
+	if url == "" {
+		return
+	}
+	r.currentBrowserPageURL = url
+	fresh := true
+	if _, ok := event["fresh"]; ok {
+		fresh = rawJSONBool(event["fresh"])
+	}
+	r.currentBrowserPageStale = !fresh
+	if key := strings.TrimSpace(rawJSONString(event["session_key"])); key != "" {
+		r.managedBrowserSessionKey = key
+	}
 }
 
 func (r *lcagentReplay) appendEntry(kind TranscriptKind, text string) {

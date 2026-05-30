@@ -17944,6 +17944,31 @@ func TestVisibleOpenCodeCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) 
 	}
 }
 
+func TestVisibleLCAgentCurrentBackgroundBrowserPageHintsOpenPage(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Status:                   "LCAgent session ready",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://example.com/",
+	}
+
+	m := Model{codexVisibleProject: "/tmp/demo"}
+	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 120))
+	if !strings.Contains(renderedBlocks, "Background browser page: https://example.com/") {
+		t.Fatalf("renderCodexBrowserPanel() missing current background page for LCAgent: %q", renderedBlocks)
+	}
+	if !strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() missing ctrl+o reveal hint for LCAgent: %q", renderedBlocks)
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(footer, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() missing ctrl+o show browser action for LCAgent: %q", footer)
+	}
+}
+
 func TestVisibleOpenCodeBrowserPanelShowsReconnectHintWhenManagedBrowserNotAttached(t *testing.T) {
 	settings := config.EditableSettings{PlaywrightPolicy: settingsAutomaticPlaywrightPolicy}
 	snapshot := codexapp.Snapshot{

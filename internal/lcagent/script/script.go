@@ -685,6 +685,12 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 	}
 
 	var result tools.ToolResult
+	browserTool := isBrowserTool(action.Tool)
+	if browserTool {
+		if err := r.writeBrowserActivityEvent("browser_activity_started", action.Tool, nil); err != nil {
+			return tools.ToolResult{}, err
+		}
+	}
 	switch action.Tool {
 	case "read_file":
 		var args readFileArgs
@@ -923,6 +929,17 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 	}
 
+	if browserTool {
+		if page := browserPageFromToolResult(result); page != nil {
+			if err := r.Session.Write(page.event(r.SessionID)); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
+		if err := r.writeBrowserActivityEvent("browser_activity_finished", action.Tool, &result); err != nil {
+			return tools.ToolResult{}, err
+		}
+	}
+
 	if err := r.Session.Write(session.Event{
 		"type":       "tool_result",
 		"session_id": r.SessionID,
@@ -936,6 +953,78 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
+}
+
+func isBrowserTool(tool string) bool {
+	switch tool {
+	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_screenshot", "browser_current_page":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Runner) writeBrowserActivityEvent(eventType, tool string, result *tools.ToolResult) error {
+	event := session.Event{
+		"type":        eventType,
+		"session_id":  r.SessionID,
+		"server_name": "playwright",
+		"tool":        strings.TrimSpace(tool),
+	}
+	if result != nil {
+		event["success"] = result.Success
+		if strings.TrimSpace(result.Error) != "" {
+			event["error"] = strings.TrimSpace(result.Error)
+		}
+	}
+	return r.Session.Write(event)
+}
+
+type browserPageEvent struct {
+	URL   string
+	Title string
+	Fresh bool
+}
+
+func (p browserPageEvent) event(sessionID string) session.Event {
+	return session.Event{
+		"type":       "browser_page",
+		"session_id": sessionID,
+		"url":        p.URL,
+		"title":      p.Title,
+		"fresh":      p.Fresh,
+	}
+}
+
+func browserPageFromToolResult(result tools.ToolResult) *browserPageEvent {
+	if !result.Success {
+		return nil
+	}
+	var page browserPageEvent
+	page.Fresh = true
+	for _, line := range strings.Split(result.Output, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "url":
+			page.URL = strings.TrimSpace(value)
+		case "title":
+			page.Title = strings.TrimSpace(value)
+		case "fresh":
+			switch strings.ToLower(strings.TrimSpace(value)) {
+			case "false", "no", "0":
+				page.Fresh = false
+			case "true", "yes", "1":
+				page.Fresh = true
+			}
+		}
+	}
+	if page.URL == "" {
+		return nil
+	}
+	return &page
 }
 
 func validateBrowserToolArgs(tool string, raw json.RawMessage) (tools.ToolResult, bool) {
