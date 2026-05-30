@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"lcroom/internal/brand"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/codexslash"
@@ -4591,7 +4592,7 @@ func codexSnapshotNeedsSubmitRefresh(snapshot codexapp.Snapshot) bool {
 
 func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
 	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
-		return false
+		return codexSnapshotBrowserWaitingForUser(snapshot)
 	}
 	return codexSnapshotCanInterruptActiveTurn(snapshot)
 }
@@ -4615,7 +4616,14 @@ func codexSnapshotCanSubmitBusyInput(snapshot codexapp.Snapshot) bool {
 	if snapshot.BusyExternal {
 		return false
 	}
+	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
+		return codexSnapshotBrowserWaitingForUser(snapshot)
+	}
 	return embeddedProvider(snapshot) != codexapp.ProviderLCAgent
+}
+
+func codexSnapshotBrowserWaitingForUser(snapshot codexapp.Snapshot) bool {
+	return snapshot.BrowserActivity.Normalize().State == browserctl.SessionActivityStateWaitingForUser
 }
 
 func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
@@ -4637,6 +4645,9 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 			return "Working elsewhere " + formatRunningDuration(now.Sub(snapshot.BusySince))
 		}
 		return "Working elsewhere"
+	}
+	if codexSnapshotBrowserWaitingForUser(snapshot) {
+		return "Waiting for browser input"
 	}
 	if snapshot.Busy {
 		if !snapshot.BusySince.IsZero() {

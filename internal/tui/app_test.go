@@ -11626,6 +11626,137 @@ func TestCodexPageKeysScrollTranscriptByEightyPercent(t *testing.T) {
 	}
 }
 
+func TestLCAgentBrowserWaitAcceptsResumeInputWhileBusy(t *testing.T) {
+	projectPath := "/tmp/lcagent-browser-wait"
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderLCAgent,
+			Started:  true,
+			Busy:     true,
+			Phase:    codexapp.SessionPhaseRunning,
+			Status:   "Browser waiting for user input",
+			BrowserActivity: browserctl.SessionActivity{
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_wait_for_user",
+			},
+			ManagedBrowserSessionKey: "managed-login",
+			CurrentBrowserPageURL:    "https://accounts.google.com/",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath, Provider: codexapp.ProviderLCAgent}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	input := newCodexTextarea()
+	input.SetValue("done")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: session.snapshot,
+		},
+		codexInput: input,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("Enter during LCAgent browser wait should send a resume command")
+	}
+	_ = cmd()
+	if len(session.submissions) != 1 || session.submissions[0].TranscriptText() != "done" {
+		t.Fatalf("submissions = %#v, want one resume message", session.submissions)
+	}
+	if strings.TrimSpace(got.codexInput.Value()) != "" {
+		t.Fatalf("composer value = %q, want cleared after sending", got.codexInput.Value())
+	}
+	if !strings.Contains(got.status, "LCAgent") {
+		t.Fatalf("status = %q, want LCAgent resume status", got.status)
+	}
+}
+
+func TestLCAgentBusyWithoutBrowserWaitStillBlocksAccidentalPrompt(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent,
+		Started:  true,
+		Busy:     true,
+		Phase:    codexapp.SessionPhaseRunning,
+		Status:   "LCAgent running",
+	}
+	if codexSnapshotCanSubmitBusyInput(snapshot) {
+		t.Fatal("busy LCAgent without a browser wait should not accept accidental prompt input")
+	}
+	if codexSnapshotCanSteer(snapshot) {
+		t.Fatal("busy LCAgent without a browser wait should not be reported as steerable")
+	}
+
+	snapshot.BrowserActivity = browserctl.SessionActivity{State: browserctl.SessionActivityStateWaitingForUser}
+	if !codexSnapshotCanSubmitBusyInput(snapshot) {
+		t.Fatal("busy LCAgent waiting for browser input should accept resume input")
+	}
+	if !codexSnapshotCanSteer(snapshot) {
+		t.Fatal("busy LCAgent waiting for browser input should be reported as steerable")
+	}
+}
+
+func TestVisibleLCAgentBrowserWaitAlwaysHasEscapeAndInterrupt(t *testing.T) {
+	projectPath := "/tmp/lcagent-browser-escape"
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent,
+		Started:  true,
+		Busy:     true,
+		Phase:    codexapp.SessionPhaseRunning,
+		BrowserActivity: browserctl.SessionActivity{
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_wait_for_user",
+		},
+	}
+	session := &fakeCodexSession{projectPath: projectPath, snapshot: snapshot}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath, Provider: codexapp.ProviderLCAgent}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	base := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: snapshot,
+		},
+		codexInput:       newCodexTextarea(),
+		detailViewport:   viewport.New(20, 5),
+		runtimeViewport:  viewport.New(20, 5),
+		width:            100,
+		height:           24,
+		settingsBaseline: &config.EditableSettings{},
+	}
+
+	updated, _ := base.updateCodexMode(tea.KeyMsg{Type: tea.KeyEsc})
+	if got := updated.(Model); got.codexVisibleProject != "" {
+		t.Fatalf("Esc should hide visible LCAgent wait pane, codexVisibleProject=%q", got.codexVisibleProject)
+	}
+
+	updated, cmd := base.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c during visible LCAgent wait should return an interrupt command")
+	}
+	_ = cmd()
+	if !session.interrupted {
+		t.Fatal("ctrl+c during visible LCAgent wait should interrupt the session")
+	}
+	if got := updated.(Model); !strings.Contains(got.status, "Interrupting LCAgent") {
+		t.Fatalf("status = %q, want interrupt status", got.status)
+	}
+}
+
 func testViewportLines(count int) string {
 	lines := make([]string, count)
 	for i := range lines {
