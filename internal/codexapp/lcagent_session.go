@@ -1867,6 +1867,9 @@ func (s *lcagentSession) statusTextLocked() string {
 	if reasoning := strings.TrimSpace(s.reasoningEffort); reasoning != "" {
 		parts = append(parts, "reasoning effort: "+reasoning)
 	}
+	tokenUsage := cloneThreadTokenUsage(s.tokenUsage)
+	s.applyContextWindowToTokenUsageLocked(tokenUsage)
+	appendThreadTokenUsageStatusLines(&parts, tokenUsage)
 	parts = append(parts, s.permissionsTextLocked(true))
 	return strings.Join(parts, "\n")
 }
@@ -2017,12 +2020,22 @@ func (s *lcagentSession) addTokenUsageLocked(usage lcrmodel.LLMUsage) {
 	if s.tokenUsage == nil {
 		s.tokenUsage = &threadTokenUsage{}
 	}
+	s.applyContextWindowToTokenUsageLocked(s.tokenUsage)
 	s.tokenUsage.Last = breakdown
 	s.tokenUsage.Total.CachedInputTokens += breakdown.CachedInputTokens
 	s.tokenUsage.Total.InputTokens += breakdown.InputTokens
 	s.tokenUsage.Total.OutputTokens += breakdown.OutputTokens
 	s.tokenUsage.Total.ReasoningOutputTokens += breakdown.ReasoningOutputTokens
 	s.tokenUsage.Total.TotalTokens += breakdown.TotalTokens
+}
+
+func (s *lcagentSession) applyContextWindowToTokenUsageLocked(tokenUsage *threadTokenUsage) {
+	if tokenUsage == nil {
+		return
+	}
+	if budget := lcagent.ContextCompactionApproxTokenBudget(s.contextProfile); budget > 0 {
+		tokenUsage.ModelContextWindow = &budget
+	}
 }
 
 func lcagentUsageFromModelResponseEvent(event map[string]json.RawMessage, modelName string) (lcrmodel.LLMUsage, bool) {
@@ -2286,6 +2299,8 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	} else if s.busy {
 		phase = SessionPhaseRunning
 	}
+	tokenUsage := cloneThreadTokenUsage(s.tokenUsage)
+	s.applyContextWindowToTokenUsageLocked(tokenUsage)
 	return Snapshot{
 		Provider:                 ProviderLCAgent,
 		ProjectPath:              s.projectPath,
@@ -2310,7 +2325,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		Model:                    firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
 		ModelProvider:            firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
 		ReasoningEffort:          s.reasoningEffort,
-		TokenUsage:               exportedTokenUsageSnapshot(s.tokenUsage),
+		TokenUsage:               exportedTokenUsageSnapshot(tokenUsage),
 	}
 }
 

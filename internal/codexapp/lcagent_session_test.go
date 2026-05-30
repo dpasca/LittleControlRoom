@@ -92,6 +92,9 @@ printf '%s\n' '{"type":"turn_complete"}'
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 120 || snapshot.TokenUsage.Last.OutputTokens != 30 || snapshot.TokenUsage.Last.CachedInputTokens != 40 || snapshot.TokenUsage.Total.TotalTokens != 150 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
+	if snapshot.TokenUsage.ModelContextWindow != 150_000 {
+		t.Fatalf("TokenUsage.ModelContextWindow = %d, want LCAgent large compaction token budget", snapshot.TokenUsage.ModelContextWindow)
+	}
 	for _, want := range []string{"please run the fake agent", "I logged in", "Tool run_command running", "command ok", "Plan:\n[x] exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
@@ -763,6 +766,9 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	}
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 200 || snapshot.TokenUsage.Last.OutputTokens != 50 || snapshot.TokenUsage.Last.CachedInputTokens != 75 || snapshot.TokenUsage.Total.TotalTokens != 250 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
+	}
+	if snapshot.TokenUsage.ModelContextWindow != 50_000 {
+		t.Fatalf("TokenUsage.ModelContextWindow = %d, want LCAgent balanced compaction token budget", snapshot.TokenUsage.ModelContextWindow)
 	}
 	for _, want := range []string{
 		"Loaded LCAgent thread " + sessionID + " from disk. Sending a prompt starts a continuing run from canonical thread state.",

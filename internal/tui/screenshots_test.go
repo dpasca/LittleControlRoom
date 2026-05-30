@@ -155,7 +155,7 @@ func TestScreenshotEmbeddedCodexSnapshotRendersSessionMeta(t *testing.T) {
 	m.syncCodexComposerSize()
 
 	rendered := ansi.Strip(m.View())
-	for _, want := range []string{"Model", "gpt-5.4", "Reasoning", "xhigh", "Context", "94% left", "188,000 tok"} {
+	for _, want := range []string{"Model", "gpt-5.4", "Reasoning", "xhigh", "Context", "max 200,000 tok", "6% used"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("embedded screenshot render missing %q: %q", want, rendered)
 		}

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/uistyle"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -27,6 +29,10 @@ type codexStatusBlockData struct {
 	Permissions        string
 	ContextTokens      int64
 	TotalTokens        int64
+	InputTokens        int64
+	OutputTokens       int64
+	CachedInputTokens  int64
+	ReasoningTokens    int64
 	ModelContextWindow int64
 	ContextUsedPercent int
 	HasContextPercent  bool
@@ -157,6 +163,22 @@ func parseCodexStatusBlock(body string) (codexStatusBlockData, bool) {
 			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
 				status.TotalTokens = parsed
 			}
+		case "input tokens":
+			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+				status.InputTokens = parsed
+			}
+		case "output tokens":
+			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+				status.OutputTokens = parsed
+			}
+		case "cached input tokens":
+			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+				status.CachedInputTokens = parsed
+			}
+		case "reasoning tokens":
+			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+				status.ReasoningTokens = parsed
+			}
 		case "context tokens":
 			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
 				status.ContextTokens = parsed
@@ -284,10 +306,22 @@ func renderCodexStatusSummaryRows(status codexStatusBlockData, width int) []stri
 		}
 		rows = append(rows, renderCodexStatusField("Context", contextValue, labelWidth))
 	}
+	if tokensValue := codexStatusTokenBreakdownLabel(status); tokensValue != "" {
+		rows = append(rows, renderCodexStatusField("Tokens", valueStyle.Render(tokensValue), labelWidth))
+	}
 	if status.LastTurnTokens > 0 {
 		rows = append(rows, renderCodexStatusField("Last turn", valueStyle.Render(fmt.Sprintf("%s tokens", formatInt64(status.LastTurnTokens))), labelWidth))
 	}
 	return rows
+}
+
+func codexStatusTokenBreakdownLabel(status codexStatusBlockData) string {
+	return uistyle.FormatCompactTokenBreakdown(
+		status.InputTokens,
+		status.OutputTokens,
+		status.CachedInputTokens,
+		status.ReasoningTokens,
+	)
 }
 
 func renderCodexStatusFooterRows(status codexStatusBlockData) []string {

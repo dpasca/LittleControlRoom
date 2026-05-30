@@ -37,3 +37,30 @@ func FormatCompactTokenUsage(inputTokens, outputTokens, cachedInputTokens, reaso
 	}
 	return strings.Join(parts, " ")
 }
+
+func FormatCompactTokenBreakdown(inputTokens, outputTokens, cachedInputTokens, reasoningTokens int64) string {
+	parts := make([]string, 0, 4)
+	if inputTokens > 0 {
+		parts = append(parts, "i"+FormatTokenCount(inputTokens))
+		parts = append(parts, fmt.Sprintf("c%d%%", CachedInputPercent(inputTokens, cachedInputTokens)))
+	} else if cachedInputTokens > 0 {
+		parts = append(parts, "c0%")
+	}
+	if reasoningTokens > 0 {
+		parts = append(parts, "r"+FormatTokenCount(reasoningTokens))
+	}
+	if outputTokens > 0 {
+		parts = append(parts, "o"+FormatTokenCount(outputTokens))
+	}
+	return strings.Join(parts, " ")
+}
+
+func CachedInputPercent(inputTokens, cachedInputTokens int64) int {
+	if inputTokens <= 0 || cachedInputTokens <= 0 {
+		return 0
+	}
+	if cachedInputTokens >= inputTokens {
+		return 100
+	}
+	return int((cachedInputTokens*100 + inputTokens/2) / inputTokens)
+}

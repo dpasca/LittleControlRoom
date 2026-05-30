@@ -2945,7 +2945,7 @@ func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) str
 	if reasoning != "" {
 		segments = append(segments, renderFooterMeta("Reasoning")+" "+renderFooterStatus(reasoning))
 	}
-	if context := codexSnapshotContextLeftLabel(snapshot); context != "" {
+	if context := codexSnapshotContextUsageLabel(snapshot); context != "" {
 		segments = append(segments, renderFooterMeta("Context")+" "+renderFooterStatus(context))
 	}
 	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
@@ -2999,11 +2999,22 @@ func codexSnapshotShowsPendingModelAsCurrent(snapshot codexapp.Snapshot) bool {
 	return true
 }
 
-func codexSnapshotContextLeftLabel(snapshot codexapp.Snapshot) string {
+func codexSnapshotContextUsageLabel(snapshot codexapp.Snapshot) string {
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.ModelContextWindow <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d%% left (%s tok)", snapshot.TokenUsage.ContextLeftPercent(), formatInt64(snapshot.TokenUsage.ContextLeftTokens()))
+	used := snapshot.TokenUsage.EstimatedContextTokens()
+	if used < 0 {
+		used = 0
+	}
+	usedPercent := int(float64(used)*100/float64(snapshot.TokenUsage.ModelContextWindow) + 0.5)
+	if usedPercent < 0 {
+		usedPercent = 0
+	}
+	if usedPercent > 100 {
+		usedPercent = 100
+	}
+	return fmt.Sprintf("max %s tok, %d%% used", formatInt64(snapshot.TokenUsage.ModelContextWindow), usedPercent)
 }
 
 func codexSnapshotTokenUsageLabel(snapshot codexapp.Snapshot) string {
@@ -3011,20 +3022,25 @@ func codexSnapshotTokenUsageLabel(snapshot codexapp.Snapshot) string {
 		return ""
 	}
 	usage := snapshot.TokenUsage.Total
-	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.ReasoningOutputTokens == 0 {
+	if !codexTokenUsageHasBreakdown(usage) {
 		usage = snapshot.TokenUsage.Last
 	}
-	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.ReasoningOutputTokens == 0 {
+	if !codexTokenUsageHasBreakdown(usage) {
 		return ""
 	}
-	return uistyle.FormatCompactTokenUsage(
+	return uistyle.FormatCompactTokenBreakdown(
 		usage.InputTokens,
 		usage.OutputTokens,
 		usage.CachedInputTokens,
 		usage.ReasoningOutputTokens,
-		usage.TotalTokens,
-		true,
 	)
+}
+
+func codexTokenUsageHasBreakdown(usage codexapp.TokenUsageBreakdown) bool {
+	return usage.InputTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.CachedInputTokens != 0 ||
+		usage.ReasoningOutputTokens != 0
 }
 
 func codexSnapshotGoalLabel(snapshot codexapp.Snapshot) string {

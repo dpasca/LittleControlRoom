@@ -5238,6 +5238,32 @@ func formatThreadTokenUsage(usage *threadTokenUsage) string {
 	return strings.Join(parts, "; ")
 }
 
+func appendThreadTokenUsageStatusLines(lines *[]string, tokenUsage *threadTokenUsage) {
+	if lines == nil || tokenUsage == nil {
+		return
+	}
+	tokenUsageSnapshot := exportedTokenUsageSnapshot(tokenUsage)
+	if tokenUsageSnapshot != nil && tokenUsageSnapshot.ModelContextWindow > 0 {
+		*lines = append(*lines, fmt.Sprintf("model context window: %d", tokenUsageSnapshot.ModelContextWindow))
+		if contextTokens := tokenUsageSnapshot.EstimatedContextTokens(); contextTokens > 0 {
+			*lines = append(*lines, fmt.Sprintf("context tokens: %d", contextTokens))
+			*lines = append(*lines, fmt.Sprintf("context used percent: %d", 100-tokenUsageSnapshot.ContextLeftPercent()))
+		}
+	}
+	if tokenUsage.Total.InputTokens > 0 {
+		*lines = append(*lines, fmt.Sprintf("input tokens: %d", tokenUsage.Total.InputTokens))
+	}
+	if tokenUsage.Total.CachedInputTokens > 0 {
+		*lines = append(*lines, fmt.Sprintf("cached input tokens: %d", tokenUsage.Total.CachedInputTokens))
+	}
+	if tokenUsage.Total.ReasoningOutputTokens > 0 {
+		*lines = append(*lines, fmt.Sprintf("reasoning tokens: %d", tokenUsage.Total.ReasoningOutputTokens))
+	}
+	if tokenUsage.Total.OutputTokens > 0 {
+		*lines = append(*lines, fmt.Sprintf("output tokens: %d", tokenUsage.Total.OutputTokens))
+	}
+}
+
 func buildEmbeddedGoalStatusText(goal *ThreadGoal) string {
 	if goal == nil {
 		return "Embedded Codex goal\nstatus: none"
@@ -5317,17 +5343,7 @@ func buildEmbeddedStatusText(threadID, projectPath, currentCWD, model, modelProv
 		lines = append(lines, "writable roots: "+strings.Join(sandboxSummary.WritableRoots, ", "))
 	}
 	if tokenUsage != nil {
-		tokenUsageSnapshot := exportedTokenUsageSnapshot(tokenUsage)
-		if tokenUsage.Total.TotalTokens > 0 {
-			lines = append(lines, fmt.Sprintf("total tokens: %d", tokenUsage.Total.TotalTokens))
-		}
-		if tokenUsageSnapshot != nil && tokenUsageSnapshot.ModelContextWindow > 0 {
-			lines = append(lines, fmt.Sprintf("model context window: %d", tokenUsageSnapshot.ModelContextWindow))
-			if contextTokens := tokenUsageSnapshot.EstimatedContextTokens(); contextTokens > 0 {
-				lines = append(lines, fmt.Sprintf("context tokens: %d", contextTokens))
-				lines = append(lines, fmt.Sprintf("context used percent: %d", 100-tokenUsageSnapshot.ContextLeftPercent()))
-			}
-		}
+		appendThreadTokenUsageStatusLines(&lines, tokenUsage)
 		if tokenUsage.Last.TotalTokens > 0 {
 			lines = append(lines, fmt.Sprintf("last turn tokens: %d", tokenUsage.Last.TotalTokens))
 		}

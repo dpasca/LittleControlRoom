@@ -69,6 +69,12 @@ func TestOpenRouterContextProfileBudgets(t *testing.T) {
 	if large.LoopCompactionCharThreshold <= balanced.LoopCompactionCharThreshold {
 		t.Fatalf("large threshold = %d, want > balanced threshold %d", large.LoopCompactionCharThreshold, balanced.LoopCompactionCharThreshold)
 	}
+	if got := ContextCompactionApproxTokenBudget("balanced"); got != 50_000 {
+		t.Fatalf("balanced approx token budget = %d, want 50000", got)
+	}
+	if got := ContextCompactionApproxTokenBudget("large"); got != 150_000 {
+		t.Fatalf("large approx token budget = %d, want 150000", got)
+	}
 }
 
 func TestCompactOpenRouterLoopMessagesPreservesRequestAndDropsToolRoles(t *testing.T) {

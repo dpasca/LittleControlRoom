@@ -1596,7 +1596,7 @@ func TestCodexSnapshotTokenUsageLabel(t *testing.T) {
 			},
 		},
 	}
-	if got := codexSnapshotTokenUsageLabel(snapshot); got != "i12k o6.8k c2.0k r123 t19k" {
+	if got := codexSnapshotTokenUsageLabel(snapshot); got != "i12k c16% r123 o6.8k" {
 		t.Fatalf("codexSnapshotTokenUsageLabel() = %q", got)
 	}
 }
@@ -18740,9 +18740,9 @@ func TestRenderCodexSessionMetaShowsModelReasoningContextAndPending(t *testing.T
 			},
 			ModelContextWindow: 200000,
 		},
-	}, 140))
+	}, 180))
 
-	for _, want := range []string{"Model", "gpt-5-codex", "Reasoning", "high", "Context", "94% left", "188,000 tok", "Goal", "active 1,200/5,000 tok", "Next", "gpt-5 / medium"} {
+	for _, want := range []string{"Model", "gpt-5-codex", "Reasoning", "high", "Context", "max 200,000 tok", "6% used", "Tok", "i10k c0% r345 o2.3k", "Goal", "active 1,200/5,000 tok", "Next", "gpt-5 / medium"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
 		}

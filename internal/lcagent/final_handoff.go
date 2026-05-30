@@ -108,6 +108,20 @@ func openRouterContextOptionsForProfile(profile openRouterContextProfile) openRo
 	return opts.withDefaults()
 }
 
+// ContextCompactionApproxTokenBudget returns the approximate token budget used
+// before the provider-loop context is compacted for the requested profile.
+func ContextCompactionApproxTokenBudget(profile string) int64 {
+	parsed, err := parseOpenRouterContextProfile(profile)
+	if err != nil {
+		parsed = openRouterContextProfileBalanced
+	}
+	threshold := openRouterContextOptionsForProfile(parsed).LoopCompactionCharThreshold
+	if threshold <= 0 {
+		return 0
+	}
+	return int64((threshold + 3) / 4)
+}
+
 func defaultOpenRouterContextOptions() openRouterContextOptions {
 	return openRouterContextOptions{
 		FinalHandoffTranscriptMaxChars: finalHandoffTranscriptMaxChars,
