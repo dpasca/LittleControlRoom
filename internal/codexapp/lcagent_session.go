@@ -202,6 +202,15 @@ func (s *lcagentSession) TrySnapshot() (Snapshot, bool) {
 	return s.snapshotLocked(), true
 }
 
+func (s *lcagentSession) StateSnapshot() Snapshot {
+	if s == nil {
+		return Snapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stateSnapshotLocked()
+}
+
 func (s *lcagentSession) Submit(prompt string) error {
 	return s.SubmitInput(Submission{Text: prompt})
 }
@@ -229,7 +238,7 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 		return nil
 	}
 	s.mu.Unlock()
-	return s.startRun(input.TranscriptText(), input.TranscriptDisplayText())
+	return s.startRunAsync(input.TranscriptText(), input.TranscriptDisplayText())
 }
 
 func (s *lcagentSession) ShowStatus() error {
@@ -351,7 +360,7 @@ func (s *lcagentSession) Review() error {
 	if !ok {
 		return s.unsupportedNotice("No uncommitted changes to review.")
 	}
-	return s.startRunWithOptions(prompt, "/review current uncommitted changes", lcagentRunOptions{
+	return s.startRunWithOptionsAsync(prompt, "/review current uncommitted changes", lcagentRunOptions{
 		autoOverride:   "off",
 		disableResume:  true,
 		startingStatus: "Starting LCAgent review",
@@ -950,15 +959,71 @@ func (s *lcagentSession) startRun(prompt, displayPrompt string) error {
 	return s.startRunWithOptions(prompt, displayPrompt, lcagentRunOptions{})
 }
 
+func (s *lcagentSession) startRunAsync(prompt, displayPrompt string) error {
+	return s.startRunWithOptionsAsync(prompt, displayPrompt, lcagentRunOptions{})
+}
+
+type lcagentPreparedRun struct {
+	prompt             string
+	resumeID           string
+	provider           string
+	routePreset        string
+	autoOverride       string
+	autoLevel          string
+	sessionAuto        string
+	runningStatus      string
+	model              string
+	modelProvider      string
+	toolProfile        string
+	contextProfile     string
+	adminWrite         bool
+	requestTimeout     time.Duration
+	maxTurns           int
+	reasoningEffort    string
+	credentialProvider string
+	providerAPIKeyName string
+	providerAPIKey     string
+	preflightAccess    bool
+	preflightReq       LaunchRequest
+	webSearchBackend   string
+	webSearchAPIKey    string
+	webSearchEngineID  string
+	webSearchURL       string
+	xiaomiBaseURL      string
+	utilityProvider    string
+	utilityModel       string
+	utilityAPIKeyName  string
+	utilityAPIKey      string
+}
+
 func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts lcagentRunOptions) error {
+	prepared, err := s.prepareRun(prompt, displayPrompt, opts)
+	if err != nil {
+		return err
+	}
+	return s.launchPreparedRun(prepared)
+}
+
+func (s *lcagentSession) startRunWithOptionsAsync(prompt, displayPrompt string, opts lcagentRunOptions) error {
+	prepared, err := s.prepareRun(prompt, displayPrompt, opts)
+	if err != nil {
+		return err
+	}
+	go func() {
+		_ = s.launchPreparedRun(prepared)
+	}()
+	return nil
+}
+
+func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRunOptions) (lcagentPreparedRun, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return fmt.Errorf("LCAgent session is closed")
+		return lcagentPreparedRun{}, fmt.Errorf("LCAgent session is closed")
 	}
 	if s.busy {
 		s.mu.Unlock()
-		return fmt.Errorf("LCAgent is already running")
+		return lcagentPreparedRun{}, fmt.Errorf("LCAgent is already running")
 	}
 	now := time.Now()
 	s.started = true
@@ -973,12 +1038,6 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		resumeID = ""
 	}
 	if resumeID != "" {
-		// Force-stabilize the thread state if it's stuck in a non-stable status
-		// (e.g. in_flight_model_response from a previous crashed run).
-		if err := lcagent.ForceStabilizeThreadState(s.dataDir, resumeID, s.projectPath); err != nil {
-			s.mu.Unlock()
-			return fmt.Errorf("LCAgent resume stabilize: %w", err)
-		}
 		if s.replayLoaded && len(s.entries) > 0 {
 			s.appendEntryLocked(TranscriptStatus, "Starting a continuing LCAgent run from thread "+resumeID+".")
 		} else {
@@ -989,6 +1048,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	s.appendEntryLocked(TranscriptUser, firstNonEmpty(displayPrompt, prompt))
 	provider := firstNonEmpty(s.provider, lcagentDefaultProvider)
 	routePreset := strings.TrimSpace(s.routePreset)
+	sessionAuto := strings.TrimSpace(s.sessionAuto)
 	autoLevel := lcagentAutoLevel(firstNonEmpty(opts.autoOverride, s.sessionAuto, s.auto))
 	model := strings.TrimSpace(s.model)
 	if model == "" && routePreset == "" {
@@ -1038,9 +1098,67 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		s.appendEntryLocked(TranscriptStatus, warning)
 	}
 	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
 
-	if preflightAccess {
-		if err := CheckLCAgentProviderAccess(context.Background(), preflightReq); err != nil {
+	return lcagentPreparedRun{
+		prompt:             prompt,
+		resumeID:           resumeID,
+		provider:           provider,
+		routePreset:        routePreset,
+		autoOverride:       opts.autoOverride,
+		autoLevel:          autoLevel,
+		sessionAuto:        sessionAuto,
+		runningStatus:      opts.runningStatus,
+		model:              model,
+		modelProvider:      modelProvider,
+		toolProfile:        toolProfile,
+		contextProfile:     contextProfile,
+		adminWrite:         adminWrite,
+		requestTimeout:     requestTimeout,
+		maxTurns:           maxTurns,
+		reasoningEffort:    reasoningEffort,
+		credentialProvider: credentialProvider,
+		providerAPIKeyName: providerAPIKeyName,
+		providerAPIKey:     providerAPIKey,
+		preflightAccess:    preflightAccess,
+		preflightReq:       preflightReq,
+		webSearchBackend:   webSearchBackend,
+		webSearchAPIKey:    webSearchAPIKey,
+		webSearchEngineID:  webSearchEngineID,
+		webSearchURL:       webSearchURL,
+		xiaomiBaseURL:      xiaomiBaseURL,
+		utilityProvider:    utilityProvider,
+		utilityModel:       utilityModel,
+		utilityAPIKeyName:  utilityAPIKeyName,
+		utilityAPIKey:      utilityAPIKey,
+	}, nil
+}
+
+func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	if s.closed || !s.busy {
+		s.mu.Unlock()
+		cancel()
+		return nil
+	}
+	s.cancel = cancel
+	s.mu.Unlock()
+
+	if prepared.resumeID != "" {
+		// Force-stabilize the thread state if it's stuck in a non-stable status
+		// (e.g. in_flight_model_response from a previous crashed run).
+		if err := lcagent.ForceStabilizeThreadState(s.dataDir, prepared.resumeID, s.projectPath); err != nil {
+			err = fmt.Errorf("LCAgent resume stabilize: %w", err)
+			s.finishRun("", false, err)
+			return err
+		}
+	}
+
+	if prepared.preflightAccess {
+		if err := CheckLCAgentProviderAccess(ctx, prepared.preflightReq); err != nil {
 			s.finishRun("", false, err)
 			return err
 		}
@@ -1051,7 +1169,6 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		s.finishRun("", false, err)
 		return err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	args := append([]string{}, spec.Args...)
 	args = append(args,
 		"exec",
@@ -1059,74 +1176,74 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 		"--data-dir", s.dataDir,
 		"--output", "stream-json",
 		"--approval-mode", "ask",
-		"--utility-provider", utilityProvider,
-		"--web-search-backend", webSearchBackend,
-		"--max-turns", strconv.Itoa(maxTurns),
+		"--utility-provider", prepared.utilityProvider,
+		"--web-search-backend", prepared.webSearchBackend,
+		"--max-turns", strconv.Itoa(prepared.maxTurns),
 	)
-	if utilityModel != "" {
-		args = append(args, "--utility-model", utilityModel)
+	if prepared.utilityModel != "" {
+		args = append(args, "--utility-model", prepared.utilityModel)
 	}
-	if adminWrite {
+	if prepared.adminWrite {
 		args = append(args, "--admin-write")
 	}
-	if routePreset != "" && opts.autoOverride == "" {
+	if prepared.routePreset != "" && prepared.autoOverride == "" {
 		args = append(args,
-			"--route-preset", routePreset,
-			"--request-timeout", requestTimeout.String(),
+			"--route-preset", prepared.routePreset,
+			"--request-timeout", prepared.requestTimeout.String(),
 		)
-		if strings.TrimSpace(s.sessionAuto) != "" {
-			args = append(args, "--auto", autoLevel)
+		if strings.TrimSpace(prepared.sessionAuto) != "" {
+			args = append(args, "--auto", prepared.autoLevel)
 		}
 	} else {
 		args = append(args,
-			"--auto", autoLevel,
-			"--provider", provider,
+			"--auto", prepared.autoLevel,
+			"--provider", prepared.provider,
 		)
-		if model != "" {
-			args = append(args, "--model", model)
+		if prepared.model != "" {
+			args = append(args, "--model", prepared.model)
 		}
 		args = append(args,
-			"--tool-profile", toolProfile,
-			"--context-profile", contextProfile,
-			"--request-timeout", requestTimeout.String(),
+			"--tool-profile", prepared.toolProfile,
+			"--context-profile", prepared.contextProfile,
+			"--request-timeout", prepared.requestTimeout.String(),
 		)
-		if reasoningEffort != "" {
-			args = append(args, "--reasoning-effort", reasoningEffort)
+		if prepared.reasoningEffort != "" {
+			args = append(args, "--reasoning-effort", prepared.reasoningEffort)
 		}
 	}
-	if webSearchEngineID != "" {
-		args = append(args, "--web-search-engine-id", webSearchEngineID)
+	if prepared.webSearchEngineID != "" {
+		args = append(args, "--web-search-engine-id", prepared.webSearchEngineID)
 	}
-	if webSearchURL != "" {
-		args = append(args, "--web-search-url", webSearchURL)
+	if prepared.webSearchURL != "" {
+		args = append(args, "--web-search-url", prepared.webSearchURL)
 	}
 	envFile := firstNonEmpty(s.envFile, os.Getenv("LCROOM_LCAGENT_ENV_FILE"))
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
-	if resumeID != "" {
-		args = append(args, "--continue-from", resumeID)
+	if prepared.resumeID != "" {
+		args = append(args, "--continue-from", prepared.resumeID)
 	}
-	args = append(args, prompt)
+	args = append(args, prepared.prompt)
 	cmd := exec.CommandContext(ctx, spec.Command, args...)
 	configureAppServerCommand(cmd)
 	cmd.Dir = spec.Dir
 	cmd.Env = os.Environ()
-	if providerAPIKeyName != "" && providerAPIKey != "" {
-		cmd.Env = setCommandEnv(cmd.Env, providerAPIKeyName, providerAPIKey)
+	if prepared.providerAPIKeyName != "" && prepared.providerAPIKey != "" {
+		cmd.Env = setCommandEnv(cmd.Env, prepared.providerAPIKeyName, prepared.providerAPIKey)
 	}
-	if utilityAPIKeyName != "" && utilityAPIKey != "" {
-		cmd.Env = setCommandEnv(cmd.Env, utilityAPIKeyName, utilityAPIKey)
+	if prepared.utilityAPIKeyName != "" && prepared.utilityAPIKey != "" {
+		cmd.Env = setCommandEnv(cmd.Env, prepared.utilityAPIKeyName, prepared.utilityAPIKey)
 	}
-	if xiaomiBaseURL != "" && (strings.EqualFold(credentialProvider, "xiaomi") || strings.EqualFold(utilityProvider, "xiaomi")) {
-		cmd.Env = setCommandEnv(cmd.Env, "XIAOMI_BASE_URL", xiaomiBaseURL)
+	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi")) {
+		cmd.Env = setCommandEnv(cmd.Env, "XIAOMI_BASE_URL", prepared.xiaomiBaseURL)
 	}
-	if webSearchAPIKey != "" {
-		switch webSearchBackend {
+	if prepared.webSearchAPIKey != "" {
+		switch prepared.webSearchBackend {
 		case "exa":
-			cmd.Env = setCommandEnv(cmd.Env, "EXA_API_KEY", webSearchAPIKey)
+			cmd.Env = setCommandEnv(cmd.Env, "EXA_API_KEY", prepared.webSearchAPIKey)
 		default:
-			cmd.Env = setCommandEnv(cmd.Env, "GOOGLE_SEARCH_API_KEY", webSearchAPIKey)
+			cmd.Env = setCommandEnv(cmd.Env, "GOOGLE_SEARCH_API_KEY", prepared.webSearchAPIKey)
 		}
 	}
 	stdout, err := cmd.StdoutPipe()
@@ -1157,7 +1274,7 @@ func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts 
 	s.cmd = cmd
 	s.stdin = stdin
 	s.cancel = cancel
-	s.status = firstNonEmpty(opts.runningStatus, "LCAgent running")
+	s.status = firstNonEmpty(prepared.runningStatus, "LCAgent running")
 	s.mu.Unlock()
 	if s.notify != nil {
 		s.notify()
@@ -2002,6 +2119,13 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		s.cache.entries = entries
 		s.cache.transcript = transcript
 	}
+	snapshot := s.stateSnapshotLocked()
+	snapshot.Entries = cloneTranscriptEntries(entries)
+	snapshot.Transcript = transcript
+	return snapshot
+}
+
+func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	phase := SessionPhaseIdle
 	if s.closed {
 		phase = SessionPhaseClosed
@@ -2019,8 +2143,6 @@ func (s *lcagentSession) snapshotLocked() Snapshot {
 		BusySince:          s.busySince,
 		LastBusyActivityAt: s.lastBusyActivityAt,
 		Closed:             s.closed,
-		Entries:            cloneTranscriptEntries(entries),
-		Transcript:         transcript,
 		Status:             s.status,
 		LastError:          s.lastError,
 		PendingApproval:    cloneApprovalRequest(s.pendingApproval),

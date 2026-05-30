@@ -125,6 +125,81 @@ printf '%s\n' '{"type":"turn_complete"}'
 	}
 }
 
+func TestLCAgentSubmitReturnsBeforeSlowPreflight(t *testing.T) {
+	root := t.TempDir()
+	releasePreflight := make(chan struct{})
+	preflightStarted := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %s, want /models", r.URL.Path)
+		}
+		select {
+		case <-preflightStarted:
+		default:
+			close(preflightStarted)
+		}
+		<-releasePreflight
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"mimo-v2.5-pro","name":"MiMo"}]}`))
+	}))
+	defer server.Close()
+
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	script := `#!/bin/sh
+printf '%s\n' '{"type":"assistant_message","message":"slow preflight still did not trap the UI"}'
+printf '%s\n' '{"type":"turn_complete","status":"ok"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:               ProviderLCAgent,
+		ProjectPath:            root,
+		AppDataDir:             t.TempDir(),
+		LCAgentPath:            exe,
+		LCAgentProvider:        "xiaomi",
+		LCAgentXiaomiAPIKey:    "test-xiaomi-key",
+		LCAgentXiaomiBaseURL:   server.URL,
+		LCAgentPreflightAccess: true,
+		LCAgentRequestTimeout:  time.Second,
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- session.SubmitInput(Submission{Text: "exercise async preflight"})
+	}()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("SubmitInput() error = %v", err)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("SubmitInput blocked behind provider preflight")
+	}
+	if snapshot := session.Snapshot(); !snapshot.Busy {
+		t.Fatalf("snapshot.Busy = false, want prompt accepted and run marked busy")
+	}
+	select {
+	case <-preflightStarted:
+	case <-time.After(time.Second):
+		t.Fatal("preflight did not start")
+	}
+	close(releasePreflight)
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	if !strings.Contains(snapshot.Transcript, "slow preflight still did not trap the UI") {
+		t.Fatalf("transcript missing fake response:\n%s", snapshot.Transcript)
+	}
+}
+
 func TestLCAgentSessionWarnsWhenWebSearchUnavailable(t *testing.T) {
 	session, err := newLCAgentSession(LaunchRequest{
 		Provider:    ProviderLCAgent,
