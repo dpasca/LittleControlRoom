@@ -168,6 +168,91 @@ func shadowPlaywrightSkill(catalog *skillcatalog.Catalog, browserEnabled bool) {
 	)
 }
 
+type lcagentBrowserRunner struct {
+	session browserctl.BrowserSession
+}
+
+func (r lcagentBrowserRunner) RunBrowserTool(ctx context.Context, tool string, args json.RawMessage) tools.ToolResult {
+	if r.session == nil {
+		return tools.ToolResult{Success: false, Error: "managed browser runtime is not configured"}
+	}
+	var (
+		result browserctl.BrowserActionResult
+		err    error
+	)
+	switch tool {
+	case "browser_navigate":
+		var parsed struct {
+			URL string `json:"url"`
+		}
+		_ = json.Unmarshal(args, &parsed)
+		result, err = r.session.Navigate(ctx, parsed.URL)
+	case "browser_snapshot":
+		var parsed struct {
+			MaxChars int `json:"max_chars"`
+		}
+		_ = json.Unmarshal(args, &parsed)
+		result, err = r.session.Snapshot(ctx, parsed.MaxChars)
+	case "browser_click":
+		var parsed struct {
+			Ref string `json:"ref"`
+		}
+		_ = json.Unmarshal(args, &parsed)
+		result, err = r.session.Click(ctx, parsed.Ref)
+	case "browser_fill":
+		var parsed struct {
+			Ref   string `json:"ref"`
+			Value string `json:"value"`
+		}
+		_ = json.Unmarshal(args, &parsed)
+		result, err = r.session.Fill(ctx, parsed.Ref, parsed.Value)
+	case "browser_press":
+		var parsed struct {
+			Key string `json:"key"`
+		}
+		_ = json.Unmarshal(args, &parsed)
+		result, err = r.session.Press(ctx, parsed.Key)
+	case "browser_screenshot":
+		var parsed struct {
+			Path string `json:"path"`
+		}
+		_ = json.Unmarshal(args, &parsed)
+		result, err = r.session.Screenshot(ctx, parsed.Path)
+	case "browser_current_page":
+		result, err = r.session.CurrentPage(ctx)
+	default:
+		return tools.ToolResult{Success: false, Error: "unsupported browser tool: " + tool}
+	}
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error()}
+	}
+	return browserToolResult(result)
+}
+
+func browserToolResult(result browserctl.BrowserActionResult) tools.ToolResult {
+	lines := []string{}
+	if strings.TrimSpace(result.Status) != "" {
+		lines = append(lines, "status: "+strings.TrimSpace(result.Status))
+	}
+	if strings.TrimSpace(result.URL) != "" {
+		lines = append(lines, "url: "+strings.TrimSpace(result.URL))
+	}
+	if strings.TrimSpace(result.Title) != "" {
+		lines = append(lines, "title: "+strings.TrimSpace(result.Title))
+	}
+	if strings.TrimSpace(result.Snapshot) != "" {
+		lines = append(lines, strings.TrimSpace(result.Snapshot))
+	}
+	if strings.TrimSpace(result.ArtifactPath) != "" {
+		lines = append(lines, "artifact: "+strings.TrimSpace(result.ArtifactPath))
+	}
+	return tools.ToolResult{
+		Success:      true,
+		Output:       strings.TrimSpace(strings.Join(lines, "\n")) + "\n",
+		ArtifactPath: strings.TrimSpace(result.ArtifactPath),
+	}
+}
+
 func runPresets(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("presets", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -564,6 +649,23 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 
 	artifactDir := filepath.Join(filepath.Dir(writer.Path()), sessionID+"-artifacts")
+	var browserRunner script.BrowserRunner
+	if browserCapability.Enabled {
+		browserSession, err := browserctl.NewPlaywrightBrowserSession(browserctl.BrowserSessionConfig{
+			DataDir:     dataDir,
+			Provider:    "lcagent",
+			ProjectPath: workspace.Root,
+			SessionKey:  browserCapability.SessionKey,
+			ProfileKey:  browserCapability.ProfileKey,
+			LaunchMode:  browserCapability.LaunchMode,
+			Policy:      browserctl.PolicyFromEnv(),
+		})
+		if err != nil {
+			return err
+		}
+		defer browserSession.Close()
+		browserRunner = lcagentBrowserRunner{session: browserSession}
+	}
 	webSearch, webSearchStatus := tools.NewWebSearchRunner(tools.WebSearchConfig{
 		Backend:        webSearchBackend,
 		APIKey:         webSearchAPIKey,
@@ -588,6 +690,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		WebSearch:        webSearch,
 		WebSearchOn:      webSearchStatus.Enabled,
 		BrowserAvailable: browserCapability.Enabled,
+		Browser:          browserRunner,
 		Skills:           catalog,
 		SessionID:        sessionID,
 		Prompt:           prompt,
