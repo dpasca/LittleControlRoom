@@ -2,6 +2,7 @@ package browserctl
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,5 +81,60 @@ done
 	}
 	if state.MCPPID != 0 {
 		t.Fatalf("MCPPID after close = %d, want 0", state.MCPPID)
+	}
+}
+
+func TestPlaywrightBrowserSessionPrefersChromeForVisibleHandoffs(t *testing.T) {
+	t.Setenv("LCR_PLAYWRIGHT_BROWSER_CHANNEL", "")
+	dir := t.TempDir()
+	fakeWorker := filepath.Join(dir, "fake-worker.sh")
+	seenConfig := filepath.Join(dir, "seen-config.json")
+	script := `#!/bin/sh
+printf '%s' "$LCR_BROWSER_WORKER_CONFIG" > "$SEEN_CONFIG"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  printf '{"id":"%s","ok":true,"result":{"URL":"about:blank","Title":"","Status":"current_page","Fresh":true}}\n' "$id"
+done
+`
+	if err := os.WriteFile(fakeWorker, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	origCommand := playwrightWorkerCommand
+	origArgs := playwrightWorkerArgs
+	playwrightWorkerCommand = fakeWorker
+	playwrightWorkerArgs = func(string) []string { return nil }
+	t.Cleanup(func() {
+		playwrightWorkerCommand = origCommand
+		playwrightWorkerArgs = origArgs
+	})
+	t.Setenv("SEEN_CONFIG", seenConfig)
+
+	session, err := NewPlaywrightBrowserSession(BrowserSessionConfig{
+		DataDir:     dir,
+		Provider:    "lcagent",
+		ProjectPath: "/tmp/demo",
+		SessionKey:  "session-demo",
+		ProfileKey:  "profile-demo",
+		LaunchMode:  ManagedLaunchModeBackground,
+		Policy:      DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	if _, err := session.CurrentPage(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(seenConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("worker config %q is not JSON: %v", raw, err)
+	}
+	if got := cfg["browserChannel"]; got != "chrome" {
+		t.Fatalf("browserChannel = %#v, want chrome for background handoff", got)
 	}
 }

@@ -176,9 +176,10 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 		return err
 	}
 	config := map[string]any{
-		"profileDir": s.paths.ProfileDir,
-		"outputDir":  s.paths.OutputDir,
-		"launchMode": string(s.paths.LaunchMode),
+		"profileDir":     s.paths.ProfileDir,
+		"outputDir":      s.paths.OutputDir,
+		"launchMode":     string(s.paths.LaunchMode),
+		"browserChannel": s.browserChannel(),
 	}
 	configRaw, err := json.Marshal(config)
 	if err != nil {
@@ -219,6 +220,21 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 	go s.readResponses(stdout)
 	go s.monitorWorker(cmd.Process.Pid)
 	return nil
+}
+
+func (s *PlaywrightBrowserSession) browserChannel() string {
+	if channel := strings.TrimSpace(os.Getenv("LCR_PLAYWRIGHT_BROWSER_CHANNEL")); channel != "" {
+		return channel
+	}
+	if channel := strings.TrimSpace(s.cfg.BrowserChannel); channel != "" {
+		return channel
+	}
+	switch s.paths.LaunchMode.Normalize() {
+	case ManagedLaunchModeHeaded, ManagedLaunchModeBackground:
+		return "chrome"
+	default:
+		return ""
+	}
 }
 
 func appendBrowserWorkerEnv(base []string, configRaw, projectPath string) []string {

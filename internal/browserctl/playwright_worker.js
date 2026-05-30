@@ -18,7 +18,7 @@ let screenshotCount = 0;
 async function ensurePage() {
   if (!context) {
     const headless = config.launchMode === "headless";
-    context = await chromium.launchPersistentContext(config.profileDir, {
+    context = await launchPersistentContext({
       headless,
       downloadsPath: config.outputDir,
       viewport: { width: 1280, height: 900 },
@@ -29,6 +29,18 @@ async function ensurePage() {
     page = context.pages()[0] || await context.newPage();
   }
   return page;
+}
+
+async function launchPersistentContext(options) {
+  const channel = typeof config.browserChannel === "string" ? config.browserChannel.trim() : "";
+  if (channel) {
+    try {
+      return await chromium.launchPersistentContext(config.profileDir, { ...options, channel });
+    } catch (err) {
+      if (channel !== "chrome") throw err;
+    }
+  }
+  return chromium.launchPersistentContext(config.profileDir, options);
 }
 
 async function pageState(extra = {}) {

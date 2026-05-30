@@ -23,11 +23,12 @@ type BrowserActionResult struct {
 }
 
 type BrowserSessionConfig struct {
-	DataDir     string
-	Provider    string
-	ProjectPath string
-	SessionKey  string
-	ProfileKey  string
-	LaunchMode  ManagedLaunchMode
-	Policy      Policy
+	DataDir        string
+	Provider       string
+	ProjectPath    string
+	SessionKey     string
+	ProfileKey     string
+	LaunchMode     ManagedLaunchMode
+	Policy         Policy
+	BrowserChannel string
 }
