@@ -86,15 +86,6 @@ func lastAssistantMessageText(messages []modeladapter.Message) string {
 	return ""
 }
 
-func modelMessagesHaveSystem(messages []modeladapter.Message) bool {
-	for _, msg := range messages {
-		if msg.Role == "system" && strings.TrimSpace(msg.Content) != "" {
-			return true
-		}
-	}
-	return false
-}
-
 func withCurrentSystemMessage(messages []modeladapter.Message, systemPrompt string) []modeladapter.Message {
 	systemPrompt = strings.TrimSpace(systemPrompt)
 	if systemPrompt == "" {
