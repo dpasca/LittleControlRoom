@@ -152,15 +152,17 @@ func lcagentManagedProcessResult(prefix string, snapshot projectrun.Snapshot, su
 		output = "Managed process updated."
 	}
 	return tools.ToolResult{
-		Success: success,
-		Output:  output,
-		Command: snapshot.Command,
-		CWD:     firstNonEmpty(snapshot.CWD, snapshot.ProjectPath),
+		Success:        success,
+		Output:         output,
+		Command:        snapshot.Command,
+		CWD:            firstNonEmpty(snapshot.CWD, snapshot.ProjectPath),
+		ManagedProcess: lcagentManagedProcessEvidence("start", snapshot),
 	}
 }
 
 func lcagentManagedProcessListResult(snapshots []projectrun.Snapshot) tools.ToolResult {
 	lines := []string{}
+	evidence := []tools.ManagedProcessEvidence{}
 	for _, snapshot := range snapshots {
 		if !lcagentSnapshotHasProcessDetail(snapshot) {
 			continue
@@ -169,11 +171,36 @@ func lcagentManagedProcessListResult(snapshots []projectrun.Snapshot) tools.Tool
 		if line != "" {
 			lines = append(lines, line)
 		}
+		if item := lcagentManagedProcessEvidence("list", snapshot); item != nil {
+			evidence = append(evidence, *item)
+		}
 	}
 	if len(lines) == 0 {
 		return tools.ToolResult{Success: true, Output: "No managed background processes are known to Little Control Room."}
 	}
-	return tools.ToolResult{Success: true, Output: strings.Join(lines, "\n")}
+	return tools.ToolResult{Success: true, Output: strings.Join(lines, "\n"), ManagedProcesses: evidence}
+}
+
+func lcagentManagedProcessEvidence(action string, snapshot projectrun.Snapshot) *tools.ManagedProcessEvidence {
+	if !lcagentSnapshotHasProcessDetail(snapshot) {
+		return nil
+	}
+	return &tools.ManagedProcessEvidence{
+		Action:        strings.TrimSpace(action),
+		ProcessID:     strings.TrimSpace(snapshot.ID),
+		Name:          strings.TrimSpace(snapshot.Name),
+		Command:       strings.TrimSpace(snapshot.Command),
+		CWD:           firstNonEmpty(strings.TrimSpace(snapshot.CWD), strings.TrimSpace(snapshot.ProjectPath)),
+		PID:           snapshot.PID,
+		PGID:          snapshot.PGID,
+		Running:       snapshot.Running,
+		ExitCode:      snapshot.ExitCode,
+		ExitCodeKnown: snapshot.ExitCodeKnown,
+		Ports:         append([]int(nil), snapshot.Ports...),
+		URLs:          append([]string(nil), snapshot.AnnouncedURLs...),
+		RecentOutput:  append([]string(nil), snapshot.RecentOutput...),
+		Error:         strings.TrimSpace(snapshot.LastError),
+	}
 }
 
 func lcagentSnapshotHasProcessDetail(snapshot projectrun.Snapshot) bool {

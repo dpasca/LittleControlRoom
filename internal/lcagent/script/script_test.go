@@ -639,7 +639,18 @@ func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	}
 	defer writer.Close()
 	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
-	processes := &fakeProcessBroker{result: tools.ToolResult{Output: "running; pid 42"}}
+	processes := &fakeProcessBroker{result: tools.ToolResult{
+		Output: "running; pid 42",
+		ManagedProcess: &tools.ManagedProcessEvidence{
+			Action:    "start",
+			ProcessID: "rt_1",
+			Name:      "frontend",
+			Command:   "pnpm dev",
+			CWD:       "frontend",
+			PID:       42,
+			Running:   true,
+		},
+	}}
 	runner := Runner{
 		Session:   writer,
 		SessionID: sessionID,
@@ -667,6 +678,18 @@ func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	request := processes.requests[0]
 	if request.Action != ProcessActionStart || request.Command != "pnpm dev" || request.CWD != "frontend" || request.Name != "frontend" || request.SessionID != sessionID {
 		t.Fatalf("process request = %#v", request)
+	}
+	text := stream.String()
+	for _, want := range []string{
+		`"type":"operational_action"`,
+		`"action":"start"`,
+		`"process_id":"rt_1"`,
+		`"pid":42`,
+		`"running":true`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %q:\n%s", want, text)
+		}
 	}
 }
 

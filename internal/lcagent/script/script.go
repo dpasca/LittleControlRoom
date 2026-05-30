@@ -905,7 +905,7 @@ func (r *Runner) runProcessWithApproval(ctx context.Context, request ProcessRequ
 	}
 	if r.Command.Workspace.Auto == policy.AutonomyLow {
 		if !r.processApprovalGranted(ctx, spec, tool) {
-			return tools.ToolResult{
+			result := tools.ToolResult{
 				Success:      false,
 				Denied:       true,
 				DenialReason: "managed background process requires approval at low autonomy",
@@ -913,6 +913,8 @@ func (r *Runner) runProcessWithApproval(ctx context.Context, request ProcessRequ
 				Command:      commandLabelForApproval(spec),
 				CWD:          commandCWDForApproval(r.Command.Workspace.Root, spec),
 			}
+			_ = r.writeOperationalAction(request, result)
+			return result
 		}
 	}
 	return r.runProcess(ctx, request)
@@ -920,14 +922,58 @@ func (r *Runner) runProcessWithApproval(ctx context.Context, request ProcessRequ
 
 func (r *Runner) runProcess(ctx context.Context, request ProcessRequest) tools.ToolResult {
 	if r == nil || r.Processes == nil {
-		return tools.ToolResult{Success: false, Error: "managed background process tools are unavailable outside an embedded LCR session"}
+		result := tools.ToolResult{Success: false, Error: "managed background process tools are unavailable outside an embedded LCR session"}
+		if r != nil {
+			_ = r.writeOperationalAction(request, result)
+		}
+		return result
 	}
 	request.SessionID = firstNonEmpty(strings.TrimSpace(request.SessionID), r.SessionID)
 	result, err := r.Processes.RequestProcess(ctx, request)
 	if err != nil {
-		return tools.ToolResult{Success: false, Error: err.Error()}
+		result = tools.ToolResult{Success: false, Error: err.Error()}
 	}
+	_ = r.writeOperationalAction(request, result)
 	return result
+}
+
+func (r *Runner) writeOperationalAction(request ProcessRequest, result tools.ToolResult) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	processID := strings.TrimSpace(request.ProcessID)
+	if processID == "" && result.ManagedProcess != nil {
+		processID = strings.TrimSpace(result.ManagedProcess.ProcessID)
+	}
+	name := strings.TrimSpace(request.Name)
+	if name == "" && result.ManagedProcess != nil {
+		name = strings.TrimSpace(result.ManagedProcess.Name)
+	}
+	event := session.Event{
+		"type":       "operational_action",
+		"session_id": r.SessionID,
+		"action":     strings.TrimSpace(string(request.Action)),
+		"process_id": processID,
+		"name":       name,
+		"command":    strings.TrimSpace(firstNonEmpty(result.Command, request.Command)),
+		"cwd":        strings.TrimSpace(firstNonEmpty(result.CWD, request.CWD)),
+		"success":    result.Success,
+		"denied":     result.Denied,
+		"error":      strings.TrimSpace(result.Error),
+	}
+	if result.ExitCode != 0 {
+		event["exit_code"] = result.ExitCode
+	}
+	if artifactPath := strings.TrimSpace(result.ArtifactPath); artifactPath != "" {
+		event["artifact_path"] = artifactPath
+	}
+	if result.ManagedProcess != nil {
+		event["managed_process"] = result.ManagedProcess
+	}
+	if len(result.ManagedProcesses) > 0 {
+		event["managed_processes"] = result.ManagedProcesses
+	}
+	return r.Session.Write(event)
 }
 
 func (r *Runner) processApprovalGranted(ctx context.Context, spec tools.CommandSpec, tool string) bool {

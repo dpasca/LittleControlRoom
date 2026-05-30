@@ -50,6 +50,8 @@ type Summary struct {
 	VerificationStatuses        map[string]int     `json:"verification_statuses,omitempty"`
 	FinalResponseAudits         int                `json:"final_response_audits,omitempty"`
 	FinalResponseAuditOutcomes  map[string]int     `json:"final_response_audit_outcomes,omitempty"`
+	OperationalActions          int                `json:"operational_actions,omitempty"`
+	OperationalActionStatuses   map[string]int     `json:"operational_action_statuses,omitempty"`
 	ContextCompactions          int                `json:"context_compactions,omitempty"`
 	ReadFileCalls               int                `json:"read_file_calls"`
 	ReadFileLines               int                `json:"read_file_lines"`
@@ -244,6 +246,9 @@ func (s *Summary) init() {
 	if s.FinalResponseAuditOutcomes == nil {
 		s.FinalResponseAuditOutcomes = map[string]int{}
 	}
+	if s.OperationalActionStatuses == nil {
+		s.OperationalActionStatuses = map[string]int{}
+	}
 	if s.rangesByFile == nil {
 		s.rangesByFile = map[string][]lineRange{}
 	}
@@ -393,6 +398,19 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			outcome = "unknown"
 		}
 		s.FinalResponseAuditOutcomes[outcome]++
+	case "operational_action":
+		s.OperationalActions++
+		action := rawString(event["action"])
+		if action == "" {
+			action = "unknown"
+		}
+		status := "failed"
+		if rawBool(event["denied"]) {
+			status = "denied"
+		} else if rawBool(event["success"]) {
+			status = "succeeded"
+		}
+		s.OperationalActionStatuses[action+"."+status]++
 	case "tool_call":
 		tool := rawString(event["tool"])
 		if tool == "" {

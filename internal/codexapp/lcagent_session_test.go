@@ -384,7 +384,9 @@ func TestLCAgentProcessRequestStartsManagedRuntime(t *testing.T) {
 
 	if got := strings.Join(stdin.writes, ""); !strings.Contains(got, `"type":"process_response"`) ||
 		!strings.Contains(got, `"id":"process-1"`) ||
-		!strings.Contains(got, `"success":true`) {
+		!strings.Contains(got, `"success":true`) ||
+		!strings.Contains(got, `"managed_process"`) ||
+		!strings.Contains(got, `"command":"pwd; sleep 30"`) {
 		t.Fatalf("process response payload = %q", got)
 	}
 	snapshot, err := manager.Snapshot(projectPath)

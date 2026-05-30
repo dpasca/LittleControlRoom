@@ -59,6 +59,8 @@ Implemented after `06403a9`:
 - Lightweight final-response audit events derived from structured tool and verification metadata.
 - Final-response audit metrics in LCAgent session metrics.
 - OpenRouter final-response bounce now uses the audit boundary for missing-verification blockers.
+- Structured operational-action trace events for managed-process tool requests.
+- Structured managed-process evidence in embedded LCR process responses where runtime snapshots are available.
 
 ## Phase 1: Generic Regression Evals
 
@@ -103,10 +105,15 @@ Likely files:
 
 Move from prompt-only guidance toward a generic contract for long-running operational actions.
 
+Current status:
+
+- Managed-process tool calls emit `operational_action` trace events with action, command, cwd, process id/name, success, errors, artifact path, and structured managed-process snapshot data when available.
+- Embedded LCR process responses attach structured managed-process evidence for start/list requests, including PID/PGID, running state, exit state, ports, URLs, recent output, and errors.
+
 Changes:
 
 - Prefer an explicit model-chosen operation intent or typed tool parameter over keyword scanning.
-- For an operational action, retain:
+- For an operational action, retain where available:
   - process label
   - command
   - PID when available
@@ -115,6 +122,12 @@ Changes:
   - full output artifact path
 - After completion, require a separate verification probe before success claims.
 - If managed process support is unavailable, final response should say the operation is blocked or can only be attempted as a bounded command with clear risk.
+
+Remaining design:
+
+- Add an explicit operation intent/metadata field only if live evals show the model needs it.
+- Track full output artifact paths for managed process logs if/when the runtime manager exposes them.
+- Teach the audit to require separate post-action verification for completed operational finals once the operation lifecycle has enough structured state.
 
 Lean note:
 

@@ -2762,6 +2762,8 @@ func TestRunEvalReportsPassingRegressionLane(t *testing.T) {
 		report.Summary.VerificationCheckStatuses["denied"] < 1 ||
 		report.Summary.VerificationCheckStatuses["timed_out"] < 1 ||
 		report.Summary.ToolFailures["start_process"] < 1 ||
+		report.Summary.OperationalActions < 1 ||
+		report.Summary.OperationalActionStatuses["start.failed"] < 1 ||
 		report.Summary.FinalResponseAudits < 1 ||
 		report.Summary.FinalResponseAuditOutcomes["pass"] < 1 {
 		t.Fatalf("eval summary missing expected trace metrics: %#v", report.Summary)

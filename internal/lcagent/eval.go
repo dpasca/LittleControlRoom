@@ -511,6 +511,9 @@ func writeEvalTextReport(stdout io.Writer, report evalReport) {
 	if report.Summary.FinalResponseAudits > 0 {
 		fmt.Fprintf(stdout, "final_response_audits=%d outcomes=%v\n", report.Summary.FinalResponseAudits, report.Summary.FinalResponseAuditOutcomes)
 	}
+	if report.Summary.OperationalActions > 0 {
+		fmt.Fprintf(stdout, "operational_actions=%d statuses=%v\n", report.Summary.OperationalActions, report.Summary.OperationalActionStatuses)
+	}
 }
 
 func lcagentEvalSessionFileSet(dataDir string) (map[string]struct{}, error) {
