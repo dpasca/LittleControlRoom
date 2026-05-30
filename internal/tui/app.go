@@ -267,8 +267,9 @@ type Model struct {
 	pendingG      bool
 	todoLaunchSeq int64
 
-	spinnerFrame int
-	showSessions bool
+	spinnerFrame  int
+	marqueeOffset int
+	showSessions  bool
 	showEvents   bool
 	showHelp     bool
 	showAIStats  bool
@@ -2282,6 +2283,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		m.recordUIStallFromSpinnerTick(m.currentTime())
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
+		m.marqueeOffset++
 		m.refreshUsagePulse()
 		m.pruneTransientHighlights(m.currentTime())
 		refreshCmd := tea.Cmd(nil)
@@ -3851,6 +3853,14 @@ func (m Model) renderProjectList(width, height int) string {
 			runState = projectRunError
 		}
 		assessment = truncateText(assessmentText, assessmentW)
+		runRender := truncateText(runLabel, projectListRunWidth)
+		if selectedRow && len([]rune(runLabel)) > projectListRunWidth {
+			runRender = marqueeScrollText(runLabel, projectListRunWidth, m.marqueeOffset)
+		}
+		assessmentRender := assessment
+		if selectedRow && len([]rune(assessmentText)) > assessmentW {
+			assessmentRender = marqueeScrollText(assessmentText, assessmentW, m.marqueeOffset)
+		}
 		selectionMarker := " "
 		selectionMarkerStyle := lipgloss.NewStyle().Width(projectListSelectionGutterWidth)
 		if selectedRow {
@@ -3870,11 +3880,11 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(todoListIndicatorStyle.Width(projectListTODOWidth).Align(lipgloss.Right)).Render(todoCount),
 			" ",
-			cellStyle(projectRunStyle(runState).Width(projectListRunWidth).Align(lipgloss.Left)).Render(truncateText(runLabel, projectListRunWidth)),
+			cellStyle(projectRunStyle(runState).Width(projectListRunWidth).Align(lipgloss.Left)).Render(runRender),
 			"  ",
 			cellStyle(nameStyle).Render(name),
 			"  ",
-			cellStyle(summaryStyle.Width(assessmentW).Bold(selectedRow)).Render(assessment),
+			cellStyle(summaryStyle.Width(assessmentW).Bold(selectedRow)).Render(assessmentRender),
 		)
 		if width > 0 {
 			row = fitStyledWidth(row, width)
@@ -6051,6 +6061,39 @@ func truncateText(text string, width int) string {
 		return string(runes[:width])
 	}
 	return string(runes[:width-3]) + "..."
+}
+
+// marqueeScrollText returns a width-wide window into text that scrolls
+// right-to-left, wrapping around.  When text fits in width it is returned
+// as-is.  The caller passes an ever-increasing offset; the helper normalises
+// it so the animation loops smoothly.  The text repeats with 4 spaces
+// between copies so the area is always filled.
+func marqueeScrollText(text string, width int, offset int) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(text)
+	n := len(runes)
+	if n <= width {
+		if n < width {
+			return text + strings.Repeat(" ", width-n)
+		}
+		return text
+	}
+	// Build a repeating ribbon: text + 4 spaces, repeated.
+	const spacer = "    "
+	cycle := n + len([]rune(spacer))
+	// Enough repeats to cover any width-wide window at any position.
+	needed := width + cycle
+	repeatCount := (needed / cycle) + 1
+	ribbon := make([]rune, 0, repeatCount*cycle)
+	spaceRunes := []rune(spacer)
+	for i := 0; i < repeatCount; i++ {
+		ribbon = append(ribbon, runes...)
+		ribbon = append(ribbon, spaceRunes...)
+	}
+	pos := ((offset % cycle) + cycle) % cycle // always non-negative
+	return string(ribbon[pos : pos+width])
 }
 
 func singleLineStatusText(text string) string {
