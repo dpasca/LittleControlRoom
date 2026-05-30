@@ -783,6 +783,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	if err := writer.Write(session.Event{
 		"type":       "user_message",
 		"session_id": runner.SessionID,
+		"origin":     "initial_prompt",
 		"message":    runner.Prompt,
 	}); err != nil {
 		return err
@@ -861,6 +862,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				if err := writer.Write(session.Event{
 					"type":       "user_message",
 					"session_id": runner.SessionID,
+					"origin":     "steer",
 					"message":    steerMsg,
 				}); err != nil {
 					return err

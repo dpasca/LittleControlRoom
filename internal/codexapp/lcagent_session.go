@@ -96,6 +96,7 @@ type lcagentSession struct {
 	browserActivity          browserctl.SessionActivity
 	currentBrowserPageURL    string
 	currentBrowserPageStale  bool
+	pendingInitialUserEcho   string
 	entries                  []TranscriptEntry
 	revision                 uint64
 	cache                    transcriptExportCache
@@ -1070,7 +1071,9 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		}
 		s.replayLoaded = false
 	}
-	s.appendEntryLocked(TranscriptUser, firstNonEmpty(displayPrompt, prompt))
+	renderedPrompt := firstNonEmpty(displayPrompt, prompt)
+	s.appendEntryLocked(TranscriptUser, renderedPrompt)
+	s.pendingInitialUserEcho = strings.TrimSpace(renderedPrompt)
 	provider := firstNonEmpty(s.provider, lcagentDefaultProvider)
 	routePreset := strings.TrimSpace(s.routePreset)
 	sessionAuto := strings.TrimSpace(s.sessionAuto)
@@ -1446,7 +1449,7 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 	case "user_message":
-		s.appendAsync(TranscriptUser, rawJSONString(event["message"]))
+		s.handleUserMessageEvent(event)
 	case "tool_call":
 		tool := rawJSONString(event["tool"])
 		s.appendAsync(TranscriptTool, lcagentToolCallText(tool, event["args"]))
@@ -1606,6 +1609,41 @@ func (s *lcagentSession) handleEvent(line []byte) {
 	if s.notify != nil {
 		s.notify()
 	}
+}
+
+func (s *lcagentSession) handleUserMessageEvent(event map[string]json.RawMessage) {
+	message := strings.TrimSpace(rawJSONString(event["message"]))
+	if message == "" {
+		return
+	}
+	origin := strings.TrimSpace(rawJSONString(event["origin"]))
+	s.mu.Lock()
+	if s.shouldSuppressInitialUserEchoLocked(message, origin) {
+		s.pendingInitialUserEcho = ""
+		s.touchLocked()
+		s.mu.Unlock()
+		if s.notify != nil {
+			s.notify()
+		}
+		return
+	}
+	s.pendingInitialUserEcho = ""
+	s.appendEntryLocked(TranscriptUser, message)
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+}
+
+func (s *lcagentSession) shouldSuppressInitialUserEchoLocked(message, origin string) bool {
+	pending := strings.TrimSpace(s.pendingInitialUserEcho)
+	if pending == "" {
+		return false
+	}
+	if strings.EqualFold(origin, "initial_prompt") {
+		return true
+	}
+	return origin == "" && message == pending
 }
 
 func (s *lcagentSession) handleBrowserActivityEvent(event map[string]json.RawMessage, state browserctl.SessionActivityState) {

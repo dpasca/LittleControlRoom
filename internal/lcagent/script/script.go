@@ -677,6 +677,7 @@ func (r *Runner) Run(ctx context.Context, actions []Action) error {
 	if err := r.Session.Write(session.Event{
 		"type":       "user_message",
 		"session_id": r.SessionID,
+		"origin":     "initial_prompt",
 		"message":    r.Prompt,
 	}); err != nil {
 		return err
@@ -1083,6 +1084,7 @@ func (r *Runner) runBrowserWaitForUser(ctx context.Context, args browserWaitForU
 			if err := r.Session.Write(session.Event{
 				"type":       "user_message",
 				"session_id": r.SessionID,
+				"origin":     "browser_handoff",
 				"message":    message,
 			}); err != nil {
 				return tools.ToolResult{Success: false, Error: err.Error()}

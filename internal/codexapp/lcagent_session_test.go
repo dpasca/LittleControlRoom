@@ -34,6 +34,7 @@ func TestLCAgentSessionLaunchesConfiguredCommandAndStreamsTranscript(t *testing.
 } > "$LCAGENT_ARGS_FILE"
 printf '%s\n' '{"type":"session_meta","id":"lca_fake_session","cwd":"/tmp/demo"}'
 printf '%s\n' '{"type":"model_response","model":"test-model","usage":{"prompt_tokens":120,"prompt_tokens_details":{"cached_tokens":40},"completion_tokens":30,"total_tokens":150},"usage_summary":{"input_tokens":120,"output_tokens":30,"total_tokens":150,"cached_input_tokens":40}}'
+printf '%s\n' '{"type":"user_message","message":"please run the fake agent"}'
 printf '%s\n' '{"type":"user_message","message":"I logged in"}'
 printf '%s\n' '{"type":"tool_call","tool":"run_command"}'
 printf '%s\n' '{"type":"tool_result","tool":"run_command","result":{"success":true,"output":"command ok"}}'
@@ -95,6 +96,9 @@ printf '%s\n' '{"type":"turn_complete"}'
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
 		}
+	}
+	if got := strings.Count(snapshot.Transcript, "please run the fake agent"); got != 1 {
+		t.Fatalf("initial prompt echo count = %d, want 1:\n%s", got, snapshot.Transcript)
 	}
 
 	argsBytes, err := os.ReadFile(argsPath)
