@@ -2423,6 +2423,48 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 			}
 			return strings.Join(nonEmptyStrings(parts), " ")
 		}
+	case "browser_navigate":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.URL)
+		}
+	case "browser_snapshot":
+		var args struct {
+			MaxChars int `json:"max_chars"`
+		}
+		if json.Unmarshal(raw, &args) == nil && args.MaxChars > 0 {
+			return fmt.Sprintf("max %d chars", args.MaxChars)
+		}
+	case "browser_click":
+		var args struct {
+			Ref string `json:"ref"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.Ref)
+		}
+	case "browser_fill":
+		var args struct {
+			Ref string `json:"ref"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.Ref)
+		}
+	case "browser_press":
+		var args struct {
+			Key string `json:"key"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.Key)
+		}
+	case "browser_screenshot":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.Path)
+		}
 	case "load_skill":
 		var args struct {
 			Name string `json:"name"`
@@ -2483,6 +2525,11 @@ func lcagentToolResultSummary(tool, output, errText, command, cwd string, exitCo
 		return lcagentSearchSummary(output, truncated)
 	case "web_search":
 		return lcagentWebSearchSummary(output, truncated)
+	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_screenshot", "browser_current_page":
+		if strings.TrimSpace(artifactPath) != "" {
+			return "artifact " + strings.TrimSpace(artifactPath)
+		}
+		return firstOutputLine(output)
 	case "run_command":
 		summary := lcagentCommandResultSummary(output, exitCode, duration, truncated, binary, artifactPath)
 		return strings.TrimSpace(lcagentCommandCWDPrefix(command, cwd) + summary)

@@ -29,6 +29,7 @@ type Runner struct {
 	WebSearch            tools.WebSearchRunner
 	WebSearchOn          bool
 	BrowserAvailable     bool
+	Browser              BrowserRunner
 	SearchRefiner        SearchRefiner
 	CodeScout            CodeScout
 	SearchRefineMinBytes int
@@ -53,6 +54,10 @@ type SearchRefiner interface {
 
 type CodeScout interface {
 	ScoutFiles(context.Context, ScoutFilesRequest) (ScoutFilesResult, error)
+}
+
+type BrowserRunner interface {
+	RunBrowserTool(context.Context, string, json.RawMessage) tools.ToolResult
 }
 
 type SearchRefineRequest struct {
@@ -483,6 +488,31 @@ type webSearchArgs struct {
 	RecencyDays int    `json:"recency_days"`
 }
 
+type browserNavigateArgs struct {
+	URL string `json:"url"`
+}
+
+type browserSnapshotArgs struct {
+	MaxChars int `json:"max_chars"`
+}
+
+type browserRefArgs struct {
+	Ref string `json:"ref"`
+}
+
+type browserFillArgs struct {
+	Ref   string `json:"ref"`
+	Value string `json:"value"`
+}
+
+type browserPressArgs struct {
+	Key string `json:"key"`
+}
+
+type browserScreenshotArgs struct {
+	Path string `json:"path"`
+}
+
 type fileOutlineArgs struct {
 	Path string `json:"path"`
 }
@@ -710,6 +740,20 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.WebSearch.Search(ctx, args.Query, args.MaxResults, args.Site, args.RecencyDays)
+	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_screenshot", "browser_current_page":
+		if invalid, ok := validateBrowserToolArgs(action.Tool, action.Args); !ok {
+			result = invalid
+			break
+		}
+		if !r.BrowserAvailable {
+			result = tools.ToolResult{Success: false, Error: "browser tools are not available for this LCAgent run"}
+			break
+		}
+		if r.Browser == nil {
+			result = tools.ToolResult{Success: false, Error: "managed browser runtime is not configured for this LCAgent run"}
+			break
+		}
+		result = r.Browser.RunBrowserTool(ctx, action.Tool, action.Args)
 	case "file_outline":
 		var args fileOutlineArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -892,6 +936,59 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
+}
+
+func validateBrowserToolArgs(tool string, raw json.RawMessage) (tools.ToolResult, bool) {
+	switch tool {
+	case "browser_navigate":
+		var args browserNavigateArgs
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+		if strings.TrimSpace(args.URL) == "" {
+			return tools.ToolResult{Success: false, Error: "browser_navigate url is required"}, false
+		}
+	case "browser_snapshot":
+		var args browserSnapshotArgs
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+	case "browser_click":
+		var args browserRefArgs
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+		if strings.TrimSpace(args.Ref) == "" {
+			return tools.ToolResult{Success: false, Error: "browser_click ref is required"}, false
+		}
+	case "browser_fill":
+		var args browserFillArgs
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+		if strings.TrimSpace(args.Ref) == "" {
+			return tools.ToolResult{Success: false, Error: "browser_fill ref is required"}, false
+		}
+	case "browser_press":
+		var args browserPressArgs
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+		if strings.TrimSpace(args.Key) == "" {
+			return tools.ToolResult{Success: false, Error: "browser_press key is required"}, false
+		}
+	case "browser_screenshot":
+		var args browserScreenshotArgs
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+	case "browser_current_page":
+		var args struct{}
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+	}
+	return tools.ToolResult{}, true
 }
 
 func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandSpec) tools.ToolResult {

@@ -600,6 +600,18 @@ func TestLCAgentCommandTranscriptSummariesIncludeCWD(t *testing.T) {
 	}
 }
 
+func TestLCAgentBrowserTranscriptSummariesAreConcise(t *testing.T) {
+	call := lcagentToolCallText("browser_navigate", json.RawMessage(`{"url":"https://example.test/login"}`))
+	if call != "Tool browser_navigate running: https://example.test/login" {
+		t.Fatalf("call summary = %q", call)
+	}
+
+	result := lcagentToolResultText("browser_snapshot", json.RawMessage(`{"success":true,"output":"snapshot:\n- heading \"Account\"\n- button \"Continue\" [ref=e1]\n"}`))
+	if result != "Tool browser_snapshot completed: snapshot:" {
+		t.Fatalf("snapshot result summary = %q", result)
+	}
+}
+
 func TestLCAgentVerificationCheckTextIncludesCWD(t *testing.T) {
 	got := lcagentVerificationCheckText(map[string]json.RawMessage{
 		"command": json.RawMessage(`"pnpm run build"`),

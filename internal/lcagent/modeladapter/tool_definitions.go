@@ -189,6 +189,9 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			},
 		})
 	}
+	if opts.BrowserAvailable {
+		defs = append(defs, browserToolDefinitions()...)
+	}
 	defs = append(defs,
 		ToolDefinition{
 			Type: "function",
@@ -358,6 +361,113 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		defs = filtered
 	}
 	return defs
+}
+
+func browserToolDefinitions() []ToolDefinition {
+	descSuffix := " Use this LCAgent browser tool instead of terminal Playwright commands, npx, playwright-mcp, or MCP server commands."
+	return []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_navigate",
+				Description: "Navigate the managed browser page to a URL and return current page state." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"url": map[string]any{"type": "string", "description": "Absolute URL to open."},
+					},
+					"required": []string{"url"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_snapshot",
+				Description: "Capture an accessibility-style snapshot of the current managed browser page with stable element refs." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"max_chars": map[string]any{"type": "integer", "minimum": 1, "maximum": 50000, "description": "Optional maximum snapshot characters."},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_click",
+				Description: "Click an element by ref from the latest browser_snapshot. If refs are stale, take a fresh snapshot." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"ref": map[string]any{"type": "string", "description": "Element ref from the latest browser_snapshot."},
+					},
+					"required": []string{"ref"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_fill",
+				Description: "Fill an input element by ref from the latest browser_snapshot. If refs are stale, take a fresh snapshot." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"ref":   map[string]any{"type": "string", "description": "Input element ref from the latest browser_snapshot."},
+						"value": map[string]any{"type": "string", "description": "Text value to enter."},
+					},
+					"required": []string{"ref", "value"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_press",
+				Description: "Press a keyboard key in the managed browser page." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"key": map[string]any{"type": "string", "description": "Key name, for example Enter, Escape, Tab, or ArrowDown."},
+					},
+					"required": []string{"key"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_screenshot",
+				Description: "Save a screenshot artifact from the managed browser page and return the artifact path." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string", "description": "Optional artifact path or filename. Defaults to the managed browser session output directory."},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_current_page",
+				Description: "Return the current managed browser page URL, title, and freshness state." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties":           map[string]any{},
+				},
+			},
+		},
+	}
 }
 
 func (o ToolOptions) withDefaults() ToolOptions {

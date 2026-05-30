@@ -122,6 +122,63 @@ func TestRunnerRecordsActualVerificationCheck(t *testing.T) {
 	}
 }
 
+func TestRunnerDispatchesBrowserToolsThroughBrowserRunner(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	browser := &fakeBrowserRunner{}
+	runner := Runner{
+		Session:          writer,
+		SessionID:        sessionID,
+		Prompt:           "use browser",
+		BrowserAvailable: true,
+		Browser:          browser,
+	}
+	actions := []Action{
+		{Type: "tool_call", Tool: "browser_navigate", Args: raw(`{"url":"https://example.test"}`)},
+		{Type: "tool_call", Tool: "browser_snapshot", Args: raw(`{"max_chars":2000}`)},
+		{Type: "final_response", Summary: "browser done", Verification: []string{"scripted browser fake"}},
+	}
+	if err := runner.Run(context.Background(), actions); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(browser.calls, ","); got != "browser_navigate,browser_snapshot" {
+		t.Fatalf("browser calls = %q", got)
+	}
+	text := stream.String()
+	for _, want := range []string{`"tool":"browser_navigate"`, `"tool":"browser_snapshot"`, "url: https://example.test/", `button \"Continue\"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunnerRejectsBrowserToolsWhenUnavailable(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "use browser",
+	}
+	err = runner.Run(context.Background(), []Action{
+		{Type: "tool_call", Tool: "browser_navigate", Args: raw(`{"url":"https://example.test"}`)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "browser_navigate failed") {
+		t.Fatalf("Run error = %v, want browser tool failure", err)
+	}
+	if !strings.Contains(stream.String(), "browser tools are not available") {
+		t.Fatalf("stream missing browser unavailable result:\n%s", stream.String())
+	}
+}
+
 func TestRunnerRefinesOversizedSearchWithIntent(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("alpha target\nbeta target\ngamma target\n"), 0o644); err != nil {
@@ -275,6 +332,24 @@ func (f *fakeProcessBroker) RequestProcess(_ context.Context, request ProcessReq
 	}
 	f.result.Success = true
 	return f.result, nil
+}
+
+type fakeBrowserRunner struct {
+	calls []string
+	args  []json.RawMessage
+}
+
+func (f *fakeBrowserRunner) RunBrowserTool(_ context.Context, tool string, args json.RawMessage) tools.ToolResult {
+	f.calls = append(f.calls, tool)
+	f.args = append(f.args, append(json.RawMessage(nil), args...))
+	switch tool {
+	case "browser_navigate":
+		return tools.ToolResult{Success: true, Output: "url: https://example.test/\ntitle: Example\nstatus: navigated\n"}
+	case "browser_snapshot":
+		return tools.ToolResult{Success: true, Output: "snapshot:\n- button \"Continue\" [ref=e1]\n"}
+	default:
+		return tools.ToolResult{Success: true, Output: "url: https://example.test/\nstatus: ok\n"}
+	}
 }
 
 func TestFinalVerificationStatusUsesLatestPassingOutcome(t *testing.T) {

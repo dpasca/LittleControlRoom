@@ -125,6 +125,35 @@ func TestToolsWithOptionsExposeManagedProcessesWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestToolsWithOptionsExposeBrowserToolsWhenEnabled(t *testing.T) {
+	disabled := toolNames(ToolsWithOptions(ToolOptions{}))
+	if disabled["browser_navigate"] {
+		t.Fatalf("browser tools should be hidden unless BrowserAvailable is true")
+	}
+	tools := ToolsWithOptions(ToolOptions{BrowserAvailable: true})
+	navigate := toolSpec(t, tools, "browser_navigate")
+	if !strings.Contains(navigate.Description, "instead of terminal Playwright commands") {
+		t.Fatalf("browser_navigate description missing terminal-wrapper guidance: %q", navigate.Description)
+	}
+	navProps := navigate.Parameters["properties"].(map[string]any)
+	if _, ok := navProps["url"]; !ok {
+		t.Fatalf("browser_navigate missing url property: %#v", navProps)
+	}
+	if got := navigate.Parameters["additionalProperties"]; got != false {
+		t.Fatalf("browser_navigate additionalProperties = %#v, want false", got)
+	}
+	_ = toolSpec(t, tools, "browser_snapshot")
+	_ = toolSpec(t, tools, "browser_click")
+	_ = toolSpec(t, tools, "browser_fill")
+	_ = toolSpec(t, tools, "browser_press")
+	_ = toolSpec(t, tools, "browser_screenshot")
+	current := toolSpec(t, tools, "browser_current_page")
+	props := current.Parameters["properties"].(map[string]any)
+	if len(props) != 0 {
+		t.Fatalf("browser_current_page properties = %#v, want empty", props)
+	}
+}
+
 func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {
 	tools := ToolsWithOptions(ToolOptions{
 		ToolProfile:             "generous",
@@ -310,6 +339,14 @@ func toolSpec(t *testing.T, tools []ToolDefinition, name string) FunctionSpec {
 	}
 	t.Fatalf("missing tool %s", name)
 	return FunctionSpec{}
+}
+
+func toolNames(tools []ToolDefinition) map[string]bool {
+	names := map[string]bool{}
+	for _, tool := range tools {
+		names[tool.Function.Name] = true
+	}
+	return names
 }
 
 func TestSanitizeAssistantContentStripsProviderToolMarkup(t *testing.T) {
