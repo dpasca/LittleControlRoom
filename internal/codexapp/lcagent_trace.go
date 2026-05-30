@@ -34,6 +34,7 @@ type LCAgentTrace struct {
 	Completed                 bool
 	Aborted                   bool
 	Summary                   string
+	FinalOutcome              string
 	FilesChanged              []string
 	Verification              []string
 	ActualChecks              []LCAgentVerificationCheck
@@ -218,9 +219,13 @@ func ParseLCAgentTraceFile(path string) (LCAgentTrace, error) {
 			if trace.Summary == "" {
 				trace.Summary = rawJSONString(event["message"])
 			}
+			trace.FinalOutcome = firstNonEmpty(rawJSONString(event["final_outcome"]), trace.FinalOutcome)
+		case "final_response_audit":
+			trace.FinalOutcome = firstNonEmpty(rawJSONString(event["final_outcome"]), trace.FinalOutcome)
 		case "turn_complete":
 			trace.Completed = true
 			trace.Summary = firstNonEmpty(rawJSONString(event["summary"]), trace.Summary)
+			trace.FinalOutcome = firstNonEmpty(rawJSONString(event["final_outcome"]), trace.FinalOutcome)
 			trace.FilesChanged = rawJSONStringList(event["files_changed"])
 			trace.Verification = rawJSONStringList(event["verification"])
 			status := firstNonEmpty(rawJSONString(event["verification_status"]), trace.VerificationStatus)
@@ -288,6 +293,9 @@ func (t LCAgentTrace) CompactSummary() string {
 	if status := strings.TrimSpace(t.VerificationStatus); status != "" {
 		parts = append(parts, "verification "+status)
 	}
+	if outcome := strings.TrimSpace(t.FinalOutcome); outcome != "" {
+		parts = append(parts, "outcome "+outcome)
+	}
 	if pending := strings.TrimSpace(t.PendingStatus); pending != "" {
 		parts = append(parts, "pending verification "+pending)
 	}
@@ -335,6 +343,9 @@ func (t LCAgentTrace) TraceQualitySummary() string {
 	}
 	if status := strings.TrimSpace(t.VerificationStatus); status != "" {
 		parts = append(parts, "verification "+status)
+	}
+	if outcome := strings.TrimSpace(t.FinalOutcome); outcome != "" {
+		parts = append(parts, "outcome "+outcome)
 	}
 	if source := strings.TrimSpace(t.ResumeSourceSessionID); source != "" {
 		parts = append(parts, "continuation: "+source)

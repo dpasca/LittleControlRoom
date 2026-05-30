@@ -26,6 +26,7 @@ type projectLCAgentTraceQuality struct {
 	LatestSessionID   string
 	LatestQuality     string
 	LatestStatus      string
+	LatestOutcome     string
 	LatestChecks      []string
 	ScoredSessions    int
 	ScoreTotal        int
@@ -115,6 +116,7 @@ func (q *projectLCAgentTraceQuality) observeTrace(session model.SessionEvidence,
 		q.LatestSessionID = sessionID
 		q.LatestQuality = strings.TrimSpace(trace.TraceQualitySummaryLabel())
 		q.LatestStatus = strings.TrimSpace(trace.VerificationStatus)
+		q.LatestOutcome = strings.TrimSpace(trace.FinalOutcome)
 		q.LatestChecks = append([]string(nil), trace.ActualCheckSummaries()...)
 	}
 	if trace.TraceQuality.Score > 0 {
@@ -183,6 +185,9 @@ func (q projectLCAgentTraceQuality) summary() string {
 		latest = append(latest, "latest verification "+q.LatestStatus)
 	} else if q.LatestSessionID != "" {
 		latest = append(latest, "latest "+shortID(q.LatestSessionID))
+	}
+	if q.LatestOutcome != "" {
+		latest = append(latest, "outcome "+q.LatestOutcome)
 	}
 	if len(q.LatestChecks) > 0 {
 		latest = append(latest, "checks: "+strings.Join(lcagentTraceQualityLimitStrings(q.LatestChecks, 2), "; "))

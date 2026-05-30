@@ -65,6 +65,7 @@ Implemented after `06403a9`:
 - Model-facing live-eval case for unavailable managed-process handoff, scored through structured final outcome metadata.
 - Model-facing replay coverage for available managed-process support, verifying the model chooses `start_process`/`list_processes` instead of bounded `run_command`.
 - Model-facing replay coverage for completed managed operations, verifying an early `completed` final is bounced until a later `purpose=verify` probe runs.
+- LCAgent trace summaries surface the latest structured final outcome alongside verification status.
 
 ## Phase 1: Generic Regression Evals
 
@@ -163,9 +164,9 @@ Audit outcomes:
 - Warn and trace: final response is ambiguous but not clearly false.
 - Block with corrective feedback: final response claims success after timeout, denied action, missing verification, or unavailable requested capability.
 
-Remaining design:
+Decision:
 
-- Consider whether accepted `blocked`, `failed`, and `partial` finals need separate UI surfacing beyond the trace metadata.
+- Surface `blocked`, `failed`, and `partial` finals lightly through existing LCAgent trace summaries rather than adding a separate workflow.
 
 Lean note:
 
@@ -183,7 +184,7 @@ Options:
 
 Open question:
 
-- Should capability routing be a generic Boss/LCR responsibility rather than something LCAgent owns?
+- Capability routing should be a generic Boss/LCR responsibility. LCAgent should honestly report unavailable capabilities in its current run; Boss/LCR can choose a different session/tool route when that is appropriate.
 
 ## Phase 5: Active Objective Summary Quality
 
@@ -196,6 +197,10 @@ Possible improvement:
 Constraint:
 
 - Do not add a model-generated objective until there is a clear eval showing that the raw excerpt is too noisy for resume/trace behavior.
+
+Decision:
+
+- Keep raw latest-user-turn active objectives for now. They are deterministic and auditable; add model-generated summaries only after a concrete eval demonstrates the need.
 
 ## Validation
 

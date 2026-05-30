@@ -1612,7 +1612,7 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 		{"type": "verification_feedback", "session_id": sessionID, "timestamp": started.Add(3200 * time.Millisecond).Format(time.RFC3339Nano), "status": "failed", "command": "go test ./...", "message": "Verification feedback: go test ./... failed."},
 		{"type": "repair_feedback_suppressed", "session_id": sessionID, "timestamp": started.Add(3300 * time.Millisecond).Format(time.RFC3339Nano), "kind": "verification", "message": "Verification feedback: go test ./... failed.", "count": 2, "reason": "duplicate feedback already sent to model"},
 		{"type": "verification_summary", "session_id": sessionID, "timestamp": started.Add(3500 * time.Millisecond).Format(time.RFC3339Nano), "status": "verified", "message": "Verification checks passed: go test ./..."},
-		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(4 * time.Second).Format(time.RFC3339Nano), "summary": "updated docs", "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "verified", "actual_checks": []map[string]any{{"command": "go test ./...", "status": "passed", "success": true}}},
+		{"type": "turn_complete", "session_id": sessionID, "timestamp": started.Add(4 * time.Second).Format(time.RFC3339Nano), "summary": "updated docs", "final_outcome": "partial", "files_changed": []string{"README.md"}, "verification": []string{"go test ./..."}, "verification_status": "verified", "actual_checks": []map[string]any{{"command": "go test ./...", "status": "passed", "success": true}}},
 	})
 
 	trace, err := ParseLCAgentTraceFile(path)
@@ -1622,8 +1622,8 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if !trace.Verified() || trace.SessionID != sessionID || trace.ProjectPath != root {
 		t.Fatalf("trace = %#v, want verified session for project", trace)
 	}
-	if trace.Summary != "updated docs" || trace.VerificationStatus != "verified" {
-		t.Fatalf("trace summary/status = %q/%q", trace.Summary, trace.VerificationStatus)
+	if trace.Summary != "updated docs" || trace.VerificationStatus != "verified" || trace.FinalOutcome != "partial" {
+		t.Fatalf("trace summary/status/outcome = %q/%q/%q", trace.Summary, trace.VerificationStatus, trace.FinalOutcome)
 	}
 	if trace.ResumeSourceSessionID != "lca_previous_trace" || trace.ResumeSourcePath == "" || trace.ResumeSourceSummary == "" || trace.ResumeSourceLastAt.IsZero() {
 		t.Fatalf("trace resume source = id:%q path:%q summary:%q last:%v, want continuation metadata", trace.ResumeSourceSessionID, trace.ResumeSourcePath, trace.ResumeSourceSummary, trace.ResumeSourceLastAt)
@@ -1650,10 +1650,10 @@ func TestParseLCAgentTraceFileHarvestsFinalOutcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadLCAgentTrace() error = %v", err)
 	}
-	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "continued from lca_previous_trace") || !strings.Contains(loaded.CompactSummary(), "continuation depth 2") || !strings.Contains(loaded.CompactSummary(), "verification verified") || !strings.Contains(loaded.CompactSummary(), "1 verification check") {
+	if loaded.ArtifactPath != path || !strings.Contains(loaded.CompactSummary(), "continued from lca_previous_trace") || !strings.Contains(loaded.CompactSummary(), "continuation depth 2") || !strings.Contains(loaded.CompactSummary(), "verification verified") || !strings.Contains(loaded.CompactSummary(), "outcome partial") || !strings.Contains(loaded.CompactSummary(), "1 verification check") {
 		t.Fatalf("loaded trace = %#v, want artifact path and compact summary", loaded)
 	}
-	for _, want := range []string{"trace quality: 83/good", "repair events: 4", "continuation: lca_previous_trace", "continuation depth: 2", "handoff source: turn_complete", "pending files: README.md", "actual checks: go test ./... passed", "patch feedback: 1", "duplicate repair feedback suppressed: 1", "tokens: 150", "cached: 40"} {
+	for _, want := range []string{"trace quality: 83/good", "repair events: 4", "verification verified", "outcome partial", "continuation: lca_previous_trace", "continuation depth: 2", "handoff source: turn_complete", "pending files: README.md", "actual checks: go test ./... passed", "patch feedback: 1", "duplicate repair feedback suppressed: 1", "tokens: 150", "cached: 40"} {
 		if !strings.Contains(loaded.TraceQualitySummary(), want) {
 			t.Fatalf("trace quality missing %q:\n%s", want, loaded.TraceQualitySummary())
 		}
