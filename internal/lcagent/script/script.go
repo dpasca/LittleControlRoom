@@ -40,6 +40,7 @@ type Runner struct {
 	SteerMessages        <-chan string
 
 	verificationChecks    []tools.VerificationCheck
+	operationalActions    []OperationalAction
 	filesTouched          []string
 	commandApprovalGrants []commandApprovalGrant
 	toolFailures          []tools.ToolResult
@@ -105,6 +106,19 @@ type FinalResponseAudit struct {
 	Message            string `json:"message"`
 	Blocking           bool   `json:"blocking,omitempty"`
 	ToolFailures       int    `json:"tool_failures,omitempty"`
+	OperationalActions int    `json:"operational_actions,omitempty"`
+}
+
+type OperationalAction struct {
+	Action                   string `json:"action"`
+	ProcessID                string `json:"process_id,omitempty"`
+	Name                     string `json:"name,omitempty"`
+	Command                  string `json:"command,omitempty"`
+	CWD                      string `json:"cwd,omitempty"`
+	Success                  bool   `json:"success"`
+	Denied                   bool   `json:"denied,omitempty"`
+	Error                    string `json:"error,omitempty"`
+	VerificationChecksBefore int    `json:"verification_checks_before"`
 }
 
 type PatchFeedback struct {
@@ -202,9 +216,11 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	action.Verification = cleanStringList(action.Verification)
 	finalOutcome := normalizeFinalResponseOutcome(action.Outcome)
 	var verificationChecks []tools.VerificationCheck
+	var operationalActions []OperationalAction
 	toolFailures := 0
 	if r != nil {
 		verificationChecks = r.verificationChecks
+		operationalActions = append([]OperationalAction(nil), r.operationalActions...)
 		toolFailures = len(r.toolFailures)
 	}
 	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, verificationChecks)
@@ -214,6 +230,7 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		VerificationStatus: verificationStatus,
 		Message:            "Final response audit passed.",
 		ToolFailures:       toolFailures,
+		OperationalActions: len(operationalActions),
 	}
 	if len(action.FilesChanged) > 0 && len(verificationChecks) == 0 && (verificationStatus == "missing_after_changes" || verificationStatus == "reported_only") {
 		audit.Outcome = "block"
@@ -235,7 +252,25 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		audit.Outcome = "warn"
 		audit.Message = fmt.Sprintf("Final response audit warning: %d tool failure(s) occurred in this turn; the final response must not imply failed actions succeeded.", toolFailures)
 	}
+	if finalOutcome == "completed" {
+		if op, ok := latestOperationalActionRequiringVerification(operationalActions); ok && len(verificationChecks) <= op.VerificationChecksBefore {
+			audit.Outcome = "block"
+			audit.Blocking = true
+			audit.Message = fmt.Sprintf("final_response outcome was completed, but managed process action %q has no later run_command check marked purpose=verify. Run a separate verification probe after the operation, or set outcome to blocked, failed, or partial and explain why verification is blocked before calling final_response again.", op.Action)
+		}
+	}
 	return audit
+}
+
+func latestOperationalActionRequiringVerification(actions []OperationalAction) (OperationalAction, bool) {
+	for i := len(actions) - 1; i >= 0; i-- {
+		action := actions[i]
+		switch strings.TrimSpace(action.Action) {
+		case string(ProcessActionStart), string(ProcessActionStop):
+			return action, true
+		}
+	}
+	return OperationalAction{}, false
 }
 
 func normalizeFinalResponseOutcome(outcome string) string {
@@ -938,7 +973,7 @@ func (r *Runner) runProcess(ctx context.Context, request ProcessRequest) tools.T
 }
 
 func (r *Runner) writeOperationalAction(request ProcessRequest, result tools.ToolResult) error {
-	if r == nil || r.Session == nil {
+	if r == nil {
 		return nil
 	}
 	processID := strings.TrimSpace(request.ProcessID)
@@ -949,17 +984,32 @@ func (r *Runner) writeOperationalAction(request ProcessRequest, result tools.Too
 	if name == "" && result.ManagedProcess != nil {
 		name = strings.TrimSpace(result.ManagedProcess.Name)
 	}
+	action := OperationalAction{
+		Action:                   strings.TrimSpace(string(request.Action)),
+		ProcessID:                processID,
+		Name:                     name,
+		Command:                  strings.TrimSpace(firstNonEmpty(result.Command, request.Command)),
+		CWD:                      strings.TrimSpace(firstNonEmpty(result.CWD, request.CWD)),
+		Success:                  result.Success,
+		Denied:                   result.Denied,
+		Error:                    strings.TrimSpace(result.Error),
+		VerificationChecksBefore: len(r.verificationChecks),
+	}
+	r.operationalActions = append(r.operationalActions, action)
+	if r.Session == nil {
+		return nil
+	}
 	event := session.Event{
 		"type":       "operational_action",
 		"session_id": r.SessionID,
-		"action":     strings.TrimSpace(string(request.Action)),
-		"process_id": processID,
-		"name":       name,
-		"command":    strings.TrimSpace(firstNonEmpty(result.Command, request.Command)),
-		"cwd":        strings.TrimSpace(firstNonEmpty(result.CWD, request.CWD)),
-		"success":    result.Success,
-		"denied":     result.Denied,
-		"error":      strings.TrimSpace(result.Error),
+		"action":     action.Action,
+		"process_id": action.ProcessID,
+		"name":       action.Name,
+		"command":    action.Command,
+		"cwd":        action.CWD,
+		"success":    action.Success,
+		"denied":     action.Denied,
+		"error":      action.Error,
 	}
 	if result.ExitCode != 0 {
 		event["exit_code"] = result.ExitCode
@@ -1710,6 +1760,7 @@ func finalResponseAuditEvent(sessionID string, audit FinalResponseAudit) session
 		"message":             strings.TrimSpace(audit.Message),
 		"blocking":            audit.Blocking,
 		"tool_failures":       audit.ToolFailures,
+		"operational_actions": audit.OperationalActions,
 	}
 }
 

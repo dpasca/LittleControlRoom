@@ -517,6 +517,62 @@ func TestRunnerFinalResponseAuditBlocksCompletedAfterFailedVerification(t *testi
 	}
 }
 
+func TestRunnerFinalResponseAuditBlocksCompletedOperationalActionWithoutLaterVerification(t *testing.T) {
+	runner := Runner{
+		verificationChecks: []tools.VerificationCheck{{
+			Command: "go test ./...",
+			Status:  tools.VerificationStatusPassed,
+			Success: true,
+		}},
+		operationalActions: []OperationalAction{{
+			Action:                   string(ProcessActionStart),
+			Command:                  "pnpm dev",
+			Success:                  true,
+			VerificationChecksBefore: 1,
+		}},
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:    "final_response",
+		Summary: "server started",
+		Outcome: "completed",
+	})
+	if audit.Outcome != "block" || !audit.Blocking || !strings.Contains(audit.Message, "no later run_command check marked purpose=verify") {
+		t.Fatalf("audit = %#v, want blocking missing post-operation verification", audit)
+	}
+}
+
+func TestRunnerFinalResponseAuditAllowsCompletedOperationalActionWithLaterVerification(t *testing.T) {
+	runner := Runner{
+		verificationChecks: []tools.VerificationCheck{
+			{
+				Command: "go test ./...",
+				Status:  tools.VerificationStatusPassed,
+				Success: true,
+			},
+			{
+				Command: "curl http://127.0.0.1:3000/",
+				Status:  tools.VerificationStatusPassed,
+				Success: true,
+			},
+		},
+		operationalActions: []OperationalAction{{
+			Action:                   string(ProcessActionStart),
+			Command:                  "pnpm dev",
+			Success:                  true,
+			VerificationChecksBefore: 1,
+		}},
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:         "final_response",
+		Summary:      "server started",
+		Outcome:      "completed",
+		Verification: []string{"curl http://127.0.0.1:3000/"},
+	})
+	if audit.Outcome != "pass" || audit.Blocking || audit.VerificationStatus != "verified" {
+		t.Fatalf("audit = %#v, want pass after post-operation verification", audit)
+	}
+}
+
 func TestRunnerEmitsPermissionDeniedEvent(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyOff)

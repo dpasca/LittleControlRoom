@@ -61,6 +61,7 @@ Implemented after `06403a9`:
 - OpenRouter final-response bounce now uses the audit boundary for missing-verification blockers.
 - Structured operational-action trace events for managed-process tool requests.
 - Structured managed-process evidence in embedded LCR process responses where runtime snapshots are available.
+- Final-response audit enforcement for completed managed start/stop actions without later verification.
 
 ## Phase 1: Generic Regression Evals
 
@@ -109,6 +110,7 @@ Current status:
 
 - Managed-process tool calls emit `operational_action` trace events with action, command, cwd, process id/name, success, errors, artifact path, and structured managed-process snapshot data when available.
 - Embedded LCR process responses attach structured managed-process evidence for start/list requests, including PID/PGID, running state, exit state, ports, URLs, recent output, and errors.
+- The final-response audit blocks a structured `completed` final after managed start/stop actions unless a later `run_command` check marked `purpose=verify` ran.
 
 Changes:
 
@@ -127,7 +129,7 @@ Remaining design:
 
 - Add an explicit operation intent/metadata field only if live evals show the model needs it.
 - Track full output artifact paths for managed process logs if/when the runtime manager exposes them.
-- Teach the audit to require separate post-action verification for completed operational finals once the operation lifecycle has enough structured state.
+- Expand operational lifecycle state if a future audit needs to distinguish unresolved retries from recovered actions.
 
 Lean note:
 
