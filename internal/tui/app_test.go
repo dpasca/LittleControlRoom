@@ -11752,8 +11752,151 @@ func TestVisibleLCAgentBrowserWaitAlwaysHasEscapeAndInterrupt(t *testing.T) {
 	if !session.interrupted {
 		t.Fatal("ctrl+c during visible LCAgent wait should interrupt the session")
 	}
-	if got := updated.(Model); !strings.Contains(got.status, "Interrupting LCAgent") {
-		t.Fatalf("status = %q, want interrupt status", got.status)
+	if got := updated.(Model); !strings.Contains(got.status, "Stopping LCAgent browser wait") {
+		t.Fatalf("status = %q, want browser wait stop status", got.status)
+	}
+
+	footer := ansi.Strip(base.renderCodexFooter(snapshot, 160))
+	for _, want := range []string{"Enter continue", "ctrl+c stop", "Alt+Up hide", "Esc hide"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("renderCodexFooter() missing %q during LCAgent browser wait: %q", want, footer)
+		}
+	}
+}
+
+func TestLCAgentBrowserWaitFocusesBlurredComposerForTyping(t *testing.T) {
+	projectPath := "/tmp/lcagent-browser-typing"
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Busy:                     true,
+		Phase:                    codexapp.SessionPhaseRunning,
+		Status:                   "Browser waiting for user input",
+		ManagedBrowserSessionKey: "managed-login",
+		CurrentBrowserPageURL:    "https://accounts.google.com/",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_wait_for_user",
+		},
+	}
+	input := newCodexTextarea()
+	input.Blur()
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: snapshot,
+		},
+		codexInput: input,
+		width:      100,
+		height:     24,
+	}
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	got := updated.(Model)
+	if !got.codexInput.Focused() {
+		t.Fatal("browser wait should focus the composer before accepting typed input")
+	}
+	if got.codexInput.Value() != "d" {
+		t.Fatalf("composer value = %q, want typed text", got.codexInput.Value())
+	}
+}
+
+func TestCodexUpdateFocusesComposerWhenLCAgentBrowserWaitStarts(t *testing.T) {
+	projectPath := "/tmp/lcagent-browser-update-focus"
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:                 codexapp.ProviderLCAgent,
+			Started:                  true,
+			Busy:                     true,
+			Phase:                    codexapp.SessionPhaseRunning,
+			Status:                   "Browser waiting for user input",
+			ManagedBrowserSessionKey: "managed-login",
+			CurrentBrowserPageURL:    "https://accounts.google.com/",
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_wait_for_user",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath, Provider: codexapp.ProviderLCAgent}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	input := newCodexTextarea()
+	input.Blur()
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: {
+				Provider: codexapp.ProviderLCAgent,
+				Started:  true,
+				Busy:     true,
+				Phase:    codexapp.SessionPhaseRunning,
+				Status:   "LCAgent running",
+			},
+		},
+		codexInput:    input,
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+		settingsBaseline: &config.EditableSettings{
+			PlaywrightPolicy: settingsAutomaticPlaywrightPolicy,
+		},
+	}
+
+	updated, _ := m.Update(codexUpdateMsg{projectPath: projectPath})
+	got := updated.(Model)
+	if !got.codexInput.Focused() {
+		t.Fatal("visible LCAgent browser wait update should focus the composer")
+	}
+}
+
+func TestVisibleLCAgentBrowserWaitExplainsContinueAndExitChoices(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Busy:                     true,
+		Phase:                    codexapp.SessionPhaseRunning,
+		Status:                   "Browser waiting for user input",
+		ManagedBrowserSessionKey: "managed-login",
+		CurrentBrowserPageURL:    "https://accounts.google.com/",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_wait_for_user",
+		},
+	}
+	m := Model{codexVisibleProject: "/tmp/lcagent-browser-wait"}
+
+	renderedPanel := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 140))
+	for _, want := range []string{
+		"browser_wait_for_user",
+		"Background browser page: https://accounts.google.com/",
+		"Type a note below, then press Enter to continue.",
+		"Press ctrl+c to stop the turn",
+		"Esc or Alt+Up hides this session",
+	} {
+		if !strings.Contains(renderedPanel, want) {
+			t.Fatalf("renderCodexBrowserPanel() missing %q during LCAgent browser wait: %q", want, renderedPanel)
+		}
+	}
+
+	renderedFooter := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	for _, want := range []string{"Enter continue", "ctrl+o show browser", "ctrl+c stop", "Alt+Up hide", "Esc hide"} {
+		if !strings.Contains(renderedFooter, want) {
+			t.Fatalf("renderCodexFooter() missing %q during LCAgent browser wait: %q", want, renderedFooter)
+		}
 	}
 }
 

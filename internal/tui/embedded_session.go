@@ -352,6 +352,9 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
 		if ok {
 			cmds = append(cmds, m.maybeStartCodexArtifactLinkScan(msg.projectPath, snapshot))
+			if codexSnapshotBrowserWaitingForUser(snapshot) {
+				cmds = append(cmds, m.codexInput.Focus())
+			}
 		}
 	}
 	if ok {
@@ -427,6 +430,9 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		m.resetCodexToolAnswerState(projectPath)
 		m.syncCodexViewport(transcriptChanged)
 		m.recordAISyncLatency("Embedded viewport", projectPath, providerLabel, time.Since(viewportStarted), "deferred")
+		if codexSnapshotBrowserWaitingForUser(snapshot) {
+			bossNoticeCmd = batchCmds(bossNoticeCmd, m.codexInput.Focus())
+		}
 	}
 	linkScanCmd := tea.Cmd(nil)
 	if m.codexVisibleProject == projectPath {

@@ -1718,6 +1718,10 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "This " + label + " session is busy in another process. Interrupt it there or hide it here with Alt+Up."
 			return m, nil
 		}
+		if codexSnapshotBrowserWaitingForUser(snapshot) {
+			m.status = "Stopping " + label + " browser wait..."
+			return m, m.interruptVisibleCodexCmd()
+		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling && codexStatusIsCompacting(snapshot.Status) {
 			m.status = label + " is compacting conversation history. Wait for it to finish or hide it with Alt+Up."
 			return m, nil
@@ -1938,8 +1942,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	focusCmd := tea.Cmd(nil)
+	if codexSnapshotBrowserWaitingForUser(snapshot) && !m.codexInput.Focused() {
+		focusCmd = m.codexInput.Focus()
+	}
+
 	if handled, cmd := m.tryHandleCodexPaste(msg, true); handled {
-		return m, cmd
+		return m, batchCmds(focusCmd, cmd)
 	}
 
 	switch msg.String() {
@@ -1965,7 +1974,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		draft := m.currentCodexDraft()
 		if draft.Empty() {
-			return m, nil
+			return m, focusCmd
 		}
 		refreshCmd := tea.Cmd(nil)
 		if refreshed, ok, needsAsync := m.refreshCodexSubmitSnapshot(m.codexVisibleProject, snapshot); ok {
@@ -1982,27 +1991,27 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.status = "This " + label + " session is read-only."
 			}
-			return m, refreshCmd
+			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Phase == codexapp.SessionPhaseFinishing {
 			m.status = label + " is finishing the current turn. Wait for it to settle before sending another prompt."
-			return m, refreshCmd
+			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling {
 			if codexStatusIsCompacting(snapshot.Status) {
 				m.status = label + " is compacting conversation history. Wait for it to finish before sending another prompt."
-				return m, refreshCmd
+				return m, batchCmds(focusCmd, refreshCmd)
 			}
 			m.status = label + " is rechecking the current turn state. If this persists, use /reconnect or /sessions before sending another prompt."
-			return m, refreshCmd
+			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Phase == codexapp.SessionPhaseStalled {
 			m.status = label + " looks stuck or disconnected. Interrupt the current turn with ctrl+c or use /reconnect before sending another prompt."
-			return m, refreshCmd
+			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		if snapshot.Busy && !codexSnapshotCanSubmitBusyInput(snapshot) {
 			m.status = label + " is already running. Wait for it to finish before sending another prompt."
-			return m, refreshCmd
+			return m, batchCmds(focusCmd, refreshCmd)
 		}
 		m.clearCodexDraft(m.codexVisibleProject)
 		if codexSnapshotGoalPausesOnPrompt(snapshot) {
@@ -2017,31 +2026,31 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.codexInput.InsertString("\n")
 		m.persistVisibleCodexDraft()
 		m.syncCodexComposerSize()
-		return m, nil
+		return m, focusCmd
 	case "alt+s":
 		m.status = "Use Alt+C to copy input or output"
-		return m, nil
+		return m, focusCmd
 	case "ctrl+v":
-		return m, nil
+		return m, focusCmd
 	case "backspace", "delete":
 		if m.removeCodexPastedTextMarkerBeforeCursor() {
 			m.persistVisibleCodexDraft()
 			m.syncCodexComposerSize()
-			return m, nil
+			return m, focusCmd
 		}
 		if m.removeCodexAttachmentMarkerBeforeCursor() {
 			m.persistVisibleCodexDraft()
 			m.syncCodexComposerSize()
-			return m, nil
+			return m, focusCmd
 		}
 		if strings.TrimSpace(m.codexInput.Value()) == "" && m.removeLastCurrentCodexAttachment() {
 			m.status = "Removed the last image attachment"
-			return m, nil
+			return m, focusCmd
 		}
 	}
 
 	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
-		return m, nil
+		return m, focusCmd
 	}
 
 	var cmd tea.Cmd
@@ -2049,7 +2058,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	m.syncCodexSlashSelection()
-	return m, cmd
+	return m, batchCmds(focusCmd, cmd)
 }
 
 func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -2731,7 +2740,10 @@ func (m Model) renderCodexElicitationBlocks(request codexapp.ElicitationRequest,
 }
 
 func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, width int) []string {
-	if snapshot.Closed || snapshot.Busy || snapshot.BusyExternal {
+	if snapshot.Closed || snapshot.BusyExternal {
+		return nil
+	}
+	if snapshot.Busy && !codexSnapshotBrowserWaitingForUser(snapshot) {
 		return nil
 	}
 	pageURL := managedBrowserCurrentPageURL(snapshot)
@@ -2742,9 +2754,24 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 		// URLs recovered from resumed transcripts are historical context, not live controls.
 		return nil
 	}
-	lines := []string{fitFooterWidth(m.managedBrowserCurrentPageLabel(snapshot)+pageURL, width)}
+	lines := []string{}
+	if codexSnapshotBrowserWaitingForUser(snapshot) {
+		summary := strings.TrimSpace(snapshot.BrowserActivity.Normalize().Summary())
+		if summary == "" {
+			summary = "Browser is waiting for you."
+		}
+		lines = append(lines, fitFooterWidth(summary, width))
+	}
+	lines = append(lines, fitFooterWidth(m.managedBrowserCurrentPageLabel(snapshot)+pageURL, width))
 	if hint := m.managedBrowserCurrentPageHint(snapshot); hint != "" {
 		lines = append(lines, fitFooterWidth(hint, width))
+	}
+	if codexSnapshotBrowserWaitingForUser(snapshot) {
+		lines = append(lines,
+			fitFooterWidth("Type a note below, then press Enter to continue.", width),
+			fitFooterWidth("Do not want to log in? Press ctrl+c to stop the turn.", width),
+			fitFooterWidth("Esc or Alt+Up hides this session without stopping it.", width),
+		)
 	}
 	return lines
 }
@@ -3168,6 +3195,20 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 			footerExitAction("Esc", "cancel"),
 			footerNavAction("arrows", "move"),
 		}
+	case codexSnapshotBrowserWaitingForUser(snapshot):
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "continue"),
+		}
+		if managedBrowserCurrentPageURL(snapshot) != "" && strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && !snapshot.CurrentBrowserPageStale {
+			actions = append(actions, footerNavAction("ctrl+o", m.managedBrowserCurrentPageFooterLabel(snapshot)))
+		}
+		actions = append(actions,
+			footerExitAction("ctrl+c", "stop"),
+			footerHideAction("Alt+Up", "hide"),
+			footerHideAction("Esc", "hide"),
+			footerNavAction("Alt+Enter", "newline"),
+			footerLowAction("Alt+C", "copy menu"),
+		)
 	case snapshot.Busy:
 		enterAction := footerPrimaryAction("Enter", "steer")
 		if codexSnapshotGoalPausesOnPrompt(snapshot) {
