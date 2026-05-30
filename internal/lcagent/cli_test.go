@@ -2,6 +2,7 @@ package lcagent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,7 +14,12 @@ import (
 	"time"
 
 	"lcroom/internal/lcagent/modeladapter"
+	"lcroom/internal/lcagent/policy"
+	"lcroom/internal/lcagent/script"
+	"lcroom/internal/lcagent/session"
 	"lcroom/internal/lcagent/sessionmetrics"
+	skillcatalog "lcroom/internal/lcagent/skills"
+	"lcroom/internal/lcagent/tools"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -214,6 +220,168 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 	if requests != 2 {
 		t.Fatalf("requests = %d, want 2", requests)
 	}
+}
+
+func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	var providerRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerRequests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if providerRequests == 1 {
+			toolsRaw, _ := body["tools"].([]any)
+			if !lcagentCLITestRequestHasTool(toolsRaw, "start_process") || !lcagentCLITestRequestHasTool(toolsRaw, "list_processes") {
+				t.Fatalf("first request missing managed process tools: %#v", toolsRaw)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch providerRequests {
+		case 1:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_start",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_start","type":"function","function":{"name":"start_process","arguments":{"command":"npm run dev","name":"dev-server"}}}]}
+				}]
+			}`))
+		case 2:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_list",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_list","type":"function","function":{"name":"list_processes","arguments":{}}}]}
+				}]
+			}`))
+		case 3:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"Started dev-server under Little Control Room and confirmed it is still running on port 4173.","outcome":"partial","files_changed":[],"verification":["list_processes reported dev-server running on port 4173"]}}}]}
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected provider request %d", providerRequests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(dataDir, time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	workspace, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	processes := &lcagentCLITestProcessBroker{}
+	runner := script.Runner{
+		Session:   writer,
+		Command:   tools.CommandRunner{Workspace: workspace},
+		Patch:     tools.PatchApplier{Workspace: workspace},
+		Files:     tools.FileTools{Workspace: workspace, Limits: tools.FileLimitsForProfile(tools.FileProfileBalanced)},
+		Processes: processes,
+		Skills:    skillcatalog.Catalog{},
+		SessionID: sessionID,
+		Prompt:    "Start the dev server and leave it running under Little Control Room management.",
+	}
+	err = runChatLoop(context.Background(), writer, runner, nil, "", nil,
+		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 4, RequestTimeout: time.Minute},
+		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
+		"openrouter", "main", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
+	if err != nil {
+		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
+	}
+	if len(processes.requests) != 2 {
+		t.Fatalf("process requests = %#v, want start then list", processes.requests)
+	}
+	if processes.requests[0].Action != script.ProcessActionStart || processes.requests[0].Command != "npm run dev" || processes.requests[0].Name != "dev-server" {
+		t.Fatalf("start request = %#v", processes.requests[0])
+	}
+	if processes.requests[1].Action != script.ProcessActionList {
+		t.Fatalf("list request = %#v", processes.requests[1])
+	}
+	text := stream.String()
+	for _, want := range []string{
+		`"type":"tool_call"`,
+		`"tool":"start_process"`,
+		`"tool":"list_processes"`,
+		`"type":"operational_action"`,
+		`"process_id":"rt_dev"`,
+		`"final_outcome":"partial"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"tool":"run_command"`) {
+		t.Fatalf("managed process replay should not use run_command:\n%s", text)
+	}
+}
+
+type lcagentCLITestProcessBroker struct {
+	requests []script.ProcessRequest
+}
+
+func (b *lcagentCLITestProcessBroker) RequestProcess(_ context.Context, request script.ProcessRequest) (tools.ToolResult, error) {
+	b.requests = append(b.requests, request)
+	evidence := tools.ManagedProcessEvidence{
+		Action:       string(request.Action),
+		ProcessID:    "rt_dev",
+		Name:         "dev-server",
+		Command:      "npm run dev",
+		PID:          4242,
+		PGID:         4242,
+		Running:      true,
+		Ports:        []int{4173},
+		URLs:         []string{"http://127.0.0.1:4173"},
+		RecentOutput: []string{"listening on 4173"},
+	}
+	switch request.Action {
+	case script.ProcessActionStart:
+		return tools.ToolResult{
+			Success:        true,
+			Output:         "started dev-server",
+			Command:        request.Command,
+			CWD:            request.CWD,
+			ManagedProcess: &evidence,
+		}, nil
+	case script.ProcessActionList:
+		return tools.ToolResult{
+			Success:          true,
+			Output:           "dev-server running",
+			ManagedProcesses: []tools.ManagedProcessEvidence{evidence},
+		}, nil
+	default:
+		return tools.ToolResult{Success: false, Error: "unexpected process action"}, nil
+	}
+}
+
+func lcagentCLITestRequestHasTool(toolsRaw []any, name string) bool {
+	for _, raw := range toolsRaw {
+		toolMap, _ := raw.(map[string]any)
+		function, _ := toolMap["function"].(map[string]any)
+		if function["name"] == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRunExecOpenRouterRetriesTransientProviderFailure(t *testing.T) {
