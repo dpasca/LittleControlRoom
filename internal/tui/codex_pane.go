@@ -1719,8 +1719,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if codexSnapshotBrowserWaitingForUser(snapshot) {
-			m.status = "Stopping " + label + " browser wait..."
-			return m, m.interruptVisibleCodexCmd()
+			interruptCmd := m.interruptVisibleCodexCmd()
+			updated, hideCmd := m.hideCodexSession()
+			m = normalizeUpdateModel(updated)
+			m.status = "Stopping " + label + " browser wait and returning to the project list..."
+			return m, batchCmds(interruptCmd, hideCmd)
 		}
 		if snapshot.Phase == codexapp.SessionPhaseReconciling && codexStatusIsCompacting(snapshot.Status) {
 			m.status = label + " is compacting conversation history. Wait for it to finish or hide it with Alt+Up."

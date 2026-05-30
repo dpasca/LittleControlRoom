@@ -327,6 +327,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.finishCodexPendingOpen(msg.projectPath, snapshot, true, reveal))
 		}
 		m.observeManagedBrowserLease(msg.projectPath, snapshot)
+		cmds = append(cmds, m.maybeReadManagedBrowserStateCmd(snapshot))
 		if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrevSnapshot, prevSnapshot, snapshot) {
 			statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(msg.projectPath, snapshot)
 		}
@@ -352,7 +353,6 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
 		if ok {
 			cmds = append(cmds, m.maybeStartCodexArtifactLinkScan(msg.projectPath, snapshot))
-			cmds = append(cmds, m.maybeReadManagedBrowserStateCmd(snapshot))
 			if codexSnapshotBrowserWaitingForUser(snapshot) {
 				cmds = append(cmds, m.codexInput.Focus())
 			}

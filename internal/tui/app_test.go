@@ -762,6 +762,9 @@ func TestBrowserAttentionHighlightsProjectListRow(t *testing.T) {
 		nowFn:        func() time.Time { return time.Date(2026, 3, 17, 12, 0, 0, 0, time.UTC) },
 		projects:     []model.ProjectSummary{project},
 		codexManager: manager,
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123},
+		},
 		width:        140,
 		height:       10,
 		spinnerFrame: 1,
@@ -1162,7 +1165,12 @@ func TestProjectAttentionScoreUsesBrowserAttentionBeforeGenericQuestion(t *testi
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 
-	m := Model{codexManager: manager}
+	m := Model{
+		codexManager: manager,
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123},
+		},
+	}
 	if got := m.projectAttentionScore(project); got != project.AttentionScore+embeddedBrowserAttentionWeight {
 		t.Fatalf("projectAttentionScore() = %d, want browser-only attention boost", got)
 	}
@@ -1179,6 +1187,55 @@ func TestProjectAttentionScoreUsesBrowserAttentionBeforeGenericQuestion(t *testi
 	}
 	if !strings.Contains(reasons[0].Text, "Codex browser needs attention") {
 		t.Fatalf("reason text = %q, want browser attention copy", reasons[0].Text)
+	}
+}
+
+func TestProjectAttentionIgnoresStaleManagedBrowserWaitAfterRestart(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:           "demo",
+		Path:           "/tmp/demo",
+		AttentionScore: 7,
+	}
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Busy:                     true,
+		Status:                   "Browser waiting for user input",
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://accounts.google.com/",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy:     settingsAutomaticPlaywrightPolicy,
+			State:      browserctl.SessionActivityStateWaitingForUser,
+			ServerName: "playwright",
+			ToolName:   "browser_wait_for_user",
+		},
+	}
+	session := &fakeCodexSession{projectPath: project.Path, snapshot: snapshot}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: project.Path,
+		Provider:    codexapp.ProviderLCAgent,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			project.Path: snapshot,
+		},
+	}
+	if _, ok := m.projectPendingBrowserAttention(project.Path); ok {
+		t.Fatal("stale managed browser wait should not surface project browser attention")
+	}
+	if got := m.projectAttentionScore(project); got != project.AttentionScore {
+		t.Fatalf("projectAttentionScore() = %d, want stale browser wait ignored", got)
+	}
+	if got := m.footerBrowserAttentionLabel(); got != "" {
+		t.Fatalf("footerBrowserAttentionLabel() = %q, want no stale browser wait", got)
 	}
 }
 
@@ -1412,6 +1469,9 @@ func TestRenderDetailContentShowsBrowserAttention(t *testing.T) {
 			Summary: model.ProjectSummary{Path: project.Path},
 		},
 		codexManager: manager,
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123},
+		},
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
@@ -11749,14 +11809,16 @@ func TestVisibleLCAgentBrowserWaitAlwaysHasEscapeAndInterrupt(t *testing.T) {
 
 	updated, cmd := base.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
-		t.Fatal("ctrl+c during visible LCAgent wait should return an interrupt command")
+		t.Fatal("ctrl+c during visible LCAgent wait should return an interrupt and hide command")
 	}
-	_ = cmd()
+	_ = collectCmdMsgs(cmd)
 	if !session.interrupted {
 		t.Fatal("ctrl+c during visible LCAgent wait should interrupt the session")
 	}
-	if got := updated.(Model); !strings.Contains(got.status, "Stopping LCAgent browser wait") {
-		t.Fatalf("status = %q, want browser wait stop status", got.status)
+	if got := updated.(Model); got.codexVisibleProject != "" {
+		t.Fatalf("ctrl+c should immediately leave visible LCAgent wait pane, codexVisibleProject=%q", got.codexVisibleProject)
+	} else if !strings.Contains(got.status, "returning to the project list") {
+		t.Fatalf("status = %q, want browser wait stop-and-return status", got.status)
 	}
 
 	footer := ansi.Strip(base.renderCodexFooter(snapshot, 160))

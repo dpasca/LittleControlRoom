@@ -42,6 +42,17 @@ func browserAttentionFromSnapshot(snapshot codexapp.Snapshot) (projectBrowserAtt
 	}, true
 }
 
+func (m Model) browserAttentionFromSnapshot(snapshot codexapp.Snapshot) (projectBrowserAttentionState, bool) {
+	state, ok := browserAttentionFromSnapshot(snapshot)
+	if !ok {
+		return projectBrowserAttentionState{}, false
+	}
+	if strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" && managedBrowserAttentionURL(snapshot) != "" && !m.managedBrowserCanReveal(snapshot) {
+		return projectBrowserAttentionState{}, false
+	}
+	return state, true
+}
+
 func (m Model) projectPendingBrowserAttention(projectPath string) (projectBrowserAttentionState, bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -51,7 +62,7 @@ func (m Model) projectPendingBrowserAttention(projectPath string) (projectBrowse
 	if !ok {
 		return projectBrowserAttentionState{}, false
 	}
-	return browserAttentionFromSnapshot(snapshot)
+	return m.browserAttentionFromSnapshot(snapshot)
 }
 
 func browserAttentionListSummary(state projectBrowserAttentionState) string {
@@ -118,7 +129,7 @@ func bossBrowserAttentionFingerprint(state projectBrowserAttentionState) string 
 func (m Model) browserAttentionCount() int {
 	count := 0
 	for _, snapshot := range m.codexSnapshots {
-		if _, ok := browserAttentionFromSnapshot(snapshot); ok {
+		if _, ok := m.browserAttentionFromSnapshot(snapshot); ok {
 			count++
 		}
 	}
@@ -145,9 +156,7 @@ func (m Model) renderFooterBrowserAttentionSegment() string {
 }
 
 func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot codexapp.Snapshot) {
-	activity := snapshot.BrowserActivity.Normalize()
-	waiting := !snapshot.Closed && activity.State == browserctl.SessionActivityStateWaitingForUser
-
+	state, waiting := m.browserAttentionFromSnapshot(snapshot)
 	if !waiting {
 		if m.browserAttention != nil && m.browserAttention.ProjectPath == projectPath {
 			m.browserAttention = nil
@@ -162,10 +171,10 @@ func (m *Model) detectBrowserAttentionNotification(projectPath string, snapshot 
 		ProjectPath:              projectPath,
 		ProjectName:              strings.TrimSpace(filepath.Base(projectPath)),
 		SessionID:                strings.TrimSpace(snapshot.ThreadID),
-		Provider:                 embeddedProvider(snapshot),
-		Activity:                 activity,
-		ManagedBrowserSessionKey: strings.TrimSpace(snapshot.ManagedBrowserSessionKey),
-		OpenURL:                  managedBrowserAttentionURL(snapshot),
+		Provider:                 state.Provider,
+		Activity:                 state.Activity,
+		ManagedBrowserSessionKey: state.ManagedBrowserSessionKey,
+		OpenURL:                  state.OpenURL,
 	}
 	if m.questionNotify != nil && m.questionNotify.ProjectPath == projectPath {
 		m.questionNotify = nil
