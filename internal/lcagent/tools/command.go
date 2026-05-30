@@ -149,7 +149,7 @@ func commandWorkspaceWriteDenialReason(spec CommandSpec) string {
 	if detail == "" {
 		return ""
 	}
-	return CommandWorkspaceWriteDenialReason + " (" + detail + "); use apply_patch or replace_text for source edits instead"
+	return CommandWorkspaceWriteDenialReason + " (" + detail + "); use apply_patch, replace_lines, or replace_text for source edits instead"
 }
 
 func argvWorkspaceWriteDetail(argv []string) string {

@@ -154,6 +154,15 @@ type replaceTextArgs struct {
 	ExpectedReplacements int    `json:"expected_replacements,omitempty"`
 }
 
+type replaceLinesArgs struct {
+	Path              string `json:"path"`
+	StartLine         int    `json:"start_line"`
+	EndLine           int    `json:"end_line"`
+	NewText           string `json:"new_text"`
+	ExpectedFirstLine string `json:"expected_first_line,omitempty"`
+	ExpectedLastLine  string `json:"expected_last_line,omitempty"`
+}
+
 type finalResponseArgs struct {
 	Summary      string   `json:"summary"`
 	Outcome      string   `json:"outcome"`
@@ -369,7 +378,7 @@ func PatchRetryGuidance(feedback PatchFeedback, repeatCount int) string {
 	} else {
 		b.WriteString(" Re-read the affected file before another patch attempt.")
 	}
-	b.WriteString(" Then retry with a smaller hunk that preserves current unchanged context, or use replace_text with exact old_text copied from the current file for a small literal edit.")
+	b.WriteString(" Then retry with a smaller hunk that preserves current unchanged context, use replace_lines when exact current line numbers are known, or use replace_text with exact old_text copied from the current file for a small literal edit.")
 	return b.String()
 }
 
@@ -420,9 +429,9 @@ type planArgs struct {
 
 func (p *planArgs) UnmarshalJSON(raw []byte) error {
 	var args struct {
-		Items *[]tools.PlanItem `json:"items"`
-		Todos *[]tools.PlanItem `json:"todos"`
-		Plan  *[]tools.PlanItem `json:"plan"`
+		Items json.RawMessage `json:"items"`
+		Todos json.RawMessage `json:"todos"`
+		Plan  json.RawMessage `json:"plan"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(bytes.TrimSpace(raw)))
 	decoder.DisallowUnknownFields()
@@ -438,17 +447,29 @@ func (p *planArgs) UnmarshalJSON(raw []byte) error {
 	}
 
 	var provided []string
-	if args.Items != nil {
+	if len(args.Items) > 0 {
+		items, err := parsePlanItemsJSON(args.Items, "items")
+		if err != nil {
+			return err
+		}
 		provided = append(provided, "items")
-		p.Items = *args.Items
+		p.Items = items
 	}
-	if args.Todos != nil {
+	if len(args.Todos) > 0 {
+		items, err := parsePlanItemsJSON(args.Todos, "todos")
+		if err != nil {
+			return err
+		}
 		provided = append(provided, "todos")
-		p.Items = *args.Todos
+		p.Items = items
 	}
-	if args.Plan != nil {
+	if len(args.Plan) > 0 {
+		items, err := parsePlanItemsJSON(args.Plan, "plan")
+		if err != nil {
+			return err
+		}
 		provided = append(provided, "plan")
-		p.Items = *args.Plan
+		p.Items = items
 	}
 	switch len(provided) {
 	case 0:
@@ -458,6 +479,25 @@ func (p *planArgs) UnmarshalJSON(raw []byte) error {
 	default:
 		return fmt.Errorf(`provide only one of "items", "todos", or "plan" for update_plan; got %s`, strings.Join(provided, ", "))
 	}
+}
+
+func parsePlanItemsJSON(raw json.RawMessage, field string) ([]tools.PlanItem, error) {
+	raw = bytes.TrimSpace(raw)
+	var items []tools.PlanItem
+	if len(raw) > 0 && raw[0] == '"' {
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err != nil {
+			return nil, fmt.Errorf("%s must be an array of plan items or a JSON-encoded array string: %w", field, err)
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(encoded)), &items); err != nil {
+			return nil, fmt.Errorf("%s string must contain a JSON array of plan items: %w", field, err)
+		}
+		return items, nil
+	}
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("%s must be an array of plan items: %w", field, err)
+	}
+	return items, nil
 }
 
 type readFileArgs struct {
@@ -900,6 +940,20 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			NewText:              args.NewText,
 			ExpectedReplacements: args.ExpectedReplacements,
 		})
+	case "replace_lines":
+		var args replaceLinesArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceLines(tools.ReplaceLinesSpec{
+			Path:              args.Path,
+			StartLine:         args.StartLine,
+			EndLine:           args.EndLine,
+			NewText:           args.NewText,
+			ExpectedFirstLine: args.ExpectedFirstLine,
+			ExpectedLastLine:  args.ExpectedLastLine,
+		})
 	case "update_plan":
 		var args planArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -918,7 +972,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		result = tools.ToolResult{Success: false, Error: "unsupported tool: " + action.Tool}
 	}
 
-	if action.Tool == "apply_patch" || action.Tool == "replace_text" {
+	if action.Tool == "apply_patch" || action.Tool == "replace_text" || action.Tool == "replace_lines" {
 		if len(result.FilesTouched) > 0 {
 			r.filesTouched = appendCleanUniqueStrings(r.filesTouched, result.FilesTouched...)
 			if err := r.Session.Write(session.Event{

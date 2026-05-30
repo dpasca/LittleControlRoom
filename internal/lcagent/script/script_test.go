@@ -1036,6 +1036,7 @@ func TestRunnerUpdatePlanAcceptsLegacyAliases(t *testing.T) {
 	}{
 		{name: "todos", args: `{"todos":[{"step":"Inspect","status":"completed"},{"step":"Patch","status":"in_progress"}]}`},
 		{name: "plan", args: `{"plan":[{"step":"Inspect","status":"completed"},{"step":"Patch","status":"in_progress"}]}`},
+		{name: "stringified_todos", args: `{"todos":"[{\"step\":\"Inspect\",\"status\":\"completed\"},{\"step\":\"Patch\",\"status\":\"in_progress\"}]"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stream bytes.Buffer

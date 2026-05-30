@@ -212,7 +212,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
-				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use apply_patch or replace_text. Do not use bounded run_command for deploy/publish/promote/upload/release operations that may exceed the timeout when managed process support is available.",
+				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use apply_patch, replace_lines, or replace_text. Do not use bounded run_command for deploy/publish/promote/upload/release operations that may exceed the timeout when managed process support is available.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -300,6 +300,26 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"expected_replacements": map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "description": "Required number of occurrences. Defaults to 1 so accidental broad edits fail."},
 					},
 					"required": []string{"path", "old_text", "new_text"},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "replace_lines",
+				Description: "Replace or delete an inclusive 1-based line range in one existing workspace text file. Use this after read_file gives exact current line numbers, especially for deleting stale blocks or replacing larger sections where replace_text would be brittle. Optional first/last line guards should be copied from the current file when available.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":                map[string]any{"type": "string", "description": writePathDescription},
+						"start_line":          map[string]any{"type": "integer", "minimum": 1, "description": "First line to replace, inclusive, using read_file line numbers."},
+						"end_line":            map[string]any{"type": "integer", "minimum": 1, "description": "Last line to replace, inclusive, using read_file line numbers. Use an empty new_text to delete the range."},
+						"new_text":            map[string]any{"type": "string", "description": "Replacement text. Empty string deletes the selected range."},
+						"expected_first_line": map[string]any{"type": "string", "description": "Optional guard: exact current contents of start_line, without the line number prefix."},
+						"expected_last_line":  map[string]any{"type": "string", "description": "Optional guard: exact current contents of end_line, without the line number prefix."},
+					},
+					"required": []string{"path", "start_line", "end_line", "new_text"},
 				},
 			},
 		},

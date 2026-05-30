@@ -440,6 +440,94 @@ func TestTextEditorReplaceTextRequiresExpectedOccurrences(t *testing.T) {
 	}
 }
 
+func TestTextEditorReplaceTextRejectsHugeSpan(t *testing.T) {
+	root := t.TempDir()
+	var body strings.Builder
+	for i := 0; i < replaceTextMaxLines+1; i++ {
+		fmt.Fprintf(&body, "line %d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(body.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.ReplaceText(ReplaceTextSpec{
+		Path:    "README.md",
+		OldText: body.String(),
+		NewText: "short\n",
+	})
+	if result.Success {
+		t.Fatal("replace_text succeeded for huge span, want guidance failure")
+	}
+	if !strings.Contains(result.Error, "too large") || !strings.Contains(result.Error, "replace_lines") {
+		t.Fatalf("error = %q", result.Error)
+	}
+	if result.PatchFailure == nil || result.PatchFailure.Stage != "replace_text" {
+		t.Fatalf("PatchFailure = %#v", result.PatchFailure)
+	}
+}
+
+func TestTextEditorReplaceLinesDeletesRangeWithGuards(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("keep-a\nold-a\nold-b\nkeep-b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.ReplaceLines(ReplaceLinesSpec{
+		Path:              "README.md",
+		StartLine:         2,
+		EndLine:           3,
+		NewText:           "",
+		ExpectedFirstLine: "old-a",
+		ExpectedLastLine:  "old-b",
+	})
+	if !result.Success {
+		t.Fatalf("replace_lines failed: %s", result.Error)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "keep-a\nkeep-b\n" {
+		t.Fatalf("README = %q", data)
+	}
+	if result.PatchSummary == nil || result.PatchSummary.TotalAddedLines != 0 || result.PatchSummary.TotalDeletedLines != 2 {
+		t.Fatalf("PatchSummary = %#v", result.PatchSummary)
+	}
+}
+
+func TestTextEditorReplaceLinesRejectsStaleGuard(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("keep\ncurrent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.ReplaceLines(ReplaceLinesSpec{
+		Path:              "README.md",
+		StartLine:         2,
+		EndLine:           2,
+		NewText:           "new\n",
+		ExpectedFirstLine: "stale",
+	})
+	if result.Success {
+		t.Fatal("replace_lines succeeded with stale guard, want failure")
+	}
+	if !strings.Contains(result.Error, "first-line guard mismatch") {
+		t.Fatalf("error = %q", result.Error)
+	}
+	if result.PatchFailure == nil || result.PatchFailure.Stage != "replace_lines" || len(result.PatchFailure.SuggestedReads) != 1 {
+		t.Fatalf("PatchFailure = %#v", result.PatchFailure)
+	}
+}
+
 func TestTextEditorReplaceTextDeniesAutoOff(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
