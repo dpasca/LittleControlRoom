@@ -41,11 +41,13 @@ type Runner struct {
 	ArtifactsDir         string
 	SteerMessages        <-chan string
 
-	verificationChecks    []tools.VerificationCheck
-	operationalActions    []OperationalAction
-	filesTouched          []string
-	commandApprovalGrants []commandApprovalGrant
-	toolFailures          []tools.ToolResult
+	verificationChecks     []tools.VerificationCheck
+	operationalActions     []OperationalAction
+	filesTouched           []string
+	commandApprovalGrants  []commandApprovalGrant
+	toolFailures           []tools.ToolResult
+	browserToolsUsed       bool
+	browserWaitForUserUsed bool
 }
 
 type SearchRefiner interface {
@@ -257,6 +259,12 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	if toolFailures > 0 {
 		audit.Outcome = "warn"
 		audit.Message = fmt.Sprintf("Final response audit warning: %d tool failure(s) occurred in this turn; the final response must not imply failed actions succeeded.", toolFailures)
+	}
+	if finalOutcome == "unknown" && r != nil && r.BrowserAvailable && r.browserToolsUsed && !r.browserWaitForUserUsed {
+		audit.Outcome = "block"
+		audit.Blocking = true
+		audit.Message = "final_response outcome was unknown after using the managed browser. If login, MFA, CAPTCHA, payment, or human judgment may unblock the browser task, call browser_wait_for_user instead of ending the turn. Otherwise set outcome to blocked, failed, partial, or completed and explain the concrete browser evidence."
+		return audit
 	}
 	if finalOutcome == "completed" {
 		if op, ok := latestOperationalActionRequiringVerification(operationalActions); ok && len(verificationChecks) <= op.VerificationChecksBefore {
@@ -513,6 +521,11 @@ type browserScreenshotArgs struct {
 	Path string `json:"path"`
 }
 
+type browserWaitForUserArgs struct {
+	Message string `json:"message"`
+	URL     string `json:"url"`
+}
+
 type fileOutlineArgs struct {
 	Path string `json:"path"`
 }
@@ -687,6 +700,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 	var result tools.ToolResult
 	browserTool := isBrowserTool(action.Tool)
 	if browserTool {
+		r.browserToolsUsed = true
 		if err := r.writeBrowserActivityEvent("browser_activity_started", action.Tool, nil); err != nil {
 			return tools.ToolResult{}, err
 		}
@@ -760,6 +774,14 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.Browser.RunBrowserTool(ctx, action.Tool, action.Args)
+	case "browser_wait_for_user":
+		r.browserWaitForUserUsed = true
+		var args browserWaitForUserArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		result = r.runBrowserWaitForUser(ctx, args)
 	case "file_outline":
 		var args fileOutlineArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -953,6 +975,71 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		return result, fmt.Errorf("%s failed: %s", action.Tool, result.Error)
 	}
 	return result, nil
+}
+
+func (r *Runner) runBrowserWaitForUser(ctx context.Context, args browserWaitForUserArgs) tools.ToolResult {
+	message := strings.TrimSpace(args.Message)
+	if message == "" {
+		return tools.ToolResult{Success: false, Error: "browser_wait_for_user message is required"}
+	}
+	if !r.BrowserAvailable {
+		return tools.ToolResult{Success: false, Error: "browser tools are not available for this LCAgent run"}
+	}
+	if r.SteerMessages == nil {
+		return tools.ToolResult{Success: false, Error: "browser user handoff is not available for this LCAgent run"}
+	}
+	page := browserPageEvent{URL: strings.TrimSpace(args.URL), Fresh: true}
+	if page.URL == "" && r.Browser != nil {
+		current := r.Browser.RunBrowserTool(ctx, "browser_current_page", json.RawMessage(`{}`))
+		if parsed := browserPageFromToolResult(current); parsed != nil {
+			page = *parsed
+		}
+	}
+	event := session.Event{
+		"type":        "browser_waiting_for_user",
+		"session_id":  r.SessionID,
+		"server_name": "playwright",
+		"tool":        "browser_wait_for_user",
+		"message":     message,
+	}
+	if page.URL != "" {
+		event["url"] = page.URL
+		event["title"] = page.Title
+		event["fresh"] = page.Fresh
+	}
+	if err := r.Session.Write(event); err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error()}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			_ = r.writeBrowserActivityEvent("browser_activity_finished", "browser_wait_for_user", &tools.ToolResult{Success: false, Error: ctx.Err().Error()})
+			return tools.ToolResult{Success: false, Error: ctx.Err().Error()}
+		case message, ok := <-r.SteerMessages:
+			if !ok {
+				_ = r.writeBrowserActivityEvent("browser_activity_finished", "browser_wait_for_user", &tools.ToolResult{Success: false, Error: "browser user handoff channel closed"})
+				return tools.ToolResult{Success: false, Error: "browser user handoff channel closed"}
+			}
+			message = strings.TrimSpace(message)
+			if message == "" {
+				continue
+			}
+			if err := r.Session.Write(session.Event{
+				"type":       "user_message",
+				"session_id": r.SessionID,
+				"message":    message,
+			}); err != nil {
+				return tools.ToolResult{Success: false, Error: err.Error()}
+			}
+			if err := r.writeBrowserActivityEvent("browser_activity_finished", "browser_wait_for_user", &tools.ToolResult{Success: true}); err != nil {
+				return tools.ToolResult{Success: false, Error: err.Error()}
+			}
+			return tools.ToolResult{
+				Success: true,
+				Output:  "User responded after browser handoff.\nuser_message: " + message,
+			}
+		}
+	}
 }
 
 func isBrowserTool(tool string) bool {

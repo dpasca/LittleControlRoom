@@ -162,6 +162,11 @@ MVP tools:
 - `browser_current_page`
   - args: none
   - output: current URL/title and whether the page state is fresh.
+- `browser_wait_for_user`
+  - args: `message`, optional `url`
+  - output: the user's resume message after they finish the browser step.
+  - emits `browser_waiting_for_user` and keeps the managed browser/session open
+    while waiting.
 
 Nice-to-have after MVP:
 
@@ -285,9 +290,9 @@ Implementation steps:
    - interactive browser lease where a user handoff is active
 
 4. Add a small model-facing instruction:
-   - If a browser step needs login/MFA/human judgment, stop browser automation,
-     report the current page, and ask the user to reveal/finish the browser
-     flow in LCR.
+   - If a browser step needs login/MFA/human judgment, call
+     `browser_wait_for_user` with a short instruction instead of
+     `final_response`, then inspect the current page after the user replies.
 
 Tests:
 

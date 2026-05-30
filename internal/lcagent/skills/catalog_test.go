@@ -124,8 +124,9 @@ func TestBrowserModeShadowsPlaywrightNativeTools(t *testing.T) {
 	for _, want := range []string{
 		"This LCAgent run has native browser tools",
 		"Use browser_navigate",
+		"browser_wait_for_user",
 		"Do not launch a separate browser from the terminal",
-		"ask the user to reveal and finish the managed browser flow",
+		"run resumes after the user replies",
 	} {
 		if !strings.Contains(loaded.Body, want) {
 			t.Fatalf("loaded body missing %q:\n%s", want, loaded.Body)

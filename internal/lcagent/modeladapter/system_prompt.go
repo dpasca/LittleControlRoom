@@ -69,7 +69,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	} else {
 		lines = append(lines,
 			"Use native browser_* tools for browser work. Do not launch Playwright, MCP servers, or browser automation wrappers from run_command.",
-			"If a browser step needs login, MFA, payment, CAPTCHA, or human judgment, stop browser automation, report the current page, and ask the user to reveal and finish the managed browser flow in Little Control Room.",
+			"If a browser step needs login, MFA, payment, CAPTCHA, or human judgment, call browser_wait_for_user with a short instruction instead of final_response. After the user replies, inspect the current page and continue.",
 		)
 	}
 	lines = append(lines,

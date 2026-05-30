@@ -467,6 +467,22 @@ func browserToolDefinitions() []ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "browser_wait_for_user",
+				Description: "Pause browser automation when login, MFA, CAPTCHA, payment, or human judgment is needed. This keeps the managed browser open, asks the user to finish the step in Little Control Room, and resumes after the user replies." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"message": map[string]any{"type": "string", "description": "Short user-facing instruction, for example: Finish login in the managed browser, then tell me to continue."},
+						"url":     map[string]any{"type": "string", "description": "Optional current browser URL if known."},
+					},
+					"required": []string{"message"},
+				},
+			},
+		},
 	}
 }
 

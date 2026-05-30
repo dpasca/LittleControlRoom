@@ -276,11 +276,11 @@ const playwrightNativeToolsSkillBody = `# Playwright
 
 This LCAgent run has native browser tools managed by Little Control Room.
 
-Use browser_navigate, browser_snapshot, browser_click, browser_fill, browser_press, browser_screenshot, and browser_current_page from the tool schema.
+Use browser_navigate, browser_snapshot, browser_click, browser_fill, browser_press, browser_screenshot, browser_current_page, and browser_wait_for_user from the tool schema.
 
 Do not launch a separate browser from the terminal. Do not run npx, playwright-mcp, playwright-cli, playwright_cli.sh, MCP setup commands, or provider-specific Playwright wrappers.
 
-If login, MFA, payment, CAPTCHA, or human judgment is required, stop browser automation, report the current page, and ask the user to reveal and finish the managed browser flow in Little Control Room.`
+If login, MFA, payment, CAPTCHA, or human judgment is required, call browser_wait_for_user with a short instruction so the managed browser stays open and the run resumes after the user replies.`
 
 type skillRoot struct {
 	Dir    string

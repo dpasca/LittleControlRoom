@@ -152,6 +152,14 @@ func TestToolsWithOptionsExposeBrowserToolsWhenEnabled(t *testing.T) {
 	if len(props) != 0 {
 		t.Fatalf("browser_current_page properties = %#v, want empty", props)
 	}
+	wait := toolSpec(t, tools, "browser_wait_for_user")
+	if !strings.Contains(wait.Description, "resumes after the user replies") {
+		t.Fatalf("browser_wait_for_user description missing handoff guidance: %q", wait.Description)
+	}
+	waitProps := wait.Parameters["properties"].(map[string]any)
+	if _, ok := waitProps["message"]; !ok {
+		t.Fatalf("browser_wait_for_user missing message property: %#v", waitProps)
+	}
 }
 
 func TestToolsWithOptionsExposeConfiguredFileLimits(t *testing.T) {

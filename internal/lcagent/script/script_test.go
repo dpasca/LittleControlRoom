@@ -165,6 +165,79 @@ func TestRunnerDispatchesBrowserToolsThroughBrowserRunner(t *testing.T) {
 	}
 }
 
+func TestRunnerBrowserWaitForUserPausesUntilSteerMessage(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	steer := make(chan string, 1)
+	steer <- "I'm logged in, continue"
+	runner := Runner{
+		Session:          writer,
+		SessionID:        sessionID,
+		Prompt:           "use browser",
+		BrowserAvailable: true,
+		Browser:          &fakeBrowserRunner{},
+		SteerMessages:    steer,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "browser_wait_for_user",
+		Args: raw(`{"message":"Finish login, then tell me to continue."}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !strings.Contains(result.Output, "I'm logged in") {
+		t.Fatalf("result output = %q, want steer message", result.Output)
+	}
+	text := stream.String()
+	for _, want := range []string{
+		`"type":"browser_waiting_for_user"`,
+		`"tool":"browser_wait_for_user"`,
+		`"message":"Finish login, then tell me to continue."`,
+		`"url":"https://example.test/"`,
+		`"type":"user_message"`,
+		`"message":"I'm logged in, continue"`,
+		`"type":"browser_activity_finished"`,
+		`"type":"tool_result"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunnerFinalResponseAuditBlocksUnknownBrowserOutcomeBeforeUserWait(t *testing.T) {
+	runner := Runner{
+		BrowserAvailable: true,
+		browserToolsUsed: true,
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:    "final_response",
+		Summary: "Need login. Should I wait?",
+		Outcome: "unknown",
+	})
+	if !audit.Blocking {
+		t.Fatalf("audit.Blocking = false, want true; audit=%#v", audit)
+	}
+	if !strings.Contains(audit.Message, "browser_wait_for_user") {
+		t.Fatalf("audit message missing browser_wait_for_user guidance: %q", audit.Message)
+	}
+
+	runner.browserWaitForUserUsed = true
+	audit = runner.FinalResponseAudit(Action{
+		Type:    "final_response",
+		Summary: "Need login. Cannot continue.",
+		Outcome: "unknown",
+	})
+	if audit.Blocking {
+		t.Fatalf("audit.Blocking = true after wait was attempted; audit=%#v", audit)
+	}
+}
+
 func TestRunnerRejectsBrowserToolsWhenUnavailable(t *testing.T) {
 	var stream bytes.Buffer
 	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
