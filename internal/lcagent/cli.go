@@ -222,7 +222,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var requestTimeout time.Duration
 	var maxTurns int
 	var searchRefineMinBytes int
-	var adminWrite bool
+	var adminWrite, requireFinalResponseTool bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
@@ -242,6 +242,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
+	fs.BoolVar(&requireFinalResponseTool, "require-final-response-tool", false, "require provider runs to finish through the structured final_response tool")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
@@ -387,6 +388,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["approval_mode"] = approvalMode
 	meta["request_timeout"] = requestTimeout.String()
 	meta["max_turns"] = maxTurns
+	meta["require_final_response_tool"] = requireFinalResponseTool
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
 		meta["root_session_id"] = resumeContext.rootSessionID()
@@ -543,7 +545,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, webSearchStatus.Enabled)
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -563,7 +565,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -670,6 +672,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
+	finalResponseToolFeedbacks := 0
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		select {
@@ -769,6 +772,19 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			}
 			if strings.TrimSpace(msg.Content) == "" {
 				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response had no content or tool calls", providerLabel))
+			}
+			if requireFinalResponseTool && finalResponseToolFeedbacks == 0 {
+				finalResponseToolFeedbacks++
+				feedback := "Final response feedback: call the final_response tool with summary, outcome, files_changed, and verification instead of returning plain assistant text."
+				if err := writer.Write(session.Event{
+					"type":       "final_response_feedback",
+					"session_id": runner.SessionID,
+					"message":    feedback,
+				}); err != nil {
+					return err
+				}
+				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+				continue
 			}
 			final := script.Action{
 				Type:    "final_response",

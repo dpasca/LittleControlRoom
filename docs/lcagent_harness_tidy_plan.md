@@ -62,6 +62,7 @@ Implemented after `06403a9`:
 - Structured operational-action trace events for managed-process tool requests.
 - Structured managed-process evidence in embedded LCR process responses where runtime snapshots are available.
 - Final-response audit enforcement for completed managed start/stop actions without later verification.
+- Model-facing live-eval case for unavailable managed-process handoff, scored through structured final outcome metadata.
 
 ## Phase 1: Generic Regression Evals
 
@@ -93,8 +94,8 @@ Scenarios:
 
 Remaining useful coverage:
 
-- A model-facing eval or replay that verifies the model chooses the right tool path, not only that scripted traces record the right evidence.
-- Stronger final-response audit coverage once final responses carry a structured outcome field such as completed/blocked/failed.
+- A model-facing eval or replay that verifies the model chooses the managed-process path when the capability is available in an embedded LCR session.
+- Live provider coverage for completed managed operations that require a later verification probe.
 
 Likely files:
 

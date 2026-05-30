@@ -142,6 +142,80 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 2 {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"done from model","outcome":"completed","files_changed":[],"verification":[]}}}]}
+				}],
+				"usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}
+			}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_plain",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"plain final"}
+			}],
+			"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"--require-final-response-tool",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"final_response_feedback"`,
+		`"response_id":"resp_final"`,
+		`"type":"turn_complete"`,
+		`"summary":"done from model"`,
+		`"final_outcome":"completed"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestRunExecOpenRouterRetriesTransientProviderFailure(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -2785,14 +2859,14 @@ func TestRunLiveEvalListsFixedSuite(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
 		t.Fatalf("decode live eval list: %v\n%s", err, stdout.String())
 	}
-	if len(listed.Cases) != 9 {
-		t.Fatalf("live eval cases = %d, want 9", len(listed.Cases))
+	if len(listed.Cases) != 10 {
+		t.Fatalf("live eval cases = %d, want 10", len(listed.Cases))
 	}
 	byName := map[string]liveEvalTask{}
 	for _, tc := range listed.Cases {
 		byName[tc.Name] = tc
 	}
-	for _, want := range []string{"readme_edit_verify", "go_bug_fix", "feature_slice", "js_package_script_fix", "python_unittest_fix", "rust_cargo_fix", "repo_orientation", "current_diff_review", "multi_file_price_refactor"} {
+	for _, want := range []string{"readme_edit_verify", "go_bug_fix", "feature_slice", "js_package_script_fix", "python_unittest_fix", "rust_cargo_fix", "repo_orientation", "managed_process_unavailable_handoff", "current_diff_review", "multi_file_price_refactor"} {
 		if _, ok := byName[want]; !ok {
 			t.Fatalf("live eval list missing %s: %#v", want, listed.Cases)
 		}
@@ -2802,6 +2876,9 @@ func TestRunLiveEvalListsFixedSuite(t *testing.T) {
 	}
 	if byName["current_diff_review"].ExpectedVerificationStatus != "failed" || !byName["current_diff_review"].ExpectNoEdits {
 		t.Fatalf("current_diff_review list entry missing review contract: %#v", byName["current_diff_review"])
+	}
+	if byName["managed_process_unavailable_handoff"].ExpectedVerificationStatus != "reported_only" || len(byName["managed_process_unavailable_handoff"].ExpectedFinalOutcomes) == 0 || !byName["managed_process_unavailable_handoff"].RequireFinalResponseTool {
+		t.Fatalf("managed_process_unavailable_handoff list entry missing outcome contract: %#v", byName["managed_process_unavailable_handoff"])
 	}
 	if byName["js_package_script_fix"].Category != "js_ts" || strings.Join(byName["js_package_script_fix"].VerifyCommand, " ") != "npm test" {
 		t.Fatalf("js_package_script_fix list entry missing JS verification contract: %#v", byName["js_package_script_fix"])
@@ -2831,7 +2908,7 @@ func TestLiveEvalArtifactScoringHelpers(t *testing.T) {
 {"type":"tool_result","tool":"read_file","result":{"success":true,"output":"ok"}}
 {"type":"tool_result","tool":"run_command","result":{"success":false,"error":"failed"}}
 {"type":"final_response","summary":"done","files_changed":["calc.go"],"verification":["go test ./..."]}
-{"type":"turn_complete","summary":"done","files_changed":["README.md"],"verification":["go test ./..."]}
+{"type":"turn_complete","summary":"done","final_outcome":"blocked","files_changed":["README.md"],"verification":["go test ./..."]}
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -2849,6 +2926,13 @@ func TestLiveEvalArtifactScoringHelpers(t *testing.T) {
 	}
 	if !changed["calc.go"] || !changed["README.md"] {
 		t.Fatalf("changed files = %#v", changed)
+	}
+	outcomes, err := liveEvalFinalOutcomes(path)
+	if err != nil {
+		t.Fatalf("final outcomes: %v", err)
+	}
+	if !liveEvalAllowedFinalOutcome(outcomes, []string{"blocked"}) {
+		t.Fatalf("final outcomes = %#v, want blocked", outcomes)
 	}
 }
 
