@@ -32,7 +32,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test lcagent-eval lcagent-live-eval lcagent-live-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -43,6 +43,7 @@ help:
 	@echo "  make lcagent-eval    - run deterministic LCAgent regression evals"
 	@echo "  make lcagent-live-eval - run repeatable live-provider LCAgent coding evals"
 	@echo "  make lcagent-live-smoke - run a live provider LCAgent smoke test"
+	@echo "  make lcagent-browser-smoke - run a scripted managed-browser LCAgent smoke test"
 	@echo "  make build           - build ./$(APP)"
 	@echo "  make build-agent     - build ./lcagent"
 	@echo "  make build-all       - build lcroom and lcagent"
@@ -101,6 +102,9 @@ lcagent-live-eval:
 
 lcagent-live-smoke:
 	$(GO) run ./cmd/lcagent smoke
+
+lcagent-browser-smoke:
+	$(GO) run ./cmd/lcagent smoke --browser --data-dir "$(DATA_DIR)"
 
 build:
 	$(GO) build -o ./$(APP) ./cmd/$(APP)
