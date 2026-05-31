@@ -103,7 +103,7 @@ func runLiveEval(args []string, stdout io.Writer) error {
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort")
 	fs.StringVar(&caseRaw, "case", "", "comma-separated case names; blank runs the full suite")
 	fs.StringVar(&toolProfile, "tool-profile", "balanced", "file tool budget profile")
-	fs.StringVar(&contextProfile, "context-profile", "balanced", "provider loop context profile")
+	fs.StringVar(&contextProfile, "context-profile", "balanced", "provider loop context profile; known model windows adapt packing budgets")
 	fs.DurationVar(&requestTimeout, "request-timeout", 12*time.Minute, "provider HTTP request timeout")
 	fs.IntVar(&maxTurns, "max-turns", 8, "maximum model turns per case")
 	fs.BoolVar(&keepTemp, "keep-temp", true, "keep temporary live-eval workspaces")
