@@ -3600,9 +3600,9 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentContextProfile:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "", "balanced":
-			return "Balanced keeps provider-loop compaction on the normal budget."
+			return "Balanced uses model-aware packing when the selected model window is known, with conservative fallback budgets."
 		case "large":
-			return "Large retains more loop context before compaction; use it with models that can spend the context well."
+			return "Large retains more packed transcript detail; known large-window models still cap live context around their useful range."
 		default:
 			return field.hint
 		}

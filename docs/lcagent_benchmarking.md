@@ -180,10 +180,13 @@ tool evidence before the harness summarizes the transcript. It is especially
 useful when measuring whether a model can reduce duplicate reads once earlier
 tool outputs remain available in context longer.
 
-The `balanced` context profile now compacts provider-loop history at roughly
-200k characters and keeps about 50k characters of transcript evidence in the
-compacted continuation. The `large` profile raises those loop budgets to roughly
-600k and 240k characters respectively.
+For known model windows, LCAgent now derives the live-context packing threshold
+from the selected model: about 80% of smaller windows, sliding down to about 50%
+for 1M-token-class windows. The compacted continuation target scales with that
+threshold so very large models keep more evidence without trying to spend the
+whole window. Unknown/custom models fall back to the profile defaults: balanced
+compacts around 200k characters and keeps about 50k characters of transcript
+evidence; large compacts around 600k and keeps about 240k characters.
 
 Summarize the resulting session artifact:
 

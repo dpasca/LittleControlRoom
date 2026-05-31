@@ -51,7 +51,7 @@ codex_launch_preset = "yolo"
 # lcagent_auto = "low"
 # lcagent_tool_profile = "balanced"
 # lcagent_route_preset = "balanced" # blank, balanced, quality, mimo-2.5-pro-low/high/max, cheap-scout
-# lcagent_context_profile = "balanced" # balanced loop compaction ~200k chars; large ~600k
+# lcagent_context_profile = "balanced" # known model windows adapt packing budgets; unknown models fall back to balanced ~200k chars / large ~600k
 # lcagent_request_timeout = "60m"
 
 # Quiet browser automation by default; LCR opens a visible browser only when needed.

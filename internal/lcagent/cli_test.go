@@ -2228,6 +2228,97 @@ func TestRunExecOpenRouterCompactionKeepsCurrentPromptAfterResume(t *testing.T) 
 	}
 }
 
+func TestRunExecPreflightCompactsOversizedResumeForSelectedModel(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	threadID := "lct_model_switch_compact"
+	store := newThreadStateStore(dataDir, threadID, root, "lca_previous", time.Date(2026, 5, 31, 1, 0, 0, 0, time.UTC))
+	largePriorAnswer := "old answer " + strings.Repeat("model switch context ", 30000)
+	if err := store.SaveCheckpoint("assistant_message", []modeladapter.Message{
+		{Role: "system", Content: "previous system prompt"},
+		{Role: "user", Content: "old request that should become packed background"},
+		{Role: "assistant", Content: largePriorAnswer},
+	}, false); err != nil {
+		t.Fatalf("write thread state: %v", err)
+	}
+
+	currentPrompt := "continue with the smaller model"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []modeladapter.Message `json:"messages"`
+			Tools    []any                  `json:"tools"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if requests != 1 {
+			t.Fatalf("unexpected request %d", requests)
+		}
+		currentStandalone := false
+		staleStandalone := false
+		compactedContextSeen := false
+		for _, msg := range body.Messages {
+			if msg.Role == "user" && msg.Content == currentPrompt {
+				currentStandalone = true
+			}
+			if msg.Role == "user" && msg.Content == "old request that should become packed background" {
+				staleStandalone = true
+			}
+			if strings.Contains(msg.Content, loopCompactedContextPrefix) && strings.Contains(msg.Content, "old request that should become packed background") {
+				compactedContextSeen = true
+			}
+			if strings.Contains(msg.Content, strings.Repeat("model switch context ", 2000)) {
+				t.Fatalf("preflight compacted request kept raw oversized prior answer")
+			}
+		}
+		if !currentStandalone || staleStandalone || !compactedContextSeen {
+			t.Fatalf("preflight request current=%v stale=%v compacted=%v messages=%#v", currentStandalone, staleStandalone, compactedContextSeen, body.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_final",
+			"model":"deepseek/deepseek-v4-pro",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"continued on smaller context budget"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/deepseek-v4-pro",
+		"--continue-from", threadID,
+		"--max-turns", "2",
+		currentPrompt,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+	text := stdout.String()
+	for _, want := range []string{`"type":"context_compacted"`, `"reason":"continuation_preflight"`, `"threshold_tokens":102400`, `"summary":"continued on smaller context budget"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecOpenRouterFinalResponseToolIsCanonical(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

@@ -2033,7 +2033,9 @@ func (s *lcagentSession) applyContextWindowToTokenUsageLocked(tokenUsage *thread
 	if tokenUsage == nil {
 		return
 	}
-	if budget := lcagent.ContextCompactionApproxTokenBudget(s.contextProfile); budget > 0 {
+	provider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), s.provider)
+	model := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider))
+	if budget := lcagent.ContextCompactionApproxTokenBudgetForModel(s.contextProfile, provider, model); budget > 0 {
 		tokenUsage.ModelContextWindow = &budget
 	}
 }

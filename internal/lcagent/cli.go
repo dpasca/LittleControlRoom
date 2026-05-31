@@ -370,7 +370,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
-	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large")
+	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
 	fs.BoolVar(&requireFinalResponseTool, "require-final-response-tool", false, "require provider runs to finish through the structured final_response tool")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent thread id to continue from")
@@ -478,7 +478,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return fmt.Errorf("search-refine-min-bytes must be >= 0")
 	}
 	reasoningEffort = openRouterReasoningEffortForProvider(provider, reasoningEffort)
-	contextOptions := openRouterContextOptionsForProfile(contextProfile)
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
 	if err != nil {
 		return err
@@ -501,6 +500,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	model = modeladapter.NormalizeModelForProvider(provider, model)
 	finalModel = modeladapter.NormalizeModelForProvider(provider, finalModel)
+	contextOptions := openRouterContextOptionsForProfileAndModel(contextProfile, provider, model)
 	resumeContext, err := loadResumeContext(dataDir, resumeSourceRaw, workspace.Root)
 	if err != nil {
 		return err
@@ -821,21 +821,22 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			messages = withCurrentSystemMessage(messages, systemPrompt)
 		}
 		observeReadLedgerMessages(readLedger, messages)
+		messages = append(messages, modeladapter.Message{Role: "user", Content: runner.Prompt})
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{
-				"type":       "context_compacted",
-				"session_id": runner.SessionID,
-				"turn":       0,
-				"threshold":  contextOptions.LoopCompactionCharThreshold,
-				"reason":     "continuation_preflight",
-				"stats":      compaction,
+				"type":             "context_compacted",
+				"session_id":       runner.SessionID,
+				"turn":             0,
+				"threshold":        contextOptions.LoopCompactionCharThreshold,
+				"threshold_tokens": contextOptions.LoopCompactionTokenBudget,
+				"reason":           "continuation_preflight",
+				"stats":            compaction,
 			}); err != nil {
 				return err
 			}
 			messages = compactedMessages
 			contextCompacted = true
 		}
-		messages = append(messages, modeladapter.Message{Role: "user", Content: runner.Prompt})
 	} else {
 		messages = []modeladapter.Message{
 			{Role: "system", Content: systemPrompt},
@@ -883,11 +884,12 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		if compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, contextOptions); compacted {
 			if err := writer.Write(session.Event{
-				"type":       "context_compacted",
-				"session_id": runner.SessionID,
-				"turn":       turn + 1,
-				"threshold":  contextOptions.LoopCompactionCharThreshold,
-				"stats":      compaction,
+				"type":             "context_compacted",
+				"session_id":       runner.SessionID,
+				"turn":             turn + 1,
+				"threshold":        contextOptions.LoopCompactionCharThreshold,
+				"threshold_tokens": contextOptions.LoopCompactionTokenBudget,
+				"stats":            compaction,
 			}); err != nil {
 				return err
 			}

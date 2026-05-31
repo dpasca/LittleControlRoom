@@ -77,6 +77,32 @@ func TestOpenRouterContextProfileBudgets(t *testing.T) {
 	}
 }
 
+func TestOpenRouterContextModelAwareBudgets(t *testing.T) {
+	deepseek := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "deepseek", "deepseek-v4-pro")
+	if deepseek.ModelContextWindowTokens != 128_000 || deepseek.LoopCompactionTokenBudget != 102_400 || deepseek.LoopCompactionUtilizationPercent != 80 {
+		t.Fatalf("deepseek context budget = %+v, want 128k window with 80%% / 102400 token threshold", deepseek)
+	}
+	if deepseek.LoopCompactionCharThreshold != 409_600 || deepseek.LoopCompactionTranscriptChars != 122_880 {
+		t.Fatalf("deepseek char budgets = threshold %d transcript %d, want 409600/122880", deepseek.LoopCompactionCharThreshold, deepseek.LoopCompactionTranscriptChars)
+	}
+
+	mimo := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "xiaomi", "mimo-v2.5-pro")
+	if mimo.ModelContextWindowTokens != 1_000_000 || mimo.LoopCompactionTokenBudget != 500_000 || mimo.LoopCompactionUtilizationPercent != 50 {
+		t.Fatalf("mimo context budget = %+v, want 1M window with 50%% / 500000 token threshold", mimo)
+	}
+	if mimo.LoopCompactionCharThreshold != 2_000_000 || mimo.LoopCompactionTranscriptChars != 600_000 {
+		t.Fatalf("mimo char budgets = threshold %d transcript %d, want 2000000/600000", mimo.LoopCompactionCharThreshold, mimo.LoopCompactionTranscriptChars)
+	}
+	if got := ContextCompactionApproxTokenBudgetForModel("large", "xiaomi", "mimo-v2.5-pro"); got != 500_000 {
+		t.Fatalf("mimo approx token budget = %d, want 500000", got)
+	}
+
+	unknown := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "openrouter", "custom-model")
+	if unknown.ModelContextWindowTokens != 0 || unknown.LoopCompactionCharThreshold != 600_000 {
+		t.Fatalf("unknown model budget = %+v, want large profile fallback", unknown)
+	}
+}
+
 func TestCompactOpenRouterLoopMessagesPreservesRequestAndDropsToolRoles(t *testing.T) {
 	var output strings.Builder
 	output.WriteString("file: big.go\ntotal_lines: 1000\nhas_more: false\nlines: 1-1000\n\n")
@@ -122,6 +148,35 @@ func TestCompactOpenRouterLoopMessagesPreservesRequestAndDropsToolRoles(t *testi
 	for _, want := range []string{loopCompactedContextPrefix, "tool_result: read_file", "file: big.go", "omitted", "call final_response"} {
 		if !strings.Contains(context, want) {
 			t.Fatalf("compacted loop context missing %q:\n%s", want, context)
+		}
+	}
+}
+
+func TestCompactOpenRouterLoopMessagesCanPackTextOnlyHistory(t *testing.T) {
+	messages := []modeladapter.Message{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "old request " + strings.Repeat("context ", 80)},
+		{Role: "assistant", Content: "old answer " + strings.Repeat("details ", 80)},
+		{Role: "user", Content: "new request"},
+	}
+	opts := defaultOpenRouterContextOptions()
+	opts.LoopCompactionCharThreshold = 1000
+	opts.LoopCompactionTranscriptChars = 600
+
+	compacted, stats, ok := compactOpenRouterLoopMessagesWithOptions(messages, nil, opts)
+	if !ok {
+		t.Fatal("text-only oversized history did not compact")
+	}
+	if stats.ToolResults != 0 || stats.CompactedChars >= stats.OriginalChars {
+		t.Fatalf("unexpected text-only compaction stats: %+v", stats)
+	}
+	if len(compacted) != 3 || compacted[1].Role != "user" || compacted[1].Content != "new request" {
+		t.Fatalf("compacted text-only shape = %#v, want system + active request + compact context", compacted)
+	}
+	context := compacted[2].Content
+	for _, want := range []string{loopCompactedContextPrefix, "old request", "details", "latest real user request above"} {
+		if !strings.Contains(context, want) {
+			t.Fatalf("compacted text-only context missing %q:\n%s", want, context)
 		}
 	}
 }
