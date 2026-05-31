@@ -354,9 +354,9 @@ func RevealManagedPlaywrightState(state ManagedPlaywrightState) error {
 	case normalized.BrowserPID > 0:
 		return setMacApplicationProcessVisible(normalized.BrowserPID, true, true)
 	case normalized.BrowserAppPath != "":
-		return exec.Command("open", "-a", normalized.BrowserAppPath).Run()
+		return setMacApplicationNamedProcessVisible(macAppName(normalized.BrowserAppPath, normalized.BrowserAppName), true, true)
 	case normalized.BrowserAppName != "":
-		return exec.Command("open", "-a", normalized.BrowserAppName).Run()
+		return setMacApplicationNamedProcessVisible(normalized.BrowserAppName, true, true)
 	default:
 		return fmt.Errorf("managed browser window is not available for this session yet")
 	}
@@ -419,8 +419,69 @@ func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]
 	return args, nil
 }
 
+func setMacApplicationNamedProcessVisible(appName string, visible, frontmost bool) error {
+	args, err := macApplicationNamedProcessVisibilityScript(appName, visible, frontmost)
+	if err != nil {
+		return err
+	}
+	if err := exec.Command("osascript", args...).Run(); err != nil {
+		return err
+	}
+	if visible && frontmost {
+		scheduleMacApplicationNamedProcessDelayedRaise(appName)
+	}
+	return nil
+}
+
+func macApplicationNamedProcessVisibilityScript(appName string, visible, frontmost bool) ([]string, error) {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		return nil, fmt.Errorf("managed browser app name required")
+	}
+	visibleLiteral := "false"
+	if visible {
+		visibleLiteral = "true"
+	}
+	lines := []string{
+		`tell application "System Events"`,
+		`set targetProcess to first application process whose name is ` + appleScriptStringLiteral(appName),
+		`set visible of targetProcess to ` + visibleLiteral,
+	}
+	if frontmost {
+		lines = append(lines,
+			`set frontmost of targetProcess to true`,
+			`try`,
+			`if (count of windows of targetProcess) > 0 then`,
+			`perform action "AXRaise" of window 1 of targetProcess`,
+			`end if`,
+			`end try`,
+			`set frontmost of targetProcess to true`,
+		)
+	}
+	lines = append(lines, `end tell`)
+	args := make([]string, 0, len(lines)*2)
+	for _, line := range lines {
+		args = append(args, "-e", line)
+	}
+	return args, nil
+}
+
 func scheduleMacApplicationProcessDelayedRaise(pid int) {
 	args, err := macApplicationProcessDelayedRaiseScript(pid, 300*time.Millisecond)
+	if err != nil {
+		return
+	}
+	cmd := exec.Command("osascript", args...)
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+}
+
+func scheduleMacApplicationNamedProcessDelayedRaise(appName string) {
+	args, err := macApplicationNamedProcessDelayedRaiseScript(appName, 300*time.Millisecond)
 	if err != nil {
 		return
 	}
@@ -468,6 +529,49 @@ func macApplicationProcessDelayedRaiseScript(pid int, delay time.Duration) ([]st
 		args = append(args, "-e", line)
 	}
 	return args, nil
+}
+
+func macApplicationNamedProcessDelayedRaiseScript(appName string, delay time.Duration) ([]string, error) {
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		return nil, fmt.Errorf("managed browser app name required")
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	delayLiteral := strconv.FormatFloat(delay.Seconds(), 'f', 3, 64)
+	lines := []string{
+		`delay ` + delayLiteral,
+		`tell application "System Events"`,
+		`set targetProcess to first application process whose name is ` + appleScriptStringLiteral(appName),
+		`set visible of targetProcess to true`,
+		`set frontmost of targetProcess to true`,
+		`try`,
+		`if (count of windows of targetProcess) > 0 then`,
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		`end if`,
+		`end try`,
+		`delay 0.300`,
+		`set visible of targetProcess to true`,
+		`set frontmost of targetProcess to true`,
+		`try`,
+		`if (count of windows of targetProcess) > 0 then`,
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		`end if`,
+		`end try`,
+		`end tell`,
+	}
+	args := make([]string, 0, len(lines)*2)
+	for _, line := range lines {
+		args = append(args, "-e", line)
+	}
+	return args, nil
+}
+
+func appleScriptStringLiteral(value string) string {
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	return `"` + escaped + `"`
 }
 
 func DetectManagedBrowserProcess(rootPID int) (ManagedBrowserProcess, bool, error) {

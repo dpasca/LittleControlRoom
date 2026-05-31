@@ -74,6 +74,7 @@ func (s *PlaywrightMCPBrowserSession) Navigate(ctx context.Context, url string) 
 }
 
 func (s *PlaywrightMCPBrowserSession) Snapshot(ctx context.Context, maxChars int) (BrowserActionResult, error) {
+	s.selectNonBlankTabIfCurrentBlank(ctx)
 	text, err := s.callTool(ctx, "browser_snapshot", map[string]any{})
 	if err != nil {
 		return BrowserActionResult{}, err
@@ -129,6 +130,7 @@ func (s *PlaywrightMCPBrowserSession) Screenshot(ctx context.Context, path strin
 }
 
 func (s *PlaywrightMCPBrowserSession) CurrentPage(ctx context.Context) (BrowserActionResult, error) {
+	s.selectNonBlankTabIfCurrentBlank(ctx)
 	text, err := s.callTool(ctx, "browser_snapshot", map[string]any{})
 	if err != nil {
 		return BrowserActionResult{}, err
@@ -178,6 +180,96 @@ func (s *PlaywrightMCPBrowserSession) callTool(ctx context.Context, name string,
 		return "", errors.New(resp.Result.Text())
 	}
 	return resp.Result.Text(), nil
+}
+
+func (s *PlaywrightMCPBrowserSession) selectNonBlankTabIfCurrentBlank(ctx context.Context) {
+	text, err := s.callTool(ctx, "browser_tabs", map[string]any{"action": "list"})
+	if err != nil {
+		return
+	}
+	index, ok := playwrightMCPNonBlankTabToSelect(parsePlaywrightMCPTabs(text))
+	if !ok {
+		return
+	}
+	_, _ = s.callTool(ctx, "browser_tabs", map[string]any{"action": "select", "index": index})
+}
+
+type playwrightMCPTab struct {
+	Index   int
+	Current bool
+	Title   string
+	URL     string
+}
+
+func parsePlaywrightMCPTabs(text string) []playwrightMCPTab {
+	var tabs []playwrightMCPTab
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		body := strings.TrimSpace(strings.TrimPrefix(line, "- "))
+		indexText, rest, ok := strings.Cut(body, ":")
+		if !ok {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimSpace(indexText))
+		if err != nil {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		current := false
+		if strings.HasPrefix(rest, "(current)") {
+			current = true
+			rest = strings.TrimSpace(strings.TrimPrefix(rest, "(current)"))
+		}
+		urlStart := strings.LastIndex(rest, " (")
+		if urlStart < 0 || !strings.HasSuffix(rest, ")") {
+			continue
+		}
+		title := strings.TrimSpace(rest[:urlStart])
+		title = strings.TrimPrefix(strings.TrimSuffix(title, "]"), "[")
+		url := strings.TrimSpace(strings.TrimSuffix(rest[urlStart+2:], ")"))
+		tabs = append(tabs, playwrightMCPTab{
+			Index:   index,
+			Current: current,
+			Title:   title,
+			URL:     url,
+		})
+	}
+	return tabs
+}
+
+func playwrightMCPNonBlankTabToSelect(tabs []playwrightMCPTab) (int, bool) {
+	currentIndex := -1
+	for i, tab := range tabs {
+		if tab.Current {
+			currentIndex = i
+			break
+		}
+	}
+	if currentIndex >= 0 && !playwrightMCPBlankTabURL(tabs[currentIndex].URL) {
+		return 0, false
+	}
+	if currentIndex < 0 && len(tabs) > 0 && !playwrightMCPBlankTabURL(tabs[0].URL) {
+		return 0, false
+	}
+	for _, tab := range tabs {
+		if !playwrightMCPBlankTabURL(tab.URL) {
+			return tab.Index, true
+		}
+	}
+	return 0, false
+}
+
+func playwrightMCPBlankTabURL(raw string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	switch normalized {
+	case "", "about:blank", "chrome://newtab/", "chrome://new-tab-page/":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *PlaywrightMCPBrowserSession) ensureStarted(ctx context.Context) error {

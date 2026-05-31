@@ -210,6 +210,49 @@ func TestMacApplicationProcessDelayedRaiseScriptRepeatsTargetWindowRaise(t *test
 	}
 }
 
+func TestMacApplicationNamedProcessVisibilityScriptRaisesExistingApp(t *testing.T) {
+	args, err := macApplicationNamedProcessVisibilityScript("Google Chrome", true, true)
+	if err != nil {
+		t.Fatalf("macApplicationNamedProcessVisibilityScript() error = %v", err)
+	}
+	script := strings.Join(args, "\n")
+	for _, want := range []string{
+		`whose name is "Google Chrome"`,
+		"set visible of targetProcess to true",
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		"set frontmost of targetProcess to true",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "open -a") {
+		t.Fatalf("named process reveal should not launch a new app/tab:\n%s", script)
+	}
+}
+
+func TestMacApplicationNamedProcessDelayedRaiseScriptRepeatsTargetWindowRaise(t *testing.T) {
+	args, err := macApplicationNamedProcessDelayedRaiseScript("Google Chrome", 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("macApplicationNamedProcessDelayedRaiseScript() error = %v", err)
+	}
+	script := strings.Join(args, "\n")
+	for _, want := range []string{
+		"delay 0.300",
+		`whose name is "Google Chrome"`,
+		"set visible of targetProcess to true",
+		`perform action "AXRaise" of window 1 of targetProcess`,
+		"set frontmost of targetProcess to true",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	if got := strings.Count(script, `perform action "AXRaise" of window 1 of targetProcess`); got != 2 {
+		t.Fatalf("raise count = %d, want 2:\n%s", got, script)
+	}
+}
+
 func TestMacApplicationProcessVisibilityScriptDoesNotRaiseWindowWhenHiding(t *testing.T) {
 	args, err := macApplicationProcessVisibilityScript(49916, false, false)
 	if err != nil {

@@ -112,6 +112,90 @@ done
 	}
 }
 
+func TestPlaywrightMCPTabSelectionPrefersNonBlankWhenCurrentIsBlank(t *testing.T) {
+	text := strings.Join([]string{
+		"### Open tabs",
+		"- 0: (current) [] (about:blank)",
+		"- 1: [Example] (https://example.test/)",
+		"",
+	}, "\n")
+	index, ok := playwrightMCPNonBlankTabToSelect(parsePlaywrightMCPTabs(text))
+	if !ok || index != 1 {
+		t.Fatalf("tab selection = %d, %v; want index 1", index, ok)
+	}
+}
+
+func TestPlaywrightMCPTabSelectionKeepsCurrentNonBlank(t *testing.T) {
+	text := strings.Join([]string{
+		"### Open tabs",
+		"- 0: (current) [Example] (https://example.test/)",
+		"- 1: [] (about:blank)",
+		"",
+	}, "\n")
+	index, ok := playwrightMCPNonBlankTabToSelect(parsePlaywrightMCPTabs(text))
+	if ok {
+		t.Fatalf("tab selection = %d, %v; want no selection", index, ok)
+	}
+}
+
+func TestPlaywrightMCPBrowserSessionSelectsNonBlankTabBeforeCurrentPage(t *testing.T) {
+	dir := t.TempDir()
+	fakeMCP := filepath.Join(dir, "fake-mcp.sh")
+	callsPath := filepath.Join(dir, "calls.log")
+	script := `#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$CALLS_PATH"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+    printf '{"id":"%s","jsonrpc":"2.0","result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"Playwright","version":"test"}}}\n' "$id"
+  elif printf '%s' "$line" | grep -q '"name":"browser_tabs"' && printf '%s' "$line" | grep -q '"action":"list"'; then
+    printf '{"id":"%s","jsonrpc":"2.0","result":{"content":[{"type":"text","text":"### Open tabs\\n- 0: (current) [] (about:blank)\\n- 1: [Example] (https://example.test/)\\n"}]}}\n' "$id"
+  elif printf '%s' "$line" | grep -q '"name":"browser_tabs"' && printf '%s' "$line" | grep -q '"action":"select"'; then
+    printf '{"id":"%s","jsonrpc":"2.0","result":{"content":[{"type":"text","text":"### Open tabs\\n- 0: [] (about:blank)\\n- 1: (current) [Example] (https://example.test/)\\n"}]}}\n' "$id"
+  elif printf '%s' "$line" | grep -q '"name":"browser_snapshot"'; then
+    printf '{"id":"%s","jsonrpc":"2.0","result":{"content":[{"type":"text","text":"### Page state\\n- Page URL: https://example.test/\\n- Page Title: Example"}]}}\n' "$id"
+  fi
+done
+`
+	if err := os.WriteFile(fakeMCP, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	origCommand := playwrightMCPCommand
+	playwrightMCPCommand = fakeMCP
+	t.Cleanup(func() { playwrightMCPCommand = origCommand })
+	t.Setenv("CALLS_PATH", callsPath)
+
+	session, err := NewPlaywrightMCPBrowserSession(BrowserSessionConfig{
+		DataDir:     dir,
+		Provider:    "lcagent",
+		ProjectPath: "/tmp/demo",
+		SessionKey:  "session-demo",
+		ProfileKey:  "profile-demo",
+		LaunchMode:  ManagedLaunchModeHeadless,
+		Policy:      DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	result, err := session.CurrentPage(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://example.test/" || result.Title != "Example" {
+		t.Fatalf("current page = %#v", result)
+	}
+	raw, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := string(raw)
+	if !strings.Contains(calls, `"name":"browser_tabs"`) || !strings.Contains(calls, `"action":"select"`) || !strings.Contains(calls, `"index":1`) {
+		t.Fatalf("calls did not select the non-blank tab:\n%s", calls)
+	}
+}
+
 func TestBrowserActionResultFromMCPTextParsesPageState(t *testing.T) {
 	result := browserActionResultFromMCPText("snapshot", "### Page state\n- Page URL: https://example.test/\n- Page Title: Example", "")
 	raw, _ := json.Marshal(result)
