@@ -239,6 +239,80 @@ func TestExtractSnapshotOpenCodePrefersVisibleAssistantTextOverPlanningParts(t *
 	}
 }
 
+func TestExtractSnapshotLCAgentJSONL(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "lcagent-session.jsonl")
+	if err := os.WriteFile(fixture, []byte(strings.Join([]string{
+		`{"type":"session_meta","id":"lca_flow","cwd":"/tmp/lcagent-demo","started_at":"2026-05-30T11:59:56Z"}`,
+		`{"type":"user_message","message":"Does the flow section participate in inference?"}`,
+		`{"type":"plan_update","items":[{"step":"Inspect Boss prompt context","status":"completed"}]}`,
+		`{"type":"tool_result","tool":"run_command","result":{"success":true,"command":"go test ./internal/boss","cwd":"/tmp/lcagent-demo","output":"secret-output-that-should-not-enter-snapshot","files_touched":["internal/boss/context_state.go"]}}`,
+		`{"type":"verification_summary","status":"verified","message":"go test ./internal/boss passed"}`,
+		`{"type":"assistant_message","message":"Flow messages are filtered out before prompt construction.","files_changed":["internal/boss/context_state.go"],"verification":["go test ./internal/boss"]}`,
+		`{"type":"turn_complete","summary":"Flow messages are excluded from Boss inference.","final_outcome":"completed","files_changed":["internal/boss/context_state.go"],"verification":["go test ./internal/boss"],"verification_status":"verified"}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	snapshot, err := ExtractSnapshot(context.Background(), model.SessionClassification{
+		Source:          model.SessionSourceLCAgent,
+		SessionID:       "lca_flow",
+		ProjectPath:     "/tmp/lcagent-demo",
+		SessionFile:     fixture,
+		SessionFormat:   "lcagent_jsonl",
+		SourceUpdatedAt: time.Now(),
+	}, model.SessionEvidence{
+		Source:               model.SessionSourceLCAgent,
+		SessionID:            "lca_flow",
+		SessionFile:          fixture,
+		Format:               "lcagent_jsonl",
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+	}, GitStatusSnapshot{})
+	if err != nil {
+		t.Fatalf("extract snapshot: %v", err)
+	}
+	if len(snapshot.Transcript) != 2 {
+		t.Fatalf("expected user and final assistant transcript items, got %#v", snapshot.Transcript)
+	}
+	if snapshot.Transcript[0].Role != "user" || !strings.Contains(snapshot.Transcript[0].Text, "flow section") {
+		t.Fatalf("unexpected user item: %#v", snapshot.Transcript[0])
+	}
+	assistant := snapshot.Transcript[1]
+	for _, want := range []string{
+		"Flow messages are excluded from Boss inference.",
+		"outcome: completed",
+		"verification status: verified",
+		"files changed: internal/boss/context_state.go",
+		"verification: go test ./internal/boss",
+	} {
+		if !strings.Contains(assistant.Text, want) {
+			t.Fatalf("assistant text missing %q:\n%s", want, assistant.Text)
+		}
+	}
+	if strings.Contains(assistant.Text, "secret-output-that-should-not-enter-snapshot") {
+		t.Fatalf("assistant text leaked raw tool output:\n%s", assistant.Text)
+	}
+
+	preview, err := ExtractPreview(context.Background(), model.SessionEvidence{
+		Source:      model.SessionSourceLCAgent,
+		SessionID:   "lca_flow",
+		SessionFile: fixture,
+		Format:      "lcagent_jsonl",
+	})
+	if err != nil {
+		t.Fatalf("extract preview: %v", err)
+	}
+	if !strings.Contains(preview.Title, "flow section") {
+		t.Fatalf("preview title = %q, want user prompt", preview.Title)
+	}
+	if !strings.Contains(preview.Summary, "Flow messages are excluded") {
+		t.Fatalf("preview summary = %q, want final assistant summary", preview.Summary)
+	}
+}
+
 func TestExtractSnapshotLongAssistantMessageKeepsTailContext(t *testing.T) {
 	t.Parallel()
 
@@ -1129,6 +1203,70 @@ func TestBuildClassificationRequestLeavesModelUnsetUntilClientChoosesOne(t *test
 	}
 	if classification.Model != "" {
 		t.Fatalf("classification.Model = %q, want blank until the active client chooses one", classification.Model)
+	}
+}
+
+func TestManagerQueueProjectSupportsLCAgentJSONL(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "lcagent-project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	sessionFile := filepath.Join(dir, "lca_queue.jsonl")
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := os.WriteFile(sessionFile, []byte(strings.Join([]string{
+		`{"type":"session_meta","id":"lca_queue","cwd":"` + projectPath + `","started_at":"` + now.Add(-time.Minute).Format(time.RFC3339) + `"}`,
+		`{"type":"user_message","message":"Please inspect the queue path."}`,
+		`{"type":"turn_complete","summary":"Inspected the queue path.","verification_status":"reported"}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write lcagent fixture: %v", err)
+	}
+
+	state := model.ProjectState{
+		Path:          projectPath,
+		Name:          "lcagent-project",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+		Sessions: []model.SessionEvidence{{
+			Source:      model.SessionSourceLCAgent,
+			SessionID:   "lca_queue",
+			ProjectPath: projectPath,
+			SessionFile: sessionFile,
+			Format:      "lcagent_jsonl",
+			LastEventAt: now,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	manager := NewManager(st, nil, Options{Client: &fakeClassifier{}})
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("QueueProject() error = %v", err)
+	}
+	if !queued {
+		t.Fatalf("QueueProject() queued = false, want true")
+	}
+	classification, err := st.GetSessionClassification(ctx, "lcagent:lca_queue")
+	if err != nil {
+		t.Fatalf("get classification: %v", err)
+	}
+	if classification.SessionFormat != "lcagent_jsonl" {
+		t.Fatalf("session format = %q, want lcagent_jsonl", classification.SessionFormat)
+	}
+	if strings.TrimSpace(classification.SnapshotHash) == "" {
+		t.Fatalf("expected queued LCAgent classification to have snapshot hash")
 	}
 }
 

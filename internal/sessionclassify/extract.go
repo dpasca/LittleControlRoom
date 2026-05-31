@@ -88,6 +88,8 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 		items, err = extractOpenCodeTranscript(ctx, classification.SessionFile)
 	case "claude_code":
 		items, err = extractClaudeCodeTranscript(classification.SessionFile)
+	case "lcagent_jsonl":
+		items, err = extractLCAgentTranscript(classification.SessionFile)
 	default:
 		err = fmt.Errorf("unsupported session format: %s", classification.SessionFormat)
 	}
@@ -134,6 +136,8 @@ func ExtractPreview(ctx context.Context, session model.SessionEvidence) (Session
 		return extractOpenCodePreview(ctx, session.SessionFile)
 	case "claude_code":
 		return extractClaudeCodePreview(session.SessionFile)
+	case "lcagent_jsonl":
+		return extractLCAgentPreview(session.SessionFile)
 	default:
 		return SessionPreview{}, fmt.Errorf("unsupported session format: %s", session.Format)
 	}
@@ -1039,6 +1043,376 @@ func extractClaudeCodeTranscript(path string) ([]TranscriptItem, error) {
 		}
 	}
 	return finalizeTranscript(items), nil
+}
+
+func extractLCAgentTranscript(path string) ([]TranscriptItem, error) {
+	lines, err := readTailLines(path, codexTailBytes)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TranscriptItem, 0, len(lines))
+	for _, line := range lines {
+		if item, ok := extractLCAgentTranscriptItem(line); ok {
+			items = append(items, item)
+		}
+	}
+	return finalizeTranscript(items), nil
+}
+
+func extractLCAgentPreview(path string) (SessionPreview, error) {
+	headItems, err := extractLCAgentHeadTranscript(path)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	tailItems, err := extractLCAgentTranscript(path)
+	if err != nil {
+		return SessionPreview{}, err
+	}
+	items := append(headItems, tailItems...)
+	if len(items) == 0 {
+		return SessionPreview{}, errors.New("no conversational transcript found")
+	}
+	return previewFromTranscript(items), nil
+}
+
+func extractLCAgentHeadTranscript(path string) ([]TranscriptItem, error) {
+	lines, err := readHeadLines(path, previewHeadBytes)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]TranscriptItem, 0, previewItemLimit)
+	for _, line := range lines {
+		item, ok := extractLCAgentTranscriptItem(line)
+		if !ok {
+			continue
+		}
+		items = append(items, item)
+		if len(items) >= previewItemLimit {
+			break
+		}
+	}
+	return finalizeTranscript(items), nil
+}
+
+type lcagentPlanItem struct {
+	Step   string `json:"step"`
+	Status string `json:"status"`
+}
+
+func extractLCAgentTranscriptItem(line string) (TranscriptItem, bool) {
+	var event struct {
+		Type               string            `json:"type"`
+		Message            string            `json:"message"`
+		Summary            string            `json:"summary"`
+		Reason             string            `json:"reason"`
+		Tool               string            `json:"tool"`
+		Result             json.RawMessage   `json:"result"`
+		Items              []lcagentPlanItem `json:"items"`
+		Files              []string          `json:"files"`
+		FilesChanged       []string          `json:"files_changed"`
+		Verification       []string          `json:"verification"`
+		Status             string            `json:"status"`
+		Command            string            `json:"command"`
+		Argv               []string          `json:"argv"`
+		CWD                string            `json:"cwd"`
+		Path               string            `json:"path"`
+		Stage              string            `json:"stage"`
+		Kind               string            `json:"kind"`
+		Count              int               `json:"count"`
+		SourceSessionID    string            `json:"source_session_id"`
+		SourcePath         string            `json:"source_path"`
+		SourceCWD          string            `json:"source_cwd"`
+		FinalOutcome       string            `json:"final_outcome"`
+		VerificationStatus string            `json:"verification_status"`
+	}
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		return TranscriptItem{}, false
+	}
+
+	switch event.Type {
+	case "user_message":
+		return lcagentTranscriptItem("user", event.Message, true)
+	case "assistant_message":
+		return lcagentTranscriptItem("assistant", lcagentFinalText(event.Message, event.FinalOutcome, "", event.FilesChanged, event.Verification), true)
+	case "final_response_audit":
+		return lcagentTranscriptItem("assistant", lcagentFinalText("", event.FinalOutcome, "", nil, nil), true)
+	case "turn_complete":
+		return lcagentTranscriptItem("assistant", lcagentFinalText(event.Summary, event.FinalOutcome, event.VerificationStatus, event.FilesChanged, event.Verification), true)
+	case "turn_aborted":
+		return lcagentTranscriptItem("assistant", "turn aborted: "+event.Reason, true)
+	case "tool_call":
+		return lcagentTranscriptItem("assistant", lcagentToolCallText(event.Tool), false)
+	case "tool_result":
+		return lcagentTranscriptItem("assistant", lcagentToolResultText(event.Tool, event.Result), false)
+	case "plan_update":
+		return lcagentTranscriptItem("assistant", lcagentPlanText(event.Items), false)
+	case "files_touched":
+		return lcagentTranscriptItem("assistant", lcagentFilesText("files touched", event.Files), false)
+	case "resume_context":
+		return lcagentTranscriptItem("assistant", lcagentResumeContextText(event.SourceSessionID, event.SourcePath, event.SourceCWD, event.Summary), false)
+	case "permission_denied":
+		return lcagentTranscriptItem("assistant", lcagentPermissionDeniedText(event.Tool, event.Reason), false)
+	case "patch_diff_summary":
+		return lcagentTranscriptItem("assistant", lcagentPatchDiffSummaryText(event.Summary), false)
+	case "patch_feedback":
+		return lcagentTranscriptItem("assistant", lcagentPatchFeedbackText(event.Path, event.Stage, event.Message), false)
+	case "verification_check":
+		return lcagentTranscriptItem("assistant", lcagentVerificationCheckText(event.Command, event.Argv, event.CWD, event.Status), false)
+	case "verification_feedback":
+		return lcagentTranscriptItem("assistant", lcagentVerificationFeedbackText(event.Command, event.Status, event.Message), false)
+	case "repair_feedback_suppressed":
+		return lcagentTranscriptItem("assistant", lcagentRepairFeedbackSuppressedText(event.Kind, event.Message, event.Count), false)
+	case "verification_summary":
+		return lcagentTranscriptItem("assistant", lcagentVerificationSummaryText(event.Status, event.Message), false)
+	default:
+		return TranscriptItem{}, false
+	}
+}
+
+func lcagentTranscriptItem(role, text string, visible bool) (TranscriptItem, bool) {
+	role = strings.ToLower(strings.TrimSpace(role))
+	text = sanitizeTranscriptText(text)
+	switch role {
+	case "user", "assistant":
+	default:
+		return TranscriptItem{}, false
+	}
+	if text == "" {
+		return TranscriptItem{}, false
+	}
+	return TranscriptItem{Role: role, Text: text, Visible: visible}, true
+}
+
+func lcagentToolCallText(tool string) string {
+	tool = sanitizeTranscriptText(tool)
+	if tool == "" {
+		return ""
+	}
+	return "tool call: " + tool
+}
+
+func lcagentToolResultText(tool string, raw json.RawMessage) string {
+	var result struct {
+		Success      bool     `json:"success"`
+		Error        string   `json:"error"`
+		Command      string   `json:"command"`
+		CWD          string   `json:"cwd"`
+		ExitCode     int      `json:"exit_code"`
+		TimedOut     bool     `json:"timed_out"`
+		Truncated    bool     `json:"truncated"`
+		Binary       bool     `json:"binary"`
+		ArtifactPath string   `json:"artifact_path"`
+		FilesTouched []string `json:"files_touched"`
+	}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &result)
+	}
+
+	tool = sanitizeTranscriptText(tool)
+	status := "succeeded"
+	if !result.Success {
+		status = "failed"
+	}
+	parts := []string{"tool result"}
+	if tool != "" {
+		parts[0] = "tool result: " + tool
+	}
+	parts = append(parts, status)
+	if tool == "run_command" {
+		if result.Command = sanitizeTranscriptText(result.Command); result.Command != "" {
+			parts = append(parts, "command: "+result.Command)
+		}
+		if result.CWD = sanitizeTranscriptText(result.CWD); result.CWD != "" {
+			parts = append(parts, "cwd: "+result.CWD)
+		}
+	}
+	if result.Error = sanitizeTranscriptText(result.Error); result.Error != "" {
+		parts = append(parts, "error: "+result.Error)
+	}
+	if result.ExitCode != 0 {
+		parts = append(parts, fmt.Sprintf("exit code: %d", result.ExitCode))
+	}
+	if result.TimedOut {
+		parts = append(parts, "timed out")
+	}
+	if result.Truncated {
+		parts = append(parts, "output truncated")
+	}
+	if result.Binary {
+		parts = append(parts, "binary output")
+	}
+	if result.ArtifactPath = sanitizeTranscriptText(result.ArtifactPath); result.ArtifactPath != "" {
+		parts = append(parts, "artifact: "+result.ArtifactPath)
+	}
+	if files := lcagentFilesText("files touched", result.FilesTouched); files != "" {
+		parts = append(parts, files)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func lcagentPlanText(items []lcagentPlanItem) string {
+	if len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		step := sanitizeTranscriptText(item.Step)
+		if step == "" {
+			continue
+		}
+		status := sanitizeTranscriptText(item.Status)
+		if status != "" {
+			step = status + ": " + step
+		}
+		parts = append(parts, step)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "plan: " + strings.Join(parts, "; ")
+}
+
+func lcagentFinalText(summary, outcome, verificationStatus string, filesChanged, verification []string) string {
+	parts := []string{}
+	if summary = sanitizeTranscriptText(summary); summary != "" {
+		parts = append(parts, summary)
+	}
+	if outcome = sanitizeTranscriptText(outcome); outcome != "" {
+		parts = append(parts, "outcome: "+outcome)
+	}
+	if verificationStatus = sanitizeTranscriptText(verificationStatus); verificationStatus != "" {
+		parts = append(parts, "verification status: "+verificationStatus)
+	}
+	if files := lcagentFilesText("files changed", filesChanged); files != "" {
+		parts = append(parts, files)
+	}
+	if checks := lcagentFilesText("verification", verification); checks != "" {
+		parts = append(parts, checks)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func lcagentPermissionDeniedText(tool, reason string) string {
+	reason = sanitizeTranscriptText(reason)
+	tool = sanitizeTranscriptText(tool)
+	if reason == "" && tool != "" {
+		reason = tool + " denied"
+	}
+	if reason == "" {
+		reason = "permission denied"
+	}
+	return "permission denied: " + reason
+}
+
+func lcagentResumeContextText(sourceID, sourcePath, sourceCWD, summary string) string {
+	parts := []string{"resume context"}
+	if sourceID = sanitizeTranscriptText(sourceID); sourceID != "" {
+		parts = append(parts, "source session: "+sourceID)
+	}
+	if sourcePath = sanitizeTranscriptText(sourcePath); sourcePath != "" {
+		parts = append(parts, "source artifact: "+sourcePath)
+	}
+	if sourceCWD = sanitizeTranscriptText(sourceCWD); sourceCWD != "" {
+		parts = append(parts, "source workspace: "+sourceCWD)
+	}
+	if summary = sanitizeTranscriptText(summary); summary != "" {
+		parts = append(parts, summary)
+	}
+	return strings.Join(parts, "; ")
+}
+
+func lcagentPatchDiffSummaryText(summary string) string {
+	summary = sanitizeTranscriptText(summary)
+	if summary == "" {
+		return ""
+	}
+	return "patch diff summary: " + summary
+}
+
+func lcagentPatchFeedbackText(path, stage, message string) string {
+	message = sanitizeTranscriptText(message)
+	if message != "" {
+		return message
+	}
+	path = sanitizeTranscriptText(path)
+	stage = lcagentFirstNonEmpty(sanitizeTranscriptText(stage), "apply_patch")
+	if path != "" {
+		return "patch feedback: " + path + " failed during " + stage
+	}
+	return "patch feedback: " + stage
+}
+
+func lcagentVerificationCheckText(command string, argv []string, cwd string, status string) string {
+	command = lcagentFirstNonEmpty(sanitizeTranscriptText(command), sanitizeTranscriptText(strings.Join(argv, " ")), "verification check")
+	if cwd = sanitizeTranscriptText(cwd); cwd != "" {
+		command += " in " + cwd
+	}
+	status = lcagentFirstNonEmpty(sanitizeTranscriptText(status), "unknown")
+	return "verification " + status + ": " + command
+}
+
+func lcagentVerificationFeedbackText(command, status, message string) string {
+	message = sanitizeTranscriptText(message)
+	if message != "" {
+		return message
+	}
+	command = sanitizeTranscriptText(command)
+	status = lcagentFirstNonEmpty(sanitizeTranscriptText(status), "needs attention")
+	if command != "" {
+		return "verification feedback: " + command + " is " + status
+	}
+	return "verification feedback: " + status
+}
+
+func lcagentRepairFeedbackSuppressedText(kind, message string, count int) string {
+	kind = lcagentFirstNonEmpty(sanitizeTranscriptText(kind), "repair")
+	message = sanitizeTranscriptText(message)
+	if count > 0 && message != "" {
+		return fmt.Sprintf("suppressed duplicate %s feedback after %d repeats: %s", kind, count, message)
+	}
+	if message != "" {
+		return "suppressed duplicate " + kind + " feedback: " + message
+	}
+	return "suppressed duplicate " + kind + " feedback"
+}
+
+func lcagentVerificationSummaryText(status, message string) string {
+	message = sanitizeTranscriptText(message)
+	if message != "" {
+		return message
+	}
+	status = sanitizeTranscriptText(status)
+	if status == "" {
+		return ""
+	}
+	return "verification status: " + status
+}
+
+func lcagentFilesText(label string, files []string) string {
+	cleaned := make([]string, 0, len(files))
+	for _, file := range files {
+		file = sanitizeTranscriptText(file)
+		if file != "" {
+			cleaned = append(cleaned, file)
+		}
+	}
+	if len(cleaned) == 0 {
+		return ""
+	}
+	if len(cleaned) > 6 {
+		hidden := len(cleaned) - 6
+		cleaned = append(cleaned[:5], fmt.Sprintf("%s (+%d more)", cleaned[5], hidden))
+	}
+	return sanitizeTranscriptText(label) + ": " + strings.Join(cleaned, ", ")
+}
+
+func lcagentFirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func extractClaudeCodePreview(path string) (SessionPreview, error) {

@@ -235,7 +235,7 @@ func BuildClassificationRequest(state model.ProjectState) (model.SessionClassifi
 		return model.SessionClassification{}, false
 	}
 	switch latest.Format {
-	case "modern", "legacy", "opencode_db", "claude_code":
+	case "modern", "legacy", "opencode_db", "claude_code", "lcagent_jsonl":
 	default:
 		return model.SessionClassification{}, false
 	}

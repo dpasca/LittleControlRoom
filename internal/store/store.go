@@ -2856,6 +2856,9 @@ func (s *Store) QueueSessionClassification(ctx context.Context, classification m
 			if retryAfter <= 0 {
 				break
 			}
+			if staleUnsupportedSessionFormatFailure(existing, classification) {
+				break
+			}
 			if !existing.UpdatedAt.IsZero() && now.Sub(existing.UpdatedAt) < retryAfter {
 				return false, nil
 			}
@@ -2909,6 +2912,14 @@ func refreshingClassificationDisplayPayload(existing model.SessionClassification
 	default:
 		return "", ""
 	}
+}
+
+func staleUnsupportedSessionFormatFailure(existing, next model.SessionClassification) bool {
+	format := strings.TrimSpace(next.SessionFormat)
+	if format != "lcagent_jsonl" {
+		return false
+	}
+	return strings.TrimSpace(existing.LastError) == "unsupported session format: "+format
 }
 
 func (s *Store) RecordSessionClassificationFailure(ctx context.Context, classification *model.SessionClassification, lastError string, retryAfter time.Duration) (bool, error) {

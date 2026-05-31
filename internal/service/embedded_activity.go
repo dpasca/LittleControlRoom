@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -147,6 +148,8 @@ func embeddedActivityDefaultFormat(source model.SessionSource) string {
 		return "opencode_db"
 	case model.SessionSourceClaudeCode:
 		return "claude_code"
+	case model.SessionSourceLCAgent:
+		return "lcagent_jsonl"
 	default:
 		return "modern"
 	}
@@ -191,6 +194,11 @@ func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessio
 	source = model.NormalizeSessionSource(source)
 	sessionID = strings.TrimSpace(sessionID)
 	rawSessionID = strings.TrimSpace(rawSessionID)
+	if rawSessionID == "" {
+		if _, parsedRaw := model.ParseCanonicalSessionID(sessionID); parsedRaw != "" {
+			rawSessionID = parsedRaw
+		}
+	}
 
 	switch source {
 	case model.SessionSourceOpenCode:
@@ -203,6 +211,12 @@ func resolveEmbeddedSessionFile(source model.SessionSource, sessionID, rawSessio
 			lookupID = sessionID
 		}
 		return resolveCodexSessionFile(cfg.CodexHome, lookupID, startedAt, lastActivityAt)
+	case model.SessionSourceLCAgent:
+		lookupID := rawSessionID
+		if lookupID == "" {
+			lookupID = sessionID
+		}
+		return resolveLCAgentSessionFile(cfg.DataDir, lookupID, startedAt, lastActivityAt)
 	}
 
 	return ""
@@ -232,6 +246,31 @@ func resolveCodexSessionFile(codexHome, sessionID string, times ...time.Time) st
 			}
 			sort.Strings(matches)
 			return matches[len(matches)-1]
+		}
+	}
+
+	return ""
+}
+
+func resolveLCAgentSessionFile(dataDir, sessionID string, times ...time.Time) string {
+	dataDir = strings.TrimSpace(dataDir)
+	sessionID = strings.TrimSpace(sessionID)
+	if dataDir == "" || sessionID == "" {
+		return ""
+	}
+
+	for _, day := range codexSessionDateCandidates(times...) {
+		path := filepath.Join(
+			dataDir,
+			"lcagent",
+			"sessions",
+			day.Format("2006"),
+			day.Format("01"),
+			day.Format("02"),
+			sessionID+".jsonl",
+		)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
 		}
 	}
 

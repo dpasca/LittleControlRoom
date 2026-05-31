@@ -2653,6 +2653,66 @@ func TestQueueSessionClassificationFailedSameSnapshotCanRetryImmediatelyWhenForc
 	}
 }
 
+func TestQueueSessionClassificationRetriesStaleLCAgentUnsupportedFormatFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	classification := model.NormalizeSessionClassificationIdentity(model.SessionClassification{
+		Source:            model.SessionSourceLCAgent,
+		SessionID:         "lca_old_unsupported",
+		ProjectPath:       "/tmp/lcagent-unsupported-retry",
+		SessionFile:       "/tmp/lcagent-unsupported-retry/session.jsonl",
+		SessionFormat:     "lcagent_jsonl",
+		SnapshotHash:      "hash-lcagent-unsupported-retry",
+		Model:             "gpt-5-mini",
+		ClassifierVersion: "v1",
+		SourceUpdatedAt:   now,
+	})
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:         classification.ProjectPath,
+		Name:         "lcagent-unsupported-retry",
+		LastActivity: now,
+		Status:       model.StatusIdle,
+		InScope:      true,
+		UpdatedAt:    now,
+		Sessions: []model.SessionEvidence{{
+			Source:      model.SessionSourceLCAgent,
+			SessionID:   classification.SessionID,
+			ProjectPath: classification.ProjectPath,
+			SessionFile: classification.SessionFile,
+			Format:      classification.SessionFormat,
+			LastEventAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project state: %v", err)
+	}
+
+	if queued, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil || !queued {
+		t.Fatalf("initial queue: queued=%v err=%v", queued, err)
+	}
+	claimed, err := st.ClaimNextPendingSessionClassification(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim classification: %v", err)
+	}
+	if err := st.FailSessionClassification(ctx, claimed.SessionID, "unsupported session format: lcagent_jsonl"); err != nil {
+		t.Fatalf("fail classification: %v", err)
+	}
+
+	if queued, err := st.QueueSessionClassification(ctx, classification, 15*time.Minute); err != nil {
+		t.Fatalf("retry unsupported format failure: %v", err)
+	} else if !queued {
+		t.Fatalf("expected stale unsupported LCAgent format failure to requeue immediately")
+	}
+}
+
 func TestQueueSessionClassificationNewSnapshotCarriesCurrentAssessmentDisplay(t *testing.T) {
 	t.Parallel()
 

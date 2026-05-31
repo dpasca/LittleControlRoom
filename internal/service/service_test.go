@@ -1434,6 +1434,31 @@ func TestRecordEmbeddedSessionActivityQueuesClassificationForCodexLiveSession(t 
 	}
 }
 
+func TestResolveEmbeddedSessionFileFindsLCAgentSessionFile(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	now := time.Date(2026, 5, 30, 2, 3, 4, 0, time.UTC)
+	sessionID := "lca_resolve"
+	sessionDir := filepath.Join(cfg.DataDir, "lcagent", "sessions", "2026", "05", "30")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatalf("mkdir lcagent session dir: %v", err)
+	}
+	want := filepath.Join(sessionDir, sessionID+".jsonl")
+	if err := os.WriteFile(want, []byte(`{"type":"session_meta","id":"lca_resolve"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write lcagent session file: %v", err)
+	}
+
+	if got := embeddedActivityDefaultFormat(model.SessionSourceLCAgent); got != "lcagent_jsonl" {
+		t.Fatalf("embeddedActivityDefaultFormat(LCAgent) = %q, want lcagent_jsonl", got)
+	}
+	got := resolveEmbeddedSessionFile(model.SessionSourceLCAgent, "lcagent:"+sessionID, "", now, now, cfg)
+	if got != want {
+		t.Fatalf("resolveEmbeddedSessionFile() = %q, want %q", got, want)
+	}
+}
+
 func TestRefreshProjectStatusBackfillsCodexSessionFileFromCodexHome(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
