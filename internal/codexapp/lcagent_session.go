@@ -97,6 +97,7 @@ type lcagentSession struct {
 	currentBrowserPageURL    string
 	currentBrowserPageStale  bool
 	pendingInitialUserEcho   string
+	pendingSteerEchoes       []string
 	entries                  []TranscriptEntry
 	revision                 uint64
 	cache                    transcriptExportCache
@@ -241,13 +242,23 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 	if input.Empty() {
 		return nil
 	}
+	transcriptText := input.TranscriptText()
+	displayText := firstNonEmpty(input.TranscriptDisplayText(), transcriptText)
 	s.mu.Lock()
 	if s.busy && s.stdin != nil {
 		stdin := s.stdin
+		s.status = "Queued steer for LCAgent"
+		s.lastError = ""
+		s.appendEntryLocked(TranscriptUser, displayText)
+		s.appendEntryLocked(TranscriptStatus, "Queued for LCAgent; it will be read at the next turn boundary. Use ctrl+c to interrupt the current run.")
+		s.pendingSteerEchoes = append(s.pendingSteerEchoes, strings.TrimSpace(transcriptText))
 		s.mu.Unlock()
+		if s.notify != nil {
+			s.notify()
+		}
 		payload, err := json.Marshal(map[string]string{
 			"type":    "steer",
-			"message": input.TranscriptText(),
+			"message": transcriptText,
 		})
 		if err != nil {
 			return err
@@ -256,11 +267,10 @@ func (s *lcagentSession) SubmitInput(input Submission) error {
 			s.appendAsync(TranscriptError, "LCAgent steer failed: "+err.Error())
 			return err
 		}
-		s.appendAsync(TranscriptStatus, "Steer sent to LCAgent")
 		return nil
 	}
 	s.mu.Unlock()
-	return s.startRunAsync(input.TranscriptText(), input.TranscriptDisplayText())
+	return s.startRunAsync(transcriptText, input.TranscriptDisplayText())
 }
 
 func (s *lcagentSession) ShowStatus() error {
@@ -1618,6 +1628,14 @@ func (s *lcagentSession) handleUserMessageEvent(event map[string]json.RawMessage
 	}
 	origin := strings.TrimSpace(rawJSONString(event["origin"]))
 	s.mu.Lock()
+	if s.shouldSuppressPendingSteerEchoLocked(message, origin) {
+		s.touchLocked()
+		s.mu.Unlock()
+		if s.notify != nil {
+			s.notify()
+		}
+		return
+	}
 	if s.shouldSuppressInitialUserEchoLocked(message, origin) {
 		s.pendingInitialUserEcho = ""
 		s.touchLocked()
@@ -1633,6 +1651,21 @@ func (s *lcagentSession) handleUserMessageEvent(event map[string]json.RawMessage
 	if s.notify != nil {
 		s.notify()
 	}
+}
+
+func (s *lcagentSession) shouldSuppressPendingSteerEchoLocked(message, origin string) bool {
+	if !strings.EqualFold(origin, "steer") {
+		return false
+	}
+	message = strings.TrimSpace(message)
+	for i, pending := range s.pendingSteerEchoes {
+		if strings.TrimSpace(pending) != message {
+			continue
+		}
+		s.pendingSteerEchoes = append(s.pendingSteerEchoes[:i], s.pendingSteerEchoes[i+1:]...)
+		return true
+	}
+	return false
 }
 
 func (s *lcagentSession) shouldSuppressInitialUserEchoLocked(message, origin string) bool {

@@ -317,6 +317,38 @@ func TestLCAgentSessionCloseDueToInactivitySkipsPendingApproval(t *testing.T) {
 	}
 }
 
+func TestLCAgentSubmitInputQueuesSteerDuringBusyRun(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		stdin:       stdin,
+		started:     true,
+		busy:        true,
+		status:      "LCAgent running",
+	}
+
+	if err := session.SubmitInput(Submission{Text: "change direction"}); err != nil {
+		t.Fatalf("SubmitInput() error = %v", err)
+	}
+
+	if len(stdin.writes) != 1 || !strings.Contains(stdin.writes[0], `"type":"steer"`) || !strings.Contains(stdin.writes[0], `"message":"change direction"`) {
+		t.Fatalf("stdin writes = %#v, want steer payload", stdin.writes)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Status != "Queued steer for LCAgent" {
+		t.Fatalf("status = %q, want queued steer", snapshot.Status)
+	}
+	if !strings.Contains(snapshot.Transcript, "change direction") || !strings.Contains(snapshot.Transcript, "Queued for LCAgent") {
+		t.Fatalf("transcript missing queued steer feedback:\n%s", snapshot.Transcript)
+	}
+
+	session.handleEvent([]byte(`{"type":"user_message","origin":"steer","message":"change direction"}`))
+	snapshot = session.Snapshot()
+	if got := strings.Count(snapshot.Transcript, "change direction"); got != 1 {
+		t.Fatalf("queued steer echo count = %d, want 1:\n%s", got, snapshot.Transcript)
+	}
+}
+
 func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	session := &lcagentSession{

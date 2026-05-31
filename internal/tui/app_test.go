@@ -11745,7 +11745,7 @@ func TestLCAgentBrowserWaitAcceptsResumeInputWhileBusy(t *testing.T) {
 	}
 }
 
-func TestLCAgentBusyWithoutBrowserWaitStillBlocksAccidentalPrompt(t *testing.T) {
+func TestLCAgentBusyWithoutBrowserWaitQueuesPrompt(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Provider: codexapp.ProviderLCAgent,
 		Started:  true,
@@ -11753,11 +11753,14 @@ func TestLCAgentBusyWithoutBrowserWaitStillBlocksAccidentalPrompt(t *testing.T) 
 		Phase:    codexapp.SessionPhaseRunning,
 		Status:   "LCAgent running",
 	}
-	if codexSnapshotCanSubmitBusyInput(snapshot) {
-		t.Fatal("busy LCAgent without a browser wait should not accept accidental prompt input")
+	if !codexSnapshotCanSubmitBusyInput(snapshot) {
+		t.Fatal("busy LCAgent without a browser wait should accept queued prompt input")
 	}
 	if codexSnapshotCanSteer(snapshot) {
-		t.Fatal("busy LCAgent without a browser wait should not be reported as steerable")
+		t.Fatal("busy LCAgent without a browser wait should not be reported as immediate-steerable")
+	}
+	if !codexSnapshotQueuesBusyInput(snapshot) {
+		t.Fatal("busy LCAgent without a browser wait should be reported as queueing input")
 	}
 
 	snapshot.BrowserActivity = browserctl.SessionActivity{State: browserctl.SessionActivityStateWaitingForUser}
@@ -11766,6 +11769,9 @@ func TestLCAgentBusyWithoutBrowserWaitStillBlocksAccidentalPrompt(t *testing.T) 
 	}
 	if !codexSnapshotCanSteer(snapshot) {
 		t.Fatal("busy LCAgent waiting for browser input should be reported as steerable")
+	}
+	if codexSnapshotQueuesBusyInput(snapshot) {
+		t.Fatal("busy LCAgent waiting for browser input should not be reported as queueing input")
 	}
 }
 
@@ -16836,7 +16842,7 @@ func TestVisibleCodexEnterDoesNotSteerExternalBusySession(t *testing.T) {
 	}
 }
 
-func TestVisibleLCAgentEnterDoesNotSubmitWhileBusy(t *testing.T) {
+func TestVisibleLCAgentEnterQueuesInputWhileBusy(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{
@@ -16872,17 +16878,18 @@ func TestVisibleLCAgentEnterDoesNotSubmitWhileBusy(t *testing.T) {
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("enter should not submit to a busy LCAgent session")
+	if cmd == nil {
+		t.Fatalf("enter should queue a busy LCAgent submission command")
 	}
-	if len(session.submissions) != 0 {
-		t.Fatalf("submissions = %d, want 0", len(session.submissions))
+	_ = cmd()
+	if len(session.submissions) != 1 || session.submissions[0].TranscriptText() != "please continue" {
+		t.Fatalf("submissions = %#v, want queued LCAgent input", session.submissions)
 	}
-	if got.codexInput.Value() != "please continue" {
-		t.Fatalf("composer = %q, want draft preserved", got.codexInput.Value())
+	if got.codexInput.Value() != "" {
+		t.Fatalf("composer = %q, want draft cleared after queueing", got.codexInput.Value())
 	}
-	if !strings.Contains(got.status, "LCAgent is already running") {
-		t.Fatalf("status = %q, want busy LCAgent guidance", got.status)
+	if !strings.Contains(got.status, "Queueing steer for LCAgent") {
+		t.Fatalf("status = %q, want queued LCAgent guidance", got.status)
 	}
 }
 
