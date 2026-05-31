@@ -1178,9 +1178,11 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 	}
 	submission := draft.Submission()
 	steer := false
+	queueSteer := false
 	label := "Codex"
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		steer = codexSnapshotCanSteer(snapshot)
+		queueSteer = codexSnapshotQueuesBusyInput(snapshot)
 		label = embeddedProvider(snapshot).Label()
 	}
 	return m.codexSessionCmd(projectPath, func() tea.Msg {
@@ -1193,8 +1195,10 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 		status := "Prompt sent to " + label
 		if steer {
 			status = "Steer sent to " + label
+		} else if queueSteer {
+			status = "Steer queued for " + label
 		}
-		return codexActionMsg{projectPath: projectPath, status: status, renamedTask: renamedTask, renameErr: renameErr}
+		return codexActionMsg{projectPath: projectPath, status: status, refreshView: queueSteer, renamedTask: renamedTask, renameErr: renameErr}
 	})
 }
 
@@ -2023,6 +2027,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.clearCodexDraft(m.codexVisibleProject)
 		if codexSnapshotGoalPausesOnPrompt(snapshot) {
 			m.status = "Pausing embedded " + label + " goal..."
+		} else if codexSnapshotQueuesBusyInput(snapshot) {
+			m.status = "Queueing steer for " + label + "..."
 		} else if codexSnapshotCanSteer(snapshot) {
 			m.status = "Sending follow-up to " + label + "..."
 		} else {
@@ -3229,6 +3235,8 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		enterAction := footerPrimaryAction("Enter", "steer")
 		if codexSnapshotGoalPausesOnPrompt(snapshot) {
 			enterAction = footerPrimaryAction("Enter", "pause goal")
+		} else if codexSnapshotQueuesBusyInput(snapshot) {
+			enterAction = footerPrimaryAction("Enter", "queue")
 		}
 		actions = []footerAction{
 			enterAction,
@@ -4674,6 +4682,13 @@ func codexSnapshotCanSteer(snapshot codexapp.Snapshot) bool {
 	return codexSnapshotCanInterruptActiveTurn(snapshot)
 }
 
+func codexSnapshotQueuesBusyInput(snapshot codexapp.Snapshot) bool {
+	if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+		return false
+	}
+	return snapshot.Busy && !snapshot.BusyExternal && !codexSnapshotBrowserWaitingForUser(snapshot)
+}
+
 func codexSnapshotCanInterruptActiveTurn(snapshot codexapp.Snapshot) bool {
 	if codexSnapshotGoalPausesOnPrompt(snapshot) {
 		return false
@@ -4694,7 +4709,7 @@ func codexSnapshotCanSubmitBusyInput(snapshot codexapp.Snapshot) bool {
 		return false
 	}
 	if embeddedProvider(snapshot) == codexapp.ProviderLCAgent {
-		return codexSnapshotBrowserWaitingForUser(snapshot)
+		return snapshot.Phase == codexapp.SessionPhaseRunning || codexSnapshotBrowserWaitingForUser(snapshot)
 	}
 	return embeddedProvider(snapshot) != codexapp.ProviderLCAgent
 }
