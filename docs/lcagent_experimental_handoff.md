@@ -112,10 +112,10 @@ Setup and product UX:
   with score, grade, findings, tool failure rate, repair pressure,
   verification rate, read overlap rate, cached-token rate, and estimated cost.
   `live-eval` reports the same score/grade per case for trace-driven
-  calibration across routes. The project
-  detail pane now loads recent LCAgent artifacts asynchronously and shows a
-  compact `LCAgent trace` rollup for latest checks, verification, provider
-  failures/retries, repairs, pending state, and continuations.
+  calibration across routes. The main project detail pane intentionally keeps
+  those trace rollups out of the user-facing project summary; use embedded
+  session badges, goal-run reports, or the hidden `/dev-lcreview` developer
+  TODO flow when trace-quality context needs inspection.
 
 Harness and policy hardening:
 
@@ -203,9 +203,9 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    continuation-chain state. Embedded LCAgent runs append a compact
    trace-quality score/grade line when the final artifact is available, and the
    LCAgent resume picker now shows continuation/pending-verification hints plus
-   compact trace-quality badges. The project detail pane now adds a recent
-   LCAgent trace-quality rollup without blocking rendering. Next, add
-   project-list trends and trace-event drill-downs in the interactive TUI.
+   compact trace-quality badges. The main project detail pane stays focused on
+   user-facing project state instead of trace-quality rollups. Next, add
+   developer-oriented trace-event drill-downs in the interactive TUI.
 
 ### P1: Make Continuation Feel Like A Coding Session
 

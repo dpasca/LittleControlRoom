@@ -270,10 +270,10 @@ type Model struct {
 	spinnerFrame  int
 	marqueeOffset int
 	showSessions  bool
-	showEvents   bool
-	showHelp     bool
-	showAIStats  bool
-	showPerf     bool
+	showEvents    bool
+	showHelp      bool
+	showAIStats   bool
+	showPerf      bool
 
 	hideReasoningSections bool
 
@@ -284,7 +284,6 @@ type Model struct {
 	detailReloadErrors      map[string]string
 	summaryReloadInFlight   map[string]bool
 	summaryReloadQueued     map[string]bool
-	lcagentTraceQuality     map[string]projectLCAgentTraceQuality
 }
 
 type codexTranscriptRenderCache struct {
@@ -1519,21 +1518,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, reloadCmd
 		}
 		m.err = msg.err
-		qualityCmd := tea.Cmd(nil)
 		if msg.err == nil {
 			m.detail = msg.detail
-			m.clearProjectLCAgentTraceQuality(msg.detail.Summary.Path)
 			m.syncTodoDialogSelection()
 			m.syncDetailViewport(false)
-			qualityCmd = m.loadProjectLCAgentTraceQualityCmd(msg.detail)
 		}
-		return m, batchCmds(reloadCmd, qualityCmd)
-	case lcagentTraceQualityMsg:
-		m.applyProjectLCAgentTraceQualityMsg(msg)
-		if normalizeProjectPath(m.currentDetailTargetPath()) == normalizeProjectPath(msg.projectPath) {
-			m.syncDetailViewport(false)
-		}
-		return m, nil
+		return m, reloadCmd
 	case projectSummaryMsg:
 		reloadCmd := m.finishProjectSummaryReloadCmd(msg.path)
 		m.clearExpiredPendingGitSummaryForPath(msg.path)
@@ -4027,9 +4017,6 @@ func (m Model) renderDetailContent(width int) string {
 		lastActivityValue += "  " + lastSourceValue
 	}
 	lines = append(lines, detailField("Last activity", lastActivityValue))
-	if traceQuality := m.projectLCAgentTraceQualitySummary(p.Path); traceQuality != "" {
-		lines = append(lines, renderWrappedDetailField("LCAgent trace", detailValueStyle, width, traceQuality))
-	}
 	if p.MovedFromPath != "" && moveStatusActive(p.MovedAt, p.Path, p.LatestSessionDetectedProjectPath) {
 		movedFields := []string{detailField("Moved from", detailValueStyle.Render(p.MovedFromPath))}
 		if !p.MovedAt.IsZero() {
