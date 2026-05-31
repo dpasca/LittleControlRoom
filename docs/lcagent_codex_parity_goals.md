@@ -221,10 +221,9 @@ Current state:
 - The LCAgent resume picker surfaces compact trace-quality badges and selected
   session detail hints for quality, continuation depth, pending verification,
   and repair/feedback counts.
-- Project detail now loads recent LCAgent JSONL artifacts asynchronously and
-  shows a compact `LCAgent trace` rollup with latest quality/checks and recent
-  verification, provider retry/failure, repair, pending, and continuation
-  counts.
+- Project detail intentionally keeps LCAgent trace-quality rollups out of the
+  user-facing summary. Developer inspection uses embedded session badges,
+  Boss/LCR goal-run reports, and the hidden `/dev-lcreview` TODO flow.
 
 Missing:
 
