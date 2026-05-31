@@ -208,6 +208,14 @@ func TestBossSessionStoreSearchesMarkdownTurns(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("appendMessage() error = %v", err)
 	}
+	if err := store.appendMessage(context.Background(), session.SessionID, ChatMessage{
+		Role:    "assistant",
+		Kind:    ChatMessageKindFlow,
+		Content: "Flow launch notes chatter should stay out of Boss recall search.",
+		At:      now.Add(2 * time.Minute),
+	}); err != nil {
+		t.Fatalf("appendMessage() flow error = %v", err)
+	}
 
 	matches, err := store.searchSessions(context.Background(), "LAUNCH", 4)
 	if err != nil {
@@ -218,6 +226,9 @@ func TestBossSessionStoreSearchesMarkdownTurns(t *testing.T) {
 	}
 	if matches[0].Turn.Role != "user" || !strings.Contains(matches[0].Snippet, "<xml>") || !strings.Contains(matches[0].Snippet, `"quotes"`) {
 		t.Fatalf("match = %#v, want raw grep-friendly snippet", matches[0])
+	}
+	if chatMessageIsFlow(matches[0].Turn) {
+		t.Fatalf("searchSessions() should skip flow matches, got %#v", matches[0])
 	}
 }
 

@@ -41,6 +41,9 @@ func (s *bossSessionStore) searchSessions(ctx context.Context, query string, lim
 			continue
 		}
 		for i, message := range messages {
+			if chatMessageIsFlow(message) {
+				continue
+			}
 			if !containsFold(message.Content, query) {
 				continue
 			}
