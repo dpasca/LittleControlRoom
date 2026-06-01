@@ -29,3 +29,21 @@ func TestResultUnmarshalDecodesSchemaFieldNames(t *testing.T) {
 		t.Fatalf("validateResult() error = %v", err)
 	}
 }
+
+func TestValidateResultUsesFallbackReasonWhenModelOmitsReason(t *testing.T) {
+	t.Parallel()
+
+	result := Result{
+		BranchName:     "feat/engineer-sidebar",
+		WorktreeSuffix: "feat-engineer-sidebar",
+		Kind:           "feature",
+		Confidence:     0.72,
+	}
+
+	if err := validateResult(&result); err != nil {
+		t.Fatalf("validateResult() error = %v", err)
+	}
+	if result.Reason != defaultSuggestionReason {
+		t.Fatalf("Reason = %q, want %q", result.Reason, defaultSuggestionReason)
+	}
+}

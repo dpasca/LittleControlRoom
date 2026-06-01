@@ -23,6 +23,7 @@ const (
 	suggestionHTTPTimeout         = 45 * time.Second
 	suggestionPrimaryReasoning    = "low"
 	defaultOpenSiblingTodoContext = 5
+	defaultSuggestionReason       = "Suggested from the TODO text."
 )
 
 type Request struct {
@@ -227,7 +228,7 @@ func validateResult(result *Result) error {
 		return errors.New("todo worktree suggestion missing worktree_suffix")
 	}
 	if result.Reason == "" {
-		return errors.New("todo worktree suggestion missing reason")
+		result.Reason = defaultSuggestionReason
 	}
 	if result.Confidence < 0 || result.Confidence > 1 {
 		return fmt.Errorf("todo worktree suggestion has invalid confidence %.4f", result.Confidence)
