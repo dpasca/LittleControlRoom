@@ -1697,15 +1697,12 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "alt+up" {
 		return m.hideCodexSession()
 	}
-	if msg.String() == "f6" {
+	if msg.String() == "alt+s" {
 		if m.codexPanelFocus == embeddedCodexFocusSidebar {
 			return m.updateCodexSidebarMode(snapshot, msg)
 		}
 		cmd := m.focusEmbeddedCodexSidebar()
 		return m, cmd
-	}
-	if msg.String() == "shift+f6" && m.codexPanelFocus == embeddedCodexFocusSidebar {
-		return m.updateCodexSidebarMode(snapshot, msg)
 	}
 	if m.codexPanelFocus == embeddedCodexFocusSidebar {
 		return m.updateCodexSidebarMode(snapshot, msg)
@@ -2064,9 +2061,6 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.codexInput.InsertString("\n")
 		m.persistVisibleCodexDraft()
 		m.syncCodexComposerSize()
-		return m, focusCmd
-	case "alt+s":
-		m.status = "Use Alt+C to copy input or output"
 		return m, focusCmd
 	case "ctrl+v":
 		return m, focusCmd
@@ -2884,6 +2878,13 @@ func (m Model) renderCodexBanner(snapshot codexapp.Snapshot, width int) string {
 		actions = append(actions, footerNavAction("Alt+O", "links"))
 	}
 	actions = append(actions, footerLowAction("Alt+L", "blocks"))
+	if m.embeddedCodexSidebarAvailable() {
+		label := "sidebar"
+		if m.codexPanelFocus == embeddedCodexFocusSidebar {
+			label = "session"
+		}
+		actions = append(actions, footerNavAction("Alt+S", label))
+	}
 	overlay := codexBannerRightStatus(snapshot)
 	contentWidth := width
 	if overlay != "" {
@@ -3301,14 +3302,6 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	if codexSnapshotGoalCanBeStopped(snapshot) && !m.codexSlashActive() {
 		actions = append([]footerAction{footerExitAction("/goal clear", "stop goal")}, actions...)
 	}
-	if m.embeddedCodexSidebarAvailable() {
-		label := "sidebar"
-		if m.codexPanelFocus == embeddedCodexFocusSidebar {
-			label = "session"
-		}
-		actions = append(actions, footerNavAction("F6", label))
-	}
-
 	segments := []string{}
 	if status != "" {
 		segments = append(segments, status)
