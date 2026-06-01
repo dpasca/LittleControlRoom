@@ -711,6 +711,7 @@ type embeddedLaunchOptions struct {
 }
 
 func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) (tea.Model, tea.Cmd) {
+	provider = provider.Normalized()
 	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
 		if updated, ok := m.revealPendingEmbeddedOpen(p.Path); ok {
 			return updated, nil
@@ -739,6 +740,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	}
 	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
 		if _, ok := m.liveEmbeddedSnapshotForProject(p.Path, provider); ok {
+			m.rememberEmbeddedProvider(provider)
 			if !options.reveal {
 				m.status = "Embedded " + provider.Label() + " session is already open in the background"
 				return m, nil
@@ -746,6 +748,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 			return m.showCodexProject(p.Path, "Embedded "+provider.Label()+" session reopened. Alt+Up hides it.")
 		}
 		if m.hasRestorableEmbeddedSession(p.Path, provider) {
+			m.rememberEmbeddedProvider(provider)
 			if !options.reveal {
 				m.status = "Embedded " + provider.Label() + " session is already available in the background"
 				return m, nil
@@ -803,6 +806,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		m.beginCodexPendingOpenWithVisibilityAndReveal(p.Path, provider, options.reveal, options.reveal)
 	}
 	m.err = nil
+	m.rememberEmbeddedProvider(provider)
 	if options.forceNew {
 		m.status = "Starting a new embedded " + provider.Label() + " session..."
 	} else {
@@ -1256,6 +1260,104 @@ func (m Model) preferredEmbeddedProviderForProject(project model.ProjectSummary)
 		return provider
 	}
 	return preferredEmbeddedProviderFromProjectSummary(project)
+}
+
+func embeddedLaunchProviderOptions() []codexapp.Provider {
+	return []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	}
+}
+
+func (m Model) initialEmbeddedProviderForNewItem(requested codexapp.Provider) (codexapp.Provider, string) {
+	if provider := explicitEmbeddedProvider(requested); provider != "" {
+		return provider, ""
+	}
+	return m.defaultEmbeddedProviderForNewItem()
+}
+
+func (m Model) defaultEmbeddedProviderForNewItem() (codexapp.Provider, string) {
+	if provider := explicitEmbeddedProvider(m.lastEmbeddedProvider); provider != "" {
+		return provider, "last used"
+	}
+	if provider, ok := m.latestProjectListEmbeddedProvider(); ok {
+		return provider, "last used"
+	}
+	if project, ok := m.selectedProject(); ok {
+		if provider, ok := m.embeddedProviderHintForProject(project); ok {
+			return provider, "selected project"
+		}
+	}
+	if provider := embeddedProviderFromAIBackend(m.currentSettingsBaseline().AIBackend); provider != "" {
+		return provider, "configured backend"
+	}
+	return codexapp.ProviderCodex, "built-in default"
+}
+
+func (m Model) latestProjectListEmbeddedProvider() (codexapp.Provider, bool) {
+	projects := m.allProjects
+	if len(projects) == 0 {
+		projects = m.projects
+	}
+	var latest time.Time
+	var selected codexapp.Provider
+	for _, project := range projects {
+		provider := providerForSessionFormat(project.LatestSessionFormat)
+		if provider == "" {
+			continue
+		}
+		at := project.LatestSessionLastEventAt
+		if at.IsZero() {
+			at = project.LastActivity
+		}
+		if selected == "" || at.After(latest) {
+			selected = provider
+			latest = at
+		}
+	}
+	if selected == "" {
+		return "", false
+	}
+	return selected, true
+}
+
+func (m Model) embeddedProviderHintForProject(project model.ProjectSummary) (codexapp.Provider, bool) {
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
+		if provider := explicitEmbeddedProvider(embeddedProvider(snapshot)); provider != "" {
+			return provider, true
+		}
+	}
+	if provider, ok := m.embeddedLaunchProviderOverride(project.Path); ok {
+		return provider, true
+	}
+	if provider := providerForSessionFormat(project.LatestSessionFormat); provider != "" {
+		return provider, true
+	}
+	return "", false
+}
+
+func embeddedProviderFromAIBackend(backend config.AIBackend) codexapp.Provider {
+	switch backend {
+	case config.AIBackendCodex:
+		return codexapp.ProviderCodex
+	case config.AIBackendOpenCode:
+		return codexapp.ProviderOpenCode
+	case config.AIBackendClaude:
+		return codexapp.ProviderClaudeCode
+	default:
+		return ""
+	}
+}
+
+func (m *Model) rememberEmbeddedProvider(provider codexapp.Provider) {
+	if m == nil {
+		return
+	}
+	if provider := explicitEmbeddedProvider(provider); provider != "" {
+		m.lastEmbeddedProvider = provider
+	}
 }
 
 func (m Model) embeddedLaunchProviderOverride(projectPath string) (codexapp.Provider, bool) {

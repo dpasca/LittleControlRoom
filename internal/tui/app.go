@@ -118,6 +118,7 @@ type Model struct {
 	ignoredPickerSelected               int
 	ignoredPickerItems                  []model.IgnoredProject
 	newProjectDialog                    *newProjectDialogState
+	newTaskDialog                       *newTaskDialogState
 	runCommandDialog                    *runCommandDialogState
 	skillsDialog                        *skillsDialogState
 	preferredSelectPath                 string
@@ -207,6 +208,7 @@ type Model struct {
 	processWarningLastCount     int
 	codexSnapshots              map[string]codexapp.Snapshot
 	embeddedProviderOverrides   map[string]codexapp.Provider
+	lastEmbeddedProvider        codexapp.Provider
 	codexTranscriptRev          map[string]uint64
 	codexVisibleProject         string
 	codexHiddenProject          string
@@ -1287,6 +1289,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
 		}
+		if m.newTaskDialog != nil {
+			return m.updateNewTaskDialogMode(msg)
+		}
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
 		}
@@ -1481,6 +1486,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.preferredSelectPath = msg.result.ProjectPath
 		provider := explicitEmbeddedProvider(msg.provider)
 		if provider != "" {
+			m.rememberEmbeddedProvider(provider)
 			m.setEmbeddedLaunchProviderOverride(msg.result.ProjectPath, provider)
 		}
 		switch msg.result.Action {
@@ -2035,6 +2041,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ensureCodexRuntime()
+		m.rememberEmbeddedProvider(provider)
 		m.beginNewCodexPendingOpenWithVisibilityAndReveal(req.ProjectPath, provider, msg.openModelFirst, msg.openModelFirst)
 		if msg.openModelFirst {
 			m.status = "Starting a new embedded " + provider.Label() + " session in new worktree..."
@@ -3055,6 +3062,28 @@ func (m Model) View() string {
 			}
 			return m.renderCodexInputCopyDialogOverlay(body, width, height)
 		}
+		if m.newProjectDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderNewProjectOverlay(body, width, height)
+		}
+		if m.newTaskDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderNewTaskOverlay(body, width, height)
+		}
 		if m.scratchTaskAction != nil {
 			width := m.width
 			if width <= 0 {
@@ -3102,6 +3131,8 @@ func (m Model) View() string {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
+	} else if m.newTaskDialog != nil {
+		body = m.renderNewTaskOverlay(body, layout.width, layout.height)
 	} else if m.runCommandDialog != nil {
 		body = m.renderRunCommandOverlay(body, layout.width, layout.height)
 	} else if m.bossSetupPrompt != nil {
@@ -4658,7 +4689,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindNewProject:
 		return m, m.openNewProjectDialog(commandAssistantProvider(inv.Assistant))
 	case commands.KindNewTask:
-		return m, m.startNewTaskCreation(inv.Prompt, commandAssistantProvider(inv.Assistant))
+		return m, m.openNewTaskDialog(inv.Prompt, commandAssistantProvider(inv.Assistant))
 	case commands.KindTaskActions:
 		return m, m.openScratchTaskActionConfirmForSelection()
 	case commands.KindOpen:
@@ -6891,6 +6922,13 @@ func (m Model) renderFooter(width int) string {
 		}
 		if m.newProjectDialog.Submitting {
 			label = "New project: applying..."
+		}
+		return m.renderModalFooter(width, label, supplementSegments...)
+	}
+	if m.newTaskDialog != nil {
+		label := "New task: Enter create, a/A cycle agent, Esc cancel"
+		if m.newTaskDialog.Submitting {
+			label = "New task: creating..."
 		}
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}

@@ -1411,6 +1411,7 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 		m.status = err.Error()
 		return m, nil
 	}
+	m.rememberEmbeddedProvider(provider)
 	m.restoreCodexDraft(project.Path, codexDraft{Text: todoText})
 	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, todoID: todoID, provider: provider, openModelFirst: openModelFirst})
 	m.todoEditor = nil
@@ -1475,6 +1476,7 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	m.todoExistingWorktree = nil
 	m.todoCopyDialog = nil
 	m.todoDialog = nil
+	m.rememberEmbeddedProvider(provider)
 	m.status = "Starting TODO in dedicated worktree..."
 	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, provider, openModelFirst, branchOverride, suffixOverride)
 }
@@ -2109,12 +2111,7 @@ func (m Model) renderTodoCopyChooserColumns(width int, runButtons, providerButto
 }
 
 func todoCopyDialogProviders() []codexapp.Provider {
-	return []codexapp.Provider{
-		codexapp.ProviderCodex,
-		codexapp.ProviderOpenCode,
-		codexapp.ProviderClaudeCode,
-		codexapp.ProviderLCAgent,
-	}
+	return embeddedLaunchProviderOptions()
 }
 
 type todoCopyProviderReadiness struct {
