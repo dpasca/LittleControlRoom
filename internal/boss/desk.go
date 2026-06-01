@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"lcroom/internal/model"
+	"lcroom/internal/uistyle"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -29,7 +30,8 @@ type bossDeskEvent struct {
 }
 
 func (m Model) renderBossSidebar(width, height int) string {
-	return m.renderRawPanel("Boss Desk", m.bossSidebarContent(width, height), width, height)
+	title := uistyle.SidebarTitleStyle.Render(fitLine("Boss Desk", bossPanelInnerWidth(width)))
+	return m.renderRawPanelStyledTitle(title, m.bossSidebarContent(width, height), width, height)
 }
 
 func (m Model) renderBossLog(width, height int) string {
@@ -645,7 +647,4 @@ func deskNoticeLabel(code string) string {
 	}
 }
 
-var bossDeskSectionStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("229")).
-	Background(lipgloss.Color("235")).
-	Bold(true)
+var bossDeskSectionStyle = uistyle.SidebarSectionHeaderStyle

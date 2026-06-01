@@ -103,7 +103,7 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderCodexView())
 	for _, want := range []string{
-		"Session Sidebar",
+		"AI Engineer",
 		"Active Processes",
 		"Diff Summary",
 		"npm run dev",
@@ -191,5 +191,28 @@ func TestDiffAskReturnsToEmbeddedEngineerWithPrompt(t *testing.T) {
 	}
 	if !strings.Contains(got.codexInput.Value(), "review the current diff") {
 		t.Fatalf("composer = %q, want diff review prompt", got.codexInput.Value())
+	}
+}
+
+func TestDiffEscReturnsToEmbeddedEngineerWithoutPrompt(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.codexVisibleProject = ""
+	m.diffView = newDiffViewState(projectPath, "demo")
+	m.diffView.returnToCodexProject = projectPath
+
+	updated, _ := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := normalizeUpdateModel(updated)
+	if got.diffView != nil {
+		t.Fatalf("diffView should close on Esc when returning to engineer")
+	}
+	if got.codexVisibleProject != projectPath {
+		t.Fatalf("codexVisibleProject = %q, want %q", got.codexVisibleProject, projectPath)
+	}
+	if strings.TrimSpace(got.codexInput.Value()) != "" {
+		t.Fatalf("composer = %q, want empty composer on Esc", got.codexInput.Value())
+	}
+	if got.status != "Back to engineer session" {
+		t.Fatalf("status = %q, want back-to-session status", got.status)
 	}
 }
