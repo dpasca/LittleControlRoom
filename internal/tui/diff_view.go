@@ -192,6 +192,22 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Staging selected file..."
 		}
 		return m, m.toggleDiffStageCmd(m.diffView.ProjectPath, file, file.Staged)
+	case "enter":
+		file, ok := m.selectedDiffFile()
+		if !ok {
+			m.status = "No diff file selected"
+			return m, nil
+		}
+		m.status = "Opening " + diffFileOpenLabel(file)
+		return m, m.openDiffFileCmd(m.diffView.ProjectPath, file)
+	case "alt+f":
+		file, ok := m.selectedDiffFile()
+		if !ok {
+			m.status = "No diff file selected"
+			return m, nil
+		}
+		m.status = "Opening folder for " + diffFileOpenLabel(file)
+		return m, m.openDiffFileFolderCmd(m.diffView.ProjectPath, file)
 	case "m":
 		m.toggleDiffRenderMode()
 		return m, nil
@@ -204,7 +220,7 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "left", "h":
 		m.setDiffFocus(diffFocusFiles)
 		return m, nil
-	case "right", "l", "enter":
+	case "right", "l":
 		m.setDiffFocus(diffFocusContent)
 		return m, nil
 	case "up", "k":
@@ -572,6 +588,69 @@ func (m Model) selectedDiffFile() (service.DiffFilePreview, bool) {
 		return service.DiffFilePreview{}, false
 	}
 	return m.diffView.preview.Files[m.diffView.selected], true
+}
+
+func (m Model) openDiffFileCmd(projectPath string, file service.DiffFilePreview) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	return func() tea.Msg {
+		path, err := diffFileOpenPath(projectPath, file)
+		if err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		if err := externalPathOpener(path); err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		return browserOpenMsg{projectPath: projectPath, status: "Opened diff file"}
+	}
+}
+
+func (m Model) openDiffFileFolderCmd(projectPath string, file service.DiffFilePreview) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	return func() tea.Msg {
+		path, err := diffFileOpenPath(projectPath, file)
+		if err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		folder, err := containingFolderForPath(path)
+		if err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		if err := externalPathOpener(folder); err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
+		return browserOpenMsg{projectPath: projectPath, status: "Opened containing folder"}
+	}
+}
+
+func diffFileOpenPath(projectPath string, file service.DiffFilePreview) (string, error) {
+	path := strings.TrimSpace(file.Path)
+	if path == "" {
+		path = strings.TrimSpace(file.OriginalPath)
+	}
+	if path == "" {
+		return "", fmt.Errorf("file path is required")
+	}
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return "", fmt.Errorf("project path is required")
+	}
+	return filepath.Join(projectPath, filepath.FromSlash(path)), nil
+}
+
+func diffFileOpenLabel(file service.DiffFilePreview) string {
+	if summary := strings.TrimSpace(file.Summary); summary != "" {
+		return summary
+	}
+	if path := strings.TrimSpace(file.Path); path != "" {
+		return path
+	}
+	if original := strings.TrimSpace(file.OriginalPath); original != "" {
+		return original
+	}
+	return "diff file"
 }
 
 func (m Model) renderDiffView(width, height int) string {
@@ -1599,14 +1678,14 @@ func diffViewReadyStatus(state diffViewState) string {
 	switch state.focus {
 	case diffFocusContent:
 		if strings.TrimSpace(state.returnToCodexProject) != "" {
-			return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down scroll, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
+			return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
 		}
-		return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down scroll, M " + modeLabel + ", Tab files, Esc " + closeLabel
+		return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", Tab files, Esc " + closeLabel
 	default:
 		if strings.TrimSpace(state.returnToCodexProject) != "" {
-			return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down choose file, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
+			return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
 		}
-		return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down choose file, M " + modeLabel + ", Tab scroll pane, Esc " + closeLabel
+		return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", Tab scroll pane, Esc " + closeLabel
 	}
 }
 
@@ -1621,9 +1700,9 @@ func diffViewFooterLabel(state diffViewState) string {
 	modeLabel := diffRenderModeToggleLabel(state.mode)
 	switch state.focus {
 	case diffFocusContent:
-		return "Diff: Up/Down scroll, M " + modeLabel + ", PgUp/PgDn page, Left/Tab files, Esc " + closeLabel
+		return "Diff: Enter open, Alt+F folder, Up/Down scroll, M " + modeLabel + ", Left/Tab files, Esc " + closeLabel
 	default:
-		return "Diff: Up/Down choose, M " + modeLabel + ", Enter/Right open, PgUp/PgDn page, Esc " + closeLabel
+		return "Diff: Enter open, Alt+F folder, Up/Down choose, M " + modeLabel + ", Right/Tab diff, Esc " + closeLabel
 	}
 }
 
@@ -1673,6 +1752,8 @@ func renderDiffFooter(width int, state diffViewState, usageSegment string) strin
 	}
 
 	actions := []footerAction{
+		footerPrimaryAction("Enter", "open"),
+		footerNavAction("Alt+F", "folder"),
 		footerPrimaryAction("-", stageLabel),
 		footerHideAction("Alt+Up", hideLabel),
 		footerLowAction("m", diffRenderModeToggleLabel(state.mode)),
@@ -1690,7 +1771,7 @@ func renderDiffFooter(width int, state diffViewState, usageSegment string) strin
 	default:
 		actions = append(actions,
 			footerNavAction("Up/Down", "choose"),
-			footerNavAction("Enter/Tab", "diff"),
+			footerNavAction("Right/Tab", "diff"),
 			footerNavAction("PgUp/PgDn", "page"),
 		)
 	}

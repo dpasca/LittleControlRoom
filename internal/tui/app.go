@@ -5218,6 +5218,11 @@ func codexArtifactContainingFolder(target codexArtifactOpenTarget) (string, erro
 		return "", fmt.Errorf("links do not have containing folders")
 	}
 	path := strings.TrimSpace(target.Path)
+	return containingFolderForPath(path)
+}
+
+func containingFolderForPath(path string) (string, error) {
+	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}

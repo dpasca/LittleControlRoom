@@ -259,7 +259,8 @@ While the diff screen is visible:
 - The left pane groups `Staged` files first and `Unstaged` files below them
 - `-` stages the selected file when it is unstaged, and unstages it when it already has staged changes
 - `Up/Down` or `j/k` moves between files when the file list is focused
-- `Enter`, `Right`, or `Tab` moves focus into the diff pane
+- `Enter` opens the selected file with the system app, and `Alt+F` opens its containing folder
+- `Right` or `Tab` moves focus into the diff pane
 - `Left` or `Tab` moves focus back to the file list
 - `PgUp/PgDn/Home/End` pages or jumps within the focused pane
 - `Alt+Up` returns to the commit preview when the diff was opened from there, otherwise to the main project list

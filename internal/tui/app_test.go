@@ -29015,6 +29015,141 @@ func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	}
 }
 
+func TestDiffModeEnterOpensSelectedFile(t *testing.T) {
+	projectPath := t.TempDir()
+	path := filepath.Join(projectPath, "README.md")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o600); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	diffState := newDiffViewState(projectPath, "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		ProjectPath: projectPath,
+		Files: []service.DiffFilePreview{{
+			Path:     "README.md",
+			Summary:  "README.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body:     "# Unstaged\n\n+line\n",
+		}},
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
+	}
+	m.syncDiffView(true)
+
+	updated, cmd := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("Enter should queue a file open command")
+	}
+	if got.diffView == nil {
+		t.Fatalf("opening a file should leave the diff view visible")
+	}
+	if got.diffView.focus != diffFocusFiles {
+		t.Fatalf("Enter should not move focus into the content pane")
+	}
+	if got.status != "Opening README.md" {
+		t.Fatalf("status = %q, want opening status", got.status)
+	}
+
+	rawMsg := cmd()
+	openMsg, ok := rawMsg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("file open command returned %T, want browserOpenMsg", rawMsg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("file open command error = %v", openMsg.err)
+	}
+	if openMsg.status != "Opened diff file" {
+		t.Fatalf("file open status = %q, want success", openMsg.status)
+	}
+	if opened != path {
+		t.Fatalf("opened path = %q, want %q", opened, path)
+	}
+}
+
+func TestDiffModeAltFOpensSelectedFileFolder(t *testing.T) {
+	projectPath := t.TempDir()
+	dir := filepath.Join(projectPath, "docs")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	path := filepath.Join(dir, "guide.md")
+	if err := os.WriteFile(path, []byte("hello\n"), 0o600); err != nil {
+		t.Fatalf("write guide.md: %v", err)
+	}
+	diffState := newDiffViewState(projectPath, "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		ProjectPath: projectPath,
+		Files: []service.DiffFilePreview{{
+			Path:     "docs/guide.md",
+			Summary:  "docs/guide.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body:     "# Unstaged\n\n+line\n",
+		}},
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
+	}
+	m.syncDiffView(true)
+
+	updated, cmd := m.updateDiffMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}, Alt: true})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("Alt+F should queue a containing-folder open command")
+	}
+	if got.diffView == nil {
+		t.Fatalf("opening a folder should leave the diff view visible")
+	}
+	if got.status != "Opening folder for docs/guide.md" {
+		t.Fatalf("status = %q, want folder opening status", got.status)
+	}
+
+	rawMsg := cmd()
+	openMsg, ok := rawMsg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("folder open command returned %T, want browserOpenMsg", rawMsg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("folder open command error = %v", openMsg.err)
+	}
+	if openMsg.status != "Opened containing folder" {
+		t.Fatalf("folder open status = %q, want success", openMsg.status)
+	}
+	if opened != dir {
+		t.Fatalf("opened path = %q, want %q", opened, dir)
+	}
+}
+
 func TestDiffViewCachesRenderedEntriesAcrossSelectionChanges(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false
