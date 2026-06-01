@@ -734,7 +734,8 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 		m.status = status
 	}
 	focusCmd := m.focusProjectPath(projectPath)
-	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath), seenCmd, asyncCmd, browserStateCmd)
+	sidebarCmd := m.refreshEmbeddedSidebarCmd(projectPath)
+	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath), seenCmd, asyncCmd, browserStateCmd, sidebarCmd)
 }
 
 func (m *Model) focusProjectPath(projectPath string) tea.Cmd {

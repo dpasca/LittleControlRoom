@@ -124,6 +124,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexDrafts == nil {
 		m.codexDrafts = make(map[string]codexDraft)
 	}
+	if m.embeddedSidebarDiffs == nil {
+		m.embeddedSidebarDiffs = make(map[string]embeddedSidebarDiffState)
+	}
 	if m.codexClosedHandled == nil {
 		m.codexClosedHandled = make(map[string]struct{})
 	}
@@ -1628,6 +1631,7 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	m.stopCodexInputSelection()
 	m.codexHiddenProject = m.codexVisibleProject
 	m.codexVisibleProject = ""
+	m.codexPanelFocus = embeddedCodexFocusMain
 	m.codexInput.Blur()
 	m.syncDetailViewport(false)
 	m.status = label + " hidden."
@@ -1688,9 +1692,23 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	label := embeddedProvider(snapshot).Label()
+	m.normalizeEmbeddedCodexFocus()
 
 	if msg.String() == "alt+up" {
 		return m.hideCodexSession()
+	}
+	if msg.String() == "f6" {
+		if m.codexPanelFocus == embeddedCodexFocusSidebar {
+			return m.updateCodexSidebarMode(snapshot, msg)
+		}
+		cmd := m.focusEmbeddedCodexSidebar()
+		return m, cmd
+	}
+	if msg.String() == "shift+f6" && m.codexPanelFocus == embeddedCodexFocusSidebar {
+		return m.updateCodexSidebarMode(snapshot, msg)
+	}
+	if m.codexPanelFocus == embeddedCodexFocusSidebar {
+		return m.updateCodexSidebarMode(snapshot, msg)
 	}
 
 	if m.codexInputCopyDialog != nil {
@@ -1935,6 +1953,13 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, m.openEmbeddedLCAgentSettingsMode(m.codexVisibleProject)
 				}
 				return m, m.openSettingsMode()
+			case codexslash.KindTerminal:
+				if strings.TrimSpace(m.codexVisibleProject) == "" {
+					m.status = "Terminal unavailable: no embedded project"
+					return m, nil
+				}
+				m.status = "Opening project terminal..."
+				return m, m.openProjectDirInTerminalCmd(m.codexVisibleProject)
 			default:
 				m.status = "Unsupported embedded slash command"
 				return m, nil
@@ -2407,7 +2432,7 @@ func (m *Model) removeCodexAttachmentMarkerBeforeCursor() bool {
 }
 
 func (m *Model) syncCodexComposerSize() {
-	width := m.width
+	width := m.embeddedCodexMainWidth()
 	if width <= 0 {
 		width = 120
 	}
@@ -2431,7 +2456,7 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 	if !ok {
 		return
 	}
-	width := m.width
+	width := m.embeddedCodexMainWidth()
 	if width <= 0 {
 		width = 120
 	}
@@ -2523,7 +2548,10 @@ func (m Model) renderCodexView() string {
 	if height <= 0 {
 		height = 30
 	}
+	return m.renderCodexSplitView(snapshot, width, height)
+}
 
+func (m Model) renderCodexMainView(snapshot codexapp.Snapshot, width, height int) string {
 	lowerBlocks := m.codexLowerBlocks(snapshot, width)
 	lowerHeight := countRenderedBlockLines(lowerBlocks)
 	transcriptHeight := codexTranscriptContentHeight(height, lowerHeight)
@@ -2555,7 +2583,7 @@ func (m Model) renderCodexView() string {
 	if m.codexSelection.dragging && m.codexSelection.hasRange() {
 		viewOutput = overlaySelectionHighlight(viewOutput, m.codexSelection, transcript.YOffset)
 	}
-	body := m.renderHFramedPane(viewOutput, width, transcriptHeight, true)
+	body := m.renderHFramedPane(viewOutput, width, transcriptHeight, m.codexMainFocused())
 
 	lines := []string{m.renderCodexBanner(snapshot, width), body}
 	lines = append(lines, lowerBlocks...)
@@ -3272,6 +3300,13 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 	}
 	if codexSnapshotGoalCanBeStopped(snapshot) && !m.codexSlashActive() {
 		actions = append([]footerAction{footerExitAction("/goal clear", "stop goal")}, actions...)
+	}
+	if m.embeddedCodexSidebarAvailable() {
+		label := "sidebar"
+		if m.codexPanelFocus == embeddedCodexFocusSidebar {
+			label = "session"
+		}
+		actions = append(actions, footerNavAction("F6", label))
 	}
 
 	segments := []string{}

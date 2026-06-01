@@ -29,6 +29,26 @@ func TestOpenProjectDirInBrowserUsesDirectoryFileURL(t *testing.T) {
 	}
 }
 
+func TestOpenProjectDirInTerminalUsesProjectDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	previousOpener := externalTerminalOpener
+	defer func() { externalTerminalOpener = previousOpener }()
+
+	called := ""
+	externalTerminalOpener = func(path string) error {
+		called = path
+		return nil
+	}
+
+	if err := openProjectDirInTerminal(dir); err != nil {
+		t.Fatalf("openProjectDirInTerminal() error = %v", err)
+	}
+	if called != dir {
+		t.Fatalf("opened terminal path = %q, want %q", called, dir)
+	}
+}
+
 func TestOpenRuntimeURLInBrowserUsesRawURL(t *testing.T) {
 	previousOpener := externalBrowserOpener
 	defer func() { externalBrowserOpener = previousOpener }()

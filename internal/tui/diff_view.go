@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"image"
-	"path/filepath"
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -60,16 +60,16 @@ const (
 )
 
 type diffSideBySideRow struct {
-	Full        string
-	Left        string
-	Right       string
-	FullTone    diffCellTone
-	LeftTone    diffCellTone
-	RightTone   diffCellTone
-	LeftCode    bool
-	RightCode   bool
-	FullWidth   bool
-	LeftLineNum int // 0 means no line number
+	Full         string
+	Left         string
+	Right        string
+	FullTone     diffCellTone
+	LeftTone     diffCellTone
+	RightTone    diffCellTone
+	LeftCode     bool
+	RightCode    bool
+	FullWidth    bool
+	LeftLineNum  int // 0 means no line number
 	RightLineNum int
 }
 
@@ -91,6 +91,7 @@ type diffViewState struct {
 	loading               bool
 	preview               *service.DiffPreview
 	returnToCommitPreview *commitPreviewReturnState
+	returnToCodexProject  string
 
 	selected int
 	offset   int
@@ -102,8 +103,8 @@ type diffViewState struct {
 
 	// Continuous scroll: all files concatenated into one scrollable document.
 	continuousContent   string
-	continuousOffsets   []int          // line offset where each file starts
-	continuousFileOrder []int          // file indices matching continuousOffsets
+	continuousOffsets   []int // line offset where each file starts
+	continuousFileOrder []int // file indices matching continuousOffsets
 	continuousWidth     int
 	continuousMode      diffRenderMode
 }
@@ -145,6 +146,11 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.closeDiffView("Diff view closed")
 	case "alt+up":
 		return m.closeDiffView("Focus: project list")
+	case "a":
+		if strings.TrimSpace(m.diffView.returnToCodexProject) != "" {
+			return m.returnFromDiffToEmbeddedCodex()
+		}
+		return m, nil
 	case "/":
 		m.openCommandMode()
 		return m, textinput.Blink
@@ -1575,16 +1581,28 @@ func diffRenderModeToggleLabel(mode diffRenderMode) string {
 func diffViewReadyStatus(state diffViewState) string {
 	closeLabel := diffViewCloseLabel(state)
 	if state.loading {
+		if strings.TrimSpace(state.returnToCodexProject) != "" {
+			return "Preparing diff view... A ask engineer, Esc " + closeLabel
+		}
 		return "Preparing diff view..."
 	}
 	if !state.hasFiles() {
+		if strings.TrimSpace(state.returnToCodexProject) != "" {
+			return "Worktree clean. A ask engineer, Esc " + closeLabel
+		}
 		return "Worktree clean. Esc " + closeLabel
 	}
 	modeLabel := diffRenderModeToggleLabel(state.mode)
 	switch state.focus {
 	case diffFocusContent:
+		if strings.TrimSpace(state.returnToCodexProject) != "" {
+			return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down scroll, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
+		}
 		return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down scroll, M " + modeLabel + ", Tab files, Esc " + closeLabel
 	default:
+		if strings.TrimSpace(state.returnToCodexProject) != "" {
+			return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down choose file, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
+		}
 		return "Diff " + diffRenderModeLabel(state.mode) + ". Up/Down choose file, M " + modeLabel + ", Tab scroll pane, Esc " + closeLabel
 	}
 }
@@ -1614,24 +1632,32 @@ func renderDiffFooter(width int, state diffViewState, usageSegment string) strin
 		closeLabel = "back"
 	}
 	if state.loading {
+		actions := []footerAction{
+			footerHideAction("Alt+Up", hideLabel),
+			footerExitAction("Esc", closeLabel),
+		}
+		if action, ok := diffAskFooterAction(state); ok {
+			actions = append([]footerAction{action}, actions...)
+		}
 		return renderFooterLine(
 			width,
 			renderFooterMeta("Diff"),
-			renderFooterActionList(
-				footerHideAction("Alt+Up", hideLabel),
-				footerExitAction("Esc", closeLabel),
-			),
+			renderFooterActionList(actions...),
 			usageSegment,
 		)
 	}
 	if !state.hasFiles() {
+		actions := []footerAction{
+			footerHideAction("Alt+Up", hideLabel),
+			footerExitAction("Esc", closeLabel),
+		}
+		if action, ok := diffAskFooterAction(state); ok {
+			actions = append([]footerAction{action}, actions...)
+		}
 		return renderFooterLine(
 			width,
 			renderFooterMeta("Diff: clean worktree"),
-			renderFooterActionList(
-				footerHideAction("Alt+Up", hideLabel),
-				footerExitAction("Esc", closeLabel),
-			),
+			renderFooterActionList(actions...),
 			usageSegment,
 		)
 	}
@@ -1647,6 +1673,9 @@ func renderDiffFooter(width int, state diffViewState, usageSegment string) strin
 		footerPrimaryAction("-", stageLabel),
 		footerHideAction("Alt+Up", hideLabel),
 		footerLowAction("m", diffRenderModeToggleLabel(state.mode)),
+	}
+	if action, ok := diffAskFooterAction(state); ok {
+		actions = append([]footerAction{action}, actions...)
 	}
 	switch state.focus {
 	case diffFocusContent:
@@ -1664,6 +1693,13 @@ func renderDiffFooter(width int, state diffViewState, usageSegment string) strin
 	}
 	actions = append(actions, footerExitAction("Esc", closeLabel))
 	return renderFooterLine(width, meta, renderFooterActionList(actions...), usageSegment)
+}
+
+func diffAskFooterAction(state diffViewState) (footerAction, bool) {
+	if strings.TrimSpace(state.returnToCodexProject) == "" {
+		return footerAction{}, false
+	}
+	return footerPrimaryAction("a", "ask"), true
 }
 
 func diffViewCloseLabel(state diffViewState) string {

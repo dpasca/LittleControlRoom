@@ -25,6 +25,7 @@ const (
 	KindSkills      Kind = "skills"
 	KindGoal        Kind = "goal"
 	KindSettings    Kind = "settings"
+	KindTerminal    Kind = "terminal"
 )
 
 type Spec = slashcmd.Spec
@@ -70,6 +71,7 @@ var specs = []Spec{
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
 	{Name: "goal", Usage: "/goal [status|pause|resume|clear|stop|objective] [--budget N]", Summary: "Show, set, pause, resume, or clear the embedded Codex goal"},
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
+	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in this project's folder"},
 }
 
 func Specs() []Spec {
@@ -175,6 +177,12 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/settings",
 			Display: "/settings",
 			Summary: "Open app settings for this embedded provider",
+		}}
+	case "terminal":
+		return []Suggestion{{
+			Insert:  "/terminal",
+			Display: "/terminal",
+			Summary: "Open a system terminal in this project's folder",
 		}}
 	case "goal":
 		argPrefix := ""
@@ -407,6 +415,14 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindSettings,
 			Canonical: "/settings",
+		}, nil
+	case "terminal":
+		if strings.TrimSpace(rawArgs) != "" {
+			return Invocation{}, fmt.Errorf("usage: /terminal")
+		}
+		return Invocation{
+			Kind:      KindTerminal,
+			Canonical: "/terminal",
 		}, nil
 	case "goal":
 		return parseGoalInvocation(rawArgs)

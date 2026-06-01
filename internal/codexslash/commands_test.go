@@ -124,6 +124,20 @@ func TestSuggestionsIncludeSettingsCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeTerminalCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/terminal" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /terminal: %#v", suggestions)
+	}
+}
+
 func TestParseModelCommand(t *testing.T) {
 	inv, err := Parse("/model")
 	if err != nil {
@@ -134,6 +148,19 @@ func TestParseModelCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/model" {
 		t.Fatalf("Parse(/model) canonical = %q, want /model", inv.Canonical)
+	}
+}
+
+func TestParseTerminalCommand(t *testing.T) {
+	inv, err := Parse("/terminal")
+	if err != nil {
+		t.Fatalf("Parse(/terminal) error = %v", err)
+	}
+	if inv.Kind != KindTerminal {
+		t.Fatalf("Parse(/terminal) kind = %q, want %q", inv.Kind, KindTerminal)
+	}
+	if inv.Canonical != "/terminal" {
+		t.Fatalf("Parse(/terminal) canonical = %q, want /terminal", inv.Canonical)
 	}
 }
 

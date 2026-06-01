@@ -215,6 +215,10 @@ type Model struct {
 	codexPendingOpen            *codexPendingOpenState
 	codexInput                  textarea.Model
 	codexDrafts                 map[string]codexDraft
+	codexPanelFocus             embeddedCodexPanelFocus
+	codexSidebarSelected        embeddedCodexSidebarSection
+	embeddedSidebarDiffs        map[string]embeddedSidebarDiffState
+	embeddedSidebarDiffSeq      int64
 	pendingGitOperations        map[string]pendingGitOperation
 	codexPasteTokenSeq          int
 	codexClosedHandled          map[string]struct{}
@@ -609,6 +613,8 @@ func New(ctx context.Context, svc *service.Service) Model {
 		status:                     initialProjectsStatus,
 		commandInput:               commandInput,
 		codexInput:                 codexInput,
+		codexPanelFocus:            embeddedCodexFocusMain,
+		embeddedSidebarDiffs:       make(map[string]embeddedSidebarDiffState),
 		dismissedSuspendedTurns:    make(map[string]struct{}),
 		codexDrafts:                make(map[string]codexDraft),
 		codexClosedHandled:         make(map[string]struct{}),
@@ -1828,6 +1834,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, reloadCmd
 	case processScanMsg:
 		return m, m.applyProcessScanMsg(msg)
+	case embeddedSidebarDiffPreviewMsg:
+		return m.applyEmbeddedSidebarDiffPreviewMsg(msg)
 	case cpuSnapshotMsg:
 		return m, m.applyCPUSnapshotMsg(msg)
 	case skillsInventoryMsg:
@@ -5162,6 +5170,15 @@ func (m Model) openProjectDirInBrowserCmd(path string) tea.Cmd {
 			return browserOpenMsg{projectPath: path, err: err}
 		}
 		return browserOpenMsg{projectPath: path, status: "Opened project in browser"}
+	}
+}
+
+func (m Model) openProjectDirInTerminalCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		if err := openProjectDirInTerminal(path); err != nil {
+			return browserOpenMsg{projectPath: path, err: err}
+		}
+		return browserOpenMsg{projectPath: path, status: "Opened project terminal"}
 	}
 }
 
