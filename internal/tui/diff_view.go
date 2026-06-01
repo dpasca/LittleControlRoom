@@ -143,12 +143,15 @@ func (m Model) updateDiffMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
+		if strings.TrimSpace(m.diffView.returnToCodexProject) != "" {
+			return m.returnFromDiffToEmbeddedCodex(false)
+		}
 		return m.closeDiffView("Diff view closed")
 	case "alt+up":
 		return m.closeDiffView("Focus: project list")
 	case "a":
 		if strings.TrimSpace(m.diffView.returnToCodexProject) != "" {
-			return m.returnFromDiffToEmbeddedCodex()
+			return m.returnFromDiffToEmbeddedCodex(true)
 		}
 		return m, nil
 	case "/":
@@ -1704,6 +1707,9 @@ func diffAskFooterAction(state diffViewState) (footerAction, bool) {
 
 func diffViewCloseLabel(state diffViewState) string {
 	if state.returnToCommitPreview != nil {
+		return "back"
+	}
+	if strings.TrimSpace(state.returnToCodexProject) != "" {
 		return "back"
 	}
 	return "close"

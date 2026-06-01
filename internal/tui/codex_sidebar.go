@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
+	"lcroom/internal/uistyle"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -193,7 +194,7 @@ func (m Model) openEmbeddedSidebarDiff(projectPath string) (tea.Model, tea.Cmd) 
 	return m, cmd
 }
 
-func (m Model) returnFromDiffToEmbeddedCodex() (tea.Model, tea.Cmd) {
+func (m Model) returnFromDiffToEmbeddedCodex(stageAskPrompt bool) (tea.Model, tea.Cmd) {
 	if m.diffView == nil || strings.TrimSpace(m.diffView.returnToCodexProject) == "" {
 		return m.closeDiffView("Diff view closed")
 	}
@@ -202,7 +203,7 @@ func (m Model) returnFromDiffToEmbeddedCodex() (tea.Model, tea.Cmd) {
 	m.diffView = nil
 	updated, cmd := m.showCodexProject(projectPath, "Back to engineer session")
 	m = normalizeUpdateModel(updated)
-	if strings.TrimSpace(m.codexInput.Value()) == "" {
+	if stageAskPrompt && strings.TrimSpace(m.codexInput.Value()) == "" {
 		prompt := "Please review the current diff and call out bugs, regressions, and missing tests."
 		m.setCodexComposerValue(prompt, len([]rune(prompt)))
 		m.persistVisibleCodexDraft()
@@ -333,11 +334,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 }
 
 func (m Model) renderEmbeddedSidebarTitle(width int) string {
-	title := detailSectionStyle.Render(fitLine("Session Sidebar", width))
-	if m.codexPanelFocus == embeddedCodexFocusSidebar {
-		return title
-	}
-	return detailMutedStyle.Render(fitLine("Session Sidebar", width))
+	return uistyle.SidebarTitleStyle.Render(fitLine("AI Engineer", width))
 }
 
 func (m Model) renderEmbeddedSidebarSectionHeader(section embeddedCodexSidebarSection, title string, width int) string {
@@ -348,9 +345,9 @@ func (m Model) renderEmbeddedSidebarSectionHeader(section embeddedCodexSidebarSe
 	}
 	text := marker + " " + title
 	if selected {
-		return commandPaletteSelectStyle.Width(width).Render(truncateText(text, max(1, width)))
+		return uistyle.SidebarSectionHeaderStyle.Width(width).Render(truncateText(text, max(1, width)))
 	}
-	return detailSectionStyle.Render(fitLine(text, width))
+	return uistyle.SidebarSectionHeaderStyle.Render(fitLine(text, width))
 }
 
 func (m Model) renderEmbeddedSidebarProcessSection(projectPath string, width int) []string {
