@@ -497,12 +497,10 @@ func newProjectExistingPathSuggestions(homeDirFn func() (string, error), raw str
 	}
 
 	if newProjectPathHasTrailingSeparator(displayPath) || newProjectPathIsDir(inspectPath) {
-		return newProjectChildDirectorySuggestions(
-			filepath.Clean(inspectPath),
-			ensureNewProjectTrailingSeparator(displayPath),
-			"",
-			limit,
-		)
+		if newProjectPathIsDir(inspectPath) {
+			return []string{ensureNewProjectTrailingSeparator(displayPath)}
+		}
+		return nil
 	}
 
 	dirPath := filepath.Dir(filepath.Clean(inspectPath))

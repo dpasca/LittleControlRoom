@@ -305,6 +305,42 @@ func TestNewProjectPathSuggestionsPreserveHomePrefix(t *testing.T) {
 	}
 }
 
+func TestNewProjectPathSuggestionsCollapseExactExistingDirectory(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		if err := os.MkdirAll(filepath.Join(parent, name), 0o755); err != nil {
+			t.Fatalf("mkdir child path: %v", err)
+		}
+	}
+
+	want := parent + string(os.PathSeparator)
+	for _, raw := range []string{parent, want} {
+		suggestions := newProjectExistingPathSuggestions(func() (string, error) { return "/Users/tester", nil }, raw, 8)
+		if len(suggestions) != 1 || suggestions[0] != want {
+			t.Fatalf("suggestions for %q = %v, want only %q", raw, suggestions, want)
+		}
+	}
+}
+
+func TestNewProjectPathSuggestionsCollapseExactHomeDirectory(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	repos := filepath.Join(home, "dev", "repos")
+	for _, name := range []string{"LittleControlRoom", "OtherProject"} {
+		if err := os.MkdirAll(filepath.Join(repos, name), 0o755); err != nil {
+			t.Fatalf("mkdir repo path: %v", err)
+		}
+	}
+
+	suggestions := newProjectExistingPathSuggestions(func() (string, error) { return home, nil }, "~/dev/repos", 8)
+	if len(suggestions) != 1 || suggestions[0] != "~/dev/repos/" {
+		t.Fatalf("suggestions = %v, want only ~/dev/repos/", suggestions)
+	}
+}
+
 func TestNewProjectPreviewDerivesNameFromQuotedExistingPathWhenNameBlank(t *testing.T) {
 	t.Parallel()
 
