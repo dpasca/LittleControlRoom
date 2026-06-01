@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	maxExportedTranscriptEntries    = 480
-	maxExportedTranscriptBytes      = 768 * 1024
-	maxExportedTranscriptEntryBytes = 128 * 1024
+	maxExportedTranscriptEntries          = 1200
+	maxExportedTranscriptBytes            = 2 * 1024 * 1024
+	maxExportedTranscriptEntryBytes       = 128 * 1024
+	maxExportedGeneratedImagePreviewBytes = 4 * 1024 * 1024
 )
 
 type transcriptExportCache struct {
@@ -47,11 +48,13 @@ func exportTranscriptEntries(entries []transcriptEntry) []TranscriptEntry {
 	reversed := make([]TranscriptEntry, 0, min(len(entries), maxExportedTranscriptEntries))
 	totalBytes := 0
 	omittedEntries := 0
+	retainedGeneratedImagePreview := false
 	for i := len(entries) - 1; i >= 0; i-- {
 		exported, ok := exportTranscriptEntry(entries[i])
 		if !ok {
 			continue
 		}
+		exported = limitGeneratedImagePreviewForTranscriptExport(exported, &retainedGeneratedImagePreview)
 		entryBytes := transcriptEntryExportBytes(exported)
 		if len(reversed) > 0 && (len(reversed) >= maxExportedTranscriptEntries || totalBytes+entryBytes > maxExportedTranscriptBytes) {
 			omittedEntries = countExportableTranscriptEntries(entries[:i+1])
@@ -75,6 +78,23 @@ func exportTranscriptEntries(entries []transcriptEntry) []TranscriptEntry {
 		out = append(out, reversed[i])
 	}
 	return out
+}
+
+func limitGeneratedImagePreviewForTranscriptExport(entry TranscriptEntry, retained *bool) TranscriptEntry {
+	if entry.GeneratedImage == nil || len(entry.GeneratedImage.PreviewData) == 0 {
+		return entry
+	}
+	if retained != nil && !*retained && len(entry.GeneratedImage.PreviewData) <= maxExportedGeneratedImagePreviewBytes {
+		*retained = true
+		return entry
+	}
+	image := cloneGeneratedImageArtifact(entry.GeneratedImage)
+	image.PreviewData = nil
+	entry.GeneratedImage = image
+	if retained != nil && !*retained {
+		*retained = true
+	}
+	return entry
 }
 
 func exportTranscriptEntry(entry transcriptEntry) (TranscriptEntry, bool) {
@@ -103,9 +123,6 @@ func countExportableTranscriptEntries(entries []transcriptEntry) int {
 
 func transcriptEntryExportBytes(entry TranscriptEntry) int {
 	size := len(entry.Text) + len(entry.DisplayText)
-	if entry.GeneratedImage != nil {
-		size += len(entry.GeneratedImage.PreviewData)
-	}
 	return size
 }
 

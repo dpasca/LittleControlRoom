@@ -645,6 +645,118 @@ func TestSnapshotBoundsLargeTranscriptExport(t *testing.T) {
 	}
 }
 
+func TestSnapshotKeepsDeepTextHistory(t *testing.T) {
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		transcriptRevision: 1,
+	}
+	for i := 0; i < 700; i++ {
+		s.entries = append(s.entries, transcriptEntry{
+			ItemID: fmt.Sprintf("entry_%03d", i),
+			Kind:   TranscriptAgent,
+			Text:   fmt.Sprintf("reply %03d", i),
+		})
+	}
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 700 {
+		t.Fatalf("snapshot entries = %d, want full 700-entry history", len(snapshot.Entries))
+	}
+	if snapshot.Entries[0].Kind == TranscriptSystem && strings.Contains(snapshot.Entries[0].Text, "older transcript entries omitted") {
+		t.Fatalf("snapshot unexpectedly clipped modest deep history: %#v", snapshot.Entries[0])
+	}
+	if snapshot.Entries[0].Text != "reply 000" || snapshot.Entries[len(snapshot.Entries)-1].Text != "reply 699" {
+		t.Fatalf("snapshot history boundaries = %q .. %q, want reply 000 .. reply 699",
+			snapshot.Entries[0].Text, snapshot.Entries[len(snapshot.Entries)-1].Text)
+	}
+}
+
+func TestSnapshotGeneratedImagePreviewDoesNotEvictTextHistory(t *testing.T) {
+	preview := bytes.Repeat([]byte("p"), maxExportedGeneratedImagePreviewBytes-1024)
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		transcriptRevision: 1,
+	}
+	for i := 0; i < 640; i++ {
+		s.entries = append(s.entries, transcriptEntry{
+			ItemID: fmt.Sprintf("entry_%03d", i),
+			Kind:   TranscriptAgent,
+			Text:   fmt.Sprintf("reply %03d", i),
+		})
+	}
+	s.entries = append(s.entries, transcriptEntry{
+		ItemID: "image_latest",
+		Kind:   TranscriptTool,
+		Text:   "Generated image",
+		GeneratedImage: &GeneratedImageArtifact{
+			ID:          "image_latest",
+			Path:        "/tmp/image-latest.png",
+			ByteSize:    int64(len(preview)),
+			PreviewData: preview,
+		},
+	})
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 641 {
+		t.Fatalf("snapshot entries = %d, want text history plus image", len(snapshot.Entries))
+	}
+	if snapshot.Entries[0].Text != "reply 000" {
+		t.Fatalf("snapshot first entry = %q, want oldest text retained", snapshot.Entries[0].Text)
+	}
+	image := snapshot.Entries[len(snapshot.Entries)-1].GeneratedImage
+	if image == nil || len(image.PreviewData) != len(preview) {
+		t.Fatalf("latest generated image preview length = %d, want %d", len(image.PreviewData), len(preview))
+	}
+}
+
+func TestSnapshotKeepsOnlyNewestGeneratedImagePreview(t *testing.T) {
+	oldPreview := []byte("old preview")
+	newPreview := []byte("new preview")
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		transcriptRevision: 1,
+	}
+	s.entries = append(s.entries,
+		transcriptEntry{
+			ItemID: "image_old",
+			Kind:   TranscriptTool,
+			Text:   "Generated image",
+			GeneratedImage: &GeneratedImageArtifact{
+				ID:          "image_old",
+				Path:        "/tmp/image-old.png",
+				PreviewData: oldPreview,
+			},
+		},
+		transcriptEntry{
+			ItemID: "image_new",
+			Kind:   TranscriptTool,
+			Text:   "Generated image",
+			GeneratedImage: &GeneratedImageArtifact{
+				ID:          "image_new",
+				Path:        "/tmp/image-new.png",
+				PreviewData: newPreview,
+			},
+		},
+	)
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 2 {
+		t.Fatalf("snapshot entries = %d, want 2", len(snapshot.Entries))
+	}
+	if snapshot.Entries[0].GeneratedImage == nil || len(snapshot.Entries[0].GeneratedImage.PreviewData) != 0 {
+		t.Fatalf("older image preview should be stripped, got %#v", snapshot.Entries[0].GeneratedImage)
+	}
+	if snapshot.Entries[1].GeneratedImage == nil || !bytes.Equal(snapshot.Entries[1].GeneratedImage.PreviewData, newPreview) {
+		t.Fatalf("newest image preview not retained: %#v", snapshot.Entries[1].GeneratedImage)
+	}
+}
+
 func TestStagedModelOverride(t *testing.T) {
 	model, reasoning := stagedModelOverride("gpt-5", "medium", "gpt-5-codex", "high")
 	if model != "gpt-5-codex" || reasoning != "high" {
