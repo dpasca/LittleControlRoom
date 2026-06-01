@@ -21548,7 +21548,7 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 	if strings.Contains(rendered, "Esc hide") {
 		t.Fatalf("renderCodexFooter() should keep Esc as a silent fallback, not advertise it: %q", rendered)
 	}
-	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks"} {
+	for _, hidden := range []string{"Alt+Down picker", "Alt+[ prev", "Alt+] next", "Alt+L blocks", "Alt+S sidebar"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("renderCodexFooter() should promote %q out of the footer: %q", hidden, rendered)
 		}
@@ -21729,7 +21729,7 @@ func TestRenderCodexBannerPromotesLinksAndBlocks(t *testing.T) {
 	m.renderAndCacheCodexTranscript("/tmp/demo", snapshot, 140)
 	rendered := ansi.Strip(m.renderCodexBanner(snapshot, 140))
 
-	for _, expected := range []string{"Codex | demo", "Alt+O links", "Alt+L blocks"} {
+	for _, expected := range []string{"Codex | demo", "Alt+O links", "Alt+L blocks", "Alt+S sidebar"} {
 		if !strings.Contains(rendered, expected) {
 			t.Fatalf("renderCodexBanner() missing %q: %q", expected, rendered)
 		}

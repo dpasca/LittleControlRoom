@@ -139,10 +139,7 @@ func (m Model) updateCodexSidebarMode(snapshot codexapp.Snapshot, msg tea.KeyMsg
 		projectPath = strings.TrimSpace(m.codexHiddenProject)
 	}
 	switch msg.String() {
-	case "f6":
-		cmd := m.focusEmbeddedCodexMain("")
-		return m, cmd
-	case "shift+f6":
+	case "alt+s":
 		cmd := m.focusEmbeddedCodexMain("")
 		return m, cmd
 	case "esc":

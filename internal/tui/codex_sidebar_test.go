@@ -116,20 +116,36 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 	}
 }
 
-func TestCodexSidebarF6TogglesSidebarAndSession(t *testing.T) {
+func TestCodexSidebarAltSTogglesSidebarAndSession(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
 
-	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyF6})
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}, Alt: true})
 	got := normalizeUpdateModel(updated)
 	if got.codexPanelFocus != embeddedCodexFocusSidebar {
 		t.Fatalf("focus = %q, want sidebar", got.codexPanelFocus)
 	}
 
-	updated, _ = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyF6})
+	updated, _ = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}, Alt: true})
 	got = normalizeUpdateModel(updated)
 	if got.codexPanelFocus != embeddedCodexFocusMain {
-		t.Fatalf("second F6 focus = %q, want main session", got.codexPanelFocus)
+		t.Fatalf("second Alt+S focus = %q, want main session", got.codexPanelFocus)
+	}
+}
+
+func TestCodexBannerAdvertisesSidebarShortcut(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+
+	rendered := ansi.Strip(m.renderCodexBanner(testEmbeddedSidebarSnapshot(projectPath), 118))
+	if !strings.Contains(rendered, "Alt+S sidebar") {
+		t.Fatalf("banner should advertise sidebar shortcut: %q", rendered)
+	}
+
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	rendered = ansi.Strip(m.renderCodexBanner(testEmbeddedSidebarSnapshot(projectPath), 118))
+	if !strings.Contains(rendered, "Alt+S session") {
+		t.Fatalf("focused sidebar banner should advertise return shortcut: %q", rendered)
 	}
 }
 
