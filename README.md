@@ -121,8 +121,8 @@ The main TUI command palette opens with `/`.
 - `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
 - `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Browser, and Advanced.
 - `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
-- `/new-project [--assistant codex|opencode|claude|lcagent]`: Create a project folder, or use path suggestions/paste an existing project path to add it directly. The dialog also lets you choose which assistant `Enter` should open first for the new item.
-- `/new-task [--assistant codex|opencode|claude|lcagent] [request]`: Create a scratch task folder under the default task root without stopping to name it. Optional request text seeds the temporary task name, and the assistant flag preselects the first embedded provider for `Enter`.
+- `/new-project [--assistant codex|opencode|claude|lcagent]`: Create a project folder, or use path suggestions/paste an existing project path to add it directly. The dialog also lets you choose which assistant `Enter` should open first for the new item, defaulting to the last embedded provider you used when available.
+- `/new-task [--assistant codex|opencode|claude|lcagent] [request]`: Create a scratch task folder under the default task root. Optional request text seeds the temporary task name, and the assistant flag preselects the first embedded provider for `Enter`; without a flag, the task picker defaults to the last embedded provider you used when available.
 - `/task-actions`: Open archive/delete actions for the selected scratch task.
 - `/open`: Open the selected project's folder in the system browser.
 - `/run [command]`: Start the selected project's managed runtime.
@@ -186,7 +186,7 @@ Boss chat sessions are saved as grep-friendly Markdown transcripts under the app
 
 1. Start the dashboard with `lcroom tui` or `./lcroom tui`.
 2. Move through projects with the arrow keys.
-3. Press `Enter` to open or resume the selected project's latest embedded provider. Fresh projects and scratch tasks default to Codex unless you selected an assistant while creating them.
+3. Press `Enter` to open or resume the selected project's latest embedded provider. Fresh projects and scratch tasks use the assistant chosen in their create dialog, which defaults to the last embedded provider you used when available.
 4. Press `Esc` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
 5. Press `/` for commands, `f` to filter the project list instantly, `a` to switch Active/Archived project tabs, or `b` for Boss Chat.
 

@@ -492,3 +492,29 @@ func TestPreferredEmbeddedProviderKeepsLiveSessionBeforeOneShotOverride(t *testi
 		t.Fatalf("preferred provider = %q, want live Codex provider", got)
 	}
 }
+
+func TestDefaultNewItemProviderUsesLatestScannedEmbeddedProvider(t *testing.T) {
+	now := time.Date(2026, 6, 1, 10, 0, 0, 0, time.UTC)
+	m := Model{
+		projects: []model.ProjectSummary{
+			{
+				Path:                     "/tmp/codex",
+				LatestSessionFormat:      "modern",
+				LatestSessionLastEventAt: now.Add(-2 * time.Hour),
+			},
+			{
+				Path:                     "/tmp/opencode",
+				LatestSessionFormat:      "opencode_db",
+				LatestSessionLastEventAt: now.Add(-time.Hour),
+			},
+		},
+	}
+
+	provider, label := m.defaultEmbeddedProviderForNewItem()
+	if provider != codexapp.ProviderOpenCode {
+		t.Fatalf("default provider = %q, want latest scanned OpenCode", provider)
+	}
+	if label != "last used" {
+		t.Fatalf("default label = %q, want last used", label)
+	}
+}

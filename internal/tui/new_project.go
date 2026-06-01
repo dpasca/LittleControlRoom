@@ -35,6 +35,7 @@ type newProjectDialogState struct {
 	CreateGitRepo          bool
 	Provider               codexapp.Provider
 	ProviderExplicit       bool
+	ProviderDefaultLabel   string
 	Submitting             bool
 	PathManuallyEdited     bool
 	PathSuggestionsPending bool
@@ -89,19 +90,15 @@ func (m Model) loadRecentProjectParentsCmd() tea.Cmd {
 func (m *Model) openNewProjectDialog(provider codexapp.Provider) tea.Cmd {
 	pathInput := newNewProjectTextInput(m.defaultNewProjectParentPath(), 1024)
 	configureNewProjectPathInput(&pathInput)
-	providerExplicit := strings.TrimSpace(string(provider)) != ""
-	if providerExplicit {
-		provider = provider.Normalized()
-	} else {
-		provider = codexapp.ProviderCodex
-	}
+	provider, defaultLabel := m.initialEmbeddedProviderForNewItem(provider)
 	dialog := &newProjectDialogState{
-		PathInput:        pathInput,
-		NameInput:        newNewProjectTextInput("", 256),
-		Selected:         newProjectFieldPath,
-		CreateGitRepo:    true,
-		Provider:         provider,
-		ProviderExplicit: providerExplicit,
+		PathInput:            pathInput,
+		NameInput:            newNewProjectTextInput("", 256),
+		Selected:             newProjectFieldPath,
+		CreateGitRepo:        true,
+		Provider:             provider,
+		ProviderExplicit:     true,
+		ProviderDefaultLabel: defaultLabel,
 	}
 	dialog.PathInput.Placeholder = "/path/to/projects"
 	dialog.NameInput.Placeholder = "project-name (optional for existing folder path)"
@@ -277,7 +274,7 @@ func (m *Model) cycleNewProjectAssistant(delta int) {
 	if dialog == nil || delta == 0 {
 		return
 	}
-	options := newProjectAssistantOptions()
+	options := embeddedLaunchProviderOptions()
 	index := 0
 	current := dialog.Provider.Normalized()
 	for i, provider := range options {
@@ -295,6 +292,7 @@ func (m *Model) cycleNewProjectAssistant(delta int) {
 	}
 	dialog.Provider = options[index]
 	dialog.ProviderExplicit = true
+	dialog.ProviderDefaultLabel = ""
 }
 
 func (m Model) createOrAttachProjectCmd(req service.CreateOrAttachProjectRequest, provider codexapp.Provider) tea.Cmd {
@@ -310,9 +308,6 @@ func (m Model) createOrAttachProjectCmd(req service.CreateOrAttachProjectRequest
 }
 
 func (s newProjectDialogState) explicitProvider() codexapp.Provider {
-	if !s.ProviderExplicit {
-		return ""
-	}
 	return explicitEmbeddedProvider(s.Provider)
 }
 
@@ -719,6 +714,11 @@ func (m Model) renderNewProjectContent(width int) string {
 	lines = append(lines,
 		m.renderNewProjectInputRow("Name", dialog.Selected == newProjectFieldName, labelWidth, inputWidth, dialog.NameInput),
 		m.renderNewProjectAssistantRow(labelWidth, inputWidth),
+	)
+	if statusLine := m.newProjectAssistantStatusLine(width); statusLine != "" {
+		lines = append(lines, statusLine)
+	}
+	lines = append(lines,
 		m.renderNewProjectGitRow(labelWidth, inputWidth),
 		"",
 		detailLabelStyle.Render("Full path:"),
@@ -816,24 +816,29 @@ func (m Model) renderNewProjectAssistantRow(labelWidth, inputWidth int) string {
 		label = "> Assistant"
 		labelStyle = commandPalettePickStyle
 	}
-	buttons := make([]string, 0, len(newProjectAssistantOptions()))
-	for _, provider := range newProjectAssistantOptions() {
+	buttons := make([]string, 0, len(embeddedLaunchProviderOptions()))
+	for _, provider := range embeddedLaunchProviderOptions() {
 		buttons = append(buttons, renderDialogButton(provider.Label(), dialog.Provider.Normalized() == provider))
 	}
 	value := strings.Join(buttons, " ")
-	if !dialog.ProviderExplicit {
+	if label := strings.TrimSpace(dialog.ProviderDefaultLabel); label != "" {
+		value += " " + detailMutedStyle.Render(label)
+	} else if !dialog.ProviderExplicit {
 		value += " " + detailMutedStyle.Render("default")
 	}
 	return labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) + " " + fitStyledWidth(value, inputWidth)
 }
 
-func newProjectAssistantOptions() []codexapp.Provider {
-	return []codexapp.Provider{
-		codexapp.ProviderCodex,
-		codexapp.ProviderOpenCode,
-		codexapp.ProviderClaudeCode,
-		codexapp.ProviderLCAgent,
+func (m Model) newProjectAssistantStatusLine(width int) string {
+	dialog := m.newProjectDialog
+	if dialog == nil {
+		return ""
 	}
+	statusLine := m.todoCopyProviderStatusLine(dialog.Provider, m.currentSettingsBaseline())
+	if strings.TrimSpace(statusLine) == "" {
+		return ""
+	}
+	return lipgloss.NewStyle().Width(width).Render(detailField("Agent status", statusLine))
 }
 
 func (m Model) renderNewProjectStatus(preview newProjectPreview, width int) []string {

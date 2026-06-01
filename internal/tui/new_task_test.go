@@ -14,9 +14,11 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestDispatchNewTaskCommandCreatesScratchTaskWithoutDialog(t *testing.T) {
+func TestDispatchNewTaskCommandOpensProviderDialogBeforeCreate(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -36,8 +38,23 @@ func TestDispatchNewTaskCommandCreatesScratchTaskWithoutDialog(t *testing.T) {
 		Prompt: "answer Sarah about API docs",
 	})
 	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("/new-task should wait for provider confirmation")
+	}
+	if got.newTaskDialog == nil {
+		t.Fatalf("/new-task should open the provider dialog")
+	}
+	if got.newTaskDialog.Provider != codexapp.ProviderCodex {
+		t.Fatalf("default dialog provider = %q, want Codex", got.newTaskDialog.Provider)
+	}
+	if !strings.Contains(got.status, "New task dialog open") {
+		t.Fatalf("status = %q, want dialog status", got.status)
+	}
+
+	updated, cmd = got.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
 	if cmd == nil {
-		t.Fatalf("/new-task should start creation immediately")
+		t.Fatalf("Enter should start scratch task creation")
 	}
 	if got.status != "Creating scratch task..." {
 		t.Fatalf("status = %q, want creation status", got.status)
@@ -57,14 +74,17 @@ func TestDispatchNewTaskCommandCreatesScratchTaskWithoutDialog(t *testing.T) {
 
 	updated, _ = got.applyNewTaskResultMsg(msg)
 	got = updated.(Model)
+	if got.newTaskDialog != nil {
+		t.Fatalf("dialog should close after scratch task creation")
+	}
 	if got.preferredSelectPath != msg.result.TaskPath {
 		t.Fatalf("preferredSelectPath = %q, want created task path %q", got.preferredSelectPath, msg.result.TaskPath)
 	}
-	if got.status != "Scratch task created and added to the list" {
+	if got.status != "Scratch task created and added to the list; Enter opens Codex" {
 		t.Fatalf("status = %q, want created status", got.status)
 	}
-	if _, ok := got.embeddedLaunchProviderOverride(msg.result.TaskPath); ok {
-		t.Fatalf("default /new-task should not install an explicit launch provider override")
+	if provider, ok := got.embeddedLaunchProviderOverride(msg.result.TaskPath); !ok || provider != codexapp.ProviderCodex {
+		t.Fatalf("launch provider override = (%q, %v), want Codex true", provider, ok)
 	}
 }
 
@@ -89,8 +109,20 @@ func TestDispatchNewTaskCommandCanPreselectAssistant(t *testing.T) {
 		Assistant: "opencode",
 	})
 	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("/new-task with assistant should wait for provider confirmation")
+	}
+	if got.newTaskDialog == nil {
+		t.Fatalf("/new-task with assistant should open the provider dialog")
+	}
+	if got.newTaskDialog.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("dialog provider = %q, want OpenCode", got.newTaskDialog.Provider)
+	}
+
+	updated, cmd = got.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
 	if cmd == nil {
-		t.Fatalf("/new-task with assistant should start creation immediately")
+		t.Fatalf("Enter should start scratch task creation")
 	}
 
 	rawMsg := cmd()
@@ -113,6 +145,38 @@ func TestDispatchNewTaskCommandCanPreselectAssistant(t *testing.T) {
 	}
 	if !strings.Contains(got.status, "Enter opens OpenCode") {
 		t.Fatalf("status = %q, want OpenCode launch hint", got.status)
+	}
+}
+
+func TestNewTaskDialogDefaultsToLastUsedProvider(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	m := New(ctx, svc)
+	m.rememberEmbeddedProvider(codexapp.ProviderClaudeCode)
+
+	updated, _ := m.dispatchCommand(commands.Invocation{
+		Kind:   commands.KindNewTask,
+		Prompt: "answer Sarah about API docs",
+	})
+	got := updated.(Model)
+	if got.newTaskDialog == nil {
+		t.Fatalf("/new-task should open the provider dialog")
+	}
+	if got.newTaskDialog.Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("dialog provider = %q, want last-used Claude Code", got.newTaskDialog.Provider)
+	}
+	if got.newTaskDialog.ProviderDefaultLabel != "last used" {
+		t.Fatalf("default label = %q, want last used", got.newTaskDialog.ProviderDefaultLabel)
 	}
 }
 

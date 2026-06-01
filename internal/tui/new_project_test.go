@@ -113,6 +113,27 @@ func TestNewProjectDialogCanPreselectAssistant(t *testing.T) {
 	}
 }
 
+func TestNewProjectDialogDefaultsToLastUsedAssistant(t *testing.T) {
+	m := Model{
+		width:     100,
+		height:    28,
+		homeDirFn: func() (string, error) { return "/Users/tester", nil },
+	}
+	m.rememberEmbeddedProvider(codexapp.ProviderClaudeCode)
+
+	updated, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindNewProject})
+	got := updated.(Model)
+	if got.newProjectDialog == nil {
+		t.Fatalf("expected dialog to open")
+	}
+	if got.newProjectDialog.Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("dialog provider = %q, want last-used Claude Code", got.newProjectDialog.Provider)
+	}
+	if got.newProjectDialog.ProviderDefaultLabel != "last used" {
+		t.Fatalf("default label = %q, want last used", got.newProjectDialog.ProviderDefaultLabel)
+	}
+}
+
 func TestNewProjectDialogCyclesAssistantSelection(t *testing.T) {
 	m := Model{
 		width:     100,
