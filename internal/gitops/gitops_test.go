@@ -4,12 +4,54 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestReadDiffStatAllStagedWorksWhenRepoIndexIsMissing(t *testing.T) {
+	repoPath := t.TempDir()
+	runGitopsTestGit(t, repoPath, "init")
+	assertGitIndexMissing(t, repoPath)
+
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+
+	stat, err := ReadDiffStatAllStaged(context.Background(), repoPath)
+	if err != nil {
+		t.Fatalf("ReadDiffStatAllStaged() error = %v", err)
+	}
+	if !strings.Contains(stat, "README.md") || !strings.Contains(stat, "1 file changed") {
+		t.Fatalf("ReadDiffStatAllStaged() = %q, want README.md stat", stat)
+	}
+	assertGitIndexMissing(t, repoPath)
+}
+
+func TestReadDiffStatWithAddedPathsWorksWhenRepoIndexIsMissing(t *testing.T) {
+	repoPath := t.TempDir()
+	runGitopsTestGit(t, repoPath, "init")
+	assertGitIndexMissing(t, repoPath)
+
+	if err := os.WriteFile(filepath.Join(repoPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "notes.txt"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatalf("write notes.txt: %v", err)
+	}
+
+	stat, err := ReadDiffStatWithAddedPaths(context.Background(), repoPath, []string{"notes.txt"})
+	if err != nil {
+		t.Fatalf("ReadDiffStatWithAddedPaths() error = %v", err)
+	}
+	if !strings.Contains(stat, "notes.txt") || strings.Contains(stat, "README.md") {
+		t.Fatalf("ReadDiffStatWithAddedPaths() = %q, want only notes.txt stat", stat)
+	}
+	assertGitIndexMissing(t, repoPath)
+}
 
 func TestPushTimesOutHungGitProcess(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -40,5 +82,24 @@ func TestPushTimesOutHungGitProcess(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "timed out after 50ms") {
 		t.Fatalf("Push() error = %q, want timeout text", err)
+	}
+}
+
+func runGitopsTestGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
+}
+
+func assertGitIndexMissing(t *testing.T, repoPath string) {
+	t.Helper()
+	indexPath := filepath.Join(repoPath, ".git", "index")
+	if _, err := os.Stat(indexPath); err == nil {
+		t.Fatalf("%s exists, want missing", indexPath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat %s: %v", indexPath, err)
 	}
 }

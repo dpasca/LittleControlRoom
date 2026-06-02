@@ -234,14 +234,8 @@ func readCachedDiffWithAddedPaths(ctx context.Context, path string, extraPaths [
 	defer os.RemoveAll(tempDir)
 
 	tempIndex := filepath.Join(tempDir, "index")
-	if data, readErr := os.ReadFile(indexPath); readErr == nil {
-		if writeErr := os.WriteFile(tempIndex, data, 0o600); writeErr != nil {
-			return nil, fmt.Errorf("seed temp index for %s: %w", path, writeErr)
-		}
-	} else if !os.IsNotExist(readErr) {
-		return nil, fmt.Errorf("read git index for %s: %w", path, readErr)
-	} else if writeErr := os.WriteFile(tempIndex, nil, 0o600); writeErr != nil {
-		return nil, fmt.Errorf("create empty temp index for %s: %w", path, writeErr)
+	if err := seedTempIndex(path, indexPath, tempIndex); err != nil {
+		return nil, err
 	}
 
 	addArgs := append([]string{"add", "--"}, extraPaths...)
@@ -275,16 +269,27 @@ func readCachedDiffWithTempIndex(ctx context.Context, path string, addArgs []str
 	defer os.RemoveAll(tempDir)
 
 	tempIndex := filepath.Join(tempDir, "index")
-	if data, readErr := os.ReadFile(indexPath); readErr == nil {
-		if writeErr := os.WriteFile(tempIndex, data, 0o600); writeErr != nil {
-			return nil, fmt.Errorf("seed temp index for %s: %w", path, writeErr)
-		}
-	} else if !os.IsNotExist(readErr) {
-		return nil, fmt.Errorf("read git index for %s: %w", path, readErr)
-	} else if writeErr := os.WriteFile(tempIndex, nil, 0o600); writeErr != nil {
-		return nil, fmt.Errorf("create empty temp index for %s: %w", path, writeErr)
+	if err := seedTempIndex(path, indexPath, tempIndex); err != nil {
+		return nil, err
 	}
 	return readCachedDiffWithTempIndexFromSeed(ctx, path, tempIndex, addArgs, diffArgs...)
+}
+
+func seedTempIndex(repoPath, indexPath, tempIndex string) error {
+	data, err := os.ReadFile(indexPath)
+	if err == nil {
+		if len(data) == 0 {
+			return nil
+		}
+		if writeErr := os.WriteFile(tempIndex, data, 0o600); writeErr != nil {
+			return fmt.Errorf("seed temp index for %s: %w", repoPath, writeErr)
+		}
+		return nil
+	}
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return fmt.Errorf("read git index for %s: %w", repoPath, err)
 }
 
 func readCachedDiffWithTempIndexFromSeed(ctx context.Context, path, tempIndex string, addArgs []string, diffArgs ...string) ([]byte, error) {
