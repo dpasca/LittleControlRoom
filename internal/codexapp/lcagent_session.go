@@ -234,6 +234,14 @@ func (s *lcagentSession) StateSnapshot() Snapshot {
 	return s.stateSnapshotLocked()
 }
 
+func (s *lcagentSession) TryStateSnapshot() (Snapshot, bool) {
+	if s == nil || !s.mu.TryLock() {
+		return Snapshot{}, false
+	}
+	defer s.mu.Unlock()
+	return s.stateSnapshotLocked(), true
+}
+
 func (s *lcagentSession) Submit(prompt string) error {
 	return s.SubmitInput(Submission{Text: prompt})
 }

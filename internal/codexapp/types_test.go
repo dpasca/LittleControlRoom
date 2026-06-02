@@ -37,6 +37,10 @@ func (s *fakeSession) StateSnapshot() Snapshot {
 	return s.Snapshot()
 }
 
+func (s *fakeSession) TryStateSnapshot() (Snapshot, bool) {
+	return s.StateSnapshot(), true
+}
+
 func (s *fakeSession) TrySnapshot() (Snapshot, bool) {
 	return s.Snapshot(), true
 }

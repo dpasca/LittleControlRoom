@@ -44,32 +44,35 @@ import (
 )
 
 type fakeCodexSession struct {
-	projectPath      string
-	snapshot         codexapp.Snapshot
-	snapshotCalls    int
-	trySnapshotCalls int
-	trySnapshotFn    func(*fakeCodexSession) (codexapp.Snapshot, bool)
-	submitted        []string
-	submissions      []codexapp.Submission
-	decisions        []codexapp.ApprovalDecision
-	toolAnswers      []map[string][]string
-	elicitations     []fakeElicitationResponse
-	statusCalls      int
-	permissionCalls  int
-	permissionLevels []string
-	showGoalCalls    int
-	clearGoalCalls   int
-	goalSetObjective string
-	goalSetBudget    *int64
-	compactCalls     int
-	reviewCalls      int
-	interrupted      bool
-	refreshCalls     int
-	refreshBusyFn    func(*fakeCodexSession) error
-	compactFn        func(*fakeCodexSession) error
-	reviewFn         func(*fakeCodexSession) error
-	models           []codexapp.ModelOption
-	modelStages      []struct {
+	projectPath           string
+	snapshot              codexapp.Snapshot
+	snapshotCalls         int
+	trySnapshotCalls      int
+	stateSnapshotCalls    int
+	tryStateSnapshotCalls int
+	trySnapshotFn         func(*fakeCodexSession) (codexapp.Snapshot, bool)
+	tryStateSnapshotFn    func(*fakeCodexSession) (codexapp.Snapshot, bool)
+	submitted             []string
+	submissions           []codexapp.Submission
+	decisions             []codexapp.ApprovalDecision
+	toolAnswers           []map[string][]string
+	elicitations          []fakeElicitationResponse
+	statusCalls           int
+	permissionCalls       int
+	permissionLevels      []string
+	showGoalCalls         int
+	clearGoalCalls        int
+	goalSetObjective      string
+	goalSetBudget         *int64
+	compactCalls          int
+	reviewCalls           int
+	interrupted           bool
+	refreshCalls          int
+	refreshBusyFn         func(*fakeCodexSession) error
+	compactFn             func(*fakeCodexSession) error
+	reviewFn              func(*fakeCodexSession) error
+	models                []codexapp.ModelOption
+	modelStages           []struct {
 		Model     string
 		Reasoning string
 	}
@@ -106,9 +109,18 @@ func (s *fakeCodexSession) Snapshot() codexapp.Snapshot {
 }
 
 func (s *fakeCodexSession) StateSnapshot() codexapp.Snapshot {
+	s.stateSnapshotCalls++
 	snapshot := s.snapshot
 	snapshot.ProjectPath = s.projectPath
 	return snapshot
+}
+
+func (s *fakeCodexSession) TryStateSnapshot() (codexapp.Snapshot, bool) {
+	s.tryStateSnapshotCalls++
+	if s.tryStateSnapshotFn != nil {
+		return s.tryStateSnapshotFn(s)
+	}
+	return s.StateSnapshot(), true
 }
 
 func (s *fakeCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
@@ -17041,6 +17053,83 @@ func TestVisibleCodexAltUpHidesSession(t *testing.T) {
 	}
 	if got.status != "Embedded Codex session hidden." {
 		t.Fatalf("status = %q, want hide notice", got.status)
+	}
+}
+
+func TestVisibleCodexAltUpHidesWithoutBlockingOnContendedLiveState(t *testing.T) {
+	projectPath := "/tmp/demo"
+	lastActivity := time.Date(2026, 4, 4, 10, 30, 0, 0, time.UTC)
+	cached := codexapp.Snapshot{
+		ProjectPath:        projectPath,
+		Provider:           codexapp.ProviderCodex,
+		Started:            true,
+		Busy:               true,
+		Phase:              codexapp.SessionPhaseRunning,
+		ThreadID:           "thread-demo",
+		LastActivityAt:     lastActivity,
+		LastBusyActivityAt: lastActivity,
+		Status:             "Codex is working",
+	}
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot:    cached,
+		trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
+		tryStateSnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	project := model.ProjectSummary{
+		Path:                projectPath,
+		Name:                "demo",
+		PresentOnDisk:       true,
+		LastActivity:        lastActivity,
+		LatestSessionFormat: "modern",
+	}
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: cached,
+		},
+		allProjects:    []model.ProjectSummary{project},
+		projects:       []model.ProjectSummary{project},
+		detail:         model.ProjectDetail{Summary: project},
+		codexInput:     newCodexTextarea(),
+		codexViewport:  viewport.New(0, 0),
+		detailViewport: viewport.New(0, 0),
+		width:          100,
+		height:         24,
+	}
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got := updated.(Model)
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want hidden", got.codexVisibleProject)
+	}
+	if session.trySnapshotCalls == 0 {
+		t.Fatalf("alt+up should try the non-blocking full snapshot before using the cache")
+	}
+	if session.tryStateSnapshotCalls == 0 {
+		t.Fatalf("dashboard rebuild should try non-blocking state before using the cache")
+	}
+	if session.snapshotCalls != 0 {
+		t.Fatalf("alt+up should not call blocking Snapshot(); calls = %d", session.snapshotCalls)
+	}
+	if session.stateSnapshotCalls != 0 {
+		t.Fatalf("alt+up should not call blocking StateSnapshot(); calls = %d", session.stateSnapshotCalls)
 	}
 }
 

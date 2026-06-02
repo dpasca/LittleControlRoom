@@ -416,19 +416,18 @@ func (m Model) nonBlockingCodexSnapshot(projectPath string) (codexapp.Snapshot, 
 	return codexapp.Snapshot{}, false
 }
 
-type codexStateSnapshooter interface {
-	StateSnapshot() codexapp.Snapshot
+type codexTryStateSnapshooter interface {
+	TryStateSnapshot() (codexapp.Snapshot, bool)
 }
 
 func stateSnapshotForCodexSession(session codexapp.Session) (codexapp.Snapshot, bool) {
 	if session == nil {
 		return codexapp.Snapshot{}, false
 	}
-	state, ok := session.(codexStateSnapshooter)
-	if !ok {
-		return codexapp.Snapshot{}, false
+	if state, ok := session.(codexTryStateSnapshooter); ok {
+		return state.TryStateSnapshot()
 	}
-	return state.StateSnapshot(), true
+	return codexapp.Snapshot{}, false
 }
 
 func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
