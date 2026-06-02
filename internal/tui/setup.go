@@ -189,6 +189,10 @@ func (m Model) updateSetupMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setupLoading = true
 		m.status = "Refreshing AI backend checks..."
 		return m, m.refreshSetupSnapshotCmd(false)
+	case "ctrl+s":
+		if m.setupSectionNavigation {
+			return m.saveSetupFromCurrentChoices()
+		}
 	case "t":
 		if m.setupStep == setupStepProjectProvider && m.setupSelectedBackend().SupportsModelTier() {
 			m.setupModelTier = m.cycleModelTier(m.setupModelTier)
@@ -221,6 +225,9 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		cmd := m.moveSetupConfigSelection(-1)
 		return m, cmd
 	case "ctrl+s":
+		if m.setupSectionNavigation {
+			return m.saveSetupFromCurrentChoices()
+		}
 		return m.setupAdvance()
 	case "enter":
 		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
@@ -278,6 +285,8 @@ func (m Model) updateSetupSectionMenuMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setupLoading = true
 		m.status = "Refreshing AI backend checks..."
 		return m, m.refreshSetupSnapshotCmd(false)
+	case "ctrl+s":
+		return m.saveSetupFromCurrentChoices()
 	case "enter":
 		return m.openSetupSectionDialog()
 	}
@@ -1400,6 +1409,7 @@ func (m Model) setupActionSegments() []string {
 	if m.setupSectionMenu {
 		return []string{
 			renderDialogAction("Enter", "open", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Up/Down", "section", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
@@ -1408,31 +1418,43 @@ func (m Model) setupActionSegments() []string {
 	if m.setupReviewMode {
 		return []string{
 			renderDialogAction("Enter", "save", commitActionKeyStyle, commitActionTextStyle),
+			renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
 		}
 	}
 	if m.setupConfigMode {
 		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
+			ctrlSLabel := "continue"
+			if m.setupSectionNavigation {
+				ctrlSLabel = "save"
+			}
 			return []string{
 				renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
-				renderDialogAction("ctrl+s", "continue", commitActionKeyStyle, commitActionTextStyle),
+				renderDialogAction("ctrl+s", ctrlSLabel, commitActionKeyStyle, commitActionTextStyle),
 				renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
 				renderDialogAction("Up/Down", "field", navigateActionKeyStyle, navigateActionTextStyle),
 				renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
 			}
 		}
-		return []string{
+		actions := []string{
 			renderDialogAction("Enter", "continue", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("Up/Down", "field", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
 		}
+		if m.setupSectionNavigation {
+			actions = append([]string{renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle)}, actions...)
+		}
+		return actions
 	}
 	actions := []string{
 		renderDialogAction("Enter", "next", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Up/Down", "provider", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Esc", m.setupBackActionLabel(), cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	if m.setupSectionNavigation {
+		actions = append([]string{renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle)}, actions...)
 	}
 	if isLocalBackendModelPickerBackend(m.setupSelectedLocalModelBackend()) {
 		actions = append(actions[:2], append([]string{

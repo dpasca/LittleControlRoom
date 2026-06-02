@@ -23898,6 +23898,86 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 	if !strings.Contains(string(rawConfig), `xiaomi_base_url = "`+xiaomiBaseURL+`"`) {
 		t.Fatalf("saved config missing Xiaomi base URL: %s", rawConfig)
 	}
+
+	updated, _ = got.Update(saved)
+	got = updated.(Model)
+	if got.xiaomiBaseURL() != xiaomiBaseURL {
+		t.Fatalf("model Xiaomi base URL after setupSavedMsg = %q, want %q", got.xiaomiBaseURL(), xiaomiBaseURL)
+	}
+}
+
+func TestSetupSectionCtrlSSavesLCAgentXiaomiBaseURL(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendDeepSeek
+	settings.BossChatBackend = config.AIBackendDeepSeek
+	settings.LCAgentProvider = "xiaomi"
+	xiaomiBaseURL := "https://token-plan-sgp.xiaomimimo.com/v1"
+
+	m := Model{
+		setupMode:              true,
+		setupSectionNavigation: true,
+		setupConfigMode:        true,
+		setupStep:              setupStepLCAgentConfig,
+		setupFocusedRole:       setupRoleLCAgent,
+		setupSelected:          mSetupSelectionForTest(config.AIBackendDeepSeek),
+		setupBossSelected:      mSetupBossSelectionForTest(config.AIBackendDeepSeek),
+		settingsBaseline:       &settings,
+		settingsConfigPath:     filepath.Join(home, ".little-control-room", "config.toml"),
+		settingsFields:         newSettingsFields(settings),
+		width:                  120,
+		height:                 30,
+	}
+	m.settingsFields[settingsFieldXiaomiBaseURL].input.SetValue(xiaomiBaseURL)
+
+	rendered := ansi.Strip(m.renderSetupConfigContent(110))
+	if !strings.Contains(rendered, "ctrl+s") || !strings.Contains(rendered, "save") {
+		t.Fatalf("setup section should advertise ctrl+s save action: %q", rendered)
+	}
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("setup section ctrl+s should queue a save command")
+	}
+	if !got.setupSaving {
+		t.Fatalf("setup section ctrl+s should mark setup saving")
+	}
+	if got.status != "Saving AI setup..." {
+		t.Fatalf("status = %q, want saving message", got.status)
+	}
+
+	msg := cmd()
+	saved, ok := msg.(setupSavedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want setupSavedMsg", msg)
+	}
+	if saved.err != nil {
+		t.Fatalf("setup section save returned error: %v", saved.err)
+	}
+	if saved.settings.AIBackend != config.AIBackendDeepSeek {
+		t.Fatalf("saved project reports backend = %s, want deepseek", saved.settings.AIBackend)
+	}
+	if saved.settings.BossChatBackend != config.AIBackendDeepSeek {
+		t.Fatalf("saved boss chat backend = %s, want deepseek", saved.settings.BossChatBackend)
+	}
+	if saved.settings.XiaomiBaseURL != xiaomiBaseURL {
+		t.Fatalf("saved Xiaomi base URL = %q, want %q", saved.settings.XiaomiBaseURL, xiaomiBaseURL)
+	}
+	rawConfig, err := os.ReadFile(saved.path)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if !strings.Contains(string(rawConfig), `xiaomi_base_url = "`+xiaomiBaseURL+`"`) {
+		t.Fatalf("saved config missing Xiaomi base URL: %s", rawConfig)
+	}
+
+	updated, _ = got.Update(saved)
+	got = updated.(Model)
+	if got.xiaomiBaseURL() != xiaomiBaseURL {
+		t.Fatalf("model Xiaomi base URL after setup section save = %q, want %q", got.xiaomiBaseURL(), xiaomiBaseURL)
+	}
 }
 
 func TestSetupBossDeepSeekModelDefaultsUseSelectedBackend(t *testing.T) {
@@ -26579,6 +26659,9 @@ func TestSettingsCtrlSSavesConfigAndClosesModal(t *testing.T) {
 	m.settingsFields[settingsFieldActiveThreshold].input.SetValue("15m")
 	m.settingsFields[settingsFieldStuckThreshold].input.SetValue("3h")
 	m.settingsFields[settingsFieldInterval].input.SetValue("45s")
+	xiaomiBaseURL := "https://token-plan-sgp.xiaomimimo.com/v1"
+	m.settingsFields[settingsFieldLCAgentProvider].input.SetValue("xiaomi")
+	m.settingsFields[settingsFieldXiaomiBaseURL].input.SetValue(xiaomiBaseURL)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got := updated.(Model)
@@ -26610,6 +26693,12 @@ func TestSettingsCtrlSSavesConfigAndClosesModal(t *testing.T) {
 	text := string(raw)
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") || !strings.Contains(text, "include_paths = [") || !strings.Contains(text, "exclude_paths = [") || !strings.Contains(text, "exclude_project_patterns = [") || !strings.Contains(text, "codex_launch_preset = \"full-auto\"") || !strings.Contains(text, "interval = \"45s\"") {
 		t.Fatalf("saved config missing edited values: %q", text)
+	}
+	if !strings.Contains(text, `xiaomi_base_url = "`+xiaomiBaseURL+`"`) {
+		t.Fatalf("saved config missing Xiaomi base URL: %q", text)
+	}
+	if saved.xiaomiBaseURL() != xiaomiBaseURL {
+		t.Fatalf("model Xiaomi base URL after settings save = %q, want %q", saved.xiaomiBaseURL(), xiaomiBaseURL)
 	}
 }
 
