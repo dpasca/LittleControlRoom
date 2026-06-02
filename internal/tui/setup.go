@@ -88,6 +88,8 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.localModelPickerVisible = false
 	m.settingsLCAgentProviderVisible = false
 	m.settingsLCAgentProviderSelected = 0
+	m.settingsLCAgentSearchPickerVisible = false
+	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
 	m.settingsChoicePicker = nil
 	m.setupStep = setupStepProjectProvider
@@ -124,6 +126,8 @@ func (m *Model) closeSetupMode(status string) {
 	m.localModelPickerVisible = false
 	m.settingsLCAgentProviderVisible = false
 	m.settingsLCAgentProviderSelected = 0
+	m.settingsLCAgentSearchPickerVisible = false
+	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
 	m.settingsChoicePicker = nil
 	m.blurSettingsFields()

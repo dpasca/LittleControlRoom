@@ -25795,6 +25795,49 @@ func TestSettingsLCAgentWebSearchPickerChoosesExa(t *testing.T) {
 	}
 }
 
+func TestSetupLCAgentWebSearchEnterRendersPicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		setupMode:           true,
+		setupConfigMode:     true,
+		setupStep:           setupStepLCAgentConfig,
+		settingsBaseline:    &settings,
+		settingsFields:      newSettingsFields(settings),
+		setupFocusedRole:    setupRoleLCAgent,
+		setupConfigSelected: 0,
+		width:               100,
+		height:              28,
+	}
+	fields := m.setupConfigFieldIndexes()
+	webSearchPosition := -1
+	for i, field := range fields {
+		if field == settingsFieldLCAgentWebSearchBackend {
+			webSearchPosition = i
+			break
+		}
+	}
+	if webSearchPosition < 0 {
+		t.Fatalf("setup LCAgent fields should include web search backend, got %#v", fields)
+	}
+	m.setupConfigSelected = webSearchPosition
+
+	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("web search picker enter should not advance setup")
+	}
+	if !got.settingsLCAgentSearchPickerVisible {
+		t.Fatalf("web search enter should open the chooser")
+	}
+	rendered := ansi.Strip(got.View())
+	for _, want := range []string{"LCAgent Web Search", "Off", "Exa", "Google", "SearXNG"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("setup web search picker view missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestSettingsLCAgentWebSearchShowsOnlyRelevantFields(t *testing.T) {
 	tests := []struct {
 		name    string

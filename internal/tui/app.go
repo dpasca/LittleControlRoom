@@ -3218,6 +3218,9 @@ func (m Model) View() string {
 		if m.settingsChoicePicker != nil {
 			body = m.renderSettingsChoicePickerOverlay(body, layout.width, layout.height)
 		}
+		if m.settingsLCAgentSearchPickerVisible {
+			body = m.renderSettingsLCAgentWebSearchPickerOverlay(body, layout.width, layout.height)
+		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
 		if m.settingsAIBackendPickerVisible {
