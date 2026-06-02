@@ -983,7 +983,7 @@ func TestRecordEmbeddedSessionActivityMarksTurnSettledAtSameLastEvent(t *testing
 	}
 }
 
-func TestProjectStateMutationSerializesRefreshAndEmbeddedActivity(t *testing.T) {
+func TestRefreshProjectStatusPreservesEmbeddedActivityRecordedDuringGitMetadataRead(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "project")
@@ -1050,7 +1050,16 @@ func TestProjectStateMutationSerializesRefreshAndEmbeddedActivity(t *testing.T) 
 
 	select {
 	case err := <-activityDone:
-		t.Fatalf("embedded activity completed while refresh still owned the project-state mutation: %v", err)
+		if err != nil {
+			t.Fatalf("record embedded activity: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("embedded activity blocked behind slow refresh metadata read")
+	}
+
+	select {
+	case err := <-refreshDone:
+		t.Fatalf("refresh completed before git metadata read was released: %v", err)
 	case <-time.After(150 * time.Millisecond):
 	}
 
@@ -1063,15 +1072,6 @@ func TestProjectStateMutationSerializesRefreshAndEmbeddedActivity(t *testing.T) 
 	case <-time.After(2 * time.Second):
 		t.Fatal("refresh did not finish")
 	}
-	select {
-	case err := <-activityDone:
-		if err != nil {
-			t.Fatalf("record embedded activity: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("embedded activity did not finish")
-	}
-
 	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
 		t.Fatalf("get project detail: %v", err)
@@ -1087,7 +1087,7 @@ func TestProjectStateMutationSerializesRefreshAndEmbeddedActivity(t *testing.T) 
 	}
 }
 
-func TestProjectStateMutationSerializesRefreshAndTogglePin(t *testing.T) {
+func TestRefreshProjectStatusPreservesPinToggledDuringGitMetadataRead(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "project")
@@ -1143,16 +1143,25 @@ func TestProjectStateMutationSerializesRefreshAndTogglePin(t *testing.T) {
 
 	select {
 	case err := <-toggleDone:
-		t.Fatalf("toggle pin completed while refresh still owned the project-state mutation: %v", err)
-	case <-time.After(150 * time.Millisecond):
+		if err != nil {
+			t.Fatalf("toggle pin: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("toggle pin blocked behind slow refresh metadata read")
 	}
 
 	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
-		t.Fatalf("get project detail while toggle is blocked: %v", err)
+		t.Fatalf("get project detail after toggle: %v", err)
 	}
-	if detail.Summary.Pinned {
-		t.Fatal("toggle pin mutated project flags before acquiring the project-state mutation lock")
+	if !detail.Summary.Pinned {
+		t.Fatal("project should be pinned while refresh metadata read is still blocked")
+	}
+
+	select {
+	case err := <-refreshDone:
+		t.Fatalf("refresh completed before git metadata read was released: %v", err)
+	case <-time.After(150 * time.Millisecond):
 	}
 
 	close(release)
@@ -1164,15 +1173,6 @@ func TestProjectStateMutationSerializesRefreshAndTogglePin(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("refresh did not finish")
 	}
-	select {
-	case err := <-toggleDone:
-		if err != nil {
-			t.Fatalf("toggle pin: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("toggle pin did not finish")
-	}
-
 	detail, err = st.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
 		t.Fatalf("get final project detail: %v", err)

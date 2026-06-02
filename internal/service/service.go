@@ -2317,51 +2317,55 @@ func (s *Service) RefreshProjectStatus(ctx context.Context, projectPath string) 
 }
 
 func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPath string, opts ScanOptions) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
-	defer unlockProjectState()
-
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	runtime := s.runtimeSnapshot()
 	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, nil)
 	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, nil)
 	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, nil)
 	now := time.Now()
-	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
+	initialDetail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
 	if err != nil {
 		return err
 	}
+	metadata := s.readProjectStatusRefreshMetadata(ctx, initialDetail.Summary, gitRepoStatusReader, gitWorktreeInfoReader, gitWorktreeListReader)
 
-	presentOnDisk := projectPathExists(detail.Summary.Path)
-	isGitRepo := presentOnDisk && projectIsGitRepo(detail.Summary.Path)
-	worktreeRootPath := detail.Summary.WorktreeRootPath
-	worktreeKind := detail.Summary.WorktreeKind
-	worktreeParentBranch := detail.Summary.WorktreeParentBranch
-	worktreeMergeStatus := detail.Summary.WorktreeMergeStatus
-	if presentOnDisk && !isGitRepo {
-		worktreeRootPath = ""
-		worktreeKind = model.WorktreeKindNone
-		worktreeParentBranch = ""
-		worktreeMergeStatus = model.WorktreeMergeStatus("")
-	}
-	repoBranch := ""
-	repoDirty := false
-	repoConflict := false
-	repoSyncStatus := model.RepoSyncStatus("")
-	repoAheadCount := 0
-	repoBehindCount := 0
-	if presentOnDisk {
-		if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, detail.Summary.Path, gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {
-			worktreeRootPath = nextRootPath
-			worktreeKind = nextKind
+	refreshLinkedWorktrees := false
+	refreshLinkedRootPath := ""
+	if err := func() error {
+		unlockProjectState := s.lockProjectStateMutation(projectPath)
+		defer unlockProjectState()
+
+		detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
+		if err != nil {
+			return err
 		}
-		if gitRepoStatusReader != nil {
-			if repoStatus, err := gitRepoStatusReader(ctx, detail.Summary.Path); err == nil {
-				repoBranch = strings.TrimSpace(repoStatus.Branch)
-				repoDirty = repoStatus.Dirty
-				repoConflict = repoConflictFromGit(repoStatus)
-				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
-				repoAheadCount = repoStatus.Ahead
-				repoBehindCount = repoStatus.Behind
-			} else if isGitRepo {
+
+		worktreeRootPath := detail.Summary.WorktreeRootPath
+		worktreeKind := detail.Summary.WorktreeKind
+		worktreeParentBranch := detail.Summary.WorktreeParentBranch
+		worktreeMergeStatus := detail.Summary.WorktreeMergeStatus
+		repoBranch := ""
+		repoDirty := false
+		repoConflict := false
+		repoSyncStatus := model.RepoSyncStatus("")
+		repoAheadCount := 0
+		repoBehindCount := 0
+		if metadata.presentOnDisk && !metadata.isGitRepo {
+			worktreeRootPath = ""
+			worktreeKind = model.WorktreeKindNone
+			worktreeParentBranch = ""
+			worktreeMergeStatus = model.WorktreeMergeStatus("")
+		} else if metadata.presentOnDisk {
+			worktreeRootPath = metadata.worktreeRootPath
+			worktreeKind = metadata.worktreeKind
+			worktreeMergeStatus = metadata.worktreeMergeStatus
+			repoBranch = metadata.repoBranch
+			repoDirty = metadata.repoDirty
+			repoConflict = metadata.repoConflict
+			repoSyncStatus = metadata.repoSyncStatus
+			repoAheadCount = metadata.repoAheadCount
+			repoBehindCount = metadata.repoBehindCount
+			if !metadata.haveRepoStatus && metadata.isGitRepo {
 				repoBranch = detail.Summary.RepoBranch
 				repoDirty = detail.Summary.RepoDirty
 				repoConflict = detail.Summary.RepoConflict
@@ -2369,64 +2373,136 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 				repoAheadCount = detail.Summary.RepoAheadCount
 				repoBehindCount = detail.Summary.RepoBehindCount
 			}
-		} else if isGitRepo {
-			repoBranch = detail.Summary.RepoBranch
-			repoDirty = detail.Summary.RepoDirty
-			repoConflict = detail.Summary.RepoConflict
-			repoSyncStatus = detail.Summary.RepoSyncStatus
-			repoAheadCount = detail.Summary.RepoAheadCount
-			repoBehindCount = detail.Summary.RepoBehindCount
 		}
-		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
+
+		forgotten := detail.Summary.Forgotten
+		if metadata.staleLinkedWorktree {
+			forgotten = true
+		}
+		if metadata.presentOnDisk && forgotten && detail.Summary.InScope && !metadata.staleLinkedWorktree {
+			forgotten = false
+		}
+
+		if len(detail.Sessions) > 0 {
+			if strings.TrimSpace(detail.Sessions[0].SessionFile) == "" {
+				detail.Sessions[0].SessionFile = resolveEmbeddedSessionFile(
+					detail.Sessions[0].Source,
+					detail.Sessions[0].SessionID,
+					detail.Sessions[0].RawSessionID,
+					detail.Sessions[0].StartedAt,
+					detail.Sessions[0].LastEventAt,
+					runtime.cfg,
+				)
+			}
+			ensureLatestSessionTurnState(&detail.Sessions[0])
+			ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
+		}
+		if err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
+			presentOnDisk:        metadata.presentOnDisk,
+			worktreeRootPath:     worktreeRootPath,
+			worktreeKind:         worktreeKind,
+			worktreeParentBranch: worktreeParentBranch,
+			worktreeMergeStatus:  worktreeMergeStatus,
+			repoBranch:           repoBranch,
+			repoDirty:            repoDirty,
+			repoConflict:         repoConflict,
+			repoSyncStatus:       repoSyncStatus,
+			repoAheadCount:       repoAheadCount,
+			repoBehindCount:      repoBehindCount,
+			forgotten:            forgotten,
+			archived:             detail.Summary.Archived,
+		}, runtime.cfg, runtime.classifier, opts); err != nil {
+			return err
+		}
+		if worktreeKind == model.WorktreeKindMain && !opts.SkipLinkedWorktreeStatusRefresh {
+			refreshLinkedWorktrees = true
+			refreshLinkedRootPath = detail.Summary.Path
+		}
+		return nil
+	}(); err != nil {
+		return err
 	}
-	forgotten := detail.Summary.Forgotten
+	if refreshLinkedWorktrees {
+		return s.refreshLinkedWorktreeStatusesForRoot(ctx, refreshLinkedRootPath)
+	}
+	return nil
+}
+
+type projectStatusRefreshMetadata struct {
+	presentOnDisk       bool
+	isGitRepo           bool
+	worktreeRootPath    string
+	worktreeKind        model.WorktreeKind
+	worktreeMergeStatus model.WorktreeMergeStatus
+	repoBranch          string
+	repoDirty           bool
+	repoConflict        bool
+	repoSyncStatus      model.RepoSyncStatus
+	repoAheadCount      int
+	repoBehindCount     int
+	haveRepoStatus      bool
+	staleLinkedWorktree bool
+}
+
+func (s *Service) readProjectStatusRefreshMetadata(
+	ctx context.Context,
+	summary model.ProjectSummary,
+	gitRepoStatusReader func(context.Context, string) (scanner.GitRepoStatus, error),
+	gitWorktreeInfoReader func(context.Context, string) (scanner.GitWorktreeInfo, error),
+	gitWorktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error),
+) projectStatusRefreshMetadata {
+	meta := projectStatusRefreshMetadata{
+		worktreeRootPath:    summary.WorktreeRootPath,
+		worktreeKind:        summary.WorktreeKind,
+		worktreeMergeStatus: summary.WorktreeMergeStatus,
+		repoBranch:          summary.RepoBranch,
+		repoDirty:           summary.RepoDirty,
+		repoConflict:        summary.RepoConflict,
+		repoSyncStatus:      summary.RepoSyncStatus,
+		repoAheadCount:      summary.RepoAheadCount,
+		repoBehindCount:     summary.RepoBehindCount,
+	}
+	projectPath := filepath.Clean(strings.TrimSpace(summary.Path))
+	meta.presentOnDisk = projectPathExists(projectPath)
+	meta.isGitRepo = meta.presentOnDisk && projectIsGitRepo(projectPath)
+	if !meta.presentOnDisk {
+		meta.staleLinkedWorktree = s.staleLinkedWorktreeOnDiskWithReader(ctx, meta.worktreeRootPath, meta.worktreeKind, projectPath, gitWorktreeListReader)
+		return meta
+	}
+	if !meta.isGitRepo {
+		meta.worktreeRootPath = ""
+		meta.worktreeKind = model.WorktreeKindNone
+		meta.worktreeMergeStatus = model.WorktreeMergeStatus("")
+		meta.repoBranch = ""
+		meta.repoDirty = false
+		meta.repoConflict = false
+		meta.repoSyncStatus = model.RepoSyncStatus("")
+		meta.repoAheadCount = 0
+		meta.repoBehindCount = 0
+		return meta
+	}
+	if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, projectPath, gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {
+		meta.worktreeRootPath = nextRootPath
+		meta.worktreeKind = nextKind
+	}
+	if gitRepoStatusReader != nil {
+		if repoStatus, err := gitRepoStatusReader(ctx, projectPath); err == nil {
+			meta.repoBranch = strings.TrimSpace(repoStatus.Branch)
+			meta.repoDirty = repoStatus.Dirty
+			meta.repoConflict = repoConflictFromGit(repoStatus)
+			meta.repoSyncStatus = repoSyncStatusFromGit(repoStatus)
+			meta.repoAheadCount = repoStatus.Ahead
+			meta.repoBehindCount = repoStatus.Behind
+			meta.haveRepoStatus = true
+		}
+	}
+	meta.worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, meta.worktreeRootPath, meta.worktreeKind, meta.repoBranch, summary.WorktreeParentBranch)
 	// Keep linked-worktree cleanup consistent with ScanOnce: once a linked
 	// checkout disappears from `git worktree list`, treat it as stale even if
 	// the directory itself is already gone. This prevents async status refreshes
 	// from briefly re-surfacing removed worktrees as plain "missing" folders.
-	staleLinkedWorktree := s.staleLinkedWorktreeOnDiskWithReader(ctx, worktreeRootPath, worktreeKind, detail.Summary.Path, gitWorktreeListReader)
-	if staleLinkedWorktree {
-		forgotten = true
-	}
-	if presentOnDisk && forgotten && detail.Summary.InScope && !staleLinkedWorktree {
-		forgotten = false
-	}
-
-	if len(detail.Sessions) > 0 {
-		if strings.TrimSpace(detail.Sessions[0].SessionFile) == "" {
-			detail.Sessions[0].SessionFile = resolveEmbeddedSessionFile(
-				detail.Sessions[0].Source,
-				detail.Sessions[0].SessionID,
-				detail.Sessions[0].RawSessionID,
-				detail.Sessions[0].StartedAt,
-				detail.Sessions[0].LastEventAt,
-				runtime.cfg,
-			)
-		}
-		ensureLatestSessionTurnState(&detail.Sessions[0])
-		ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
-	}
-	if err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
-		presentOnDisk:        presentOnDisk,
-		worktreeRootPath:     worktreeRootPath,
-		worktreeKind:         worktreeKind,
-		worktreeParentBranch: worktreeParentBranch,
-		worktreeMergeStatus:  worktreeMergeStatus,
-		repoBranch:           repoBranch,
-		repoDirty:            repoDirty,
-		repoConflict:         repoConflict,
-		repoSyncStatus:       repoSyncStatus,
-		repoAheadCount:       repoAheadCount,
-		repoBehindCount:      repoBehindCount,
-		forgotten:            forgotten,
-		archived:             detail.Summary.Archived,
-	}, runtime.cfg, runtime.classifier, opts); err != nil {
-		return err
-	}
-	if worktreeKind == model.WorktreeKindMain && !opts.SkipLinkedWorktreeStatusRefresh {
-		return s.refreshLinkedWorktreeStatusesForRoot(ctx, detail.Summary.Path)
-	}
-	return nil
+	meta.staleLinkedWorktree = s.staleLinkedWorktreeOnDiskWithReader(ctx, meta.worktreeRootPath, meta.worktreeKind, projectPath, gitWorktreeListReader)
+	return meta
 }
 
 func (s *Service) refreshLinkedWorktreeStatusesForRoot(ctx context.Context, rootPath string) error {
