@@ -11471,7 +11471,7 @@ func TestCodexUpdateAfterModelApplyDefersLiveSnapshotRefresh(t *testing.T) {
 	}
 }
 
-func TestCodexUpdateBusyToIdleSettlesTurnAndRefreshesProjectStatus(t *testing.T) {
+func TestCodexUpdateBusyToIdleSettlesTurnRefreshesProjectStatusAndSidebarDiff(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -11566,7 +11566,8 @@ func TestCodexUpdateBusyToIdleSettlesTurnAndRefreshesProjectStatus(t *testing.T)
 			PresentOnDisk: true,
 			RepoBranch:    "master",
 		}},
-		selected: 0,
+		selected:            0,
+		codexVisibleProject: projectPath,
 		detail: model.ProjectDetail{
 			Summary: model.ProjectSummary{
 				Path:          projectPath,
@@ -11590,7 +11591,7 @@ func TestCodexUpdateBusyToIdleSettlesTurnAndRefreshesProjectStatus(t *testing.T)
 		codexInput:      newCodexTextarea(),
 		detailViewport:  viewport.New(20, 5),
 		runtimeViewport: viewport.New(20, 5),
-		width:           100,
+		width:           118,
 		height:          24,
 	}
 
@@ -11604,24 +11605,32 @@ func TestCodexUpdateBusyToIdleSettlesTurnAndRefreshesProjectStatus(t *testing.T)
 		t.Fatal("busy-to-idle update should return follow-up messages")
 	}
 	if batch, ok := raw.(tea.BatchMsg); ok {
-		found := false
-		for i := len(batch) - 1; i >= 0; i-- {
+		foundProjectRefresh := false
+		foundSidebarDiffRefresh := false
+		firstFollowUp := max(0, len(batch)-4)
+		for i := len(batch) - 1; i >= firstFollowUp && (!foundProjectRefresh || !foundSidebarDiffRefresh); i-- {
 			if batch[i] == nil {
 				continue
 			}
 			msg := batch[i]()
-			refreshMsg, ok := msg.(projectStatusRefreshedMsg)
-			if !ok {
-				continue
+			switch typed := msg.(type) {
+			case projectStatusRefreshedMsg:
+				updated, followUp := got.Update(typed)
+				got = updated.(Model)
+				got = drainCmdMsgs(got, followUp)
+				foundProjectRefresh = true
+			case embeddedSidebarDiffPreviewMsg:
+				updated, followUp := got.Update(typed)
+				got = updated.(Model)
+				got = drainCmdMsgs(got, followUp)
+				foundSidebarDiffRefresh = true
 			}
-			updated, followUp := got.Update(refreshMsg)
-			got = updated.(Model)
-			got = drainCmdMsgs(got, followUp)
-			found = true
-			break
 		}
-		if !found {
+		if !foundProjectRefresh {
 			t.Fatalf("busy-to-idle batch should include projectStatusRefreshedMsg, got %#v", raw)
+		}
+		if !foundSidebarDiffRefresh {
+			t.Fatalf("busy-to-idle batch should include embeddedSidebarDiffPreviewMsg, got %#v", raw)
 		}
 	} else {
 		updated, followUp := got.Update(raw)
@@ -11645,6 +11654,13 @@ func TestCodexUpdateBusyToIdleSettlesTurnAndRefreshesProjectStatus(t *testing.T)
 	}
 	if len(detail.Sessions) == 0 || !detail.Sessions[0].LatestTurnStateKnown || !detail.Sessions[0].LatestTurnCompleted {
 		t.Fatalf("stored session turn state = %#v, want settled turn", detail.Sessions)
+	}
+	diffState, ok := got.embeddedSidebarDiffState(projectPath)
+	if !ok || diffState.Preview == nil || len(diffState.Preview.Files) == 0 {
+		t.Fatalf("sidebar diff state = %#v, want refreshed diff preview", diffState)
+	}
+	if got := diffState.Preview.Files[0].Path; got != "README.md" {
+		t.Fatalf("sidebar diff first file = %q, want README.md", got)
 	}
 }
 

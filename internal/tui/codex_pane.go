@@ -127,6 +127,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.embeddedSidebarDiffs == nil {
 		m.embeddedSidebarDiffs = make(map[string]embeddedSidebarDiffState)
 	}
+	if m.embeddedSidebarDiffAutoAt == nil {
+		m.embeddedSidebarDiffAutoAt = make(map[string]time.Time)
+	}
 	if m.codexClosedHandled == nil {
 		m.codexClosedHandled = make(map[string]struct{})
 	}

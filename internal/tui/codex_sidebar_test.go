@@ -237,6 +237,43 @@ func TestFinishCodexPendingOpenRefreshesSidebarDiffWhenRevealed(t *testing.T) {
 	}
 }
 
+func TestVisibleBusyEmbeddedSidebarDiffRefreshIsThrottled(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	m := testEmbeddedSidebarModel(projectPath)
+	m.ctx = context.Background()
+	m.svc = &service.Service{}
+	m.nowFn = func() time.Time { return now }
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Busy = true
+	m.codexSnapshots[projectPath] = snapshot
+	delete(m.embeddedSidebarDiffs, projectPath)
+
+	cmd := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd()
+	if cmd == nil {
+		t.Fatalf("visible busy session should request sidebar diff refresh")
+	}
+	state, ok := m.embeddedSidebarDiffState(projectPath)
+	if !ok || !state.Loading {
+		t.Fatalf("sidebar diff state should be loading after auto refresh: %#v", state)
+	}
+	if next := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd(); next != nil {
+		t.Fatalf("in-flight sidebar diff refresh should not queue another command")
+	}
+
+	state.Loading = false
+	m.embeddedSidebarDiffs[projectPath] = state
+	now = now.Add(embeddedSidebarDiffAutoInterval - time.Millisecond)
+	if next := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd(); next != nil {
+		t.Fatalf("sidebar diff refresh should be throttled before the interval")
+	}
+
+	now = now.Add(time.Millisecond)
+	if next := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd(); next == nil {
+		t.Fatalf("sidebar diff refresh should run again after the throttle interval")
+	}
+}
+
 func TestCodexSidebarAltSTogglesSidebarAndSession(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)

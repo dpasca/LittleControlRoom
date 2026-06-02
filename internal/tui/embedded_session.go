@@ -318,6 +318,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 	providerLabel := ""
 	transcriptChanged := false
 	statusRefreshCmd := tea.Cmd(nil)
+	sidebarDiffRefreshCmd := tea.Cmd(nil)
 	bossNoticeCmd := tea.Cmd(nil)
 	if ok {
 		providerLabel = embeddedProvider(snapshot).Label()
@@ -333,6 +334,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		}
 		if shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 			statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(msg.projectPath, snapshot)
+			sidebarDiffRefreshCmd = m.requestVisibleEmbeddedSidebarDiffRefreshCmd(msg.projectPath, true)
 		}
 		if m.bossMode {
 			if notice := bossBrowserAttentionHostNoticeForSnapshot(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot); notice != "" {
@@ -364,7 +366,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 			m.markCodexSessionLive(msg.projectPath)
 			m.detectBrowserAttentionNotification(msg.projectPath, snapshot)
 			m.detectQuestionNotification(msg.projectPath, snapshot)
-			return m, batchCmds(append(cmds, statusRefreshCmd, bossNoticeCmd)...)
+			return m, batchCmds(append(cmds, statusRefreshCmd, sidebarDiffRefreshCmd, bossNoticeCmd)...)
 		}
 		m.cancelModelSettleLatency(msg.projectPath, "session closed")
 		if !m.markCodexSessionClosedHandled(msg.projectPath) {
@@ -409,12 +411,14 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 	providerLabel := embeddedProvider(snapshot).Label()
 	transcriptChanged := !hadPrev || codexTranscriptStateChanged(prevSnapshot, snapshot)
 	statusRefreshCmd := tea.Cmd(nil)
+	sidebarDiffRefreshCmd := tea.Cmd(nil)
 	bossNoticeCmd := tea.Cmd(nil)
 	if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev, prevSnapshot, snapshot) {
 		statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(projectPath, snapshot)
 	}
 	if hadPrev && shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 		statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(projectPath, snapshot)
+		sidebarDiffRefreshCmd = m.requestVisibleEmbeddedSidebarDiffRefreshCmd(projectPath, true)
 	}
 	if m.bossMode {
 		if notice := bossBrowserAttentionHostNoticeForSnapshot(projectPath, hadPrev, prevSnapshot, snapshot); notice != "" {
@@ -445,7 +449,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		m.markCodexSessionLive(projectPath)
 		m.detectBrowserAttentionNotification(projectPath, snapshot)
 		m.detectQuestionNotification(projectPath, snapshot)
-		return m, batchCmds(statusRefreshCmd, linkScanCmd, browserStateCmd, bossNoticeCmd)
+		return m, batchCmds(statusRefreshCmd, sidebarDiffRefreshCmd, linkScanCmd, browserStateCmd, bossNoticeCmd)
 	}
 	m.removeManagedBrowserLease(projectPath, snapshot)
 	m.cancelModelSettleLatency(projectPath, "session closed")
