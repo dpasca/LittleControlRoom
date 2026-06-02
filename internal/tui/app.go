@@ -4370,10 +4370,14 @@ func (m Model) markProjectSessionSeenCmd(path string, seenAt time.Time, refresh 
 		seenAt = m.currentTime()
 	}
 	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.MarkProjectSessionSeen(ctx, path, seenAt)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "marking the session seen")
 		return projectSessionSeenMsg{
 			path:    path,
 			refresh: refresh,
-			err:     m.svc.MarkProjectSessionSeen(m.ctx, path, seenAt),
+			err:     err,
 		}
 	}
 }
@@ -4390,11 +4394,15 @@ func (m Model) markProjectSessionUnreadCmd(path string) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.MarkProjectSessionUnread(ctx, path)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "marking the session unread")
 		return actionMsg{
 			projectPath: path,
 			status:      "Marked unread",
 			refresh:     invalidateProjectData(path),
-			err:         m.svc.MarkProjectSessionUnread(m.ctx, path),
+			err:         err,
 		}
 	}
 }
@@ -4999,7 +5007,10 @@ func projectLoadFailedStatus(hadProjects bool) string {
 
 func (m Model) togglePinCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.svc.TogglePin(m.ctx, path)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.TogglePin(ctx, path)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "updating the pin")
 		return actionMsg{
 			projectPath: path,
 			status:      "Pin toggled",
@@ -5012,7 +5023,10 @@ func (m Model) togglePinCmd(path string) tea.Cmd {
 func (m Model) snoozeCmd(path string, d time.Duration) tea.Cmd {
 	label := formatSnoozeDuration(d)
 	return func() tea.Msg {
-		err := m.svc.Snooze(m.ctx, path, d)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.Snooze(ctx, path, d)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "snoozing the project")
 		return actionMsg{
 			projectPath: path,
 			status:      "Snoozed for " + label,
@@ -5024,7 +5038,10 @@ func (m Model) snoozeCmd(path string, d time.Duration) tea.Cmd {
 
 func (m Model) clearSnoozeCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.svc.ClearSnooze(m.ctx, path)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.ClearSnooze(ctx, path)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "clearing the snooze")
 		return actionMsg{
 			projectPath: path,
 			status:      "Snooze cleared",
@@ -5093,10 +5110,14 @@ func (m Model) setProjectArchivedCmd(project model.ProjectSummary, archived bool
 	return func() tea.Msg {
 		var err error
 		status := fmt.Sprintf("Archived %q", name)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
 		if archived {
-			err = m.svc.ArchiveProject(m.ctx, path)
+			err = m.svc.ArchiveProject(ctx, path)
+			err = timeoutActionError(err, tuiQuickActionTimeout, "archiving the project")
 		} else {
-			err = m.svc.UnarchiveProject(m.ctx, path)
+			err = m.svc.UnarchiveProject(ctx, path)
+			err = timeoutActionError(err, tuiQuickActionTimeout, "unarchiving the project")
 			if project.InScope {
 				status = fmt.Sprintf("Unarchived %q", name)
 			} else {
@@ -5141,16 +5162,10 @@ func projectRemovalName(project model.ProjectSummary) string {
 
 func (m Model) removeProjectCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := m.ctx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		removeCtx, cancel := context.WithTimeout(ctx, tuiProjectRemoveTimeout)
+		removeCtx, cancel := m.actionContext(tuiProjectRemoveTimeout)
 		defer cancel()
 		err := m.svc.ForgetProject(removeCtx, path)
-		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("timed out after %s while removing stale project", tuiProjectRemoveTimeout.Round(time.Millisecond))
-		}
+		err = timeoutActionError(err, tuiProjectRemoveTimeout, "removing the stale project")
 		return projectRemoveActionMsg{projectPath: path, status: "Removed from list", err: err}
 	}
 }
@@ -5158,7 +5173,10 @@ func (m Model) removeProjectCmd(path string) tea.Cmd {
 func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
 	name := projectRemovalName(project)
 	return func() tea.Msg {
-		err := m.svc.Store().SetIgnoredProjectName(m.ctx, name, true)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.Store().SetIgnoredProjectName(ctx, name, true)
+		err = timeoutActionError(err, tuiQuickActionTimeout, fmt.Sprintf("ignoring %q", name))
 		status := fmt.Sprintf("Ignored %q", name)
 		return ignoredProjectActionMsg{status: status, err: err}
 	}
@@ -5167,16 +5185,10 @@ func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
 func (m Model) removeProjectFromListCmd(project model.ProjectSummary) tea.Cmd {
 	name := projectRemovalName(project)
 	return func() tea.Msg {
-		ctx := m.ctx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		removeCtx, cancel := context.WithTimeout(ctx, tuiProjectRemoveTimeout)
+		removeCtx, cancel := m.actionContext(tuiProjectRemoveTimeout)
 		defer cancel()
 		err := m.svc.Store().SetIgnoredProjectPath(removeCtx, project.Path, true)
-		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("timed out after %s while removing %q from the list", tuiProjectRemoveTimeout.Round(time.Millisecond), name)
-		}
+		err = timeoutActionError(err, tuiProjectRemoveTimeout, fmt.Sprintf("removing %q from the list", name))
 		status := fmt.Sprintf("Removed %q from list", name)
 		return projectRemoveActionMsg{projectPath: project.Path, status: status, err: err}
 	}
@@ -5286,7 +5298,10 @@ func (m Model) prepareCommitPreviewCmd(path string, intent service.GitActionInte
 			message:     message,
 			requestID:   m.commitPreviewRequestID,
 		}
-		preview, err := m.svc.PrepareCommit(m.ctx, path, intent, message)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		preview, err := m.svc.PrepareCommit(ctx, path, intent, message)
+		err = timeoutActionError(err, tuiGitActionTimeout, "preparing the commit preview")
 		previewMsg.preview = preview
 		previewMsg.err = err
 		if err != nil {
@@ -5353,7 +5368,10 @@ func commitPreviewLoadingMessage(intent service.GitActionIntent, messageOverride
 
 func (m Model) prepareDiffPreviewCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		preview, err := m.svc.PrepareDiff(m.ctx, path)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		preview, err := m.svc.PrepareDiff(ctx, path)
+		err = timeoutActionError(err, tuiGitActionTimeout, "preparing the diff view")
 		return diffPreviewMsg{preview: preview, err: err}
 	}
 }
@@ -5381,11 +5399,15 @@ func (m *Model) startDiffViewFromCommitPreview(preview service.CommitPreview, me
 
 func (m Model) toggleDiffStageCmd(projectPath string, file service.DiffFilePreview, selectStaged bool) tea.Cmd {
 	return func() tea.Msg {
-		status, err := m.svc.ToggleDiffFileStage(m.ctx, projectPath, file)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		status, err := m.svc.ToggleDiffFileStage(ctx, projectPath, file)
+		err = timeoutActionError(err, tuiGitActionTimeout, "staging the diff file")
 		if err != nil {
 			return diffStageToggleMsg{status: status, path: file.Path, originalPath: file.OriginalPath, selectStaged: selectStaged, err: err}
 		}
-		preview, err := m.svc.PrepareDiff(m.ctx, projectPath)
+		preview, err := m.svc.PrepareDiff(ctx, projectPath)
+		err = timeoutActionError(err, tuiGitActionTimeout, "refreshing the diff view")
 		return diffStageToggleMsg{
 			preview:      preview,
 			status:       status,
@@ -5410,7 +5432,10 @@ func (m Model) resumeCommitPreviewCmd(cached service.CommitPreview, messageOverr
 			return previewMsg
 		}
 
-		currentHash, err := m.svc.CommitPreviewStateHash(m.ctx, cached.ProjectPath)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		currentHash, err := m.svc.CommitPreviewStateHash(ctx, cached.ProjectPath)
+		err = timeoutActionError(err, tuiGitActionTimeout, "checking the commit preview state")
 		if err != nil {
 			previewMsg.err = err
 			return previewMsg
@@ -5420,7 +5445,8 @@ func (m Model) resumeCommitPreviewCmd(cached service.CommitPreview, messageOverr
 			return previewMsg
 		}
 
-		preview, err := m.svc.PrepareCommit(m.ctx, cached.ProjectPath, cached.Intent, messageOverride)
+		preview, err := m.svc.PrepareCommit(ctx, cached.ProjectPath, cached.Intent, messageOverride)
+		err = timeoutActionError(err, tuiGitActionTimeout, "refreshing the commit preview")
 		previewMsg.preview = preview
 		previewMsg.err = err
 		if err != nil {
@@ -5472,7 +5498,10 @@ func diffPreviewStagedSelectionIndex(files []service.DiffFilePreview, path, orig
 
 func (m Model) resolveSubmodulesAndContinueCmd(path string, intent service.GitActionIntent, message string) tea.Cmd {
 	return func() tea.Msg {
-		preview, err := m.svc.ResolveSubmodulesAndPrepareCommit(m.ctx, path, intent, message)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		preview, err := m.svc.ResolveSubmodulesAndPrepareCommit(ctx, path, intent, message)
+		err = timeoutActionError(err, tuiGitActionTimeout, "resolving submodules")
 		return commitPreviewMsg{preview: preview, projectPath: path, intent: intent, message: message, err: err}
 	}
 }
@@ -5480,7 +5509,10 @@ func (m Model) resolveSubmodulesAndContinueCmd(path string, intent service.GitAc
 func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCommit bool) tea.Cmd {
 	completedTodoIDs := selectedCommitTodoIDs(m.commitTodoCompletions)
 	return func() tea.Msg {
-		result, err := m.svc.ApplyCommit(m.ctx, preview, pushAfterCommit, completedTodoIDs)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		result, err := m.svc.ApplyCommit(ctx, preview, pushAfterCommit, completedTodoIDs)
+		err = timeoutActionError(err, tuiGitActionTimeout, "applying the commit")
 		if err != nil {
 			return actionMsg{projectPath: preview.ProjectPath, status: "Commit failed", clearPendingGitSummary: true, err: err}
 		}
@@ -5507,7 +5539,10 @@ func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCom
 
 func (m Model) pushCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		result, err := m.svc.PushProject(m.ctx, path)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		result, err := m.svc.PushProject(ctx, path)
+		err = timeoutActionError(err, tuiGitActionTimeout, "pushing the project")
 		if err != nil {
 			return actionMsg{projectPath: path, status: "Push failed", clearPendingGitSummary: true, err: err}
 		}

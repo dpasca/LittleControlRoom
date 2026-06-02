@@ -173,17 +173,19 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Project path and name are required"
 			return m, nil
 		}
-		dialog.Submitting = true
+		req := service.CreateOrAttachProjectRequest{
+			ParentPath:    preview.ParentPath,
+			Name:          preview.Name,
+			CreateGitRepo: dialog.CreateGitRepo,
+		}
+		provider := dialog.explicitProvider()
+		m.closeNewProjectDialog("")
 		if preview.Exists && preview.ExistingDir {
 			m.status = "Adding existing folder to the list..."
 		} else {
 			m.status = "Creating project..."
 		}
-		return m, m.createOrAttachProjectCmd(service.CreateOrAttachProjectRequest{
-			ParentPath:    preview.ParentPath,
-			Name:          preview.Name,
-			CreateGitRepo: dialog.CreateGitRepo,
-		}, dialog.explicitProvider())
+		return m, m.createOrAttachProjectCmd(req, provider)
 	case " ", "x":
 		if dialog.Selected == newProjectFieldGitRepo {
 			dialog.CreateGitRepo = !dialog.CreateGitRepo
@@ -302,7 +304,10 @@ func (m Model) createOrAttachProjectCmd(req service.CreateOrAttachProjectRequest
 		}
 	}
 	return func() tea.Msg {
-		result, err := m.svc.CreateOrAttachProject(m.ctx, req)
+		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
+		defer cancel()
+		result, err := m.svc.CreateOrAttachProject(ctx, req)
+		err = timeoutActionError(err, tuiProjectActionTimeout, "creating or adding the project")
 		return newProjectResultMsg{result: result, provider: explicitEmbeddedProvider(provider), err: err}
 	}
 }

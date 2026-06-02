@@ -959,7 +959,10 @@ func (m Model) addTodoCmd(projectPath, text string) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		_, err := m.svc.AddTodo(m.ctx, projectPath, text)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		_, err := m.svc.AddTodo(ctx, projectPath, text)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "adding the TODO")
 		return todoActionMsg{
 			projectPath: projectPath,
 			status:      "TODO added",
@@ -975,7 +978,10 @@ func (m Model) updateTodoCmd(projectPath string, todoID int64, text string) tea.
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.UpdateTodo(m.ctx, projectPath, todoID, text)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.UpdateTodo(ctx, projectPath, todoID, text)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "saving the TODO")
 		return todoActionMsg{
 			projectPath: projectPath,
 			status:      "TODO saved",
@@ -991,7 +997,10 @@ func (m Model) toggleTodoDoneCmd(item model.TodoItem) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.ToggleTodoDone(m.ctx, item.ProjectPath, item.ID, !item.Done)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.ToggleTodoDone(ctx, item.ProjectPath, item.ID, !item.Done)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "updating the TODO")
 		status := "TODO marked done"
 		if item.Done {
 			status = "TODO reopened"
@@ -1022,7 +1031,10 @@ func (m Model) markTodoWorkStartedCmd(projectPath string, todoID int64, snapshot
 		startedAt = m.currentTime()
 	}
 	return func() tea.Msg {
-		err := m.svc.MarkTodoWorkStarted(m.ctx, projectPath, todoID, provider, sessionID, startedAt)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.MarkTodoWorkStarted(ctx, projectPath, todoID, provider, sessionID, startedAt)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "recording TODO work")
 		return projectStatusRefreshedMsg{projectPath: projectPath, err: err}
 	}
 }
@@ -1034,7 +1046,10 @@ func (m Model) deleteTodoCmd(projectPath string, todoID int64) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.DeleteTodo(m.ctx, projectPath, todoID)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.DeleteTodo(ctx, projectPath, todoID)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "deleting the TODO")
 		return todoActionMsg{
 			projectPath: projectPath,
 			status:      "TODO deleted",
@@ -1050,7 +1065,10 @@ func (m Model) purgeDoneTodosCmd(projectPath string) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		count, err := m.svc.PurgeDoneTodos(m.ctx, projectPath)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		count, err := m.svc.PurgeDoneTodos(ctx, projectPath)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "purging completed TODOs")
 		status := "No completed TODOs to purge"
 		if count == 1 {
 			status = "Purged 1 completed TODO"
@@ -1132,7 +1150,10 @@ func (m Model) regenerateTodoWorktreeSuggestionCmd(projectPath string, todoID in
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.RegenerateTodoWorktreeSuggestion(m.ctx, projectPath, todoID)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.RegenerateTodoWorktreeSuggestion(ctx, projectPath, todoID)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "refreshing the worktree suggestion")
 		return todoActionMsg{
 			projectPath: projectPath,
 			status:      "Refreshing worktree suggestion...",
@@ -1154,7 +1175,10 @@ func (m Model) ensureTodoWorktreeSuggestionCmd(projectPath string, todoID int64)
 		}
 	}
 	return func() tea.Msg {
-		changed, err := m.svc.EnsureTodoWorktreeSuggestion(m.ctx, projectPath, todoID)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		changed, err := m.svc.EnsureTodoWorktreeSuggestion(ctx, projectPath, todoID)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "preparing the worktree suggestion")
 		status := ""
 		if changed {
 			status = "Preparing worktree suggestion..."

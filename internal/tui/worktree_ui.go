@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -1433,11 +1431,14 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			result service.MergeWorktreeBackResult
 			err    error
 		)
+		actionCtx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
 		if confirm.CommitBeforeMerge && confirm.SourceDirty {
-			result, err = m.svc.CommitAndMergeWorktreeBack(m.ctx, projectPath)
+			result, err = m.svc.CommitAndMergeWorktreeBack(actionCtx, projectPath)
 		} else {
-			result, err = m.svc.MergeWorktreeBack(m.ctx, projectPath)
+			result, err = m.svc.MergeWorktreeBack(actionCtx, projectPath)
 		}
+		err = timeoutActionError(err, tuiGitActionTimeout, "merging the worktree")
 		if err != nil {
 			msg.err = err
 			return msg
@@ -1453,7 +1454,11 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			case strings.TrimSpace(result.LinkedTodoPath) == "":
 				status = appendWorktreeStatusClause(status, "Could not mark the linked TODO done because its project path is unavailable.")
 			default:
-				if err := m.svc.ToggleTodoDone(m.ctx, result.LinkedTodoPath, result.LinkedTodoID, true); err != nil {
+				todoCtx, todoCancel := m.actionContext(tuiQuickActionTimeout)
+				err := m.svc.ToggleTodoDone(todoCtx, result.LinkedTodoPath, result.LinkedTodoID, true)
+				todoCancel()
+				err = timeoutActionError(err, tuiQuickActionTimeout, "marking the linked TODO done")
+				if err != nil {
 					status = appendWorktreeStatusClause(status, "Could not mark the linked TODO done: "+err.Error())
 				} else {
 					status = appendWorktreeStatusClause(status, "Linked TODO marked done.")
@@ -1586,7 +1591,11 @@ func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID i
 		}
 	}
 	return func() tea.Msg {
-		if err := m.svc.ToggleTodoDone(m.ctx, todoProjectPath, todoID, true); err != nil {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		err := m.svc.ToggleTodoDone(ctx, todoProjectPath, todoID, true)
+		cancel()
+		err = timeoutActionError(err, tuiQuickActionTimeout, "marking the linked TODO done")
+		if err != nil {
 			return worktreeActionMsg{projectPath: worktreePath, err: err}
 		}
 		status := strings.TrimSpace(baseStatus)
@@ -1733,17 +1742,10 @@ func (m Model) removeWorktreeWithTimeout(projectPath string, force bool) error {
 	if m.svc == nil {
 		return fmt.Errorf("service unavailable")
 	}
-	ctx := m.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	removeCtx, cancel := context.WithTimeout(ctx, tuiWorktreeRemoveTimeout)
+	removeCtx, cancel := m.actionContext(tuiWorktreeRemoveTimeout)
 	defer cancel()
 	err := m.svc.RemoveWorktree(removeCtx, projectPath, force)
-	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Errorf("timed out after %s while removing worktree; another git or worktree operation may still be running", tuiWorktreeRemoveTimeout.Round(time.Millisecond))
-	}
-	return err
+	return timeoutActionError(err, tuiWorktreeRemoveTimeout, "removing the worktree; another git or worktree operation may still be running")
 }
 
 func removedWorktreePath(removed bool, projectPath string) string {
@@ -1760,7 +1762,10 @@ func (m Model) pruneWorktreesCmd(projectPath, selectPath string) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.PruneWorktrees(m.ctx, projectPath)
+		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
+		defer cancel()
+		err := m.svc.PruneWorktrees(ctx, projectPath)
+		err = timeoutActionError(err, tuiProjectActionTimeout, "pruning stale git worktrees")
 		return worktreeActionMsg{
 			projectPath:            projectPath,
 			selectPath:             selectPath,

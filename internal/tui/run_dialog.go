@@ -108,13 +108,15 @@ func (m Model) updateRunCommandDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Run command is required"
 			return m, nil
 		}
-		dialog.Submitting = true
+		projectPath := dialog.ProjectPath
+		startAfterSave := dialog.StartAfterSave
+		m.closeRunCommandDialog("")
 		if dialog.StartAfterSave {
 			m.status = "Saving run command and starting runtime..."
 		} else {
 			m.status = "Saving run command..."
 		}
-		return m, m.saveRunCommandCmd(dialog.ProjectPath, command, dialog.StartAfterSave)
+		return m, m.saveRunCommandCmd(projectPath, command, startAfterSave)
 	}
 
 	var cmd tea.Cmd
@@ -134,7 +136,10 @@ func (m Model) saveRunCommandCmd(projectPath, command string, startAfter bool) t
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.SetRunCommand(m.ctx, projectPath, command)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.SetRunCommand(ctx, projectPath, command)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "saving the run command")
 		return runCommandSavedMsg{
 			projectPath: projectPath,
 			command:     command,

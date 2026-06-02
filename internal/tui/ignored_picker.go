@@ -33,19 +33,26 @@ func (m *Model) closeIgnoredPicker(status string) {
 
 func (m Model) loadIgnoredProjectsCmd() tea.Cmd {
 	return func() tea.Msg {
-		items, err := m.svc.Store().ListIgnoredProjects(m.ctx)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		items, err := m.svc.Store().ListIgnoredProjects(ctx)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "loading ignored projects")
 		return ignoredProjectsMsg{items: items, err: err}
 	}
 }
 
 func (m Model) unignoreProjectCmd(item model.IgnoredProject) tea.Cmd {
 	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
 		switch item.Scope {
 		case model.ProjectIgnoreScopePath:
-			err := m.svc.Store().SetIgnoredProjectPath(m.ctx, item.Path, false)
+			err := m.svc.Store().SetIgnoredProjectPath(ctx, item.Path, false)
+			err = timeoutActionError(err, tuiQuickActionTimeout, fmt.Sprintf("restoring %q", item.Path))
 			return ignoredProjectActionMsg{status: fmt.Sprintf("Restored %q", item.Path), err: err}
 		default:
-			err := m.svc.Store().SetIgnoredProjectName(m.ctx, item.Name, false)
+			err := m.svc.Store().SetIgnoredProjectName(ctx, item.Name, false)
+			err = timeoutActionError(err, tuiQuickActionTimeout, fmt.Sprintf("restoring %q", item.Name))
 			return ignoredProjectActionMsg{status: fmt.Sprintf("Restored %q", item.Name), err: err}
 		}
 	}

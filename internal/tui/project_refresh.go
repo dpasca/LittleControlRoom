@@ -22,6 +22,9 @@ import (
 // raw git metadata reads alone.
 const tuiProjectStatusRefreshTimeout = 30 * time.Second
 const tuiProjectDetailLoadTimeout = 8 * time.Second
+const tuiProjectSummaryLoadTimeout = 8 * time.Second
+const tuiProjectsReloadTimeout = 12 * time.Second
+const tuiProjectScanTimeout = 45 * time.Second
 const tuiOpenAgentTaskLimit = 50
 
 type projectsMsg struct {
@@ -149,9 +152,14 @@ func (m *Model) finishScanCmd() tea.Cmd {
 
 func (m Model) scanCmd(forceRetryFailedClassifications bool) tea.Cmd {
 	return func() tea.Msg {
-		report, err := m.svc.ScanWithOptions(m.ctx, service.ScanOptions{
+		ctx, cancel := m.actionContext(tuiProjectScanTimeout)
+		defer cancel()
+		report, err := m.svc.ScanWithOptions(ctx, service.ScanOptions{
 			ForceRetryFailedClassifications: forceRetryFailedClassifications,
 		})
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("timed out after %s", tuiProjectScanTimeout.Round(time.Millisecond))
+		}
 		return scanMsg{report: report, err: err}
 	}
 }
@@ -278,7 +286,10 @@ func (m Model) recordEmbeddedSessionStateCmd(activity service.EmbeddedSessionAct
 		return nil
 	}
 	return func() tea.Msg {
-		err := m.svc.RecordEmbeddedSessionActivity(m.ctx, activity)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.RecordEmbeddedSessionActivity(ctx, activity)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "recording embedded session activity")
 		return projectStatusRefreshedMsg{projectPath: activity.ProjectPath, err: err}
 	}
 }
@@ -301,9 +312,12 @@ func (m Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, sna
 	}
 	return func() tea.Msg {
 		var errs []error
-		if err := m.svc.RecordEmbeddedSessionActivity(m.ctx, activity); err != nil {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		if err := m.svc.RecordEmbeddedSessionActivity(ctx, activity); err != nil {
+			err = timeoutActionError(err, tuiQuickActionTimeout, "recording embedded session activity")
 			errs = append(errs, err)
 		}
+		cancel()
 		if refreshCmd != nil {
 			msg := refreshCmd()
 			if refreshMsg, ok := msg.(projectStatusRefreshedMsg); ok {
@@ -449,16 +463,27 @@ func (m Model) waitBusCmd() tea.Cmd {
 
 func (m Model) loadProjectsCmd() tea.Cmd {
 	return func() tea.Msg {
-		allProjects, err := m.svc.Store().ListProjects(m.ctx, true)
+		ctx, cancel := m.actionContext(tuiProjectsReloadTimeout)
+		defer cancel()
+		allProjects, err := m.svc.Store().ListProjects(ctx, true)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
+			}
 			return projectsMsg{err: err}
 		}
 		projects, archivedProjects := splitProjectArchiveSummaries(allProjects)
-		summaries, err := m.svc.Store().GetProjectSummaryMap(m.ctx)
+		summaries, err := m.svc.Store().GetProjectSummaryMap(ctx)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
+			}
 			return projectsMsg{err: err}
 		}
-		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(m.ctx, tuiOpenAgentTaskLimit)
+		openAgentTasks, agentTaskErr := m.svc.ListOpenAgentTasks(ctx, tuiOpenAgentTaskLimit)
+		if errors.Is(agentTaskErr, context.DeadlineExceeded) {
+			agentTaskErr = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
+		}
 		patterns, filterErr := config.LoadExcludeProjectPatterns(m.currentConfigPath(), m.excludeProjectPatterns)
 		if filterErr == nil && agentTaskErr != nil {
 			filterErr = fmt.Errorf("agent tasks unavailable: %w", agentTaskErr)
@@ -537,10 +562,15 @@ func (m Model) detailReloadError(path string) string {
 
 func (m Model) loadProjectSummaryCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		summary, err := m.svc.Store().GetProjectSummary(m.ctx, path, true)
+		ctx, cancel := m.actionContext(tuiProjectSummaryLoadTimeout)
+		defer cancel()
+		summary, err := m.svc.Store().GetProjectSummary(ctx, path, true)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return projectSummaryMsg{path: path}
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = fmt.Errorf("timed out after %s", tuiProjectSummaryLoadTimeout.Round(time.Millisecond))
 			}
 			return projectSummaryMsg{path: path, err: err}
 		}

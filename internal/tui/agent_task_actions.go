@@ -125,16 +125,17 @@ func (m Model) updateAgentTaskActionConfirmMode(msg tea.KeyMsg) (tea.Model, tea.
 			)
 			return m, nil
 		}
-		confirm.Submitting = true
-		selectPath := m.nextProjectSelectionPathAfter(confirm.ProjectPath)
+		taskID := confirm.TaskID
+		projectPath := confirm.ProjectPath
+		selectPath := m.nextProjectSelectionPathAfter(projectPath)
 		m.status = "Archiving agent task..."
-		closeCmd, err := m.closeEmbeddedSessionForProject(confirm.ProjectPath)
+		closeCmd, err := m.closeEmbeddedSessionForProject(projectPath)
 		if err != nil {
-			confirm.Submitting = false
-			m.reportError("Agent task action failed", err, confirm.ProjectPath)
+			m.reportError("Agent task action failed", err, projectPath)
 			return m, nil
 		}
-		return m, batchCmds(closeCmd, m.archiveAgentTaskCmd(confirm.TaskID, confirm.ProjectPath, selectPath))
+		m.agentTaskAction = nil
+		return m, batchCmds(closeCmd, m.archiveAgentTaskCmd(taskID, projectPath, selectPath))
 	}
 	return m, nil
 }
@@ -146,7 +147,10 @@ func (m Model) archiveAgentTaskCmd(taskID, projectPath, selectPath string) tea.C
 		}
 	}
 	return func() tea.Msg {
-		task, err := m.svc.ArchiveAgentTask(m.ctx, taskID)
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		task, err := m.svc.ArchiveAgentTask(ctx, taskID)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "archiving the agent task")
 		return agentTaskActionMsg{
 			task:        task,
 			projectPath: projectPath,

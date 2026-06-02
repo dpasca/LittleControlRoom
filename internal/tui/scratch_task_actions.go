@@ -129,19 +129,22 @@ func (m Model) updateScratchTaskActionConfirmMode(msg tea.KeyMsg) (tea.Model, te
 		m.cycleScratchTaskActionSelection(1)
 		return m, nil
 	case "enter":
-		confirm.Submitting = true
 		selectPath := m.nextProjectSelectionPathAfter(confirm.ProjectPath)
+		projectPath := confirm.ProjectPath
+		presentOnDisk := confirm.PresentOnDisk
 		switch confirm.Selected {
 		case scratchTaskActionFocusArchive:
+			m.scratchTaskAction = nil
 			m.status = "Archiving task..."
-			return m, m.archiveScratchTaskCmd(confirm.ProjectPath, selectPath)
+			return m, m.archiveScratchTaskCmd(projectPath, selectPath)
 		case scratchTaskActionFocusDelete:
-			if confirm.PresentOnDisk {
+			m.scratchTaskAction = nil
+			if presentOnDisk {
 				m.status = "Deleting task..."
 			} else {
 				m.status = "Removing task from list..."
 			}
-			return m, m.deleteScratchTaskCmd(confirm.ProjectPath, selectPath)
+			return m, m.deleteScratchTaskCmd(projectPath, selectPath)
 		default:
 			m.closeScratchTaskActionConfirm("Task actions closed")
 			return m, nil
@@ -157,7 +160,10 @@ func (m Model) archiveScratchTaskCmd(projectPath, selectPath string) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		_, err := m.svc.ArchiveScratchTask(m.ctx, projectPath)
+		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
+		defer cancel()
+		_, err := m.svc.ArchiveScratchTask(ctx, projectPath)
+		err = timeoutActionError(err, tuiProjectActionTimeout, "archiving the scratch task")
 		return scratchTaskActionMsg{
 			projectPath: projectPath,
 			selectPath:  selectPath,
@@ -174,7 +180,10 @@ func (m Model) deleteScratchTaskCmd(projectPath, selectPath string) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.DeleteScratchTask(m.ctx, projectPath)
+		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
+		defer cancel()
+		err := m.svc.DeleteScratchTask(ctx, projectPath)
+		err = timeoutActionError(err, tuiProjectActionTimeout, "deleting the scratch task")
 		return scratchTaskActionMsg{
 			projectPath: projectPath,
 			selectPath:  selectPath,

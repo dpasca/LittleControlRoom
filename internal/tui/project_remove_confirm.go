@@ -2,7 +2,6 @@ package tui
 
 import (
 	"strings"
-	"time"
 
 	"lcroom/internal/model"
 
@@ -15,7 +14,7 @@ const (
 	projectRemoveConfirmFocusKeep
 )
 
-const tuiProjectRemoveTimeout = 8 * time.Second
+const tuiProjectRemoveTimeout = tuiQuickActionTimeout
 
 type projectRemoveConfirmState struct {
 	ProjectPath   string

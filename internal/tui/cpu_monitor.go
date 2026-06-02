@@ -678,7 +678,10 @@ func (m Model) createCPURemediationTaskCmd(prompt string) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		result, err := m.svc.CreateScratchTask(m.ctx, service.CreateScratchTaskRequest{Title: cpuRemediationTaskTitle})
+		ctx, cancel := m.actionContext(newTaskCreateTimeout)
+		defer cancel()
+		result, err := m.svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{Title: cpuRemediationTaskTitle})
+		err = timeoutActionError(err, newTaskCreateTimeout, "creating the CPU remediation task")
 		return cpuRemediationTaskCreatedMsg{result: result, prompt: prompt, err: err}
 	}
 }

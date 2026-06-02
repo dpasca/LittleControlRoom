@@ -61,9 +61,11 @@ func (m Model) updateNewTaskDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleNewTaskProvider(-1)
 		return m, nil
 	case "enter":
-		dialog.Submitting = true
+		request := dialog.Request
+		provider := dialog.Provider
+		m.newTaskDialog = nil
 		m.status = "Creating scratch task..."
-		return m, m.createScratchTaskCmd(dialog.Request, dialog.Provider)
+		return m, m.createScratchTaskCmd(request, provider)
 	}
 	return m, nil
 }
@@ -108,6 +110,7 @@ func (m Model) createScratchTaskCmd(request string, provider codexapp.Provider) 
 		ctx, cancel := context.WithTimeout(ctx, newTaskCreateTimeout)
 		defer cancel()
 		result, err := m.svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{Request: request})
+		err = timeoutActionError(err, newTaskCreateTimeout, "creating the scratch task")
 		return newTaskResultMsg{result: result, provider: explicitEmbeddedProvider(provider), err: err}
 	}
 }
