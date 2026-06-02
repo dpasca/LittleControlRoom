@@ -3,14 +3,17 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/scanner"
 	"lcroom/internal/service"
 	"lcroom/internal/uistyle"
 
@@ -33,7 +36,10 @@ const (
 	embeddedCodexSidebarDiff
 )
 
-const embeddedCodexSidebarSectionCount = 2
+const (
+	embeddedCodexSidebarSectionCount = 2
+	embeddedSidebarRecentLimit       = 3
+)
 
 type embeddedSidebarDiffState struct {
 	ProjectPath string
@@ -321,17 +327,23 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	}
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject, m.codexHiddenProject))
 	contentWidth := max(12, width-2)
-	lines := []string{
-		m.renderEmbeddedSidebarTitle(contentWidth),
-	}
-	lines = append(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth)...)
-	lines = append(lines, "")
-	lines = append(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth)...)
+	lines := []string{}
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSessionSection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarRecentActivitySection(snapshot, contentWidth))
 	return lipgloss.NewStyle().PaddingLeft(1).Render(fitPaneContent(strings.Join(lines, "\n"), contentWidth, height))
 }
 
-func (m Model) renderEmbeddedSidebarTitle(width int) string {
-	return uistyle.SidebarTitleStyle.Render(fitLine("AI Engineer", width))
+func appendEmbeddedSidebarSection(lines, section []string) []string {
+	if len(section) == 0 {
+		return lines
+	}
+	if len(lines) > 0 {
+		lines = append(lines, "")
+	}
+	return append(lines, section...)
 }
 
 func (m Model) renderEmbeddedSidebarSectionHeader(section embeddedCodexSidebarSection, title string, width int) string {
@@ -345,6 +357,153 @@ func (m Model) renderEmbeddedSidebarSectionHeader(section embeddedCodexSidebarSe
 		return uistyle.SidebarSectionHeaderStyle.Width(width).Render(truncateText(text, max(1, width)))
 	}
 	return uistyle.SidebarSectionHeaderStyle.Render(fitLine(text, width))
+}
+
+func renderEmbeddedSidebarStaticHeader(title string, width int) string {
+	return uistyle.SidebarSectionHeaderStyle.Render(fitLine("  "+title, width))
+}
+
+func (m Model) renderEmbeddedSidebarSessionSection(snapshot codexapp.Snapshot, width int) []string {
+	rows := m.embeddedSidebarSessionRows(snapshot, width)
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string{renderEmbeddedSidebarStaticHeader("Session", width)}, rows...)
+}
+
+func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int) []string {
+	rows := []string{}
+	if row := embeddedSidebarContextRow(snapshot, width); row != "" {
+		rows = append(rows, row)
+	}
+	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Tokens", tokens, detailValueStyle, width))
+	}
+	if goal := snapshot.Goal; goal != nil {
+		label := codexSnapshotGoalLabel(snapshot)
+		if label == "" {
+			label = "active"
+		}
+		rows = append(rows, embeddedSidebarFieldRow("Goal", label, embeddedSidebarGoalStyle(goal.Status), width))
+		if objective := strings.TrimSpace(goal.Objective); objective != "" {
+			rows = append(rows, detailMutedStyle.Render(fitLine(objective, width)))
+		}
+	}
+	return rows
+}
+
+func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {
+	if snapshot.TokenUsage == nil || snapshot.TokenUsage.ModelContextWindow <= 0 {
+		return ""
+	}
+	used := snapshot.TokenUsage.EstimatedContextTokens()
+	if used < 0 {
+		used = 0
+	}
+	if used == 0 {
+		return ""
+	}
+	usedPercent := int(float64(used)*100/float64(snapshot.TokenUsage.ModelContextWindow) + 0.5)
+	if usedPercent < 0 {
+		usedPercent = 0
+	}
+	if usedPercent > 100 {
+		usedPercent = 100
+	}
+	style := detailValueStyle
+	if usedPercent >= 90 {
+		style = detailDangerStyle
+	} else if usedPercent >= 70 {
+		style = detailWarningStyle
+	}
+	value := fmt.Sprintf("%d%% of %s", usedPercent, uistyle.FormatTokenCount(snapshot.TokenUsage.ModelContextWindow))
+	return embeddedSidebarFieldRow("Context", value, style, width)
+}
+
+func embeddedSidebarGoalStyle(status codexapp.ThreadGoalStatus) lipgloss.Style {
+	switch status {
+	case codexapp.ThreadGoalStatusBlocked, codexapp.ThreadGoalStatusBudgetLimited:
+		return detailDangerStyle
+	case codexapp.ThreadGoalStatusPaused:
+		return detailWarningStyle
+	case codexapp.ThreadGoalStatusComplete:
+		return detailMutedStyle
+	default:
+		return detailValueStyle
+	}
+}
+
+func (m Model) renderEmbeddedSidebarBrowserSection(snapshot codexapp.Snapshot, width int) []string {
+	rows := m.embeddedSidebarBrowserRows(snapshot, width)
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string{renderEmbeddedSidebarStaticHeader("Browser", width)}, rows...)
+}
+
+func (m Model) embeddedSidebarBrowserRows(snapshot codexapp.Snapshot, width int) []string {
+	if snapshot.Closed {
+		return nil
+	}
+	if !embeddedSidebarBrowserRelevant(snapshot) {
+		return nil
+	}
+	rows := []string{}
+	if m.codexBrowserPolicyMismatch(snapshot) {
+		rows = append(rows, detailWarningStyle.Render(fitLine("Browser settings changed", width)))
+		rows = append(rows, detailMutedStyle.Render(fitLine("Use /reconnect", width)))
+	}
+	if request := snapshot.PendingElicitation; request != nil && request.Mode == codexapp.ElicitationModeURL {
+		rows = append(rows, detailWarningStyle.Render(fitLine("Input requested", width)))
+		if requestURL := strings.TrimSpace(request.URL); requestURL != "" {
+			rows = append(rows, embeddedSidebarURLRow("URL", requestURL, width))
+		}
+	}
+	activity := snapshot.BrowserActivity.Normalize()
+	source := firstNonEmptyString(activity.SourceLabel(), "Playwright")
+	switch activity.State {
+	case browserctl.SessionActivityStateWaitingForUser:
+		rows = append(rows, embeddedSidebarFieldRow("State", "waiting", detailWarningStyle, width))
+		rows = append(rows, embeddedSidebarFieldRow("Source", source, detailMutedStyle, width))
+	case browserctl.SessionActivityStateActive:
+		rows = append(rows, embeddedSidebarFieldRow("State", "active", detailValueStyle, width))
+		rows = append(rows, embeddedSidebarFieldRow("Source", source, detailMutedStyle, width))
+	}
+	if pageURL := managedBrowserCurrentPageURL(snapshot); pageURL != "" &&
+		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" &&
+		!snapshot.CurrentBrowserPageStale {
+		rows = append(rows, embeddedSidebarURLRow("Page", pageURL, width))
+		if hint := m.managedBrowserCurrentPageHint(snapshot); hint != "" {
+			rows = append(rows, detailMutedStyle.Render(fitLine("ctrl+o reveals browser", width)))
+		}
+	}
+	return dedupeSidebarRows(rows)
+}
+
+func embeddedSidebarBrowserRelevant(snapshot codexapp.Snapshot) bool {
+	if request := snapshot.PendingElicitation; request != nil && request.Mode == codexapp.ElicitationModeURL {
+		return true
+	}
+	activity := snapshot.BrowserActivity
+	if activity.State != "" ||
+		strings.TrimSpace(activity.ServerName) != "" ||
+		strings.TrimSpace(activity.ToolName) != "" {
+		return true
+	}
+	return strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" ||
+		strings.TrimSpace(snapshot.CurrentBrowserPageURL) != ""
+}
+
+func embeddedSidebarRecentActivitySection(snapshot codexapp.Snapshot, width int) []string {
+	rows := embeddedSidebarRecentActivityRows(snapshot, width, embeddedSidebarRecentLimit)
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string{renderEmbeddedSidebarStaticHeader("Recent Activity", width)}, rows...)
+}
+
+func (m Model) renderEmbeddedSidebarRecentActivitySection(snapshot codexapp.Snapshot, width int) []string {
+	return embeddedSidebarRecentActivitySection(snapshot, width)
 }
 
 func (m Model) renderEmbeddedSidebarProcessSection(projectPath string, width int) []string {
@@ -433,7 +592,7 @@ func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) [
 		lines = append(lines, detailDangerStyle.Render(fitLine("Diff unavailable", width)))
 		lines = append(lines, detailMutedStyle.Render(fitLine(state.Err, width)))
 	case ok && state.Preview != nil && len(state.Preview.Files) > 0:
-		lines = append(lines, detailValueStyle.Render(fitLine(state.Preview.Summary, width)))
+		lines = append(lines, embeddedSidebarDiffSummaryRow(*state.Preview, width))
 		if branch := strings.TrimSpace(state.Preview.Branch); branch != "" {
 			lines = append(lines, detailMutedStyle.Render(fitLine(branch, width)))
 		}
@@ -442,7 +601,7 @@ func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) [
 				lines = append(lines, detailMutedStyle.Render(fitLine(fmt.Sprintf("+%d more", len(state.Preview.Files)-i), width)))
 				break
 			}
-			lines = append(lines, detailMutedStyle.Render(fitLine(diffFileKindCode(file)+" "+file.Summary, width)))
+			lines = append(lines, embeddedSidebarDiffFileRow(file, width))
 		}
 		lines = append(lines, detailMutedStyle.Render(fitLine("Enter opens full diff", width)))
 	case ok && state.Clean:
@@ -459,6 +618,85 @@ func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) [
 		lines = append(lines, detailMutedStyle.Render(fitLine("r refreshes", width)))
 	}
 	return lines
+}
+
+func embeddedSidebarDiffSummaryRow(preview service.DiffPreview, width int) string {
+	summary := strings.TrimSpace(preview.Summary)
+	if summary == "" {
+		summary = fmt.Sprintf("%d files changed", len(preview.Files))
+	}
+	counts := embeddedSidebarDiffKindCounts(preview.Files)
+	if len(counts) == 0 {
+		return detailValueStyle.Render(fitLine(summary, width))
+	}
+	countText := embeddedSidebarDiffKindCountText(counts)
+	summaryWidth := max(1, width-ansi.StringWidth(ansi.Strip(countText))-1)
+	return fitStyledWidth(detailValueStyle.Render(truncateText(summary, summaryWidth))+" "+countText, width)
+}
+
+func embeddedSidebarDiffKindCounts(files []service.DiffFilePreview) []service.DiffFilePreview {
+	order := []scanner.GitChangeKind{
+		scanner.GitChangeModified,
+		scanner.GitChangeAdded,
+		scanner.GitChangeDeleted,
+		scanner.GitChangeRenamed,
+		scanner.GitChangeCopied,
+		scanner.GitChangeType,
+		scanner.GitChangeUnmerged,
+		scanner.GitChangeUntracked,
+		scanner.GitChangeUnknown,
+	}
+	countByKind := make(map[scanner.GitChangeKind]int)
+	for _, file := range files {
+		countByKind[file.Kind]++
+	}
+	out := make([]service.DiffFilePreview, 0, len(countByKind))
+	for _, kind := range order {
+		count := countByKind[kind]
+		if count == 0 {
+			continue
+		}
+		out = append(out, service.DiffFilePreview{Kind: kind, Summary: fmt.Sprintf("%d", count)})
+	}
+	return out
+}
+
+func embeddedSidebarDiffKindCountText(counts []service.DiffFilePreview) string {
+	parts := make([]string, 0, len(counts))
+	for _, count := range counts {
+		code := diffFileKindCode(count)
+		parts = append(parts, embeddedSidebarDiffCodeStyle(count).Render(code+count.Summary))
+	}
+	return strings.Join(parts, " ")
+}
+
+func embeddedSidebarDiffFileRow(file service.DiffFilePreview, width int) string {
+	code := embeddedSidebarDiffCodeStyle(file).Render(diffFileKindCode(file))
+	summary := strings.TrimSpace(file.Summary)
+	if summary == "" {
+		summary = strings.TrimSpace(file.Path)
+	}
+	if summary == "" {
+		summary = "changed file"
+	}
+	return fitStyledWidth(code+" "+detailMutedStyle.Render(truncateText(summary, max(1, width-2))), width)
+}
+
+func embeddedSidebarDiffCodeStyle(file service.DiffFilePreview) lipgloss.Style {
+	switch file.Kind {
+	case scanner.GitChangeAdded:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+	case scanner.GitChangeModified:
+		return detailWarningStyle
+	case scanner.GitChangeDeleted, scanner.GitChangeUnmerged:
+		return detailDangerStyle
+	case scanner.GitChangeRenamed, scanner.GitChangeCopied, scanner.GitChangeType:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	case scanner.GitChangeUntracked:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	default:
+		return detailMutedStyle
+	}
 }
 
 func (m Model) embeddedSidebarDiffState(projectPath string) (embeddedSidebarDiffState, bool) {
@@ -478,6 +716,127 @@ func repoDirtyPlainLabel(project model.ProjectSummary) string {
 		return "Dirty worktree"
 	}
 	return "Clean worktree"
+}
+
+func embeddedSidebarRecentActivityRows(snapshot codexapp.Snapshot, width, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	rows := make([]string, 0, limit)
+	seen := map[string]struct{}{}
+	for i := len(snapshot.Entries) - 1; i >= 0 && len(rows) < limit; i-- {
+		row := embeddedSidebarRecentActivityRow(snapshot.Entries[i], width)
+		key := ansi.Strip(row)
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func embeddedSidebarRecentActivityRow(entry codexapp.TranscriptEntry, width int) string {
+	text := embeddedSidebarTranscriptSummaryText(entry)
+	if text == "" {
+		return ""
+	}
+	label, style, ok := embeddedSidebarActivityKind(entry.Kind)
+	if !ok {
+		return ""
+	}
+	prefix := style.Render(label)
+	return fitStyledWidth(prefix+" "+detailMutedStyle.Render(truncateText(text, max(1, width-ansi.StringWidth(label)-1))), width)
+}
+
+func embeddedSidebarActivityKind(kind codexapp.TranscriptKind) (string, lipgloss.Style, bool) {
+	switch kind {
+	case codexapp.TranscriptCommand:
+		return "cmd", detailValueStyle, true
+	case codexapp.TranscriptFileChange:
+		return "file", detailValueStyle, true
+	case codexapp.TranscriptTool:
+		return "tool", detailValueStyle, true
+	case codexapp.TranscriptPlan:
+		return "plan", detailWarningStyle, true
+	case codexapp.TranscriptStatus:
+		return "note", detailMutedStyle, true
+	case codexapp.TranscriptError:
+		return "err", detailDangerStyle, true
+	default:
+		return "", lipgloss.Style{}, false
+	}
+}
+
+func embeddedSidebarTranscriptSummaryText(entry codexapp.TranscriptEntry) string {
+	text := strings.TrimSpace(firstNonEmptyString(entry.DisplayText, entry.Text))
+	if text == "" {
+		return ""
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func embeddedSidebarURLRow(label, rawURL string, width int) string {
+	return embeddedSidebarFieldRow(label, embeddedSidebarCompactURL(rawURL), detailMutedStyle, width)
+}
+
+func embeddedSidebarCompactURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return rawURL
+	}
+	path := strings.TrimSpace(parsed.EscapedPath())
+	if path == "" || path == "/" {
+		return parsed.Host
+	}
+	return parsed.Host + path
+}
+
+func embeddedSidebarFieldRow(label, value string, style lipgloss.Style, width int) string {
+	label = strings.TrimSpace(label)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	prefix := label
+	if prefix != "" {
+		prefix += " "
+	}
+	valueWidth := max(1, width-ansi.StringWidth(prefix))
+	return fitStyledWidth(detailMutedStyle.Render(prefix)+style.Render(truncateText(value, valueWidth)), width)
+}
+
+func dedupeSidebarRows(rows []string) []string {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(rows))
+	seen := map[string]struct{}{}
+	for _, row := range rows {
+		key := strings.TrimSpace(ansi.Strip(row))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, row)
+	}
+	return out
 }
 
 func fitLine(text string, width int) string {

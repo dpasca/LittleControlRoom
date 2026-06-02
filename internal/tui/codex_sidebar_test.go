@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
@@ -85,10 +86,11 @@ func testEmbeddedSidebarModel(projectPath string) Model {
 
 func testEmbeddedSidebarSnapshot(projectPath string) codexapp.Snapshot {
 	return codexapp.Snapshot{
-		Provider:    codexapp.ProviderCodex,
-		ProjectPath: projectPath,
-		ThreadID:    "thread-sidebar",
-		Started:     true,
+		Provider:                 codexapp.ProviderCodex,
+		ProjectPath:              projectPath,
+		ThreadID:                 "thread-sidebar",
+		Started:                  true,
+		ManagedBrowserSessionKey: "managed-sidebar",
 		Entries: []codexapp.TranscriptEntry{{
 			Kind: codexapp.TranscriptAgent,
 			Text: "Ready to work.",
@@ -103,7 +105,6 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderCodexView())
 	for _, want := range []string{
-		"AI Engineer",
 		"Active Processes",
 		"Diff Summary",
 		"npm run dev",
@@ -113,6 +114,86 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered sidebar missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "AI Engineer") {
+		t.Fatalf("sidebar should not render the redundant title:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarOmitsOptionalSectionsWithoutState(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+
+	rendered := ansi.Strip(m.renderEmbeddedCodexSidebar(testEmbeddedSidebarSnapshot(projectPath), 40, 28))
+	for _, absent := range []string{
+		"AI Engineer",
+		"Session",
+		"Browser",
+		"Recent Activity",
+		"Goal",
+		"Ready to work",
+	} {
+		if strings.Contains(rendered, absent) {
+			t.Fatalf("sidebar should omit optional %q without relevant state:\n%s", absent, rendered)
+		}
+	}
+}
+
+func TestEmbeddedSidebarShowsConditionalSessionBrowserAndActivity(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	tokenBudget := int64(5000)
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.TokenUsage = &codexapp.TokenUsageSnapshot{
+		Total: codexapp.TokenUsageBreakdown{
+			InputTokens:  10000,
+			OutputTokens: 2000,
+		},
+		ModelContextWindow: 200000,
+	}
+	snapshot.Goal = &codexapp.ThreadGoal{
+		Objective:   "ship conditional sidebar sections",
+		Status:      codexapp.ThreadGoalStatusActive,
+		TokenBudget: &tokenBudget,
+		TokensUsed:  1200,
+	}
+	snapshot.BrowserActivity = browserctl.SessionActivity{
+		Policy:     settingsAutomaticPlaywrightPolicy,
+		State:      browserctl.SessionActivityStateWaitingForUser,
+		ServerName: "playwright",
+		ToolName:   "browser_click",
+	}
+	snapshot.CurrentBrowserPageURL = "https://example.com/login?state=demo"
+	snapshot.Entries = []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptUser, Text: "Please make the sidebar useful."},
+		{Kind: codexapp.TranscriptAgent, Text: "Ready to work."},
+		{Kind: codexapp.TranscriptTool, Text: "Bash: make test"},
+		{Kind: codexapp.TranscriptCommand, Text: "$ make test\nok"},
+		{Kind: codexapp.TranscriptStatus, Text: "Conversation history compacted"},
+	}
+
+	rendered := ansi.Strip(m.renderEmbeddedCodexSidebar(snapshot, 46, 40))
+	for _, want := range []string{
+		"Session",
+		"Context 6% of 200k",
+		"Tokens i10k c0% o2.0k",
+		"Goal active 1,200/5,000 tok",
+		"ship conditional sidebar sections",
+		"Browser",
+		"State waiting",
+		"Source playwright/browser_click",
+		"Page example.com/login",
+		"Recent Activity",
+		"note Conversation history compacted",
+		"cmd $ make test",
+		"tool Bash: make test",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("conditional sidebar missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Please make the sidebar useful") || strings.Contains(rendered, "Ready to work") {
+		t.Fatalf("recent activity should skip user and agent chatter:\n%s", rendered)
 	}
 }
 
