@@ -11,6 +11,7 @@ import (
 
 	"lcroom/internal/config"
 	"lcroom/internal/model"
+	"lcroom/internal/runtimeguard"
 	"lcroom/internal/store"
 )
 
@@ -39,6 +40,39 @@ func TestRunVersion(t *testing.T) {
 	}
 	if got, want := strings.TrimSpace(string(output)), "lcroom dev"; got != want {
 		t.Fatalf("version output = %q, want %q", got, want)
+	}
+}
+
+func TestFormatRuntimeConflictMessageIncludesRecovery(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Date(2026, 6, 2, 12, 25, 45, 0, time.FixedZone("JST", 9*60*60))
+	message := formatRuntimeConflictMessage(&runtimeguard.Owner{
+		PID:       50891,
+		Mode:      "tui",
+		DBPath:    "/tmp/little-control-room.sqlite",
+		Hostname:  "demo-host",
+		CWD:       "/tmp/LittleControlRoom",
+		Command:   "/tmp/lcroom tui --config /tmp/config.toml --db /tmp/little-control-room.sqlite",
+		StartedAt: startedAt,
+	}, "/tmp/little-control-room.sqlite", "tui")
+
+	for _, want := range []string{
+		"Little Control Room is already running a tui runtime for this database.",
+		"database: /tmp/little-control-room.sqlite",
+		"To recover:",
+		"  kill 50891",
+		"  # if it does not exit: kill -9 50891",
+		"  # if your prompt still looks stair-stepped: stty sane",
+		"Active runtime:",
+		"  pid: 50891",
+		"  mode: tui",
+		"  started: 2026-06-02T12:25:45+09:00",
+		"For intentional short-lived dev/debug overlap only, re-run with --allow-multiple-instances.",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message missing %q:\n%s", want, message)
+		}
 	}
 }
 

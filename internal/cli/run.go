@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sort"
@@ -94,29 +95,27 @@ func Run(programName string, args []string) int {
 			if errors.Is(err, runtimeguard.ErrBusy) {
 				message := formatRuntimeConflictMessage(owner, cfg.DBPath, subcmd)
 				if cfg.AllowMultipleInstances {
-					fmt.Fprintf(os.Stderr, "warning: %s\n", message)
+					printPlainRuntimeError("warning: " + message)
 				} else {
-					fmt.Fprintln(os.Stderr, message)
-					fmt.Fprintln(os.Stderr, "Re-run with --allow-multiple-instances only for intentional short-lived dev/debug overlap.")
+					printPlainRuntimeError(message)
 					return 1
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "runtime lease failed: %v\n", err)
+				printPlainRuntimeError(fmt.Sprintf("runtime lease failed: %v", err))
 				return 1
 			}
 		} else {
 			runtimeLease = lease
 			if peer, err := runtimeguard.FindPeerProcess(cfg.DBPath); err != nil {
-				fmt.Fprintf(os.Stderr, "runtime peer check failed: %v\n", err)
+				printPlainRuntimeError(fmt.Sprintf("runtime peer check failed: %v", err))
 				return 1
 			} else if peer != nil {
 				message := formatRuntimeConflictMessage(peer, cfg.DBPath, subcmd)
 				if cfg.AllowMultipleInstances {
-					fmt.Fprintf(os.Stderr, "warning: %s\n", message)
+					printPlainRuntimeError("warning: " + message)
 				} else {
 					_ = runtimeLease.Close()
-					fmt.Fprintln(os.Stderr, message)
-					fmt.Fprintln(os.Stderr, "Stop the older lcroom process first, or re-run with --allow-multiple-instances only for intentional short-lived dev/debug overlap.")
+					printPlainRuntimeError(message)
 					return 1
 				}
 			}
@@ -899,29 +898,107 @@ func guardedRuntimeMode(subcmd string) bool {
 }
 
 func formatRuntimeConflictMessage(owner *runtimeguard.Owner, dbPath, mode string) string {
+	cleanDB := strings.TrimSpace(dbPath)
+	if cleanDB != "" {
+		cleanDB = filepath.Clean(cleanDB)
+	} else {
+		cleanDB = "(unknown database)"
+	}
+	cleanMode := strings.TrimSpace(mode)
+	if cleanMode == "" {
+		cleanMode = "runtime"
+	}
+
 	lines := []string{
-		fmt.Sprintf("another %s %s runtime is already active for %s", brand.Name, strings.TrimSpace(mode), filepath.Clean(strings.TrimSpace(dbPath))),
+		fmt.Sprintf("%s is already running a %s runtime for this database.", brand.Name, cleanMode),
+		"This launch stopped before starting the runtime so the database is not shared by two long-lived processes.",
+		"",
+		fmt.Sprintf("database: %s", cleanDB),
 	}
+	appendRuntimeConflictRecovery(&lines, owner)
+	appendRuntimeConflictOwner(&lines, owner)
+	lines = append(lines,
+		"",
+		"For intentional short-lived dev/debug overlap only, re-run with --allow-multiple-instances.",
+	)
+	return strings.Join(lines, "\n")
+}
+
+func appendRuntimeConflictRecovery(lines *[]string, owner *runtimeguard.Owner) {
+	*lines = append(*lines, "", "To recover:")
+	if owner != nil && owner.PID > 0 {
+		*lines = append(*lines,
+			fmt.Sprintf("  kill %d", owner.PID),
+			fmt.Sprintf("  # if it does not exit: kill -9 %d", owner.PID),
+		)
+	} else {
+		*lines = append(*lines, "  stop the older lcroom process, then run this command again")
+	}
+	*lines = append(*lines, "  # if your prompt still looks stair-stepped: stty sane")
+}
+
+func appendRuntimeConflictOwner(lines *[]string, owner *runtimeguard.Owner) {
 	if owner == nil {
-		return strings.Join(lines, "\n")
+		return
 	}
+	*lines = append(*lines, "", "Active runtime:")
 	if owner.PID > 0 {
-		lines = append(lines, fmt.Sprintf("  pid: %d", owner.PID))
+		*lines = append(*lines, fmt.Sprintf("  pid: %d", owner.PID))
 	}
 	if trimmed := strings.TrimSpace(owner.Mode); trimmed != "" {
-		lines = append(lines, fmt.Sprintf("  active mode: %s", trimmed))
+		*lines = append(*lines, fmt.Sprintf("  mode: %s", trimmed))
 	}
 	if !owner.StartedAt.IsZero() {
-		lines = append(lines, fmt.Sprintf("  started: %s", owner.StartedAt.Format(time.RFC3339)))
+		*lines = append(*lines, fmt.Sprintf("  started: %s", owner.StartedAt.Format(time.RFC3339)))
 	}
 	if trimmed := strings.TrimSpace(owner.CWD); trimmed != "" {
-		lines = append(lines, fmt.Sprintf("  cwd: %s", trimmed))
+		*lines = append(*lines, fmt.Sprintf("  cwd: %s", trimmed))
 	}
 	if trimmed := strings.TrimSpace(owner.Hostname); trimmed != "" {
-		lines = append(lines, fmt.Sprintf("  host: %s", trimmed))
+		*lines = append(*lines, fmt.Sprintf("  host: %s", trimmed))
 	}
 	if trimmed := strings.TrimSpace(owner.Command); trimmed != "" {
-		lines = append(lines, fmt.Sprintf("  command: %s", trimmed))
+		*lines = append(*lines, fmt.Sprintf("  command: %s", trimRuntimeConflictField(trimmed, 220)))
 	}
-	return strings.Join(lines, "\n")
+}
+
+func trimRuntimeConflictField(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
+}
+
+func printPlainRuntimeError(message string) {
+	restoreTerminalForPlainText()
+	message = strings.TrimRight(message, "\r\n")
+	if message == "" {
+		return
+	}
+	fmt.Fprint(os.Stderr, strings.ReplaceAll(message, "\n", "\r\n")+"\r\n")
+}
+
+func restoreTerminalForPlainText() {
+	const reset = "\r\x1b[0m\x1b[?25h\x1b[?1049l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\r"
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return
+	}
+	defer tty.Close()
+
+	_, _ = tty.WriteString(reset)
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "stty", "sane")
+	cmd.Stdin = tty
+	_ = cmd.Run()
+	_, _ = tty.WriteString(reset)
 }
