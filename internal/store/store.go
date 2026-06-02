@@ -2046,9 +2046,18 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 				WHEN excluded.present_on_disk = 0 AND projects.present_on_disk = 0 AND projects.forgotten = 1 THEN 1
 				ELSE excluded.forgotten
 			END,
-			manually_added=excluded.manually_added,
-			in_scope=excluded.in_scope,
-			archived=excluded.archived,
+			manually_added=CASE
+				WHEN projects.manually_added != 0 THEN 1
+				ELSE excluded.manually_added
+			END,
+			in_scope=CASE
+				WHEN projects.manually_added != 0 OR excluded.manually_added != 0 THEN 1
+				ELSE excluded.in_scope
+			END,
+			archived=CASE
+				WHEN projects.manually_added != 0 THEN projects.archived
+				ELSE excluded.archived
+			END,
 			pinned=projects.pinned,
 			snoozed_until=projects.snoozed_until,
 			moved_from_path=CASE

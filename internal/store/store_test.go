@@ -97,6 +97,54 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 	}
 }
 
+func TestUpsertProjectStateKeepsManualProjectVisibleAgainstStaleSnapshot(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	projectPath := "/tmp/portfolio"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "portfolio",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		ManuallyAdded: true,
+		InScope:       true,
+		Archived:      false,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("seed manual project: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "portfolio",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		ManuallyAdded: false,
+		InScope:       false,
+		Archived:      true,
+		UpdatedAt:     now.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("stale upsert: %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if !summary.ManuallyAdded || !summary.InScope || summary.Archived {
+		t.Fatalf("manual visibility flags were not preserved: %#v", summary)
+	}
+}
+
 func TestProjectMissingSincePersistsUntilRediscovered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
