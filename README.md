@@ -43,16 +43,25 @@ Requirements:
 
 ### Prebuilt binaries
 
-Prebuilt binaries are the intended install path. Download the archive for your platform from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases), or use the source build below if no release asset is available yet.
+Prebuilt release archives are currently the intended install path for macOS and Linux. Little Control Room is not published through Homebrew, apt, Snap, Flatpak, Nix, or other package managers yet.
+
+Download the archive for your platform from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases), or use the source build below if no release asset is available yet.
+
+| Platform | Release asset |
+| --- | --- |
+| macOS Apple Silicon | `lcroom_Darwin_arm64.tar.gz` |
+| macOS Intel | `lcroom_Darwin_x86_64.tar.gz` |
+| Linux ARM64 | `lcroom_Linux_arm64.tar.gz` |
+| Linux x86_64 | `lcroom_Linux_x86_64.tar.gz` |
 
 ```bash
-# Example: macOS ARM64
-curl -L -o lcroom.tar.gz https://github.com/dpasca/LittleControlRoom/releases/latest/download/lcroom_Darwin_arm64.tar.gz
+# Example: Linux x86_64
+curl -L -o lcroom.tar.gz https://github.com/dpasca/LittleControlRoom/releases/latest/download/lcroom_Linux_x86_64.tar.gz
 tar -xzf lcroom.tar.gz
 ./lcroom tui
 ```
 
-Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider.
+Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider. Move both binaries to a directory on your `PATH` if you want to run `lcroom` from anywhere.
 
 ### Build from source
 

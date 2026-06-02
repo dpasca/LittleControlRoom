@@ -43,10 +43,7 @@ func (m *Model) openSkillsDialog() tea.Cmd {
 }
 
 func (m Model) loadSkillsInventoryCmd(requestID int64) tea.Cmd {
-	codexHome := ""
-	if m.svc != nil {
-		codexHome = m.svc.Config().CodexHome
-	}
+	codexHome := m.codexHome()
 	parent := m.ctx
 	if parent == nil {
 		parent = context.Background()

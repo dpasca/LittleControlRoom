@@ -148,7 +148,7 @@ func setupDetectionConfig(settings config.EditableSettings) config.AppConfig {
 
 func (m Model) saveSetupCmd(settings config.EditableSettings) tea.Cmd {
 	settings = config.NormalizeEditableSettings(settings)
-	path := m.currentConfigPath()
+	path := m.currentWritableConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
 		return setupSavedMsg{settings: settings, path: path, err: err}

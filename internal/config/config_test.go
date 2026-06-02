@@ -746,6 +746,44 @@ func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *test
 	}
 }
 
+func TestSaveEditableSettingsBacksUpExistingConfig(t *testing.T) {
+	useTempHome(t)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	oldConfig := "ai_backend = \"deepseek\"\ndeepseek_api_key = \"old-secret\"\n"
+	if err := os.WriteFile(configPath, []byte(oldConfig), 0o600); err != nil {
+		t.Fatalf("write old config: %v", err)
+	}
+
+	settings := EditableSettingsFromAppConfig(Default())
+	settings.PrivacyMode = true
+	if err := SaveEditableSettings(configPath, settings); err != nil {
+		t.Fatalf("SaveEditableSettings() error = %v", err)
+	}
+
+	backups, err := filepath.Glob(configPath + ".*.bak")
+	if err != nil {
+		t.Fatalf("glob config backups: %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("backup count = %d, want 1", len(backups))
+	}
+	raw, err := os.ReadFile(backups[0])
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(raw) != oldConfig {
+		t.Fatalf("backup did not preserve the previous config")
+	}
+	info, err := os.Stat(backups[0])
+	if err != nil {
+		t.Fatalf("stat backup: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("backup mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
 func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	useTempHome(t)
 	configPath := filepath.Join(t.TempDir(), "config.toml")

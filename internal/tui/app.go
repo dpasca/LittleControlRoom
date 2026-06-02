@@ -160,6 +160,9 @@ type Model struct {
 	settingsSelected                    int
 	settingsDrilldown                   settingsDrilldownID
 	settingsBaseline                    *config.EditableSettings
+	settingsConfigPath                  string
+	appDataDirPath                      string
+	codexHomePath                       string
 	settingsRevealPrivacy               bool
 	settingsPrivacyEditor               *settingsPrivacyEditorState
 	settingsBossChatPickerVisible       bool
@@ -613,7 +616,9 @@ func New(ctx context.Context, svc *service.Service) Model {
 	detailViewport := viewport.New(0, 0)
 	runtimeViewport := viewport.New(0, 0)
 	codexViewport := viewport.New(0, 0)
-	initialSettings := config.EditableSettingsFromAppConfig(svc.Config())
+	initialConfig := svc.Config()
+	initialSettings := config.EditableSettingsFromAppConfig(initialConfig)
+	settingsBaseline := cloneEditableSettings(initialSettings)
 	homeDir, _ := os.UserHomeDir()
 
 	m := Model{
@@ -651,9 +656,13 @@ func New(ctx context.Context, svc *service.Service) Model {
 		sortMode:                   sortByAttention,
 		visibility:                 visibilityAIFolders,
 		archiveMode:                projectArchiveActive,
-		excludeProjectPatterns:     currentExcludeProjectPatterns(svc),
+		settingsBaseline:           &settingsBaseline,
+		settingsConfigPath:         strings.TrimSpace(initialConfig.ConfigPath),
+		appDataDirPath:             strings.TrimSpace(initialConfig.DataDir),
+		codexHomePath:              strings.TrimSpace(initialConfig.CodexHome),
+		excludeProjectPatterns:     append([]string(nil), initialSettings.ExcludeProjectPatterns...),
 		privacyMode:                initialSettings.PrivacyMode,
-		privacyPatterns:            currentPrivacyPatterns(svc),
+		privacyPatterns:            append([]string(nil), initialSettings.PrivacyPatterns...),
 		codexManager:               codexapp.NewManager(),
 		runtimeManager:             projectrun.NewManager(),
 		runtimeSnapshots:           make(map[string]projectrun.Snapshot),
@@ -692,11 +701,8 @@ func (m Model) currentTime() time.Time {
 }
 
 func (m Model) assessmentStallThreshold() time.Duration {
-	if m.svc == nil {
-		return 0
-	}
-	cfg := m.svc.Config()
-	return sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold)
+	settings := m.currentSettingsBaseline()
+	return sessionclassify.EffectiveAssessmentStallThreshold(settings.ActiveThreshold, settings.StuckThreshold)
 }
 
 func (m *Model) markAssessmentFlash(projectPath string, at time.Time) {
@@ -948,20 +954,6 @@ func llmUsageTotalsIncreased(current, previous model.LLMUsage) bool {
 		current.TotalTokens > previous.TotalTokens ||
 		current.CachedInputTokens > previous.CachedInputTokens ||
 		current.ReasoningTokens > previous.ReasoningTokens
-}
-
-func currentExcludeProjectPatterns(svc *service.Service) []string {
-	if svc == nil {
-		return nil
-	}
-	return append([]string(nil), svc.Config().ExcludeProjectPatterns...)
-}
-
-func currentPrivacyPatterns(svc *service.Service) []string {
-	if svc == nil {
-		return nil
-	}
-	return append([]string(nil), svc.Config().PrivacyPatterns...)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -2205,6 +2197,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
+		m.settingsConfigPath = strings.TrimSpace(msg.path)
 		m.excludeProjectPatterns = append([]string(nil), msg.settings.ExcludeProjectPatterns...)
 		m.privacyPatterns = append([]string(nil), msg.settings.PrivacyPatterns...)
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
@@ -2245,6 +2238,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
+		m.settingsConfigPath = strings.TrimSpace(msg.path)
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.setupSnapshot.Selected = msg.settings.AIBackend
 		m.setupMode = false
@@ -2264,6 +2258,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// freeze the UI during /model changes.
 		saved := cloneEditableSettings(msg.settings)
 		m.settingsBaseline = &saved
+		m.settingsConfigPath = strings.TrimSpace(msg.path)
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		return m, nil
 	case privacyModeSavedMsg:
@@ -2272,6 +2267,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		m.settingsConfigPath = strings.TrimSpace(msg.path)
 		if m.settingsBaseline != nil {
 			m.settingsBaseline.PrivacyMode = msg.privacyMode
 		}

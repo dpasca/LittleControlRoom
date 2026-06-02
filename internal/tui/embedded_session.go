@@ -992,15 +992,15 @@ func (m *Model) reloadEmbeddedLCAgentAfterSettingsCmd(projectPath string, settin
 }
 
 func (m Model) appDataDir() string {
-	if m.svc != nil {
-		return m.svc.Config().DataDir
+	if path := strings.TrimSpace(m.appDataDirPath); path != "" {
+		return path
 	}
 	return config.Default().DataDir
 }
 
 func (m Model) codexHome() string {
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().CodexHome)
+	if path := strings.TrimSpace(m.codexHomePath); path != "" {
+		return path
 	}
 	return strings.TrimSpace(config.Default().CodexHome)
 }

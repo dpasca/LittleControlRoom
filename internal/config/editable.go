@@ -474,10 +474,25 @@ func SaveEditableSettings(path string, settings EditableSettings) error {
 	if err := tempFile.Close(); err != nil {
 		return fmt.Errorf("close temp config file: %w", err)
 	}
+	if err := backupExistingEditableSettings(path); err != nil {
+		return fmt.Errorf("backup existing config file: %w", err)
+	}
 	if err := os.Rename(tempPath, path); err != nil {
 		return fmt.Errorf("install config file: %w", err)
 	}
 	return nil
+}
+
+func backupExistingEditableSettings(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	backupPath := fmt.Sprintf("%s.%s.bak", path, time.Now().UTC().Format("20060102-150405.000000000"))
+	return os.WriteFile(backupPath, raw, 0o600)
 }
 
 func validateEditableSettings(settings EditableSettings) error {

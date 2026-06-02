@@ -1414,7 +1414,7 @@ func (m Model) updateSettingsPrivacyEditorMode(msg tea.KeyMsg) (tea.Model, tea.C
 
 func (m Model) saveSettingsCmd(settings config.EditableSettings) tea.Cmd {
 	settings = config.NormalizeEditableSettings(settings)
-	path := m.currentConfigPath()
+	path := m.currentWritableConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
 		return settingsSavedMsg{settings: settings, path: path, err: err}
@@ -1445,7 +1445,7 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	if embeddedModelSettingsEqual(baseline, settings) {
 		return nil
 	}
-	path := m.currentConfigPath()
+	path := m.currentWritableConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
 		return embeddedModelPreferencesSavedMsg{settings: settings, path: path, err: err}
@@ -1455,7 +1455,7 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 func (m Model) savePrivacyModeCmd(privacyMode bool) tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	settings.PrivacyMode = privacyMode
-	path := m.currentConfigPath()
+	path := m.currentWritableConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
 		return privacyModeSavedMsg{privacyMode: privacyMode, path: path, err: err}
@@ -1473,10 +1473,23 @@ func (m Model) currentSettingsBaseline() config.EditableSettings {
 }
 
 func (m Model) currentConfigPath() string {
+	if path := strings.TrimSpace(m.settingsConfigPath); path != "" {
+		return path
+	}
 	if m.svc != nil {
-		return m.svc.Config().ConfigPath
+		return strings.TrimSpace(m.svc.Config().ConfigPath)
 	}
 	return config.Default().ConfigPath
+}
+
+func (m Model) currentWritableConfigPath() string {
+	if path := strings.TrimSpace(m.settingsConfigPath); path != "" {
+		return path
+	}
+	if m.svc != nil {
+		return strings.TrimSpace(m.svc.Config().ConfigPath)
+	}
+	return ""
 }
 
 func displayPathWithHomeTilde(path, homeDir string) string {
@@ -1554,6 +1567,14 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentWebSearchURL = m.settingsFieldValue(settingsFieldLCAgentWebSearchURL)
 	if timeout, err := time.ParseDuration(m.settingsFieldValue(settingsFieldLCAgentRequestTimeout)); err == nil {
 		settings.LCAgentRequestTimeout = timeout
+	}
+	return settings
+}
+
+func (m Model) bossModelDefaultSettings() config.EditableSettings {
+	settings := m.settingsDraftForInferenceStatus()
+	if m.setupMode && m.setupFocusedRole == setupRoleBossChat {
+		settings.BossChatBackend = m.setupSelectedBossBackend()
 	}
 	return settings
 }
@@ -2763,9 +2784,9 @@ func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
 	settings := m.settingsDraftForInferenceStatus()
 	switch fieldIndex {
 	case settingsFieldBossChatModel:
-		return "Default: " + settingsBossHelmDefaultLabel(settings)
+		return "Default: " + settingsBossHelmDefaultLabel(m.bossModelDefaultSettings())
 	case settingsFieldBossUtilityModel:
-		return "Default: " + settingsBossUtilityDefaultLabel(settings)
+		return "Default: " + settingsBossUtilityDefaultLabel(m.bossModelDefaultSettings())
 	case settingsFieldOpenRouterModel:
 		return "Default: " + config.DefaultOpenRouterModel
 	case settingsFieldDeepSeekModel:
@@ -3458,14 +3479,12 @@ func (m Model) settingsFieldHint(index int) string {
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
 			return "Boss helm calls will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
 		}
-		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses " + settingsBossHelmDefaultLabel(settings) + ". " + brand.BossAssistantModelEnvVar + " still wins if set in the environment."
+		return "Blank uses " + settingsBossHelmDefaultLabel(m.bossModelDefaultSettings()) + ". " + brand.BossAssistantModelEnvVar + " still wins if set in the environment."
 	case settingsFieldBossUtilityModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
 			return "Routine Boss utility calls will request model " + model + ". LCROOM_BOSS_MODEL still overrides all Boss model choices if set."
 		}
-		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses " + settingsBossUtilityDefaultLabel(settings) + ". " + brand.BossAssistantModelEnvVar + " still overrides all Boss model choices if set."
+		return "Blank uses " + settingsBossUtilityDefaultLabel(m.bossModelDefaultSettings()) + ". " + brand.BossAssistantModelEnvVar + " still overrides all Boss model choices if set."
 	case settingsFieldMLXBaseURL:
 		return field.hint
 	case settingsFieldMLXAPIKey:

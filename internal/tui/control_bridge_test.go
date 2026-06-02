@@ -646,10 +646,13 @@ func TestExecuteSettingsUpdateControlAddsPrivacyPattern(t *testing.T) {
 		_ = st.Close()
 	})
 	svc := service.New(cfg, st, events.NewBus(), nil)
+	settings := config.EditableSettingsFromAppConfig(cfg)
 	m := Model{
-		ctx:             ctx,
-		svc:             svc,
-		privacyPatterns: []string{"medical"},
+		ctx:                ctx,
+		svc:                svc,
+		settingsBaseline:   &settings,
+		settingsConfigPath: cfg.ConfigPath,
+		privacyPatterns:    []string{"medical"},
 	}
 
 	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{

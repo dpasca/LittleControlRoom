@@ -33,6 +33,7 @@ import (
 	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
 	"lcroom/internal/service"
+	"lcroom/internal/sessionclassify"
 	"lcroom/internal/store"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -95,6 +96,75 @@ func (c *usageSnapshotClassifier) Notify()               {}
 func (c *usageSnapshotClassifier) Start(context.Context) {}
 func (c *usageSnapshotClassifier) UsageSnapshot() model.LLMSessionUsage {
 	return c.usage
+}
+
+func TestNewCachesStableSettingsForUI(t *testing.T) {
+	cfg := config.Default()
+	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	cfg.DataDir = filepath.Join(t.TempDir(), "data")
+	cfg.CodexHome = filepath.Join(t.TempDir(), "codex-home")
+	cfg.ActiveThreshold = 17 * time.Second
+	cfg.StuckThreshold = 43 * time.Second
+	cfg.ExcludeProjectPatterns = []string{"vendor"}
+	cfg.PrivacyPatterns = []string{"secret"}
+
+	m := New(context.Background(), service.New(cfg, nil, events.NewBus(), nil))
+
+	if m.settingsBaseline == nil {
+		t.Fatal("settings baseline was not cached")
+	}
+	if got := m.currentConfigPath(); got != cfg.ConfigPath {
+		t.Fatalf("config path = %q, want %q", got, cfg.ConfigPath)
+	}
+	if got := m.appDataDir(); got != cfg.DataDir {
+		t.Fatalf("app data dir = %q, want %q", got, cfg.DataDir)
+	}
+	if got := m.codexHome(); got != cfg.CodexHome {
+		t.Fatalf("codex home = %q, want %q", got, cfg.CodexHome)
+	}
+	if got := m.assessmentStallThreshold(); got != sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold) {
+		t.Fatalf("assessment stall threshold = %s", got)
+	}
+	if got := strings.Join(m.excludeProjectPatterns, ","); got != "vendor" {
+		t.Fatalf("exclude patterns = %q", got)
+	}
+	if got := strings.Join(m.privacyPatterns, ","); got != "secret" {
+		t.Fatalf("privacy patterns = %q", got)
+	}
+}
+
+func TestBareModelConfigSaveDoesNotWriteDefaultUserConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cmd := Model{}.savePrivacyModeCmd(true)
+	if cmd == nil {
+		t.Fatal("savePrivacyModeCmd() returned nil")
+	}
+	msg := cmd()
+	saved, ok := msg.(privacyModeSavedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want privacyModeSavedMsg", msg)
+	}
+	if saved.err == nil {
+		t.Fatal("bare model save should fail without an initialized config path")
+	}
+	defaultPath := filepath.Join(home, brand.DataDirName, brand.ConfigFileName)
+	if _, err := os.Stat(defaultPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("default config path was touched; stat err = %v", err)
+	}
+}
+
+func TestAssessmentStallThresholdUsesCachedSettingsWithoutService(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.ActiveThreshold = 9 * time.Second
+	settings.StuckThreshold = 31 * time.Second
+
+	got := (Model{settingsBaseline: &settings}).assessmentStallThreshold()
+	want := sessionclassify.EffectiveAssessmentStallThreshold(settings.ActiveThreshold, settings.StuckThreshold)
+	if got != want {
+		t.Fatalf("assessment stall threshold = %s, want %s", got, want)
+	}
 }
 
 func (s *fakeCodexSession) ProjectPath() string {
@@ -23764,6 +23834,7 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 		setupConfigMode:     true,
 		setupStep:           setupStepBossConfig,
 		settingsBaseline:    &settings,
+		settingsConfigPath:  filepath.Join(home, ".little-control-room", "config.toml"),
 		settingsFields:      newSettingsFields(settings),
 		setupFocusedRole:    setupRoleBossChat,
 		setupBossSelected:   mSetupBossSelectionForTest(config.AIBackendOpenAIAPI),
@@ -23813,6 +23884,42 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 	}
 	if saved.settings.BossChatBackend != config.AIBackendOpenAIAPI {
 		t.Fatalf("saved boss backend = %s, want openai_api", saved.settings.BossChatBackend)
+	}
+}
+
+func TestSetupBossDeepSeekModelDefaultsUseSelectedBackend(t *testing.T) {
+	t.Setenv(brand.BossAssistantModelEnvVar, "")
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendUnset
+
+	m := Model{
+		setupMode:         true,
+		setupConfigMode:   true,
+		setupStep:         setupStepBossConfig,
+		setupFocusedRole:  setupRoleBossChat,
+		setupBossSelected: mSetupBossSelectionForTest(config.AIBackendDeepSeek),
+		settingsBaseline:  &settings,
+		settingsFields:    newSettingsFields(settings),
+		width:             120,
+		height:            30,
+	}
+
+	rendered := ansi.Strip(m.renderSetupConfigContent(110))
+	for _, want := range []string{
+		"Default: " + config.DefaultDeepSeekProModel + " from DeepSeek",
+		"Default: " + config.DefaultDeepSeekModel + " from DeepSeek",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("DeepSeek boss setup missing %q: %q", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{
+		"Default: " + config.DefaultBossHelmModel,
+		"Default: " + config.DefaultBossUtilityModel,
+	} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("DeepSeek boss setup should not show %q: %q", unwanted, rendered)
+		}
 	}
 }
 
@@ -26351,10 +26458,11 @@ func TestSettingsCtrlSSavesConfigAndClosesModal(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:       true,
+		settingsConfigPath: filepath.Join(home, ".little-control-room", "config.toml"),
+		settingsFields:     newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:              100,
+		height:             24,
 	}
 	_ = m.setSettingsSelection(0)
 
@@ -26545,10 +26653,11 @@ func TestSettingsBrowserAutomationMapsToManagedPolicy(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:       true,
+		settingsConfigPath: filepath.Join(home, ".little-control-room", "config.toml"),
+		settingsFields:     newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:              100,
+		height:             24,
 	}
 	_ = m.setSettingsSelection(settingsFieldBrowserAutomation)
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
@@ -26661,10 +26770,11 @@ func TestSettingsCtrlSWarnsAboutMissingLCAgentEnvFile(t *testing.T) {
 	missingPath := filepath.Join(home, "missing.env")
 
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
-		width:          100,
-		height:         24,
+		settingsMode:       true,
+		settingsConfigPath: filepath.Join(home, ".little-control-room", "config.toml"),
+		settingsFields:     newSettingsFields(config.EditableSettingsFromAppConfig(config.Default())),
+		width:              100,
+		height:             24,
 	}
 	_ = m.setSettingsSelection(settingsFieldLCAgentEnvFile)
 	m.settingsFields[settingsFieldLCAgentEnvFile].input.SetValue(missingPath)
