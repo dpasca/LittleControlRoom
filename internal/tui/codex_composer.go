@@ -14,6 +14,7 @@ import (
 const (
 	codexLargePasteCharacterThreshold = 500
 	codexLargePasteLineThreshold      = 8
+	codexComposerCharLimit            = 0
 )
 
 type codexPastedText struct {
@@ -85,7 +86,11 @@ func newCodexTextarea() textarea.Model {
 		return "  "
 	})
 	input.Placeholder = ""
-	input.CharLimit = 10000
+	// Prompts can exceed the visible composer budget via collapsed paste
+	// placeholders. A textarea char limit makes the composer look frozen once
+	// it is reached, so keep the component uncapped and rely on paste
+	// placeholder collapse to keep rendering cheap.
+	input.CharLimit = codexComposerCharLimit
 	input.SetWidth(72)
 	input.SetHeight(3)
 	input.ShowLineNumbers = false
