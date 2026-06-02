@@ -6,11 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
+	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/store"
 
@@ -214,6 +216,72 @@ func TestNewProjectDialogCreatesProjectAndSelectsIt(t *testing.T) {
 	wantPath := filepath.Join(parent, "demo")
 	if selected.Path != wantPath {
 		t.Fatalf("selected path = %q, want %q", selected.Path, wantPath)
+	}
+}
+
+func TestNewProjectDialogAddsExistingDiscoveredRepoToAIFolders(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "portfolio")
+	if err := os.MkdirAll(filepath.Join(projectPath, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir existing git project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "portfolio",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert discovered project: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := New(ctx, svc)
+	m.width = 100
+	m.height = 28
+	m.homeDirFn = func() (string, error) { return parent, nil }
+
+	updated, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindNewProject})
+	got := updated.(Model)
+	got.newProjectDialog.PathInput.SetValue(parent)
+	got.newProjectDialog.NameInput.SetValue("portfolio")
+	got.newProjectDialog.CreateGitRepo = false
+	got = applyNewProjectPreviewRefresh(t, got)
+
+	updated, cmd := got.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should submit the existing project")
+	}
+	if got.status != "Adding existing folder to the list..." {
+		t.Fatalf("status = %q, want existing-folder add notice", got.status)
+	}
+
+	msg := cmd()
+	updated, loadCmd := got.Update(msg)
+	got = updated.(Model)
+	if loadCmd == nil {
+		t.Fatalf("successful add should reload the project list")
+	}
+
+	updated, _ = got.Update(loadCmd())
+	got = updated.(Model)
+	selected, ok := got.selectedProject()
+	if !ok {
+		t.Fatalf("expected the existing repo to be visible in the default AI folders list")
+	}
+	if selected.Path != projectPath || !selected.ManuallyAdded {
+		t.Fatalf("selected project = %#v, want manually added %q", selected, projectPath)
 	}
 }
 

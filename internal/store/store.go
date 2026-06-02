@@ -4840,6 +4840,38 @@ func (s *Store) SetProjectArchived(ctx context.Context, path string, archived bo
 	return err
 }
 
+func (s *Store) MarkProjectManuallyAdded(ctx context.Context, path string, presentOnDisk bool) error {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
+		return fmt.Errorf("project path is required")
+	}
+	now := time.Now().Unix()
+	if presentOnDisk {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE projects
+			SET manually_added = 1,
+				in_scope = 1,
+				archived = 0,
+				forgotten = 0,
+				present_on_disk = 1,
+				missing_since = NULL,
+				updated_at = ?
+			WHERE path = ?
+		`, now, path)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE projects
+		SET manually_added = 1,
+			in_scope = 1,
+			archived = 0,
+			forgotten = 0,
+			updated_at = ?
+		WHERE path = ?
+	`, now, path)
+	return err
+}
+
 func (s *Store) RememberRecentProjectParentPath(ctx context.Context, parentPath string, limit int) error {
 	parentPath = filepath.Clean(strings.TrimSpace(parentPath))
 	if parentPath == "" {

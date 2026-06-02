@@ -96,6 +96,53 @@ func TestCreateOrAttachProjectAddsExistingDirectoryWithoutInitializingGit(t *tes
 	}
 }
 
+func TestCreateOrAttachProjectPromotesExistingDiscoveredProjectWithoutSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "portfolio")
+	if err := os.MkdirAll(filepath.Join(projectPath, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir existing git project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "portfolio",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert discovered project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	result, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: parent,
+		Name:       "portfolio",
+	})
+	if err != nil {
+		t.Fatalf("CreateOrAttachProject() error = %v", err)
+	}
+	if result.Action != CreateOrAttachProjectAdded {
+		t.Fatalf("action = %q, want %q", result.Action, CreateOrAttachProjectAdded)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if !detail.Summary.ManuallyAdded || !detail.Summary.InScope || detail.Summary.Archived || detail.Summary.Forgotten {
+		t.Fatalf("expected existing discovered project to be promoted into the active manual list, got %#v", detail.Summary)
+	}
+}
+
 func TestCreateOrAttachProjectAddsQuotedExistingDirectoryAndDerivesNameFromPath(t *testing.T) {
 	t.Parallel()
 
