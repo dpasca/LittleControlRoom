@@ -85,9 +85,10 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 		ParentPath:          parentPath,
 		NameDerivedFromPath: normalized.NameDerivedFromPath,
 	}
+	existingAlreadyVisible := existingProjectVisibleInDefaultList(existing)
 
 	switch {
-	case existing.Path != "" && !existing.Forgotten:
+	case existing.Path != "" && !existing.Forgotten && existingAlreadyVisible:
 		result.Action = CreateOrAttachProjectAlreadyKnown
 	case exists:
 		result.Action = CreateOrAttachProjectAdded
@@ -147,10 +148,10 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 
 func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSummary, projectPath, name string, kind model.ProjectKind) error {
 	if existing.Path != "" {
+		if err := s.ensureProjectManuallyTracked(ctx, existing, projectPath); err != nil {
+			return err
+		}
 		if existing.Forgotten {
-			if err := s.store.SetForgotten(ctx, projectPath, false); err != nil {
-				return fmt.Errorf("restore forgotten project: %w", err)
-			}
 			if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
 				return err
 			}
@@ -158,6 +159,29 @@ func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSu
 		return nil
 	}
 	return s.upsertManualProjectState(ctx, existing, projectPath, name, kind)
+}
+
+func (s *Service) ensureProjectManuallyTracked(ctx context.Context, existing model.ProjectSummary, projectPath string) error {
+	presentOnDisk := projectPathExists(projectPath)
+	if existing.ManuallyAdded && existing.InScope && !existing.Archived && !existing.Forgotten && (!presentOnDisk || existing.PresentOnDisk) {
+		return nil
+	}
+	if err := s.store.MarkProjectManuallyAdded(ctx, projectPath, presentOnDisk); err != nil {
+		return fmt.Errorf("mark project as manually added: %w", err)
+	}
+	return nil
+}
+
+func existingProjectVisibleInDefaultList(project model.ProjectSummary) bool {
+	if project.Path == "" || project.Forgotten || !project.InScope || project.Archived {
+		return false
+	}
+	if project.ManuallyAdded {
+		return true
+	}
+	return !project.LastActivity.IsZero() ||
+		project.LatestSessionFormat != "" ||
+		project.LatestSessionClassification != ""
 }
 
 func (s *Service) upsertManualProjectState(ctx context.Context, existing model.ProjectSummary, projectPath, name string, kind model.ProjectKind) error {
