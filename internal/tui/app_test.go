@@ -11330,10 +11330,18 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediatel
 		t.Fatalf("composer text = %q, want preserved multiline TODO draft", got.codexInput.Value())
 	}
 
-	msg := cmd()
-	listMsg, ok := msg.(codexModelListMsg)
+	msgs := collectCmdMsgs(cmd)
+	var listMsg codexModelListMsg
+	ok := false
+	for _, msg := range msgs {
+		if typed, isList := msg.(codexModelListMsg); isList {
+			listMsg = typed
+			ok = true
+			break
+		}
+	}
 	if !ok {
-		t.Fatalf("cmd() returned %T, want codexModelListMsg", msg)
+		t.Fatalf("cmd messages = %#v, want codexModelListMsg", msgs)
 	}
 	updated, _ = got.update(listMsg)
 	got = updated.(Model)
@@ -11355,7 +11363,7 @@ func TestTodoModelPickerApplyRefocusesComposerAndCapturesSettleLatencyImmediatel
 		t.Fatalf("enter should apply the selected model")
 	}
 
-	msg = cmd()
+	msg := cmd()
 	action, ok := msg.(codexActionMsg)
 	if !ok {
 		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
@@ -13274,10 +13282,18 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverla
 	if cmd == nil {
 		t.Fatalf("first overlapping session open should still return the model picker command")
 	}
-	msg := cmd()
-	listA, ok := msg.(codexModelListMsg)
+	msgs = collectCmdMsgs(cmd)
+	var listA codexModelListMsg
+	ok = false
+	for _, msg := range msgs {
+		if typed, isList := msg.(codexModelListMsg); isList {
+			listA = typed
+			ok = true
+			break
+		}
+	}
 	if !ok {
-		t.Fatalf("first model-picker cmd returned %T, want codexModelListMsg", msg)
+		t.Fatalf("first model-picker cmd messages = %#v, want codexModelListMsg", msgs)
 	}
 	if listA.projectPath != "/tmp/root--feat-a" {
 		t.Fatalf("first model-picker project = %q, want %q", listA.projectPath, "/tmp/root--feat-a")
@@ -13294,10 +13310,18 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverla
 	if cmd == nil {
 		t.Fatalf("second overlapping session open should return the model picker command")
 	}
-	msg = cmd()
-	listB, ok := msg.(codexModelListMsg)
+	msgs = collectCmdMsgs(cmd)
+	var listB codexModelListMsg
+	ok = false
+	for _, msg := range msgs {
+		if typed, isList := msg.(codexModelListMsg); isList {
+			listB = typed
+			ok = true
+			break
+		}
+	}
 	if !ok {
-		t.Fatalf("second model-picker cmd returned %T, want codexModelListMsg", msg)
+		t.Fatalf("second model-picker cmd messages = %#v, want codexModelListMsg", msgs)
 	}
 	if listB.projectPath != "/tmp/root--feat-b" {
 		t.Fatalf("second model-picker project = %q, want %q", listB.projectPath, "/tmp/root--feat-b")
