@@ -27,19 +27,28 @@ func (m Model) projectRuntimeSnapshots(projectPath string) []projectrun.Snapshot
 	if projectPath == "." || projectPath == "" {
 		return nil
 	}
+	managed := make([]projectrun.Snapshot, 0)
 	if len(m.runtimeProcessSnapshots) == 0 {
 		if snapshot, ok := m.runtimeSnapshots[projectPath]; ok && runtimeDetailAvailable("", snapshot) {
-			return []projectrun.Snapshot{snapshot}
+			managed = append(managed, snapshot)
 		}
-		return nil
-	}
-	out := make([]projectrun.Snapshot, 0)
-	for _, snapshot := range m.runtimeProcessSnapshots {
-		if filepath.Clean(strings.TrimSpace(snapshot.ProjectPath)) != projectPath {
-			continue
+	} else {
+		for _, snapshot := range m.runtimeProcessSnapshots {
+			if filepath.Clean(strings.TrimSpace(snapshot.ProjectPath)) != projectPath {
+				continue
+			}
+			managed = append(managed, snapshot)
 		}
-		out = append(out, snapshot)
 	}
+	local := m.projectLocalInstanceSnapshots(projectPath)
+	if len(local) == 0 {
+		return managed
+	}
+	if len(managed) == 0 {
+		return local
+	}
+	out := append([]projectrun.Snapshot(nil), managed...)
+	out = append(out, local...)
 	return out
 }
 
@@ -289,6 +298,16 @@ func runtimeURLSummary(snapshot projectrun.Snapshot) string {
 }
 
 func runtimeProcessLabel(snapshot projectrun.Snapshot) string {
+	if snapshot.External {
+		label := strings.TrimSpace(snapshot.Name)
+		if label == "" {
+			label = "local listener"
+		}
+		if snapshot.PID > 0 {
+			label += fmt.Sprintf(" pid %d", snapshot.PID)
+		}
+		return strings.TrimSpace(label)
+	}
 	id := strings.TrimSpace(snapshot.ID)
 	if id == "" {
 		id = "default"

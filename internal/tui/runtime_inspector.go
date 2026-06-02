@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -135,6 +136,10 @@ func (m *Model) activateRuntimePaneAction() tea.Cmd {
 		m.status = "Opening runtime URL in browser..."
 		return m.openRuntimeURLInBrowserCmd(rawURL)
 	case runtimePaneActionRestart:
+		if snapshot.External {
+			m.status = "Stop the external listener before restarting as a managed runtime"
+			return nil
+		}
 		command := effectiveRuntimeCommand(project.RunCommand, snapshot)
 		if command == "" {
 			m.status = "Runtime command is not set"
@@ -146,6 +151,9 @@ func (m *Model) activateRuntimePaneAction() tea.Cmd {
 		if !snapshot.Running {
 			m.status = "Runtime is not running"
 			return nil
+		}
+		if snapshot.External {
+			return m.openExternalProcessStopConfirm(project, snapshot)
 		}
 		m.status = "Stopping runtime..."
 		return m.stopRuntimeProcessCmd(project.Path, snapshot.ID)
@@ -204,8 +212,11 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 	if cwd := runtimeRelativeCWD(projectPath, snapshot.CWD); cwd != "" {
 		lines = append(lines, renderWrappedRuntimeField("CWD", width, detailMutedStyle, cwd)...)
 	}
-	if processTotal > 1 {
+	if processTotal > 1 || snapshot.External {
 		processText := fmt.Sprintf("%d/%d  %s", processIndex+1, processTotal, runtimeProcessLabel(snapshot))
+		if processTotal <= 1 {
+			processText = runtimeProcessLabel(snapshot)
+		}
 		lines = append(lines, renderWrappedRuntimeField("Process", width, detailMutedStyle, processText)...)
 	}
 
@@ -253,6 +264,9 @@ func (m Model) renderRuntimePanelOutputContent(width int, projectPath string) st
 	if len(snapshot.RecentOutput) == 0 {
 		if !runtimeDetailAvailable(project.RunCommand, snapshot) {
 			return detailMutedStyle.Render("No managed runtime yet")
+		}
+		if snapshot.External {
+			return detailMutedStyle.Render("External listener output is not captured")
 		}
 		return detailMutedStyle.Render("No captured runtime output yet")
 	}
@@ -327,16 +341,26 @@ func (m Model) runtimePanelActions(projectPath string) []runtimePaneAction {
 		{
 			Kind:           runtimePaneActionRestart,
 			Label:          "Restart",
-			Enabled:        command != "",
-			DisabledStatus: "Runtime command is not set",
+			Enabled:        command != "" && !snapshot.External,
+			DisabledStatus: runtimeRestartDisabledStatus(snapshot, command),
 		},
 		{
 			Kind:           runtimePaneActionStop,
 			Label:          "Stop",
-			Enabled:        snapshot.Running,
+			Enabled:        snapshot.Running && (!snapshot.External || snapshot.PID > 0),
 			DisabledStatus: "Runtime is not running",
 		},
 	}
+}
+
+func runtimeRestartDisabledStatus(snapshot projectrun.Snapshot, command string) string {
+	if snapshot.External {
+		return "Stop the external listener before restarting as a managed runtime"
+	}
+	if strings.TrimSpace(command) == "" {
+		return "Runtime command is not set"
+	}
+	return "Runtime restart unavailable"
 }
 
 func renderWrappedRuntimeField(label string, width int, valueStyle lipgloss.Style, value string) []string {

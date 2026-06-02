@@ -7212,6 +7212,160 @@ func TestRuntimePaneSwitchesBetweenManagedProcesses(t *testing.T) {
 	}
 }
 
+func TestStopRuntimeOpensExternalProcessConfirmation(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := modelWithExternalProcess(projectPath, 4321, 4017)
+
+	updated, cmd := m.handleStopRuntime(m.projects[0])
+	if cmd != nil {
+		t.Fatalf("handleStopRuntime() command = %v, want nil before confirmation", cmd)
+	}
+	got := updated.(Model)
+	if got.externalStopConfirm == nil {
+		t.Fatalf("external stop confirmation was not opened")
+	}
+	if got.externalStopConfirm.Selected != externalProcessStopConfirmFocusKeep {
+		t.Fatalf("default external stop selection = %d, want keep", got.externalStopConfirm.Selected)
+	}
+
+	rendered := ansi.Strip(got.renderExternalProcessStopConfirmOverlay("", 100, 24))
+	for _, want := range []string{"Stop External Process", "PID", "4321", "Ports", "4017", "python3 -m http.server 4017"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("external stop confirmation missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestRuntimePaneShowsExternalListenerAndStopConfirms(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := modelWithExternalProcess(projectPath, 4321, 4017)
+	m.focusedPane = focusRuntime
+	m.runtimeViewport = viewport.New(80, 5)
+
+	m.syncRuntimeViewport(true)
+	rendered := ansi.Strip(m.renderRuntimePanel(80, 14))
+	for _, want := range []string{"local listener pid 4321", "External listener output is not captured", "Open URL", "Restart", "Stop"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("runtime pane missing %q: %q", want, rendered)
+		}
+	}
+
+	actions := m.runtimePanelActions(projectPath)
+	if len(actions) != 3 {
+		t.Fatalf("runtime actions len = %d, want 3", len(actions))
+	}
+	if actions[1].Enabled {
+		t.Fatalf("restart should be disabled for external listeners")
+	}
+	if !actions[2].Enabled {
+		t.Fatalf("stop should be enabled for external listener with PID")
+	}
+
+	m.runtimeActionSelected = 2
+	cmd := m.activateRuntimePaneAction()
+	if cmd != nil {
+		t.Fatalf("external runtime stop action should wait for confirmation, got command")
+	}
+	if m.externalStopConfirm == nil || m.externalStopConfirm.PID != 4321 {
+		t.Fatalf("external stop confirmation = %#v, want PID 4321", m.externalStopConfirm)
+	}
+}
+
+func TestExternalProcessStopConfirmInvokesTerminatorAfterStopSelection(t *testing.T) {
+	oldTerminator := externalProcessTerminator
+	defer func() { externalProcessTerminator = oldTerminator }()
+
+	calledPID := 0
+	externalProcessTerminator = func(pid int) error {
+		calledPID = pid
+		return nil
+	}
+
+	m := modelWithExternalProcess("/tmp/demo", 4321, 4017)
+	m.externalStopConfirm = &externalProcessStopConfirmState{
+		ProjectPath: "/tmp/demo",
+		ProjectName: "demo",
+		PID:         4321,
+		Ports:       []int{4017},
+		Selected:    externalProcessStopConfirmFocusKeep,
+	}
+
+	updated, cmd := m.updateExternalProcessStopConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("keep selection should not stop external process")
+	}
+	if calledPID != 0 {
+		t.Fatalf("terminator called for keep selection with PID %d", calledPID)
+	}
+	if got.externalStopConfirm != nil {
+		t.Fatalf("keep selection should close confirmation")
+	}
+
+	m.externalStopConfirm = &externalProcessStopConfirmState{
+		ProjectPath: "/tmp/demo",
+		ProjectName: "demo",
+		PID:         4321,
+		Ports:       []int{4017},
+		Selected:    externalProcessStopConfirmFocusStop,
+	}
+	updated, cmd = m.updateExternalProcessStopConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("stop selection should return a stop command")
+	}
+	if got.externalStopConfirm == nil || !got.externalStopConfirm.Submitting {
+		t.Fatalf("confirmation should be marked submitting before stop result")
+	}
+
+	updated, _ = got.update(cmd())
+	got = updated.(Model)
+	if calledPID != 4321 {
+		t.Fatalf("terminator PID = %d, want 4321", calledPID)
+	}
+	if got.externalStopConfirm != nil {
+		t.Fatalf("successful stop should close confirmation")
+	}
+	if !strings.Contains(got.status, "Requested stop for external process PID 4321") {
+		t.Fatalf("status = %q, want external stop status", got.status)
+	}
+}
+
+func modelWithExternalProcess(projectPath string, pid, port int) Model {
+	project := model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+	}
+	process := procinspect.Process{
+		PID:     pid,
+		PPID:    1,
+		PGID:    pid,
+		Command: "python3 -m http.server 4017",
+		CWD:     filepath.Join(projectPath, "_site"),
+		Ports:   []int{port},
+	}
+	return Model{
+		width:                  100,
+		height:                 28,
+		projects:               []model.ProjectSummary{project},
+		allProjects:            []model.ProjectSummary{project},
+		selected:               0,
+		visibility:             visibilityAllFolders,
+		runtimeSnapshots:       map[string]projectrun.Snapshot{},
+		runtimeProcessSelected: make(map[string]string),
+		processReports: map[string]procinspect.ProjectReport{
+			projectPath: {
+				ProjectPath: projectPath,
+				Instances: []procinspect.ProjectInstance{{
+					Process:     process,
+					ProjectPath: projectPath,
+				}},
+			},
+		},
+	}
+}
+
 func TestRenderRuntimePaneShowsControlRoomFlairWhenEmpty(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

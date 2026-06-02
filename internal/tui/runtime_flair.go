@@ -216,7 +216,7 @@ func (m Model) renderRuntimeFlairPanel(width, height int) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	snapshot := m.projectRuntimeSnapshot(projectPath)
+	snapshot := m.projectRuntimeContextSnapshot(projectPath)
 	if runtimeDetailAvailable(project.RunCommand, snapshot) {
 		return "", false
 	}

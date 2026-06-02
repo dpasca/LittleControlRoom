@@ -87,6 +87,7 @@ type Model struct {
 	scratchTaskAction     *scratchTaskActionConfirmState
 	agentTaskAction       *agentTaskActionConfirmState
 	projectRemoveConfirm  *projectRemoveConfirmState
+	externalStopConfirm   *externalProcessStopConfirmState
 	todoLaunchDrafts      map[string]todoLaunchDraftState
 	todoPendingSave       *todoPendingSaveState
 	todoPendingLaunch     *todoPendingLaunchState
@@ -368,6 +369,13 @@ type codexArtifactLinkScanMsg struct {
 
 type runtimeActionMsg struct {
 	projectPath string
+	status      string
+	err         error
+}
+
+type externalProcessStopMsg struct {
+	projectPath string
+	pid         int
 	status      string
 	err         error
 }
@@ -1336,6 +1344,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.projectRemoveConfirm != nil {
 			return m.updateProjectRemoveConfirmMode(msg)
 		}
+		if m.externalStopConfirm != nil {
+			return m.updateExternalProcessStopConfirmMode(msg)
+		}
 		if m.todoDeleteConfirm != nil {
 			return m.updateTodoDeleteConfirmMode(msg)
 		}
@@ -1846,6 +1857,28 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rebuildProjectList(selectedPath)
 		m.syncRuntimeViewport(false)
 		return m, m.requestRuntimeSnapshotsRefreshCmd()
+	case externalProcessStopMsg:
+		if m.externalStopConfirm != nil && m.externalStopConfirm.PID == msg.pid {
+			m.externalStopConfirm.Submitting = false
+		}
+		if msg.err != nil {
+			m.reportError("External process stop failed", msg.err, msg.projectPath)
+			return m, nil
+		}
+		m.externalStopConfirm = nil
+		m.err = nil
+		if strings.TrimSpace(msg.status) != "" {
+			m.status = msg.status
+		}
+		selectedPath := msg.projectPath
+		if selectedPath == "" {
+			if p, ok := m.selectedProject(); ok {
+				selectedPath = p.Path
+			}
+		}
+		m.rebuildProjectList(selectedPath)
+		m.syncRuntimeViewport(false)
+		return m, batchCmds(m.requestProcessScanCmd(msg.projectPath), m.requestRuntimeSnapshotsRefreshCmd())
 	case runtimeSnapshotsMsg:
 		reloadCmd := m.finishRuntimeSnapshotsRefreshCmd()
 		prevSnapshots := m.runtimeSnapshots
@@ -3262,6 +3295,9 @@ func (m Model) View() string {
 	}
 	if m.projectRemoveConfirm != nil {
 		body = m.renderProjectRemoveConfirmOverlay(body, layout.width, layout.height)
+	}
+	if m.externalStopConfirm != nil {
+		body = m.renderExternalProcessStopConfirmOverlay(body, layout.width, layout.height)
 	}
 	if m.todoExistingWorktree != nil {
 		body = m.renderTodoExistingWorktreeOverlay(body, layout.width, layout.height)
@@ -4810,7 +4846,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			m.status = "No project selected"
 			return m, nil
 		}
-		return m, m.stopProjectRuntimeCmd(p.Path)
+		return m.handleStopRuntime(p)
 	case commands.KindDiff:
 		p, ok := m.selectedProject()
 		if !ok {
