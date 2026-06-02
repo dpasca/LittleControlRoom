@@ -1661,49 +1661,18 @@ func diffRenderModeToggleLabel(mode diffRenderMode) string {
 }
 
 func diffViewReadyStatus(state diffViewState) string {
-	closeLabel := diffViewCloseLabel(state)
 	if state.loading {
-		if strings.TrimSpace(state.returnToCodexProject) != "" {
-			return "Preparing diff view... A ask engineer, Esc " + closeLabel
-		}
 		return "Preparing diff view..."
 	}
 	if !state.hasFiles() {
-		if strings.TrimSpace(state.returnToCodexProject) != "" {
-			return "Worktree clean. A ask engineer, Esc " + closeLabel
-		}
-		return "Worktree clean. Esc " + closeLabel
+		return "Worktree clean"
 	}
-	modeLabel := diffRenderModeToggleLabel(state.mode)
-	switch state.focus {
-	case diffFocusContent:
-		if strings.TrimSpace(state.returnToCodexProject) != "" {
-			return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
-		}
-		return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", Tab files, Esc " + closeLabel
-	default:
-		if strings.TrimSpace(state.returnToCodexProject) != "" {
-			return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", A ask engineer, Esc " + closeLabel
-		}
-		return "Diff " + diffRenderModeLabel(state.mode) + ". Enter open file, Alt+F folder, M " + modeLabel + ", Tab scroll pane, Esc " + closeLabel
+	focusLabel := "files"
+	if state.focus == diffFocusContent {
+		focusLabel = "diff"
 	}
-}
-
-func diffViewFooterLabel(state diffViewState) string {
-	closeLabel := diffViewCloseLabel(state)
-	if state.loading {
-		return "Diff loading. Esc " + closeLabel
-	}
-	if !state.hasFiles() {
-		return "Diff clean. Esc " + closeLabel
-	}
-	modeLabel := diffRenderModeToggleLabel(state.mode)
-	switch state.focus {
-	case diffFocusContent:
-		return "Diff: Enter open, Alt+F folder, Up/Down scroll, M " + modeLabel + ", Left/Tab files, Esc " + closeLabel
-	default:
-		return "Diff: Enter open, Alt+F folder, Up/Down choose, M " + modeLabel + ", Right/Tab diff, Esc " + closeLabel
-	}
+	mode := diffRenderModeLabel(state.mode)
+	return "Diff " + mode + " | focus: " + focusLabel
 }
 
 func renderDiffFooter(width int, state diffViewState, usageSegment string) string {

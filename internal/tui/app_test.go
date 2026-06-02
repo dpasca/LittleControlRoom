@@ -28773,6 +28773,53 @@ func TestViewWithDiffScreenUsesFullBody(t *testing.T) {
 	}
 }
 
+func TestDiffScreenKeepsActionHintsInFooterOnly(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		ProjectName: "demo",
+		ProjectPath: "/tmp/demo",
+		Branch:      "master",
+		Summary:     "1 file changed",
+		Files: []service.DiffFilePreview{{
+			Path:     "README.md",
+			Summary:  "README.md",
+			Code:     "M",
+			Kind:     scanner.GitChangeModified,
+			Unstaged: true,
+			Body:     "# Unstaged\n\ndiff --git a/README.md b/README.md\n+diff screen\n",
+		}},
+	}
+
+	m := Model{
+		diffView: diffState,
+		width:    200,
+		height:   20,
+	}
+	m.syncDiffView(true)
+	m.status = diffViewReadyStatus(*m.diffView)
+
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("View() rendered too few lines: %q", strings.Join(lines, "\n"))
+	}
+	top := lines[0]
+	footer := lines[len(lines)-1]
+	for _, unexpected := range []string{"Alt+F", "Enter open", "Esc close", "f filter", "b boss"} {
+		if strings.Contains(top, unexpected) {
+			t.Fatalf("top status should not advertise action hint %q: %q", unexpected, top)
+		}
+	}
+	if !strings.Contains(top, "Diff split") || !strings.Contains(top, "focus: files") {
+		t.Fatalf("top status should keep compact diff state, got %q", top)
+	}
+	for _, want := range []string{"Enter open", "Alt+F folder", "Esc close"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("diff footer should advertise %q, got %q", want, footer)
+		}
+	}
+}
+
 func TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen(t *testing.T) {
 	m := Model{
 		diffView: newDiffViewState("/tmp/demo", "demo"),
@@ -28801,7 +28848,7 @@ func TestDiffPreviewMsgNoChangesKeepsDiffScreenOpen(t *testing.T) {
 	if got.diffView.preview == nil {
 		t.Fatalf("no-diff result should keep preview metadata for the empty state")
 	}
-	if got.status != "Worktree clean. Esc close" {
+	if got.status != "Worktree clean" {
 		t.Fatalf("status = %q, want clean-worktree status", got.status)
 	}
 

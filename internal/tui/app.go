@@ -3551,6 +3551,9 @@ func renderTopStatusDangerMessage(text string, spinnerFrame int) string {
 }
 
 func (m Model) renderTopStatusActions(width int) string {
+	if m.diffView != nil {
+		return ""
+	}
 	if width < 72 {
 		return ""
 	}
