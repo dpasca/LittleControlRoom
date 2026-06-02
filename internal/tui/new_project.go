@@ -705,14 +705,9 @@ func (m Model) renderNewProjectContent(width int) string {
 		commandPaletteHintStyle.Render("Create a new folder, or add an existing one even before any Codex/OpenCode activity exists there."),
 		"",
 		m.renderNewProjectInputRow("Path", dialog.Selected == newProjectFieldPath, labelWidth, inputWidth, dialog.PathInput),
-	}
-	if dialog.Selected == newProjectFieldPath {
-		lines = append(lines, m.renderNewProjectPathSuggestions(width)...)
-	}
-	lines = append(lines,
 		m.renderNewProjectInputRow("Name", dialog.Selected == newProjectFieldName, labelWidth, inputWidth, dialog.NameInput),
 		m.renderNewProjectAssistantRow(labelWidth, inputWidth),
-	)
+	}
 	if statusLine := m.newProjectAssistantStatusLine(width); statusLine != "" {
 		lines = append(lines, statusLine)
 	}
@@ -722,6 +717,13 @@ func (m Model) renderNewProjectContent(width int) string {
 		detailLabelStyle.Render("Full path:"),
 		lipgloss.NewStyle().Width(width).Render(detailValueStyle.Render(preview.FullPath)),
 	)
+
+	if dialog.Selected == newProjectFieldPath {
+		if suggestions := m.renderNewProjectPathSuggestions(width); len(suggestions) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, suggestions...)
+		}
+	}
 
 	lines = append(lines, m.renderNewProjectStatus(preview, width)...)
 
@@ -752,14 +754,17 @@ func (m Model) renderNewProjectPathSuggestions(width int) []string {
 	suggestions := dialog.PathInput.MatchedSuggestions()
 	if len(suggestions) == 0 {
 		if dialog.PathSuggestionsPending {
-			return []string{commandPaletteHintStyle.Render("Looking for matching folders...")}
+			return []string{
+				commandPaletteTitleStyle.Render("Path Suggestions"),
+				commandPaletteHintStyle.Render("Looking for matching folders..."),
+			}
 		}
 		return nil
 	}
 	limit := min(newProjectPathSuggestionLimit, len(suggestions))
 	lines := []string{
-		commandPaletteHintStyle.Render("Right completes the inline folder; Alt+1..8 picks from suggestions."),
 		commandPaletteTitleStyle.Render("Path Suggestions"),
+		commandPaletteHintStyle.Render("Right completes the inline folder; Alt+1..8 picks from suggestions."),
 	}
 	selected := dialog.PathInput.CurrentSuggestionIndex()
 	for i := 0; i < limit; i++ {

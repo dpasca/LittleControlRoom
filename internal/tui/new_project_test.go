@@ -274,6 +274,15 @@ func TestNewProjectPathSuggestionsApplyExistingFolder(t *testing.T) {
 	if !strings.Contains(rendered, "Path Suggestions") || !strings.Contains(rendered, "Alt+1") {
 		t.Fatalf("rendered dialog missing path suggestions: %q", rendered)
 	}
+	nameIndex := strings.Index(rendered, "Name")
+	fullPathIndex := strings.Index(rendered, "Full path:")
+	suggestionIndex := strings.Index(rendered, "Path Suggestions")
+	if nameIndex < 0 || fullPathIndex < 0 || suggestionIndex < 0 {
+		t.Fatalf("rendered dialog missing expected sections: %q", rendered)
+	}
+	if suggestionIndex < nameIndex || suggestionIndex < fullPathIndex {
+		t.Fatalf("path suggestions should render below the core project fields: %q", rendered)
+	}
 
 	updated, cmd := m.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}, Alt: true})
 	m = updated.(Model)
