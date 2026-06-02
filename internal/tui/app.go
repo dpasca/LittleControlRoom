@@ -2124,11 +2124,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.worktreePostMerge = nil
 		m.worktreeRemoveConfirm = nil
 		m.err = nil
-		if strings.TrimSpace(msg.selectPath) != "" {
-			m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
-		}
 		if strings.TrimSpace(msg.removedProjectPath) != "" {
-			m.applyRemovedProjectLocally(msg.removedProjectPath, msg.selectPath)
+			selectPath := strings.TrimSpace(msg.selectPath)
+			if currentPath := m.currentSelectedProjectPath(); currentPath != "" && currentPath != normalizeProjectPath(msg.removedProjectPath) {
+				selectPath = ""
+			}
+			m.applyRemovedProjectLocally(msg.removedProjectPath, selectPath)
 		}
 		if strings.TrimSpace(msg.status) != "" {
 			m.status = msg.status

@@ -3745,11 +3745,81 @@ func TestWorktreeActionMsgMergeCompletionDoesNotOpenFollowUpPrompt(t *testing.T)
 	if got.worktreePostMerge != nil {
 		t.Fatalf("merge completion should stay in the single merge dialog flow")
 	}
-	if got.preferredSelectPath != rootPath {
-		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
+	if got.preferredSelectPath != "" {
+		t.Fatalf("preferred select path = %q, want no forced selection", got.preferredSelectPath)
 	}
 	if got.status != status {
 		t.Fatalf("status = %q, want %q", got.status, status)
+	}
+}
+
+func TestWorktreeActionMsgMergeCompletionPreservesCurrentWorktreeSelectionThroughReload(t *testing.T) {
+	rootPath := "/tmp/repo"
+	mergingPath := "/tmp/repo--feat-parallel-lane"
+	selectedPath := "/tmp/repo--feat-toolbar"
+
+	root := model.ProjectSummary{
+		Name:             "repo",
+		Path:             rootPath,
+		Status:           model.StatusIdle,
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		RepoBranch:       "master",
+	}
+	merging := model.ProjectSummary{
+		Name:                "repo--feat-parallel-lane",
+		Path:                mergingPath,
+		Status:              model.StatusIdle,
+		PresentOnDisk:       true,
+		WorktreeRootPath:    rootPath,
+		WorktreeKind:        model.WorktreeKindLinked,
+		WorktreeMergeStatus: model.WorktreeMergeStatusNotMerged,
+		RepoBranch:          "feat/parallel-lane",
+	}
+	selected := model.ProjectSummary{
+		Name:                "repo--feat-toolbar",
+		Path:                selectedPath,
+		Status:              model.StatusIdle,
+		PresentOnDisk:       true,
+		WorktreeRootPath:    rootPath,
+		WorktreeKind:        model.WorktreeKindLinked,
+		WorktreeMergeStatus: model.WorktreeMergeStatusMerged,
+		RepoBranch:          "feat/toolbar",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{root, merging, selected},
+		detail: model.ProjectDetail{
+			Summary: selected,
+		},
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+	}
+	m.rebuildProjectList(selectedPath)
+
+	updated, cmd := m.Update(worktreeActionMsg{
+		projectPath: mergingPath,
+		selectPath:  rootPath,
+		status:      "Merged feat/parallel-lane into master",
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("merge completion should queue a refresh command batch")
+	}
+	if got.currentSelectedProjectPath() != selectedPath {
+		t.Fatalf("selected path after merge completion = %q, want %q", got.currentSelectedProjectPath(), selectedPath)
+	}
+	if got.preferredSelectPath != "" {
+		t.Fatalf("preferred select path = %q, want no forced selection", got.preferredSelectPath)
+	}
+
+	merging.WorktreeMergeStatus = model.WorktreeMergeStatusMerged
+	reloaded, _ := got.Update(projectsMsg{
+		projects: []model.ProjectSummary{root, merging, selected},
+	})
+	got = reloaded.(Model)
+	if got.currentSelectedProjectPath() != selectedPath {
+		t.Fatalf("selected path after project reload = %q, want %q", got.currentSelectedProjectPath(), selectedPath)
 	}
 }
 
@@ -3795,8 +3865,8 @@ func TestWorktreeActionMsgRemoveHidesWorktreeImmediately(t *testing.T) {
 	if cmd == nil {
 		t.Fatalf("worktree removal completion should queue a refresh command batch")
 	}
-	if got.preferredSelectPath != rootPath {
-		t.Fatalf("preferred select path = %q, want %q", got.preferredSelectPath, rootPath)
+	if got.preferredSelectPath != "" {
+		t.Fatalf("preferred select path = %q, want no forced selection", got.preferredSelectPath)
 	}
 	if len(got.projects) != 1 || got.projects[0].Path != rootPath {
 		t.Fatalf("visible projects after local removal = %#v, want only the repo root", got.projects)
