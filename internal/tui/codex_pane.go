@@ -3524,6 +3524,7 @@ func (m Model) renderCodexTranscriptContentFromSnapshotWithLinksForProject(proje
 	projectPath = strings.TrimSpace(firstNonEmptyString(projectPath, snapshot.ProjectPath))
 	options := codexTranscriptRenderOptions{
 		fullHistory: m.codexTranscriptFullHistoryLoaded(projectPath),
+		projectPath: projectPath,
 	}
 	if rendered, links := m.renderCodexTranscriptEntriesWithLinksOptions(snapshot, width, options); strings.TrimSpace(rendered) != "" {
 		return rendered, links
@@ -3867,7 +3868,7 @@ func codexArtifactLinkScanCmd(projectPath string, scanSeq int64, transcriptRev u
 	}
 	entries = append([]codexapp.TranscriptEntry(nil), entries...)
 	return func() tea.Msg {
-		targets, nextEntry, nextTextOffset, complete := scanCodexArtifactLinksChunk(entries, startEntry, startTextOffset)
+		targets, nextEntry, nextTextOffset, complete := scanCodexArtifactLinksChunk(projectPath, entries, startEntry, startTextOffset)
 		return codexArtifactLinkScanMsg{
 			projectPath:    projectPath,
 			scanSeq:        scanSeq,
@@ -3880,7 +3881,7 @@ func codexArtifactLinkScanCmd(projectPath string, scanSeq int64, transcriptRev u
 	}
 }
 
-func scanCodexArtifactLinksChunk(entries []codexapp.TranscriptEntry, startEntry, startTextOffset int) ([]codexArtifactOpenTarget, int, int, bool) {
+func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.TranscriptEntry, startEntry, startTextOffset int) ([]codexArtifactOpenTarget, int, int, bool) {
 	if len(entries) == 0 {
 		return nil, 0, 0, true
 	}
@@ -3912,7 +3913,7 @@ func scanCodexArtifactLinksChunk(entries []codexapp.TranscriptEntry, startEntry,
 		}
 		scanLen := min(len(text)-textOffset, remainingBudget)
 		parseEnd := min(len(text), textOffset+scanLen+codexMarkdownLinkLabelScanLimit+codexMarkdownLinkTargetScanLimit+4)
-		targets = append(targets, codexArtifactOpenTargetsFromMarkdownPrefix(text[textOffset:parseEnd], scanLen)...)
+		targets = append(targets, codexArtifactOpenTargetsFromMarkdownPrefixInProject(text[textOffset:parseEnd], scanLen, projectPath)...)
 		bytesScanned += scanLen
 		if textOffset+scanLen < len(text) {
 			textOffset += scanLen
@@ -4497,8 +4498,9 @@ func shortenHeadTail(text string, width int) string {
 
 func codexArtifactOpenTargets(snapshot codexapp.Snapshot) []codexArtifactOpenTarget {
 	targets := make([]codexArtifactOpenTarget, 0)
+	projectPath := strings.TrimSpace(snapshot.ProjectPath)
 	for _, entry := range codexTranscriptEntriesFromSnapshot(snapshot) {
-		targets = append(targets, codexOpenTargetsFromTranscriptEntryFull(entry)...)
+		targets = append(targets, codexOpenTargetsFromTranscriptEntryFullInProject(entry, projectPath)...)
 	}
 	return normalizeCodexArtifactOpenTargets(targets)
 }
@@ -4508,6 +4510,10 @@ func codexOpenTargetsFromTranscriptEntry(entry codexapp.TranscriptEntry) []codex
 }
 
 func codexOpenTargetsFromTranscriptEntryForBlockMode(entry codexapp.TranscriptEntry, blockMode codexDenseBlockMode) []codexArtifactOpenTarget {
+	return codexOpenTargetsFromTranscriptEntryForBlockModeInProject(entry, blockMode, "")
+}
+
+func codexOpenTargetsFromTranscriptEntryForBlockModeInProject(entry codexapp.TranscriptEntry, blockMode codexDenseBlockMode, projectPath string) []codexArtifactOpenTarget {
 	if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
 		return []codexArtifactOpenTarget{{
 			Kind:        target.Kind,
@@ -4520,16 +4526,20 @@ func codexOpenTargetsFromTranscriptEntryForBlockMode(entry codexapp.TranscriptEn
 	if !ok {
 		return nil
 	}
-	return codexArtifactOpenTargetsFromMarkdown(text)
+	return codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)
 }
 
 func codexOpenTargetsFromTranscriptEntryFull(entry codexapp.TranscriptEntry) []codexArtifactOpenTarget {
+	return codexOpenTargetsFromTranscriptEntryFullInProject(entry, "")
+}
+
+func codexOpenTargetsFromTranscriptEntryFullInProject(entry codexapp.TranscriptEntry, projectPath string) []codexArtifactOpenTarget {
 	targets := make([]codexArtifactOpenTarget, 0, 1)
 	if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
 		targets = append(targets, target)
 	}
 	if text := codexFullTranscriptEntryLinkScanText(entry); strings.TrimSpace(text) != "" {
-		targets = append(targets, codexArtifactOpenTargetsFromMarkdown(text)...)
+		targets = append(targets, codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)...)
 	}
 	return normalizeCodexArtifactOpenTargets(targets)
 }
@@ -4579,14 +4589,22 @@ func codexTranscriptEntryLinkScanText(entry codexapp.TranscriptEntry, blockMode 
 }
 
 func codexArtifactOpenTargetsFromMarkdown(text string) []codexArtifactOpenTarget {
+	return codexArtifactOpenTargetsFromMarkdownInProject(text, "")
+}
+
+func codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath string) []codexArtifactOpenTarget {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
 	}
-	return codexArtifactOpenTargetsFromMarkdownPrefix(text, len(text))
+	return codexArtifactOpenTargetsFromMarkdownPrefixInProject(text, len(text), projectPath)
 }
 
 func codexArtifactOpenTargetsFromMarkdownPrefix(text string, scanLimit int) []codexArtifactOpenTarget {
+	return codexArtifactOpenTargetsFromMarkdownPrefixInProject(text, scanLimit, "")
+}
+
+func codexArtifactOpenTargetsFromMarkdownPrefixInProject(text string, scanLimit int, projectPath string) []codexArtifactOpenTarget {
 	if scanLimit <= 0 || strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -4607,7 +4625,7 @@ func codexArtifactOpenTargetsFromMarkdownPrefix(text string, scanLimit int) []co
 			remainingScanLimit -= idx + 1
 			continue
 		}
-		if localPath, ok := codexLocalLinkText(target); ok {
+		if localPath, ok := codexLocalLinkTextForProject(target, projectPath); ok {
 			if artifactPath, kind, ok := codexLocalArtifactOpenTarget(label, localPath); ok {
 				targets = append(targets, codexArtifactOpenTarget{Kind: kind, Label: label, Path: artifactPath})
 			} else if openPath, _ := codexLocalOpenPath(localPath); strings.TrimSpace(openPath) != "" {

@@ -21,6 +21,10 @@ func renderCodexMessageBlock(label, body string, accent, bodyColor lipgloss.Colo
 	return renderCodexMessageBlockWithStyle(label, body, accent, bodyColor, width, false)
 }
 
+func renderCodexMessageBlockForProject(label, body string, accent, bodyColor lipgloss.Color, width int, projectPath string) string {
+	return renderCodexMessageBlockWithStyleForProject(label, body, accent, bodyColor, width, false, projectPath)
+}
+
 func renderCodexCompactTranscriptLine(body string, accent lipgloss.Color, width int) string {
 	return renderCodexMessageBlockWithStyle("", body, accent, accent, width, false)
 }
@@ -29,12 +33,20 @@ func renderCodexUserMessageBlock(body string, width int) string {
 	return renderCodexMessageBlockWithStyle("", body, lipgloss.Color("81"), lipgloss.Color("252"), width, true)
 }
 
+func renderCodexUserMessageBlockForProject(body string, width int, projectPath string) string {
+	return renderCodexMessageBlockWithStyleForProject("", body, lipgloss.Color("81"), lipgloss.Color("252"), width, true, projectPath)
+}
+
 func renderCodexPlanBlock(body string, width int) string {
+	return renderCodexPlanBlockForProject(body, width, "")
+}
+
+func renderCodexPlanBlockForProject(body string, width int, projectPath string) string {
 	accent := lipgloss.Color("214")
 	contentWidth := max(10, width-2)
 	label := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Plan")
 	lines := []string{label}
-	if renderedBody := strings.TrimSpace(renderCodexPlanBody(body, contentWidth)); renderedBody != "" {
+	if renderedBody := strings.TrimSpace(renderCodexPlanBodyForProject(body, contentWidth, projectPath)); renderedBody != "" {
 		lines = append(lines, strings.Split(renderedBody, "\n")...)
 	}
 	return lipgloss.NewStyle().
@@ -45,6 +57,10 @@ func renderCodexPlanBlock(body string, width int) string {
 }
 
 func renderCodexPlanBody(body string, width int) string {
+	return renderCodexPlanBodyForProject(body, width, "")
+}
+
+func renderCodexPlanBodyForProject(body string, width int, projectPath string) string {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return ""
@@ -53,10 +69,10 @@ func renderCodexPlanBody(body string, width int) string {
 	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if marker, text, ok := parseCodexPlanMarker(line); ok {
-			rendered = append(rendered, renderCodexPlanStatusLine(marker, text, width)...)
+			rendered = append(rendered, renderCodexPlanStatusLineForProject(marker, text, width, projectPath)...)
 			continue
 		}
-		rendered = append(rendered, strings.Split(renderCodexBody(line, lipgloss.Color("252"), width), "\n")...)
+		rendered = append(rendered, strings.Split(renderCodexBodyForProject(line, lipgloss.Color("252"), width, projectPath), "\n")...)
 	}
 	return strings.Join(rendered, "\n")
 }
@@ -72,6 +88,10 @@ func parseCodexPlanMarker(line string) (marker, text string, ok bool) {
 }
 
 func renderCodexPlanStatusLine(marker, text string, width int) []string {
+	return renderCodexPlanStatusLineForProject(marker, text, width, "")
+}
+
+func renderCodexPlanStatusLineForProject(marker, text string, width int, projectPath string) []string {
 	markerStyle, textStyle := codexPlanStatusStyles(marker)
 	markerWidth := ansi.StringWidth(marker)
 	indent := markerWidth + 1
@@ -79,7 +99,7 @@ func renderCodexPlanStatusLine(marker, text string, width int) []string {
 	if strings.TrimSpace(text) == "" {
 		return []string{markerStyle.Render(marker)}
 	}
-	renderedText := renderCodexInlineMarkdown(text, textStyle)
+	renderedText := renderCodexInlineMarkdownForProject(text, textStyle, projectPath)
 	wrapped := strings.Split(lipgloss.NewStyle().Width(textWidth).Render(renderedText), "\n")
 	out := make([]string, 0, len(wrapped))
 	for index, line := range wrapped {
@@ -110,6 +130,10 @@ func codexPlanStatusStyles(marker string) (lipgloss.Style, lipgloss.Style) {
 }
 
 func renderCodexMessageBlockWithStyle(label, body string, accent, bodyColor lipgloss.Color, width int, shaded bool) string {
+	return renderCodexMessageBlockWithStyleForProject(label, body, accent, bodyColor, width, shaded, "")
+}
+
+func renderCodexMessageBlockWithStyleForProject(label, body string, accent, bodyColor lipgloss.Color, width int, shaded bool, projectPath string) string {
 	paddingRight := 0
 	style := lipgloss.NewStyle().
 		BorderLeft(true).
@@ -120,29 +144,33 @@ func renderCodexMessageBlockWithStyle(label, body string, accent, bodyColor lipg
 		style = style.PaddingRight(1).Background(codexComposerShellColor)
 	}
 	contentWidth := max(10, width-2-paddingRight)
-	lines := renderCodexMessageBlockLines(label, body, accent, bodyColor, contentWidth)
+	lines := renderCodexMessageBlockLinesForProject(label, body, accent, bodyColor, contentWidth, projectPath)
 	return style.Render(strings.Join(lines, "\n"))
 }
 
 var reasoningBackgroundColor = lipgloss.Color("235")
 
 func renderCodexMessageBlockLines(label, body string, accent, bodyColor lipgloss.Color, contentWidth int) []string {
+	return renderCodexMessageBlockLinesForProject(label, body, accent, bodyColor, contentWidth, "")
+}
+
+func renderCodexMessageBlockLinesForProject(label, body string, accent, bodyColor lipgloss.Color, contentWidth int, projectPath string) []string {
 	label = strings.TrimSpace(label)
 	if label == "" {
-		return []string{renderCodexBody(body, bodyColor, contentWidth)}
+		return []string{renderCodexBodyForProject(body, bodyColor, contentWidth, projectPath)}
 	}
 	labelStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 	labelWidth := ansi.StringWidth(label) + 1
 	if labelWidth >= contentWidth-4 {
 		return []string{
 			labelStyle.Render(label),
-			renderCodexBody(body, bodyColor, contentWidth),
+			renderCodexBodyForProject(body, bodyColor, contentWidth, projectPath),
 		}
 	}
 
 	firstLine, rest, _ := strings.Cut(body, "\n")
 	firstWidth := max(4, contentWidth-labelWidth)
-	firstRendered := strings.Split(renderCodexBody(firstLine, bodyColor, firstWidth), "\n")
+	firstRendered := strings.Split(renderCodexBodyForProject(firstLine, bodyColor, firstWidth, projectPath), "\n")
 	lines := make([]string, 0, len(firstRendered)+1)
 	for index, line := range firstRendered {
 		if index == 0 {
@@ -152,16 +180,20 @@ func renderCodexMessageBlockLines(label, body string, accent, bodyColor lipgloss
 		lines = append(lines, strings.Repeat(" ", labelWidth)+line)
 	}
 	if strings.TrimSpace(rest) != "" {
-		lines = append(lines, renderCodexBody(rest, bodyColor, contentWidth))
+		lines = append(lines, renderCodexBodyForProject(rest, bodyColor, contentWidth, projectPath))
 	}
 	return lines
 }
 
 func renderReasoningBlock(body string, width int) string {
+	return renderReasoningBlockForProject(body, width, "")
+}
+
+func renderReasoningBlockForProject(body string, width int, projectPath string) string {
 	contentWidth := max(10, width-4)
 	label := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("180")).Faint(true).Render("Reasoning")
 	bodyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Width(contentWidth)
-	wrappedBody := bodyStyle.Render(renderCodexBody(body, lipgloss.Color("252"), contentWidth))
+	wrappedBody := bodyStyle.Render(renderCodexBodyForProject(body, lipgloss.Color("252"), contentWidth, projectPath))
 	return lipgloss.NewStyle().
 		BorderLeft(true).
 		BorderForeground(lipgloss.Color("180")).
@@ -361,6 +393,10 @@ func codexDenseBlockHiddenTitle(label string, hidden int, blockMode codexDenseBl
 }
 
 func renderCodexBody(body string, color lipgloss.Color, width int) string {
+	return renderCodexBodyForProject(body, color, width, "")
+}
+
+func renderCodexBodyForProject(body string, color lipgloss.Color, width int, projectPath string) string {
 	lines := strings.Split(body, "\n")
 	out := make([]string, 0, len(lines))
 	inFence := false
@@ -407,26 +443,26 @@ func renderCodexBody(body string, color lipgloss.Color, width int) string {
 			flushTable()
 			switch {
 			case strings.HasPrefix(trimmed, "[attached image]"):
-				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)))
+				out = append(out, renderCodexInlineMarkdownForProject(line, lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true), projectPath))
 			case strings.HasPrefix(trimmed, "### "):
-				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "### "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+				out = append(out, renderCodexInlineMarkdownForProject(strings.TrimPrefix(trimmed, "### "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true), projectPath))
 			case strings.HasPrefix(trimmed, "## "):
-				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "## "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+				out = append(out, renderCodexInlineMarkdownForProject(strings.TrimPrefix(trimmed, "## "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true), projectPath))
 			case strings.HasPrefix(trimmed, "# "):
-				out = append(out, renderCodexInlineMarkdown(strings.TrimPrefix(trimmed, "# "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+				out = append(out, renderCodexInlineMarkdownForProject(strings.TrimPrefix(trimmed, "# "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true), projectPath))
 			case strings.HasPrefix(trimmed, "> "):
-				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)))
+				out = append(out, renderCodexInlineMarkdownForProject(line, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true), projectPath))
 			case isMarkdownHorizontalRule(trimmed):
 				rule := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true).Render(strings.Repeat("─", min(width, 40)))
 				out = append(out, rule)
 			case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* "):
-				out = append(out, renderCodexInlineMarkdown("• "+strings.TrimSpace(trimmed[2:]), lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
+				out = append(out, renderCodexInlineMarkdownForProject("• "+strings.TrimSpace(trimmed[2:]), lipgloss.NewStyle().Foreground(lipgloss.Color("151")), projectPath))
 			case isMarkdownNumberedListItem(trimmed):
 				num, content := parseMarkdownNumberedListItem(trimmed)
 				numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-				out = append(out, numStyle.Render(num+".")+renderCodexInlineMarkdown(" "+content, lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
+				out = append(out, numStyle.Render(num+".")+renderCodexInlineMarkdownForProject(" "+content, lipgloss.NewStyle().Foreground(lipgloss.Color("151")), projectPath))
 			default:
-				out = append(out, renderCodexInlineMarkdown(line, lipgloss.NewStyle().Foreground(color)))
+				out = append(out, renderCodexInlineMarkdownForProject(line, lipgloss.NewStyle().Foreground(color), projectPath))
 			}
 		}
 	}
@@ -695,6 +731,10 @@ func parseMarkdownNumberedListItem(line string) (num, content string) {
 }
 
 func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
+	return renderCodexInlineMarkdownForProject(text, style, "")
+}
+
+func renderCodexInlineMarkdownForProject(text string, style lipgloss.Style, projectPath string) string {
 	if text == "" {
 		return style.Render(text)
 	}
@@ -783,7 +823,7 @@ func renderCodexInlineMarkdown(text string, style lipgloss.Style) string {
 				remaining = remaining[earliest+1:]
 				continue
 			}
-			out.WriteString(renderCodexHyperlink(label, target, style))
+			out.WriteString(renderCodexHyperlinkForProject(label, target, style, projectPath))
 			remaining = remaining[earliest+consumed:]
 
 		case codeIdx == earliest:
@@ -864,8 +904,12 @@ func boundedIndexByte(text string, c byte, limit int) int {
 }
 
 func renderCodexHyperlink(label, target string, style lipgloss.Style) string {
+	return renderCodexHyperlinkForProject(label, target, style, "")
+}
+
+func renderCodexHyperlinkForProject(label, target string, style lipgloss.Style, projectPath string) string {
 	linkStyle := style.Copy().Foreground(lipgloss.Color("111")).Underline(true)
-	if localPath, ok := codexLocalLinkText(target); ok {
+	if localPath, ok := codexLocalLinkTextForProject(target, projectPath); ok {
 		if artifactPath, _, ok := codexLocalArtifactOpenTarget(label, localPath); ok {
 			return renderCodexLocalArtifactLink(label, artifactPath, linkStyle)
 		}
@@ -950,6 +994,64 @@ func codexLocalLinkText(target string) (string, bool) {
 		pathText = parsed.Host + ":" + pathText
 	}
 	return pathText, path != ""
+}
+
+func codexLocalLinkTextForProject(target, projectPath string) (string, bool) {
+	if localPath, ok := codexLocalLinkText(target); ok {
+		return localPath, true
+	}
+	return codexRelativeLocalLinkText(target, projectPath)
+}
+
+func codexRelativeLocalLinkText(target, projectPath string) (string, bool) {
+	target = strings.TrimSpace(target)
+	projectPath = strings.TrimSpace(projectPath)
+	if target == "" || projectPath == "" {
+		return "", false
+	}
+	if strings.HasPrefix(target, "#") || strings.HasPrefix(target, "?") || strings.HasPrefix(target, "//") {
+		return "", false
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
+		return "", false
+	}
+	pathPart, location := codexLocalOpenPath(target)
+	pathPart = strings.TrimSpace(pathPart)
+	if !codexRelativeLocalLinkPath(pathPart) {
+		return "", false
+	}
+	resolved := filepath.Clean(filepath.Join(projectPath, filepath.FromSlash(pathPart)))
+	if location != "" {
+		resolved += location
+	}
+	return resolved, true
+}
+
+func codexRelativeLocalLinkPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) || strings.ContainsAny(path, "\r\n") {
+		return false
+	}
+	slashPath := filepath.ToSlash(path)
+	if slashPath == "." || slashPath == ".." {
+		return false
+	}
+	if strings.HasPrefix(slashPath, "./") || strings.HasPrefix(slashPath, "../") {
+		return true
+	}
+	firstSegment := slashPath
+	if idx := strings.IndexByte(slashPath, '/'); idx >= 0 {
+		firstSegment = slashPath[:idx]
+	}
+	if strings.Contains(slashPath, "/") && firstSegment != "." && firstSegment != ".." && strings.Contains(firstSegment, ".") {
+		return false
+	}
+	base := slashPath
+	if idx := strings.LastIndexByte(slashPath, '/'); idx >= 0 {
+		base = slashPath[idx+1:]
+	}
+	return filepath.Ext(base) != ""
 }
 
 func codexLocalPathText(path, fragment string) string {

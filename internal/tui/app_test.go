@@ -20312,6 +20312,47 @@ func TestRenderCodexTranscriptEntriesRendersLocalMarkdownLinksAsArtifacts(t *tes
 	}
 }
 
+func TestRenderCodexTranscriptEntriesResolvesRelativeMarkdownArtifactLinksAgainstProjectPath(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "proj_leaf")
+	siblingPath := filepath.Join(root, "proj_leaf_bulk")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := os.MkdirAll(siblingPath, 0o755); err != nil {
+		t.Fatalf("create sibling dir: %v", err)
+	}
+	artifactPath := filepath.Join(siblingPath, "tmp_export_ui_integration_map_2026-06-02.html")
+	if err := os.WriteFile(artifactPath, []byte("<!doctype html>\n"), 0o600); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Open [integration map](../proj_leaf_bulk/tmp_export_ui_integration_map_2026-06-02.html).",
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 140)
+	if strings.Contains(rendered, ansi.SetHyperlink(artifactPath)) {
+		t.Fatalf("relative local artifact links should not rely on terminal hyperlinks: %q", rendered)
+	}
+	if strings.Contains(rendered, "../proj_leaf_bulk") {
+		t.Fatalf("rendered transcript should not expose unresolved relative artifact paths: %q", rendered)
+	}
+	stripped := ansi.Strip(rendered)
+	if strings.Contains(stripped, "[integration map](") {
+		t.Fatalf("rendered transcript should hide markdown link syntax once rendered: %q", stripped)
+	}
+	want := "Open integration map (tmp_export_ui_integration_map_2026-06-02.html) Alt+O."
+	if !strings.Contains(stripped, want) {
+		t.Fatalf("rendered transcript missing resolved artifact hint %q: %q", want, stripped)
+	}
+}
+
 func TestCodexLinkExtractionIgnoresHiddenDenseCommandOutput(t *testing.T) {
 	hiddenOutput := strings.Repeat("[not a markdown link\n", 2000) + "[hidden](https://hidden.example/docs)"
 	entry := codexapp.TranscriptEntry{
@@ -20364,6 +20405,45 @@ func TestCodexProgressiveLinkScanFindsHiddenDenseCommandOutput(t *testing.T) {
 	got = normalizeUpdateModel(updated)
 	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
 		t.Fatalf("hidden link picker state = %#v, want one progressive target", got.codexArtifactPicker)
+	}
+}
+
+func TestCodexProgressiveLinkScanResolvesRelativeMarkdownArtifactLinks(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "proj_leaf")
+	siblingPath := filepath.Join(root, "proj_leaf_bulk")
+	if err := os.MkdirAll(siblingPath, 0o755); err != nil {
+		t.Fatalf("create sibling dir: %v", err)
+	}
+	artifactPath := filepath.Join(siblingPath, "tmp_export_ui_integration_map_2026-06-02.html")
+	if err := os.WriteFile(artifactPath, []byte("<!doctype html>\n"), 0o600); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptCommand,
+				Text: "$ export-map\nOpen [integration map](../proj_leaf_bulk/tmp_export_ui_integration_map_2026-06-02.html).",
+			},
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(100, 4),
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	cmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+	if cmd == nil {
+		t.Fatalf("progressive link scan should start for transcript entries")
+	}
+	got := drainCmdMsgs(m, cmd)
+	targets := got.cachedProgressiveCodexOpenTargets(snapshot)
+	if len(targets) != 1 {
+		t.Fatalf("progressive targets = %#v, want one relative artifact", targets)
+	}
+	if targets[0].Kind != "html" || targets[0].Path != artifactPath {
+		t.Fatalf("relative progressive target = %#v, want html path %q", targets[0], artifactPath)
 	}
 }
 
@@ -20492,6 +20572,71 @@ func TestCodexLinkPickerOpensLineSuffixedLocalMarkdownLinksAsFiles(t *testing.T)
 	}
 	if opened != path {
 		t.Fatalf("source picker opened %q, want clean file path %q", opened, path)
+	}
+	_ = updated
+}
+
+func TestCodexLinkPickerOpensRelativeMarkdownArtifactLinksAgainstProjectPath(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "proj_leaf")
+	siblingPath := filepath.Join(root, "proj_leaf_bulk")
+	if err := os.MkdirAll(siblingPath, 0o755); err != nil {
+		t.Fatalf("create sibling dir: %v", err)
+	}
+	artifactPath := filepath.Join(siblingPath, "tmp_export_ui_integration_map_2026-06-02.html")
+	if err := os.WriteFile(artifactPath, []byte("<!doctype html>\n"), 0o600); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Open [integration map](../proj_leaf_bulk/tmp_export_ui_integration_map_2026-06-02.html).",
+			},
+		},
+	}
+
+	opened := ""
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = path
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: snapshot,
+		},
+		codexViewport: viewport.New(140, 4),
+	}
+	rendered := m.renderAndCacheCodexTranscript(projectPath, snapshot, 140)
+	m.codexViewport.SetContent(rendered)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("link picker state = %#v, want one html target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "html" || target.Path != artifactPath {
+		t.Fatalf("HTML target = %#v, want kind html path %q", target, artifactPath)
+	}
+
+	updated, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on relative artifact should queue open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("relative artifact open command returned nil")
+	}
+	if opened != artifactPath {
+		t.Fatalf("relative artifact picker opened %q, want %q", opened, artifactPath)
 	}
 	_ = updated
 }

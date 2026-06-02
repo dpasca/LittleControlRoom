@@ -19,6 +19,7 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 
 type codexTranscriptRenderOptions struct {
 	fullHistory bool
+	projectPath string
 }
 
 const lcAgentStatusCollapsedText = "Embedded LCAgent status is hidden. Use /show-status (or /dev-show-status) to view it."
@@ -55,6 +56,7 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 	if width <= 0 {
 		width = 80
 	}
+	projectPath := strings.TrimSpace(firstNonEmptyString(options.projectPath, snapshot.ProjectPath))
 	contentWidth := max(18, width-4)
 	blocks := make([]string, 0, len(entries)*2)
 	links := make([]codexTranscriptLinkSpan, 0)
@@ -93,6 +95,7 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 		flushReasoning()
 		block := renderCodexTranscriptEntryWithOptions(entry, contentWidth, blockMode, codexTranscriptEntryRenderOptions{
 			latestGeneratedImage: index == lastGeneratedImageIndex,
+			projectPath:          projectPath,
 		})
 		if strings.TrimSpace(block) != "" {
 			if hasPrevious {
@@ -104,7 +107,7 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 			blocks = append(blocks, block)
 			endLine := startLine + strings.Count(block, "\n") + 1
 			lineIndex += strings.Count(block, "\n")
-			for _, target := range codexOpenTargetsFromTranscriptEntryForBlockMode(entry, blockMode) {
+			for _, target := range codexOpenTargetsFromTranscriptEntryForBlockModeInProject(entry, blockMode, projectPath) {
 				links = append(links, codexTranscriptLinkSpan{
 					Target:    target,
 					StartLine: startLine,
@@ -195,6 +198,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, block
 
 type codexTranscriptEntryRenderOptions struct {
 	latestGeneratedImage bool
+	projectPath          string
 }
 
 func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode, options codexTranscriptEntryRenderOptions) string {
@@ -213,13 +217,13 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 		divider := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("238")).
 			Render(strings.Repeat("─", max(0, width)))
-		return divider + "\n" + renderCodexUserMessageBlock(text, width)
+		return divider + "\n" + renderCodexUserMessageBlockForProject(text, width, options.projectPath)
 	case codexapp.TranscriptAgent:
-		return renderCodexMessageBlock("", text, lipgloss.Color("120"), lipgloss.Color("252"), width)
+		return renderCodexMessageBlockForProject("", text, lipgloss.Color("120"), lipgloss.Color("252"), width, options.projectPath)
 	case codexapp.TranscriptPlan:
-		return renderCodexPlanBlock(text, width)
+		return renderCodexPlanBlockForProject(text, width, options.projectPath)
 	case codexapp.TranscriptReasoning:
-		return renderReasoningBlock(text, width)
+		return renderReasoningBlockForProject(text, width, options.projectPath)
 	case codexapp.TranscriptCommand:
 		return renderCodexDenseBlock("Command", text, lipgloss.Color("111"), width, blockMode)
 	case codexapp.TranscriptFileChange:
@@ -227,13 +231,13 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 	case codexapp.TranscriptTool:
 		return renderCodexToolLine(text, width)
 	case codexapp.TranscriptError:
-		return renderCodexMessageBlock("Error", text, lipgloss.Color("203"), lipgloss.Color("252"), width)
+		return renderCodexMessageBlockForProject("Error", text, lipgloss.Color("203"), lipgloss.Color("252"), width, options.projectPath)
 	case codexapp.TranscriptStatus:
 		return renderCodexStatusBlock(text, width)
 	case codexapp.TranscriptSystem:
-		return renderCodexMessageBlock("System", text, lipgloss.Color("244"), lipgloss.Color("246"), width)
+		return renderCodexMessageBlockForProject("System", text, lipgloss.Color("244"), lipgloss.Color("246"), width, options.projectPath)
 	default:
-		return renderCodexMessageBlock("", text, lipgloss.Color("244"), lipgloss.Color("252"), width)
+		return renderCodexMessageBlockForProject("", text, lipgloss.Color("244"), lipgloss.Color("252"), width, options.projectPath)
 	}
 }
 
