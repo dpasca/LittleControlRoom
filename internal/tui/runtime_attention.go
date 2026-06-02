@@ -22,6 +22,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
 		score += runtimeRunningAttentionWeight
 	}
+	if _, ok := m.projectPrimaryLocalInstanceSnapshot(project.Path); ok {
+		score += runtimeRunningAttentionWeight
+	}
 	if reason := m.projectProcessAttentionReason(project.Path); reason != nil {
 		score += reason.Weight
 	}
@@ -39,6 +42,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 func (m Model) projectAttentionReasons(project model.ProjectSummary, base []model.AttentionReason) []model.AttentionReason {
 	reasons := append([]model.AttentionReason(nil), base...)
 	if reason := m.projectRuntimeAttentionReason(project.Path); reason != nil {
+		reasons = append(reasons, *reason)
+	}
+	if reason := m.projectLocalInstanceAttentionReason(project.Path); reason != nil {
 		reasons = append(reasons, *reason)
 	}
 	if reason := m.projectProcessAttentionReason(project.Path); reason != nil {
@@ -71,6 +77,27 @@ func (m Model) projectRuntimeAttentionReason(projectPath string) *model.Attentio
 
 	return &model.AttentionReason{
 		Code:   "runtime_running",
+		Text:   text,
+		Weight: runtimeRunningAttentionWeight,
+	}
+}
+
+func (m Model) projectLocalInstanceAttentionReason(projectPath string) *model.AttentionReason {
+	snapshot, ok := m.projectPrimaryLocalInstanceSnapshot(projectPath)
+	if !ok {
+		return nil
+	}
+
+	text := "Local instance is listening"
+	if len(snapshot.Ports) > 0 {
+		text = fmt.Sprintf("Local instance listening on %s", joinPorts(snapshot.Ports))
+	}
+	if label := projectRunCommandLabel(snapshot.Command); label != "" {
+		text += " (" + label + ")"
+	}
+
+	return &model.AttentionReason{
+		Code:   "local_instance_active",
 		Text:   text,
 		Weight: runtimeRunningAttentionWeight,
 	}

@@ -52,9 +52,17 @@ type Finding struct {
 	OwnerProjectPath  string
 }
 
+type ProjectInstance struct {
+	Process
+	ProjectPath       string
+	ManagedRuntime    bool
+	OwnedByCurrentApp bool
+}
+
 type ProjectReport struct {
 	ProjectPath string
 	Findings    []Finding
+	Instances   []ProjectInstance
 	ScannedAt   time.Time
 }
 
@@ -162,6 +170,9 @@ func ScanProjects(ctx context.Context, opts ScanOptions) ([]ProjectReport, error
 		if !ok {
 			continue
 		}
+		if instance, ok := projectInstanceFromProcess(process, projectPath, ppids, ownPID, opts.ManagedPIDs, opts.ManagedPGIDs); ok {
+			reportsByProject[projectPath].Instances = append(reportsByProject[projectPath].Instances, instance)
+		}
 		finding := classifyProcess(process, projectPath, ppids, ownPID, opts.ManagedPIDs, opts.ManagedPGIDs, highCPUThreshold, orphanCPUThreshold)
 		if len(finding.Reasons) == 0 {
 			continue
@@ -173,6 +184,7 @@ func ScanProjects(ctx context.Context, opts ScanOptions) ([]ProjectReport, error
 	reports := make([]ProjectReport, 0, len(reportsByProject))
 	for _, projectPath := range projectPaths {
 		report := reportsByProject[projectPath]
+		sortProjectInstances(report.Instances)
 		sort.SliceStable(report.Findings, func(i, j int) bool {
 			left, right := report.Findings[i], report.Findings[j]
 			if left.PortConflict != right.PortConflict {
@@ -325,6 +337,50 @@ func classifyProcess(process Process, projectPath string, ppids map[int]int, own
 		finding.Reasons = append(finding.Reasons, "listening on TCP ports")
 	}
 	return finding
+}
+
+func projectInstanceFromProcess(process Process, projectPath string, ppids map[int]int, ownPID int, managedPIDs, managedPGIDs map[int]struct{}) (ProjectInstance, bool) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." || process.PID <= 0 || len(process.Ports) == 0 {
+		return ProjectInstance{}, false
+	}
+	managed := processIsManaged(process, managedPIDs, managedPGIDs)
+	if managed {
+		return ProjectInstance{}, false
+	}
+	return ProjectInstance{
+		Process:           process,
+		ProjectPath:       projectPath,
+		ManagedRuntime:    managed,
+		OwnedByCurrentApp: processDescendsFrom(process.PID, ownPID, ppids),
+	}, true
+}
+
+func sortProjectInstances(instances []ProjectInstance) {
+	sort.SliceStable(instances, func(i, j int) bool {
+		left, right := instances[i], instances[j]
+		leftPort, rightPort := firstProcessPort(left.Process), firstProcessPort(right.Process)
+		if leftPort != rightPort {
+			if leftPort == 0 {
+				return false
+			}
+			if rightPort == 0 {
+				return true
+			}
+			return leftPort < rightPort
+		}
+		if left.ProjectPath != right.ProjectPath {
+			return strings.ToLower(left.ProjectPath) < strings.ToLower(right.ProjectPath)
+		}
+		return left.PID < right.PID
+	})
+}
+
+func firstProcessPort(process Process) int {
+	if len(process.Ports) == 0 {
+		return 0
+	}
+	return process.Ports[0]
 }
 
 func appendExpectedPortFindings(reportsByProject map[string]*ProjectReport, byPID map[int]Process, projectPaths []string, ppids map[int]int, ownPID int, opts ScanOptions) {

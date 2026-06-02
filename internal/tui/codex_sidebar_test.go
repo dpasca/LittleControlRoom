@@ -65,6 +65,10 @@ func testEmbeddedSidebarModel(projectPath string) Model {
 					Process: procinspect.Process{PID: 9876, CPU: 64, Command: "node server.js", Ports: []int{5173}},
 					Reasons: []string{"orphaned under PID 1", "high CPU"},
 				}},
+				Instances: []procinspect.ProjectInstance{{
+					Process:     procinspect.Process{PID: 2468, PGID: 2468, Command: "vite --host 127.0.0.1", Ports: []int{4017}},
+					ProjectPath: projectPath,
+				}},
 			},
 		},
 		embeddedSidebarDiffs: map[string]embeddedSidebarDiffState{
@@ -110,6 +114,8 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 		"Active Processes",
 		"Diff Summary",
 		"npm run dev",
+		"vite pid 2468",
+		"4017",
 		"node 64%",
 		"2 files changed",
 	} {

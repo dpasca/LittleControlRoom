@@ -6058,6 +6058,38 @@ func TestRenderProjectListShowsProcessWarningInRunColumn(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListShowsLocalInstanceInRunColumn(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:          "portfolio",
+		Path:          "/tmp/portfolio",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+	m := Model{
+		projects: []model.ProjectSummary{project},
+		selected: 0,
+		processReports: map[string]procinspect.ProjectReport{
+			project.Path: {
+				ProjectPath: project.Path,
+				Instances: []procinspect.ProjectInstance{{
+					Process:     procinspect.Process{PID: 4017, PGID: 4017, Command: "vite --host 127.0.0.1", Ports: []int{4017}},
+					ProjectPath: project.Path,
+				}},
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(90, 6))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one row, got %q", rendered)
+	}
+	if !strings.Contains(lines[2], "vite@4017") {
+		t.Fatalf("renderProjectList() should show local listener in RUN, got %q", lines[2])
+	}
+}
+
 func TestRenderProjectListKeepsScratchTasksInlineAndKeepsRepoWarningOffTheirRows(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{

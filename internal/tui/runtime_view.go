@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 )
 
@@ -40,6 +41,121 @@ func (m Model) projectRuntimeSnapshots(projectPath string) []projectrun.Snapshot
 		out = append(out, snapshot)
 	}
 	return out
+}
+
+func (m Model) projectLocalInstanceSnapshots(projectPath string) []projectrun.Snapshot {
+	report, ok := m.projectProcessReport(projectPath)
+	if !ok || len(report.Instances) == 0 {
+		return nil
+	}
+	out := make([]projectrun.Snapshot, 0, len(report.Instances))
+	for _, instance := range report.Instances {
+		snapshot := localInstanceRuntimeSnapshot(instance)
+		if snapshot.ProjectPath == "" || len(snapshot.Ports) == 0 {
+			continue
+		}
+		out = append(out, snapshot)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		leftPort, rightPort := firstRuntimeSnapshotPort(out[i]), firstRuntimeSnapshotPort(out[j])
+		if leftPort != rightPort {
+			return leftPort < rightPort
+		}
+		return out[i].PID < out[j].PID
+	})
+	return out
+}
+
+func (m Model) projectVisibleLocalInstanceSnapshots(projectPath string) []projectrun.Snapshot {
+	snapshots := m.projectLocalInstanceSnapshots(projectPath)
+	if len(snapshots) == 0 {
+		return nil
+	}
+	report, ok := m.projectProcessReport(projectPath)
+	if !ok || len(report.Findings) == 0 {
+		return snapshots
+	}
+	findingPIDs := make(map[int]struct{}, len(report.Findings))
+	for _, finding := range report.Findings {
+		if finding.PID > 0 {
+			findingPIDs[finding.PID] = struct{}{}
+		}
+	}
+	out := snapshots[:0]
+	for _, snapshot := range snapshots {
+		if snapshot.PID > 0 {
+			if _, ok := findingPIDs[snapshot.PID]; ok {
+				continue
+			}
+		}
+		out = append(out, snapshot)
+	}
+	return out
+}
+
+func (m Model) projectPrimaryLocalInstanceSnapshot(projectPath string) (projectrun.Snapshot, bool) {
+	snapshots := m.projectLocalInstanceSnapshots(projectPath)
+	if len(snapshots) == 0 {
+		return projectrun.Snapshot{}, false
+	}
+	return snapshots[0], true
+}
+
+func (m Model) projectRuntimeContextSnapshot(projectPath string) projectrun.Snapshot {
+	snapshot := m.projectRuntimeSnapshot(projectPath)
+	if snapshot.Running {
+		return snapshot
+	}
+	if localSnapshot, ok := m.projectPrimaryLocalInstanceSnapshot(projectPath); ok {
+		return localSnapshot
+	}
+	return snapshot
+}
+
+func (m Model) projectLocalInstanceSummary(projectPath string) string {
+	snapshots := m.projectVisibleLocalInstanceSnapshots(projectPath)
+	if len(snapshots) == 0 {
+		return ""
+	}
+	snapshot := snapshots[0]
+	label := localInstanceDisplayLabel(snapshot)
+	if url := runtimePrimaryURL(snapshot); url != "" {
+		label += " at " + url
+	} else if len(snapshot.Ports) > 0 {
+		label += " on " + joinPorts(snapshot.Ports)
+	}
+	if len(snapshots) > 1 {
+		label += fmt.Sprintf(" (+%d more)", len(snapshots)-1)
+	}
+	return strings.TrimSpace(label)
+}
+
+func localInstanceRuntimeSnapshot(instance procinspect.ProjectInstance) projectrun.Snapshot {
+	projectPath := normalizeProjectPath(instance.ProjectPath)
+	if projectPath == "" {
+		return projectrun.Snapshot{}
+	}
+	ports := append([]int(nil), instance.Ports...)
+	sort.Ints(ports)
+	return projectrun.Snapshot{
+		ID:          fmt.Sprintf("pid_%d", instance.PID),
+		Name:        "local listener",
+		External:    true,
+		ProjectPath: projectPath,
+		Command:     strings.TrimSpace(instance.Command),
+		CWD:         strings.TrimSpace(instance.CWD),
+		PID:         instance.PID,
+		PGID:        instance.PGID,
+		Running:     true,
+		Ports:       ports,
+	}
+}
+
+func firstRuntimeSnapshotPort(snapshot projectrun.Snapshot) int {
+	if len(snapshot.Ports) == 0 {
+		return 0
+	}
+	return snapshot.Ports[0]
 }
 
 func (m Model) selectedRuntimeProcessSnapshot(projectPath string) (projectrun.Snapshot, int, int) {
@@ -118,6 +234,7 @@ func (m Model) renderFooterRuntimeSegment() string {
 
 func runtimeDetailAvailable(savedCommand string, snapshot projectrun.Snapshot) bool {
 	return strings.TrimSpace(savedCommand) != "" ||
+		snapshot.External ||
 		strings.TrimSpace(snapshot.Command) != "" ||
 		strings.TrimSpace(snapshot.CWD) != "" ||
 		snapshot.Running ||

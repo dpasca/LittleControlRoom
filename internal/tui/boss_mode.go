@@ -431,7 +431,7 @@ func (m Model) bossRuntimeContexts() []bossui.ViewRuntimeContext {
 		if projectPath == "" || projectPath == "." || seen[projectPath] {
 			return
 		}
-		snapshot := m.projectRuntimeSnapshot(projectPath)
+		snapshot := m.projectRuntimeContextSnapshot(projectPath)
 		if !runtimeDetailAvailable(project.RunCommand, snapshot) {
 			return
 		}
@@ -474,6 +474,8 @@ func bossRuntimeContextFromProject(project model.ProjectSummary, snapshot projec
 
 func bossRuntimePlainStatus(snapshot projectrun.Snapshot) string {
 	switch {
+	case snapshot.External && snapshot.Running:
+		return "local listener"
 	case snapshot.Running:
 		return "running"
 	case strings.TrimSpace(snapshot.LastError) != "":
