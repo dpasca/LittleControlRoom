@@ -919,10 +919,19 @@ func (m *Model) refreshUsagePulse() {
 		m.haveUsageTotals = true
 		return
 	}
-	if totals.EstimatedCostUSD > m.lastUsageTotals.EstimatedCostUSD {
+	if llmUsageTotalsIncreased(totals, m.lastUsageTotals) {
 		m.usagePulseUntil = m.currentTime().Add(usagePulseDuration)
 	}
 	m.lastUsageTotals = totals
+}
+
+func llmUsageTotalsIncreased(current, previous model.LLMUsage) bool {
+	return current.EstimatedCostUSD > previous.EstimatedCostUSD ||
+		current.InputTokens > previous.InputTokens ||
+		current.OutputTokens > previous.OutputTokens ||
+		current.TotalTokens > previous.TotalTokens ||
+		current.CachedInputTokens > previous.CachedInputTokens ||
+		current.ReasoningTokens > previous.ReasoningTokens
 }
 
 func currentExcludeProjectPatterns(svc *service.Service) []string {
@@ -7846,9 +7855,69 @@ func compactUsageLabel(usage model.LLMSessionUsage) string {
 	}
 	estimatedCostUSD, ok := estimatedUsageCostUSD(usage)
 	if !ok {
-		return "cost ?"
+		if fallback := compactUnknownCostUsageLabel(usage); fallback != "" {
+			return fallback
+		}
+		return "usage unknown"
 	}
 	return "cost " + formatEstimatedCostUSD(estimatedCostUSD)
+}
+
+func compactUnknownCostUsageLabel(usage model.LLMSessionUsage) string {
+	modelLabel := compactUsageModelLabel(usage.Model)
+	tokens := compactUsageTokenLabel(usage.Totals)
+	if modelLabel != "" && tokens != "" {
+		return modelLabel + " " + tokens
+	}
+	if tokens != "" {
+		return "tokens " + tokens
+	}
+	if usage.Running > 0 && modelLabel != "" {
+		return modelLabel + " running"
+	}
+	if modelLabel != "" {
+		return "model " + modelLabel
+	}
+	if usage.Running > 0 {
+		return "AI running"
+	}
+	callCount := usage.Completed + usage.Failed
+	if callCount <= 0 {
+		callCount = usage.Started
+	}
+	if callCount == 1 {
+		return "AI 1 call"
+	}
+	if callCount > 1 {
+		return fmt.Sprintf("AI %d calls", callCount)
+	}
+	return ""
+}
+
+func compactUsageTokenLabel(usage model.LLMUsage) string {
+	includeTotal := usage.InputTokens == 0 && usage.OutputTokens == 0
+	return uistyle.FormatCompactTokenUsage(
+		usage.InputTokens,
+		usage.OutputTokens,
+		usage.CachedInputTokens,
+		usage.ReasoningTokens,
+		usage.TotalTokens,
+		includeTotal,
+	)
+}
+
+func compactUsageModelLabel(modelName string) string {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return ""
+	}
+	if slash := strings.LastIndex(modelName, "/"); slash >= 0 {
+		modelName = modelName[slash+1:]
+	}
+	if modelName == "" {
+		return ""
+	}
+	return truncateText(modelName, 16)
 }
 
 func compactLocalUsageLabel(providerLabel string, usage model.LLMSessionUsage) string {

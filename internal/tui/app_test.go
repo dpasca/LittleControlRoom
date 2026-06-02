@@ -4090,6 +4090,45 @@ func TestCompactUsageLabel(t *testing.T) {
 	}
 }
 
+func TestCompactUsageLabelFallsBackToModelAndTokensWhenCostUnknown(t *testing.T) {
+	usage := model.LLMSessionUsage{
+		Enabled: true,
+		Model:   "xiaomi/mimo-v2.5-pro",
+		Totals: model.LLMUsage{
+			InputTokens:       12_500,
+			OutputTokens:      345,
+			CachedInputTokens: 2_000,
+			ReasoningTokens:   67,
+		},
+	}
+
+	want := "mimo-v2.5-pro i12k o345 c2.0k r67"
+	if got := compactUsageLabel(usage); got != want {
+		t.Fatalf("compactUsageLabel(unknown cost) = %q, want %q", got, want)
+	}
+}
+
+func TestCompactUnknownCostUsageLabelUsesTotalWhenOnlyTotalTokensAvailable(t *testing.T) {
+	usage := model.LLMSessionUsage{
+		Enabled: true,
+		Model:   "mimo-v2.5-pro",
+		Totals: model.LLMUsage{
+			TotalTokens: 18_250,
+		},
+	}
+
+	want := "mimo-v2.5-pro t18k"
+	if got := compactUsageLabel(usage); got != want {
+		t.Fatalf("compactUsageLabel(total-only unknown cost) = %q, want %q", got, want)
+	}
+}
+
+func TestCompactUsageModelLabelKeepsLastProviderSegment(t *testing.T) {
+	if got := compactUsageModelLabel("openrouter/x-ai/grok-4-latest"); got != "grok-4-latest" {
+		t.Fatalf("compactUsageModelLabel() = %q, want %q", got, "grok-4-latest")
+	}
+}
+
 func TestCompactLocalUsageLabel(t *testing.T) {
 	if got := compactLocalUsageLabel("Codex", model.LLMSessionUsage{}); got != "Codex ready" {
 		t.Fatalf("compactLocalUsageLabel(ready) = %q, want %q", got, "Codex ready")
@@ -4098,6 +4137,29 @@ func TestCompactLocalUsageLabel(t *testing.T) {
 	usage := model.LLMSessionUsage{Started: 1, Completed: 1}
 	if got := compactLocalUsageLabel("Codex", usage); got != "Codex 1 call" {
 		t.Fatalf("compactLocalUsageLabel(one call) = %q, want %q", got, "Codex 1 call")
+	}
+}
+
+func TestLLMUsageTotalsIncreasedIncludesTokenCounters(t *testing.T) {
+	previous := model.LLMUsage{
+		InputTokens:      10,
+		OutputTokens:     5,
+		EstimatedCostUSD: 0,
+	}
+	if llmUsageTotalsIncreased(previous, previous) {
+		t.Fatalf("same usage totals should not count as increased")
+	}
+
+	current := previous
+	current.InputTokens = 11
+	if !llmUsageTotalsIncreased(current, previous) {
+		t.Fatalf("input token increase should count as increased usage")
+	}
+
+	current = previous
+	current.OutputTokens = 6
+	if !llmUsageTotalsIncreased(current, previous) {
+		t.Fatalf("output token increase should count as increased usage")
 	}
 }
 
