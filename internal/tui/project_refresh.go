@@ -26,6 +26,7 @@ const tuiProjectSummaryLoadTimeout = 8 * time.Second
 const tuiProjectsReloadTimeout = 12 * time.Second
 const tuiProjectScanTimeout = 45 * time.Second
 const tuiOpenAgentTaskLimit = 50
+const embeddedSessionActivityRecordMinInterval = 5 * time.Second
 
 type projectsMsg struct {
 	projects                []model.ProjectSummary
@@ -61,9 +62,21 @@ type projectStatusRefreshedMsg struct {
 	err         error
 }
 
+type embeddedSessionActivityRecordedMsg struct {
+	key          string
+	projectPath  string
+	refreshAfter bool
+	err          error
+}
+
 type scanMsg struct {
 	report service.ScanReport
 	err    error
+}
+
+type embeddedSessionActivityRecordRequest struct {
+	activity     service.EmbeddedSessionActivity
+	refreshAfter bool
 }
 
 type projectInvalidationKind uint8
@@ -105,6 +118,18 @@ func (m *Model) ensureRefreshState() {
 	}
 	if m.summaryReloadQueued == nil {
 		m.summaryReloadQueued = make(map[string]bool)
+	}
+}
+
+func (m *Model) ensureEmbeddedActivityRecordState() {
+	if m.embeddedActivityInFlight == nil {
+		m.embeddedActivityInFlight = make(map[string]bool)
+	}
+	if m.embeddedActivityQueued == nil {
+		m.embeddedActivityQueued = make(map[string]embeddedSessionActivityRecordRequest)
+	}
+	if m.embeddedActivityWatermark == nil {
+		m.embeddedActivityWatermark = make(map[string]time.Time)
 	}
 }
 
@@ -259,7 +284,7 @@ func (m Model) refreshProjectStatusCmdWithOptions(path string, opts service.Scan
 	}
 }
 
-func (m Model) recordEmbeddedSessionActivityCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+func (m *Model) recordEmbeddedSessionActivityCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
 	if m.svc == nil {
 		return nil
 	}
@@ -267,7 +292,7 @@ func (m Model) recordEmbeddedSessionActivityCmd(projectPath string, snapshot cod
 	if !ok {
 		return nil
 	}
-	return m.recordEmbeddedSessionStateCmd(activity)
+	return m.requestEmbeddedSessionActivityRecordCmd(activity, false, true)
 }
 
 func (m Model) recordEmbeddedSessionSettledCmd(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
@@ -279,6 +304,81 @@ func (m Model) recordEmbeddedSessionSettledCmd(projectPath string, snapshot code
 		return nil
 	}
 	return m.recordEmbeddedSessionStateCmd(activity)
+}
+
+func (m *Model) requestEmbeddedSessionActivityRecordCmd(activity service.EmbeddedSessionActivity, refreshAfter, throttle bool) tea.Cmd {
+	if m.isAgentTaskProjectPath(activity.ProjectPath) {
+		return nil
+	}
+	key := embeddedSessionActivityRecordKey(activity)
+	if key == "" {
+		return nil
+	}
+	m.ensureEmbeddedActivityRecordState()
+	if throttle && m.embeddedActivityRecordThrottled(key, activity.LastActivityAt) {
+		return nil
+	}
+	m.rememberEmbeddedActivityRecordWatermark(key, activity.LastActivityAt)
+	req := embeddedSessionActivityRecordRequest{activity: activity, refreshAfter: refreshAfter}
+	if m.embeddedActivityInFlight[key] {
+		m.embeddedActivityQueued[key] = mergeEmbeddedSessionActivityRecordRequest(m.embeddedActivityQueued[key], req)
+		return nil
+	}
+	m.embeddedActivityInFlight[key] = true
+	delete(m.embeddedActivityQueued, key)
+	return m.recordEmbeddedSessionActivityRecordCmd(key, req)
+}
+
+func (m Model) embeddedActivityRecordThrottled(key string, at time.Time) bool {
+	if key == "" || at.IsZero() || len(m.embeddedActivityWatermark) == 0 {
+		return false
+	}
+	last := m.embeddedActivityWatermark[key]
+	if last.IsZero() {
+		return false
+	}
+	return at.Before(last.Add(embeddedSessionActivityRecordMinInterval))
+}
+
+func (m *Model) rememberEmbeddedActivityRecordWatermark(key string, at time.Time) {
+	if key == "" || at.IsZero() {
+		return
+	}
+	m.ensureEmbeddedActivityRecordState()
+	if current := m.embeddedActivityWatermark[key]; current.IsZero() || at.After(current) {
+		m.embeddedActivityWatermark[key] = at
+	}
+}
+
+func (m Model) recordEmbeddedSessionActivityRecordCmd(key string, req embeddedSessionActivityRecordRequest) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		err := m.svc.RecordEmbeddedSessionActivity(ctx, req.activity)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "recording embedded session activity")
+		return embeddedSessionActivityRecordedMsg{
+			key:          key,
+			projectPath:  req.activity.ProjectPath,
+			refreshAfter: req.refreshAfter,
+			err:          err,
+		}
+	}
+}
+
+func (m *Model) finishEmbeddedSessionActivityRecordCmd(msg embeddedSessionActivityRecordedMsg) tea.Cmd {
+	if msg.key == "" {
+		return nil
+	}
+	m.ensureEmbeddedActivityRecordState()
+	delete(m.embeddedActivityInFlight, msg.key)
+	if queued, ok := m.embeddedActivityQueued[msg.key]; ok {
+		delete(m.embeddedActivityQueued, msg.key)
+		return m.requestEmbeddedSessionActivityRecordCmd(queued.activity, queued.refreshAfter, false)
+	}
+	if msg.err == nil && msg.refreshAfter {
+		return m.refreshProjectStatusCmd(msg.projectPath)
+	}
+	return nil
 }
 
 func (m Model) recordEmbeddedSessionStateCmd(activity service.EmbeddedSessionActivity) tea.Cmd {
@@ -330,6 +430,37 @@ func (m Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, sna
 		}
 		return projectStatusRefreshedMsg{projectPath: activity.ProjectPath, err: errors.Join(errs...)}
 	}
+}
+
+func embeddedSessionActivityRecordKey(activity service.EmbeddedSessionActivity) string {
+	projectPath := normalizeProjectPath(activity.ProjectPath)
+	source := model.NormalizeSessionSource(activity.Source)
+	sessionID := strings.TrimSpace(activity.SessionID)
+	if projectPath == "" || sessionID == "" {
+		return ""
+	}
+	if format := strings.TrimSpace(activity.Format); format != "" {
+		normalizedSource, normalizedSessionID, _ := model.NormalizeSessionIdentity(source, format, sessionID, "")
+		source = normalizedSource
+		if normalizedSessionID != "" {
+			sessionID = normalizedSessionID
+		}
+	}
+	return projectPath + "\x00" + string(source) + "\x00" + sessionID
+}
+
+func mergeEmbeddedSessionActivityRecordRequest(existing, next embeddedSessionActivityRecordRequest) embeddedSessionActivityRecordRequest {
+	if strings.TrimSpace(existing.activity.ProjectPath) == "" {
+		return next
+	}
+	merged := existing
+	nextAt := next.activity.LastActivityAt
+	existingAt := existing.activity.LastActivityAt
+	if nextAt.After(existingAt) || (nextAt.Equal(existingAt) && next.activity.LatestTurnCompleted && !existing.activity.LatestTurnCompleted) {
+		merged.activity = next.activity
+	}
+	merged.refreshAfter = existing.refreshAfter || next.refreshAfter
+	return merged
 }
 
 func (m *Model) requestProjectRefreshCmd(req projectRefreshRequest) tea.Cmd {

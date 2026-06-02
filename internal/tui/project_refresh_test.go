@@ -141,6 +141,103 @@ func TestAgentTaskPathsDoNotUseProjectRefreshPipeline(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSessionActivityHeartbeatThrottlesAndCoalesces(t *testing.T) {
+	projectPath := "/tmp/demo"
+	now := time.Date(2026, 6, 2, 5, 52, 40, 0, time.UTC)
+	m := Model{svc: newControlTestService(t)}
+	snapshot := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		ThreadID:           "thread-demo",
+		Started:            true,
+		Busy:               true,
+		LastBusyActivityAt: now,
+		LastActivityAt:     now,
+	}
+
+	first := m.recordEmbeddedSessionActivityCmd(projectPath, snapshot)
+	if first == nil {
+		t.Fatal("first busy heartbeat should schedule persistence")
+	}
+	activity, ok := embeddedSessionActivityFromSnapshot(projectPath, snapshot)
+	if !ok {
+		t.Fatal("snapshot should produce activity")
+	}
+	key := embeddedSessionActivityRecordKey(activity)
+	if !m.embeddedActivityInFlight[key] {
+		t.Fatalf("in-flight activity keys = %#v, want %q", m.embeddedActivityInFlight, key)
+	}
+	if got := m.embeddedActivityWatermark[key]; !got.Equal(now) {
+		t.Fatalf("watermark = %v, want %v", got, now)
+	}
+
+	snapshot.LastBusyActivityAt = now.Add(time.Second)
+	snapshot.LastActivityAt = snapshot.LastBusyActivityAt
+	if cmd := m.recordEmbeddedSessionActivityCmd(projectPath, snapshot); cmd != nil {
+		t.Fatal("busy heartbeat inside persistence interval should be throttled")
+	}
+	if len(m.embeddedActivityQueued) != 0 {
+		t.Fatalf("queued activity = %#v, want none for throttled heartbeat", m.embeddedActivityQueued)
+	}
+
+	snapshot.LastBusyActivityAt = now.Add(embeddedSessionActivityRecordMinInterval)
+	snapshot.LastActivityAt = snapshot.LastBusyActivityAt
+	if cmd := m.recordEmbeddedSessionActivityCmd(projectPath, snapshot); cmd != nil {
+		t.Fatal("busy heartbeat should coalesce while previous persistence is in flight")
+	}
+	queued, ok := m.embeddedActivityQueued[key]
+	if !ok {
+		t.Fatalf("queued activity keys = %#v, want %q", m.embeddedActivityQueued, key)
+	}
+	if !queued.activity.LastActivityAt.Equal(snapshot.LastActivityAt) {
+		t.Fatalf("queued activity at = %v, want %v", queued.activity.LastActivityAt, snapshot.LastActivityAt)
+	}
+
+	next := m.finishEmbeddedSessionActivityRecordCmd(embeddedSessionActivityRecordedMsg{key: key, projectPath: projectPath})
+	if next == nil {
+		t.Fatal("finishing first heartbeat should start the coalesced heartbeat")
+	}
+	if !m.embeddedActivityInFlight[key] {
+		t.Fatal("coalesced heartbeat should be marked in flight")
+	}
+	if _, ok := m.embeddedActivityQueued[key]; ok {
+		t.Fatalf("queued activity should be consumed, got %#v", m.embeddedActivityQueued)
+	}
+}
+
+func TestEmbeddedSessionActivityAckDoesNotRefreshProjectData(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "demo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: projectPath,
+				Name: "demo",
+			},
+		},
+	}
+
+	updated, cmd := m.Update(embeddedSessionActivityRecordedMsg{
+		key:         "activity-key",
+		projectPath: projectPath,
+	})
+	got := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("successful heartbeat ack should not schedule its own project refresh")
+	}
+	if len(got.summaryReloadInFlight) != 0 {
+		t.Fatalf("summary reloads = %#v, want none", got.summaryReloadInFlight)
+	}
+	if len(got.detailReloadInFlight) != 0 {
+		t.Fatalf("detail reloads = %#v, want none", got.detailReloadInFlight)
+	}
+}
+
 func TestRunCommandSavedMsgRefreshesOnlyProjectData(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

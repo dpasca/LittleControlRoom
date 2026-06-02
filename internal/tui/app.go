@@ -209,6 +209,9 @@ type Model struct {
 	codexSnapshots              map[string]codexapp.Snapshot
 	embeddedProviderOverrides   map[string]codexapp.Provider
 	lastEmbeddedProvider        codexapp.Provider
+	embeddedActivityInFlight    map[string]bool
+	embeddedActivityQueued      map[string]embeddedSessionActivityRecordRequest
+	embeddedActivityWatermark   map[string]time.Time
 	codexTranscriptRev          map[string]uint64
 	codexVisibleProject         string
 	codexHiddenProject          string
@@ -621,6 +624,9 @@ func New(ctx context.Context, svc *service.Service) Model {
 		pendingGitOperations:       make(map[string]pendingGitOperation),
 		pendingGitSummaries:        make(map[string]string),
 		codexSnapshots:             make(map[string]codexapp.Snapshot),
+		embeddedActivityInFlight:   make(map[string]bool),
+		embeddedActivityQueued:     make(map[string]embeddedSessionActivityRecordRequest),
+		embeddedActivityWatermark:  make(map[string]time.Time),
 		codexTranscriptRev:         make(map[string]uint64),
 		codexTranscriptFullHistory: make(map[string]struct{}),
 		codexArtifactLinkScans:     make(map[string]codexArtifactLinkScanState),
@@ -1583,6 +1589,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.requestProjectInvalidationCmd(msg.refresh)
+	case embeddedSessionActivityRecordedMsg:
+		followUp := m.finishEmbeddedSessionActivityRecordCmd(msg)
+		if msg.err != nil {
+			m.reportError("Embedded session activity update failed", msg.err, msg.projectPath)
+			return m, followUp
+		}
+		return m, followUp
 	case projectStatusRefreshedMsg:
 		if worktreeMergeConfirmTracksPath(m.worktreeMergeConfirm, msg.projectPath) {
 			if msg.err != nil {
