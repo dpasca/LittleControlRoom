@@ -140,10 +140,7 @@ func (m *Model) moveEmbeddedSidebarSelection(delta int) {
 }
 
 func (m Model) updateCodexSidebarMode(snapshot codexapp.Snapshot, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
-	if projectPath == "" {
-		projectPath = strings.TrimSpace(m.codexHiddenProject)
-	}
+	projectPath := m.embeddedSidebarProjectPath(snapshot)
 	switch msg.String() {
 	case "alt+s":
 		cmd := m.focusEmbeddedCodexMain("")
@@ -246,7 +243,10 @@ func (m *Model) requestEmbeddedSidebarDiffRefreshCmd(projectPath string) tea.Cmd
 	current.Err = ""
 	m.embeddedSidebarDiffs[projectPath] = current
 	return func() tea.Msg {
-		preview, err := m.svc.PrepareDiff(m.ctx, projectPath)
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		preview, err := m.svc.PrepareDiff(ctx, projectPath)
+		err = timeoutActionError(err, tuiGitActionTimeout, "preparing the sidebar diff summary")
 		if err != nil {
 			var noDiffErr service.NoDiffChangesError
 			if errors.As(err, &noDiffErr) {
@@ -297,6 +297,47 @@ func (m Model) applyEmbeddedSidebarDiffPreviewMsg(msg embeddedSidebarDiffPreview
 	return m, nil
 }
 
+func (m *Model) rememberEmbeddedSidebarDiffPreview(preview service.DiffPreview) {
+	projectPath := normalizeProjectPath(preview.ProjectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.embeddedSidebarDiffs == nil {
+		m.embeddedSidebarDiffs = make(map[string]embeddedSidebarDiffState)
+	}
+	current := m.embeddedSidebarDiffs[projectPath]
+	preview.ProjectPath = projectPath
+	current.ProjectPath = projectPath
+	current.Loading = false
+	current.Preview = &preview
+	current.Clean = false
+	current.Branch = strings.TrimSpace(preview.Branch)
+	current.ProjectName = strings.TrimSpace(preview.ProjectName)
+	current.Err = ""
+	current.UpdatedAt = m.currentTime()
+	m.embeddedSidebarDiffs[projectPath] = current
+}
+
+func (m *Model) rememberEmbeddedSidebarCleanDiff(projectPath, projectName, branch string) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.embeddedSidebarDiffs == nil {
+		m.embeddedSidebarDiffs = make(map[string]embeddedSidebarDiffState)
+	}
+	current := m.embeddedSidebarDiffs[projectPath]
+	current.ProjectPath = projectPath
+	current.Loading = false
+	current.Preview = nil
+	current.Clean = true
+	current.Branch = strings.TrimSpace(branch)
+	current.ProjectName = strings.TrimSpace(projectName)
+	current.Err = ""
+	current.UpdatedAt = m.currentTime()
+	m.embeddedSidebarDiffs[projectPath] = current
+}
+
 func (m Model) renderCodexSplitView(snapshot codexapp.Snapshot, width, height int) string {
 	sidebarWidth := codexSidebarTargetWidth(width)
 	if sidebarWidth == 0 {
@@ -325,7 +366,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	if width <= 0 || height <= 0 {
 		return ""
 	}
-	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject, m.codexHiddenProject))
+	projectPath := m.embeddedSidebarProjectPath(snapshot)
 	contentWidth := max(12, width-2)
 	lines := []string{}
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSessionSection(snapshot, contentWidth))
@@ -334,6 +375,10 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarRecentActivitySection(snapshot, contentWidth))
 	return lipgloss.NewStyle().PaddingLeft(1).Render(fitPaneContent(strings.Join(lines, "\n"), contentWidth, height))
+}
+
+func (m Model) embeddedSidebarProjectPath(snapshot codexapp.Snapshot) string {
+	return normalizeProjectPath(firstNonEmptyString(m.codexVisibleProject, snapshot.ProjectPath, m.codexHiddenProject))
 }
 
 func appendEmbeddedSidebarSection(lines, section []string) []string {

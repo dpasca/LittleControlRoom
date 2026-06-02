@@ -1705,6 +1705,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var noDiffErr service.NoDiffChangesError
 			if errors.As(msg.err, &noDiffErr) {
 				m.err = nil
+				m.rememberEmbeddedSidebarCleanDiff(noDiffErr.ProjectPath, noDiffErr.ProjectName, noDiffErr.Branch)
 				m.diffView.preview = &service.DiffPreview{
 					ProjectPath: noDiffErr.ProjectPath,
 					ProjectName: noDiffErr.ProjectName,
@@ -1722,6 +1723,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		m.rememberEmbeddedSidebarDiffPreview(msg.preview)
 		m.diffView.preview = &msg.preview
 		m.diffView.selected = 0
 		m.diffView.offset = 0
@@ -1738,6 +1740,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var noDiffErr service.NoDiffChangesError
 			if errors.As(msg.err, &noDiffErr) {
 				m.err = nil
+				m.rememberEmbeddedSidebarCleanDiff(noDiffErr.ProjectPath, noDiffErr.ProjectName, noDiffErr.Branch)
 				m.diffView.preview = &service.DiffPreview{
 					ProjectPath: noDiffErr.ProjectPath,
 					ProjectName: noDiffErr.ProjectName,
@@ -1754,6 +1757,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
+		m.rememberEmbeddedSidebarDiffPreview(msg.preview)
 		m.diffView.preview = &msg.preview
 		m.diffView.selected = diffPreviewStagedSelectionIndex(msg.preview.Files, msg.path, msg.originalPath, m.diffView.selected, msg.selectStaged)
 		m.diffView.resetRenderCache()

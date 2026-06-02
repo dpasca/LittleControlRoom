@@ -321,7 +321,11 @@ func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Sna
 			linkScanCmd = m.maybeStartCodexArtifactLinkScan(projectPath, cached)
 		}
 	}
-	return batchCmds(m.markProjectSessionSeen(projectPath), asyncCmd, linkScanCmd)
+	sidebarCmd := tea.Cmd(nil)
+	if reveal {
+		sidebarCmd = m.refreshEmbeddedSidebarCmd(projectPath)
+	}
+	return batchCmds(m.markProjectSessionSeen(projectPath), asyncCmd, linkScanCmd, sidebarCmd)
 }
 
 func (m *Model) pruneCodexSessionVisibility() {

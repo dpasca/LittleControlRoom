@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
+	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 	"lcroom/internal/scanner"
@@ -120,6 +122,24 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarDiffUsesVisibleProjectWhenSnapshotPathDiffers(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	snapshotPath := "/tmp/lcr-sidebar-demo-from-snapshot"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.allProjects = []model.ProjectSummary{
+		{Name: "demo", Path: projectPath, RepoDirty: true, PresentOnDisk: true},
+		{Name: "snapshot-demo", Path: snapshotPath, RepoDirty: true, PresentOnDisk: true},
+	}
+
+	rendered := ansi.Strip(m.renderEmbeddedCodexSidebar(testEmbeddedSidebarSnapshot(snapshotPath), 46, 28))
+	if !strings.Contains(rendered, "2 files changed") {
+		t.Fatalf("sidebar should use the visible project's cached diff, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Dirty worktree") {
+		t.Fatalf("sidebar should not fall back to the snapshot path dirty label, got:\n%s", rendered)
+	}
+}
+
 func TestEmbeddedSidebarOmitsOptionalSectionsWithoutState(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
@@ -194,6 +214,26 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndActivity(t *testing.T) 
 	}
 	if strings.Contains(rendered, "Please make the sidebar useful") || strings.Contains(rendered, "Ready to work") {
 		t.Fatalf("recent activity should skip user and agent chatter:\n%s", rendered)
+	}
+}
+
+func TestFinishCodexPendingOpenRefreshesSidebarDiffWhenRevealed(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.ctx = context.Background()
+	m.svc = &service.Service{}
+	delete(m.embeddedSidebarDiffs, projectPath)
+
+	cmd := m.finishCodexPendingOpen(projectPath, testEmbeddedSidebarSnapshot(projectPath), true, true)
+	if cmd == nil {
+		t.Fatalf("finishCodexPendingOpen should return a refresh command when revealing the session")
+	}
+	state, ok := m.embeddedSidebarDiffState(projectPath)
+	if !ok {
+		t.Fatalf("sidebar diff state was not initialized")
+	}
+	if !state.Loading {
+		t.Fatalf("sidebar diff state should be loading after revealed pending open: %#v", state)
 	}
 }
 
