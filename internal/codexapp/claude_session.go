@@ -211,6 +211,14 @@ func (s *claudeCodeSession) StateSnapshot() Snapshot {
 	return s.stateSnapshotLocked()
 }
 
+func (s *claudeCodeSession) TryStateSnapshot() (Snapshot, bool) {
+	if !s.mu.TryLock() {
+		return Snapshot{}, false
+	}
+	defer s.mu.Unlock()
+	return s.stateSnapshotLocked(), true
+}
+
 func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 	return Snapshot{
 		Provider:           ProviderClaudeCode,

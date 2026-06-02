@@ -629,6 +629,10 @@ func (s *screenshotCodexSession) StateSnapshot() codexapp.Snapshot {
 	return s.Snapshot()
 }
 
+func (s *screenshotCodexSession) TryStateSnapshot() (codexapp.Snapshot, bool) {
+	return s.StateSnapshot(), true
+}
+
 func (s *screenshotCodexSession) TrySnapshot() (codexapp.Snapshot, bool) {
 	return s.Snapshot(), true
 }

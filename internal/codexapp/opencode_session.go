@@ -338,6 +338,14 @@ func (s *openCodeSession) StateSnapshot() Snapshot {
 	return s.stateSnapshotLocked()
 }
 
+func (s *openCodeSession) TryStateSnapshot() (Snapshot, bool) {
+	if !s.mu.TryLock() {
+		return Snapshot{}, false
+	}
+	defer s.mu.Unlock()
+	return s.stateSnapshotLocked(), true
+}
+
 func (s *openCodeSession) stateSnapshotLocked() Snapshot {
 	return Snapshot{
 		Provider:                 ProviderOpenCode,

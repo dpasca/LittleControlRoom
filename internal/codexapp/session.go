@@ -651,6 +651,15 @@ func (s *appServerSession) StateSnapshot() Snapshot {
 	return s.stateSnapshotLocked()
 }
 
+func (s *appServerSession) TryStateSnapshot() (Snapshot, bool) {
+	if !s.mu.TryLock() {
+		return Snapshot{}, false
+	}
+	defer s.mu.Unlock()
+	s.promoteHardStalledBusyLocked(time.Now())
+	return s.stateSnapshotLocked(), true
+}
+
 func (s *appServerSession) stateSnapshotLocked() Snapshot {
 	tokenUsage := exportedTokenUsageSnapshot(s.tokenUsage)
 	usageWindows := exportedUsageWindowsSnapshot(s.rateLimits, s.rateLimitsByID)
