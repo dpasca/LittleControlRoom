@@ -396,18 +396,18 @@ func (m Model) setupAdvanceSectionDialog() (tea.Model, tea.Cmd) {
 		if m.setupStepNeedsConfig(setupStepProjectConfig) {
 			return m.enterSetupStep(setupStepProjectConfig, "Project reports details. Press Enter to return to setup sections.")
 		}
-		return m.closeSetupSectionDialog("Project reports setup updated.")
+		return m.closeSetupSectionDialog("Project reports setup updated in this draft. Open Save to write config.")
 	case setupStepProjectConfig:
-		return m.closeSetupSectionDialog("Project reports setup updated.")
+		return m.closeSetupSectionDialog("Project reports setup updated in this draft. Open Save to write config.")
 	case setupStepBossProvider:
 		if m.setupStepNeedsConfig(setupStepBossConfig) {
 			return m.enterSetupStep(setupStepBossConfig, "Boss chat details. Press Enter to return to setup sections.")
 		}
-		return m.closeSetupSectionDialog("Boss chat setup updated.")
+		return m.closeSetupSectionDialog("Boss chat setup updated in this draft. Open Save to write config.")
 	case setupStepBossConfig:
-		return m.closeSetupSectionDialog("Boss chat setup updated.")
+		return m.closeSetupSectionDialog("Boss chat setup updated in this draft. Open Save to write config.")
 	case setupStepLCAgentConfig:
-		return m.closeSetupSectionDialog("LCAgent setup updated.")
+		return m.closeSetupSectionDialog("LCAgent setup updated in this draft. Open Save to write config.")
 	case setupStepSave:
 		return m.saveSetupFromCurrentChoices()
 	default:

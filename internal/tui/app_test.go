@@ -23828,6 +23828,8 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 	t.Setenv("HOME", home)
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendCodex
+	settings.LCAgentProvider = "xiaomi"
+	xiaomiBaseURL := "https://token-plan-sgp.xiaomimimo.com/v1"
 
 	m := Model{
 		setupMode:           true,
@@ -23853,6 +23855,7 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 	if got.setupSaving {
 		t.Fatalf("setup config fields should not save until save confirmation")
 	}
+	got.settingsFields[settingsFieldXiaomiBaseURL].input.SetValue(xiaomiBaseURL)
 
 	updated, cmd = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyCtrlS})
 	got = updated.(Model)
@@ -23884,6 +23887,16 @@ func TestSetupDetailsPageSaveStepUsesEditedFields(t *testing.T) {
 	}
 	if saved.settings.BossChatBackend != config.AIBackendOpenAIAPI {
 		t.Fatalf("saved boss backend = %s, want openai_api", saved.settings.BossChatBackend)
+	}
+	if saved.settings.XiaomiBaseURL != xiaomiBaseURL {
+		t.Fatalf("saved Xiaomi base URL = %q, want %q", saved.settings.XiaomiBaseURL, xiaomiBaseURL)
+	}
+	rawConfig, err := os.ReadFile(saved.path)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	if !strings.Contains(string(rawConfig), `xiaomi_base_url = "`+xiaomiBaseURL+`"`) {
+		t.Fatalf("saved config missing Xiaomi base URL: %s", rawConfig)
 	}
 }
 
