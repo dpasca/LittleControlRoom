@@ -5141,7 +5141,16 @@ func projectRemovalName(project model.ProjectSummary) string {
 
 func (m Model) removeProjectCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.svc.ForgetProject(m.ctx, path)
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		removeCtx, cancel := context.WithTimeout(ctx, tuiProjectRemoveTimeout)
+		defer cancel()
+		err := m.svc.ForgetProject(removeCtx, path)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("timed out after %s while removing stale project", tuiProjectRemoveTimeout.Round(time.Millisecond))
+		}
 		return projectRemoveActionMsg{projectPath: path, status: "Removed from list", err: err}
 	}
 }
@@ -5158,7 +5167,16 @@ func (m Model) ignoreProjectCmd(project model.ProjectSummary) tea.Cmd {
 func (m Model) removeProjectFromListCmd(project model.ProjectSummary) tea.Cmd {
 	name := projectRemovalName(project)
 	return func() tea.Msg {
-		err := m.svc.Store().SetIgnoredProjectPath(m.ctx, project.Path, true)
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		removeCtx, cancel := context.WithTimeout(ctx, tuiProjectRemoveTimeout)
+		defer cancel()
+		err := m.svc.Store().SetIgnoredProjectPath(removeCtx, project.Path, true)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("timed out after %s while removing %q from the list", tuiProjectRemoveTimeout.Round(time.Millisecond), name)
+		}
 		status := fmt.Sprintf("Removed %q from list", name)
 		return projectRemoveActionMsg{projectPath: project.Path, status: status, err: err}
 	}

@@ -26710,6 +26710,9 @@ func TestDispatchRemoveCommandStoresIgnoredPathAndHidesOnlySelectedProject(t *te
 	if cmd == nil {
 		t.Fatalf("project removal confirmation should return a removal command")
 	}
+	if got.projectRemoveConfirm != nil {
+		t.Fatalf("project removal confirmation should close while the background action runs")
+	}
 
 	rawMsg := cmd()
 	afterAction, reloadCmd := got.Update(rawMsg)
@@ -26822,6 +26825,9 @@ func TestDispatchRemoveCommandForMissingProjectMarksItForgotten(t *testing.T) {
 	got = updated.(Model)
 	if cmd == nil {
 		t.Fatalf("project removal confirmation should return a removal command")
+	}
+	if got.projectRemoveConfirm != nil {
+		t.Fatalf("missing-project removal confirmation should close while the background action runs")
 	}
 
 	rawMsg := cmd()

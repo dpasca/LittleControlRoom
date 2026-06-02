@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -37,6 +39,7 @@ const (
 	worktreeCommitMergePendingSummary = "Committing and merging worktree back..."
 	worktreeRemovePendingSummary      = "Removing worktree..."
 	worktreePostMergeRemoveSummary    = "Removing merged worktree..."
+	tuiWorktreeRemoveTimeout          = 20 * time.Second
 )
 
 type projectListRow struct {
@@ -1458,7 +1461,7 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			}
 		}
 		if confirm.RemoveNow {
-			if err := m.svc.RemoveWorktree(m.ctx, projectPath, false); err != nil {
+			if err := m.removeWorktreeWithTimeout(projectPath, false); err != nil {
 				status = appendWorktreeStatusClause(status, "Could not remove the merged worktree: "+err.Error())
 			} else {
 				status = appendWorktreeStatusClause(status, "Worktree removed.")
@@ -1591,7 +1594,7 @@ func (m Model) completeWorktreePostMergeTodoCmd(todoProjectPath string, todoID i
 			status = "Linked TODO marked done"
 		}
 		if removeAfter {
-			if err := m.svc.RemoveWorktree(m.ctx, worktreePath, false); err != nil {
+			if err := m.removeWorktreeWithTimeout(worktreePath, false); err != nil {
 				return worktreeActionMsg{
 					projectPath:            worktreePath,
 					clearPendingGitSummary: true,
@@ -1714,7 +1717,7 @@ func (m Model) removeWorktreeCmd(projectPath, rootPath string, force bool) tea.C
 		}
 	}
 	return func() tea.Msg {
-		err := m.svc.RemoveWorktree(m.ctx, projectPath, force)
+		err := m.removeWorktreeWithTimeout(projectPath, force)
 		return worktreeActionMsg{
 			projectPath:            projectPath,
 			removedProjectPath:     removedWorktreePath(err == nil, projectPath),
@@ -1724,6 +1727,23 @@ func (m Model) removeWorktreeCmd(projectPath, rootPath string, force bool) tea.C
 			err:                    err,
 		}
 	}
+}
+
+func (m Model) removeWorktreeWithTimeout(projectPath string, force bool) error {
+	if m.svc == nil {
+		return fmt.Errorf("service unavailable")
+	}
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	removeCtx, cancel := context.WithTimeout(ctx, tuiWorktreeRemoveTimeout)
+	defer cancel()
+	err := m.svc.RemoveWorktree(removeCtx, projectPath, force)
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("timed out after %s while removing worktree; another git or worktree operation may still be running", tuiWorktreeRemoveTimeout.Round(time.Millisecond))
+	}
+	return err
 }
 
 func removedWorktreePath(removed bool, projectPath string) string {

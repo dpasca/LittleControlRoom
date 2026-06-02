@@ -290,6 +290,25 @@ func (s *Service) lockProjectStateMutation(projectPath string) func() {
 	return s.projectStateLocks.Lock(projectPath)
 }
 
+func (s *Service) lockMutation(ctx context.Context) (func(), error) {
+	if s == nil {
+		return func() {}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for {
+		if s.mu.TryLock() {
+			return s.mu.Unlock, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for service mutation lock: %w", ctx.Err())
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
 func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

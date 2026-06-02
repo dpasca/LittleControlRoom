@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"time"
 
 	"lcroom/internal/model"
 
@@ -13,6 +14,8 @@ const (
 	projectRemoveConfirmFocusRemove = iota
 	projectRemoveConfirmFocusKeep
 )
+
+const tuiProjectRemoveTimeout = 8 * time.Second
 
 type projectRemoveConfirmState struct {
 	ProjectPath   string
@@ -80,12 +83,12 @@ func (m Model) updateProjectRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			m.closeProjectRemoveConfirm("Project removal canceled")
 			return m, nil
 		}
-		confirm.Submitting = true
 		project := model.ProjectSummary{
 			Path:          confirm.ProjectPath,
 			Name:          confirm.ProjectName,
 			PresentOnDisk: confirm.PresentOnDisk,
 		}
+		m.projectRemoveConfirm = nil
 		if confirm.PresentOnDisk {
 			m.status = "Removing project from list..."
 			return m, m.removeProjectFromListCmd(project)

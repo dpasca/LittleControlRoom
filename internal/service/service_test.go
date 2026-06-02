@@ -4950,6 +4950,28 @@ func TestRemoveWorktreeWaitsForScanAndStaysForgotten(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeHonorsContextWhileWaitingForMutationLock(t *testing.T) {
+	t.Parallel()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	err = svc.RemoveWorktree(ctx, filepath.Join(t.TempDir(), "repo--blocked"), false)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RemoveWorktree() error = %v, want context deadline exceeded", err)
+	}
+}
+
 func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	t.Parallel()
 

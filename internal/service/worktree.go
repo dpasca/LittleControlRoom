@@ -711,8 +711,11 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	if s == nil || s.store == nil {
 		return fmt.Errorf("service unavailable")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	unlockMutation, err := s.lockMutation(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlockMutation()
 
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" {
