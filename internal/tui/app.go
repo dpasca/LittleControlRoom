@@ -222,6 +222,7 @@ type Model struct {
 	codexSidebarSelected        embeddedCodexSidebarSection
 	embeddedSidebarDiffs        map[string]embeddedSidebarDiffState
 	embeddedSidebarDiffSeq      int64
+	embeddedSidebarDiffAutoAt   map[string]time.Time
 	pendingGitOperations        map[string]pendingGitOperation
 	codexPasteTokenSeq          int
 	codexClosedHandled          map[string]struct{}
@@ -618,6 +619,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		codexInput:                 codexInput,
 		codexPanelFocus:            embeddedCodexFocusMain,
 		embeddedSidebarDiffs:       make(map[string]embeddedSidebarDiffState),
+		embeddedSidebarDiffAutoAt:  make(map[string]time.Time),
 		dismissedSuspendedTurns:    make(map[string]struct{}),
 		codexDrafts:                make(map[string]codexDraft),
 		codexClosedHandled:         make(map[string]struct{}),
@@ -2330,7 +2332,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.spinnerFrame%cpuSnapshotRefreshEveryTicks == 0 {
 			cpuSnapshotCmd = m.requestCPUSnapshotRefreshCmd()
 		}
-		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd)
+		sidebarDiffCmd := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd()
+		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, sidebarDiffCmd)
 	case codexUpdateMsg:
 		return m.applyCodexUpdateMsg(msg)
 	case codexDeferredSnapshotMsg:

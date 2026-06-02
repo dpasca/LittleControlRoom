@@ -39,6 +39,7 @@ const (
 const (
 	embeddedCodexSidebarSectionCount = 2
 	embeddedSidebarRecentLimit       = 3
+	embeddedSidebarDiffAutoInterval  = 2 * time.Second
 )
 
 type embeddedSidebarDiffState struct {
@@ -221,6 +222,49 @@ func (m *Model) refreshEmbeddedSidebarCmd(projectPath string) tea.Cmd {
 		m.requestRuntimeSnapshotsRefreshCmd(),
 		m.requestProcessScanCmd(projectPath),
 	)
+}
+
+func (m *Model) requestVisibleBusyEmbeddedSidebarDiffRefreshCmd() tea.Cmd {
+	projectPath := normalizeProjectPath(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	snapshot, ok := m.codexCachedSnapshot(projectPath)
+	if !ok || snapshot.Closed || !snapshot.Busy {
+		return nil
+	}
+	return m.requestVisibleEmbeddedSidebarDiffRefreshCmd(projectPath, false)
+}
+
+func (m *Model) requestVisibleEmbeddedSidebarDiffRefreshCmd(projectPath string, force bool) tea.Cmd {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" || projectPath != normalizeProjectPath(m.codexVisibleProject) {
+		return nil
+	}
+	if !m.embeddedCodexSidebarAvailable() {
+		return nil
+	}
+	if state, ok := m.embeddedSidebarDiffState(projectPath); ok && state.Loading {
+		return nil
+	}
+	now := m.currentTime()
+	if !force {
+		if m.embeddedSidebarDiffAutoAt == nil {
+			m.embeddedSidebarDiffAutoAt = make(map[string]time.Time)
+		}
+		if last := m.embeddedSidebarDiffAutoAt[projectPath]; !last.IsZero() && now.Before(last.Add(embeddedSidebarDiffAutoInterval)) {
+			return nil
+		}
+	}
+	cmd := m.requestEmbeddedSidebarDiffRefreshCmd(projectPath)
+	if cmd == nil {
+		return nil
+	}
+	if m.embeddedSidebarDiffAutoAt == nil {
+		m.embeddedSidebarDiffAutoAt = make(map[string]time.Time)
+	}
+	m.embeddedSidebarDiffAutoAt[projectPath] = now
+	return cmd
 }
 
 func (m *Model) requestEmbeddedSidebarDiffRefreshCmd(projectPath string) tea.Cmd {
@@ -631,7 +675,7 @@ func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) [
 	state, ok := m.embeddedSidebarDiffState(projectPath)
 	project, _ := m.projectSummaryByPathAllProjects(projectPath)
 	switch {
-	case ok && state.Loading:
+	case ok && state.Loading && state.Preview == nil && !state.Clean:
 		lines = append(lines, detailMutedStyle.Render(fitLine("Preparing diff summary...", width)))
 	case ok && strings.TrimSpace(state.Err) != "":
 		lines = append(lines, detailDangerStyle.Render(fitLine("Diff unavailable", width)))
