@@ -36,6 +36,7 @@ type Snapshot struct {
 	ID            string
 	Name          string
 	Default       bool
+	External      bool
 	ProjectPath   string
 	Command       string
 	CWD           string

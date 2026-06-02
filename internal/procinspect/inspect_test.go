@@ -103,6 +103,46 @@ func TestClassifyProcessIgnoresQuietOrphanWithoutPorts(t *testing.T) {
 	}
 }
 
+func TestProjectInstanceFromProcessDetectsProjectLocalListener(t *testing.T) {
+	process := Process{
+		PID:     4017,
+		PPID:    700,
+		PGID:    700,
+		CWD:     "/Users/davide/dev/repos/portfolio",
+		Command: "vite --host 127.0.0.1",
+		Ports:   []int{4017},
+	}
+
+	instance, ok := projectInstanceFromProcess(process, "/Users/davide/dev/repos/portfolio", map[int]int{4017: 700, 700: 42}, 42, nil, nil)
+
+	if !ok {
+		t.Fatalf("projectInstanceFromProcess() ok = false, want true")
+	}
+	if instance.ProjectPath != "/Users/davide/dev/repos/portfolio" {
+		t.Fatalf("ProjectPath = %q, want portfolio path", instance.ProjectPath)
+	}
+	if !instance.OwnedByCurrentApp {
+		t.Fatalf("OwnedByCurrentApp = false, want true for descendant process")
+	}
+	if len(instance.Ports) != 1 || instance.Ports[0] != 4017 {
+		t.Fatalf("Ports = %v, want [4017]", instance.Ports)
+	}
+}
+
+func TestProjectInstanceFromProcessSkipsManagedRuntime(t *testing.T) {
+	process := Process{
+		PID:   4017,
+		PPID:  700,
+		PGID:  700,
+		CWD:   "/Users/davide/dev/repos/portfolio",
+		Ports: []int{4017},
+	}
+
+	if _, ok := projectInstanceFromProcess(process, "/Users/davide/dev/repos/portfolio", map[int]int{4017: 700}, 999, nil, map[int]struct{}{700: {}}); ok {
+		t.Fatalf("projectInstanceFromProcess() ok = true, want false for managed process group")
+	}
+}
+
 func TestAppendExpectedPortFindingsFlagsExternalOwner(t *testing.T) {
 	target := "/Users/davide/dev/repos/FraactalMech"
 	owner := "/Users/davide/dev/repos/OtherApp"

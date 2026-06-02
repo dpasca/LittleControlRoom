@@ -3906,6 +3906,10 @@ func (m Model) renderProjectList(width, height int) string {
 		}
 		todoCount := projectTODOCountLabel(p.OpenTODOCount)
 		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)
+		if localRunLabel, ok := m.projectLocalInstanceRunSummary(p.Path); ok && runState == projectRunIdle {
+			runLabel = localRunLabel
+			runState = projectRunActive
+		}
 		if processFlag := m.projectProcessRunFlag(p.Path); processFlag != "" {
 			if runLabel == "" {
 				runLabel = processFlag
@@ -4068,6 +4072,9 @@ func (m Model) renderDetailContent(width int) string {
 	}
 	if summary := m.projectProcessWarningSummary(p.Path); summary != "" {
 		lines = append(lines, renderWrappedDetailField("Processes", detailWarningStyle, width, summary))
+	}
+	if summary := m.projectLocalInstanceSummary(p.Path); summary != "" {
+		lines = append(lines, renderWrappedDetailField("Local instance", detailValueStyle, width, summary))
 	}
 	if projectMissing(p) {
 		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
@@ -6091,6 +6098,15 @@ func projectRunSummary(snapshot projectrun.Snapshot, savedCommand string) (strin
 		return label, projectRunIdle
 	}
 	return "", projectRunIdle
+}
+
+func (m Model) projectLocalInstanceRunSummary(projectPath string) (string, bool) {
+	snapshot, ok := m.projectPrimaryLocalInstanceSnapshot(projectPath)
+	if !ok {
+		return "", false
+	}
+	label, state := projectRunSummary(snapshot, "")
+	return label, state == projectRunActive && strings.TrimSpace(label) != ""
 }
 
 func projectRunPortSummary(snapshot projectrun.Snapshot) string {

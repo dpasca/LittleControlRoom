@@ -620,6 +620,12 @@ func (m Model) embeddedSidebarProcessRows(projectPath string, width, limit int) 
 		}
 		rows = append(rows, m.embeddedSidebarRuntimeRow(snapshot, width))
 	}
+	for _, snapshot := range m.projectVisibleLocalInstanceSnapshots(projectPath) {
+		if len(rows) >= limit {
+			break
+		}
+		rows = append(rows, embeddedSidebarLocalInstanceRow(snapshot, width))
+	}
 	if report, ok := m.projectProcessReport(projectPath); ok {
 		for _, finding := range report.Findings {
 			if len(rows) >= limit {
@@ -653,6 +659,28 @@ func (m Model) embeddedSidebarRuntimeRow(snapshot projectrun.Snapshot, width int
 		label += " :" + joinPorts(snapshot.Ports)
 	}
 	return fitStyledWidth(style.Render(status)+" "+detailMutedStyle.Render(truncateText(label, max(1, width-5))), width)
+}
+
+func embeddedSidebarLocalInstanceRow(snapshot projectrun.Snapshot, width int) string {
+	label := localInstanceDisplayLabel(snapshot)
+	if len(snapshot.AnnouncedURLs) > 0 {
+		url := runtimeURLSummary(snapshot)
+		label += " " + url
+	} else if len(snapshot.Ports) > 0 {
+		label += " :" + joinPorts(snapshot.Ports)
+	}
+	return fitStyledWidth(detailValueStyle.Render("live")+" "+detailMutedStyle.Render(truncateText(label, max(1, width-6))), width)
+}
+
+func localInstanceDisplayLabel(snapshot projectrun.Snapshot) string {
+	label := projectRunCommandLabel(snapshot.Command)
+	if label == "" {
+		label = "pid"
+	}
+	if snapshot.PID > 0 {
+		label += fmt.Sprintf(" pid %d", snapshot.PID)
+	}
+	return strings.TrimSpace(label)
 }
 
 func embeddedSidebarFindingRow(finding procinspect.Finding, width int) string {

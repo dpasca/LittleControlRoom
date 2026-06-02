@@ -1826,7 +1826,7 @@ func (m Model) projectRuntimeContextLines(project model.ProjectSummary) []string
 	if projectPath == "" || projectPath == "." {
 		return nil
 	}
-	snapshot := m.projectRuntimeSnapshot(projectPath)
+	snapshot := m.projectRuntimeContextSnapshot(projectPath)
 	if !runtimeDetailAvailable(project.RunCommand, snapshot) {
 		return nil
 	}
@@ -1847,10 +1847,18 @@ func (m Model) projectRuntimeContextLines(project model.ProjectSummary) []string
 		lines = append(lines, "- "+prefix+"detected listening ports: "+joinPorts(context.Ports))
 	}
 	if command := strings.TrimSpace(context.Command); command != "" {
-		lines = append(lines, "- "+prefix+"managed runtime command: "+command)
+		commandLabel := "managed runtime command"
+		if snapshot.External {
+			commandLabel = "local instance command"
+		}
+		lines = append(lines, "- "+prefix+commandLabel+": "+command)
 	}
 	if status := strings.TrimSpace(context.Status); status != "" {
-		lines = append(lines, "- "+prefix+"managed runtime status: "+status)
+		statusLabel := "managed runtime status"
+		if snapshot.External {
+			statusLabel = "local instance status"
+		}
+		lines = append(lines, "- "+prefix+statusLabel+": "+status)
 	}
 	return lines
 }
