@@ -25534,7 +25534,7 @@ func TestSettingsLCAgentPresetHidesOverriddenMainModelFields(t *testing.T) {
 	got := updated.(Model)
 
 	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
-	for _, want := range []string{"LCAgent route preset", "Xiaomi API key"} {
+	for _, want := range []string{"LCAgent route preset", "Xiaomi base URL", "Xiaomi API key"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("LCAgent preset setup panel missing %q: %q", want, rendered)
 		}
@@ -25542,6 +25542,55 @@ func TestSettingsLCAgentPresetHidesOverriddenMainModelFields(t *testing.T) {
 	for _, hidden := range []string{"Main model provider", "Main model", "Main reasoning"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("LCAgent preset setup panel should hide overridden field %q: %q", hidden, rendered)
+		}
+	}
+}
+
+func TestLCAgentXiaomiSetupShowsBaseURLWhenProjectReportsUseDifferentBackend(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendDeepSeek
+	settings.LCAgentProvider = "xiaomi"
+
+	setupModel := Model{
+		setupMode:        true,
+		setupConfigMode:  true,
+		setupStep:        setupStepLCAgentConfig,
+		setupFocusedRole: setupRoleLCAgent,
+		settingsBaseline: &settings,
+		settingsFields:   newSettingsFields(settings),
+		width:            120,
+		height:           30,
+	}
+	setupFields := setupModel.setupConfigFieldIndexes()
+	if !slices.Contains(setupFields, settingsFieldXiaomiBaseURL) || !slices.Contains(setupFields, settingsFieldXiaomiAPIKey) {
+		t.Fatalf("LCAgent Xiaomi setup fields should include base URL and API key, got %#v", setupFields)
+	}
+	setupRendered := ansi.Strip(setupModel.renderSetupConfigContent(110))
+	for _, want := range []string{"Xiaomi base URL", "Xiaomi API key"} {
+		if !strings.Contains(setupRendered, want) {
+			t.Fatalf("LCAgent Xiaomi setup missing %q: %q", want, setupRendered)
+		}
+	}
+	if strings.Contains(setupRendered, "Xiaomi project model") {
+		t.Fatalf("LCAgent Xiaomi setup should not expose the project-report Xiaomi model: %q", setupRendered)
+	}
+
+	settingsModel := Model{
+		settingsMode:      true,
+		settingsBaseline:  &settings,
+		settingsFields:    newSettingsFields(settings),
+		settingsDrilldown: settingsDrilldownLCAgent,
+		width:             120,
+		height:            30,
+	}
+	settingsFields := settingsModel.visibleSettingsDrilldownFieldOrder(settingsDrilldownLCAgent)
+	if !slices.Contains(settingsFields, settingsFieldXiaomiBaseURL) || !slices.Contains(settingsFields, settingsFieldXiaomiAPIKey) {
+		t.Fatalf("LCAgent Xiaomi settings fields should include base URL and API key, got %#v", settingsFields)
+	}
+	settingsRendered := ansi.Strip(settingsModel.renderSettingsContent(100, 24))
+	for _, want := range []string{"LCAgent Setup", "Xiaomi base URL", "Xiaomi API key"} {
+		if !strings.Contains(settingsRendered, want) {
+			t.Fatalf("LCAgent Xiaomi settings missing %q: %q", want, settingsRendered)
 		}
 	}
 }
@@ -26621,6 +26670,54 @@ func TestSettingsWarnsWhenXiaomiTokenPlanKeyUsesRegularURL(t *testing.T) {
 	state, _, detail := lcagentCredentialSmokeCheck(settings)
 	if state != "blocked" || !strings.Contains(detail, "token-plan base URL") {
 		t.Fatalf("lcagentCredentialSmokeCheck() = (%q, %q), want blocked token-plan URL detail", state, detail)
+	}
+}
+
+func TestLCAgentCredentialSmokeBlockedStateRendersRed(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "xiaomi"
+	settings.XiaomiAPIKey = "TC_example"
+	settings.XiaomiBaseURL = ""
+	settingsFields := newSettingsFields(settings)
+	setupModel := Model{
+		setupMode:        true,
+		setupConfigMode:  true,
+		setupStep:        setupStepLCAgentConfig,
+		setupFocusedRole: setupRoleLCAgent,
+		settingsBaseline: &settings,
+		settingsFields:   settingsFields,
+		width:            120,
+		height:           30,
+	}
+
+	setupRendered := setupModel.renderSetupConfigContent(110)
+	if !strings.Contains(ansi.Strip(setupRendered), "Credential smoke: blocked - Token Plan key needs the regional Xiaomi token-plan base URL.") {
+		t.Fatalf("setup credential smoke missing blocked detail: %q", ansi.Strip(setupRendered))
+	}
+	if !strings.Contains(setupRendered, "38;5;203") {
+		t.Fatalf("setup credential smoke should render blocked in danger red, got %q", setupRendered)
+	}
+
+	settingsModel := Model{
+		settingsBaseline:  &settings,
+		settingsFields:    newSettingsFields(settings),
+		settingsDrilldown: settingsDrilldownLCAgent,
+	}
+	settingsRendered := strings.Join(settingsModel.renderSettingsDrilldownStatus(110), "\n")
+	if !strings.Contains(ansi.Strip(settingsRendered), "Xiaomi connection: blocked - Token Plan key needs the regional Xiaomi token-plan base URL.") {
+		t.Fatalf("settings credential smoke missing blocked detail: %q", ansi.Strip(settingsRendered))
+	}
+	if !strings.Contains(settingsRendered, "38;5;203") {
+		t.Fatalf("settings credential smoke should render blocked in danger red, got %q", settingsRendered)
 	}
 }
 

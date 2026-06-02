@@ -624,12 +624,7 @@ func (m Model) setupConfigFieldIndexes() []int {
 			settingsFieldLCAgentUtilityProvider,
 			settingsFieldLCAgentUtilityModel,
 		)
-		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
-			fields = append(fields, credentialField)
-		}
-		if utilityCredentialField := settingsLCAgentUtilityCredentialField(settings); utilityCredentialField >= 0 && !intSliceContains(fields, utilityCredentialField) {
-			fields = append(fields, utilityCredentialField)
-		}
+		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
 		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
@@ -1221,7 +1216,7 @@ func (m Model) renderSetupConfigContent(width int) string {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, warning))
 	}
 	if m.setupFocusedRole == setupRoleLCAgent {
-		lines = append(lines, renderWrappedDetailField("Credential smoke", detailValueStyle, width, m.lcagentSetupSmokeText()))
+		lines = append(lines, renderWrappedDetailField("Credential smoke", detailValueStyle, width, m.lcagentSetupSmokeLine()))
 	}
 	if len(fields) == 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(m.setupNoConfigText()))
@@ -1253,13 +1248,9 @@ func (m Model) setupConfigTitle() string {
 	return providerChoiceRoleTitle(m.setupFocusedProviderChoiceRole())
 }
 
-func (m Model) lcagentSetupSmokeText() string {
+func (m Model) lcagentSetupSmokeLine() string {
 	settings := m.setupDraftSettingsForProviderChoices()
-	state, _, detail := lcagentCredentialSmokeCheck(settings)
-	if detail == "" {
-		return state
-	}
-	return state + " - " + detail
+	return renderLCAgentCredentialSmokeLine(settings)
 }
 
 func (m Model) setupNoConfigText() string {

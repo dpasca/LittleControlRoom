@@ -219,6 +219,7 @@ func settingsSections() []settingsSection {
 				settingsFieldOpenAIAPIKey,
 				settingsFieldDeepSeekAPIKey,
 				settingsFieldMoonshotAPIKey,
+				settingsFieldXiaomiBaseURL,
 				settingsFieldXiaomiAPIKey,
 				settingsFieldLCAgentWebSearchBackend,
 				settingsFieldLCAgentWebSearchAPIKey,
@@ -1015,6 +1016,7 @@ func (m Model) settingsFieldVisible(index int) bool {
 	case settingsFieldXiaomiBaseURL:
 		return settings.AIBackend == config.AIBackendXiaomi ||
 			settings.BossChatBackend == config.AIBackendXiaomi ||
+			settingsLCAgentCredentialFieldRelevant(settings, "xiaomi") ||
 			strings.TrimSpace(settings.XiaomiBaseURL) != ""
 	case settingsFieldXiaomiAPIKey:
 		return settings.AIBackend == config.AIBackendXiaomi ||
@@ -1158,12 +1160,7 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 			settingsFieldLCAgentUtilityProvider,
 			settingsFieldLCAgentUtilityModel,
 		)
-		if credentialField := settingsLCAgentCredentialField(settings); credentialField >= 0 {
-			fields = append(fields, credentialField)
-		}
-		if utilityCredentialField := settingsLCAgentUtilityCredentialField(settings); utilityCredentialField >= 0 && !intSliceContains(fields, utilityCredentialField) {
-			fields = append(fields, utilityCredentialField)
-		}
+		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
 		fields = append(fields, settingsLCAgentWebSearchDetailFields(settings.LCAgentWebSearchBackend)...)
 		return fields
@@ -1229,12 +1226,32 @@ func settingsLCAgentCredentialField(settings config.EditableSettings) int {
 	return settingsLCAgentCredentialFieldForProvider(settingsLCAgentMainProvider(settings))
 }
 
-func settingsLCAgentUtilityCredentialField(settings config.EditableSettings) int {
-	provider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
-	if strings.EqualFold(provider, "off") || strings.EqualFold(provider, "main") {
-		return -1
+func settingsLCAgentConnectionFields(settings config.EditableSettings) []int {
+	fields := appendSettingsLCAgentConnectionFields(nil, settingsLCAgentMainProvider(settings))
+	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
+	if !strings.EqualFold(utilityProvider, "off") && !strings.EqualFold(utilityProvider, "main") {
+		fields = appendSettingsLCAgentConnectionFields(fields, utilityProvider)
 	}
-	return settingsLCAgentCredentialFieldForProvider(provider)
+	return fields
+}
+
+func appendSettingsLCAgentConnectionFields(fields []int, provider string) []int {
+	if strings.EqualFold(strings.TrimSpace(provider), "xiaomi") {
+		fields = appendUniqueSettingsField(fields, settingsFieldXiaomiBaseURL)
+		fields = appendUniqueSettingsField(fields, settingsFieldXiaomiAPIKey)
+		return fields
+	}
+	if credentialField := settingsLCAgentCredentialFieldForProvider(provider); credentialField >= 0 {
+		fields = appendUniqueSettingsField(fields, credentialField)
+	}
+	return fields
+}
+
+func appendUniqueSettingsField(fields []int, field int) []int {
+	if intSliceContains(fields, field) {
+		return fields
+	}
+	return append(fields, field)
 }
 
 func settingsLCAgentCredentialFieldForProvider(provider string) int {
@@ -1952,9 +1969,8 @@ func (m Model) renderSettingsDrilldownStatus(width int) []string {
 		return lines
 	case settingsDrilldownLCAgent:
 		provider := settingsLCAgentMainProvider(settings)
-		state, style, detail := lcagentCredentialSmokeCheck(settings)
 		label := settingsLCAgentProviderOptionLabel(provider) + " connection"
-		lines = append(lines, detailField(label, style.Render(state)+detailMutedStyle.Render(" - "+detail)))
+		lines = append(lines, detailField(label, renderLCAgentCredentialSmokeLine(settings)))
 		return lines
 	case settingsDrilldownProjectScope:
 		_, state, style, detail := m.settingsProjectRootsStepState()
@@ -2013,7 +2029,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Coding Route"
 		case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
 			return "Main Model"
-		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiAPIKey:
+		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey:
 			return "Provider Credentials"
 		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentUtilityModel:
 			return "Utility Model"
@@ -2049,10 +2065,8 @@ func (m Model) renderProviderConnectionsStatus(width int) []string {
 	lines = append(lines, m.renderProviderConnectionLine("Ollama", settingsLocalConnectionState(settings, config.AIBackendOllama), settingsProviderUsers(settings, config.AIBackendOllama), width))
 
 	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
-	state, style, detail := lcagentCredentialSmokeCheck(settings)
 	label := "LCAgent " + settingsLCAgentProviderOptionLabel(provider)
-	line := style.Render(state) + detailMutedStyle.Render(" - "+detail)
-	lines = append(lines, renderWrappedDetailField(label, detailValueStyle, width, line))
+	lines = append(lines, renderWrappedDetailField(label, detailValueStyle, width, renderLCAgentCredentialSmokeLine(settings)))
 	return lines
 }
 
@@ -2060,7 +2074,9 @@ func (m Model) renderProviderConnectionLine(label string, state string, users []
 	style := detailMutedStyle
 	if state == "ready" {
 		style = footerPrimaryLabelStyle
-	} else if state == "needed" || state == "blocked" {
+	} else if state == "blocked" {
+		style = detailDangerStyle
+	} else if state == "needed" {
 		style = detailWarningStyle
 	}
 	detail := "not used right now"
@@ -2071,6 +2087,14 @@ func (m Model) renderProviderConnectionLine(label string, state string, users []
 		detail = "Token Plan key needs a regional token-plan base URL"
 	}
 	return renderWrappedDetailField(label, detailValueStyle, width, style.Render(state)+detailMutedStyle.Render(" - "+detail))
+}
+
+func renderLCAgentCredentialSmokeLine(settings config.EditableSettings) string {
+	state, style, detail := lcagentCredentialSmokeCheck(settings)
+	if strings.TrimSpace(detail) == "" {
+		return style.Render(state)
+	}
+	return style.Render(state) + detailMutedStyle.Render(" - "+detail)
 }
 
 func settingsOpenAIConnectionState(settings config.EditableSettings) string {
@@ -2296,7 +2320,7 @@ func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipg
 		if strings.EqualFold(strings.TrimSpace(provider), "xiaomi") &&
 			config.LooksLikeXiaomiTokenPlanAPIKey(value) &&
 			config.LooksLikeRegularXiaomiBaseURL(settings.XiaomiBaseURL) {
-			return "blocked", detailWarningStyle, "Token Plan key needs the regional Xiaomi token-plan base URL."
+			return "blocked", detailDangerStyle, "Token Plan key needs the regional Xiaomi token-plan base URL."
 		}
 		return "ready", footerPrimaryLabelStyle, lcagentProviderSavedKeyLabel(provider) + " saved " + maskedOpenAIKeySuffix(value) + "."
 	}
@@ -2304,7 +2328,7 @@ func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipg
 	if envFile != "" {
 		value, found, err := readEnvFileKey(envFile, keyName)
 		if err != nil {
-			return "blocked", detailWarningStyle, err.Error()
+			return "blocked", detailDangerStyle, err.Error()
 		}
 		if found && strings.TrimSpace(value) != "" {
 			return "ready", footerPrimaryLabelStyle, keyName + " found in env file " + maskedOpenAIKeySuffix(value) + "."
