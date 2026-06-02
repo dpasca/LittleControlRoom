@@ -2247,7 +2247,7 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 
 func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.Cmd) {
 	switch {
-	case msg.Paste:
+	case msg.Paste || (allowImage && codexBulkTextInput(msg)):
 		text := string(msg.Runes)
 		if !shouldCollapseCodexPaste(text) {
 			return false, nil
@@ -2286,6 +2286,13 @@ func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.
 	m.syncCodexComposerSize()
 	m.syncCodexSlashSelection()
 	return true, nil
+}
+
+func codexBulkTextInput(msg tea.KeyMsg) bool {
+	if msg.Paste || msg.Type != tea.KeyRunes || msg.Alt {
+		return false
+	}
+	return shouldCollapseCodexPaste(string(msg.Runes))
 }
 
 func (m *Model) tryAttachClipboardImage() (bool, error) {
