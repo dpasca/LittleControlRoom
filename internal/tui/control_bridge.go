@@ -958,7 +958,7 @@ func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArch
 	} else if project.InScope {
 		m.status = fmt.Sprintf("Unarchived %q", name)
 	} else {
-		m.status = fmt.Sprintf("Unarchived %q; still in Archived because it is outside project scope", name)
+		m.status = fmt.Sprintf("Unarchived %q; still outside project scope", name)
 	}
 	return controlInvocationOutcome{model: m}
 }

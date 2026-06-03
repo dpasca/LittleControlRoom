@@ -236,7 +236,7 @@ var bossPlannerControlRoutingPrompt = []string{
 	"When delegating project work for an open project TODO, set todo_id and todo_text on engineer.send_prompt, and set todo_label from the short TODO label when available. If the user names a TODO id, use that id; if the target TODO is unclear, inspect todo_report/project_detail or ask before sending work.",
 	"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation or external web/product/market research. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
 	"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should be archived.",
-	"Use project.set_archive_state when project metadata identifies a regular loaded project, meaning it is not marked kind=scratch_task or kind=agent_task, and the user asks to archive, unarchive, restore, hide, or move it between the Active and Archived tabs.",
+	"Use project.set_archive_state when project metadata identifies an in-scope regular loaded project, meaning it is not marked kind=scratch_task or kind=agent_task, and the user asks to archive, unarchive, hide, or move it between the Active and Archived tabs. This control does not add out-of-scope projects back to scope.",
 	"When the user asks to archive, unarchive, hide, restore, or move all projects matching a term, use search_context with include_historical=true first. The search_context exact project matches section is meant for bulk project selection; do not stop at a capped snippet list when exact matches are present.",
 	"For project.set_archive_state with multiple regular loaded projects, leave project_path and project_name empty and put every confirmed target in resources as kind=project with project_path and label. Use one batch control proposal instead of one confirmation per project.",
 	"Use scratch_task.archive when project metadata identifies kind=scratch_task and the user asks to remove, clear, archive, hide, or get rid of that scratch task.",
@@ -407,7 +407,7 @@ var bossActionPlannerForcedInstructions = []string{
 
 	// Project archive controls.
 	"If gathered project data identifies kind=scratch_task and the user wants that task gone, choose kind=\"propose_control\" with control_capability=\"scratch_task.archive\".",
-	"If gathered project data identifies one regular loaded project and the user wants it archived, hidden from Active, unarchived, restored, or moved between Active and Archived tabs, choose kind=\"propose_control\" with control_capability=\"project.set_archive_state\".",
+	"If gathered project data identifies one in-scope regular loaded project and the user wants it archived, hidden from Active, unarchived, or moved between Active and Archived tabs, choose kind=\"propose_control\" with control_capability=\"project.set_archive_state\".",
 	"Set project_archive_action=\"archive\" or \"unarchive\".",
 	"If gathered project data identifies multiple regular loaded projects for the same archive/unarchive request, choose one project.set_archive_state control proposal with project_archive_action set and all selected targets in resources as kind=project.",
 

@@ -1731,6 +1731,56 @@ func TestArchiveProjectMovesProjectOutOfCurrentList(t *testing.T) {
 	}
 }
 
+func TestUnarchiveProjectLeavesOutOfScopeProjectHidden(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "outside-scope-project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "outside-scope-project",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       false,
+		Archived:      false,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.UnarchiveProject(ctx, projectPath); err != nil {
+		t.Fatalf("UnarchiveProject() error = %v", err)
+	}
+
+	current, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(current after unarchive) error = %v", err)
+	}
+	if len(current) != 0 {
+		t.Fatalf("out-of-scope project should stay out of current list, got %#v", current)
+	}
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("ListProjects(all after unarchive) error = %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("historical project should remain queryable, got %#v", all)
+	}
+	if got := all[0]; got.Archived || got.InScope || got.ManuallyAdded {
+		t.Fatalf("out-of-scope project flags = %#v, want not archived, out of scope, not manual", got)
+	}
+}
+
 func TestScanOnceKeepsConcurrentForgottenMissingProjectHidden(t *testing.T) {
 	t.Parallel()
 

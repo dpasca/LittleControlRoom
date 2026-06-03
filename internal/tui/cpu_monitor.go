@@ -739,6 +739,7 @@ func cpuRemediationTaskProjectSummary(result service.CreateScratchTaskResult, no
 		AttentionScore:                  75,
 		PresentOnDisk:                   true,
 		ManuallyAdded:                   true,
+		InScope:                         true,
 		LatestSessionClassification:     model.ClassificationPending,
 		LatestSessionClassificationType: model.SessionCategoryInProgress,
 		LatestSessionSummary:            "CPU investigation task starting",

@@ -367,3 +367,72 @@ func TestDispatchArchiveAndUnarchiveProjectCommands(t *testing.T) {
 		t.Fatalf("unarchived project should return to active list, got %#v", active)
 	}
 }
+
+func TestSplitProjectArchiveSummariesHidesOutOfScopeProject(t *testing.T) {
+	active := model.ProjectSummary{Path: "/tmp/active", Name: "active", InScope: true}
+	manual := model.ProjectSummary{Path: "/tmp/manual", Name: "manual", ManuallyAdded: true}
+	archived := model.ProjectSummary{Path: "/tmp/archived", Name: "archived", InScope: true, Archived: true}
+	outside := model.ProjectSummary{Path: "/tmp/outside", Name: "outside", InScope: false, Archived: false}
+
+	activeProjects, archivedProjects := splitProjectArchiveSummaries([]model.ProjectSummary{active, manual, archived, outside})
+
+	if len(activeProjects) != 2 || activeProjects[0].Path != active.Path || activeProjects[1].Path != manual.Path {
+		t.Fatalf("active projects = %#v, want in-scope plus manually tracked projects", activeProjects)
+	}
+	if len(archivedProjects) != 1 || archivedProjects[0].Path != archived.Path {
+		t.Fatalf("archived projects = %#v, want only explicitly archived project", archivedProjects)
+	}
+}
+
+func TestDispatchUnarchiveProjectCommandLeavesOutOfScopeProjectHidden(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "outside-scope-project")
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "outside-scope-project",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       false,
+		Archived:      false,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("list historical projects: %v", err)
+	}
+	if len(all) != 1 || all[0].Archived || all[0].InScope {
+		t.Fatalf("historical projects = %#v, want out-of-scope project", all)
+	}
+
+	m := Model{
+		ctx:        ctx,
+		svc:        svc,
+		projects:   all,
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+	}
+	updated, unarchiveCmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindUnarchive, Canonical: "/unarchive"})
+	got := updated.(Model)
+	if unarchiveCmd != nil {
+		t.Fatalf("/unarchive should not start an action for an out-of-scope project")
+	}
+	if got.status != `"outside-scope-project" is outside project scope` {
+		t.Fatalf("status = %q, want outside-scope explanation", got.status)
+	}
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after rejected unarchive: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("out-of-scope project should stay hidden from active list, got %#v", active)
+	}
+}

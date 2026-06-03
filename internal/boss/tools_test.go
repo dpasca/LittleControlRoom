@@ -102,7 +102,7 @@ func TestQueryExecutorReportsReflectionInventoryFacets(t *testing.T) {
 	for _, want := range []string{
 		"Reflection report:",
 		"Project inventory facets:",
-		"Visible projects: 3 total",
+		"Known projects: 3 total",
 		"dashboard_bucket: active_tab=2, archived_tab=1",
 		"active_tab_status: active=1",
 		"archive_state: explicit_archived=1, not_archived=2",

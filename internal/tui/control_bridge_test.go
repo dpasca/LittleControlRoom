@@ -834,6 +834,65 @@ func TestExecuteProjectArchiveControlArchivesAndUnarchivesProject(t *testing.T) 
 	}
 }
 
+func TestExecuteProjectArchiveControlRejectsOutOfScopeUnarchive(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "outside-scope-project")
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "outside-scope-project",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       false,
+		Archived:      false,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	archivedProjects, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("list historical projects: %v", err)
+	}
+	m := Model{
+		ctx:              ctx,
+		svc:              svc,
+		archivedProjects: archivedProjects,
+		projects:         archivedProjects,
+		archiveMode:      projectArchiveArchived,
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityProjectArchive, control.ProjectArchiveInput{
+		ProjectPath: projectPath,
+		Action:      control.ProjectArchiveActionUnarchive,
+	}))
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate rejection", cmd)
+	}
+	if got.status != `"outside-scope-project" is outside project scope` {
+		t.Fatalf("status = %q, want outside-scope explanation", got.status)
+	}
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after rejected unarchive: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("out-of-scope project should stay hidden from active list, got %#v", active)
+	}
+	summary, ok := got.projectSummaryByPathAllProjects(projectPath)
+	if !ok || summary.Archived || summary.InScope || summary.ManuallyAdded {
+		t.Fatalf("local out-of-scope project summary = %#v, ok=%v", summary, ok)
+	}
+}
+
 func TestExecuteProjectArchiveControlArchivesBatch(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))

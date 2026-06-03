@@ -211,6 +211,9 @@ func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
 		m.archivedProjects = append(m.archivedProjects, summary)
 		return
 	}
+	if !projectSummaryActive(summary) {
+		return
+	}
 	m.allProjects = append(m.allProjects, summary)
 }
 
@@ -890,7 +893,7 @@ func (m Model) setProjectArchivedCmd(project model.ProjectSummary, archived bool
 			if project.InScope {
 				status = fmt.Sprintf("Unarchived %q", name)
 			} else {
-				status = fmt.Sprintf("Unarchived %q; still in Archived because it is outside project scope", name)
+				status = fmt.Sprintf("Unarchived %q; still outside project scope", name)
 			}
 		}
 		return actionMsg{

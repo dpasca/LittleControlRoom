@@ -90,7 +90,7 @@ func buildSuspendedTurnResumeChoices(projects []model.ProjectSummary, limit int)
 	choices := make([]suspendedTurnResumeChoice, 0)
 	seen := map[string]struct{}{}
 	for _, project := range projects {
-		if !project.PresentOnDisk || projectSummaryArchived(project) {
+		if !project.PresentOnDisk || !projectSummaryActive(project) {
 			continue
 		}
 		if !project.LatestTurnStateKnown || project.LatestTurnCompleted {

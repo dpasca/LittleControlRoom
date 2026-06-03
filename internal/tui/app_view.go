@@ -722,7 +722,7 @@ func (m Model) renderProjectList(width, height int) string {
 				message = fmt.Sprintf("No projects match %s\nPress f or /filter to change it", filterLabel)
 			}
 		} else if m.archiveMode == projectArchiveArchived {
-			message = "No archived projects\nUse /archive, or old out-of-scope projects will appear here"
+			message = "No archived projects\nUse /archive to park a project here"
 		} else if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
 			message = "No AI-linked folders\nUse /view all to switch folders"
 		} else if len(m.archivedProjects) > 0 {

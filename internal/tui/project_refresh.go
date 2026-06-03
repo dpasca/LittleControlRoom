@@ -639,15 +639,19 @@ func splitProjectArchiveSummaries(projects []model.ProjectSummary) ([]model.Proj
 	for _, project := range projects {
 		if projectSummaryArchived(project) {
 			archived = append(archived, project)
-		} else {
+		} else if projectSummaryActive(project) {
 			active = append(active, project)
 		}
 	}
 	return active, archived
 }
 
+func projectSummaryActive(project model.ProjectSummary) bool {
+	return (project.InScope || project.ManuallyAdded) && !project.Archived
+}
+
 func projectSummaryArchived(project model.ProjectSummary) bool {
-	return project.Archived || !project.InScope
+	return project.Archived
 }
 
 func (m Model) loadDetailCmd(path string) tea.Cmd {

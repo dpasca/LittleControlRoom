@@ -50,7 +50,7 @@ func TestBuildStateBriefSummarizesHotProjects(t *testing.T) {
 
 	brief := BuildStateBrief(snapshot, now)
 	for _, want := range []string{
-		"Visible projects: 3",
+		"Known projects: 3",
 		"AI assessment queue: 2 pending/running.",
 		"Alpha",
 		"possibly_stuck",
@@ -325,8 +325,8 @@ func TestLoadStateSnapshotCountsActiveAndArchivedTabs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadStateSnapshot() error = %v", err)
 	}
-	if snapshot.TotalProjects != 3 || snapshot.ActiveTabProjects != 1 || snapshot.ArchivedProjects != 2 {
-		t.Fatalf("project counts = total %d active tab %d archived %d, want 3/1/2", snapshot.TotalProjects, snapshot.ActiveTabProjects, snapshot.ArchivedProjects)
+	if snapshot.TotalProjects != 3 || snapshot.ActiveTabProjects != 1 || snapshot.ArchivedProjects != 1 {
+		t.Fatalf("project counts = total %d active tab %d archived %d, want 3/1/1", snapshot.TotalProjects, snapshot.ActiveTabProjects, snapshot.ArchivedProjects)
 	}
 	if snapshot.ActiveProjects != 1 || snapshot.PossiblyStuckProjects != 0 {
 		t.Fatalf("operational counts = active %d stuck %d, want active-tab-only 1/0", snapshot.ActiveProjects, snapshot.PossiblyStuckProjects)
@@ -334,9 +334,9 @@ func TestLoadStateSnapshotCountsActiveAndArchivedTabs(t *testing.T) {
 
 	brief := BuildStateBrief(snapshot, now)
 	for _, want := range []string{
-		"Visible projects: 3 total",
+		"Known projects: 3 total",
 		"Active tab: 1",
-		"Archived tab: 2",
+		"Archived tab: 1",
 		"Active work status: 1",
 	} {
 		if !strings.Contains(brief, want) {

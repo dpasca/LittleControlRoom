@@ -243,6 +243,9 @@ func buildProjectInventory(projects []model.ProjectSummary) projectInventory {
 			inventory.DashboardBuckets[projectDashboardBucketArchived]++
 			continue
 		}
+		if !projectActiveTab(project) {
+			continue
+		}
 		inventory.DashboardBuckets[projectDashboardBucketActive]++
 		status := string(project.Status)
 		if status == "" {
@@ -265,15 +268,19 @@ func activeTabProjectSummaries(projects []model.ProjectSummary) []model.ProjectS
 	}
 	active := make([]model.ProjectSummary, 0, len(projects))
 	for _, project := range projects {
-		if !projectArchivedTab(project) {
+		if projectActiveTab(project) {
 			active = append(active, project)
 		}
 	}
 	return active
 }
 
+func projectActiveTab(project model.ProjectSummary) bool {
+	return (project.InScope || project.ManuallyAdded) && !project.Archived
+}
+
 func projectArchivedTab(project model.ProjectSummary) bool {
-	return project.Archived || !project.InScope
+	return project.Archived
 }
 
 func stateSnapshotProjectInventory(snapshot StateSnapshot) projectInventory {
@@ -305,7 +312,7 @@ func stateSnapshotProjectInventory(snapshot StateSnapshot) projectInventory {
 
 func formatProjectInventoryHeadline(inventory projectInventory) string {
 	return fmt.Sprintf(
-		"Visible projects: %d total; Active tab: %d; Archived tab: %d. Active work status: %d. Possibly stuck: %d. Conflicts: %d.",
+		"Known projects: %d total; Active tab: %d; Archived tab: %d. Active work status: %d. Possibly stuck: %d. Conflicts: %d.",
 		inventory.Total,
 		inventory.DashboardBuckets[projectDashboardBucketActive],
 		inventory.DashboardBuckets[projectDashboardBucketArchived],
