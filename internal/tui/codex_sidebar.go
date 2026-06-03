@@ -462,6 +462,7 @@ func (m Model) renderEmbeddedSidebarSessionSection(snapshot codexapp.Snapshot, w
 
 func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int) []string {
 	rows := []string{}
+	rows = append(rows, embeddedSidebarModelRows(snapshot, width)...)
 	if row := embeddedSidebarContextRow(snapshot, width); row != "" {
 		rows = append(rows, row)
 	}
@@ -477,6 +478,32 @@ func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int)
 		if objective := strings.TrimSpace(goal.Objective); objective != "" {
 			rows = append(rows, detailMutedStyle.Render(fitLine(objective, width)))
 		}
+	}
+	return rows
+}
+
+func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
+	rows := []string{}
+	model := strings.TrimSpace(snapshot.Model)
+	reasoning := strings.TrimSpace(snapshot.ReasoningEffort)
+	showPendingAsCurrent := codexSnapshotShowsPendingModelAsCurrent(snapshot)
+	if showPendingAsCurrent {
+		model = strings.TrimSpace(snapshot.PendingModel)
+		reasoning = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), reasoning)
+	}
+	if model != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
+	}
+	if reasoning != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Reasoning", reasoning, detailValueStyle, width))
+	}
+	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
+		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
+		next := nextModel
+		if nextReasoning != "" {
+			next += " / " + nextReasoning
+		}
+		rows = append(rows, embeddedSidebarFieldRow("Next", next, detailWarningStyle, width))
 	}
 	return rows
 }

@@ -139,15 +139,10 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 				footerHideAction("Alt+Up", "hide"),
 			}
 		}
-		lines := []string{}
-		if meta := m.renderCodexSessionMeta(snapshot, width); meta != "" {
-			lines = append(lines, meta)
-		}
-		lines = append(lines,
+		return []string{
 			fitFooterWidth("Approval: "+snapshot.PendingApproval.Summary(), width),
 			renderFooterLine(width, renderFooterActionList(approvalActions...)),
-		)
-		return lines
+		}
 	case snapshot.Closed:
 		return []string{
 			fitFooterWidth(label+" session closed. Alt+Up hides it; Enter on the project opens a new one.", width),
@@ -155,9 +150,6 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 		}
 	default:
 		lines := []string{}
-		if meta := m.renderCodexSessionMeta(snapshot, width); meta != "" {
-			lines = append(lines, meta)
-		}
 		if snapshot.BusyExternal {
 			lines = append(lines, m.renderCodexBusyElsewhereNotice(snapshot, width))
 		}
@@ -457,44 +449,6 @@ func (m Model) renderCodexBusyElsewhereNotice(snapshot codexapp.Snapshot, width 
 	return renderCodexMessageBlock("Read-only", message, lipgloss.Color("221"), lipgloss.Color("252"), max(24, width-4))
 }
 
-func (m Model) renderCodexSessionMeta(snapshot codexapp.Snapshot, width int) string {
-	segments := []string{}
-	model := strings.TrimSpace(snapshot.Model)
-	reasoning := strings.TrimSpace(snapshot.ReasoningEffort)
-	showPendingAsCurrent := codexSnapshotShowsPendingModelAsCurrent(snapshot)
-	if showPendingAsCurrent {
-		model = strings.TrimSpace(snapshot.PendingModel)
-		reasoning = firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), reasoning)
-	}
-	if model != "" {
-		segments = append(segments, renderFooterMeta("Model")+" "+renderFooterStatus(model))
-	}
-	if reasoning != "" {
-		segments = append(segments, renderFooterMeta("Reasoning")+" "+renderFooterStatus(reasoning))
-	}
-	if context := codexSnapshotContextUsageLabel(snapshot); context != "" {
-		segments = append(segments, renderFooterMeta("Context")+" "+renderFooterStatus(context))
-	}
-	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
-		segments = append(segments, renderFooterMeta("Tok")+" "+renderFooterStatus(tokens))
-	}
-	if goal := codexSnapshotGoalLabel(snapshot); goal != "" {
-		segments = append(segments, renderFooterMeta("Goal")+" "+renderFooterStatus(goal))
-	}
-	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
-		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
-		next := nextModel
-		if nextReasoning != "" {
-			next += " / " + nextReasoning
-		}
-		segments = append(segments, renderFooterMeta("Next")+" "+renderFooterUsage(next))
-	}
-	if len(segments) == 0 {
-		return ""
-	}
-	return renderFooterLine(width, segments...)
-}
-
 func codexSnapshotPermissionLabel(snapshot codexapp.Snapshot) string {
 	if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
 		return ""
@@ -524,24 +478,6 @@ func codexSnapshotShowsPendingModelAsCurrent(snapshot codexapp.Snapshot) bool {
 		}
 	}
 	return true
-}
-
-func codexSnapshotContextUsageLabel(snapshot codexapp.Snapshot) string {
-	if snapshot.TokenUsage == nil || snapshot.TokenUsage.ModelContextWindow <= 0 {
-		return ""
-	}
-	used := snapshot.TokenUsage.EstimatedContextTokens()
-	if used < 0 {
-		used = 0
-	}
-	usedPercent := int(float64(used)*100/float64(snapshot.TokenUsage.ModelContextWindow) + 0.5)
-	if usedPercent < 0 {
-		usedPercent = 0
-	}
-	if usedPercent > 100 {
-		usedPercent = 100
-	}
-	return fmt.Sprintf("max %s tok, %d%% used", formatInt64(snapshot.TokenUsage.ModelContextWindow), usedPercent)
 }
 
 func codexSnapshotTokenUsageLabel(snapshot codexapp.Snapshot) string {

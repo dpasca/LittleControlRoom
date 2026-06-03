@@ -170,6 +170,10 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndActivity(t *testing.T) 
 	m := testEmbeddedSidebarModel(projectPath)
 	tokenBudget := int64(5000)
 	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Model = "gpt-5-codex"
+	snapshot.ReasoningEffort = "high"
+	snapshot.PendingModel = "gpt-5"
+	snapshot.PendingReasoning = "medium"
 	snapshot.TokenUsage = &codexapp.TokenUsageSnapshot{
 		Total: codexapp.TokenUsageBreakdown{
 			InputTokens:  10000,
@@ -201,6 +205,9 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndActivity(t *testing.T) 
 	rendered := ansi.Strip(m.renderEmbeddedCodexSidebar(snapshot, 46, 40))
 	for _, want := range []string{
 		"Session",
+		"Model gpt-5-codex",
+		"Reasoning high",
+		"Next gpt-5 / medium",
 		"Context 6% of 200k",
 		"Tokens i10k c0% o2.0k",
 		"Goal active 1,200/5,000 tok",
@@ -220,6 +227,45 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndActivity(t *testing.T) 
 	}
 	if strings.Contains(rendered, "Please make the sidebar useful") || strings.Contains(rendered, "Ready to work") {
 		t.Fatalf("recent activity should skip user and agent chatter:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarTreatsFreshPendingModelAsCurrent(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Model = "gpt-5-codex"
+	snapshot.ReasoningEffort = "medium"
+	snapshot.PendingModel = "gpt-5.4"
+	snapshot.PendingReasoning = "high"
+	snapshot.Entries = []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptSystem, Text: "Started a new embedded Codex session 019demo."},
+	}
+
+	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
+	for _, want := range []string{"Model gpt-5.4", "Reasoning high"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("sidebar model rows missing %q:\n%s", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Next", "gpt-5-codex", "medium"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("fresh pending model should be shown as current, not %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
+func TestEmbeddedSidebarSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Model = "openai/gpt-5"
+	snapshot.ReasoningEffort = "high"
+
+	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
+	for _, want := range []string{"Model openai/gpt-5", "Reasoning high"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("sidebar model rows missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Next") {
+		t.Fatalf("sidebar model rows should not show pending next without pending state:\n%s", rendered)
 	}
 }
 

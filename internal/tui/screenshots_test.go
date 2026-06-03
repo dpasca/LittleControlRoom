@@ -130,7 +130,7 @@ func TestTerminalLineBackgroundRequiresMatchingEdges(t *testing.T) {
 	}
 }
 
-func TestScreenshotEmbeddedCodexSnapshotRendersSessionMeta(t *testing.T) {
+func TestScreenshotEmbeddedCodexSnapshotRendersSidebarSessionInfo(t *testing.T) {
 	t.Parallel()
 
 	project := model.ProjectSummary{
@@ -155,7 +155,7 @@ func TestScreenshotEmbeddedCodexSnapshotRendersSessionMeta(t *testing.T) {
 	m.syncCodexComposerSize()
 
 	rendered := ansi.Strip(m.View())
-	for _, want := range []string{"Model", "gpt-5.4", "Reasoning", "xhigh", "Context", "max 200,000 tok", "6% used"} {
+	for _, want := range []string{"Session", "Model gpt-5.4", "Reasoning xhigh", "Context 6% of 200k"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("embedded screenshot render missing %q: %q", want, rendered)
 		}

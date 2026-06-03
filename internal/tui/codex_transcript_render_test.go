@@ -199,9 +199,13 @@ func TestVisibleLCAgentViewShowsPermissionBadgeInBanner(t *testing.T) {
 	}
 }
 
-func TestRenderCodexSessionMetaShowsModelReasoningContextAndPending(t *testing.T) {
+func TestCodexLowerBlocksOmitSidebarSessionMeta(t *testing.T) {
 	tokenBudget := int64(5000)
-	rendered := ansi.Strip((Model{}).renderCodexSessionMeta(codexapp.Snapshot{
+	m := Model{
+		codexInput: newCodexTextarea(),
+		nowFn:      func() time.Time { return time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC) },
+	}
+	rendered := ansi.Strip(strings.Join(m.codexLowerBlocks(codexapp.Snapshot{
 		Model:            "gpt-5-codex",
 		ReasoningEffort:  "high",
 		PendingModel:     "gpt-5",
@@ -227,11 +231,11 @@ func TestRenderCodexSessionMetaShowsModelReasoningContextAndPending(t *testing.T
 			},
 			ModelContextWindow: 200000,
 		},
-	}, 180))
+	}, 180), "\n"))
 
-	for _, want := range []string{"Model", "gpt-5-codex", "Reasoning", "high", "Context", "max 200,000 tok", "6% used", "Tok", "i10k c0% r345 o2.3k", "Goal", "active 1,200/5,000 tok", "Next", "gpt-5 / medium"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
+	for _, unwanted := range []string{"Model gpt-5-codex", "Reasoning high", "Context max 200,000 tok", "Tok i10k", "Goal active", "Next gpt-5 / medium"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("codex lower blocks should omit sidebar session meta %q: %q", unwanted, rendered)
 		}
 	}
 }
@@ -276,49 +280,6 @@ func TestCodexSnapshotGoalLabelShowsGoalStates(t *testing.T) {
 				t.Fatalf("codexSnapshotGoalLabel() = %q, want %q", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestRenderCodexSessionMetaTreatsFreshPendingModelAsCurrent(t *testing.T) {
-	rendered := ansi.Strip((Model{}).renderCodexSessionMeta(codexapp.Snapshot{
-		Model:            "gpt-5-codex",
-		ReasoningEffort:  "medium",
-		PendingModel:     "gpt-5.4",
-		PendingReasoning: "high",
-		Entries: []codexapp.TranscriptEntry{
-			{Kind: codexapp.TranscriptSystem, Text: "Started a new embedded Codex session 019demo."},
-		},
-	}, 140))
-
-	for _, want := range []string{"Model", "gpt-5.4", "Reasoning", "high"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
-		}
-	}
-	for _, unwanted := range []string{"Next", "gpt-5-codex", "medium"} {
-		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("renderCodexSessionMeta() should not include %q for a fresh session: %q", unwanted, rendered)
-		}
-	}
-}
-
-func TestRenderCodexSessionMetaSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.T) {
-	rendered := ansi.Strip((Model{}).renderCodexSessionMeta(codexapp.Snapshot{
-		Model:            "openai/gpt-5",
-		ReasoningEffort:  "high",
-		PendingModel:     "",
-		PendingReasoning: "",
-	}, 140))
-
-	for _, want := range []string{"Model", "openai/gpt-5", "Reasoning", "high"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("renderCodexSessionMeta() missing %q: %q", want, rendered)
-		}
-	}
-	for _, unwanted := range []string{"Next", "gpt-5 /"} {
-		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("renderCodexSessionMeta() should not include %q: %q", unwanted, rendered)
-		}
 	}
 }
 
