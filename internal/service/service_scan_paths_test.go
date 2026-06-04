@@ -131,6 +131,72 @@ func TestScanOnceReconcilesDuplicateSessionOwnershipAcrossProjects(t *testing.T)
 	}
 }
 
+func TestScanOnceWithIncludePathsRunsDetectorsOnceAndKeepsRecentOutOfScopeActivity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	includeRoot := t.TempDir()
+	includedPath := filepath.Join(includeRoot, "included")
+	outsideRoot := t.TempDir()
+	recentOutsidePath := filepath.Join(outsideRoot, "recent-outside")
+	staleOutsidePath := filepath.Join(outsideRoot, "stale-outside")
+	for _, path := range []string{includedPath, recentOutsidePath, staleOutsidePath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	detector := &countingDetector{
+		name: "test",
+		activities: map[string]*model.DetectorProjectActivity{
+			includedPath:      fakeActivity(includedPath, "included-session", now.Add(-72*time.Hour)),
+			recentOutsidePath: fakeActivity(recentOutsidePath, "recent-outside-session", now.Add(-time.Hour)),
+			staleOutsidePath:  fakeActivity(staleOutsidePath, "stale-outside-session", now.Add(-72*time.Hour)),
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{includeRoot}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	svc.SetSessionClassifier(nil)
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = nil
+	svc.gitWorktreeInfoReader = nil
+	svc.gitWorktreeListReader = nil
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if detector.calls != 1 {
+		t.Fatalf("detector calls = %d, want 1", detector.calls)
+	}
+	if len(detector.scopes) != 1 || len(detector.scopes[0].IncludePaths) != 0 {
+		t.Fatalf("detector scope = %#v, want one broad activity pass", detector.scopes)
+	}
+
+	statesByPath := map[string]model.ProjectState{}
+	for _, state := range report.States {
+		statesByPath[state.Path] = state
+	}
+	if _, ok := statesByPath[includedPath]; !ok {
+		t.Fatalf("included activity missing from scan states: %#v", report.States)
+	}
+	if _, ok := statesByPath[recentOutsidePath]; !ok {
+		t.Fatalf("recent out-of-scope activity missing from scan states: %#v", report.States)
+	}
+	if _, ok := statesByPath[staleOutsidePath]; ok {
+		t.Fatalf("stale out-of-scope activity should be filtered from scan states: %#v", report.States)
+	}
+}
+
 func TestScanOnceKeepsActiveSnooze(t *testing.T) {
 	t.Parallel()
 

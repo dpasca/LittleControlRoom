@@ -17,6 +17,13 @@ type staticDetector struct {
 	activities map[string]*model.DetectorProjectActivity
 }
 
+type countingDetector struct {
+	name       string
+	calls      int
+	scopes     []scanner.PathScope
+	activities map[string]*model.DetectorProjectActivity
+}
+
 type blockingDetector struct {
 	started chan struct{}
 	release chan struct{}
@@ -30,6 +37,23 @@ func (d staticDetector) Name() string {
 }
 
 func (d staticDetector) Detect(context.Context, scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
+	out := make(map[string]*model.DetectorProjectActivity, len(d.activities))
+	for path, activity := range d.activities {
+		out[path] = activity
+	}
+	return out, nil
+}
+
+func (d *countingDetector) Name() string {
+	if d.name != "" {
+		return d.name
+	}
+	return "counting"
+}
+
+func (d *countingDetector) Detect(_ context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
+	d.calls++
+	d.scopes = append(d.scopes, scope)
 	out := make(map[string]*model.DetectorProjectActivity, len(d.activities))
 	for path, activity := range d.activities {
 		out[path] = activity
@@ -58,12 +82,18 @@ type recordingClassifier struct {
 }
 
 func (c *recordingClassifier) QueueProject(_ context.Context, state model.ProjectState) (bool, error) {
+	if len(state.Sessions) == 0 {
+		return false, nil
+	}
 	c.normalCalls++
 	c.lastState = state
 	return true, nil
 }
 
 func (c *recordingClassifier) QueueProjectRetry(_ context.Context, state model.ProjectState, _ time.Duration) (bool, error) {
+	if len(state.Sessions) == 0 {
+		return false, nil
+	}
 	c.forcedCalls++
 	c.lastState = state
 	return true, nil

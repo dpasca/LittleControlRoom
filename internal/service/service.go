@@ -35,6 +35,7 @@ const bossAssistantHTTPTimeout = 90 * time.Second
 const missingLinkedWorktreeRetention = 7 * 24 * time.Hour
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
+var scanGitMetadataConcurrency = 8
 
 type SessionClassifier interface {
 	QueueProject(ctx context.Context, state model.ProjectState) (bool, error)
@@ -227,13 +228,17 @@ func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, 
 	if reader == nil {
 		return nil
 	}
+	var timedOutMu sync.Mutex
 	return func(parent context.Context, path string) (T, error) {
 		var zero T
 		cleanPath := filepath.Clean(strings.TrimSpace(path))
 		if timedOutPaths != nil {
+			timedOutMu.Lock()
 			if _, ok := timedOutPaths[cleanPath]; ok {
+				timedOutMu.Unlock()
 				return zero, fmt.Errorf("skipping git metadata read for %s after earlier timeout", cleanPath)
 			}
+			timedOutMu.Unlock()
 		}
 		timeout := scanGitMetadataTimeout
 		if timeout <= 0 {
@@ -254,7 +259,9 @@ func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, 
 		value, err := reader(ctx, path)
 		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			if timedOutPaths != nil {
+				timedOutMu.Lock()
 				timedOutPaths[cleanPath] = struct{}{}
+				timedOutMu.Unlock()
 			}
 			return zero, fmt.Errorf("git metadata read timed out for %s after %s: %w", path, timeout, ctx.Err())
 		}
@@ -908,25 +915,17 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		oldMap[path] = old
 	}
 
-	rawActivities, err := s.detectProjectActivities(ctx, scope, internalWorkspaceRoot)
+	activityScope := scope
+	filterRecentOutOfScopeActivities := len(cfg.IncludePaths) > 0
+	if filterRecentOutOfScopeActivities {
+		activityScope = scanner.NewPathScope(nil, cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot)
+	}
+	rawActivities, err := s.detectProjectActivities(ctx, activityScope, internalWorkspaceRoot)
 	if err != nil {
 		return ScanReport{}, err
 	}
-	if len(cfg.IncludePaths) > 0 {
-		fullScopeActivities, err := s.detectProjectActivities(ctx, scanner.NewPathScope(nil, cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot), internalWorkspaceRoot)
-		if err != nil {
-			return ScanReport{}, err
-		}
-		for path, activity := range fullScopeActivities {
-			if !isRecentSessionActivity(now, activity, recentActivityDiscoveryWindow) {
-				continue
-			}
-			if existing, ok := rawActivities[path]; ok {
-				mergeDetectorActivities(existing, activity)
-				continue
-			}
-			rawActivities[path] = activity
-		}
+	if filterRecentOutOfScopeActivities {
+		filterIncludedOrRecentActivities(rawActivities, scope, now, recentActivityDiscoveryWindow)
 	}
 	finalizeDetectorActivities(rawActivities)
 
@@ -1007,24 +1006,33 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	}
 	worktreeInfoCache := map[string]scanner.GitWorktreeInfo{}
 	worktreeInfoMisses := map[string]struct{}{}
+	var worktreeInfoMu sync.Mutex
 	readWorktreeInfo := func(path string) (scanner.GitWorktreeInfo, bool) {
 		cleanPath := filepath.Clean(strings.TrimSpace(path))
 		if cleanPath == "" || cleanPath == "." || gitWorktreeInfoReader == nil || !projectPathExists(cleanPath) {
 			return scanner.GitWorktreeInfo{}, false
 		}
+		worktreeInfoMu.Lock()
 		if info, ok := worktreeInfoCache[cleanPath]; ok {
+			worktreeInfoMu.Unlock()
 			return info, true
 		}
 		if _, ok := worktreeInfoMisses[cleanPath]; ok {
+			worktreeInfoMu.Unlock()
 			return scanner.GitWorktreeInfo{}, false
 		}
+		worktreeInfoMu.Unlock()
 		info, readErr := gitWorktreeInfoReader(ctx, cleanPath)
 		if readErr != nil {
+			worktreeInfoMu.Lock()
 			worktreeInfoMisses[cleanPath] = struct{}{}
+			worktreeInfoMu.Unlock()
 			return scanner.GitWorktreeInfo{}, false
 		}
 		info = normalizeWorktreeInfoPaths(info)
+		worktreeInfoMu.Lock()
 		worktreeInfoCache[cleanPath] = info
+		worktreeInfoMu.Unlock()
 		return info, true
 	}
 
@@ -1070,34 +1078,30 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 
 	currentRepoStatus := map[string]scanner.GitRepoStatus{}
 	currentWorktreeInfo := map[string]scanner.GitWorktreeInfo{}
-	for _, path := range paths {
-		if !projectPathExists(path) {
+	gitMetadata := readScanGitMetadata(ctx, paths, gitFingerprintReader, gitRepoStatusReader, readWorktreeInfo)
+	for _, metadata := range gitMetadata {
+		path := metadata.path
+		if !metadata.presentOnDisk {
 			continue
 		}
-		if gitFingerprintReader != nil {
-			fingerprint, readErr := gitFingerprintReader(ctx, path)
-			if readErr == nil {
-				if cached, ok := cachedFingerprints[path]; ok {
-					s.queueCommitTodoCheckForFingerprintChange(ctx, path, oldMap[path], cached, fingerprint)
-				}
-				if err := s.store.UpsertProjectGitFingerprint(ctx, model.ProjectGitFingerprint{
-					ProjectPath:  path,
-					HeadHash:     fingerprint.HeadHash,
-					RecentHashes: append([]string(nil), fingerprint.RecentHashes...),
-					UpdatedAt:    now,
-				}); err != nil {
-					return ScanReport{}, fmt.Errorf("persist git fingerprint: %w", err)
-				}
+		if metadata.haveFingerprint {
+			if cached, ok := cachedFingerprints[path]; ok {
+				s.queueCommitTodoCheckForFingerprintChange(ctx, path, oldMap[path], cached, metadata.fingerprint)
+			}
+			if err := s.store.UpsertProjectGitFingerprint(ctx, model.ProjectGitFingerprint{
+				ProjectPath:  path,
+				HeadHash:     metadata.fingerprint.HeadHash,
+				RecentHashes: append([]string(nil), metadata.fingerprint.RecentHashes...),
+				UpdatedAt:    now,
+			}); err != nil {
+				return ScanReport{}, fmt.Errorf("persist git fingerprint: %w", err)
 			}
 		}
-		if gitRepoStatusReader != nil {
-			repoStatus, readErr := gitRepoStatusReader(ctx, path)
-			if readErr == nil {
-				currentRepoStatus[path] = repoStatus
-			}
+		if metadata.haveRepoStatus {
+			currentRepoStatus[path] = metadata.repoStatus
 		}
-		if worktreeInfo, ok := readWorktreeInfo(path); ok {
-			currentWorktreeInfo[path] = worktreeInfo
+		if metadata.haveWorktreeInfo {
+			currentWorktreeInfo[path] = metadata.worktreeInfo
 		}
 	}
 
@@ -1406,6 +1410,104 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	return report, nil
 }
 
+type scanGitMetadataResult struct {
+	path             string
+	presentOnDisk    bool
+	fingerprint      scanner.GitFingerprint
+	haveFingerprint  bool
+	repoStatus       scanner.GitRepoStatus
+	haveRepoStatus   bool
+	worktreeInfo     scanner.GitWorktreeInfo
+	haveWorktreeInfo bool
+}
+
+func readScanGitMetadata(
+	ctx context.Context,
+	paths []string,
+	gitFingerprintReader func(context.Context, string) (scanner.GitFingerprint, error),
+	gitRepoStatusReader func(context.Context, string) (scanner.GitRepoStatus, error),
+	readWorktreeInfo func(string) (scanner.GitWorktreeInfo, bool),
+) []scanGitMetadataResult {
+	results := make([]scanGitMetadataResult, len(paths))
+	for i, path := range paths {
+		results[i].path = path
+	}
+	if len(paths) == 0 {
+		return results
+	}
+
+	concurrency := scanGitMetadataConcurrency
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > len(paths) {
+		concurrency = len(paths)
+	}
+
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				path := paths[index]
+				result := scanGitMetadataResult{
+					path:          path,
+					presentOnDisk: projectPathExists(path),
+				}
+				if !result.presentOnDisk {
+					results[index] = result
+					continue
+				}
+				if ctx.Err() != nil {
+					results[index] = result
+					continue
+				}
+				if gitFingerprintReader != nil {
+					if fingerprint, err := gitFingerprintReader(ctx, path); err == nil {
+						result.fingerprint = fingerprint
+						result.haveFingerprint = true
+					}
+				}
+				if ctx.Err() != nil {
+					results[index] = result
+					continue
+				}
+				if gitRepoStatusReader != nil {
+					if repoStatus, err := gitRepoStatusReader(ctx, path); err == nil {
+						result.repoStatus = repoStatus
+						result.haveRepoStatus = true
+					}
+				}
+				if ctx.Err() != nil {
+					results[index] = result
+					continue
+				}
+				if readWorktreeInfo != nil {
+					if worktreeInfo, ok := readWorktreeInfo(path); ok {
+						result.worktreeInfo = worktreeInfo
+						result.haveWorktreeInfo = true
+					}
+				}
+				results[index] = result
+			}
+		}()
+	}
+
+sendLoop:
+	for i := range paths {
+		select {
+		case <-ctx.Done():
+			break sendLoop
+		case jobs <- i:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return results
+}
+
 func (s *Service) currentProjectDetailForScan(ctx context.Context, path string) (model.ProjectDetail, bool, error) {
 	detail, err := s.store.GetProjectDetail(ctx, path, 20)
 	if err != nil {
@@ -1513,6 +1615,22 @@ func isRecentSessionActivity(now time.Time, activity *model.DetectorProjectActiv
 		return false
 	}
 	return now.Sub(lastActivity) <= window
+}
+
+func filterIncludedOrRecentActivities(activities map[string]*model.DetectorProjectActivity, scope scanner.PathScope, now time.Time, recentWindow time.Duration) {
+	for path, activity := range activities {
+		activityPath := filepath.Clean(path)
+		if activity != nil && strings.TrimSpace(activity.ProjectPath) != "" {
+			activityPath = filepath.Clean(activity.ProjectPath)
+		}
+		if scope.Allows(activityPath) {
+			continue
+		}
+		if isRecentSessionActivity(now, activity, recentWindow) {
+			continue
+		}
+		delete(activities, path)
+	}
 }
 
 func mergeDetectorActivities(dst *model.DetectorProjectActivity, src *model.DetectorProjectActivity) {

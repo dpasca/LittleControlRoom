@@ -120,7 +120,9 @@ func TestScanWithOptionsTimesOutHungWorktreeReadersAndRepairsCodexSessionFile(t 
 	}
 
 	classifier := &recordingClassifier{}
-	svc := New(config.Default(), st, events.NewBus(), []detectors.Detector{detector})
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
 	svc.SetSessionClassifier(classifier)
 	svc.gitFingerprintReader = nil
 	svc.gitRepoStatusReader = nil
@@ -171,6 +173,62 @@ func TestScanWithOptionsTimesOutHungWorktreeReadersAndRepairsCodexSessionFile(t 
 	}
 	if strings.TrimSpace(detail.Sessions[0].SnapshotHash) == "" {
 		t.Fatalf("expected stored session snapshot hash after scan")
+	}
+}
+
+func TestReadScanGitMetadataUsesBoundedConcurrency(t *testing.T) {
+	oldConcurrency := scanGitMetadataConcurrency
+	scanGitMetadataConcurrency = 4
+	defer func() {
+		scanGitMetadataConcurrency = oldConcurrency
+	}()
+
+	root := t.TempDir()
+	paths := []string{
+		filepath.Join(root, "one"),
+		filepath.Join(root, "two"),
+		filepath.Join(root, "three"),
+		filepath.Join(root, "four"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	started := make(chan string, len(paths))
+	release := make(chan struct{})
+	done := make(chan []scanGitMetadataResult, 1)
+	go func() {
+		done <- readScanGitMetadata(context.Background(), paths, func(_ context.Context, path string) (scanner.GitFingerprint, error) {
+			started <- path
+			<-release
+			return scanner.GitFingerprint{HeadHash: filepath.Base(path)}, nil
+		}, nil, nil)
+	}()
+
+	for i := 0; i < len(paths); i++ {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			close(release)
+			t.Fatalf("metadata reader started %d of %d paths before blocking; want concurrent starts", i, len(paths))
+		}
+	}
+	close(release)
+
+	select {
+	case results := <-done:
+		if len(results) != len(paths) {
+			t.Fatalf("results = %d, want %d", len(results), len(paths))
+		}
+		for _, result := range results {
+			if !result.haveFingerprint {
+				t.Fatalf("result for %s missing fingerprint: %#v", result.path, result)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("metadata reads did not finish after release")
 	}
 }
 

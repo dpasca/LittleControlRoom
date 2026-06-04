@@ -17,14 +17,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Interactive project refreshes also repair session snapshot hashes and queue
-// classifier work after embedded turns, so they need a bit more budget than
-// raw git metadata reads alone.
+// Full project scans reconcile global agent artifacts and many git repos. They
+// run off the UI thread, so give large local workspaces enough room while
+// keeping targeted project refreshes tighter.
 const tuiProjectStatusRefreshTimeout = 30 * time.Second
 const tuiProjectDetailLoadTimeout = 8 * time.Second
 const tuiProjectSummaryLoadTimeout = 8 * time.Second
 const tuiProjectsReloadTimeout = 12 * time.Second
-const tuiProjectScanTimeout = 45 * time.Second
+const tuiProjectScanTimeout = 90 * time.Second
 const tuiOpenAgentTaskLimit = 50
 const embeddedSessionActivityRecordMinInterval = 5 * time.Second
 
