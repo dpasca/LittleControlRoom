@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/store"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestDispatchNewTaskCommandOpensProviderDialogBeforeCreate(t *testing.T) {
@@ -177,6 +178,79 @@ func TestNewTaskDialogDefaultsToLastUsedProvider(t *testing.T) {
 	}
 	if got.newTaskDialog.ProviderDefaultLabel != "last used" {
 		t.Fatalf("default label = %q, want last used", got.newTaskDialog.ProviderDefaultLabel)
+	}
+}
+
+func TestNewTaskDialogUsesVerticalProviderSelection(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		newTaskDialog: &newTaskDialogState{
+			Request:  "answer Sarah about API docs",
+			Provider: codexapp.ProviderCodex,
+		},
+	}
+
+	updated, cmd := m.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("j should only move the agent selection")
+	}
+	if got.newTaskDialog.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("provider after j = %q, want OpenCode", got.newTaskDialog.Provider)
+	}
+
+	updated, _ = got.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.newTaskDialog.Provider != codexapp.ProviderClaudeCode {
+		t.Fatalf("provider after down = %q, want Claude Code", got.newTaskDialog.Provider)
+	}
+
+	updated, _ = got.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	got = updated.(Model)
+	if got.newTaskDialog.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("provider after k = %q, want OpenCode", got.newTaskDialog.Provider)
+	}
+
+	updated, _ = got.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got = updated.(Model)
+	if got.newTaskDialog.Provider != codexapp.ProviderOpenCode {
+		t.Fatalf("provider after a = %q, want unchanged OpenCode", got.newTaskDialog.Provider)
+	}
+
+	rendered := ansi.Strip(got.renderNewTaskContent(72))
+	if !strings.Contains(rendered, "↑↓/j/k") {
+		t.Fatalf("rendered dialog = %q, want vertical selection hint", rendered)
+	}
+	if strings.Contains(rendered, "a/A") {
+		t.Fatalf("rendered dialog = %q, should not advertise a/A agent cycling", rendered)
+	}
+}
+
+func TestNewTaskDialogLCAgentReadinessUsesSavedXiaomiKey(t *testing.T) {
+	t.Parallel()
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "xiaomi"
+	settings.XiaomiAPIKey = "test-xiaomi-key"
+	settings.XiaomiBaseURL = config.AIBackendXiaomi.DefaultOpenAICompatibleBaseURL()
+	m := Model{
+		settingsBaseline: &settings,
+		newTaskDialog: &newTaskDialogState{
+			Request:  "check Xiaomi-backed LC agent setup",
+			Provider: codexapp.ProviderLCAgent,
+		},
+	}
+
+	rendered := ansi.Strip(m.renderNewTaskContent(88))
+	if !strings.Contains(rendered, "LCAgent - ready") {
+		t.Fatalf("rendered dialog = %q, want ready LCAgent state", rendered)
+	}
+	if !strings.Contains(rendered, "Xiaomi API key saved") {
+		t.Fatalf("rendered dialog = %q, want saved Xiaomi key detail", rendered)
+	}
+	if strings.Contains(rendered, "XIAOMI_API_KEY is not configured") {
+		t.Fatalf("rendered dialog = %q, should not claim saved Xiaomi key is missing", rendered)
 	}
 }
 

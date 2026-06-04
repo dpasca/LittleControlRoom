@@ -37,7 +37,7 @@ func (m *Model) openNewTaskDialog(request string, provider codexapp.Provider) te
 	}
 	m.showHelp = false
 	m.err = nil
-	m.status = "New task dialog open. Enter create, a cycles agent, Esc cancel"
+	m.status = "New task dialog open. Enter create, j/k choose agent, Esc cancel"
 	return nil
 }
 
@@ -54,10 +54,10 @@ func (m Model) updateNewTaskDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.newTaskDialog = nil
 		m.status = "New task canceled"
 		return m, nil
-	case "a", "right", "l", " ":
+	case "down", "j":
 		m.cycleNewTaskProvider(1)
 		return m, nil
-	case "A", "left", "h":
+	case "up", "k":
 		m.cycleNewTaskProvider(-1)
 		return m, nil
 	case "enter":
@@ -180,7 +180,7 @@ func (m Model) renderNewTaskContent(width int) string {
 	}
 	lines = append(lines, "", renderHelpPanelActionRow(
 		renderDialogAction("Enter", "create", commitActionKeyStyle, commitActionTextStyle),
-		renderDialogAction("a/A", "agent", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("↑↓/j/k", "agent", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	))
 	return strings.Join(lines, "\n")

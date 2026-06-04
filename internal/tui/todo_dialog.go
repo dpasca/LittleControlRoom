@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -2222,28 +2221,26 @@ func todoCopyLCAgentReadiness(settings config.EditableSettings) todoCopyProvider
 	if keyName == "" {
 		return todoCopyProviderReadiness{
 			State:  "needs config",
-			Detail: "Unknown LCAgent provider " + provider + ". Open /settings and choose openrouter, openai, deepseek, or moonshot.",
+			Detail: "Unknown LCAgent provider " + provider + ". Open /settings and choose openrouter, openai, deepseek, moonshot, or xiaomi.",
 			Style:  detailWarningStyle,
 		}
 	}
-	if strings.TrimSpace(settings.LCAgentEnvFile) != "" {
-		return todoCopyProviderReadiness{
-			State:  "configured",
-			Detail: "LCAgent will load " + keyName + " from the configured env file.",
-			Style:  footerPrimaryLabelStyle,
-		}
-	}
-	if strings.TrimSpace(os.Getenv(keyName)) != "" {
-		return todoCopyProviderReadiness{
-			State:  "ready",
-			Detail: keyName + " is available in the process environment.",
-			Style:  footerPrimaryLabelStyle,
-		}
+	state, style, detail := lcagentCredentialSmokeCheck(settings)
+	readinessState := state
+	switch state {
+	case "ready":
+		readinessState = "ready"
+	case "blocked":
+		readinessState = "blocked"
+	case "unknown":
+		readinessState = "needs config"
+	case "needed":
+		readinessState = "needs key"
 	}
 	return todoCopyProviderReadiness{
-		State:  "needs key",
-		Detail: keyName + " is not configured. Set an LCAgent env file or environment variable in /settings.",
-		Style:  detailWarningStyle,
+		State:  readinessState,
+		Detail: detail,
+		Style:  style,
 	}
 }
 

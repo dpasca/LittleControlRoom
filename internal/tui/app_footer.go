@@ -130,7 +130,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}
 	if m.newTaskDialog != nil {
-		label := "New task: Enter create, a/A cycle agent, Esc cancel"
+		label := "New task: ↑↓/j/k choose agent, Enter create, Esc cancel"
 		if m.newTaskDialog.Submitting {
 			label = "New task: creating..."
 		}
