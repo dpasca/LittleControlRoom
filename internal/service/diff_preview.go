@@ -58,6 +58,23 @@ func (e NoDiffChangesError) Error() string {
 	return fmt.Sprintf("%s for %s", base, project)
 }
 
+type NoGitRepositoryError struct {
+	ProjectPath string
+	ProjectName string
+}
+
+func (e NoGitRepositoryError) Error() string {
+	base := "no git repository"
+	project := strings.TrimSpace(e.ProjectName)
+	if project == "" && strings.TrimSpace(e.ProjectPath) != "" {
+		project = filepath.Base(e.ProjectPath)
+	}
+	if project == "" {
+		return base
+	}
+	return fmt.Sprintf("%s for %s", base, project)
+}
+
 func (s *Service) PrepareDiff(ctx context.Context, projectPath string) (DiffPreview, error) {
 	detail, err := s.store.GetProjectDetail(ctx, projectPath, 5)
 	if err != nil {
@@ -67,14 +84,20 @@ func (s *Service) PrepareDiff(ctx context.Context, projectPath string) (DiffPrev
 		return DiffPreview{}, fmt.Errorf("project not found on disk: %s", projectPath)
 	}
 
-	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
-	if err != nil {
-		return DiffPreview{}, err
-	}
-
 	projectName := strings.TrimSpace(detail.Summary.Name)
 	if projectName == "" {
 		projectName = filepath.Base(projectPath)
+	}
+	if !projectIsGitRepo(projectPath) {
+		return DiffPreview{}, NoGitRepositoryError{
+			ProjectPath: projectPath,
+			ProjectName: projectName,
+		}
+	}
+
+	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	if err != nil {
+		return DiffPreview{}, err
 	}
 	branch := strings.TrimSpace(repoStatus.Branch)
 	if branch == "" {

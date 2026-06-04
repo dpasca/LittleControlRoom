@@ -48,6 +48,7 @@ type embeddedSidebarDiffState struct {
 	Seq         int64
 	Preview     *service.DiffPreview
 	Clean       bool
+	NoGit       bool
 	Branch      string
 	ProjectName string
 	Err         string
@@ -59,6 +60,7 @@ type embeddedSidebarDiffPreviewMsg struct {
 	seq         int64
 	preview     service.DiffPreview
 	clean       bool
+	noGit       bool
 	branch      string
 	projectName string
 	err         error
@@ -244,6 +246,9 @@ func (m *Model) requestVisibleEmbeddedSidebarDiffRefreshCmd(projectPath string, 
 	if !m.embeddedCodexSidebarAvailable() {
 		return nil
 	}
+	if m.embeddedSidebarProjectKnownNonGit(projectPath) {
+		return nil
+	}
 	if state, ok := m.embeddedSidebarDiffState(projectPath); ok && state.Loading {
 		return nil
 	}
@@ -284,7 +289,6 @@ func (m *Model) requestEmbeddedSidebarDiffRefreshCmd(projectPath string) tea.Cmd
 	current.ProjectPath = projectPath
 	current.Loading = true
 	current.Seq = seq
-	current.Err = ""
 	m.embeddedSidebarDiffs[projectPath] = current
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiGitActionTimeout)
@@ -300,6 +304,15 @@ func (m *Model) requestEmbeddedSidebarDiffRefreshCmd(projectPath string) tea.Cmd
 					clean:       true,
 					branch:      noDiffErr.Branch,
 					projectName: noDiffErr.ProjectName,
+				}
+			}
+			var noGitErr service.NoGitRepositoryError
+			if errors.As(err, &noGitErr) {
+				return embeddedSidebarDiffPreviewMsg{
+					projectPath: projectPath,
+					seq:         seq,
+					noGit:       true,
+					projectName: noGitErr.ProjectName,
 				}
 			}
 			return embeddedSidebarDiffPreviewMsg{projectPath: projectPath, seq: seq, err: err}
@@ -326,11 +339,14 @@ func (m Model) applyEmbeddedSidebarDiffPreviewMsg(msg embeddedSidebarDiffPreview
 	current.UpdatedAt = m.currentTime()
 	current.Preview = nil
 	current.Clean = msg.clean
+	current.NoGit = msg.noGit
 	current.Branch = strings.TrimSpace(msg.branch)
 	current.ProjectName = strings.TrimSpace(msg.projectName)
 	current.Err = ""
 	if msg.err != nil {
 		current.Err = strings.TrimSpace(msg.err.Error())
+	} else if msg.noGit {
+		current.Clean = false
 	} else if !msg.clean {
 		preview := msg.preview
 		current.Preview = &preview
@@ -355,6 +371,7 @@ func (m *Model) rememberEmbeddedSidebarDiffPreview(preview service.DiffPreview) 
 	current.Loading = false
 	current.Preview = &preview
 	current.Clean = false
+	current.NoGit = false
 	current.Branch = strings.TrimSpace(preview.Branch)
 	current.ProjectName = strings.TrimSpace(preview.ProjectName)
 	current.Err = ""
@@ -375,6 +392,7 @@ func (m *Model) rememberEmbeddedSidebarCleanDiff(projectPath, projectName, branc
 	current.Loading = false
 	current.Preview = nil
 	current.Clean = true
+	current.NoGit = false
 	current.Branch = strings.TrimSpace(branch)
 	current.ProjectName = strings.TrimSpace(projectName)
 	current.Err = ""
@@ -728,13 +746,16 @@ func embeddedSidebarFindingRow(finding procinspect.Finding, width int) string {
 func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) []string {
 	lines := []string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarDiff, "Diff Summary", width)}
 	state, ok := m.embeddedSidebarDiffState(projectPath)
-	project, _ := m.projectSummaryByPathAllProjects(projectPath)
+	project, _ := m.embeddedSidebarProjectSummary(projectPath)
 	switch {
-	case ok && state.Loading && state.Preview == nil && !state.Clean:
-		lines = append(lines, detailMutedStyle.Render(fitLine("Preparing diff summary...", width)))
+	case ok && state.NoGit:
+		lines = append(lines, detailMutedStyle.Render(fitLine("No git repository", width)))
+		lines = append(lines, detailMutedStyle.Render(fitLine("r checks again", width)))
 	case ok && strings.TrimSpace(state.Err) != "":
 		lines = append(lines, detailDangerStyle.Render(fitLine("Diff unavailable", width)))
 		lines = append(lines, detailMutedStyle.Render(fitLine(state.Err, width)))
+	case ok && state.Loading && state.Preview == nil && !state.Clean:
+		lines = append(lines, detailMutedStyle.Render(fitLine("Preparing diff summary...", width)))
 	case ok && state.Preview != nil && len(state.Preview.Files) > 0:
 		lines = append(lines, embeddedSidebarDiffSummaryRow(*state.Preview, width))
 		if branch := strings.TrimSpace(state.Preview.Branch); branch != "" {
@@ -757,6 +778,8 @@ func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) [
 	case project.RepoDirty || project.RepoConflict:
 		lines = append(lines, detailWarningStyle.Render(fitLine(repoDirtyPlainLabel(project), width)))
 		lines = append(lines, detailMutedStyle.Render(fitLine("Enter opens full diff", width)))
+	case m.embeddedSidebarProjectKnownNonGit(projectPath):
+		lines = append(lines, detailMutedStyle.Render(fitLine("No git repository", width)))
 	default:
 		lines = append(lines, detailMutedStyle.Render(fitLine("No diff cached yet", width)))
 		lines = append(lines, detailMutedStyle.Render(fitLine("r refreshes", width)))
@@ -850,6 +873,32 @@ func (m Model) embeddedSidebarDiffState(projectPath string) (embeddedSidebarDiff
 	}
 	state, ok := m.embeddedSidebarDiffs[projectPath]
 	return state, ok
+}
+
+func (m Model) embeddedSidebarProjectSummary(projectPath string) (model.ProjectSummary, bool) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return model.ProjectSummary{}, false
+	}
+	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
+		return project, true
+	}
+	if normalizeProjectPath(m.detail.Summary.Path) == projectPath {
+		return m.detail.Summary, true
+	}
+	return model.ProjectSummary{}, false
+}
+
+func (m Model) embeddedSidebarProjectKnownNonGit(projectPath string) bool {
+	project, ok := m.embeddedSidebarProjectSummary(projectPath)
+	if !ok {
+		return false
+	}
+	return project.PresentOnDisk &&
+		project.WorktreeKind == model.WorktreeKindNone &&
+		strings.TrimSpace(project.RepoBranch) == "" &&
+		!project.RepoDirty &&
+		!project.RepoConflict
 }
 
 func repoDirtyPlainLabel(project model.ProjectSummary) string {

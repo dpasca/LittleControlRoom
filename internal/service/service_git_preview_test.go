@@ -265,6 +265,45 @@ func TestPrepareDiffReturnsNoChangesError(t *testing.T) {
 	}
 }
 
+func TestPrepareDiffReturnsNoGitRepositoryError(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "scratch")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("create scratch dir: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "scratch",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	_, err = svc.PrepareDiff(ctx, projectPath)
+	if err == nil {
+		t.Fatalf("prepare diff should fail outside a git repository")
+	}
+
+	var noGitErr NoGitRepositoryError
+	if !errors.As(err, &noGitErr) {
+		t.Fatalf("prepare diff error = %v, want NoGitRepositoryError", err)
+	}
+	if noGitErr.ProjectName != "scratch" {
+		t.Fatalf("project name = %q, want scratch", noGitErr.ProjectName)
+	}
+}
+
 func TestToggleDiffFileStageStagesAndUnstagesFile(t *testing.T) {
 	t.Parallel()
 

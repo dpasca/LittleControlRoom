@@ -326,6 +326,65 @@ func TestVisibleBusyEmbeddedSidebarDiffRefreshIsThrottled(t *testing.T) {
 	}
 }
 
+func TestVisibleBusyEmbeddedSidebarDiffSkipsKnownNonGitProject(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-scratch"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.ctx = context.Background()
+	m.svc = &service.Service{}
+	m.allProjects = []model.ProjectSummary{{
+		Path:          projectPath,
+		Name:          "scratch",
+		PresentOnDisk: true,
+		WorktreeKind:  model.WorktreeKindNone,
+	}}
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Busy = true
+	m.codexSnapshots[projectPath] = snapshot
+	delete(m.embeddedSidebarDiffs, projectPath)
+
+	if cmd := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd(); cmd != nil {
+		t.Fatalf("known non-git project should not auto-refresh sidebar diff")
+	}
+	if state, ok := m.embeddedSidebarDiffState(projectPath); ok && state.Loading {
+		t.Fatalf("known non-git project should not enter loading diff state: %#v", state)
+	}
+
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarDiffSection(projectPath, 46), "\n"))
+	if !strings.Contains(rendered, "No git repository") {
+		t.Fatalf("non-git sidebar diff section should be stable, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "No diff cached yet") || strings.Contains(rendered, "Preparing diff summary") {
+		t.Fatalf("non-git sidebar diff section should not flicker through diff states:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarNoGitErrorStaysVisibleWhileRetryLoading(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-scratch"
+	m := testEmbeddedSidebarModel(projectPath)
+	updated, _ := m.applyEmbeddedSidebarDiffPreviewMsg(embeddedSidebarDiffPreviewMsg{
+		projectPath: projectPath,
+		seq:         1,
+		noGit:       true,
+		projectName: "scratch",
+	})
+	got := normalizeUpdateModel(updated)
+
+	state, ok := got.embeddedSidebarDiffState(projectPath)
+	if !ok || !state.NoGit {
+		t.Fatalf("sidebar diff state = %#v, want no-git state", state)
+	}
+	state.Loading = true
+	got.embeddedSidebarDiffs[projectPath] = state
+
+	rendered := ansi.Strip(strings.Join(got.renderEmbeddedSidebarDiffSection(projectPath, 46), "\n"))
+	if !strings.Contains(rendered, "No git repository") {
+		t.Fatalf("loading retry should keep no-git state visible, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Preparing diff summary") {
+		t.Fatalf("loading retry should not flicker to preparing text:\n%s", rendered)
+	}
+}
+
 func TestCodexSidebarAltSTogglesSidebarAndSession(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
