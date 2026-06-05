@@ -1350,6 +1350,62 @@ func TestRenderAIStatsContentHidesLocalBackendCost(t *testing.T) {
 	}
 }
 
+func TestRenderAIStatsContentShowsLocalContextAndSpeed(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	classifier := &usageSnapshotClassifier{
+		usage: model.LLMSessionUsage{
+			Enabled:                      true,
+			Model:                        "gemma4:12b-mlx",
+			Completed:                    2,
+			LastRequestDuration:          1500 * time.Millisecond,
+			LastOutputTokensPerSecond:    12.5,
+			AverageOutputTokensPerSecond: 10.0,
+			Totals: model.LLMUsage{
+				InputTokens:  512,
+				OutputTokens: 30,
+				TotalTokens:  542,
+			},
+		},
+	}
+
+	cfg := config.Default()
+	cfg.AIBackend = config.AIBackendOllama
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
+
+	m := New(ctx, svc)
+	m.setupChecked = true
+	m.setupSnapshot = aibackend.Snapshot{
+		Selected: config.AIBackendOllama,
+		Ollama: aibackend.Status{
+			Backend:       config.AIBackendOllama,
+			Label:         "Ollama",
+			Installed:     true,
+			Authenticated: true,
+			Ready:         true,
+			Detail:        "Ollama ready at http://127.0.0.1:11434/v1 (using gemma4:12b-mlx)",
+			ContextWindow: 131072,
+			ContextDetail: "max context 131.1k tokens | 13.0B | nvfp4",
+		},
+	}
+
+	rendered := ansi.Strip(m.renderAIStatsContent(90))
+	for _, want := range []string{
+		"Speed: last 12.5 tok/s | avg 10.0 tok/s | last 1.5s",
+		"Context: max context 131.1k tokens | 13.0B | nvfp4",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderAIStatsContent() missing %q: %q", want, rendered)
+		}
+	}
+}
+
 func TestRenderPerfContentShowsLatencySection(t *testing.T) {
 	now := time.Date(2026, time.April, 2, 17, 30, 0, 0, time.UTC)
 	m := Model{
@@ -2768,7 +2824,7 @@ func TestRenderCommitPreviewContentShowsAIFallbackStatusInline(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderCommitPreviewContent(72, 8))
-	if !strings.Contains(rendered, "AI: Fallback subject used; /errors has details") {
+	if !strings.Contains(rendered, "AI: AI failed; fallback subject used; /errors has details") {
 		t.Fatalf("renderCommitPreviewContent() should show inline AI fallback guidance: %q", rendered)
 	}
 }

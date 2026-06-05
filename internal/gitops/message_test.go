@@ -372,6 +372,41 @@ func TestOpenAICommitMessageClientSuggestRetriesRetryableHTTPError(t *testing.T)
 	}
 }
 
+func TestOpenAICommitMessageClientSuggestAcceptsCommitSubjectAlias(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedJSONSchemaRunner{
+		results: []scriptedJSONSchemaResult{
+			{
+				response: llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "gemma4:12b-mlx",
+					OutputText: `{"commit_subject":"Add Ollama model eval diagnostics"}`,
+				},
+			},
+		},
+	}
+
+	client := &OpenAICommitMessageClient{
+		model:     "gemma4:12b-mlx",
+		responses: runner,
+	}
+
+	suggestion, err := client.Suggest(context.Background(), CommitMessageInput{
+		Intent:        "commit",
+		ProjectName:   "Little Control Room",
+		Branch:        "master",
+		StageMode:     "staged_only",
+		IncludedFiles: []string{"internal/llm/ollama.go"},
+	})
+	if err != nil {
+		t.Fatalf("suggest: %v", err)
+	}
+	if suggestion.Message != "Add Ollama model eval diagnostics" {
+		t.Fatalf("message = %q, want commit_subject alias", suggestion.Message)
+	}
+}
+
 func TestOpenAICommitMessageClientSuggestRetriesEmptyMessage(t *testing.T) {
 	t.Parallel()
 

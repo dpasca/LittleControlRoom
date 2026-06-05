@@ -32,7 +32,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -40,6 +40,7 @@ help:
 	@echo "  make tidy            - go mod tidy"
 	@echo "  make fmt             - gofmt project files"
 	@echo "  make test            - run go test ./..."
+	@echo "  make model-eval      - run common LCR model-usage smoke checks"
 	@echo "  make lcagent-eval    - run deterministic LCAgent regression evals"
 	@echo "  make lcagent-live-eval - run repeatable live-provider LCAgent coding evals"
 	@echo "  make lcagent-live-smoke - run a live provider LCAgent smoke test"
@@ -93,6 +94,9 @@ fmt:
 
 test:
 	$(GO) test ./...
+
+model-eval:
+	$(GO) run ./cmd/$(APP) model-eval $(COMMON_FLAGS)
 
 lcagent-eval:
 	$(GO) run ./cmd/lcagent eval

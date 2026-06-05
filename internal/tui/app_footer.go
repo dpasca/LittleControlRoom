@@ -536,7 +536,7 @@ func commitPreviewAIStatusText(preview service.CommitPreview) string {
 	if strings.TrimSpace(preview.CommitMessageError) == "" {
 		return ""
 	}
-	return "Fallback subject used; /errors has details"
+	return "AI failed; fallback subject used; /errors has details"
 }
 
 func gitStatusDialogFromNoChanges(err service.NoChangesToCommitError) gitStatusDialog {

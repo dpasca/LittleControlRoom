@@ -90,6 +90,20 @@ func NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, prefer
 	}
 }
 
+func NewClientWithRunner(preferredModel string, runner llm.JSONSchemaRunner) *OpenAIClient {
+	if runner == nil {
+		return nil
+	}
+	model := strings.TrimSpace(preferredModel)
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar))
+	}
+	return &OpenAIClient{
+		model:     model,
+		responses: runner,
+	}
+}
+
 func NewCodexClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
 	return &OpenAIClient{
 		model:     configuredModel(localRunnerDefaultModel),

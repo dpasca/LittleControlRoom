@@ -26,6 +26,7 @@ import (
 	"lcroom/internal/detectors/opencode"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/modeleval"
 	"lcroom/internal/runtimeguard"
 	"lcroom/internal/server"
 	"lcroom/internal/service"
@@ -45,6 +46,7 @@ func Run(programName string, args []string) int {
 	}
 
 	subcmd := args[0]
+	modelEvalOpts := modelEvalCLIOptions{}
 	if subcmd == "version" || subcmd == "--version" || subcmd == "-v" {
 		fmt.Println(buildinfo.Summary(programName))
 		return 0
@@ -61,6 +63,14 @@ func Run(programName string, args []string) int {
 		return runMockups(ctx, args[1:])
 	}
 	commonArgs := append([]string(nil), args[1:]...)
+	if subcmd == "model-eval" {
+		var err error
+		commonArgs, modelEvalOpts, err = splitModelEvalArgs(commonArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "model-eval flag error: %v\n", err)
+			return 2
+		}
+	}
 	if subcmd == "screenshots" {
 		var err error
 		commonArgs, _, err = stripPathFlagArg(commonArgs, "--screenshot-config")
@@ -87,6 +97,10 @@ func Run(programName string, args []string) int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	if subcmd == "model-eval" {
+		return runModelEval(ctx, cfg, modelEvalOpts)
+	}
 
 	var runtimeLease *runtimeguard.Lease
 	if guardedRuntimeMode(subcmd) {
@@ -249,6 +263,203 @@ func runClassify(ctx context.Context, svc *service.Service) int {
 		case <-time.After(750 * time.Millisecond):
 		}
 	}
+}
+
+type modelEvalCLIOptions struct {
+	Backend    config.AIBackend
+	BackendSet bool
+	Model      string
+	BaseURL    string
+	APIKey     string
+	Timeout    time.Duration
+	JSON       bool
+}
+
+func splitModelEvalArgs(args []string) ([]string, modelEvalCLIOptions, error) {
+	common := make([]string, 0, len(args))
+	opts := modelEvalCLIOptions{}
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		switch {
+		case arg == "--json":
+			opts.JSON = true
+		case arg == "--backend" || strings.HasPrefix(arg, "--backend="):
+			value, next, err := flagValue(args, i, "--backend")
+			if err != nil {
+				return nil, opts, err
+			}
+			backend, err := config.ParseAIBackend(value)
+			if err != nil {
+				return nil, opts, err
+			}
+			opts.Backend = backend
+			opts.BackendSet = true
+			i = next
+		case arg == "--model" || strings.HasPrefix(arg, "--model="):
+			value, next, err := flagValue(args, i, "--model")
+			if err != nil {
+				return nil, opts, err
+			}
+			opts.Model = strings.TrimSpace(value)
+			i = next
+		case arg == "--base-url" || strings.HasPrefix(arg, "--base-url="):
+			value, next, err := flagValue(args, i, "--base-url")
+			if err != nil {
+				return nil, opts, err
+			}
+			opts.BaseURL = strings.TrimSpace(value)
+			i = next
+		case arg == "--api-key" || strings.HasPrefix(arg, "--api-key="):
+			value, next, err := flagValue(args, i, "--api-key")
+			if err != nil {
+				return nil, opts, err
+			}
+			opts.APIKey = strings.TrimSpace(value)
+			i = next
+		case arg == "--timeout" || strings.HasPrefix(arg, "--timeout="):
+			value, next, err := flagValue(args, i, "--timeout")
+			if err != nil {
+				return nil, opts, err
+			}
+			timeout, err := time.ParseDuration(strings.TrimSpace(value))
+			if err != nil {
+				return nil, opts, fmt.Errorf("--timeout: %w", err)
+			}
+			opts.Timeout = timeout
+			i = next
+		default:
+			common = append(common, args[i])
+		}
+	}
+	return common, opts, nil
+}
+
+func flagValue(args []string, index int, name string) (string, int, error) {
+	arg := strings.TrimSpace(args[index])
+	prefix := name + "="
+	if strings.HasPrefix(arg, prefix) {
+		value := strings.TrimSpace(strings.TrimPrefix(arg, prefix))
+		if value == "" {
+			return "", index, fmt.Errorf("%s requires a value", name)
+		}
+		return value, index, nil
+	}
+	if arg != name {
+		return "", index, fmt.Errorf("internal flag parser mismatch for %s", name)
+	}
+	if index+1 >= len(args) {
+		return "", index, fmt.Errorf("%s requires a value", name)
+	}
+	value := strings.TrimSpace(args[index+1])
+	if value == "" {
+		return "", index, fmt.Errorf("%s requires a value", name)
+	}
+	return value, index + 1, nil
+}
+
+func runModelEval(ctx context.Context, cfg config.AppConfig, cliOpts modelEvalCLIOptions) int {
+	backend := cfg.EffectiveAIBackend()
+	if cliOpts.BackendSet {
+		backend = cliOpts.Backend
+	}
+	if backend == config.AIBackendUnset || backend == config.AIBackendDisabled {
+		fmt.Fprintln(os.Stderr, "model-eval requires a model backend; pass --backend ollama or configure ai_backend")
+		return 2
+	}
+
+	opts := modeleval.Options{
+		Backend: backend,
+		BaseURL: cfg.OpenAICompatibleBaseURL(backend),
+		APIKey:  cfg.OpenAICompatibleAPIKey(backend),
+		Model:   cfg.OpenAICompatibleModel(backend),
+		Timeout: cliOpts.Timeout,
+	}
+	if backend == config.AIBackendOpenAIAPI {
+		opts.APIKey = strings.TrimSpace(cfg.OpenAIAPIKey)
+	}
+	if cliOpts.BaseURL != "" {
+		opts.BaseURL = cliOpts.BaseURL
+	}
+	if cliOpts.APIKey != "" {
+		opts.APIKey = cliOpts.APIKey
+	}
+	if cliOpts.Model != "" {
+		opts.Model = cliOpts.Model
+	}
+
+	report, err := modeleval.Run(ctx, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "model-eval failed: %v\n", err)
+		return 1
+	}
+	if cliOpts.JSON {
+		raw, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "model-eval JSON failed: %v\n", err)
+			return 1
+		}
+		fmt.Println(string(raw))
+	} else {
+		printModelEvalReport(report)
+	}
+	if !report.Passed() {
+		return 1
+	}
+	return 0
+}
+
+func printModelEvalReport(report modeleval.Report) {
+	status := "FAIL"
+	if report.Passed() {
+		status = "PASS"
+	}
+	fmt.Printf("model eval: %s\n", status)
+	fmt.Printf("backend: %s\n", report.Backend)
+	fmt.Printf("model: %s\n", report.Model)
+	if strings.TrimSpace(report.BaseURL) != "" {
+		fmt.Printf("base url: %s\n", report.BaseURL)
+	}
+	if report.ContextWindow > 0 {
+		fmt.Printf("context: %s tokens", formatPlainTokenCount(report.ContextWindow))
+		if strings.TrimSpace(report.ContextDetail) != "" {
+			fmt.Printf(" (%s)", report.ContextDetail)
+		}
+		fmt.Println()
+	} else if strings.TrimSpace(report.ContextDetail) != "" {
+		fmt.Printf("context: %s\n", report.ContextDetail)
+	}
+	fmt.Printf("duration: %s\n", report.Duration.Round(time.Millisecond))
+	fmt.Println()
+	for _, c := range report.Cases {
+		caseStatus := "FAIL"
+		if c.Passed {
+			caseStatus = "PASS"
+		}
+		fmt.Printf("- %s %s", caseStatus, c.Name)
+		if c.Duration > 0 {
+			fmt.Printf(" %s", c.Duration.Round(time.Millisecond))
+		}
+		if c.TokensPerSecond > 0 {
+			fmt.Printf(" %.1f tok/s", c.TokensPerSecond)
+		}
+		fmt.Println()
+		if c.Error != "" {
+			fmt.Printf("  error: %s\n", c.Error)
+		}
+		if c.OutputPreview != "" {
+			fmt.Printf("  output: %s\n", c.OutputPreview)
+		}
+	}
+}
+
+func formatPlainTokenCount(tokens int64) string {
+	if tokens >= 1000 && tokens%1000 == 0 {
+		return fmt.Sprintf("%dk", tokens/1000)
+	}
+	if tokens >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(tokens)/1000)
+	}
+	return fmt.Sprintf("%d", tokens)
 }
 
 func runDoctor(ctx context.Context, svc *service.Service, cfg config.AppConfig) int {
@@ -846,7 +1057,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <version|scope|scan|classify|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|boss|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|boss|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -867,6 +1078,13 @@ func printUsage(programName string) {
 	fmt.Println("  --session-id <id>")
 	fmt.Println("  --apply")
 	fmt.Println("  --dry-run")
+	fmt.Println("Model eval flags:")
+	fmt.Println("  --backend <openai_api|ollama|mlx|openrouter|deepseek|moonshot|xiaomi>")
+	fmt.Println("  --model <model-id>")
+	fmt.Println("  --base-url <url>")
+	fmt.Println("  --api-key <key>")
+	fmt.Println("  --timeout <duration>")
+	fmt.Println("  --json")
 	fmt.Println("Snapshot flags:")
 	fmt.Println("  --limit <count>")
 	fmt.Println("  --project <path>")

@@ -17,18 +17,25 @@ import (
 )
 
 const detectTimeout = 4 * time.Second
+const (
+	minUsefulLocalContextWindow        int64 = 8192
+	preferredSummaryLocalContextWindow int64 = 32768
+)
 
 type Status struct {
-	Backend       config.AIBackend
-	Label         string
-	Installed     bool
-	Authenticated bool
-	Ready         bool
-	Detail        string
-	LoginHint     string
-	Endpoint      string
-	Models        []string
-	ActiveModel   string
+	Backend        config.AIBackend
+	Label          string
+	Installed      bool
+	Authenticated  bool
+	Ready          bool
+	Detail         string
+	LoginHint      string
+	Endpoint       string
+	Models         []string
+	ActiveModel    string
+	ContextWindow  int64
+	ContextDetail  string
+	ContextWarning string
 }
 
 type Snapshot struct {
@@ -369,6 +376,7 @@ func detectOpenAICompatibleLocal(ctx context.Context, cfg config.AppConfig, back
 				status.Ready = true
 				status.ActiveModel = model
 				status.Detail = fmt.Sprintf("%s ready at %s (using %s)", label, baseURL, model)
+				enrichLocalModelMetadata(ctx, cfg, backend, &status)
 				return status
 			}
 		}
@@ -383,7 +391,65 @@ func detectOpenAICompatibleLocal(ctx context.Context, cfg config.AppConfig, back
 	if len(models) > 1 {
 		status.Detail = fmt.Sprintf("%s ready at %s (auto %s +%d more)", label, baseURL, models[0], len(models)-1)
 	}
+	enrichLocalModelMetadata(ctx, cfg, backend, &status)
 	return status
+}
+
+func enrichLocalModelMetadata(ctx context.Context, cfg config.AppConfig, backend config.AIBackend, status *Status) {
+	if status == nil || !status.Ready || strings.TrimSpace(status.ActiveModel) == "" {
+		return
+	}
+	switch backend {
+	case config.AIBackendOllama:
+		meta, err := llm.FetchOllamaModelMetadata(ctx, cfg.OpenAICompatibleBaseURL(backend), status.ActiveModel, detectTimeout)
+		if err != nil {
+			status.ContextWarning = "Ollama model context metadata was not available."
+			return
+		}
+		status.ContextWindow = meta.ContextWindow
+		status.ContextDetail = ollamaContextDetail(meta)
+		status.ContextWarning = localContextWarning(meta.ContextWindow)
+	}
+}
+
+func ollamaContextDetail(meta llm.OllamaModelMetadata) string {
+	parts := []string{}
+	if meta.ContextWindow > 0 {
+		parts = append(parts, fmt.Sprintf("max context %s tokens", formatContextTokenCount(meta.ContextWindow)))
+	}
+	if meta.ParameterSize != "" {
+		parts = append(parts, meta.ParameterSize)
+	}
+	if meta.Quantization != "" {
+		parts = append(parts, meta.Quantization)
+	}
+	if meta.Architecture != "" {
+		parts = append(parts, meta.Architecture)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func localContextWarning(contextWindow int64) string {
+	switch {
+	case contextWindow <= 0:
+		return "Model context window is unknown. For Ollama, `ollama show <model>` or /api/show should expose model_info context_length when available."
+	case contextWindow < minUsefulLocalContextWindow:
+		return fmt.Sprintf("Context is below LCR's useful floor of %s tokens. Use a larger-context model, or create an Ollama variant with a larger num_ctx if the model supports it.", formatContextTokenCount(minUsefulLocalContextWindow))
+	case contextWindow < preferredSummaryLocalContextWindow:
+		return fmt.Sprintf("Context is usable but below LCR's preferred %s-token window for richer summaries. Ollama can raise request context with num_ctx when the model and hardware allow it.", formatContextTokenCount(preferredSummaryLocalContextWindow))
+	default:
+		return ""
+	}
+}
+
+func formatContextTokenCount(tokens int64) string {
+	if tokens >= 1000 && tokens%1000 == 0 {
+		return fmt.Sprintf("%dk", tokens/1000)
+	}
+	if tokens >= 1000 {
+		return fmt.Sprintf("%.1fk", float64(tokens)/1000)
+	}
+	return fmt.Sprintf("%d", tokens)
 }
 
 type claudeAuthStatus struct {

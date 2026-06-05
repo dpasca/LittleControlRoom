@@ -375,15 +375,19 @@ type LLMUsage struct {
 }
 
 type LLMSessionUsage struct {
-	Enabled        bool      `json:"enabled"`
-	Model          string    `json:"model"`
-	Running        int       `json:"running"`
-	Started        int       `json:"started"`
-	Completed      int       `json:"completed"`
-	Failed         int       `json:"failed"`
-	LastStartedAt  time.Time `json:"last_started_at"`
-	LastFinishedAt time.Time `json:"last_finished_at"`
-	Totals         LLMUsage  `json:"totals"`
+	Enabled                      bool          `json:"enabled"`
+	Model                        string        `json:"model"`
+	Running                      int           `json:"running"`
+	Started                      int           `json:"started"`
+	Completed                    int           `json:"completed"`
+	Failed                       int           `json:"failed"`
+	LastStartedAt                time.Time     `json:"last_started_at"`
+	LastFinishedAt               time.Time     `json:"last_finished_at"`
+	LastRequestDuration          time.Duration `json:"last_request_duration"`
+	TotalRequestDuration         time.Duration `json:"total_request_duration"`
+	LastOutputTokensPerSecond    float64       `json:"last_output_tokens_per_second"`
+	AverageOutputTokensPerSecond float64       `json:"average_output_tokens_per_second"`
+	Totals                       LLMUsage      `json:"totals"`
 }
 
 type DetectorProjectActivity struct {

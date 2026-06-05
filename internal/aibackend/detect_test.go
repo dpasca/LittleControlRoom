@@ -88,6 +88,45 @@ func TestDetectOpenAICompatibleLocalReady(t *testing.T) {
 	}
 }
 
+func TestDetectOllamaLocalAddsContextMetadata(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"gemma4:12b-mlx"}]}`))
+		case "/api/show":
+			_, _ = w.Write([]byte(`{
+				"details":{"parameter_size":"13.0B","quantization_level":"nvfp4"},
+				"model_info":{"gemma4_unified.context_length":131072,"general.architecture":"gemma4_unified"},
+				"capabilities":["completion","tools","thinking"]
+			}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.OllamaBaseURL = server.URL + "/v1"
+	cfg.OllamaModel = "gemma4:12b-mlx"
+
+	status := detectOpenAICompatibleLocal(context.Background(), cfg, config.AIBackendOllama)
+	if !status.Ready {
+		t.Fatalf("status.Ready = false, want true")
+	}
+	if status.ContextWindow != 131072 {
+		t.Fatalf("ContextWindow = %d, want 131072", status.ContextWindow)
+	}
+	if status.ContextWarning != "" {
+		t.Fatalf("ContextWarning = %q, want none for large context", status.ContextWarning)
+	}
+	if status.ContextDetail == "" {
+		t.Fatalf("ContextDetail should describe model context")
+	}
+}
+
 func TestDetectOpenAICompatibleLocalConfiguredModelMustExist(t *testing.T) {
 	t.Parallel()
 

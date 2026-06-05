@@ -600,6 +600,9 @@ func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend)
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
+		if backend == config.AIBackendOllama {
+			return llm.NewOllamaTextRunner(cfg.OpenAICompatibleBaseURL(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+		}
 		return llm.NewOpenAICompatibleTextRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
@@ -621,6 +624,9 @@ func (s *Service) NewBossJSONRunner() (llm.JSONSchemaRunner, string, config.AIBa
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
+		if backend == config.AIBackendOllama {
+			return llm.NewOllamaJSONSchemaRunner(cfg.OpenAICompatibleBaseURL(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+		}
 		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
@@ -642,6 +648,9 @@ func (s *Service) NewBossUtilityJSONRunner() (llm.JSONSchemaRunner, string, conf
 	case config.AIBackendOpenAIAPI:
 		return llm.NewResponsesClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
+		if backend == config.AIBackendOllama {
+			return llm.NewOllamaJSONSchemaRunner(cfg.OpenAICompatibleBaseURL(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+		}
 		return llm.NewOpenAICompatibleResponsesRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:
 		return nil, modelName, backend
@@ -751,10 +760,16 @@ func (s *Service) configureAIClientsLocked() {
 			baseURL := s.cfg.OpenAICompatibleBaseURL(selectedBackend)
 			apiKey := s.cfg.OpenAICompatibleAPIKey(selectedBackend)
 			model := s.cfg.OpenAICompatibleModel(selectedBackend)
-			opts := openAICompatibleResponsesRunnerOptions(selectedBackend, model, true)
-			commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
-			client = sessionclassify.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
-			todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
+			if selectedBackend == config.AIBackendOllama {
+				commitAssistant = gitops.NewOpenAICommitMessageClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, defaultCommitAssistantTimeout, s.llmUsageTracker))
+				client = sessionclassify.NewClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, 60*time.Second, s.llmUsageTracker))
+				todoClient = todoworktree.NewClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, defaultCommitAssistantTimeout, s.llmUsageTracker))
+			} else {
+				opts := openAICompatibleResponsesRunnerOptions(selectedBackend, model, true)
+				commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
+				client = sessionclassify.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
+				todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
+			}
 		}
 	}
 	unavailableReason := ""

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"lcroom/internal/aibackend"
 	"lcroom/internal/config"
@@ -98,6 +99,9 @@ func (m Model) renderAIStatsContent(width int) string {
 	if modelValue := aiStatsModelValue(usage); modelValue != "" {
 		lines = append(lines, detailField("Model", modelValue))
 	}
+	if speedValue := aiStatsSpeedValue(usage); speedValue != "" {
+		lines = append(lines, detailField("Speed", speedValue))
+	}
 	if activityValue := aiStatsActivityValue(usage); activityValue != "" {
 		lines = append(lines, detailField("Recent", activityValue))
 	}
@@ -107,6 +111,12 @@ func (m Model) renderAIStatsContent(width int) string {
 	lines = append(lines, detailField("Selected", aiStatsBackendLabelValue(backend, backendStatus)))
 	if detail := strings.TrimSpace(backendStatus.Detail); detail != "" {
 		lines = append(lines, detailField("State", aiStatsBackendDetailValue(backend, backendStatus)))
+	}
+	if contextValue := aiStatsContextValue(backendStatus); contextValue != "" {
+		lines = append(lines, detailField("Context", contextValue))
+	}
+	if warning := strings.TrimSpace(backendStatus.ContextWarning); warning != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, warning)...)
 	}
 	if notice := m.renderAIBackendStatusNotice(); notice != "" {
 		lines = append(lines, detailField("Notice", notice))
@@ -280,6 +290,23 @@ func aiStatsModelValue(usage model.LLMSessionUsage) string {
 	return ""
 }
 
+func aiStatsSpeedValue(usage model.LLMSessionUsage) string {
+	parts := make([]string, 0, 3)
+	if usage.LastOutputTokensPerSecond > 0 {
+		parts = append(parts, fmt.Sprintf("last %.1f tok/s", usage.LastOutputTokensPerSecond))
+	}
+	if usage.AverageOutputTokensPerSecond > 0 && usage.Completed > 1 {
+		parts = append(parts, fmt.Sprintf("avg %.1f tok/s", usage.AverageOutputTokensPerSecond))
+	}
+	if usage.LastRequestDuration > 0 {
+		parts = append(parts, "last "+usage.LastRequestDuration.Round(time.Millisecond).String())
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return detailValueStyle.Render(strings.Join(parts, " | "))
+}
+
 func aiStatsActivityValue(usage model.LLMSessionUsage) string {
 	parts := make([]string, 0, 2)
 	if !usage.LastStartedAt.IsZero() {
@@ -292,6 +319,17 @@ func aiStatsActivityValue(usage model.LLMSessionUsage) string {
 		return ""
 	}
 	return detailValueStyle.Render(strings.Join(parts, " | "))
+}
+
+func aiStatsContextValue(status aibackend.Status) string {
+	detail := strings.TrimSpace(status.ContextDetail)
+	if detail != "" {
+		return detailValueStyle.Render(detail)
+	}
+	if status.ContextWindow > 0 {
+		return detailValueStyle.Render(formatTokenCount(status.ContextWindow) + " tokens")
+	}
+	return ""
 }
 
 func (m Model) aiStatsFailedProjects(limit int) ([]string, int) {

@@ -99,7 +99,7 @@ LCR separates embedded session providers from the backend used for background wo
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
 - Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
 - Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
-- MLX and Ollama use OpenAI-compatible local endpoints, so they fit into the same background inference path without a separate integration surface.
+- MLX uses its OpenAI-compatible local endpoint. Ollama discovery still uses its OpenAI-compatible model list, while background generation uses Ollama's native chat endpoint so thinking models can return usable JSON/text with thinking disabled.
 
 For local inference, the practical setup is:
 
@@ -111,6 +111,14 @@ Default local endpoints:
 
 - MLX: `http://127.0.0.1:8080/v1`
 - Ollama: `http://127.0.0.1:11434/v1`
+
+To smoke-test a local model against common LCR usage without touching any repo state, run:
+
+```bash
+lcroom model-eval --backend ollama --model gemma4:12b-mlx
+```
+
+The check covers plain summary text, LCR session-assessment JSON, and commit-subject JSON. Passing and failing cases are both useful: local models may be good enough for commit help or free-form summaries while still failing stricter dashboard assessment schemas. The `/ai` dialog also reports observed output speed in tokens per second after successful calls, plus Ollama model context metadata when the server exposes it.
 
 <p align="center">
   <a href="docs/screenshots/settings-local-backends.png">

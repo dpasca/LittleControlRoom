@@ -118,6 +118,20 @@ func NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, a
 	}
 }
 
+func NewOpenAICommitMessageClientWithRunner(preferredModel string, runner llm.JSONSchemaRunner) *OpenAICommitMessageClient {
+	if runner == nil {
+		return nil
+	}
+	model := strings.TrimSpace(preferredModel)
+	if model == "" {
+		model = strings.TrimSpace(os.Getenv(brand.CommitModelEnvVar))
+	}
+	return &OpenAICommitMessageClient{
+		model:     model,
+		responses: runner,
+	}
+}
+
 func NewCodexCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
 	return NewCodexCommitMessageClientWithUsageTrackerInDataDir("", usage)
 }
@@ -213,12 +227,13 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 		var decoded struct {
 			Message          string  `json:"message"`
 			Subject          string  `json:"subject"`
+			CommitSubject    string  `json:"commit_subject"`
 			CompletedTodoIDs []int64 `json:"completed_todo_ids"`
 		}
 		if err := llm.DecodeJSONObjectOutput(response.OutputText, &decoded); err != nil {
 			return CommitMessageSuggestion{}, fmt.Errorf("decode commit message result: %w", err)
 		}
-		message := firstNonEmptyString(decoded.Message, decoded.Subject)
+		message := firstNonEmptyString(decoded.Message, decoded.Subject, decoded.CommitSubject)
 		if message != "" {
 			return CommitMessageSuggestion{
 				Message:          message,
