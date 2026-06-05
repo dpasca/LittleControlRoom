@@ -20,6 +20,7 @@ type OllamaChatClient struct {
 	endpoint   string
 	httpClient *http.Client
 	usage      *UsageTracker
+	think      bool
 }
 
 type OllamaModelMetadata struct {
@@ -32,8 +33,16 @@ type OllamaModelMetadata struct {
 	DetailsPresent bool
 }
 
+type OllamaChatOptions struct {
+	Think bool
+}
+
 func NewOllamaJSONSchemaRunner(baseURL, defaultModel string, timeout time.Duration, usage *UsageTracker) JSONSchemaRunner {
-	baseRunner := NewOllamaChatClientWithBaseURL(baseURL, timeout, usage)
+	return NewOllamaJSONSchemaRunnerWithOptions(baseURL, defaultModel, timeout, usage, OllamaChatOptions{})
+}
+
+func NewOllamaJSONSchemaRunnerWithOptions(baseURL, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OllamaChatOptions) JSONSchemaRunner {
+	baseRunner := NewOllamaChatClientWithBaseURLAndOptions(baseURL, timeout, usage, opts)
 	if baseRunner == nil {
 		return nil
 	}
@@ -42,7 +51,11 @@ func NewOllamaJSONSchemaRunner(baseURL, defaultModel string, timeout time.Durati
 }
 
 func NewOllamaTextRunner(baseURL, defaultModel string, timeout time.Duration, usage *UsageTracker) TextRunner {
-	baseRunner := NewOllamaChatClientWithBaseURL(baseURL, timeout, usage)
+	return NewOllamaTextRunnerWithOptions(baseURL, defaultModel, timeout, usage, OllamaChatOptions{})
+}
+
+func NewOllamaTextRunnerWithOptions(baseURL, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OllamaChatOptions) TextRunner {
+	baseRunner := NewOllamaChatClientWithBaseURLAndOptions(baseURL, timeout, usage, opts)
 	if baseRunner == nil {
 		return nil
 	}
@@ -51,6 +64,10 @@ func NewOllamaTextRunner(baseURL, defaultModel string, timeout time.Duration, us
 }
 
 func NewOllamaChatClientWithBaseURL(baseURL string, timeout time.Duration, usage *UsageTracker) *OllamaChatClient {
+	return NewOllamaChatClientWithBaseURLAndOptions(baseURL, timeout, usage, OllamaChatOptions{})
+}
+
+func NewOllamaChatClientWithBaseURLAndOptions(baseURL string, timeout time.Duration, usage *UsageTracker, opts OllamaChatOptions) *OllamaChatClient {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
@@ -58,6 +75,7 @@ func NewOllamaChatClientWithBaseURL(baseURL string, timeout time.Duration, usage
 		endpoint:   OllamaNativeEndpoint(baseURL, "/api/chat"),
 		httpClient: &http.Client{Timeout: timeout},
 		usage:      usage,
+		think:      opts.Think,
 	}
 }
 
@@ -192,7 +210,7 @@ func (c *OllamaChatClient) RunText(ctx context.Context, req TextRequest) (TextRe
 		Status:           ollamaResponseStatus(response.Done),
 		Model:            firstNonEmptyString(response.Model, modelName),
 		IncompleteReason: strings.TrimSpace(response.DoneReason),
-		OutputText:       strings.TrimSpace(response.Message.Content),
+		OutputText:       strings.TrimSpace(StripThinkingBlocks(response.Message.Content)),
 		Usage:            response.usage(),
 	}, nil
 }
@@ -223,7 +241,7 @@ func (c *OllamaChatClient) RunJSONSchema(ctx context.Context, req JSONSchemaRequ
 		Status:           ollamaResponseStatus(response.Done),
 		Model:            firstNonEmptyString(response.Model, modelName),
 		IncompleteReason: strings.TrimSpace(response.DoneReason),
-		OutputText:       strings.TrimSpace(response.Message.Content),
+		OutputText:       strings.TrimSpace(StripThinkingBlocks(response.Message.Content)),
 		Usage:            response.usage(),
 	}, nil
 }
@@ -236,8 +254,9 @@ type ollamaChatMessage struct {
 type ollamaChatResponse struct {
 	Model   string `json:"model"`
 	Message struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		Role     string `json:"role"`
+		Content  string `json:"content"`
+		Thinking string `json:"thinking"`
 	} `json:"message"`
 	Done               bool   `json:"done"`
 	DoneReason         string `json:"done_reason"`
@@ -254,7 +273,7 @@ func (c *OllamaChatClient) runChat(ctx context.Context, modelName string, messag
 		"model":    modelName,
 		"messages": messages,
 		"stream":   false,
-		"think":    false,
+		"think":    c.think,
 	}
 	if format != nil {
 		reqBody["format"] = format

@@ -34,6 +34,7 @@ const (
 	settingsFieldBossChatBackend
 	settingsFieldBossChatModel
 	settingsFieldBossUtilityModel
+	settingsFieldBossChatOllamaThinking
 	settingsFieldMLXBaseURL
 	settingsFieldMLXAPIKey
 	settingsFieldMLXModel
@@ -724,6 +725,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldXiaomiModel),
 		m.settingsFieldValue(settingsFieldBossChatModel),
 		m.settingsFieldValue(settingsFieldBossUtilityModel),
+		m.settingsFieldValue(settingsFieldBossChatOllamaThinking),
 		m.settingsFieldValue(settingsFieldMLXBaseURL),
 		m.settingsFieldValue(settingsFieldMLXAPIKey),
 		m.settingsFieldValue(settingsFieldMLXModel),
@@ -1034,6 +1036,8 @@ func (m Model) settingsFieldVisible(index int) bool {
 			strings.TrimSpace(settings.XiaomiModel) != ""
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 		return settingsBossModelFieldsRelevant(settings)
+	case settingsFieldBossChatOllamaThinking:
+		return settings.BossChatBackend == config.AIBackendOllama || settings.BossChatOllamaThinking
 	case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning,
 		settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile:
 		return strings.TrimSpace(settings.LCAgentRoutePreset) == ""
@@ -1151,6 +1155,9 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		fields = append(fields, settingsBossProviderConnectionFields(settings.BossChatBackend)...)
 		if settingsBossModelFieldsRelevant(settings) {
 			fields = append(fields, settingsFieldBossChatModel, settingsFieldBossUtilityModel)
+		}
+		if settings.BossChatBackend == config.AIBackendOllama || settings.BossChatOllamaThinking {
+			fields = append(fields, settingsFieldBossChatOllamaThinking)
 		}
 		return fields
 	case settingsDrilldownLCAgent:
@@ -1556,6 +1563,7 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.BossChatBackend = config.AIBackend(m.settingsFieldValue(settingsFieldBossChatBackend))
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
+	settings.BossChatOllamaThinking = strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldBossChatOllamaThinking, m.settingsFieldValue(settingsFieldBossChatOllamaThinking)), "true")
 	settings.OpenAIAPIKey = m.settingsFieldValue(settingsFieldOpenAIAPIKey)
 	settings.OpenRouterAPIKey = m.settingsFieldValue(settingsFieldOpenRouterAPIKey)
 	settings.OpenRouterModel = m.settingsFieldValue(settingsFieldOpenRouterModel)
@@ -2028,6 +2036,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Shared Ollama Connection"
 		case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 			return "Boss Models"
+		case settingsFieldBossChatOllamaThinking:
+			return "Ollama Thinking"
 		}
 	case settingsDrilldownLCAgent:
 		switch fieldIndex {
@@ -3056,6 +3066,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAI,
 		),
 		newSettingsField(
+			"Boss Ollama thinking",
+			"Press Enter to choose whether Ollama Boss Chat answers request native thinking. Default off keeps responses faster and avoids leaking reasoning into structured tasks.",
+			strconv.FormatBool(settings.BossChatOllamaThinking),
+			8,
+			settingsSectionAI,
+		),
+		newSettingsField(
 			"MLX base URL",
 			"Used when Project reports or Boss chat uses MLX. Leave blank to use the default local OpenAI-compatible URL: http://127.0.0.1:8080/v1",
 			settings.MLXBaseURL,
@@ -3519,6 +3536,11 @@ func (m Model) settingsFieldHint(index int) string {
 			return "Routine Boss utility calls will request model " + model + ". LCROOM_BOSS_MODEL still overrides all Boss model choices if set."
 		}
 		return "Blank uses " + settingsBossUtilityDefaultLabel(m.bossModelDefaultSettings()) + ". " + brand.BossAssistantModelEnvVar + " still overrides all Boss model choices if set."
+	case settingsFieldBossChatOllamaThinking:
+		if strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldBossChatOllamaThinking, field.input.Value()), "true") {
+			return "Ollama Boss Chat answers will request native thinking. Final content is used; returned thinking is kept out of the answer."
+		}
+		return "Default off: Ollama Boss Chat asks for final content only, which is faster and more predictable."
 	case settingsFieldMLXBaseURL:
 		return field.hint
 	case settingsFieldMLXAPIKey:

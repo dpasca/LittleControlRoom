@@ -48,6 +48,52 @@ func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {
 	}
 }
 
+func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOllama
+	settings.OllamaModel = "gemma4:12b-mlx"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownBossChat)
+	got := updated.(Model)
+	fields := got.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
+	if !slices.Contains(fields, settingsFieldBossChatOllamaThinking) {
+		t.Fatalf("boss chat Ollama drilldown fields = %#v, want thinking field", fields)
+	}
+	rendered := ansi.Strip(got.renderSettingsContent(100, 24))
+	for _, want := range []string{"Ollama Thinking", "Boss Ollama thinking"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("settings content missing %q:\n%s", want, rendered)
+		}
+	}
+
+	_ = got.setSettingsSelection(settingsFieldBossChatOllamaThinking)
+	updated, _ = got.openSettingsChoicePicker(settingsFieldBossChatOllamaThinking)
+	got = updated.(Model)
+	if got.settingsChoicePicker == nil {
+		t.Fatalf("Boss Ollama thinking should open choice picker")
+	}
+	rendered = ansi.Strip(got.renderSettingsChoicePickerContent(56, 18))
+	for _, want := range []string{"Boss Ollama Thinking", "Off", "On"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("choice picker missing %q:\n%s", want, rendered)
+		}
+	}
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsFieldValue(settingsFieldBossChatOllamaThinking) != "true" {
+		t.Fatalf("Boss Ollama thinking = %q, want true", got.settingsFieldValue(settingsFieldBossChatOllamaThinking))
+	}
+}
+
 func TestCommandEnterOpensRunCommandDialogWhenUnset(t *testing.T) {
 	tests := []struct {
 		name    string

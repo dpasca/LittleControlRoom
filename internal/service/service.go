@@ -332,12 +332,14 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	nextBackend := config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
 	currentBossChatBackend := s.cfg.EffectiveBossChatBackend()
 	nextBossChatBackend := config.ResolveBossChatBackend(settings.BossChatBackend, settings.OpenAIAPIKey)
+	currentBossChatOllamaThinking := s.cfg.BossChatOllamaThinking
 
 	s.cfg.AIBackend = settings.AIBackend
 	s.cfg.BossChatBackend = settings.BossChatBackend
 	s.cfg.BossChatModel = strings.TrimSpace(settings.BossChatModel)
 	s.cfg.BossHelmModel = strings.TrimSpace(settings.BossHelmModel)
 	s.cfg.BossUtilityModel = strings.TrimSpace(settings.BossUtilityModel)
+	s.cfg.BossChatOllamaThinking = settings.BossChatOllamaThinking
 	s.cfg.OpenAIAPIKey = strings.TrimSpace(settings.OpenAIAPIKey)
 	s.cfg.OpenRouterAPIKey = strings.TrimSpace(settings.OpenRouterAPIKey)
 	s.cfg.OpenRouterModel = strings.TrimSpace(settings.OpenRouterModel)
@@ -395,7 +397,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	if currentBackend != nextBackend {
 		s.resetSessionUsageLocked()
 	}
-	if currentBossChatBackend != nextBossChatBackend {
+	if currentBossChatBackend != nextBossChatBackend || currentBossChatOllamaThinking != settings.BossChatOllamaThinking {
 		s.resetBossChatUsageLocked()
 	}
 }
@@ -601,7 +603,9 @@ func (s *Service) NewBossTextRunner() (llm.TextRunner, string, config.AIBackend)
 		return llm.NewResponsesTextClient(strings.TrimSpace(cfg.OpenAIAPIKey), bossAssistantHTTPTimeout, usageTracker), modelName, backend
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
 		if backend == config.AIBackendOllama {
-			return llm.NewOllamaTextRunner(cfg.OpenAICompatibleBaseURL(backend), modelName, bossAssistantHTTPTimeout, usageTracker), modelName, backend
+			return llm.NewOllamaTextRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), modelName, bossAssistantHTTPTimeout, usageTracker, llm.OllamaChatOptions{
+				Think: cfg.BossChatOllamaThinking,
+			}), modelName, backend
 		}
 		return llm.NewOpenAICompatibleTextRunnerWithOptions(cfg.OpenAICompatibleBaseURL(backend), cfg.OpenAICompatibleAPIKey(backend), modelName, bossAssistantHTTPTimeout, usageTracker, openAICompatibleResponsesRunnerOptions(backend, modelName, backend.UsesCloudAPIKey())), modelName, backend
 	default:

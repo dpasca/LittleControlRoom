@@ -22,6 +22,7 @@ type AppConfig struct {
 	BossChatModel             string
 	BossHelmModel             string
 	BossUtilityModel          string
+	BossChatOllamaThinking    bool
 	OpenAIAPIKey              string
 	OpenRouterAPIKey          string
 	OpenRouterModel           string
@@ -174,6 +175,7 @@ type fileConfig struct {
 	BossChatModel             *string   `toml:"boss_chat_model"`
 	BossHelmModel             *string   `toml:"boss_helm_model"`
 	BossUtilityModel          *string   `toml:"boss_utility_model"`
+	BossChatOllamaThinking    *bool     `toml:"boss_chat_ollama_thinking"`
 	OpenAIAPIKey              *string   `toml:"openai_api_key"`
 	OpenRouterAPIKey          *string   `toml:"openrouter_api_key"`
 	OpenRouterModel           *string   `toml:"openrouter_model"`
@@ -550,6 +552,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.BossChatModel, fc.BossChatModel)
 	applyOptionalTrimmedString(&cfg.BossHelmModel, fc.BossHelmModel)
 	applyOptionalTrimmedString(&cfg.BossUtilityModel, fc.BossUtilityModel)
+	if fc.BossChatOllamaThinking != nil {
+		cfg.BossChatOllamaThinking = *fc.BossChatOllamaThinking
+	}
 	applyOptionalTrimmedString(&cfg.OpenAIAPIKey, fc.OpenAIAPIKey)
 	applyOptionalTrimmedString(&cfg.OpenRouterAPIKey, fc.OpenRouterAPIKey)
 	applyOptionalTrimmedString(&cfg.OpenRouterModel, fc.OpenRouterModel)

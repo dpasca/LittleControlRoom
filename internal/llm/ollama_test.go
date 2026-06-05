@@ -101,3 +101,53 @@ func TestDecodeOllamaModelMetadataReadsContextWindow(t *testing.T) {
 		t.Fatalf("Capabilities = %#v, want three capabilities", meta.Capabilities)
 	}
 }
+
+func TestOllamaTextRunnerCanEnableThinkingWithoutLeakingIt(t *testing.T) {
+	t.Parallel()
+
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/chat":
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"model":"gemma4:12b-mlx",
+				"message":{
+					"role":"assistant",
+					"thinking":"Plan the answer privately.",
+					"content":"<think>extra inline thought</think>\nThe final answer."
+				},
+				"done":true,
+				"done_reason":"stop",
+				"prompt_eval_count":7,
+				"eval_count":11
+			}`))
+		case "/v1/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"gemma4:12b-mlx"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewOllamaTextRunnerWithOptions(server.URL+"/v1", "gemma4:12b-mlx", time.Second, nil, OllamaChatOptions{Think: true})
+	resp, err := runner.RunText(context.Background(), TextRequest{
+		Model: "gemma4:12b-mlx",
+		Messages: []TextMessage{
+			{Role: "user", Content: "Answer directly."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunText() error = %v", err)
+	}
+	if got["think"] != true {
+		t.Fatalf("think = %#v, want true", got["think"])
+	}
+	if resp.OutputText != "The final answer." {
+		t.Fatalf("OutputText = %q, want final content without thinking", resp.OutputText)
+	}
+}

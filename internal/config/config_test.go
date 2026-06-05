@@ -81,6 +81,7 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"boss_chat_model = \"gpt-5.4-mini\"\n" +
 		"boss_helm_model = \"gpt-5.5\"\n" +
 		"boss_utility_model = \"gpt-5.4-mini\"\n" +
+		"boss_chat_ollama_thinking = true\n" +
 		"openai_api_key = \"sk-live-example\"\n" +
 		"openrouter_api_key = \"or-live-example\"\n" +
 		"openrouter_model = \"deepseek/deepseek-v4-flash\"\n" +
@@ -168,6 +169,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.BossUtilityModel, "gpt-5.4-mini"; got != want {
 		t.Fatalf("boss utility model = %q, want %q", got, want)
+	}
+	if !cfg.BossChatOllamaThinking {
+		t.Fatalf("boss chat ollama thinking = false, want true")
 	}
 	if got, want := cfg.ExcludePaths, []string{"/tmp/skip"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("exclude paths = %v, want %v", got, want)
@@ -494,7 +498,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "off", "", "", "", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "off", "", "", "", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -509,6 +513,9 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 	if got, want := settings.OpenAIAPIKey, "sk-test-example"; got != want {
 		t.Fatalf("openai api key = %q, want %q", got, want)
+	}
+	if !settings.BossChatOllamaThinking {
+		t.Fatalf("boss chat ollama thinking = false, want true")
 	}
 	if got, want := settings.OpenRouterAPIKey, "sk-openrouter"; got != want {
 		t.Fatalf("openrouter api key = %q, want %q", got, want)
@@ -721,7 +728,7 @@ func TestSaveEditableSettingsNormalizesDirectLCAgentProviderModelPrefixes(t *tes
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -729,7 +736,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -737,7 +744,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -793,6 +800,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		BossChatBackend:           AIBackendOpenAIAPI,
 		BossHelmModel:             "gpt-5.5",
 		BossUtilityModel:          "gpt-5.4-mini",
+		BossChatOllamaThinking:    true,
 		OpenAIAPIKey:              "sk-test-example",
 		OpenRouterAPIKey:          "or-test-example",
 		OpenRouterModel:           "deepseek/deepseek-v4-flash",
@@ -869,6 +877,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "boss_utility_model = \"gpt-5.4-mini\"") {
 		t.Fatalf("saved config should include boss_utility_model: %q", text)
+	}
+	if !strings.Contains(text, "boss_chat_ollama_thinking = true") {
+		t.Fatalf("saved config should include boss_chat_ollama_thinking: %q", text)
 	}
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") {
 		t.Fatalf("saved config should include openai api key: %q", text)

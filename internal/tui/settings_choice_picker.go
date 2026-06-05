@@ -26,6 +26,7 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 		settingsFieldLCAgentReasoning,
 		settingsFieldLCAgentAuto,
 		settingsFieldLCAgentAdminWrite,
+		settingsFieldBossChatOllamaThinking,
 		settingsFieldLCAgentToolProfile,
 		settingsFieldLCAgentContextProfile:
 		return true
@@ -98,6 +99,11 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 		return []settingsChoiceOption{
 			{Value: "false", Label: "Off", Summary: "Keep write tools scoped to the workspace.", Description: "Recommended for normal project work."},
 			{Value: "true", Label: "On", Summary: "Allow explicit absolute-path admin edits.", Description: "Use only for system or cross-workspace maintenance where you expect LCAgent to write outside the project."},
+		}
+	case settingsFieldBossChatOllamaThinking:
+		return []settingsChoiceOption{
+			{Value: "false", Label: "Off", Summary: "Ask Ollama Boss Chat for final content only.", Description: "Recommended default for responsiveness and predictable final answers."},
+			{Value: "true", Label: "On", Summary: "Allow native Ollama thinking for Boss Chat answers.", Description: "Useful when you want deeper local reasoning and can accept extra latency. Returned thinking is not included in the final answer."},
 		}
 	case settingsFieldLCAgentToolProfile:
 		return []settingsChoiceOption{
@@ -286,7 +292,7 @@ func settingsChoiceOptionValueForField(fieldIndex int, raw string) string {
 			return "mimo-2.5-pro-low"
 		}
 		return normalized
-	case settingsFieldLCAgentAdminWrite:
+	case settingsFieldLCAgentAdminWrite, settingsFieldBossChatOllamaThinking:
 		if normalized == "true" || normalized == "yes" || normalized == "on" || normalized == "1" {
 			return "true"
 		}
@@ -329,6 +335,8 @@ func settingsChoiceTitle(fieldIndex int) string {
 		return "LCAgent Permissions"
 	case settingsFieldLCAgentAdminWrite:
 		return "LCAgent Admin Write"
+	case settingsFieldBossChatOllamaThinking:
+		return "Boss Ollama Thinking"
 	case settingsFieldLCAgentToolProfile:
 		return "LCAgent Tool Profile"
 	case settingsFieldLCAgentContextProfile:

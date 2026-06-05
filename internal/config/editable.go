@@ -19,6 +19,7 @@ type EditableSettings struct {
 	BossChatModel             string
 	BossHelmModel             string
 	BossUtilityModel          string
+	BossChatOllamaThinking    bool
 	OpenAIAPIKey              string
 	OpenRouterAPIKey          string
 	OpenRouterModel           string
@@ -83,6 +84,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		BossChatModel:             cfg.BossChatModel,
 		BossHelmModel:             firstNonEmptyTrimmed(cfg.BossHelmModel, cfg.BossChatModel),
 		BossUtilityModel:          cfg.BossUtilityModel,
+		BossChatOllamaThinking:    cfg.BossChatOllamaThinking,
 		OpenAIAPIKey:              cfg.OpenAIAPIKey,
 		OpenRouterAPIKey:          cfg.OpenRouterAPIKey,
 		OpenRouterModel:           cfg.OpenRouterModel,
@@ -267,7 +269,7 @@ func trimLCAgentModelProviderPrefix(model, prefix string) string {
 	return model
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -285,6 +287,10 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	xiaomiModel := strings.TrimSpace(xiaomiModelRaw)
 	bossHelmModel := strings.TrimSpace(bossHelmModelRaw)
 	bossUtilityModel := strings.TrimSpace(bossUtilityModelRaw)
+	bossChatOllamaThinking, err := parseOptionalConfigBool(bossChatOllamaThinkingRaw, "boss_chat_ollama_thinking")
+	if err != nil {
+		return EditableSettings{}, err
+	}
 	mlxBaseURL := strings.TrimSpace(mlxBaseURLRaw)
 	mlxAPIKey := strings.TrimSpace(mlxAPIKeyRaw)
 	mlxModel := strings.TrimSpace(mlxModelRaw)
@@ -390,6 +396,7 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		BossChatBackend:        parsedBossChatBackend,
 		BossHelmModel:          bossHelmModel,
 		BossUtilityModel:       bossUtilityModel,
+		BossChatOllamaThinking: bossChatOllamaThinking,
 		OpenAIAPIKey:           openAIAPIKey,
 		OpenRouterAPIKey:       openRouterAPIKey,
 		DeepSeekAPIKey:         deepSeekAPIKey,
@@ -574,10 +581,14 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.BossUtilityModel); value != "" {
 		lines = append(lines, fmt.Sprintf("boss_utility_model = %s", strconv.Quote(value)))
 	}
+	if settings.BossChatOllamaThinking {
+		lines = append(lines, "boss_chat_ollama_thinking = true")
+	}
 	if settings.BossChatBackend != AIBackendUnset ||
 		strings.TrimSpace(settings.BossChatModel) != "" ||
 		strings.TrimSpace(settings.BossHelmModel) != "" ||
-		strings.TrimSpace(settings.BossUtilityModel) != "" {
+		strings.TrimSpace(settings.BossUtilityModel) != "" ||
+		settings.BossChatOllamaThinking {
 		lines = append(lines, "")
 	}
 	if settings.OpenAIAPIKey != "" {

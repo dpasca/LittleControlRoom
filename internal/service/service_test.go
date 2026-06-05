@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"lcroom/internal/aibackend"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -416,6 +419,87 @@ func TestBossChatRunnerSupportsLocalOpenAICompatibleBackend(t *testing.T) {
 	}
 	if plannerModel != "local-boss-model" {
 		t.Fatalf("boss chat planner model = %q, want local-boss-model", plannerModel)
+	}
+}
+
+func TestBossChatOllamaThinkingEnablesNativeThinkOnlyForTextRunner(t *testing.T) {
+	t.Setenv("LCROOM_BOSS_MODEL", "")
+
+	textRequests := make([]map[string]any, 0, 1)
+	jsonRequests := make([]map[string]any, 0, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/chat":
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			if _, hasFormat := req["format"]; hasFormat {
+				jsonRequests = append(jsonRequests, req)
+			} else {
+				textRequests = append(textRequests, req)
+			}
+			_, _ = w.Write([]byte(`{
+				"model":"gemma4:12b-mlx",
+				"message":{"role":"assistant","content":"done"},
+				"done":true,
+				"done_reason":"stop",
+				"prompt_eval_count":4,
+				"eval_count":1
+			}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.BossChatBackend = config.AIBackendOllama
+	cfg.BossChatOllamaThinking = true
+	cfg.OllamaBaseURL = server.URL + "/v1"
+	cfg.OllamaModel = "gemma4:12b-mlx"
+	svc := &Service{
+		cfg:                  cfg,
+		bossChatUsageTracker: llm.NewUsageTracker(),
+	}
+
+	textRunner, textModel, backend := svc.NewBossTextRunner()
+	if backend != config.AIBackendOllama || textModel != "gemma4:12b-mlx" {
+		t.Fatalf("text runner backend/model = %s/%q, want ollama/gemma4:12b-mlx", backend, textModel)
+	}
+	if _, err := textRunner.RunText(context.Background(), llm.TextRequest{
+		Model: textModel,
+		Messages: []llm.TextMessage{
+			{Role: "user", Content: "answer"},
+		},
+	}); err != nil {
+		t.Fatalf("RunText() error = %v", err)
+	}
+
+	jsonRunner, jsonModel, jsonBackend := svc.NewBossJSONRunner()
+	if jsonBackend != config.AIBackendOllama || jsonModel != "gemma4:12b-mlx" {
+		t.Fatalf("json runner backend/model = %s/%q, want ollama/gemma4:12b-mlx", jsonBackend, jsonModel)
+	}
+	if _, err := jsonRunner.RunJSONSchema(context.Background(), llm.JSONSchemaRequest{
+		Model:      jsonModel,
+		SystemText: "Return JSON.",
+		UserText:   "Return status.",
+		SchemaName: "status",
+		Schema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"status": map[string]any{"type": "string"}},
+			"required":   []string{"status"},
+		},
+	}); err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+
+	if len(textRequests) != 1 || textRequests[0]["think"] != true {
+		t.Fatalf("text requests = %#v, want one request with think=true", textRequests)
+	}
+	if len(jsonRequests) != 1 || jsonRequests[0]["think"] != false {
+		t.Fatalf("json requests = %#v, want one request with think=false", jsonRequests)
 	}
 }
 
