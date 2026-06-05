@@ -1272,8 +1272,8 @@ func TestSettingsCtrlSSavesConfigAndClosesModal(t *testing.T) {
 	if saved.settingsMode {
 		t.Fatalf("settings mode should close after a successful save")
 	}
-	if !strings.Contains(saved.status, "Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now") {
-		t.Fatalf("status = %q, want immediate-apply notice", saved.status)
+	if !strings.Contains(saved.status, "Project scope changed; rescanning projects in the background now") {
+		t.Fatalf("status = %q, want scope rescan notice", saved.status)
 	}
 
 	configPath := filepath.Join(home, ".little-control-room", "config.toml")
@@ -1796,8 +1796,14 @@ func TestSettingsAPIKeyHintShowsMaskedSuffix(t *testing.T) {
 }
 
 func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	next := settings
+	next.ExcludeProjectPatterns = []string{"client-*"}
+	next.CodexLaunchPreset = codexcli.PresetSafe
+
 	m := Model{
-		settingsMode: true,
+		settingsMode:     true,
+		settingsBaseline: &settings,
 		allProjects: []model.ProjectSummary{
 			{Path: "/tmp/client-demo-03", Name: "client-demo-03", LastActivity: time.Date(2026, 3, 6, 9, 0, 0, 0, time.UTC)},
 			{Path: "/tmp/visible-demo", Name: "visible-demo", LastActivity: time.Date(2026, 3, 6, 10, 0, 0, 0, time.UTC)},
@@ -1808,11 +1814,8 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	m.rebuildProjectList("")
 
 	updated, cmd := m.Update(settingsSavedMsg{
-		path: "/tmp/config.toml",
-		settings: config.EditableSettings{
-			ExcludeProjectPatterns: []string{"client-*"},
-			CodexLaunchPreset:      codexcli.PresetSafe,
-		},
+		path:     "/tmp/config.toml",
+		settings: next,
 	})
 	got := updated.(Model)
 	if got.settingsMode {
@@ -1846,5 +1849,63 @@ func TestApplyEditableSettingsCmdReturnsCompletionMsg(t *testing.T) {
 	msg := cmd()
 	if _, ok := msg.(editableSettingsAppliedMsg); !ok {
 		t.Fatalf("cmd() returned %T, want editableSettingsAppliedMsg", msg)
+	}
+}
+
+func TestSettingsSavedMsgQueuesScanAfterScopePathChange(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{"/tmp/old-root"}
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	baseline := config.EditableSettingsFromAppConfig(cfg)
+	next := baseline
+	next.IncludePaths = []string{"/tmp/new-root"}
+
+	m := Model{
+		svc:              svc,
+		settingsMode:     true,
+		settingsBaseline: &baseline,
+	}
+
+	updated, cmd := m.Update(settingsSavedMsg{
+		path:     "/tmp/config.toml",
+		settings: next,
+	})
+	got := updated.(Model)
+	if got.scanInFlight {
+		t.Fatal("settings save should wait until settings are applied before starting the scan")
+	}
+	var applied editableSettingsAppliedMsg
+	found := false
+	for _, msg := range collectCmdMsgs(cmd) {
+		if appliedMsg, ok := msg.(editableSettingsAppliedMsg); ok {
+			applied = appliedMsg
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("settings save command did not apply settings before scan")
+	}
+	if !applied.scanAfter {
+		t.Fatalf("editableSettingsAppliedMsg.scanAfter = false, want true for include path change")
+	}
+
+	updated, scanCmd := got.Update(applied)
+	got = updated.(Model)
+	if !got.scanInFlight {
+		t.Fatal("scope-change settings apply should mark scan in flight")
+	}
+	msgs := collectCmdMsgs(scanCmd)
+	if len(msgs) != 1 {
+		t.Fatalf("scan command messages = %#v, want one scanMsg", msgs)
+	}
+	if _, ok := msgs[0].(scanMsg); !ok {
+		t.Fatalf("scan command returned %T, want scanMsg", msgs[0])
 	}
 }

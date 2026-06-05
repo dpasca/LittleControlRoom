@@ -660,6 +660,26 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	}
 }
 
+func TestSettingsSectionsKeepScopePathFieldsPaired(t *testing.T) {
+	for _, sectionID := range []settingsSectionID{settingsSectionGettingStarted, settingsSectionScope} {
+		t.Run(string(sectionID), func(t *testing.T) {
+			var fields []int
+			for _, section := range settingsSections() {
+				if section.id == sectionID {
+					fields = append([]int(nil), section.fieldOrder...)
+					break
+				}
+			}
+			if !slices.Contains(fields, settingsFieldIncludePaths) {
+				t.Fatalf("%s section missing include paths field: %#v", sectionID, fields)
+			}
+			if !slices.Contains(fields, settingsFieldExcludePaths) {
+				t.Fatalf("%s section missing exclude paths field: %#v", sectionID, fields)
+			}
+		})
+	}
+}
+
 func TestSettingsPrivacyPatternsRevealActionIsDiscoverable(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.PrivacyPatterns = []string{"super-private-folder", "customer-999"}
