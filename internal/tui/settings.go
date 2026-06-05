@@ -192,6 +192,7 @@ func settingsSections() []settingsSection {
 				settingsFieldBossChatBackend,
 				settingsFieldLCAgentProvider,
 				settingsFieldIncludePaths,
+				settingsFieldExcludePaths,
 			},
 		},
 		{
@@ -241,6 +242,7 @@ func settingsSections() []settingsSection {
 			summary: "Discovery and privacy",
 			hint:    "Choose which folders stay visible and which names should stay hidden or masked in demos.",
 			fieldOrder: []int{
+				settingsFieldIncludePaths,
 				settingsFieldExcludePaths,
 				settingsFieldExcludeProjectPatterns,
 				settingsFieldPrivacyPatterns,
@@ -798,6 +800,11 @@ func settingsLocalFileIssue(settings config.EditableSettings) error {
 		return fmt.Errorf("LCAgent env file is a directory: %s", envFile)
 	}
 	return nil
+}
+
+func projectScopeSettingsChanged(previous, next config.EditableSettings) bool {
+	return !stringSlicesEqual(previous.IncludePaths, next.IncludePaths) ||
+		!stringSlicesEqual(previous.ExcludePaths, next.ExcludePaths)
 }
 
 func (m *Model) appendSettingsConfigIssue(err error) {
@@ -1452,6 +1459,10 @@ func (m Model) saveSettingsCmd(settings config.EditableSettings) tea.Cmd {
 }
 
 func (m Model) applyEditableSettingsCmd(settings config.EditableSettings) tea.Cmd {
+	return m.applyEditableSettingsCmdWithScan(settings, false)
+}
+
+func (m Model) applyEditableSettingsCmdWithScan(settings config.EditableSettings, scanAfter bool) tea.Cmd {
 	if m.svc == nil {
 		return nil
 	}
@@ -1460,7 +1471,7 @@ func (m Model) applyEditableSettingsCmd(settings config.EditableSettings) tea.Cm
 		// Apply service-side AI client reconfiguration off the Bubble Tea update
 		// path so local backend probing cannot stall the UI thread.
 		m.svc.ApplyEditableSettings(saved)
-		return editableSettingsAppliedMsg{}
+		return editableSettingsAppliedMsg{scanAfter: scanAfter}
 	}
 }
 

@@ -197,6 +197,82 @@ func TestScanOnceWithIncludePathsRunsDetectorsOnceAndKeepsRecentOutOfScopeActivi
 	}
 }
 
+func TestScanOnceKeepsStaleActivityForManualProjectOutsideIncludePaths(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	includeRoot := t.TempDir()
+	outsideRoot := t.TempDir()
+	manualOutsidePath := filepath.Join(outsideRoot, "manual-outside")
+	staleOutsidePath := filepath.Join(outsideRoot, "stale-outside")
+	for _, path := range []string{manualOutsidePath, staleOutsidePath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	now := time.Now().UTC().Truncate(time.Second)
+	activityAt := now.Add(-72 * time.Hour)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          manualOutsidePath,
+		Name:          filepath.Base(manualOutsidePath),
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		ManuallyAdded: true,
+		InScope:       true,
+		CreatedAt:     now.Add(-96 * time.Hour),
+		UpdatedAt:     now.Add(-72 * time.Hour),
+	}); err != nil {
+		t.Fatalf("seed manual outside project: %v", err)
+	}
+
+	detector := &countingDetector{
+		name: "test",
+		activities: map[string]*model.DetectorProjectActivity{
+			manualOutsidePath: fakeActivity(manualOutsidePath, "manual-outside-session", activityAt),
+			staleOutsidePath:  fakeActivity(staleOutsidePath, "stale-outside-session", activityAt),
+		},
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = []string{includeRoot}
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	svc.SetSessionClassifier(nil)
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = nil
+	svc.gitWorktreeInfoReader = nil
+	svc.gitWorktreeListReader = nil
+
+	report, err := svc.ScanOnce(ctx)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	statesByPath := map[string]model.ProjectState{}
+	for _, state := range report.States {
+		statesByPath[state.Path] = state
+	}
+	manualState, ok := statesByPath[manualOutsidePath]
+	if !ok {
+		t.Fatalf("manual outside activity missing from scan states: %#v", report.States)
+	}
+	if !manualState.LastActivity.Equal(activityAt) {
+		t.Fatalf("manual outside LastActivity = %s, want %s", manualState.LastActivity, activityAt)
+	}
+	if len(manualState.Sessions) != 1 {
+		t.Fatalf("manual outside sessions = %#v, want one session", manualState.Sessions)
+	}
+	if _, ok := statesByPath[staleOutsidePath]; ok {
+		t.Fatalf("untracked stale outside activity should still be filtered: %#v", report.States)
+	}
+}
+
 func TestScanOnceKeepsActiveSnooze(t *testing.T) {
 	t.Parallel()
 

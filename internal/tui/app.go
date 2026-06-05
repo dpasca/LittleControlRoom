@@ -522,7 +522,9 @@ type setupSnapshotMsg struct {
 	openOnStartup bool
 }
 
-type editableSettingsAppliedMsg struct{}
+type editableSettingsAppliedMsg struct {
+	scanAfter bool
+}
 
 type privacyModeSavedMsg struct {
 	privacyMode bool
@@ -2173,6 +2175,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		previousSettings := m.currentSettingsBaseline()
+		scopeSettingsChanged := projectScopeSettingsChanged(previousSettings, msg.settings)
 		reloadLCAgentProject, shouldReloadLCAgent := m.shouldReloadEmbeddedLCAgentAfterSettingsSave(previousSettings, msg.settings)
 		settingsEmbeddedProject := m.settingsEmbeddedProject
 		settingsEmbeddedProvider := m.settingsEmbeddedProvider
@@ -2194,6 +2197,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
 		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		if scopeSettingsChanged {
+			m.status = fmt.Sprintf("Settings saved to %s. Project scope changed; rescanning projects in the background now.", msg.path)
+		}
 		if shouldReloadLCAgent {
 			m.beginCodexPendingOpen(reloadLCAgentProject, codexapp.ProviderLCAgent)
 			m.status = fmt.Sprintf("Settings saved to %s. Restarting LCAgent so the next run uses the new configuration.", msg.path)
@@ -2205,7 +2211,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status += " " + errorStatusWithHint(settingsConfigIssueStatus) + "."
 		}
 		m.rebuildProjectList(selectedPath)
-		cmds := []tea.Cmd{m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false)}
+		cmds := []tea.Cmd{m.applyEditableSettingsCmdWithScan(msg.settings, scopeSettingsChanged), m.refreshSetupSnapshotCmd(false)}
 		if shouldReloadLCAgent {
 			cmds = append(cmds, m.reloadEmbeddedLCAgentAfterSettingsCmd(reloadLCAgentProject, msg.settings))
 		}
@@ -2235,6 +2241,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("AI setup saved to %s. %s is now selected.", msg.path, msg.settings.AIBackend.Label())
 		return m, tea.Batch(m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false))
 	case editableSettingsAppliedMsg:
+		if msg.scanAfter {
+			return m, m.requestScanCmd(false)
+		}
 		return m, nil
 	case embeddedModelPreferencesSavedMsg:
 		if msg.err != nil {
