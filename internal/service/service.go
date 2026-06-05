@@ -925,7 +925,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		return ScanReport{}, err
 	}
 	if filterRecentOutOfScopeActivities {
-		filterIncludedOrRecentActivities(rawActivities, scope, now, recentActivityDiscoveryWindow)
+		filterIncludedOrRecentActivities(rawActivities, scope, now, recentActivityDiscoveryWindow, manuallyTrackedActivityPaths(oldMap))
 	}
 	finalizeDetectorActivities(rawActivities)
 
@@ -1617,11 +1617,29 @@ func isRecentSessionActivity(now time.Time, activity *model.DetectorProjectActiv
 	return now.Sub(lastActivity) <= window
 }
 
-func filterIncludedOrRecentActivities(activities map[string]*model.DetectorProjectActivity, scope scanner.PathScope, now time.Time, recentWindow time.Duration) {
+func manuallyTrackedActivityPaths(projects map[string]model.ProjectSummary) map[string]struct{} {
+	out := map[string]struct{}{}
+	for path, project := range projects {
+		if !project.ManuallyAdded {
+			continue
+		}
+		cleanPath := filepath.Clean(strings.TrimSpace(path))
+		if cleanPath == "" || cleanPath == "." {
+			continue
+		}
+		out[cleanPath] = struct{}{}
+	}
+	return out
+}
+
+func filterIncludedOrRecentActivities(activities map[string]*model.DetectorProjectActivity, scope scanner.PathScope, now time.Time, recentWindow time.Duration, alwaysKeep map[string]struct{}) {
 	for path, activity := range activities {
 		activityPath := filepath.Clean(path)
 		if activity != nil && strings.TrimSpace(activity.ProjectPath) != "" {
 			activityPath = filepath.Clean(activity.ProjectPath)
+		}
+		if _, ok := alwaysKeep[activityPath]; ok {
+			continue
 		}
 		if scope.Allows(activityPath) {
 			continue
