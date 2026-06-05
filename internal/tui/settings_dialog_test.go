@@ -534,6 +534,57 @@ func TestLocalBackendModelPickerLegendUsesDistinctActionTones(t *testing.T) {
 	}
 }
 
+func TestSettingsOllamaModelFieldOpensPicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOllama
+
+	m := Model{
+		settingsMode:            true,
+		settingsFields:          newSettingsFields(settings),
+		settingsBaseline:        &settings,
+		settingsSelected:        settingsFieldOllamaModel,
+		settingsSectionSelected: settingsSectionIndexByID(settingsSectionAI),
+		setupSnapshot: aibackend.Snapshot{
+			Selected: config.AIBackendOllama,
+			Ollama: aibackend.Status{
+				Backend:     config.AIBackendOllama,
+				Label:       "Ollama",
+				Ready:       true,
+				Endpoint:    "http://127.0.0.1:11434/v1",
+				Models:      []string{"qwen3:8b", "llama3.2:3b"},
+				ActiveModel: "qwen3:8b",
+			},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	actions := ansi.Strip(m.renderSettingsActions())
+	if !strings.Contains(actions, "Enter") || !strings.Contains(actions, "choose") {
+		t.Fatalf("Ollama model field should advertise Enter choose, got %q", actions)
+	}
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("opening Ollama picker should not queue a command")
+	}
+	if !got.localModelPickerVisible || got.localModelPickerBackend != config.AIBackendOllama {
+		t.Fatalf("Ollama model field should open Ollama picker, visible=%v backend=%s", got.localModelPickerVisible, got.localModelPickerBackend)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.localModelPickerVisible {
+		t.Fatalf("local model picker should close after choosing a model")
+	}
+	if got.currentSettingsBaseline().OllamaModel != "qwen3:8b" {
+		t.Fatalf("saved Ollama model = %q, want qwen3:8b", got.currentSettingsBaseline().OllamaModel)
+	}
+}
+
 func TestViewWithSettingsModeRespectsHeight(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

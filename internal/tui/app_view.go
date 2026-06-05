@@ -221,6 +221,9 @@ func (m Model) View() string {
 		}
 	} else if m.settingsMode {
 		body = m.renderSettingsOverlay(body, layout.width, layout.height)
+		if m.localModelPickerVisible {
+			body = m.renderLocalBackendModelPickerOverlay(body, layout.width, layout.height)
+		}
 		if m.settingsAIBackendPickerVisible {
 			body = m.renderSettingsAIBackendPickerOverlay(body, layout.width, layout.height)
 		}

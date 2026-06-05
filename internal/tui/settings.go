@@ -508,6 +508,9 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
 	m.settingsChoicePicker = nil
+	m.localModelPickerVisible = false
+	m.localModelPickerBackend = config.AIBackendUnset
+	m.localModelPickerSelected = 0
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
 	if status != "" {
@@ -548,6 +551,9 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if settingsFieldUsesPicker(m.settingsSelected) {
 			return m.openSettingsPickerForField(m.settingsSelected)
+		}
+		if settingsFieldUsesLocalBackendModelPicker(m.settingsSelected) {
+			return m.openLocalBackendModelPicker()
 		}
 		if settingsFieldUsesLCAgentModelPicker(m.settingsSelected) {
 			return m.openSettingsLCAgentModelPicker()
@@ -2931,6 +2937,10 @@ func (m Model) renderSettingsActions() string {
 		}
 		actions = append(actions, renderDialogAction("ctrl+r", label, navigateActionKeyStyle, navigateActionTextStyle))
 	} else if settingsFieldUsesPicker(m.settingsSelected) {
+		actions = append([]string{
+			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
+		}, actions...)
+	} else if settingsFieldUsesLocalBackendModelPicker(m.settingsSelected) || settingsFieldUsesLCAgentModelPicker(m.settingsSelected) {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions...)

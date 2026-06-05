@@ -11,22 +11,55 @@ import (
 )
 
 func (m Model) openLocalBackendModelPicker() (tea.Model, tea.Cmd) {
-	backend := m.setupSelectedLocalModelBackend()
+	backend := m.selectedLocalBackendModelPickerBackend()
 	status := m.setupSnapshot.StatusFor(backend)
 	models := localBackendPickerModels(status.Models)
 	if !isLocalBackendModelPickerBackend(backend) || len(models) == 0 {
-		m.status = "No discovered local models yet. Press r to refresh first."
+		m.status = m.localBackendModelPickerNoModelsStatus()
 		return m, nil
 	}
 
 	m.localModelPickerVisible = true
 	m.localModelPickerBackend = backend
 	m.localModelPickerSelected = m.localBackendModelPickerSelection(backend, models)
-	m.status = "Choose the " + backend.Label() + " model to use for " + m.setupFocusedRoleModelPickerLabel() + "."
+	m.status = "Choose the " + backend.Label() + " model to use for " + m.localBackendModelPickerRoleLabel() + "."
 	return m, nil
 }
 
-func (m Model) setupFocusedRoleModelPickerLabel() string {
+func (m Model) localBackendModelPickerNoModelsStatus() string {
+	if m.setupMode {
+		return "No discovered local models yet. Press r to refresh first."
+	}
+	return "No discovered local models yet. Reopen settings after the local server is running, or run /setup and press r."
+}
+
+func (m Model) selectedLocalBackendModelPickerBackend() config.AIBackend {
+	fieldIndex := m.settingsSelected
+	if m.setupMode && m.setupConfigMode {
+		fieldIndex = m.setupSelectedConfigFieldIndex()
+	}
+	if backend := localBackendModelFieldBackend(fieldIndex); backend != config.AIBackendUnset {
+		return backend
+	}
+	return m.setupSelectedLocalModelBackend()
+}
+
+func localBackendModelFieldBackend(fieldIndex int) config.AIBackend {
+	switch fieldIndex {
+	case settingsFieldMLXModel:
+		return config.AIBackendMLX
+	case settingsFieldOllamaModel:
+		return config.AIBackendOllama
+	default:
+		return config.AIBackendUnset
+	}
+}
+
+func settingsFieldUsesLocalBackendModelPicker(index int) bool {
+	return localBackendModelFieldBackend(index) != config.AIBackendUnset
+}
+
+func (m Model) localBackendModelPickerRoleLabel() string {
 	if m.setupFocusedRole == setupRoleBossChat {
 		return "boss chat"
 	}
@@ -46,7 +79,7 @@ func (m Model) updateLocalBackendModelPickerMode(msg tea.KeyMsg) (tea.Model, tea
 	backend := m.localModelPickerBackend
 	models := localBackendPickerModels(m.setupSnapshot.StatusFor(backend).Models)
 	if !isLocalBackendModelPickerBackend(backend) || len(models) == 0 {
-		m.closeLocalBackendModelPicker("No discovered local models yet. Press r to refresh first.")
+		m.closeLocalBackendModelPicker(m.localBackendModelPickerNoModelsStatus())
 		return m, nil
 	}
 
@@ -109,8 +142,15 @@ func (m Model) applyLocalBackendModelSelection(model string) (tea.Model, tea.Cmd
 		m.closeLocalBackendModelPicker(fmt.Sprintf("%s model reset to auto selection%s", backend.Label(), formatAutoModelSuffix(active)))
 		return m, nil
 	}
-	m.closeLocalBackendModelPicker(fmt.Sprintf("%s model set to %s. Press Enter in /setup to continue.", backend.Label(), model))
+	m.closeLocalBackendModelPicker(fmt.Sprintf("%s model set to %s. %s", backend.Label(), model, m.localBackendModelPickerAfterChooseHint()))
 	return m, nil
+}
+
+func (m Model) localBackendModelPickerAfterChooseHint() string {
+	if m.settingsMode && !m.setupMode {
+		return "Press ctrl+s to save settings."
+	}
+	return "Press Enter in /setup to continue."
 }
 
 func (m Model) localBackendModelPickerSelection(backend config.AIBackend, models []string) int {

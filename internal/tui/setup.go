@@ -230,6 +230,9 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.setupAdvance()
 	case "enter":
+		if settingsFieldUsesLocalBackendModelPicker(m.setupSelectedConfigFieldIndex()) {
+			return m.openLocalBackendModelPicker()
+		}
 		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
 			return m.openSettingsPickerForField(m.setupSelectedConfigFieldIndex())
 		}
@@ -1423,7 +1426,9 @@ func (m Model) setupActionSegments() []string {
 		}
 	}
 	if m.setupConfigMode {
-		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
+		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) ||
+			settingsFieldUsesLocalBackendModelPicker(m.setupSelectedConfigFieldIndex()) ||
+			settingsFieldUsesLCAgentModelPicker(m.setupSelectedConfigFieldIndex()) {
 			ctrlSLabel := "continue"
 			if m.setupSectionNavigation {
 				ctrlSLabel = "save"
