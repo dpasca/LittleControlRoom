@@ -695,9 +695,13 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		} else if codexSnapshotQueuesBusyInput(snapshot) {
 			enterAction = footerPrimaryAction("Enter", "queue")
 		}
+		ctrlCAction := footerExitAction("ctrl+c", "close")
+		if codexSnapshotCanInterruptActiveTurn(snapshot) {
+			ctrlCAction = footerExitAction("ctrl+c", "interrupt")
+		}
 		actions = []footerAction{
 			enterAction,
-			footerExitAction("ctrl+c", "interrupt"),
+			ctrlCAction,
 			footerHideAction("Alt+Up", "hide"),
 			footerNavAction("Alt+Enter", "newline"),
 			footerNavAction("ctrl+v", "image"),

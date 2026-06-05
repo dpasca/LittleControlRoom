@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/attention"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
@@ -383,6 +384,74 @@ func TestVisibleCodexCtrlCDoesNotInterruptExternalBusySession(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(got.status), "another process") {
 		t.Fatalf("status = %q, want clear busy-elsewhere message", got.status)
+	}
+}
+
+func TestVisibleCodexCtrlCClosesBusySessionWithoutActiveTurn(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:   true,
+			Preset:    codexcli.PresetYolo,
+			Busy:      true,
+			Phase:     codexapp.SessionPhaseRunning,
+			BusySince: time.Date(2026, 4, 20, 10, 30, 0, 0, time.UTC),
+			Status:    "Codex is working...",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(session.snapshot, 120))
+	if !strings.Contains(footer, "ctrl+c close") {
+		t.Fatalf("footer = %q, want ctrl+c close for busy Codex without an active turn", footer)
+	}
+	if strings.Contains(footer, "ctrl+c interrupt") {
+		t.Fatalf("footer = %q, should not advertise an unavailable interrupt", footer)
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+c should close a busy embedded Codex session when there is no active turn id")
+	}
+	if got.status != "Closing embedded Codex session..." {
+		t.Fatalf("status = %q, want closing notice", got.status)
+	}
+
+	msg := cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("close action error = %v, want nil", action.err)
+	}
+	if !action.closed {
+		t.Fatalf("close action should mark the session as closed")
+	}
+	if session.interrupted {
+		t.Fatalf("session should be closed without sending an unavailable turn interrupt")
+	}
+	if !session.snapshot.Closed {
+		t.Fatalf("ctrl+c should close the backing session")
 	}
 }
 

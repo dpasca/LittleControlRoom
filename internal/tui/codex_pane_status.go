@@ -50,7 +50,13 @@ func codexSnapshotCanInterruptActiveTurn(snapshot codexapp.Snapshot) bool {
 	}
 	switch snapshot.Phase {
 	case "", codexapp.SessionPhaseRunning:
-		return snapshot.Busy && !snapshot.BusyExternal
+		if !snapshot.Busy || snapshot.BusyExternal {
+			return false
+		}
+		if embeddedProvider(snapshot) == codexapp.ProviderCodex {
+			return strings.TrimSpace(snapshot.ActiveTurnID) != ""
+		}
+		return true
 	default:
 		return false
 	}
