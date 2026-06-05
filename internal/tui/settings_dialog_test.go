@@ -85,8 +85,6 @@ func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
 			t.Fatalf("choice picker missing %q:\n%s", want, rendered)
 		}
 	}
-	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got = updated.(Model)
 	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if got.settingsFieldValue(settingsFieldBossChatOllamaThinking) != "true" {

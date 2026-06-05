@@ -1037,7 +1037,7 @@ func (m Model) settingsFieldVisible(index int) bool {
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 		return settingsBossModelFieldsRelevant(settings)
 	case settingsFieldBossChatOllamaThinking:
-		return settings.BossChatBackend == config.AIBackendOllama || settings.BossChatOllamaThinking
+		return settings.BossChatBackend == config.AIBackendOllama
 	case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning,
 		settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile:
 		return strings.TrimSpace(settings.LCAgentRoutePreset) == ""
@@ -1156,7 +1156,7 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		if settingsBossModelFieldsRelevant(settings) {
 			fields = append(fields, settingsFieldBossChatModel, settingsFieldBossUtilityModel)
 		}
-		if settings.BossChatBackend == config.AIBackendOllama || settings.BossChatOllamaThinking {
+		if settings.BossChatBackend == config.AIBackendOllama {
 			fields = append(fields, settingsFieldBossChatOllamaThinking)
 		}
 		return fields
@@ -3067,7 +3067,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Boss Ollama thinking",
-			"Press Enter to choose whether Ollama Boss Chat answers request native thinking. Default off keeps responses faster and avoids leaking reasoning into structured tasks.",
+			"Press Enter to choose whether Ollama Boss Chat answers request native thinking. Default on gives Boss Chat deeper local reasoning; structured tasks still keep thinking off.",
 			strconv.FormatBool(settings.BossChatOllamaThinking),
 			8,
 			settingsSectionAI,
@@ -3538,9 +3538,9 @@ func (m Model) settingsFieldHint(index int) string {
 		return "Blank uses " + settingsBossUtilityDefaultLabel(m.bossModelDefaultSettings()) + ". " + brand.BossAssistantModelEnvVar + " still overrides all Boss model choices if set."
 	case settingsFieldBossChatOllamaThinking:
 		if strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldBossChatOllamaThinking, field.input.Value()), "true") {
-			return "Ollama Boss Chat answers will request native thinking. Final content is used; returned thinking is kept out of the answer."
+			return "Default on: Ollama Boss Chat answers request native thinking. Final content is used; returned thinking is kept out of the answer."
 		}
-		return "Default off: Ollama Boss Chat asks for final content only, which is faster and more predictable."
+		return "Disabled: Ollama Boss Chat asks for final content only, which is faster and more predictable."
 	case settingsFieldMLXBaseURL:
 		return field.hint
 	case settingsFieldMLXAPIKey:

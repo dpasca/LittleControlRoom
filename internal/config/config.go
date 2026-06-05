@@ -252,6 +252,7 @@ func Default() AppConfig {
 		LCAgentRequestTimeout:   10 * time.Minute,
 		LCAgentUtilityProvider:  "main",
 		LCAgentWebSearchBackend: "off",
+		BossChatOllamaThinking:  true,
 		CodexLaunchPreset:       codexcli.DefaultPreset(),
 		PlaywrightPolicy:        browserctl.DefaultPolicy(),
 		DataDir:                 dataDir,

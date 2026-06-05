@@ -287,9 +287,13 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 	xiaomiModel := strings.TrimSpace(xiaomiModelRaw)
 	bossHelmModel := strings.TrimSpace(bossHelmModelRaw)
 	bossUtilityModel := strings.TrimSpace(bossUtilityModelRaw)
-	bossChatOllamaThinking, err := parseOptionalConfigBool(bossChatOllamaThinkingRaw, "boss_chat_ollama_thinking")
-	if err != nil {
-		return EditableSettings{}, err
+	bossChatOllamaThinking := Default().BossChatOllamaThinking
+	if strings.TrimSpace(bossChatOllamaThinkingRaw) != "" {
+		var err error
+		bossChatOllamaThinking, err = parseOptionalConfigBool(bossChatOllamaThinkingRaw, "boss_chat_ollama_thinking")
+		if err != nil {
+			return EditableSettings{}, err
+		}
 	}
 	mlxBaseURL := strings.TrimSpace(mlxBaseURLRaw)
 	mlxAPIKey := strings.TrimSpace(mlxAPIKeyRaw)
@@ -581,14 +585,15 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.BossUtilityModel); value != "" {
 		lines = append(lines, fmt.Sprintf("boss_utility_model = %s", strconv.Quote(value)))
 	}
-	if settings.BossChatOllamaThinking {
-		lines = append(lines, "boss_chat_ollama_thinking = true")
+	bossChatOllamaThinkingDiffersFromDefault := settings.BossChatOllamaThinking != Default().BossChatOllamaThinking
+	if settings.BossChatBackend == AIBackendOllama || bossChatOllamaThinkingDiffersFromDefault {
+		lines = append(lines, fmt.Sprintf("boss_chat_ollama_thinking = %t", settings.BossChatOllamaThinking))
 	}
 	if settings.BossChatBackend != AIBackendUnset ||
 		strings.TrimSpace(settings.BossChatModel) != "" ||
 		strings.TrimSpace(settings.BossHelmModel) != "" ||
 		strings.TrimSpace(settings.BossUtilityModel) != "" ||
-		settings.BossChatOllamaThinking {
+		bossChatOllamaThinkingDiffersFromDefault {
 		lines = append(lines, "")
 	}
 	if settings.OpenAIAPIKey != "" {

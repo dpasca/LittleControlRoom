@@ -72,6 +72,14 @@ func TestDefaultUsesTenMinuteLCAgentRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestDefaultEnablesBossChatOllamaThinking(t *testing.T) {
+	cfg := Default()
+
+	if !cfg.BossChatOllamaThinking {
+		t.Fatalf("default boss chat ollama thinking = false, want true")
+	}
+}
+
 func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	useTempHome(t)
 	dir := t.TempDir()
@@ -248,6 +256,25 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.StuckThreshold, 3*time.Hour; got != want {
 		t.Fatalf("stuck-threshold = %s, want %s", got, want)
+	}
+}
+
+func TestParseCanDisableDefaultBossChatOllamaThinking(t *testing.T) {
+	useTempHome(t)
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	content := "boss_chat_ollama_thinking = false\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+
+	if cfg.BossChatOllamaThinking {
+		t.Fatalf("boss chat ollama thinking = true, want false")
 	}
 }
 
@@ -878,9 +905,6 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	if !strings.Contains(text, "boss_utility_model = \"gpt-5.4-mini\"") {
 		t.Fatalf("saved config should include boss_utility_model: %q", text)
 	}
-	if !strings.Contains(text, "boss_chat_ollama_thinking = true") {
-		t.Fatalf("saved config should include boss_chat_ollama_thinking: %q", text)
-	}
 	if !strings.Contains(text, "openai_api_key = \"sk-test-example\"") {
 		t.Fatalf("saved config should include openai api key: %q", text)
 	}
@@ -990,6 +1014,25 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
 		t.Fatalf("config file mode = %o, want %o", got, want)
+	}
+}
+
+func TestSaveEditableSettingsCanDisableDefaultBossChatOllamaThinking(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	settings := EditableSettingsFromAppConfig(Default())
+	settings.BossChatOllamaThinking = false
+
+	if err := SaveEditableSettings(configPath, settings); err != nil {
+		t.Fatalf("SaveEditableSettings() error = %v", err)
+	}
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+	if text := string(raw); !strings.Contains(text, "boss_chat_ollama_thinking = false") {
+		t.Fatalf("saved config should persist disabled boss_chat_ollama_thinking: %q", text)
 	}
 }
 

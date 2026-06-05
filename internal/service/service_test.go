@@ -422,7 +422,7 @@ func TestBossChatRunnerSupportsLocalOpenAICompatibleBackend(t *testing.T) {
 	}
 }
 
-func TestBossChatOllamaThinkingEnablesNativeThinkOnlyForTextRunner(t *testing.T) {
+func TestBossChatOllamaThinkingDefaultsToNativeThinkOnlyForTextRunner(t *testing.T) {
 	t.Setenv("LCROOM_BOSS_MODEL", "")
 
 	textRequests := make([]map[string]any, 0, 1)
@@ -456,7 +456,6 @@ func TestBossChatOllamaThinkingEnablesNativeThinkOnlyForTextRunner(t *testing.T)
 
 	cfg := config.Default()
 	cfg.BossChatBackend = config.AIBackendOllama
-	cfg.BossChatOllamaThinking = true
 	cfg.OllamaBaseURL = server.URL + "/v1"
 	cfg.OllamaModel = "gemma4:12b-mlx"
 	svc := &Service{

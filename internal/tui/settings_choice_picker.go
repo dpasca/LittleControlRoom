@@ -102,8 +102,8 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 		}
 	case settingsFieldBossChatOllamaThinking:
 		return []settingsChoiceOption{
-			{Value: "false", Label: "Off", Summary: "Ask Ollama Boss Chat for final content only.", Description: "Recommended default for responsiveness and predictable final answers."},
-			{Value: "true", Label: "On", Summary: "Allow native Ollama thinking for Boss Chat answers.", Description: "Useful when you want deeper local reasoning and can accept extra latency. Returned thinking is not included in the final answer."},
+			{Value: "true", Label: "On", Summary: "Allow native Ollama thinking for Boss Chat answers.", Description: "Default for deeper local Boss Chat reasoning. Returned thinking is not included in the final answer."},
+			{Value: "false", Label: "Off", Summary: "Ask Ollama Boss Chat for final content only.", Description: "Use when you want lower latency or a simpler local model response."},
 		}
 	case settingsFieldLCAgentToolProfile:
 		return []settingsChoiceOption{
@@ -292,7 +292,15 @@ func settingsChoiceOptionValueForField(fieldIndex int, raw string) string {
 			return "mimo-2.5-pro-low"
 		}
 		return normalized
-	case settingsFieldLCAgentAdminWrite, settingsFieldBossChatOllamaThinking:
+	case settingsFieldLCAgentAdminWrite:
+		if normalized == "true" || normalized == "yes" || normalized == "on" || normalized == "1" {
+			return "true"
+		}
+		return "false"
+	case settingsFieldBossChatOllamaThinking:
+		if normalized == "" {
+			return "true"
+		}
 		if normalized == "true" || normalized == "yes" || normalized == "on" || normalized == "1" {
 			return "true"
 		}
