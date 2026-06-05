@@ -9,24 +9,26 @@ import (
 	"time"
 )
 
-func TestOllamaJSONSchemaRunnerUsesNativeChatWithThinkDisabled(t *testing.T) {
+func TestOllamaJSONSchemaRunnerUsesNativeGenerateWithThinkDisabled(t *testing.T) {
 	t.Parallel()
 
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/chat":
+		case "/api/generate":
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatalf("decode request: %v", err)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"model":"gemma4:12b-mlx",
-				"message":{"role":"assistant","content":"{\"summary\":\"ready\",\"category\":\"completed\"}"},
+				"response":"{\"summary\":\"ready\",\"category\":\"completed\"}",
 				"done":true,
 				"done_reason":"stop",
 				"prompt_eval_count":31,
-				"eval_count":9
+				"prompt_eval_duration":400000000,
+				"eval_count":9,
+				"eval_duration":900000000
 			}`))
 		case "/v1/models":
 			w.Header().Set("Content-Type", "application/json")
@@ -65,6 +67,12 @@ func TestOllamaJSONSchemaRunnerUsesNativeChatWithThinkDisabled(t *testing.T) {
 	if got["stream"] != false {
 		t.Fatalf("stream = %#v, want false", got["stream"])
 	}
+	if got["system"] == "" {
+		t.Fatalf("system = %#v, want non-empty system prompt", got["system"])
+	}
+	if got["prompt"] == "" {
+		t.Fatalf("prompt = %#v, want non-empty generation prompt", got["prompt"])
+	}
 	if _, ok := got["format"].(map[string]any); !ok {
 		t.Fatalf("format = %#v, want JSON schema object", got["format"])
 	}
@@ -72,8 +80,11 @@ func TestOllamaJSONSchemaRunnerUsesNativeChatWithThinkDisabled(t *testing.T) {
 	if snapshot.Completed != 1 || snapshot.Totals.OutputTokens != 9 {
 		t.Fatalf("usage snapshot = %+v, want one completion with output tokens", snapshot)
 	}
-	if snapshot.LastOutputTokensPerSecond <= 0 {
-		t.Fatalf("LastOutputTokensPerSecond = %f, want positive", snapshot.LastOutputTokensPerSecond)
+	if snapshot.LastOutputEvalDuration != 900*time.Millisecond {
+		t.Fatalf("LastOutputEvalDuration = %s, want 900ms", snapshot.LastOutputEvalDuration)
+	}
+	if got := snapshot.LastOutputTokensPerSecond; got < 9.9 || got > 10.1 {
+		t.Fatalf("LastOutputTokensPerSecond = %f, want about 10", got)
 	}
 }
 
@@ -108,18 +119,15 @@ func TestOllamaTextRunnerCanEnableThinkingWithoutLeakingIt(t *testing.T) {
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/chat":
+		case "/api/generate":
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 				t.Fatalf("decode request: %v", err)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"model":"gemma4:12b-mlx",
-				"message":{
-					"role":"assistant",
-					"thinking":"Plan the answer privately.",
-					"content":"<think>extra inline thought</think>\nThe final answer."
-				},
+				"thinking":"Plan the answer privately.",
+				"response":"<think>extra inline thought</think>\nThe final answer.",
 				"done":true,
 				"done_reason":"stop",
 				"prompt_eval_count":7,

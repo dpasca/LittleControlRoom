@@ -15,7 +15,7 @@ import (
 func TestRunOllamaModelEval(t *testing.T) {
 	t.Parallel()
 
-	var chatRequests []map[string]any
+	var generateRequests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -26,15 +26,15 @@ func TestRunOllamaModelEval(t *testing.T) {
 				"details":{"parameter_size":"13.0B","quantization_level":"nvfp4"},
 				"model_info":{"gemma4_unified.context_length":131072,"general.architecture":"gemma4_unified"}
 			}`))
-		case "/api/chat":
+		case "/api/generate":
 			var req map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode request: %v", err)
 			}
-			chatRequests = append(chatRequests, req)
+			generateRequests = append(generateRequests, req)
 			response := `Little Control Room can use this model for summaries.`
 			if _, structured := req["format"]; structured {
-				if len(chatRequests) == 2 {
+				if len(generateRequests) == 2 {
 					response = `{"summary":"Gemma can summarize local model testing.","category":"completed"}`
 				} else {
 					response = `{"message":"Add Ollama model eval diagnostics"}`
@@ -42,7 +42,7 @@ func TestRunOllamaModelEval(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{
 				"model":"gemma4:12b-mlx",
-				"message":{"role":"assistant","content":` + strconvQuote(response) + `},
+				"response":` + strconvQuote(response) + `,
 				"done":true,
 				"done_reason":"stop",
 				"prompt_eval_count":24,
@@ -72,7 +72,7 @@ func TestRunOllamaModelEval(t *testing.T) {
 	if len(report.Cases) != 3 {
 		t.Fatalf("cases = %d, want 3", len(report.Cases))
 	}
-	for _, req := range chatRequests {
+	for _, req := range generateRequests {
 		if req["think"] != false {
 			t.Fatalf("ollama request think = %#v, want false", req["think"])
 		}

@@ -179,7 +179,7 @@ func runSummaryJSONCase(ctx context.Context, opts Options, runner llm.JSONSchema
 		},
 		Transcript: []sessionclassify.TranscriptItem{
 			{Role: "user", Text: "Can we test whether the local Gemma model can generate summaries for LCR?"},
-			{Role: "assistant", Text: "I tested Ollama, found the OpenAI-compatible endpoint returned empty content, and switched generation to native Ollama chat with thinking disabled."},
+			{Role: "assistant", Text: "I tested Ollama, found the OpenAI-compatible endpoint returned empty content, and switched generation to native Ollama generate with thinking disabled."},
 			{Role: "assistant", Text: "I added a model-eval command and surfaced context window and token speed in /ai."},
 		},
 	})
@@ -243,8 +243,14 @@ func textCaseResult(name string, started time.Time, modelName, output string, us
 		OutputPreview: clippedSingleLine(output, 180),
 		Usage:         usage,
 	}
-	if usage.OutputTokens > 0 && duration > 0 {
-		result.TokensPerSecond = float64(usage.OutputTokens) / duration.Seconds()
+	if usage.OutputTokens > 0 {
+		rateDuration := duration
+		if usage.OutputEvalDuration > 0 {
+			rateDuration = usage.OutputEvalDuration
+		}
+		if rateDuration > 0 {
+			result.TokensPerSecond = float64(usage.OutputTokens) / rateDuration.Seconds()
+		}
 	}
 	if err != nil {
 		result.Error = strings.TrimSpace(err.Error())

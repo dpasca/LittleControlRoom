@@ -99,7 +99,7 @@ LCR separates embedded session providers from the backend used for background wo
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
 - Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
 - Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
-- MLX uses its OpenAI-compatible local endpoint. Ollama discovery still uses its OpenAI-compatible model list, while background generation uses Ollama's native chat endpoint so thinking models can return usable JSON/text with thinking disabled.
+- MLX uses its OpenAI-compatible local endpoint. Ollama discovery still uses its OpenAI-compatible model list, while background generation uses Ollama's native generate endpoint so thinking models can return usable JSON/text with thinking disabled.
 - Ollama thinking stays off by default for background automation and structured helper calls. When Boss chat uses Ollama, native `think: true` is on by default for Boss answer text only; its setup panel includes a Boss Ollama thinking toggle if you want final-content-only responses.
 
 For local inference, the practical setup is:

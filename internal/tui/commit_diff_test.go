@@ -1364,12 +1364,14 @@ func TestRenderAIStatsContentShowsLocalContextAndSpeed(t *testing.T) {
 			Model:                        "gemma4:12b-mlx",
 			Completed:                    2,
 			LastRequestDuration:          1500 * time.Millisecond,
+			LastOutputEvalDuration:       800 * time.Millisecond,
 			LastOutputTokensPerSecond:    12.5,
 			AverageOutputTokensPerSecond: 10.0,
 			Totals: model.LLMUsage{
-				InputTokens:  512,
-				OutputTokens: 30,
-				TotalTokens:  542,
+				InputTokens:        512,
+				OutputTokens:       30,
+				TotalTokens:        542,
+				OutputEvalDuration: 3 * time.Second,
 			},
 		},
 	}
@@ -1397,7 +1399,7 @@ func TestRenderAIStatsContentShowsLocalContextAndSpeed(t *testing.T) {
 
 	rendered := ansi.Strip(m.renderAIStatsContent(90))
 	for _, want := range []string{
-		"Speed: last 12.5 tok/s | avg 10.0 tok/s | last 1.5s",
+		"Speed: decode last 12.5 tok/s | decode avg 10.0 tok/s | request last 1.5s",
 		"Context: max context 131.1k tokens | 13.0B | nvfp4",
 	} {
 		if !strings.Contains(rendered, want) {

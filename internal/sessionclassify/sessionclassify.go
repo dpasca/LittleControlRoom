@@ -736,6 +736,8 @@ func (u *usageTracker) complete(modelName string, usage model.LLMUsage) {
 	u.snapshot.Totals.TotalTokens += usage.TotalTokens
 	u.snapshot.Totals.CachedInputTokens += usage.CachedInputTokens
 	u.snapshot.Totals.ReasoningTokens += usage.ReasoningTokens
+	u.snapshot.Totals.PromptEvalDuration += usage.PromptEvalDuration
+	u.snapshot.Totals.OutputEvalDuration += usage.OutputEvalDuration
 }
 
 func (u *usageTracker) fail(modelName string) {

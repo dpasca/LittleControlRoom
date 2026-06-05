@@ -293,13 +293,21 @@ func aiStatsModelValue(usage model.LLMSessionUsage) string {
 func aiStatsSpeedValue(usage model.LLMSessionUsage) string {
 	parts := make([]string, 0, 3)
 	if usage.LastOutputTokensPerSecond > 0 {
-		parts = append(parts, fmt.Sprintf("last %.1f tok/s", usage.LastOutputTokensPerSecond))
+		label := "last"
+		if usage.LastOutputEvalDuration > 0 {
+			label = "decode last"
+		}
+		parts = append(parts, fmt.Sprintf("%s %.1f tok/s", label, usage.LastOutputTokensPerSecond))
 	}
 	if usage.AverageOutputTokensPerSecond > 0 && usage.Completed > 1 {
-		parts = append(parts, fmt.Sprintf("avg %.1f tok/s", usage.AverageOutputTokensPerSecond))
+		label := "avg"
+		if usage.Totals.OutputEvalDuration > 0 {
+			label = "decode avg"
+		}
+		parts = append(parts, fmt.Sprintf("%s %.1f tok/s", label, usage.AverageOutputTokensPerSecond))
 	}
 	if usage.LastRequestDuration > 0 {
-		parts = append(parts, "last "+usage.LastRequestDuration.Round(time.Millisecond).String())
+		parts = append(parts, "request last "+usage.LastRequestDuration.Round(time.Millisecond).String())
 	}
 	if len(parts) == 0 {
 		return ""

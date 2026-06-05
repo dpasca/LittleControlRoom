@@ -430,7 +430,7 @@ func TestBossChatOllamaThinkingDefaultsToNativeThinkOnlyForTextRunner(t *testing
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/chat":
+		case "/api/generate":
 			var req map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode request: %v", err)
@@ -442,7 +442,7 @@ func TestBossChatOllamaThinkingDefaultsToNativeThinkOnlyForTextRunner(t *testing
 			}
 			_, _ = w.Write([]byte(`{
 				"model":"gemma4:12b-mlx",
-				"message":{"role":"assistant","content":"done"},
+				"response":"done",
 				"done":true,
 				"done_reason":"stop",
 				"prompt_eval_count":4,

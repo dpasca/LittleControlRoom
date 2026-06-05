@@ -605,12 +605,14 @@ func decodeClassifierOutput(outputText string, result *Result) error {
 
 func addLLMUsage(a, b model.LLMUsage) model.LLMUsage {
 	return model.LLMUsage{
-		InputTokens:       a.InputTokens + b.InputTokens,
-		OutputTokens:      a.OutputTokens + b.OutputTokens,
-		TotalTokens:       a.TotalTokens + b.TotalTokens,
-		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens,
-		ReasoningTokens:   a.ReasoningTokens + b.ReasoningTokens,
-		EstimatedCostUSD:  a.EstimatedCostUSD + b.EstimatedCostUSD,
+		InputTokens:        a.InputTokens + b.InputTokens,
+		OutputTokens:       a.OutputTokens + b.OutputTokens,
+		TotalTokens:        a.TotalTokens + b.TotalTokens,
+		CachedInputTokens:  a.CachedInputTokens + b.CachedInputTokens,
+		ReasoningTokens:    a.ReasoningTokens + b.ReasoningTokens,
+		PromptEvalDuration: a.PromptEvalDuration + b.PromptEvalDuration,
+		OutputEvalDuration: a.OutputEvalDuration + b.OutputEvalDuration,
+		EstimatedCostUSD:   a.EstimatedCostUSD + b.EstimatedCostUSD,
 	}
 }
 

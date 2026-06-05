@@ -54,17 +54,28 @@ func (u *UsageTracker) Complete(modelName string, usage model.LLMUsage) {
 	u.snapshot.Totals.TotalTokens += usage.TotalTokens
 	u.snapshot.Totals.CachedInputTokens += usage.CachedInputTokens
 	u.snapshot.Totals.ReasoningTokens += usage.ReasoningTokens
+	u.snapshot.Totals.PromptEvalDuration += usage.PromptEvalDuration
+	u.snapshot.Totals.OutputEvalDuration += usage.OutputEvalDuration
 	u.snapshot.Totals.EstimatedCostUSD += usage.EstimatedCostUSD
+	u.snapshot.LastOutputEvalDuration = usage.OutputEvalDuration
 	if !startedAt.IsZero() {
 		duration := finishedAt.Sub(startedAt)
 		if duration > 0 {
 			u.snapshot.LastRequestDuration = duration
 			u.snapshot.TotalRequestDuration += duration
 			if usage.OutputTokens > 0 {
-				u.snapshot.LastOutputTokensPerSecond = float64(usage.OutputTokens) / duration.Seconds()
+				rateDuration := duration
+				if usage.OutputEvalDuration > 0 {
+					rateDuration = usage.OutputEvalDuration
+				}
+				u.snapshot.LastOutputTokensPerSecond = float64(usage.OutputTokens) / rateDuration.Seconds()
 			}
-			if u.snapshot.Totals.OutputTokens > 0 && u.snapshot.TotalRequestDuration > 0 {
-				u.snapshot.AverageOutputTokensPerSecond = float64(u.snapshot.Totals.OutputTokens) / u.snapshot.TotalRequestDuration.Seconds()
+			totalRateDuration := u.snapshot.TotalRequestDuration
+			if u.snapshot.Totals.OutputEvalDuration > 0 {
+				totalRateDuration = u.snapshot.Totals.OutputEvalDuration
+			}
+			if u.snapshot.Totals.OutputTokens > 0 && totalRateDuration > 0 {
+				u.snapshot.AverageOutputTokensPerSecond = float64(u.snapshot.Totals.OutputTokens) / totalRateDuration.Seconds()
 			}
 		}
 	}

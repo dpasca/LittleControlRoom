@@ -72,7 +72,7 @@ func NewOllamaChatClientWithBaseURLAndOptions(baseURL string, timeout time.Durat
 		timeout = 60 * time.Second
 	}
 	return &OllamaChatClient{
-		endpoint:   OllamaNativeEndpoint(baseURL, "/api/chat"),
+		endpoint:   OllamaNativeEndpoint(baseURL, "/api/generate"),
 		httpClient: &http.Client{Timeout: timeout},
 		usage:      usage,
 		think:      opts.Think,
@@ -100,6 +100,9 @@ func OllamaNativeBaseURL(baseURL string) string {
 	}
 	if strings.HasSuffix(base, "/api/chat") {
 		base = strings.TrimRight(strings.TrimSuffix(base, "/api/chat"), "/")
+	}
+	if strings.HasSuffix(base, "/api/generate") {
+		base = strings.TrimRight(strings.TrimSuffix(base, "/api/generate"), "/")
 	}
 	if strings.HasSuffix(base, "/api/show") {
 		base = strings.TrimRight(strings.TrimSuffix(base, "/api/show"), "/")
@@ -192,17 +195,22 @@ func DecodeOllamaModelMetadata(body []byte, fallbackModel string) (OllamaModelMe
 
 func (c *OllamaChatClient) RunText(ctx context.Context, req TextRequest) (TextResponse, error) {
 	if c == nil || strings.TrimSpace(c.endpoint) == "" {
-		return TextResponse{}, errors.New("ollama chat client not configured")
+		return TextResponse{}, errors.New("ollama generate client not configured")
 	}
 	modelName := strings.TrimSpace(req.Model)
 	if modelName == "" {
 		return TextResponse{}, errors.New("ollama text request requires a model")
 	}
-	messages := ollamaTextMessages(req.SystemText, req.Messages)
-	if len(messages) == 0 {
+	systemText := strings.TrimSpace(req.SystemText)
+	prompt := ollamaGeneratePrompt(req.Messages)
+	if systemText == "" && prompt == "" {
 		return TextResponse{}, errors.New("ollama text request requires at least one message")
 	}
-	response, err := c.runChat(ctx, modelName, messages, nil)
+	if prompt == "" {
+		prompt = systemText
+		systemText = ""
+	}
+	response, err := c.runGenerate(ctx, modelName, systemText, prompt, nil)
 	if err != nil {
 		return TextResponse{}, err
 	}
@@ -210,30 +218,21 @@ func (c *OllamaChatClient) RunText(ctx context.Context, req TextRequest) (TextRe
 		Status:           ollamaResponseStatus(response.Done),
 		Model:            firstNonEmptyString(response.Model, modelName),
 		IncompleteReason: strings.TrimSpace(response.DoneReason),
-		OutputText:       strings.TrimSpace(StripThinkingBlocks(response.Message.Content)),
+		OutputText:       strings.TrimSpace(StripThinkingBlocks(response.Response)),
 		Usage:            response.usage(),
 	}, nil
 }
 
 func (c *OllamaChatClient) RunJSONSchema(ctx context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
 	if c == nil || strings.TrimSpace(c.endpoint) == "" {
-		return JSONSchemaResponse{}, errors.New("ollama chat client not configured")
+		return JSONSchemaResponse{}, errors.New("ollama generate client not configured")
 	}
 	modelName := strings.TrimSpace(req.Model)
 	if modelName == "" {
 		return JSONSchemaResponse{}, errors.New("ollama JSON schema request requires a model")
 	}
-	messages := []ollamaChatMessage{
-		{
-			Role:    "system",
-			Content: strings.TrimSpace(req.SystemText + "\n\nReturn only valid JSON. Do not wrap the JSON in markdown."),
-		},
-		{
-			Role:    "user",
-			Content: buildSchemaPrompt(req, true),
-		},
-	}
-	response, err := c.runChat(ctx, modelName, messages, ollamaJSONFormat(req.Schema))
+	systemText := strings.TrimSpace(req.SystemText + "\n\nReturn only valid JSON. Do not wrap the JSON in markdown.")
+	response, err := c.runGenerate(ctx, modelName, systemText, buildSchemaPrompt(req, true), ollamaJSONFormat(req.Schema))
 	if err != nil {
 		return JSONSchemaResponse{}, err
 	}
@@ -241,23 +240,15 @@ func (c *OllamaChatClient) RunJSONSchema(ctx context.Context, req JSONSchemaRequ
 		Status:           ollamaResponseStatus(response.Done),
 		Model:            firstNonEmptyString(response.Model, modelName),
 		IncompleteReason: strings.TrimSpace(response.DoneReason),
-		OutputText:       strings.TrimSpace(StripThinkingBlocks(response.Message.Content)),
+		OutputText:       strings.TrimSpace(StripThinkingBlocks(response.Response)),
 		Usage:            response.usage(),
 	}, nil
 }
 
-type ollamaChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type ollamaChatResponse struct {
-	Model   string `json:"model"`
-	Message struct {
-		Role     string `json:"role"`
-		Content  string `json:"content"`
-		Thinking string `json:"thinking"`
-	} `json:"message"`
+type ollamaGenerateResponse struct {
+	Model              string `json:"model"`
+	Response           string `json:"response"`
+	Thinking           string `json:"thinking"`
 	Done               bool   `json:"done"`
 	DoneReason         string `json:"done_reason"`
 	PromptEvalCount    int64  `json:"prompt_eval_count"`
@@ -268,23 +259,26 @@ type ollamaChatResponse struct {
 	Error              string `json:"error"`
 }
 
-func (c *OllamaChatClient) runChat(ctx context.Context, modelName string, messages []ollamaChatMessage, format any) (ollamaChatResponse, error) {
+func (c *OllamaChatClient) runGenerate(ctx context.Context, modelName, systemText, prompt string, format any) (ollamaGenerateResponse, error) {
 	reqBody := map[string]any{
-		"model":    modelName,
-		"messages": messages,
-		"stream":   false,
-		"think":    c.think,
+		"model":  modelName,
+		"prompt": strings.TrimSpace(prompt),
+		"stream": false,
+		"think":  c.think,
+	}
+	if system := strings.TrimSpace(systemText); system != "" {
+		reqBody["system"] = system
 	}
 	if format != nil {
 		reqBody["format"] = format
 	}
 	raw, err := json.Marshal(reqBody)
 	if err != nil {
-		return ollamaChatResponse{}, fmt.Errorf("marshal ollama chat request: %w", err)
+		return ollamaGenerateResponse{}, fmt.Errorf("marshal ollama generate request: %w", err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(raw))
 	if err != nil {
-		return ollamaChatResponse{}, fmt.Errorf("create ollama chat request: %w", err)
+		return ollamaGenerateResponse{}, fmt.Errorf("create ollama generate request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
@@ -296,7 +290,7 @@ func (c *OllamaChatClient) runChat(ctx context.Context, modelName string, messag
 		if c.usage != nil {
 			c.usage.Fail(modelName)
 		}
-		return ollamaChatResponse{}, fmt.Errorf("send ollama chat request: %w", err)
+		return ollamaGenerateResponse{}, fmt.Errorf("send ollama generate request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -305,13 +299,13 @@ func (c *OllamaChatClient) runChat(ctx context.Context, modelName string, messag
 		if c.usage != nil {
 			c.usage.Fail(modelName)
 		}
-		return ollamaChatResponse{}, fmt.Errorf("read ollama chat response: %w", err)
+		return ollamaGenerateResponse{}, fmt.Errorf("read ollama generate response: %w", err)
 	}
 	if resp.StatusCode >= 300 {
 		if c.usage != nil {
 			c.usage.Fail(modelName)
 		}
-		return ollamaChatResponse{}, &HTTPStatusError{
+		return ollamaGenerateResponse{}, &HTTPStatusError{
 			StatusCode: resp.StatusCode,
 			Status:     resp.Status,
 			Body:       string(body),
@@ -319,18 +313,18 @@ func (c *OllamaChatClient) runChat(ctx context.Context, modelName string, messag
 		}
 	}
 
-	var parsed ollamaChatResponse
+	var parsed ollamaGenerateResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		if c.usage != nil {
 			c.usage.Fail(modelName)
 		}
-		return ollamaChatResponse{}, fmt.Errorf("decode ollama chat response: %w", err)
+		return ollamaGenerateResponse{}, fmt.Errorf("decode ollama generate response: %w", err)
 	}
 	if strings.TrimSpace(parsed.Error) != "" {
 		if c.usage != nil {
 			c.usage.Fail(modelName)
 		}
-		return ollamaChatResponse{}, errors.New(strings.TrimSpace(parsed.Error))
+		return ollamaGenerateResponse{}, errors.New(strings.TrimSpace(parsed.Error))
 	}
 	if c.usage != nil {
 		modelForUsage := firstNonEmptyString(parsed.Model, modelName)
@@ -339,31 +333,35 @@ func (c *OllamaChatClient) runChat(ctx context.Context, modelName string, messag
 	return parsed, nil
 }
 
-func (r ollamaChatResponse) usage() model.LLMUsage {
+func (r ollamaGenerateResponse) usage() model.LLMUsage {
 	usage := model.LLMUsage{
-		InputTokens:  r.PromptEvalCount,
-		OutputTokens: r.EvalCount,
+		InputTokens:        r.PromptEvalCount,
+		OutputTokens:       r.EvalCount,
+		PromptEvalDuration: time.Duration(r.PromptEvalDuration),
+		OutputEvalDuration: time.Duration(r.EvalDuration),
 	}
 	usage.TotalTokens = usage.InputTokens + usage.OutputTokens
 	return usage
 }
 
-func ollamaTextMessages(systemText string, messages []TextMessage) []ollamaChatMessage {
-	out := make([]ollamaChatMessage, 0, len(messages)+1)
-	if system := strings.TrimSpace(systemText); system != "" {
-		out = append(out, ollamaChatMessage{Role: "system", Content: system})
-	}
+func ollamaGeneratePrompt(messages []TextMessage) string {
+	parts := make([]string, 0, len(messages)+1)
 	for _, message := range messages {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue
 		}
-		out = append(out, ollamaChatMessage{
-			Role:    normalizeTextMessageRole(message.Role),
-			Content: content,
-		})
+		role := normalizeTextMessageRole(message.Role)
+		if role == "" || role == "user" && len(parts) == 0 {
+			parts = append(parts, content)
+			continue
+		}
+		parts = append(parts, strings.ToUpper(role[:1])+role[1:]+": "+content)
 	}
-	return out
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func ollamaJSONFormat(schema map[string]any) any {

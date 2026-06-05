@@ -366,12 +366,14 @@ type ContextSearchResult struct {
 }
 
 type LLMUsage struct {
-	InputTokens       int64   `json:"input_tokens"`
-	OutputTokens      int64   `json:"output_tokens"`
-	TotalTokens       int64   `json:"total_tokens"`
-	CachedInputTokens int64   `json:"cached_input_tokens"`
-	ReasoningTokens   int64   `json:"reasoning_tokens"`
-	EstimatedCostUSD  float64 `json:"estimated_cost_usd"`
+	InputTokens        int64         `json:"input_tokens"`
+	OutputTokens       int64         `json:"output_tokens"`
+	TotalTokens        int64         `json:"total_tokens"`
+	CachedInputTokens  int64         `json:"cached_input_tokens"`
+	ReasoningTokens    int64         `json:"reasoning_tokens"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
+	OutputEvalDuration time.Duration `json:"output_eval_duration"`
+	EstimatedCostUSD   float64       `json:"estimated_cost_usd"`
 }
 
 type LLMSessionUsage struct {
@@ -385,6 +387,7 @@ type LLMSessionUsage struct {
 	LastFinishedAt               time.Time     `json:"last_finished_at"`
 	LastRequestDuration          time.Duration `json:"last_request_duration"`
 	TotalRequestDuration         time.Duration `json:"total_request_duration"`
+	LastOutputEvalDuration       time.Duration `json:"last_output_eval_duration"`
 	LastOutputTokensPerSecond    float64       `json:"last_output_tokens_per_second"`
 	AverageOutputTokensPerSecond float64       `json:"average_output_tokens_per_second"`
 	Totals                       LLMUsage      `json:"totals"`
