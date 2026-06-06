@@ -663,7 +663,7 @@ func TestDispatchBossOffClosesBossMode(t *testing.T) {
 	}
 }
 
-func TestDispatchSetupOpensSetupWizard(t *testing.T) {
+func TestDispatchSetupOpensGettingStartedSettings(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenCode
 
@@ -676,17 +676,23 @@ func TestDispatchSetupOpensSetupWizard(t *testing.T) {
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindSetup})
 	got := updated.(Model)
-	if !got.setupMode {
-		t.Fatalf("/setup should open the setup wizard")
+	if got.setupMode {
+		t.Fatalf("/setup should not open the retired setup wizard")
 	}
-	if got.settingsMode {
-		t.Fatalf("/setup should leave the full settings editor closed")
+	if !got.settingsMode {
+		t.Fatalf("/setup should open settings mode")
 	}
-	if got.status != "Setup open. Choose a section, then press Enter." {
-		t.Fatalf("status = %q, want setup wizard status", got.status)
+	if got.settingsSectionMenu {
+		t.Fatalf("/setup should open Getting Started directly")
 	}
-	if !got.setupSectionMenu {
-		t.Fatalf("/setup should start at the section chooser")
+	if got.activeSettingsSection().id != settingsSectionGettingStarted {
+		t.Fatalf("active settings section = %q, want Getting Started", got.activeSettingsSection().id)
+	}
+	if got.settingsSelected != settingsFieldAIBackend {
+		t.Fatalf("settingsSelected = %d, want project reports field", got.settingsSelected)
+	}
+	if got.status != "Setup open in Getting Started. Choose a row, press Enter to configure, or ctrl+s to save." {
+		t.Fatalf("status = %q, want Getting Started setup status", got.status)
 	}
 	if cmd == nil {
 		t.Fatalf("/setup should refresh backend availability")

@@ -17,7 +17,7 @@ import (
 	"testing"
 )
 
-func TestStartupUnconfiguredAIBackendOpensSetupWizard(t *testing.T) {
+func TestStartupUnconfiguredAIBackendOpensGettingStartedSettings(t *testing.T) {
 	m := Model{
 		width:  100,
 		height: 24,
@@ -30,20 +30,26 @@ func TestStartupUnconfiguredAIBackendOpensSetupWizard(t *testing.T) {
 		},
 	})
 	got := updated.(Model)
-	if !got.setupMode {
-		t.Fatalf("setup wizard should open when startup detects no configured backend")
+	if got.setupMode {
+		t.Fatalf("startup setup should not open the retired setup wizard")
 	}
-	if got.settingsMode {
-		t.Fatalf("startup setup should not open full settings mode")
+	if !got.settingsMode {
+		t.Fatalf("startup setup should open settings mode")
 	}
-	if got.status != "Setup open. Choose a section, then press Enter." {
-		t.Fatalf("status = %q, want setup wizard explanation", got.status)
+	if got.settingsSectionMenu {
+		t.Fatalf("startup setup should open the Getting Started guide directly")
 	}
-	if !got.setupSectionMenu {
-		t.Fatalf("startup setup should start at the section chooser")
+	if got.activeSettingsSection().id != settingsSectionGettingStarted {
+		t.Fatalf("active settings section = %q, want Getting Started", got.activeSettingsSection().id)
+	}
+	if got.settingsSelected != settingsFieldAIBackend {
+		t.Fatalf("settingsSelected = %d, want project reports field", got.settingsSelected)
+	}
+	if got.status != "Setup open in Getting Started. Choose a row, press Enter to configure, or ctrl+s to save." {
+		t.Fatalf("status = %q, want Getting Started setup explanation", got.status)
 	}
 	if cmd == nil {
-		t.Fatalf("opening setup should refresh backend availability")
+		t.Fatalf("opening setup should focus the Getting Started selection")
 	}
 }
 

@@ -202,19 +202,15 @@ func TestScreenshotRuntimeSnapshotRendersRuntimePane(t *testing.T) {
 	}
 }
 
-func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
+func TestScreenshotSetupRendersGettingStartedGuide(t *testing.T) {
 	t.Parallel()
 
 	m := Model{
-		width:          112,
-		height:         31,
-		homeDir:        "/Users/davide",
-		setupMode:      true,
-		setupChecked:   true,
-		setupSelected:  mSetupSelectionForTest(config.AIBackendClaude),
-		setupModelTier: config.ModelTierCheap,
-		setupSnapshot:  screenshotSetupSnapshot(),
-		status:         "Choose AI roles for project reports and boss chat.",
+		width:         112,
+		height:        31,
+		homeDir:       "/Users/davide",
+		setupChecked:  true,
+		setupSnapshot: screenshotSetupSnapshot(),
 		projects: []model.ProjectSummary{
 			{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
 		},
@@ -226,6 +222,8 @@ func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
 	settings.AIBackend = config.AIBackendCodex
 	settings.OpenCodeModelTier = string(config.ModelTierCheap)
 	m.settingsBaseline = &settings
+	_ = m.openQuickSetupSettingsMode(false)
+	m.setupSnapshot = screenshotSetupSnapshot()
 	m.detail = model.ProjectDetail{
 		Summary: model.ProjectSummary{Name: "LittleControlRoom", Path: "/tmp/LittleControlRoom", PresentOnDisk: true},
 	}
@@ -234,22 +232,24 @@ func TestScreenshotSetupRendersBackendChoicesAndHaikuHint(t *testing.T) {
 	rendered := ansi.Strip(m.View())
 	for _, want := range []string{
 		"Setup",
-		"Who Should Handle Project Reports?",
-		"Codex",
-		"OpenCode",
-		"Claude Code",
-		"OpenAI API",
+		"Getting Started",
+		"Setup Guide",
+		"Project reports",
+		"Boss chat",
+		"LCAgent",
 		"Enter",
-		"next",
+		"setup",
 		"Up/Down",
-		"provider",
-		"Haiku",
-		"current",
-		"ready",
+		"move",
+		"ctrl+s",
+		"save",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("setup screenshot render missing %q: %q", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Project roots") {
+		t.Fatalf("setup screenshot should not show project roots in quick setup: %q", rendered)
 	}
 }
 

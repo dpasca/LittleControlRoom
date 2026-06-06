@@ -186,13 +186,11 @@ func settingsSections() []settingsSection {
 			id:      settingsSectionGettingStarted,
 			label:   "Getting Started",
 			summary: "Quick setup",
-			hint:    "I only need two decisions first: who writes project reports, and whether /boss should answer. Everything else can wait.",
+			hint:    "Start with project-report AI. Boss chat and LCAgent can wait, and project discovery lives in Project Scope.",
 			fieldOrder: []int{
 				settingsFieldAIBackend,
 				settingsFieldBossChatBackend,
 				settingsFieldLCAgentProvider,
-				settingsFieldIncludePaths,
-				settingsFieldExcludePaths,
 			},
 		},
 		{
@@ -404,6 +402,19 @@ func (m *Model) openSettingsMode() tea.Cmd {
 	return tea.Batch(cmd, m.refreshSetupSnapshotCmd(false))
 }
 
+func (m *Model) openQuickSetupSettingsMode(refreshAvailability bool) tea.Cmd {
+	cmds := []tea.Cmd{m.openSettingsModeWithBaseline(m.currentSettingsBaseline())}
+	m.settingsSectionMenu = false
+	m.settingsDrilldown = settingsDrilldownNone
+	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionGettingStarted)
+	m.status = "Setup open in Getting Started. Choose a row, press Enter to configure, or ctrl+s to save."
+	cmds = append(cmds, m.setSettingsSelection(settingsFieldAIBackend))
+	if refreshAvailability {
+		cmds = append(cmds, m.refreshSetupSnapshotCmd(false))
+	}
+	return tea.Batch(cmds...)
+}
+
 func (m *Model) openEmbeddedLCAgentSettingsMode(projectPath string) tea.Cmd {
 	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
 	m.settingsEmbeddedProject = strings.TrimSpace(projectPath)
@@ -543,6 +554,12 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveSettingsSelection(-1)
 	case "ctrl+s":
 		return m.saveSettingsFromFields()
+	case "r":
+		if m.activeSettingsSection().id == settingsSectionGettingStarted {
+			m.status = "Refreshing AI backend availability..."
+			return m, m.refreshSetupSnapshotCmd(false)
+		}
+		return m, nil
 	case "enter":
 		if m.settingsSelected == settingsFieldPrivacyPatterns {
 			return m.openSettingsPrivacyEditor()
@@ -2225,7 +2242,6 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 	projectValue := settingsProjectReportsOverviewValue(settings, projectChoice)
 	bossValue := settingsBossChatOverviewValue(settings, bossChoice)
 	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := settingsLCAgentStepState(settings)
-	rootsValue, rootsState, rootsStyle, rootsDetail := m.settingsProjectRootsStepState()
 	return []settingsGettingStartedStep{
 		{
 			Number:     "1",
@@ -2253,15 +2269,6 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 			StateStyle: lcagentStyle,
 			Detail:     lcagentDetail,
 			FieldIndex: settingsFieldLCAgentProvider,
-		},
-		{
-			Number:     "4",
-			Title:      "Project roots",
-			Value:      rootsValue,
-			State:      rootsState,
-			StateStyle: rootsStyle,
-			Detail:     rootsDetail,
-			FieldIndex: settingsFieldIncludePaths,
 		},
 	}
 }
@@ -2948,6 +2955,9 @@ func (m Model) renderSettingsActions() string {
 		actions = append([]string{
 			renderDialogAction("Enter", "setup", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions...)
+		if !m.settingsSaving {
+			actions = append(actions, renderDialogAction("r", "refresh", navigateActionKeyStyle, navigateActionTextStyle))
+		}
 	} else if m.settingsSelected == settingsFieldPrivacyPatterns {
 		actions = append([]string{
 			renderDialogAction("Enter", "edit", navigateActionKeyStyle, navigateActionTextStyle),
