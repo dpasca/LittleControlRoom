@@ -178,7 +178,7 @@ func GenerateScreenshots(ctx context.Context, svc *service.Service, cfg config.S
 	setupModel.settingsBaseline = &settings
 	setupModel.setupChecked = true
 	setupModel.setupSnapshot = screenshotSetupSnapshot()
-	_ = setupModel.openSetupMode()
+	_ = setupModel.openQuickSetupSettingsMode(false)
 	setupModel.setupSnapshot = screenshotSetupSnapshot()
 	assets = append(assets, screenshotAsset("setup", "Setup", setupModel.View(), cfg))
 

@@ -131,9 +131,9 @@ func (m Model) openSetupFromBossSetupPrompt() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) openSettingsModeForBossChat() tea.Cmd {
-	m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+	cmd := m.openQuickSetupSettingsMode(false)
 	m.status = "Configure boss chat in Getting Started, then run /boss again."
-	return m.setSettingsSelection(settingsFieldBossChatBackend)
+	return tea.Batch(cmd, m.setSettingsSelection(settingsFieldBossChatBackend))
 }
 
 func (m Model) renderBossSetupPromptOverlay(body string, bodyW, bodyH int) string {

@@ -1486,7 +1486,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupLoading = false
 		m.setupSnapshot = msg.snapshot
 		if msg.openOnStartup && msg.snapshot.NeedsSetup() {
-			return m, m.openSetupMode()
+			return m, m.openQuickSetupSettingsMode(false)
 		}
 		return m, nil
 	case newProjectResultMsg:

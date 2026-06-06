@@ -461,7 +461,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			return m, m.toggleArchiveMode()
 		}
 	case commands.KindSetup:
-		return m, m.openSetupMode()
+		return m, m.openQuickSetupSettingsMode(true)
 	case commands.KindSettings:
 		return m, m.openSettingsMode()
 	case commands.KindSkills:

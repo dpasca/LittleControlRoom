@@ -704,23 +704,28 @@ func TestSettingsModalRendersColoredActionLegend(t *testing.T) {
 	}
 }
 
-func TestSettingsSectionsKeepScopePathFieldsPaired(t *testing.T) {
-	for _, sectionID := range []settingsSectionID{settingsSectionGettingStarted, settingsSectionScope} {
-		t.Run(string(sectionID), func(t *testing.T) {
-			var fields []int
-			for _, section := range settingsSections() {
-				if section.id == sectionID {
-					fields = append([]int(nil), section.fieldOrder...)
-					break
-				}
-			}
-			if !slices.Contains(fields, settingsFieldIncludePaths) {
-				t.Fatalf("%s section missing include paths field: %#v", sectionID, fields)
-			}
-			if !slices.Contains(fields, settingsFieldExcludePaths) {
-				t.Fatalf("%s section missing exclude paths field: %#v", sectionID, fields)
-			}
-		})
+func TestProjectScopeKeepsPathFieldsPaired(t *testing.T) {
+	var fields []int
+	for _, section := range settingsSections() {
+		if section.id == settingsSectionScope {
+			fields = append([]int(nil), section.fieldOrder...)
+			break
+		}
+	}
+	if !slices.Contains(fields, settingsFieldIncludePaths) {
+		t.Fatalf("Project Scope section missing include paths field: %#v", fields)
+	}
+	if !slices.Contains(fields, settingsFieldExcludePaths) {
+		t.Fatalf("Project Scope section missing exclude paths field: %#v", fields)
+	}
+
+	for _, section := range settingsSections() {
+		if section.id != settingsSectionGettingStarted {
+			continue
+		}
+		if slices.Contains(section.fieldOrder, settingsFieldIncludePaths) || slices.Contains(section.fieldOrder, settingsFieldExcludePaths) {
+			t.Fatalf("Getting Started should not include advanced project path fields: %#v", section.fieldOrder)
+		}
 	}
 }
 
@@ -1052,10 +1057,13 @@ func TestSettingsGettingStartedRendersStepGuide(t *testing.T) {
 	_ = m.setSettingsSelection(settingsFieldAIBackend)
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Setup Guide", "Project reports", "Boss chat", "Project roots", "Next: press Enter"} {
+	for _, want := range []string{"Setup Guide", "Project reports", "Boss chat", "LCAgent", "Next: press Enter"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("getting started guide missing %q: %q", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "Project roots") {
+		t.Fatalf("getting started guide should leave project roots in Project Scope: %q", rendered)
 	}
 	if strings.Contains(rendered, "OpenAI key") {
 		t.Fatalf("getting started guide should not show OpenAI key as a required top-level step: %q", rendered)
