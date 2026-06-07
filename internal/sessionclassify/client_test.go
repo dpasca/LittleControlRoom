@@ -84,7 +84,7 @@ func TestOpenAIClientClassifyRepairsStructuredOutputWhenFieldsAreMissing(t *test
 				return llm.JSONSchemaResponse{
 					Status:     "completed",
 					Model:      "gpt-5.4-mini",
-					OutputText: `{"category":"completed","summary":"Work is wrapped up."}`,
+					OutputText: `{"category":"completed","summary":"Work is wrapped up.","confidence":0.91}`,
 				}, nil
 			},
 		},
@@ -160,7 +160,7 @@ func TestOpenAIClientClassifyFallsBackAfterRepairFailure(t *testing.T) {
 					return llm.JSONSchemaResponse{
 						Status:     "completed",
 						Model:      "gpt-5.4-mini",
-						OutputText: `{"category":"completed","summary":"Work is wrapped up."}`,
+						OutputText: `{"category":"completed","summary":"Work is wrapped up.","confidence":0.91}`,
 					}, nil
 				default:
 					t.Fatalf("unexpected runner call %d", callCount)
@@ -269,7 +269,7 @@ func TestOpenAIClientClassifyCapturesUsage(t *testing.T) {
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"completed\",\"summary\":\"Work is wrapped up.\"}"
+							"text":"{\"category\":\"completed\",\"summary\":\"Work is wrapped up.\",\"confidence\":0.91}"
 						}
 					]
 				}
@@ -319,8 +319,10 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 	t.Parallel()
 
 	var (
-		systemText         string
-		summaryDescription string
+		systemText            string
+		summaryDescription    string
+		confidenceDescription string
+		requiredFields        []string
 	)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -341,7 +343,11 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 							Summary struct {
 								Description string `json:"description"`
 							} `json:"summary"`
+							Confidence struct {
+								Description string `json:"description"`
+							} `json:"confidence"`
 						} `json:"properties"`
+						Required []string `json:"required"`
 					} `json:"schema"`
 				} `json:"format"`
 			} `json:"text"`
@@ -354,6 +360,8 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 		}
 		systemText = req.Input[0].Content[0].Text
 		summaryDescription = req.Text.Format.Schema.Properties.Summary.Description
+		confidenceDescription = req.Text.Format.Schema.Properties.Confidence.Description
+		requiredFields = append([]string(nil), req.Text.Format.Schema.Required...)
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -366,7 +374,7 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"in_progress\",\"summary\":\"Actively working on the runtime cleanup.\"}"
+							"text":"{\"category\":\"in_progress\",\"summary\":\"Actively working on the runtime cleanup.\",\"confidence\":0.86}"
 						}
 					]
 				}
@@ -410,8 +418,17 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 	if !strings.Contains(systemText, "Do not force a stock opener; choose the most direct wording that fits the evidence.") {
 		t.Fatalf("system prompt = %q, want anti-template guidance", systemText)
 	}
+	if !strings.Contains(systemText, "Classify the dashboard attention state after the turn, not just whether the assistant answered the last message.") {
+		t.Fatalf("system prompt = %q, want dashboard-attention guidance", systemText)
+	}
 	if !strings.Contains(systemText, "Treat optional follow-up offers like") {
 		t.Fatalf("system prompt = %q, want optional-follow-up guidance", systemText)
+	}
+	if !strings.Contains(systemText, "If the user asked for advice, an opinion, a review, or a plan, and the latest assistant message ends with a concrete recommended milestone, next step, or implementation path, prefer needs_follow_up over completed.") {
+		t.Fatalf("system prompt = %q, want advice-milestone guidance", systemText)
+	}
+	if !strings.Contains(systemText, "Use needs_follow_up for assistant-proposed implementation milestones that are ready to start next") {
+		t.Fatalf("system prompt = %q, want implementation milestone guidance", systemText)
 	}
 	if !strings.Contains(systemText, "If the latest assistant message asks the user to choose between options, confirm a proposed plan, approve a next step, or answer a direct implementation question, prefer waiting_for_user over completed.") {
 		t.Fatalf("system prompt = %q, want explicit proposal-handoff guidance", systemText)
@@ -436,6 +453,14 @@ func TestOpenAIClientClassifyRequestsImplicitAssistantPOVSummaries(t *testing.T)
 	}
 	if !strings.Contains(summaryDescription, "omit prefixes like 'Assistant is'") {
 		t.Fatalf("summary schema description = %q, want prefix omission guidance", summaryDescription)
+	}
+	if !strings.Contains(confidenceDescription, "Confidence in the category") {
+		t.Fatalf("confidence schema description = %q, want confidence guidance", confidenceDescription)
+	}
+	for _, want := range []string{"category", "summary", "confidence"} {
+		if !containsString(requiredFields, want) {
+			t.Fatalf("schema required fields = %#v, want %q", requiredFields, want)
+		}
 	}
 }
 
@@ -505,7 +530,7 @@ func TestOpenAIClientClassifyRetriesIncompleteWithFallback(t *testing.T) {
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"needs_follow_up\",\"summary\":\"One more repo step remains.\"}"
+							"text":"{\"category\":\"needs_follow_up\",\"summary\":\"One more repo step remains.\",\"confidence\":0.82}"
 						}
 					]
 				}
@@ -573,7 +598,7 @@ func TestOpenAIClientClassifyRetriesTransientServerError(t *testing.T) {
 					"content":[
 						{
 							"type":"output_text",
-							"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\"}"
+							"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\",\"confidence\":0.93}"
 						}
 					]
 				}
@@ -708,7 +733,7 @@ func TestOpenAIClientClassifyRetriesTransientTransportError(t *testing.T) {
 								"content":[
 									{
 									"type":"output_text",
-										"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\"}"
+										"text":"{\"category\":\"completed\",\"summary\":\"Everything is wrapped up.\",\"confidence\":0.93}"
 									}
 								]
 							}
@@ -759,7 +784,7 @@ func TestOpenAIClientClassifyRetriesCodexStreamDisconnect(t *testing.T) {
 				return llm.JSONSchemaResponse{
 					Status:     "completed",
 					Model:      "gpt-5.4-mini",
-					OutputText: `{"category":"completed","summary":"Everything is wrapped up."}`,
+					OutputText: `{"category":"completed","summary":"Everything is wrapped up.","confidence":0.93}`,
 				}, nil
 			},
 		},
@@ -805,7 +830,7 @@ func TestOpenAIClientClassifyRetriesCodexReconnectExhaustion(t *testing.T) {
 				return llm.JSONSchemaResponse{
 					Status:     "completed",
 					Model:      "gpt-5.4-mini",
-					OutputText: `{"category":"completed","summary":"Everything is wrapped up."}`,
+					OutputText: `{"category":"completed","summary":"Everything is wrapped up.","confidence":0.93}`,
 				}, nil
 			},
 		},
@@ -1005,6 +1030,15 @@ func TestStripMarkdownCodeBlock(t *testing.T) {
 			}
 		})
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestStripThinkingBlocks(t *testing.T) {

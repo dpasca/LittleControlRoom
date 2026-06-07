@@ -19,15 +19,36 @@ import (
 
 const (
 	DefaultModel      = "gpt-5.4-nano"
-	ClassifierVersion = "session-v5"
+	ClassifierVersion = "session-v6"
 )
 
 type Result struct {
-	Category   model.SessionCategory
-	Summary    string
-	Confidence float64
-	Model      string
-	Usage      model.LLMUsage
+	Category   model.SessionCategory `json:"category"`
+	Summary    string                `json:"summary"`
+	Confidence float64               `json:"confidence"`
+	Model      string                `json:"-"`
+	Usage      model.LLMUsage        `json:"-"`
+
+	confidenceSet bool
+}
+
+func (r *Result) UnmarshalJSON(data []byte) error {
+	var decoded struct {
+		Category   model.SessionCategory `json:"category"`
+		Summary    string                `json:"summary"`
+		Confidence *float64              `json:"confidence"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	r.Category = decoded.Category
+	r.Summary = decoded.Summary
+	r.confidenceSet = decoded.Confidence != nil
+	r.Confidence = 0
+	if decoded.Confidence != nil {
+		r.Confidence = *decoded.Confidence
+	}
+	return nil
 }
 
 type Classifier interface {

@@ -91,6 +91,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 
 	report.Cases = append(report.Cases, runTextCase(ctx, opts, textRunner))
 	report.Cases = append(report.Cases, runSummaryJSONCase(ctx, opts, jsonRunner))
+	report.Cases = append(report.Cases, runAdviceFollowUpJSONCase(ctx, opts, jsonRunner))
 	report.Cases = append(report.Cases, runCommitSubjectJSONCase(ctx, opts, jsonRunner))
 	report.FinishedAt = time.Now()
 	report.Duration = report.FinishedAt.Sub(report.StartedAt)
@@ -188,6 +189,35 @@ func runSummaryJSONCase(ctx context.Context, opts Options, runner llm.JSONSchema
 	}
 	output := fmt.Sprintf("%s: %s", result.Category, result.Summary)
 	return textCaseResult("session_assessment_structured_json", started, result.Model, output, result.Usage, nil)
+}
+
+func runAdviceFollowUpJSONCase(ctx context.Context, opts Options, runner llm.JSONSchemaRunner) CaseResult {
+	started := time.Now()
+	client := sessionclassify.NewClientWithRunner(opts.Model, runner)
+	result, err := client.Classify(ctx, sessionclassify.SessionSnapshot{
+		ProjectPath:          "/tmp/romaexe-intros",
+		SessionID:            "eval-advice-followup",
+		SessionFormat:        "modern",
+		LastEventAt:          time.Now().UTC().Format(time.RFC3339),
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		GitStatus: sessionclassify.GitStatusSnapshot{
+			WorktreeDirty: false,
+			RemoteStatus:  "synced",
+		},
+		Transcript: []sessionclassify.TranscriptItem{
+			{Role: "user", Text: "How can we improve this demo? I like the synth music but it is short. It would be nice if the scene reacted to the music somehow. I want to be realistic about what we can achieve."},
+			{Role: "assistant", Text: "My vote is to improve it by making it a small choreographed intro rather than a richer object viewer. Concrete next milestone: reactive splats + 128-bar synth/director + one procedural club/data stage phase."},
+		},
+	})
+	if err != nil {
+		return textCaseResult("session_assessment_advice_followup_json", started, "", "", model.LLMUsage{}, err)
+	}
+	output := fmt.Sprintf("%s: %s", result.Category, result.Summary)
+	if result.Category != model.SessionCategoryNeedsFollowUp {
+		err = fmt.Errorf("advice milestone classified as %s, want %s", result.Category, model.SessionCategoryNeedsFollowUp)
+	}
+	return textCaseResult("session_assessment_advice_followup_json", started, result.Model, output, result.Usage, err)
 }
 
 func runCommitSubjectJSONCase(ctx context.Context, opts Options, runner llm.JSONSchemaRunner) CaseResult {
