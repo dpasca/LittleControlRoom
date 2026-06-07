@@ -770,7 +770,7 @@ func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) 
 }
 
 func (m Model) managedBrowserCanReveal(snapshot codexapp.Snapshot) bool {
-	if managedBrowserCurrentPageURL(snapshot) == "" || strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" || snapshot.CurrentBrowserPageStale {
+	if strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" || snapshot.BusyExternal || snapshot.Closed {
 		return false
 	}
 	state, ok := m.cachedManagedBrowserState(snapshot.ManagedBrowserSessionKey)
@@ -779,10 +779,7 @@ func (m Model) managedBrowserCanReveal(snapshot codexapp.Snapshot) bool {
 
 func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.Cmd {
 	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-	if sessionKey == "" || snapshot.CurrentBrowserPageStale {
-		return nil
-	}
-	if managedBrowserCurrentPageURL(snapshot) == "" && snapshot.PendingElicitation == nil {
+	if sessionKey == "" || snapshot.BusyExternal || snapshot.Closed {
 		return nil
 	}
 	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) {

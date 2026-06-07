@@ -27,6 +27,7 @@ It is intentionally different from `STATUS.md`:
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
 - Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal.
 - Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `ctrl+o`.
+- `ctrl+o` now reveals or focuses a live attached managed browser based on fresh managed browser state even when the session has not reported a current page URL, so hidden login windows do not become unreachable.
 - Resumed embedded Codex sessions mark browser page URLs recovered from transcript history as no longer attached, so the persistent Browser panel does not offer a broken `ctrl+o` reveal or keep showing stale URLs.
 - OpenCode and Claude Code still remain behind Codex in managed-browser support.
 

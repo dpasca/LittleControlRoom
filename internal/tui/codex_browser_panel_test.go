@@ -250,6 +250,122 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 	}
 }
 
+func TestVisibleCodexCanOpenManagedBrowserWithoutCurrentPageURL(t *testing.T) {
+	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started:                  true,
+			ThreadID:                 "thread-demo",
+			Preset:                   codexcli.PresetYolo,
+			Status:                   "Codex session ready",
+			BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+			ManagedBrowserSessionKey: "managed-demo",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	previousSessionRevealer := managedBrowserSessionRevealer
+	defer func() {
+		managedBrowserSessionRevealer = previousSessionRevealer
+	}()
+
+	revealedSessionKey := ""
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealedSessionKey = sessionKey
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		nowFn:               func() time.Time { return now },
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {SessionKey: "managed-demo", BrowserPID: 123, Hidden: true, UpdatedAt: now},
+		},
+		width:  100,
+		height: 24,
+	}
+
+	footer := ansi.Strip(m.renderCodexFooter(session.snapshot, 160))
+	if !strings.Contains(footer, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() should offer ctrl+o without a current page URL: %q", footer)
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+o should queue the managed browser-open command without a current page URL")
+	}
+	if got.status != "Showing the managed browser window..." {
+		t.Fatalf("status = %q, want managed browser reveal notice", got.status)
+	}
+
+	msg := cmd()
+	openMsg, ok := msg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want browserOpenMsg", msg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
+	}
+	if revealedSessionKey != "managed-demo" {
+		t.Fatalf("revealed session key = %q, want managed-demo", revealedSessionKey)
+	}
+}
+
+func TestVisibleCodexManagedBrowserWithoutCurrentPageURLHydratesState(t *testing.T) {
+	now := time.Now()
+	previousStateReader := managedBrowserStateReader
+	defer func() {
+		managedBrowserStateReader = previousStateReader
+	}()
+
+	readSessionKey := ""
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		readSessionKey = sessionKey
+		return browserctl.ManagedPlaywrightState{
+			SessionKey:      sessionKey,
+			BrowserPID:      123,
+			Hidden:          true,
+			RevealSupported: true,
+			UpdatedAt:       now,
+		}, nil
+	}
+
+	m := Model{nowFn: func() time.Time { return now }}
+	cmd := m.maybeReadManagedBrowserStateCmd(codexapp.Snapshot{
+		Started:                  true,
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+	})
+	if cmd == nil {
+		t.Fatalf("managed browser state should hydrate even without a current page URL")
+	}
+
+	msg, ok := cmd().(managedBrowserStateMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want managedBrowserStateMsg", msg)
+	}
+	if msg.err != nil {
+		t.Fatalf("managedBrowserStateMsg.err = %v, want nil", msg.err)
+	}
+	if readSessionKey != "managed-demo" || msg.state.SessionKey != "managed-demo" {
+		t.Fatalf("read session key = %q, msg session key = %q, want managed-demo", readSessionKey, msg.state.SessionKey)
+	}
+}
+
 func TestVisibleCodexURLBasedElicitationBlocksWhenInteractiveLeaseOwnedElsewhere(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

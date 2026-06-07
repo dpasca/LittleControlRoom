@@ -328,11 +328,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+o":
 		pageURL := managedBrowserCurrentPageURL(snapshot)
 		sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-		if pageURL != "" && sessionKey != "" && snapshot.CurrentBrowserPageStale {
+		if pageURL != "" && sessionKey != "" && snapshot.CurrentBrowserPageStale && !m.managedBrowserCanReveal(snapshot) {
 			m.status = "That browser page came from the resumed transcript and is no longer attached. Ask the assistant to reopen it if you still need it."
 			return m, nil
 		}
-		if pageURL == "" || sessionKey == "" || snapshot.BusyExternal || snapshot.Closed || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+		if sessionKey == "" || snapshot.BusyExternal || snapshot.Closed {
 			if status := m.codexBrowserReconnectStatus(snapshot); status != "" {
 				m.status = status
 			}
