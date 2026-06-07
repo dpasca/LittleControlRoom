@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/events"
@@ -110,6 +111,67 @@ func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	defer svc.refreshMu.Unlock()
 	if len(svc.refreshState) != 0 {
 		t.Fatalf("refreshState = %#v, want empty after coalesced refresh finishes", svc.refreshState)
+	}
+}
+
+func TestRecordEmbeddedSessionActivityRespectsContextWhileProjectLockHeld(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	st, err := store.Open(filepath.Join(root, "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "project",
+		PresentOnDisk: true,
+		InScope:       true,
+		CreatedAt:     now.Add(-time.Hour),
+		UpdatedAt:     now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	unlock := svc.lockProjectStateMutation(projectPath)
+	released := false
+	release := func() {
+		if released {
+			return
+		}
+		released = true
+		unlock()
+	}
+	defer release()
+
+	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- svc.RecordEmbeddedSessionActivity(waitCtx, EmbeddedSessionActivity{
+			ProjectPath:    projectPath,
+			Source:         model.SessionSourceCodex,
+			SessionID:      "blocked-session",
+			Format:         "modern",
+			LastActivityAt: now,
+		})
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("RecordEmbeddedSessionActivity() error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		release()
+		t.Fatal("RecordEmbeddedSessionActivity() did not respect context while waiting for project lock")
 	}
 }
 

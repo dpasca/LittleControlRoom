@@ -1,6 +1,10 @@
 package keyedmutex
 
-import "sync"
+import (
+	"context"
+	"sync"
+	"time"
+)
 
 // Locker serializes work for the same key while allowing different keys to
 // proceed independently.
@@ -19,6 +23,19 @@ func (l *Locker) Lock(key string) func() {
 		return func() {}
 	}
 
+	unlock, _ := l.LockContext(context.Background(), key)
+	return unlock
+}
+
+// LockContext waits for the lock for key until ctx is done.
+func (l *Locker) LockContext(ctx context.Context, key string) (func(), error) {
+	if key == "" {
+		return func() {}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	l.mu.Lock()
 	if l.locks == nil {
 		l.locks = make(map[string]*entry)
@@ -31,7 +48,17 @@ func (l *Locker) Lock(key string) func() {
 	current.refs++
 	l.mu.Unlock()
 
-	current.mu.Lock()
+	for {
+		if current.mu.TryLock() {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			l.releaseRef(key, current)
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 
 	released := false
 	return func() {
@@ -40,12 +67,15 @@ func (l *Locker) Lock(key string) func() {
 		}
 		released = true
 		current.mu.Unlock()
+		l.releaseRef(key, current)
+	}, nil
+}
 
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		current.refs--
-		if current.refs == 0 {
-			delete(l.locks, key)
-		}
+func (l *Locker) releaseRef(key string, current *entry) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	current.refs--
+	if current.refs == 0 {
+		delete(l.locks, key)
 	}
 }

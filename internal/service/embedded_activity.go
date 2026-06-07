@@ -36,45 +36,65 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 	if projectPath == "" || projectPath == "." || activity.LastActivityAt.IsZero() {
 		return nil
 	}
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
-	defer unlockProjectState()
-
 	runtime := s.runtimeSnapshot()
-	detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || strings.HasPrefix(err.Error(), "project not found:") {
-			return nil
+
+	var state model.ProjectState
+	if err := func() error {
+		unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+		if err != nil {
+			return err
 		}
+		defer unlockProjectState()
+
+		detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) || strings.HasPrefix(err.Error(), "project not found:") {
+				return nil
+			}
+			return err
+		}
+
+		activitySession := embeddedActivitySession(projectPath, activity, runtime.cfg)
+		if activitySession.SessionID != "" {
+			detail.Sessions = mergeEmbeddedActivitySession(detail.Sessions, activitySession)
+		}
+		if activity.LastActivityAt.After(detail.Summary.LastActivity) {
+			detail.Summary.LastActivity = activity.LastActivityAt
+		}
+		if len(detail.Sessions) > 0 && detail.Sessions[0].LastEventAt.After(detail.Summary.LastActivity) {
+			detail.Summary.LastActivity = detail.Sessions[0].LastEventAt
+		}
+
+		state, err = s.persistProjectStateUpdate(ctx, detail, time.Now(), projectStatusRefreshOverrides{
+			presentOnDisk:        detail.Summary.PresentOnDisk,
+			worktreeRootPath:     detail.Summary.WorktreeRootPath,
+			worktreeKind:         detail.Summary.WorktreeKind,
+			worktreeParentBranch: detail.Summary.WorktreeParentBranch,
+			worktreeMergeStatus:  detail.Summary.WorktreeMergeStatus,
+			repoBranch:           detail.Summary.RepoBranch,
+			repoDirty:            detail.Summary.RepoDirty,
+			repoConflict:         detail.Summary.RepoConflict,
+			repoSyncStatus:       detail.Summary.RepoSyncStatus,
+			repoAheadCount:       detail.Summary.RepoAheadCount,
+			repoBehindCount:      detail.Summary.RepoBehindCount,
+			forgotten:            detail.Summary.Forgotten,
+			archived:             detail.Summary.Archived,
+		}, runtime.cfg, nil, ScanOptions{})
+		return err
+	}(); err != nil {
 		return err
 	}
-
-	activitySession := embeddedActivitySession(projectPath, activity, runtime.cfg)
-	if activitySession.SessionID != "" {
-		detail.Sessions = mergeEmbeddedActivitySession(detail.Sessions, activitySession)
+	if state.Path == "" {
+		return nil
 	}
-	if activity.LastActivityAt.After(detail.Summary.LastActivity) {
-		detail.Summary.LastActivity = activity.LastActivityAt
-	}
-	if len(detail.Sessions) > 0 && detail.Sessions[0].LastEventAt.After(detail.Summary.LastActivity) {
-		detail.Summary.LastActivity = detail.Sessions[0].LastEventAt
-	}
-
-	if err := s.persistProjectStateUpdate(ctx, detail, time.Now(), projectStatusRefreshOverrides{
-		presentOnDisk:        detail.Summary.PresentOnDisk,
-		worktreeRootPath:     detail.Summary.WorktreeRootPath,
-		worktreeKind:         detail.Summary.WorktreeKind,
-		worktreeParentBranch: detail.Summary.WorktreeParentBranch,
-		worktreeMergeStatus:  detail.Summary.WorktreeMergeStatus,
-		repoBranch:           detail.Summary.RepoBranch,
-		repoDirty:            detail.Summary.RepoDirty,
-		repoConflict:         detail.Summary.RepoConflict,
-		repoSyncStatus:       detail.Summary.RepoSyncStatus,
-		repoAheadCount:       detail.Summary.RepoAheadCount,
-		repoBehindCount:      detail.Summary.RepoBehindCount,
-		forgotten:            detail.Summary.Forgotten,
-		archived:             detail.Summary.Archived,
-	}, runtime.cfg, runtime.classifier, ScanOptions{}); err != nil {
-		return err
+	if runtime.classifier != nil {
+		queued, err := queueProjectClassification(ctx, runtime.classifier, state, ScanOptions{})
+		if err != nil {
+			return err
+		}
+		if queued {
+			runtime.classifier.Notify()
+		}
 	}
 	return s.updateTodoWorkStateForEmbeddedActivity(ctx, projectPath, activity)
 }

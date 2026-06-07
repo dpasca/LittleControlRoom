@@ -25,5 +25,5 @@ func timeoutActionError(err error, timeout time.Duration, action string) error {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return fmt.Errorf("timed out after %s while %s", timeout.Round(time.Millisecond), action)
+	return fmt.Errorf("timed out after %s while %s: %w", timeout.Round(time.Millisecond), action, err)
 }

@@ -297,6 +297,21 @@ func (s *Service) lockProjectStateMutation(projectPath string) func() {
 	return s.projectStateLocks.Lock(projectPath)
 }
 
+func (s *Service) lockProjectStateMutationContext(ctx context.Context, projectPath string) (func(), error) {
+	if s == nil {
+		return func() {}, nil
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return func() {}, nil
+	}
+	unlock, err := s.projectStateLocks.LockContext(ctx, projectPath)
+	if err != nil {
+		return nil, fmt.Errorf("wait for project state mutation lock for %s: %w", projectPath, err)
+	}
+	return unlock, nil
+}
+
 func (s *Service) lockMutation(ctx context.Context) (func(), error) {
 	if s == nil {
 		return func() {}, nil
@@ -2487,7 +2502,10 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 	refreshLinkedWorktrees := false
 	refreshLinkedRootPath := ""
 	if err := func() error {
-		unlockProjectState := s.lockProjectStateMutation(projectPath)
+		unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+		if err != nil {
+			return err
+		}
 		defer unlockProjectState()
 
 		detail, err := s.store.GetProjectDetail(ctx, projectPath, 20)
@@ -2552,7 +2570,7 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 			ensureLatestSessionTurnState(&detail.Sessions[0])
 			ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
 		}
-		if err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
+		if _, err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
 			presentOnDisk:        metadata.presentOnDisk,
 			worktreeRootPath:     worktreeRootPath,
 			worktreeKind:         worktreeKind,
@@ -2713,7 +2731,7 @@ type projectStatusRefreshOverrides struct {
 	archived             bool
 }
 
-func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig, classifier SessionClassifier, opts ScanOptions) error {
+func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig, classifier SessionClassifier, opts ScanOptions) (model.ProjectState, error) {
 	projectPath := detail.Summary.Path
 	latestSessionStart := time.Time{}
 	latestTurnKnown := false
@@ -2785,12 +2803,12 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		UpdatedAt:            now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
-		return fmt.Errorf("persist refreshed project state: %w", err)
+		return model.ProjectState{}, fmt.Errorf("persist refreshed project state: %w", err)
 	}
 	if classifier != nil {
 		queued, err := queueProjectClassification(ctx, classifier, state, opts)
 		if err != nil {
-			return fmt.Errorf("queue session classification: %w", err)
+			return model.ProjectState{}, fmt.Errorf("queue session classification: %w", err)
 		}
 		if queued {
 			classifier.Notify()
@@ -2799,7 +2817,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 	if projectStateChanged(detail.Summary, state) {
 		s.publishProjectChanged(ctx, now, state)
 	}
-	return nil
+	return state, nil
 }
 
 func (s *Service) refreshProjectAttention(ctx context.Context, projectPath string) error {
@@ -2816,7 +2834,7 @@ func (s *Service) refreshProjectAttentionLocked(ctx context.Context, projectPath
 	if err != nil {
 		return err
 	}
-	return s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
+	_, err = s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
 		presentOnDisk:        detail.Summary.PresentOnDisk,
 		worktreeRootPath:     detail.Summary.WorktreeRootPath,
 		worktreeKind:         detail.Summary.WorktreeKind,
@@ -2831,10 +2849,14 @@ func (s *Service) refreshProjectAttentionLocked(ctx context.Context, projectPath
 		forgotten:            detail.Summary.Forgotten,
 		archived:             detail.Summary.Archived,
 	}, cfg, nil, ScanOptions{})
+	return err
 }
 
 func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	m, err := s.store.GetProjectSummaryMap(ctx)
@@ -2866,7 +2888,10 @@ func (s *Service) UnarchiveProject(ctx context.Context, projectPath string) erro
 }
 
 func (s *Service) setProjectArchived(ctx context.Context, projectPath string, archived bool, action string) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	m, err := s.store.GetProjectSummaryMap(ctx)
@@ -2890,7 +2915,10 @@ func (s *Service) setProjectArchived(ctx context.Context, projectPath string, ar
 }
 
 func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.Duration) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	until := time.Now().Add(duration)
@@ -2907,7 +2935,10 @@ func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.
 }
 
 func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	if err := s.store.SetSnooze(ctx, projectPath, nil); err != nil {
@@ -2923,7 +2954,10 @@ func (s *Service) ClearSnooze(ctx context.Context, projectPath string) error {
 }
 
 func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string, seenAt time.Time) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	if err := s.store.SetProjectSessionSeenAt(ctx, projectPath, seenAt); err != nil {
@@ -2952,7 +2986,10 @@ func (s *Service) MarkProjectSessionSeen(ctx context.Context, projectPath string
 }
 
 func (s *Service) MarkProjectSessionUnread(ctx context.Context, projectPath string) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	if err := s.store.ClearProjectSessionSeenAt(ctx, projectPath); err != nil {
@@ -3195,7 +3232,10 @@ func (s *Service) SetRunCommand(ctx context.Context, projectPath, command string
 }
 
 func (s *Service) ForgetProject(ctx context.Context, projectPath string) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	m, err := s.store.GetProjectSummaryMap(ctx)
