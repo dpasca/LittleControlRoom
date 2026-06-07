@@ -195,6 +195,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "privacy settings",
+			raw:  "/privacy settings",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindPrivacySettings {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindPrivacySettings)
+				}
+				if inv.Canonical != "/privacy settings" {
+					t.Fatalf("canonical = %q, want /privacy settings", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "filter dialog",
 			raw:  "/filter",
 			check: func(t *testing.T, inv Invocation) {
@@ -970,6 +982,16 @@ func TestSuggestionsWorktreeAliasArguments(t *testing.T) {
 	}
 	if got[0].Insert != "/wt lanes" {
 		t.Fatalf("first suggestion = %q, want /wt lanes", got[0].Insert)
+	}
+}
+
+func TestSuggestionsPrivacySettingsArgument(t *testing.T) {
+	got := Suggestions("/privacy s")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/privacy s) len = %d, want 1", len(got))
+	}
+	if got[0].Insert != "/privacy settings" {
+		t.Fatalf("suggestion = %q, want /privacy settings", got[0].Insert)
 	}
 }
 

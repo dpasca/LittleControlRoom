@@ -12,62 +12,63 @@ import (
 type Kind string
 
 const (
-	KindHelp           Kind = "help"
-	KindAIStats        Kind = "ai-stats"
-	KindPerf           Kind = "perf"
-	KindErrors         Kind = "errors"
-	KindBoss           Kind = "boss"
-	KindRefresh        Kind = "refresh"
-	KindSort           Kind = "sort"
-	KindView           Kind = "view"
-	KindTab            Kind = "tab"
-	KindSetup          Kind = "setup"
-	KindSettings       Kind = "settings"
-	KindSkills         Kind = "skills"
-	KindFilter         Kind = "filter"
-	KindNewProject     Kind = "new-project"
-	KindNewTask        Kind = "new-task"
-	KindTaskActions    Kind = "task-actions"
-	KindOpen           Kind = "open"
-	KindRun            Kind = "run"
-	KindRestart        Kind = "restart"
-	KindRunEdit        Kind = "run-edit"
-	KindRuntime        Kind = "runtime"
-	KindCPU            Kind = "cpu"
-	KindStop           Kind = "stop"
-	KindDiff           Kind = "diff"
-	KindCommit         Kind = "commit"
-	KindPush           Kind = "push"
-	KindResolve        Kind = "resolve"
-	KindCodex          Kind = "codex"
-	KindCodexNew       Kind = "codex-new"
-	KindClaude         Kind = "claude"
-	KindClaudeNew      Kind = "claude-new"
-	KindOpenCode       Kind = "opencode"
-	KindOpenCodeNew    Kind = "opencode-new"
-	KindLCAgent        Kind = "lcagent"
-	KindLCAgentNew     Kind = "lcagent-new"
-	KindTodo           Kind = "todo"
-	KindWorktreeLanes  Kind = "worktree-lanes"
-	KindWorktreeMerge  Kind = "worktree-merge"
-	KindWorktreeRemove Kind = "worktree-remove"
-	KindWorktreePrune  Kind = "worktree-prune"
-	KindPin            Kind = "pin"
-	KindRead           Kind = "read"
-	KindUnread         Kind = "unread"
-	KindSnooze         Kind = "snooze"
-	KindClearSnooze    Kind = "clear-snooze"
-	KindSession        Kind = "session"
-	KindSessions       Kind = "sessions"
-	KindEvents         Kind = "events"
-	KindIgnore         Kind = "ignore"
-	KindIgnored        Kind = "ignored"
-	KindArchive        Kind = "archive"
-	KindUnarchive      Kind = "unarchive"
-	KindRemove         Kind = "remove"
-	KindFocus          Kind = "focus"
-	KindPrivacy        Kind = "privacy"
-	KindQuit           Kind = "quit"
+	KindHelp            Kind = "help"
+	KindAIStats         Kind = "ai-stats"
+	KindPerf            Kind = "perf"
+	KindErrors          Kind = "errors"
+	KindBoss            Kind = "boss"
+	KindRefresh         Kind = "refresh"
+	KindSort            Kind = "sort"
+	KindView            Kind = "view"
+	KindTab             Kind = "tab"
+	KindSetup           Kind = "setup"
+	KindSettings        Kind = "settings"
+	KindSkills          Kind = "skills"
+	KindFilter          Kind = "filter"
+	KindNewProject      Kind = "new-project"
+	KindNewTask         Kind = "new-task"
+	KindTaskActions     Kind = "task-actions"
+	KindOpen            Kind = "open"
+	KindRun             Kind = "run"
+	KindRestart         Kind = "restart"
+	KindRunEdit         Kind = "run-edit"
+	KindRuntime         Kind = "runtime"
+	KindCPU             Kind = "cpu"
+	KindStop            Kind = "stop"
+	KindDiff            Kind = "diff"
+	KindCommit          Kind = "commit"
+	KindPush            Kind = "push"
+	KindResolve         Kind = "resolve"
+	KindCodex           Kind = "codex"
+	KindCodexNew        Kind = "codex-new"
+	KindClaude          Kind = "claude"
+	KindClaudeNew       Kind = "claude-new"
+	KindOpenCode        Kind = "opencode"
+	KindOpenCodeNew     Kind = "opencode-new"
+	KindLCAgent         Kind = "lcagent"
+	KindLCAgentNew      Kind = "lcagent-new"
+	KindTodo            Kind = "todo"
+	KindWorktreeLanes   Kind = "worktree-lanes"
+	KindWorktreeMerge   Kind = "worktree-merge"
+	KindWorktreeRemove  Kind = "worktree-remove"
+	KindWorktreePrune   Kind = "worktree-prune"
+	KindPin             Kind = "pin"
+	KindRead            Kind = "read"
+	KindUnread          Kind = "unread"
+	KindSnooze          Kind = "snooze"
+	KindClearSnooze     Kind = "clear-snooze"
+	KindSession         Kind = "session"
+	KindSessions        Kind = "sessions"
+	KindEvents          Kind = "events"
+	KindIgnore          Kind = "ignore"
+	KindIgnored         Kind = "ignored"
+	KindArchive         Kind = "archive"
+	KindUnarchive       Kind = "unarchive"
+	KindRemove          Kind = "remove"
+	KindFocus           Kind = "focus"
+	KindPrivacy         Kind = "privacy"
+	KindPrivacySettings Kind = "privacy-settings"
+	KindQuit            Kind = "quit"
 )
 
 type SortMode string
@@ -184,7 +185,7 @@ var specs = []Spec{
 	{Name: "unarchive", Usage: "/unarchive", Summary: "Move the selected project back to Active when it is in scope"},
 	{Name: "remove", Usage: "/remove", Summary: "Confirm, then make the selected item go away safely"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
-	{Name: "privacy", Usage: "/privacy on|off|toggle", Summary: "Toggle demo privacy mode that hides project name patterns"},
+	{Name: "privacy", Usage: "/privacy on|off|toggle|settings", Summary: "Toggle demo privacy mode or open privacy settings"},
 	{Name: "quit", Usage: "/quit", Summary: "Quit the TUI"},
 }
 
@@ -321,6 +322,7 @@ func Suggestions(input string) []Suggestion {
 			choice("toggle", "Flip demo privacy mode"),
 			choice("on", "Enable demo privacy mode"),
 			choice("off", "Disable demo privacy mode"),
+			choice("settings", "Open privacy settings"),
 		)
 	case "boss":
 		argPrefix := ""
@@ -665,9 +667,12 @@ func Parse(input string) (Invocation, error) {
 		}
 		return Invocation{Kind: KindFocus, Focus: target, Canonical: "/focus " + string(target)}, nil
 	case "privacy":
+		if strings.EqualFold(strings.TrimSpace(rawArgs), "settings") {
+			return Invocation{Kind: KindPrivacySettings, Canonical: "/privacy settings"}, nil
+		}
 		mode, err := parseToggleMode(rawArgs, "/privacy")
 		if err != nil {
-			return Invocation{}, err
+			return Invocation{}, fmt.Errorf("usage: /privacy on|off|toggle|settings")
 		}
 		return Invocation{Kind: KindPrivacy, Toggle: mode, Canonical: "/privacy " + string(mode)}, nil
 	case "quit":
