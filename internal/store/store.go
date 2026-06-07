@@ -15,7 +15,10 @@ type Store struct {
 	db *sql.DB
 }
 
-const sqliteBusyTimeout = 5 * time.Second
+const (
+	sqliteBusyTimeout  = 5 * time.Second
+	sqliteMaxOpenConns = 4
+)
 
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -25,8 +28,8 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(sqliteMaxOpenConns)
+	db.SetMaxIdleConns(sqliteMaxOpenConns)
 
 	s := &Store{db: db}
 	if err := s.initSchema(context.Background()); err != nil {

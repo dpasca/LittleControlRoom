@@ -1625,6 +1625,52 @@ func TestOpenConfiguresSQLitePragmas(t *testing.T) {
 	if foreignKeys != 1 {
 		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
 	}
+
+	if got := st.db.Stats().MaxOpenConnections; got != sqliteMaxOpenConns {
+		t.Fatalf("max open connections = %d, want %d", got, sqliteMaxOpenConns)
+	}
+}
+
+func TestOpenAllowsWriteWhileReadRowsAreOpen(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/held-read"
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "held-read",
+		Status:         model.StatusIdle,
+		AttentionScore: 1,
+		InScope:        true,
+		PresentOnDisk:  true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	rows, err := st.db.QueryContext(ctx, `SELECT path FROM projects`)
+	if err != nil {
+		t.Fatalf("open read rows: %v", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		t.Fatal("expected held read row")
+	}
+
+	writeCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	if err := st.SetProjectSessionSeenAt(writeCtx, projectPath, now.Add(time.Minute)); err != nil {
+		t.Fatalf("write while read rows are open: %v", err)
+	}
 }
 
 func TestSetRunCommandPersistsInProjectSummaryAndDetail(t *testing.T) {
