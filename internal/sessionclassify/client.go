@@ -299,9 +299,6 @@ func validateClassificationResult(result *Result) error {
 		return errors.New("classifier result missing")
 	}
 	result.Summary = strings.TrimSpace(result.Summary)
-	if result.Confidence < 0 || result.Confidence > 1 {
-		result.Confidence = 0
-	}
 	switch result.Category {
 	case model.SessionCategoryCompleted,
 		model.SessionCategoryBlocked,
@@ -317,6 +314,12 @@ func validateClassificationResult(result *Result) error {
 	}
 	if result.Summary == "" {
 		return errors.New("classifier result missing summary")
+	}
+	if !result.confidenceSet {
+		return errors.New("classifier result missing confidence")
+	}
+	if result.Confidence < 0 || result.Confidence > 1 {
+		return fmt.Errorf("classifier result confidence %.3f out of range", result.Confidence)
 	}
 	return nil
 }
@@ -378,8 +381,14 @@ func sessionClassificationSchema() map[string]any {
 				"type":        "string",
 				"description": "One concise dashboard-ready summary under 140 characters; brief fragments are fine, write from the implicit assistant point of view, and omit prefixes like 'Assistant is'.",
 			},
+			"confidence": map[string]any{
+				"type":        "number",
+				"minimum":     0,
+				"maximum":     1,
+				"description": "Confidence in the category as a number from 0 to 1. Use lower confidence when completed and follow-up both seem plausible.",
+			},
 		},
-		"required": []string{"category", "summary"},
+		"required": []string{"category", "summary", "confidence"},
 	}
 }
 
@@ -545,22 +554,25 @@ Do not wrap the JSON in markdown fences.
 Do not include any prose before or after the JSON object.
 
 Choose exactly one category:
-- completed: the requested work appears complete for now; optional future ideas do not make it incomplete
+- completed: no concrete dashboard action remains after this turn; optional future ideas do not make it incomplete
 - blocked: work stopped because of an unresolved blocker, failure, or dependency
 - waiting_for_user: the assistant explicitly needs input, approval, credentials, or a decision from the user
-- needs_follow_up: work is not blocked, but there is a concrete unfinished next step that should likely happen next
+- needs_follow_up: work is not blocked, but there is a concrete project next step that should likely happen next
 - in_progress: the session looks mid-flight with no clear handoff yet
 - unknown: there is not enough evidence
 
+Classify the dashboard attention state after the turn, not just whether the assistant answered the last message.
 Focus on the latest user and assistant messages, not the full project history.
 Also consider the brief git_status snapshot as supporting context.
 If latest_turn_state_known is true, treat latest_turn_completed as a strong workflow signal:
-- true usually means the assistant finished that turn, even if the repo is still dirty
+- true usually means the assistant finished that turn, but it does not automatically mean the project is completed
 - false means the assistant may still be mid-turn unless the transcript clearly shows a handoff
 Dirty or unsynced git state can be evidence of unfinished follow-up, but transcript evidence should remain primary.
 Do not label a session in_progress only because the worktree is dirty after a completed turn.
-Prefer completed when the assistant clearly wrapped up the asked task and any extra offer is optional.
+Prefer completed when the assistant clearly wrapped up the asked task and no concrete tracked project action remains.
 Treat optional follow-up offers like “if you want, I can also ...” as optional unless the user actually asked for that extra step or the assistant says it still must happen.
+If the user asked for advice, an opinion, a review, or a plan, and the latest assistant message ends with a concrete recommended milestone, next step, or implementation path, prefer needs_follow_up over completed.
+Use needs_follow_up for assistant-proposed implementation milestones that are ready to start next, even when the advice itself was delivered successfully.
 If the latest assistant message asks the user to choose between options, confirm a proposed plan, approve a next step, or answer a direct implementation question, prefer waiting_for_user over completed.
 Proposal handoffs count as waiting_for_user when the next meaningful action depends on the user's choice, even if the assistant includes a recommendation like “I’d go with 2”.
 Use completed only when the assistant can stop without a reply from the user; if the assistant is clearly waiting for the user's answer before proceeding, do not mark completed.
@@ -571,7 +583,8 @@ Return a short factual dashboard summary under 140 characters.
 Prefer brief direct phrasing over full sentences when natural.
 Write from the implicit assistant point of view rather than naming the assistant as the subject.
 Omit leading scaffolding like "Assistant is" or "The assistant is".
-Do not force a stock opener; choose the most direct wording that fits the evidence.`
+Do not force a stock opener; choose the most direct wording that fits the evidence.
+Return confidence below 0.75 when the distinction between completed, waiting_for_user, and needs_follow_up is ambiguous.`
 
 const sessionClassificationRepairInstructions = `You repair a previous classifier answer so it exactly matches the required response schema.
 

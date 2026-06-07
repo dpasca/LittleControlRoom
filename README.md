@@ -119,7 +119,7 @@ To smoke-test a local model against common LCR usage without touching any repo s
 lcroom model-eval --backend ollama --model gemma4:12b-mlx
 ```
 
-The check covers plain summary text, LCR session-assessment JSON, and commit-subject JSON. Passing and failing cases are both useful: local models may be good enough for commit help or free-form summaries while still failing stricter dashboard assessment schemas. The `/ai` dialog also reports observed output speed in tokens per second after successful calls, plus Ollama model context metadata when the server exposes it.
+The check covers plain summary text, LCR session-assessment JSON, advice-follow-up classification, and commit-subject JSON. Passing and failing cases are both useful: local models may be good enough for commit help or free-form summaries while still failing stricter dashboard assessment schemas. The `/ai` dialog also reports observed output speed in tokens per second after successful calls, plus Ollama model context metadata when the server exposes it.
 
 <p align="center">
   <a href="docs/screenshots/settings-local-backends.png">

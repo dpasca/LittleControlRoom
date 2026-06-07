@@ -34,9 +34,12 @@ func TestRunOllamaModelEval(t *testing.T) {
 			generateRequests = append(generateRequests, req)
 			response := `Little Control Room can use this model for summaries.`
 			if _, structured := req["format"]; structured {
-				if len(generateRequests) == 2 {
-					response = `{"summary":"Gemma can summarize local model testing.","category":"completed"}`
-				} else {
+				switch len(generateRequests) {
+				case 2:
+					response = `{"summary":"Gemma can summarize local model testing.","category":"completed","confidence":0.88}`
+				case 3:
+					response = `{"summary":"Concrete demo milestone should be implemented next.","category":"needs_follow_up","confidence":0.84}`
+				default:
 					response = `{"message":"Add Ollama model eval diagnostics"}`
 				}
 			}
@@ -69,8 +72,11 @@ func TestRunOllamaModelEval(t *testing.T) {
 	if report.ContextWindow != 131072 {
 		t.Fatalf("ContextWindow = %d, want 131072", report.ContextWindow)
 	}
-	if len(report.Cases) != 3 {
-		t.Fatalf("cases = %d, want 3", len(report.Cases))
+	if len(report.Cases) != 4 {
+		t.Fatalf("cases = %d, want 4", len(report.Cases))
+	}
+	if !reportContainsCase(report, "session_assessment_advice_followup_json") {
+		t.Fatalf("report missing advice-follow-up case: %+v", report.Cases)
 	}
 	for _, req := range generateRequests {
 		if req["think"] != false {
@@ -85,6 +91,15 @@ func strconvQuote(value string) string {
 		panic(err)
 	}
 	return string(raw)
+}
+
+func reportContainsCase(report Report, name string) bool {
+	for _, c := range report.Cases {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReportMarshalJSONIncludesPassState(t *testing.T) {
