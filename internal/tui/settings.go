@@ -423,6 +423,15 @@ func (m *Model) openEmbeddedLCAgentSettingsMode(projectPath string) tea.Cmd {
 	return tea.Batch(cmd, m.setSettingsSelection(settingsFieldLCAgentWebSearchBackend), m.refreshSetupSnapshotCmd(false))
 }
 
+func (m *Model) openPrivacySettingsMode() tea.Cmd {
+	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+	m.settingsSectionMenu = false
+	m.settingsDrilldown = settingsDrilldownNone
+	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionScope)
+	m.status = "Privacy settings open. Press Enter to edit patterns, or ctrl+s to save."
+	return tea.Batch(cmd, m.setSettingsSelection(settingsFieldPrivacyPatterns))
+}
+
 func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	m.settingsFields = newSettingsFields(settings)

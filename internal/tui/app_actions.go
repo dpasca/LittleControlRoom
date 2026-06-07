@@ -705,6 +705,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	case commands.KindFocus:
 		m.setFocusedPaneFromCommand(inv.Focus)
 		return m, nil
+	case commands.KindPrivacySettings:
+		return m, m.openPrivacySettingsMode()
 	case commands.KindPrivacy:
 		switch inv.Toggle {
 		case commands.ToggleOn:
