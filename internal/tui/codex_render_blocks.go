@@ -283,9 +283,13 @@ func renderCodexDenseBlock(label, body string, accent lipgloss.Color, width int,
 
 func renderCodexDenseBlockWithInlineSummary(label string, lines []string, accent lipgloss.Color, width int) string {
 	contentWidth := max(10, width-2)
-	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(label)
-	firstLine := renderCodexMonospaceLine(lines[0])
-	inline := lipgloss.NewStyle().Width(contentWidth).Render(title + " -> " + firstLine)
+	titleText, summaryLine := codexDenseInlineSummaryParts(label, lines[0], contentWidth)
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render(titleText)
+	inlineText := title
+	if summaryLine != "" {
+		inlineText += " -> " + renderCodexMonospaceLine(summaryLine)
+	}
+	inline := lipgloss.NewStyle().Width(contentWidth).Render(inlineText)
 	if len(lines) == 1 {
 		return lipgloss.NewStyle().
 			BorderLeft(true).
@@ -303,6 +307,38 @@ func renderCodexDenseBlockWithInlineSummary(label string, lines []string, accent
 		BorderForeground(accent).
 		PaddingLeft(0).
 		Render(inline + "\n" + bodyBlock)
+}
+
+func codexDenseInlineSummaryParts(label, line string, width int) (string, string) {
+	const separator = " -> "
+	if width <= 0 {
+		return "", ""
+	}
+	if ansi.StringWidth(label+separator+line) <= width {
+		return label, line
+	}
+	labelWidth := ansi.StringWidth(label)
+	if labelWidth >= width {
+		return truncateCodexInlineText(label, width), ""
+	}
+	summaryWidth := width - labelWidth - ansi.StringWidth(separator)
+	if summaryWidth <= 0 {
+		return truncateCodexInlineText(label, width), ""
+	}
+	return label, truncateCodexInlineText(line, summaryWidth)
+}
+
+func truncateCodexInlineText(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(text) <= width {
+		return text
+	}
+	if width <= 3 {
+		return ansi.Truncate(text, width, "")
+	}
+	return ansi.Truncate(text, width, "...")
 }
 
 func visibleCodexDenseBlockLines(lines []string, blockMode codexDenseBlockMode) ([]string, int) {

@@ -884,6 +884,38 @@ func TestRenderCodexDenseBlockHidesOutputByDefault(t *testing.T) {
 	}
 }
 
+func TestRenderCodexDenseBlockTruncatesLongCollapsedCommandInlineSummary(t *testing.T) {
+	paths := make([]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		paths = append(paths, fmt.Sprintf("captures/player-sprite-prototype/20260608/rb00-root-180-axis-neg-current/sprite-%02d.png", i))
+	}
+	command := `$ /bin/zsh -lc "magick montage ` + strings.Join(paths, " ") + ` -tile 6x5 out.png"`
+	body := command + "\nfirst output line\nsecond output line\n[command completed, exit 0]"
+
+	rendered := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 90, codexDenseBlockSummary))
+	lines := strings.Split(strings.TrimSpace(rendered), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("summary command block should keep long commands to one display line, got %d lines: %q", len(lines), rendered)
+	}
+	if !strings.Contains(rendered, `$ /bin/zsh -lc`) {
+		t.Fatalf("summary command block should keep the command prefix: %q", rendered)
+	}
+	if !strings.Contains(rendered, "...") {
+		t.Fatalf("summary command block should mark truncated commands: %q", rendered)
+	}
+	if strings.Contains(rendered, "sprite-29.png") {
+		t.Fatalf("summary command block should truncate the far tail of long commands: %q", rendered)
+	}
+	if width := ansi.StringWidth(lines[0]); width > 90 {
+		t.Fatalf("summary command block line width = %d, want <= 90: %q", width, lines[0])
+	}
+
+	full := ansi.Strip(renderCodexDenseBlock("Command", body, lipgloss.Color("111"), 90, codexDenseBlockFull))
+	if !strings.Contains(full, "sprite-29.png") {
+		t.Fatalf("expanded command block should keep the full command: %q", full)
+	}
+}
+
 func TestRenderCodexDenseBlockPreviewShowsFiveOutputLines(t *testing.T) {
 	outputLines := make([]string, 0, 7)
 	for i := 1; i <= 7; i++ {
