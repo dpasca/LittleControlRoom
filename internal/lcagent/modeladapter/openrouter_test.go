@@ -80,6 +80,16 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["scout_files"], "utility/scout model") || !strings.Contains(descriptions["scout_files"], "read-only") {
 		t.Fatalf("scout_files description should explain utility model routing: %q", descriptions["scout_files"])
 	}
+	var runCommandProperties map[string]any
+	for _, tool := range Tools() {
+		if tool.Function.Name == "run_command" {
+			runCommandProperties, _ = tool.Function.Parameters["properties"].(map[string]any)
+			break
+		}
+	}
+	if _, ok := runCommandProperties["allowed_exit_codes"]; !ok {
+		t.Fatalf("run_command schema missing allowed_exit_codes: %#v", runCommandProperties)
+	}
 	if !strings.Contains(descriptions["update_plan"], "continue with the in_progress step") {
 		t.Fatalf("update_plan description should keep plans tied to execution: %q", descriptions["update_plan"])
 	}

@@ -311,6 +311,61 @@ func TestFileToolsListAndSearchReportHiddenDirs(t *testing.T) {
 	}
 }
 
+func TestFileToolsSearchDeniesBroadHomeWithoutGlob(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("needle\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	result := files.SearchContext("needle", ".", "", 20, 0, 0)
+	if result.Success || !strings.Contains(result.Error, "broad home-directory search requires a narrower path or file_glob") {
+		t.Fatalf("broad home search result = %#v", result)
+	}
+
+	withGlob := files.SearchContext("needle", ".", "*.txt", 20, 0, 0)
+	if !withGlob.Success || !strings.Contains(withGlob.Output, "note.txt:1: needle") {
+		t.Fatalf("home search with glob = %#v\n%s", withGlob, withGlob.Output)
+	}
+}
+
+func TestFileToolsSearchStopsAtTraversalBudget(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 6; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("file-%02d.txt", i)), []byte("haystack\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{
+		Workspace: w,
+		Limits: FileLimits{
+			DefaultSearchFileBudget:   2,
+			MaxSearchFileBudget:       2,
+			DefaultSearchTimeBudgetMS: 1000,
+			MaxSearchTimeBudgetMS:     1000,
+		},
+	}
+
+	result := files.SearchContext("needle", ".", "*.txt", 20, 0, 0)
+	if !result.Success || !result.Truncated {
+		t.Fatalf("budgeted search result = %#v\n%s", result, result.Output)
+	}
+	for _, want := range []string{"files_seen: 2", "files_searched: 2", "search stopped: file budget reached after 2 files"} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("budgeted search missing %q:\n%s", want, result.Output)
+		}
+	}
+}
+
 func TestFileToolsRepoOverviewFilesystemReportsHiddenDirs(t *testing.T) {
 	root := t.TempDir()
 	for _, dir := range []string{".venv", "build", "src"} {

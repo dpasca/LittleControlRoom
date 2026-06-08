@@ -28,12 +28,13 @@ type CommandRunner struct {
 }
 
 type CommandSpec struct {
-	Command   string
-	Argv      []string
-	CWD       string
-	Shell     bool
-	TimeoutMS int
-	Purpose   string
+	Command          string
+	Argv             []string
+	CWD              string
+	Shell            bool
+	TimeoutMS        int
+	Purpose          string
+	AllowedExitCodes []int
 }
 
 func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Duration) ToolResult {
@@ -45,12 +46,13 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	cwd, err := r.Workspace.ResolveCommandCWD(spec.CWD)
 	if err != nil {
 		result := ToolResult{
-			Success: false,
-			Error:   err.Error(),
-			Command: commandLabelFromSpec(spec),
-			Argv:    cleanArgv(spec.Argv),
-			CWD:     cwdLabel,
-			Purpose: normalizeCommandPurpose(spec.Purpose),
+			Success:          false,
+			Error:            err.Error(),
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwdLabel,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 		if policy.IsDenied(err) {
 			result.Denied = true
@@ -60,24 +62,26 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	}
 	if reason := commandWorkspaceWriteDenialReason(spec); reason != "" {
 		return ToolResult{
-			Success:      false,
-			Error:        reason,
-			Denied:       true,
-			DenialReason: reason,
-			Command:      commandLabelFromSpec(spec),
-			Argv:         cleanArgv(spec.Argv),
-			CWD:          cwd,
-			Purpose:      normalizeCommandPurpose(spec.Purpose),
+			Success:          false,
+			Error:            reason,
+			Denied:           true,
+			DenialReason:     reason,
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwd,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 	}
 	if err := r.Workspace.AllowCommandSpec(spec.Argv, spec.Command, spec.Shell); err != nil {
 		result := ToolResult{
-			Success: false,
-			Error:   err.Error(),
-			Command: commandLabelFromSpec(spec),
-			Argv:    cleanArgv(spec.Argv),
-			CWD:     cwd,
-			Purpose: normalizeCommandPurpose(spec.Purpose),
+			Success:          false,
+			Error:            err.Error(),
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwd,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 		if policy.IsDenied(err) {
 			result.Denied = true
@@ -92,7 +96,7 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 
 	cmd, label, err := commandFromSpec(spec)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), CWD: cwd, Purpose: normalizeCommandPurpose(spec.Purpose)}
+		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), CWD: cwd, Purpose: normalizeCommandPurpose(spec.Purpose), AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes)}
 	}
 	cmd.Dir = cwd
 	prepareCommandProcessGroup(cmd)
@@ -109,6 +113,12 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	if timedOut && exitCode == 0 {
 		exitCode = -1
 	}
+	allowedExitCodes := cleanAllowedExitCodes(spec.AllowedExitCodes)
+	exitAllowed := commandExitCodeAllowed(exitCode, allowedExitCodes) && !timedOut
+	displayErr := err
+	if exitAllowed {
+		displayErr = nil
+	}
 	p := present.Command(present.CommandOutput{
 		Stdout:       stdout.Bytes(),
 		Stderr:       stderr.Bytes(),
@@ -119,19 +129,20 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 		CommandLabel: label,
 	})
 	return ToolResult{
-		Success:      err == nil && !timedOut,
-		Output:       p.Text,
-		Error:        errorString(err, timedOut),
-		Command:      label,
-		Argv:         cleanArgv(spec.Argv),
-		CWD:          cwd,
-		Purpose:      normalizeCommandPurpose(spec.Purpose),
-		ExitCode:     exitCode,
-		Duration:     duration,
-		TimedOut:     timedOut,
-		Truncated:    p.Truncated,
-		Binary:       p.Binary,
-		ArtifactPath: p.ArtifactPath,
+		Success:          (err == nil || exitAllowed) && !timedOut,
+		Output:           p.Text,
+		Error:            errorString(displayErr, timedOut),
+		Command:          label,
+		Argv:             cleanArgv(spec.Argv),
+		CWD:              cwd,
+		Purpose:          normalizeCommandPurpose(spec.Purpose),
+		AllowedExitCodes: allowedExitCodes,
+		ExitCode:         exitCode,
+		Duration:         duration,
+		TimedOut:         timedOut,
+		Truncated:        p.Truncated,
+		Binary:           p.Binary,
+		ArtifactPath:     p.ArtifactPath,
 	}
 }
 
@@ -484,6 +495,34 @@ func cleanArgv(argv []string) []string {
 		}
 	}
 	return out
+}
+
+func cleanAllowedExitCodes(codes []int) []int {
+	if len(codes) == 0 {
+		return nil
+	}
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(codes))
+	for _, code := range codes {
+		if code < 0 || code > 255 {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		out = append(out, code)
+	}
+	return out
+}
+
+func commandExitCodeAllowed(exitCode int, allowed []int) bool {
+	for _, code := range allowed {
+		if code == exitCode {
+			return true
+		}
+	}
+	return false
 }
 
 func exitCodeFromError(err error) int {

@@ -172,6 +172,17 @@ Lean note:
 
 - Prefer a small deterministic audit over another model call at first. The audit should inspect structured tool/result metadata, not parse arbitrary language with brittle regexes.
 
+## Deferred Security Boundary
+
+Recent session review found an inconsistent boundary between workspace/admin edits and broader system mutations: shell-style writes to files such as `~/.zshrc` were denied, while other system-level commands could still mutate user configuration through process side effects.
+
+Second-phase fixes:
+
+- Define a generic admin/system mutation contract for `run_command`, separate from workspace file-write denial.
+- Require explicit user confirmation or an admin/system capability flag for non-workspace persistent configuration changes, including Launch Services/defaults updates, shell profile edits, global package manager state, and OS registration commands.
+- Prefer typed tools or structured operation metadata where possible; do not infer risky intent from natural-language keyword matching.
+- Add trace events and final-response audit inputs that distinguish workspace edits, admin file edits, and system configuration mutations.
+
 ## Phase 4: Capability Handoff
 
 Decide how LCAgent should behave when the user asks for unavailable capabilities.

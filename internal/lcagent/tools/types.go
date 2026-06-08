@@ -12,6 +12,7 @@ type ToolResult struct {
 	Argv             []string                 `json:"argv,omitempty"`
 	CWD              string                   `json:"cwd,omitempty"`
 	Purpose          string                   `json:"purpose,omitempty"`
+	AllowedExitCodes []int                    `json:"allowed_exit_codes,omitempty"`
 	ExitCode         int                      `json:"exit_code,omitempty"`
 	Duration         time.Duration            `json:"duration,omitempty"`
 	TimedOut         bool                     `json:"timed_out,omitempty"`
@@ -68,17 +69,18 @@ const (
 )
 
 type VerificationCheck struct {
-	Command  string        `json:"command,omitempty"`
-	Argv     []string      `json:"argv,omitempty"`
-	CWD      string        `json:"cwd,omitempty"`
-	Purpose  string        `json:"purpose,omitempty"`
-	Status   string        `json:"status"`
-	Success  bool          `json:"success"`
-	ExitCode int           `json:"exit_code,omitempty"`
-	Duration time.Duration `json:"duration,omitempty"`
-	TimedOut bool          `json:"timed_out,omitempty"`
-	Denied   bool          `json:"denied,omitempty"`
-	Error    string        `json:"error,omitempty"`
+	Command          string        `json:"command,omitempty"`
+	Argv             []string      `json:"argv,omitempty"`
+	CWD              string        `json:"cwd,omitempty"`
+	Purpose          string        `json:"purpose,omitempty"`
+	AllowedExitCodes []int         `json:"allowed_exit_codes,omitempty"`
+	Status           string        `json:"status"`
+	Success          bool          `json:"success"`
+	ExitCode         int           `json:"exit_code,omitempty"`
+	Duration         time.Duration `json:"duration,omitempty"`
+	TimedOut         bool          `json:"timed_out,omitempty"`
+	Denied           bool          `json:"denied,omitempty"`
+	Error            string        `json:"error,omitempty"`
 }
 
 func VerificationCheckFromResult(result ToolResult) VerificationCheck {
@@ -92,17 +94,18 @@ func VerificationCheckFromResult(result ToolResult) VerificationCheck {
 		status = VerificationStatusPassed
 	}
 	return VerificationCheck{
-		Command:  result.Command,
-		Argv:     append([]string(nil), result.Argv...),
-		CWD:      result.CWD,
-		Purpose:  result.Purpose,
-		Status:   status,
-		Success:  result.Success,
-		ExitCode: result.ExitCode,
-		Duration: result.Duration,
-		TimedOut: result.TimedOut,
-		Denied:   result.Denied,
-		Error:    result.Error,
+		Command:          result.Command,
+		Argv:             append([]string(nil), result.Argv...),
+		CWD:              result.CWD,
+		Purpose:          result.Purpose,
+		AllowedExitCodes: append([]int(nil), result.AllowedExitCodes...),
+		Status:           status,
+		Success:          result.Success,
+		ExitCode:         result.ExitCode,
+		Duration:         result.Duration,
+		TimedOut:         result.TimedOut,
+		Denied:           result.Denied,
+		Error:            result.Error,
 	}
 }
 

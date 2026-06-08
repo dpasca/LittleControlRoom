@@ -262,6 +262,24 @@ func TestCommandRunnerPreservesVerificationPurpose(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerAllowsExplicitExpectedExitCode(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:             []string{"sh", "-c", "exit 1"},
+		TimeoutMS:        1000,
+		AllowedExitCodes: []int{0, 1, 1, 999},
+	})
+	if !result.Success || result.Error != "" || result.ExitCode != 1 {
+		t.Fatalf("result = %#v, want allowed nonzero exit", result)
+	}
+	if got := result.AllowedExitCodes; len(got) != 2 || got[0] != 0 || got[1] != 1 {
+		t.Fatalf("AllowedExitCodes = %v, want [0 1]", got)
+	}
+}
+
 func TestCommandRunnerDeniesBroadCommandBelowMedium(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyLow)
 	if err != nil {
