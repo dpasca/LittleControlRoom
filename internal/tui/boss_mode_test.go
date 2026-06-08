@@ -428,6 +428,41 @@ func TestLatestEngineerTranscriptOutputDropsCodeBlocks(t *testing.T) {
 	}
 }
 
+func TestLatestEngineerTranscriptOutputOmitsCodeOnlyBlocks(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "```go\n" + strings.Repeat("func generatedSummaryLeak() string { return \"too much code\" }\n", 40) + "```",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	if got != "" {
+		t.Fatalf("latestEngineerTranscriptOutput() = %q, want empty code-only summary", got)
+	}
+}
+
+func TestLatestEngineerTranscriptOutputKeepsProseButDropsLargeCodeBlock(t *testing.T) {
+	t.Parallel()
+
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Generated the helper for review:\n```go\n" + strings.Repeat("func generatedSummaryLeak() string { return \"too much code\" }\n", 40) + "```\n",
+		}},
+	}
+
+	got := latestEngineerTranscriptOutput(snapshot)
+	if got != "Generated the helper for review." {
+		t.Fatalf("latestEngineerTranscriptOutput() = %q", got)
+	}
+	if strings.Contains(got, "generatedSummaryLeak") || strings.Contains(got, "too much code") || strings.Contains(got, "```") {
+		t.Fatalf("summary leaked code block content: %q", got)
+	}
+}
+
 func TestLatestEngineerTranscriptOutputDropsMalformedInlineFence(t *testing.T) {
 	t.Parallel()
 

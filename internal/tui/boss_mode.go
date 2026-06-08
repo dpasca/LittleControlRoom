@@ -919,7 +919,7 @@ func engineerNoticeSummaryText(text string, sentenceLimit int) string {
 				}
 			}
 		}
-		return strings.TrimSpace(strings.ReplaceAll(text, "`", ""))
+		return ""
 	}
 
 	var thinFallback string
