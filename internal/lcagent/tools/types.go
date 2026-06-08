@@ -12,6 +12,8 @@ type ToolResult struct {
 	Argv             []string                 `json:"argv,omitempty"`
 	CWD              string                   `json:"cwd,omitempty"`
 	Purpose          string                   `json:"purpose,omitempty"`
+	AdminScope       string                   `json:"admin_scope,omitempty"`
+	SystemMutation   bool                     `json:"system_mutation,omitempty"`
 	AllowedExitCodes []int                    `json:"allowed_exit_codes,omitempty"`
 	ExitCode         int                      `json:"exit_code,omitempty"`
 	Duration         time.Duration            `json:"duration,omitempty"`

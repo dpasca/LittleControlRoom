@@ -79,6 +79,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		writePathLine,
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"Do not use run_command to write workspace files through shell redirects, heredocs, tee, in-place rewrites, or mutating file commands. Use apply_patch for source edits, replace_lines when read_file gives exact current line numbers, or replace_text for small exact substitutions when patch syntax keeps failing.",
+		"Persistent user/system configuration mutations through run_command, such as macOS defaults or Launch Services registration, global package-manager state changes, or file-association updates, require admin_scope=system and LCAgent admin-write enabled. Use admin_scope=system only when the user explicitly requested that system/admin change.",
 		"When running a command for a package or subproject, set run_command cwd to a workspace-relative directory such as \"frontend\" instead of using shell cd.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
 		"For negative probes where a nonzero exit is expected evidence, such as checking whether a command or path exists, set run_command allowed_exit_codes explicitly, for example [0,1]. Do not use allowed_exit_codes to soften failing tests or real verification failures.",

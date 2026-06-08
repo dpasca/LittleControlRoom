@@ -410,6 +410,7 @@ type commandArgs struct {
 	Shell            bool     `json:"shell"`
 	TimeoutMS        int      `json:"timeout_ms"`
 	Purpose          string   `json:"purpose"`
+	AdminScope       string   `json:"admin_scope"`
 	AllowedExitCodes []int    `json:"allowed_exit_codes"`
 }
 
@@ -877,6 +878,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			Shell:            args.Shell || args.Command != "",
 			TimeoutMS:        args.TimeoutMS,
 			Purpose:          args.Purpose,
+			AdminScope:       args.AdminScope,
 			AllowedExitCodes: args.AllowedExitCodes,
 		}
 		result = r.runCommandWithApproval(ctx, spec)
@@ -1231,6 +1233,9 @@ func validateBrowserToolArgs(tool string, raw json.RawMessage) (tools.ToolResult
 func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandSpec) tools.ToolResult {
 	result := r.Command.RunSpec(ctx, spec)
 	if tools.IsWorkspaceWriteCommandDenied(result) {
+		return result
+	}
+	if tools.IsSystemMutationCommandDenied(result) {
 		return result
 	}
 	if !result.Denied || r.Approvals == nil || r.Command.Workspace.Auto != policy.AutonomyLow {

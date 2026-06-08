@@ -224,6 +224,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"shell":              map[string]any{"type": "boolean", "description": "Set true when using command as a shell string."},
 						"timeout_ms":         map[string]any{"type": "integer", "minimum": 1, "maximum": 60000},
 						"purpose":            map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "Use verify for tests, linters, typechecks, builds, or other commands intended to verify the final answer. Use inspect for read-only exploration."},
+						"admin_scope":        map[string]any{"type": "string", "enum": []string{"system"}, "description": "Set to system only for persistent user/system configuration mutations explicitly requested by the user. System-scope commands also require LCAgent admin write to be enabled."},
 						"allowed_exit_codes": map[string]any{"type": "array", "items": map[string]any{"type": "integer", "minimum": 0, "maximum": 255}, "description": "Optional explicit successful exit codes. Use only for probes where a nonzero exit is expected evidence, for example [0,1] for command/path existence checks. Do not use for tests or verification unless the nonzero exit is intentionally acceptable."},
 					},
 				},

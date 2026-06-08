@@ -172,16 +172,21 @@ Lean note:
 
 - Prefer a small deterministic audit over another model call at first. The audit should inspect structured tool/result metadata, not parse arbitrary language with brittle regexes.
 
-## Deferred Security Boundary
+## Phase 3.5: Admin/System Mutation Boundary
 
 Recent session review found an inconsistent boundary between workspace/admin edits and broader system mutations: shell-style writes to files such as `~/.zshrc` were denied, while other system-level commands could still mutate user configuration through process side effects.
 
-Second-phase fixes:
+Current status:
 
-- Define a generic admin/system mutation contract for `run_command`, separate from workspace file-write denial.
-- Require explicit user confirmation or an admin/system capability flag for non-workspace persistent configuration changes, including Launch Services/defaults updates, shell profile edits, global package manager state, and OS registration commands.
-- Prefer typed tools or structured operation metadata where possible; do not infer risky intent from natural-language keyword matching.
-- Add trace events and final-response audit inputs that distinguish workspace edits, admin file edits, and system configuration mutations.
+- `run_command` now has an explicit `admin_scope=system` contract for persistent user/system configuration mutations.
+- Structurally recognized system mutations require both `admin_scope=system` and LCAgent admin write; Low-autonomy command approval cannot bypass that denial.
+- Tool results include `system_mutation` and `admin_scope` metadata for trace/audit visibility.
+
+Remaining useful fixes:
+
+- Consider typed tools for common system operations once real use cases repeat.
+- Add final-response audit checks if system mutation claims drift from `system_mutation` trace evidence.
+- Improve admin file-edit categorization so shell profile edits are distinguished from workspace writes in trace summaries.
 
 ## Phase 4: Capability Handoff
 

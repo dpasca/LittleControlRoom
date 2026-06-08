@@ -90,6 +90,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if _, ok := runCommandProperties["allowed_exit_codes"]; !ok {
 		t.Fatalf("run_command schema missing allowed_exit_codes: %#v", runCommandProperties)
 	}
+	if _, ok := runCommandProperties["admin_scope"]; !ok {
+		t.Fatalf("run_command schema missing admin_scope: %#v", runCommandProperties)
+	}
 	if !strings.Contains(descriptions["update_plan"], "continue with the in_progress step") {
 		t.Fatalf("update_plan description should keep plans tied to execution: %q", descriptions["update_plan"])
 	}
