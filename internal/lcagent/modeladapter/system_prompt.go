@@ -54,6 +54,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"list_files glob matching is case-sensitive by default and supports ** as a recursive path segment; if a user names a file and the exact-case glob finds nothing, retry with case_sensitive=false before concluding it is absent.",
 		"For specific behavior, identifiers, errors, commands, or tests, prefer search with context before raw reads.",
 		"Search queries are case-insensitive literal substrings, not regexes, globs, or alternation patterns; use separate searches for separate identifiers or phrases. For broad terms, short tokens, or common UI words, set a low max_matches and a path or file_glob before widening.",
+		"Do not search an entire home directory; choose the likely project/folder first or set a narrow file_glob.",
 		"For broad searches that may have many hits, set search output_mode=compact and include an intent sentence describing what you are trying to learn. If a search result is condensed by a utility model, treat it as routing advice only: read the named files and line ranges before making final claims.",
 		"Use read_file for targeted ranges. Reading from line 1 is useful for imports/package context, but do not default to first-N-line scouting when an outline or search can locate the relevant range.",
 		readScoutingLine,
@@ -78,8 +79,10 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		writePathLine,
 		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
 		"Do not use run_command to write workspace files through shell redirects, heredocs, tee, in-place rewrites, or mutating file commands. Use apply_patch for source edits, replace_lines when read_file gives exact current line numbers, or replace_text for small exact substitutions when patch syntax keeps failing.",
+		"Persistent user/system configuration mutations through run_command, such as macOS defaults or Launch Services registration, global package-manager state changes, or file-association updates, require admin_scope=system and LCAgent admin-write enabled. Use admin_scope=system only when the user explicitly requested that system/admin change.",
 		"When running a command for a package or subproject, set run_command cwd to a workspace-relative directory such as \"frontend\" instead of using shell cd.",
 		"When a run_command is a test, lint, typecheck, build, or other verification check, set purpose to verify so LCR can audit what actually ran.",
+		"For negative probes where a nonzero exit is expected evidence, such as checking whether a command or path exists, set run_command allowed_exit_codes explicitly, for example [0,1]. Do not use allowed_exit_codes to soften failing tests or real verification failures.",
 		"run_command is for bounded commands. If a run_command times out, LCAgent terminated that command's process group; do not claim a dev server, watcher, or other long-running process is still running from pre-timeout output. Use a later bounded probe for liveness, or say the process was not kept running.",
 		"For deploy, publish, promote, upload, release, or store-rollout operations, treat the action as long-running operational work: capture the command, process label, PID when available, exit status, recent output, and output artifact path; after it exits, run a separate verification probe before claiming success.",
 	)

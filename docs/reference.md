@@ -136,6 +136,9 @@ the default: it allows workspace file edits, read-only command inspection, and
 recognized verifier commands, while broader commands ask in the embedded pane.
 `medium` allows workspace-contained commands without repeated approvals; write
 tools still stay inside the workspace unless `lcagent_admin_write` is enabled.
+Persistent user/system configuration mutations through `run_command`, such as
+file-association/defaults changes or global package-manager state changes, also
+require explicit `admin_scope=system` plus `lcagent_admin_write`.
 When a Low run asks for command approval, `a` approves once and `A` switches the
 current LCAgent run to Medium.
 

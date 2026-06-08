@@ -404,12 +404,14 @@ func formatReadSuggestionsForModel(suggestions []tools.ReadSuggestion) string {
 }
 
 type commandArgs struct {
-	Command   string   `json:"command"`
-	Argv      []string `json:"argv"`
-	CWD       string   `json:"cwd"`
-	Shell     bool     `json:"shell"`
-	TimeoutMS int      `json:"timeout_ms"`
-	Purpose   string   `json:"purpose"`
+	Command          string   `json:"command"`
+	Argv             []string `json:"argv"`
+	CWD              string   `json:"cwd"`
+	Shell            bool     `json:"shell"`
+	TimeoutMS        int      `json:"timeout_ms"`
+	Purpose          string   `json:"purpose"`
+	AdminScope       string   `json:"admin_scope"`
+	AllowedExitCodes []int    `json:"allowed_exit_codes"`
 }
 
 type processArgs struct {
@@ -870,12 +872,14 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		spec := tools.CommandSpec{
-			Command:   args.Command,
-			Argv:      args.Argv,
-			CWD:       args.CWD,
-			Shell:     args.Shell || args.Command != "",
-			TimeoutMS: args.TimeoutMS,
-			Purpose:   args.Purpose,
+			Command:          args.Command,
+			Argv:             args.Argv,
+			CWD:              args.CWD,
+			Shell:            args.Shell || args.Command != "",
+			TimeoutMS:        args.TimeoutMS,
+			Purpose:          args.Purpose,
+			AdminScope:       args.AdminScope,
+			AllowedExitCodes: args.AllowedExitCodes,
 		}
 		result = r.runCommandWithApproval(ctx, spec)
 		if strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) {
@@ -1229,6 +1233,9 @@ func validateBrowserToolArgs(tool string, raw json.RawMessage) (tools.ToolResult
 func (r *Runner) runCommandWithApproval(ctx context.Context, spec tools.CommandSpec) tools.ToolResult {
 	result := r.Command.RunSpec(ctx, spec)
 	if tools.IsWorkspaceWriteCommandDenied(result) {
+		return result
+	}
+	if tools.IsSystemMutationCommandDenied(result) {
 		return result
 	}
 	if !result.Denied || r.Approvals == nil || r.Command.Workspace.Auto != policy.AutonomyLow {
@@ -2100,19 +2107,20 @@ func finalResponseAuditEvent(sessionID string, audit FinalResponseAudit) session
 
 func verificationCheckEvent(sessionID string, check tools.VerificationCheck) session.Event {
 	return session.Event{
-		"type":       "verification_check",
-		"session_id": sessionID,
-		"command":    check.Command,
-		"argv":       check.Argv,
-		"cwd":        check.CWD,
-		"purpose":    check.Purpose,
-		"status":     check.Status,
-		"success":    check.Success,
-		"exit_code":  check.ExitCode,
-		"duration":   check.Duration,
-		"timed_out":  check.TimedOut,
-		"denied":     check.Denied,
-		"error":      check.Error,
+		"type":               "verification_check",
+		"session_id":         sessionID,
+		"command":            check.Command,
+		"argv":               check.Argv,
+		"cwd":                check.CWD,
+		"purpose":            check.Purpose,
+		"allowed_exit_codes": check.AllowedExitCodes,
+		"status":             check.Status,
+		"success":            check.Success,
+		"exit_code":          check.ExitCode,
+		"duration":           check.Duration,
+		"timed_out":          check.TimedOut,
+		"denied":             check.Denied,
+		"error":              check.Error,
 	}
 }
 

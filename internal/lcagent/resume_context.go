@@ -94,6 +94,7 @@ func loadLegacyResumeContext(dataDir, raw, workspaceRoot string) (*resumeContext
 	if ctx.SourceSessionID == "" && !looksLikePath(raw) {
 		ctx.SourceSessionID = raw
 	}
+	hydrateResumeContextFromThreadState(dataDir, ctx, workspaceRoot)
 	hydrateResumeContextFromAncestors(dataDir, ctx, workspaceRoot)
 	if workspaceRoot != "" && ctx.ProjectPath != "" && !sameCleanPath(workspaceRoot, ctx.ProjectPath) {
 		return nil, fmt.Errorf("LCAgent resume session %s belongs to %s, not %s", firstResumeNonEmpty(ctx.SourceSessionID, raw), ctx.ProjectPath, workspaceRoot)
@@ -253,15 +254,21 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 			ctx.LastError = firstResumeNonEmpty(resumeJSONString(event["reason"]), ctx.LastError)
 			ctx.HandoffSource = "turn_aborted"
 		case "model_context_snapshot":
+			ctx.ThreadID = firstResumeNonEmpty(resumeJSONString(event["thread_id"]), ctx.ThreadID)
+			ctx.ThreadContextMode = firstResumeNonEmpty(resumeJSONString(event["context_mode"]), ctx.ThreadContextMode)
+			ctx.ExactSource = firstResumeNonEmpty(resumeJSONString(event["source"]), ctx.ExactSource, "model_context_snapshot")
+			if count := resumeJSONInt(event["message_count"]); count > 0 {
+				ctx.ExactMessageCount = count
+			}
+			if chars := resumeJSONInt(event["approx_chars"]); chars > 0 {
+				ctx.ExactChars = chars
+			}
 			var messages []modeladapter.Message
 			if err := json.Unmarshal(event["messages"], &messages); err == nil && len(messages) > 0 {
 				ctx.ExactMessages = cloneModelMessages(messages)
-				ctx.ExactSource = firstResumeNonEmpty(resumeJSONString(event["source"]), "model_context_snapshot")
-				ctx.ExactMessageCount = resumeJSONInt(event["message_count"])
 				if ctx.ExactMessageCount <= 0 {
 					ctx.ExactMessageCount = len(messages)
 				}
-				ctx.ExactChars = resumeJSONInt(event["approx_chars"])
 				if ctx.ExactChars <= 0 {
 					ctx.ExactChars = messagesApproxChars(messages)
 				}
@@ -275,6 +282,30 @@ func parseResumeContextFile(path string) (*resumeContext, error) {
 		}
 	}
 	return ctx, nil
+}
+
+func hydrateResumeContextFromThreadState(dataDir string, ctx *resumeContext, workspaceRoot string) {
+	if ctx == nil || ctx.hasExactMessages() || strings.TrimSpace(ctx.ThreadID) == "" {
+		return
+	}
+	state, ok, err := loadThreadState(dataDir, ctx.ThreadID, workspaceRoot)
+	if err != nil || !ok {
+		return
+	}
+	stateCtx, err := resumeContextFromThreadState(state)
+	if err != nil || stateCtx == nil || !stateCtx.hasExactMessages() {
+		return
+	}
+	ctx.LastRunID = firstResumeNonEmpty(ctx.LastRunID, stateCtx.LastRunID)
+	ctx.ProjectPath = firstResumeNonEmpty(ctx.ProjectPath, stateCtx.ProjectPath)
+	ctx.ActiveObjective = firstResumeNonEmpty(ctx.ActiveObjective, stateCtx.ActiveObjective)
+	ctx.FinalSummary = firstResumeNonEmpty(ctx.FinalSummary, stateCtx.FinalSummary)
+	ctx.ExactMessages = stateCtx.exactMessages()
+	ctx.ExactSource = stateCtx.ExactSource
+	ctx.ExactMessageCount = stateCtx.ExactMessageCount
+	ctx.ExactChars = stateCtx.ExactChars
+	ctx.ThreadContextMode = stateCtx.ThreadContextMode
+	ctx.FromThreadState = true
 }
 
 func resumeContextFromThreadState(state *threadState) (*resumeContext, error) {

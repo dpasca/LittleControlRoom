@@ -262,6 +262,24 @@ func TestCommandRunnerPreservesVerificationPurpose(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerAllowsExplicitExpectedExitCode(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:             []string{"sh", "-c", "exit 1"},
+		TimeoutMS:        1000,
+		AllowedExitCodes: []int{0, 1, 1, 999},
+	})
+	if !result.Success || result.Error != "" || result.ExitCode != 1 {
+		t.Fatalf("result = %#v, want allowed nonzero exit", result)
+	}
+	if got := result.AllowedExitCodes; len(got) != 2 || got[0] != 0 || got[1] != 1 {
+		t.Fatalf("AllowedExitCodes = %v, want [0 1]", got)
+	}
+}
+
 func TestCommandRunnerDeniesBroadCommandBelowMedium(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyLow)
 	if err != nil {
@@ -279,5 +297,76 @@ func TestCommandRunnerDeniesBroadCommandBelowMedium(t *testing.T) {
 	}
 	if !result.Denied || !strings.Contains(result.DenialReason, CommandWorkspaceWriteDenialReason) {
 		t.Fatalf("denial metadata = denied %v reason %q", result.Denied, result.DenialReason)
+	}
+}
+
+func TestCommandRunnerDeniesSystemMutationWithoutAdminScope(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:      []string{"defaults", "write", "com.example.demo", "Enabled", "1"},
+		TimeoutMS: 1000,
+	})
+	if result.Success || !result.Denied || !result.SystemMutation {
+		t.Fatalf("result = %#v, want denied system mutation", result)
+	}
+	if !strings.Contains(result.DenialReason, CommandSystemMutationDenialReason) || !strings.Contains(result.DenialReason, "admin_scope=system") {
+		t.Fatalf("denial reason = %q", result.DenialReason)
+	}
+}
+
+func TestCommandRunnerDeniesSystemMutationWithoutAdminWrite(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:       []string{"defaults", "write", "com.example.demo", "Enabled", "1"},
+		TimeoutMS:  1000,
+		AdminScope: CommandAdminScopeSystem,
+	})
+	if result.Success || !result.Denied || !result.SystemMutation {
+		t.Fatalf("result = %#v, want denied system mutation without admin-write", result)
+	}
+	if !strings.Contains(result.DenialReason, "--admin-write") {
+		t.Fatalf("denial reason = %q", result.DenialReason)
+	}
+}
+
+func TestCommandSystemMutationContractAllowsExplicitAdminScopeWithAdminWrite(t *testing.T) {
+	spec := CommandSpec{
+		Argv:       []string{"defaults", "write", "com.example.demo", "Enabled", "1"},
+		AdminScope: CommandAdminScopeSystem,
+	}
+	if reason := commandSystemMutationDenialReason(spec, true); reason != "" {
+		t.Fatalf("commandSystemMutationDenialReason() = %q, want allowed", reason)
+	}
+}
+
+func TestCommandSystemMutationDetectionIsStructural(t *testing.T) {
+	cases := []struct {
+		name string
+		spec CommandSpec
+		want bool
+	}{
+		{name: "defaults write", spec: CommandSpec{Argv: []string{"defaults", "write", "com.example.demo", "Enabled", "1"}}, want: true},
+		{name: "defaults read", spec: CommandSpec{Argv: []string{"defaults", "read", "com.example.demo"}}, want: false},
+		{name: "lsregister", spec: CommandSpec{Argv: []string{"lsregister", "-f", "/Applications/Veil.app"}}, want: true},
+		{name: "duti set", spec: CommandSpec{Argv: []string{"duti", "-s", "com.example", "txt", "all"}}, want: true},
+		{name: "brew install", spec: CommandSpec{Argv: []string{"brew", "install", "--cask", "veil"}}, want: true},
+		{name: "brew version", spec: CommandSpec{Argv: []string{"brew", "--version"}}, want: false},
+		{name: "global npm install", spec: CommandSpec{Argv: []string{"npm", "install", "-g", "typescript"}}, want: true},
+		{name: "local npm install", spec: CommandSpec{Argv: []string{"npm", "install"}}, want: false},
+		{name: "shell defaults write", spec: CommandSpec{Command: "command defaults write com.example.demo Enabled 1", Shell: true}, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := commandSystemMutationDetail(tc.spec) != ""
+			if got != tc.want {
+				t.Fatalf("commandSystemMutationDetail(%#v) = %v, want %v", tc.spec, got, tc.want)
+			}
+		})
 	}
 }

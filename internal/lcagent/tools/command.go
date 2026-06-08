@@ -20,6 +20,8 @@ const (
 	maxCommandTimeout     = 60 * time.Second
 
 	CommandWorkspaceWriteDenialReason = "run_command appears to write workspace files"
+	CommandSystemMutationDenialReason = "run_command appears to mutate user/system configuration"
+	CommandAdminScopeSystem           = "system"
 )
 
 type CommandRunner struct {
@@ -28,12 +30,14 @@ type CommandRunner struct {
 }
 
 type CommandSpec struct {
-	Command   string
-	Argv      []string
-	CWD       string
-	Shell     bool
-	TimeoutMS int
-	Purpose   string
+	Command          string
+	Argv             []string
+	CWD              string
+	Shell            bool
+	TimeoutMS        int
+	Purpose          string
+	AdminScope       string
+	AllowedExitCodes []int
 }
 
 func (r CommandRunner) Run(ctx context.Context, command string, timeout time.Duration) ToolResult {
@@ -45,12 +49,14 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	cwd, err := r.Workspace.ResolveCommandCWD(spec.CWD)
 	if err != nil {
 		result := ToolResult{
-			Success: false,
-			Error:   err.Error(),
-			Command: commandLabelFromSpec(spec),
-			Argv:    cleanArgv(spec.Argv),
-			CWD:     cwdLabel,
-			Purpose: normalizeCommandPurpose(spec.Purpose),
+			Success:          false,
+			Error:            err.Error(),
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwdLabel,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AdminScope:       normalizeCommandAdminScope(spec.AdminScope),
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 		if policy.IsDenied(err) {
 			result.Denied = true
@@ -60,24 +66,44 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	}
 	if reason := commandWorkspaceWriteDenialReason(spec); reason != "" {
 		return ToolResult{
-			Success:      false,
-			Error:        reason,
-			Denied:       true,
-			DenialReason: reason,
-			Command:      commandLabelFromSpec(spec),
-			Argv:         cleanArgv(spec.Argv),
-			CWD:          cwd,
-			Purpose:      normalizeCommandPurpose(spec.Purpose),
+			Success:          false,
+			Error:            reason,
+			Denied:           true,
+			DenialReason:     reason,
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwd,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AdminScope:       normalizeCommandAdminScope(spec.AdminScope),
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
+		}
+	}
+	if reason := commandSystemMutationDenialReason(spec, r.Workspace.AdminWrite); reason != "" {
+		return ToolResult{
+			Success:          false,
+			Error:            reason,
+			Denied:           true,
+			DenialReason:     reason,
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwd,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AdminScope:       normalizeCommandAdminScope(spec.AdminScope),
+			SystemMutation:   true,
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 	}
 	if err := r.Workspace.AllowCommandSpec(spec.Argv, spec.Command, spec.Shell); err != nil {
 		result := ToolResult{
-			Success: false,
-			Error:   err.Error(),
-			Command: commandLabelFromSpec(spec),
-			Argv:    cleanArgv(spec.Argv),
-			CWD:     cwd,
-			Purpose: normalizeCommandPurpose(spec.Purpose),
+			Success:          false,
+			Error:            err.Error(),
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwd,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AdminScope:       normalizeCommandAdminScope(spec.AdminScope),
+			SystemMutation:   commandSystemMutationDetail(spec) != "",
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
 		}
 		if policy.IsDenied(err) {
 			result.Denied = true
@@ -92,7 +118,7 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 
 	cmd, label, err := commandFromSpec(spec)
 	if err != nil {
-		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), CWD: cwd, Purpose: normalizeCommandPurpose(spec.Purpose)}
+		return ToolResult{Success: false, Error: err.Error(), Command: commandLabelFromSpec(spec), Argv: cleanArgv(spec.Argv), CWD: cwd, Purpose: normalizeCommandPurpose(spec.Purpose), AdminScope: normalizeCommandAdminScope(spec.AdminScope), SystemMutation: commandSystemMutationDetail(spec) != "", AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes)}
 	}
 	cmd.Dir = cwd
 	prepareCommandProcessGroup(cmd)
@@ -109,6 +135,12 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 	if timedOut && exitCode == 0 {
 		exitCode = -1
 	}
+	allowedExitCodes := cleanAllowedExitCodes(spec.AllowedExitCodes)
+	exitAllowed := commandExitCodeAllowed(exitCode, allowedExitCodes) && !timedOut
+	displayErr := err
+	if exitAllowed {
+		displayErr = nil
+	}
 	p := present.Command(present.CommandOutput{
 		Stdout:       stdout.Bytes(),
 		Stderr:       stderr.Bytes(),
@@ -119,24 +151,31 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 		CommandLabel: label,
 	})
 	return ToolResult{
-		Success:      err == nil && !timedOut,
-		Output:       p.Text,
-		Error:        errorString(err, timedOut),
-		Command:      label,
-		Argv:         cleanArgv(spec.Argv),
-		CWD:          cwd,
-		Purpose:      normalizeCommandPurpose(spec.Purpose),
-		ExitCode:     exitCode,
-		Duration:     duration,
-		TimedOut:     timedOut,
-		Truncated:    p.Truncated,
-		Binary:       p.Binary,
-		ArtifactPath: p.ArtifactPath,
+		Success:          (err == nil || exitAllowed) && !timedOut,
+		Output:           p.Text,
+		Error:            errorString(displayErr, timedOut),
+		Command:          label,
+		Argv:             cleanArgv(spec.Argv),
+		CWD:              cwd,
+		Purpose:          normalizeCommandPurpose(spec.Purpose),
+		AdminScope:       normalizeCommandAdminScope(spec.AdminScope),
+		SystemMutation:   commandSystemMutationDetail(spec) != "",
+		AllowedExitCodes: allowedExitCodes,
+		ExitCode:         exitCode,
+		Duration:         duration,
+		TimedOut:         timedOut,
+		Truncated:        p.Truncated,
+		Binary:           p.Binary,
+		ArtifactPath:     p.ArtifactPath,
 	}
 }
 
 func IsWorkspaceWriteCommandDenied(result ToolResult) bool {
 	return result.Denied && strings.HasPrefix(result.DenialReason, CommandWorkspaceWriteDenialReason)
+}
+
+func IsSystemMutationCommandDenied(result ToolResult) bool {
+	return result.Denied && strings.HasPrefix(result.DenialReason, CommandSystemMutationDenialReason)
 }
 
 func commandWorkspaceWriteDenialReason(spec CommandSpec) string {
@@ -150,6 +189,126 @@ func commandWorkspaceWriteDenialReason(spec CommandSpec) string {
 		return ""
 	}
 	return CommandWorkspaceWriteDenialReason + " (" + detail + "); use apply_patch, replace_lines, or replace_text for source edits instead"
+}
+
+func commandSystemMutationDenialReason(spec CommandSpec, adminWrite bool) string {
+	detail := commandSystemMutationDetail(spec)
+	if detail == "" {
+		return ""
+	}
+	if normalizeCommandAdminScope(spec.AdminScope) != CommandAdminScopeSystem {
+		return CommandSystemMutationDenialReason + " (" + detail + "); set admin_scope=system only when the user explicitly requested a persistent system/admin change"
+	}
+	if !adminWrite {
+		return CommandSystemMutationDenialReason + " (" + detail + "); enable LCAgent admin write (CLI: --admin-write; LCR /settings: LCAgent admin write) only when the task truly needs system/admin changes"
+	}
+	return ""
+}
+
+func commandSystemMutationDetail(spec CommandSpec) string {
+	if argv := cleanArgv(spec.Argv); len(argv) > 0 {
+		return argvSystemMutationDetail(argv)
+	}
+	for _, segment := range shellCommandSegments(spec.Command) {
+		if detail := argvSystemMutationDetail(shellSegmentFields(segment)); detail != "" {
+			return detail
+		}
+	}
+	return ""
+}
+
+func shellSegmentFields(segment string) []string {
+	fields := strings.Fields(strings.TrimSpace(segment))
+	for len(fields) > 0 && isShellPrefixWord(fields[0]) {
+		fields = fields[1:]
+	}
+	return fields
+}
+
+func argvSystemMutationDetail(argv []string) string {
+	if len(argv) == 0 {
+		return ""
+	}
+	name := strings.ToLower(filepath.Base(argv[0]))
+	switch {
+	case name == "sh" || name == "bash" || name == "zsh":
+		if script := shellScriptArg(argv); script != "" {
+			return commandSystemMutationDetail(CommandSpec{Command: script, Shell: true})
+		}
+	case name == "defaults":
+		if len(argv) >= 2 && macOSDefaultsMutationSubcommand(argv[1]) {
+			return "detected macOS defaults mutation"
+		}
+	case name == "lsregister":
+		return "detected Launch Services registration command"
+	case name == "duti":
+		if len(argv) >= 2 && argv[1] == "-s" {
+			return "detected file-association mutation via duti"
+		}
+	case name == "brew":
+		if len(argv) >= 2 && homebrewMutationSubcommand(argv[1]) {
+			return "detected Homebrew state mutation"
+		}
+	case name == "npm" || name == "pnpm":
+		if packageManagerGlobalMutation(argv[1:]) {
+			return "detected global package-manager state mutation"
+		}
+	case name == "yarn":
+		if yarnGlobalMutation(argv[1:]) {
+			return "detected global package-manager state mutation"
+		}
+	}
+	return ""
+}
+
+func macOSDefaultsMutationSubcommand(subcommand string) bool {
+	switch strings.ToLower(strings.TrimSpace(subcommand)) {
+	case "write", "delete", "import", "rename", "rename-domain":
+		return true
+	default:
+		return false
+	}
+}
+
+func homebrewMutationSubcommand(subcommand string) bool {
+	switch strings.ToLower(strings.TrimSpace(subcommand)) {
+	case "install", "uninstall", "reinstall", "upgrade", "update", "tap", "untap", "link", "unlink", "pin", "unpin", "services", "bundle", "cleanup", "autoremove":
+		return true
+	default:
+		return false
+	}
+}
+
+func packageManagerGlobalMutation(args []string) bool {
+	if len(args) == 0 || !containsGlobalFlag(args) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "install", "i", "add", "remove", "rm", "uninstall", "update", "upgrade", "link", "unlink":
+		return true
+	default:
+		return false
+	}
+}
+
+func yarnGlobalMutation(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(args[0]), "global") {
+		return true
+	}
+	return packageManagerGlobalMutation(args)
+}
+
+func containsGlobalFlag(args []string) bool {
+	for _, arg := range args {
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "-g", "--global":
+			return true
+		}
+	}
+	return false
 }
 
 func argvWorkspaceWriteDetail(argv []string) string {
@@ -372,10 +531,7 @@ func shellCommandSegments(command string) []string {
 }
 
 func shellSegmentWorkspaceWriteDetail(segment string) string {
-	fields := strings.Fields(segment)
-	for len(fields) > 0 && isShellPrefixWord(fields[0]) {
-		fields = fields[1:]
-	}
+	fields := shellSegmentFields(segment)
 	if len(fields) == 0 {
 		return ""
 	}
@@ -420,6 +576,15 @@ func normalizeCommandPurpose(raw string) string {
 		return ""
 	default:
 		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+func normalizeCommandAdminScope(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case CommandAdminScopeSystem:
+		return CommandAdminScopeSystem
+	default:
+		return ""
 	}
 }
 
@@ -484,6 +649,34 @@ func cleanArgv(argv []string) []string {
 		}
 	}
 	return out
+}
+
+func cleanAllowedExitCodes(codes []int) []int {
+	if len(codes) == 0 {
+		return nil
+	}
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(codes))
+	for _, code := range codes {
+		if code < 0 || code > 255 {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		out = append(out, code)
+	}
+	return out
+}
+
+func commandExitCodeAllowed(exitCode int, allowed []int) bool {
+	for _, code := range allowed {
+		if code == exitCode {
+			return true
+		}
+	}
+	return false
 }
 
 func exitCodeFromError(err error) int {

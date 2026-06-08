@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"lcroom/internal/lcagent/policy"
@@ -32,6 +33,10 @@ const (
 	defaultOutlineFileLimit = 30
 	maxOutlineFileLimit     = 80
 	maxModuleOutlineChars   = 24000
+	defaultSearchFileBudget = 12000
+	maxSearchFileBudget     = 50000
+	defaultSearchTimeBudget = 8 * time.Second
+	maxSearchTimeBudget     = 20 * time.Second
 	defaultScoutFileLimit   = 12
 	maxScoutFileLimit       = 40
 	defaultScoutLineLimit   = 120
@@ -47,16 +52,20 @@ const (
 )
 
 type FileLimits struct {
-	DefaultReadLineLimit    int `json:"default_read_line_limit"`
-	MaxReadLineLimit        int `json:"max_read_line_limit"`
-	DefaultListEntryLimit   int `json:"default_list_entry_limit"`
-	MaxListEntryLimit       int `json:"max_list_entry_limit"`
-	DefaultSearchMaxMatch   int `json:"default_search_max_match"`
-	MaxSearchMaxMatch       int `json:"max_search_max_match"`
-	MaxSearchContextLines   int `json:"max_search_context_lines"`
-	DefaultOutlineFileLimit int `json:"default_outline_file_limit"`
-	MaxOutlineFileLimit     int `json:"max_outline_file_limit"`
-	MaxModuleOutlineChars   int `json:"max_module_outline_chars"`
+	DefaultReadLineLimit      int `json:"default_read_line_limit"`
+	MaxReadLineLimit          int `json:"max_read_line_limit"`
+	DefaultListEntryLimit     int `json:"default_list_entry_limit"`
+	MaxListEntryLimit         int `json:"max_list_entry_limit"`
+	DefaultSearchMaxMatch     int `json:"default_search_max_match"`
+	MaxSearchMaxMatch         int `json:"max_search_max_match"`
+	MaxSearchContextLines     int `json:"max_search_context_lines"`
+	DefaultSearchFileBudget   int `json:"default_search_file_budget"`
+	MaxSearchFileBudget       int `json:"max_search_file_budget"`
+	DefaultSearchTimeBudgetMS int `json:"default_search_time_budget_ms"`
+	MaxSearchTimeBudgetMS     int `json:"max_search_time_budget_ms"`
+	DefaultOutlineFileLimit   int `json:"default_outline_file_limit"`
+	MaxOutlineFileLimit       int `json:"max_outline_file_limit"`
+	MaxModuleOutlineChars     int `json:"max_module_outline_chars"`
 }
 
 type FileTools struct {
@@ -109,31 +118,39 @@ func FileLimitsForProfile(profile FileProfile) FileLimits {
 
 func BalancedFileLimits() FileLimits {
 	return FileLimits{
-		DefaultReadLineLimit:    defaultReadLineLimit,
-		MaxReadLineLimit:        maxReadLineLimit,
-		DefaultListEntryLimit:   defaultListEntryLimit,
-		MaxListEntryLimit:       maxListEntryLimit,
-		DefaultSearchMaxMatch:   defaultSearchMaxMatch,
-		MaxSearchMaxMatch:       maxSearchMaxMatch,
-		MaxSearchContextLines:   maxSearchContextLines,
-		DefaultOutlineFileLimit: defaultOutlineFileLimit,
-		MaxOutlineFileLimit:     maxOutlineFileLimit,
-		MaxModuleOutlineChars:   maxModuleOutlineChars,
+		DefaultReadLineLimit:      defaultReadLineLimit,
+		MaxReadLineLimit:          maxReadLineLimit,
+		DefaultListEntryLimit:     defaultListEntryLimit,
+		MaxListEntryLimit:         maxListEntryLimit,
+		DefaultSearchMaxMatch:     defaultSearchMaxMatch,
+		MaxSearchMaxMatch:         maxSearchMaxMatch,
+		MaxSearchContextLines:     maxSearchContextLines,
+		DefaultSearchFileBudget:   defaultSearchFileBudget,
+		MaxSearchFileBudget:       maxSearchFileBudget,
+		DefaultSearchTimeBudgetMS: int(defaultSearchTimeBudget / time.Millisecond),
+		MaxSearchTimeBudgetMS:     int(maxSearchTimeBudget / time.Millisecond),
+		DefaultOutlineFileLimit:   defaultOutlineFileLimit,
+		MaxOutlineFileLimit:       maxOutlineFileLimit,
+		MaxModuleOutlineChars:     maxModuleOutlineChars,
 	}
 }
 
 func GenerousFileLimits() FileLimits {
 	return FileLimits{
-		DefaultReadLineLimit:    400,
-		MaxReadLineLimit:        2500,
-		DefaultListEntryLimit:   400,
-		MaxListEntryLimit:       2000,
-		DefaultSearchMaxMatch:   50,
-		MaxSearchMaxMatch:       250,
-		MaxSearchContextLines:   16,
-		DefaultOutlineFileLimit: 60,
-		MaxOutlineFileLimit:     160,
-		MaxModuleOutlineChars:   48000,
+		DefaultReadLineLimit:      400,
+		MaxReadLineLimit:          2500,
+		DefaultListEntryLimit:     400,
+		MaxListEntryLimit:         2000,
+		DefaultSearchMaxMatch:     50,
+		MaxSearchMaxMatch:         250,
+		MaxSearchContextLines:     16,
+		DefaultSearchFileBudget:   25000,
+		MaxSearchFileBudget:       maxSearchFileBudget,
+		DefaultSearchTimeBudgetMS: int(12 * time.Second / time.Millisecond),
+		MaxSearchTimeBudgetMS:     int(maxSearchTimeBudget / time.Millisecond),
+		DefaultOutlineFileLimit:   60,
+		MaxOutlineFileLimit:       160,
+		MaxModuleOutlineChars:     48000,
 	}
 }
 
@@ -164,6 +181,18 @@ func (l FileLimits) withDefaults() FileLimits {
 	if l.MaxSearchContextLines <= 0 {
 		l.MaxSearchContextLines = defaults.MaxSearchContextLines
 	}
+	if l.DefaultSearchFileBudget <= 0 {
+		l.DefaultSearchFileBudget = defaults.DefaultSearchFileBudget
+	}
+	if l.MaxSearchFileBudget <= 0 {
+		l.MaxSearchFileBudget = defaults.MaxSearchFileBudget
+	}
+	if l.DefaultSearchTimeBudgetMS <= 0 {
+		l.DefaultSearchTimeBudgetMS = defaults.DefaultSearchTimeBudgetMS
+	}
+	if l.MaxSearchTimeBudgetMS <= 0 {
+		l.MaxSearchTimeBudgetMS = defaults.MaxSearchTimeBudgetMS
+	}
 	if l.DefaultOutlineFileLimit <= 0 {
 		l.DefaultOutlineFileLimit = defaults.DefaultOutlineFileLimit
 	}
@@ -181,6 +210,12 @@ func (l FileLimits) withDefaults() FileLimits {
 	}
 	if l.MaxSearchMaxMatch < l.DefaultSearchMaxMatch {
 		l.MaxSearchMaxMatch = l.DefaultSearchMaxMatch
+	}
+	if l.MaxSearchFileBudget < l.DefaultSearchFileBudget {
+		l.MaxSearchFileBudget = l.DefaultSearchFileBudget
+	}
+	if l.MaxSearchTimeBudgetMS < l.DefaultSearchTimeBudgetMS {
+		l.MaxSearchTimeBudgetMS = l.DefaultSearchTimeBudgetMS
 	}
 	if l.MaxOutlineFileLimit < l.DefaultOutlineFileLimit {
 		l.MaxOutlineFileLimit = l.DefaultOutlineFileLimit
@@ -381,25 +416,50 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 		contextAfter = 0
 	}
 	fileGlob = strings.TrimSpace(fileGlob)
+	if reason := broadHomeSearchDenialReason(target, info, fileGlob); reason != "" {
+		return ToolResult{Success: false, Error: reason}
+	}
 
 	matches := []string{}
 	hiddenDirs := []string{}
-	truncated := false
+	matchTruncated := false
+	filesSeen := 0
+	filesSearched := 0
+	budgetReason := ""
+	maxFiles := clampInt(0, limits.DefaultSearchFileBudget, limits.MaxSearchFileBudget)
+	maxDuration := time.Duration(clampInt(0, limits.DefaultSearchTimeBudgetMS, limits.MaxSearchTimeBudgetMS)) * time.Millisecond
+	deadline := time.Now().Add(maxDuration)
+	budgetExceeded := func() bool {
+		if budgetReason != "" {
+			return true
+		}
+		if maxFiles > 0 && filesSeen >= maxFiles {
+			budgetReason = fmt.Sprintf("file budget reached after %d files", filesSeen)
+			return true
+		}
+		if maxDuration > 0 && time.Now().After(deadline) {
+			budgetReason = fmt.Sprintf("time budget reached after %s", maxDuration)
+			return true
+		}
+		return false
+	}
 	searchFile := func(path string) {
-		if truncated {
+		if matchTruncated || budgetExceeded() {
 			return
 		}
+		filesSeen++
 		display := t.displayPath(path)
 		if fileGlob != "" && !fileGlobMatches(fileGlob, display) {
 			return
 		}
+		filesSearched++
 		fileMatches, err := searchTextFile(path, display, query, maxMatches-len(matches), contextBefore, contextAfter)
 		if err != nil {
 			return
 		}
 		matches = append(matches, fileMatches...)
 		if len(matches) >= maxMatches {
-			truncated = true
+			matchTruncated = true
 		}
 	}
 	addHiddenDir := func(path string, entry fs.DirEntry) {
@@ -430,6 +490,15 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 				return nil
 			}
 			searchFile(path)
+			if matchTruncated {
+				return fs.SkipAll
+			}
+			if budgetExceeded() {
+				if entry != nil && entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return fs.SkipAll
+			}
 			return nil
 		})
 		if err != nil {
@@ -448,6 +517,8 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 	if fileGlob != "" {
 		fmt.Fprintf(&b, "file_glob: %s\n", fileGlob)
 	}
+	fmt.Fprintf(&b, "files_seen: %d\n", filesSeen)
+	fmt.Fprintf(&b, "files_searched: %d\n", filesSearched)
 	if len(hiddenDirs) > 0 {
 		fmt.Fprintf(&b, "hidden_dirs_skipped: %d (%s)\n", len(hiddenDirs), strings.Join(trimStrings(hiddenDirs, 12), ", "))
 		fmt.Fprintf(&b, "hidden_note: set include_hidden=true to search hidden/generated directories.\n")
@@ -461,10 +532,13 @@ func (t FileTools) SearchContextWithOptions(query, path, fileGlob string, maxMat
 	if len(matches) > 0 {
 		b.WriteByte('\n')
 	}
-	if truncated {
+	if matchTruncated {
 		fmt.Fprintf(&b, "\n--- search truncated after %d matches ---\n", maxMatches)
 	}
-	return ToolResult{Success: true, Output: b.String(), Truncated: truncated}
+	if budgetReason != "" {
+		fmt.Fprintf(&b, "\n--- search stopped: %s; narrow path or file_glob before widening ---\n", budgetReason)
+	}
+	return ToolResult{Success: true, Output: b.String(), Truncated: matchTruncated || budgetReason != ""}
 }
 
 func (t FileTools) Outline(path string) ToolResult {
@@ -743,6 +817,49 @@ func defaultPath(path string) string {
 		return "."
 	}
 	return path
+}
+
+func broadHomeSearchDenialReason(target string, info os.FileInfo, fileGlob string) string {
+	if info == nil || !info.IsDir() || strings.TrimSpace(fileGlob) != "" {
+		return ""
+	}
+	for _, home := range homePathCandidates() {
+		if sameCleanFilesystemPath(target, home) {
+			return "broad home-directory search requires a narrower path or file_glob; search a specific project/folder or add file_glob before scanning the whole home directory"
+		}
+	}
+	return ""
+}
+
+func homePathCandidates() []string {
+	candidates := []string{}
+	if home := strings.TrimSpace(os.Getenv("HOME")); home != "" {
+		candidates = append(candidates, home)
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		candidates = append(candidates, home)
+	}
+	return candidates
+}
+
+func sameCleanFilesystemPath(a, b string) bool {
+	a = cleanAbsPath(a)
+	b = cleanAbsPath(b)
+	return a != "" && b != "" && a == b
+}
+
+func cleanAbsPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.Clean(path)
 }
 
 func searchTextFile(path, display, query string, remaining, contextBefore, contextAfter int) ([]string, error) {

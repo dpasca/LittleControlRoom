@@ -842,6 +842,44 @@ func TestRunnerRunCommandDeniesWorkspaceWriteAtMedium(t *testing.T) {
 	}
 }
 
+func TestRunnerRunCommandSystemMutationDoesNotUseLowApproval(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"argv":["defaults","write","com.example.demo","Enabled","1"],"timeout_ms":1000}`),
+	})
+	if err == nil {
+		t.Fatalf("RunTool succeeded, want system mutation denial; result=%#v", result)
+	}
+	if approvals.calls != 0 {
+		t.Fatalf("approval broker calls = %d, want 0", approvals.calls)
+	}
+	if !result.Denied || !result.SystemMutation || !strings.Contains(result.DenialReason, tools.CommandSystemMutationDenialReason) {
+		t.Fatalf("result = %#v", result)
+	}
+	if text := stream.String(); !strings.Contains(text, `"system_mutation":true`) || !strings.Contains(text, `"type":"permission_denied"`) {
+		t.Fatalf("stream missing system mutation denial evidence:\n%s", text)
+	}
+}
+
 func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyLow)

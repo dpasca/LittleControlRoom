@@ -1,6 +1,8 @@
 package lcagent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 
@@ -17,24 +19,50 @@ func writeModelContextSnapshot(writer *session.Writer, stateStore *threadStateSt
 		return nil
 	}
 	snapshot := cloneModelMessages(messages)
+	hasThreadState := stateStore != nil && strings.TrimSpace(stateStore.ThreadID) != ""
+	if hasThreadState {
+		if err := stateStore.SaveCheckpoint(source, snapshot, compacted); err != nil {
+			return err
+		}
+	}
 	event := session.Event{
-		"type":          modelContextSnapshotType,
-		"session_id":    sessionID,
-		"source":        strings.TrimSpace(source),
-		"message_count": len(snapshot),
-		"approx_chars":  messagesApproxChars(snapshot),
-		"messages":      snapshot,
+		"type":            modelContextSnapshotType,
+		"session_id":      sessionID,
+		"source":          strings.TrimSpace(source),
+		"message_count":   len(snapshot),
+		"approx_chars":    messagesApproxChars(snapshot),
+		"content_sha256":  modelMessagesHash(snapshot),
+		"context_mode":    threadContextModeForCompacted(compacted),
+		"snapshot_format": "inline_messages",
 	}
-	if stateStore != nil && strings.TrimSpace(stateStore.ThreadID) != "" {
+	if hasThreadState {
 		event["thread_id"] = strings.TrimSpace(stateStore.ThreadID)
+		event["snapshot_format"] = "thread_state_ref"
+		event["messages_included"] = false
+		if path, err := threadStatePath(stateStore.DataDir, stateStore.ThreadID); err == nil && strings.TrimSpace(path) != "" {
+			event["state_path"] = path
+		}
+	} else {
+		event["messages"] = snapshot
+		event["messages_included"] = true
 	}
-	if err := writer.WritePrivate(event); err != nil {
-		return err
+	return writer.WritePrivate(event)
+}
+
+func modelMessagesHash(messages []modeladapter.Message) string {
+	body, err := json.Marshal(messages)
+	if err != nil {
+		return ""
 	}
-	if stateStore != nil {
-		return stateStore.SaveCheckpoint(source, snapshot, compacted)
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func threadContextModeForCompacted(compacted bool) string {
+	if compacted {
+		return threadContextModeCompacted
 	}
-	return nil
+	return threadContextModeExact
 }
 
 func appendFinalResponseForContextSnapshot(messages []modeladapter.Message, callID string, final script.Action) []modeladapter.Message {
