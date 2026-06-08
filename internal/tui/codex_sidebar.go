@@ -38,7 +38,6 @@ const (
 
 const (
 	embeddedCodexSidebarSectionCount = 2
-	embeddedSidebarRecentLimit       = 3
 	embeddedSidebarDiffAutoInterval  = 2 * time.Second
 )
 
@@ -435,7 +434,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth))
-	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarRecentActivitySection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSummarySection(snapshot, contentWidth))
 	return lipgloss.NewStyle().PaddingLeft(1).Render(fitPaneContent(strings.Join(lines, "\n"), contentWidth, height))
 }
 
@@ -628,16 +627,16 @@ func embeddedSidebarBrowserRelevant(snapshot codexapp.Snapshot) bool {
 		strings.TrimSpace(snapshot.CurrentBrowserPageURL) != ""
 }
 
-func embeddedSidebarRecentActivitySection(snapshot codexapp.Snapshot, width int) []string {
-	rows := embeddedSidebarRecentActivityRows(snapshot, width, embeddedSidebarRecentLimit)
+func (m Model) renderEmbeddedSidebarSummarySection(snapshot codexapp.Snapshot, width int) []string {
+	summary, style, ok := m.embeddedSidebarSummary(snapshot)
+	if !ok {
+		return nil
+	}
+	rows := embeddedSidebarWrappedRows(summary, style, width)
 	if len(rows) == 0 {
 		return nil
 	}
-	return append([]string{renderEmbeddedSidebarStaticHeader("Recent Activity", width)}, rows...)
-}
-
-func (m Model) renderEmbeddedSidebarRecentActivitySection(snapshot codexapp.Snapshot, width int) []string {
-	return embeddedSidebarRecentActivitySection(snapshot, width)
+	return append([]string{renderEmbeddedSidebarStaticHeader("Summary", width)}, rows...)
 }
 
 func (m Model) renderEmbeddedSidebarProcessSection(projectPath string, width int) []string {
@@ -911,71 +910,53 @@ func repoDirtyPlainLabel(project model.ProjectSummary) string {
 	return "Clean worktree"
 }
 
-func embeddedSidebarRecentActivityRows(snapshot codexapp.Snapshot, width, limit int) []string {
-	if limit <= 0 {
-		return nil
-	}
-	rows := make([]string, 0, limit)
-	seen := map[string]struct{}{}
-	for i := len(snapshot.Entries) - 1; i >= 0 && len(rows) < limit; i-- {
-		row := embeddedSidebarRecentActivityRow(snapshot.Entries[i], width)
-		key := ansi.Strip(row)
-		if strings.TrimSpace(key) == "" {
-			continue
-		}
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
-func embeddedSidebarRecentActivityRow(entry codexapp.TranscriptEntry, width int) string {
-	text := embeddedSidebarTranscriptSummaryText(entry)
-	if text == "" {
-		return ""
-	}
-	label, style, ok := embeddedSidebarActivityKind(entry.Kind)
+func (m Model) embeddedSidebarSummary(snapshot codexapp.Snapshot) (string, lipgloss.Style, bool) {
+	projectPath := m.embeddedSidebarProjectPath(snapshot)
+	project, ok := m.embeddedSidebarProjectSummary(projectPath)
 	if !ok {
-		return ""
+		project = model.ProjectSummary{Path: projectPath}
 	}
-	prefix := style.Render(label)
-	return fitStyledWidth(prefix+" "+detailMutedStyle.Render(truncateText(text, max(1, width-ansi.StringWidth(label)-1))), width)
-}
-
-func embeddedSidebarActivityKind(kind codexapp.TranscriptKind) (string, lipgloss.Style, bool) {
-	switch kind {
-	case codexapp.TranscriptCommand:
-		return "cmd", detailValueStyle, true
-	case codexapp.TranscriptFileChange:
-		return "file", detailValueStyle, true
-	case codexapp.TranscriptTool:
-		return "tool", detailValueStyle, true
-	case codexapp.TranscriptPlan:
-		return "plan", detailWarningStyle, true
-	case codexapp.TranscriptStatus:
-		return "note", detailMutedStyle, true
-	case codexapp.TranscriptError:
-		return "err", detailDangerStyle, true
-	default:
+	now := m.currentTime()
+	if task, ok := m.agentTaskForProjectPath(projectPath); ok {
+		summary := strings.TrimSpace(agentTaskListSummary(task))
+		if summary == "" {
+			return "", lipgloss.Style{}, false
+		}
+		style := detailValueStyle
+		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusWaiting {
+			style = detailWarningStyle
+		}
+		return summary, style, true
+	}
+	if browserAttention, ok := m.projectPendingBrowserAttention(projectPath); ok {
+		summary := strings.TrimSpace(browserAttentionListSummary(browserAttention))
+		if summary == "" {
+			return "", lipgloss.Style{}, false
+		}
+		return summary, detailWarningStyle, true
+	}
+	if summary, ok := m.projectLiveEngineerAssessmentSummary(project, now); ok {
+		summary = strings.TrimSpace(summary)
+		if summary == "" {
+			return "", lipgloss.Style{}, false
+		}
+		return summary, detailValueStyle, true
+	}
+	if !ok {
 		return "", lipgloss.Style{}, false
 	}
+	summary := strings.TrimSpace(m.projectAssessmentDisplayTextAt(project, now, m.assessmentStallThreshold()))
+	if summary == "" || summary == "-" {
+		return "", lipgloss.Style{}, false
+	}
+	return summary, m.projectListAssessmentSummaryStyle(project), true
 }
 
-func embeddedSidebarTranscriptSummaryText(entry codexapp.TranscriptEntry) string {
-	text := strings.TrimSpace(firstNonEmptyString(entry.DisplayText, entry.Text))
-	if text == "" {
-		return ""
+func embeddedSidebarWrappedRows(text string, style lipgloss.Style, width int) []string {
+	if width <= 0 {
+		return nil
 	}
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
-		}
-	}
-	return ""
+	return renderWrappedDialogTextLines(style, max(1, width), strings.TrimSpace(text))
 }
 
 func embeddedSidebarURLRow(label, rawURL string, width int) string {

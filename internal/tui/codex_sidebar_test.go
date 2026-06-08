@@ -165,9 +165,17 @@ func TestEmbeddedSidebarOmitsOptionalSectionsWithoutState(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSidebarShowsConditionalSessionBrowserAndActivity(t *testing.T) {
+func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
+	m.allProjects = []model.ProjectSummary{{
+		Name:                            "demo",
+		Path:                            projectPath,
+		LatestSessionFormat:             "codex_jsonl",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+		LatestSessionSummary:            "Use the dashboard summary here.",
+	}}
 	tokenBudget := int64(5000)
 	snapshot := testEmbeddedSidebarSnapshot(projectPath)
 	snapshot.Model = "gpt-5-codex"
@@ -216,17 +224,47 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndActivity(t *testing.T) 
 		"State waiting",
 		"Source playwright/browser_click",
 		"Page example.com/login",
-		"Recent Activity",
-		"note Conversation history compacted",
-		"cmd $ make test",
-		"tool Bash: make test",
+		"Summary",
+		"Use the dashboard summary here.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("conditional sidebar missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Please make the sidebar useful") || strings.Contains(rendered, "Ready to work") {
-		t.Fatalf("recent activity should skip user and agent chatter:\n%s", rendered)
+	if strings.Contains(rendered, "Recent Activity") ||
+		strings.Contains(rendered, "Conversation history compacted") ||
+		strings.Contains(rendered, "$ make test") ||
+		strings.Contains(rendered, "Please make the sidebar useful") ||
+		strings.Contains(rendered, "Ready to work") {
+		t.Fatalf("sidebar summary should not show transcript activity rows:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedSidebarSummaryWrapsProjectListSummary(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.allProjects = []model.ProjectSummary{{
+		Name:                            "demo",
+		Path:                            projectPath,
+		LatestSessionFormat:             "codex_jsonl",
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+		LatestSessionSummary:            "This summary mirrors the dashboard assessment text and wraps cleanly inside the sidebar without ellipses.",
+	}}
+
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarSummarySection(testEmbeddedSidebarSnapshot(projectPath), 32), "\n"))
+	if !strings.Contains(rendered, "Summary") ||
+		!strings.Contains(rendered, "dashboard assessment text") ||
+		!strings.Contains(rendered, "without ellipses") {
+		t.Fatalf("wrapped sidebar summary missing expected text:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "...") {
+		t.Fatalf("sidebar summary should wrap instead of ellipsizing:\n%s", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if width := ansi.StringWidth(line); width > 32 {
+			t.Fatalf("wrapped sidebar summary line width = %d, want <= 32: %q\n%s", width, line, rendered)
+		}
 	}
 }
 
