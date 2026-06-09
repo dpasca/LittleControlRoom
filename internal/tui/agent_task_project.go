@@ -184,7 +184,9 @@ func agentTaskListStatus(task model.AgentTask) string {
 
 func agentTaskListSummary(task model.AgentTask) string {
 	if summary := strings.TrimSpace(task.Summary); summary != "" {
-		return summary
+		if compact := liveEngineerCompactSummary(summary); compact != "" {
+			return compact
+		}
 	}
 	parts := []string{fmt.Sprintf("%s task", agentTaskListStatus(task))}
 	if name := bossui.EngineerNameForKey("agent_task", task.ID); name != "" {

@@ -268,6 +268,55 @@ func TestEmbeddedSidebarSummaryWrapsProjectListSummary(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarLiveSummaryDropsLargeCodeBlock(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.allProjects = []model.ProjectSummary{{
+		Name:                "demo",
+		Path:                projectPath,
+		LatestSessionFormat: "codex_jsonl",
+	}}
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Busy = true
+	snapshot.BusySince = m.currentTime().Add(-2 * time.Minute)
+	snapshot.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "Generated the helper for review:\n```go\n" + strings.Repeat("func generatedSidebarLeak() string { return \"too much code\" }\n", 40) + "```\n",
+	}}
+	m.codexSnapshots[projectPath] = snapshot
+
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarSummarySection(snapshot, 42), "\n"))
+	if !strings.Contains(rendered, "Generated the helper for review.") {
+		t.Fatalf("sidebar summary missing prose:\n%s", rendered)
+	}
+	for _, unwanted := range []string{"generatedSidebarLeak", "too much code", "```"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("sidebar summary leaked %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
+func TestEmbeddedSidebarAgentTaskSummaryDropsLargeCodeOnlyBlock(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-agent-task"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.openAgentTasks = []model.AgentTask{{
+		ID:            "agt_sidebar_code",
+		WorkspacePath: projectPath,
+		Status:        model.AgentTaskStatusWaiting,
+		Summary:       "```go\n" + strings.Repeat("func generatedSidebarLeak() string { return \"too much code\" }\n", 40) + "```",
+	}}
+
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarSummarySection(testEmbeddedSidebarSnapshot(projectPath), 42), "\n"))
+	if !strings.Contains(rendered, "review task") {
+		t.Fatalf("code-only agent-task summary should fall back to task status:\n%s", rendered)
+	}
+	for _, unwanted := range []string{"generatedSidebarLeak", "too much code", "```"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("sidebar summary leaked %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
 func TestEmbeddedSidebarTreatsFreshPendingModelAsCurrent(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Model = "gpt-5-codex"

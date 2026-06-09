@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/codexapp"
@@ -14,6 +15,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	liveEngineerSidebarSummarySentenceLimit = 2
+	liveEngineerSidebarSummaryCharLimit     = 360
 )
 
 func shortID(id string) string {
@@ -388,29 +394,47 @@ func liveEngineerSnapshotDetail(snapshot codexapp.Snapshot) string {
 func liveEngineerTranscriptDetail(entries []codexapp.TranscriptEntry) string {
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
-		text := liveEngineerCleanSummary(firstNonEmptyString(entry.DisplayText, entry.Text))
-		if text == "" {
+		rawText := strings.TrimSpace(firstNonEmptyString(entry.DisplayText, entry.Text))
+		if rawText == "" {
 			continue
 		}
 		switch entry.Kind {
 		case codexapp.TranscriptAgent, codexapp.TranscriptPlan:
-			return text
+			if summary := liveEngineerCompactSummary(rawText); summary != "" {
+				return summary
+			}
 		case codexapp.TranscriptCommand:
+			text := liveEngineerCleanSummary(rawText)
 			if line := liveEngineerFirstLine(text); line != "" {
 				line = strings.TrimSpace(strings.TrimPrefix(line, "$ "))
 				return "Running " + line
 			}
 		case codexapp.TranscriptFileChange:
+			text := liveEngineerCleanSummary(rawText)
 			if line := liveEngineerFirstLine(text); line != "" {
 				return "Editing " + line
 			}
 		case codexapp.TranscriptStatus, codexapp.TranscriptSystem:
+			text := liveEngineerCleanSummary(rawText)
 			if detail := liveEngineerStatusDetail(text); detail != "" {
 				return detail
 			}
 		}
 	}
 	return ""
+}
+
+func liveEngineerCompactSummary(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	summary := engineerNoticeSummaryText(text, liveEngineerSidebarSummarySentenceLimit)
+	summary = cleanEngineerNoticeSummary(compactEngineerNoticeText(summary, liveEngineerSidebarSummaryCharLimit))
+	if !engineerNoticeHasUsefulDetail(summary) {
+		return ""
+	}
+	return summary
 }
 
 func liveEngineerStatusDetail(status string) string {
