@@ -588,6 +588,46 @@ func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
 	}
 }
 
+func TestModelAttentionRowsPreferActiveEngineerSummary(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	m := New(context.Background(), nil)
+	m.nowFn = func() time.Time { return now }
+	m.viewContext = ViewContext{
+		EngineerActivities: []ViewEngineerActivity{{
+			Kind:         "project",
+			ProjectPath:  "/alpha",
+			Title:        "Alpha",
+			EngineerName: "Hedy",
+			Provider:     model.SessionSourceCodex,
+			SessionID:    "thread-project-1",
+			Status:       "working",
+			Summary:      "Generated the helper for review.",
+			Active:       true,
+			StartedAt:    now.Add(-2 * time.Minute),
+		}},
+	}
+	m.snapshot = StateSnapshot{
+		HotProjects: []ProjectBrief{{
+			Name:          "Alpha",
+			Path:          "/alpha",
+			Status:        model.StatusActive,
+			LatestSummary: strings.Repeat("Vec2 pa {}; const auto drawRadius = radius * depthMul; ", 8),
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderAttentionRows(120, 1))
+	if !strings.Contains(rendered, "Generated the helper for review.") {
+		t.Fatalf("active project row missing live engineer summary:\n%s", rendered)
+	}
+	for _, unwanted := range []string{"Vec2 pa", "drawRadius"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("active project row leaked stale code summary %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
 func TestControlResultSummarizesAgentTaskHandoff(t *testing.T) {
 	t.Parallel()
 

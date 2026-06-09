@@ -936,9 +936,7 @@ func (m Model) embeddedSidebarSummary(snapshot codexapp.Snapshot) (string, lipgl
 		return summary, detailWarningStyle, true
 	}
 	if startedAt, active := embeddedSnapshotActiveStartedAt(snapshot, project); active {
-		if detail := liveEngineerSnapshotDetail(snapshot); detail != "" {
-			return formatLiveEngineerSummary(detail, startedAt, now), detailValueStyle, true
-		}
+		return formatLiveEngineerSummary(liveEngineerActiveSummaryDetail(snapshot, project), startedAt, now), detailValueStyle, true
 	}
 	if summary, ok := m.projectLiveEngineerAssessmentSummary(project, now); ok {
 		summary = strings.TrimSpace(summary)

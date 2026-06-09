@@ -170,6 +170,7 @@ type ViewEngineerActivity struct {
 	Provider     model.SessionSource
 	SessionID    string
 	Status       string
+	Summary      string
 	Active       bool
 	StartedAt    time.Time
 	LastEventAt  time.Time

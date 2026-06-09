@@ -151,6 +151,53 @@ func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
 	}
 }
 
+func TestBossViewContextEngineerSummaryMatchesLiveSidebarSummary(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_800_000_000, 0)
+	project := model.ProjectSummary{
+		Path:                 "/tmp/project-task",
+		Name:                 "Project Task",
+		LatestSessionSummary: "stale summary should not win",
+	}
+	snapshot := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        project.Path,
+		ThreadID:           "thread-project-1",
+		Started:            true,
+		Busy:               true,
+		BusySince:          now.Add(-2 * time.Minute),
+		ActiveTurnID:       "turn-live",
+		LastBusyActivityAt: now.Add(-5 * time.Second),
+		LastActivityAt:     now.Add(-5 * time.Second),
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "Generated the helper for review:\n```go\n" + strings.Repeat("func generatedBossSidebarLeak() string { return \"too much code\" }\n", 40) + "```\n",
+		}},
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+		codexSnapshots: map[string]codexapp.Snapshot{
+			project.Path: snapshot,
+		},
+	}
+
+	view := m.bossViewContext()
+	if len(view.EngineerActivities) != 1 {
+		t.Fatalf("EngineerActivities len = %d, want 1: %#v", len(view.EngineerActivities), view.EngineerActivities)
+	}
+	want := liveEngineerActiveSummaryDetail(snapshot, project)
+	if view.EngineerActivities[0].Summary != want {
+		t.Fatalf("Boss activity summary = %q, want live sidebar summary %q", view.EngineerActivities[0].Summary, want)
+	}
+	for _, unwanted := range []string{"generatedBossSidebarLeak", "too much code", "```", "stale summary"} {
+		if strings.Contains(view.EngineerActivities[0].Summary, unwanted) {
+			t.Fatalf("Boss activity summary leaked %q: %q", unwanted, view.EngineerActivities[0].Summary)
+		}
+	}
+}
+
 func TestBossViewContextCarriesActiveProjectTodo(t *testing.T) {
 	t.Parallel()
 

@@ -553,6 +553,7 @@ func bossAgentTaskActivityFromSnapshot(task model.AgentTask, snapshot codexapp.S
 		Provider:     modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
 		SessionID:    strings.TrimSpace(snapshot.ThreadID),
 		Status:       bossEngineerActivityStatus(snapshot),
+		Summary:      liveEngineerActiveSummaryDetail(snapshot, model.ProjectSummary{Path: strings.TrimSpace(task.WorkspacePath)}),
 		Active:       true,
 		StartedAt:    bossEngineerActivityStartedAt(snapshot),
 		LastEventAt:  embeddedSnapshotActivityAt(snapshot),
@@ -568,8 +569,10 @@ func (m Model) bossProjectEngineerActivityFromSnapshot(snapshot codexapp.Snapsho
 		return bossui.ViewEngineerActivity{}, false
 	}
 	title := filepath.Base(projectPath)
-	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
-		title = projectNameForPicker(project, projectPath)
+	project := model.ProjectSummary{Path: projectPath}
+	if found, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
+		project = found
+		title = projectNameForPicker(found, projectPath)
 	}
 	var todo bossTrackedTodo
 	if tracked, ok := m.bossTrackedTodoForSnapshot(projectPath, snapshot); ok {
@@ -587,6 +590,7 @@ func (m Model) bossProjectEngineerActivityFromSnapshot(snapshot codexapp.Snapsho
 		Provider:     modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
 		SessionID:    strings.TrimSpace(snapshot.ThreadID),
 		Status:       bossEngineerActivityStatus(snapshot),
+		Summary:      liveEngineerActiveSummaryDetail(snapshot, project),
 		Active:       true,
 		StartedAt:    bossEngineerActivityStartedAt(snapshot),
 		LastEventAt:  embeddedSnapshotActivityAt(snapshot),

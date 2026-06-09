@@ -1684,6 +1684,9 @@ func bossEngineerActivitySummaryText(base string, activity ViewEngineerActivity,
 	if name := strings.TrimSpace(activity.EngineerName); name != "" {
 		status = name + " " + status
 	}
+	if summary := strings.TrimSpace(activity.Summary); summary != "" {
+		base = summary
+	}
 	if strings.TrimSpace(base) == "" || base == "-" {
 		return status
 	}

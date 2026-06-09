@@ -323,13 +323,7 @@ func (m Model) projectLiveEngineerAssessmentSummary(project model.ProjectSummary
 		if !active {
 			return "", false
 		}
-		if detail := liveEngineerSnapshotDetail(snapshot); detail != "" {
-			return formatLiveEngineerSummary(detail, startedAt, now), true
-		}
-		if detail := liveEngineerProjectInProgressSummary(project); detail != "" {
-			return formatLiveEngineerSummary(detail, startedAt, now), true
-		}
-		return formatLiveEngineerSummary("Work in progress", startedAt, now), true
+		return formatLiveEngineerSummary(liveEngineerActiveSummaryDetail(snapshot, project), startedAt, now), true
 	}
 
 	provider := providerForSessionFormat(project.LatestSessionFormat)
@@ -367,6 +361,16 @@ func liveEngineerProjectInProgressSummary(project model.ProjectSummary) string {
 	return liveEngineerStatusDetail(project.LatestSessionSummary)
 }
 
+func liveEngineerActiveSummaryDetail(snapshot codexapp.Snapshot, project model.ProjectSummary) string {
+	if detail := liveEngineerSnapshotDetail(snapshot); detail != "" {
+		return detail
+	}
+	if detail := liveEngineerProjectInProgressSummary(project); detail != "" {
+		return detail
+	}
+	return "Work in progress"
+}
+
 func liveEngineerSnapshotDetail(snapshot codexapp.Snapshot) string {
 	if snapshot.PendingApproval != nil {
 		return liveEngineerCleanSummary("Waiting for approval: " + snapshot.PendingApproval.Summary())
@@ -402,17 +406,6 @@ func liveEngineerTranscriptDetail(entries []codexapp.TranscriptEntry) string {
 		case codexapp.TranscriptAgent, codexapp.TranscriptPlan:
 			if summary := liveEngineerCompactSummary(rawText); summary != "" {
 				return summary
-			}
-		case codexapp.TranscriptCommand:
-			text := liveEngineerCleanSummary(rawText)
-			if line := liveEngineerFirstLine(text); line != "" {
-				line = strings.TrimSpace(strings.TrimPrefix(line, "$ "))
-				return "Running " + line
-			}
-		case codexapp.TranscriptFileChange:
-			text := liveEngineerCleanSummary(rawText)
-			if line := liveEngineerFirstLine(text); line != "" {
-				return "Editing " + line
 			}
 		case codexapp.TranscriptStatus, codexapp.TranscriptSystem:
 			text := liveEngineerCleanSummary(rawText)
@@ -452,18 +445,9 @@ func liveEngineerCleanSummary(text string) string {
 	return singleLineStatusText(text)
 }
 
-func liveEngineerFirstLine(text string) string {
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			return line
-		}
-	}
-	return ""
-}
-
 func liveEngineerGenericStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "working", "codex is working...", "opencode is working...", "codex ready", "opencode ready", "codex turn completed", "turn completed":
+	case "working", "codex is working...", "opencode is working...", "codex ready", "opencode ready", "codex turn completed", "turn completed", "conversation history compacted":
 		return true
 	default:
 		return false

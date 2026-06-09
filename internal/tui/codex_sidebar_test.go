@@ -296,6 +296,37 @@ func TestEmbeddedSidebarLiveSummaryDropsLargeCodeBlock(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarLiveSummaryDoesNotUseCommandOutput(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.allProjects = []model.ProjectSummary{{
+		Name:                "demo",
+		Path:                projectPath,
+		LatestSessionFormat: "codex_jsonl",
+	}}
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Busy = true
+	snapshot.BusySince = m.currentTime().Add(-3 * time.Minute)
+	snapshot.Status = "Codex is working..."
+	snapshot.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptCommand,
+		Text: "$ /bin/zsh -lc \"sed -n '560,900p' src/FractalSpaceScene.cpp\"\n" +
+			"# cwd: /Users/davide/dev/repos/romaexe_intros--bjung-alternative-scenes\n" +
+			strings.Repeat("Vec2 pa {}; | Vec2 pb {}; | const auto drawRadius = radius * depthMul;\n", 40),
+	}}
+	m.codexSnapshots[projectPath] = snapshot
+
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarSummarySection(snapshot, 42), "\n"))
+	if !strings.Contains(rendered, "Work in progress") {
+		t.Fatalf("command-only live summary should use active fallback:\n%s", rendered)
+	}
+	for _, unwanted := range []string{"Running /bin/zsh", "FractalSpaceScene.cpp", "Vec2 pa", "drawRadius"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("sidebar summary leaked command output %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
 func TestEmbeddedSidebarAgentTaskSummaryDropsLargeCodeOnlyBlock(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-agent-task"
 	m := testEmbeddedSidebarModel(projectPath)
