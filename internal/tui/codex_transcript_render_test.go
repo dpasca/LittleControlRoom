@@ -1522,6 +1522,42 @@ func TestCodexProgressiveLinkScanResolvesRelativeMarkdownArtifactLinks(t *testin
 	}
 }
 
+func TestCodexProgressiveLinkScanIgnoresCppLambdaCaptures(t *testing.T) {
+	projectPath := t.TempDir()
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptCommand,
+				Text: strings.Join([]string{
+					"$ sed -n '1,80p' src/App.cpp",
+					"auto at = [&](float x, float z, float lift=0.f) { return Vec3{x, lift, z}; };",
+					"auto control = [this](DjControlId id, float lift=0.f) { return djControl(id, lift); };",
+					"See [notes](docs/plan.md).",
+				}, "\n"),
+			},
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(100, 4),
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	cmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+	if cmd == nil {
+		t.Fatalf("progressive link scan should start for transcript entries")
+	}
+	got := drainCmdMsgs(m, cmd)
+	targets := got.cachedProgressiveCodexOpenTargets(snapshot)
+	if len(targets) != 1 {
+		t.Fatalf("progressive targets = %#v, want only the real relative markdown link", targets)
+	}
+	wantPath := filepath.Join(projectPath, "docs", "plan.md")
+	if targets[0].Kind != "doc" || targets[0].Label != "notes" || targets[0].Path != wantPath {
+		t.Fatalf("progressive target = %#v, want notes doc path %q", targets[0], wantPath)
+	}
+}
+
 func TestCodexMarkdownLinkParserBoundsMalformedBrackets(t *testing.T) {
 	longLabel := "[" + strings.Repeat("x", codexMarkdownLinkLabelScanLimit+1) + "](https://example.com/docs)"
 	if _, _, _, ok := parseCodexMarkdownLink(longLabel); ok {

@@ -929,7 +929,11 @@ func parseCodexMarkdownLinkTarget(text string) (target string, consumed int, ok 
 	if closeTarget < 0 {
 		return "", 0, false
 	}
-	return strings.TrimSpace(trimmed[:closeTarget]), leading + closeTarget + 1, true
+	target = strings.TrimSpace(trimmed[:closeTarget])
+	if strings.ContainsFunc(target, unicode.IsSpace) {
+		return "", 0, false
+	}
+	return target, leading + closeTarget + 1, true
 }
 
 func boundedIndexByte(text string, c byte, limit int) int {
