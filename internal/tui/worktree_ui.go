@@ -92,24 +92,25 @@ func worktreeRemoveConfirmReady(confirm *worktreeRemoveConfirmState) bool {
 }
 
 type worktreeMergeConfirmState struct {
-	ProjectPath       string
-	RootPath          string
-	ProjectName       string
-	BranchName        string
-	TargetBranch      string
-	PendingRefresh    map[string]struct{}
-	HardBlockReason   string
-	SourceDirty       bool
-	RuntimeRunning    bool
-	StopRuntime       bool
-	CommitBeforeMerge bool
-	HasLinkedTodo     bool
-	MarkTodoDone      bool
-	RemoveNow         bool
-	ErrorMessage      string
-	Busy              bool
-	BusyMessage       string
-	Selected          int
+	ProjectPath          string
+	RootPath             string
+	ProjectName          string
+	BranchName           string
+	TargetBranch         string
+	PendingRefresh       map[string]struct{}
+	HardBlockReason      string
+	SourceDirty          bool
+	RuntimeRunning       bool
+	StopRuntime          bool
+	CommitBeforeMerge    bool
+	HasLinkedTodo        bool
+	MarkTodoDone         bool
+	RemoveNow            bool
+	ActiveSessionWarning string
+	ErrorMessage         string
+	Busy                 bool
+	BusyMessage          string
+	Selected             int
 }
 
 type worktreeMergeReadinessState struct {
@@ -991,6 +992,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 
 	if len(family) > 1 || row.LinkedCount > 0 || row.Kind == projectListRowWorktree {
 		actions = append(actions, footerNavAction("w", "lanes"))
+		if width >= 80 {
+			actions = append(actions, footerNavAction("/wt", ""))
+		}
 	}
 	if row.Kind == projectListRowWorktree && m.canMergeWorktreeBack(project) && width >= 80 {
 		label := "merge"
@@ -1021,9 +1025,6 @@ func (m Model) canMergeWorktreeBack(project model.ProjectSummary) bool {
 	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
 	sourceBranch := strings.TrimSpace(project.RepoBranch)
 	if targetBranch == "" || sourceBranch == "" || sourceBranch == targetBranch {
-		return false
-	}
-	if m.projectHasLiveCodexSession(project.Path) {
 		return false
 	}
 	return true
@@ -1170,6 +1171,17 @@ func worktreeMergeCanAutoCloseSnapshot(snapshot codexapp.Snapshot) bool {
 	return worktreeMergeSnapshotShowsCompletedTurn(snapshot) || worktreeMergeSnapshotShowsSettledIdle(snapshot)
 }
 
+func worktreeMergeActiveSessionWarning(snapshot codexapp.Snapshot) string {
+	if !snapshot.Started || snapshot.Closed {
+		return ""
+	}
+	label := embeddedProvider(snapshot).Label()
+	if strings.TrimSpace(label) == "" {
+		label = "AI"
+	}
+	return "An embedded " + label + " engineer session is still open. Merging now will not wait for it, and later AI changes will not be automatically committed or merged."
+}
+
 func (m *Model) closeEmbeddedSessionForProject(projectPath string) (tea.Cmd, error) {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" || m.codexManager == nil {
@@ -1287,6 +1299,7 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		m.status = "A commit is still in progress. Finish it before merging this worktree back."
 		return nil
 	}
+	activeSessionWarning := ""
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		if worktreeMergeCanAutoCloseSnapshot(snapshot) {
 			seenCmd, err := m.closeEmbeddedSessionForProject(project.Path)
@@ -1296,14 +1309,7 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 			}
 			autoCloseCmd = batchCmds(autoCloseCmd, seenCmd)
 		} else {
-			m.showSessionBlockedAttentionDialog(
-				project,
-				"Merge blocked",
-				"Close the embedded agent session before merging this worktree back.",
-				"retry the merge",
-				embeddedProvider(snapshot),
-			)
-			return nil
+			activeSessionWarning = worktreeMergeActiveSessionWarning(snapshot)
 		}
 	}
 	readiness := m.worktreeMergeReadiness(project, row.RootPath)
@@ -1312,18 +1318,19 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 		pendingRefresh = worktreeMergeConfirmPendingRefreshSet(project.Path, row.RootPath)
 	}
 	m.worktreeMergeConfirm = &worktreeMergeConfirmState{
-		ProjectPath:     project.Path,
-		RootPath:        row.RootPath,
-		ProjectName:     project.Name,
-		BranchName:      projectWorktreeLabel(project),
-		TargetBranch:    strings.TrimSpace(project.WorktreeParentBranch),
-		PendingRefresh:  pendingRefresh,
-		HardBlockReason: readiness.HardBlockReason,
-		SourceDirty:     readiness.SourceDirty,
-		RuntimeRunning:  m.projectRuntimeSnapshot(project.Path).Running,
-		HasLinkedTodo:   project.WorktreeOriginTodoID > 0,
-		RemoveNow:       true,
-		Selected:        0,
+		ProjectPath:          project.Path,
+		RootPath:             row.RootPath,
+		ProjectName:          project.Name,
+		BranchName:           projectWorktreeLabel(project),
+		TargetBranch:         strings.TrimSpace(project.WorktreeParentBranch),
+		PendingRefresh:       pendingRefresh,
+		HardBlockReason:      readiness.HardBlockReason,
+		SourceDirty:          readiness.SourceDirty,
+		RuntimeRunning:       m.projectRuntimeSnapshot(project.Path).Running,
+		HasLinkedTodo:        project.WorktreeOriginTodoID > 0,
+		RemoveNow:            true,
+		ActiveSessionWarning: activeSessionWarning,
+		Selected:             0,
 	}
 	if len(pendingRefresh) > 0 {
 		m.worktreeMergeConfirm.Busy = true
@@ -1931,6 +1938,10 @@ func (m Model) renderWorktreeMergeConfirmOverlay(body string, bodyW, bodyH int) 
 	} else {
 		lines = append(lines, "")
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Choose the merge actions Little Control Room should handle now. Applicable actions start checked so you can press Enter to run the full flow.")...)
+		if warning := strings.TrimSpace(confirm.ActiveSessionWarning); warning != "" {
+			lines = append(lines, "", detailWarningStyle.Render("Active engineer session"))
+			lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, panelInnerW, warning)...)
+		}
 		lines = append(lines, "")
 		for index, option := range worktreeMergeConfirmOptions(confirm) {
 			prefix := "[ ] "

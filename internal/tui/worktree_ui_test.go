@@ -184,6 +184,9 @@ func TestRenderFooterShowsMergeHintForLinkedWorktreeWithParentBranch(t *testing.
 	if !strings.Contains(rendered, "M merge") {
 		t.Fatalf("renderFooter() should advertise linked worktree merge-back when a parent branch is known, got %q", rendered)
 	}
+	if !strings.Contains(rendered, "/wt") {
+		t.Fatalf("renderFooter() should advertise the worktree slash-command entry point for linked worktrees, got %q", rendered)
+	}
 }
 
 func TestRenderFooterShowsCommitMergeHintForDirtyLinkedWorktree(t *testing.T) {
@@ -1735,7 +1738,7 @@ func TestDispatchCommandRemoveOpensWorktreeRemoveConfirm(t *testing.T) {
 	}
 }
 
-func TestOpenWorktreeMergeConfirmWithLiveSessionShowsAttentionDialog(t *testing.T) {
+func TestOpenWorktreeMergeConfirmWithActiveEngineerSessionShowsWarning(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	var requests []codexapp.LaunchRequest
@@ -1747,7 +1750,8 @@ func TestOpenWorktreeMergeConfirmWithLiveSessionShowsAttentionDialog(t *testing.
 				Provider: req.Provider.Normalized(),
 				Started:  true,
 				ThreadID: "thread-live",
-				Status:   req.Provider.Label() + " session ready",
+				Busy:     true,
+				Status:   req.Provider.Label() + " is working",
 			},
 		}, nil
 	})
@@ -1786,22 +1790,30 @@ func TestOpenWorktreeMergeConfirmWithLiveSessionShowsAttentionDialog(t *testing.
 
 	cmd := m.openWorktreeMergeConfirmForSelection()
 	if cmd != nil {
-		t.Fatalf("blocked merge should not schedule a command")
+		t.Fatalf("merge confirm should open without scheduling a command")
 	}
-	if m.worktreeMergeConfirm != nil {
-		t.Fatalf("merge confirmation dialog should stay closed when the session warning modal is shown")
+	if m.worktreeMergeConfirm == nil {
+		t.Fatalf("merge confirmation dialog should open during an active engineer session")
 	}
-	if m.attentionDialog == nil {
-		t.Fatalf("blocked merge should show the attention dialog")
+	if m.attentionDialog != nil {
+		t.Fatalf("active engineer session should warn inside the merge dialog, not open the attention modal")
 	}
-	if m.attentionDialog.Title != "Merge blocked" {
-		t.Fatalf("attention dialog title = %q, want merge blocked", m.attentionDialog.Title)
+	if warning := m.worktreeMergeConfirm.ActiveSessionWarning; !strings.Contains(warning, "Claude Code engineer session is still open") || !strings.Contains(warning, "will not be automatically committed or merged") {
+		t.Fatalf("merge confirm active-session warning = %q", warning)
 	}
-	if m.attentionDialog.PrimaryLabel != "Open Claude Code" {
-		t.Fatalf("attention dialog primary label = %q, want open action", m.attentionDialog.PrimaryLabel)
+	if m.status != "Confirm worktree merge-back" {
+		t.Fatalf("status = %q, want merge confirmation", m.status)
 	}
-	if m.status != "Close the embedded agent session before merging this worktree back." {
-		t.Fatalf("status = %q, want merge block warning", m.status)
+	rendered := ansi.Strip(m.renderWorktreeMergeConfirmOverlay("", 100, 24))
+	for _, want := range []string{
+		"Active engineer session",
+		"Claude Code engineer session is still open",
+		"will not be automatically",
+		"committed or merged",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("merge dialog missing %q in %q", want, rendered)
+		}
 	}
 }
 
