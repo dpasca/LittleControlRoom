@@ -50,6 +50,26 @@ func ReadWorkingTreeFile(repoPath, relPath string, maxBytes int) ([]byte, bool, 
 	return data, false, nil
 }
 
+func ListUntrackedFilesUnderPath(ctx context.Context, repoPath, relPath string) ([]string, error) {
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
+		return nil, nil
+	}
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "ls-files", "-z", "--others", "--exclude-standard", "--", relPath).Output()
+	if err != nil {
+		return nil, fmt.Errorf("list untracked files under %s for %s: %w", relPath, repoPath, err)
+	}
+	parts := strings.Split(string(out), "\x00")
+	paths := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		paths = append(paths, part)
+	}
+	return paths, nil
+}
+
 func trimPreviewOutput(out []byte, maxBytes int) string {
 	if maxBytes > 0 && len(out) > maxBytes {
 		out = out[:maxBytes]

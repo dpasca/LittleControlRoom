@@ -12,6 +12,16 @@ func TestSyntaxHighlightPreparedLexerSkipsContentOnlyInference(t *testing.T) {
 	}
 }
 
+func TestSyntaxHighlightLexerUsesCppFilenameHint(t *testing.T) {
+	lexer := syntaxHighlightLexer("", "src/main.cpp", "int main() {\n    return 0;\n}\n")
+	if lexer == nil {
+		t.Fatalf("expected a lexer for C++ source")
+	}
+	if got := strings.ToLower(lexer.Config().Name); !strings.Contains(got, "c++") {
+		t.Fatalf("lexer name = %q, want a C++ lexer", lexer.Config().Name)
+	}
+}
+
 func TestSyntaxHighlightPreparedLexerSkipsLargeTypedBlock(t *testing.T) {
 	large := strings.Repeat("fmt.Println(\"hello\")\n", syntaxHighlightMaxLines+5)
 	lexer := syntaxHighlightPreparedLexer("go", "", large)

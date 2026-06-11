@@ -118,7 +118,7 @@ func newDiffViewState(projectPath, projectName string) *diffViewState {
 		ProjectPath:     strings.TrimSpace(projectPath),
 		ProjectName:     strings.TrimSpace(projectName),
 		loading:         true,
-		focus:           diffFocusFiles,
+		focus:           diffFocusContent,
 		mode:            diffRenderModeSideBySide,
 		contentViewport: viewport.New(0, 0),
 		renderCache:     make(map[diffRenderCacheKey]string),
@@ -489,12 +489,12 @@ func (m *Model) ensureRenderedContinuousContent(width int) {
 		seen[row.FileIndex] = true
 
 		file := files[row.FileIndex]
+		offsets = append(offsets, currentLine)
+		fileOrder = append(fileOrder, row.FileIndex)
+
 		fileHeader := renderContinuousFileHeader(file, width)
 		parts = append(parts, fileHeader)
 		currentLine += strings.Count(fileHeader, "\n") + 1
-
-		offsets = append(offsets, currentLine)
-		fileOrder = append(fileOrder, row.FileIndex)
 
 		cacheKey := diffRenderCacheKey{FileIndex: row.FileIndex, Width: width, Mode: m.diffView.mode}
 		body, ok := m.diffView.renderCache[cacheKey]
@@ -537,11 +537,15 @@ func renderContinuousFileHeader(file service.DiffFilePreview, width int) string 
 	kindCode := diffFileKindCode(file)
 	state := diffFileStateWord(file)
 	label := kindCode + " " + state + "  " + file.Summary
-	return lipgloss.NewStyle().
+	rule := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("238")).
+		Render(strings.Repeat("─", max(1, width)))
+	header := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252")).
 		Bold(true).
 		Width(width).
 		Render(truncateText(label, max(1, width)))
+	return rule + "\n" + header
 }
 
 func (m *Model) continuousFileAtOffset(yOffset int) int {
@@ -922,7 +926,7 @@ func renderDiffImageBody(file service.DiffFilePreview, width int) string {
 func renderDiffUnifiedTextBody(body, syntaxFilename string, width int) string {
 	contentWidth := max(10, width-2)
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render("Diff")
-	highlightPlan := newSyntaxHighlightPlan("", syntaxFilename, body)
+	highlightPlan := newSyntaxHighlightPlan("", syntaxFilename, diffSyntaxHighlightSample(body))
 	renderedLines := make([]string, 0, len(strings.Split(body, "\n")))
 	for _, line := range strings.Split(body, "\n") {
 		renderedLines = append(renderedLines, renderUnifiedDiffLine(line, contentWidth, highlightPlan))
@@ -942,7 +946,7 @@ func renderDiffSideBySideTextBody(body, syntaxFilename string, width int) string
 	}
 
 	contentWidth := max(10, width-2)
-	highlightPlan := newSyntaxHighlightPlan("", syntaxFilename, body)
+	highlightPlan := newSyntaxHighlightPlan("", syntaxFilename, diffSyntaxHighlightSample(body))
 	sections := parseDiffTextSections(body)
 	rendered := make([]string, 0, len(sections))
 	for _, section := range sections {
@@ -955,6 +959,33 @@ func renderDiffSideBySideTextBody(body, syntaxFilename string, width int) string
 		rendered = append(rendered, renderDiffFullRow("No textual diff available.", contentWidth, diffCellToneNote))
 	}
 	return renderDiffTextBlock("Diff", strings.Join(rendered, "\n\n"), lipgloss.Color("81"))
+}
+
+func diffSyntaxHighlightSample(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	if !syntaxHighlightTextTooLarge(text) {
+		return text
+	}
+	var out strings.Builder
+	lineCount := 0
+	for _, line := range strings.Split(text, "\n") {
+		if lineCount >= syntaxHighlightMaxLines {
+			break
+		}
+		nextLen := len(line)
+		if out.Len() > 0 {
+			nextLen++
+		}
+		if out.Len()+nextLen > syntaxHighlightMaxBytes {
+			break
+		}
+		if out.Len() > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(line)
+		lineCount++
+	}
+	return out.String()
 }
 
 func parseDiffTextSections(body string) []diffTextSection {

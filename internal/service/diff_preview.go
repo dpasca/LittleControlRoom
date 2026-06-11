@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -111,7 +112,7 @@ func (s *Service) PrepareDiff(ctx context.Context, projectPath string) (DiffPrev
 		}
 	}
 
-	changes := append([]scanner.GitChange(nil), repoStatus.Changes...)
+	changes := expandDiffPreviewUntrackedDirectories(ctx, projectPath, repoStatus.Changes)
 	sort.SliceStable(changes, func(i, j int) bool {
 		leftStage, rightStage := diffStageRank(changes[i]), diffStageRank(changes[j])
 		if leftStage != rightStage {
@@ -162,6 +163,52 @@ func (s *Service) ToggleDiffFileStage(ctx context.Context, projectPath string, f
 		return "", err
 	}
 	return "Staged " + file.Summary, nil
+}
+
+func expandDiffPreviewUntrackedDirectories(ctx context.Context, projectPath string, changes []scanner.GitChange) []scanner.GitChange {
+	out := make([]scanner.GitChange, 0, len(changes))
+	for _, change := range changes {
+		if !isDiffPreviewUntrackedDirectory(projectPath, change) {
+			out = append(out, change)
+			continue
+		}
+		files, err := gitops.ListUntrackedFilesUnderPath(ctx, projectPath, change.Path)
+		if err != nil || len(files) == 0 {
+			out = append(out, change)
+			continue
+		}
+		for _, path := range files {
+			expanded := change
+			expanded.Path = path
+			expanded.OriginalPath = ""
+			expanded.Code = "??"
+			expanded.Kind = scanner.GitChangeUntracked
+			expanded.Staged = false
+			expanded.Unstaged = true
+			expanded.Untracked = true
+			expanded.IsSubmodule = false
+			expanded.SubmoduleCommitChanged = false
+			expanded.SubmoduleModified = false
+			expanded.SubmoduleUntracked = false
+			out = append(out, expanded)
+		}
+	}
+	return out
+}
+
+func isDiffPreviewUntrackedDirectory(projectPath string, change scanner.GitChange) bool {
+	if !change.Untracked {
+		return false
+	}
+	path := strings.TrimSpace(change.Path)
+	if path == "" {
+		return false
+	}
+	if strings.HasSuffix(path, "/") {
+		return true
+	}
+	info, err := os.Stat(filepath.Join(projectPath, filepath.FromSlash(path)))
+	return err == nil && info.IsDir()
 }
 
 func diffStageRank(change scanner.GitChange) int {

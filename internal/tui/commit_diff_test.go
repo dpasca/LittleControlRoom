@@ -1963,13 +1963,20 @@ func TestDiffScreenKeepsActionHintsInFooterOnly(t *testing.T) {
 			t.Fatalf("top status should not advertise action hint %q: %q", unexpected, top)
 		}
 	}
-	if !strings.Contains(top, "Diff split") || !strings.Contains(top, "focus: files") {
+	if !strings.Contains(top, "Diff split") || !strings.Contains(top, "focus: diff") {
 		t.Fatalf("top status should keep compact diff state, got %q", top)
 	}
 	for _, want := range []string{"Enter open", "Alt+F folder", "Esc close"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("diff footer should advertise %q, got %q", want, footer)
 		}
+	}
+}
+
+func TestNewDiffViewStateDefaultsToContentFocus(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	if diffState.focus != diffFocusContent {
+		t.Fatalf("new diff focus = %s, want content", diffState.focus)
 	}
 }
 
@@ -2256,9 +2263,46 @@ func TestSyntaxHighlightLexerUsesFilenameHint(t *testing.T) {
 	}
 }
 
+func TestRenderDiffEntryBodyHighlightsLargeCppDiffByFilename(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	body := "# Untracked\n\n" + strings.Repeat("+int main() { return 0; }\n", syntaxHighlightMaxLines+5)
+	cppRendered := renderDiffEntryBody(service.DiffFilePreview{
+		Path:      "src/main.cpp",
+		Summary:   "src/main.cpp",
+		Code:      "??",
+		Kind:      scanner.GitChangeUntracked,
+		Untracked: true,
+		Body:      body,
+	}, 84, diffRenderModeSideBySide)
+	textRendered := renderDiffEntryBody(service.DiffFilePreview{
+		Path:      "notes.txt",
+		Summary:   "notes.txt",
+		Code:      "??",
+		Kind:      scanner.GitChangeUntracked,
+		Untracked: true,
+		Body:      body,
+	}, 84, diffRenderModeSideBySide)
+
+	if ansi.Strip(cppRendered) != ansi.Strip(textRendered) {
+		t.Fatalf("syntax highlighting should preserve visible diff text")
+	}
+	if cppRendered == textRendered {
+		t.Fatalf("large .cpp diff should use filename-based syntax highlighting")
+	}
+}
+
 func TestDiffModeMovesSelectionAndScrollsContent(t *testing.T) {
 	diffState := newDiffViewState("/tmp/demo", "demo")
 	diffState.loading = false
+	diffState.focus = diffFocusFiles
 	diffState.preview = &service.DiffPreview{
 		Files: []service.DiffFilePreview{
 			{
@@ -2354,8 +2398,8 @@ func TestDiffModeEnterOpensSelectedFile(t *testing.T) {
 	if got.diffView == nil {
 		t.Fatalf("opening a file should leave the diff view visible")
 	}
-	if got.diffView.focus != diffFocusFiles {
-		t.Fatalf("Enter should not move focus into the content pane")
+	if got.diffView.focus != diffFocusContent {
+		t.Fatalf("Enter should keep the current diff focus")
 	}
 	if got.status != "Opening README.md" {
 		t.Fatalf("status = %q, want opening status", got.status)
@@ -2518,6 +2562,58 @@ diff --git a/diff_view.go b/diff_view.go
 	}
 	if m.diffView.continuousContent != firstContinuous {
 		t.Fatalf("revisiting a file should reuse the cached continuous content")
+	}
+}
+
+func TestDiffContinuousContentSeparatesFilesWithRule(t *testing.T) {
+	diffState := newDiffViewState("/tmp/demo", "demo")
+	diffState.loading = false
+	diffState.preview = &service.DiffPreview{
+		Files: []service.DiffFilePreview{
+			{
+				Path:     "main.go",
+				Summary:  "main.go",
+				Code:     "M",
+				Kind:     scanner.GitChangeModified,
+				Unstaged: true,
+				Body:     "# Unstaged\n\n+line\n",
+			},
+			{
+				Path:      "notes.txt",
+				Summary:   "notes.txt",
+				Code:      "??",
+				Kind:      scanner.GitChangeUntracked,
+				Untracked: true,
+				Body:      "# Untracked\n\n+note\n",
+			},
+		},
+	}
+
+	m := Model{
+		diffView:     diffState,
+		commandInput: textinput.New(),
+		width:        100,
+		height:       24,
+	}
+	m.syncDiffView(true)
+
+	lines := strings.Split(ansi.Strip(m.diffView.continuousContent), "\n")
+	fileHeaderIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, "M modified  main.go") {
+			fileHeaderIndex = i
+			break
+		}
+	}
+	if fileHeaderIndex < 1 {
+		t.Fatalf("continuous diff should include a main.go header after a separator: %q", ansi.Strip(m.diffView.continuousContent))
+	}
+	separator := strings.TrimSpace(lines[fileHeaderIndex-1])
+	if separator == "" || strings.Trim(separator, "─") != "" {
+		t.Fatalf("line before file header should be a separator rule, got %q", lines[fileHeaderIndex-1])
+	}
+	if len(m.diffView.continuousOffsets) == 0 || m.diffView.continuousOffsets[0] != fileHeaderIndex-1 {
+		t.Fatalf("first file offset = %#v, want separator line %d", m.diffView.continuousOffsets, fileHeaderIndex-1)
 	}
 }
 

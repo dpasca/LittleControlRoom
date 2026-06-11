@@ -153,7 +153,10 @@ func TestPrepareDiffIncludesTextUntrackedDeletedAndImagePreviews(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projectPath, "old.txt"), []byte("old line\n"), 0o644); err != nil {
 		t.Fatalf("write old.txt: %v", err)
 	}
-	runGit(t, projectPath, "git", "add", "pixel.png", "old.txt")
+	if err := os.WriteFile(filepath.Join(projectPath, ".gitignore"), []byte("notes_dir/ignored.log\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "pixel.png", "old.txt", ".gitignore")
 	runGit(t, projectPath, "git", "commit", "-m", "add fixtures")
 
 	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\ndiff screen\n"), 0o644); err != nil {
@@ -164,6 +167,18 @@ func TestPrepareDiffIncludesTextUntrackedDeletedAndImagePreviews(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(projectPath, "notes.txt"), []byte("release note\n"), 0o644); err != nil {
 		t.Fatalf("write notes: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(projectPath, "notes_dir", "include"), 0o755); err != nil {
+		t.Fatalf("mkdir notes_dir/include: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "notes_dir", "main.cpp"), []byte("int main() {\n    return 0;\n}\n"), 0o644); err != nil {
+		t.Fatalf("write notes_dir/main.cpp: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "notes_dir", "include", "main.h"), []byte("#pragma once\n"), 0o644); err != nil {
+		t.Fatalf("write notes_dir/include/main.h: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectPath, "notes_dir", "ignored.log"), []byte("ignore me\n"), 0o644); err != nil {
+		t.Fatalf("write notes_dir/ignored.log: %v", err)
 	}
 	if err := os.Remove(filepath.Join(projectPath, "old.txt")); err != nil {
 		t.Fatalf("remove old.txt: %v", err)
@@ -192,8 +207,8 @@ func TestPrepareDiffIncludesTextUntrackedDeletedAndImagePreviews(t *testing.T) {
 	if preview.ProjectName != "repo" {
 		t.Fatalf("project name = %q, want repo", preview.ProjectName)
 	}
-	if len(preview.Files) != 4 {
-		t.Fatalf("file count = %d, want 4", len(preview.Files))
+	if len(preview.Files) != 6 {
+		t.Fatalf("file count = %d, want 6", len(preview.Files))
 	}
 
 	byPath := map[string]DiffFilePreview{}
@@ -209,6 +224,21 @@ func TestPrepareDiffIncludesTextUntrackedDeletedAndImagePreviews(t *testing.T) {
 	notes := byPath["notes.txt"]
 	if !notes.Untracked || !strings.Contains(notes.Body, "# Untracked") || !strings.Contains(notes.Body, "+release note") {
 		t.Fatalf("notes preview = %#v, want untracked added-line preview", notes)
+	}
+
+	cpp := byPath["notes_dir/main.cpp"]
+	if !cpp.Untracked || !strings.Contains(cpp.Body, "+int main()") {
+		t.Fatalf("expanded untracked cpp preview = %#v, want notes_dir/main.cpp", cpp)
+	}
+	header := byPath["notes_dir/include/main.h"]
+	if !header.Untracked || !strings.Contains(header.Body, "+#pragma once") {
+		t.Fatalf("expanded untracked header preview = %#v, want notes_dir/include/main.h", header)
+	}
+	if _, ok := byPath["notes_dir/"]; ok {
+		t.Fatalf("preview should expand untracked directories into files, got directory entry %#v", byPath["notes_dir/"])
+	}
+	if _, ok := byPath["notes_dir/ignored.log"]; ok {
+		t.Fatalf("preview should not include ignored files, got %#v", byPath["notes_dir/ignored.log"])
 	}
 
 	deleted := byPath["old.txt"]
