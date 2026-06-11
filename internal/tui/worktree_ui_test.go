@@ -50,6 +50,9 @@ func TestRenderFooterShowsWorktreeHintsForRepoFamily(t *testing.T) {
 	if !strings.Contains(rendered, "w lanes") {
 		t.Fatalf("renderFooter() should advertise worktree lane toggling, got %q", rendered)
 	}
+	if strings.Contains(rendered, "/wt") {
+		t.Fatalf("renderFooter() should reserve the worktree slash-command hint for linked worktree rows, got %q", rendered)
+	}
 	if strings.Contains(rendered, "P prune") {
 		t.Fatalf("renderFooter() should not advertise a Prune hotkey, got %q", rendered)
 	}
@@ -91,6 +94,9 @@ func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "x remove") {
 		t.Fatalf("renderFooter() should advertise linked worktree removal when it is allowed, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "/wt") {
+		t.Fatalf("renderFooter() should advertise the worktree slash-command entry point on linked worktree rows, got %q", rendered)
 	}
 }
 

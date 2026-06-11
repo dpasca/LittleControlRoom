@@ -992,8 +992,8 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 
 	if len(family) > 1 || row.LinkedCount > 0 || row.Kind == projectListRowWorktree {
 		actions = append(actions, footerNavAction("w", "lanes"))
-		if width >= 80 {
-			actions = append(actions, footerNavAction("/wt", ""))
+		if row.Kind == projectListRowWorktree && width >= 80 {
+			actions = append(actions, footerNavAction("/wt", "ops"))
 		}
 	}
 	if row.Kind == projectListRowWorktree && m.canMergeWorktreeBack(project) && width >= 80 {
@@ -1092,38 +1092,6 @@ func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.
 		hints = append(hints, "/wt prune")
 	}
 	return hints
-}
-
-func (m Model) worktreeCommandPaletteHint(project model.ProjectSummary, family []model.ProjectSummary) string {
-	hints := m.worktreeActionHints(project, family)
-	if len(hints) == 0 {
-		return ""
-	}
-	commands := make([]string, 0, len(hints))
-	for _, hint := range hints {
-		if command := worktreeSlashCommandFromHint(hint); command != "" {
-			commands = append(commands, command)
-		}
-	}
-	if len(commands) == 0 {
-		return ""
-	}
-	return "Worktrees: try " + strings.Join(commands, ", ") + "."
-}
-
-func worktreeSlashCommandFromHint(hint string) string {
-	fields := strings.Fields(hint)
-	for i := 0; i < len(fields)-1; i++ {
-		if fields[i] != "/wt" {
-			continue
-		}
-		command := strings.Trim(fields[i+1], ".,;:)")
-		if command == "" {
-			return ""
-		}
-		return "/wt " + command
-	}
-	return ""
 }
 
 func (m Model) mergeBackRulesSummary() string {

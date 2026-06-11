@@ -757,9 +757,6 @@ func (m Model) renderCommandPaletteContent(width int) string {
 
 	if p, ok := m.selectedProject(); ok {
 		lines = append(lines, commandPaletteHintStyle.Render("Selected project: "+p.Name))
-		if hint := m.worktreeCommandPaletteHint(p, m.worktreeFamily(projectWorktreeRootPath(p))); hint != "" {
-			lines = append(lines, commandPaletteHintStyle.Render(hint))
-		}
 	} else {
 		lines = append(lines, commandPaletteHintStyle.Render("Selected project: none"))
 	}

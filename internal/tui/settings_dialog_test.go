@@ -370,7 +370,7 @@ func TestCommandPaletteRendersColoredActionLegend(t *testing.T) {
 	}
 }
 
-func TestCommandPaletteShowsWorktreeCommandHintForLinkedWorktree(t *testing.T) {
+func TestCommandPaletteDoesNotShowWorktreeCommandHintForLinkedWorktree(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/")
 
@@ -408,12 +408,12 @@ func TestCommandPaletteShowsWorktreeCommandHintForLinkedWorktree(t *testing.T) {
 	m.syncCommandSelection()
 
 	rendered := ansi.Strip(m.renderCommandPaletteContent(72))
-	if !strings.Contains(rendered, "Worktrees: try /wt lanes, /wt merge, /wt remove.") {
-		t.Fatalf("command palette should hint the worktree slash commands, got %q", rendered)
+	if strings.Contains(rendered, "Worktrees: try") {
+		t.Fatalf("command palette should not render the worktree slash-command legend, got %q", rendered)
 	}
 }
 
-func TestRenderCommandPaletteContentForLinkedWorktreeSkipsPruneHint(t *testing.T) {
+func TestCommandPaletteDoesNotShowWorktreeCommandHintForCleanLinkedWorktree(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/")
 
@@ -450,12 +450,12 @@ func TestRenderCommandPaletteContentForLinkedWorktreeSkipsPruneHint(t *testing.T
 	m.syncCommandSelection()
 
 	rendered := ansi.Strip(m.renderCommandPaletteContent(72))
-	if strings.Contains(strings.ToLower(rendered), "prune") {
-		t.Fatalf("command palette should not include prune for linked worktree selection, got %q", rendered)
+	if strings.Contains(rendered, "Worktrees: try") {
+		t.Fatalf("command palette should not render a linked-worktree command legend, got %q", rendered)
 	}
 }
 
-func TestCommandPaletteShowsWorktreePruneCommandForRepoRoot(t *testing.T) {
+func TestCommandPaletteDoesNotShowWorktreeCommandHintForRepoRoot(t *testing.T) {
 	input := textinput.New()
 	input.SetValue("/")
 
@@ -491,8 +491,8 @@ func TestCommandPaletteShowsWorktreePruneCommandForRepoRoot(t *testing.T) {
 	m.syncCommandSelection()
 
 	rendered := ansi.Strip(m.renderCommandPaletteContent(72))
-	if !strings.Contains(rendered, "Worktrees: try /wt lanes, /wt prune.") {
-		t.Fatalf("command palette should include prune for repo-root selection, got %q", rendered)
+	if strings.Contains(rendered, "Worktrees: try") {
+		t.Fatalf("command palette should not render a repo-root worktree command legend, got %q", rendered)
 	}
 }
 
