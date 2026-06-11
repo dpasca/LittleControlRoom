@@ -549,6 +549,7 @@ const (
 	pendingGitOperationCommit        pendingGitOperationKind = "commit"
 	pendingGitOperationCommitPush    pendingGitOperationKind = "commit_push"
 	pendingGitOperationPush          pendingGitOperationKind = "push"
+	pendingGitOperationPull          pendingGitOperationKind = "pull"
 	pendingGitOperationCommitMerge   pendingGitOperationKind = "commit_merge"
 	pendingGitOperationPrune         pendingGitOperationKind = "prune"
 	pendingGitOperationPrepareCommit pendingGitOperationKind = "prepare_commit"
@@ -805,6 +806,8 @@ func inferPendingGitOperation(summary string) pendingGitOperation {
 		return pendingGitOperation{Kind: pendingGitOperationCommitPush, Summary: summary}
 	case "Pushing...", "Pushing existing commits...":
 		return pendingGitOperation{Kind: pendingGitOperationPush, Summary: summary}
+	case "Pulling...":
+		return pendingGitOperation{Kind: pendingGitOperationPull, Summary: summary}
 	case "Committing and merging worktree back...":
 		return pendingGitOperation{Kind: pendingGitOperationCommitMerge, Summary: summary}
 	case "Pruning worktrees...", "Pruning stale git worktrees...":
@@ -839,6 +842,8 @@ func (op pendingGitOperation) shortLabel() string {
 		return "commit + push"
 	case pendingGitOperationPush:
 		return "pushing"
+	case pendingGitOperationPull:
+		return "pulling"
 	case pendingGitOperationCommitMerge:
 		return "commit + merge"
 	case pendingGitOperationPrune:

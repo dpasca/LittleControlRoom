@@ -570,6 +570,15 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		m.setPendingGitOperation(p.Path, pendingGitOperationPush, "Pushing...")
 		m.status = "Pushing..."
 		return m, m.pushCmd(p.Path)
+	case commands.KindPull:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		m.setPendingGitOperation(p.Path, pendingGitOperationPull, "Pulling...")
+		m.status = "Pulling..."
+		return m, m.pullCmd(p.Path)
 	case commands.KindResolve:
 		return m.resolveMergeConflictsForSelection()
 	case commands.KindCodex:
@@ -1323,6 +1332,27 @@ func (m Model) pushCmd(path string) tea.Cmd {
 		status := result.Summary
 		if strings.TrimSpace(status) == "" {
 			status = "Push complete"
+		}
+		refresh, refreshErr := m.refreshProjectStatusAfterGitAction(path)
+		if refreshErr != nil {
+			status = status + ". Repo status will refresh shortly."
+		}
+		return actionMsg{projectPath: path, status: status, clearPendingGitSummary: true, refresh: refresh, err: nil}
+	}
+}
+
+func (m Model) pullCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		result, err := m.svc.PullProject(ctx, path)
+		err = timeoutActionError(err, tuiGitActionTimeout, "pulling the project")
+		if err != nil {
+			return actionMsg{projectPath: path, status: "Pull failed", clearPendingGitSummary: true, err: err}
+		}
+		status := result.Summary
+		if strings.TrimSpace(status) == "" {
+			status = "Pull complete"
 		}
 		refresh, refreshErr := m.refreshProjectStatusAfterGitAction(path)
 		if refreshErr != nil {

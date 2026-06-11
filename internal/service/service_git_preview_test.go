@@ -1206,6 +1206,55 @@ func TestPushProjectReportsNothingToPushWhenBranchAlreadySynced(t *testing.T) {
 	}
 }
 
+func TestPullProjectPullsFreshRemoteChanges(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	remotePath := filepath.Join(root, "origin.git")
+	seedPath := filepath.Join(root, "seed")
+	projectPath := filepath.Join(root, "repo")
+	initBareGitRepo(t, remotePath)
+	initGitRepo(t, seedPath)
+	branch := strings.TrimSpace(gitOutput(t, seedPath, "git", "branch", "--show-current"))
+	runGit(t, seedPath, "git", "remote", "add", "origin", remotePath)
+	runGit(t, seedPath, "git", "push", "-u", "origin", branch)
+	runGit(t, root, "git", "clone", remotePath, projectPath)
+
+	if err := os.WriteFile(filepath.Join(seedPath, "README.md"), []byte("hello\nremote\n"), 0o644); err != nil {
+		t.Fatalf("update seed README: %v", err)
+	}
+	runGit(t, seedPath, "git", "add", "README.md")
+	runGit(t, seedPath, "git", "commit", "-m", "remote update")
+	runGit(t, seedPath, "git", "push")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+
+	result, err := svc.PullProject(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("pull project: %v", err)
+	}
+	if !result.Pulled {
+		t.Fatalf("expected pull command to run, got %#v", result)
+	}
+	if result.Summary != "Pull complete" {
+		t.Fatalf("summary = %q, want pull completion message", result.Summary)
+	}
+	content, err := os.ReadFile(filepath.Join(projectPath, "README.md"))
+	if err != nil {
+		t.Fatalf("read project README: %v", err)
+	}
+	if !strings.Contains(string(content), "remote") {
+		t.Fatalf("README content = %q, want pulled remote update", string(content))
+	}
+}
+
 type fakeDetector struct {
 	activities map[string]*model.DetectorProjectActivity
 }

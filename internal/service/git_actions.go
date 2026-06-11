@@ -83,6 +83,13 @@ type PushResult struct {
 	Summary     string
 }
 
+type PullResult struct {
+	ProjectPath string
+	Branch      string
+	Pulled      bool
+	Summary     string
+}
+
 type NoChangesToCommitError struct {
 	ProjectPath string
 	ProjectName string
@@ -560,6 +567,45 @@ func (s *Service) PushProject(ctx context.Context, projectPath string) (PushResu
 	return result, nil
 }
 
+func (s *Service) PullProject(ctx context.Context, projectPath string) (PullResult, error) {
+	if !projectPathExists(projectPath) {
+		return PullResult{}, fmt.Errorf("project not found on disk: %s", projectPath)
+	}
+
+	repoStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	if err != nil {
+		return PullResult{}, err
+	}
+	branch := strings.TrimSpace(repoStatus.Branch)
+	result := PullResult{
+		ProjectPath: projectPath,
+		Branch:      branch,
+	}
+
+	switch {
+	case !repoStatus.HasRemote:
+		return PullResult{}, fmt.Errorf("repo has no remote")
+	case !repoStatus.HasUpstream:
+		return PullResult{}, fmt.Errorf("repo has no upstream tracking branch")
+	case repoStatus.Behind > 0 && repoStatus.Ahead > 0:
+		return PullResult{}, fmt.Errorf("branch has diverged from upstream (+%d/-%d)", repoStatus.Ahead, repoStatus.Behind)
+	}
+
+	if err := gitops.Pull(ctx, projectPath); err != nil {
+		return PullResult{}, err
+	}
+	now := time.Now()
+	result.Pulled = true
+	if repoStatus.Behind > 0 {
+		result.Summary = "Pulled latest changes"
+	} else {
+		result.Summary = "Pull complete"
+	}
+	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "git_pull"}})
+	_ = s.store.AddEvent(ctx, eventForPull(now, projectPath, branch))
+	return result, nil
+}
+
 func summarizeCommitFiles(changes []scanner.GitChange) []CommitFile {
 	out := make([]CommitFile, 0, len(changes))
 	for _, change := range changes {
@@ -731,6 +777,19 @@ func eventForGitAction(now time.Time, projectPath, action string, result CommitR
 
 func eventForPush(now time.Time, projectPath, branch string) model.StoredEvent {
 	payload := "git_push"
+	if strings.TrimSpace(branch) != "" {
+		payload += " " + strings.TrimSpace(branch)
+	}
+	return model.StoredEvent{
+		At:          now,
+		ProjectPath: projectPath,
+		Type:        string(events.ActionApplied),
+		Payload:     payload,
+	}
+}
+
+func eventForPull(now time.Time, projectPath, branch string) model.StoredEvent {
+	payload := "git_pull"
 	if strings.TrimSpace(branch) != "" {
 		payload += " " + strings.TrimSpace(branch)
 	}

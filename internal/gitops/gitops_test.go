@@ -85,6 +85,38 @@ func TestPushTimesOutHungGitProcess(t *testing.T) {
 	}
 }
 
+func TestPullTimesOutHungGitProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake git timeout test uses a POSIX shell script")
+	}
+
+	oldTimeout := defaultPullTimeout
+	defaultPullTimeout = 50 * time.Millisecond
+	defer func() {
+		defaultPullTimeout = oldTimeout
+	}()
+
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	script := "#!/bin/sh\nsleep 1\n"
+	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := Pull(context.Background(), t.TempDir())
+	if err == nil {
+		t.Fatal("Pull() error = nil, want timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Pull() error = %v, want deadline exceeded", err)
+	}
+	if !strings.Contains(err.Error(), "timed out after 50ms") {
+		t.Fatalf("Pull() error = %q, want timeout text", err)
+	}
+}
+
 func runGitopsTestGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)

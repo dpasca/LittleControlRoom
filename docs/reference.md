@@ -313,6 +313,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/commit`
 - `/commit tighten git status parsing`
 - `/push`
+- `/pull`
 - `/pin`
 - `/read`
 - `/read all`

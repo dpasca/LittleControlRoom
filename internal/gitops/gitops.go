@@ -12,6 +12,7 @@ import (
 )
 
 var defaultPushTimeout = 90 * time.Second
+var defaultPullTimeout = 90 * time.Second
 
 func ReadDiffStat(ctx context.Context, path string, cached bool) (string, error) {
 	args := []string{"-C", path, "diff"}
@@ -192,6 +193,25 @@ func Push(ctx context.Context, path string) error {
 			return fmt.Errorf("push %s timed out after %s: %w", path, timeoutText, context.DeadlineExceeded)
 		}
 		return fmt.Errorf("push %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func Pull(ctx context.Context, path string) error {
+	pullCtx, cancel, appliedTimeout := withDefaultTimeout(ctx, defaultPullTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(pullCtx, "git", "-C", path, "pull")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if appliedTimeout > 0 && errors.Is(pullCtx.Err(), context.DeadlineExceeded) {
+			timeoutText := appliedTimeout.Round(time.Millisecond).String()
+			trimmed := strings.TrimSpace(string(out))
+			if trimmed != "" {
+				return fmt.Errorf("pull %s timed out after %s: %w: %s", path, timeoutText, context.DeadlineExceeded, trimmed)
+			}
+			return fmt.Errorf("pull %s timed out after %s: %w", path, timeoutText, context.DeadlineExceeded)
+		}
+		return fmt.Errorf("pull %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

@@ -371,6 +371,29 @@ func TestDispatchCommandPushMarksPendingGitOperation(t *testing.T) {
 	}
 }
 
+func TestDispatchCommandPullMarksPendingGitOperation(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindPull})
+	got := updated.(Model)
+	if got.pendingGitSummary("/tmp/demo") != "Pulling..." {
+		t.Fatalf("pending git summary = %q, want pull marker", got.pendingGitSummary("/tmp/demo"))
+	}
+	if got.status != "Pulling..." {
+		t.Fatalf("status = %q, want pull-in-flight status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("/pull should schedule async work")
+	}
+}
+
 func TestCommitPreviewDOpensDiffView(t *testing.T) {
 	m := Model{
 		commitPreview: &service.CommitPreview{
@@ -817,6 +840,117 @@ func TestPushCmdRefreshesProjectStatusAndTargetsProjectReload(t *testing.T) {
 	got := updated.(Model)
 	if reloadCmd == nil {
 		t.Fatal("push action should invalidate project data")
+	}
+	if !got.summaryReloadInFlight[projectPath] {
+		t.Fatalf("summary reload should start for %q", projectPath)
+	}
+	if !got.detailReloadInFlight[projectPath] {
+		t.Fatalf("detail reload should start for visible project %q", projectPath)
+	}
+}
+
+func TestPullCmdRefreshesProjectStatusAndTargetsProjectReload(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	remotePath := filepath.Join(root, "origin.git")
+	seedPath := filepath.Join(root, "seed")
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", "--bare", remotePath)
+	runTUITestGit(t, "", "init", seedPath)
+	runTUITestGit(t, seedPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, seedPath, "config", "user.email", "tests@example.com")
+	if err := os.WriteFile(filepath.Join(seedPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write seed README.md: %v", err)
+	}
+	runTUITestGit(t, seedPath, "add", "README.md")
+	runTUITestGit(t, seedPath, "commit", "-m", "initial commit")
+	branch := runTUITestGit(t, seedPath, "branch", "--show-current")
+	runTUITestGit(t, seedPath, "remote", "add", "origin", remotePath)
+	runTUITestGit(t, seedPath, "push", "-u", "origin", branch)
+	runTUITestGit(t, root, "clone", remotePath, projectPath)
+
+	if err := os.WriteFile(filepath.Join(seedPath, "README.md"), []byte("hello\nremote\n"), 0o644); err != nil {
+		t.Fatalf("update seed README.md: %v", err)
+	}
+	runTUITestGit(t, seedPath, "add", "README.md")
+	runTUITestGit(t, seedPath, "commit", "-m", "remote update")
+	runTUITestGit(t, seedPath, "push")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:            projectPath,
+		Name:            "repo",
+		PresentOnDisk:   true,
+		InScope:         true,
+		RepoBranch:      branch,
+		RepoSyncStatus:  model.RepoSyncBehind,
+		RepoBehindCount: 1,
+		UpdatedAt:       time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed stale project state: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "repo",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "repo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: projectPath,
+				Name: "repo",
+			},
+		},
+	}
+
+	cmd := m.pullCmd(projectPath)
+	if cmd == nil {
+		t.Fatal("pullCmd() should return a command")
+	}
+	raw := cmd()
+	msg, ok := raw.(actionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want actionMsg", raw)
+	}
+	if msg.err != nil {
+		t.Fatalf("pull action err = %v", msg.err)
+	}
+	if msg.status != "Pull complete" {
+		t.Fatalf("status = %q, want pull success message", msg.status)
+	}
+	if msg.refresh.kind != projectInvalidationProjectData || msg.refresh.projectPath != projectPath {
+		t.Fatalf("refresh = %#v, want targeted project-data invalidation for %q", msg.refresh, projectPath)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail after pull refresh: %v", err)
+	}
+	if detail.Summary.RepoBehindCount != 0 {
+		t.Fatalf("expected behind count to clear after pull refresh, got %#v", detail.Summary)
+	}
+	if detail.Summary.RepoSyncStatus != model.RepoSyncSynced {
+		t.Fatalf("expected synced repo status after pull refresh, got %#v", detail.Summary)
+	}
+
+	updated, reloadCmd := m.Update(msg)
+	got := updated.(Model)
+	if reloadCmd == nil {
+		t.Fatal("pull action should invalidate project data")
 	}
 	if !got.summaryReloadInFlight[projectPath] {
 		t.Fatalf("summary reload should start for %q", projectPath)

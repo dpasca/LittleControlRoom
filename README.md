@@ -153,6 +153,7 @@ The main TUI command palette opens with `/`.
 - `/diff`: Open the full-screen git diff.
 - `/commit [message]`: Preview a commit for the selected project.
 - `/push`: Push the selected project's branch.
+- `/pull`: Pull the selected project's branch.
 - `/resolve`: Start a fresh engineer session to resolve selected repo merge conflicts.
 - `/codex [prompt]`: Resume the latest Codex session or start one.
 - `/codex-new [prompt]`: Start a fresh Codex session.
@@ -224,7 +225,7 @@ Most day-to-day use falls into a few buckets:
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
 
-- **Review and organize** — Use `/diff` to inspect git changes, `/commit` and `/push` when you are ready to ship, and `/open` to jump to the project folder.
+- **Review and organize** — Use `/diff` to inspect git changes, `/commit`, `/push`, and `/pull` when you are ready to sync or ship, and `/open` to jump to the project folder.
 
   | Diff View | Commit Preview | Image Diff |
   | --- | --- | --- |

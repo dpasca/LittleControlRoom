@@ -45,6 +45,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "pull",
+			raw:  "/pull",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindPull {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindPull)
+				}
+				if inv.Canonical != "/pull" {
+					t.Fatalf("canonical = %q, want /pull", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "error alias",
 			raw:  "/error",
 			check: func(t *testing.T, inv Invocation) {
