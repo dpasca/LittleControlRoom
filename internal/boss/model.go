@@ -433,9 +433,6 @@ func (m Model) UsageText() string {
 			parts = append(parts, "tok "+tokens)
 		}
 	}
-	if contextText := m.ContextText(); contextText != "" {
-		parts = append(parts, contextText)
-	}
 	if usage := m.bossChatUsage(); usage.Running > 0 && len(parts) == 0 {
 		parts = append(parts, "tok measuring")
 	} else if costUSD, ok := bossEstimatedUsageCostUSD(usage); ok && costUSD > 0 {

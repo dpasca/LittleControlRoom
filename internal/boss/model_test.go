@@ -75,7 +75,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	}
 }
 
-func TestModelHeaderShowsLastContextUsage(t *testing.T) {
+func TestModelHeaderShowsLastUsage(t *testing.T) {
 	t.Parallel()
 
 	m := New(context.Background(), nil)
@@ -108,6 +108,52 @@ func TestModelHeaderShowsLastContextUsage(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "last $0.012") {
 		t.Fatalf("view missing last cost estimate:\n%s", rendered)
+	}
+}
+
+func TestBossSidebarShowsReadableChatStats(t *testing.T) {
+	t.Parallel()
+
+	m := New(context.Background(), nil)
+	m.lastAssistantModel = "gpt-5.5"
+	m.haveLastAssistantUsage = true
+	m.lastAssistantUsage = model.LLMUsage{
+		InputTokens:       4321,
+		OutputTokens:      210,
+		TotalTokens:       4531,
+		CachedInputTokens: 800,
+		ReasoningTokens:   55,
+	}
+	m.haveLastContextReport = true
+	m.lastContextReport = bossContextReport{
+		ContextMode:     agentcontext.ContextModeCompacted,
+		MessageCount:    25,
+		TotalMessages:   25,
+		VisibleMessages: 12,
+		SummaryMessages: 13,
+		ApproxChars:     1800,
+	}
+
+	rendered := ansi.Strip(strings.Join(m.bossSidebarLines(54, 20), "\n"))
+	for _, want := range []string{
+		"Boss Chat",
+		"Model",
+		"gpt-5.5",
+		"Reasoning",
+		"high",
+		"Context",
+		"compacted",
+		"12 recent + 13 summarized",
+		"~1.8k chars",
+		"Tokens",
+		"i4.3k o210 c800 r55",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("sidebar missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "ctx compacted") || strings.Contains(rendered, "25t") || strings.Contains(rendered, "1.8kch") {
+		t.Fatalf("sidebar should use readable context wording:\n%s", rendered)
 	}
 }
 

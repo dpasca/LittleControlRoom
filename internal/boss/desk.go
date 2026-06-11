@@ -78,6 +78,9 @@ func (m Model) bossSidebarLines(width, height int) []string {
 	var lines []string
 	nowLimit, decisionLimit, todoLimit, watchingLimit := bossSidebarSectionLimits(height)
 
+	if rows := m.bossDeskChatStatsRows(width); len(rows) > 0 {
+		lines = appendDeskSection(lines, "Boss Chat", rows, width)
+	}
 	if rows := takeDeskRows(m.bossDeskNowRows(width, now), nowLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Now", rows, width)
 	}
@@ -96,6 +99,88 @@ func (m Model) bossSidebarLines(width, height int) []string {
 		lines = appendDeskSection(lines, "Watching", rows, width)
 	}
 	return lines
+}
+
+func (m Model) bossDeskChatStatsRows(width int) []string {
+	rows := []string{}
+	modelName := strings.TrimSpace(m.lastAssistantModel)
+	if modelName == "" && m.assistant != nil {
+		modelName = strings.TrimSpace(m.assistant.model)
+	}
+	if modelName != "" {
+		rows = append(rows, bossDeskFieldRow("Model", modelName, width))
+		rows = append(rows, bossDeskFieldRow("Reasoning", bossAssistantReasoningEffort, width))
+	}
+	if contextRows := m.bossDeskContextRows(width); len(contextRows) > 0 {
+		rows = append(rows, contextRows...)
+	}
+	if m.haveLastAssistantUsage {
+		if tokens := formatBossLLMUsageTokens(m.lastAssistantUsage); tokens != "" {
+			rows = append(rows, bossDeskFieldRow("Tokens", tokens, width))
+		}
+	} else if usage := m.bossChatUsage(); usage.Running > 0 {
+		rows = append(rows, bossDeskFieldRow("Tokens", "measuring", width))
+	}
+	return rows
+}
+
+func (m Model) bossDeskContextRows(width int) []string {
+	report := m.contextReport()
+	if report.MessageCount == 0 && report.FlowEventCount == 0 {
+		return nil
+	}
+	rows := []string{}
+	mode := bossDeskContextModeLabel(report.ContextMode, report.TotalMessages, report.VisibleMessages, report.SummaryMessages)
+	if mode != "" {
+		rows = append(rows, bossDeskFieldRow("Context", mode, width))
+	}
+	if detail := bossDeskContextCountLabel(report.TotalMessages, report.VisibleMessages, report.SummaryMessages); detail != "" {
+		rows = append(rows, bossDeskMutedDetailRow(detail, width))
+	}
+	if report.ApproxChars > 0 {
+		rows = append(rows, bossDeskMutedDetailRow("~"+uistyle.FormatTokenCount(int64(report.ApproxChars))+" chars", width))
+	}
+	return rows
+}
+
+func bossDeskContextModeLabel(mode string, total, visible, summarized int) string {
+	switch strings.TrimSpace(mode) {
+	case "compacted":
+		return "compacted"
+	case "clipped":
+		return "recent chat"
+	case "exact":
+		if summarized > 0 || total > visible {
+			return "recent chat"
+		}
+		return "full chat"
+	default:
+		if summarized > 0 {
+			return "compacted"
+		}
+		if total > visible {
+			return "recent chat"
+		}
+		if total > 0 || visible > 0 {
+			return "full chat"
+		}
+		return ""
+	}
+}
+
+func bossDeskContextCountLabel(total, visible, summarized int) string {
+	switch {
+	case visible > 0 && summarized > 0:
+		return fmt.Sprintf("%d recent + %d summarized", visible, summarized)
+	case visible > 0 && total > visible:
+		return fmt.Sprintf("%d recent of %d messages", visible, total)
+	case visible == 1:
+		return "1 message"
+	case visible > 1:
+		return fmt.Sprintf("%d messages", visible)
+	default:
+		return ""
+	}
 }
 
 func (m Model) bossLogContent(width, height int) string {
@@ -575,6 +660,28 @@ func bossDeskEventStyle(label string) lipgloss.Style {
 
 func bossDeskRow(labelStyle lipgloss.Style, label, text string, width int) string {
 	return bossDeskRowWithHotkey("", labelStyle, label, text, width)
+}
+
+func bossDeskFieldRow(label, text string, width int) string {
+	label = strings.TrimSpace(label)
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	prefix := label
+	if prefix != "" {
+		prefix += " "
+	}
+	textWidth := maxInt(1, width-ansi.StringWidth(prefix))
+	return fitStyledLine(bossMutedStyle.Render(prefix)+bossSummaryTextStyle.Render(fitLine(text, textWidth)), width)
+}
+
+func bossDeskMutedDetailRow(text string, width int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	return bossMutedStyle.Render(fitLine("  "+text, width))
 }
 
 func (m Model) bossDeskAttentionRow(item AttentionItem, labelStyle lipgloss.Style, label, text string, width int) string {
