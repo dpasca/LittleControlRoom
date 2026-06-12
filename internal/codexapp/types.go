@@ -476,43 +476,46 @@ type ModelOption struct {
 }
 
 type Snapshot struct {
-	Provider                 Provider
-	ProjectPath              string
-	ThreadID                 string
-	Preset                   codexcli.Preset
-	PermissionLevel          string
-	BrowserActivity          browserctl.SessionActivity
-	ManagedBrowserSessionKey string
-	CurrentBrowserPageURL    string
-	CurrentBrowserPageStale  bool
-	TranscriptRevision       uint64
-	Phase                    SessionPhase
-	Started                  bool
-	Busy                     bool
-	BusyExternal             bool
-	BusySince                time.Time
-	LastBusyActivityAt       time.Time
-	Closed                   bool
-	ActiveTurnID             string
-	PendingApproval          *ApprovalRequest
-	PendingToolInput         *ToolInputRequest
-	PendingElicitation       *ElicitationRequest
-	Entries                  []TranscriptEntry
-	Transcript               string
-	Status                   string
-	LastError                string
-	LastSystemNotice         string
-	LastActivityAt           time.Time
-	CurrentCWD               string
-	Model                    string
-	ModelProvider            string
-	ReasoningEffort          string
-	ServiceTier              string
-	PendingModel             string
-	PendingReasoning         string
-	TokenUsage               *TokenUsageSnapshot
-	UsageWindows             []UsageWindowSnapshot
-	Goal                     *ThreadGoal
+	Provider                  Provider
+	ProjectPath               string
+	ThreadID                  string
+	Preset                    codexcli.Preset
+	PermissionLevel           string
+	BrowserActivity           browserctl.SessionActivity
+	ManagedBrowserSessionKey  string
+	CurrentBrowserPageURL     string
+	CurrentBrowserPageStale   bool
+	TranscriptRevision        uint64
+	Phase                     SessionPhase
+	Started                   bool
+	Busy                      bool
+	BusyExternal              bool
+	BusySince                 time.Time
+	LastBusyActivityAt        time.Time
+	Closed                    bool
+	ActiveTurnID              string
+	PendingApproval           *ApprovalRequest
+	PendingToolInput          *ToolInputRequest
+	PendingElicitation        *ElicitationRequest
+	Entries                   []TranscriptEntry
+	Transcript                string
+	Status                    string
+	LastError                 string
+	LastSystemNotice          string
+	SuggestedInputDraftID     string
+	SuggestedInputDraft       string
+	SuggestedInputDraftSource string
+	LastActivityAt            time.Time
+	CurrentCWD                string
+	Model                     string
+	ModelProvider             string
+	ReasoningEffort           string
+	ServiceTier               string
+	PendingModel              string
+	PendingReasoning          string
+	TokenUsage                *TokenUsageSnapshot
+	UsageWindows              []UsageWindowSnapshot
+	Goal                      *ThreadGoal
 }
 
 type Session interface {
@@ -574,6 +577,8 @@ type LaunchRequest struct {
 	LCAgentRequestTimeout    time.Duration
 	LCAgentUtilityProvider   string
 	LCAgentUtilityModel      string
+	LCAgentCriticProvider    string
+	LCAgentCriticModel       string
 	LCAgentWebSearchBackend  string
 	LCAgentWebSearchAPIKey   string
 	LCAgentWebSearchEngineID string

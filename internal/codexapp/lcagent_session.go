@@ -30,6 +30,7 @@ const (
 	lcagentDefaultContextProfile  = "balanced"
 	lcagentDefaultRequestTimeout  = 10 * time.Minute
 	lcagentDefaultUtilityProvider = "main"
+	lcagentDefaultCriticProvider  = "off"
 	lcagentDefaultWebSearch       = "off"
 )
 
@@ -62,6 +63,8 @@ type lcagentSession struct {
 	requestTimeout    time.Duration
 	utilityProvider   string
 	utilityModel      string
+	criticProvider    string
+	criticModel       string
 	webSearchBackend  string
 	webSearchAPIKey   string
 	webSearchEngineID string
@@ -101,6 +104,8 @@ type lcagentSession struct {
 	entries                  []TranscriptEntry
 	revision                 uint64
 	cache                    transcriptExportCache
+	suggestedInputDraftID    string
+	suggestedInputDraft      string
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
@@ -146,6 +151,11 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
+	criticProvider := lcagentCriticProviderValue(req.LCAgentCriticProvider)
+	criticModel := ""
+	if resolvedCriticProvider := lcagentResolvedCriticProvider(routePreset, provider, criticProvider); resolvedCriticProvider != "" {
+		criticModel = modeladapter.NormalizeModelForProvider(resolvedCriticProvider, req.LCAgentCriticModel)
+	}
 	session := &lcagentSession{
 		projectPath:              strings.TrimSpace(req.ProjectPath),
 		dataDir:                  dataDir,
@@ -167,6 +177,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		requestTimeout:           requestTimeout,
 		utilityProvider:          utilityProvider,
 		utilityModel:             utilityModel,
+		criticProvider:           criticProvider,
+		criticModel:              criticModel,
 		webSearchBackend:         lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:          strings.TrimSpace(req.LCAgentWebSearchAPIKey),
 		webSearchEngineID:        strings.TrimSpace(req.LCAgentWebSearchEngineID),
@@ -1034,6 +1046,10 @@ type lcagentPreparedRun struct {
 	utilityModel       string
 	utilityAPIKeyName  string
 	utilityAPIKey      string
+	criticProvider     string
+	criticModel        string
+	criticAPIKeyName   string
+	criticAPIKey       string
 	browserControl     string
 	browserSessionKey  string
 	browserProfileKey  string
@@ -1092,6 +1108,8 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	renderedPrompt := firstNonEmpty(displayPrompt, prompt)
 	s.appendEntryLocked(TranscriptUser, renderedPrompt)
 	s.pendingInitialUserEcho = strings.TrimSpace(renderedPrompt)
+	s.suggestedInputDraftID = ""
+	s.suggestedInputDraft = ""
 	provider := firstNonEmpty(s.provider, lcagentDefaultProvider)
 	routePreset := strings.TrimSpace(s.routePreset)
 	sessionAuto := strings.TrimSpace(s.sessionAuto)
@@ -1140,6 +1158,15 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	utilityProvider := firstNonEmpty(s.utilityProvider, lcagentDefaultUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, s.utilityModel)
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
+	criticProvider := firstNonEmpty(s.criticProvider, lcagentDefaultCriticProvider)
+	criticModel := strings.TrimSpace(s.criticModel)
+	criticCredentialProvider := lcagentResolvedCriticProvider(routePreset, provider, criticProvider)
+	if criticCredentialProvider != "" {
+		criticModel = modeladapter.NormalizeModelForProvider(criticCredentialProvider, criticModel)
+	} else {
+		criticModel = ""
+	}
+	criticAPIKeyName, criticAPIKey := s.providerCredentialLocked(criticCredentialProvider)
 	browserControl := "off"
 	browserSessionKey := strings.TrimSpace(s.managedBrowserSessionKey)
 	browserProfileKey := strings.TrimSpace(s.browserProfileKey)
@@ -1186,6 +1213,10 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		utilityModel:       utilityModel,
 		utilityAPIKeyName:  utilityAPIKeyName,
 		utilityAPIKey:      utilityAPIKey,
+		criticProvider:     criticProvider,
+		criticModel:        criticModel,
+		criticAPIKeyName:   criticAPIKeyName,
+		criticAPIKey:       criticAPIKey,
 		browserControl:     browserControl,
 		browserSessionKey:  browserSessionKey,
 		browserProfileKey:  browserProfileKey,
@@ -1234,6 +1265,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--output", "stream-json",
 		"--approval-mode", "ask",
 		"--utility-provider", prepared.utilityProvider,
+		"--critic-provider", prepared.criticProvider,
 		"--web-search-backend", prepared.webSearchBackend,
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
@@ -1247,6 +1279,9 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	}
 	if prepared.utilityModel != "" {
 		args = append(args, "--utility-model", prepared.utilityModel)
+	}
+	if prepared.criticModel != "" {
+		args = append(args, "--critic-model", prepared.criticModel)
 	}
 	if prepared.adminWrite {
 		args = append(args, "--admin-write")
@@ -1300,7 +1335,10 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	if prepared.utilityAPIKeyName != "" && prepared.utilityAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, prepared.utilityAPIKeyName, prepared.utilityAPIKey)
 	}
-	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi")) {
+	if prepared.criticAPIKeyName != "" && prepared.criticAPIKey != "" {
+		cmd.Env = setCommandEnv(cmd.Env, prepared.criticAPIKeyName, prepared.criticAPIKey)
+	}
+	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi") || strings.EqualFold(lcagentResolvedCriticProvider(prepared.routePreset, prepared.provider, prepared.criticProvider), "xiaomi")) {
 		cmd.Env = setCommandEnv(cmd.Env, "XIAOMI_BASE_URL", prepared.xiaomiBaseURL)
 	}
 	if prepared.webSearchAPIKey != "" {
@@ -1596,6 +1634,29 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		} else if message := rawJSONString(event["message"]); message != "" {
 			s.appendAsync(TranscriptStatus, "LCAgent search refinement skipped: "+message)
 		}
+	case "critic_review_started":
+		s.mu.Lock()
+		s.status = "LCAgent critic reviewing turn"
+		s.touchLocked()
+		s.mu.Unlock()
+	case "critic_model_response":
+		modelName := rawJSONString(event["model"])
+		usage, ok := lcagentUsageFromModelResponseEvent(event, modelName)
+		s.mu.Lock()
+		if ok {
+			s.addTokenUsageLocked(usage)
+		}
+		s.touchLocked()
+		s.mu.Unlock()
+	case "critic_review_result":
+		s.handleLCAgentCriticReviewResult(event)
+	case "critic_review_failed":
+		message := firstNonEmpty(rawJSONString(event["message"]), "critic review failed")
+		s.mu.Lock()
+		s.status = "LCAgent critic unavailable"
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, "LCAgent critic unavailable: "+message)
 	case "plan_update":
 		s.appendAsync(TranscriptPlan, lcagentPlanText(event["items"]))
 	case "assistant_message":
@@ -1839,6 +1900,36 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	s.mu.Unlock()
 
 	bridge.handle(request)
+}
+
+func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.RawMessage) {
+	status := strings.ToLower(strings.TrimSpace(rawJSONString(event["status"])))
+	summary := strings.TrimSpace(rawJSONString(event["summary"]))
+	proposed := strings.TrimSpace(rawJSONString(event["proposed_user_message"]))
+	packetHash := strings.TrimSpace(rawJSONString(event["packet_hash"]))
+	if packetHash == "" {
+		packetHash = strings.TrimSpace(rawJSONString(event["session_id"]))
+	}
+
+	text := "LCAgent critic review complete"
+	if status != "" && status != "clean" {
+		text = "LCAgent critic found " + strings.ReplaceAll(status, "_", " ")
+	} else if status == "clean" {
+		text = "LCAgent critic found no concerns"
+	}
+	if summary != "" {
+		text += ": " + summary
+	}
+
+	s.mu.Lock()
+	s.status = text
+	if proposed != "" && status != "clean" {
+		s.suggestedInputDraftID = firstNonEmpty(packetHash, fmt.Sprintf("critic-%d", s.revision+1))
+		s.suggestedInputDraft = proposed
+	}
+	s.appendEntryLocked(TranscriptStatus, text)
+	s.touchLocked()
+	s.mu.Unlock()
 }
 
 func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
@@ -2220,6 +2311,31 @@ func lcagentResolvedUtilityModel(routePreset string, mainProvider string, mainMo
 	return firstNonEmpty(lcagentRoutePresetModel(routePreset), mainModel)
 }
 
+func lcagentCriticProviderValue(configured string) string {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_CRITIC_PROVIDER"))))
+	value = strings.ReplaceAll(value, "_", "-")
+	switch value {
+	case "main", "same", "same-as-main":
+		return "main"
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+		return value
+	default:
+		return lcagentDefaultCriticProvider
+	}
+}
+
+func lcagentResolvedCriticProvider(routePreset string, mainProvider string, configured string) string {
+	criticProvider := lcagentCriticProviderValue(configured)
+	switch criticProvider {
+	case "off":
+		return ""
+	case "main":
+		return firstNonEmpty(lcagentRoutePresetProvider(routePreset), mainProvider, lcagentDefaultProvider)
+	default:
+		return criticProvider
+	}
+}
+
 func (s *lcagentSession) webSearchWarning() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2344,31 +2460,40 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	}
 	tokenUsage := cloneThreadTokenUsage(s.tokenUsage)
 	s.applyContextWindowToTokenUsageLocked(tokenUsage)
+	suggestedDraftID := strings.TrimSpace(s.suggestedInputDraftID)
+	suggestedDraft := strings.TrimSpace(s.suggestedInputDraft)
+	suggestedDraftSource := ""
+	if suggestedDraftID != "" && suggestedDraft != "" {
+		suggestedDraftSource = "lcagent_critic"
+	}
 	return Snapshot{
-		Provider:                 ProviderLCAgent,
-		ProjectPath:              s.projectPath,
-		ThreadID:                 s.threadID,
-		BrowserActivity:          s.browserActivity.Normalize(),
-		ManagedBrowserSessionKey: strings.TrimSpace(s.managedBrowserSessionKey),
-		CurrentBrowserPageURL:    strings.TrimSpace(s.currentBrowserPageURL),
-		CurrentBrowserPageStale:  s.currentBrowserPageStale,
-		TranscriptRevision:       s.revision,
-		Phase:                    phase,
-		Started:                  s.started,
-		Busy:                     s.busy,
-		BusySince:                s.busySince,
-		LastBusyActivityAt:       s.lastBusyActivityAt,
-		Closed:                   s.closed,
-		Status:                   s.status,
-		LastError:                s.lastError,
-		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
-		LastActivityAt:           s.lastActivityAt,
-		CurrentCWD:               s.projectPath,
-		PermissionLevel:          s.effectiveAutoLocked(),
-		Model:                    firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
-		ModelProvider:            firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
-		ReasoningEffort:          s.reasoningEffort,
-		TokenUsage:               exportedTokenUsageSnapshot(tokenUsage),
+		Provider:                  ProviderLCAgent,
+		ProjectPath:               s.projectPath,
+		ThreadID:                  s.threadID,
+		BrowserActivity:           s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey:  strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:     strings.TrimSpace(s.currentBrowserPageURL),
+		CurrentBrowserPageStale:   s.currentBrowserPageStale,
+		TranscriptRevision:        s.revision,
+		Phase:                     phase,
+		Started:                   s.started,
+		Busy:                      s.busy,
+		BusySince:                 s.busySince,
+		LastBusyActivityAt:        s.lastBusyActivityAt,
+		Closed:                    s.closed,
+		Status:                    s.status,
+		LastError:                 s.lastError,
+		SuggestedInputDraftID:     suggestedDraftID,
+		SuggestedInputDraft:       suggestedDraft,
+		SuggestedInputDraftSource: suggestedDraftSource,
+		PendingApproval:           cloneApprovalRequest(s.pendingApproval),
+		LastActivityAt:            s.lastActivityAt,
+		CurrentCWD:                s.projectPath,
+		PermissionLevel:           s.effectiveAutoLocked(),
+		Model:                     firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
+		ModelProvider:             firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
+		ReasoningEffort:           s.reasoningEffort,
+		TokenUsage:                exportedTokenUsageSnapshot(tokenUsage),
 	}
 }
 

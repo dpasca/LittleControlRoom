@@ -90,7 +90,57 @@ func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
 	}
 }
 
+func settingsLCAgentCriticProviderOptions() []settingsLCAgentProviderOption {
+	return []settingsLCAgentProviderOption{
+		{
+			Value:       "off",
+			Label:       "Off",
+			Summary:     "Disable the post-turn critic.",
+			Description: "Default for normal use. LCAgent completes turns without an extra trace-only model review.",
+		},
+		{
+			Value:       "main",
+			Label:       "Same as Main",
+			Summary:     "Use the Main Model provider and model for critic review.",
+			Description: "The critic runs after the lead turn completes, reviews only the captured trace packet, and can draft a follow-up for you to send.",
+		},
+		{
+			Value:       "openrouter",
+			Label:       "OpenRouter",
+			Summary:     "Use OpenRouter for post-turn critic review.",
+			Description: "Uses the saved OpenRouter API key. Leave Critic Model blank to use the standard OpenRouter LCAgent model default.",
+		},
+		{
+			Value:       "openai",
+			Label:       "OpenAI",
+			Summary:     "Use direct OpenAI for post-turn critic review.",
+			Description: "Useful for a high-grade no-tool review model that looks only at the captured turn packet.",
+		},
+		{
+			Value:       "deepseek",
+			Label:       "DeepSeek",
+			Summary:     "Use direct DeepSeek for post-turn critic review.",
+			Description: "Uses the saved DeepSeek API key. Leave Critic Model blank to use the standard DeepSeek LCAgent model default.",
+		},
+		{
+			Value:       "moonshot",
+			Label:       "Moonshot",
+			Summary:     "Use direct Moonshot/Kimi for post-turn critic review.",
+			Description: "Uses the saved Moonshot API key. The critic receives no tools and cannot change files.",
+		},
+		{
+			Value:       "xiaomi",
+			Label:       "Xiaomi",
+			Summary:     "Use direct Xiaomi MiMo for post-turn critic review.",
+			Description: "Uses the saved Xiaomi API key. The critic receives no tools and cannot change files.",
+		},
+	}
+}
+
 func settingsLCAgentProviderOptionsForField(fieldIndex int) []settingsLCAgentProviderOption {
+	if fieldIndex == settingsFieldLCAgentCriticProvider {
+		return settingsLCAgentCriticProviderOptions()
+	}
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		return settingsLCAgentUtilityProviderOptions()
 	}
@@ -105,6 +155,8 @@ func (m Model) openSettingsLCAgentProviderPicker() (tea.Model, tea.Cmd) {
 	m.status = "Choose the Main Model provider for LCAgent."
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		m.status = "Choose the Utility Model provider for LCAgent."
+	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
+		m.status = "Choose the Critic Model provider for LCAgent."
 	}
 	return m, nil
 }
@@ -120,6 +172,9 @@ func (m *Model) closeSettingsLCAgentProviderPicker(status string) {
 func (m Model) settingsLCAgentProviderPickerField() int {
 	if m.settingsSelected == settingsFieldLCAgentUtilityProvider {
 		return settingsFieldLCAgentUtilityProvider
+	}
+	if m.settingsSelected == settingsFieldLCAgentCriticProvider {
+		return settingsFieldLCAgentCriticProvider
 	}
 	return settingsFieldLCAgentProvider
 }
@@ -176,6 +231,8 @@ func (m Model) applySettingsLCAgentProviderPickerSelection(option settingsLCAgen
 	target := "LCAgent provider"
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		target = "Utility Model provider"
+	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
+		target = "Critic Model provider"
 	} else {
 		target = "Main Model provider"
 	}
@@ -204,6 +261,8 @@ func (m Model) renderSettingsLCAgentProviderPickerContent(width, bodyH int) stri
 	title := "LCAgent Provider"
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		title = "Utility Model Provider"
+	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
+		title = "Critic Model Provider"
 	} else {
 		title = "Main Model Provider"
 	}
@@ -273,6 +332,16 @@ func settingsLCAgentProviderOptionValueForField(fieldIndex int, raw string) stri
 		}
 		return normalized
 	}
+	if fieldIndex == settingsFieldLCAgentCriticProvider {
+		switch normalized {
+		case "", "off":
+			return "off"
+		case "main", "same", "same-as-main":
+			return "main"
+		default:
+			return normalized
+		}
+	}
 	if normalized == "" {
 		return "openrouter"
 	}
@@ -288,6 +357,9 @@ func settingsLCAgentProviderOptionLabelForField(fieldIndex int, raw string) stri
 	}
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		return "Same as Main"
+	}
+	if fieldIndex == settingsFieldLCAgentCriticProvider {
+		return "Off"
 	}
 	return "OpenRouter"
 }

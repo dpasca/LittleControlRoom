@@ -347,6 +347,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw string
 	var utilityProviderRaw, utilityModel string
+	var criticProviderRaw, criticModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw string
 	var requestTimeout time.Duration
@@ -369,6 +370,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
+	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "trace-only critic provider after each completed turn: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
+	fs.StringVar(&criticModel, "critic-model", defaultCriticModel, "optional trace-only critic model; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
@@ -471,6 +474,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	utilityProvider, err := normalizeUtilityProvider(utilityProviderRaw)
+	if err != nil {
+		return err
+	}
+	criticProvider, err := normalizeCriticProvider(criticProviderRaw)
 	if err != nil {
 		return err
 	}
@@ -719,7 +726,14 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
+		}, modeladapter.OpenRouterConfig{
+			Model:           criticModel,
+			EnvFile:         envFile,
+			MaxTurns:        1,
+			RequestTimeout:  requestTimeout,
+			Temperature:     temperature,
+			OmitTemperature: omitTemperature,
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -739,7 +753,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, provider, utilityProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -769,6 +783,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		runner.CodeScout = searchRefine.Scout
 		runner.SearchRefineMinBytes = searchRefine.MinBytes
 	}
+	critic := newCriticProfile(criticProvider, criticCfg, providerLabel, client.Model())
 	if err := writer.Write(session.Event{
 		"type":       "search_refine_profile",
 		"session_id": runner.SessionID,
@@ -777,6 +792,17 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"model":      searchRefine.Model,
 		"min_bytes":  searchRefine.MinBytes,
 		"message":    searchRefine.Message,
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
+		"type":       "critic_profile",
+		"session_id": runner.SessionID,
+		"enabled":    critic.Enabled,
+		"provider":   critic.Provider,
+		"model":      critic.Model,
+		"mode":       "trace_only",
+		"message":    critic.Message,
 	}); err != nil {
 		return err
 	}
@@ -986,7 +1012,10 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			if err := runner.Final(final); err != nil {
 				return err
 			}
-			return writeModelContextSnapshot(writer, threadStore, runner.SessionID, "assistant_message", messages, contextCompacted)
+			if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "assistant_message", messages, contextCompacted); err != nil {
+				return err
+			}
+			return maybeRunTraceCritic(ctx, writer, runner, critic, final, messages, contextCompacted)
 		}
 		if threadStore != nil {
 			if err := threadStore.MarkPendingTools("assistant_tool_calls", messages, contextCompacted, msg.ToolCalls); err != nil {
@@ -1062,7 +1091,10 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				if err := runner.Final(final); err != nil {
 					return err
 				}
-				return writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_response", snapshotMessages, contextCompacted)
+				if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_response", snapshotMessages, contextCompacted); err != nil {
+					return err
+				}
+				return maybeRunTraceCritic(ctx, writer, runner, critic, final, snapshotMessages, contextCompacted)
 			}
 			result, err := runner.RunTool(ctx, action)
 			if call.Function.Name == "read_file" {
@@ -1124,7 +1156,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			return err
 		}
 	}
-	return finalizeChatLoopAfterMaxTurns(ctx, writer, runner, threadStore, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions)
+	return finalizeChatLoopAfterMaxTurns(ctx, writer, runner, threadStore, client, finalClient, messages, readLedger, providerLabel, cfg, contextOptions, critic)
 }
 
 func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (*modeladapter.Client, error) {
@@ -1178,7 +1210,7 @@ func shouldBounceFinalAudit(audit script.FinalResponseAudit, feedbackCount int) 
 	return feedbackCount == 0
 }
 
-func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions) error {
+func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions, critic criticProfile) error {
 	maxTurns := client.MaxTurns()
 	filesChanged := runner.FilesTouched()
 	verification := runner.VerificationDetails()
@@ -1226,7 +1258,11 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 	if err := runner.Final(final); err != nil {
 		return err
 	}
-	return writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_handoff", appendAssistantContentForContextSnapshot(compactedMessages, sanitizedContent), true)
+	snapshotMessages := appendAssistantContentForContextSnapshot(compactedMessages, sanitizedContent)
+	if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_handoff", snapshotMessages, true); err != nil {
+		return err
+	}
+	return maybeRunTraceCritic(ctx, writer, runner, critic, final, snapshotMessages, true)
 }
 
 func openRouterMaxTurnsFinalPrompt(maxTurns int, filesChanged, verification []string) string {
