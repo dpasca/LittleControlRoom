@@ -323,6 +323,24 @@ func TestSystemPromptIncludesBrowserAvailability(t *testing.T) {
 	}
 }
 
+func TestSystemPromptIncludesHostEnvironmentFacts(t *testing.T) {
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{
+		HostOS:   "macOS (darwin)",
+		HostArch: "arm64",
+	})
+	for _, want := range []string{
+		"Host environment for this run",
+		"operating system: macOS (darwin)",
+		"architecture: arm64",
+		"You may rely on these host environment facts",
+		"installed apps, or clipboard contents",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestSystemPromptIncludesAdminWriteMode(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{AdminWrite: true})
 	if !strings.Contains(prompt, "admin-write enabled") || !strings.Contains(prompt, "absolute paths outside the workspace") {

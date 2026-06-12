@@ -61,7 +61,7 @@ func TestRunExecScriptedStreamJSON(t *testing.T) {
 	if string(data) != "new\n" {
 		t.Fatalf("README = %q", data)
 	}
-	if !strings.Contains(stdout.String(), `"type":"session_meta"`) || !strings.Contains(stdout.String(), `"type":"project_instructions"`) || !strings.Contains(stdout.String(), `"type":"turn_complete"`) {
+	if !strings.Contains(stdout.String(), `"type":"session_meta"`) || !strings.Contains(stdout.String(), `"host_os":`) || !strings.Contains(stdout.String(), `"host_arch":`) || !strings.Contains(stdout.String(), `"type":"project_instructions"`) || !strings.Contains(stdout.String(), `"type":"turn_complete"`) {
 		t.Fatalf("stdout missing events:\n%s", stdout.String())
 	}
 }
@@ -1179,6 +1179,9 @@ func TestRunExecOpenRouterPrefersExactContinuationSnapshot(t *testing.T) {
 		}
 		if body.Messages[0].Role != "system" || !strings.Contains(body.Messages[0].Content, "Capability status for this run") {
 			t.Fatalf("first message = %#v, want refreshed current system prompt", body.Messages[0])
+		}
+		if !strings.Contains(body.Messages[0].Content, "Host environment for this run") || !strings.Contains(body.Messages[0].Content, "operating system:") {
+			t.Fatalf("refreshed system prompt missing host environment:\n%s", body.Messages[0].Content)
 		}
 		if !strings.Contains(body.Messages[0].Content, "Previous LCAgent session context") || !strings.Contains(body.Messages[0].Content, "latest current user request below is authoritative") {
 			t.Fatalf("refreshed system prompt missing resume boundary:\n%s", body.Messages[0].Content)

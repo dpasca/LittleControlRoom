@@ -13,6 +13,8 @@ type SystemPromptOptions struct {
 	ManagedProcessesEnabled bool
 	AdminWrite              bool
 	BrowserAvailable        bool
+	HostOS                  string
+	HostArch                string
 }
 
 func SystemPrompt(skillIndex, projectInstructions string) string {
@@ -41,6 +43,9 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		fmt.Sprintf("- managed background processes available: %s", yesNo(opts.ManagedProcessesEnabled)),
 		fmt.Sprintf("- admin write available: %s", yesNo(opts.AdminWrite)),
 		fmt.Sprintf("- public web search available: %s", yesNo(opts.WebSearchEnabled)),
+	}
+	lines = append(lines, hostEnvironmentPromptLines(opts)...)
+	lines = append(lines,
 		"Use the provided tools for all workspace inspection, edits, plan updates, and final responses.",
 		"The latest user request is the active objective for this turn. Treat compacted, resumed, or inherited context as background; when it conflicts with the latest request, follow the latest request.",
 		"When the current user request asks you to carry out a proposed plan or selected option, start executing it within the current autonomy and tool policy unless a concrete blocker or unsafe ambiguity remains.",
@@ -58,7 +63,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"For broad searches that may have many hits, set search output_mode=compact and include an intent sentence describing what you are trying to learn. If a search result is condensed by a utility model, treat it as routing advice only: read the named files and line ranges before making final claims.",
 		"Use read_file for targeted ranges. Reading from line 1 is useful for imports/package context, but do not default to first-N-line scouting when an outline or search can locate the relevant range.",
 		readScoutingLine,
-	}
+	)
 	if opts.WebSearchEnabled {
 		lines = append(lines,
 			"Use web_search for current public web information or documentation discovery when workspace evidence is not enough; cite URLs from the tool result in final_response when web evidence affects the answer.",
@@ -122,6 +127,23 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		lines = append(lines, "", strings.TrimSpace(projectInstructions))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func hostEnvironmentPromptLines(opts SystemPromptOptions) []string {
+	hostOS := strings.TrimSpace(opts.HostOS)
+	hostArch := strings.TrimSpace(opts.HostArch)
+	if hostOS == "" && hostArch == "" {
+		return nil
+	}
+	lines := []string{"Host environment for this run:"}
+	if hostOS != "" {
+		lines = append(lines, "- operating system: "+hostOS)
+	}
+	if hostArch != "" {
+		lines = append(lines, "- architecture: "+hostArch)
+	}
+	lines = append(lines, "You may rely on these host environment facts when the user asks about the current machine; use tools for finer-grained details such as OS version, installed apps, or clipboard contents.")
+	return lines
 }
 
 func yesNo(value bool) string {

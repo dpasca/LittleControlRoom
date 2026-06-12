@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -532,9 +533,12 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	defer writer.Close()
+	hostOS, hostArch := currentHostEnvironment()
 	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, buildinfo.Version(), started)
 	meta["thread_id"] = threadID
 	meta["run_id"] = sessionID
+	meta["host_os"] = hostOS
+	meta["host_arch"] = hostArch
 	meta["admin_write"] = adminWrite
 	meta["approval_mode"] = approvalMode
 	meta["request_timeout"] = requestTimeout.String()
@@ -1637,9 +1641,31 @@ func modelToolOptions(profile tools.FileProfile, limits tools.FileLimits) modela
 }
 
 func modelSystemPromptOptions(profile tools.FileProfile, limits tools.FileLimits) modeladapter.SystemPromptOptions {
+	hostOS, hostArch := currentHostEnvironment()
 	return modeladapter.SystemPromptOptions{
 		ToolProfile:          string(profile),
 		DefaultReadLineLimit: limits.DefaultReadLineLimit,
 		MaxReadLineLimit:     limits.MaxReadLineLimit,
+		HostOS:               hostOS,
+		HostArch:             hostArch,
+	}
+}
+
+func currentHostEnvironment() (string, string) {
+	return hostOSDisplayName(runtime.GOOS), strings.TrimSpace(runtime.GOARCH)
+}
+
+func hostOSDisplayName(goos string) string {
+	switch strings.ToLower(strings.TrimSpace(goos)) {
+	case "":
+		return ""
+	case "darwin":
+		return "macOS (darwin)"
+	case "linux":
+		return "Linux (linux)"
+	case "windows":
+		return "Windows (windows)"
+	default:
+		return strings.TrimSpace(goos)
 	}
 }
