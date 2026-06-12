@@ -789,6 +789,8 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		LCAgentRequestTimeout:    m.lcagentRequestTimeout(),
 		LCAgentUtilityProvider:   m.lcagentUtilityProvider(),
 		LCAgentUtilityModel:      m.lcagentUtilityModel(),
+		LCAgentCriticProvider:    m.lcagentCriticProvider(),
+		LCAgentCriticModel:       m.lcagentCriticModel(),
 		LCAgentWebSearchBackend:  m.lcagentWebSearchBackend(),
 		LCAgentWebSearchAPIKey:   m.lcagentWebSearchAPIKey(),
 		LCAgentWebSearchEngineID: m.lcagentWebSearchEngineID(),
@@ -883,6 +885,8 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		previous.LCAgentRequestTimeout != saved.LCAgentRequestTimeout ||
 		strings.TrimSpace(previous.LCAgentUtilityProvider) != strings.TrimSpace(saved.LCAgentUtilityProvider) ||
 		strings.TrimSpace(previous.LCAgentUtilityModel) != strings.TrimSpace(saved.LCAgentUtilityModel) ||
+		strings.TrimSpace(previous.LCAgentCriticProvider) != strings.TrimSpace(saved.LCAgentCriticProvider) ||
+		strings.TrimSpace(previous.LCAgentCriticModel) != strings.TrimSpace(saved.LCAgentCriticModel) ||
 		strings.TrimSpace(previous.LCAgentWebSearchBackend) != strings.TrimSpace(saved.LCAgentWebSearchBackend) ||
 		strings.TrimSpace(previous.LCAgentWebSearchAPIKey) != strings.TrimSpace(saved.LCAgentWebSearchAPIKey) ||
 		strings.TrimSpace(previous.LCAgentWebSearchEngineID) != strings.TrimSpace(saved.LCAgentWebSearchEngineID) ||
@@ -916,6 +920,8 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentRequestTimeout:    settings.LCAgentRequestTimeout,
 		LCAgentUtilityProvider:   strings.TrimSpace(settings.LCAgentUtilityProvider),
 		LCAgentUtilityModel:      strings.TrimSpace(settings.LCAgentUtilityModel),
+		LCAgentCriticProvider:    strings.TrimSpace(settings.LCAgentCriticProvider),
+		LCAgentCriticModel:       strings.TrimSpace(settings.LCAgentCriticModel),
 		LCAgentWebSearchBackend:  strings.TrimSpace(settings.LCAgentWebSearchBackend),
 		LCAgentWebSearchAPIKey:   strings.TrimSpace(settings.LCAgentWebSearchAPIKey),
 		LCAgentWebSearchEngineID: strings.TrimSpace(settings.LCAgentWebSearchEngineID),
@@ -1071,6 +1077,14 @@ func (m Model) lcagentUtilityProvider() string {
 
 func (m Model) lcagentUtilityModel() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentUtilityModel)
+}
+
+func (m Model) lcagentCriticProvider() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentCriticProvider)
+}
+
+func (m Model) lcagentCriticModel() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentCriticModel)
 }
 
 func (m Model) lcagentWebSearchBackend() string {

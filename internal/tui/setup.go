@@ -635,6 +635,8 @@ func (m Model) setupConfigFieldIndexes() []int {
 		fields = append(fields,
 			settingsFieldLCAgentUtilityProvider,
 			settingsFieldLCAgentUtilityModel,
+			settingsFieldLCAgentCriticProvider,
+			settingsFieldLCAgentCriticModel,
 		)
 		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
@@ -741,6 +743,8 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
 	settings.LCAgentUtilityProvider = m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)
 	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
+	settings.LCAgentCriticProvider = m.settingsFieldValue(settingsFieldLCAgentCriticProvider)
+	settings.LCAgentCriticModel = m.settingsFieldValue(settingsFieldLCAgentCriticModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)

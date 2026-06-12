@@ -598,6 +598,31 @@ func (m *Model) storeCodexSnapshot(projectPath string, snapshot codexapp.Snapsho
 		m.resetCodexTranscriptCaches(projectPath)
 	}
 	m.codexSnapshots[projectPath] = snapshot
+	m.maybeApplyCodexSuggestedInputDraft(projectPath, snapshot)
+}
+
+func (m *Model) maybeApplyCodexSuggestedInputDraft(projectPath string, snapshot codexapp.Snapshot) {
+	projectPath = strings.TrimSpace(projectPath)
+	draftID := strings.TrimSpace(snapshot.SuggestedInputDraftID)
+	text := strings.TrimSpace(snapshot.SuggestedInputDraft)
+	if projectPath == "" || draftID == "" || text == "" {
+		return
+	}
+	if m.codexSuggestedDraftsApplied == nil {
+		m.codexSuggestedDraftsApplied = make(map[string]string)
+	}
+	if m.codexSuggestedDraftsApplied[projectPath] == draftID {
+		return
+	}
+	if !m.currentCodexDraftFor(projectPath).Empty() {
+		return
+	}
+	m.codexSuggestedDraftsApplied[projectPath] = draftID
+	m.restoreCodexDraft(projectPath, codexDraft{Text: text})
+	if strings.TrimSpace(m.codexVisibleProject) == projectPath {
+		m.status = "LCAgent critic drafted a follow-up for review."
+		m.syncCodexComposerSize()
+	}
 }
 
 func (m *Model) stageEmbeddedModelSelectionInCache(projectPath string, provider codexapp.Provider, model, reasoning string) (codexapp.Snapshot, bool) {
@@ -956,6 +981,12 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		}
 		if strings.TrimSpace(req.LCAgentUtilityModel) == "" {
 			req.LCAgentUtilityModel = m.lcagentUtilityModel()
+		}
+		if strings.TrimSpace(req.LCAgentCriticProvider) == "" {
+			req.LCAgentCriticProvider = m.lcagentCriticProvider()
+		}
+		if strings.TrimSpace(req.LCAgentCriticModel) == "" {
+			req.LCAgentCriticModel = m.lcagentCriticModel()
 		}
 		if strings.TrimSpace(req.LCAgentWebSearchBackend) == "" {
 			req.LCAgentWebSearchBackend = m.lcagentWebSearchBackend()

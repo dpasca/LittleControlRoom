@@ -54,6 +54,8 @@ const (
 	settingsFieldLCAgentRequestTimeout
 	settingsFieldLCAgentUtilityProvider
 	settingsFieldLCAgentUtilityModel
+	settingsFieldLCAgentCriticProvider
+	settingsFieldLCAgentCriticModel
 	settingsFieldLCAgentWebSearchBackend
 	settingsFieldLCAgentWebSearchAPIKey
 	settingsFieldLCAgentWebSearchEngineID
@@ -215,6 +217,8 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentReasoning,
 				settingsFieldLCAgentUtilityProvider,
 				settingsFieldLCAgentUtilityModel,
+				settingsFieldLCAgentCriticProvider,
+				settingsFieldLCAgentCriticModel,
 				settingsFieldOpenRouterAPIKey,
 				settingsFieldOpenAIAPIKey,
 				settingsFieldDeepSeekAPIKey,
@@ -383,6 +387,7 @@ func settingsFieldUsesPicker(index int) bool {
 		index == settingsFieldBossChatBackend ||
 		index == settingsFieldLCAgentProvider ||
 		index == settingsFieldLCAgentUtilityProvider ||
+		index == settingsFieldLCAgentCriticProvider ||
 		index == settingsFieldBrowserAutomation ||
 		index == settingsFieldLCAgentWebSearchBackend ||
 		settingsFieldUsesChoicePicker(index)
@@ -710,6 +715,9 @@ func (m *Model) moveSettingsSectionMenu(delta int) tea.Cmd {
 }
 
 func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
+	if fieldIndex >= 0 && fieldIndex < len(m.settingsFields) {
+		m.settingsSelected = fieldIndex
+	}
 	switch fieldIndex {
 	case settingsFieldAIBackend:
 		return m.openSettingsAIBackendPicker()
@@ -718,6 +726,8 @@ func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
 	case settingsFieldLCAgentProvider:
 		return m.openSettingsLCAgentProviderPicker()
 	case settingsFieldLCAgentUtilityProvider:
+		return m.openSettingsLCAgentProviderPicker()
+	case settingsFieldLCAgentCriticProvider:
 		return m.openSettingsLCAgentProviderPicker()
 	case settingsFieldBrowserAutomation:
 		return m.openSettingsBrowserAutomationPicker()
@@ -783,6 +793,8 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldLCAgentRequestTimeout),
 		m.settingsFieldValue(settingsFieldLCAgentUtilityProvider),
 		m.settingsFieldValue(settingsFieldLCAgentUtilityModel),
+		m.settingsFieldValue(settingsFieldLCAgentCriticProvider),
+		m.settingsFieldValue(settingsFieldLCAgentCriticModel),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID),
@@ -1080,6 +1092,8 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendOllama)
 	case settingsFieldLCAgentUtilityModel:
 		return settingsLCAgentUtilityProviderValue(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off"
+	case settingsFieldLCAgentCriticModel:
+		return settingsLCAgentCriticProviderValue(m.settingsFieldValue(settingsFieldLCAgentCriticProvider)) != "off"
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -1112,9 +1126,15 @@ func settingsLCAgentCredentialFieldRelevant(settings config.EditableSettings, pr
 		return true
 	}
 	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
-	return !strings.EqualFold(utilityProvider, "off") &&
+	if !strings.EqualFold(utilityProvider, "off") &&
 		!strings.EqualFold(utilityProvider, "main") &&
-		strings.EqualFold(strings.TrimSpace(utilityProvider), strings.TrimSpace(provider))
+		strings.EqualFold(strings.TrimSpace(utilityProvider), strings.TrimSpace(provider)) {
+		return true
+	}
+	criticProvider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+	return !strings.EqualFold(criticProvider, "off") &&
+		!strings.EqualFold(criticProvider, "main") &&
+		strings.EqualFold(strings.TrimSpace(criticProvider), strings.TrimSpace(provider))
 }
 
 func settingsBossModelFieldsRelevant(settings config.EditableSettings) bool {
@@ -1205,6 +1225,8 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		fields = append(fields,
 			settingsFieldLCAgentUtilityProvider,
 			settingsFieldLCAgentUtilityModel,
+			settingsFieldLCAgentCriticProvider,
+			settingsFieldLCAgentCriticModel,
 		)
 		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
@@ -1629,6 +1651,8 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentContextProfile = m.settingsFieldValue(settingsFieldLCAgentContextProfile)
 	settings.LCAgentUtilityProvider = m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)
 	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
+	settings.LCAgentCriticProvider = m.settingsFieldValue(settingsFieldLCAgentCriticProvider)
+	settings.LCAgentCriticModel = m.settingsFieldValue(settingsFieldLCAgentCriticModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
@@ -2086,6 +2110,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Provider Credentials"
 		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentUtilityModel:
 			return "Utility Model"
+		case settingsFieldLCAgentCriticProvider, settingsFieldLCAgentCriticModel:
+			return "Critic Model"
 		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
 			return "Web Search"
 		case settingsFieldLCAgentAuto, settingsFieldLCAgentAdminWrite, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
@@ -2527,6 +2553,30 @@ func settingsLCAgentUtilityProviderValue(raw string) string {
 	}
 }
 
+func settingsLCAgentCriticDefaultLabel(settings config.EditableSettings) string {
+	provider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+	if provider == "off" {
+		return "off"
+	}
+	if provider == "main" {
+		mainProvider := settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings))
+		return "same as Main Model (" + mainProvider + " / " + settingsLCAgentMainModel(settings) + ")"
+	}
+	return lcagentDefaultModelForProvider(provider)
+}
+
+func settingsLCAgentCriticProviderValue(raw string) string {
+	normalized := normalizeSettingsChoice(raw)
+	switch normalized {
+	case "", "off":
+		return "off"
+	case "main", "same", "same-as-main":
+		return "main"
+	default:
+		return normalized
+	}
+}
+
 func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
 		return modelName + " from " + brand.BossAssistantModelEnvVar
@@ -2818,7 +2868,7 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsAIBackendValue(selected, inputWidth)
 		case settingsFieldBossChatBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
-		case settingsFieldLCAgentProvider, settingsFieldLCAgentUtilityProvider:
+		case settingsFieldLCAgentProvider, settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentCriticProvider:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentProviderValue(fieldIndex, selected, inputWidth)
 		case settingsFieldBrowserAutomation:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
@@ -2866,6 +2916,8 @@ func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
 		return "Default: " + settingsLCAgentMainModel(settings)
 	case settingsFieldLCAgentUtilityModel:
 		return "Default: " + settingsLCAgentUtilityDefaultLabel(settings)
+	case settingsFieldLCAgentCriticModel:
+		return "Default: " + settingsLCAgentCriticDefaultLabel(settings)
 	default:
 		return ""
 	}
@@ -3240,6 +3292,21 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
+			"Critic model provider",
+			"Press Enter to choose the post-turn trace-only critic provider, use the Main Model, or turn the critic off.",
+			settings.LCAgentCriticProvider,
+			32,
+			settingsSectionLCAgent,
+		),
+		newSettingsFieldWithPlaceholder(
+			"Critic model",
+			"Optional model ID for the post-turn trace-only critic. Blank uses the selected critic provider default.",
+			settings.LCAgentCriticModel,
+			256,
+			"Default: "+settingsLCAgentCriticDefaultLabel(settings),
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
 			"LCAgent web search",
 			"Press Enter to choose Off, Exa, Google, or SearXNG.",
 			settings.LCAgentWebSearchBackend,
@@ -3422,6 +3489,8 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.LCAgentContextProfile = strings.TrimSpace(settings.LCAgentContextProfile)
 	settings.LCAgentUtilityProvider = strings.TrimSpace(settings.LCAgentUtilityProvider)
 	settings.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
+	settings.LCAgentCriticProvider = strings.TrimSpace(settings.LCAgentCriticProvider)
+	settings.LCAgentCriticModel = strings.TrimSpace(settings.LCAgentCriticModel)
 	settings.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
@@ -3677,6 +3746,31 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 		settings := m.settingsDraftForInferenceStatus()
 		return "Blank uses " + settingsLCAgentUtilityDefaultLabel(settings) + ". Press Enter to fetch/select provider models when available, or type an exact ID."
+	case settingsFieldLCAgentCriticProvider:
+		switch settingsLCAgentCriticProviderValue(field.input.Value()) {
+		case "off":
+			return "The post-turn trace-only critic is off."
+		case "main":
+			return "The post-turn trace-only critic will use the same provider and model as the Main Model."
+		case "openrouter":
+			return "The post-turn trace-only critic will use OpenRouter without tools after each completed turn."
+		case "deepseek":
+			return "The post-turn trace-only critic will use direct DeepSeek without tools after each completed turn."
+		case "openai":
+			return "The post-turn trace-only critic will use direct OpenAI without tools after each completed turn."
+		case "moonshot":
+			return "The post-turn trace-only critic will use direct Moonshot/Kimi without tools after each completed turn."
+		case "xiaomi":
+			return "The post-turn trace-only critic will use direct Xiaomi MiMo without tools after each completed turn."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentCriticModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "The post-turn trace-only critic will request " + model + " and can only review the captured turn packet."
+		}
+		settings := m.settingsDraftForInferenceStatus()
+		return "Blank uses " + settingsLCAgentCriticDefaultLabel(settings) + ". The critic can suggest a follow-up draft, but cannot send it."
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":

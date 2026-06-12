@@ -53,6 +53,50 @@ func TestVisibleCodexAltEnterInsertsNewline(t *testing.T) {
 	}
 }
 
+func TestStoreCodexSnapshotAppliesCriticSuggestedDraftOnce(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+	}
+
+	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
+		Provider:              codexapp.ProviderLCAgent,
+		ProjectPath:           projectPath,
+		SuggestedInputDraftID: "critic-1",
+		SuggestedInputDraft:   "Please verify the failing test before continuing.",
+	})
+	if got := m.codexInput.Value(); got != "Please verify the failing test before continuing." {
+		t.Fatalf("composer draft = %q", got)
+	}
+	if got := m.status; got != "LCAgent critic drafted a follow-up for review." {
+		t.Fatalf("status = %q", got)
+	}
+
+	m.codexInput.SetValue("")
+	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
+		Provider:              codexapp.ProviderLCAgent,
+		ProjectPath:           projectPath,
+		SuggestedInputDraftID: "critic-1",
+		SuggestedInputDraft:   "Please verify the failing test before continuing.",
+	})
+	if got := m.codexInput.Value(); got != "" {
+		t.Fatalf("same critic draft reapplied after clearing = %q", got)
+	}
+
+	m.codexInput.SetValue("human draft")
+	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
+		Provider:              codexapp.ProviderLCAgent,
+		ProjectPath:           projectPath,
+		SuggestedInputDraftID: "critic-2",
+		SuggestedInputDraft:   "Please inspect the changed files.",
+	})
+	if got := m.codexInput.Value(); got != "human draft" {
+		t.Fatalf("critic draft overwrote human draft = %q", got)
+	}
+}
+
 func TestVisibleCodexCtrlVAttachesClipboardImage(t *testing.T) {
 	previousExporter := clipboardImageExporter
 	clipboardImageExporter = func() (string, error) {
