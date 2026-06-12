@@ -7,6 +7,7 @@ import (
 
 	"lcroom/internal/lcagent/modeladapter"
 	"lcroom/internal/lcagent/script"
+	"lcroom/internal/lcagent/tools"
 )
 
 func TestParseCriticReviewPayloadFromFencedJSON(t *testing.T) {
@@ -27,6 +28,51 @@ func TestParseCriticReviewPayloadFromFencedJSON(t *testing.T) {
 	}
 	if payload.ProposedUserMessage != "Please run the tests." {
 		t.Fatalf("proposed message = %q", payload.ProposedUserMessage)
+	}
+}
+
+func TestBuildCriticReviewPacketAddsEvidenceExcerptsForTruncatedToolOutput(t *testing.T) {
+	sourceEvidence := `textbox "file content" [ref=e385]: "const tests = [{ input: {\"ops\":[{\"attributes\":{\"indent\":1,\"list\":\"bullet\"},\"insert\":\"\\n\"},{\"attributes\":{\"slackemoji\":true},\"insert\":\"party\"},{\"attributes\":{\"slackmention\":\"U123\"},\"insert\":\"Davide\"}]}}];"`
+	output := "status: navigated\n" +
+		strings.Repeat("github navigation chrome\n", 220) +
+		sourceEvidence +
+		strings.Repeat("\nfooter chrome", 220)
+	body, err := json.Marshal(tools.ToolResult{Success: true, Output: output})
+	if err != nil {
+		t.Fatalf("marshal tool result: %v", err)
+	}
+	packet := buildCriticReviewPacket("sess-1", "Did you read the file?", script.Action{
+		Outcome: "success",
+		Summary: "I read `textbox \"file content\"` and saw \"indent\", \"slackemoji\", and \"slackmention\" in the source.",
+	}, []modeladapter.Message{{
+		Role:       "tool",
+		Content:    string(body),
+		ToolCallID: "call_1",
+	}}, false)
+
+	if len(packet.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(packet.Messages))
+	}
+	msg := packet.Messages[0]
+	if !msg.Truncated {
+		t.Fatalf("tool message should be truncated")
+	}
+	if len(msg.EvidenceExcerpts) == 0 {
+		t.Fatalf("expected evidence excerpts for truncated tool output")
+	}
+	var joined strings.Builder
+	for _, excerpt := range msg.EvidenceExcerpts {
+		joined.WriteString(excerpt.Text)
+		joined.WriteByte('\n')
+		if excerpt.Source != "tool_result.output" {
+			t.Fatalf("excerpt source = %q, want tool_result.output", excerpt.Source)
+		}
+	}
+	evidence := joined.String()
+	for _, want := range []string{`textbox "file content"`, "indent", "slackemoji", "slackmention"} {
+		if !strings.Contains(evidence, want) {
+			t.Fatalf("evidence excerpts missing %q:\n%s", want, evidence)
+		}
 	}
 }
 
