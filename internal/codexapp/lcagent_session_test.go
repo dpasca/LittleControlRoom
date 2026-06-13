@@ -388,6 +388,73 @@ func TestLCAgentSubmitInputQueuesSteerDuringBusyRun(t *testing.T) {
 	}
 }
 
+func TestLCAgentSessionModelRequestProgressUpdatesInPlace(t *testing.T) {
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		started:     true,
+		busy:        true,
+		status:      "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"model_request_started","session_id":"lca_model_progress","provider":"deepseek","model":"deepseek-v4-pro","phase":"tool_loop","turn":2,"attempt":1}`))
+	first := session.Snapshot()
+	if strings.Contains(first.Transcript, "still waiting") {
+		t.Fatalf("started event should not render as still waiting:\n%s", first.Transcript)
+	}
+	session.handleEvent([]byte(`{"type":"model_request_progress","session_id":"lca_model_progress","provider":"deepseek","model":"deepseek-v4-pro","phase":"tool_loop","turn":2,"attempt":1,"elapsed_ms":125000}`))
+	session.handleEvent([]byte(`{"type":"model_request_progress","session_id":"lca_model_progress","provider":"deepseek","model":"deepseek-v4-pro","phase":"tool_loop","turn":2,"attempt":1,"elapsed_ms":185000}`))
+	progress := session.Snapshot()
+	if got := strings.Count(progress.Transcript, "LCAgent still waiting for model response"); got != 1 {
+		t.Fatalf("progress updates should replace one line, got %d:\n%s", got, progress.Transcript)
+	}
+	if !strings.Contains(progress.Transcript, "elapsed 03:05") {
+		t.Fatalf("progress transcript missing latest elapsed duration:\n%s", progress.Transcript)
+	}
+	if progress.LastBusyActivityAt.IsZero() {
+		t.Fatalf("LastBusyActivityAt should advance on model progress")
+	}
+
+	session.handleEvent([]byte(`{"type":"model_response","session_id":"lca_model_progress","provider":"deepseek","model":"deepseek-v4-pro","phase":"tool_loop","turn":2,"tool_call_count":1,"finish_reason":"tool_calls"}`))
+	snapshot := session.Snapshot()
+	if strings.Contains(snapshot.Transcript, "still waiting") {
+		t.Fatalf("model_response should replace stale progress text:\n%s", snapshot.Transcript)
+	}
+	if got := strings.Count(snapshot.Transcript, "LCAgent model response received"); got != 1 {
+		t.Fatalf("model response line count = %d, want 1:\n%s", got, snapshot.Transcript)
+	}
+	for _, want := range []string{"turn 2", "tool loop", "deepseek-v4-pro", "1 tool call"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("model response transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+}
+
+func TestLCAgentSessionModelRequestTerminalFailureReplacesProgress(t *testing.T) {
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		started:     true,
+		busy:        true,
+		status:      "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"model_request_started","session_id":"lca_model_failure","provider":"xiaomi","model":"mimo-v2.5-pro","phase":"tool_loop","turn":3,"attempt":3}`))
+	session.handleEvent([]byte(`{"type":"model_request_progress","session_id":"lca_model_failure","provider":"xiaomi","model":"mimo-v2.5-pro","phase":"tool_loop","turn":3,"attempt":3,"elapsed_ms":600000}`))
+	session.handleEvent([]byte(`{"type":"provider_failure","session_id":"lca_model_failure","provider":"xiaomi","model":"mimo-v2.5-pro","phase":"tool_loop","turn":3,"attempt":3,"kind":"timeout","message":"context deadline exceeded","retryable":true,"retrying":false}`))
+
+	snapshot := session.Snapshot()
+	if strings.Contains(snapshot.Transcript, "still waiting") {
+		t.Fatalf("terminal provider failure should replace stale progress text:\n%s", snapshot.Transcript)
+	}
+	for _, want := range []string{"LCAgent model request failed", "turn 3", "tool loop", "mimo-v2.5-pro", "attempt 3", "timeout"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("failure transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+	if got := strings.Count(snapshot.Transcript, "context deadline exceeded"); got != 1 {
+		t.Fatalf("provider failure error line count = %d, want 1:\n%s", got, snapshot.Transcript)
+	}
+}
+
 func TestLCAgentSessionApprovalRequestRoundTrip(t *testing.T) {
 	stdin := &recordingWriteCloser{}
 	session := &lcagentSession{
@@ -1364,6 +1431,41 @@ func TestLCAgentReplayRestoresBrowserPageEvents(t *testing.T) {
 	}
 	if snapshot.CurrentBrowserPageStale {
 		t.Fatalf("CurrentBrowserPageStale = true, want false")
+	}
+}
+
+func TestLCAgentReplayShowsModelRequestFailureAndProviderRetry(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_model_failure"
+	started := time.Date(2026, 6, 13, 6, 0, 0, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro"},
+		{"type": "model_request_started", "session_id": sessionID, "timestamp": started.Add(time.Second).Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro", "phase": "tool_loop", "turn": 3, "attempt": 1},
+		{"type": "model_request_progress", "session_id": sessionID, "timestamp": started.Add(30 * time.Second).Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro", "phase": "tool_loop", "turn": 3, "attempt": 1, "elapsed_ms": 30000},
+		{"type": "provider_failure", "session_id": sessionID, "timestamp": started.Add(10 * time.Minute).Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro", "phase": "tool_loop", "turn": 3, "attempt": 1, "kind": "timeout", "message": "context deadline exceeded", "retryable": true, "retrying": true, "retry_delay_ms": 250},
+		{"type": "provider_retry", "session_id": sessionID, "timestamp": started.Add(10*time.Minute + 250*time.Millisecond).Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro", "phase": "tool_loop", "turn": 3, "attempt": 2, "delay_ms": 250},
+		{"type": "model_request_started", "session_id": sessionID, "timestamp": started.Add(10*time.Minute + 500*time.Millisecond).Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro", "phase": "tool_loop", "turn": 3, "attempt": 2},
+		{"type": "provider_failure", "session_id": sessionID, "timestamp": started.Add(20 * time.Minute).Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro", "phase": "tool_loop", "turn": 3, "attempt": 2, "kind": "timeout", "message": "context deadline exceeded", "retryable": true, "retrying": false},
+	})
+
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
+	}
+	var transcript strings.Builder
+	for _, entry := range replay.entries {
+		transcript.WriteString(entry.Text)
+		transcript.WriteByte('\n')
+	}
+	got := transcript.String()
+	if strings.Contains(got, "still waiting") {
+		t.Fatalf("terminal provider failure should replace replay progress text:\n%s", got)
+	}
+	for _, want := range []string{"LCAgent retrying xiaomi request (attempt 2)", "LCAgent model request failed", "attempt 2", "LCAgent xiaomi failure: timeout"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("replay transcript missing %q:\n%s", want, got)
+		}
 	}
 }
 

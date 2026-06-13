@@ -1492,6 +1492,13 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.status = "LCAgent thread " + firstNonEmpty(threadID, id, "started")
 		s.touchLocked()
 		s.mu.Unlock()
+	case "model_request_started", "model_request_progress":
+		if text := lcagentModelRequestText(event); text != "" {
+			s.mu.Lock()
+			s.status = text
+			s.upsertEntryLocked(lcagentModelRequestItemID(event), TranscriptStatus, text)
+			s.mu.Unlock()
+		}
 	case "model_response":
 		modelName := rawJSONString(event["model"])
 		usage, ok := lcagentUsageFromModelResponseEvent(event, modelName)
@@ -1501,6 +1508,10 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		}
 		if ok {
 			s.addTokenUsageLocked(usage)
+		}
+		if text := lcagentModelResponseText(event); text != "" {
+			s.status = text
+			s.upsertExistingEntryLocked(lcagentModelRequestItemID(event), TranscriptStatus, text)
 		}
 		s.touchLocked()
 		s.mu.Unlock()
@@ -1585,6 +1596,14 @@ func (s *lcagentSession) handleEvent(line []byte) {
 	case "repair_guidance":
 		s.appendAsync(TranscriptStatus, lcagentRepairGuidanceText(event))
 	case "provider_failure":
+		if !rawJSONBool(event["retrying"]) {
+			if text := lcagentModelRequestFailureText(event); text != "" {
+				s.mu.Lock()
+				s.status = text
+				s.upsertExistingEntryLocked(lcagentModelRequestItemID(event), TranscriptStatus, text)
+				s.mu.Unlock()
+			}
+		}
 		s.appendAsync(TranscriptError, lcagentProviderFailureText(event))
 	case "provider_retry":
 		s.appendAsync(TranscriptStatus, lcagentProviderRetryText(event))
@@ -2059,16 +2078,54 @@ func (s *lcagentSession) appendAsync(kind TranscriptKind, text string) {
 }
 
 func (s *lcagentSession) appendEntryLocked(kind TranscriptKind, text string) {
+	s.appendEntryWithIDLocked("", kind, text)
+}
+
+func (s *lcagentSession) appendEntryWithIDLocked(itemID string, kind TranscriptKind, text string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return
 	}
+	if strings.TrimSpace(itemID) == "" {
+		itemID = fmt.Sprintf("lcagent-%d", len(s.entries)+1)
+	}
 	s.entries = append(s.entries, TranscriptEntry{
-		ItemID: fmt.Sprintf("lcagent-%d", len(s.entries)+1),
+		ItemID: itemID,
 		Kind:   kind,
 		Text:   text,
 	})
 	s.touchLocked()
+}
+
+func (s *lcagentSession) upsertEntryLocked(itemID string, kind TranscriptKind, text string) {
+	if s.upsertExistingEntryLocked(itemID, kind, text) {
+		return
+	}
+	s.appendEntryWithIDLocked(itemID, kind, text)
+}
+
+func (s *lcagentSession) upsertExistingEntryLocked(itemID string, kind TranscriptKind, text string) bool {
+	itemID = strings.TrimSpace(itemID)
+	text = strings.TrimSpace(text)
+	if itemID == "" || text == "" {
+		return false
+	}
+	for index := len(s.entries) - 1; index >= 0; index-- {
+		if s.entries[index].ItemID != itemID {
+			continue
+		}
+		if s.entries[index].Kind == kind && s.entries[index].Text == text && s.entries[index].DisplayText == "" && s.entries[index].GeneratedImage == nil {
+			s.touchLocked()
+			return true
+		}
+		s.entries[index].Kind = kind
+		s.entries[index].Text = text
+		s.entries[index].DisplayText = ""
+		s.entries[index].GeneratedImage = nil
+		s.touchLocked()
+		return true
+	}
+	return false
 }
 
 func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
@@ -2139,7 +2196,11 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 }
 
 func (s *lcagentSession) touchLocked() {
-	s.lastActivityAt = time.Now()
+	now := time.Now()
+	s.lastActivityAt = now
+	if s.busy {
+		s.lastBusyActivityAt = now
+	}
 	s.revision++
 	s.cache.invalidate(nil)
 }

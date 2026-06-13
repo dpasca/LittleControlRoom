@@ -414,6 +414,8 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			if replay.lastActivityAt.IsZero() {
 				replay.lastActivityAt = replay.startedAt
 			}
+		case "model_request_started", "model_request_progress":
+			replay.upsertEntry(lcagentModelRequestItemID(event), TranscriptStatus, lcagentModelRequestText(event))
 		case "model_response":
 			modelName := rawJSONString(event["model"])
 			if modelName != "" {
@@ -422,6 +424,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
 				replay.addTokenUsage(usage)
 			}
+			replay.upsertExistingEntry(lcagentModelRequestItemID(event), TranscriptStatus, lcagentModelResponseText(event))
 		case "user_message":
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
@@ -458,6 +461,15 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.appendEntry(TranscriptStatus, lcagentRepairFeedbackSuppressedText(event))
 		case "repair_guidance":
 			replay.appendEntry(TranscriptStatus, lcagentRepairGuidanceText(event))
+		case "provider_failure":
+			if !rawJSONBool(event["retrying"]) {
+				replay.upsertExistingEntry(lcagentModelRequestItemID(event), TranscriptStatus, lcagentModelRequestFailureText(event))
+			}
+			replay.appendEntry(TranscriptError, lcagentProviderFailureText(event))
+		case "provider_retry":
+			replay.appendEntry(TranscriptStatus, lcagentProviderRetryText(event))
+		case "provider_retry_succeeded":
+			replay.appendEntry(TranscriptStatus, lcagentProviderRetrySucceededText(event))
 		case "verification_summary":
 			status := rawJSONString(event["status"])
 			message := rawJSONString(event["message"])
@@ -545,6 +557,10 @@ func (r *lcagentReplay) observeBrowserPage(event map[string]json.RawMessage) {
 }
 
 func (r *lcagentReplay) appendEntry(kind TranscriptKind, text string) {
+	r.appendEntryWithID("", kind, text)
+}
+
+func (r *lcagentReplay) appendEntryWithID(itemID string, kind TranscriptKind, text string) {
 	if r == nil {
 		return
 	}
@@ -552,11 +568,43 @@ func (r *lcagentReplay) appendEntry(kind TranscriptKind, text string) {
 	if text == "" {
 		return
 	}
+	if strings.TrimSpace(itemID) == "" {
+		itemID = fmt.Sprintf("lcagent-replay-%d", len(r.entries)+1)
+	}
 	r.entries = append(r.entries, TranscriptEntry{
-		ItemID: fmt.Sprintf("lcagent-replay-%d", len(r.entries)+1),
+		ItemID: itemID,
 		Kind:   kind,
 		Text:   text,
 	})
+}
+
+func (r *lcagentReplay) upsertEntry(itemID string, kind TranscriptKind, text string) {
+	if r.upsertExistingEntry(itemID, kind, text) {
+		return
+	}
+	r.appendEntryWithID(itemID, kind, text)
+}
+
+func (r *lcagentReplay) upsertExistingEntry(itemID string, kind TranscriptKind, text string) bool {
+	if r == nil {
+		return false
+	}
+	itemID = strings.TrimSpace(itemID)
+	text = strings.TrimSpace(text)
+	if itemID == "" || text == "" {
+		return false
+	}
+	for index := len(r.entries) - 1; index >= 0; index-- {
+		if r.entries[index].ItemID != itemID {
+			continue
+		}
+		r.entries[index].Kind = kind
+		r.entries[index].Text = text
+		r.entries[index].DisplayText = ""
+		r.entries[index].GeneratedImage = nil
+		return true
+	}
+	return false
 }
 
 func rawJSONTime(raw json.RawMessage) time.Time {

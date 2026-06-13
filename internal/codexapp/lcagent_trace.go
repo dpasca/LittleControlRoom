@@ -849,6 +849,99 @@ func lcagentRepairGuidanceText(event map[string]json.RawMessage) string {
 	return "Repair guidance: " + kind
 }
 
+func lcagentModelRequestItemID(event map[string]json.RawMessage) string {
+	sessionID := lcagentTranscriptIDPart(firstNonEmpty(rawJSONString(event["session_id"]), rawJSONString(event["id"])))
+	phase := lcagentTranscriptIDPart(rawJSONString(event["phase"]))
+	turn := rawJSONInt(event["turn"])
+	if sessionID == "" && phase == "" && turn <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("lcagent-model-request-%s-%s-%d", sessionID, phase, turn)
+}
+
+func lcagentTranscriptIDPart(value string) string {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) == 0 {
+		return ""
+	}
+	value = strings.Join(fields, "-")
+	value = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '-', r == '_', r == '.':
+			return r
+		default:
+			return '-'
+		}
+	}, value)
+	return strings.Trim(value, "-")
+}
+
+func lcagentModelRequestText(event map[string]json.RawMessage) string {
+	eventType := rawJSONString(event["type"])
+	prefix := "LCAgent requested model response"
+	if eventType == "model_request_progress" {
+		prefix = "LCAgent still waiting for model response"
+	}
+	return lcagentModelLifecycleText(prefix, event, 0)
+}
+
+func lcagentModelResponseText(event map[string]json.RawMessage) string {
+	prefix := "LCAgent model response received"
+	if rawJSONBool(event["invalid"]) {
+		prefix = "LCAgent model response was unusable"
+	}
+	return lcagentModelLifecycleText(prefix, event, rawJSONInt(event["tool_call_count"]))
+}
+
+func lcagentModelRequestFailureText(event map[string]json.RawMessage) string {
+	text := lcagentModelLifecycleText("LCAgent model request failed", event, 0)
+	if kind := rawJSONString(event["kind"]); kind != "" {
+		text += "; " + kind
+	}
+	return text
+}
+
+func lcagentModelLifecycleText(prefix string, event map[string]json.RawMessage, toolCallCount int) string {
+	parts := []string{}
+	if turn := rawJSONInt(event["turn"]); turn > 0 {
+		parts = append(parts, fmt.Sprintf("turn %d", turn))
+	}
+	if phase := strings.ReplaceAll(rawJSONString(event["phase"]), "_", " "); phase != "" {
+		parts = append(parts, phase)
+	}
+	if provider := rawJSONString(event["provider"]); provider != "" {
+		parts = append(parts, provider)
+	}
+	if model := rawJSONString(event["model"]); model != "" {
+		parts = append(parts, model)
+	}
+	if attempt := rawJSONInt(event["attempt"]); attempt > 1 {
+		parts = append(parts, fmt.Sprintf("attempt %d", attempt))
+	}
+	if elapsedMS := rawJSONInt(event["elapsed_ms"]); elapsedMS > 0 {
+		parts = append(parts, "elapsed "+formatTurnStatusDuration(time.Duration(elapsedMS)*time.Millisecond))
+	}
+	if toolCallCount > 0 {
+		label := "tool calls"
+		if toolCallCount == 1 {
+			label = "tool call"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", toolCallCount, label))
+	} else if finish := rawJSONString(event["finish_reason"]); finish != "" {
+		parts = append(parts, "finish "+finish)
+	}
+	if len(parts) == 0 {
+		return strings.TrimSpace(prefix)
+	}
+	return strings.TrimSpace(prefix) + ": " + strings.Join(parts, "; ")
+}
+
 func lcagentProviderFailureText(event map[string]json.RawMessage) string {
 	provider := firstNonEmpty(rawJSONString(event["provider"]), "provider")
 	kind := firstNonEmpty(rawJSONString(event["kind"]), "failure")

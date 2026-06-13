@@ -240,6 +240,67 @@ func TestRunExecOpenRouterEmitsModelResponseUsage(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterEmitsModelRequestProgress(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	previousInterval := modelRequestProgressInterval
+	modelRequestProgressInterval = 10 * time.Millisecond
+	t.Cleanup(func() {
+		modelRequestProgressInterval = previousInterval
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		time.Sleep(60 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_slow",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done after slow model request"}
+			}],
+			"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"model_request_started"`,
+		`"type":"model_request_progress"`,
+		`"elapsed_ms"`,
+		`"phase":"tool_loop"`,
+		`"turn":1`,
+		`"attempt":1`,
+		`"type":"model_response"`,
+		`"summary":"done after slow model request"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

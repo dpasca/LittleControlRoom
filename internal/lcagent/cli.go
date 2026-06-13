@@ -964,7 +964,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			return abortOpenRouterRun(writer, runner.SessionID, err)
 		}
 		msg := completion.Message
-		if err := writer.Write(modelResponseEvent(runner.SessionID, turn+1, completion, len(msg.ToolCalls))); err != nil {
+		if err := writer.Write(modelResponseEvent(runner.SessionID, providerLabel, requestPhase, turn+1, completion, len(msg.ToolCalls))); err != nil {
 			return err
 		}
 		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
@@ -1239,7 +1239,7 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff failed: %w", providerLabel, err))
 	}
 	msg := completion.Message
-	if err := writer.Write(modelResponseEvent(runner.SessionID, maxTurns+1, completion, len(msg.ToolCalls))); err != nil {
+	if err := writer.Write(modelResponseEvent(runner.SessionID, providerLabel, "final_handoff", maxTurns+1, completion, len(msg.ToolCalls))); err != nil {
 		return err
 	}
 	sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
@@ -1354,6 +1354,8 @@ func writeRepairGuidance(writer *session.Writer, sessionID, kind, message string
 
 const providerRetryMaxAttempts = 3
 
+var modelRequestProgressInterval = 30 * time.Second
+
 func completeProviderWithRetries(ctx context.Context, writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, call func() (modeladapter.Completion, error)) (modeladapter.Completion, error) {
 	return completeProviderWithRetriesValidated(ctx, writer, sessionID, provider, phase, turn, modelName, nil, call)
 }
@@ -1361,10 +1363,18 @@ func completeProviderWithRetries(ctx context.Context, writer *session.Writer, se
 func completeProviderWithRetriesValidated(ctx context.Context, writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, validate func(modeladapter.Completion) error, call func() (modeladapter.Completion, error)) (modeladapter.Completion, error) {
 	var lastErr error
 	for attempt := 1; attempt <= providerRetryMaxAttempts; attempt++ {
+		startedAt := time.Now()
+		if err := writeModelRequestEvent(writer, "model_request_started", sessionID, provider, phase, turn, modelName, attempt, 0); err != nil {
+			return modeladapter.Completion{}, err
+		}
+		stopProgress := startModelRequestProgress(ctx, writer, sessionID, provider, phase, turn, modelName, attempt, startedAt)
 		completion, err := call()
+		if progressErr := stopProgress(); progressErr != nil {
+			return modeladapter.Completion{}, progressErr
+		}
 		if err == nil && validate != nil {
 			if validationErr := validate(completion); validationErr != nil {
-				event := modelResponseEvent(sessionID, turn, completion, len(completion.Message.ToolCalls))
+				event := modelResponseEvent(sessionID, provider, phase, turn, completion, len(completion.Message.ToolCalls))
 				event["invalid"] = true
 				event["attempt"] = attempt
 				if writeErr := writer.Write(event); writeErr != nil {
@@ -1426,6 +1436,56 @@ func completeProviderWithRetriesValidated(ctx context.Context, writer *session.W
 		}
 	}
 	return modeladapter.Completion{}, lastErr
+}
+
+func startModelRequestProgress(ctx context.Context, writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, attempt int, startedAt time.Time) func() error {
+	interval := modelRequestProgressInterval
+	if interval <= 0 {
+		return func() error { return nil }
+	}
+	stop := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		timer := time.NewTimer(interval)
+		defer timer.Stop()
+		for {
+			select {
+			case <-stop:
+				done <- nil
+				return
+			case <-ctx.Done():
+				done <- nil
+				return
+			case <-timer.C:
+				elapsed := time.Since(startedAt)
+				if err := writeModelRequestEvent(writer, "model_request_progress", sessionID, provider, phase, turn, modelName, attempt, elapsed); err != nil {
+					done <- err
+					return
+				}
+				timer.Reset(interval)
+			}
+		}
+	}()
+	return func() error {
+		close(stop)
+		return <-done
+	}
+}
+
+func writeModelRequestEvent(writer *session.Writer, eventType, sessionID, provider, phase string, turn int, modelName string, attempt int, elapsed time.Duration) error {
+	event := session.Event{
+		"type":       eventType,
+		"session_id": sessionID,
+		"provider":   strings.TrimSpace(provider),
+		"model":      strings.TrimSpace(modelName),
+		"phase":      strings.TrimSpace(phase),
+		"turn":       turn,
+		"attempt":    attempt,
+	}
+	if elapsed > 0 {
+		event["elapsed_ms"] = elapsed.Round(time.Millisecond).Milliseconds()
+	}
+	return writer.Write(event)
 }
 
 func validateVisibleCompletion(provider string) func(modeladapter.Completion) error {
@@ -1532,10 +1592,12 @@ func hasToolCall(calls []modeladapter.ToolCall, name string) bool {
 	return false
 }
 
-func modelResponseEvent(sessionID string, turn int, completion modeladapter.Completion, toolCallCount int) session.Event {
+func modelResponseEvent(sessionID string, provider string, phase string, turn int, completion modeladapter.Completion, toolCallCount int) session.Event {
 	event := session.Event{
 		"type":            "model_response",
 		"session_id":      sessionID,
+		"provider":        strings.TrimSpace(provider),
+		"phase":           strings.TrimSpace(phase),
 		"turn":            turn,
 		"model":           completion.Model,
 		"tool_call_count": toolCallCount,
