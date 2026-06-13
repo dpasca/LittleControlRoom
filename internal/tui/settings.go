@@ -3200,7 +3200,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent executable",
-			"Optional path to the lcagent binary. Leave blank to use the bundled sibling binary, PATH lookup, or local go run fallback.",
+			"Optional path to the lcagent binary. Leave blank to use the bundled sibling binary, PATH lookup, or source-checkout go run fallback.",
 			settings.LCAgentPath,
 			512,
 			settingsSectionLCAgent,

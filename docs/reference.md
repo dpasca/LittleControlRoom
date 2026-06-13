@@ -89,7 +89,7 @@ exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
 # LCAgent is experimental. Leave lcagent_path blank to use the bundled binary,
-# PATH lookup, or local go run fallback. Saved provider keys are used before
+# PATH lookup, or source-checkout go run fallback. Saved provider keys are used before
 # process environment variables; lcagent_env_file is an advanced fallback.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"
 # lcagent_env_file = "~/path/to/openrouter.env"

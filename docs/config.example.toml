@@ -31,7 +31,7 @@ exclude_project_patterns = []
 codex_launch_preset = "yolo"
 
 # Experimental LCAgent provider. Leave lcagent_path blank to use the bundled
-# sibling binary, PATH lookup, or local go run fallback. The env file can
+# sibling binary, PATH lookup, or source-checkout go run fallback. The env file can
 # contain OPENROUTER_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, XIAOMI_API_KEY, or
 # OPENAI_API_KEY; key contents are not copied into this config.
 # embedded_lcagent_model = "deepseek/deepseek-v4-pro"

@@ -2521,7 +2521,8 @@ func lcagentCommandSpec(configuredPath, projectPath string) (lcagentCommand, err
 			return lcagentCommand{Command: "go", Args: []string{"run", "./cmd/lcagent"}, Dir: dir}, nil
 		}
 	}
-	return lcagentCommand{}, fmt.Errorf("lcagent executable not found; set LCROOM_LCAGENT_PATH")
+	return lcagentCommand{}, fmt.Errorf("lcagent executable not found; install lcagent on PATH, place it next to lcroom, " +
+		"set lcagent_path or LCROOM_LCAGENT_PATH, or run from a Little Control Room source checkout")
 }
 
 func lcagentSourceFallbackDirs(projectPath string) []string {
