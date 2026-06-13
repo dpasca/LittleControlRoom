@@ -2496,7 +2496,7 @@ func lcagentDefaultModelForProvider(provider string) string {
 	case "deepseek":
 		return "deepseek-v4-pro"
 	case "moonshot":
-		return "kimi-k2.6"
+		return config.DefaultMoonshotModel
 	case "xiaomi":
 		return "mimo-v2.5-pro"
 	default:

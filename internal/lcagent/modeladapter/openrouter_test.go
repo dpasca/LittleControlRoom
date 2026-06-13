@@ -1090,6 +1090,47 @@ func TestMoonshotClientUsesDirectEndpointShape(t *testing.T) {
 	}
 }
 
+func TestMoonshotClientK27OmitsDisableThinking(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["model"] != DefaultMoonshotModel {
+			t.Fatalf("model = %q, want %q", body["model"], DefaultMoonshotModel)
+		}
+		if _, ok := body["thinking"]; ok {
+			t.Fatalf("kimi-k2.7-code request should omit thinking overrides: %#v", body["thinking"])
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"moonshot_k27_resp",
+			"model":"kimi-k2.7-code",
+			"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := NewMoonshotClient(OpenRouterConfig{
+		APIKey:  "moonshot-key",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := client.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{
+		DisableThinking: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion.Model != DefaultMoonshotModel || completion.Message.Content != "done" {
+		t.Fatalf("completion = %+v", completion)
+	}
+}
+
 func TestMoonshotClientDefaultsFromEnv(t *testing.T) {
 	t.Setenv("MOONSHOT_API_KEY", "key")
 	t.Setenv("MOONSHOT_BASE_URL", "https://example.moonshot.test")
@@ -1099,6 +1140,18 @@ func TestMoonshotClientDefaultsFromEnv(t *testing.T) {
 	}
 	if client.Model() != DefaultMoonshotModel {
 		t.Fatalf("Model() = %q", client.Model())
+	}
+}
+
+func TestModelIsKnownForProviderKeepsMoonshotK26(t *testing.T) {
+	if !ModelIsKnownForProvider("moonshot", DefaultMoonshotModel) {
+		t.Fatalf("default Moonshot model %q should be known", DefaultMoonshotModel)
+	}
+	if !ModelIsKnownForProvider("moonshot", "kimi-k2.6") {
+		t.Fatalf("explicit kimi-k2.6 should remain known after the default moves")
+	}
+	if !ModelIsKnownForProvider("moonshot", "moonshotai/kimi-k2.6") {
+		t.Fatalf("provider-prefixed kimi-k2.6 should remain known after normalization")
 	}
 }
 

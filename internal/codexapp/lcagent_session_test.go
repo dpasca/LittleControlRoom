@@ -1005,8 +1005,8 @@ func TestLCAgentModelOptionsForProviderMoonshotHasNoReasoningControls(t *testing
 	if len(options) != 1 {
 		t.Fatalf("provider options = %#v, want one moonshot option", options)
 	}
-	if options[0].Model != "kimi-k2.6" {
-		t.Fatalf("moonshot model = %q, want kimi-k2.6", options[0].Model)
+	if options[0].Model != "kimi-k2.7-code" {
+		t.Fatalf("moonshot model = %q, want kimi-k2.7-code", options[0].Model)
 	}
 	if len(options[0].SupportedReasoningEfforts) != 0 {
 		t.Fatalf("reasoning options = %#v, want none", options[0].SupportedReasoningEfforts)
@@ -1018,7 +1018,7 @@ func TestLCAgentProviderModelOptionsMoonshotHasNoReasoningControls(t *testing.T)
 		if r.URL.Path != "/models" {
 			t.Fatalf("path = %q, want /models", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"kimi-k2.6","name":"Kimi K2.6","description":"Moonshot direct coding model"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"kimi-k2.7-code","name":"Kimi K2.7 Code","description":"Moonshot direct coding model"}]}`))
 	}))
 	defer server.Close()
 	t.Setenv("MOONSHOT_BASE_URL", server.URL)

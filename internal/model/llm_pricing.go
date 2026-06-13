@@ -82,6 +82,12 @@ func lookupLLMPriceCard(modelName string) (llmPriceCard, bool) {
 			CachedInputUSDPerMTokens: 0.003625,
 			OutputUSDPerMTokens:      0.87,
 		}, true
+	case name == "kimi-k2.7-code" || name == "moonshotai/kimi-k2.7-code":
+		return llmPriceCard{
+			InputUSDPerMTokens:       0.95,
+			CachedInputUSDPerMTokens: 0.19,
+			OutputUSDPerMTokens:      4.00,
+		}, true
 	case name == "kimi-k2.6" || name == "moonshotai/kimi-k2.6":
 		return llmPriceCard{
 			InputUSDPerMTokens:       0.95,

@@ -1614,8 +1614,8 @@ func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		if body["model"] != "kimi-k2.6" {
-			t.Fatalf("model = %q, want kimi-k2.6", body["model"])
+		if body["model"] != "kimi-k2.7-code" {
+			t.Fatalf("model = %q, want kimi-k2.7-code", body["model"])
 		}
 		for _, key := range []string{"temperature", "max_completion_tokens", "max_tokens", "thinking"} {
 			if _, ok := body[key]; ok {
@@ -1625,7 +1625,7 @@ func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"resp_moonshot",
-			"model":"kimi-k2.6",
+			"model":"kimi-k2.7-code",
 			"choices":[{
 				"finish_reason":"stop",
 				"message":{"role":"assistant","content":"done from direct moonshot"}
@@ -1655,7 +1655,7 @@ func TestRunExecMoonshotUsesDirectProviderEnv(t *testing.T) {
 	text := stdout.String()
 	for _, want := range []string{
 		`"provider":"moonshot"`,
-		`"model":"kimi-k2.6"`,
+		`"model":"kimi-k2.7-code"`,
 		`"response_id":"resp_moonshot"`,
 		`"cached_input_tokens":2`,
 		`"summary":"done from direct moonshot"`,
@@ -1680,8 +1680,8 @@ func TestRunExecMoonshotSkipsUnsupportedReasoningEffort(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		if body["model"] != "kimi-k2.6" {
-			t.Fatalf("model = %q, want kimi-k2.6", body["model"])
+		if body["model"] != "kimi-k2.7-code" {
+			t.Fatalf("model = %q, want kimi-k2.7-code", body["model"])
 		}
 		if _, ok := body["reasoning"]; ok {
 			t.Fatalf("moonshot request should not include reasoning: %#v", body["reasoning"])
@@ -1701,7 +1701,7 @@ func TestRunExecMoonshotSkipsUnsupportedReasoningEffort(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"resp_moonshot_skip_reasoning",
-			"model":"kimi-k2.6",
+			"model":"kimi-k2.7-code",
 			"choices":[{
 				"finish_reason":"stop",
 				"message":{"role":"assistant","content":"done from direct moonshot"}

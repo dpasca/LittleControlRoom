@@ -97,6 +97,9 @@ func TestOpenAICompatibleModelUsesCloudOverrides(t *testing.T) {
 	if got := cfg.OpenAICompatibleModel(AIBackendDeepSeek); got != DefaultDeepSeekModel {
 		t.Fatalf("default DeepSeek project model = %q, want %q", got, DefaultDeepSeekModel)
 	}
+	if got := cfg.OpenAICompatibleModel(AIBackendMoonshot); got != DefaultMoonshotModel {
+		t.Fatalf("default Moonshot project model = %q, want %q", got, DefaultMoonshotModel)
+	}
 	cfg.DeepSeekModel = DefaultDeepSeekProModel
 	if got := cfg.OpenAICompatibleModel(AIBackendDeepSeek); got != DefaultDeepSeekProModel {
 		t.Fatalf("configured DeepSeek project model = %q, want %q", got, DefaultDeepSeekProModel)

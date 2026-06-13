@@ -88,7 +88,7 @@ func TestSettingsLCAgentModelPickerSelectionUpdatesMainProvider(t *testing.T) {
 func TestSettingsLCAgentModelPickerJKTypeIntoFilter(t *testing.T) {
 	models := []codexapp.ModelOption{
 		{Model: "joker/model", DisplayName: "Joker Model"},
-		{Model: "kimi-k2.6", DisplayName: "Kimi K2.6"},
+		{Model: "kimi-k2.7-code", DisplayName: "Kimi K2.7 Code"},
 	}
 	m := Model{
 		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{

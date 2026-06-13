@@ -227,7 +227,7 @@ func knownModelContextWindowTokens(provider, model string) (int64, bool) {
 			return 400000, true
 		case strings.Contains(name, "gpt-5.4") || strings.Contains(name, "gpt-5"):
 			return 200000, true
-		case strings.Contains(name, "kimi-k2.6"):
+		case strings.Contains(name, "kimi-k2.7-code") || strings.Contains(name, "kimi-k2.6"):
 			return 256000, true
 		case strings.Contains(name, "deepseek-v4") || strings.Contains(name, "deepseek-chat") || strings.Contains(name, "deepseek-reasoner"):
 			return 128000, true

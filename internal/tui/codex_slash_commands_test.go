@@ -1312,17 +1312,17 @@ func TestVisibleCodexSlashModelSkipsReasoningSelectionWhenUnsupported(t *testing
 			Started:          true,
 			Preset:           codexcli.PresetYolo,
 			Status:           "Codex ready",
-			Model:            "kimi-k2.6",
+			Model:            "kimi-k2.7-code",
 			ReasoningEffort:  "high",
 			PendingModel:     "",
 			PendingReasoning: "",
 		},
 		models: []codexapp.ModelOption{
 			{
-				ID:            "kimi-k2.6",
-				Model:         "kimi-k2.6",
+				ID:            "kimi-k2.7-code",
+				Model:         "kimi-k2.7-code",
 				ModelProvider: "moonshot",
-				DisplayName:   "Balanced: Kimi K2.6",
+				DisplayName:   "Balanced: Kimi K2.7 Code",
 				Description:   "Direct Moonshot/Kimi coding route.",
 				IsDefault:     true,
 			},
@@ -1394,14 +1394,14 @@ func TestVisibleCodexSlashModelSkipsReasoningSelectionWhenUnsupported(t *testing
 	if got.codexModelPicker != nil {
 		t.Fatalf("model picker should close after applying")
 	}
-	if session.modelStages[0].Model != "kimi-k2.6" {
-		t.Fatalf("staged model = %q, want kimi-k2.6", session.modelStages[0].Model)
+	if session.modelStages[0].Model != "kimi-k2.7-code" {
+		t.Fatalf("staged model = %q, want kimi-k2.7-code", session.modelStages[0].Model)
 	}
 	if session.modelStages[0].Reasoning != "" {
 		t.Fatalf("staged reasoning = %q, want empty", session.modelStages[0].Reasoning)
 	}
-	if action.status != "Embedded model set to kimi-k2.6 for the next prompt" {
-		t.Fatalf("status = %q, want Embedded model set to kimi-k2.6 for the next prompt", action.status)
+	if action.status != "Embedded model set to kimi-k2.7-code for the next prompt" {
+		t.Fatalf("status = %q, want Embedded model set to kimi-k2.7-code for the next prompt", action.status)
 	}
 }
 

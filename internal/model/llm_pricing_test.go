@@ -74,6 +74,24 @@ func TestEstimateLLMCostUSDKimiK26(t *testing.T) {
 	}
 }
 
+func TestEstimateLLMCostUSDKimiK27Code(t *testing.T) {
+	t.Parallel()
+
+	cost, ok := EstimateLLMCostUSD("kimi-k2.7-code", LLMUsage{
+		InputTokens:       1_000_000,
+		CachedInputTokens: 100_000,
+		OutputTokens:      10_000,
+	})
+	if !ok {
+		t.Fatalf("expected pricing lookup to succeed")
+	}
+
+	want := 0.9*0.95 + 0.1*0.19 + 0.01*4.00
+	if cost != want {
+		t.Fatalf("cost = %f, want %f", cost, want)
+	}
+}
+
 func TestEstimateLLMCostUSDGLM51(t *testing.T) {
 	t.Parallel()
 

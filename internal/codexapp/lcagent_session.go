@@ -735,7 +735,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		}
 	case "moonshot":
 		return []ModelOption{
-			option(modeladapter.DefaultMoonshotModel, "Balanced: Kimi K2.6", "Direct Moonshot/Kimi coding route.", "", true),
+			option(modeladapter.DefaultMoonshotModel, "Balanced: Kimi K2.7 Code", "Direct Moonshot/Kimi coding route.", "", true),
 		}
 	case "xiaomi":
 		return []ModelOption{

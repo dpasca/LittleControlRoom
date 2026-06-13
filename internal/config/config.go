@@ -105,7 +105,7 @@ const (
 	DefaultOpenRouterModel  = "deepseek/deepseek-v4-pro"
 	DefaultDeepSeekModel    = "deepseek-v4-flash"
 	DefaultDeepSeekProModel = "deepseek-v4-pro"
-	DefaultMoonshotModel    = "kimi-k2.6"
+	DefaultMoonshotModel    = "kimi-k2.7-code"
 	DefaultXiaomiModel      = "mimo-v2.5-pro"
 	DefaultXiaomiProModel   = "mimo-v2.5-pro"
 )

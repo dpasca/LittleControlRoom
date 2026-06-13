@@ -19,7 +19,7 @@ const (
 	DefaultOpenRouterModel    = "deepseek/deepseek-v4-pro"
 	DefaultOpenAIModel        = "gpt-5.5"
 	DefaultDeepSeekModel      = "deepseek-v4-pro"
-	DefaultMoonshotModel      = "kimi-k2.6"
+	DefaultMoonshotModel      = "kimi-k2.7-code"
 	DefaultXiaomiModel        = "mimo-v2.5-pro"
 	DefaultXiaomiUtilityModel = "mimo-v2.5"
 	DefaultOpenRouterMaxTurns = 48
@@ -351,7 +351,8 @@ func ModelIsKnownForProvider(provider, model string) bool {
 	case "deepseek":
 		return model == DefaultDeepSeekModel || model == "deepseek-v4-flash"
 	case "moonshot":
-		return model == DefaultMoonshotModel
+		model = strings.ToLower(NormalizeModelForProvider("moonshot", model))
+		return model == DefaultMoonshotModel || model == "kimi-k2.6"
 	case "xiaomi":
 		return model == DefaultXiaomiModel
 	default:
@@ -526,7 +527,7 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 		if strings.TrimSpace(opts.ReasoningEffort) != "" || opts.ReasoningMaxTokens > 0 {
 			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning effort or max_tokens options", c.providerLabel())
 		}
-		if opts.DisableThinking {
+		if opts.DisableThinking && moonshotSupportsDisableThinking(c.model) {
 			body["thinking"] = map[string]any{"type": "disabled"}
 		}
 	default:
@@ -602,6 +603,15 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 		Usage:        append(json.RawMessage(nil), parsed.Usage...),
 		UsageSummary: usage,
 	}, nil
+}
+
+func moonshotSupportsDisableThinking(model string) bool {
+	switch strings.ToLower(strings.TrimSpace(NormalizeModelForProvider("moonshot", model))) {
+	case "kimi-k2.5", "kimi-k2.6":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) completeResponses(ctx context.Context, messages []Message, tools []ToolDefinition, opts CompletionOptions) (Completion, error) {
