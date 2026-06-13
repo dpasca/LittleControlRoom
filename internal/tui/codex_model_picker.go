@@ -113,13 +113,15 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	state.RecentModels = codexBuildRecentModels(models, recentModelIDs, 5)
 
 	desiredModel := ""
+	desiredModelProvider := ""
 	desiredReasoning := ""
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
 		desiredModel = firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
+		desiredModelProvider = strings.TrimSpace(snapshot.ModelProvider)
 		desiredReasoning = firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 	}
 
-	state.ModelIndex = codexModelOptionIndex(state.FilteredModels, desiredModel)
+	state.ModelIndex = codexModelOptionIndexForProvider(state.FilteredModels, desiredModel, desiredModelProvider)
 	if state.ModelIndex < 0 {
 		state.ModelIndex = codexDefaultModelOptionIndex(state.FilteredModels)
 	}
@@ -141,6 +143,7 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 
 func (m *Model) closeCodexModelPicker(status string) {
 	m.codexModelPicker = nil
+	m.codexLCAgentProviderSetup = nil
 	if status != "" {
 		m.status = status
 	}
@@ -670,6 +673,9 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	if provider.Normalized() == "" {
 		provider = codexapp.ProviderCodex
 	}
+	if provider == codexapp.ProviderLCAgent && modelProvider != "" && !m.lcagentModelProviderReady(modelProvider) {
+		return m.openCodexLCAgentProviderSetup(modelOption, effort)
+	}
 	perfOpID := m.beginAILatencyOp("Model apply", projectPath, strings.TrimSpace(provider.Label()+" "+modelName+" "+effort))
 	m.closeCodexModelPicker("")
 	m.status = "Staging " + modelName + "..."
@@ -888,6 +894,16 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		rightLines = append(rightLines, commandPaletteTitleStyle.Render("About"))
 		rightLines = append(rightLines, commandPaletteHintStyle.Render(description))
 	}
+	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent {
+		if provider := strings.TrimSpace(selectedModel.ModelProvider); provider != "" {
+			state, style, detail := lcagentCredentialSmokeCheckForProvider(m.currentSettingsBaseline(), provider)
+			if detail != "" {
+				rightLines = append(rightLines, "")
+				rightLines = append(rightLines, commandPaletteTitleStyle.Render("Connection"))
+				rightLines = append(rightLines, style.Render(state+" - "+detail))
+			}
+		}
+	}
 
 	// Pad columns to equal height, then join side-by-side.
 	leftCol := strings.Join(leftLines, "\n")
@@ -926,6 +942,14 @@ func (m Model) renderCodexModelPickerRow(option codexapp.ModelOption, selected b
 	if option.IsDefault {
 		parts = append(parts, "default")
 	}
+	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent {
+		if provider := strings.TrimSpace(option.ModelProvider); provider != "" {
+			parts = append(parts, settingsLCAgentProviderOptionLabel(provider))
+			if !m.lcagentModelProviderReady(provider) {
+				parts = append(parts, "setup")
+			}
+		}
+	}
 	row := strings.Join(parts, "  ")
 	if selected {
 		prefix := "> "
@@ -957,14 +981,25 @@ func (m Model) renderCodexReasoningPickerRow(option codexapp.ReasoningEffortOpti
 }
 
 func codexModelOptionIndex(models []codexapp.ModelOption, desired string) int {
+	return codexModelOptionIndexForProvider(models, desired, "")
+}
+
+func codexModelOptionIndexForProvider(models []codexapp.ModelOption, desired, desiredProvider string) int {
 	desired = strings.TrimSpace(desired)
 	if desired == "" {
 		return -1
 	}
+	desiredProvider = strings.ToLower(strings.TrimSpace(desiredProvider))
 	for i, option := range models {
+		if desiredProvider != "" && strings.ToLower(strings.TrimSpace(option.ModelProvider)) != desiredProvider {
+			continue
+		}
 		if strings.EqualFold(strings.TrimSpace(option.Model), desired) || strings.EqualFold(strings.TrimSpace(option.DisplayName), desired) {
 			return i
 		}
+	}
+	if desiredProvider != "" {
+		return codexModelOptionIndexForProvider(models, desired, "")
 	}
 	return -1
 }
@@ -976,7 +1011,12 @@ func codexModelOptionKey(option codexapp.ModelOption) string {
 func codexSameModelOption(left, right codexapp.ModelOption) bool {
 	leftKey := codexModelOptionKey(left)
 	rightKey := codexModelOptionKey(right)
-	return leftKey != "" && rightKey != "" && strings.EqualFold(leftKey, rightKey)
+	if leftKey == "" || rightKey == "" || !strings.EqualFold(leftKey, rightKey) {
+		return false
+	}
+	leftProvider := strings.TrimSpace(left.ModelProvider)
+	rightProvider := strings.TrimSpace(right.ModelProvider)
+	return leftProvider == "" || rightProvider == "" || strings.EqualFold(leftProvider, rightProvider)
 }
 
 func codexDefaultModelOptionIndex(models []codexapp.ModelOption) int {
@@ -1058,17 +1098,14 @@ func codexBuildRecentModels(models []codexapp.ModelOption, recentIDs []string, m
 	if len(recentIDs) == 0 || len(models) == 0 || maxRecent <= 0 {
 		return nil
 	}
-	modelMap := make(map[string]codexapp.ModelOption)
-	for _, model := range models {
-		modelMap[strings.ToLower(strings.TrimSpace(model.Model))] = model
-	}
 	var recent []codexapp.ModelOption
 	for _, id := range recentIDs {
-		id = strings.ToLower(strings.TrimSpace(id))
-		if id == "" {
+		provider, modelID := parseLCAgentRecentModelID(id)
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
 			continue
 		}
-		if model, ok := modelMap[id]; ok {
+		if model, ok := codexFindRecentModelOption(models, provider, modelID); ok {
 			recent = append(recent, model)
 			if len(recent) >= maxRecent {
 				break
@@ -1076,6 +1113,23 @@ func codexBuildRecentModels(models []codexapp.ModelOption, recentIDs []string, m
 		}
 	}
 	return recent
+}
+
+func codexFindRecentModelOption(models []codexapp.ModelOption, provider, modelID string) (codexapp.ModelOption, bool) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	modelID = strings.TrimSpace(modelID)
+	for _, model := range models {
+		if provider != "" && strings.ToLower(strings.TrimSpace(model.ModelProvider)) != provider {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(model.Model), modelID) {
+			return model, true
+		}
+	}
+	if provider != "" {
+		return codexFindRecentModelOption(models, "", modelID)
+	}
+	return codexapp.ModelOption{}, false
 }
 
 func codexFilterModels(models []codexapp.ModelOption, filter string) []codexapp.ModelOption {

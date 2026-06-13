@@ -1095,6 +1095,45 @@ func TestLCAgentSessionListModelsReturnsCuratedCodingRoutes(t *testing.T) {
 	}
 }
 
+func TestLCAgentAvailableModelOptionsIncludesUnconfiguredProviders(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("MOONSHOT_API_KEY", "")
+	t.Setenv("XIAOMI_API_KEY", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %q, want /models", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"deepseek/deepseek-v4-pro","name":"DeepSeek V4 Pro"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	models, err := LCAgentModelOptions(context.Background(), LCAgentModelListConfig{
+		Provider:         "openrouter",
+		OpenRouterAPIKey: "key",
+		IncludeAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("LCAgentModelOptions() error = %v", err)
+	}
+	found := map[string]bool{}
+	for _, option := range models {
+		found[option.ModelProvider+":"+option.Model] = true
+	}
+	for _, want := range []string{
+		"openrouter:deepseek/deepseek-v4-pro",
+		"openai:gpt-5.5",
+		"deepseek:deepseek-v4-pro",
+		"moonshot:kimi-k2.7-code",
+		"xiaomi:mimo-v2.5-pro",
+	} {
+		if !found[want] {
+			t.Fatalf("missing model option %q in %#v", want, models)
+		}
+	}
+}
+
 func TestLCAgentModelOptionsForProviderMoonshotHasNoReasoningControls(t *testing.T) {
 	options := lcagentModelOptionsForProvider("moonshot")
 	if len(options) != 1 {

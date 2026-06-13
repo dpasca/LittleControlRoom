@@ -52,6 +52,11 @@ type fakeCodexSession struct {
 		Model     string
 		Reasoning string
 	}
+	modelProviderStages []struct {
+		Provider  string
+		Model     string
+		Reasoning string
+	}
 }
 
 type fakeElicitationResponse struct {
@@ -313,6 +318,22 @@ func (s *fakeCodexSession) StageModelOverride(model, reasoningEffort string) err
 		Model:     model,
 		Reasoning: reasoningEffort,
 	})
+	s.snapshot.PendingModel = model
+	s.snapshot.PendingReasoning = reasoningEffort
+	return nil
+}
+
+func (s *fakeCodexSession) StageModelProviderOverride(provider, model, reasoningEffort string) error {
+	s.modelProviderStages = append(s.modelProviderStages, struct {
+		Provider  string
+		Model     string
+		Reasoning string
+	}{
+		Provider:  provider,
+		Model:     model,
+		Reasoning: reasoningEffort,
+	})
+	s.snapshot.ModelProvider = provider
 	s.snapshot.PendingModel = model
 	s.snapshot.PendingReasoning = reasoningEffort
 	return nil

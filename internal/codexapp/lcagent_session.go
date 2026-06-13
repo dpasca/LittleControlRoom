@@ -557,7 +557,7 @@ func lcagentAvailableModelOptions(ctx context.Context, cfg LCAgentModelListConfi
 			providerCfg.Model = modeladapter.NormalizeModelForProvider(provider, cfg.Model)
 		}
 		options, err := LCAgentModelOptions(ctx, providerCfg)
-		if err != nil && firstErr == nil {
+		if err != nil && firstErr == nil && lcagentModelListErrorShouldSurface(cfg, selectedProvider, provider) {
 			firstErr = err
 		}
 		for _, option := range options {
@@ -584,25 +584,38 @@ func lcagentAvailableModelProviders(cfg LCAgentModelListConfig, selectedProvider
 	if selectedProvider == "" {
 		selectedProvider = lcagentDefaultProvider
 	}
-	hasEnvFile := strings.TrimSpace(cfg.EnvFile) != ""
-	hasKey := func(provider string) bool {
-		if provider == selectedProvider {
-			return true
-		}
-		if hasEnvFile {
-			return true
-		}
-		return strings.TrimSpace(lcagentModelListAPIKey(provider, cfg)) != ""
-	}
 	all := []string{"openrouter", "openai", "deepseek", "moonshot", "xiaomi"}
 	out := []string{selectedProvider}
 	for _, provider := range all {
-		if provider == selectedProvider || !hasKey(provider) {
+		if provider == selectedProvider {
 			continue
 		}
 		out = append(out, provider)
 	}
 	return out
+}
+
+func lcagentModelListErrorShouldSurface(cfg LCAgentModelListConfig, selectedProvider, provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	selectedProvider = strings.ToLower(strings.TrimSpace(selectedProvider))
+	if provider == selectedProvider {
+		return true
+	}
+	if strings.TrimSpace(lcagentModelListAPIKey(provider, cfg)) != "" {
+		return true
+	}
+	switch provider {
+	case "openai":
+		return strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) != ""
+	case "deepseek":
+		return strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")) != ""
+	case "moonshot":
+		return strings.TrimSpace(os.Getenv("MOONSHOT_API_KEY")) != ""
+	case "xiaomi":
+		return strings.TrimSpace(os.Getenv("XIAOMI_API_KEY")) != ""
+	default:
+		return strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != ""
+	}
 }
 
 func lcagentProviderModelOptions(ctx context.Context, cfg LCAgentModelListConfig, provider string) ([]ModelOption, error) {

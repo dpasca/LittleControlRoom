@@ -103,7 +103,11 @@ func (m Model) View() string {
 			if height <= 0 {
 				height = 30
 			}
-			return m.renderCodexModelPickerOverlay(body, width, height)
+			body = m.renderCodexModelPickerOverlay(body, width, height)
+			if m.codexLCAgentProviderSetup != nil {
+				body = m.renderCodexLCAgentProviderSetupOverlay(body, width, height)
+			}
+			return body
 		}
 		if m.codexPickerVisible {
 			width := m.width

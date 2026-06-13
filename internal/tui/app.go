@@ -243,6 +243,7 @@ type Model struct {
 	codexInputSelection         *codexInputSelectionState
 	codexComposerSelection      textSelection
 	codexModelPicker            *codexModelPickerState
+	codexLCAgentProviderSetup   *codexLCAgentProviderSetupState
 	embeddedModelPrefs          map[codexapp.Provider]embeddedModelPreference
 	recentCodexModels           []string
 	recentClaudeModels          []string
@@ -510,6 +511,13 @@ type settingsSavedMsg struct {
 	settings config.EditableSettings
 	path     string
 	err      error
+}
+
+type codexLCAgentProviderSetupSavedMsg struct {
+	projectPath string
+	settings    config.EditableSettings
+	path        string
+	err         error
 }
 
 type setupSavedMsg struct {
@@ -1253,6 +1261,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.codexArtifactPicker != nil {
 			return m.updateCodexArtifactPickerMode(msg)
+		}
+		if m.codexLCAgentProviderSetup != nil {
+			return m.updateCodexLCAgentProviderSetupMode(msg)
 		}
 		if m.codexModelPickerVisible() {
 			return m.updateCodexModelPickerMode(msg)
@@ -2232,6 +2243,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case settingsLCAgentModelListMsg:
 		return m.applySettingsLCAgentModelListMsg(msg)
+	case codexLCAgentProviderSetupSavedMsg:
+		return m.applyCodexLCAgentProviderSetupSavedMsg(msg)
 	case setupSavedMsg:
 		m.setupSaving = false
 		m.err = nil

@@ -233,7 +233,7 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 			pref.ModelProvider = strings.TrimSpace(msg.modelProvider)
 			m.embeddedModelPrefs[codexapp.ProviderLCAgent] = pref
 		}
-		m.recordRecentModel(msg.provider, msg.model)
+		m.recordRecentModel(msg.provider, msg.model, msg.modelProvider)
 		m.returnToTodoFromModelPicker()
 		if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
 			return m, tea.Batch(asyncCmd, m.saveEmbeddedModelPreferencesCmd(), m.codexInput.Focus())

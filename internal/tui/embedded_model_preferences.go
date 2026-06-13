@@ -121,11 +121,15 @@ func (m Model) applyEmbeddedModelPreference(req codexapp.LaunchRequest) codexapp
 	return req
 }
 
-func (m *Model) recordRecentModel(provider codexapp.Provider, model string) {
+func (m *Model) recordRecentModel(provider codexapp.Provider, model string, modelProvider ...string) {
 	provider = provider.Normalized()
 	model = strings.TrimSpace(model)
 	if provider == "" || model == "" {
 		return
+	}
+	recentID := model
+	if provider == codexapp.ProviderLCAgent {
+		recentID = formatLCAgentRecentModelID(firstNonEmptyTrimmed(modelProvider...), model)
 	}
 	maxRecent := 5
 	var recent *[]string
@@ -143,16 +147,36 @@ func (m *Model) recordRecentModel(provider codexapp.Provider, model string) {
 	}
 	filtered := make([]string, 0, len(*recent)+1)
 	for _, existing := range *recent {
-		if strings.EqualFold(strings.TrimSpace(existing), model) {
+		if strings.EqualFold(strings.TrimSpace(existing), recentID) {
 			continue
 		}
 		filtered = append(filtered, existing)
 	}
-	filtered = append([]string{model}, filtered...)
+	filtered = append([]string{recentID}, filtered...)
 	if len(filtered) > maxRecent {
 		filtered = filtered[:maxRecent]
 	}
 	*recent = filtered
+}
+
+func formatLCAgentRecentModelID(provider, model string) string {
+	model = strings.TrimSpace(model)
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if model == "" || provider == "" {
+		return model
+	}
+	return provider + ":" + model
+}
+
+func parseLCAgentRecentModelID(raw string) (string, string) {
+	raw = strings.TrimSpace(raw)
+	for _, provider := range []string{"openrouter", "openai", "deepseek", "moonshot", "xiaomi"} {
+		prefix := provider + ":"
+		if strings.HasPrefix(strings.ToLower(raw), prefix) {
+			return provider, strings.TrimSpace(raw[len(prefix):])
+		}
+	}
+	return "", raw
 }
 
 func embeddedModelSettingsEqual(left, right config.EditableSettings) bool {
