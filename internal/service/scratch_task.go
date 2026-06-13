@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/pasteplaceholder"
 )
 
 const scratchTaskMetadataFileName = "TASK.md"
@@ -191,7 +192,7 @@ func isTemporaryScratchTaskTitle(title string) bool {
 }
 
 func scratchTaskTitleFromRequest(request string) string {
-	title := strings.Join(strings.Fields(request), " ")
+	title := strings.Join(strings.Fields(pasteplaceholder.Strip(request)), " ")
 	if title == "" {
 		return ""
 	}

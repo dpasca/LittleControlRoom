@@ -394,6 +394,22 @@ func TestPreviewFromTranscriptSkipsScaffoldTitlesAndHeadingOnlySummaries(t *test
 	}
 }
 
+func TestPreviewFromTranscriptSkipsCollapsedPastePlaceholderTitle(t *testing.T) {
+	t.Parallel()
+
+	preview := previewFromTranscript([]TranscriptItem{
+		{Role: "user", Text: "[2 lines pasted]"},
+		{Role: "assistant", Text: "I found the failing assertion in the footer rendering path."},
+	})
+
+	if preview.Title != "I found the failing assertion in the footer rendering path." {
+		t.Fatalf("preview title = %q, want assistant summary fallback", preview.Title)
+	}
+	if preview.Summary != "I found the failing assertion in the footer rendering path." {
+		t.Fatalf("preview summary = %q", preview.Summary)
+	}
+}
+
 func TestSanitizeClassificationSummaryUsesTranscriptPreviewForStatusLikeInput(t *testing.T) {
 	got := sanitizeClassificationSummary("Turn completed", SessionSnapshot{
 		Transcript: []TranscriptItem{

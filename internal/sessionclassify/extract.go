@@ -16,6 +16,7 @@ import (
 
 	"lcroom/internal/model"
 	"lcroom/internal/opencodesqlite"
+	"lcroom/internal/pasteplaceholder"
 )
 
 const (
@@ -953,7 +954,7 @@ func lastPreviewSummary(items []TranscriptItem, title string) string {
 }
 
 func previewText(text string) string {
-	text = sanitizeTranscriptText(text)
+	text = sanitizeTranscriptText(pasteplaceholder.Strip(text))
 	lines := strings.Split(text, "\n")
 	if previewScaffoldText(lines) {
 		return ""
