@@ -16,6 +16,34 @@ import (
 	"lcroom/internal/projectrun"
 )
 
+func TestLCAgentCommandSpecFallsBackToProjectSourceCheckout(t *testing.T) {
+	t.Setenv("LCROOM_LCAGENT_PATH", "")
+	t.Setenv("PATH", t.TempDir())
+
+	projectRoot := filepath.Join(t.TempDir(), "LittleControlRoom--skateboard-prompt")
+	mainPath := filepath.Join(projectRoot, "cmd", "lcagent", "main.go")
+	if err := os.MkdirAll(filepath.Dir(mainPath), 0o755); err != nil {
+		t.Fatalf("create fake source checkout: %v", err)
+	}
+	if err := os.WriteFile(mainPath, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fake lcagent main: %v", err)
+	}
+
+	spec, err := lcagentCommandSpec("", projectRoot)
+	if err != nil {
+		t.Fatalf("lcagentCommandSpec() error = %v", err)
+	}
+	if spec.Command != "go" {
+		t.Fatalf("Command = %q, want go", spec.Command)
+	}
+	if got, want := strings.Join(spec.Args, "\x00"), strings.Join([]string{"run", "./cmd/lcagent"}, "\x00"); got != want {
+		t.Fatalf("Args = %#v, want go run ./cmd/lcagent", spec.Args)
+	}
+	if spec.Dir != projectRoot {
+		t.Fatalf("Dir = %q, want %q", spec.Dir, projectRoot)
+	}
+}
+
 func TestLCAgentSessionLaunchesConfiguredCommandAndStreamsTranscript(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

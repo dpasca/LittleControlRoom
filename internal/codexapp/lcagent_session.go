@@ -1252,7 +1252,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		}
 	}
 
-	spec, err := lcagentCommandSpec(s.execPath)
+	spec, err := lcagentCommandSpec(s.execPath, s.projectPath)
 	if err != nil {
 		s.finishRun("", false, err)
 		return err
@@ -2503,7 +2503,7 @@ type lcagentCommand struct {
 	Dir     string
 }
 
-func lcagentCommandSpec(configuredPath string) (lcagentCommand, error) {
+func lcagentCommandSpec(configuredPath, projectPath string) (lcagentCommand, error) {
 	if configured := firstNonEmpty(configuredPath, os.Getenv("LCROOM_LCAGENT_PATH")); configured != "" {
 		return lcagentCommand{Command: configured}, nil
 	}
@@ -2516,12 +2516,37 @@ func lcagentCommandSpec(configuredPath string) (lcagentCommand, error) {
 	if path, err := exec.LookPath("lcagent"); err == nil {
 		return lcagentCommand{Command: path}, nil
 	}
-	if wd, err := os.Getwd(); err == nil {
-		if _, statErr := os.Stat(filepath.Join(wd, "cmd", "lcagent", "main.go")); statErr == nil {
-			return lcagentCommand{Command: "go", Args: []string{"run", "./cmd/lcagent"}, Dir: wd}, nil
+	for _, dir := range lcagentSourceFallbackDirs(projectPath) {
+		if _, statErr := os.Stat(filepath.Join(dir, "cmd", "lcagent", "main.go")); statErr == nil {
+			return lcagentCommand{Command: "go", Args: []string{"run", "./cmd/lcagent"}, Dir: dir}, nil
 		}
 	}
 	return lcagentCommand{}, fmt.Errorf("lcagent executable not found; set LCROOM_LCAGENT_PATH")
+}
+
+func lcagentSourceFallbackDirs(projectPath string) []string {
+	var dirs []string
+	seen := map[string]struct{}{}
+	add := func(dir string) {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			return
+		}
+		clean := filepath.Clean(dir)
+		if _, ok := seen[clean]; ok {
+			return
+		}
+		seen[clean] = struct{}{}
+		dirs = append(dirs, clean)
+	}
+	if exe, err := os.Executable(); err == nil {
+		add(filepath.Dir(exe))
+	}
+	if wd, err := os.Getwd(); err == nil {
+		add(wd)
+	}
+	add(projectPath)
+	return dirs
 }
 
 func lcagentAutoLevel(configured string) string {
