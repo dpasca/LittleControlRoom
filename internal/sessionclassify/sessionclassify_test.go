@@ -1270,6 +1270,100 @@ func TestManagerQueueProjectSupportsLCAgentJSONL(t *testing.T) {
 	}
 }
 
+func TestManagerProcessOneRefreshesStaleLCAgentAbortedLifecycle(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "lcagent-aborted")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	sessionFile := filepath.Join(dir, "lca_aborted.jsonl")
+	startedAt := time.Date(2026, 6, 13, 6, 19, 0, 0, time.UTC)
+	userAt := startedAt.Add(time.Minute)
+	abortAt := userAt.Add(time.Minute)
+	if err := os.WriteFile(sessionFile, []byte(strings.Join([]string{
+		`{"type":"session_meta","id":"lca_aborted","cwd":"` + filepath.ToSlash(projectPath) + `","started_at":"` + startedAt.Format(time.RFC3339Nano) + `"}`,
+		`{"type":"user_message","timestamp":"` + userAt.Format(time.RFC3339Nano) + `","message":"Please build a 3D game."}`,
+		`{"type":"turn_aborted","timestamp":"` + abortAt.Format(time.RFC3339Nano) + `","reason":"interrupted"}`,
+	}, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write lcagent fixture: %v", err)
+	}
+
+	state := model.ProjectState{
+		Path:          projectPath,
+		Name:          "lcagent-aborted",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     abortAt,
+		Sessions: []model.SessionEvidence{{
+			Source:               model.SessionSourceLCAgent,
+			SessionID:            "lca_aborted",
+			ProjectPath:          projectPath,
+			SessionFile:          sessionFile,
+			Format:               "lcagent_jsonl",
+			LastEventAt:          abortAt,
+			LatestTurnStartedAt:  userAt,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  false,
+		}},
+	}
+	if err := st.UpsertProjectState(ctx, state); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	var seenSnapshot SessionSnapshot
+	manager := NewManager(st, nil, Options{
+		Client: &fakeClassifier{
+			seen: &seenSnapshot,
+			result: Result{
+				Category:   model.SessionCategoryBlocked,
+				Summary:    "Interrupted before completion.",
+				Confidence: 0.9,
+			},
+		},
+		Workers: 1,
+	})
+	queued, err := manager.QueueProject(ctx, state)
+	if err != nil {
+		t.Fatalf("QueueProject() error = %v", err)
+	}
+	if !queued {
+		t.Fatalf("QueueProject() queued = false, want true")
+	}
+	processed, err := manager.processOne(ctx)
+	if err != nil {
+		t.Fatalf("processOne() error = %v", err)
+	}
+	if !processed {
+		t.Fatalf("processOne() processed = false, want true")
+	}
+	if !seenSnapshot.LatestTurnStateKnown || !seenSnapshot.LatestTurnCompleted {
+		t.Fatalf("snapshot lifecycle known=%v completed=%v, want recovered aborted turn", seenSnapshot.LatestTurnStateKnown, seenSnapshot.LatestTurnCompleted)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 1)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 {
+		t.Fatalf("sessions = %#v, want one", detail.Sessions)
+	}
+	if !detail.Sessions[0].LatestTurnStateKnown || !detail.Sessions[0].LatestTurnCompleted {
+		t.Fatalf("stored lifecycle known=%v completed=%v, want recovered aborted turn", detail.Sessions[0].LatestTurnStateKnown, detail.Sessions[0].LatestTurnCompleted)
+	}
+	if !detail.Sessions[0].LatestTurnStartedAt.IsZero() {
+		t.Fatalf("stored LatestTurnStartedAt = %v, want zero after abort", detail.Sessions[0].LatestTurnStartedAt)
+	}
+}
+
 func TestManagerQueueProjectUsesClientModelWhenAvailable(t *testing.T) {
 	t.Parallel()
 

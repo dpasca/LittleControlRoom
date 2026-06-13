@@ -105,3 +105,39 @@ func TestDetectorCountsExplicitPermissionDenialOnce(t *testing.T) {
 		t.Fatalf("error counts session=%d entry=%d, want one explicit denial", entry.Sessions[0].ErrorCount, entry.ErrorCount)
 	}
 }
+
+func TestDetectorTreatsTurnAbortedAsSettled(t *testing.T) {
+	dataDir := t.TempDir()
+	project := t.TempDir()
+	sessionDir := filepath.Join(dataDir, "lcagent", "sessions", "2026", "05", "09")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(sessionDir, "lca_interrupted.jsonl")
+	content := `{"type":"session_meta","id":"lca_interrupted","started_at":"2026-05-09T01:00:00Z","cwd":"` + filepath.ToSlash(project) + `","auto":"low","model":"scripted"}
+{"type":"user_message","event_id":"evt_1","timestamp":"2026-05-09T01:00:01Z","session_id":"lca_interrupted","message":"build the game"}
+{"type":"turn_aborted","event_id":"evt_2","timestamp":"2026-05-09T01:00:02Z","session_id":"lca_interrupted","reason":"interrupted"}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := New(dataDir).Detect(context.Background(), scanner.NewPathScope([]string{project}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := results[project]
+	if entry == nil || len(entry.Sessions) != 1 {
+		t.Fatalf("missing session entry: %#v", results)
+	}
+	session := entry.Sessions[0]
+	if !session.LatestTurnStateKnown || !session.LatestTurnCompleted {
+		t.Fatalf("turn state known=%v completed=%v, want settled aborted turn", session.LatestTurnStateKnown, session.LatestTurnCompleted)
+	}
+	if !session.LatestTurnStartedAt.IsZero() {
+		t.Fatalf("LatestTurnStartedAt = %v, want zero for settled aborted turn", session.LatestTurnStartedAt)
+	}
+	if session.ErrorCount != 1 || entry.ErrorCount != 1 {
+		t.Fatalf("error counts session=%d entry=%d, want one interrupted turn error", session.ErrorCount, entry.ErrorCount)
+	}
+}

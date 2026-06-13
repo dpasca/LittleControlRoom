@@ -201,9 +201,11 @@ func parseSessionFile(path string) (parseResult, error) {
 		case "turn_complete":
 			result.turnKnown = true
 			result.turnDone = true
+			result.turnStartedAt = time.Time{}
 		case "turn_aborted":
 			result.turnKnown = true
-			result.turnDone = false
+			result.turnDone = true
+			result.turnStartedAt = time.Time{}
 			result.errorCount++
 		case "tool_result":
 			if toolResultFailed(event["result"]) {

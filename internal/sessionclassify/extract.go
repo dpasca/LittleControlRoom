@@ -103,27 +103,34 @@ func ExtractSnapshot(ctx context.Context, classification model.SessionClassifica
 	return snapshot, nil
 }
 
-// RecoverSessionTurnState backfills latest-turn lifecycle from the session artifact
-// when the fast detector omitted it, which commonly happens on older Codex sessions.
+// RecoverSessionTurnState refreshes latest-turn lifecycle from the session
+// artifact when persisted detector metadata is missing or stale.
 func RecoverSessionTurnState(session *model.SessionEvidence) error {
-	if session == nil || session.LatestTurnStateKnown || strings.TrimSpace(session.SessionFile) == "" {
+	if session == nil || strings.TrimSpace(session.SessionFile) == "" {
 		return nil
 	}
 
+	var (
+		state codexTurnLifecycle
+		err   error
+	)
 	switch session.Format {
 	case "modern", "legacy":
-		state, err := detectCodexTurnLifecycle(session.SessionFile)
-		if err != nil {
-			return err
-		}
-		if !state.known {
-			return nil
-		}
-		session.LatestTurnStateKnown = true
-		session.LatestTurnCompleted = state.completed
-		session.LatestTurnStartedAt = state.startedAt
+		state, err = detectCodexTurnLifecycle(session.SessionFile)
+	case "lcagent_jsonl":
+		state, err = detectLCAgentTurnLifecycle(session.SessionFile)
 	default:
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	if !state.known {
+		return nil
+	}
+	session.LatestTurnStateKnown = true
+	session.LatestTurnCompleted = state.completed
+	session.LatestTurnStartedAt = state.startedAt
 
 	return nil
 }
@@ -300,6 +307,28 @@ func detectCodexTurnLifecycle(path string) (codexTurnLifecycle, error) {
 	return state, nil
 }
 
+func detectLCAgentTurnLifecycle(path string) (codexTurnLifecycle, error) {
+	lines, err := readTailLines(path, codexTailBytes)
+	if err != nil {
+		return codexTurnLifecycle{}, err
+	}
+	state := codexTurnLifecycle{}
+	for _, line := range lines {
+		event, ok := extractLCAgentTurnLifecycleEvent(line)
+		if !ok {
+			continue
+		}
+		state.known = true
+		state.completed = event.completed
+		if event.completed {
+			state.startedAt = time.Time{}
+		} else {
+			state.startedAt = event.timestamp
+		}
+	}
+	return state, nil
+}
+
 func readTailLines(path string, maxBytes int64) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -437,6 +466,30 @@ func extractCodexTurnLifecycleEvent(line string) (codexTurnLifecycleEvent, bool)
 	case "task_started":
 		return codexTurnLifecycleEvent{completed: false, timestamp: timestamp}, true
 	case "task_complete", "turn_aborted":
+		return codexTurnLifecycleEvent{completed: true, timestamp: timestamp}, true
+	default:
+		return codexTurnLifecycleEvent{}, false
+	}
+}
+
+func extractLCAgentTurnLifecycleEvent(line string) (codexTurnLifecycleEvent, bool) {
+	var event struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"timestamp"`
+	}
+	if err := json.Unmarshal([]byte(line), &event); err != nil {
+		return codexTurnLifecycleEvent{}, false
+	}
+	timestamp := time.Time{}
+	if parsed, err := time.Parse(time.RFC3339Nano, event.Timestamp); err == nil {
+		timestamp = parsed
+	} else if parsed, err := time.Parse(time.RFC3339, event.Timestamp); err == nil {
+		timestamp = parsed
+	}
+	switch event.Type {
+	case "user_message":
+		return codexTurnLifecycleEvent{completed: false, timestamp: timestamp}, true
+	case "turn_complete", "turn_aborted":
 		return codexTurnLifecycleEvent{completed: true, timestamp: timestamp}, true
 	default:
 		return codexTurnLifecycleEvent{}, false

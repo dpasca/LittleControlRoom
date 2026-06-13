@@ -884,7 +884,22 @@ func (s *lcagentSession) Interrupt() error {
 	s.mu.Lock()
 	cancel := s.cancel
 	cmd := s.cmd
+	runID := strings.TrimSpace(s.runID)
+	dataDir := s.dataDir
+	if s.busy {
+		s.status = "Interrupting LCAgent run..."
+		s.lastError = "LCAgent run interrupted"
+		s.appendEntryLocked(TranscriptStatus, s.status)
+	}
 	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+	if runID != "" {
+		if err := appendLCAgentAbortMarker(dataDir, runID, "interrupted"); err != nil {
+			s.appendAsync(TranscriptError, "LCAgent abort marker failed: "+err.Error())
+		}
+	}
 	return cancelLCAgentRun(cancel, cmd)
 }
 
@@ -896,6 +911,36 @@ func cancelLCAgentRun(cancel context.CancelFunc, cmd *exec.Cmd) error {
 		return terminateAppServerCommand(cmd)
 	}
 	return nil
+}
+
+func appendLCAgentAbortMarker(dataDir, runID, reason string) error {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil
+	}
+	path, err := findLCAgentSessionFile(dataDir, runID)
+	if err != nil || path == "" {
+		return err
+	}
+	event := map[string]any{
+		"type":       "turn_aborted",
+		"event_id":   "lcroom_interrupt_" + strconv.FormatInt(time.Now().UnixNano(), 10),
+		"timestamp":  time.Now().Format(time.RFC3339Nano),
+		"session_id": runID,
+		"reason":     firstNonEmpty(strings.TrimSpace(reason), "interrupted"),
+		"source":     "little_control_room",
+	}
+	line, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(append(line, '\n'))
+	return err
 }
 
 func (s *lcagentSession) RespondApproval(decision ApprovalDecision) error {
@@ -1966,7 +2011,11 @@ func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
 	s.lastActivityAt = s.lastBusyActivityAt
 	if err != nil {
 		s.lastError = err.Error()
-		s.status = "LCAgent failed: " + err.Error()
+		if strings.EqualFold(strings.TrimSpace(s.lastError), "LCAgent run interrupted") {
+			s.status = s.lastError
+		} else {
+			s.status = "LCAgent failed: " + err.Error()
+		}
 		s.appendEntryLocked(TranscriptError, s.status)
 	} else if ok {
 		s.status = "LCAgent run complete"
