@@ -1217,7 +1217,7 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 		if err := session.SubmitInput(submission); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: err}
 		}
-		renamedTask, renameErr := m.maybeAutoRenameScratchTaskFromPrompt(projectPath, submission.TranscriptDisplayText())
+		renamedTask, renameErr := m.maybeAutoRenameScratchTaskFromPrompt(projectPath, draft.titleText())
 		status := "Prompt sent to " + label
 		if steer {
 			status = "Steer sent to " + label

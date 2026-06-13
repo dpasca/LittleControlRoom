@@ -65,6 +65,19 @@ func (d codexDraft) Submission() codexapp.Submission {
 	return sub
 }
 
+func (d codexDraft) titleText() string {
+	d = d.normalized()
+	displayText := stripCodexAttachmentComposerTokens(d.Text, d.Attachments)
+	withoutPastes := displayText
+	for _, pasted := range d.PastedTexts {
+		withoutPastes = strings.ReplaceAll(withoutPastes, pasted.Token, " ")
+	}
+	if text := strings.Join(strings.Fields(withoutPastes), " "); text != "" {
+		return text
+	}
+	return d.Submission().TranscriptText()
+}
+
 type codexToolAnswerState struct {
 	RequestID     string
 	QuestionIndex int

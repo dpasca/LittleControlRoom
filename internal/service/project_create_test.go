@@ -403,6 +403,62 @@ func TestCreateScratchTaskUsesRequestAsInitialName(t *testing.T) {
 	}
 }
 
+func TestCreateScratchTaskIgnoresCollapsedPasteOnlyRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{
+		Request: "[2 lines pasted]",
+	})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	if !strings.HasPrefix(result.TaskName, defaultScratchTaskTitlePrefix+" ") {
+		t.Fatalf("task name = %q, want temporary name", result.TaskName)
+	}
+	if strings.Contains(filepath.Base(result.TaskPath), "lines-pasted") {
+		t.Fatalf("task folder = %q, should not use paste placeholder", filepath.Base(result.TaskPath))
+	}
+}
+
+func TestCreateScratchTaskUsesTextAroundCollapsedPasteRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{
+		Request: "[2 lines pasted] summarize this config",
+	})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	if result.TaskName != "summarize this config" {
+		t.Fatalf("task name = %q, want prompt text around paste placeholder", result.TaskName)
+	}
+	if got := filepath.Base(result.TaskPath); !strings.Contains(got, "summarize-this-config") || strings.Contains(got, "lines-pasted") {
+		t.Fatalf("task folder = %q, want prompt slug without paste placeholder", got)
+	}
+}
+
 func TestCreateScratchTaskUsesTemporaryNameWhenTitleAndRequestAreBlank(t *testing.T) {
 	t.Parallel()
 

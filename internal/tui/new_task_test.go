@@ -320,3 +320,102 @@ func TestVisibleScratchTaskPromptAutoRenamesTemporaryTask(t *testing.T) {
 		t.Fatalf("TASK.md = %q, want renamed heading", got)
 	}
 }
+
+func TestVisibleScratchTaskPromptAutoRenameUsesTextAroundCollapsedPaste(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	created, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	session := &fakeCodexSession{
+		projectPath: created.TaskPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: created.TaskPath}); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	pasted := strings.Repeat("raw log line that should not become the title\n", 9) + "raw log line that should not become the title"
+	token := codexPastedTextComposerToken(1, pasted)
+	draft := codexDraft{
+		Text: token + " summarize the failing config",
+		PastedTexts: []codexPastedText{
+			{Token: token, Text: pasted},
+		},
+	}
+
+	m := New(ctx, svc)
+	m.codexManager = manager
+	m.codexVisibleProject = created.TaskPath
+	cmd := m.submitVisibleCodexCmd(draft)
+	if cmd == nil {
+		t.Fatalf("submitVisibleCodexCmd() returned nil")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want codexActionMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("codex action error = %v", msg.err)
+	}
+	if !msg.renamedTask {
+		t.Fatalf("renamedTask = false, want scratch task auto-rename")
+	}
+	if len(session.submissions) != 1 {
+		t.Fatalf("submissions = %d, want 1", len(session.submissions))
+	}
+	if got := session.submissions[0].DisplayText; !strings.Contains(got, "[10 lines pasted]") {
+		t.Fatalf("display text = %q, want collapsed paste placeholder", got)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, created.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.Name != "summarize the failing config" {
+		t.Fatalf("stored name = %q, want prompt text around paste", detail.Summary.Name)
+	}
+	if strings.Contains(detail.Summary.Name, "pasted") || strings.Contains(detail.Summary.Name, "raw log line") {
+		t.Fatalf("stored name = %q, should not use paste placeholder or pasted body", detail.Summary.Name)
+	}
+}
+
+func TestCodexDraftTitleTextFallsBackToExpandedPasteOnlyPrompt(t *testing.T) {
+	t.Parallel()
+
+	pasted := "Fix chart legend on mobile\nUse the attached reproduction notes"
+	token := codexPastedTextComposerToken(1, pasted)
+	draft := codexDraft{
+		Text: token,
+		PastedTexts: []codexPastedText{
+			{Token: token, Text: pasted},
+		},
+	}
+
+	got := draft.titleText()
+	if got != pasted {
+		t.Fatalf("title text = %q, want expanded paste text", got)
+	}
+	if strings.Contains(got, "pasted]") {
+		t.Fatalf("title text = %q, should not use collapsed paste placeholder", got)
+	}
+}
