@@ -78,15 +78,19 @@ type criticReviewPayload struct {
 	Confidence          float64                `json:"confidence"`
 	Summary             string                 `json:"summary"`
 	Findings            []criticReviewFinding  `json:"findings"`
+	LeadInstruction     string                 `json:"lead_instruction,omitempty"`
+	HumanPrompt         string                 `json:"human_prompt,omitempty"`
 	ProposedUserMessage string                 `json:"proposed_user_message"`
 	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type criticReviewFinding struct {
 	Severity          string `json:"severity"`
+	Materiality       string `json:"materiality,omitempty"`
 	Claim             string `json:"claim"`
 	EvidenceSource    string `json:"evidence_source"`
 	Evidence          string `json:"evidence"`
+	UserImpact        string `json:"user_impact,omitempty"`
 	SuggestedFollowup string `json:"suggested_followup"`
 }
 
@@ -212,6 +216,8 @@ func maybeRunTraceCritic(ctx context.Context, writer *session.Writer, runner scr
 		"confidence":            review.Confidence,
 		"summary":               strings.TrimSpace(review.Summary),
 		"findings":              cleanCriticFindings(review.Findings),
+		"lead_instruction":      strings.TrimSpace(review.LeadInstruction),
+		"human_prompt":          strings.TrimSpace(review.HumanPrompt),
 		"proposed_user_message": strings.TrimSpace(review.ProposedUserMessage),
 	})
 }
@@ -240,27 +246,28 @@ func (r traceCritic) Review(ctx context.Context, packet criticReviewPacket) (cri
 	if err != nil {
 		return criticReviewPayload{}, completion, err
 	}
-	review.Status = normalizeCriticStatus(review.Status)
-	review.Findings = cleanCriticFindings(review.Findings)
-	review.ProposedUserMessage = strings.TrimSpace(review.ProposedUserMessage)
-	if review.Status == "clean" {
-		review.ProposedUserMessage = ""
-	}
-	return review, completion, nil
+	return normalizeCriticReviewForRouting(review), completion, nil
 }
 
 func criticSystemPrompt() string {
 	return strings.Join([]string{
 		"You are a trace-only critic for an AI coding agent turn.",
 		"Review only the provided packet. You have no live tools and must not claim to inspect current files.",
-		"Find concrete evidence that the lead turn may be wrong, incomplete, overclaimed, unsafe, or insufficiently verified.",
+		"Find concrete evidence that the lead turn may be wrong, incomplete, overclaimed, unsafe, insufficiently verified, or on a poor trajectory for the original user request.",
+		"Optimize for material user outcome, not transcript perfection. A true but low-impact wording nit should be a note, not a follow-up.",
 		"Use evidence_source values only from: tool_trace, patch, verification, lead_final, missing_evidence.",
 		"If a concern cannot cite packet evidence, do not include it as a finding.",
+		"Use severity for factual risk and materiality for impact on the original user request.",
+		"Set status=needs_followup only when the task should be reopened because the issue materially blocks or weakens the requested outcome.",
+		"Use status=concerns for trace notes that are true but do not justify another lead turn.",
+		"Prefer lead_instruction for routine corrections the lead can make without human judgment.",
+		"Use human_prompt/proposed_user_message only when human input or an explicit task-reopening follow-up is genuinely warranted.",
+		"Leave human_prompt and proposed_user_message blank for low-materiality findings, even when status=concerns.",
 		"Message content can be truncated. Treat evidence_excerpts on a message as raw trace evidence from omitted portions of that same message.",
 		"Do not claim that a string, file, or page content was absent from a truncated message solely because it is absent from the visible content; at most report missing_evidence when no excerpt or other packet evidence supports the lead claim.",
 		"Return only JSON. Do not use markdown.",
 		"The JSON shape is:",
-		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[{"severity":"low|medium|high","claim":"concrete issue","evidence_source":"tool_trace|patch|verification|lead_final|missing_evidence","evidence":"specific packet evidence","suggested_followup":"what the next user message should ask"}],"proposed_user_message":"draft follow-up for the human to send, blank when status is clean"}`,
+		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","claim":"concrete issue","evidence_source":"tool_trace|patch|verification|lead_final|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what should happen next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
 	}, "\n")
 }
 
@@ -598,9 +605,11 @@ func cleanCriticFindings(findings []criticReviewFinding) []criticReviewFinding {
 	out := make([]criticReviewFinding, 0, len(findings))
 	for _, finding := range findings {
 		finding.Severity = normalizeCriticSeverity(finding.Severity)
+		finding.Materiality = normalizeCriticMateriality(finding.Materiality, finding.Severity)
 		finding.EvidenceSource = normalizeCriticEvidenceSource(finding.EvidenceSource)
 		finding.Claim = strings.TrimSpace(finding.Claim)
 		finding.Evidence = strings.TrimSpace(finding.Evidence)
+		finding.UserImpact = strings.TrimSpace(finding.UserImpact)
 		finding.SuggestedFollowup = strings.TrimSpace(finding.SuggestedFollowup)
 		if finding.Claim == "" && finding.Evidence == "" {
 			continue
@@ -610,6 +619,50 @@ func cleanCriticFindings(findings []criticReviewFinding) []criticReviewFinding {
 	return out
 }
 
+func normalizeCriticReviewForRouting(review criticReviewPayload) criticReviewPayload {
+	review.Status = normalizeCriticStatus(review.Status)
+	review.Summary = strings.TrimSpace(review.Summary)
+	review.Findings = cleanCriticFindings(review.Findings)
+	review.LeadInstruction = strings.TrimSpace(review.LeadInstruction)
+	review.HumanPrompt = strings.TrimSpace(review.HumanPrompt)
+	review.ProposedUserMessage = strings.TrimSpace(review.ProposedUserMessage)
+	if review.HumanPrompt == "" {
+		review.HumanPrompt = review.ProposedUserMessage
+	}
+	if !criticReviewShouldDraftHumanFollowup(review) {
+		review.HumanPrompt = ""
+		review.ProposedUserMessage = ""
+		return review
+	}
+	draft := firstNonEmptyString(review.HumanPrompt, review.ProposedUserMessage)
+	review.HumanPrompt = draft
+	review.ProposedUserMessage = draft
+	return review
+}
+
+func criticReviewShouldDraftHumanFollowup(review criticReviewPayload) bool {
+	if review.Status != "needs_followup" {
+		return false
+	}
+	if strings.TrimSpace(firstNonEmptyString(review.HumanPrompt, review.ProposedUserMessage)) == "" {
+		return false
+	}
+	if len(review.Findings) == 0 {
+		return true
+	}
+	for _, finding := range review.Findings {
+		switch finding.Materiality {
+		case "high", "medium":
+			return true
+		}
+		switch finding.Severity {
+		case "high", "medium":
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeCriticSeverity(severity string) string {
 	switch strings.ToLower(strings.TrimSpace(severity)) {
 	case "high", "medium", "low":
@@ -617,6 +670,14 @@ func normalizeCriticSeverity(severity string) string {
 	default:
 		return "medium"
 	}
+}
+
+func normalizeCriticMateriality(materiality, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(materiality)) {
+	case "high", "medium", "low":
+		return strings.ToLower(strings.TrimSpace(materiality))
+	}
+	return normalizeCriticSeverity(fallback)
 }
 
 func normalizeCriticEvidenceSource(source string) string {

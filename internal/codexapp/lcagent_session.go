@@ -1967,9 +1967,13 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 }
 
 func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.RawMessage) {
-	status := strings.ToLower(strings.TrimSpace(rawJSONString(event["status"])))
+	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
 	summary := strings.TrimSpace(rawJSONString(event["summary"]))
-	proposed := strings.TrimSpace(rawJSONString(event["proposed_user_message"]))
+	proposed := firstNonEmpty(
+		rawJSONString(event["proposed_user_message"]),
+		rawJSONString(event["human_prompt"]),
+	)
+	proposed = strings.TrimSpace(proposed)
 	packetHash := strings.TrimSpace(rawJSONString(event["packet_hash"]))
 	if packetHash == "" {
 		packetHash = strings.TrimSpace(rawJSONString(event["session_id"]))
@@ -1987,13 +1991,26 @@ func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.R
 
 	s.mu.Lock()
 	s.status = text
-	if proposed != "" && status != "clean" {
+	if proposed != "" && status == "needs_followup" {
 		s.suggestedInputDraftID = firstNonEmpty(packetHash, fmt.Sprintf("critic-%d", s.revision+1))
 		s.suggestedInputDraft = proposed
 	}
 	s.appendEntryLocked(TranscriptStatus, text)
 	s.touchLocked()
 	s.mu.Unlock()
+}
+
+func normalizeLCAgentCriticReviewStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "clean":
+		return "clean"
+	case "needs_followup", "needs-followup", "followup", "needs_investigation", "needs-investigation":
+		return "needs_followup"
+	case "concern", "concerns", "warning", "warnings":
+		return "concerns"
+	default:
+		return "concerns"
+	}
 }
 
 func (s *lcagentSession) finishRun(processState string, ok bool, err error) {

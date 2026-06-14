@@ -15,8 +15,7 @@ func TestParseCriticReviewPayloadFromFencedJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCriticReviewPayload() error = %v", err)
 	}
-	payload.Status = normalizeCriticStatus(payload.Status)
-	payload.Findings = cleanCriticFindings(payload.Findings)
+	payload = normalizeCriticReviewForRouting(payload)
 	if payload.Status != "needs_followup" {
 		t.Fatalf("status = %q", payload.Status)
 	}
@@ -26,8 +25,57 @@ func TestParseCriticReviewPayloadFromFencedJSON(t *testing.T) {
 	if payload.Findings[0].Severity != "medium" {
 		t.Fatalf("severity = %q, want normalized medium", payload.Findings[0].Severity)
 	}
+	if payload.Findings[0].Materiality != "medium" {
+		t.Fatalf("materiality = %q, want fallback medium", payload.Findings[0].Materiality)
+	}
 	if payload.ProposedUserMessage != "Please run the tests." {
 		t.Fatalf("proposed message = %q", payload.ProposedUserMessage)
+	}
+}
+
+func TestNormalizeCriticReviewForRoutingClearsConcernDraft(t *testing.T) {
+	payload := normalizeCriticReviewForRouting(criticReviewPayload{
+		Status:              "concerns",
+		Summary:             "wording is slightly imprecise",
+		ProposedUserMessage: "Please clarify the wording.",
+		Findings: []criticReviewFinding{{
+			Severity:       "low",
+			Materiality:    "low",
+			Claim:          "minor wording issue",
+			EvidenceSource: "lead_final",
+			Evidence:       "the final wording was slightly broad",
+		}},
+	})
+
+	if payload.Status != "concerns" {
+		t.Fatalf("status = %q, want concerns", payload.Status)
+	}
+	if payload.ProposedUserMessage != "" || payload.HumanPrompt != "" {
+		t.Fatalf("low concern should not draft follow-up: proposed=%q human=%q", payload.ProposedUserMessage, payload.HumanPrompt)
+	}
+	if len(payload.Findings) != 1 || payload.Findings[0].Materiality != "low" {
+		t.Fatalf("findings = %#v", payload.Findings)
+	}
+}
+
+func TestNormalizeCriticReviewForRoutingBlocksLowMaterialFollowupDraft(t *testing.T) {
+	payload := normalizeCriticReviewForRouting(criticReviewPayload{
+		Status:      "needs_followup",
+		HumanPrompt: "Please ask the lead to clarify a tiny wording issue.",
+		Findings: []criticReviewFinding{{
+			Severity:       "low",
+			Materiality:    "low",
+			Claim:          "minor wording issue",
+			EvidenceSource: "lead_final",
+			Evidence:       "the final wording was slightly broad",
+		}},
+	})
+
+	if payload.Status != "needs_followup" {
+		t.Fatalf("status = %q, want needs_followup", payload.Status)
+	}
+	if payload.ProposedUserMessage != "" || payload.HumanPrompt != "" {
+		t.Fatalf("low-material follow-up should be suppressed: proposed=%q human=%q", payload.ProposedUserMessage, payload.HumanPrompt)
 	}
 }
 

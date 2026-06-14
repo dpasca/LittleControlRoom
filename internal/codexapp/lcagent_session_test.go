@@ -170,6 +170,64 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 	}
 }
 
+func TestLCAgentCriticConcernsDoNotCreateSuggestedDraft(t *testing.T) {
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		started:     true,
+	}
+	raw := func(value string) json.RawMessage {
+		body, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %q: %v", value, err)
+		}
+		return body
+	}
+
+	session.handleLCAgentCriticReviewResult(map[string]json.RawMessage{
+		"packet_hash":           raw("critic-packet-note"),
+		"status":                raw("concerns"),
+		"summary":               raw("minor wording concern"),
+		"proposed_user_message": raw("Please clarify a minor wording issue."),
+	})
+
+	snapshot := session.Snapshot()
+	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
+		t.Fatalf("concerns should not create draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
+	}
+	if !strings.Contains(snapshot.Status, "LCAgent critic found concerns") {
+		t.Fatalf("status = %q, want critic concern status", snapshot.Status)
+	}
+}
+
+func TestLCAgentCriticNeedsFollowupCreatesSuggestedDraft(t *testing.T) {
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		started:     true,
+	}
+	raw := func(value string) json.RawMessage {
+		body, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %q: %v", value, err)
+		}
+		return body
+	}
+
+	session.handleLCAgentCriticReviewResult(map[string]json.RawMessage{
+		"packet_hash":           raw("critic-packet-followup"),
+		"status":                raw("needs-followup"),
+		"summary":               raw("verification is still failing"),
+		"proposed_user_message": raw("Please rerun the failing verification and fix it."),
+	})
+
+	snapshot := session.Snapshot()
+	if snapshot.SuggestedInputDraftID != "critic-packet-followup" {
+		t.Fatalf("SuggestedInputDraftID = %q, want critic packet", snapshot.SuggestedInputDraftID)
+	}
+	if snapshot.SuggestedInputDraft != "Please rerun the failing verification and fix it." {
+		t.Fatalf("SuggestedInputDraft = %q", snapshot.SuggestedInputDraft)
+	}
+}
+
 func TestLCAgentSubmitReturnsBeforeSlowPreflight(t *testing.T) {
 	root := t.TempDir()
 	releasePreflight := make(chan struct{})
