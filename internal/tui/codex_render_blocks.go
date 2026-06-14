@@ -454,7 +454,7 @@ func renderCodexBodyForProject(body string, color lipgloss.Color, width int, pro
 		if len(tableRows) == 0 {
 			return
 		}
-		out = append(out, renderCodexMarkdownTable(tableRows, color, width)...)
+		out = append(out, renderCodexMarkdownTable(tableRows, color, width, projectPath)...)
 		tableRows = nil
 	}
 	for _, line := range lines {
@@ -528,7 +528,7 @@ func isMarkdownTableSeparator(line string) bool {
 	return true
 }
 
-func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []string {
+func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int, projectPath string) []string {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -561,7 +561,7 @@ func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int)
 	colWidths := make([]int, numCols)
 	for _, cells := range parsed {
 		for j, cell := range cells {
-			if w := ansi.StringWidth(cell); w > colWidths[j] {
+			if w := codexMarkdownTableCellWidth(cell, projectPath); w > colWidths[j] {
 				colWidths[j] = w
 			}
 		}
@@ -604,7 +604,11 @@ func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int)
 			if j < len(cells) {
 				cell = cells[j]
 			}
-			wrappedCells[j] = wrapCodexMarkdownTableCell(cell, colWidths[j])
+			style := cellStyle
+			if isHeader {
+				style = headerStyle
+			}
+			wrappedCells[j] = wrapCodexMarkdownTableCell(cell, colWidths[j], style, projectPath)
 			if len(wrappedCells[j]) > rowHeight {
 				rowHeight = len(wrappedCells[j])
 			}
@@ -621,12 +625,11 @@ func renderCodexMarkdownTable(rows []string, color lipgloss.Color, maxWidth int)
 				if pad < 0 {
 					pad = 0
 				}
-				padded := cellLine + strings.Repeat(" ", pad)
+				style := cellStyle
 				if isHeader {
-					parts[j] = headerStyle.Render(padded)
-				} else {
-					parts[j] = cellStyle.Render(padded)
+					style = headerStyle
 				}
+				parts[j] = cellLine + style.Render(strings.Repeat(" ", pad))
 			}
 			sep := borderStyle.Render(" │ ")
 			out = append(out, borderStyle.Render("│ ")+strings.Join(parts, sep)+borderStyle.Render(" │"))
@@ -690,11 +693,17 @@ func fitCodexMarkdownTableColumnWidths(maxWidths []int, maxWidth int, tableOverh
 	return widths
 }
 
-func wrapCodexMarkdownTableCell(cell string, width int) []string {
+func codexMarkdownTableCellWidth(cell, projectPath string) int {
+	rendered := renderCodexInlineMarkdownForProject(cell, lipgloss.NewStyle(), projectPath)
+	return ansi.StringWidth(rendered)
+}
+
+func wrapCodexMarkdownTableCell(cell string, width int, style lipgloss.Style, projectPath string) []string {
 	if width <= 0 || cell == "" {
-		return []string{cell}
+		return []string{style.Render(cell)}
 	}
-	wrapped := lipgloss.NewStyle().Width(width).Render(cell)
+	rendered := renderCodexInlineMarkdownForProject(cell, style, projectPath)
+	wrapped := ansi.Wordwrap(rendered, width, " ")
 	rawLines := strings.Split(strings.ReplaceAll(wrapped, "\r\n", "\n"), "\n")
 	lines := make([]string, 0, len(rawLines))
 	for _, raw := range rawLines {
@@ -707,19 +716,15 @@ func wrapCodexMarkdownTableCell(cell string, width int) []string {
 }
 
 func hardWrapCodexMarkdownTableLine(line string, width int) []string {
-	if width <= 0 || ansi.StringWidth(line) <= width {
+	lineWidth := ansi.StringWidth(line)
+	if width <= 0 || lineWidth <= width {
 		return []string{line}
 	}
-	lines := []string{}
-	remaining := line
-	for remaining != "" {
-		part := ansi.Truncate(remaining, width, "")
-		if part == "" {
-			runes := []rune(remaining)
-			part = string(runes[:1])
-		}
+	lines := make([]string, 0, (lineWidth+width-1)/width)
+	for left := 0; left < lineWidth; left += width {
+		right := min(left+width, lineWidth)
+		part := ansi.Cut(line, left, right)
 		lines = append(lines, part)
-		remaining = strings.TrimPrefix(remaining, part)
 	}
 	return lines
 }
