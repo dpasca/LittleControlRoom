@@ -163,7 +163,7 @@ func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []st
 	colWidths := make([]int, numCols)
 	for _, cells := range parsed {
 		for j, cell := range cells {
-			if w := ansi.StringWidth(cell); w > colWidths[j] {
+			if w := markdownTableCellWidth(cell); w > colWidths[j] {
 				colWidths[j] = w
 			}
 		}
@@ -205,7 +205,11 @@ func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []st
 			if j < len(cells) {
 				cell = cells[j]
 			}
-			wrappedCells[j] = wrapMarkdownTableCell(cell, colWidths[j])
+			style := cellStyle
+			if isHeader {
+				style = headerStyle
+			}
+			wrappedCells[j] = wrapMarkdownTableCell(cell, colWidths[j], style)
 			if len(wrappedCells[j]) > rowHeight {
 				rowHeight = len(wrappedCells[j])
 			}
@@ -222,12 +226,11 @@ func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []st
 				if pad < 0 {
 					pad = 0
 				}
-				padded := cellLine + strings.Repeat(" ", pad)
+				style := cellStyle
 				if isHeader {
-					parts[j] = headerStyle.Render(padded)
-				} else {
-					parts[j] = cellStyle.Render(padded)
+					style = headerStyle
 				}
+				parts[j] = cellLine + style.Render(strings.Repeat(" ", pad))
 			}
 			sep := borderStyle.Render(" │ ")
 			out = append(out, borderStyle.Render("│ ")+strings.Join(parts, sep)+borderStyle.Render(" │"))
@@ -291,11 +294,17 @@ func fitMarkdownTableColumnWidths(maxWidths []int, maxWidth int, tableOverhead i
 	return widths
 }
 
-func wrapMarkdownTableCell(cell string, width int) []string {
+func markdownTableCellWidth(cell string) int {
+	rendered := renderInlineMarkdown(cell, lipgloss.NewStyle())
+	return ansi.StringWidth(rendered)
+}
+
+func wrapMarkdownTableCell(cell string, width int, style lipgloss.Style) []string {
 	if width <= 0 || cell == "" {
-		return []string{cell}
+		return []string{style.Render(cell)}
 	}
-	wrapped := lipgloss.NewStyle().Width(width).Render(cell)
+	rendered := renderInlineMarkdown(cell, style)
+	wrapped := ansi.Wordwrap(rendered, width, " ")
 	rawLines := strings.Split(strings.ReplaceAll(wrapped, "\r\n", "\n"), "\n")
 	lines := make([]string, 0, len(rawLines))
 	for _, raw := range rawLines {
@@ -308,19 +317,15 @@ func wrapMarkdownTableCell(cell string, width int) []string {
 }
 
 func hardWrapMarkdownTableLine(line string, width int) []string {
-	if width <= 0 || ansi.StringWidth(line) <= width {
+	lineWidth := ansi.StringWidth(line)
+	if width <= 0 || lineWidth <= width {
 		return []string{line}
 	}
-	lines := []string{}
-	remaining := line
-	for remaining != "" {
-		part := ansi.Truncate(remaining, width, "")
-		if part == "" {
-			runes := []rune(remaining)
-			part = string(runes[:1])
-		}
+	lines := make([]string, 0, (lineWidth+width-1)/width)
+	for left := 0; left < lineWidth; left += width {
+		right := min(left+width, lineWidth)
+		part := ansi.Cut(line, left, right)
 		lines = append(lines, part)
-		remaining = strings.TrimPrefix(remaining, part)
 	}
 	return lines
 }

@@ -2552,6 +2552,49 @@ func TestRenderCodexTranscriptEntriesKeepsHTTPSMarkdownLinksClickable(t *testing
 	}
 }
 
+func TestRenderCodexTranscriptEntriesRendersMarkdownInsideTableCells(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: strings.Join([]string{
+					"| Kind | Output | Notes |",
+					"| --- | --- | --- |",
+					"| Web | [docs](https://example.com/docs) | **ready** and *polished* with `code` |",
+					"| Local | [README](/tmp/demo/README.md) | plain |",
+				}, "\n"),
+			},
+		},
+	}
+
+	rendered := (Model{}).renderCodexTranscriptEntries(snapshot, 160)
+	if !strings.Contains(rendered, ansi.SetHyperlink("https://example.com/docs")) {
+		t.Fatalf("table cell markdown link should render as a clickable hyperlink: %q", rendered)
+	}
+	if strings.Contains(rendered, ansi.SetHyperlink("/tmp/demo/README.md")) {
+		t.Fatalf("local markdown artifact table link should use the artifact hint instead of a terminal hyperlink: %q", rendered)
+	}
+
+	stripped := ansi.Strip(rendered)
+	for _, unwanted := range []string{
+		"[docs](https://example.com/docs)",
+		"https://example.com/docs",
+		"[README](/tmp/demo/README.md)",
+		"**ready**",
+		"*polished*",
+		"`code`",
+	} {
+		if strings.Contains(stripped, unwanted) {
+			t.Fatalf("rendered table should hide markdown syntax %q:\n%s", unwanted, stripped)
+		}
+	}
+	for _, want := range []string{"docs", "README (README.md) Alt+O", "ready", "polished", "code"} {
+		if !strings.Contains(stripped, want) {
+			t.Fatalf("rendered table missing %q:\n%s", want, stripped)
+		}
+	}
+}
+
 func TestCodexLinkPickerListsOnlyVisibleTranscriptLinks(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		ProjectPath: "/tmp/demo",
