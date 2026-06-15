@@ -3,6 +3,7 @@ package tools
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -253,6 +254,11 @@ func (t FileTools) Read(path string, offset, limit int) ToolResult {
 	hasMore := len(lines) > 0 && endLine < totalLines
 	var b strings.Builder
 	fmt.Fprintf(&b, "file: %s\n", rel)
+	if sum, err := fileSHA256HexPath(target); err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	} else {
+		fmt.Fprintf(&b, "sha256: %s\n", sum)
+	}
 	fmt.Fprintf(&b, "total_lines: %d\n", totalLines)
 	fmt.Fprintf(&b, "has_more: %t\n", hasMore)
 	if hasMore {
@@ -795,6 +801,19 @@ func (t FileTools) resolve(path string) (string, string, error) {
 
 func (t FileTools) relative(path string) string {
 	return t.displayPath(path)
+}
+
+func fileSHA256HexPath(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return fileSHA256Hex(body), nil
+}
+
+func fileSHA256Hex(body []byte) string {
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func (t FileTools) displayPath(path string) string {

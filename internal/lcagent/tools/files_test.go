@@ -39,6 +39,9 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 	if !strings.Contains(read.Output, "lines: 2-2") || !strings.Contains(read.Output, "2 | beta needle") {
 		t.Fatalf("read output = %q", read.Output)
 	}
+	if !strings.Contains(read.Output, "sha256: ") || !strings.Contains(read.Output, fileSHA256Hex([]byte("alpha\nbeta needle\ngamma\n"))) {
+		t.Fatalf("read output missing sha256:\n%s", read.Output)
+	}
 	if !strings.Contains(read.Output, "total_lines: 3") || !strings.Contains(read.Output, "has_more: true") || !strings.Contains(read.Output, "next_offset: 3") {
 		t.Fatalf("read metadata missing:\n%s", read.Output)
 	}
@@ -500,6 +503,148 @@ func TestTextEditorReplaceText(t *testing.T) {
 	}
 	if !strings.Contains(result.DiffSummary, "README.md: replace +1 -1") {
 		t.Fatalf("diff summary = %q", result.DiffSummary)
+	}
+}
+
+func TestTextEditorCreateFileWritesExactContent(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := "first\nsecond\n"
+	result := TextEditor{Workspace: w}.CreateFile(CreateFileSpec{
+		Path:    "docs/new.txt",
+		Content: content,
+	})
+	if !result.Success {
+		t.Fatalf("create_file failed: %s", result.Error)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "new.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Fatalf("new file content = %q", data)
+	}
+	if got := strings.Join(result.FilesTouched, ","); got != "docs/new.txt" {
+		t.Fatalf("FilesTouched = %v", result.FilesTouched)
+	}
+	if result.PatchSummary == nil || result.PatchSummary.TotalAddedLines != 2 || result.PatchSummary.TotalDeletedLines != 0 {
+		t.Fatalf("PatchSummary = %#v", result.PatchSummary)
+	}
+	if !strings.Contains(result.Output, fileSHA256Hex([]byte(content))) {
+		t.Fatalf("create_file output missing sha256:\n%s", result.Output)
+	}
+}
+
+func TestTextEditorCreateFileRejectsExistingTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := TextEditor{Workspace: w}.CreateFile(CreateFileSpec{
+		Path:    "README.md",
+		Content: "new\n",
+	})
+	if result.Success {
+		t.Fatal("create_file succeeded for existing file, want failure")
+	}
+	if !strings.Contains(result.Error, "target already exists") || !strings.Contains(result.Error, "replace_file") {
+		t.Fatalf("error = %q", result.Error)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old\n" {
+		t.Fatalf("existing file changed: %q", data)
+	}
+}
+
+func TestTextEditorReplaceFileRequiresExpectedSHA256(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "README.md")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missing := TextEditor{Workspace: w}.ReplaceFile(ReplaceFileSpec{
+		Path:    "README.md",
+		Content: "new\n",
+	})
+	if missing.Success || !strings.Contains(missing.Error, "expected_sha256") {
+		t.Fatalf("missing guard result = %#v", missing)
+	}
+
+	stale := TextEditor{Workspace: w}.ReplaceFile(ReplaceFileSpec{
+		Path:           "README.md",
+		Content:        "new\n",
+		ExpectedSHA256: strings.Repeat("0", 64),
+	})
+	if stale.Success {
+		t.Fatal("replace_file succeeded with stale sha, want failure")
+	}
+	if !strings.Contains(stale.Error, "sha256 guard mismatch") || stale.PatchFailure == nil || stale.PatchFailure.Stage != "replace_file" {
+		t.Fatalf("stale guard result = %#v", stale)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "old\n" {
+		t.Fatalf("file changed despite stale guard: %q", data)
+	}
+}
+
+func TestTextEditorReplaceFileRewritesWithHashGuard(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "README.md")
+	old := "old\nkeep\n"
+	if err := os.WriteFile(path, []byte(old), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newBody := "new\nbody\n"
+	result := TextEditor{Workspace: w}.ReplaceFile(ReplaceFileSpec{
+		Path:           "README.md",
+		Content:        newBody,
+		ExpectedSHA256: fileSHA256Hex([]byte(old)),
+	})
+	if !result.Success {
+		t.Fatalf("replace_file failed: %s", result.Error)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != newBody {
+		t.Fatalf("README = %q", data)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("mode = %#o, want 0640", got)
+	}
+	if got := strings.Join(result.FilesTouched, ","); got != "README.md" {
+		t.Fatalf("FilesTouched = %v", result.FilesTouched)
+	}
+	if result.PatchSummary == nil || result.PatchSummary.TotalAddedLines != 2 || result.PatchSummary.TotalDeletedLines != 2 {
+		t.Fatalf("PatchSummary = %#v", result.PatchSummary)
+	}
+	if !strings.Contains(result.Output, fileSHA256Hex([]byte(newBody))) || !strings.Contains(result.Output, fileSHA256Hex([]byte(old))) {
+		t.Fatalf("replace_file output missing hashes:\n%s", result.Output)
 	}
 }
 

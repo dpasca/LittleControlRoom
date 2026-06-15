@@ -146,10 +146,14 @@ Current state:
 
 - `apply_patch` returns structured failure metadata.
 - Patch feedback suggests targeted re-reads.
+- `create_file` supports initial file writes without patch grammar.
+- `replace_file` supports guarded whole-file rewrites using SHA-256 values
+  copied from `read_file`.
+- `replace_lines` supports known line-range replacement/deletion.
 - `replace_text` gives a simple exact-replacement fallback.
 - Repeated identical patch feedback is suppressed and escalated into
   model-facing repair guidance that asks the model to re-read current lines,
-  retry a smaller hunk, or use exact `replace_text`.
+  retry a smaller hunk, or choose the smallest direct edit tool.
 
 Missing:
 

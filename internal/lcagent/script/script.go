@@ -163,6 +163,17 @@ type replaceLinesArgs struct {
 	ExpectedLastLine  string `json:"expected_last_line,omitempty"`
 }
 
+type createFileArgs struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+type replaceFileArgs struct {
+	Path           string `json:"path"`
+	Content        string `json:"content"`
+	ExpectedSHA256 string `json:"expected_sha256"`
+}
+
 type finalResponseArgs struct {
 	Summary      string   `json:"summary"`
 	Outcome      string   `json:"outcome"`
@@ -934,6 +945,27 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.Patch.Apply(args.Patch)
+	case "create_file":
+		var args createFileArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		result = tools.TextEditor{Workspace: r.Patch.Workspace}.CreateFile(tools.CreateFileSpec{
+			Path:    args.Path,
+			Content: args.Content,
+		})
+	case "replace_file":
+		var args replaceFileArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceFile(tools.ReplaceFileSpec{
+			Path:           args.Path,
+			Content:        args.Content,
+			ExpectedSHA256: args.ExpectedSHA256,
+		})
 	case "replace_text":
 		var args replaceTextArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -978,7 +1010,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		result = tools.ToolResult{Success: false, Error: "unsupported tool: " + action.Tool}
 	}
 
-	if action.Tool == "apply_patch" || action.Tool == "replace_text" || action.Tool == "replace_lines" {
+	if action.Tool == "apply_patch" || action.Tool == "create_file" || action.Tool == "replace_file" || action.Tool == "replace_text" || action.Tool == "replace_lines" {
 		if len(result.FilesTouched) > 0 {
 			r.filesTouched = appendCleanUniqueStrings(r.filesTouched, result.FilesTouched...)
 			if err := r.Session.Write(session.Event{

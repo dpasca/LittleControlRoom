@@ -498,7 +498,7 @@ func TestLCAgentSessionModelRequestProgressUpdatesInPlace(t *testing.T) {
 	session.handleEvent([]byte(`{"type":"model_request_progress","session_id":"lca_model_progress","provider":"deepseek","model":"deepseek-v4-pro","phase":"tool_loop","turn":2,"attempt":1,"elapsed_ms":125000}`))
 	session.handleEvent([]byte(`{"type":"model_request_progress","session_id":"lca_model_progress","provider":"deepseek","model":"deepseek-v4-pro","phase":"tool_loop","turn":2,"attempt":1,"elapsed_ms":185000}`))
 	progress := session.Snapshot()
-	if got := strings.Count(progress.Transcript, "LCAgent still waiting for model response"); got != 1 {
+	if got := strings.Count(progress.Transcript, "LCAgent still waiting for model response/tool call"); got != 1 {
 		t.Fatalf("progress updates should replace one line, got %d:\n%s", got, progress.Transcript)
 	}
 	if !strings.Contains(progress.Transcript, "elapsed 03:05") {
@@ -513,7 +513,7 @@ func TestLCAgentSessionModelRequestProgressUpdatesInPlace(t *testing.T) {
 	if strings.Contains(snapshot.Transcript, "still waiting") {
 		t.Fatalf("model_response should replace stale progress text:\n%s", snapshot.Transcript)
 	}
-	if got := strings.Count(snapshot.Transcript, "LCAgent model response received"); got != 1 {
+	if got := strings.Count(snapshot.Transcript, "LCAgent model response/tool call received"); got != 1 {
 		t.Fatalf("model response line count = %d, want 1:\n%s", got, snapshot.Transcript)
 	}
 	for _, want := range []string{"turn 2", "tool loop", "deepseek-v4-pro", "1 tool call"} {
@@ -546,6 +546,48 @@ func TestLCAgentSessionModelRequestTerminalFailureReplacesProgress(t *testing.T)
 	}
 	if got := strings.Count(snapshot.Transcript, "context deadline exceeded"); got != 1 {
 		t.Fatalf("provider failure error line count = %d, want 1:\n%s", got, snapshot.Transcript)
+	}
+}
+
+func TestLCAgentDirectFileToolSummaries(t *testing.T) {
+	createArgs := json.RawMessage(`{"path":"docs/new.txt","content":"hidden from transcript\n"}`)
+	if got := lcagentToolArgsSummary("create_file", createArgs); got != "docs/new.txt" {
+		t.Fatalf("create_file args summary = %q", got)
+	}
+	result := json.RawMessage(`{"success":true,"files_touched":["docs/new.txt"],"output":"file created\nsha256: abc"}`)
+	if got := lcagentToolResultText("create_file", result); !strings.Contains(got, "touched docs/new.txt") {
+		t.Fatalf("create_file result text = %q", got)
+	}
+
+	replaceArgs := json.RawMessage(`{"path":"README.md","content":"hidden from transcript\n","expected_sha256":"abc"}`)
+	if got := lcagentToolArgsSummary("replace_file", replaceArgs); got != "README.md" {
+		t.Fatalf("replace_file args summary = %q", got)
+	}
+}
+
+func TestLCAgentCriticInvalidJSONIsDistinctFromUnavailable(t *testing.T) {
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		started:     true,
+	}
+	session.handleEvent([]byte(`{"type":"critic_model_response_invalid","session_id":"lca_critic_invalid","provider":"openrouter","model":"critic/test","attempt":1,"retrying":true,"message":"critic returned invalid JSON","usage_summary":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}`))
+	session.handleEvent([]byte(`{"type":"critic_review_retry","session_id":"lca_critic_invalid","message":"critic returned invalid structured output; retrying once with stricter JSON-only instructions"}`))
+	session.handleEvent([]byte(`{"type":"critic_review_failed","session_id":"lca_critic_invalid","failure_kind":"invalid_json","message":"critic returned invalid JSON after retry"}`))
+
+	snapshot := session.Snapshot()
+	if snapshot.Status != "LCAgent critic invalid structured output" {
+		t.Fatalf("status = %q", snapshot.Status)
+	}
+	for _, want := range []string{"LCAgent critic returned invalid structured output on attempt 1; retrying", "retrying once with stricter JSON-only instructions", "LCAgent critic invalid structured output: critic returned invalid JSON after retry"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+	if strings.Contains(snapshot.Transcript, "LCAgent critic unavailable") {
+		t.Fatalf("invalid JSON should not be rendered as unavailable:\n%s", snapshot.Transcript)
+	}
+	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Total.TotalTokens != 7 {
+		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
 }
 

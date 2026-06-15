@@ -122,6 +122,49 @@ func TestRunnerRecordsActualVerificationCheck(t *testing.T) {
 	}
 }
 
+func TestRunnerEmitsFileEventsForDirectFileTools(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Patch:     tools.PatchApplier{Workspace: w},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "create_file",
+		Args: raw(`{"path":"docs/new.txt","content":"hello\n"}`),
+	})
+	if err != nil {
+		t.Fatalf("create_file failed: %v", err)
+	}
+	if !result.Success || strings.Join(result.FilesTouched, ",") != "docs/new.txt" {
+		t.Fatalf("result = %#v", result)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "docs", "new.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello\n" {
+		t.Fatalf("new file = %q", data)
+	}
+	text := stream.String()
+	for _, want := range []string{`"tool":"create_file"`, `"type":"files_touched"`, `"docs/new.txt"`, `"type":"patch_diff_summary"`, `"operation":"add"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunnerDispatchesBrowserToolsThroughBrowserRunner(t *testing.T) {
 	var stream bytes.Buffer
 	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)

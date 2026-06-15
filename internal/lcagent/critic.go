@@ -192,9 +192,9 @@ func maybeRunCriticReview(ctx context.Context, writer *session.Writer, runner sc
 	}); err != nil {
 		return criticReviewPayload{}, packetHash, true, err
 	}
-	review, completion, err := profile.Reviewer.Review(ctx, packet)
+	review, completion, err := runCriticReviewWithRetry(ctx, writer, profile, runner.SessionID, packet, packetHash, mode)
 	if err != nil {
-		return criticReviewPayload{}, packetHash, true, writer.Write(session.Event{
+		event := session.Event{
 			"type":        "critic_review_failed",
 			"session_id":  runner.SessionID,
 			"provider":    profile.Provider,
@@ -202,7 +202,11 @@ func maybeRunCriticReview(ctx context.Context, writer *session.Writer, runner sc
 			"packet_hash": packetHash,
 			"message":     err.Error(),
 			"mode":        mode,
-		})
+		}
+		if strings.Contains(err.Error(), "invalid JSON") {
+			event["failure_kind"] = "invalid_json"
+		}
+		return criticReviewPayload{}, packetHash, true, writer.Write(event)
 	}
 	modelName := firstNonEmptyString(strings.TrimSpace(completion.Model), profile.Model)
 	if err := writer.Write(session.Event{
@@ -237,31 +241,151 @@ func maybeRunCriticReview(ctx context.Context, writer *session.Writer, runner sc
 	return review, packetHash, true, nil
 }
 
-func (r traceCritic) Review(ctx context.Context, packet criticReviewPacket) (criticReviewPayload, modeladapter.Completion, error) {
+type criticReviewAttempt struct {
+	Attempt     int
+	Review      criticReviewPayload
+	Completion  modeladapter.Completion
+	InvalidJSON bool
+	Err         error
+}
+
+func runCriticReviewWithRetry(ctx context.Context, writer *session.Writer, profile criticProfile, sessionID string, packet criticReviewPacket, packetHash string, mode string) (criticReviewPayload, modeladapter.Completion, error) {
+	var previousInvalid string
+	var lastCompletion modeladapter.Completion
+	for attempt := 1; attempt <= 2; attempt++ {
+		result := profile.Reviewer.ReviewAttempt(ctx, packet, attempt, previousInvalid)
+		lastCompletion = result.Completion
+		if result.Err == nil {
+			return result.Review, result.Completion, nil
+		}
+		if !result.InvalidJSON {
+			return criticReviewPayload{}, result.Completion, result.Err
+		}
+		if err := writeCriticInvalidModelResponse(writer, profile, sessionID, packetHash, mode, result); err != nil {
+			return criticReviewPayload{}, result.Completion, err
+		}
+		previousInvalid = result.Completion.Message.Content
+		if attempt < 2 {
+			if err := writer.Write(session.Event{
+				"type":        "critic_review_retry",
+				"session_id":  sessionID,
+				"provider":    profile.Provider,
+				"model":       firstNonEmptyString(strings.TrimSpace(result.Completion.Model), profile.Model),
+				"packet_hash": packetHash,
+				"mode":        mode,
+				"attempt":     attempt + 1,
+				"reason":      "invalid_json",
+				"message":     "critic returned invalid structured output; retrying once with stricter JSON-only instructions",
+			}); err != nil {
+				return criticReviewPayload{}, result.Completion, err
+			}
+			continue
+		}
+		return criticReviewPayload{}, result.Completion, fmt.Errorf("critic returned invalid JSON after retry")
+	}
+	return criticReviewPayload{}, lastCompletion, fmt.Errorf("critic review failed")
+}
+
+func (r traceCritic) ReviewAttempt(ctx context.Context, packet criticReviewPacket, attempt int, previousInvalid string) criticReviewAttempt {
+	result := criticReviewAttempt{Attempt: attempt}
 	if r.client == nil {
-		return criticReviewPayload{}, modeladapter.Completion{}, fmt.Errorf("critic client is not configured")
+		result.Err = fmt.Errorf("critic client is not configured")
+		return result
 	}
 	body, err := json.MarshalIndent(packet, "", "  ")
 	if err != nil {
-		return criticReviewPayload{}, modeladapter.Completion{}, err
+		result.Err = err
+		return result
 	}
-	messages := []modeladapter.Message{
-		{Role: "system", Content: criticSystemPrompt()},
-		{Role: "user", Content: string(body)},
-	}
+	messages := criticReviewMessages(string(body), previousInvalid)
 	options := modeladapter.CompletionOptions{MaxCompletionTokens: 1400}
 	if !strings.EqualFold(r.provider, "openai") {
 		options.DisableThinking = true
 	}
 	completion, err := r.client.CompleteWithOptions(ctx, messages, nil, options)
+	result.Completion = completion
 	if err != nil {
-		return criticReviewPayload{}, completion, err
+		result.Err = err
+		return result
 	}
 	review, err := parseCriticReviewPayload(completion.Message.Content)
 	if err != nil {
-		return criticReviewPayload{}, completion, err
+		result.InvalidJSON = true
+		result.Err = err
+		return result
 	}
-	return normalizeCriticReviewForRouting(review), completion, nil
+	result.Review = normalizeCriticReviewForRouting(review)
+	return result
+}
+
+func criticReviewMessages(packetBody string, previousInvalid string) []modeladapter.Message {
+	messages := []modeladapter.Message{
+		{Role: "system", Content: criticSystemPrompt()},
+		{Role: "user", Content: packetBody},
+	}
+	if strings.TrimSpace(previousInvalid) == "" {
+		return messages
+	}
+	previous, _ := truncateCriticText(previousInvalid, 4000)
+	messages = append(messages,
+		modeladapter.Message{Role: "assistant", Content: previous},
+		modeladapter.Message{Role: "user", Content: criticJSONRepairPrompt()},
+	)
+	return messages
+}
+
+func criticJSONRepairPrompt() string {
+	return strings.Join([]string{
+		"Your previous critic response was not valid JSON for the required schema.",
+		"Return only one JSON object. Do not include markdown, prose, code fences, comments, or multiple JSON values.",
+		"Use exactly this top-level shape:",
+		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[],"lead_instruction":"","human_prompt":"","proposed_user_message":""}`,
+		"If there are findings, each item must include severity, materiality, claim, evidence_source, evidence, user_impact, and suggested_followup.",
+	}, "\n")
+}
+
+func writeCriticInvalidModelResponse(writer *session.Writer, profile criticProfile, sessionID, packetHash, mode string, result criticReviewAttempt) error {
+	if writer == nil {
+		return nil
+	}
+	content := result.Completion.Message.Content
+	contentHash := criticContentHash(content)
+	modelName := firstNonEmptyString(strings.TrimSpace(result.Completion.Model), profile.Model)
+	message := "critic returned invalid structured output"
+	if result.Err != nil {
+		message = result.Err.Error()
+	}
+	public := session.Event{
+		"type":           "critic_model_response_invalid",
+		"session_id":     sessionID,
+		"provider":       profile.Provider,
+		"model":          modelName,
+		"packet_hash":    packetHash,
+		"attempt":        result.Attempt,
+		"mode":           mode,
+		"message":        message,
+		"content_sha256": contentHash,
+		"usage":          json.RawMessage(result.Completion.Usage),
+		"usage_summary":  result.Completion.UsageSummary,
+	}
+	if result.Attempt < 2 {
+		public["retrying"] = true
+	}
+	if err := writer.Write(public); err != nil {
+		return err
+	}
+	return writer.WritePrivate(session.Event{
+		"type":           "critic_model_response_invalid_raw",
+		"session_id":     sessionID,
+		"provider":       profile.Provider,
+		"model":          modelName,
+		"packet_hash":    packetHash,
+		"attempt":        result.Attempt,
+		"mode":           mode,
+		"message":        message,
+		"content_sha256": contentHash,
+		"content":        content,
+	})
 }
 
 func criticSystemPrompt() string {
@@ -804,5 +928,10 @@ func criticPacketHash(packet criticReviewPacket) string {
 		return ""
 	}
 	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+func criticContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:])
 }

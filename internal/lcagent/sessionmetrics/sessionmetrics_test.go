@@ -94,6 +94,7 @@ func TestAnalyzeFilesSummarizesCriticSignals(t *testing.T) {
 {"type":"critic_review_result","mode":"pre_final","status":"needs_followup","summary":"material issue","lead_instruction":"fix it","findings":[{"severity":"medium","materiality":"high","claim":"bad final","evidence_source":"lead_final","evidence":"bad"}]}
 {"type":"critic_lead_feedback","message":"Critic feedback before final_response: fix it"}
 {"type":"critic_review_started","mode":"trace_only"}
+{"type":"critic_model_response_invalid","mode":"trace_only","attempt":1,"message":"critic returned invalid JSON","usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}
 {"type":"critic_review_result","mode":"trace_only","status":"concerns","summary":"minor concern","proposed_user_message":"Please ask the user."}
 {"type":"critic_review_failed","mode":"trace_only","message":"critic unavailable"}
 {"type":"verification_summary","status":"verified"}
@@ -115,10 +116,10 @@ func TestAnalyzeFilesSummarizesCriticSignals(t *testing.T) {
 	if summary.CriticReviewStatuses["needs_followup"] != 1 || summary.CriticReviewStatuses["concerns"] != 1 {
 		t.Fatalf("critic statuses = %#v", summary.CriticReviewStatuses)
 	}
-	if summary.CriticLeadFeedback != 1 || summary.CriticHumanPrompts != 1 || summary.CriticModelResponses != 1 {
-		t.Fatalf("critic friction = lead %d human %d model %d", summary.CriticLeadFeedback, summary.CriticHumanPrompts, summary.CriticModelResponses)
+	if summary.CriticLeadFeedback != 1 || summary.CriticHumanPrompts != 1 || summary.CriticModelResponses != 1 || summary.CriticInvalidModelResponses != 1 {
+		t.Fatalf("critic friction = lead %d human %d model %d invalid %d", summary.CriticLeadFeedback, summary.CriticHumanPrompts, summary.CriticModelResponses, summary.CriticInvalidModelResponses)
 	}
-	if summary.TokenUsage.InputTokens != 5 || summary.TokenUsage.OutputTokens != 2 || summary.TokenUsage.TotalTokens != 7 {
+	if summary.TokenUsage.InputTokens != 8 || summary.TokenUsage.OutputTokens != 3 || summary.TokenUsage.TotalTokens != 11 {
 		t.Fatalf("critic token usage = %+v", summary.TokenUsage)
 	}
 	if summary.TraceQuality.CriticReviews != 2 || summary.TraceQuality.CriticLeadFeedback != 1 || summary.TraceQuality.CriticHumanPrompts != 1 {

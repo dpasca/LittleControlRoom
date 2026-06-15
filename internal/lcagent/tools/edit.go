@@ -30,10 +30,114 @@ type ReplaceLinesSpec struct {
 	ExpectedLastLine  string
 }
 
+type CreateFileSpec struct {
+	Path    string
+	Content string
+}
+
+type ReplaceFileSpec struct {
+	Path           string
+	Content        string
+	ExpectedSHA256 string
+}
+
 const (
 	replaceTextMaxLines = 80
 	replaceTextMaxBytes = 12000
 )
+
+func (e TextEditor) CreateFile(spec CreateFileSpec) ToolResult {
+	if err := e.Workspace.AllowEdit("create_file"); err != nil {
+		return failureResult(err)
+	}
+	rel := cleanEditPath(spec.Path)
+	if rel == "" {
+		return ToolResult{Success: false, Error: "path is required"}
+	}
+	if strings.ContainsRune(spec.Content, '\x00') {
+		return ToolResult{Success: false, Error: fmt.Sprintf("binary content suppressed: %s", rel), Binary: true}
+	}
+	path, err := e.Workspace.Resolve(rel)
+	if err != nil {
+		return failureResult(err)
+	}
+	if info, err := os.Stat(path); err == nil {
+		if info.IsDir() {
+			return ToolResult{Success: false, Error: fmt.Sprintf("path is a directory: %s", rel)}
+		}
+		return ToolResult{Success: false, Error: fmt.Sprintf("create_file target already exists: %s; use replace_file with expected_sha256 for whole-file rewrites", rel)}
+	} else if !os.IsNotExist(err) {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if err := os.WriteFile(path, []byte(spec.Content), 0o644); err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	summary := fileWritePatchSummary(rel, "add", countReplacementLines(spec.Content), 0)
+	diffSummary := formatPatchSummary(summary)
+	return ToolResult{
+		Success:      true,
+		Output:       "file created\nsha256: " + fileSHA256Hex([]byte(spec.Content)) + "\n\n" + diffSummary,
+		FilesTouched: []string{rel},
+		DiffSummary:  diffSummary,
+		PatchSummary: summary,
+	}
+}
+
+func (e TextEditor) ReplaceFile(spec ReplaceFileSpec) ToolResult {
+	if err := e.Workspace.AllowEdit("replace_file"); err != nil {
+		return failureResult(err)
+	}
+	rel := cleanEditPath(spec.Path)
+	if rel == "" {
+		return ToolResult{Success: false, Error: "path is required"}
+	}
+	expectedSHA := strings.ToLower(strings.TrimSpace(spec.ExpectedSHA256))
+	if !isSHA256Hex(expectedSHA) {
+		return textEditFailureResult("replace_file", rel, "expected_sha256 is required and must be a 64-character hex SHA-256 from the latest read_file output", "call read_file on the target file and copy its sha256 value before retrying", []ReadSuggestion{{Path: rel, Offset: 1, Limit: 80, Reason: "refresh file hash before whole-file replacement"}})
+	}
+	if strings.ContainsRune(spec.Content, '\x00') {
+		return ToolResult{Success: false, Error: fmt.Sprintf("binary content suppressed: %s", rel), Binary: true}
+	}
+	path, err := e.Workspace.Resolve(rel)
+	if err != nil {
+		return failureResult(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if info.IsDir() {
+		return ToolResult{Success: false, Error: fmt.Sprintf("path is a directory: %s", rel)}
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	if bytes.IndexByte(body, 0) >= 0 {
+		return ToolResult{Success: false, Error: fmt.Sprintf("binary file suppressed: %s", rel), Binary: true}
+	}
+	currentSHA := fileSHA256Hex(body)
+	if !strings.EqualFold(currentSHA, expectedSHA) {
+		message := fmt.Sprintf("replace_file sha256 guard mismatch in %s; expected %s, current %s", rel, expectedSHA, currentSHA)
+		return textEditFailureResult("replace_file", rel, message, "call read_file on the target file and copy its current sha256 value before retrying", []ReadSuggestion{{Path: rel, Offset: 1, Limit: 80, Reason: "refresh file hash before whole-file replacement"}})
+	}
+	if err := os.WriteFile(path, []byte(spec.Content), info.Mode().Perm()); err != nil {
+		return ToolResult{Success: false, Error: err.Error()}
+	}
+	newSHA := fileSHA256Hex([]byte(spec.Content))
+	summary := fileWritePatchSummary(rel, "replace", countReplacementLines(spec.Content), countReplacementLines(string(body)))
+	diffSummary := formatPatchSummary(summary)
+	return ToolResult{
+		Success:      true,
+		Output:       fmt.Sprintf("file replaced\nold_sha256: %s\nsha256: %s\n\n%s", currentSHA, newSHA, diffSummary),
+		FilesTouched: []string{rel},
+		DiffSummary:  diffSummary,
+		PatchSummary: summary,
+	}
+}
 
 func (e TextEditor) ReplaceText(spec ReplaceTextSpec) ToolResult {
 	if err := e.Workspace.AllowEdit("replace_text"); err != nil {
@@ -167,6 +271,40 @@ func (e TextEditor) ReplaceLines(spec ReplaceLinesSpec) ToolResult {
 		FilesTouched: []string{rel},
 		DiffSummary:  diffSummary,
 		PatchSummary: summary,
+	}
+}
+
+func cleanEditPath(path string) string {
+	rel := filepath.Clean(strings.TrimSpace(path))
+	if rel == "." || rel == "" {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
+func isSHA256Hex(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func fileWritePatchSummary(path, operation string, added, deleted int) *PatchSummary {
+	return &PatchSummary{
+		Files: []FilePatchSummary{{
+			Path:         path,
+			Operation:    operation,
+			AddedLines:   added,
+			DeletedLines: deleted,
+		}},
+		TotalAddedLines:   added,
+		TotalDeletedLines: deleted,
 	}
 }
 
