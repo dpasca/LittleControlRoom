@@ -2510,6 +2510,12 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	if provider := strings.TrimSpace(replay.modelProvider); provider != "" {
 		s.modelProvider = provider
 	}
+	if provider := strings.TrimSpace(replay.criticModelProvider); provider != "" {
+		s.criticProvider = provider
+	}
+	if model := strings.TrimSpace(replay.criticModel); model != "" {
+		s.criticModel = model
+	}
 	// If the restored model doesn't belong to the session's current provider,
 	// clear it so the next run defaults to the correct model.
 	sessionProvider := firstNonEmpty(s.provider, lcagentDefaultProvider)
@@ -2517,6 +2523,17 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 		s.model = ""
 	}
 	s.tokenUsage = cloneThreadTokenUsage(replay.tokenUsage)
+	s.criticActive = replay.criticActive
+	s.criticReviews = replay.criticReviews
+	s.criticConsultations = replay.criticConsultations
+	s.criticConsultConcerns = replay.criticConsultConcerns
+	s.criticConcerns = replay.criticConcerns
+	s.criticLeadRevisions = replay.criticLeadRevisions
+	s.criticFollowupDrafts = replay.criticFollowupDrafts
+	s.criticLastStatus = strings.TrimSpace(replay.criticLastStatus)
+	s.criticLastSummary = strings.TrimSpace(replay.criticLastSummary)
+	s.suggestedInputDraftID = strings.TrimSpace(replay.suggestedInputDraftID)
+	s.suggestedInputDraft = strings.TrimSpace(replay.suggestedInputDraft)
 	label := firstNonEmpty(s.threadID, "history")
 	s.status = "Loaded LCAgent thread " + label + " from disk"
 	s.replayLoaded = true

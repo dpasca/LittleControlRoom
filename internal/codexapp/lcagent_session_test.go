@@ -1787,6 +1787,60 @@ func TestLCAgentReplayShowsModelRequestFailureAndProviderRetry(t *testing.T) {
 	}
 }
 
+func TestLCAgentReplayRestoresCriticInvalidJSONFailure(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_critic_failure"
+	started := time.Date(2026, 6, 16, 2, 42, 0, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro"},
+		{"type": "critic_profile", "session_id": sessionID, "enabled": true, "provider": "deepseek", "model": "deepseek-v4-pro"},
+		{"type": "critic_review_started", "session_id": sessionID, "mode": "pre_final"},
+		{"type": "critic_model_response_invalid", "session_id": sessionID, "attempt": 1, "retrying": true, "message": "critic returned invalid JSON", "usage_summary": map[string]any{"input_tokens": 5, "output_tokens": 2, "total_tokens": 7}},
+		{"type": "critic_review_retry", "session_id": sessionID, "message": "critic returned invalid structured output; retrying once with stricter JSON-only instructions"},
+		{"type": "critic_model_response_invalid", "session_id": sessionID, "attempt": 2, "message": "critic returned invalid JSON", "usage_summary": map[string]any{"input_tokens": 11, "output_tokens": 3, "total_tokens": 14}},
+		{"type": "critic_review_failed", "session_id": sessionID, "failure_kind": "invalid_json", "message": "critic returned invalid JSON after retry"},
+	})
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
+	}
+	lca := &lcagentSession{
+		projectPath: root,
+		provider:    "xiaomi",
+	}
+	lca.applyReplay(replay)
+	snapshot := lca.Snapshot()
+	if snapshot.CriticModelProvider != "deepseek" || snapshot.CriticModel != "deepseek-v4-pro" {
+		t.Fatalf("critic model = %q/%q, want deepseek/deepseek-v4-pro", snapshot.CriticModelProvider, snapshot.CriticModel)
+	}
+	if snapshot.CriticActive {
+		t.Fatal("critic should not be active after failed replay")
+	}
+	if snapshot.CriticLastStatus != "failed" || snapshot.CriticLastSummary != "critic returned invalid JSON after retry" {
+		t.Fatalf("critic status = %q summary %q, want failed invalid JSON summary", snapshot.CriticLastStatus, snapshot.CriticLastSummary)
+	}
+	if snapshot.CriticReviews != 0 || snapshot.CriticConcerns != 0 {
+		t.Fatalf("failed critic review should not count as completed review: reviews=%d concerns=%d", snapshot.CriticReviews, snapshot.CriticConcerns)
+	}
+	for _, want := range []string{
+		"LCAgent critic returned invalid structured output on attempt 1; retrying",
+		"retrying once with stricter JSON-only instructions",
+		"LCAgent critic returned invalid structured output on attempt 2",
+		"LCAgent critic invalid structured output: critic returned invalid JSON after retry",
+	} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("replayed transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Total.TotalTokens != 21 {
+		t.Fatalf("token usage = %#v, want total 21", snapshot.TokenUsage)
+	}
+	if snapshot.LastError != "" {
+		t.Fatalf("LastError = %q, want empty for critic failure", snapshot.LastError)
+	}
+}
+
 func TestLCAgentSessionPassesXiaomiBaseURLForDirectRoute(t *testing.T) {
 	root := t.TempDir()
 	argsPath := filepath.Join(t.TempDir(), "args.txt")

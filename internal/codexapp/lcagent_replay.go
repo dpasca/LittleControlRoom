@@ -26,9 +26,22 @@ type lcagentReplay struct {
 	projectPath              string
 	model                    string
 	modelProvider            string
+	criticModel              string
+	criticModelProvider      string
 	startedAt                time.Time
 	lastActivityAt           time.Time
 	lastError                string
+	criticActive             bool
+	criticReviews            int
+	criticConsultations      int
+	criticConsultConcerns    int
+	criticConcerns           int
+	criticLeadRevisions      int
+	criticFollowupDrafts     int
+	criticLastStatus         string
+	criticLastSummary        string
+	suggestedInputDraftID    string
+	suggestedInputDraft      string
 	tokenUsage               *threadTokenUsage
 	browserActivity          browserctl.SessionActivity
 	managedBrowserSessionKey string
@@ -169,6 +182,7 @@ func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (
 		}
 		combined.entries = appendReplayEntries(combined.entries, replay.entries)
 		combined.tokenUsage = mergeReplayTokenUsage(combined.tokenUsage, replay.tokenUsage)
+		mergeReplayCriticState(combined, replay)
 	}
 	return combined, nil
 }
@@ -249,6 +263,33 @@ func mergeReplayTokenUsage(total, next *threadTokenUsage) *threadTokenUsage {
 		out.ModelContextWindow = &copied
 	}
 	return out
+}
+
+func mergeReplayCriticState(total, next *lcagentReplay) {
+	if total == nil || next == nil {
+		return
+	}
+	if next.criticModel != "" {
+		total.criticModel = next.criticModel
+	}
+	if next.criticModelProvider != "" {
+		total.criticModelProvider = next.criticModelProvider
+	}
+	total.criticActive = next.criticActive
+	total.criticReviews += next.criticReviews
+	total.criticConsultations += next.criticConsultations
+	total.criticConsultConcerns += next.criticConsultConcerns
+	total.criticConcerns += next.criticConcerns
+	total.criticLeadRevisions += next.criticLeadRevisions
+	total.criticFollowupDrafts += next.criticFollowupDrafts
+	if next.criticLastStatus != "" {
+		total.criticLastStatus = next.criticLastStatus
+		total.criticLastSummary = next.criticLastSummary
+	}
+	if next.suggestedInputDraftID != "" || next.suggestedInputDraft != "" {
+		total.suggestedInputDraftID = next.suggestedInputDraftID
+		total.suggestedInputDraft = next.suggestedInputDraft
+	}
 }
 
 func findLCAgentSessionFile(dataDir, sessionID string) (string, error) {
@@ -425,6 +466,36 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 				replay.addTokenUsage(usage)
 			}
 			replay.upsertExistingEntry(lcagentModelRequestItemID(event), TranscriptStatus, lcagentModelResponseText(event))
+		case "critic_profile":
+			if rawJSONBool(event["enabled"]) {
+				replay.criticModel = rawJSONString(event["model"])
+				replay.criticModelProvider = rawJSONString(event["provider"])
+			}
+		case "critic_review_started":
+			replay.criticActive = true
+			replay.criticLastStatus = "reviewing"
+			replay.criticLastSummary = ""
+		case "critic_model_response":
+			modelName := rawJSONString(event["model"])
+			if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
+				replay.addTokenUsage(usage)
+			}
+		case "critic_model_response_invalid":
+			replay.applyCriticInvalidModelResponse(event)
+		case "critic_review_retry":
+			replay.applyCriticReviewRetry(event)
+		case "critic_review_result":
+			replay.applyCriticReviewResult(event)
+		case "critic_review_failed":
+			replay.applyCriticReviewFailed(event)
+		case "critic_lead_feedback":
+			replay.applyCriticLeadFeedback(event)
+		case "critic_consult_started":
+			replay.applyCriticConsultStarted(event)
+		case "critic_consult_result":
+			replay.applyCriticConsultResult(event)
+		case "critic_consult_failed":
+			replay.applyCriticConsultFailed(event)
 		case "user_message":
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
@@ -510,6 +581,163 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 		replay.threadID = replay.sessionID
 	}
 	return replay, nil
+}
+
+func (r *lcagentReplay) applyCriticInvalidModelResponse(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	modelName := rawJSONString(event["model"])
+	if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
+		r.addTokenUsage(usage)
+	}
+	attempt := rawJSONInt(event["attempt"])
+	text := "LCAgent critic returned invalid structured output"
+	if attempt > 0 {
+		text += fmt.Sprintf(" on attempt %d", attempt)
+	}
+	if rawJSONBool(event["retrying"]) {
+		text += "; retrying"
+	}
+	r.criticLastStatus = "invalid_json"
+	r.criticLastSummary = strings.TrimSpace(firstNonEmpty(rawJSONString(event["message"]), text))
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyCriticReviewRetry(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	message := firstNonEmpty(rawJSONString(event["message"]), "LCAgent critic retrying")
+	r.criticLastStatus = "retrying"
+	r.criticLastSummary = strings.TrimSpace(message)
+	r.appendEntry(TranscriptStatus, message)
+}
+
+func (r *lcagentReplay) applyCriticReviewResult(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
+	summary := strings.TrimSpace(rawJSONString(event["summary"]))
+	text := lcagentCriticReviewResultText(status, summary)
+	r.criticActive = false
+	r.criticReviews++
+	r.criticLastStatus = firstNonEmpty(status, "complete")
+	r.criticLastSummary = summary
+	if status != "" && status != "clean" {
+		r.criticConcerns++
+	}
+	proposed := strings.TrimSpace(firstNonEmpty(rawJSONString(event["proposed_user_message"]), rawJSONString(event["human_prompt"])))
+	if proposed != "" && status == "needs_followup" {
+		packetHash := strings.TrimSpace(rawJSONString(event["packet_hash"]))
+		if packetHash == "" {
+			packetHash = strings.TrimSpace(rawJSONString(event["session_id"]))
+		}
+		r.suggestedInputDraftID = firstNonEmpty(packetHash, fmt.Sprintf("critic-%d", len(r.entries)+1))
+		r.suggestedInputDraft = proposed
+		r.criticFollowupDrafts++
+	}
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyCriticReviewFailed(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	message := firstNonEmpty(rawJSONString(event["message"]), "critic review failed")
+	prefix := "LCAgent critic unavailable: "
+	if strings.EqualFold(rawJSONString(event["failure_kind"]), "invalid_json") {
+		prefix = "LCAgent critic invalid structured output: "
+	}
+	r.criticActive = false
+	r.criticLastStatus = "failed"
+	r.criticLastSummary = strings.TrimSpace(message)
+	r.appendEntry(TranscriptStatus, prefix+message)
+}
+
+func (r *lcagentReplay) applyCriticLeadFeedback(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	text := lcagentCriticLeadFeedbackText(event)
+	r.criticLeadRevisions++
+	r.criticLastStatus = "lead revision"
+	r.criticLastSummary = strings.TrimSpace(text)
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyCriticConsultStarted(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	text := "LCAgent critic consulting"
+	if question := rawJSONString(event["question"]); question != "" {
+		text += ": " + lcagentCondenseStatusText(question, 160)
+	}
+	r.criticActive = true
+	r.criticLastStatus = "consulting"
+	r.criticLastSummary = ""
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyCriticConsultResult(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
+	summary := strings.TrimSpace(rawJSONString(event["summary"]))
+	modelName := rawJSONString(event["model"])
+	if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
+		r.addTokenUsage(usage)
+	}
+	text := lcagentCriticConsultResultText(status, summary)
+	r.criticActive = false
+	r.criticConsultations++
+	r.criticLastStatus = firstNonEmpty(status, "consulted")
+	r.criticLastSummary = summary
+	if status != "" && status != "clean" {
+		r.criticConsultConcerns++
+	}
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyCriticConsultFailed(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	message := firstNonEmpty(rawJSONString(event["message"]), "critic consultation failed")
+	text := "LCAgent critic consultation failed: " + message
+	r.criticActive = false
+	r.criticLastStatus = "consult failed"
+	r.criticLastSummary = strings.TrimSpace(message)
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func lcagentCriticReviewResultText(status, summary string) string {
+	text := "LCAgent critic review complete"
+	if status != "" && status != "clean" {
+		text = "LCAgent critic found " + strings.ReplaceAll(status, "_", " ")
+	} else if status == "clean" {
+		text = "LCAgent critic found no concerns"
+	}
+	if strings.TrimSpace(summary) != "" {
+		text += ": " + strings.TrimSpace(summary)
+	}
+	return text
+}
+
+func lcagentCriticConsultResultText(status, summary string) string {
+	text := "LCAgent critic consultation complete"
+	if status != "" && status != "clean" {
+		text = "LCAgent critic consultation found " + strings.ReplaceAll(status, "_", " ")
+	} else if status == "clean" {
+		text = "LCAgent critic consultation found no concerns"
+	}
+	if strings.TrimSpace(summary) != "" {
+		text += ": " + strings.TrimSpace(summary)
+	}
+	return text
 }
 
 func (r *lcagentReplay) addTokenUsage(usage lcrmodel.LLMUsage) {
