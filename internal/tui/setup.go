@@ -693,6 +693,10 @@ func (m Model) setupConfigFieldIndexes() []int {
 
 func (m Model) saveSetupFromCurrentChoices() (tea.Model, tea.Cmd) {
 	settings := m.setupSettingsFromCurrentChoices()
+	if issue, ok := settingsLCAgentKnownModelProviderIssue(settings); ok {
+		m.status = issue.saveStatus()
+		return m, nil
+	}
 	m.setupSaving = true
 	m.setupConfigMode = false
 	m.setupReviewMode = false
@@ -1230,6 +1234,9 @@ func (m Model) renderSetupConfigContent(width int) string {
 	}
 	if warning := settingsXiaomiTokenPlanBaseURLWarning(m.setupDraftSettingsForProviderChoices()); warning != "" {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, warning))
+	}
+	if issue, ok := settingsLCAgentKnownModelProviderIssue(m.setupDraftSettingsForProviderChoices()); ok {
+		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
 	}
 	if m.setupFocusedRole == setupRoleLCAgent {
 		lines = append(lines, renderWrappedDetailField("Credential smoke", detailValueStyle, width, m.lcagentSetupSmokeLine()))

@@ -502,6 +502,9 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.showHelp = false
 	m.err = nil
 	m.status = "Settings open. Choose a section, then press Enter."
+	if issue, ok := settingsLCAgentKnownModelProviderIssue(saved); ok {
+		m.status = issue.message()
+	}
 	if issue := settingsLocalFileIssue(saved); issue != nil {
 		m.appendSettingsConfigIssue(issue)
 		m.status = errorStatusWithHint(settingsConfigIssueStatus)
@@ -813,9 +816,19 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.MoonshotModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldMoonshotModel))
 	settings.XiaomiBaseURL = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiBaseURL))
 	settings.XiaomiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiModel))
+	lcagentRoutePreset := settings.LCAgentRoutePreset
+	lcagentProvider := settings.LCAgentProvider
 	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
+	settings.LCAgentRoutePreset = lcagentRoutePreset
+	settings.LCAgentProvider = lcagentProvider
 	settings.EmbeddedLCAgentModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentModel))
 	settings.EmbeddedLCAgentReasoning = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentReasoning))
+	if issue, ok := settingsLCAgentKnownModelProviderIssue(settings); ok {
+		m.err = nil
+		m.settingsSaving = false
+		m.status = issue.saveStatus()
+		return m, nil
+	}
 	m.err = nil
 	m.settingsSaving = true
 	m.status = "Saving settings..."
@@ -1735,6 +1748,9 @@ func (m Model) renderSettingsContent(width, maxHeight int) string {
 	if warning := settingsXiaomiTokenPlanBaseURLWarning(m.settingsDraftForInferenceStatus()); warning != "" {
 		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, warning))
 	}
+	if issue, ok := settingsLCAgentKnownModelProviderIssue(m.settingsDraftForInferenceStatus()); ok {
+		lines = append(lines, renderWrappedDetailField("Warning", detailWarningStyle, width, issue.message()))
+	}
 	lines = append(lines, m.renderCompactInferenceSetupSummary(width))
 	lines = append(lines, "")
 	if m.settingsSectionMenu {
@@ -2025,6 +2041,70 @@ func settingsXiaomiTokenPlanBaseURLWarning(settings config.EditableSettings) str
 		return ""
 	}
 	return "Xiaomi Token Plan key detected, but Xiaomi base URL is still the regular API URL. Direct Xiaomi requests will fail until Xiaomi base URL is set to the regional token-plan URL from Xiaomi subscription management."
+}
+
+type settingsLCAgentModelProviderIssue struct {
+	modelLabel         string
+	providerLabel      string
+	configuredProvider string
+	resolvedProvider   string
+	model              string
+	normalizedModel    string
+}
+
+func settingsLCAgentKnownModelProviderIssue(settings config.EditableSettings) (settingsLCAgentModelProviderIssue, bool) {
+	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Main model", "Main model provider", settingsLCAgentMainProvider(settings), settings.EmbeddedLCAgentModel); ok {
+			return issue, true
+		}
+	}
+	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
+	if utilityProvider != "main" && utilityProvider != "off" {
+		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Utility model", "Utility Model provider", utilityProvider, settings.LCAgentUtilityModel); ok {
+			return issue, true
+		}
+	}
+	criticProvider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+	if criticProvider != "main" && criticProvider != "off" {
+		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Critic model", "Critic Model provider", criticProvider, settings.LCAgentCriticModel); ok {
+			return issue, true
+		}
+	}
+	return settingsLCAgentModelProviderIssue{}, false
+}
+
+func settingsLCAgentKnownModelProviderIssueFor(modelLabel, providerLabel, provider, model string) (settingsLCAgentModelProviderIssue, bool) {
+	mismatch, ok := codexapp.LCAgentKnownModelProviderMismatch(provider, model)
+	if !ok {
+		return settingsLCAgentModelProviderIssue{}, false
+	}
+	return settingsLCAgentModelProviderIssue{
+		modelLabel:         modelLabel,
+		providerLabel:      providerLabel,
+		configuredProvider: mismatch.ConfiguredProvider,
+		resolvedProvider:   mismatch.ResolvedProvider,
+		model:              mismatch.Model,
+		normalizedModel:    mismatch.NormalizedModel,
+	}, true
+}
+
+func (i settingsLCAgentModelProviderIssue) message() string {
+	return fmt.Sprintf(
+		"LCAgent %s mismatch: %s belongs to %s, but %s is %s. This would run as %s / %s. Choose %s in the provider picker or choose another %s.",
+		i.modelLabel,
+		i.model,
+		codexapp.LCAgentProviderDisplayName(i.resolvedProvider),
+		i.providerLabel,
+		codexapp.LCAgentProviderDisplayName(i.configuredProvider),
+		codexapp.LCAgentProviderDisplayName(i.resolvedProvider),
+		i.normalizedModel,
+		codexapp.LCAgentProviderDisplayName(i.resolvedProvider),
+		i.modelLabel,
+	)
+}
+
+func (i settingsLCAgentModelProviderIssue) saveStatus() string {
+	return i.message() + " Settings were not saved."
 }
 
 func (m Model) renderSettingsDrilldownStatus(width int) []string {
