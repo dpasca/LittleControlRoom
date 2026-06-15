@@ -136,3 +136,49 @@ func TestDispatchOpenCommandOpensSelectedProjectInBrowser(t *testing.T) {
 		t.Fatalf("opened URL = %q, want %q", called, directoryFileURL(dir))
 	}
 }
+
+func TestDispatchTerminalCommandOpensSelectedProjectInTerminal(t *testing.T) {
+	dir := t.TempDir()
+
+	previousOpener := externalTerminalOpener
+	defer func() { externalTerminalOpener = previousOpener }()
+
+	called := ""
+	externalTerminalOpener = func(path string) error {
+		called = path
+		return nil
+	}
+
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          dir,
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindTerminal})
+	got := updated.(Model)
+	if got.status != "Opening project terminal..." {
+		t.Fatalf("status = %q, want opening terminal status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("dispatchCommand(/terminal) should return an open command")
+	}
+
+	msg := cmd()
+	openMsg, ok := msg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("cmd() message type = %T, want browserOpenMsg", msg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
+	}
+	if openMsg.status != "Opened project terminal" {
+		t.Fatalf("browserOpenMsg.status = %q, want terminal success status", openMsg.status)
+	}
+	if called != dir {
+		t.Fatalf("opened terminal path = %q, want %q", called, dir)
+	}
+}
