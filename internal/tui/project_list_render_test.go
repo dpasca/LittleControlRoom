@@ -914,6 +914,41 @@ func TestRenderProjectListMarksAndHighlightsSelectedRow(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListScrollsSelectedProjectName(t *testing.T) {
+	const width = 80
+	projectW, _ := projectListColumnWidths(width - projectListSelectionGutterWidth)
+	longName := "alpha-bravo-charlie-delta-echo-selected-project"
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          longName,
+			Path:          "/tmp/long-project",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+		}},
+		selected:      0,
+		marqueeOffset: projectW + 2,
+		sortMode:      sortByAttention,
+		visibility:    visibilityAIFolders,
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(width, 6))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one row, got %q", rendered)
+	}
+	row := lines[2]
+	expected := marqueeScrollText(longName, projectW, m.marqueeOffset)
+	if !strings.Contains(row, expected) {
+		t.Fatalf("renderProjectList() should show the scrolled project name window %q in row %q", expected, row)
+	}
+	if initial := truncateText(longName, projectW); strings.Contains(row, initial) {
+		t.Fatalf("renderProjectList() should not keep the initial truncated project name once scrolled, got %q", row)
+	}
+	if got := ansi.StringWidth(row); got > width {
+		t.Fatalf("renderProjectList() row width = %d, want <= %d: %q", got, width, row)
+	}
+}
+
 func TestMoveSelectionFlashesSelectedRowBriefly(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
