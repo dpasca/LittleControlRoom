@@ -531,11 +531,6 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 	if model != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
 	}
-	if snapshot.Provider == codexapp.ProviderLCAgent {
-		if critic := embeddedSidebarCriticModelLabel(snapshot); critic != "" {
-			rows = append(rows, embeddedSidebarFieldRow("Critic", critic, detailValueStyle, width))
-		}
-	}
 	if reasoning != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Reasoning", reasoning, detailValueStyle, width))
 	}
