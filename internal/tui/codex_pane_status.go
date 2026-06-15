@@ -171,6 +171,14 @@ func countRenderedBlockLines(blocks []string) int {
 	return total
 }
 
+func codexMouseWheelPress(msg tea.MouseMsg) bool {
+	return msg.Action == tea.MouseActionPress && tea.MouseEvent(msg).IsWheel()
+}
+
+func codexHorizontalMouseWheel(msg tea.MouseMsg) bool {
+	return msg.Button == tea.MouseButtonWheelLeft || msg.Button == tea.MouseButtonWheelRight
+}
+
 // codexViewportScreenTop returns the screen Y where the viewport content area
 // begins (banner line + top border of the framed pane).
 const codexViewportScreenTop = 2

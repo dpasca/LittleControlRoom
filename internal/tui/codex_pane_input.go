@@ -65,10 +65,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.cycleCodexSession(1)
 	case "esc":
 		return m.hideCodexSession()
-	case "alt+[":
-		return m.cycleCodexSession(-1)
-	case "alt+]":
-		return m.cycleCodexSession(1)
+	case "alt+[", "alt+]":
+		return m, nil
 	case "alt+l":
 		m.codexDenseBlockMode = m.codexDenseBlockMode.next()
 		m.status = m.codexDenseBlockMode.statusText()
@@ -428,6 +426,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
 		return m, focusCmd
 	}
+	if codexShouldIgnoreStraySGRMousePacket(msg) {
+		return m, focusCmd
+	}
 
 	var cmd tea.Cmd
 	m.codexInput, cmd = m.codexInput.Update(msg)
@@ -491,6 +492,9 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 	}
 
 	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
+		return m, nil
+	}
+	if codexShouldIgnoreStraySGRMousePacket(msg) {
 		return m, nil
 	}
 
@@ -576,6 +580,9 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	}
 
 	if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) {
+		return m, nil
+	}
+	if codexShouldIgnoreStraySGRMousePacket(msg) {
 		return m, nil
 	}
 

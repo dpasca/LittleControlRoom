@@ -1234,9 +1234,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.codexComposerSelection = textSelection{}
 				return m, cmd
 			}
-			// Unhandled mouse event (e.g. scroll wheel) — finalize any
-			// pending drag (missed release), clear selection, and forward
-			// to viewport.
+			// Unhandled mouse event: finalize any pending drag (missed
+			// release), clear selection, and only let scoped wheel presses
+			// reach the transcript viewport.
 			if m.codexSelection.dragging {
 				m.finalizeCodexSelection()
 			}
@@ -1245,6 +1245,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.codexSelection = textSelection{}
 			m.codexComposerSelection = textSelection{}
+			if !codexMouseWheelPress(msg) {
+				return m, nil
+			}
+			if codexHorizontalMouseWheel(msg) {
+				return m, nil
+			}
 			var cmd tea.Cmd
 			m.codexViewport, cmd = m.codexViewport.Update(msg)
 			if msg.Button == tea.MouseButtonWheelUp {
