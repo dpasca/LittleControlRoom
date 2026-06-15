@@ -176,7 +176,7 @@ func (m Model) renderCodexSlashBlocks(width int) []string {
 
 	suggestions := m.codexSlashSuggestions()
 	if len(suggestions) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No supported embedded or host slash commands match. Try /new, /sessions, /terminal, /skills, or /reconnect."))
+		lines = append(lines, commandPaletteHintStyle.Render("No supported embedded or host slash commands match. Try /new, /sessions, /model, /critic, /terminal, /skills, or /reconnect."))
 	} else {
 		start, end := m.codexSlashSuggestionWindow(len(suggestions))
 		if start > 0 {

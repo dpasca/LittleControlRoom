@@ -107,6 +107,13 @@ type lcagentSession struct {
 	cache                    transcriptExportCache
 	suggestedInputDraftID    string
 	suggestedInputDraft      string
+	criticActive             bool
+	criticReviews            int
+	criticConcerns           int
+	criticLeadRevisions      int
+	criticFollowupDrafts     int
+	criticLastStatus         string
+	criticLastSummary        string
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
@@ -921,6 +928,34 @@ func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEf
 		s.modelWarning = lcagentModelSelectionWarning(originalRoutePreset, originalProvider, originalModel, s.routePreset, s.provider, s.model)
 	}
 	s.reasoningEffort = strings.TrimSpace(reasoningEffort)
+	return nil
+}
+
+func (s *lcagentSession) StageCriticModelProviderOverride(provider, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.TrimSpace(model)
+	if provider == "" && model == "" {
+		return fmt.Errorf("critic provider or model required")
+	}
+	if provider == "" {
+		provider = lcagentProviderForExplicitModel(lcagentResolvedCriticProvider(s.routePreset, s.provider, s.criticProvider), model)
+	}
+	if provider == "" {
+		provider = lcagentResolvedCriticProvider(s.routePreset, s.provider, s.criticProvider)
+	}
+	if provider == "" || strings.EqualFold(provider, "off") {
+		return fmt.Errorf("critic provider must be openrouter, openai, deepseek, moonshot, or xiaomi")
+	}
+	model = modeladapter.NormalizeModelForProvider(provider, model)
+	if model == "" {
+		model = lcagentDefaultModel(provider)
+	}
+	s.criticProvider = provider
+	s.criticModel = model
+	s.status = "LCAgent critic model set to " + lcagentProviderDisplayName(provider) + " / " + model + "."
+	s.touchLocked()
 	return nil
 }
 
@@ -1759,6 +1794,9 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		}
 		s.mu.Lock()
 		s.status = status
+		s.criticActive = true
+		s.criticLastStatus = "reviewing"
+		s.criticLastSummary = ""
 		s.touchLocked()
 		s.mu.Unlock()
 	case "critic_model_response":
@@ -1776,6 +1814,9 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		text := lcagentCriticLeadFeedbackText(event)
 		s.mu.Lock()
 		s.status = text
+		s.criticLeadRevisions++
+		s.criticLastStatus = "lead revision"
+		s.criticLastSummary = strings.TrimSpace(text)
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
@@ -1783,6 +1824,9 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		message := firstNonEmpty(rawJSONString(event["message"]), "critic review failed")
 		s.mu.Lock()
 		s.status = "LCAgent critic unavailable"
+		s.criticActive = false
+		s.criticLastStatus = "failed"
+		s.criticLastSummary = strings.TrimSpace(message)
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, "LCAgent critic unavailable: "+message)
@@ -2056,9 +2100,17 @@ func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.R
 
 	s.mu.Lock()
 	s.status = text
+	s.criticActive = false
+	s.criticReviews++
+	s.criticLastStatus = firstNonEmpty(status, "complete")
+	s.criticLastSummary = summary
+	if status != "" && status != "clean" {
+		s.criticConcerns++
+	}
 	if proposed != "" && status == "needs_followup" {
 		s.suggestedInputDraftID = firstNonEmpty(packetHash, fmt.Sprintf("critic-%d", s.revision+1))
 		s.suggestedInputDraft = proposed
+		s.criticFollowupDrafts++
 	}
 	s.appendEntryLocked(TranscriptStatus, text)
 	s.touchLocked()
@@ -2776,6 +2828,13 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		ModelProvider:             modelProvider,
 		CriticModel:               criticModel,
 		CriticModelProvider:       criticModelProvider,
+		CriticActive:              s.criticActive,
+		CriticReviews:             s.criticReviews,
+		CriticConcerns:            s.criticConcerns,
+		CriticLeadRevisions:       s.criticLeadRevisions,
+		CriticFollowupDrafts:      s.criticFollowupDrafts,
+		CriticLastStatus:          strings.TrimSpace(s.criticLastStatus),
+		CriticLastSummary:         strings.TrimSpace(s.criticLastSummary),
 		ReasoningEffort:           s.reasoningEffort,
 		TokenUsage:                exportedTokenUsageSnapshot(tokenUsage),
 	}

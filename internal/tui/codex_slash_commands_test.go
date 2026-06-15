@@ -340,8 +340,17 @@ func TestVisibleCodexSlashTabCyclesSuggestions(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("tab cycling should not queue a command")
 	}
+	if got.codexInput.Value() != "/critic" {
+		t.Fatalf("codex input = %q, want /critic after fifth tab", got.codexInput.Value())
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("tab cycling should not queue a command")
+	}
 	if got.codexInput.Value() != "/status" {
-		t.Fatalf("codex input = %q, want /status after fifth tab", got.codexInput.Value())
+		t.Fatalf("codex input = %q, want /status after sixth tab", got.codexInput.Value())
 	}
 }
 
@@ -1167,6 +1176,165 @@ func TestVisibleCodexSlashModelOpensPickerAndStagesSelection(t *testing.T) {
 	}
 	if session.modelStages[0].Model != "gpt-5-codex" || session.modelStages[0].Reasoning != "high" {
 		t.Fatalf("staged model = %#v, want gpt-5-codex + high", session.modelStages[0])
+	}
+}
+
+func TestVisibleLCAgentSlashCriticOpensPickerAndStagesSelection(t *testing.T) {
+	projectPath := "/tmp/demo-lcagent-critic"
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider:            codexapp.ProviderLCAgent,
+			Started:             true,
+			Status:              "LCAgent session ready",
+			ThreadID:            "thread_demo",
+			Model:               "mimo-v2.5-pro",
+			ModelProvider:       "xiaomi",
+			CriticModel:         "deepseek-v4-pro",
+			CriticModelProvider: "deepseek",
+		},
+		models: []codexapp.ModelOption{
+			{
+				ID:            "mimo-v2.5-pro",
+				Model:         "mimo-v2.5-pro",
+				ModelProvider: "xiaomi",
+				DisplayName:   "MiMo V2.5 Pro",
+			},
+			{
+				ID:            "deepseek-v4-pro",
+				Model:         "deepseek-v4-pro",
+				ModelProvider: "deepseek",
+				DisplayName:   "DeepSeek V4 Pro",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderLCAgent,
+		ProjectPath: projectPath,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/critic")
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.DeepSeekAPIKey = "sk-deepseek-test"
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		settingsBaseline:    &settings,
+		width:               100,
+		height:              28,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should open the embedded /critic picker")
+	}
+	if got.codexInput.Value() != "" {
+		t.Fatalf("codex input should clear after /critic, got %q", got.codexInput.Value())
+	}
+	if !got.codexModelPickerVisible() || !got.codexModelPicker.Loading {
+		t.Fatalf("critic picker should enter loading state")
+	}
+	if got.codexModelPicker.Target != codexModelPickerTargetCritic {
+		t.Fatalf("picker target = %q, want critic", got.codexModelPicker.Target)
+	}
+
+	msg := cmd()
+	listMsg, ok := msg.(codexModelListMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexModelListMsg", msg)
+	}
+	updated, _ = got.Update(listMsg)
+	got = updated.(Model)
+	if !got.codexModelPickerVisible() || got.codexModelPicker.Loading {
+		t.Fatalf("critic picker should be visible with loaded models")
+	}
+	if got.codexModelPicker.Target != codexModelPickerTargetCritic {
+		t.Fatalf("loaded picker target = %q, want critic", got.codexModelPicker.Target)
+	}
+	if options := got.currentCodexReasoningOptions(); len(options) != 0 {
+		t.Fatalf("critic picker should not show reasoning options: %#v", options)
+	}
+	got.codexModelPicker.Focus = codexModelPickerFocusModels
+	got.codexModelPicker.ModelIndex = 1
+	got.setCodexModelPickerModel(session.models[1], "")
+
+	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should apply the selected critic model")
+	}
+	msg = cmd()
+	action, ok := msg.(codexActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexActionMsg", msg)
+	}
+	if action.err != nil {
+		t.Fatalf("/critic returned error = %v", action.err)
+	}
+	if !action.criticModel {
+		t.Fatalf("/critic action should be marked as critic model")
+	}
+	if len(session.criticModelProviderStages) != 1 {
+		t.Fatalf("critic stages = %d, want 1", len(session.criticModelProviderStages))
+	}
+	stage := session.criticModelProviderStages[0]
+	if stage.Provider != "deepseek" || stage.Model != "deepseek-v4-pro" {
+		t.Fatalf("critic stage = %#v, want deepseek/deepseek-v4-pro", stage)
+	}
+}
+
+func TestVisibleCodexSlashCriticRequiresLCAgent(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Started: true,
+			Preset:  codexcli.PresetYolo,
+			Status:  "Codex session ready",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	input := newCodexTextarea()
+	input.SetValue("/critic")
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          input,
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              28,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("non-LCAgent /critic should not queue a command")
+	}
+	if got.codexModelPicker != nil {
+		t.Fatalf("non-LCAgent /critic should not open a picker")
+	}
+	if !strings.Contains(got.status, "only available for embedded LCAgent") {
+		t.Fatalf("status = %q, want LCAgent-only message", got.status)
 	}
 }
 

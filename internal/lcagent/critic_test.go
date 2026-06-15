@@ -130,6 +130,22 @@ func TestCriticLeadFeedbackMessageRequiresMaterialFollowup(t *testing.T) {
 	if !strings.Contains(feedback, "Run the missing verification") || !strings.Contains(feedback, "Material finding") {
 		t.Fatalf("material feedback = %q", feedback)
 	}
+
+	concern := normalizeCriticReviewForRouting(criticReviewPayload{
+		Status:          "concerns",
+		LeadInstruction: "Tighten the final answer to mention the verification gap.",
+		Findings: []criticReviewFinding{{
+			Severity:       "medium",
+			Materiality:    "medium",
+			Claim:          "final answer overstates verification",
+			EvidenceSource: "lead_final",
+			Evidence:       "final answer says done but verification is thin",
+		}},
+	})
+	feedback = criticLeadFeedbackMessage(concern)
+	if !strings.Contains(feedback, "Tighten the final answer") || !strings.Contains(feedback, "Material finding") {
+		t.Fatalf("material concern feedback = %q", feedback)
+	}
 }
 
 func TestBuildCriticReviewPacketAddsEvidenceExcerptsForTruncatedToolOutput(t *testing.T) {

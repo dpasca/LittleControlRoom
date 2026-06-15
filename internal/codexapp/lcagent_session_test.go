@@ -197,6 +197,12 @@ func TestLCAgentCriticConcernsDoNotCreateSuggestedDraft(t *testing.T) {
 	if !strings.Contains(snapshot.Status, "LCAgent critic found concerns") {
 		t.Fatalf("status = %q, want critic concern status", snapshot.Status)
 	}
+	if snapshot.CriticReviews != 1 || snapshot.CriticConcerns != 1 || snapshot.CriticLastStatus != "concerns" {
+		t.Fatalf("critic metrics = reviews %d concerns %d status %q, want 1/1/concerns", snapshot.CriticReviews, snapshot.CriticConcerns, snapshot.CriticLastStatus)
+	}
+	if snapshot.CriticLastSummary != "minor wording concern" {
+		t.Fatalf("critic summary = %q", snapshot.CriticLastSummary)
+	}
 }
 
 func TestLCAgentCriticNeedsFollowupCreatesSuggestedDraft(t *testing.T) {
@@ -226,6 +232,9 @@ func TestLCAgentCriticNeedsFollowupCreatesSuggestedDraft(t *testing.T) {
 	if snapshot.SuggestedInputDraft != "Please rerun the failing verification and fix it." {
 		t.Fatalf("SuggestedInputDraft = %q", snapshot.SuggestedInputDraft)
 	}
+	if snapshot.CriticReviews != 1 || snapshot.CriticConcerns != 1 || snapshot.CriticFollowupDrafts != 1 {
+		t.Fatalf("critic metrics = reviews %d concerns %d drafts %d, want 1/1/1", snapshot.CriticReviews, snapshot.CriticConcerns, snapshot.CriticFollowupDrafts)
+	}
 }
 
 func TestLCAgentCriticLeadFeedbackUpdatesStatusWithoutDraft(t *testing.T) {
@@ -249,6 +258,9 @@ func TestLCAgentCriticLeadFeedbackUpdatesStatusWithoutDraft(t *testing.T) {
 	}
 	if !strings.Contains(snapshot.Status, "private lead revision") {
 		t.Fatalf("status = %q, want private lead revision", snapshot.Status)
+	}
+	if snapshot.CriticLeadRevisions != 1 || snapshot.CriticLastStatus != "lead revision" {
+		t.Fatalf("critic lead metrics = revisions %d status %q, want 1/lead revision", snapshot.CriticLeadRevisions, snapshot.CriticLastStatus)
 	}
 }
 

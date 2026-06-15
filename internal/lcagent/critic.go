@@ -669,7 +669,17 @@ func criticReviewShouldDraftHumanFollowup(review criticReviewPayload) bool {
 }
 
 func criticReviewShouldBounceLead(review criticReviewPayload) bool {
-	return review.Status == "needs_followup" && criticReviewHasMaterialFinding(review)
+	if !criticReviewHasMaterialFinding(review) {
+		return false
+	}
+	switch review.Status {
+	case "needs_followup":
+		return true
+	case "concerns":
+		return strings.TrimSpace(review.LeadInstruction) != ""
+	default:
+		return false
+	}
 }
 
 func criticReviewHasMaterialFinding(review criticReviewPayload) bool {

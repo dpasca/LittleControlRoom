@@ -2286,6 +2286,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settingsConfigPath = strings.TrimSpace(msg.path)
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		return m, nil
+	case embeddedCriticPreferenceSavedMsg:
+		if msg.err != nil {
+			m.reportError("LCAgent critic model updated for this run; config save failed", msg.err, "")
+			return m, nil
+		}
+		m.err = nil
+		saved := cloneEditableSettings(msg.settings)
+		m.settingsBaseline = &saved
+		m.settingsConfigPath = strings.TrimSpace(msg.path)
+		m.recentLCAgentModels = append([]string(nil), msg.settings.RecentLCAgentModels...)
+		return m, nil
 	case privacyModeSavedMsg:
 		if msg.err != nil {
 			m.reportError("Privacy mode updated for this run; config save failed", msg.err, "")

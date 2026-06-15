@@ -1541,6 +1541,24 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	}
 }
 
+func (m Model) saveLCAgentCriticPreferenceCmd(provider, model string) tea.Cmd {
+	baseline := m.currentSettingsBaseline()
+	settings := baseline
+	settings.LCAgentCriticProvider = strings.TrimSpace(provider)
+	settings.LCAgentCriticModel = strings.TrimSpace(model)
+	settings.RecentLCAgentModels = append([]string(nil), m.recentLCAgentModels...)
+	if strings.TrimSpace(settings.LCAgentCriticProvider) == strings.TrimSpace(baseline.LCAgentCriticProvider) &&
+		strings.TrimSpace(settings.LCAgentCriticModel) == strings.TrimSpace(baseline.LCAgentCriticModel) &&
+		trimmedStringSlicesEqual(settings.RecentLCAgentModels, baseline.RecentLCAgentModels) {
+		return nil
+	}
+	path := m.currentWritableConfigPath()
+	return func() tea.Msg {
+		err := config.SaveEditableSettings(path, settings)
+		return embeddedCriticPreferenceSavedMsg{settings: settings, path: path, err: err}
+	}
+}
+
 func (m Model) savePrivacyModeCmd(privacyMode bool) tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	settings.PrivacyMode = privacyMode

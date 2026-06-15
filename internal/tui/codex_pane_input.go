@@ -202,6 +202,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.clearCodexDraft(m.codexVisibleProject)
 			if snapshot.Closed && (inv.Kind == codexslash.KindModel ||
+				inv.Kind == codexslash.KindCritic ||
 				inv.Kind == codexslash.KindStatus ||
 				inv.Kind == codexslash.KindShowStatus ||
 				inv.Kind == codexslash.KindCompact ||
@@ -233,6 +234,14 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case codexslash.KindModel:
 				m.openCodexModelPickerLoading()
 				m.status = "Loading embedded " + label + " models..."
+				return m, m.openCodexModelPickerCmd()
+			case codexslash.KindCritic:
+				if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
+					m.status = "/critic is only available for embedded LCAgent sessions"
+					return m, nil
+				}
+				m.openCodexCriticModelPickerLoading()
+				m.status = "Loading embedded LCAgent critic models..."
 				return m, m.openCodexModelPickerCmd()
 			case codexslash.KindStatus, codexslash.KindShowStatus:
 				m.setCodexLCAgentStatusVisible(snapshot.ProjectPath, true)

@@ -16,6 +16,20 @@ func TestSuggestionsIncludeModelCommand(t *testing.T) {
 	}
 }
 
+func TestSuggestionsIncludeCriticCommand(t *testing.T) {
+	suggestions := Suggestions("/")
+	found := false
+	for _, suggestion := range suggestions {
+		if suggestion.Insert == "/critic" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Suggestions(/) should include /critic: %#v", suggestions)
+	}
+}
+
 func TestSuggestionsIncludeReconnectCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false
@@ -148,6 +162,19 @@ func TestParseModelCommand(t *testing.T) {
 	}
 	if inv.Canonical != "/model" {
 		t.Fatalf("Parse(/model) canonical = %q, want /model", inv.Canonical)
+	}
+}
+
+func TestParseCriticCommand(t *testing.T) {
+	inv, err := Parse("/critic")
+	if err != nil {
+		t.Fatalf("Parse(/critic) error = %v", err)
+	}
+	if inv.Kind != KindCritic {
+		t.Fatalf("Parse(/critic) kind = %q, want %q", inv.Kind, KindCritic)
+	}
+	if inv.Canonical != "/critic" {
+		t.Fatalf("Parse(/critic) canonical = %q, want /critic", inv.Canonical)
 	}
 }
 

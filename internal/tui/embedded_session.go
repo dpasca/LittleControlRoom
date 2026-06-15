@@ -21,6 +21,12 @@ type embeddedModelPreferencesSavedMsg struct {
 	err      error
 }
 
+type embeddedCriticPreferenceSavedMsg struct {
+	settings config.EditableSettings
+	path     string
+	err      error
+}
+
 type codexSessionOpenedMsg struct {
 	projectPath      string
 	snapshot         codexapp.Snapshot
@@ -59,6 +65,7 @@ type codexActionMsg struct {
 	provider      codexapp.Provider
 	model         string
 	modelProvider string
+	criticModel   bool
 	reasoning     string
 	awaitSettle   bool
 	refreshView   bool
@@ -217,6 +224,14 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 				m.markCodexSessionLive(msg.projectPath)
 			}
 		}
+	}
+	if msg.criticModel {
+		m.recordRecentModel(codexapp.ProviderLCAgent, msg.model, msg.modelProvider)
+		saveCmd := m.saveLCAgentCriticPreferenceCmd(msg.modelProvider, msg.model)
+		if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
+			return m, tea.Batch(refreshCmd, linkScanCmd, renameRefreshCmd, saveCmd, m.codexInput.Focus())
+		}
+		return m, tea.Batch(refreshCmd, linkScanCmd, renameRefreshCmd, saveCmd)
 	}
 	if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 		var asyncCmd tea.Cmd

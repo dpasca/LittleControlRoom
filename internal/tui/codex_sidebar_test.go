@@ -390,6 +390,41 @@ func TestEmbeddedSidebarShowsLCAgentCriticModelAfterLead(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarShowsLCAgentCriticActivity(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.Model = "mimo-v2.5-pro"
+	snapshot.ModelProvider = "xiaomi"
+	snapshot.CriticModel = "deepseek-v4-pro"
+	snapshot.CriticModelProvider = "deepseek"
+	snapshot.CriticReviews = 2
+	snapshot.CriticConcerns = 1
+	snapshot.CriticLeadRevisions = 1
+	snapshot.CriticLastStatus = "concerns"
+	snapshot.CriticLastSummary = "verification was thin"
+
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarCriticSection(snapshot, 46), "\n"))
+	for _, want := range []string{
+		"Critic",
+		"Model deepseek/deepseek-v4-pro",
+		"Status concerns",
+		"Reviews 2",
+		"Concerns 1",
+		"Corrections 1",
+		"verification was thin",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("critic sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+
+	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
+	sessionRows := ansi.Strip(strings.Join(m.embeddedSidebarSessionRows(snapshot, 46), "\n"))
+	if !strings.Contains(sessionRows, "Commands /model /critic") {
+		t.Fatalf("LCAgent session rows should mention /model and /critic:\n%s", sessionRows)
+	}
+}
+
 func TestEmbeddedSidebarSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Model = "openai/gpt-5"

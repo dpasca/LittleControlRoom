@@ -431,6 +431,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	contentWidth := max(12, width-2)
 	lines := []string{}
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSessionSection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarCriticSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth))
@@ -486,6 +487,9 @@ func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int)
 	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Tokens", tokens, detailValueStyle, width))
 	}
+	if commands := embeddedSidebarModelCommands(snapshot); commands != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Commands", commands, detailMutedStyle, width))
+	}
 	if goal := snapshot.Goal; goal != nil {
 		label := codexSnapshotGoalLabel(snapshot)
 		if label == "" {
@@ -497,6 +501,22 @@ func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int)
 		}
 	}
 	return rows
+}
+
+func embeddedSidebarModelCommands(snapshot codexapp.Snapshot) string {
+	if strings.TrimSpace(snapshot.Model) == "" &&
+		strings.TrimSpace(snapshot.PendingModel) == "" &&
+		strings.TrimSpace(snapshot.CriticModel) == "" {
+		return ""
+	}
+	switch snapshot.Provider {
+	case codexapp.ProviderLCAgent:
+		return "/model /critic"
+	case codexapp.ProviderCodex, codexapp.ProviderClaudeCode, codexapp.ProviderOpenCode:
+		return "/model"
+	default:
+		return ""
+	}
 }
 
 func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
@@ -540,6 +560,83 @@ func embeddedSidebarCriticModelLabel(snapshot codexapp.Snapshot) string {
 		return model
 	}
 	return provider + "/" + model
+}
+
+func (m Model) renderEmbeddedSidebarCriticSection(snapshot codexapp.Snapshot, width int) []string {
+	rows := embeddedSidebarCriticRows(snapshot, width)
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string{renderEmbeddedSidebarStaticHeader("Critic", width)}, rows...)
+}
+
+func embeddedSidebarCriticRows(snapshot codexapp.Snapshot, width int) []string {
+	if snapshot.Provider != codexapp.ProviderLCAgent {
+		return nil
+	}
+	model := embeddedSidebarCriticModelLabel(snapshot)
+	status := embeddedSidebarCriticStatus(snapshot)
+	if model == "" &&
+		status == "" &&
+		snapshot.CriticReviews == 0 &&
+		snapshot.CriticConcerns == 0 &&
+		snapshot.CriticLeadRevisions == 0 &&
+		snapshot.CriticFollowupDrafts == 0 {
+		return nil
+	}
+	rows := []string{}
+	if model != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
+	}
+	if status != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Status", status, embeddedSidebarCriticStatusStyle(status), width))
+	}
+	rows = append(rows, embeddedSidebarFieldRow("Reviews", fmt.Sprintf("%d", max(0, snapshot.CriticReviews)), detailValueStyle, width))
+	rows = append(rows, embeddedSidebarFieldRow("Concerns", fmt.Sprintf("%d", max(0, snapshot.CriticConcerns)), detailWarningStyle, width))
+	rows = append(rows, embeddedSidebarFieldRow("Corrections", fmt.Sprintf("%d", max(0, snapshot.CriticLeadRevisions)), detailValueStyle, width))
+	if snapshot.CriticFollowupDrafts > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("Drafts", fmt.Sprintf("%d", snapshot.CriticFollowupDrafts), detailWarningStyle, width))
+	}
+	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
+		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+	}
+	return rows
+}
+
+func embeddedSidebarCriticStatus(snapshot codexapp.Snapshot) string {
+	if snapshot.CriticActive {
+		return "reviewing"
+	}
+	status := strings.ToLower(strings.TrimSpace(snapshot.CriticLastStatus))
+	switch status {
+	case "":
+		if strings.TrimSpace(snapshot.CriticModel) != "" {
+			return "idle"
+		}
+		return ""
+	case "clean":
+		return "clean"
+	case "needs-followup":
+		return "needs follow-up"
+	case "needs_followup":
+		return "needs follow-up"
+	default:
+		return strings.ReplaceAll(status, "_", " ")
+	}
+}
+
+func embeddedSidebarCriticStatusStyle(status string) lipgloss.Style {
+	status = strings.ToLower(strings.TrimSpace(status))
+	switch {
+	case status == "reviewing", status == "clean":
+		return detailValueStyle
+	case strings.Contains(status, "concern"), strings.Contains(status, "revision"):
+		return detailWarningStyle
+	case strings.Contains(status, "follow"), strings.Contains(status, "failed"):
+		return detailDangerStyle
+	default:
+		return detailMutedStyle
+	}
 }
 
 func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {

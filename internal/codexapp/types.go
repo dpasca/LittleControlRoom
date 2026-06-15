@@ -511,6 +511,13 @@ type Snapshot struct {
 	ModelProvider             string
 	CriticModel               string
 	CriticModelProvider       string
+	CriticActive              bool
+	CriticReviews             int
+	CriticConcerns            int
+	CriticLeadRevisions       int
+	CriticFollowupDrafts      int
+	CriticLastStatus          string
+	CriticLastSummary         string
 	ReasoningEffort           string
 	ServiceTier               string
 	PendingModel              string
