@@ -249,6 +249,9 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if settingsFieldUsesPicker(fieldIndex) {
 		return m, nil
 	}
+	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+		return m, nil
+	}
 	input, cmd := m.settingsFields[fieldIndex].input.Update(msg)
 	m.settingsFields[fieldIndex].input = input
 	return m, cmd
@@ -627,7 +630,6 @@ func (m Model) setupConfigFieldIndexes() []int {
 		fields := []int{settingsFieldLCAgentRoutePreset}
 		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
 			fields = append(fields,
-				settingsFieldLCAgentProvider,
 				settingsFieldLCAgentModel,
 				settingsFieldLCAgentReasoning,
 			)

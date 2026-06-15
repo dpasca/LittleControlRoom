@@ -78,7 +78,11 @@ func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 		FilterInput: newSettingsLCAgentModelPickerFilterInput(),
 		Loading:     true,
 	}
-	m.status = "Checking " + settingsLCAgentModelPickerProviderLabel(provider) + " models..."
+	if fieldIndex == settingsFieldLCAgentModel {
+		m.status = "Checking LCAgent provider/model options..."
+	} else {
+		m.status = "Checking " + settingsLCAgentModelPickerProviderLabel(provider) + " models..."
+	}
 	return m, settingsLCAgentModelListCmd(fieldIndex, provider, current, cfg)
 }
 
@@ -152,6 +156,8 @@ func (m Model) applySettingsLCAgentModelListMsg(msg settingsLCAgentModelListMsg)
 	state.Selected = settingsLCAgentModelPickerSelection(state.FilteredModels, state.Rows, state.Current)
 	if state.Err != "" {
 		m.status = "Showing curated LCAgent models; provider list check did not complete."
+	} else if state.FieldIndex == settingsFieldLCAgentModel {
+		m.status = fmt.Sprintf("Loaded %d LCAgent provider/model options.", len(state.Models))
 	} else {
 		m.status = fmt.Sprintf("Loaded %d %s models.", len(state.Models), settingsLCAgentModelPickerProviderLabel(state.Provider))
 	}
@@ -299,11 +305,15 @@ func (m Model) applySettingsLCAgentModelPickerSelection(option codexapp.ModelOpt
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
 		label = "Utility model"
 	}
+	providerLabel := strings.TrimSpace(option.ModelProvider)
+	if providerLabel != "" {
+		providerLabel = settingsLCAgentModelPickerProviderLabel(providerLabel) + " / "
+	}
 	if strings.TrimSpace(model) == "" {
 		m.closeSettingsLCAgentModelPicker(label + " reset to provider default. Press ctrl+s to save.")
 		return m, nil
 	}
-	m.closeSettingsLCAgentModelPicker(label + " set to " + strings.TrimSpace(model) + ". Press ctrl+s to save.")
+	m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + strings.TrimSpace(model) + ". Press ctrl+s to save.")
 	return m, nil
 }
 
@@ -344,7 +354,11 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	if current == "" {
 		current = "Auto (" + settingsLCAgentModelPickerAutoLabel(m.settingsDraftForInferenceStatus(), state.FieldIndex) + ")"
 	}
-	lines = append(lines, detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(state.Provider)+"   Current: "+truncateText(current, max(18, width-22))))
+	if state.FieldIndex == settingsFieldLCAgentModel {
+		lines = append(lines, detailMutedStyle.Render("Current: "+truncateText(settingsLCAgentModelValueLabel(m.settingsDraftForInferenceStatus(), state.FieldIndex), max(18, width-9))))
+	} else {
+		lines = append(lines, detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(state.Provider)+"   Current: "+truncateText(current, max(18, width-22))))
+	}
 	if state.Err != "" {
 		lines = append(lines, detailMutedStyle.Render("Provider check: "+truncateText(state.Err, max(18, width-16))))
 	}
@@ -422,6 +436,37 @@ func settingsLCAgentModelPickerAutoLabel(settings config.EditableSettings, field
 		return settingsLCAgentUtilityDefaultLabel(settings)
 	}
 	return settingsLCAgentMainModel(settings)
+}
+
+func (m Model) renderSettingsLCAgentModelValue(fieldIndex int, selected bool, inputWidth int) string {
+	label := settingsLCAgentModelValueLabel(m.settingsDraftForInferenceStatus(), fieldIndex)
+	value := detailValueStyle.Bold(true).Render(label + " ▼")
+	if selected {
+		value = projectListSelectedRowStyle.Render(label + " ▼")
+		prompt := commandPaletteHintStyle.Render("Enter to choose")
+		return fitFooterWidth(lipgloss.JoinHorizontal(lipgloss.Top, value, "  ", prompt), inputWidth)
+	}
+	return fitFooterWidth(value, inputWidth)
+}
+
+func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex int) string {
+	if fieldIndex == settingsFieldLCAgentUtilityModel {
+		provider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
+		switch provider {
+		case "off":
+			return "Off"
+		case "main":
+			return "Same as Main / " + settingsLCAgentMainModel(settings)
+		default:
+			model := strings.TrimSpace(settings.LCAgentUtilityModel)
+			if model == "" {
+				model = lcagentDefaultUtilityModelForProvider(provider)
+			}
+			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentUtilityProvider, provider) + " / " + model
+		}
+	}
+	provider := settingsLCAgentMainProvider(settings)
+	return settingsLCAgentProviderOptionLabel(provider) + " / " + settingsLCAgentMainModel(settings)
 }
 
 func settingsLCAgentModelPickerProviderLabel(provider string) string {

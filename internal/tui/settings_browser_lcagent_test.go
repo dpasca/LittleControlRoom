@@ -140,7 +140,7 @@ func TestSettingsBrowserAutomationFieldRendersChooserHint(t *testing.T) {
 	}
 }
 
-func TestSettingsLCAgentProviderEnterOpensPicker(t *testing.T) {
+func TestSettingsLCAgentMainModelEnterOpensProviderModelPicker(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 
 	m := Model{
@@ -152,18 +152,18 @@ func TestSettingsLCAgentProviderEnterOpensPicker(t *testing.T) {
 	}
 	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
 	m = updated.(Model)
-	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
+	_ = m.setSettingsSelection(settingsFieldLCAgentModel)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("LCAgent provider picker enter should not save immediately")
+	if cmd == nil {
+		t.Fatalf("LCAgent main model enter should start a model-list command")
 	}
-	if !got.settingsLCAgentProviderVisible {
-		t.Fatalf("LCAgent provider enter should open the chooser")
+	if got.settingsLCAgentModelPicker == nil || !got.settingsLCAgentModelPicker.Loading {
+		t.Fatalf("LCAgent main model enter should open the provider/model picker")
 	}
-	if got.status != "Choose the Main Model provider for LCAgent." {
-		t.Fatalf("status = %q, want chooser status", got.status)
+	if got.status != "Checking LCAgent provider/model options..." {
+		t.Fatalf("status = %q, want model picker loading status", got.status)
 	}
 }
 
@@ -177,13 +177,10 @@ func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
 		width:            100,
 		height:           24,
 	}
-	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
+	_ = m.setSettingsSelection(settingsFieldLCAgentRoutePreset)
 
-	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("opening a setup panel should focus its first field")
-	}
 	if got.settingsDrilldown != settingsDrilldownLCAgent {
 		t.Fatalf("settingsDrilldown = %q, want LCAgent", got.settingsDrilldown)
 	}
@@ -279,7 +276,7 @@ func TestLCAgentXiaomiSetupShowsBaseURLWhenProjectReportsUseDifferentBackend(t *
 	}
 }
 
-func TestSettingsLCAgentProviderPickerChoosesDeepSeek(t *testing.T) {
+func TestSettingsLCAgentMainModelPickerChoosesDeepSeek(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 
 	m := Model{
@@ -288,33 +285,26 @@ func TestSettingsLCAgentProviderPickerChoosesDeepSeek(t *testing.T) {
 		settingsBaseline: &settings,
 		width:            100,
 		height:           24,
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex: settingsFieldLCAgentModel,
+			Provider:   "openrouter",
+		},
 	}
-	_ = m.setSettingsSelection(settingsFieldLCAgentProvider)
 
-	updated, _ := m.openSettingsLCAgentProviderPicker()
+	updated, _ := m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{
+		Model:         "deepseek-v4-pro",
+		ModelProvider: "deepseek",
+	})
 	got := updated.(Model)
-	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got = updated.(Model)
-	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got = updated.(Model)
-	rendered := ansi.Strip(got.renderSettingsLCAgentProviderPickerContent(56, 18))
-	for _, want := range []string{"OpenRouter  (current)", "> DeepSeek", "Selected: DeepSeek"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("LCAgent provider picker is missing %q: %q", want, rendered)
-		}
-	}
-
-	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
-	got = updated.(Model)
-	if got.settingsLCAgentProviderVisible {
-		t.Fatalf("LCAgent provider picker should close after choosing")
+	if got.settingsLCAgentModelPicker != nil {
+		t.Fatalf("LCAgent model picker should close after choosing")
 	}
 	if got.settingsFields[settingsFieldLCAgentProvider].input.Value() != "deepseek" {
-		t.Fatalf("LCAgent provider = %q, want deepseek", got.settingsFields[settingsFieldLCAgentProvider].input.Value())
+		t.Fatalf("hidden LCAgent provider = %q, want deepseek", got.settingsFields[settingsFieldLCAgentProvider].input.Value())
 	}
 	updated, _ = got.openSettingsDrilldown(settingsDrilldownLCAgent)
 	got = updated.(Model)
-	rendered = ansi.Strip(got.renderSettingsContent(84, 24))
+	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
 	if !strings.Contains(rendered, "DeepSeek API key") {
 		t.Fatalf("DeepSeek provider should reveal DeepSeek credentials: %q", rendered)
 	}
@@ -378,6 +368,8 @@ func TestSettingsLCAgentChoicePickerChoosesRoutePreset(t *testing.T) {
 		width:            100,
 		height:           24,
 	}
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
+	m = updated.(Model)
 	_ = m.setSettingsSelection(settingsFieldLCAgentRoutePreset)
 
 	rendered := ansi.Strip(m.renderSettingsContent(84, 24))

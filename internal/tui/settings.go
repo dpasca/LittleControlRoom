@@ -192,7 +192,7 @@ func settingsSections() []settingsSection {
 			fieldOrder: []int{
 				settingsFieldAIBackend,
 				settingsFieldBossChatBackend,
-				settingsFieldLCAgentProvider,
+				settingsFieldLCAgentRoutePreset,
 			},
 		},
 		{
@@ -212,7 +212,6 @@ func settingsSections() []settingsSection {
 			hint:    "Configure the experimental LCR-native worker separately from project reports and Boss chat.",
 			fieldOrder: []int{
 				settingsFieldLCAgentRoutePreset,
-				settingsFieldLCAgentProvider,
 				settingsFieldLCAgentModel,
 				settingsFieldLCAgentReasoning,
 				settingsFieldLCAgentUtilityProvider,
@@ -385,7 +384,6 @@ func settingsBrowserAutomationOptionLabel(raw string, baseline browserctl.Policy
 func settingsFieldUsesPicker(index int) bool {
 	return index == settingsFieldAIBackend ||
 		index == settingsFieldBossChatBackend ||
-		index == settingsFieldLCAgentProvider ||
 		index == settingsFieldLCAgentUtilityProvider ||
 		index == settingsFieldLCAgentCriticProvider ||
 		index == settingsFieldBrowserAutomation ||
@@ -610,6 +608,9 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if settingsFieldUsesPicker(m.settingsSelected) {
 		return m, nil
 	}
+	if settingsFieldUsesLCAgentModelPicker(m.settingsSelected) {
+		return m, nil
+	}
 	input, cmd := m.settingsFields[m.settingsSelected].input.Update(msg)
 	m.settingsFields[m.settingsSelected].input = input
 	return m, cmd
@@ -638,7 +639,7 @@ func settingsDrilldownForField(fieldIndex int) settingsDrilldownID {
 		return settingsDrilldownProjectReports
 	case settingsFieldBossChatBackend:
 		return settingsDrilldownBossChat
-	case settingsFieldLCAgentProvider:
+	case settingsFieldLCAgentRoutePreset:
 		return settingsDrilldownLCAgent
 	case settingsFieldIncludePaths:
 		return settingsDrilldownProjectScope
@@ -726,8 +727,6 @@ func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
 		return m.openSettingsAIBackendPicker()
 	case settingsFieldBossChatBackend:
 		return m.openSettingsBossChatBackendPicker()
-	case settingsFieldLCAgentProvider:
-		return m.openSettingsLCAgentProviderPicker()
 	case settingsFieldLCAgentUtilityProvider:
 		return m.openSettingsLCAgentProviderPicker()
 	case settingsFieldLCAgentCriticProvider:
@@ -1096,9 +1095,11 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return settingsBossModelFieldsRelevant(settings)
 	case settingsFieldBossChatOllamaThinking:
 		return settings.BossChatBackend == config.AIBackendOllama
-	case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning,
+	case settingsFieldLCAgentModel, settingsFieldLCAgentReasoning,
 		settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile:
 		return strings.TrimSpace(settings.LCAgentRoutePreset) == ""
+	case settingsFieldLCAgentProvider:
+		return false
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendMLX)
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
@@ -1230,7 +1231,6 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		fields := []int{settingsFieldLCAgentRoutePreset}
 		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
 			fields = append(fields,
-				settingsFieldLCAgentProvider,
 				settingsFieldLCAgentModel,
 				settingsFieldLCAgentReasoning,
 			)
@@ -1381,7 +1381,7 @@ func settingsDrilldownTopField(drilldown settingsDrilldownID) int {
 	case settingsDrilldownBossChat:
 		return settingsFieldBossChatBackend
 	case settingsDrilldownLCAgent:
-		return settingsFieldLCAgentProvider
+		return settingsFieldLCAgentRoutePreset
 	case settingsDrilldownProjectScope:
 		return settingsFieldIncludePaths
 	default:
@@ -2107,6 +2107,18 @@ func settingsLCAgentKnownModelProviderIssueFor(modelLabel, providerLabel, provid
 }
 
 func (i settingsLCAgentModelProviderIssue) message() string {
+	if strings.EqualFold(strings.TrimSpace(i.modelLabel), "Main model") {
+		return fmt.Sprintf(
+			"LCAgent %s mismatch: %s belongs to %s, but the current provider is %s. This would run as %s / %s. Choose a provider/model pair in the Main model picker or choose another %s.",
+			i.modelLabel,
+			i.model,
+			codexapp.LCAgentProviderDisplayName(i.resolvedProvider),
+			codexapp.LCAgentProviderDisplayName(i.configuredProvider),
+			codexapp.LCAgentProviderDisplayName(i.resolvedProvider),
+			i.normalizedModel,
+			i.modelLabel,
+		)
+	}
 	return fmt.Sprintf(
 		"LCAgent %s mismatch: %s belongs to %s, but %s is %s. This would run as %s / %s. Choose %s in the provider picker or choose another %s.",
 		i.modelLabel,
@@ -2202,7 +2214,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 		switch fieldIndex {
 		case settingsFieldLCAgentRoutePreset:
 			return "Coding Route"
-		case settingsFieldLCAgentProvider, settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
+		case settingsFieldLCAgentModel, settingsFieldLCAgentReasoning:
 			return "Main Model"
 		case settingsFieldOpenAIAPIKey, settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey:
 			return "Provider Credentials"
@@ -2401,7 +2413,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 			State:      lcagentState,
 			StateStyle: lcagentStyle,
 			Detail:     lcagentDetail,
-			FieldIndex: settingsFieldLCAgentProvider,
+			FieldIndex: settingsFieldLCAgentRoutePreset,
 		},
 	}
 }
@@ -2966,7 +2978,7 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsAIBackendValue(selected, inputWidth)
 		case settingsFieldBossChatBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
-		case settingsFieldLCAgentProvider, settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentCriticProvider:
+		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentCriticProvider:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentProviderValue(fieldIndex, selected, inputWidth)
 		case settingsFieldBrowserAutomation:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
@@ -2977,6 +2989,13 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 				row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsChoiceValue(fieldIndex, selected, inputWidth)
 			}
 		}
+		if selected {
+			return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
+		}
+		return row
+	}
+	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+		row := labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentModelValue(fieldIndex, selected, inputWidth)
 		if selected {
 			return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
 		}
@@ -3050,7 +3069,7 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 	switch m.settingsSelected {
 	case settingsFieldAIBackend, settingsFieldBossChatBackend:
 		action = "Next: press Enter to open the focused setup panel."
-	case settingsFieldLCAgentProvider:
+	case settingsFieldLCAgentRoutePreset:
 		action = "Next: press Enter to configure LCAgent Main Model, Utility Model, credentials, and web search."
 	case settingsFieldOpenAIAPIKey:
 		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(settingsFieldOpenAIAPIKey)); suffix != "" {
@@ -3312,21 +3331,21 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent route preset",
-			"Press Enter to choose a coding route bundle, or use Individual Fields to tune provider, model, autonomy, and profiles separately.",
+			"Press Enter to choose a coding route bundle, or use Individual Fields to tune model, autonomy, and profiles separately.",
 			settings.LCAgentRoutePreset,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
 			"Main model provider",
-			"Press Enter to choose the provider for the main LCAgent model.",
+			"Internal provider value set by the Main model picker.",
 			settings.LCAgentProvider,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsFieldWithPlaceholder(
 			"Main model",
-			"Optional exact model ID for experimental LCAgent runs. Press Enter to check/fetch provider models when available, or type an exact custom ID. Leave blank to use the provider default.",
+			"Press Enter to choose the provider and model for experimental LCAgent runs together. Leave blank to use the current provider default.",
 			settings.EmbeddedLCAgentModel,
 			256,
 			"Default: "+lcagentDefaultModelForProvider(firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")),
@@ -3775,7 +3794,7 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentRoutePreset:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "":
-			return "LCAgent launches will use the individual provider, model, autonomy, tool, and context fields below."
+			return "LCAgent launches will use the individual model, autonomy, tool, and context fields below."
 		case "balanced":
 			return "Balanced uses direct DeepSeek V4 Pro with conservative coding budgets."
 		case "quality":
@@ -3810,10 +3829,11 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 	case settingsFieldLCAgentModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "The Main Model will request " + model + ". Press Enter to check this provider's model list when available."
+			settings := m.settingsDraftForInferenceStatus()
+			return "The Main Model will request " + settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings)) + " / " + model + ". Press Enter to choose a provider/model pair."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses the Main Model default: " + settingsLCAgentMainModel(settings) + ". Press Enter to fetch/select provider models when available, or type an exact ID."
+		return "Blank uses the Main Model default: " + settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings)) + " / " + settingsLCAgentMainModel(settings) + ". Press Enter to choose a provider/model pair."
 	case settingsFieldLCAgentReasoning:
 		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
 			return "The Main Model will request reasoning effort " + effort + " when the selected provider supports it."

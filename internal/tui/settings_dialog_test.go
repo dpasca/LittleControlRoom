@@ -1101,8 +1101,8 @@ func TestSettingsGettingStartedNavigationSkipsProviderDetailFields(t *testing.T)
 	if cmd == nil {
 		t.Fatalf("moving down should refocus the next top-level setup row")
 	}
-	if got.settingsSelected != settingsFieldLCAgentProvider {
-		t.Fatalf("settingsSelected = %d, want LCAgent provider, not OpenAI key", got.settingsSelected)
+	if got.settingsSelected != settingsFieldLCAgentRoutePreset {
+		t.Fatalf("settingsSelected = %d, want LCAgent setup row, not OpenAI key", got.settingsSelected)
 	}
 }
 
@@ -1383,8 +1383,11 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if !strings.Contains(rendered, "LCAgent section.") {
 		t.Fatalf("settings modal should render the new section hint: %q", rendered)
 	}
-	if !strings.Contains(rendered, "LCAgent route preset") || !strings.Contains(rendered, "Main model provider") {
+	if !strings.Contains(rendered, "LCAgent route preset") || !strings.Contains(rendered, "Main model") {
 		t.Fatalf("settings modal should show LCAgent fields after switching sections: %q", rendered)
+	}
+	if strings.Contains(rendered, "Main model provider") {
+		t.Fatalf("settings modal should hide the standalone LCAgent provider field: %q", rendered)
 	}
 	if strings.Contains(rendered, "Boss helm model") {
 		t.Fatalf("settings modal should not keep rendering the old section fields: %q", rendered)

@@ -147,7 +147,7 @@ func TestSettingsLCAgentKnownModelProviderMismatchBlocksSave(t *testing.T) {
 	if got.settingsSaving {
 		t.Fatalf("settingsSaving = true, want false after blocked save")
 	}
-	for _, want := range []string{"Main model mismatch", "mimo-v2.5-pro belongs to Xiaomi", "Main model provider is DeepSeek", "Settings were not saved"} {
+	for _, want := range []string{"Main model mismatch", "mimo-v2.5-pro belongs to Xiaomi", "current provider is DeepSeek", "Settings were not saved"} {
 		if !strings.Contains(got.status, want) {
 			t.Fatalf("status missing %q: %q", want, got.status)
 		}
