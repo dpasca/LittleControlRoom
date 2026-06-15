@@ -351,6 +351,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "terminal",
+			raw:  "/terminal",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindTerminal {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindTerminal)
+				}
+				if inv.Canonical != "/terminal" {
+					t.Fatalf("canonical = %q, want /terminal", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "resolve",
 			raw:  "/resolve",
 			check: func(t *testing.T, inv Invocation) {
@@ -1106,6 +1118,16 @@ func TestSuggestionsIncludeOpenCodeCommands(t *testing.T) {
 	}
 	if got[2].Insert != "/opencode-new" {
 		t.Fatalf("third /open suggestion = %q, want /opencode-new", got[2].Insert)
+	}
+}
+
+func TestSuggestionsIncludeTerminalCommand(t *testing.T) {
+	got := Suggestions("/ter")
+	if len(got) == 0 {
+		t.Fatalf("Suggestions(/ter) returned none")
+	}
+	if got[0].Insert != "/terminal" {
+		t.Fatalf("first /ter suggestion = %q, want /terminal", got[0].Insert)
 	}
 }
 

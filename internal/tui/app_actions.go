@@ -492,6 +492,18 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		}
 		m.status = "Opening project in browser..."
 		return m, m.openProjectDirInBrowserCmd(p.Path)
+	case commands.KindTerminal:
+		p, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		if !p.PresentOnDisk {
+			m.status = "Terminal requires a folder present on disk"
+			return m, nil
+		}
+		m.status = "Opening project terminal..."
+		return m, m.openProjectDirInTerminalCmd(p.Path)
 	case commands.KindRun:
 		p, ok := m.selectedProject()
 		if !ok {

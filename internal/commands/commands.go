@@ -29,6 +29,7 @@ const (
 	KindNewTask         Kind = "new-task"
 	KindTaskActions     Kind = "task-actions"
 	KindOpen            Kind = "open"
+	KindTerminal        Kind = "terminal"
 	KindRun             Kind = "run"
 	KindRestart         Kind = "restart"
 	KindRunEdit         Kind = "run-edit"
@@ -150,6 +151,7 @@ var specs = []Spec{
 	{Name: "new-task", Usage: "/new-task [--assistant codex|opencode|claude|lcagent] [request]", Summary: "Create a scratch task folder without stopping to name it"},
 	{Name: "task-actions", Usage: "/task-actions", Summary: "Open archive/delete actions for the selected scratch task"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
+	{Name: "terminal", Usage: "/terminal", Summary: "Open a system terminal in the selected project's folder"},
 	{Name: "run", Usage: "/run [command]", Summary: "Start the selected project's managed runtime"},
 	{Name: "start", Usage: "/start [command]", Summary: "Alias for /run"},
 	{Name: "restart", Usage: "/restart", Summary: "Restart the selected project's managed runtime"},
@@ -472,6 +474,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /open")
 		}
 		return Invocation{Kind: KindOpen, Canonical: "/open"}, nil
+	case "terminal":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /terminal")
+		}
+		return Invocation{Kind: KindTerminal, Canonical: "/terminal"}, nil
 	case "run", "start":
 		return Invocation{
 			Kind:      KindRun,
