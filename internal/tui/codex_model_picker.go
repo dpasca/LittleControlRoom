@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/fuzzyfilter"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -484,7 +485,17 @@ func (m Model) updateCodexModelPickerFilterMode(msg tea.KeyMsg) (tea.Model, tea.
 	case "tab":
 		m.focusCodexModelPickerListFromFilter()
 		return m, nil
-	case "down", "j", "pgdown", "ctrl+d", "home", "end":
+	case "pgup", "pageup", "ctrl+u":
+		if m.focusCodexModelPickerModelsFromFilter() {
+			m.moveCodexModelPickerSelection(-5)
+		}
+		return m, nil
+	case "pgdown", "pagedown", "ctrl+d":
+		if m.focusCodexModelPickerModelsFromFilter() {
+			m.moveCodexModelPickerSelection(5)
+		}
+		return m, nil
+	case "down", "j", "home", "end":
 		if !m.focusCodexModelPickerListFromFilter() {
 			return m, nil
 		}
@@ -516,6 +527,38 @@ func (m Model) updateCodexModelPickerFilterMode(msg tea.KeyMsg) (tea.Model, tea.
 	}
 
 	return m, nil
+}
+
+func (m *Model) focusCodexModelPickerModelsFromFilter() bool {
+	state := m.codexModelPicker
+	if state == nil {
+		return false
+	}
+	if len(state.FilteredModels) > 0 {
+		if state.ModelIndex < 0 {
+			state.ModelIndex = 0
+		}
+		if state.ModelIndex >= len(state.FilteredModels) {
+			state.ModelIndex = len(state.FilteredModels) - 1
+		}
+		state.Focus = codexModelPickerFocusModels
+		m.setCodexModelPickerModel(state.FilteredModels[state.ModelIndex], "")
+		m.status = "Choosing embedded model"
+		return true
+	}
+	if len(state.RecentModels) > 0 {
+		if state.RecentIndex < 0 {
+			state.RecentIndex = 0
+		}
+		if state.RecentIndex >= len(state.RecentModels) {
+			state.RecentIndex = len(state.RecentModels) - 1
+		}
+		state.Focus = codexModelPickerFocusRecent
+		m.setCodexModelPickerModel(state.RecentModels[state.RecentIndex], "")
+		m.status = "Choosing from recent models"
+		return true
+	}
+	return false
 }
 
 func (m *Model) focusCodexModelPickerListFromFilter() bool {
@@ -905,6 +948,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		commandPaletteTitleStyle.Render("Embedded Model Picker (" + titleLabel + ")"),
 		renderDialogAction("Enter", "apply", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Tab", "focus", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 		"",
 	}
@@ -998,15 +1042,23 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 
 	rightLines := []string{}
 
+	selectedModel, _ := m.currentCodexModelOption()
+	if selected := codexModelPickerSelectedStatus(selectedModel); selected != "" {
+		rightLines = append(rightLines, commandPaletteTitleStyle.Render("Selected"))
+		rightLines = append(rightLines, commandPaletteHintStyle.Render(selected))
+	}
+
 	options := m.currentCodexReasoningOptions()
 	if len(options) > 0 {
+		if len(rightLines) > 0 {
+			rightLines = append(rightLines, "")
+		}
 		rightLines = append(rightLines, commandPaletteTitleStyle.Render("Reasoning"))
 		for i, option := range options {
 			rightLines = append(rightLines, m.renderCodexReasoningPickerRow(option, i == state.EffortIndex, rightWidth))
 		}
 	}
 
-	selectedModel, _ := m.currentCodexModelOption()
 	if description := strings.TrimSpace(selectedModel.Description); description != "" {
 		rightLines = append(rightLines, "")
 		rightLines = append(rightLines, commandPaletteTitleStyle.Render("About"))
@@ -1251,17 +1303,53 @@ func codexFindRecentModelOption(models []codexapp.ModelOption, provider, modelID
 }
 
 func codexFilterModels(models []codexapp.ModelOption, filter string) []codexapp.ModelOption {
-	filter = strings.ToLower(strings.TrimSpace(filter))
+	filter = strings.TrimSpace(filter)
 	if filter == "" {
 		return models
 	}
 	var filtered []codexapp.ModelOption
 	for _, model := range models {
-		name := strings.ToLower(model.DisplayName)
-		id := strings.ToLower(model.Model)
-		if strings.Contains(name, filter) || strings.Contains(id, filter) {
+		if fuzzyfilter.Match(filter, codexModelOptionSearchCandidates(model)...) {
 			filtered = append(filtered, model)
 		}
 	}
 	return filtered
+}
+
+func codexModelOptionSearchCandidates(option codexapp.ModelOption) []string {
+	provider := strings.TrimSpace(option.ModelProvider)
+	candidates := []string{
+		option.DisplayName,
+		option.Model,
+		option.ID,
+		option.Description,
+		provider,
+	}
+	if provider != "" {
+		candidates = append(candidates, settingsLCAgentProviderOptionLabel(provider))
+	}
+	return candidates
+}
+
+func codexModelPickerSelectedStatus(option codexapp.ModelOption) string {
+	model := firstNonEmptyTrimmed(option.Model, option.DisplayName, option.ID)
+	if model == "" {
+		return ""
+	}
+	label := firstNonEmptyTrimmed(option.DisplayName, option.Model, option.ID)
+	parts := []string{}
+	if provider := strings.TrimSpace(option.ModelProvider); provider != "" {
+		parts = append(parts, settingsLCAgentProviderOptionLabel(provider))
+	}
+	if !strings.EqualFold(label, model) {
+		parts = append(parts, label)
+	}
+	parts = append(parts, model)
+	if option.IsDefault {
+		parts = append(parts, "default")
+	}
+	if effort := strings.TrimSpace(option.DefaultReasoningEffort); effort != "" {
+		parts = append(parts, "default reasoning: "+effort)
+	}
+	return strings.Join(parts, " / ")
 }
