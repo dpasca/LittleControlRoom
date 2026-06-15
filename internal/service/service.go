@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lcroom/internal/aibackend"
@@ -64,6 +65,7 @@ type Service struct {
 	llmUsageTracker          *llm.UsageTracker
 	bossChatUsageTracker     *llm.UsageTracker
 	opencodeDiscovery        *llm.OpenCodeDiscovery
+	sessionUsageCache        atomic.Value
 
 	gitFingerprintReader   func(context.Context, string) (scanner.GitFingerprint, error)
 	gitRepoStatusReader    func(context.Context, string) (scanner.GitRepoStatus, error)
@@ -424,6 +426,7 @@ func (s *Service) resetSessionUsageLocked() {
 	if resetter, ok := s.classifier.(interface{ ResetUsage() }); ok {
 		resetter.ResetUsage()
 	}
+	s.sessionUsageCache.Store(model.LLMSessionUsage{})
 }
 
 func (s *Service) resetBossChatUsageLocked() {
@@ -548,7 +551,15 @@ func (s *Service) HasSessionClassifier() bool {
 }
 
 func (s *Service) SessionUsage() model.LLMSessionUsage {
-	s.mu.Lock()
+	if s == nil {
+		return model.LLMSessionUsage{}
+	}
+	if !s.mu.TryLock() {
+		if cached, ok := s.sessionUsageCache.Load().(model.LLMSessionUsage); ok {
+			return cached
+		}
+		return model.LLMSessionUsage{}
+	}
 	classifier := s.classifier
 	commitMessageSuggesterConfigured := s.commitMessageSuggester != nil
 	usageTracker := s.llmUsageTracker
@@ -566,19 +577,27 @@ func (s *Service) SessionUsage() model.LLMSessionUsage {
 	if usageTracker != nil {
 		snapshot := usageTracker.Snapshot(enabled)
 		if hasMeaningfulLLMUsage(snapshot) {
+			s.sessionUsageCache.Store(snapshot)
 			return snapshot
 		}
 	}
+	var usage model.LLMSessionUsage
 	if classifier == nil {
 		if enabled {
-			return model.LLMSessionUsage{Enabled: true}
+			usage = model.LLMSessionUsage{Enabled: true}
+		} else {
+			usage = model.LLMSessionUsage{}
 		}
-		return model.LLMSessionUsage{}
+		s.sessionUsageCache.Store(usage)
+		return usage
 	}
 	if usageReader, ok := classifier.(interface{ UsageSnapshot() model.LLMSessionUsage }); ok {
-		return usageReader.UsageSnapshot()
+		usage = usageReader.UsageSnapshot()
+	} else {
+		usage = model.LLMSessionUsage{Enabled: enabled}
 	}
-	return model.LLMSessionUsage{Enabled: enabled}
+	s.sessionUsageCache.Store(usage)
+	return usage
 }
 
 func (s *Service) BossChatUsage() model.LLMSessionUsage {

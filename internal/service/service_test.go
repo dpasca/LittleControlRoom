@@ -246,6 +246,44 @@ func TestApplyEditableSettingsResetsUsageWhenBackendChanges(t *testing.T) {
 	}
 }
 
+func TestSessionUsageReturnsCachedSnapshotWhenServiceLockBusy(t *testing.T) {
+	t.Parallel()
+
+	svc := &Service{
+		llmUsageTracker:        llm.NewUsageTracker(),
+		commitMessageSuggester: fakeCommitMessageSuggester{},
+	}
+
+	svc.llmUsageTracker.Start("gpt-5-mini")
+	svc.llmUsageTracker.Complete("gpt-5-mini", model.LLMUsage{
+		InputTokens:  120,
+		OutputTokens: 30,
+		TotalTokens:  150,
+	})
+	cached := svc.SessionUsage()
+	if !cached.Enabled || cached.Completed != 1 || cached.Totals.TotalTokens != 150 {
+		t.Fatalf("cached usage = %+v, want completed usage snapshot", cached)
+	}
+
+	svc.llmUsageTracker.Start("gpt-5-mini")
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+
+	done := make(chan model.LLMSessionUsage, 1)
+	go func() {
+		done <- svc.SessionUsage()
+	}()
+
+	select {
+	case got := <-done:
+		if got.Running != cached.Running || got.Started != cached.Started || got.Totals.TotalTokens != cached.Totals.TotalTokens {
+			t.Fatalf("SessionUsage() while service lock busy = %+v, want cached %+v", got, cached)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("SessionUsage() blocked while service lock was busy")
+	}
+}
+
 func TestBossChatRunnerUsesBossChatBackendNotProjectAnalysisBackend(t *testing.T) {
 	t.Setenv("LCROOM_BOSS_MODEL", "")
 
