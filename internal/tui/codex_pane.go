@@ -955,7 +955,7 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentXiaomiBaseURL) == "" {
 			req.LCAgentXiaomiBaseURL = m.xiaomiBaseURL()
 		}
-		if strings.TrimSpace(req.LCAgentRoutePreset) == "" {
+		if strings.TrimSpace(req.LCAgentRoutePreset) == "" && strings.TrimSpace(req.PendingModel) == "" && strings.TrimSpace(req.PendingReasoning) == "" {
 			req.LCAgentRoutePreset = m.lcagentRoutePreset()
 		}
 		if strings.TrimSpace(req.LCAgentProvider) == "" {

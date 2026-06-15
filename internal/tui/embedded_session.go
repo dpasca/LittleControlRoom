@@ -227,12 +227,7 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 			}
 			m.markCodexSkipNextLiveRefresh(msg.projectPath)
 		}
-		m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning)
-		if msg.provider == codexapp.ProviderLCAgent && strings.TrimSpace(msg.modelProvider) != "" {
-			pref := m.embeddedModelPrefs[codexapp.ProviderLCAgent]
-			pref.ModelProvider = strings.TrimSpace(msg.modelProvider)
-			m.embeddedModelPrefs[codexapp.ProviderLCAgent] = pref
-		}
+		m.rememberEmbeddedModelPreference(msg.provider, msg.model, msg.reasoning, msg.modelProvider)
 		m.recordRecentModel(msg.provider, msg.model, msg.modelProvider)
 		m.returnToTodoFromModelPicker()
 		if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
@@ -894,11 +889,17 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 }
 
 func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings config.EditableSettings) codexapp.LaunchRequest {
+	pendingModel := strings.TrimSpace(settings.EmbeddedLCAgentModel)
+	pendingReasoning := strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
+	if strings.TrimSpace(settings.LCAgentRoutePreset) != "" {
+		pendingModel = ""
+		pendingReasoning = ""
+	}
 	return codexapp.LaunchRequest{
 		Provider:                 codexapp.ProviderLCAgent,
 		ProjectPath:              strings.TrimSpace(projectPath),
-		PendingModel:             strings.TrimSpace(settings.EmbeddedLCAgentModel),
-		PendingReasoning:         strings.TrimSpace(settings.EmbeddedLCAgentReasoning),
+		PendingModel:             pendingModel,
+		PendingReasoning:         pendingReasoning,
 		PlaywrightPolicy:         settings.PlaywrightPolicy,
 		AppDataDir:               m.appDataDir(),
 		CodexHome:                m.codexHome(),

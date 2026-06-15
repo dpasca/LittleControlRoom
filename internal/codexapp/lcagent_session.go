@@ -65,6 +65,7 @@ type lcagentSession struct {
 	utilityModel      string
 	criticProvider    string
 	criticModel       string
+	modelWarning      string
 	webSearchBackend  string
 	webSearchAPIKey   string
 	webSearchEngineID string
@@ -143,12 +144,21 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		return nil, err
 	}
 	requestTimeout := lcagentRequestTimeoutValue(req.LCAgentRequestTimeout)
+	configuredProvider := provider
+	configuredRoutePreset := routePreset
 	model := strings.TrimSpace(req.PendingModel)
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
+	if model != "" && routePreset != "" && !lcagentRoutePresetMatchesModel(routePreset, model) {
+		routePreset = ""
+	}
+	if model != "" && routePreset == "" {
+		provider = lcagentProviderForExplicitModel(provider, model)
+	}
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
+	modelWarning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(req.PendingModel), routePreset, provider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
 	criticProvider := lcagentCriticProviderValue(req.LCAgentCriticProvider)
@@ -179,6 +189,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		utilityModel:             utilityModel,
 		criticProvider:           criticProvider,
 		criticModel:              criticModel,
+		modelWarning:             modelWarning,
 		webSearchBackend:         lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:          strings.TrimSpace(req.LCAgentWebSearchAPIKey),
 		webSearchEngineID:        strings.TrimSpace(req.LCAgentWebSearchEngineID),
@@ -206,6 +217,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		}
 	} else if !session.started {
 		session.appendEntryLocked(TranscriptStatus, "Experimental LCAgent is ready. Send a prompt to start a one-shot run.")
+		session.appendModelSelectionWarningLocked()
 		if warning := session.webSearchWarning(); warning != "" {
 			session.appendEntryLocked(TranscriptStatus, warning)
 		}
@@ -875,19 +887,38 @@ func (s *lcagentSession) StageModelOverride(model, reasoningEffort string) error
 func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEffort string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	originalProvider := strings.TrimSpace(s.provider)
+	originalRoutePreset := strings.TrimSpace(s.routePreset)
+	originalModel := strings.TrimSpace(model)
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.TrimSpace(model)
+	if model != "" && strings.TrimSpace(s.routePreset) != "" && !lcagentRoutePresetMatchesModel(s.routePreset, model) {
+		s.routePreset = ""
+	}
 	if provider != "" {
 		s.provider = provider
 		s.modelProvider = provider
 		s.routePreset = ""
 		model = modeladapter.NormalizeModelForProvider(provider, model)
+	} else if model != "" && strings.TrimSpace(s.routePreset) == "" {
+		provider = lcagentProviderForExplicitModel(s.provider, model)
+		if provider != "" && !strings.EqualFold(provider, strings.TrimSpace(s.provider)) {
+			s.provider = provider
+			s.modelProvider = provider
+			model = modeladapter.NormalizeModelForProvider(provider, model)
+		}
 	}
-	if strings.TrimSpace(model) != "" {
-		s.model = strings.TrimSpace(model)
+	if model != "" {
+		s.model = model
 	} else if provider != "" {
 		// Provider changed without an explicit model; clear stale model
 		// so the next run defaults to the correct model for the new provider.
 		s.model = ""
+	}
+	if provider != "" {
+		s.modelWarning = ""
+	} else {
+		s.modelWarning = lcagentModelSelectionWarning(originalRoutePreset, originalProvider, originalModel, s.routePreset, s.provider, s.model)
 	}
 	s.reasoningEffort = strings.TrimSpace(reasoningEffort)
 	return nil
@@ -1170,17 +1201,27 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	s.suggestedInputDraft = ""
 	provider := firstNonEmpty(s.provider, lcagentDefaultProvider)
 	routePreset := strings.TrimSpace(s.routePreset)
+	configuredProvider := provider
+	configuredRoutePreset := routePreset
 	sessionAuto := strings.TrimSpace(s.sessionAuto)
 	autoLevel := lcagentAutoLevel(firstNonEmpty(opts.autoOverride, s.sessionAuto, s.auto))
 	model := strings.TrimSpace(s.model)
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
+	if model != "" && routePreset != "" && !lcagentRoutePresetMatchesModel(routePreset, model) {
+		routePreset = ""
+		provider = lcagentProviderForExplicitModel(provider, model)
+	}
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
 	if routePreset == "" && !modeladapter.ModelIsKnownForProvider(modelProvider, model) {
 		model = lcagentDefaultModel(modelProvider)
 	}
+	if warning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(s.model), routePreset, provider, model); warning != "" {
+		s.modelWarning = warning
+	}
+	s.appendModelSelectionWarningLocked()
 	toolProfile := firstNonEmpty(s.toolProfile, lcagentDefaultToolProfile)
 	contextProfile := firstNonEmpty(s.contextProfile, lcagentDefaultContextProfile)
 	adminWrite := s.adminWrite
@@ -2094,6 +2135,19 @@ func (s *lcagentSession) unsupportedNotice(text string) error {
 	return nil
 }
 
+func (s *lcagentSession) appendModelSelectionWarningLocked() {
+	warning := strings.TrimSpace(s.modelWarning)
+	if warning == "" {
+		return
+	}
+	for _, entry := range s.entries {
+		if entry.Kind == TranscriptStatus && strings.TrimSpace(entry.Text) == warning {
+			return
+		}
+	}
+	s.appendEntryLocked(TranscriptStatus, warning)
+}
+
 func (s *lcagentSession) statusTextLocked() string {
 	status := strings.TrimSpace(s.status)
 	if status == "" {
@@ -2115,6 +2169,9 @@ func (s *lcagentSession) statusTextLocked() string {
 	}
 	if reasoning := strings.TrimSpace(s.reasoningEffort); reasoning != "" {
 		parts = append(parts, "reasoning effort: "+reasoning)
+	}
+	if warning := strings.TrimSpace(s.modelWarning); warning != "" {
+		parts = append(parts, warning)
 	}
 	tokenUsage := cloneThreadTokenUsage(s.tokenUsage)
 	s.applyContextWindowToTokenUsageLocked(tokenUsage)
@@ -2581,6 +2638,69 @@ func lcagentRoutePresetModel(preset string) string {
 	}
 }
 
+func lcagentRoutePresetMatchesModel(preset string, model string) bool {
+	provider := lcagentRoutePresetProvider(preset)
+	routeModel := lcagentRoutePresetModel(preset)
+	if provider == "" || routeModel == "" || strings.TrimSpace(model) == "" {
+		return false
+	}
+	return strings.EqualFold(
+		modeladapter.NormalizeModelForProvider(provider, routeModel),
+		modeladapter.NormalizeModelForProvider(provider, model),
+	)
+}
+
+func lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, requestedModel, resolvedRoutePreset, resolvedProvider, resolvedModel string) string {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if requestedModel == "" {
+		return ""
+	}
+	configuredRoutePreset = strings.TrimSpace(configuredRoutePreset)
+	resolvedRoutePreset = strings.TrimSpace(resolvedRoutePreset)
+	configuredProvider = strings.ToLower(strings.TrimSpace(configuredProvider))
+	resolvedProvider = strings.ToLower(strings.TrimSpace(resolvedProvider))
+	resolvedModel = strings.TrimSpace(resolvedModel)
+	if configuredRoutePreset != "" && resolvedRoutePreset == "" && !lcagentRoutePresetMatchesModel(configuredRoutePreset, requestedModel) {
+		return "LCAgent model selection warning: route preset " + configuredRoutePreset + " was ignored because the pending model is " + requestedModel + ". This run will use " + lcagentProviderDisplayName(resolvedProvider) + " / " + resolvedModel + ". Use /model to choose another model, or /settings to save the intended LCAgent route."
+	}
+	if configuredProvider != "" && configuredProvider != resolvedProvider && configuredProvider != "openrouter" {
+		return "LCAgent model selection warning: " + requestedModel + " does not match the saved " + lcagentProviderDisplayName(configuredProvider) + " provider. This run will use " + lcagentProviderDisplayName(resolvedProvider) + " / " + resolvedModel + ". Use /settings to save the intended LCAgent provider, or /model to choose another model."
+	}
+	return ""
+}
+
+func lcagentProviderForExplicitModel(provider string, model string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		provider = lcagentDefaultProvider
+	}
+	model = strings.TrimSpace(model)
+	if model == "" || provider == "openrouter" {
+		return provider
+	}
+	if modeladapter.ModelIsKnownForProvider(provider, modeladapter.NormalizeModelForProvider(provider, model)) {
+		return provider
+	}
+	if inferred := lcagentDirectProviderForKnownModel(model); inferred != "" {
+		return inferred
+	}
+	return provider
+}
+
+func lcagentDirectProviderForKnownModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	for _, provider := range []string{"openai", "deepseek", "moonshot", "xiaomi"} {
+		normalized := modeladapter.NormalizeModelForProvider(provider, model)
+		if modeladapter.ModelIsKnownForProvider(provider, normalized) {
+			return provider
+		}
+	}
+	return ""
+}
+
 func lcagentRoutePresetAuto(preset string) string {
 	switch strings.ToLower(strings.TrimSpace(preset)) {
 	case "balanced", "quality", "mimo-2.5-pro-low", "mimo-2.5-pro-high", "mimo-2.5-pro-max":
@@ -2625,6 +2745,9 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	if suggestedDraftID != "" && suggestedDraft != "" {
 		suggestedDraftSource = "lcagent_critic"
 	}
+	model := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider))
+	modelProvider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider)
+	criticModel, criticModelProvider := s.resolvedCriticModelLocked(modelProvider, model)
 	return Snapshot{
 		Provider:                  ProviderLCAgent,
 		ProjectPath:               s.projectPath,
@@ -2649,11 +2772,33 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		LastActivityAt:            s.lastActivityAt,
 		CurrentCWD:                s.projectPath,
 		PermissionLevel:           s.effectiveAutoLocked(),
-		Model:                     firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider)),
-		ModelProvider:             firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider),
+		Model:                     model,
+		ModelProvider:             modelProvider,
+		CriticModel:               criticModel,
+		CriticModelProvider:       criticModelProvider,
 		ReasoningEffort:           s.reasoningEffort,
 		TokenUsage:                exportedTokenUsageSnapshot(tokenUsage),
 	}
+}
+
+func (s *lcagentSession) resolvedCriticModelLocked(mainProvider, mainModel string) (string, string) {
+	criticProvider := lcagentCriticProviderValue(s.criticProvider)
+	if criticProvider == "off" {
+		return "", ""
+	}
+	resolvedProvider := lcagentResolvedCriticProvider(s.routePreset, firstNonEmpty(s.provider, mainProvider), criticProvider)
+	if resolvedProvider == "" {
+		return "", ""
+	}
+	model := strings.TrimSpace(s.criticModel)
+	if model == "" && criticProvider == "main" {
+		model = strings.TrimSpace(mainModel)
+	}
+	if model == "" {
+		model = lcagentDefaultModel(resolvedProvider)
+	}
+	model = modeladapter.NormalizeModelForProvider(resolvedProvider, model)
+	return model, resolvedProvider
 }
 
 type lcagentCommand struct {

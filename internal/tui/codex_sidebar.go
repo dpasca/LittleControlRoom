@@ -511,6 +511,11 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 	if model != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
 	}
+	if snapshot.Provider == codexapp.ProviderLCAgent {
+		if critic := embeddedSidebarCriticModelLabel(snapshot); critic != "" {
+			rows = append(rows, embeddedSidebarFieldRow("Critic", critic, detailValueStyle, width))
+		}
+	}
 	if reasoning != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Reasoning", reasoning, detailValueStyle, width))
 	}
@@ -523,6 +528,18 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 		rows = append(rows, embeddedSidebarFieldRow("Next", next, detailWarningStyle, width))
 	}
 	return rows
+}
+
+func embeddedSidebarCriticModelLabel(snapshot codexapp.Snapshot) string {
+	model := strings.TrimSpace(snapshot.CriticModel)
+	if model == "" {
+		return ""
+	}
+	provider := strings.TrimSpace(snapshot.CriticModelProvider)
+	if provider == "" || strings.EqualFold(provider, strings.TrimSpace(snapshot.ModelProvider)) {
+		return model
+	}
+	return provider + "/" + model
 }
 
 func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {

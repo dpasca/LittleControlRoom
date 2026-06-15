@@ -33,11 +33,15 @@ func embeddedModelPreferencesFromSettings(settings config.EditableSettings) map[
 			Reasoning: strings.TrimSpace(settings.EmbeddedOpenCodeReasoning),
 		}
 	}
-	if model := strings.TrimSpace(settings.EmbeddedLCAgentModel); model != "" || strings.TrimSpace(settings.EmbeddedLCAgentReasoning) != "" {
-		prefs[codexapp.ProviderLCAgent] = embeddedModelPreference{
-			Model:         model,
-			ModelProvider: strings.TrimSpace(settings.LCAgentProvider),
-			Reasoning:     strings.TrimSpace(settings.EmbeddedLCAgentReasoning),
+	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
+		model := strings.TrimSpace(settings.EmbeddedLCAgentModel)
+		reasoning := strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
+		if model != "" || reasoning != "" {
+			prefs[codexapp.ProviderLCAgent] = embeddedModelPreference{
+				Model:         model,
+				ModelProvider: strings.TrimSpace(settings.LCAgentProvider),
+				Reasoning:     reasoning,
+			}
 		}
 	}
 	if len(prefs) == 0 {
@@ -97,7 +101,7 @@ func (m Model) embeddedModelPreference(provider codexapp.Provider) (embeddedMode
 	return pref, true
 }
 
-func (m *Model) rememberEmbeddedModelPreference(provider codexapp.Provider, model, reasoning string) {
+func (m *Model) rememberEmbeddedModelPreference(provider codexapp.Provider, model, reasoning string, modelProvider ...string) {
 	provider = provider.Normalized()
 	model = strings.TrimSpace(model)
 	reasoning = strings.TrimSpace(reasoning)
@@ -108,8 +112,9 @@ func (m *Model) rememberEmbeddedModelPreference(provider codexapp.Provider, mode
 		m.embeddedModelPrefs = make(map[codexapp.Provider]embeddedModelPreference)
 	}
 	m.embeddedModelPrefs[provider] = embeddedModelPreference{
-		Model:     model,
-		Reasoning: reasoning,
+		Model:         model,
+		ModelProvider: firstNonEmptyTrimmed(modelProvider...),
+		Reasoning:     reasoning,
 	}
 }
 
@@ -117,6 +122,10 @@ func (m Model) applyEmbeddedModelPreference(req codexapp.LaunchRequest) codexapp
 	if pref, ok := m.embeddedModelPreference(req.Provider); ok {
 		req.PendingModel = pref.Model
 		req.PendingReasoning = pref.Reasoning
+		if req.Provider.Normalized() == codexapp.ProviderLCAgent && strings.TrimSpace(pref.ModelProvider) != "" {
+			req.LCAgentRoutePreset = ""
+			req.LCAgentProvider = strings.TrimSpace(pref.ModelProvider)
+		}
 	}
 	return req
 }

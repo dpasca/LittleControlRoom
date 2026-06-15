@@ -1276,6 +1276,34 @@ func TestLCAgentSessionListModelsKeepsCustomCurrentModel(t *testing.T) {
 	}
 }
 
+func TestLCAgentSessionWarnsWhenModelImpliesDifferentProvider(t *testing.T) {
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:        ProviderLCAgent,
+		ProjectPath:     t.TempDir(),
+		AppDataDir:      t.TempDir(),
+		LCAgentProvider: "deepseek",
+		PendingModel:    "mimo-v2.5-pro",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := session.Snapshot()
+	if snapshot.Model != "mimo-v2.5-pro" || snapshot.ModelProvider != "xiaomi" {
+		t.Fatalf("snapshot model/provider = %q/%q, want xiaomi/mimo-v2.5-pro", snapshot.Model, snapshot.ModelProvider)
+	}
+	for _, want := range []string{"LCAgent model selection warning", "saved DeepSeek provider", "Xiaomi / mimo-v2.5-pro", "/settings", "/model"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+	if err := session.ShowStatus(); err != nil {
+		t.Fatalf("ShowStatus() error = %v", err)
+	}
+	if statusSnapshot := session.Snapshot(); !strings.Contains(statusSnapshot.Transcript, "LCAgent model selection warning") {
+		t.Fatalf("/status should include model selection warning:\n%s", statusSnapshot.Transcript)
+	}
+}
+
 func TestLCAgentModelOptionsMergesProviderModelList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
@@ -1395,6 +1423,74 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	}
 	if got := strings.TrimSpace(string(envBytes)); got != "saved-openai-key" {
 		t.Fatalf("OPENAI_API_KEY passed to route preset = %q, want saved settings key", got)
+	}
+}
+
+func TestLCAgentExplicitPendingModelOverridesRoutePresetAndInfersProvider(t *testing.T) {
+	root := t.TempDir()
+	argsPath := filepath.Join(t.TempDir(), "args.txt")
+	exe := filepath.Join(t.TempDir(), "fake-lcagent")
+	script := `#!/bin/sh
+{
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} > "$LCAGENT_ARGS_FILE"
+printf '%s\n' '{"type":"session_meta","id":"lca_mimo_session","cwd":"/tmp/demo"}'
+printf '%s\n' '{"type":"turn_complete","summary":"mimo run"}'
+`
+	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake lcagent: %v", err)
+	}
+	t.Setenv("LCAGENT_ARGS_FILE", argsPath)
+
+	notify := make(chan struct{}, 20)
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:              ProviderLCAgent,
+		ProjectPath:           root,
+		AppDataDir:            t.TempDir(),
+		LCAgentPath:           exe,
+		LCAgentRoutePreset:    "balanced",
+		LCAgentProvider:       "deepseek",
+		LCAgentAuto:           "medium",
+		LCAgentToolProfile:    "balanced",
+		LCAgentContextProfile: "balanced",
+		PendingModel:          "mimo-v2.5-pro",
+		PendingReasoning:      "high",
+		Prompt:                "use the xiaomi model",
+	}, func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
+	if snapshot.Model != "mimo-v2.5-pro" || snapshot.ModelProvider != "xiaomi" {
+		t.Fatalf("snapshot model/provider = %q/%q, want xiaomi/mimo-v2.5-pro", snapshot.Model, snapshot.ModelProvider)
+	}
+	for _, want := range []string{"LCAgent model selection warning", "route preset balanced was ignored", "Xiaomi / mimo-v2.5-pro", "/settings", "/model"} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
+	}
+
+	argsBytes, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake args: %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
+	for _, want := range []string{"--provider", "xiaomi", "--model", "mimo-v2.5-pro", "--reasoning-effort", "high"} {
+		if !lcagentTestStringSliceContains(args, want) {
+			t.Fatalf("args missing %q: %#v", want, args)
+		}
+	}
+	for _, blocked := range []string{"--route-preset", "deepseek-v4-pro"} {
+		if lcagentTestStringSliceContains(args, blocked) {
+			t.Fatalf("explicit model should not launch %q: %#v", blocked, args)
+		}
 	}
 }
 

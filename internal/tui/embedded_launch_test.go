@@ -90,6 +90,72 @@ func TestEmbeddedModelPreferenceLoadsFromSavedSettingsOnStartup(t *testing.T) {
 	}
 }
 
+func TestEmbeddedModelPreferenceIgnoresStaleLCAgentModelWhenRoutePresetActive(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = "balanced"
+	settings.LCAgentProvider = "deepseek"
+	settings.EmbeddedLCAgentModel = "mimo-v2.5-pro"
+	settings.EmbeddedLCAgentReasoning = "high"
+
+	prefs := embeddedModelPreferencesFromSettings(settings)
+	if pref, ok := prefs[codexapp.ProviderLCAgent]; ok {
+		t.Fatalf("stale route-preset LCAgent preference = %#v, want ignored", pref)
+	}
+}
+
+func TestEmbeddedLCAgentModelPreferenceCarriesProviderOnLaunch(t *testing.T) {
+	cfg := config.Default()
+	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	cfg.LCAgentRoutePreset = "balanced"
+	cfg.LCAgentProvider = "deepseek"
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+	m := New(context.Background(), svc)
+	m.embeddedModelPrefs = map[codexapp.Provider]embeddedModelPreference{
+		codexapp.ProviderLCAgent: {
+			Model:         "mimo-v2.5-pro",
+			ModelProvider: "xiaomi",
+			Reasoning:     "high",
+		},
+	}
+	var requests []codexapp.LaunchRequest
+	m.codexManager = codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:      codexapp.ProviderLCAgent,
+				Started:       true,
+				Status:        "LCAgent session ready",
+				Model:         req.PendingModel,
+				ModelProvider: req.LCAgentProvider,
+			},
+		}, nil
+	})
+	m.projects = []model.ProjectSummary{{
+		Path:          "/tmp/demo",
+		Name:          "demo",
+		PresentOnDisk: true,
+	}}
+
+	updated, cmd := m.launchEmbeddedForSelection(codexapp.ProviderLCAgent, true, "")
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("launchEmbeddedForSelection(lcagent) should return an open command")
+	}
+	if msg := cmd(); msg == nil {
+		t.Fatalf("lcagent open command should return a message")
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].PendingModel != "mimo-v2.5-pro" || requests[0].PendingReasoning != "high" {
+		t.Fatalf("pending model/reasoning = %q/%q, want mimo high", requests[0].PendingModel, requests[0].PendingReasoning)
+	}
+	if requests[0].LCAgentProvider != "xiaomi" || requests[0].LCAgentRoutePreset != "" {
+		t.Fatalf("lcagent provider/route = %q/%q, want xiaomi with no route preset", requests[0].LCAgentProvider, requests[0].LCAgentRoutePreset)
+	}
+}
+
 func TestVisibleCodexSlashSessionAliasOpensRequestedOpenCodeSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {

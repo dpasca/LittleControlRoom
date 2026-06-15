@@ -509,6 +509,8 @@ type Snapshot struct {
 	CurrentCWD                string
 	Model                     string
 	ModelProvider             string
+	CriticModel               string
+	CriticModelProvider       string
 	ReasoningEffort           string
 	ServiceTier               string
 	PendingModel              string
