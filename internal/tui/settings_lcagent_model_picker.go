@@ -217,6 +217,12 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	case "down", "tab":
 		state.Selected = settingsLCAgentPickerNextSelectable(state.Rows, state.Selected)
 		return m, nil
+	case "pgup", "pageup", "ctrl+u":
+		state.Selected = settingsLCAgentPickerMoveSelectable(state.Rows, state.Selected, -5)
+		return m, nil
+	case "pgdown", "pagedown", "ctrl+d":
+		state.Selected = settingsLCAgentPickerMoveSelectable(state.Rows, state.Selected, 5)
+		return m, nil
 	case "enter":
 		if state.Selected == 0 {
 			return m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{})
@@ -230,7 +236,7 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		return m, nil
 	default:
 		// Everything else — letters, digits, backspace, home/end,
-		// ctrl+u, etc. — goes to the filter input for typing.
+		// etc. — goes to the filter input for typing.
 		// j/k are NOT used for vim-style list navigation here.
 		previous := strings.TrimSpace(state.FilterInput.Value())
 		input, cmd := state.FilterInput.Update(msg)
@@ -343,6 +349,7 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
 		renderDialogAction("Type", "filter", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
@@ -365,11 +372,17 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	lines = append(lines, commandPaletteRowStyle.Render("Filter: "+state.FilterInput.View()), "")
 
 	about := ""
+	selectedStatus := ""
 	if state.Selected > 0 && state.Selected-1 < len(state.Rows) {
 		row := state.Rows[state.Selected-1]
 		if !row.IsHeader && row.ModelIndex >= 0 && row.ModelIndex < len(state.FilteredModels) {
-			about = strings.TrimSpace(state.FilteredModels[row.ModelIndex].Description)
+			option := state.FilteredModels[row.ModelIndex]
+			about = strings.TrimSpace(option.Description)
+			selectedStatus = codexModelPickerSelectedStatus(option)
 		}
+	}
+	if selectedStatus != "" {
+		lines = append(lines, detailMutedStyle.Render("Selected: "+truncateText(selectedStatus, max(18, width-10))))
 	}
 	totalDisplayRows := len(state.Rows) + 1 // +1 for Auto row
 	listLimit := max(4, min(totalDisplayRows, bodyH-len(lines)-5))
@@ -578,6 +591,43 @@ func settingsLCAgentPickerPrevSelectable(rows []settingsLCAgentPickerRow, curren
 		}
 	}
 	return 0
+}
+
+func settingsLCAgentPickerMoveSelectable(rows []settingsLCAgentPickerRow, current, delta int) int {
+	selectable := []int{0}
+	for i, row := range rows {
+		if !row.IsHeader {
+			selectable = append(selectable, i+1)
+		}
+	}
+	if len(selectable) == 0 || delta == 0 {
+		return current
+	}
+	pos := -1
+	for i, idx := range selectable {
+		if idx == current {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		pos = 0
+		for i, idx := range selectable {
+			if idx >= current {
+				pos = i
+				break
+			}
+			pos = i
+		}
+	}
+	pos += delta
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= len(selectable) {
+		pos = len(selectable) - 1
+	}
+	return selectable[pos]
 }
 
 func settingsLCAgentPickerLastSelectable(rows []settingsLCAgentPickerRow) int {

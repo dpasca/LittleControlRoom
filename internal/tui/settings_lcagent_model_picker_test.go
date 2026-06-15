@@ -125,6 +125,47 @@ func TestSettingsLCAgentModelPickerJKTypeIntoFilter(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentModelPickerPageKeysSkipHeaders(t *testing.T) {
+	models := make([]codexapp.ModelOption, 0, 8)
+	for i := 0; i < 8; i++ {
+		models = append(models, codexapp.ModelOption{
+			Model:         "model-" + string(rune('a'+i)),
+			ModelProvider: "openai",
+			DisplayName:   "Model " + string(rune('A'+i)),
+		})
+	}
+	m := Model{
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldLCAgentModel,
+			Provider:       "openai",
+			Models:         models,
+			FilteredModels: models,
+			Rows:           buildSettingsLCAgentPickerRows(models, "openai"),
+			FilterInput:    newSettingsLCAgentModelPickerFilterInput(),
+			Selected:       0,
+		},
+	}
+
+	updated, _ := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyPgDown})
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil {
+		t.Fatal("model picker closed unexpectedly")
+	}
+	if state.Selected == 0 || state.Rows[state.Selected-1].IsHeader {
+		t.Fatalf("selected after pgdown = %d, want a model row", state.Selected)
+	}
+	if state.Rows[state.Selected-1].ModelIndex != 4 {
+		t.Fatalf("model index after pgdown = %d, want 4", state.Rows[state.Selected-1].ModelIndex)
+	}
+
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyPgUp})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker.Selected != 0 {
+		t.Fatalf("selected after pgup = %d, want Auto row", got.settingsLCAgentModelPicker.Selected)
+	}
+}
+
 func TestSettingsLCAgentKnownModelProviderMismatchBlocksSave(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.LCAgentRoutePreset = ""
