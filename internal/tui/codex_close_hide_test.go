@@ -1179,7 +1179,7 @@ func TestVisibleCodexF3CyclesLiveSessions(t *testing.T) {
 	}
 }
 
-func TestVisibleCodexAltBracketCyclesLiveSessions(t *testing.T) {
+func TestVisibleCodexAltBracketDoesNotCycleLiveSessions(t *testing.T) {
 	sessionA := &fakeCodexSession{
 		projectPath: "/tmp/a",
 		snapshot: codexapp.Snapshot{
@@ -1234,26 +1234,103 @@ func TestVisibleCodexAltBracketCyclesLiveSessions(t *testing.T) {
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("alt+] should focus the switched Codex composer")
-	}
-	if got.codexVisibleProject != "/tmp/b" {
-		t.Fatalf("codexVisibleProject = %q, want /tmp/b", got.codexVisibleProject)
-	}
-	if got.status != "Switched to the next embedded Codex session" {
-		t.Fatalf("status = %q, want next-session notice", got.status)
-	}
-
-	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
-	got = updated.(Model)
-	if cmd == nil {
-		t.Fatalf("alt+[ should focus the switched Codex composer")
+	if cmd != nil {
+		t.Fatalf("alt+] should not queue a session switch command")
 	}
 	if got.codexVisibleProject != "/tmp/a" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/a", got.codexVisibleProject)
 	}
-	if got.status != "Switched to the previous embedded Codex session" {
-		t.Fatalf("status = %q, want previous-session notice", got.status)
+	if got.status != "" {
+		t.Fatalf("status = %q, want no status change for obsolete alt+] shortcut", got.status)
+	}
+
+	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("alt+[ should not queue a session switch command")
+	}
+	if got.codexVisibleProject != "/tmp/a" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/a", got.codexVisibleProject)
+	}
+	if got.status != "" {
+		t.Fatalf("status = %q, want no status change for obsolete alt+[ shortcut", got.status)
+	}
+}
+
+func TestNormalModeAltBracketDoesNotCycleLiveSessions(t *testing.T) {
+	sessionA := &fakeCodexSession{
+		projectPath: "/tmp/a",
+		snapshot: codexapp.Snapshot{
+			Started:        true,
+			Preset:         codexcli.PresetYolo,
+			Status:         "Codex session ready",
+			LastActivityAt: time.Date(2026, 3, 8, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	sessionB := &fakeCodexSession{
+		projectPath: "/tmp/b",
+		snapshot: codexapp.Snapshot{
+			Started:        true,
+			Preset:         codexcli.PresetYolo,
+			Status:         "Codex session ready",
+			LastActivityAt: time.Date(2026, 3, 8, 10, 5, 0, 0, time.UTC),
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		switch req.ProjectPath {
+		case "/tmp/a":
+			return sessionA, nil
+		case "/tmp/b":
+			return sessionB, nil
+		default:
+			return nil, fmt.Errorf("unexpected project %s", req.ProjectPath)
+		}
+	})
+	for _, projectPath := range []string{"/tmp/a", "/tmp/b"} {
+		if _, _, err := manager.Open(codexapp.LaunchRequest{
+			ProjectPath: projectPath,
+			Preset:      codexcli.PresetYolo,
+		}); err != nil {
+			t.Fatalf("manager.Open(%q) error = %v", projectPath, err)
+		}
+	}
+
+	m := Model{
+		codexManager:       manager,
+		codexHiddenProject: "/tmp/a",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/a": sessionA.snapshot,
+			"/tmp/b": sessionB.snapshot,
+		},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("normal-mode alt+] should not queue a session switch command")
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want no visible session", got.codexVisibleProject)
+	}
+	if got.status != "" {
+		t.Fatalf("status = %q, want no status change for obsolete alt+] shortcut", got.status)
+	}
+
+	updated, cmd = got.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}, Alt: true})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("normal-mode alt+[ should not queue a session switch command")
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("codexVisibleProject = %q, want no visible session", got.codexVisibleProject)
+	}
+	if got.status != "" {
+		t.Fatalf("status = %q, want no status change for obsolete alt+[ shortcut", got.status)
 	}
 }
 
@@ -1358,16 +1435,16 @@ func TestVisibleCodexAltUpReturnsToLastEmbeddedProjectSelection(t *testing.T) {
 		height:   24,
 	}
 
-	updated, cycleCmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}, Alt: true})
+	updated, cycleCmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyF3})
 	got := updated.(Model)
 	if cycleCmd == nil {
-		t.Fatalf("alt+] should queue the session switch work")
+		t.Fatalf("f3 should queue the session switch work")
 	}
 	if got.codexVisibleProject != "/tmp/b" {
 		t.Fatalf("codexVisibleProject = %q, want /tmp/b", got.codexVisibleProject)
 	}
 	if project, ok := got.selectedProject(); !ok || project.Path != "/tmp/b" {
-		t.Fatalf("selected project after alt+] = %#v, want /tmp/b", project)
+		t.Fatalf("selected project after f3 = %#v, want /tmp/b", project)
 	}
 
 	updated, hideCmd := got.updateCodexMode(tea.KeyMsg{Type: tea.KeyEsc})

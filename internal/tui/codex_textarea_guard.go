@@ -45,6 +45,52 @@ func codexShouldIgnoreTextareaWordBackward(input *textarea.Model, msg tea.KeyMsg
 	return codexWordBackwardKey(msg) && codexTextareaWordBackwardWouldStall(input)
 }
 
+func codexShouldIgnoreStraySGRMousePacket(msg tea.KeyMsg) bool {
+	if msg.Type != tea.KeyRunes || msg.Alt || msg.Paste || len(msg.Runes) == 0 {
+		return false
+	}
+	return codexParseSGRMousePackets(msg.Runes)
+}
+
+func codexParseSGRMousePackets(runes []rune) bool {
+	if len(runes) == 0 {
+		return false
+	}
+	i := 0
+	for i < len(runes) {
+		if runes[i] == '\x1b' {
+			if i+2 >= len(runes) || runes[i+1] != '[' {
+				return false
+			}
+			i += 2
+		}
+		if i >= len(runes) || runes[i] != '<' {
+			return false
+		}
+		i++
+		for field := 0; field < 3; field++ {
+			start := i
+			for i < len(runes) && runes[i] >= '0' && runes[i] <= '9' {
+				i++
+			}
+			if i == start {
+				return false
+			}
+			if field < 2 {
+				if i >= len(runes) || runes[i] != ';' {
+					return false
+				}
+				i++
+			}
+		}
+		if i >= len(runes) || (runes[i] != 'M' && runes[i] != 'm') {
+			return false
+		}
+		i++
+	}
+	return true
+}
+
 func codexTextareaCharacterLeft(rows [][]rune, row, col int, insideLine bool) (int, int) {
 	if col == 0 && row != 0 {
 		row--

@@ -131,3 +131,62 @@ func TestVisibleCodexWordBackwardStillMovesWhenSafe(t *testing.T) {
 		t.Fatalf("row text = %q, want %q", string(rows[row]), "first second")
 	}
 }
+
+func TestVisibleCodexIgnoresStraySGRMousePacketText(t *testing.T) {
+	input := newCodexTextarea()
+	input.SetValue("hello")
+	input.Focus()
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started: true,
+				Status:  "Codex session ready",
+			},
+		},
+		codexInput:    input,
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("<65;73;17M<65;73;17M")})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("stray mouse packet text should not queue a command")
+	}
+	if got.codexInput.Value() != "hello" {
+		t.Fatalf("composer value = %q, want unchanged draft", got.codexInput.Value())
+	}
+}
+
+func TestVisibleCodexKeepsNormalTextContainingMousePacketShape(t *testing.T) {
+	input := newCodexTextarea()
+	input.Focus()
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started: true,
+				Status:  "Codex session ready",
+			},
+		},
+		codexInput:    input,
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	text := "literal <65;73;17M"
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+	got := updated.(Model)
+	if got.codexInput.Value() != text {
+		t.Fatalf("composer value = %q, want %q", got.codexInput.Value(), text)
+	}
+}

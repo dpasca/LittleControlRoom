@@ -62,10 +62,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openBossModeOrSetupPrompt()
 	case "f3":
 		return m.cycleCodexSession(1)
-	case "alt+[":
-		return m.cycleCodexSession(-1)
-	case "alt+]":
-		return m.cycleCodexSession(1)
 	case "esc":
 		if m.showHelp {
 			m.showHelp = false
