@@ -884,15 +884,15 @@ func lcagentTranscriptIDPart(value string) string {
 
 func lcagentModelRequestText(event map[string]json.RawMessage) string {
 	eventType := rawJSONString(event["type"])
-	prefix := "LCAgent requested model response"
+	prefix := "LCAgent requested model response/tool call"
 	if eventType == "model_request_progress" {
-		prefix = "LCAgent still waiting for model response"
+		prefix = "LCAgent still waiting for model response/tool call"
 	}
 	return lcagentModelLifecycleText(prefix, event, 0)
 }
 
 func lcagentModelResponseText(event map[string]json.RawMessage) string {
-	prefix := "LCAgent model response received"
+	prefix := "LCAgent model response/tool call received"
 	if rawJSONBool(event["invalid"]) {
 		prefix = "LCAgent model response was unusable"
 	}

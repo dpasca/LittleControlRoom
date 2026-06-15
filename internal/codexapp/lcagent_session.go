@@ -1849,6 +1849,36 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		}
 		s.touchLocked()
 		s.mu.Unlock()
+	case "critic_model_response_invalid":
+		modelName := rawJSONString(event["model"])
+		usage, ok := lcagentUsageFromModelResponseEvent(event, modelName)
+		attempt := rawJSONInt(event["attempt"])
+		text := "LCAgent critic returned invalid structured output"
+		if attempt > 0 {
+			text += fmt.Sprintf(" on attempt %d", attempt)
+		}
+		if rawJSONBool(event["retrying"]) {
+			text += "; retrying"
+		}
+		s.mu.Lock()
+		if ok {
+			s.addTokenUsageLocked(usage)
+		}
+		s.status = text
+		s.criticLastStatus = "invalid_json"
+		s.criticLastSummary = strings.TrimSpace(firstNonEmpty(rawJSONString(event["message"]), text))
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
+	case "critic_review_retry":
+		message := firstNonEmpty(rawJSONString(event["message"]), "LCAgent critic retrying")
+		s.mu.Lock()
+		s.status = message
+		s.criticLastStatus = "retrying"
+		s.criticLastSummary = strings.TrimSpace(message)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, message)
 	case "critic_review_result":
 		s.handleLCAgentCriticReviewResult(event)
 	case "critic_lead_feedback":
@@ -1863,14 +1893,20 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.appendAsync(TranscriptStatus, text)
 	case "critic_review_failed":
 		message := firstNonEmpty(rawJSONString(event["message"]), "critic review failed")
+		status := "LCAgent critic unavailable"
+		prefix := "LCAgent critic unavailable: "
+		if strings.EqualFold(rawJSONString(event["failure_kind"]), "invalid_json") {
+			status = "LCAgent critic invalid structured output"
+			prefix = "LCAgent critic invalid structured output: "
+		}
 		s.mu.Lock()
-		s.status = "LCAgent critic unavailable"
+		s.status = status
 		s.criticActive = false
 		s.criticLastStatus = "failed"
 		s.criticLastSummary = strings.TrimSpace(message)
 		s.touchLocked()
 		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, "LCAgent critic unavailable: "+message)
+		s.appendAsync(TranscriptStatus, prefix+message)
 	case "plan_update":
 		s.appendAsync(TranscriptPlan, lcagentPlanText(event["items"]))
 	case "assistant_message":
@@ -3225,6 +3261,13 @@ func lcagentToolArgsSummary(tool string, raw json.RawMessage) string {
 			}
 			return command
 		}
+	case "create_file", "replace_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &args) == nil {
+			return strings.TrimSpace(args.Path)
+		}
 	case "start_process":
 		var args struct {
 			Command string `json:"command"`
@@ -3269,7 +3312,7 @@ func lcagentToolResultSummary(tool, output, errText, command, cwd string, exitCo
 		return strings.TrimSpace(lcagentCommandCWDPrefix(command, cwd) + summary)
 	case "start_process", "list_processes", "stop_process":
 		return firstOutputLine(output)
-	case "apply_patch":
+	case "apply_patch", "create_file", "replace_file", "replace_text", "replace_lines":
 		if len(filesTouched) > 0 {
 			return fmt.Sprintf("touched %s", strings.Join(filesTouched, ", "))
 		}

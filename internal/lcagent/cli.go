@@ -1425,7 +1425,7 @@ func writeRepairGuidance(writer *session.Writer, sessionID, kind, message string
 
 const providerRetryMaxAttempts = 3
 
-var modelRequestProgressInterval = 30 * time.Second
+var modelRequestProgressInterval = 15 * time.Second
 
 func completeProviderWithRetries(ctx context.Context, writer *session.Writer, sessionID, provider, phase string, turn int, modelName string, call func() (modeladapter.Completion, error)) (modeladapter.Completion, error) {
 	return completeProviderWithRetriesValidated(ctx, writer, sessionID, provider, phase, turn, modelName, nil, call)

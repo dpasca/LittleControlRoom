@@ -518,6 +518,160 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterCriticRetriesInvalidJSONOnce(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "candidate answer",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "critic/test-model" {
+				t.Fatalf("request 2 model = %q, want critic model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_critic_invalid",
+				"model": "critic/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "This is not JSON",
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
+			})
+		case 3:
+			if body["model"] != "critic/test-model" {
+				t.Fatalf("request 3 model = %q, want critic model", body["model"])
+			}
+			messagesJSON, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(messagesJSON), "Your previous critic response was not valid JSON") || !strings.Contains(string(messagesJSON), "This is not JSON") {
+				t.Fatalf("critic retry request missing repair context:\n%s", messagesJSON)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_critic_clean",
+				"model": "critic/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": `{"status":"clean","confidence":0.88,"summary":"no material issues","findings":[],"lead_instruction":"","human_prompt":"","proposed_user_message":""}`,
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 14, "completion_tokens": 6, "total_tokens": 20},
+			})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--critic-provider", "openrouter",
+		"--critic-model", "critic/test-model",
+		"--max-turns", "3",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3\nstdout=%s", requests, stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"critic_model_response_invalid"`,
+		`"type":"critic_review_retry"`,
+		`"type":"critic_review_result"`,
+		`"status":"clean"`,
+		`"summary":"candidate answer"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"critic_review_failed"`) || strings.Contains(text, "This is not JSON") {
+		t.Fatalf("stdout leaked raw invalid response or failure:\n%s", text)
+	}
+
+	privateTrace := readSingleLCAgentSessionTraceForTest(t, dataDir)
+	if !strings.Contains(privateTrace, `"type":"critic_model_response_invalid_raw"`) || !strings.Contains(privateTrace, "This is not JSON") {
+		t.Fatalf("private trace missing raw invalid critic output:\n%s", privateTrace)
+	}
+}
+
+func readSingleLCAgentSessionTraceForTest(t *testing.T, dataDir string) string {
+	t.Helper()
+	var matches []string
+	root := filepath.Join(dataDir, "lcagent", "sessions")
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry == nil || entry.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		matches = append(matches, path)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("session traces = %v, want exactly one", matches)
+	}
+	body, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
 func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

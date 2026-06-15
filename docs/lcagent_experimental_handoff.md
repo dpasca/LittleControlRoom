@@ -39,8 +39,9 @@ Implemented pieces:
   typecheck tools, JS/TS checks, and read-only formatter modes.
 - Workspace-contained tools: `read_file`, `file_outline`, `module_outline`,
   `list_files`, literal `search`, optional `web_search`, `load_skill`,
-  `run_command`, `apply_patch`, literal `replace_text`, `update_plan`, and
-  `final_response`.
+  `run_command`, direct `create_file`, guarded whole-file `replace_file`,
+  `apply_patch`, literal `replace_text`, line-range `replace_lines`,
+  `update_plan`, and `final_response`.
 - Provider adapters for OpenRouter, OpenAI, DeepSeek, and Moonshot/Kimi routes.
 - Coding route presets for `balanced`, `quality`, and `cheap-scout` CLI lanes,
   with traceable `route_preset` events, explicit flag overrides, and optional
@@ -140,9 +141,11 @@ Harness and policy hardening:
   coverage, richer blocked-state UI, timeout recovery, prompt-cache behavior,
   and OpenRouter provider pinning/fallback calibration.
 - Patch/edit ergonomics now include first-pass failure feedback, concrete
-  re-read suggestions for stale hunks, and a literal `replace_text` fallback
-  tool for small exact replacements when strict patch syntax is failing. There
-  is still no model-adaptive edit dialect or post-edit formatting hook.
+  re-read suggestions for stale hunks, direct `create_file` for initial file
+  writes, guarded `replace_file` for whole-file rewrites, line-range
+  `replace_lines`, and a literal `replace_text` fallback for small exact
+  replacements. There is still no model-adaptive edit dialect or post-edit
+  formatting hook.
 
 Eval maturity:
 
@@ -190,10 +193,12 @@ small-to-medium coding tasks before it tries to be a broader assistant.
    `apply_patch` now returns typed `patch_failure` metadata and emits
    `patch_feedback` guidance for stale context and malformed patches, including
    concrete suggested `read_file` ranges when a failed hunk can be localized.
-   `replace_text` now provides a simpler exact-replacement fallback for small
-   edits after reading current file text. Next, tune retry behavior against live
-   traces and eventually add a model-adaptive edit dialect for providers that
-   struggle with strict patch syntax.
+   `create_file` handles initial writes without patch grammar, `replace_file`
+   rewrites complete files behind a `read_file` SHA-256 guard, `replace_lines`
+   handles known line ranges, and `replace_text` remains the small literal
+   substitution fallback. Next, tune retry behavior against live traces and
+   eventually add a model-adaptive edit dialect for providers that struggle with
+   strict patch syntax.
 
 4. Surface trace quality in LCR.
    Shared LCAgent summaries and Boss goal-run reports now show denials, files

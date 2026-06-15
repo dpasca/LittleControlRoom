@@ -36,10 +36,16 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 		names[tool.Function.Name] = true
 		descriptions[tool.Function.Name] = tool.Function.Description
 	}
-	for _, want := range []string{"read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "load_skill", "run_command", "apply_patch", "replace_text", "replace_lines", "update_plan", "final_response"} {
+	for _, want := range []string{"read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "load_skill", "run_command", "create_file", "replace_file", "apply_patch", "replace_text", "replace_lines", "update_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
+	}
+	if !strings.Contains(descriptions["create_file"], "brand-new text file") || !strings.Contains(descriptions["create_file"], "without patch syntax") {
+		t.Fatalf("create_file description missing direct-write guidance: %q", descriptions["create_file"])
+	}
+	if !strings.Contains(descriptions["replace_file"], "expected_sha256") || !strings.Contains(descriptions["replace_file"], "Do not calculate it yourself") {
+		t.Fatalf("replace_file description missing hash-guard guidance: %q", descriptions["replace_file"])
 	}
 	if !strings.Contains(descriptions["apply_patch"], "*** Update File: README.md") {
 		t.Fatalf("apply_patch description missing format example: %q", descriptions["apply_patch"])

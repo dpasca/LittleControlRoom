@@ -29,6 +29,7 @@ type Summary struct {
 	ContextProfiles             map[string]int     `json:"context_profiles,omitempty"`
 	ModelResponses              int                `json:"model_responses"`
 	CriticModelResponses        int                `json:"critic_model_responses,omitempty"`
+	CriticInvalidModelResponses int                `json:"critic_invalid_model_responses,omitempty"`
 	ToolCalls                   map[string]int     `json:"tool_calls"`
 	ToolResults                 map[string]int     `json:"tool_results"`
 	ToolSuccesses               map[string]int     `json:"tool_successes,omitempty"`
@@ -365,6 +366,10 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.addUsage(usage)
 	case "critic_model_response":
 		s.CriticModelResponses++
+		usage := usageFromEvent(event)
+		s.addUsage(usage)
+	case "critic_model_response_invalid":
+		s.CriticInvalidModelResponses++
 		usage := usageFromEvent(event)
 		s.addUsage(usage)
 	case "permission_denied":

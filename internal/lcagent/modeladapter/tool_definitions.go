@@ -213,7 +213,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
-				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use apply_patch, replace_lines, or replace_text. Do not use bounded run_command for deploy/publish/promote/upload/release operations that may exceed the timeout when managed process support is available.",
+				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use create_file, replace_file, apply_patch, replace_lines, or replace_text. Do not use bounded run_command for deploy/publish/promote/upload/release operations that may exceed the timeout when managed process support is available.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -270,6 +270,39 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"properties": map[string]any{
 						"process_id": map[string]any{"type": "string", "description": "Optional managed process id from list_processes. If omitted, LCR stops the selected/default process for this workspace."},
 					},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "create_file",
+				Description: "Create one brand-new text file with exact content, without patch syntax. Use this for initial writes or generated files when the target must not already exist. Fails if the file exists. " + writePathDescription + " Successful writes return a diff summary and the new sha256.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":    map[string]any{"type": "string", "description": writePathDescription},
+						"content": map[string]any{"type": "string", "description": "Complete text content to write exactly as provided."},
+					},
+					"required": []string{"path", "content"},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "replace_file",
+				Description: "Replace one existing text file with complete new content, without patch syntax. Use this when a whole-file rewrite is simpler than a patch. Requires expected_sha256 copied from the latest read_file output for that file; LCAgent calculates and verifies the current file hash before writing. Do not calculate it yourself. " + writePathDescription + " Successful writes return a diff summary and the new sha256.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":            map[string]any{"type": "string", "description": writePathDescription},
+						"content":         map[string]any{"type": "string", "description": "Complete replacement text content to write exactly as provided."},
+						"expected_sha256": map[string]any{"type": "string", "description": "The exact sha256 value copied from the latest read_file result for this file. Do not calculate it yourself."},
+					},
+					"required": []string{"path", "content", "expected_sha256"},
 				},
 			},
 		},
