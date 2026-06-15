@@ -399,6 +399,54 @@ func TestRunnerScoutsFilesWithUtilityModel(t *testing.T) {
 	}
 }
 
+func TestRunnerConsultsCriticWithFileExcerpt(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("package demo\n\nfunc updateCodexMode() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	critic := &fakeCriticConsultant{}
+	runner := Runner{
+		Session:          writer,
+		SessionID:        sessionID,
+		Prompt:           "add Enter handling",
+		Files:            tools.FileTools{Workspace: w},
+		CriticConsultant: critic,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "consult_critic",
+		Args: raw(`{"kind":"patch","question":"Does this change need another test?","candidate":"I will patch updateCodexMode.","checks":["correctness"],"files":[{"path":"app.go","start_line":1,"end_line":3,"role":"current code"}]}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v", err)
+	}
+	if !result.Success || !strings.Contains(result.Output, "critic_consultation: concerns") || !strings.Contains(result.Output, "suggested_next_step") {
+		t.Fatalf("consult result = %#v", result)
+	}
+	if critic.request.Kind != "patch" || critic.request.Question != "Does this change need another test?" {
+		t.Fatalf("critic request = %#v", critic.request)
+	}
+	if len(critic.request.Files) != 1 || !strings.Contains(critic.request.Files[0].Excerpt, "func updateCodexMode") {
+		t.Fatalf("critic file excerpts = %#v", critic.request.Files)
+	}
+	text := stream.String()
+	for _, want := range []string{`"tool":"consult_critic"`, `"type":"critic_consult_started"`, `"type":"critic_consult_result"`, `"model":"fake-critic"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
 type fakeSearchRefiner struct {
 	request SearchRefineRequest
 }
@@ -424,6 +472,30 @@ func (f *fakeCodeScout) ScoutFiles(_ context.Context, request ScoutFilesRequest)
 		Provider:     "fake",
 		Model:        "fake-scout",
 		UsageSummary: lcrmodel.LLMUsage{InputTokens: 20, OutputTokens: 7, TotalTokens: 27},
+	}, nil
+}
+
+type fakeCriticConsultant struct {
+	request CriticConsultRequest
+}
+
+func (f *fakeCriticConsultant) ConsultCritic(_ context.Context, request CriticConsultRequest) (CriticConsultResult, error) {
+	f.request = request
+	return CriticConsultResult{
+		Status:          "concerns",
+		Summary:         "add a targeted test",
+		LeadInstruction: "Add or inspect a focused test before final_response.",
+		Provider:        "fake",
+		Model:           "fake-critic",
+		Findings: []CriticConsultFinding{{
+			Severity:          "medium",
+			Materiality:       "medium",
+			Claim:             "The candidate changes behavior without showing a test.",
+			EvidenceSource:    "candidate",
+			Evidence:          request.Candidate,
+			SuggestedFollowup: "Add a focused test.",
+		}},
+		UsageSummary: lcrmodel.LLMUsage{InputTokens: 12, OutputTokens: 4, TotalTokens: 16},
 	}, nil
 }
 

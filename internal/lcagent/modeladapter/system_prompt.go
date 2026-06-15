@@ -13,6 +13,7 @@ type SystemPromptOptions struct {
 	ManagedProcessesEnabled bool
 	AdminWrite              bool
 	BrowserAvailable        bool
+	CriticConsultEnabled    bool
 	HostOS                  string
 	HostArch                string
 }
@@ -67,6 +68,11 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.WebSearchEnabled {
 		lines = append(lines,
 			"Use web_search for current public web information or documentation discovery when workspace evidence is not enough; cite URLs from the tool result in final_response when web evidence affects the answer.",
+		)
+	}
+	if opts.CriticConsultEnabled {
+		lines = append(lines,
+			"consult_critic is available for optional advisory review from the configured critic model. Use it for focused second opinions on plans, patches, debugging hypotheses, or final claims when it would materially improve the work; include bounded context, then make your own decision from tool evidence.",
 		)
 	}
 	if !opts.BrowserAvailable {

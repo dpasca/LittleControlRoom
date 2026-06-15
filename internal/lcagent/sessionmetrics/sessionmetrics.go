@@ -44,6 +44,10 @@ type Summary struct {
 	CriticReviewFailures        int                `json:"critic_review_failures,omitempty"`
 	CriticReviewStatuses        map[string]int     `json:"critic_review_statuses,omitempty"`
 	CriticReviewModes           map[string]int     `json:"critic_review_modes,omitempty"`
+	CriticConsultsStarted       int                `json:"critic_consults_started,omitempty"`
+	CriticConsultResults        int                `json:"critic_consult_results,omitempty"`
+	CriticConsultFailures       int                `json:"critic_consult_failures,omitempty"`
+	CriticConsultStatuses       map[string]int     `json:"critic_consult_statuses,omitempty"`
 	CriticLeadFeedback          int                `json:"critic_lead_feedback,omitempty"`
 	CriticHumanPrompts          int                `json:"critic_human_prompts,omitempty"`
 	Continuations               int                `json:"continuations"`
@@ -136,6 +140,7 @@ type TraceQuality struct {
 	ProviderFailures     int                   `json:"provider_failures"`
 	ProviderRetries      int                   `json:"provider_retries"`
 	CriticReviews        int                   `json:"critic_reviews,omitempty"`
+	CriticConsultations  int                   `json:"critic_consultations,omitempty"`
 	CriticLeadFeedback   int                   `json:"critic_lead_feedback,omitempty"`
 	CriticHumanPrompts   int                   `json:"critic_human_prompts,omitempty"`
 	RepairEvents         int                   `json:"repair_events"`
@@ -254,6 +259,9 @@ func (s *Summary) init() {
 	}
 	if s.CriticReviewModes == nil {
 		s.CriticReviewModes = map[string]int{}
+	}
+	if s.CriticConsultStatuses == nil {
+		s.CriticConsultStatuses = map[string]int{}
 	}
 	if s.VerificationStatuses == nil {
 		s.VerificationStatuses = map[string]int{}
@@ -406,6 +414,19 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 	case "critic_review_failed":
 		s.CriticReviewFailures++
 		s.addCriticReviewMode(rawString(event["mode"]))
+	case "critic_consult_started":
+		s.CriticConsultsStarted++
+	case "critic_consult_result":
+		s.CriticConsultResults++
+		status := rawString(event["status"])
+		if status == "" {
+			status = "unknown"
+		}
+		s.CriticConsultStatuses[status]++
+		usage := usageFromEvent(event)
+		s.addUsage(usage)
+	case "critic_consult_failed":
+		s.CriticConsultFailures++
 	case "critic_lead_feedback":
 		s.CriticLeadFeedback++
 	case "continuation":
@@ -783,6 +804,7 @@ func (s Summary) computeTraceQuality() TraceQuality {
 		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed + s.RepairGuidance,
 		ProviderRetries:      s.ProviderRetries,
 		CriticReviews:        s.CriticReviewResults,
+		CriticConsultations:  s.CriticConsultResults,
 		CriticLeadFeedback:   s.CriticLeadFeedback,
 		CriticHumanPrompts:   s.CriticHumanPrompts,
 		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
@@ -845,6 +867,9 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	}
 	if s.CriticLeadFeedback > 0 {
 		quality.addFinding("info", "critic_lead_feedback", fmt.Sprintf("%d private critic lead revision event(s) were recorded.", s.CriticLeadFeedback))
+	}
+	if s.CriticConsultResults > 0 {
+		quality.addFinding("info", "critic_consultations", fmt.Sprintf("%d lead-initiated critic consultation(s) were recorded.", s.CriticConsultResults))
 	}
 	if s.CriticHumanPrompts > 0 {
 		quality.addFinding("info", "critic_human_prompts", fmt.Sprintf("%d critic review result(s) drafted human-facing follow-up.", s.CriticHumanPrompts))

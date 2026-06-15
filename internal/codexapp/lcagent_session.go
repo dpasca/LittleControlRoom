@@ -109,6 +109,8 @@ type lcagentSession struct {
 	suggestedInputDraft      string
 	criticActive             bool
 	criticReviews            int
+	criticConsultations      int
+	criticConsultConcerns    int
 	criticConcerns           int
 	criticLeadRevisions      int
 	criticFollowupDrafts     int
@@ -1879,6 +1881,32 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, message)
+	case "critic_consult_started":
+		text := "LCAgent critic consulting"
+		if question := rawJSONString(event["question"]); question != "" {
+			text += ": " + lcagentCondenseStatusText(question, 160)
+		}
+		s.mu.Lock()
+		s.status = text
+		s.criticActive = true
+		s.criticLastStatus = "consulting"
+		s.criticLastSummary = ""
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
+	case "critic_consult_result":
+		s.handleLCAgentCriticConsultResult(event)
+	case "critic_consult_failed":
+		message := firstNonEmpty(rawJSONString(event["message"]), "critic consultation failed")
+		text := "LCAgent critic consultation failed: " + message
+		s.mu.Lock()
+		s.status = text
+		s.criticActive = false
+		s.criticLastStatus = "consult failed"
+		s.criticLastSummary = strings.TrimSpace(message)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
 	case "critic_review_result":
 		s.handleLCAgentCriticReviewResult(event)
 	case "critic_lead_feedback":
@@ -2188,6 +2216,39 @@ func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.R
 		s.suggestedInputDraftID = firstNonEmpty(packetHash, fmt.Sprintf("critic-%d", s.revision+1))
 		s.suggestedInputDraft = proposed
 		s.criticFollowupDrafts++
+	}
+	s.appendEntryLocked(TranscriptStatus, text)
+	s.touchLocked()
+	s.mu.Unlock()
+}
+
+func (s *lcagentSession) handleLCAgentCriticConsultResult(event map[string]json.RawMessage) {
+	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
+	summary := strings.TrimSpace(rawJSONString(event["summary"]))
+	modelName := rawJSONString(event["model"])
+	usage, usageOK := lcagentUsageFromModelResponseEvent(event, modelName)
+
+	text := "LCAgent critic consultation complete"
+	if status != "" && status != "clean" {
+		text = "LCAgent critic consultation found " + strings.ReplaceAll(status, "_", " ")
+	} else if status == "clean" {
+		text = "LCAgent critic consultation found no concerns"
+	}
+	if summary != "" {
+		text += ": " + summary
+	}
+
+	s.mu.Lock()
+	s.status = text
+	s.criticActive = false
+	s.criticConsultations++
+	s.criticLastStatus = firstNonEmpty(status, "consulted")
+	s.criticLastSummary = summary
+	if status != "" && status != "clean" {
+		s.criticConsultConcerns++
+	}
+	if usageOK {
+		s.addTokenUsageLocked(usage)
 	}
 	s.appendEntryLocked(TranscriptStatus, text)
 	s.touchLocked()
@@ -2907,6 +2968,8 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		CriticModelProvider:       criticModelProvider,
 		CriticActive:              s.criticActive,
 		CriticReviews:             s.criticReviews,
+		CriticConsultations:       s.criticConsultations,
+		CriticConsultConcerns:     s.criticConsultConcerns,
 		CriticConcerns:            s.criticConcerns,
 		CriticLeadRevisions:       s.criticLeadRevisions,
 		CriticFollowupDrafts:      s.criticFollowupDrafts,

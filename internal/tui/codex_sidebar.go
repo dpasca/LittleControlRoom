@@ -574,6 +574,8 @@ func embeddedSidebarCriticRows(snapshot codexapp.Snapshot, width int) []string {
 	if model == "" &&
 		status == "" &&
 		snapshot.CriticReviews == 0 &&
+		snapshot.CriticConsultations == 0 &&
+		snapshot.CriticConsultConcerns == 0 &&
 		snapshot.CriticConcerns == 0 &&
 		snapshot.CriticLeadRevisions == 0 &&
 		snapshot.CriticFollowupDrafts == 0 {
@@ -587,7 +589,11 @@ func embeddedSidebarCriticRows(snapshot codexapp.Snapshot, width int) []string {
 		rows = append(rows, embeddedSidebarFieldRow("Status", status, embeddedSidebarCriticStatusStyle(status), width))
 	}
 	rows = append(rows, embeddedSidebarFieldRow("Reviews", fmt.Sprintf("%d", max(0, snapshot.CriticReviews)), detailValueStyle, width))
+	rows = append(rows, embeddedSidebarFieldRow("Consults", fmt.Sprintf("%d", max(0, snapshot.CriticConsultations)), detailValueStyle, width))
 	rows = append(rows, embeddedSidebarFieldRow("Concerns", fmt.Sprintf("%d", max(0, snapshot.CriticConcerns)), detailWarningStyle, width))
+	if snapshot.CriticConsultConcerns > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("Consult Concerns", fmt.Sprintf("%d", snapshot.CriticConsultConcerns), detailWarningStyle, width))
+	}
 	rows = append(rows, embeddedSidebarFieldRow("Corrections", fmt.Sprintf("%d", max(0, snapshot.CriticLeadRevisions)), detailValueStyle, width))
 	if snapshot.CriticFollowupDrafts > 0 {
 		rows = append(rows, embeddedSidebarFieldRow("Drafts", fmt.Sprintf("%d", snapshot.CriticFollowupDrafts), detailWarningStyle, width))
@@ -600,6 +606,9 @@ func embeddedSidebarCriticRows(snapshot codexapp.Snapshot, width int) []string {
 
 func embeddedSidebarCriticStatus(snapshot codexapp.Snapshot) string {
 	if snapshot.CriticActive {
+		if strings.EqualFold(strings.TrimSpace(snapshot.CriticLastStatus), "consulting") {
+			return "consulting"
+		}
 		return "reviewing"
 	}
 	status := strings.ToLower(strings.TrimSpace(snapshot.CriticLastStatus))

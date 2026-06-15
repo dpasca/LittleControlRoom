@@ -788,6 +788,12 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		runner.SearchRefineMinBytes = searchRefine.MinBytes
 	}
 	critic := newCriticProfile(criticProvider, criticCfg, providerLabel, client.Model())
+	if critic.Enabled {
+		runner.CriticConsultant = criticConsultant{
+			profile: critic,
+			writer:  writer,
+		}
+	}
 	if err := writer.Write(session.Event{
 		"type":       "search_refine_profile",
 		"session_id": runner.SessionID,
@@ -838,6 +844,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.ManagedProcessesEnabled = runner.Processes != nil
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
+	systemPromptOptions.CriticConsultEnabled = critic.Enabled
 	if resumeSection := resumeContext.systemPromptSection(); resumeSection != "" {
 		projectInstructionPrompt = strings.TrimSpace(projectInstructionPrompt + "\n\n" + resumeSection)
 	}
@@ -878,6 +885,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.ManagedProcessesEnabled = runner.Processes != nil
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolOptions.BrowserAvailable = runner.BrowserAvailable
+	toolOptions.CriticConsultEnabled = critic.Enabled
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0
