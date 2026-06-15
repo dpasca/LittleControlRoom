@@ -452,7 +452,7 @@ func (r traceCritic) ReviewAttempt(ctx context.Context, packet criticReviewPacke
 		return result
 	}
 	messages := criticReviewMessages(string(body), previousInvalid)
-	options := modeladapter.CompletionOptions{MaxCompletionTokens: 1400}
+	options := modeladapter.CompletionOptions{}
 	if !strings.EqualFold(r.provider, "openai") {
 		options.DisableThinking = true
 	}
@@ -484,7 +484,7 @@ func (r traceCritic) ConsultAttempt(ctx context.Context, packet criticConsultPac
 		return result
 	}
 	messages := criticConsultMessages(string(body), previousInvalid)
-	options := modeladapter.CompletionOptions{MaxCompletionTokens: 1200}
+	options := modeladapter.CompletionOptions{}
 	if !strings.EqualFold(r.provider, "openai") {
 		options.DisableThinking = true
 	}

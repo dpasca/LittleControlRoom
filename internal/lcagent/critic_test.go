@@ -1,7 +1,10 @@
 package lcagent
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -145,6 +148,70 @@ func TestCriticLeadFeedbackMessageRequiresMaterialFollowup(t *testing.T) {
 	feedback = criticLeadFeedbackMessage(concern)
 	if !strings.Contains(feedback, "Tighten the final answer") || !strings.Contains(feedback, "Material finding") {
 		t.Fatalf("material concern feedback = %q", feedback)
+	}
+}
+
+func TestTraceCriticReviewAndConsultDoNotSetCompletionTokenCap(t *testing.T) {
+	var requestCount int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %s, want /chat/completions", r.URL.Path)
+		}
+		requestCount++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		for _, field := range []string{"max_completion_tokens", "max_tokens", "max_output_tokens"} {
+			if _, ok := body[field]; ok {
+				t.Fatalf("critic request sent %s cap in body: %#v", field, body)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "deepseek/deepseek-v4-pro",
+			"choices": []map[string]any{{
+				"finish_reason": "stop",
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": `{"status":"clean","confidence":0.9,"summary":"ok","findings":[],"lead_instruction":"","human_prompt":"","proposed_user_message":""}`,
+				},
+			}},
+			"usage": map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	defer server.Close()
+
+	client, err := modeladapter.NewOpenRouterClient(modeladapter.OpenRouterConfig{
+		APIKey:  "key",
+		BaseURL: server.URL,
+		Model:   "deepseek/deepseek-v4-pro",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer := traceCritic{provider: "openrouter", client: client}
+
+	review := reviewer.ReviewAttempt(context.Background(), criticReviewPacket{
+		SessionID:    "sess-1",
+		UserRequest:  "finish the task",
+		FinalOutcome: "success",
+		FinalSummary: "done",
+		ContextMode:  "full",
+	}, 1, "")
+	if review.Err != nil {
+		t.Fatalf("ReviewAttempt() error = %v", review.Err)
+	}
+	consult := reviewer.ConsultAttempt(context.Background(), criticConsultPacket{
+		SessionID: "sess-1",
+		Kind:      "plan",
+		Question:  "Does this plan look sound?",
+	}, 1, "")
+	if consult.Err != nil {
+		t.Fatalf("ConsultAttempt() error = %v", consult.Err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("requests = %d, want 2", requestCount)
 	}
 }
 
