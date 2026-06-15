@@ -934,7 +934,10 @@ func (m Model) renderProjectList(width, height int) string {
 				}
 			}
 		}
-		name = truncateText(name, projectW)
+		nameRender := truncateText(name, projectW)
+		if selectedRow && len([]rune(name)) > projectW {
+			nameRender = marqueeScrollText(name, projectW, m.marqueeOffset)
+		}
 		assessment := truncateText(assessmentText, assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
@@ -988,7 +991,7 @@ func (m Model) renderProjectList(width, height int) string {
 			" ",
 			cellStyle(projectRunStyle(runState).Width(projectListRunWidth).Align(lipgloss.Left)).Render(runRender),
 			"  ",
-			cellStyle(nameStyle).Render(name),
+			cellStyle(nameStyle).Render(nameRender),
 			"  ",
 			cellStyle(summaryStyle.Width(assessmentW).Bold(selectedRow)).Render(assessmentRender),
 		)
