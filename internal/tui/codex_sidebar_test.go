@@ -371,7 +371,7 @@ func TestEmbeddedSidebarTreatsFreshPendingModelAsCurrent(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSidebarShowsLCAgentCriticModelAfterLead(t *testing.T) {
+func TestEmbeddedSidebarKeepsLCAgentCriticModelOutOfSessionSection(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Provider = codexapp.ProviderLCAgent
 	snapshot.Model = "mimo-v2.5-pro"
@@ -380,13 +380,12 @@ func TestEmbeddedSidebarShowsLCAgentCriticModelAfterLead(t *testing.T) {
 	snapshot.CriticModelProvider = "deepseek"
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
-	modelIndex := strings.Index(rendered, "Model mimo-v2.5-pro")
-	criticIndex := strings.Index(rendered, "Critic deepseek/deepseek-v4-pro")
-	if modelIndex < 0 || criticIndex < 0 {
-		t.Fatalf("sidebar model rows missing lead or critic:\n%s", rendered)
+	if !strings.Contains(rendered, "Model mimo-v2.5-pro") {
+		t.Fatalf("sidebar model rows missing lead model:\n%s", rendered)
 	}
-	if criticIndex < modelIndex {
-		t.Fatalf("critic row should render after lead model:\n%s", rendered)
+	if strings.Contains(rendered, "deepseek/deepseek-v4-pro") ||
+		strings.Contains(rendered, "Critic") {
+		t.Fatalf("session model rows should not include critic model:\n%s", rendered)
 	}
 }
 
