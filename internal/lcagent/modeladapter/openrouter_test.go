@@ -108,10 +108,38 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if names["web_search"] {
 		t.Fatalf("Tools() should not expose web_search unless it is enabled")
 	}
+	if names["consult_critic"] {
+		t.Fatalf("Tools() should not expose consult_critic unless a critic is enabled")
+	}
 	for _, processTool := range []string{"start_process", "list_processes", "stop_process"} {
 		if names[processTool] {
 			t.Fatalf("Tools() should not expose %s outside managed-process sessions", processTool)
 		}
+	}
+}
+
+func TestToolsWithOptionsExposeConsultCriticWhenEnabled(t *testing.T) {
+	spec := toolSpec(t, ToolsWithOptions(ToolOptions{CriticConsultEnabled: true}), "consult_critic")
+	if !strings.Contains(spec.Description, "critic model") || !strings.Contains(spec.Description, "advisory") {
+		t.Fatalf("consult_critic description = %q", spec.Description)
+	}
+	props := spec.Parameters["properties"].(map[string]any)
+	if _, ok := props["question"]; !ok {
+		t.Fatalf("consult_critic missing question property: %#v", props)
+	}
+	if _, ok := props["candidate"]; !ok {
+		t.Fatalf("consult_critic missing candidate property: %#v", props)
+	}
+	filesSpec, ok := props["files"].(map[string]any)
+	if !ok {
+		t.Fatalf("consult_critic missing files property: %#v", props)
+	}
+	if filesSpec["maxItems"] != 8 {
+		t.Fatalf("consult_critic files maxItems = %#v", filesSpec["maxItems"])
+	}
+	required, _ := spec.Parameters["required"].([]string)
+	if len(required) != 1 || required[0] != "question" {
+		t.Fatalf("consult_critic required = %#v", spec.Parameters["required"])
 	}
 }
 
@@ -351,6 +379,19 @@ func TestSystemPromptIncludesAdminWriteMode(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{AdminWrite: true})
 	if !strings.Contains(prompt, "admin-write enabled") || !strings.Contains(prompt, "absolute paths outside the workspace") {
 		t.Fatalf("prompt missing admin-write guidance:\n%s", prompt)
+	}
+}
+
+func TestSystemPromptIncludesCriticConsultGuidanceWhenEnabled(t *testing.T) {
+	disabled := SystemPromptWithOptions("", "", SystemPromptOptions{})
+	if strings.Contains(disabled, "consult_critic") {
+		t.Fatalf("default prompt should not mention consult_critic:\n%s", disabled)
+	}
+	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{CriticConsultEnabled: true})
+	for _, want := range []string{"consult_critic is available", "optional advisory review", "focused second opinions"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("critic consult prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

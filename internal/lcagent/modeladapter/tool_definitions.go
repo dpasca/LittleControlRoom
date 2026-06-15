@@ -21,6 +21,7 @@ type ToolOptions struct {
 	ManagedProcessesEnabled bool
 	AdminWrite              bool
 	BrowserAvailable        bool
+	CriticConsultEnabled    bool
 }
 
 func Tools() []ToolDefinition {
@@ -169,6 +170,43 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				},
 			},
 		},
+	}
+	if opts.CriticConsultEnabled {
+		defs = append(defs, ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "consult_critic",
+				Description: "Ask the configured critic model for a focused advisory second opinion. Use this when you are uncertain about a plan, patch, debugging hypothesis, or final claims. It is advisory only: keep working from tool evidence and remain responsible for the decision.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"kind":      map[string]any{"type": "string", "enum": []string{"plan", "code", "patch", "debug", "final_claims", "other"}, "description": "What the critic should review. Defaults to other."},
+						"question":  map[string]any{"type": "string", "maxLength": 1200, "description": "Focused question for the critic, including what decision you need help with."},
+						"context":   map[string]any{"type": "string", "maxLength": 6000, "description": "Optional brief context from the task or trace. Include only what the critic needs."},
+						"candidate": map[string]any{"type": "string", "maxLength": 18000, "description": "Optional candidate plan, code, patch, diagnosis, or final claims to review."},
+						"checks":    map[string]any{"type": "array", "maxItems": 8, "items": map[string]any{"type": "string", "maxLength": 80}, "description": "Optional review angles, for example correctness, missing tests, user impact, simplicity, or security."},
+						"files": map[string]any{
+							"type":        "array",
+							"maxItems":    8,
+							"description": "Optional bounded file excerpts for the harness to read into the critic packet. Use ranges that are directly relevant.",
+							"items": map[string]any{
+								"type":                 "object",
+								"additionalProperties": false,
+								"properties": map[string]any{
+									"path":       map[string]any{"type": "string", "description": "Workspace-relative path, or absolute read-only path allowed by the file tools."},
+									"start_line": map[string]any{"type": "integer", "minimum": 1, "description": "1-based first line to include. Defaults to 1."},
+									"end_line":   map[string]any{"type": "integer", "minimum": 1, "description": "1-based last line to include. The harness caps each excerpt."},
+									"role":       map[string]any{"type": "string", "maxLength": 80, "description": "Optional label such as current code, proposed edit, failing test, or related config."},
+								},
+								"required": []string{"path"},
+							},
+						},
+					},
+					"required": []string{"question"},
+				},
+			},
+		})
 	}
 	if opts.WebSearchEnabled {
 		defs = append(defs, ToolDefinition{

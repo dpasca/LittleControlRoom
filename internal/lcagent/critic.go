@@ -47,6 +47,18 @@ type criticReviewPacket struct {
 	Metadata        map[string]interface{} `json:"metadata,omitempty"`
 }
 
+type criticConsultPacket struct {
+	SessionID     string                     `json:"session_id"`
+	UserRequest   string                     `json:"user_request,omitempty"`
+	Kind          string                     `json:"kind"`
+	Question      string                     `json:"question"`
+	Context       string                     `json:"context,omitempty"`
+	Candidate     string                     `json:"candidate,omitempty"`
+	Checks        []string                   `json:"checks,omitempty"`
+	Files         []script.CriticConsultFile `json:"files,omitempty"`
+	EvidenceNotes []string                   `json:"evidence_notes,omitempty"`
+}
+
 type criticPacketMessage struct {
 	Index            int                           `json:"index"`
 	Role             string                        `json:"role"`
@@ -241,6 +253,106 @@ func maybeRunCriticReview(ctx context.Context, writer *session.Writer, runner sc
 	return review, packetHash, true, nil
 }
 
+type criticConsultant struct {
+	profile criticProfile
+	writer  *session.Writer
+}
+
+func (c criticConsultant) ConsultCritic(ctx context.Context, request script.CriticConsultRequest) (script.CriticConsultResult, error) {
+	if !c.profile.Enabled || c.profile.Reviewer.client == nil {
+		return script.CriticConsultResult{}, fmt.Errorf("critic client is not configured")
+	}
+	packet := buildCriticConsultPacket(request)
+	packetHash := criticPacketHash(packet)
+	if c.writer != nil {
+		if err := c.writer.WritePrivate(session.Event{
+			"type":        "critic_consult_packet",
+			"session_id":  packet.SessionID,
+			"packet_hash": packetHash,
+			"packet":      packet,
+			"mode":        "consult",
+		}); err != nil {
+			return script.CriticConsultResult{}, err
+		}
+	}
+	review, completion, err := runCriticConsultWithRetry(ctx, c.writer, c.profile, packet.SessionID, packet, packetHash)
+	if err != nil {
+		return script.CriticConsultResult{}, err
+	}
+	modelName := firstNonEmptyString(strings.TrimSpace(completion.Model), c.profile.Model)
+	return script.CriticConsultResult{
+		Status:              normalizeCriticStatus(review.Status),
+		Summary:             strings.TrimSpace(review.Summary),
+		Findings:            scriptCriticConsultFindings(cleanCriticFindings(review.Findings)),
+		LeadInstruction:     strings.TrimSpace(review.LeadInstruction),
+		HumanPrompt:         strings.TrimSpace(review.HumanPrompt),
+		ProposedUserMessage: strings.TrimSpace(review.ProposedUserMessage),
+		Provider:            c.profile.Provider,
+		Model:               modelName,
+		PacketHash:          packetHash,
+		Usage:               json.RawMessage(completion.Usage),
+		UsageSummary:        completion.UsageSummary,
+	}, nil
+}
+
+func buildCriticConsultPacket(request script.CriticConsultRequest) criticConsultPacket {
+	userRequest, _ := truncateCriticText(request.UserRequest, 4000)
+	return criticConsultPacket{
+		SessionID:   strings.TrimSpace(request.SessionID),
+		UserRequest: userRequest,
+		Kind:        normalizeCriticConsultPacketKind(request.Kind),
+		Question:    strings.TrimSpace(request.Question),
+		Context:     strings.TrimSpace(request.Context),
+		Candidate:   strings.TrimSpace(request.Candidate),
+		Checks:      cleanCriticStringList(request.Checks),
+		Files:       cleanCriticConsultFiles(request.Files),
+		EvidenceNotes: []string{
+			"The lead model requested this consultation mid-turn.",
+			"Review only this packet. File excerpts are bounded snapshots provided by the harness.",
+			"Treat the result as advisory guidance for the lead, not as an automatic task outcome.",
+		},
+	}
+}
+
+func normalizeCriticConsultPacketKind(kind string) string {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(kind), "-", "_")) {
+	case "plan", "code", "patch", "debug", "final_claims", "other":
+		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(kind), "-", "_"))
+	default:
+		return "other"
+	}
+}
+
+func cleanCriticConsultFiles(files []script.CriticConsultFile) []script.CriticConsultFile {
+	out := make([]script.CriticConsultFile, 0, len(files))
+	for _, file := range files {
+		file.Path = strings.TrimSpace(file.Path)
+		file.Role = strings.TrimSpace(file.Role)
+		file.Excerpt = strings.TrimSpace(file.Excerpt)
+		if file.Path == "" && file.Excerpt == "" {
+			continue
+		}
+		out = append(out, file)
+	}
+	return out
+}
+
+func scriptCriticConsultFindings(findings []criticReviewFinding) []script.CriticConsultFinding {
+	out := make([]script.CriticConsultFinding, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, script.CriticConsultFinding{
+			Severity:          strings.TrimSpace(finding.Severity),
+			Materiality:       strings.TrimSpace(finding.Materiality),
+			Claim:             strings.TrimSpace(finding.Claim),
+			EvidenceSource:    strings.TrimSpace(finding.EvidenceSource),
+			Evidence:          strings.TrimSpace(finding.Evidence),
+			UserImpact:        strings.TrimSpace(finding.UserImpact),
+			SuggestedFollowup: strings.TrimSpace(finding.SuggestedFollowup),
+		})
+	}
+	return out
+}
+
 type criticReviewAttempt struct {
 	Attempt     int
 	Review      criticReviewPayload
@@ -266,24 +378,66 @@ func runCriticReviewWithRetry(ctx context.Context, writer *session.Writer, profi
 		}
 		previousInvalid = result.Completion.Message.Content
 		if attempt < 2 {
-			if err := writer.Write(session.Event{
-				"type":        "critic_review_retry",
-				"session_id":  sessionID,
-				"provider":    profile.Provider,
-				"model":       firstNonEmptyString(strings.TrimSpace(result.Completion.Model), profile.Model),
-				"packet_hash": packetHash,
-				"mode":        mode,
-				"attempt":     attempt + 1,
-				"reason":      "invalid_json",
-				"message":     "critic returned invalid structured output; retrying once with stricter JSON-only instructions",
-			}); err != nil {
-				return criticReviewPayload{}, result.Completion, err
+			if writer != nil {
+				if err := writer.Write(session.Event{
+					"type":        "critic_review_retry",
+					"session_id":  sessionID,
+					"provider":    profile.Provider,
+					"model":       firstNonEmptyString(strings.TrimSpace(result.Completion.Model), profile.Model),
+					"packet_hash": packetHash,
+					"mode":        mode,
+					"attempt":     attempt + 1,
+					"reason":      "invalid_json",
+					"message":     "critic returned invalid structured output; retrying once with stricter JSON-only instructions",
+				}); err != nil {
+					return criticReviewPayload{}, result.Completion, err
+				}
 			}
 			continue
 		}
 		return criticReviewPayload{}, result.Completion, fmt.Errorf("critic returned invalid JSON after retry")
 	}
 	return criticReviewPayload{}, lastCompletion, fmt.Errorf("critic review failed")
+}
+
+func runCriticConsultWithRetry(ctx context.Context, writer *session.Writer, profile criticProfile, sessionID string, packet criticConsultPacket, packetHash string) (criticReviewPayload, modeladapter.Completion, error) {
+	const mode = "consult"
+	var previousInvalid string
+	var lastCompletion modeladapter.Completion
+	for attempt := 1; attempt <= 2; attempt++ {
+		result := profile.Reviewer.ConsultAttempt(ctx, packet, attempt, previousInvalid)
+		lastCompletion = result.Completion
+		if result.Err == nil {
+			return result.Review, result.Completion, nil
+		}
+		if !result.InvalidJSON {
+			return criticReviewPayload{}, result.Completion, result.Err
+		}
+		if err := writeCriticInvalidModelResponse(writer, profile, sessionID, packetHash, mode, result); err != nil {
+			return criticReviewPayload{}, result.Completion, err
+		}
+		previousInvalid = result.Completion.Message.Content
+		if attempt < 2 {
+			if writer != nil {
+				if err := writer.Write(session.Event{
+					"type":        "critic_review_retry",
+					"session_id":  sessionID,
+					"provider":    profile.Provider,
+					"model":       firstNonEmptyString(strings.TrimSpace(result.Completion.Model), profile.Model),
+					"packet_hash": packetHash,
+					"mode":        mode,
+					"attempt":     attempt + 1,
+					"reason":      "invalid_json",
+					"message":     "critic consultation returned invalid structured output; retrying once with stricter JSON-only instructions",
+				}); err != nil {
+					return criticReviewPayload{}, result.Completion, err
+				}
+			}
+			continue
+		}
+		return criticReviewPayload{}, result.Completion, fmt.Errorf("critic returned invalid JSON after retry")
+	}
+	return criticReviewPayload{}, lastCompletion, fmt.Errorf("critic consultation failed")
 }
 
 func (r traceCritic) ReviewAttempt(ctx context.Context, packet criticReviewPacket, attempt int, previousInvalid string) criticReviewAttempt {
@@ -318,9 +472,57 @@ func (r traceCritic) ReviewAttempt(ctx context.Context, packet criticReviewPacke
 	return result
 }
 
+func (r traceCritic) ConsultAttempt(ctx context.Context, packet criticConsultPacket, attempt int, previousInvalid string) criticReviewAttempt {
+	result := criticReviewAttempt{Attempt: attempt}
+	if r.client == nil {
+		result.Err = fmt.Errorf("critic client is not configured")
+		return result
+	}
+	body, err := json.MarshalIndent(packet, "", "  ")
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	messages := criticConsultMessages(string(body), previousInvalid)
+	options := modeladapter.CompletionOptions{MaxCompletionTokens: 1200}
+	if !strings.EqualFold(r.provider, "openai") {
+		options.DisableThinking = true
+	}
+	completion, err := r.client.CompleteWithOptions(ctx, messages, nil, options)
+	result.Completion = completion
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	review, err := parseCriticReviewPayload(completion.Message.Content)
+	if err != nil {
+		result.InvalidJSON = true
+		result.Err = err
+		return result
+	}
+	result.Review = normalizeCriticReviewForRouting(review)
+	return result
+}
+
 func criticReviewMessages(packetBody string, previousInvalid string) []modeladapter.Message {
 	messages := []modeladapter.Message{
 		{Role: "system", Content: criticSystemPrompt()},
+		{Role: "user", Content: packetBody},
+	}
+	if strings.TrimSpace(previousInvalid) == "" {
+		return messages
+	}
+	previous, _ := truncateCriticText(previousInvalid, 4000)
+	messages = append(messages,
+		modeladapter.Message{Role: "assistant", Content: previous},
+		modeladapter.Message{Role: "user", Content: criticJSONRepairPrompt()},
+	)
+	return messages
+}
+
+func criticConsultMessages(packetBody string, previousInvalid string) []modeladapter.Message {
+	messages := []modeladapter.Message{
+		{Role: "system", Content: criticConsultSystemPrompt()},
 		{Role: "user", Content: packetBody},
 	}
 	if strings.TrimSpace(previousInvalid) == "" {
@@ -407,6 +609,23 @@ func criticSystemPrompt() string {
 		"Return only JSON. Do not use markdown.",
 		"The JSON shape is:",
 		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","claim":"concrete issue","evidence_source":"tool_trace|patch|verification|lead_final|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what should happen next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
+	}, "\n")
+}
+
+func criticConsultSystemPrompt() string {
+	return strings.Join([]string{
+		"You are an advisory critic for an AI coding agent that explicitly asked for a second opinion mid-turn.",
+		"Review only the provided consultation packet. You have no live tools and must not claim to inspect current files beyond included file excerpts.",
+		"Answer the lead's question directly. Focus on material correctness, missing evidence, risky assumptions, poor plan shape, insufficient verification, or user-impacting omissions.",
+		"Do not rewrite the whole solution unless that is the simplest way to explain the concern.",
+		"Use evidence_source values from: consult_question, provided_context, candidate, file_excerpt, missing_evidence.",
+		"Set status=clean when the candidate or plan looks sound from the packet.",
+		"Set status=concerns when there are risks or improvements the lead should consider.",
+		"Set status=needs_followup only when the lead should gather more evidence, change course, or ask the user before proceeding.",
+		"Use lead_instruction for the most useful private next step for the lead. Leave human_prompt and proposed_user_message blank unless user input is truly needed.",
+		"Return only JSON. Do not use markdown.",
+		"The JSON shape is:",
+		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short advisory answer","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","claim":"concrete issue or reassurance","evidence_source":"consult_question|provided_context|candidate|file_excerpt|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what the lead should do next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
 	}, "\n")
 }
 
@@ -897,7 +1116,7 @@ func normalizeCriticMateriality(materiality, fallback string) string {
 
 func normalizeCriticEvidenceSource(source string) string {
 	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "tool_trace", "patch", "verification", "lead_final", "missing_evidence":
+	case "tool_trace", "patch", "verification", "lead_final", "consult_question", "provided_context", "candidate", "file_excerpt", "missing_evidence":
 		return strings.ToLower(strings.TrimSpace(source))
 	default:
 		return "missing_evidence"
@@ -922,7 +1141,7 @@ func normalizeFinalOutcomeForCritic(outcome string) string {
 	return normalized
 }
 
-func criticPacketHash(packet criticReviewPacket) string {
+func criticPacketHash(packet any) string {
 	body, err := json.Marshal(packet)
 	if err != nil {
 		return ""

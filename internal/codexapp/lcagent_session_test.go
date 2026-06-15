@@ -237,6 +237,53 @@ func TestLCAgentCriticNeedsFollowupCreatesSuggestedDraft(t *testing.T) {
 	}
 }
 
+func TestLCAgentCriticConsultResultTracksConsultMetrics(t *testing.T) {
+	session := &lcagentSession{
+		projectPath:   t.TempDir(),
+		started:       true,
+		criticActive:  true,
+		criticReviews: 2,
+	}
+	raw := func(value any) json.RawMessage {
+		body, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %#v: %v", value, err)
+		}
+		return body
+	}
+
+	session.handleLCAgentCriticConsultResult(map[string]json.RawMessage{
+		"status":  raw("concerns"),
+		"summary": raw("patch likely needs a targeted test"),
+		"model":   raw("critic/test"),
+		"usage": raw(map[string]any{
+			"prompt_tokens":     7,
+			"completion_tokens": 3,
+			"total_tokens":      10,
+		}),
+	})
+
+	snapshot := session.Snapshot()
+	if snapshot.CriticActive {
+		t.Fatal("critic should no longer be active after consultation result")
+	}
+	if snapshot.CriticConsultations != 1 || snapshot.CriticConsultConcerns != 1 {
+		t.Fatalf("consult metrics = %d/%d, want 1/1", snapshot.CriticConsultations, snapshot.CriticConsultConcerns)
+	}
+	if snapshot.CriticReviews != 2 || snapshot.CriticConcerns != 0 {
+		t.Fatalf("review metrics changed: reviews=%d concerns=%d", snapshot.CriticReviews, snapshot.CriticConcerns)
+	}
+	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
+		t.Fatalf("consultation should not create draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
+	}
+	if !strings.Contains(snapshot.Status, "LCAgent critic consultation found concerns") {
+		t.Fatalf("status = %q, want consultation concern status", snapshot.Status)
+	}
+	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Total.TotalTokens != 10 {
+		t.Fatalf("token usage = %#v, want total 10", snapshot.TokenUsage)
+	}
+}
+
 func TestLCAgentCriticLeadFeedbackUpdatesStatusWithoutDraft(t *testing.T) {
 	session := &lcagentSession{
 		projectPath: t.TempDir(),

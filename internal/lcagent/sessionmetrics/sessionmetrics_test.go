@@ -97,6 +97,9 @@ func TestAnalyzeFilesSummarizesCriticSignals(t *testing.T) {
 {"type":"critic_model_response_invalid","mode":"trace_only","attempt":1,"message":"critic returned invalid JSON","usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}
 {"type":"critic_review_result","mode":"trace_only","status":"concerns","summary":"minor concern","proposed_user_message":"Please ask the user."}
 {"type":"critic_review_failed","mode":"trace_only","message":"critic unavailable"}
+{"type":"critic_consult_started","kind":"patch","question":"Does this patch need another test?"}
+{"type":"critic_consult_result","kind":"patch","status":"concerns","summary":"targeted test would help","usage":{"prompt_tokens":11,"completion_tokens":4,"total_tokens":15}}
+{"type":"critic_consult_failed","kind":"debug","message":"critic unavailable"}
 {"type":"verification_summary","status":"verified"}
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -119,13 +122,19 @@ func TestAnalyzeFilesSummarizesCriticSignals(t *testing.T) {
 	if summary.CriticLeadFeedback != 1 || summary.CriticHumanPrompts != 1 || summary.CriticModelResponses != 1 || summary.CriticInvalidModelResponses != 1 {
 		t.Fatalf("critic friction = lead %d human %d model %d invalid %d", summary.CriticLeadFeedback, summary.CriticHumanPrompts, summary.CriticModelResponses, summary.CriticInvalidModelResponses)
 	}
-	if summary.TokenUsage.InputTokens != 8 || summary.TokenUsage.OutputTokens != 3 || summary.TokenUsage.TotalTokens != 11 {
+	if summary.CriticConsultsStarted != 1 || summary.CriticConsultResults != 1 || summary.CriticConsultFailures != 1 {
+		t.Fatalf("critic consult counts = started %d results %d failures %d", summary.CriticConsultsStarted, summary.CriticConsultResults, summary.CriticConsultFailures)
+	}
+	if summary.CriticConsultStatuses["concerns"] != 1 {
+		t.Fatalf("critic consult statuses = %#v", summary.CriticConsultStatuses)
+	}
+	if summary.TokenUsage.InputTokens != 19 || summary.TokenUsage.OutputTokens != 7 || summary.TokenUsage.TotalTokens != 26 {
 		t.Fatalf("critic token usage = %+v", summary.TokenUsage)
 	}
-	if summary.TraceQuality.CriticReviews != 2 || summary.TraceQuality.CriticLeadFeedback != 1 || summary.TraceQuality.CriticHumanPrompts != 1 {
+	if summary.TraceQuality.CriticReviews != 2 || summary.TraceQuality.CriticConsultations != 1 || summary.TraceQuality.CriticLeadFeedback != 1 || summary.TraceQuality.CriticHumanPrompts != 1 {
 		t.Fatalf("trace quality critic fields = %#v", summary.TraceQuality)
 	}
-	if !traceQualityHasFinding(summary.TraceQuality, "critic_lead_feedback") || !traceQualityHasFinding(summary.TraceQuality, "critic_human_prompts") {
+	if !traceQualityHasFinding(summary.TraceQuality, "critic_lead_feedback") || !traceQualityHasFinding(summary.TraceQuality, "critic_human_prompts") || !traceQualityHasFinding(summary.TraceQuality, "critic_consultations") {
 		t.Fatalf("trace quality findings = %#v", summary.TraceQuality.Findings)
 	}
 }

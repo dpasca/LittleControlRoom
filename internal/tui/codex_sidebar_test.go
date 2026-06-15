@@ -398,6 +398,8 @@ func TestEmbeddedSidebarShowsLCAgentCriticActivity(t *testing.T) {
 	snapshot.CriticModel = "deepseek-v4-pro"
 	snapshot.CriticModelProvider = "deepseek"
 	snapshot.CriticReviews = 2
+	snapshot.CriticConsultations = 3
+	snapshot.CriticConsultConcerns = 1
 	snapshot.CriticConcerns = 1
 	snapshot.CriticLeadRevisions = 1
 	snapshot.CriticLastStatus = "concerns"
@@ -409,7 +411,9 @@ func TestEmbeddedSidebarShowsLCAgentCriticActivity(t *testing.T) {
 		"Model deepseek/deepseek-v4-pro",
 		"Status concerns",
 		"Reviews 2",
+		"Consults 3",
 		"Concerns 1",
+		"Consult Concerns 1",
 		"Corrections 1",
 		"verification was thin",
 	} {
