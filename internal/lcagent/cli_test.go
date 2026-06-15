@@ -375,6 +375,149 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	sawCriticFeedback := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 1 model = %q, want lead model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_bad_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_bad_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "wrong answer",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "critic/test-model" {
+				t.Fatalf("request 2 model = %q, want critic model", body["model"])
+			}
+			messagesJSON, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(messagesJSON), "wrong answer") {
+				t.Fatalf("critic request did not include candidate final packet:\n%s", messagesJSON)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_critic",
+				"model": "critic/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": `{"status":"needs_followup","confidence":0.91,"summary":"candidate answer is wrong","findings":[{"severity":"medium","materiality":"high","claim":"candidate final says wrong answer","evidence_source":"lead_final","evidence":"final_summary is wrong answer","user_impact":"the user would receive the wrong result","suggested_followup":"produce the corrected answer"}],"lead_instruction":"Replace the candidate final with the corrected answer.","human_prompt":"","proposed_user_message":""}`,
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
+			})
+		case 3:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 3 model = %q, want lead model", body["model"])
+			}
+			messagesJSON, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(messagesJSON), "Critic feedback before final_response") {
+				t.Fatalf("lead retry did not receive critic feedback:\n%s", messagesJSON)
+			}
+			sawCriticFeedback = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_corrected_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_corrected_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "corrected answer",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
+			})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--critic-provider", "openrouter",
+		"--critic-model", "critic/test-model",
+		"--max-turns", "4",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3\nstdout=%s", requests, stdout.String())
+	}
+	if !sawCriticFeedback {
+		t.Fatalf("server did not observe critic feedback retry")
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"critic_review_started"`,
+		`"mode":"pre_final"`,
+		`"type":"critic_lead_feedback"`,
+		`"type":"turn_complete"`,
+		`"summary":"corrected answer"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

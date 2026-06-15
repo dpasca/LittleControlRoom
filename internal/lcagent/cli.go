@@ -371,8 +371,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
-	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "trace-only critic provider after each completed turn: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
-	fs.StringVar(&criticModel, "critic-model", defaultCriticModel, "optional trace-only critic model; blank with provider main uses the main model")
+	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "critic provider for one packet-bound pre-final review: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
+	fs.StringVar(&criticModel, "critic-model", defaultCriticModel, "optional critic model; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
@@ -805,7 +805,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"enabled":    critic.Enabled,
 		"provider":   critic.Provider,
 		"model":      critic.Model,
-		"mode":       "trace_only",
+		"mode":       "pre_final",
 		"message":    critic.Message,
 	}); err != nil {
 		return err
@@ -881,6 +881,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0
+	criticLeadFeedbacks := 0
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		select {
@@ -1013,13 +1014,20 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 				continue
 			}
+			if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, messages, contextCompacted, criticLeadFeedbacks); err != nil {
+				return err
+			} else if applied {
+				criticLeadFeedbacks++
+				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+				continue
+			}
 			if err := runner.Final(final); err != nil {
 				return err
 			}
 			if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "assistant_message", messages, contextCompacted); err != nil {
 				return err
 			}
-			return maybeRunTraceCritic(ctx, writer, runner, critic, final, messages, contextCompacted)
+			return nil
 		}
 		if threadStore != nil {
 			if err := threadStore.MarkPendingTools("assistant_tool_calls", messages, contextCompacted, msg.ToolCalls); err != nil {
@@ -1092,13 +1100,46 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					continue
 				}
 				snapshotMessages := appendFinalResponseForContextSnapshot(messages, call.ID, final)
+				if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, snapshotMessages, contextCompacted, criticLeadFeedbacks); err != nil {
+					return err
+				} else if applied {
+					criticLeadFeedbacks++
+					if err := writer.Write(session.Event{
+						"type":       "tool_call",
+						"session_id": runner.SessionID,
+						"tool":       call.Function.Name,
+						"args":       json.RawMessage(args),
+					}); err != nil {
+						return err
+					}
+					result := tools.ToolResult{Success: false, Error: feedback}
+					if err := writer.Write(session.Event{
+						"type":       "tool_result",
+						"session_id": runner.SessionID,
+						"tool":       call.Function.Name,
+						"result":     result,
+					}); err != nil {
+						return err
+					}
+					resultJSON, marshalErr := json.Marshal(result)
+					if marshalErr != nil {
+						return marshalErr
+					}
+					messages = append(messages, modeladapter.Message{
+						Role:       "tool",
+						ToolCallID: call.ID,
+						Content:    string(resultJSON),
+					})
+					messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+					continue
+				}
 				if err := runner.Final(final); err != nil {
 					return err
 				}
 				if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_response", snapshotMessages, contextCompacted); err != nil {
 					return err
 				}
-				return maybeRunTraceCritic(ctx, writer, runner, critic, final, snapshotMessages, contextCompacted)
+				return nil
 			}
 			result, err := runner.RunTool(ctx, action)
 			if call.Function.Name == "read_file" {
@@ -1212,6 +1253,36 @@ func shouldBounceFinalAudit(audit script.FinalResponseAudit, feedbackCount int) 
 		return true
 	}
 	return feedbackCount == 0
+}
+
+func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, runner script.Runner, critic criticProfile, final script.Action, messages []modeladapter.Message, compacted bool, feedbackCount int) (string, string, bool, error) {
+	if feedbackCount > 0 {
+		return "", "", false, nil
+	}
+	review, packetHash, ran, err := maybeRunCriticReview(ctx, writer, runner, critic, final, messages, compacted, "pre_final")
+	if err != nil || !ran {
+		return "", packetHash, false, err
+	}
+	feedback := criticLeadFeedbackMessage(review)
+	if feedback == "" {
+		return "", packetHash, false, nil
+	}
+	if err := writeCriticLeadFeedback(writer, runner.SessionID, packetHash, feedback); err != nil {
+		return "", packetHash, false, err
+	}
+	return feedback, packetHash, true, nil
+}
+
+func writeCriticLeadFeedback(writer *session.Writer, sessionID, packetHash, message string) error {
+	if writer == nil {
+		return nil
+	}
+	return writer.Write(session.Event{
+		"type":        "critic_lead_feedback",
+		"session_id":  sessionID,
+		"packet_hash": packetHash,
+		"message":     strings.TrimSpace(message),
+	})
 }
 
 func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, client *modeladapter.Client, finalClient *modeladapter.Client, messages []modeladapter.Message, readLedger *readLedger, providerLabel string, cfg modeladapter.OpenRouterConfig, contextOptions openRouterContextOptions, critic criticProfile) error {

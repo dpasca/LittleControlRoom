@@ -85,6 +85,50 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	}
 }
 
+func TestAnalyzeFilesSummarizesCriticSignals(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "critic-session.jsonl")
+	body := `{"type":"session_meta","id":"lca_critic","cwd":"/repo"}
+{"type":"critic_review_started","mode":"pre_final"}
+{"type":"critic_model_response","model":"critic/test","usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}
+{"type":"critic_review_result","mode":"pre_final","status":"needs_followup","summary":"material issue","lead_instruction":"fix it","findings":[{"severity":"medium","materiality":"high","claim":"bad final","evidence_source":"lead_final","evidence":"bad"}]}
+{"type":"critic_lead_feedback","message":"Critic feedback before final_response: fix it"}
+{"type":"critic_review_started","mode":"trace_only"}
+{"type":"critic_review_result","mode":"trace_only","status":"concerns","summary":"minor concern","proposed_user_message":"Please ask the user."}
+{"type":"critic_review_failed","mode":"trace_only","message":"critic unavailable"}
+{"type":"verification_summary","status":"verified"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := AnalyzeFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if summary.CriticReviewsStarted != 2 || summary.CriticReviewResults != 2 || summary.CriticReviewFailures != 1 {
+		t.Fatalf("critic review counts = started %d results %d failures %d", summary.CriticReviewsStarted, summary.CriticReviewResults, summary.CriticReviewFailures)
+	}
+	if summary.CriticReviewModes["pre_final"] != 1 || summary.CriticReviewModes["trace_only"] != 2 {
+		t.Fatalf("critic modes = %#v", summary.CriticReviewModes)
+	}
+	if summary.CriticReviewStatuses["needs_followup"] != 1 || summary.CriticReviewStatuses["concerns"] != 1 {
+		t.Fatalf("critic statuses = %#v", summary.CriticReviewStatuses)
+	}
+	if summary.CriticLeadFeedback != 1 || summary.CriticHumanPrompts != 1 || summary.CriticModelResponses != 1 {
+		t.Fatalf("critic friction = lead %d human %d model %d", summary.CriticLeadFeedback, summary.CriticHumanPrompts, summary.CriticModelResponses)
+	}
+	if summary.TokenUsage.InputTokens != 5 || summary.TokenUsage.OutputTokens != 2 || summary.TokenUsage.TotalTokens != 7 {
+		t.Fatalf("critic token usage = %+v", summary.TokenUsage)
+	}
+	if summary.TraceQuality.CriticReviews != 2 || summary.TraceQuality.CriticLeadFeedback != 1 || summary.TraceQuality.CriticHumanPrompts != 1 {
+		t.Fatalf("trace quality critic fields = %#v", summary.TraceQuality)
+	}
+	if !traceQualityHasFinding(summary.TraceQuality, "critic_lead_feedback") || !traceQualityHasFinding(summary.TraceQuality, "critic_human_prompts") {
+		t.Fatalf("trace quality findings = %#v", summary.TraceQuality.Findings)
+	}
+}
+
 func TestAnalyzeFilesTraceQualityFlagsFailures(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")
