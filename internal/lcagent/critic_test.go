@@ -79,6 +79,59 @@ func TestNormalizeCriticReviewForRoutingBlocksLowMaterialFollowupDraft(t *testin
 	}
 }
 
+func TestNormalizeCriticReviewForRoutingUsesMaterialityForDrafts(t *testing.T) {
+	payload := normalizeCriticReviewForRouting(criticReviewPayload{
+		Status:      "needs_followup",
+		HumanPrompt: "Please ask the user to reopen this.",
+		Findings: []criticReviewFinding{{
+			Severity:       "medium",
+			Materiality:    "low",
+			Claim:          "technically true but irrelevant issue",
+			EvidenceSource: "lead_final",
+			Evidence:       "the final wording could be more exact",
+		}},
+	})
+
+	if payload.ProposedUserMessage != "" || payload.HumanPrompt != "" {
+		t.Fatalf("low-material medium-severity follow-up should be suppressed: proposed=%q human=%q", payload.ProposedUserMessage, payload.HumanPrompt)
+	}
+}
+
+func TestCriticLeadFeedbackMessageRequiresMaterialFollowup(t *testing.T) {
+	low := normalizeCriticReviewForRouting(criticReviewPayload{
+		Status:          "needs_followup",
+		LeadInstruction: "Nitpick the phrasing.",
+		Findings: []criticReviewFinding{{
+			Severity:       "medium",
+			Materiality:    "low",
+			Claim:          "minor phrasing",
+			EvidenceSource: "lead_final",
+			Evidence:       "summary was broad",
+		}},
+	})
+	if feedback := criticLeadFeedbackMessage(low); feedback != "" {
+		t.Fatalf("low-material feedback = %q, want empty", feedback)
+	}
+
+	material := normalizeCriticReviewForRouting(criticReviewPayload{
+		Status:          "needs_followup",
+		LeadInstruction: "Run the missing verification before final_response.",
+		Findings: []criticReviewFinding{{
+			Severity:          "medium",
+			Materiality:       "high",
+			Claim:             "verification was not run",
+			EvidenceSource:    "lead_final",
+			Evidence:          "verification array was empty",
+			UserImpact:        "the user asked for a code change",
+			SuggestedFollowup: "run the relevant test",
+		}},
+	})
+	feedback := criticLeadFeedbackMessage(material)
+	if !strings.Contains(feedback, "Run the missing verification") || !strings.Contains(feedback, "Material finding") {
+		t.Fatalf("material feedback = %q", feedback)
+	}
+}
+
 func TestBuildCriticReviewPacketAddsEvidenceExcerptsForTruncatedToolOutput(t *testing.T) {
 	sourceEvidence := `textbox "file content" [ref=e385]: "const tests = [{ input: {\"ops\":[{\"attributes\":{\"indent\":1,\"list\":\"bullet\"},\"insert\":\"\\n\"},{\"attributes\":{\"slackemoji\":true},\"insert\":\"party\"},{\"attributes\":{\"slackmention\":\"U123\"},\"insert\":\"Davide\"}]}}];"`
 	output := "status: navigated\n" +

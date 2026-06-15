@@ -1712,8 +1712,12 @@ func (s *lcagentSession) handleEvent(line []byte) {
 			s.appendAsync(TranscriptStatus, "LCAgent search refinement skipped: "+message)
 		}
 	case "critic_review_started":
+		status := "LCAgent critic reviewing turn"
+		if strings.EqualFold(rawJSONString(event["mode"]), "pre_final") {
+			status = "LCAgent critic reviewing candidate final"
+		}
 		s.mu.Lock()
-		s.status = "LCAgent critic reviewing turn"
+		s.status = status
 		s.touchLocked()
 		s.mu.Unlock()
 	case "critic_model_response":
@@ -1727,6 +1731,13 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.mu.Unlock()
 	case "critic_review_result":
 		s.handleLCAgentCriticReviewResult(event)
+	case "critic_lead_feedback":
+		text := lcagentCriticLeadFeedbackText(event)
+		s.mu.Lock()
+		s.status = text
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
 	case "critic_review_failed":
 		message := firstNonEmpty(rawJSONString(event["message"]), "critic review failed")
 		s.mu.Lock()
@@ -2011,6 +2022,14 @@ func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.R
 	s.appendEntryLocked(TranscriptStatus, text)
 	s.touchLocked()
 	s.mu.Unlock()
+}
+
+func lcagentCriticLeadFeedbackText(event map[string]json.RawMessage) string {
+	message := strings.TrimSpace(rawJSONString(event["message"]))
+	if message == "" {
+		return "LCAgent critic requested one private lead revision"
+	}
+	return "LCAgent critic requested one private lead revision: " + lcagentCondenseStatusText(message, 220)
 }
 
 func normalizeLCAgentCriticReviewStatus(status string) string {
@@ -2736,6 +2755,17 @@ func rawJSONInt(raw json.RawMessage) int {
 	var value int
 	_ = json.Unmarshal(raw, &value)
 	return value
+}
+
+func lcagentCondenseStatusText(text string, limit int) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if limit <= 0 || len(text) <= limit {
+		return text
+	}
+	if limit <= 16 {
+		return text[:limit]
+	}
+	return strings.TrimSpace(text[:limit-13]) + "...[truncated]"
 }
 
 func lcagentToolCallText(tool string, raw json.RawMessage) string {

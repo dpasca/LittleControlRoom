@@ -128,9 +128,9 @@ func newCriticProfile(provider string, cfg modeladapter.OpenRouterConfig, mainPr
 			DisabledErr: err,
 		}
 	}
-	message := "LCAgent trace-only critic enabled."
+	message := "LCAgent critic enabled."
 	if sameAsMain {
-		message = "LCAgent trace-only critic uses the Main Model."
+		message = "LCAgent critic uses the Main Model."
 	}
 	return criticProfile{
 		Enabled:  true,
@@ -158,8 +158,17 @@ func normalizeCriticProvider(raw string) (string, error) {
 }
 
 func maybeRunTraceCritic(ctx context.Context, writer *session.Writer, runner script.Runner, profile criticProfile, final script.Action, messages []modeladapter.Message, compacted bool) error {
+	_, _, _, err := maybeRunCriticReview(ctx, writer, runner, profile, final, messages, compacted, "trace_only")
+	return err
+}
+
+func maybeRunCriticReview(ctx context.Context, writer *session.Writer, runner script.Runner, profile criticProfile, final script.Action, messages []modeladapter.Message, compacted bool, mode string) (criticReviewPayload, string, bool, error) {
 	if writer == nil || !profile.Enabled || profile.Reviewer.client == nil {
-		return nil
+		return criticReviewPayload{}, "", false, nil
+	}
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		mode = "trace_only"
 	}
 	packet := buildCriticReviewPacket(runner.SessionID, runner.Prompt, final, messages, compacted)
 	packetHash := criticPacketHash(packet)
@@ -169,8 +178,9 @@ func maybeRunTraceCritic(ctx context.Context, writer *session.Writer, runner scr
 		"packet_hash":  packetHash,
 		"packet":       packet,
 		"context_mode": packet.ContextMode,
+		"mode":         mode,
 	}); err != nil {
-		return err
+		return criticReviewPayload{}, packetHash, true, err
 	}
 	if err := writer.Write(session.Event{
 		"type":        "critic_review_started",
@@ -178,19 +188,20 @@ func maybeRunTraceCritic(ctx context.Context, writer *session.Writer, runner scr
 		"provider":    profile.Provider,
 		"model":       profile.Model,
 		"packet_hash": packetHash,
-		"mode":        "trace_only",
+		"mode":        mode,
 	}); err != nil {
-		return err
+		return criticReviewPayload{}, packetHash, true, err
 	}
 	review, completion, err := profile.Reviewer.Review(ctx, packet)
 	if err != nil {
-		return writer.Write(session.Event{
+		return criticReviewPayload{}, packetHash, true, writer.Write(session.Event{
 			"type":        "critic_review_failed",
 			"session_id":  runner.SessionID,
 			"provider":    profile.Provider,
 			"model":       profile.Model,
 			"packet_hash": packetHash,
 			"message":     err.Error(),
+			"mode":        mode,
 		})
 	}
 	modelName := firstNonEmptyString(strings.TrimSpace(completion.Model), profile.Model)
@@ -202,15 +213,16 @@ func maybeRunTraceCritic(ctx context.Context, writer *session.Writer, runner scr
 		"packet_hash":   packetHash,
 		"usage":         json.RawMessage(completion.Usage),
 		"usage_summary": completion.UsageSummary,
+		"mode":          mode,
 	}); err != nil {
-		return err
+		return criticReviewPayload{}, packetHash, true, err
 	}
-	return writer.Write(session.Event{
+	if err := writer.Write(session.Event{
 		"type":                  "critic_review_result",
 		"session_id":            runner.SessionID,
 		"provider":              profile.Provider,
 		"model":                 modelName,
-		"mode":                  "trace_only",
+		"mode":                  mode,
 		"packet_hash":           packetHash,
 		"status":                normalizeCriticStatus(review.Status),
 		"confidence":            review.Confidence,
@@ -219,7 +231,10 @@ func maybeRunTraceCritic(ctx context.Context, writer *session.Writer, runner scr
 		"lead_instruction":      strings.TrimSpace(review.LeadInstruction),
 		"human_prompt":          strings.TrimSpace(review.HumanPrompt),
 		"proposed_user_message": strings.TrimSpace(review.ProposedUserMessage),
-	})
+	}); err != nil {
+		return criticReviewPayload{}, packetHash, true, err
+	}
+	return review, packetHash, true, nil
 }
 
 func (r traceCritic) Review(ctx context.Context, packet criticReviewPacket) (criticReviewPayload, modeladapter.Completion, error) {
@@ -251,7 +266,7 @@ func (r traceCritic) Review(ctx context.Context, packet criticReviewPacket) (cri
 
 func criticSystemPrompt() string {
 	return strings.Join([]string{
-		"You are a trace-only critic for an AI coding agent turn.",
+		"You are a packet-bound critic for an AI coding agent turn.",
 		"Review only the provided packet. You have no live tools and must not claim to inspect current files.",
 		"Find concrete evidence that the lead turn may be wrong, incomplete, overclaimed, unsafe, insufficiently verified, or on a poor trajectory for the original user request.",
 		"Optimize for material user outcome, not transcript perfection. A true but low-impact wording nit should be a note, not a follow-up.",
@@ -648,19 +663,85 @@ func criticReviewShouldDraftHumanFollowup(review criticReviewPayload) bool {
 		return false
 	}
 	if len(review.Findings) == 0 {
-		return true
+		return false
 	}
+	return criticReviewHasMaterialFinding(review)
+}
+
+func criticReviewShouldBounceLead(review criticReviewPayload) bool {
+	return review.Status == "needs_followup" && criticReviewHasMaterialFinding(review)
+}
+
+func criticReviewHasMaterialFinding(review criticReviewPayload) bool {
 	for _, finding := range review.Findings {
 		switch finding.Materiality {
 		case "high", "medium":
 			return true
 		}
-		switch finding.Severity {
-		case "high", "medium":
-			return true
-		}
 	}
 	return false
+}
+
+func criticLeadFeedbackMessage(review criticReviewPayload) string {
+	if !criticReviewShouldBounceLead(review) {
+		return ""
+	}
+	instruction := strings.TrimSpace(review.LeadInstruction)
+	if instruction == "" {
+		for _, finding := range review.Findings {
+			if finding.Materiality != "high" && finding.Materiality != "medium" {
+				continue
+			}
+			instruction = strings.TrimSpace(finding.SuggestedFollowup)
+			if instruction == "" {
+				instruction = strings.TrimSpace(finding.Claim)
+			}
+			if instruction != "" {
+				break
+			}
+		}
+	}
+	if instruction == "" {
+		instruction = strings.TrimSpace(review.Summary)
+	}
+	if instruction == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("Critic feedback before final_response: ")
+	b.WriteString(criticTrimFeedbackField(instruction, 700))
+	for _, finding := range review.Findings {
+		if finding.Materiality != "high" && finding.Materiality != "medium" {
+			continue
+		}
+		if claim := criticTrimFeedbackField(finding.Claim, 320); claim != "" {
+			b.WriteString("\n\nMaterial finding: ")
+			b.WriteString(claim)
+		}
+		if evidence := criticTrimFeedbackField(finding.Evidence, 500); evidence != "" {
+			b.WriteString("\nEvidence: ")
+			b.WriteString(evidence)
+		}
+		if impact := criticTrimFeedbackField(finding.UserImpact, 320); impact != "" {
+			b.WriteString("\nUser impact: ")
+			b.WriteString(impact)
+		}
+		break
+	}
+	b.WriteString("\n\nTreat this as private review guidance. Reopen the work only for material issues affecting the user's request. If the critic is wrong, proceed and explain briefly in final_response.")
+	return b.String()
+}
+
+func criticTrimFeedbackField(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	if limit <= 16 {
+		return value[:limit]
+	}
+	return strings.TrimSpace(value[:limit-13]) + "...[truncated]"
 }
 
 func normalizeCriticSeverity(severity string) string {

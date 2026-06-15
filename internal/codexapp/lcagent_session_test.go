@@ -228,6 +228,30 @@ func TestLCAgentCriticNeedsFollowupCreatesSuggestedDraft(t *testing.T) {
 	}
 }
 
+func TestLCAgentCriticLeadFeedbackUpdatesStatusWithoutDraft(t *testing.T) {
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		started:     true,
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"type":    "critic_lead_feedback",
+		"message": "Critic feedback before final_response: rerun verification before final.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.handleEvent(body)
+
+	snapshot := session.Snapshot()
+	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
+		t.Fatalf("private lead feedback should not create draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
+	}
+	if !strings.Contains(snapshot.Status, "private lead revision") {
+		t.Fatalf("status = %q, want private lead revision", snapshot.Status)
+	}
+}
+
 func TestLCAgentSubmitReturnsBeforeSlowPreflight(t *testing.T) {
 	root := t.TempDir()
 	releasePreflight := make(chan struct{})
