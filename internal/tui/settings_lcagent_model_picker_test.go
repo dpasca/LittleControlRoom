@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -121,5 +122,135 @@ func TestSettingsLCAgentModelPickerJKTypeIntoFilter(t *testing.T) {
 	got = gotModel.(Model)
 	if got.settingsLCAgentModelPicker.FilterInput.Value() != "jk" {
 		t.Fatalf("filter after k = %q, want jk", got.settingsLCAgentModelPicker.FilterInput.Value())
+	}
+}
+
+func TestSettingsLCAgentKnownModelProviderMismatchBlocksSave(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = ""
+	settings.LCAgentProvider = "deepseek"
+	settings.EmbeddedLCAgentModel = "mimo-v2.5-pro"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("mismatched LCAgent provider/model should block save")
+	}
+	if got.settingsSaving {
+		t.Fatalf("settingsSaving = true, want false after blocked save")
+	}
+	for _, want := range []string{"Main model mismatch", "mimo-v2.5-pro belongs to Xiaomi", "Main model provider is DeepSeek", "Settings were not saved"} {
+		if !strings.Contains(got.status, want) {
+			t.Fatalf("status missing %q: %q", want, got.status)
+		}
+	}
+	rendered := got.renderSettingsContent(90, 24)
+	if !strings.Contains(rendered, "mimo-v2.5-pro belongs to Xiaomi") {
+		t.Fatalf("settings warning missing provider/model mismatch: %q", rendered)
+	}
+}
+
+func TestSettingsLCAgentOpenRouterAllowsCrossProviderModel(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = ""
+	settings.LCAgentProvider = "openrouter"
+	settings.EmbeddedLCAgentModel = "xiaomi/mimo-v2.5-pro"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("OpenRouter cross-provider model should still be saveable")
+	}
+	if !got.settingsSaving {
+		t.Fatalf("settingsSaving = false, want true while save command is pending")
+	}
+}
+
+func TestSettingsLCAgentEditedProviderWinsOverBaselineEmbeddedPreference(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = ""
+	settings.LCAgentProvider = "deepseek"
+	settings.EmbeddedLCAgentModel = "mimo-v2.5-pro"
+
+	m := Model{
+		settingsMode:       true,
+		settingsConfigPath: filepath.Join(t.TempDir(), "config.toml"),
+		settingsFields:     newSettingsFields(settings),
+		settingsBaseline:   &settings,
+		width:              100,
+		height:             24,
+	}
+	m.settingsFields[settingsFieldLCAgentProvider].input.SetValue("xiaomi")
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyCtrlS})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("corrected LCAgent provider/model should save")
+	}
+	if !got.settingsSaving {
+		t.Fatalf("settingsSaving = false, want true while save command is pending")
+	}
+	msg, ok := cmd().(settingsSavedMsg)
+	if !ok {
+		t.Fatalf("save command returned %T, want settingsSavedMsg", msg)
+	}
+	if msg.err != nil {
+		t.Fatalf("save error = %v", msg.err)
+	}
+	if msg.settings.LCAgentProvider != "xiaomi" {
+		t.Fatalf("saved LCAgent provider = %q, want xiaomi", msg.settings.LCAgentProvider)
+	}
+	if msg.settings.EmbeddedLCAgentModel != "mimo-v2.5-pro" {
+		t.Fatalf("saved LCAgent model = %q, want mimo-v2.5-pro", msg.settings.EmbeddedLCAgentModel)
+	}
+}
+
+func TestSetupLCAgentKnownModelProviderMismatchBlocksSave(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentRoutePreset = ""
+	settings.LCAgentProvider = "deepseek"
+	settings.EmbeddedLCAgentModel = "mimo-v2.5-pro"
+
+	m := Model{
+		setupMode:        true,
+		setupConfigMode:  true,
+		setupStep:        setupStepLCAgentConfig,
+		setupFocusedRole: setupRoleLCAgent,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+
+	updated, cmd := m.saveSetupFromCurrentChoices()
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("mismatched LCAgent provider/model should block setup save")
+	}
+	if got.setupSaving {
+		t.Fatalf("setupSaving = true, want false after blocked setup save")
+	}
+	if !strings.Contains(got.status, "mimo-v2.5-pro belongs to Xiaomi") {
+		t.Fatalf("status = %q, want provider/model mismatch", got.status)
+	}
+	rendered := got.renderSetupConfigContent(90)
+	if !strings.Contains(rendered, "mimo-v2.5-pro belongs to Xiaomi") {
+		t.Fatalf("setup warning missing provider/model mismatch: %q", rendered)
 	}
 }

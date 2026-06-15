@@ -877,6 +877,47 @@ func lcagentProviderDisplayName(provider string) string {
 	}
 }
 
+// LCAgentModelProviderMismatch describes a direct-provider model selection
+// that would be resolved to another known direct provider at launch time.
+type LCAgentModelProviderMismatch struct {
+	ConfiguredProvider string
+	ResolvedProvider   string
+	Model              string
+	NormalizedModel    string
+}
+
+// LCAgentKnownModelProviderMismatch reports whether model is recognized as
+// belonging to a different direct LCAgent provider than provider. OpenRouter is
+// intentionally accepted because it can route cross-provider model IDs.
+func LCAgentKnownModelProviderMismatch(provider, model string) (LCAgentModelProviderMismatch, bool) {
+	configuredProvider := strings.ToLower(strings.TrimSpace(provider))
+	if configuredProvider == "" {
+		configuredProvider = lcagentDefaultProvider
+	}
+	model = strings.TrimSpace(model)
+	if configuredProvider == "openrouter" || model == "" {
+		return LCAgentModelProviderMismatch{}, false
+	}
+	if modeladapter.ModelIsKnownForProvider(configuredProvider, modeladapter.NormalizeModelForProvider(configuredProvider, model)) {
+		return LCAgentModelProviderMismatch{}, false
+	}
+	resolvedProvider := lcagentDirectProviderForKnownModel(model)
+	if resolvedProvider == "" || resolvedProvider == configuredProvider {
+		return LCAgentModelProviderMismatch{}, false
+	}
+	return LCAgentModelProviderMismatch{
+		ConfiguredProvider: configuredProvider,
+		ResolvedProvider:   resolvedProvider,
+		Model:              model,
+		NormalizedModel:    modeladapter.NormalizeModelForProvider(resolvedProvider, model),
+	}, true
+}
+
+// LCAgentProviderDisplayName returns the user-facing provider label.
+func LCAgentProviderDisplayName(provider string) string {
+	return lcagentProviderDisplayName(provider)
+}
+
 func lcagentModelOptionExists(models []ModelOption, id string) bool {
 	for _, option := range models {
 		if strings.EqualFold(strings.TrimSpace(option.ID), strings.TrimSpace(id)) ||
