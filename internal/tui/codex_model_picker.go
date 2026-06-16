@@ -307,7 +307,7 @@ func (m *Model) setCodexModelPickerModel(option codexapp.ModelOption, preferredR
 	if index := codexModelOptionIndex(state.RecentModels, key); index >= 0 {
 		state.RecentIndex = index
 	}
-	efforts := codexReasoningOptionsFor(option)
+	efforts := m.codexReasoningOptionsForModel(option)
 	if len(efforts) == 0 {
 		state.EffortIndex = 0
 		return
@@ -327,7 +327,7 @@ func (m Model) currentCodexReasoningOptions() []codexapp.ReasoningEffortOption {
 	if !ok {
 		return nil
 	}
-	return codexReasoningOptionsFor(modelOption)
+	return m.codexReasoningOptionsForModel(modelOption)
 }
 
 func (m Model) currentCodexReasoningOption() (codexapp.ReasoningEffortOption, bool) {
@@ -739,7 +739,7 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 		return m.applyCodexCriticModelPickerSelection(modelOption)
 	}
 	effort := ""
-	reasoningOptions := codexReasoningOptionsFor(modelOption)
+	reasoningOptions := m.codexReasoningOptionsForModel(modelOption)
 	if len(reasoningOptions) > 0 {
 		effort = strings.TrimSpace(modelOption.DefaultReasoningEffort)
 		if selectedEffort, ok := m.currentCodexReasoningOption(); ok {
@@ -1209,6 +1209,15 @@ func codexReasoningOptionsFor(option codexapp.ModelOption) []codexapp.ReasoningE
 		return nil
 	}
 	return append([]codexapp.ReasoningEffortOption(nil), option.SupportedReasoningEfforts...)
+}
+
+func (m Model) codexReasoningOptionsForModel(option codexapp.ModelOption) []codexapp.ReasoningEffortOption {
+	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent && len(option.SupportedReasoningEfforts) == 0 {
+		if efforts := codexapp.LCAgentReasoningEffortOptionsForProvider(option.ModelProvider); len(efforts) > 0 {
+			return efforts
+		}
+	}
+	return codexReasoningOptionsFor(option)
 }
 
 func codexReasoningOptionIndex(options []codexapp.ReasoningEffortOption, desired string) int {

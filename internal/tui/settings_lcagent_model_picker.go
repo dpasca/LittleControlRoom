@@ -352,7 +352,7 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	case "esc":
 		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
 		return m, nil
-	case "left", "h", "backspace":
+	case "left", "h":
 		if strings.TrimSpace(state.APIKeyProvider) != "" {
 			state.Step = settingsLCAgentModelPickerStepAPIKey
 			m.status = "Paste or confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " API key."
@@ -598,9 +598,11 @@ func (m Model) updateSettingsLCAgentModelPickerReasoningStep(msg tea.KeyMsg) (te
 		return m, nil
 	case "up", "k", "shift+tab":
 		state.ReasoningSelected = wrapIndex(state.ReasoningSelected-1, len(options))
+		state.PendingReasoning = strings.TrimSpace(options[state.ReasoningSelected].Value)
 		return m, nil
 	case "down", "j", "tab":
 		state.ReasoningSelected = wrapIndex(state.ReasoningSelected+1, len(options))
+		state.PendingReasoning = strings.TrimSpace(options[state.ReasoningSelected].Value)
 		return m, nil
 	case "enter":
 		state.PendingReasoning = strings.TrimSpace(options[state.ReasoningSelected].Value)
@@ -1220,7 +1222,12 @@ func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPicke
 	if state.PendingModelAuto || strings.TrimSpace(modelOption.Model) == "" {
 		modelOption = settingsLCAgentModelPickerDefaultOption(state.Models)
 	}
-	for _, effort := range modelOption.SupportedReasoningEfforts {
+	efforts := modelOption.SupportedReasoningEfforts
+	if len(efforts) == 0 {
+		provider := firstNonEmptyTrimmed(modelOption.ModelProvider, state.Provider)
+		efforts = codexapp.LCAgentReasoningEffortOptionsForProvider(provider)
+	}
+	for _, effort := range efforts {
 		value := strings.TrimSpace(effort.ReasoningEffort)
 		if value == "" {
 			continue

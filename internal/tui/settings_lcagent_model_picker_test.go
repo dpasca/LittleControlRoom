@@ -146,6 +146,40 @@ func TestSettingsLCAgentModelPickerJKTypeIntoFilter(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentModelPickerBackspaceEditsFilter(t *testing.T) {
+	models := []codexapp.ModelOption{
+		{Model: "openai/gpt-5.5", DisplayName: "GPT 5.5"},
+		{Model: "kimi-k2.7-code", DisplayName: "Kimi K2.7 Code"},
+	}
+	input := newSettingsLCAgentModelPickerFilterInput()
+	input.SetValue("gpt")
+	m := Model{
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldLCAgentModel,
+			Step:           settingsLCAgentModelPickerStepModel,
+			Provider:       "openrouter",
+			Models:         models,
+			FilteredModels: []codexapp.ModelOption{models[0]},
+			Rows:           buildSettingsLCAgentPickerRows([]codexapp.ModelOption{models[0]}, "openrouter"),
+			FilterInput:    input,
+			Selected:       2,
+		},
+	}
+
+	updated, _ := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyBackspace})
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil {
+		t.Fatal("model picker closed unexpectedly")
+	}
+	if state.Step != settingsLCAgentModelPickerStepModel {
+		t.Fatalf("picker step after backspace = %v, want model step", state.Step)
+	}
+	if state.FilterInput.Value() != "gp" {
+		t.Fatalf("filter after backspace = %q, want gp", state.FilterInput.Value())
+	}
+}
+
 func TestSettingsLCAgentModelPickerPageKeysSkipHeaders(t *testing.T) {
 	models := make([]codexapp.ModelOption, 0, 8)
 	for i := 0; i < 8; i++ {

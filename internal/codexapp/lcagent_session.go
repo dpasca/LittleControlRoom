@@ -820,6 +820,10 @@ func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffort
 	return lcagentReasoningEffortOptions()
 }
 
+func LCAgentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {
+	return append([]ReasoningEffortOption(nil), lcagentReasoningEffortOptionsForProvider(provider)...)
+}
+
 func lcagentDefaultReasoningEffort(provider, model string) string {
 	if strings.EqualFold(strings.TrimSpace(provider), "openai") ||
 		strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "openai/") {
