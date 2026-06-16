@@ -14,6 +14,7 @@ type SystemPromptOptions struct {
 	AdminWrite              bool
 	BrowserAvailable        bool
 	CriticConsultEnabled    bool
+	VisionAnalysisEnabled   bool
 	HostOS                  string
 	HostArch                string
 }
@@ -44,6 +45,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		fmt.Sprintf("- managed background processes available: %s", yesNo(opts.ManagedProcessesEnabled)),
 		fmt.Sprintf("- admin write available: %s", yesNo(opts.AdminWrite)),
 		fmt.Sprintf("- public web search available: %s", yesNo(opts.WebSearchEnabled)),
+		fmt.Sprintf("- vision image analysis available: %s", yesNo(opts.VisionAnalysisEnabled)),
 	}
 	lines = append(lines, hostEnvironmentPromptLines(opts)...)
 	lines = append(lines,
@@ -73,6 +75,11 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.CriticConsultEnabled {
 		lines = append(lines,
 			"consult_critic is available for optional advisory review from the configured critic model. Use it for focused second opinions on plans, patches, debugging hypotheses, or final claims when it would materially improve the work; include bounded context, then make your own decision from tool evidence.",
+		)
+	}
+	if opts.VisionAnalysisEnabled {
+		lines = append(lines,
+			"analyze_image is available for screenshot and image inspection. When user-facing visual quality matters, capture or locate the image, then use analyze_image with the expected visual state and specific checks before making final visual claims.",
 		)
 	}
 	if !opts.BrowserAvailable {

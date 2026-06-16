@@ -73,6 +73,8 @@ type AppConfig struct {
 	LCAgentUtilityModel       string
 	LCAgentCriticProvider     string
 	LCAgentCriticModel        string
+	LCAgentVisionProvider     string
+	LCAgentVisionModel        string
 	LCAgentWebSearchBackend   string
 	LCAgentWebSearchAPIKey    string
 	LCAgentWebSearchEngineID  string
@@ -224,6 +226,8 @@ type fileConfig struct {
 	LCAgentUtilityModel       *string   `toml:"lcagent_utility_model"`
 	LCAgentCriticProvider     *string   `toml:"lcagent_critic_provider"`
 	LCAgentCriticModel        *string   `toml:"lcagent_critic_model"`
+	LCAgentVisionProvider     *string   `toml:"lcagent_vision_provider"`
+	LCAgentVisionModel        *string   `toml:"lcagent_vision_model"`
 	LCAgentWebSearchBackend   *string   `toml:"lcagent_web_search_backend"`
 	LCAgentWebSearchAPIKey    *string   `toml:"lcagent_web_search_api_key"`
 	LCAgentWebSearchEngineID  *string   `toml:"lcagent_web_search_engine_id"`
@@ -256,6 +260,7 @@ func Default() AppConfig {
 		LCAgentRequestTimeout:   10 * time.Minute,
 		LCAgentUtilityProvider:  "main",
 		LCAgentCriticProvider:   "off",
+		LCAgentVisionProvider:   "off",
 		LCAgentWebSearchBackend: "off",
 		BossChatOllamaThinking:  true,
 		CodexLaunchPreset:       codexcli.DefaultPreset(),
@@ -315,6 +320,8 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentUtilityModel := fs.String("lcagent-utility-model", cfg.LCAgentUtilityModel, "LCAgent utility model for oversized search refinement; blank with provider main uses the main model")
 	lcagentCriticProvider := fs.String("lcagent-critic-provider", cfg.LCAgentCriticProvider, "LCAgent trace-only critic provider: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	lcagentCriticModel := fs.String("lcagent-critic-model", cfg.LCAgentCriticModel, "LCAgent trace-only critic model; blank with provider main uses the main model")
+	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
+	lcagentVisionModel := fs.String("lcagent-vision-model", cfg.LCAgentVisionModel, "LCAgent image-analysis model; blank with provider main uses the main model")
 	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, or searxng")
 	lcagentWebSearchAPIKey := fs.String("lcagent-web-search-api-key", cfg.LCAgentWebSearchAPIKey, "LCAgent web search API key for Exa or Google")
 	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
@@ -421,6 +428,12 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg.LCAgentCriticModel = strings.TrimSpace(*lcagentCriticModel)
+	cfg.LCAgentVisionProvider, err = parseLCAgentVisionProvider(*lcagentVisionProvider)
+	if err != nil {
+		return AppConfig{}, err
+	}
+	cfg.LCAgentVisionModel = strings.TrimSpace(*lcagentVisionModel)
+	cfg.LCAgentVisionModel = normalizeLCAgentModelForProvider(lcagentEffectiveVisionProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider, cfg.LCAgentVisionProvider), cfg.LCAgentVisionModel)
 	cfg.LCAgentWebSearchBackend, err = parseLCAgentWebSearchBackend(*lcagentWebSearchBackend)
 	if err != nil {
 		return AppConfig{}, err
@@ -693,9 +706,18 @@ func applyConfigFile(cfg *AppConfig) error {
 		cfg.LCAgentCriticProvider = value
 	}
 	applyOptionalTrimmedString(&cfg.LCAgentCriticModel, fc.LCAgentCriticModel)
+	if fc.LCAgentVisionProvider != nil {
+		value, err := parseLCAgentVisionProvider(*fc.LCAgentVisionProvider)
+		if err != nil {
+			return fmt.Errorf("config lcagent_vision_provider: %w", err)
+		}
+		cfg.LCAgentVisionProvider = value
+	}
+	applyOptionalTrimmedString(&cfg.LCAgentVisionModel, fc.LCAgentVisionModel)
 	cfg.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider), cfg.EmbeddedLCAgentModel)
 	cfg.LCAgentUtilityModel = normalizeLCAgentModelForProvider(lcagentEffectiveUtilityProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider, cfg.LCAgentUtilityProvider), cfg.LCAgentUtilityModel)
 	cfg.LCAgentCriticModel = normalizeLCAgentModelForProvider(lcagentEffectiveCriticProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider, cfg.LCAgentCriticProvider), cfg.LCAgentCriticModel)
+	cfg.LCAgentVisionModel = normalizeLCAgentModelForProvider(lcagentEffectiveVisionProvider(cfg.LCAgentRoutePreset, cfg.LCAgentProvider, cfg.LCAgentVisionProvider), cfg.LCAgentVisionModel)
 	if fc.LCAgentWebSearchBackend != nil {
 		value, err := parseLCAgentWebSearchBackend(*fc.LCAgentWebSearchBackend)
 		if err != nil {
@@ -806,6 +828,9 @@ func validate(cfg AppConfig) error {
 	if _, err := parseLCAgentCriticProvider(cfg.LCAgentCriticProvider); err != nil {
 		return err
 	}
+	if _, err := parseLCAgentVisionProvider(cfg.LCAgentVisionProvider); err != nil {
+		return err
+	}
 	if _, err := parseLCAgentWebSearchBackend(cfg.LCAgentWebSearchBackend); err != nil {
 		return err
 	}
@@ -910,6 +935,22 @@ func parseLCAgentCriticProvider(raw string) (string, error) {
 		return value, nil
 	default:
 		return "", fmt.Errorf("lcagent-critic-provider must be one of: off, main, openrouter, openai, deepseek, moonshot, xiaomi")
+	}
+}
+
+func parseLCAgentVisionProvider(raw string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.ReplaceAll(value, "_", "-")
+	if value == "" {
+		return "off", nil
+	}
+	switch value {
+	case "main", "same", "same-as-main":
+		return "main", nil
+	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+		return value, nil
+	default:
+		return "", fmt.Errorf("lcagent-vision-provider must be one of: off, main, openrouter, openai, deepseek, moonshot, xiaomi")
 	}
 }
 

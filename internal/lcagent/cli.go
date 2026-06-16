@@ -349,6 +349,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw string
 	var utilityProviderRaw, utilityModel string
 	var criticProviderRaw, criticModel string
+	var visionProviderRaw, visionModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw string
 	var requestTimeout time.Duration
@@ -373,6 +374,8 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "critic provider for one packet-bound pre-final review: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&criticModel, "critic-model", defaultCriticModel, "optional critic model; blank with provider main uses the main model")
+	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
+	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
@@ -479,6 +482,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	criticProvider, err := normalizeCriticProvider(criticProviderRaw)
+	if err != nil {
+		return err
+	}
+	visionProvider, err := normalizeVisionProvider(visionProviderRaw)
 	if err != nil {
 		return err
 	}
@@ -737,7 +744,14 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
+		}, modeladapter.OpenRouterConfig{
+			Model:           visionModel,
+			EnvFile:         envFile,
+			MaxTurns:        1,
+			RequestTimeout:  requestTimeout,
+			Temperature:     temperature,
+			OmitTemperature: omitTemperature,
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -757,7 +771,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -794,6 +808,13 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			writer:  writer,
 		}
 	}
+	vision := newVisionProfile(visionProvider, visionCfg, providerLabel, client.Model())
+	if vision.Enabled {
+		runner.ImageAnalyzer = visionAnalyzer{
+			profile:       vision,
+			workspaceRoot: runner.Files.Workspace.Root,
+		}
+	}
 	if err := writer.Write(session.Event{
 		"type":       "search_refine_profile",
 		"session_id": runner.SessionID,
@@ -813,6 +834,16 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"model":      critic.Model,
 		"mode":       "pre_final",
 		"message":    critic.Message,
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
+		"type":       "vision_profile",
+		"session_id": runner.SessionID,
+		"enabled":    vision.Enabled,
+		"provider":   vision.Provider,
+		"model":      vision.Model,
+		"message":    vision.Message,
 	}); err != nil {
 		return err
 	}
@@ -845,6 +876,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
 	systemPromptOptions.CriticConsultEnabled = critic.Enabled
+	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
 	if resumeSection := resumeContext.systemPromptSection(); resumeSection != "" {
 		projectInstructionPrompt = strings.TrimSpace(projectInstructionPrompt + "\n\n" + resumeSection)
 	}
@@ -886,6 +918,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolOptions.BrowserAvailable = runner.BrowserAvailable
 	toolOptions.CriticConsultEnabled = critic.Enabled
+	toolOptions.VisionAnalysisEnabled = vision.Enabled
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0

@@ -22,6 +22,7 @@ type ToolOptions struct {
 	AdminWrite              bool
 	BrowserAvailable        bool
 	CriticConsultEnabled    bool
+	VisionAnalysisEnabled   bool
 }
 
 func Tools() []ToolDefinition {
@@ -204,6 +205,26 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						},
 					},
 					"required": []string{"question"},
+				},
+			},
+		})
+	}
+	if opts.VisionAnalysisEnabled {
+		defs = append(defs, ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "analyze_image",
+				Description: "Ask the configured vision model to inspect an image file or screenshot pixels. Use this for visual QA, screenshots, layout/rendering issues, or image contents; do not substitute deterministic pixel counts for visual judgment when this tool is available.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":     map[string]any{"type": "string", "description": "Workspace-relative image path, or absolute path for read-only inspection when produced by browser_screenshot or another tool."},
+						"question": map[string]any{"type": "string", "maxLength": 1200, "description": "Focused question for the vision model, for example 'Does this screenshot show the boardwalk surface, ocean, and player correctly?'"},
+						"context":  map[string]any{"type": "string", "maxLength": 4000, "description": "Optional task context, expected visual state, or specific UI/game details to inspect."},
+						"checks":   map[string]any{"type": "array", "maxItems": 10, "items": map[string]any{"type": "string", "maxLength": 100}, "description": "Optional visual checks, for example missing ground plane, overlapping text, clipped elements, or color contrast."},
+					},
+					"required": []string{"path", "question"},
 				},
 			},
 		})

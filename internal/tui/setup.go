@@ -91,6 +91,7 @@ func (m *Model) openSetupMode() tea.Cmd {
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsLCAgentVisionCheckInFlight = false
 	m.settingsChoicePicker = nil
 	m.setupStep = setupStepProjectProvider
 	m.setupFocusedRole = setupRoleProjectReports
@@ -129,6 +130,7 @@ func (m *Model) closeSetupMode(status string) {
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsLCAgentVisionCheckInFlight = false
 	m.settingsChoicePicker = nil
 	m.blurSettingsFields()
 	if status != "" {
@@ -229,6 +231,10 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.saveSetupFromCurrentChoices()
 		}
 		return m.setupAdvance()
+	case "v":
+		if settingsFieldCanCheckLCAgentVision(m.setupSelectedConfigFieldIndex()) {
+			return m.checkSettingsLCAgentVision()
+		}
 	case "enter":
 		if settingsFieldUsesLocalBackendModelPicker(m.setupSelectedConfigFieldIndex()) {
 			return m.openLocalBackendModelPicker()
@@ -639,6 +645,8 @@ func (m Model) setupConfigFieldIndexes() []int {
 			settingsFieldLCAgentUtilityModel,
 			settingsFieldLCAgentCriticProvider,
 			settingsFieldLCAgentCriticModel,
+			settingsFieldLCAgentVisionProvider,
+			settingsFieldLCAgentVisionModel,
 		)
 		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
@@ -751,6 +759,8 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
 	settings.LCAgentCriticProvider = m.settingsFieldValue(settingsFieldLCAgentCriticProvider)
 	settings.LCAgentCriticModel = m.settingsFieldValue(settingsFieldLCAgentCriticModel)
+	settings.LCAgentVisionProvider = m.settingsFieldValue(settingsFieldLCAgentVisionProvider)
+	settings.LCAgentVisionModel = m.settingsFieldValue(settingsFieldLCAgentVisionModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
@@ -1446,13 +1456,19 @@ func (m Model) setupActionSegments() []string {
 			if m.setupSectionNavigation {
 				ctrlSLabel = "save"
 			}
-			return []string{
+			actions := []string{
 				renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle),
 				renderDialogAction("ctrl+s", ctrlSLabel, commitActionKeyStyle, commitActionTextStyle),
 				renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle),
 				renderDialogAction("Up/Down", "field", navigateActionKeyStyle, navigateActionTextStyle),
 				renderDialogAction("Esc", "back", cancelActionKeyStyle, cancelActionTextStyle),
 			}
+			if settingsFieldCanCheckLCAgentVision(m.setupSelectedConfigFieldIndex()) {
+				actions = append(actions[:1], append([]string{
+					renderDialogAction("v", "check", navigateActionKeyStyle, navigateActionTextStyle),
+				}, actions[1:]...)...)
+			}
+			return actions
 		}
 		actions := []string{
 			renderDialogAction("Enter", "continue", commitActionKeyStyle, commitActionTextStyle),

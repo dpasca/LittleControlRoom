@@ -167,6 +167,54 @@ func TestSettingsLCAgentMainModelEnterOpensProviderModelPicker(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentVisionCheckShortcutStartsProbe(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentVisionProvider = "openrouter"
+	settings.LCAgentVisionModel = "openai/gpt-4o-mini"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
+	m = updated.(Model)
+	_ = m.setSettingsSelection(settingsFieldLCAgentVisionModel)
+
+	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("vision check shortcut should start a check command")
+	}
+	if !got.settingsLCAgentVisionCheckInFlight {
+		t.Fatalf("vision check should be marked in flight")
+	}
+	if got.status != "Checking LCAgent vision image input..." {
+		t.Fatalf("status = %q, want vision check status", got.status)
+	}
+}
+
+func TestSettingsShortcutVStillTypesInTextFields(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	_ = m.setSettingsSelection(settingsFieldLCAgentEnvFile)
+
+	updated, _ := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	got := updated.(Model)
+	if got.settingsFieldValue(settingsFieldLCAgentEnvFile) != "v" {
+		t.Fatalf("env file value = %q, want typed v", got.settingsFieldValue(settingsFieldLCAgentEnvFile))
+	}
+}
+
 func TestSettingsGettingStartedEnterOpensFocusedSetupPanel(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 

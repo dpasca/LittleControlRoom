@@ -111,6 +111,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if names["consult_critic"] {
 		t.Fatalf("Tools() should not expose consult_critic unless a critic is enabled")
 	}
+	if names["analyze_image"] {
+		t.Fatalf("Tools() should not expose analyze_image unless vision analysis is enabled")
+	}
 	for _, processTool := range []string{"start_process", "list_processes", "stop_process"} {
 		if names[processTool] {
 			t.Fatalf("Tools() should not expose %s outside managed-process sessions", processTool)
@@ -140,6 +143,23 @@ func TestToolsWithOptionsExposeConsultCriticWhenEnabled(t *testing.T) {
 	required, _ := spec.Parameters["required"].([]string)
 	if len(required) != 1 || required[0] != "question" {
 		t.Fatalf("consult_critic required = %#v", spec.Parameters["required"])
+	}
+}
+
+func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
+	spec := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "analyze_image")
+	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") {
+		t.Fatalf("analyze_image description = %q", spec.Description)
+	}
+	props := spec.Parameters["properties"].(map[string]any)
+	for _, want := range []string{"path", "question", "context", "checks"} {
+		if _, ok := props[want]; !ok {
+			t.Fatalf("analyze_image missing %s property: %#v", want, props)
+		}
+	}
+	required, _ := spec.Parameters["required"].([]string)
+	if len(required) != 2 || required[0] != "path" || required[1] != "question" {
+		t.Fatalf("analyze_image required = %#v", spec.Parameters["required"])
 	}
 }
 
@@ -452,6 +472,108 @@ func TestSanitizeAssistantContentStripsProviderToolMarkup(t *testing.T) {
 	}
 	if clean, stripped := SanitizeAssistantContent("plain answer"); stripped || clean != "plain answer" {
 		t.Fatalf("plain sanitize = %q/%v", clean, stripped)
+	}
+}
+
+func TestCompleteVisionSendsChatCompletionsImageContent(t *testing.T) {
+	var sawImageURL string
+	var sawPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		messages := body["messages"].([]any)
+		message := messages[0].(map[string]any)
+		content := message["content"].([]any)
+		textPart := content[0].(map[string]any)
+		sawPrompt, _ = textPart["text"].(string)
+		imagePart := content[1].(map[string]any)
+		imageURL := imagePart["image_url"].(map[string]any)
+		sawImageURL, _ = imageURL["url"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-test","model":"vision-test","choices":[{"message":{"role":"assistant","content":"boardwalk missing"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouterClient(OpenRouterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Model:   "vision-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := client.CompleteVision(context.Background(), "Describe the screenshot", ImageInput{
+		MIMEType: "image/png",
+		Data:     []byte("png-bytes"),
+	})
+	if err != nil {
+		t.Fatalf("CompleteVision() error = %v", err)
+	}
+	if completion.Message.Content != "boardwalk missing" {
+		t.Fatalf("completion content = %q", completion.Message.Content)
+	}
+	if sawPrompt != "Describe the screenshot" {
+		t.Fatalf("prompt = %q", sawPrompt)
+	}
+	if !strings.HasPrefix(sawImageURL, "data:image/png;base64,") {
+		t.Fatalf("image url = %q", sawImageURL)
+	}
+}
+
+func TestCompleteVisionSendsOpenAIResponsesImageInput(t *testing.T) {
+	var sawImageURL string
+	var sawPrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Fatalf("request path = %s, want /responses", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		input := body["input"].([]any)
+		item := input[0].(map[string]any)
+		content := item["content"].([]any)
+		textPart := content[0].(map[string]any)
+		sawPrompt, _ = textPart["text"].(string)
+		imagePart := content[1].(map[string]any)
+		sawImageURL, _ = imagePart["image_url"].(string)
+		if body["store"] != false {
+			t.Fatalf("store = %#v, want false", body["store"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp-test","model":"gpt-vision-test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ground plane missing"}]}],"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenAIClient(OpenRouterConfig{
+		APIKey:  "test-key",
+		BaseURL: server.URL,
+		Model:   "gpt-vision-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := client.CompleteVision(context.Background(), "Inspect visual render", ImageInput{
+		MIMEType: "image/jpeg",
+		Data:     []byte("jpeg-bytes"),
+	})
+	if err != nil {
+		t.Fatalf("CompleteVision() error = %v", err)
+	}
+	if completion.Message.Content != "ground plane missing" {
+		t.Fatalf("completion content = %q", completion.Message.Content)
+	}
+	if sawPrompt != "Inspect visual render" {
+		t.Fatalf("prompt = %q", sawPrompt)
+	}
+	if !strings.HasPrefix(sawImageURL, "data:image/jpeg;base64,") {
+		t.Fatalf("image url = %q", sawImageURL)
 	}
 }
 

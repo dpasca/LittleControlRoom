@@ -56,6 +56,8 @@ const (
 	settingsFieldLCAgentUtilityModel
 	settingsFieldLCAgentCriticProvider
 	settingsFieldLCAgentCriticModel
+	settingsFieldLCAgentVisionProvider
+	settingsFieldLCAgentVisionModel
 	settingsFieldLCAgentWebSearchBackend
 	settingsFieldLCAgentWebSearchAPIKey
 	settingsFieldLCAgentWebSearchEngineID
@@ -218,6 +220,8 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentUtilityModel,
 				settingsFieldLCAgentCriticProvider,
 				settingsFieldLCAgentCriticModel,
+				settingsFieldLCAgentVisionProvider,
+				settingsFieldLCAgentVisionModel,
 				settingsFieldOpenRouterAPIKey,
 				settingsFieldOpenAIAPIKey,
 				settingsFieldDeepSeekAPIKey,
@@ -386,6 +390,7 @@ func settingsFieldUsesPicker(index int) bool {
 		index == settingsFieldBossChatBackend ||
 		index == settingsFieldLCAgentUtilityProvider ||
 		index == settingsFieldLCAgentCriticProvider ||
+		index == settingsFieldLCAgentVisionProvider ||
 		index == settingsFieldBrowserAutomation ||
 		index == settingsFieldLCAgentWebSearchBackend ||
 		settingsFieldUsesChoicePicker(index)
@@ -457,6 +462,7 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsLCAgentVisionCheckInFlight = false
 	m.settingsChoicePicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
@@ -491,6 +497,7 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsLCAgentVisionCheckInFlight = false
 	m.settingsChoicePicker = nil
 	m.settingsEmbeddedProject = ""
 	m.settingsEmbeddedProvider = ""
@@ -536,6 +543,7 @@ func (m *Model) closeSettingsMode(status string) {
 	m.settingsLCAgentSearchPickerVisible = false
 	m.settingsLCAgentSearchPickerSelected = 0
 	m.settingsLCAgentModelPicker = nil
+	m.settingsLCAgentVisionCheckInFlight = false
 	m.settingsChoicePicker = nil
 	m.localModelPickerVisible = false
 	m.localModelPickerBackend = config.AIBackendUnset
@@ -569,6 +577,10 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.moveSettingsSelection(-1)
 	case "ctrl+s":
 		return m.saveSettingsFromFields()
+	case "v":
+		if settingsFieldCanCheckLCAgentVision(m.settingsSelected) {
+			return m.checkSettingsLCAgentVision()
+		}
 	case "r":
 		if m.activeSettingsSection().id == settingsSectionGettingStarted {
 			m.status = "Refreshing AI backend availability..."
@@ -731,6 +743,8 @@ func (m Model) openSettingsPickerForField(fieldIndex int) (tea.Model, tea.Cmd) {
 		return m.openSettingsLCAgentProviderPicker()
 	case settingsFieldLCAgentCriticProvider:
 		return m.openSettingsLCAgentProviderPicker()
+	case settingsFieldLCAgentVisionProvider:
+		return m.openSettingsLCAgentProviderPicker()
 	case settingsFieldBrowserAutomation:
 		return m.openSettingsBrowserAutomationPicker()
 	case settingsFieldLCAgentWebSearchBackend:
@@ -797,6 +811,8 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldLCAgentUtilityModel),
 		m.settingsFieldValue(settingsFieldLCAgentCriticProvider),
 		m.settingsFieldValue(settingsFieldLCAgentCriticModel),
+		m.settingsFieldValue(settingsFieldLCAgentVisionProvider),
+		m.settingsFieldValue(settingsFieldLCAgentVisionModel),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID),
@@ -1108,6 +1124,8 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return settingsLCAgentUtilityProviderValue(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off"
 	case settingsFieldLCAgentCriticModel:
 		return settingsLCAgentCriticProviderValue(m.settingsFieldValue(settingsFieldLCAgentCriticProvider)) != "off"
+	case settingsFieldLCAgentVisionModel:
+		return settingsLCAgentVisionProviderValue(m.settingsFieldValue(settingsFieldLCAgentVisionProvider)) != "off"
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -1146,9 +1164,15 @@ func settingsLCAgentCredentialFieldRelevant(settings config.EditableSettings, pr
 		return true
 	}
 	criticProvider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
-	return !strings.EqualFold(criticProvider, "off") &&
+	if !strings.EqualFold(criticProvider, "off") &&
 		!strings.EqualFold(criticProvider, "main") &&
-		strings.EqualFold(strings.TrimSpace(criticProvider), strings.TrimSpace(provider))
+		strings.EqualFold(strings.TrimSpace(criticProvider), strings.TrimSpace(provider)) {
+		return true
+	}
+	visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+	return !strings.EqualFold(visionProvider, "off") &&
+		!strings.EqualFold(visionProvider, "main") &&
+		strings.EqualFold(strings.TrimSpace(visionProvider), strings.TrimSpace(provider))
 }
 
 func settingsBossModelFieldsRelevant(settings config.EditableSettings) bool {
@@ -1240,6 +1264,8 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 			settingsFieldLCAgentUtilityModel,
 			settingsFieldLCAgentCriticProvider,
 			settingsFieldLCAgentCriticModel,
+			settingsFieldLCAgentVisionProvider,
+			settingsFieldLCAgentVisionModel,
 		)
 		fields = append(fields, settingsLCAgentConnectionFields(settings)...)
 		fields = append(fields, settingsFieldLCAgentWebSearchBackend)
@@ -1684,6 +1710,8 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
 	settings.LCAgentCriticProvider = m.settingsFieldValue(settingsFieldLCAgentCriticProvider)
 	settings.LCAgentCriticModel = m.settingsFieldValue(settingsFieldLCAgentCriticModel)
+	settings.LCAgentVisionProvider = m.settingsFieldValue(settingsFieldLCAgentVisionProvider)
+	settings.LCAgentVisionModel = m.settingsFieldValue(settingsFieldLCAgentVisionModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
@@ -2088,6 +2116,12 @@ func settingsLCAgentKnownModelProviderIssue(settings config.EditableSettings) (s
 			return issue, true
 		}
 	}
+	visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+	if visionProvider != "main" && visionProvider != "off" {
+		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Vision model", "Vision Model provider", visionProvider, settings.LCAgentVisionModel); ok {
+			return issue, true
+		}
+	}
 	return settingsLCAgentModelProviderIssue{}, false
 }
 
@@ -2222,6 +2256,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Utility Model"
 		case settingsFieldLCAgentCriticProvider, settingsFieldLCAgentCriticModel:
 			return "Critic Model"
+		case settingsFieldLCAgentVisionProvider, settingsFieldLCAgentVisionModel:
+			return "Vision Model"
 		case settingsFieldLCAgentWebSearchBackend, settingsFieldLCAgentWebSearchAPIKey, settingsFieldLCAgentWebSearchEngineID, settingsFieldLCAgentWebSearchURL:
 			return "Web Search"
 		case settingsFieldLCAgentAuto, settingsFieldLCAgentAdminWrite, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile, settingsFieldLCAgentRequestTimeout:
@@ -2687,6 +2723,30 @@ func settingsLCAgentCriticProviderValue(raw string) string {
 	}
 }
 
+func settingsLCAgentVisionDefaultLabel(settings config.EditableSettings) string {
+	provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+	if provider == "off" {
+		return "off"
+	}
+	if provider == "main" {
+		mainProvider := settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings))
+		return "same as Main Model (" + mainProvider + " / " + settingsLCAgentMainModel(settings) + ")"
+	}
+	return lcagentDefaultModelForProvider(provider)
+}
+
+func settingsLCAgentVisionProviderValue(raw string) string {
+	normalized := normalizeSettingsChoice(raw)
+	switch normalized {
+	case "", "off":
+		return "off"
+	case "main", "same", "same-as-main":
+		return "main"
+	default:
+		return normalized
+	}
+}
+
 func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
 	if modelName := strings.TrimSpace(os.Getenv(brand.BossAssistantModelEnvVar)); modelName != "" {
 		return modelName + " from " + brand.BossAssistantModelEnvVar
@@ -2978,7 +3038,7 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsAIBackendValue(selected, inputWidth)
 		case settingsFieldBossChatBackend:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBossChatBackendValue(selected, inputWidth)
-		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentCriticProvider:
+		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentCriticProvider, settingsFieldLCAgentVisionProvider:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentProviderValue(fieldIndex, selected, inputWidth)
 		case settingsFieldBrowserAutomation:
 			row = labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsBrowserAutomationValue(selected, inputWidth)
@@ -3035,6 +3095,8 @@ func (m Model) settingsFieldPlaceholder(fieldIndex int) string {
 		return "Default: " + settingsLCAgentUtilityDefaultLabel(settings)
 	case settingsFieldLCAgentCriticModel:
 		return "Default: " + settingsLCAgentCriticDefaultLabel(settings)
+	case settingsFieldLCAgentVisionModel:
+		return "Default: " + settingsLCAgentVisionDefaultLabel(settings)
 	default:
 		return ""
 	}
@@ -3153,6 +3215,14 @@ func (m Model) renderSettingsActions() string {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions...)
+	}
+	if settingsFieldCanCheckLCAgentVision(m.settingsSelected) {
+		checkAction := renderDialogAction("v", "check", navigateActionKeyStyle, navigateActionTextStyle)
+		if len(actions) > 0 {
+			actions = append(actions[:1], append([]string{checkAction}, actions[1:]...)...)
+		} else {
+			actions = []string{checkAction}
+		}
 	}
 	return strings.Join([]string{
 		strings.Join(actions, "   "),
@@ -3424,6 +3494,21 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
+			"Vision model provider",
+			"Press Enter to choose the provider for analyze_image, use the Main Model, or turn image analysis off.",
+			settings.LCAgentVisionProvider,
+			32,
+			settingsSectionLCAgent,
+		),
+		newSettingsFieldWithPlaceholder(
+			"Vision model",
+			"Optional model ID for analyze_image. Choose a model that supports image input; blank uses the selected vision provider default.",
+			settings.LCAgentVisionModel,
+			256,
+			"Default: "+settingsLCAgentVisionDefaultLabel(settings),
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
 			"LCAgent web search",
 			"Press Enter to choose Off, Exa, Google, or SearXNG.",
 			settings.LCAgentWebSearchBackend,
@@ -3608,6 +3693,8 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
 	settings.LCAgentCriticProvider = strings.TrimSpace(settings.LCAgentCriticProvider)
 	settings.LCAgentCriticModel = strings.TrimSpace(settings.LCAgentCriticModel)
+	settings.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
+	settings.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
 	settings.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
 	settings.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
@@ -3889,6 +3976,31 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 		settings := m.settingsDraftForInferenceStatus()
 		return "Blank uses " + settingsLCAgentCriticDefaultLabel(settings) + ". The critic can suggest a follow-up draft, but cannot send it."
+	case settingsFieldLCAgentVisionProvider:
+		switch settingsLCAgentVisionProviderValue(field.input.Value()) {
+		case "off":
+			return "Image analysis is off; screenshots and image files remain paths only unless another tool inspects them."
+		case "main":
+			return "analyze_image will use the same provider and model as the Main Model. Press v to send a small image-input check."
+		case "openrouter":
+			return "analyze_image will use OpenRouter. Pick a model that supports image input; press v to check the selected route."
+		case "deepseek":
+			return "analyze_image will use direct DeepSeek. Pick a model that supports image input; press v to check the selected route."
+		case "openai":
+			return "analyze_image will use direct OpenAI. Pick a model that supports image input; press v to check the selected route."
+		case "moonshot":
+			return "analyze_image will use direct Moonshot/Kimi. Pick a model that supports image input; press v to check the selected route."
+		case "xiaomi":
+			return "analyze_image will use direct Xiaomi MiMo. Pick a model that supports image input; press v to check the selected route."
+		default:
+			return field.hint
+		}
+	case settingsFieldLCAgentVisionModel:
+		if model := strings.TrimSpace(field.input.Value()); model != "" {
+			return "analyze_image will request " + model + ". Press Enter to choose a model, or v to send a small image-input check."
+		}
+		settings := m.settingsDraftForInferenceStatus()
+		return "Blank uses " + settingsLCAgentVisionDefaultLabel(settings) + ". Press v to check image input after choosing a provider."
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":

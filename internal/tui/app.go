@@ -166,6 +166,7 @@ type Model struct {
 	settingsLCAgentSearchPickerVisible  bool
 	settingsLCAgentSearchPickerSelected int
 	settingsLCAgentModelPicker          *settingsLCAgentModelPickerState
+	settingsLCAgentVisionCheckInFlight  bool
 	settingsChoicePicker                *settingsChoicePickerState
 	settingsEmbeddedProject             string
 	settingsEmbeddedProvider            codexapp.Provider
@@ -511,6 +512,11 @@ type settingsSavedMsg struct {
 	settings config.EditableSettings
 	path     string
 	err      error
+}
+
+type settingsLCAgentVisionCheckMsg struct {
+	result codexapp.LCAgentVisionCheckResult
+	err    error
 }
 
 type codexLCAgentProviderSetupSavedMsg struct {
@@ -2249,6 +2255,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case settingsLCAgentModelListMsg:
 		return m.applySettingsLCAgentModelListMsg(msg)
+	case settingsLCAgentVisionCheckMsg:
+		return m.applySettingsLCAgentVisionCheckMsg(msg)
 	case codexLCAgentProviderSetupSavedMsg:
 		return m.applyCodexLCAgentProviderSetupSavedMsg(msg)
 	case setupSavedMsg:

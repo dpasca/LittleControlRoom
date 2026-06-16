@@ -447,6 +447,42 @@ func TestRunnerConsultsCriticWithFileExcerpt(t *testing.T) {
 	}
 }
 
+func TestRunnerAnalyzesImageWithConfiguredVisionModel(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	analyzer := &fakeImageAnalyzer{}
+	runner := Runner{
+		Session:       writer,
+		SessionID:     sessionID,
+		Prompt:        "make the skate game look like a boardwalk",
+		ImageAnalyzer: analyzer,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "analyze_image",
+		Args: raw(`{"path":"screenshot.png","question":"Is the boardwalk visible?","context":"Expected: wooden boardwalk, ocean, player.","checks":["missing boardwalk","floating props"]}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v", err)
+	}
+	if !result.Success || !strings.Contains(result.Output, "boardwalk is missing") {
+		t.Fatalf("analyze_image result = %#v", result)
+	}
+	if analyzer.request.Path != "screenshot.png" || analyzer.request.Question != "Is the boardwalk visible?" {
+		t.Fatalf("image request = %#v", analyzer.request)
+	}
+	text := stream.String()
+	for _, want := range []string{`"tool":"analyze_image"`, `"type":"image_analysis_started"`, `"type":"image_analysis_result"`, `"model":"fake-vision"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
 type fakeSearchRefiner struct {
 	request SearchRefineRequest
 }
@@ -496,6 +532,20 @@ func (f *fakeCriticConsultant) ConsultCritic(_ context.Context, request CriticCo
 			SuggestedFollowup: "Add a focused test.",
 		}},
 		UsageSummary: lcrmodel.LLMUsage{InputTokens: 12, OutputTokens: 4, TotalTokens: 16},
+	}, nil
+}
+
+type fakeImageAnalyzer struct {
+	request ImageAnalysisRequest
+}
+
+func (f *fakeImageAnalyzer) AnalyzeImage(_ context.Context, request ImageAnalysisRequest) (ImageAnalysisResult, error) {
+	f.request = request
+	return ImageAnalysisResult{
+		Output:       "The boardwalk is missing; props appear to float over a blue background.",
+		Provider:     "fake",
+		Model:        "fake-vision",
+		UsageSummary: lcrmodel.LLMUsage{InputTokens: 30, OutputTokens: 9, TotalTokens: 39},
 	}, nil
 }
 

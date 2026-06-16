@@ -1,8 +1,11 @@
 package codexapp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1941,6 +1944,89 @@ func TestCheckLCAgentProviderAccessUsesXiaomiBaseURL(t *testing.T) {
 	}
 	if !sawModels {
 		t.Fatalf("provider access check did not call Xiaomi model list")
+	}
+}
+
+func TestCheckLCAgentVisionAccessSendsOrdinaryPNG(t *testing.T) {
+	var sawVision bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		sawVision = true
+		if got := r.Header.Get("Authorization"); got != "Bearer saved-openrouter-key" {
+			t.Fatalf("Authorization = %q, want bearer key", got)
+		}
+		var body struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Role    string `json:"role"`
+				Content []struct {
+					Type     string `json:"type"`
+					Text     string `json:"text"`
+					ImageURL struct {
+						URL string `json:"url"`
+					} `json:"image_url"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.Model != "openai/gpt-4o-mini" {
+			t.Fatalf("model = %q, want openai/gpt-4o-mini", body.Model)
+		}
+		if len(body.Messages) != 1 || len(body.Messages[0].Content) != 2 {
+			t.Fatalf("messages = %#v, want one text block and one image block", body.Messages)
+		}
+		dataURL := body.Messages[0].Content[1].ImageURL.URL
+		const prefix = "data:image/png;base64,"
+		if !strings.HasPrefix(dataURL, prefix) {
+			t.Fatalf("image URL prefix = %q, want %q", dataURL[:min(len(dataURL), len(prefix))], prefix)
+		}
+		data, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(dataURL, prefix))
+		if err != nil {
+			t.Fatalf("decode image data: %v", err)
+		}
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatalf("decode png: %v", err)
+		}
+		bounds := img.Bounds()
+		if bounds.Dx() != 256 || bounds.Dy() != 256 {
+			t.Fatalf("probe image size = %dx%d, want 256x256", bounds.Dx(), bounds.Dy())
+		}
+		rr, gg, bb, _ := img.At(10, 10).RGBA()
+		if rr <= gg || rr <= bb {
+			t.Fatalf("top-left pixel is not red enough: r=%d g=%d b=%d", rr, gg, bb)
+		}
+		rr, gg, bb, _ = img.At(246, 246).RGBA()
+		if rr <= bb || gg <= bb {
+			t.Fatalf("bottom-right pixel is not yellow enough: r=%d g=%d b=%d", rr, gg, bb)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"vision-check","model":"openai/gpt-4o-mini","choices":[{"message":{"role":"assistant","content":"{\"can_inspect_image\":true,\"top_left\":\"red\",\"bottom_right\":\"yellow\",\"note\":\"visible\"}"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	result, err := CheckLCAgentVisionAccess(context.Background(), LaunchRequest{
+		Provider:                ProviderLCAgent,
+		ProjectPath:             t.TempDir(),
+		LCAgentProvider:         "openrouter",
+		LCAgentOpenRouterAPIKey: "saved-openrouter-key",
+		LCAgentVisionProvider:   "openrouter",
+		LCAgentVisionModel:      "openai/gpt-4o-mini",
+		LCAgentRequestTimeout:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("CheckLCAgentVisionAccess() error = %v", err)
+	}
+	if !sawVision {
+		t.Fatalf("vision access check did not send an image request")
+	}
+	if result.Provider != "openrouter" || result.Model != "openai/gpt-4o-mini" || !result.Verified || result.ObservedTopLeft != "red" || result.ObservedBottomRight != "yellow" {
+		t.Fatalf("result = %#v", result)
 	}
 }
 

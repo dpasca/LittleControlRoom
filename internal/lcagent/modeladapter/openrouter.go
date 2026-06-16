@@ -3,6 +3,7 @@ package modeladapter
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -165,6 +166,11 @@ type CompletionOptions struct {
 	ReasoningMaxTokens  int
 	ReasoningEffort     string
 	DisableThinking     bool
+}
+
+type ImageInput struct {
+	MIMEType string
+	Data     []byte
 }
 
 func NewOpenRouterClient(cfg OpenRouterConfig) (*Client, error) {
@@ -389,6 +395,28 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 	return c.CompleteWithOptions(ctx, messages, tools, CompletionOptions{})
 }
 
+func (c *Client) CompleteVision(ctx context.Context, prompt string, image ImageInput) (Completion, error) {
+	if c == nil {
+		return Completion{}, fmt.Errorf("provider client is not configured")
+	}
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return Completion{}, fmt.Errorf("vision prompt is required")
+	}
+	if len(image.Data) == 0 {
+		return Completion{}, fmt.Errorf("vision image data is required")
+	}
+	mimeType := strings.TrimSpace(image.MIMEType)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	dataURL := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
+	if c.reasoningStyle == "openai" {
+		return c.completeVisionResponses(ctx, prompt, dataURL)
+	}
+	return c.completeVisionChat(ctx, prompt, dataURL)
+}
+
 func (c *Client) ListModels(ctx context.Context) ([]ListedModel, error) {
 	if c == nil {
 		return nil, fmt.Errorf("provider client is not configured")
@@ -605,6 +633,95 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 	}, nil
 }
 
+func (c *Client) completeVisionChat(ctx context.Context, prompt, dataURL string) (Completion, error) {
+	body := map[string]any{
+		"model": c.model,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "text", "text": prompt},
+					{"type": "image_url", "image_url": map[string]any{"url": dataURL, "detail": "high"}},
+				},
+			},
+		},
+	}
+	if !c.omitTemperature {
+		temperature := DefaultChatTemperature
+		if c.temperature != nil {
+			temperature = *c.temperature
+		}
+		body["temperature"] = temperature
+	}
+	if len(c.providerOnly) > 0 {
+		body["provider"] = map[string]any{
+			"only":               c.providerOnly,
+			"allow_fallbacks":    false,
+			"require_parameters": true,
+		}
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return Completion{}, err
+	}
+	endpoint, err := url.JoinPath(c.baseURL, "chat", "completions")
+	if err != nil {
+		return Completion{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return Completion{}, err
+	}
+	c.setAPIKeyHeader(req.Header)
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range c.extraHeaders {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	if err != nil {
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
+	}
+	var parsed ChatResponse
+	decodeErr := json.Unmarshal(data, &parsed)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if decodeErr != nil {
+			if body := responseSnippet(data); body != "" {
+				return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, body, resp.Header.Get("Retry-After"))
+			}
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
+		}
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, parsed.Error.Message, resp.Header.Get("Retry-After"))
+		}
+		return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
+	}
+	if decodeErr != nil {
+		return Completion{}, newProviderDecodeError(c.providerLabel(), decodeErr)
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return Completion{}, newProviderBodyError(c.providerLabel(), parsed.Error.Message, parsed.Error.Type)
+	}
+	if len(parsed.Choices) == 0 {
+		return Completion{}, newProviderSchemaError(c.providerLabel(), "response had no choices")
+	}
+	choice := parsed.Choices[0]
+	modelName := strings.TrimSpace(firstNonEmpty(parsed.Model, c.model))
+	return Completion{
+		Message:      choice.Message,
+		ID:           strings.TrimSpace(parsed.ID),
+		Model:        modelName,
+		FinishReason: strings.TrimSpace(choice.FinishReason),
+		Usage:        append(json.RawMessage(nil), parsed.Usage...),
+		UsageSummary: UsageFromRaw(parsed.Usage, modelName),
+	}, nil
+}
+
 func moonshotSupportsDisableThinking(model string) bool {
 	switch strings.ToLower(strings.TrimSpace(NormalizeModelForProvider("moonshot", model))) {
 	case "kimi-k2.5", "kimi-k2.6":
@@ -699,6 +816,85 @@ func (c *Client) completeResponses(ctx context.Context, messages []Message, tool
 		return Completion{}, newProviderSchemaError(c.providerLabel(), "response had no content or function calls")
 	}
 	c.previousResponseID = strings.TrimSpace(parsed.ID)
+	modelName := strings.TrimSpace(firstNonEmpty(parsed.Model, c.model))
+	return Completion{
+		Message:      msg,
+		ID:           strings.TrimSpace(parsed.ID),
+		Model:        modelName,
+		FinishReason: strings.TrimSpace(parsed.Status),
+		Usage:        append(json.RawMessage(nil), parsed.Usage...),
+		UsageSummary: UsageFromRaw(parsed.Usage, modelName),
+	}, nil
+}
+
+func (c *Client) completeVisionResponses(ctx context.Context, prompt, dataURL string) (Completion, error) {
+	body := map[string]any{
+		"model": c.model,
+		"input": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "input_text", "text": prompt},
+					{"type": "input_image", "image_url": dataURL},
+				},
+			},
+		},
+		"store": false,
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return Completion{}, err
+	}
+	endpoint, err := url.JoinPath(c.baseURL, "responses")
+	if err != nil {
+		return Completion{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return Completion{}, err
+	}
+	c.setAPIKeyHeader(req.Header)
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range c.extraHeaders {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	if err != nil {
+		return Completion{}, newProviderRequestError(c.providerLabel(), err)
+	}
+	var parsed responsesResponse
+	decodeErr := json.Unmarshal(data, &parsed)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if decodeErr != nil {
+			if body := responseSnippet(data); body != "" {
+				return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, body, resp.Header.Get("Retry-After"))
+			}
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
+		}
+		if parsed.Error != nil && parsed.Error.Message != "" {
+			return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, parsed.Error.Message, resp.Header.Get("Retry-After"))
+		}
+		return Completion{}, newProviderHTTPError(c.providerLabel(), resp.StatusCode, "", resp.Header.Get("Retry-After"))
+	}
+	if decodeErr != nil {
+		return Completion{}, newProviderDecodeError(c.providerLabel(), decodeErr)
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return Completion{}, newProviderBodyError(c.providerLabel(), parsed.Error.Message, parsed.Error.Type)
+	}
+	if len(parsed.Output) == 0 {
+		return Completion{}, newProviderSchemaError(c.providerLabel(), "response had no output")
+	}
+	msg := responsesMessage(parsed.Output)
+	if strings.TrimSpace(msg.Content) == "" {
+		return Completion{}, newProviderSchemaError(c.providerLabel(), "response had no content")
+	}
 	modelName := strings.TrimSpace(firstNonEmpty(parsed.Model, c.model))
 	return Completion{
 		Message:      msg,

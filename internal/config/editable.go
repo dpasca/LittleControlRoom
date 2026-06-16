@@ -66,6 +66,8 @@ type EditableSettings struct {
 	LCAgentUtilityModel       string
 	LCAgentCriticProvider     string
 	LCAgentCriticModel        string
+	LCAgentVisionProvider     string
+	LCAgentVisionModel        string
 	LCAgentWebSearchBackend   string
 	LCAgentWebSearchAPIKey    string
 	LCAgentWebSearchEngineID  string
@@ -133,6 +135,8 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentUtilityModel:       cfg.LCAgentUtilityModel,
 		LCAgentCriticProvider:     cfg.LCAgentCriticProvider,
 		LCAgentCriticModel:        cfg.LCAgentCriticModel,
+		LCAgentVisionProvider:     cfg.LCAgentVisionProvider,
+		LCAgentVisionModel:        cfg.LCAgentVisionModel,
 		LCAgentWebSearchBackend:   cfg.LCAgentWebSearchBackend,
 		LCAgentWebSearchAPIKey:    cfg.LCAgentWebSearchAPIKey,
 		LCAgentWebSearchEngineID:  cfg.LCAgentWebSearchEngineID,
@@ -219,6 +223,7 @@ func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
 	settings.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider), settings.EmbeddedLCAgentModel)
 	settings.LCAgentUtilityModel = normalizeLCAgentModelForProvider(lcagentEffectiveUtilityProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentUtilityProvider), settings.LCAgentUtilityModel)
 	settings.LCAgentCriticModel = normalizeLCAgentModelForProvider(lcagentEffectiveCriticProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentCriticProvider), settings.LCAgentCriticModel)
+	settings.LCAgentVisionModel = normalizeLCAgentModelForProvider(lcagentEffectiveVisionProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentVisionProvider), settings.LCAgentVisionModel)
 	return settings
 }
 
@@ -236,6 +241,20 @@ func lcagentEffectiveUtilityProvider(routePreset, mainProvider, utilityProvider 
 
 func lcagentEffectiveCriticProvider(routePreset, mainProvider, criticProvider string) string {
 	value, err := parseLCAgentCriticProvider(criticProvider)
+	if err != nil {
+		return ""
+	}
+	if value == "main" {
+		return lcagentEffectiveMainProvider(routePreset, mainProvider)
+	}
+	if value == "off" {
+		return ""
+	}
+	return value
+}
+
+func lcagentEffectiveVisionProvider(routePreset, mainProvider, visionProvider string) string {
+	value, err := parseLCAgentVisionProvider(visionProvider)
 	if err != nil {
 		return ""
 	}
@@ -288,7 +307,7 @@ func trimLCAgentModelProviderPrefix(model, prefix string) string {
 	return model
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentCriticProviderRaw, lcagentCriticModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentCriticProviderRaw, lcagentCriticModelRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -361,6 +380,10 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		return EditableSettings{}, err
 	}
 	lcagentCriticProvider, err := parseLCAgentCriticProvider(lcagentCriticProviderRaw)
+	if err != nil {
+		return EditableSettings{}, err
+	}
+	lcagentVisionProvider, err := parseLCAgentVisionProvider(lcagentVisionProviderRaw)
 	if err != nil {
 		return EditableSettings{}, err
 	}
@@ -462,6 +485,8 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		LCAgentUtilityModel:      strings.TrimSpace(lcagentUtilityModelRaw),
 		LCAgentCriticProvider:    lcagentCriticProvider,
 		LCAgentCriticModel:       strings.TrimSpace(lcagentCriticModelRaw),
+		LCAgentVisionProvider:    lcagentVisionProvider,
+		LCAgentVisionModel:       strings.TrimSpace(lcagentVisionModelRaw),
 		LCAgentWebSearchBackend:  lcagentWebSearchBackend,
 		LCAgentWebSearchAPIKey:   strings.TrimSpace(lcagentWebSearchAPIKeyRaw),
 		LCAgentWebSearchEngineID: strings.TrimSpace(lcagentWebSearchEngineIDRaw),
@@ -566,6 +591,8 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
 	cfg.LCAgentCriticProvider = strings.TrimSpace(settings.LCAgentCriticProvider)
 	cfg.LCAgentCriticModel = strings.TrimSpace(settings.LCAgentCriticModel)
+	cfg.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
+	cfg.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
 	cfg.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
 	cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	cfg.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
@@ -798,6 +825,14 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if value := strings.TrimSpace(settings.LCAgentCriticModel); value != "" {
 		lines = append(lines, fmt.Sprintf("lcagent_critic_model = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value, err := parseLCAgentVisionProvider(settings.LCAgentVisionProvider); err == nil && value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_vision_provider = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentVisionModel); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_vision_model = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
 	if value, err := parseLCAgentWebSearchBackend(settings.LCAgentWebSearchBackend); err == nil && value != "" {

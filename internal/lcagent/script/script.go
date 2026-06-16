@@ -29,6 +29,9 @@ const (
 	defaultCriticConsultLinesPerFile = 160
 	maxCriticConsultFileChars        = 7000
 	maxCriticConsultTotalFileChars   = 24000
+	maxImageAnalysisQuestionChars    = 1200
+	maxImageAnalysisContextChars     = 4000
+	maxImageAnalysisChecks           = 10
 )
 
 type Runner struct {
@@ -43,6 +46,7 @@ type Runner struct {
 	SearchRefiner        SearchRefiner
 	CodeScout            CodeScout
 	CriticConsultant     CriticConsultant
+	ImageAnalyzer        ImageAnalyzer
 	SearchRefineMinBytes int
 	Approvals            ApprovalBroker
 	Processes            ProcessBroker
@@ -71,6 +75,10 @@ type CodeScout interface {
 
 type CriticConsultant interface {
 	ConsultCritic(context.Context, CriticConsultRequest) (CriticConsultResult, error)
+}
+
+type ImageAnalyzer interface {
+	AnalyzeImage(context.Context, ImageAnalysisRequest) (ImageAnalysisResult, error)
 }
 
 type BrowserRunner interface {
@@ -148,6 +156,23 @@ type CriticConsultResult struct {
 	PacketHash          string
 	Usage               json.RawMessage
 	UsageSummary        lcrmodel.LLMUsage
+}
+
+type ImageAnalysisRequest struct {
+	SessionID   string
+	UserRequest string
+	Path        string
+	Question    string
+	Context     string
+	Checks      []string
+}
+
+type ImageAnalysisResult struct {
+	Output       string
+	Provider     string
+	Model        string
+	Usage        json.RawMessage
+	UsageSummary lcrmodel.LLMUsage
 }
 
 type CriticConsultFinding struct {
@@ -240,6 +265,13 @@ type consultCriticArgs struct {
 	Candidate string                  `json:"candidate,omitempty"`
 	Checks    []string                `json:"checks,omitempty"`
 	Files     []consultCriticFileArgs `json:"files,omitempty"`
+}
+
+type analyzeImageArgs struct {
+	Path     string   `json:"path"`
+	Question string   `json:"question"`
+	Context  string   `json:"context,omitempty"`
+	Checks   []string `json:"checks,omitempty"`
 }
 
 type consultCriticFileArgs struct {
@@ -889,6 +921,17 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 		var err error
 		result, err = r.runConsultCritic(ctx, args)
+		if err != nil {
+			return tools.ToolResult{}, err
+		}
+	case "analyze_image":
+		var args analyzeImageArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		var err error
+		result, err = r.runAnalyzeImage(ctx, args)
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
@@ -2057,6 +2100,46 @@ func (r *Runner) runConsultCritic(ctx context.Context, args consultCriticArgs) (
 	return tools.ToolResult{Success: true, Output: formatCriticConsultResult(consulted), Truncated: inputTruncated}, nil
 }
 
+func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (tools.ToolResult, error) {
+	if r.ImageAnalyzer == nil {
+		return tools.ToolResult{Success: false, Error: "analyze_image is not available for this LCAgent run"}, nil
+	}
+	path := strings.TrimSpace(args.Path)
+	if path == "" {
+		return tools.ToolResult{Success: false, Error: "analyze_image path is required"}, nil
+	}
+	question, questionTruncated := boundedCriticConsultText(args.Question, maxImageAnalysisQuestionChars)
+	if question == "" {
+		return tools.ToolResult{Success: false, Error: "analyze_image question is required"}, nil
+	}
+	contextText, contextTruncated := boundedCriticConsultText(args.Context, maxImageAnalysisContextChars)
+	checks := cleanImageAnalysisChecks(args.Checks)
+	request := ImageAnalysisRequest{
+		SessionID:   r.SessionID,
+		UserRequest: strings.TrimSpace(r.Prompt),
+		Path:        path,
+		Question:    question,
+		Context:     contextText,
+		Checks:      checks,
+	}
+	inputTruncated := questionTruncated || contextTruncated || len(args.Checks) > len(checks)
+	if err := r.writeImageAnalysisStartedEvent(request, inputTruncated); err != nil {
+		return tools.ToolResult{}, err
+	}
+	analyzed, err := r.ImageAnalyzer.AnalyzeImage(ctx, request)
+	if err != nil {
+		message := err.Error()
+		if writeErr := r.writeImageAnalysisFailedEvent(request, message); writeErr != nil {
+			return tools.ToolResult{}, writeErr
+		}
+		return tools.ToolResult{Success: false, Error: "image analysis failed: " + message}, nil
+	}
+	if err := r.writeImageAnalysisResultEvent(request, analyzed); err != nil {
+		return tools.ToolResult{}, err
+	}
+	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed), Truncated: inputTruncated}, nil
+}
+
 func (r *Runner) criticConsultFiles(files []consultCriticFileArgs) ([]CriticConsultFile, bool, tools.ToolResult) {
 	if len(files) == 0 {
 		return nil, false, tools.ToolResult{}
@@ -2152,6 +2235,27 @@ func cleanCriticConsultChecks(checks []string) []string {
 	return out
 }
 
+func cleanImageAnalysisChecks(checks []string) []string {
+	out := make([]string, 0, len(checks))
+	seen := map[string]struct{}{}
+	for _, check := range checks {
+		check, _ = boundedCriticConsultText(check, 100)
+		if check == "" {
+			continue
+		}
+		key := strings.ToLower(check)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, check)
+		if len(out) >= maxImageAnalysisChecks {
+			break
+		}
+	}
+	return out
+}
+
 func boundedCriticConsultText(value string, limit int) (string, bool) {
 	value = strings.TrimSpace(value)
 	if limit <= 0 || value == "" {
@@ -2165,6 +2269,14 @@ func boundedCriticConsultText(value string, limit int) (string, bool) {
 		return string(runes[:limit]), true
 	}
 	return strings.TrimSpace(string(runes[:limit-24])) + "\n...[truncated]...", true
+}
+
+func formatImageAnalysisResult(result ImageAnalysisResult) string {
+	output := strings.TrimSpace(result.Output)
+	if output == "" {
+		output = "vision model returned no substantive image analysis"
+	}
+	return "image_analysis:\n" + output + "\n"
 }
 
 func formatCriticConsultResult(result CriticConsultResult) string {
@@ -2264,6 +2376,50 @@ func (r *Runner) writeCriticConsultFailedEvent(request CriticConsultRequest, mes
 		event["failure_kind"] = strings.TrimSpace(failureKind)
 	}
 	return r.Session.Write(event)
+}
+
+func (r *Runner) writeImageAnalysisStartedEvent(request ImageAnalysisRequest, inputTruncated bool) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":            "image_analysis_started",
+		"session_id":      r.SessionID,
+		"path":            request.Path,
+		"question":        request.Question,
+		"checks":          request.Checks,
+		"input_truncated": inputTruncated,
+	})
+}
+
+func (r *Runner) writeImageAnalysisResultEvent(request ImageAnalysisRequest, result ImageAnalysisResult) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":          "image_analysis_result",
+		"session_id":    r.SessionID,
+		"path":          request.Path,
+		"question":      request.Question,
+		"provider":      strings.TrimSpace(result.Provider),
+		"model":         strings.TrimSpace(result.Model),
+		"output":        strings.TrimSpace(result.Output),
+		"usage":         json.RawMessage(result.Usage),
+		"usage_summary": result.UsageSummary,
+	})
+}
+
+func (r *Runner) writeImageAnalysisFailedEvent(request ImageAnalysisRequest, message string) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":       "image_analysis_failed",
+		"session_id": r.SessionID,
+		"path":       request.Path,
+		"question":   request.Question,
+		"message":    strings.TrimSpace(message),
+	})
 }
 
 func annotateSearchOutput(output string, headerLines ...string) string {

@@ -28,6 +28,8 @@ type lcagentReplay struct {
 	modelProvider            string
 	criticModel              string
 	criticModelProvider      string
+	visionModel              string
+	visionModelProvider      string
 	startedAt                time.Time
 	lastActivityAt           time.Time
 	lastError                string
@@ -40,6 +42,10 @@ type lcagentReplay struct {
 	criticFollowupDrafts     int
 	criticLastStatus         string
 	criticLastSummary        string
+	imageAnalysisActive      bool
+	imageAnalyses            int
+	imageAnalysisFailures    int
+	imageAnalysisLastSummary string
 	suggestedInputDraftID    string
 	suggestedInputDraft      string
 	tokenUsage               *threadTokenUsage
@@ -275,6 +281,12 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	if next.criticModelProvider != "" {
 		total.criticModelProvider = next.criticModelProvider
 	}
+	if next.visionModel != "" {
+		total.visionModel = next.visionModel
+	}
+	if next.visionModelProvider != "" {
+		total.visionModelProvider = next.visionModelProvider
+	}
 	total.criticActive = next.criticActive
 	total.criticReviews += next.criticReviews
 	total.criticConsultations += next.criticConsultations
@@ -285,6 +297,12 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	if next.criticLastStatus != "" {
 		total.criticLastStatus = next.criticLastStatus
 		total.criticLastSummary = next.criticLastSummary
+	}
+	total.imageAnalysisActive = next.imageAnalysisActive
+	total.imageAnalyses += next.imageAnalyses
+	total.imageAnalysisFailures += next.imageAnalysisFailures
+	if next.imageAnalysisLastSummary != "" {
+		total.imageAnalysisLastSummary = next.imageAnalysisLastSummary
 	}
 	if next.suggestedInputDraftID != "" || next.suggestedInputDraft != "" {
 		total.suggestedInputDraftID = next.suggestedInputDraftID
@@ -471,6 +489,11 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 				replay.criticModel = rawJSONString(event["model"])
 				replay.criticModelProvider = rawJSONString(event["provider"])
 			}
+		case "vision_profile":
+			if rawJSONBool(event["enabled"]) {
+				replay.visionModel = rawJSONString(event["model"])
+				replay.visionModelProvider = rawJSONString(event["provider"])
+			}
 		case "critic_review_started":
 			replay.criticActive = true
 			replay.criticLastStatus = "reviewing"
@@ -496,6 +519,12 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.applyCriticConsultResult(event)
 		case "critic_consult_failed":
 			replay.applyCriticConsultFailed(event)
+		case "image_analysis_started":
+			replay.applyImageAnalysisStarted(event)
+		case "image_analysis_result":
+			replay.applyImageAnalysisResult(event)
+		case "image_analysis_failed":
+			replay.applyImageAnalysisFailed(event)
 		case "user_message":
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
@@ -712,6 +741,55 @@ func (r *lcagentReplay) applyCriticConsultFailed(event map[string]json.RawMessag
 	r.criticLastStatus = "consult failed"
 	r.criticLastSummary = strings.TrimSpace(message)
 	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyImageAnalysisStarted(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	text := "LCAgent vision analyzing image"
+	if question := rawJSONString(event["question"]); question != "" {
+		text += ": " + lcagentCondenseStatusText(question, 160)
+	}
+	r.imageAnalysisActive = true
+	r.imageAnalysisLastSummary = ""
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyImageAnalysisResult(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	output := strings.TrimSpace(rawJSONString(event["output"]))
+	modelName := rawJSONString(event["model"])
+	if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
+		r.addTokenUsage(usage)
+	}
+	if provider := strings.TrimSpace(rawJSONString(event["provider"])); provider != "" {
+		r.visionModelProvider = provider
+	}
+	if model := strings.TrimSpace(modelName); model != "" {
+		r.visionModel = model
+	}
+	text := "LCAgent vision analysis complete"
+	if output != "" {
+		text += ": " + lcagentCondenseStatusText(output, 180)
+	}
+	r.imageAnalysisActive = false
+	r.imageAnalyses++
+	r.imageAnalysisLastSummary = output
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyImageAnalysisFailed(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	message := firstNonEmpty(rawJSONString(event["message"]), "image analysis failed")
+	r.imageAnalysisActive = false
+	r.imageAnalysisFailures++
+	r.imageAnalysisLastSummary = strings.TrimSpace(message)
+	r.appendEntry(TranscriptStatus, "LCAgent vision analysis failed: "+message)
 }
 
 func lcagentCriticReviewResultText(status, summary string) string {

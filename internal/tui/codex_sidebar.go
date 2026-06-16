@@ -432,6 +432,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	lines := []string{}
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSessionSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarCriticSection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarVisionSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth))
@@ -599,6 +600,56 @@ func embeddedSidebarCriticRows(snapshot codexapp.Snapshot, width int) []string {
 		rows = append(rows, embeddedSidebarFieldRow("Drafts", fmt.Sprintf("%d", snapshot.CriticFollowupDrafts), detailWarningStyle, width))
 	}
 	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
+		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+	}
+	return rows
+}
+
+func embeddedSidebarVisionModelLabel(snapshot codexapp.Snapshot) string {
+	model := strings.TrimSpace(snapshot.VisionModel)
+	if model == "" {
+		return ""
+	}
+	provider := strings.TrimSpace(snapshot.VisionModelProvider)
+	if provider == "" || strings.EqualFold(provider, strings.TrimSpace(snapshot.ModelProvider)) {
+		return model
+	}
+	return provider + "/" + model
+}
+
+func (m Model) renderEmbeddedSidebarVisionSection(snapshot codexapp.Snapshot, width int) []string {
+	rows := embeddedSidebarVisionRows(snapshot, width)
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string{renderEmbeddedSidebarStaticHeader("Vision", width)}, rows...)
+}
+
+func embeddedSidebarVisionRows(snapshot codexapp.Snapshot, width int) []string {
+	if snapshot.Provider != codexapp.ProviderLCAgent {
+		return nil
+	}
+	model := embeddedSidebarVisionModelLabel(snapshot)
+	if model == "" &&
+		!snapshot.ImageAnalysisActive &&
+		snapshot.ImageAnalyses == 0 &&
+		snapshot.ImageAnalysisFailures == 0 {
+		return nil
+	}
+	rows := []string{}
+	if model != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
+	}
+	status := "idle"
+	if snapshot.ImageAnalysisActive {
+		status = "analyzing"
+	}
+	rows = append(rows, embeddedSidebarFieldRow("Status", status, detailValueStyle, width))
+	rows = append(rows, embeddedSidebarFieldRow("Analyses", fmt.Sprintf("%d", max(0, snapshot.ImageAnalyses)), detailValueStyle, width))
+	if snapshot.ImageAnalysisFailures > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("Failures", fmt.Sprintf("%d", snapshot.ImageAnalysisFailures), detailWarningStyle, width))
+	}
+	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
 	return rows

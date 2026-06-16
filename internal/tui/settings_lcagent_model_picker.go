@@ -45,7 +45,7 @@ type settingsLCAgentModelListMsg struct {
 }
 
 func settingsFieldUsesLCAgentModelPicker(index int) bool {
-	return index == settingsFieldLCAgentModel || index == settingsFieldLCAgentUtilityModel
+	return index == settingsFieldLCAgentModel || index == settingsFieldLCAgentUtilityModel || index == settingsFieldLCAgentVisionModel
 }
 
 func newSettingsLCAgentModelPickerFilterInput() textinput.Model {
@@ -113,6 +113,16 @@ func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex
 			provider = utilityProvider
 		}
 		current = strings.TrimSpace(settings.LCAgentUtilityModel)
+	}
+	if fieldIndex == settingsFieldLCAgentVisionModel {
+		visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+		if visionProvider == "off" {
+			return codexapp.LCAgentModelListConfig{}, "", "", false
+		}
+		if visionProvider != "main" {
+			provider = visionProvider
+		}
+		current = strings.TrimSpace(settings.LCAgentVisionModel)
 	}
 	cfg := codexapp.LCAgentModelListConfig{
 		Provider:         provider,
@@ -305,11 +315,17 @@ func (m Model) applySettingsLCAgentModelPickerSelection(option codexapp.ModelOpt
 			if len(m.settingsFields) > settingsFieldLCAgentUtilityProvider {
 				m.settingsFields[settingsFieldLCAgentUtilityProvider].input.SetValue(strings.TrimSpace(option.ModelProvider))
 			}
+		case settingsFieldLCAgentVisionModel:
+			if len(m.settingsFields) > settingsFieldLCAgentVisionProvider {
+				m.settingsFields[settingsFieldLCAgentVisionProvider].input.SetValue(strings.TrimSpace(option.ModelProvider))
+			}
 		}
 	}
 	label := "Main model"
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
 		label = "Utility model"
+	} else if fieldIndex == settingsFieldLCAgentVisionModel {
+		label = "Vision model"
 	}
 	providerLabel := strings.TrimSpace(option.ModelProvider)
 	if providerLabel != "" {
@@ -343,6 +359,8 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	title := "LCAgent Model"
 	if state != nil && state.FieldIndex == settingsFieldLCAgentUtilityModel {
 		title = "LCAgent Utility Model"
+	} else if state != nil && state.FieldIndex == settingsFieldLCAgentVisionModel {
+		title = "LCAgent Vision Model"
 	} else if state != nil {
 		title = "LCAgent Main Model"
 	}
@@ -448,6 +466,9 @@ func settingsLCAgentModelPickerAutoLabel(settings config.EditableSettings, field
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
 		return settingsLCAgentUtilityDefaultLabel(settings)
 	}
+	if fieldIndex == settingsFieldLCAgentVisionModel {
+		return settingsLCAgentVisionDefaultLabel(settings)
+	}
 	return settingsLCAgentMainModel(settings)
 }
 
@@ -476,6 +497,21 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 				model = lcagentDefaultUtilityModelForProvider(provider)
 			}
 			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentUtilityProvider, provider) + " / " + model
+		}
+	}
+	if fieldIndex == settingsFieldLCAgentVisionModel {
+		provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+		switch provider {
+		case "off":
+			return "Off"
+		case "main":
+			return "Same as Main / " + settingsLCAgentMainModel(settings)
+		default:
+			model := strings.TrimSpace(settings.LCAgentVisionModel)
+			if model == "" {
+				model = lcagentDefaultModelForProvider(provider)
+			}
+			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentVisionProvider, provider) + " / " + model
 		}
 	}
 	provider := settingsLCAgentMainProvider(settings)

@@ -137,7 +137,57 @@ func settingsLCAgentCriticProviderOptions() []settingsLCAgentProviderOption {
 	}
 }
 
+func settingsLCAgentVisionProviderOptions() []settingsLCAgentProviderOption {
+	return []settingsLCAgentProviderOption{
+		{
+			Value:       "off",
+			Label:       "Off",
+			Summary:     "Disable image analysis.",
+			Description: "Default for normal use. LCAgent still captures screenshot paths, but it will not call a vision model to inspect pixels.",
+		},
+		{
+			Value:       "main",
+			Label:       "Same as Main",
+			Summary:     "Use the Main Model provider and model for image analysis.",
+			Description: "Only choose this when the Main Model supports image input. The analyze_image tool will send the selected screenshot or image file to that model.",
+		},
+		{
+			Value:       "openrouter",
+			Label:       "OpenRouter",
+			Summary:     "Use OpenRouter for image analysis.",
+			Description: "Uses the saved OpenRouter API key. Choose a model that supports image input.",
+		},
+		{
+			Value:       "openai",
+			Label:       "OpenAI",
+			Summary:     "Use direct OpenAI for image analysis.",
+			Description: "Useful for screenshot review and visual QA with OpenAI vision-capable models.",
+		},
+		{
+			Value:       "deepseek",
+			Label:       "DeepSeek",
+			Summary:     "Use direct DeepSeek for image analysis.",
+			Description: "Uses the saved DeepSeek API key. Choose a model that supports image input.",
+		},
+		{
+			Value:       "moonshot",
+			Label:       "Moonshot",
+			Summary:     "Use direct Moonshot/Kimi for image analysis.",
+			Description: "Uses the saved Moonshot API key. Choose a model that supports image input.",
+		},
+		{
+			Value:       "xiaomi",
+			Label:       "Xiaomi",
+			Summary:     "Use direct Xiaomi MiMo for image analysis.",
+			Description: "Uses the saved Xiaomi API key. Choose a model that supports image input.",
+		},
+	}
+}
+
 func settingsLCAgentProviderOptionsForField(fieldIndex int) []settingsLCAgentProviderOption {
+	if fieldIndex == settingsFieldLCAgentVisionProvider {
+		return settingsLCAgentVisionProviderOptions()
+	}
 	if fieldIndex == settingsFieldLCAgentCriticProvider {
 		return settingsLCAgentCriticProviderOptions()
 	}
@@ -157,6 +207,8 @@ func (m Model) openSettingsLCAgentProviderPicker() (tea.Model, tea.Cmd) {
 		m.status = "Choose the Utility Model provider for LCAgent."
 	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
 		m.status = "Choose the Critic Model provider for LCAgent."
+	} else if fieldIndex == settingsFieldLCAgentVisionProvider {
+		m.status = "Choose the Vision Model provider for LCAgent."
 	}
 	return m, nil
 }
@@ -175,6 +227,9 @@ func (m Model) settingsLCAgentProviderPickerField() int {
 	}
 	if m.settingsSelected == settingsFieldLCAgentCriticProvider {
 		return settingsFieldLCAgentCriticProvider
+	}
+	if m.settingsSelected == settingsFieldLCAgentVisionProvider {
+		return settingsFieldLCAgentVisionProvider
 	}
 	return settingsFieldLCAgentProvider
 }
@@ -233,6 +288,8 @@ func (m Model) applySettingsLCAgentProviderPickerSelection(option settingsLCAgen
 		target = "Utility Model provider"
 	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
 		target = "Critic Model provider"
+	} else if fieldIndex == settingsFieldLCAgentVisionProvider {
+		target = "Vision Model provider"
 	} else {
 		target = "Main Model provider"
 	}
@@ -263,6 +320,8 @@ func (m Model) renderSettingsLCAgentProviderPickerContent(width, bodyH int) stri
 		title = "Utility Model Provider"
 	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
 		title = "Critic Model Provider"
+	} else if fieldIndex == settingsFieldLCAgentVisionProvider {
+		title = "Vision Model Provider"
 	} else {
 		title = "Main Model Provider"
 	}
@@ -342,6 +401,16 @@ func settingsLCAgentProviderOptionValueForField(fieldIndex int, raw string) stri
 			return normalized
 		}
 	}
+	if fieldIndex == settingsFieldLCAgentVisionProvider {
+		switch normalized {
+		case "", "off":
+			return "off"
+		case "main", "same", "same-as-main":
+			return "main"
+		default:
+			return normalized
+		}
+	}
 	if normalized == "" {
 		return "openrouter"
 	}
@@ -359,6 +428,9 @@ func settingsLCAgentProviderOptionLabelForField(fieldIndex int, raw string) stri
 		return "Same as Main"
 	}
 	if fieldIndex == settingsFieldLCAgentCriticProvider {
+		return "Off"
+	}
+	if fieldIndex == settingsFieldLCAgentVisionProvider {
 		return "Off"
 	}
 	return "OpenRouter"

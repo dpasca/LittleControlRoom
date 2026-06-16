@@ -31,6 +31,7 @@ const (
 	lcagentDefaultRequestTimeout  = 10 * time.Minute
 	lcagentDefaultUtilityProvider = "main"
 	lcagentDefaultCriticProvider  = "off"
+	lcagentDefaultVisionProvider  = "off"
 	lcagentDefaultWebSearch       = "off"
 )
 
@@ -65,6 +66,8 @@ type lcagentSession struct {
 	utilityModel      string
 	criticProvider    string
 	criticModel       string
+	visionProvider    string
+	visionModel       string
 	modelWarning      string
 	webSearchBackend  string
 	webSearchAPIKey   string
@@ -116,6 +119,10 @@ type lcagentSession struct {
 	criticFollowupDrafts     int
 	criticLastStatus         string
 	criticLastSummary        string
+	imageAnalysisActive      bool
+	imageAnalyses            int
+	imageAnalysisFailures    int
+	imageAnalysisLastSummary string
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
@@ -175,6 +182,11 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if resolvedCriticProvider := lcagentResolvedCriticProvider(routePreset, provider, criticProvider); resolvedCriticProvider != "" {
 		criticModel = modeladapter.NormalizeModelForProvider(resolvedCriticProvider, req.LCAgentCriticModel)
 	}
+	visionProvider := lcagentVisionProviderValue(req.LCAgentVisionProvider)
+	visionModel := ""
+	if resolvedVisionProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider); resolvedVisionProvider != "" {
+		visionModel = modeladapter.NormalizeModelForProvider(resolvedVisionProvider, req.LCAgentVisionModel)
+	}
 	session := &lcagentSession{
 		projectPath:              strings.TrimSpace(req.ProjectPath),
 		dataDir:                  dataDir,
@@ -198,6 +210,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		utilityModel:             utilityModel,
 		criticProvider:           criticProvider,
 		criticModel:              criticModel,
+		visionProvider:           visionProvider,
+		visionModel:              visionModel,
 		modelWarning:             modelWarning,
 		webSearchBackend:         lcagentWebSearchBackendValue(req.LCAgentWebSearchBackend),
 		webSearchAPIKey:          strings.TrimSpace(req.LCAgentWebSearchAPIKey),
@@ -1217,6 +1231,10 @@ type lcagentPreparedRun struct {
 	criticModel        string
 	criticAPIKeyName   string
 	criticAPIKey       string
+	visionProvider     string
+	visionModel        string
+	visionAPIKeyName   string
+	visionAPIKey       string
 	browserControl     string
 	browserSessionKey  string
 	browserProfileKey  string
@@ -1344,6 +1362,15 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		criticModel = ""
 	}
 	criticAPIKeyName, criticAPIKey := s.providerCredentialLocked(criticCredentialProvider)
+	visionProvider := firstNonEmpty(s.visionProvider, lcagentDefaultVisionProvider)
+	visionModel := strings.TrimSpace(s.visionModel)
+	visionCredentialProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
+	if visionCredentialProvider != "" {
+		visionModel = modeladapter.NormalizeModelForProvider(visionCredentialProvider, visionModel)
+	} else {
+		visionModel = ""
+	}
+	visionAPIKeyName, visionAPIKey := s.providerCredentialLocked(visionCredentialProvider)
 	browserControl := "off"
 	browserSessionKey := strings.TrimSpace(s.managedBrowserSessionKey)
 	browserProfileKey := strings.TrimSpace(s.browserProfileKey)
@@ -1394,6 +1421,10 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		criticModel:        criticModel,
 		criticAPIKeyName:   criticAPIKeyName,
 		criticAPIKey:       criticAPIKey,
+		visionProvider:     visionProvider,
+		visionModel:        visionModel,
+		visionAPIKeyName:   visionAPIKeyName,
+		visionAPIKey:       visionAPIKey,
 		browserControl:     browserControl,
 		browserSessionKey:  browserSessionKey,
 		browserProfileKey:  browserProfileKey,
@@ -1443,6 +1474,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--approval-mode", "ask",
 		"--utility-provider", prepared.utilityProvider,
 		"--critic-provider", prepared.criticProvider,
+		"--vision-provider", prepared.visionProvider,
 		"--web-search-backend", prepared.webSearchBackend,
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
@@ -1459,6 +1491,9 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	}
 	if prepared.criticModel != "" {
 		args = append(args, "--critic-model", prepared.criticModel)
+	}
+	if prepared.visionModel != "" {
+		args = append(args, "--vision-model", prepared.visionModel)
 	}
 	if prepared.adminWrite {
 		args = append(args, "--admin-write")
@@ -1515,7 +1550,10 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	if prepared.criticAPIKeyName != "" && prepared.criticAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, prepared.criticAPIKeyName, prepared.criticAPIKey)
 	}
-	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi") || strings.EqualFold(lcagentResolvedCriticProvider(prepared.routePreset, prepared.provider, prepared.criticProvider), "xiaomi")) {
+	if prepared.visionAPIKeyName != "" && prepared.visionAPIKey != "" {
+		cmd.Env = setCommandEnv(cmd.Env, prepared.visionAPIKeyName, prepared.visionAPIKey)
+	}
+	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi") || strings.EqualFold(lcagentResolvedCriticProvider(prepared.routePreset, prepared.provider, prepared.criticProvider), "xiaomi") || strings.EqualFold(lcagentResolvedVisionProvider(prepared.routePreset, prepared.provider, prepared.visionProvider), "xiaomi")) {
 		cmd.Env = setCommandEnv(cmd.Env, "XIAOMI_BASE_URL", prepared.xiaomiBaseURL)
 	}
 	if prepared.webSearchAPIKey != "" {
@@ -1907,6 +1945,31 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
+	case "image_analysis_started":
+		text := "LCAgent vision analyzing image"
+		if question := rawJSONString(event["question"]); question != "" {
+			text += ": " + lcagentCondenseStatusText(question, 160)
+		}
+		s.mu.Lock()
+		s.status = text
+		s.imageAnalysisActive = true
+		s.imageAnalysisLastSummary = ""
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
+	case "image_analysis_result":
+		s.handleLCAgentImageAnalysisResult(event)
+	case "image_analysis_failed":
+		message := firstNonEmpty(rawJSONString(event["message"]), "image analysis failed")
+		text := "LCAgent vision analysis failed: " + message
+		s.mu.Lock()
+		s.status = text
+		s.imageAnalysisActive = false
+		s.imageAnalysisFailures++
+		s.imageAnalysisLastSummary = strings.TrimSpace(message)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
 	case "critic_review_result":
 		s.handleLCAgentCriticReviewResult(event)
 	case "critic_lead_feedback":
@@ -2263,6 +2326,35 @@ func lcagentCriticLeadFeedbackText(event map[string]json.RawMessage) string {
 	return "LCAgent critic requested one private lead revision: " + lcagentCondenseStatusText(message, 220)
 }
 
+func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.RawMessage) {
+	output := strings.TrimSpace(rawJSONString(event["output"]))
+	modelName := rawJSONString(event["model"])
+	usage, usageOK := lcagentUsageFromModelResponseEvent(event, modelName)
+
+	text := "LCAgent vision analysis complete"
+	if output != "" {
+		text += ": " + lcagentCondenseStatusText(output, 180)
+	}
+
+	s.mu.Lock()
+	s.status = text
+	s.imageAnalysisActive = false
+	s.imageAnalyses++
+	s.imageAnalysisLastSummary = strings.TrimSpace(output)
+	if model := strings.TrimSpace(modelName); model != "" {
+		s.visionModel = model
+	}
+	if provider := strings.TrimSpace(rawJSONString(event["provider"])); provider != "" {
+		s.visionProvider = provider
+	}
+	if usageOK {
+		s.addTokenUsageLocked(usage)
+	}
+	s.appendEntryLocked(TranscriptStatus, text)
+	s.touchLocked()
+	s.mu.Unlock()
+}
+
 func normalizeLCAgentCriticReviewStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "clean":
@@ -2516,6 +2608,12 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	if model := strings.TrimSpace(replay.criticModel); model != "" {
 		s.criticModel = model
 	}
+	if provider := strings.TrimSpace(replay.visionModelProvider); provider != "" {
+		s.visionProvider = provider
+	}
+	if model := strings.TrimSpace(replay.visionModel); model != "" {
+		s.visionModel = model
+	}
 	// If the restored model doesn't belong to the session's current provider,
 	// clear it so the next run defaults to the correct model.
 	sessionProvider := firstNonEmpty(s.provider, lcagentDefaultProvider)
@@ -2532,6 +2630,10 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.criticFollowupDrafts = replay.criticFollowupDrafts
 	s.criticLastStatus = strings.TrimSpace(replay.criticLastStatus)
 	s.criticLastSummary = strings.TrimSpace(replay.criticLastSummary)
+	s.imageAnalysisActive = replay.imageAnalysisActive
+	s.imageAnalyses = replay.imageAnalyses
+	s.imageAnalysisFailures = replay.imageAnalysisFailures
+	s.imageAnalysisLastSummary = strings.TrimSpace(replay.imageAnalysisLastSummary)
 	s.suggestedInputDraftID = strings.TrimSpace(replay.suggestedInputDraftID)
 	s.suggestedInputDraft = strings.TrimSpace(replay.suggestedInputDraft)
 	label := firstNonEmpty(s.threadID, "history")
@@ -2759,6 +2861,31 @@ func lcagentResolvedCriticProvider(routePreset string, mainProvider string, conf
 	}
 }
 
+func lcagentVisionProviderValue(configured string) string {
+	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_VISION_PROVIDER"))))
+	value = strings.ReplaceAll(value, "_", "-")
+	switch value {
+	case "main", "same", "same-as-main":
+		return "main"
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+		return value
+	default:
+		return lcagentDefaultVisionProvider
+	}
+}
+
+func lcagentResolvedVisionProvider(routePreset string, mainProvider string, configured string) string {
+	visionProvider := lcagentVisionProviderValue(configured)
+	switch visionProvider {
+	case "off":
+		return ""
+	case "main":
+		return firstNonEmpty(lcagentRoutePresetProvider(routePreset), mainProvider, lcagentDefaultProvider)
+	default:
+		return visionProvider
+	}
+}
+
 func (s *lcagentSession) webSearchWarning() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2955,6 +3082,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	model := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider))
 	modelProvider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider)
 	criticModel, criticModelProvider := s.resolvedCriticModelLocked(modelProvider, model)
+	visionModel, visionModelProvider := s.resolvedVisionModelLocked(modelProvider, model)
 	return Snapshot{
 		Provider:                  ProviderLCAgent,
 		ProjectPath:               s.projectPath,
@@ -2983,6 +3111,12 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		ModelProvider:             modelProvider,
 		CriticModel:               criticModel,
 		CriticModelProvider:       criticModelProvider,
+		VisionModel:               visionModel,
+		VisionModelProvider:       visionModelProvider,
+		ImageAnalysisActive:       s.imageAnalysisActive,
+		ImageAnalyses:             s.imageAnalyses,
+		ImageAnalysisFailures:     s.imageAnalysisFailures,
+		ImageAnalysisLastSummary:  strings.TrimSpace(s.imageAnalysisLastSummary),
 		CriticActive:              s.criticActive,
 		CriticReviews:             s.criticReviews,
 		CriticConsultations:       s.criticConsultations,
@@ -3008,6 +3142,26 @@ func (s *lcagentSession) resolvedCriticModelLocked(mainProvider, mainModel strin
 	}
 	model := strings.TrimSpace(s.criticModel)
 	if model == "" && criticProvider == "main" {
+		model = strings.TrimSpace(mainModel)
+	}
+	if model == "" {
+		model = lcagentDefaultModel(resolvedProvider)
+	}
+	model = modeladapter.NormalizeModelForProvider(resolvedProvider, model)
+	return model, resolvedProvider
+}
+
+func (s *lcagentSession) resolvedVisionModelLocked(mainProvider, mainModel string) (string, string) {
+	visionProvider := lcagentVisionProviderValue(s.visionProvider)
+	if visionProvider == "off" {
+		return "", ""
+	}
+	resolvedProvider := lcagentResolvedVisionProvider(s.routePreset, firstNonEmpty(s.provider, mainProvider), visionProvider)
+	if resolvedProvider == "" {
+		return "", ""
+	}
+	model := strings.TrimSpace(s.visionModel)
+	if model == "" && visionProvider == "main" {
 		model = strings.TrimSpace(mainModel)
 	}
 	if model == "" {

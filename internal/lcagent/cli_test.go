@@ -755,7 +755,8 @@ func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 4, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
+		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}
@@ -883,7 +884,8 @@ func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 5, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
+		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}

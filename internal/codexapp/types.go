@@ -511,6 +511,12 @@ type Snapshot struct {
 	ModelProvider             string
 	CriticModel               string
 	CriticModelProvider       string
+	VisionModel               string
+	VisionModelProvider       string
+	ImageAnalysisActive       bool
+	ImageAnalyses             int
+	ImageAnalysisFailures     int
+	ImageAnalysisLastSummary  string
 	CriticActive              bool
 	CriticReviews             int
 	CriticConsultations       int
@@ -590,6 +596,8 @@ type LaunchRequest struct {
 	LCAgentUtilityModel      string
 	LCAgentCriticProvider    string
 	LCAgentCriticModel       string
+	LCAgentVisionProvider    string
+	LCAgentVisionModel       string
 	LCAgentWebSearchBackend  string
 	LCAgentWebSearchAPIKey   string
 	LCAgentWebSearchEngineID string
