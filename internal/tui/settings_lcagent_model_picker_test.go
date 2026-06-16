@@ -34,6 +34,28 @@ func TestSettingsLCAgentModelListConfigUsesUtilityProvider(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentModelListConfigProviderOverrideWorksWhenRoleIsOff(t *testing.T) {
+	settings := config.EditableSettings{
+		LCAgentProvider:       "deepseek",
+		LCAgentVisionProvider: "off",
+		OpenRouterAPIKey:      "openrouter-key",
+	}
+
+	cfg, provider, current, ok := settingsLCAgentModelListConfigForProvider(settings, settingsFieldLCAgentVisionModel, "openrouter")
+	if !ok {
+		t.Fatal("settingsLCAgentModelListConfigForProvider() ok = false for Vision override from off")
+	}
+	if provider != "openrouter" {
+		t.Fatalf("provider = %q, want openrouter", provider)
+	}
+	if current != "" {
+		t.Fatalf("current = %q, want empty after provider override", current)
+	}
+	if cfg.Provider != "openrouter" || cfg.OpenRouterAPIKey != "openrouter-key" {
+		t.Fatalf("cfg = %#v", cfg)
+	}
+}
+
 func TestSettingsLCAgentModelPickerSelectionUpdatesField(t *testing.T) {
 	settings := config.EditableSettings{LCAgentProvider: "openrouter"}
 	m := Model{

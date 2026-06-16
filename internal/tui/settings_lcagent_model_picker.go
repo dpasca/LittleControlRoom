@@ -176,11 +176,12 @@ func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex
 }
 
 func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings, fieldIndex int, providerOverride string) (codexapp.LCAgentModelListConfig, string, string, bool) {
+	providerOverride = strings.ToLower(strings.TrimSpace(providerOverride))
 	provider := settingsLCAgentMainProvider(settings)
 	current := strings.TrimSpace(settings.EmbeddedLCAgentModel)
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
 		utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
-		if utilityProvider == "off" {
+		if utilityProvider == "off" && providerOverride == "" {
 			return codexapp.LCAgentModelListConfig{}, "", "", false
 		}
 		if utilityProvider != "main" {
@@ -190,7 +191,7 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 	}
 	if fieldIndex == settingsFieldLCAgentCriticModel {
 		criticProvider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
-		if criticProvider == "off" {
+		if criticProvider == "off" && providerOverride == "" {
 			return codexapp.LCAgentModelListConfig{}, "", "", false
 		}
 		if criticProvider != "main" {
@@ -200,7 +201,7 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
-		if visionProvider == "off" {
+		if visionProvider == "off" && providerOverride == "" {
 			return codexapp.LCAgentModelListConfig{}, "", "", false
 		}
 		if visionProvider != "main" {
@@ -222,7 +223,7 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 			current = strings.TrimSpace(settings.BossUtilityModel)
 		}
 	}
-	if providerOverride = strings.ToLower(strings.TrimSpace(providerOverride)); providerOverride != "" {
+	if providerOverride != "" {
 		if providerOverride == "off" {
 			return codexapp.LCAgentModelListConfig{}, "", "", false
 		}
