@@ -155,6 +155,7 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 		"--output", "stream-json",
 		"--approval-mode", "ask",
 		"--quality-checkpoint-passes", "1",
+		"--quality-repair-passes", "3",
 		"--admin-write",
 		"--utility-provider", "deepseek",
 		"--utility-model", "test-model",
@@ -1883,6 +1884,41 @@ func TestLCAgentReplayRestoresQualityCheckpointStats(t *testing.T) {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("replayed transcript missing %q:\n%s", want, snapshot.Transcript)
 		}
+	}
+}
+
+func TestLCAgentReplayRestoresQualityRepairStats(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_quality_repair"
+	started := time.Date(2026, 6, 16, 7, 2, 0, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "openrouter", "model": "deepseek/test"},
+		{"type": "quality_repair_profile", "session_id": sessionID, "enabled": true, "max_passes": 3},
+		{"type": "quality_repair_feedback", "session_id": sessionID, "pass": 2, "max_passes": 3, "reason": "critic_material_finding", "message": "Quality repair required"},
+		{"type": "turn_complete", "session_id": sessionID, "summary": "partial answer", "final_outcome": "partial", "verification_status": "not_run"},
+	})
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
+	}
+	lca := &lcagentSession{
+		projectPath: root,
+		provider:    "openrouter",
+	}
+	lca.applyReplay(replay)
+	snapshot := lca.Snapshot()
+	if !snapshot.QualityRepairActive {
+		t.Fatal("quality repair should remain active after unresolved repair replay")
+	}
+	if snapshot.QualityRepairPasses != 2 || snapshot.QualityRepairMaxPasses != 3 {
+		t.Fatalf("quality repair stats = %d/%d, want 2/3", snapshot.QualityRepairPasses, snapshot.QualityRepairMaxPasses)
+	}
+	if snapshot.QualityRepairLastSummary != "LCAgent requested quality repair 2/3" {
+		t.Fatalf("quality repair summary = %q", snapshot.QualityRepairLastSummary)
+	}
+	if !strings.Contains(snapshot.Transcript, "LCAgent requested quality repair 2/3") {
+		t.Fatalf("replayed transcript missing repair feedback:\n%s", snapshot.Transcript)
 	}
 }
 

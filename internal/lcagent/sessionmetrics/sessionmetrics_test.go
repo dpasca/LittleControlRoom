@@ -145,6 +145,8 @@ func TestAnalyzeFilesSummarizesQualityCheckpoints(t *testing.T) {
 	body := `{"type":"session_meta","id":"lca_quality","cwd":"/repo"}
 {"type":"quality_checkpoint_started","pass":1,"max_passes":1}
 {"type":"quality_checkpoint_feedback","pass":1,"max_passes":1,"message":"Quality checkpoint before final_response"}
+{"type":"quality_repair_feedback","pass":1,"max_passes":3,"reason":"critic_material_finding","message":"Quality repair required"}
+{"type":"quality_repair_cleared","passes":1,"max_passes":3,"summary":"clean after repair"}
 {"type":"verification_summary","status":"verified"}
 `
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
@@ -157,8 +159,14 @@ func TestAnalyzeFilesSummarizesQualityCheckpoints(t *testing.T) {
 	if summary.QualityCheckpointsStarted != 1 || summary.QualityCheckpointFeedback != 1 {
 		t.Fatalf("quality checkpoint counts = started %d feedback %d", summary.QualityCheckpointsStarted, summary.QualityCheckpointFeedback)
 	}
+	if summary.QualityRepairFeedback != 1 || summary.QualityRepairCleared != 1 {
+		t.Fatalf("quality repair counts = feedback %d cleared %d", summary.QualityRepairFeedback, summary.QualityRepairCleared)
+	}
 	if summary.TraceQuality.QualityCheckpoints != 1 || !traceQualityHasFinding(summary.TraceQuality, "quality_checkpoints") {
 		t.Fatalf("trace quality checkpoint fields = %#v", summary.TraceQuality)
+	}
+	if summary.TraceQuality.QualityRepairs != 1 || !traceQualityHasFinding(summary.TraceQuality, "quality_repairs") || !traceQualityHasFinding(summary.TraceQuality, "quality_repair_cleared") {
+		t.Fatalf("trace quality repair fields = %#v", summary.TraceQuality)
 	}
 }
 

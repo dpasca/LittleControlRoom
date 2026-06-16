@@ -621,7 +621,11 @@ func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string 
 	if !snapshot.QualityCheckpointActive &&
 		snapshot.QualityCheckpointPasses == 0 &&
 		snapshot.QualityCheckpointMaxPasses == 0 &&
-		strings.TrimSpace(snapshot.QualityCheckpointLastSummary) == "" {
+		strings.TrimSpace(snapshot.QualityCheckpointLastSummary) == "" &&
+		!snapshot.QualityRepairActive &&
+		snapshot.QualityRepairPasses == 0 &&
+		snapshot.QualityRepairMaxPasses == 0 &&
+		strings.TrimSpace(snapshot.QualityRepairLastSummary) == "" {
 		return nil
 	}
 	rows := []string{}
@@ -630,6 +634,9 @@ func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string 
 	if snapshot.QualityCheckpointActive {
 		status = "checking"
 		style = detailValueStyle
+	} else if snapshot.QualityRepairActive {
+		status = "repairing"
+		style = detailWarningStyle
 	} else if snapshot.QualityCheckpointPasses > 0 {
 		status = "checked"
 		style = detailValueStyle
@@ -639,8 +646,18 @@ func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string 
 	if snapshot.QualityCheckpointMaxPasses > 0 {
 		passes += fmt.Sprintf("/%d", snapshot.QualityCheckpointMaxPasses)
 	}
-	rows = append(rows, embeddedSidebarFieldRow("Passes", passes, detailValueStyle, width))
+	rows = append(rows, embeddedSidebarFieldRow("Checkpoints", passes, detailValueStyle, width))
+	repairPasses := fmt.Sprintf("%d", max(0, snapshot.QualityRepairPasses))
+	if snapshot.QualityRepairMaxPasses > 0 {
+		repairPasses += fmt.Sprintf("/%d", snapshot.QualityRepairMaxPasses)
+	}
+	if snapshot.QualityRepairPasses > 0 || snapshot.QualityRepairMaxPasses > 0 || snapshot.QualityRepairActive {
+		rows = append(rows, embeddedSidebarFieldRow("Repairs", repairPasses, detailWarningStyle, width))
+	}
 	if summary := strings.TrimSpace(snapshot.QualityCheckpointLastSummary); summary != "" {
+		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+	}
+	if summary := strings.TrimSpace(snapshot.QualityRepairLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
 	return rows
