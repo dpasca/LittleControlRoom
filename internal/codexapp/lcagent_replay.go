@@ -50,6 +50,10 @@ type lcagentReplay struct {
 	qualityCheckpointPasses      int
 	qualityCheckpointMaxPasses   int
 	qualityCheckpointLastSummary string
+	qualityRepairActive          bool
+	qualityRepairPasses          int
+	qualityRepairMaxPasses       int
+	qualityRepairLastSummary     string
 	suggestedInputDraftID        string
 	suggestedInputDraft          string
 	tokenUsage                   *threadTokenUsage
@@ -316,6 +320,14 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	if next.qualityCheckpointLastSummary != "" {
 		total.qualityCheckpointLastSummary = next.qualityCheckpointLastSummary
 	}
+	total.qualityRepairActive = next.qualityRepairActive
+	total.qualityRepairPasses += next.qualityRepairPasses
+	if next.qualityRepairMaxPasses > 0 {
+		total.qualityRepairMaxPasses = next.qualityRepairMaxPasses
+	}
+	if next.qualityRepairLastSummary != "" {
+		total.qualityRepairLastSummary = next.qualityRepairLastSummary
+	}
 	if next.suggestedInputDraftID != "" || next.suggestedInputDraft != "" {
 		total.suggestedInputDraftID = next.suggestedInputDraftID
 		total.suggestedInputDraft = next.suggestedInputDraft
@@ -543,6 +555,12 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.applyQualityCheckpointStarted(event)
 		case "quality_checkpoint_feedback":
 			replay.applyQualityCheckpointFeedback(event)
+		case "quality_repair_profile":
+			replay.qualityRepairMaxPasses = rawJSONInt(event["max_passes"])
+		case "quality_repair_feedback":
+			replay.applyQualityRepairFeedback(event)
+		case "quality_repair_cleared":
+			replay.applyQualityRepairCleared(event)
 		case "user_message":
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
@@ -838,6 +856,42 @@ func (r *lcagentReplay) applyQualityCheckpointFeedback(event map[string]json.Raw
 	}
 	text := lcagentQualityCheckpointFeedbackText(pass, maxPasses)
 	r.qualityCheckpointLastSummary = strings.TrimSpace(text)
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyQualityRepairFeedback(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	pass := rawJSONInt(event["pass"])
+	maxPasses := rawJSONInt(event["max_passes"])
+	r.qualityRepairActive = true
+	if pass > r.qualityRepairPasses {
+		r.qualityRepairPasses = pass
+	}
+	if maxPasses > 0 {
+		r.qualityRepairMaxPasses = maxPasses
+	}
+	text := lcagentQualityRepairFeedbackText(event, pass, maxPasses)
+	r.qualityRepairLastSummary = strings.TrimSpace(text)
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyQualityRepairCleared(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	pass := rawJSONInt(event["passes"])
+	maxPasses := rawJSONInt(event["max_passes"])
+	r.qualityRepairActive = false
+	if pass > r.qualityRepairPasses {
+		r.qualityRepairPasses = pass
+	}
+	if maxPasses > 0 {
+		r.qualityRepairMaxPasses = maxPasses
+	}
+	text := lcagentQualityRepairClearedText(pass, maxPasses)
+	r.qualityRepairLastSummary = strings.TrimSpace(text)
 	r.appendEntry(TranscriptStatus, text)
 }
 

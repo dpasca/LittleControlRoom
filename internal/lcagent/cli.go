@@ -355,6 +355,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var requestTimeout time.Duration
 	var maxTurns int
 	var qualityCheckpointPasses int
+	var qualityRepairPasses int
 	var searchRefineMinBytes int
 	var adminWrite, requireFinalResponseTool bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
@@ -394,6 +395,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
 	fs.IntVar(&qualityCheckpointPasses, "quality-checkpoint-passes", 0, "maximum lead self-review checkpoint passes before accepting final_response; embedded LCAgent enables one pass by default")
+	fs.IntVar(&qualityRepairPasses, "quality-repair-passes", 0, "maximum critic-driven artifact repair passes after material quality concerns; embedded LCAgent enables this for richer creation tasks")
 	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -497,6 +499,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if qualityCheckpointPasses < 0 {
 		return fmt.Errorf("quality-checkpoint-passes must be >= 0")
 	}
+	if qualityRepairPasses < 0 {
+		return fmt.Errorf("quality-repair-passes must be >= 0")
+	}
 	reasoningEffort = openRouterReasoningEffortForProvider(provider, reasoningEffort)
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
 	if err != nil {
@@ -556,6 +561,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["request_timeout"] = requestTimeout.String()
 	meta["max_turns"] = maxTurns
 	meta["quality_checkpoint_passes"] = qualityCheckpointPasses
+	meta["quality_repair_passes"] = qualityRepairPasses
 	meta["require_final_response_tool"] = requireFinalResponseTool
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
@@ -757,7 +763,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, qualityCheckpointPasses, webSearchStatus.Enabled)
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, qualityCheckpointPasses, qualityRepairPasses, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -777,7 +783,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, qualityCheckpointPasses int, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, qualityCheckpointPasses int, qualityRepairPasses int, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -826,6 +832,11 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		CriticAvailable: critic.Enabled,
 		VisionAvailable: vision.Enabled,
 	}
+	qualityRepairPolicy := qualityRepairPolicy{
+		MaxPasses:       qualityRepairPasses,
+		CriticAvailable: critic.Enabled,
+		VisionAvailable: vision.Enabled,
+	}
 	if err := writer.Write(session.Event{
 		"type":       "search_refine_profile",
 		"session_id": runner.SessionID,
@@ -866,6 +877,17 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"critic_available": qualityPolicy.CriticAvailable,
 		"vision_available": qualityPolicy.VisionAvailable,
 		"message":          qualityPolicy.Message(),
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
+		"type":             "quality_repair_profile",
+		"session_id":       runner.SessionID,
+		"enabled":          qualityRepairPolicy.Enabled(),
+		"max_passes":       qualityRepairPolicy.MaxPasses,
+		"critic_available": qualityRepairPolicy.CriticAvailable,
+		"vision_available": qualityRepairPolicy.VisionAvailable,
+		"message":          qualityRepairPolicy.Message(),
 	}); err != nil {
 		return err
 	}
@@ -946,6 +968,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	finalResponseToolFeedbacks := 0
 	criticLeadFeedbacks := 0
 	qualityCheckpointFeedbacks := 0
+	qualityRepairState := qualityRepairState{}
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		select {
@@ -1087,7 +1110,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					continue
 				}
 			}
-			if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, messages, contextCompacted, criticLeadFeedbacks); err != nil {
+			if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, messages, contextCompacted, criticLeadFeedbacks, qualityRepairPolicy, &qualityRepairState); err != nil {
 				return err
 			} else if applied {
 				criticLeadFeedbacks++
@@ -1195,7 +1218,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 						continue
 					}
 				}
-				if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, snapshotMessages, contextCompacted, criticLeadFeedbacks); err != nil {
+				if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, snapshotMessages, contextCompacted, criticLeadFeedbacks, qualityRepairPolicy, &qualityRepairState); err != nil {
 					return err
 				} else if applied {
 					criticLeadFeedbacks++
@@ -1476,6 +1499,75 @@ func cleanQualityCheckpointStrings(values []string) []string {
 	return out
 }
 
+type qualityRepairPolicy struct {
+	MaxPasses       int
+	CriticAvailable bool
+	VisionAvailable bool
+}
+
+func (p qualityRepairPolicy) Enabled() bool {
+	return p.MaxPasses > 0 && p.CriticAvailable
+}
+
+func (p qualityRepairPolicy) Message() string {
+	if !p.Enabled() {
+		if p.MaxPasses > 0 && !p.CriticAvailable {
+			return "LCAgent quality repair disabled because no critic is configured."
+		}
+		return "LCAgent quality repair disabled."
+	}
+	return fmt.Sprintf("LCAgent may require up to %d critic-driven artifact repair pass%s before accepting completed final_response.", p.MaxPasses, lcagentPluralSuffix(p.MaxPasses))
+}
+
+type qualityRepairState struct {
+	Active                    bool
+	Passes                    int
+	NoEvidenceReminders       int
+	LastSummary               string
+	LastFindings              []criticReviewFinding
+	FileTouchEventsAtFeedback int
+	VerificationAtFeedback    int
+	LastFeedbackMessage       string
+	LastFeedbackPacketHash    string
+	LastFeedbackCriticSummary string
+}
+
+func (s *qualityRepairState) recordFeedback(runner script.Runner, review criticReviewPayload, packetHash string, feedback string) {
+	if s == nil {
+		return
+	}
+	s.Active = true
+	s.Passes++
+	s.NoEvidenceReminders = 0
+	s.LastSummary = strings.TrimSpace(review.Summary)
+	s.LastFindings = cleanCriticFindings(review.Findings)
+	s.FileTouchEventsAtFeedback = runner.FileTouchEvents()
+	s.VerificationAtFeedback = len(runner.VerificationDetails())
+	s.LastFeedbackMessage = strings.TrimSpace(feedback)
+	s.LastFeedbackPacketHash = strings.TrimSpace(packetHash)
+	s.LastFeedbackCriticSummary = strings.TrimSpace(review.Summary)
+}
+
+func (s *qualityRepairState) clear() {
+	if s == nil {
+		return
+	}
+	s.Active = false
+	s.LastSummary = ""
+	s.LastFindings = nil
+	s.LastFeedbackMessage = ""
+	s.LastFeedbackPacketHash = ""
+	s.LastFeedbackCriticSummary = ""
+}
+
+func (s *qualityRepairState) hasEvidenceAfterFeedback(runner script.Runner) bool {
+	if s == nil || !s.Active {
+		return true
+	}
+	return runner.FileTouchEvents() > s.FileTouchEventsAtFeedback ||
+		len(runner.VerificationDetails()) > s.VerificationAtFeedback
+}
+
 func lcagentPluralSuffix(count int) string {
 	if count == 1 {
 		return ""
@@ -1483,9 +1575,32 @@ func lcagentPluralSuffix(count int) string {
 	return "es"
 }
 
-func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, runner script.Runner, critic criticProfile, final script.Action, messages []modeladapter.Message, compacted bool, feedbackCount int) (string, string, bool, error) {
-	if feedbackCount > 0 {
+func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, runner script.Runner, critic criticProfile, final script.Action, messages []modeladapter.Message, compacted bool, feedbackCount int, repairPolicy qualityRepairPolicy, repairState *qualityRepairState) (string, string, bool, error) {
+	if feedbackCount > 0 && !repairPolicy.Enabled() {
 		return "", "", false, nil
+	}
+	if repairPolicy.Enabled() && qualityRepairFinalOutcome(final) != "completed" {
+		return "", "", false, nil
+	}
+	if repairPolicy.Enabled() && repairState != nil && repairState.Active && qualityRepairFinalOutcome(final) == "completed" {
+		if !repairState.hasEvidenceAfterFeedback(runner) {
+			repairState.NoEvidenceReminders++
+			feedback := qualityRepairNoEvidenceMessage(*repairState, repairPolicy)
+			if err := writeQualityRepairFeedback(writer, runner.SessionID, repairState.LastFeedbackPacketHash, repairState.Passes, repairPolicy.MaxPasses, "no_new_evidence", feedback, repairState.LastFindings); err != nil {
+				return "", repairState.LastFeedbackPacketHash, false, err
+			}
+			return feedback, repairState.LastFeedbackPacketHash, true, nil
+		}
+		if repairState.Passes >= repairPolicy.MaxPasses {
+			feedback := qualityRepairExhaustedMessage(*repairState, repairPolicy)
+			if err := writeQualityRepairFeedback(writer, runner.SessionID, repairState.LastFeedbackPacketHash, repairState.Passes, repairPolicy.MaxPasses, "repair_budget_exhausted", feedback, repairState.LastFindings); err != nil {
+				return "", repairState.LastFeedbackPacketHash, false, err
+			}
+			return feedback, repairState.LastFeedbackPacketHash, true, nil
+		}
+	}
+	if repairPolicy.Enabled() && repairState != nil && repairState.Passes >= repairPolicy.MaxPasses && repairState.Active {
+		return "", repairState.LastFeedbackPacketHash, false, nil
 	}
 	review, packetHash, ran, err := maybeRunCriticReview(ctx, writer, runner, critic, final, messages, compacted, "pre_final")
 	if err != nil || !ran {
@@ -1493,12 +1608,105 @@ func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, r
 	}
 	feedback := criticLeadFeedbackMessage(review)
 	if feedback == "" {
+		if repairPolicy.Enabled() && repairState != nil && repairState.Active {
+			if err := writeQualityRepairCleared(writer, runner.SessionID, packetHash, repairState.Passes, repairPolicy.MaxPasses, strings.TrimSpace(review.Summary)); err != nil {
+				return "", packetHash, false, err
+			}
+			repairState.clear()
+		}
 		return "", packetHash, false, nil
+	}
+	if repairPolicy.Enabled() && repairState != nil {
+		pass := repairState.Passes + 1
+		if pass > repairPolicy.MaxPasses {
+			feedback = qualityRepairExhaustedMessage(*repairState, repairPolicy)
+			if err := writeQualityRepairFeedback(writer, runner.SessionID, packetHash, repairState.Passes, repairPolicy.MaxPasses, "repair_budget_exhausted", feedback, repairState.LastFindings); err != nil {
+				return "", packetHash, false, err
+			}
+			return feedback, packetHash, true, nil
+		}
+		feedback = qualityRepairFeedbackMessage(feedback, review, pass, repairPolicy.MaxPasses)
+		repairState.recordFeedback(runner, review, packetHash, feedback)
+		if err := writeQualityRepairFeedback(writer, runner.SessionID, packetHash, pass, repairPolicy.MaxPasses, "critic_material_finding", feedback, repairState.LastFindings); err != nil {
+			return "", packetHash, false, err
+		}
 	}
 	if err := writeCriticLeadFeedback(writer, runner.SessionID, packetHash, feedback); err != nil {
 		return "", packetHash, false, err
 	}
 	return feedback, packetHash, true, nil
+}
+
+func qualityRepairFinalOutcome(final script.Action) string {
+	outcome := strings.ToLower(strings.TrimSpace(final.Outcome))
+	if outcome == "" {
+		return "unknown"
+	}
+	return outcome
+}
+
+func qualityRepairFeedbackMessage(criticFeedback string, review criticReviewPayload, pass int, maxPasses int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Quality repair required (%d/%d): LCAgent critic found material issues that block a completed final_response.", pass, maxPasses)
+	b.WriteString("\n\n")
+	b.WriteString(strings.TrimSpace(criticFeedback))
+	b.WriteString("\n\nDo not satisfy this by only weakening the final summary. Make a concrete artifact change or run a concrete verification/re-analysis step targeted at the finding, then call final_response again with the new evidence.")
+	if pass >= maxPasses {
+		b.WriteString(" This is the final configured repair pass; if the issue remains after this pass, finish with outcome partial, blocked, or failed instead of completed.")
+	}
+	return b.String()
+}
+
+func qualityRepairNoEvidenceMessage(state qualityRepairState, policy qualityRepairPolicy) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Quality repair still required (%d/%d): the previous critic finding has not been followed by a new artifact change or verification check.", state.Passes, policy.MaxPasses)
+	if summary := strings.TrimSpace(state.LastFeedbackCriticSummary); summary != "" {
+		b.WriteString("\n\nPrevious critic summary: ")
+		b.WriteString(criticTrimFeedbackField(summary, 500))
+	}
+	b.WriteString("\n\nBefore claiming completed, make a concrete artifact change or run a targeted verification/re-analysis step that addresses the finding. If you cannot or should not fix it within this run, call final_response with outcome partial, blocked, or failed and explain the unresolved issue.")
+	return b.String()
+}
+
+func qualityRepairExhaustedMessage(state qualityRepairState, policy qualityRepairPolicy) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Quality repair budget exhausted (%d/%d): unresolved material quality findings remain.", state.Passes, policy.MaxPasses)
+	if summary := strings.TrimSpace(state.LastFeedbackCriticSummary); summary != "" {
+		b.WriteString("\n\nLast critic summary: ")
+		b.WriteString(criticTrimFeedbackField(summary, 500))
+	}
+	b.WriteString("\n\nDo not use final_response outcome completed unless a later critic/vision check explicitly clears the issue. Finish with outcome partial, blocked, or failed and clearly name what remains unresolved.")
+	return b.String()
+}
+
+func writeQualityRepairFeedback(writer *session.Writer, sessionID, packetHash string, pass int, maxPasses int, reason string, message string, findings []criticReviewFinding) error {
+	if writer == nil {
+		return nil
+	}
+	return writer.Write(session.Event{
+		"type":        "quality_repair_feedback",
+		"session_id":  sessionID,
+		"packet_hash": strings.TrimSpace(packetHash),
+		"pass":        pass,
+		"max_passes":  maxPasses,
+		"reason":      strings.TrimSpace(reason),
+		"message":     strings.TrimSpace(message),
+		"findings":    cleanCriticFindings(findings),
+	})
+}
+
+func writeQualityRepairCleared(writer *session.Writer, sessionID, packetHash string, passes int, maxPasses int, summary string) error {
+	if writer == nil {
+		return nil
+	}
+	return writer.Write(session.Event{
+		"type":        "quality_repair_cleared",
+		"session_id":  sessionID,
+		"packet_hash": strings.TrimSpace(packetHash),
+		"passes":      passes,
+		"max_passes":  maxPasses,
+		"summary":     strings.TrimSpace(summary),
+	})
 }
 
 func writeCriticLeadFeedback(writer *session.Writer, sessionID, packetHash, message string) error {

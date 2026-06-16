@@ -59,6 +59,7 @@ type Runner struct {
 	verificationChecks     []tools.VerificationCheck
 	operationalActions     []OperationalAction
 	filesTouched           []string
+	fileTouchEvents        int
 	commandApprovalGrants  []commandApprovalGrant
 	toolFailures           []tools.ToolResult
 	browserToolsUsed       bool
@@ -1141,6 +1142,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 
 	if action.Tool == "apply_patch" || action.Tool == "create_file" || action.Tool == "replace_file" || action.Tool == "replace_text" || action.Tool == "replace_lines" {
 		if len(result.FilesTouched) > 0 {
+			r.fileTouchEvents++
 			r.filesTouched = appendCleanUniqueStrings(r.filesTouched, result.FilesTouched...)
 			if err := r.Session.Write(session.Event{
 				"type":       "files_touched",
@@ -2549,6 +2551,13 @@ func (r *Runner) FilesTouched() []string {
 		return nil
 	}
 	return append([]string(nil), r.filesTouched...)
+}
+
+func (r *Runner) FileTouchEvents() int {
+	if r == nil {
+		return 0
+	}
+	return r.fileTouchEvents
 }
 
 func (r *Runner) VerificationDetails() []string {

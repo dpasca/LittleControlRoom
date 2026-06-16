@@ -641,6 +641,178 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	sawRepairFeedback := false
+	sawNoEvidenceFeedback := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_bad_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_bad_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "visual game is excellent",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "critic/test-model" {
+				t.Fatalf("request 2 model = %q, want critic model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_critic",
+				"model": "critic/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": `{"status":"needs_followup","confidence":0.9,"summary":"visual result is materially poor","findings":[{"severity":"high","materiality":"high","claim":"visual quality is poor","evidence_source":"image_analysis","evidence":"screenshot shows broken-looking geometry","user_impact":"the user asked for a good visual artifact","suggested_followup":"improve the artifact and recheck visually"}],"lead_instruction":"Improve the artifact and recheck it before claiming completion.","human_prompt":"","proposed_user_message":""}`,
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
+			})
+		case 3:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 3 model = %q, want lead model", body["model"])
+			}
+			messagesJSON, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(messagesJSON), "Quality repair required") {
+				t.Fatalf("lead retry did not receive quality repair feedback:\n%s", messagesJSON)
+			}
+			sawRepairFeedback = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_repeated_completed",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_repeated_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "toned down summary only",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
+			})
+		case 4:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 4 model = %q, want lead model", body["model"])
+			}
+			messagesJSON, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(messagesJSON), "has not been followed by a new artifact change or verification check") {
+				t.Fatalf("lead retry did not receive no-evidence repair gate:\n%s", messagesJSON)
+			}
+			sawNoEvidenceFeedback = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_partial_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_partial_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "partial: visual quality remains unresolved",
+									"outcome":       "partial",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
+			})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--critic-provider", "openrouter",
+		"--critic-model", "critic/test-model",
+		"--quality-repair-passes", "3",
+		"--max-turns", "5",
+		"make a visual game",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 4 {
+		t.Fatalf("requests = %d, want 4\nstdout=%s", requests, stdout.String())
+	}
+	if !sawRepairFeedback || !sawNoEvidenceFeedback {
+		t.Fatalf("repair feedback observed = %v no-evidence = %v", sawRepairFeedback, sawNoEvidenceFeedback)
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"quality_repair_profile"`,
+		`"type":"quality_repair_feedback"`,
+		`"reason":"critic_material_finding"`,
+		`"reason":"no_new_evidence"`,
+		`"summary":"partial: visual quality remains unresolved"`,
+		`"final_outcome":"partial"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecOpenRouterCriticRetriesInvalidJSONOnce(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -879,7 +1051,7 @@ func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, false)
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, 0, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}
@@ -1008,7 +1180,7 @@ func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, false)
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, 0, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}

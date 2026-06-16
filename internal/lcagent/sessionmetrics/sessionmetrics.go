@@ -65,6 +65,8 @@ type Summary struct {
 	FinalResponseAuditOutcomes  map[string]int     `json:"final_response_audit_outcomes,omitempty"`
 	QualityCheckpointsStarted   int                `json:"quality_checkpoints_started,omitempty"`
 	QualityCheckpointFeedback   int                `json:"quality_checkpoint_feedback,omitempty"`
+	QualityRepairFeedback       int                `json:"quality_repair_feedback,omitempty"`
+	QualityRepairCleared        int                `json:"quality_repair_cleared,omitempty"`
 	OperationalActions          int                `json:"operational_actions,omitempty"`
 	OperationalActionStatuses   map[string]int     `json:"operational_action_statuses,omitempty"`
 	ContextCompactions          int                `json:"context_compactions,omitempty"`
@@ -146,6 +148,7 @@ type TraceQuality struct {
 	CriticLeadFeedback   int                   `json:"critic_lead_feedback,omitempty"`
 	CriticHumanPrompts   int                   `json:"critic_human_prompts,omitempty"`
 	QualityCheckpoints   int                   `json:"quality_checkpoints,omitempty"`
+	QualityRepairs       int                   `json:"quality_repairs,omitempty"`
 	RepairEvents         int                   `json:"repair_events"`
 	VerifiedSessions     int                   `json:"verified_sessions"`
 	VerificationRate     float64               `json:"verification_rate"`
@@ -470,6 +473,10 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.QualityCheckpointsStarted++
 	case "quality_checkpoint_feedback":
 		s.QualityCheckpointFeedback++
+	case "quality_repair_feedback":
+		s.QualityRepairFeedback++
+	case "quality_repair_cleared":
+		s.QualityRepairCleared++
 	case "operational_action":
 		s.OperationalActions++
 		action := rawString(event["action"])
@@ -808,13 +815,14 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	quality := TraceQuality{
 		Score:                100,
 		VerifiedSessions:     s.VerificationStatuses["verified"],
-		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed + s.RepairGuidance,
+		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed + s.RepairGuidance + s.QualityRepairFeedback,
 		ProviderRetries:      s.ProviderRetries,
 		CriticReviews:        s.CriticReviewResults,
 		CriticConsultations:  s.CriticConsultResults,
 		CriticLeadFeedback:   s.CriticLeadFeedback,
 		CriticHumanPrompts:   s.CriticHumanPrompts,
 		QualityCheckpoints:   s.QualityCheckpointFeedback,
+		QualityRepairs:       s.QualityRepairFeedback,
 		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
 		CachedInputTokenRate: ratio64(s.TokenUsage.CachedInputTokens, s.TokenUsage.InputTokens),
 		EstimatedCostUSD:     s.TokenUsage.EstimatedCostUSD,
@@ -884,6 +892,13 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	}
 	if s.QualityCheckpointFeedback > 0 {
 		quality.addFinding("info", "quality_checkpoints", fmt.Sprintf("%d lead quality checkpoint pass(es) were requested.", s.QualityCheckpointFeedback))
+	}
+	if s.QualityRepairFeedback > 0 {
+		quality.addFinding("warn", "quality_repairs", fmt.Sprintf("%d quality repair feedback event(s) were needed.", s.QualityRepairFeedback))
+		quality.Score -= minInt(15, s.QualityRepairFeedback*3)
+	}
+	if s.QualityRepairCleared > 0 {
+		quality.addFinding("info", "quality_repair_cleared", fmt.Sprintf("%d quality repair concern(s) were cleared by a later check.", s.QualityRepairCleared))
 	}
 	if quality.ReadOverlapRate >= 0.25 && s.ReadFileLines >= 100 {
 		quality.addFinding("info", "read_overlap", fmt.Sprintf("%.0f%% of read_file lines overlapped earlier reads.", quality.ReadOverlapRate*100))

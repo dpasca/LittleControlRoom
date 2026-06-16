@@ -439,8 +439,29 @@ func TestEmbeddedSidebarShowsLCAgentQualityCheckpointActivity(t *testing.T) {
 	for _, want := range []string{
 		"Quality",
 		"Status checked",
-		"Passes 1/1",
+		"Checkpoints 1/1",
 		"LCAgent requested private quality pass 1/1",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("quality sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestEmbeddedSidebarShowsLCAgentQualityRepairActivity(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.QualityRepairActive = true
+	snapshot.QualityRepairPasses = 2
+	snapshot.QualityRepairMaxPasses = 3
+	snapshot.QualityRepairLastSummary = "LCAgent requested quality repair 2/3"
+
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
+	for _, want := range []string{
+		"Quality",
+		"Status repairing",
+		"Repairs 2/3",
+		"LCAgent requested quality repair 2/3",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("quality sidebar section missing %q:\n%s", want, rendered)

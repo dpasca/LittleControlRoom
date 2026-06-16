@@ -127,10 +127,15 @@ type lcagentSession struct {
 	qualityCheckpointPasses      int
 	qualityCheckpointMaxPasses   int
 	qualityCheckpointLastSummary string
+	qualityRepairActive          bool
+	qualityRepairPasses          int
+	qualityRepairMaxPasses       int
+	qualityRepairLastSummary     string
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
 const lcagentDefaultQualityCheckpointPasses = 1
+const lcagentDefaultQualityRepairPasses = 3
 
 func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if err := req.Validate(); err != nil {
@@ -1488,6 +1493,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
 		"--quality-checkpoint-passes", strconv.Itoa(lcagentDefaultQualityCheckpointPasses),
+		"--quality-repair-passes", strconv.Itoa(lcagentDefaultQualityRepairPasses),
 	)
 	if prepared.browserControl == "managed" {
 		args = append(args,
@@ -2014,6 +2020,45 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
+	case "quality_repair_profile":
+		s.mu.Lock()
+		s.qualityRepairMaxPasses = rawJSONInt(event["max_passes"])
+		s.touchLocked()
+		s.mu.Unlock()
+	case "quality_repair_feedback":
+		pass := rawJSONInt(event["pass"])
+		maxPasses := rawJSONInt(event["max_passes"])
+		text := lcagentQualityRepairFeedbackText(event, pass, maxPasses)
+		s.mu.Lock()
+		s.status = text
+		s.qualityRepairActive = true
+		if pass > s.qualityRepairPasses {
+			s.qualityRepairPasses = pass
+		}
+		if maxPasses > 0 {
+			s.qualityRepairMaxPasses = maxPasses
+		}
+		s.qualityRepairLastSummary = strings.TrimSpace(text)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
+	case "quality_repair_cleared":
+		pass := rawJSONInt(event["passes"])
+		maxPasses := rawJSONInt(event["max_passes"])
+		text := lcagentQualityRepairClearedText(pass, maxPasses)
+		s.mu.Lock()
+		s.status = text
+		s.qualityRepairActive = false
+		if pass > s.qualityRepairPasses {
+			s.qualityRepairPasses = pass
+		}
+		if maxPasses > 0 {
+			s.qualityRepairMaxPasses = maxPasses
+		}
+		s.qualityRepairLastSummary = strings.TrimSpace(text)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
 	case "critic_review_result":
 		s.handleLCAgentCriticReviewResult(event)
 	case "critic_lead_feedback":
@@ -2390,6 +2435,34 @@ func lcagentQualityCheckpointFeedbackText(pass, maxPasses int) string {
 	return fmt.Sprintf("LCAgent requested private quality pass %d", pass)
 }
 
+func lcagentQualityRepairFeedbackText(event map[string]json.RawMessage, pass, maxPasses int) string {
+	reason := strings.TrimSpace(rawJSONString(event["reason"]))
+	base := "LCAgent requested quality repair"
+	switch reason {
+	case "no_new_evidence":
+		base = "LCAgent still requires quality repair evidence"
+	case "repair_budget_exhausted":
+		base = "LCAgent quality repair budget exhausted"
+	}
+	if pass <= 0 {
+		return base
+	}
+	if maxPasses > 0 {
+		return fmt.Sprintf("%s %d/%d", base, pass, maxPasses)
+	}
+	return fmt.Sprintf("%s %d", base, pass)
+}
+
+func lcagentQualityRepairClearedText(pass, maxPasses int) string {
+	if pass <= 0 {
+		return "LCAgent quality repair cleared"
+	}
+	if maxPasses > 0 {
+		return fmt.Sprintf("LCAgent quality repair cleared after %d/%d", pass, maxPasses)
+	}
+	return fmt.Sprintf("LCAgent quality repair cleared after %d", pass)
+}
+
 func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.RawMessage) {
 	output := strings.TrimSpace(rawJSONString(event["output"]))
 	modelName := rawJSONString(event["model"])
@@ -2702,6 +2775,10 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.qualityCheckpointPasses = replay.qualityCheckpointPasses
 	s.qualityCheckpointMaxPasses = replay.qualityCheckpointMaxPasses
 	s.qualityCheckpointLastSummary = strings.TrimSpace(replay.qualityCheckpointLastSummary)
+	s.qualityRepairActive = replay.qualityRepairActive
+	s.qualityRepairPasses = replay.qualityRepairPasses
+	s.qualityRepairMaxPasses = replay.qualityRepairMaxPasses
+	s.qualityRepairLastSummary = strings.TrimSpace(replay.qualityRepairLastSummary)
 	s.suggestedInputDraftID = strings.TrimSpace(replay.suggestedInputDraftID)
 	s.suggestedInputDraft = strings.TrimSpace(replay.suggestedInputDraft)
 	label := firstNonEmpty(s.threadID, "history")
@@ -3189,6 +3266,10 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		QualityCheckpointPasses:      s.qualityCheckpointPasses,
 		QualityCheckpointMaxPasses:   s.qualityCheckpointMaxPasses,
 		QualityCheckpointLastSummary: strings.TrimSpace(s.qualityCheckpointLastSummary),
+		QualityRepairActive:          s.qualityRepairActive,
+		QualityRepairPasses:          s.qualityRepairPasses,
+		QualityRepairMaxPasses:       s.qualityRepairMaxPasses,
+		QualityRepairLastSummary:     strings.TrimSpace(s.qualityRepairLastSummary),
 		CriticActive:                 s.criticActive,
 		CriticReviews:                s.criticReviews,
 		CriticConsultations:          s.criticConsultations,
