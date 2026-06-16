@@ -20,40 +20,44 @@ import (
 const lcagentReplayMaxDepth = 20
 
 type lcagentReplay struct {
-	sessionID                string
-	threadID                 string
-	parentID                 string
-	projectPath              string
-	model                    string
-	modelProvider            string
-	criticModel              string
-	criticModelProvider      string
-	visionModel              string
-	visionModelProvider      string
-	startedAt                time.Time
-	lastActivityAt           time.Time
-	lastError                string
-	criticActive             bool
-	criticReviews            int
-	criticConsultations      int
-	criticConsultConcerns    int
-	criticConcerns           int
-	criticLeadRevisions      int
-	criticFollowupDrafts     int
-	criticLastStatus         string
-	criticLastSummary        string
-	imageAnalysisActive      bool
-	imageAnalyses            int
-	imageAnalysisFailures    int
-	imageAnalysisLastSummary string
-	suggestedInputDraftID    string
-	suggestedInputDraft      string
-	tokenUsage               *threadTokenUsage
-	browserActivity          browserctl.SessionActivity
-	managedBrowserSessionKey string
-	currentBrowserPageURL    string
-	currentBrowserPageStale  bool
-	entries                  []TranscriptEntry
+	sessionID                    string
+	threadID                     string
+	parentID                     string
+	projectPath                  string
+	model                        string
+	modelProvider                string
+	criticModel                  string
+	criticModelProvider          string
+	visionModel                  string
+	visionModelProvider          string
+	startedAt                    time.Time
+	lastActivityAt               time.Time
+	lastError                    string
+	criticActive                 bool
+	criticReviews                int
+	criticConsultations          int
+	criticConsultConcerns        int
+	criticConcerns               int
+	criticLeadRevisions          int
+	criticFollowupDrafts         int
+	criticLastStatus             string
+	criticLastSummary            string
+	imageAnalysisActive          bool
+	imageAnalyses                int
+	imageAnalysisFailures        int
+	imageAnalysisLastSummary     string
+	qualityCheckpointActive      bool
+	qualityCheckpointPasses      int
+	qualityCheckpointMaxPasses   int
+	qualityCheckpointLastSummary string
+	suggestedInputDraftID        string
+	suggestedInputDraft          string
+	tokenUsage                   *threadTokenUsage
+	browserActivity              browserctl.SessionActivity
+	managedBrowserSessionKey     string
+	currentBrowserPageURL        string
+	currentBrowserPageStale      bool
+	entries                      []TranscriptEntry
 }
 
 func loadLCAgentReplay(req LaunchRequest) (*lcagentReplay, error) {
@@ -304,6 +308,14 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	if next.imageAnalysisLastSummary != "" {
 		total.imageAnalysisLastSummary = next.imageAnalysisLastSummary
 	}
+	total.qualityCheckpointActive = next.qualityCheckpointActive
+	total.qualityCheckpointPasses += next.qualityCheckpointPasses
+	if next.qualityCheckpointMaxPasses > 0 {
+		total.qualityCheckpointMaxPasses = next.qualityCheckpointMaxPasses
+	}
+	if next.qualityCheckpointLastSummary != "" {
+		total.qualityCheckpointLastSummary = next.qualityCheckpointLastSummary
+	}
 	if next.suggestedInputDraftID != "" || next.suggestedInputDraft != "" {
 		total.suggestedInputDraftID = next.suggestedInputDraftID
 		total.suggestedInputDraft = next.suggestedInputDraft
@@ -525,6 +537,12 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.applyImageAnalysisResult(event)
 		case "image_analysis_failed":
 			replay.applyImageAnalysisFailed(event)
+		case "quality_checkpoint_profile":
+			replay.qualityCheckpointMaxPasses = rawJSONInt(event["max_passes"])
+		case "quality_checkpoint_started":
+			replay.applyQualityCheckpointStarted(event)
+		case "quality_checkpoint_feedback":
+			replay.applyQualityCheckpointFeedback(event)
 		case "user_message":
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
@@ -790,6 +808,37 @@ func (r *lcagentReplay) applyImageAnalysisFailed(event map[string]json.RawMessag
 	r.imageAnalysisFailures++
 	r.imageAnalysisLastSummary = strings.TrimSpace(message)
 	r.appendEntry(TranscriptStatus, "LCAgent vision analysis failed: "+message)
+}
+
+func (r *lcagentReplay) applyQualityCheckpointStarted(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	pass := rawJSONInt(event["pass"])
+	maxPasses := rawJSONInt(event["max_passes"])
+	r.qualityCheckpointActive = true
+	if maxPasses > 0 {
+		r.qualityCheckpointMaxPasses = maxPasses
+	}
+	text := lcagentQualityCheckpointStartedText(pass, maxPasses)
+	r.qualityCheckpointLastSummary = ""
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyQualityCheckpointFeedback(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	pass := rawJSONInt(event["pass"])
+	maxPasses := rawJSONInt(event["max_passes"])
+	r.qualityCheckpointActive = false
+	r.qualityCheckpointPasses++
+	if maxPasses > 0 {
+		r.qualityCheckpointMaxPasses = maxPasses
+	}
+	text := lcagentQualityCheckpointFeedbackText(pass, maxPasses)
+	r.qualityCheckpointLastSummary = strings.TrimSpace(text)
+	r.appendEntry(TranscriptStatus, text)
 }
 
 func lcagentCriticReviewResultText(status, summary string) string {

@@ -139,6 +139,29 @@ func TestAnalyzeFilesSummarizesCriticSignals(t *testing.T) {
 	}
 }
 
+func TestAnalyzeFilesSummarizesQualityCheckpoints(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "quality-session.jsonl")
+	body := `{"type":"session_meta","id":"lca_quality","cwd":"/repo"}
+{"type":"quality_checkpoint_started","pass":1,"max_passes":1}
+{"type":"quality_checkpoint_feedback","pass":1,"max_passes":1,"message":"Quality checkpoint before final_response"}
+{"type":"verification_summary","status":"verified"}
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := AnalyzeFiles([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.QualityCheckpointsStarted != 1 || summary.QualityCheckpointFeedback != 1 {
+		t.Fatalf("quality checkpoint counts = started %d feedback %d", summary.QualityCheckpointsStarted, summary.QualityCheckpointFeedback)
+	}
+	if summary.TraceQuality.QualityCheckpoints != 1 || !traceQualityHasFinding(summary.TraceQuality, "quality_checkpoints") {
+		t.Fatalf("trace quality checkpoint fields = %#v", summary.TraceQuality)
+	}
+}
+
 func TestAnalyzeFilesTraceQualityFlagsFailures(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session.jsonl")

@@ -154,6 +154,7 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 		"--auto", "medium",
 		"--output", "stream-json",
 		"--approval-mode", "ask",
+		"--quality-checkpoint-passes", "1",
 		"--admin-write",
 		"--utility-provider", "deepseek",
 		"--utility-model", "test-model",
@@ -1841,6 +1842,47 @@ func TestLCAgentReplayRestoresCriticInvalidJSONFailure(t *testing.T) {
 	}
 	if snapshot.LastError != "" {
 		t.Fatalf("LastError = %q, want empty for critic failure", snapshot.LastError)
+	}
+}
+
+func TestLCAgentReplayRestoresQualityCheckpointStats(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_quality_checkpoint"
+	started := time.Date(2026, 6, 16, 7, 1, 0, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "openrouter", "model": "deepseek/test"},
+		{"type": "quality_checkpoint_profile", "session_id": sessionID, "enabled": true, "max_passes": 1},
+		{"type": "quality_checkpoint_started", "session_id": sessionID, "pass": 1, "max_passes": 1, "summary": "first answer"},
+		{"type": "quality_checkpoint_feedback", "session_id": sessionID, "pass": 1, "max_passes": 1, "message": "Quality checkpoint before final_response"},
+		{"type": "turn_complete", "session_id": sessionID, "summary": "checked answer", "verification_status": "not_run"},
+	})
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
+	}
+	lca := &lcagentSession{
+		projectPath: root,
+		provider:    "openrouter",
+	}
+	lca.applyReplay(replay)
+	snapshot := lca.Snapshot()
+	if snapshot.QualityCheckpointActive {
+		t.Fatal("quality checkpoint should not be active after feedback replay")
+	}
+	if snapshot.QualityCheckpointPasses != 1 || snapshot.QualityCheckpointMaxPasses != 1 {
+		t.Fatalf("quality checkpoint stats = %d/%d, want 1/1", snapshot.QualityCheckpointPasses, snapshot.QualityCheckpointMaxPasses)
+	}
+	if snapshot.QualityCheckpointLastSummary != "LCAgent requested private quality pass 1/1" {
+		t.Fatalf("quality checkpoint summary = %q", snapshot.QualityCheckpointLastSummary)
+	}
+	for _, want := range []string{
+		"LCAgent quality checkpoint reviewing candidate final 1/1",
+		"LCAgent requested private quality pass 1/1",
+	} {
+		if !strings.Contains(snapshot.Transcript, want) {
+			t.Fatalf("replayed transcript missing %q:\n%s", want, snapshot.Transcript)
+		}
 	}
 }
 

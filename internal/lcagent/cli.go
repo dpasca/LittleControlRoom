@@ -354,6 +354,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw string
 	var requestTimeout time.Duration
 	var maxTurns int
+	var qualityCheckpointPasses int
 	var searchRefineMinBytes int
 	var adminWrite, requireFinalResponseTool bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
@@ -392,6 +393,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&browserLaunchModeRaw, "browser-launch-mode", string(browserctl.ManagedLaunchModeHeadless), "managed browser launch mode: headless, headed, or background")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
+	fs.IntVar(&qualityCheckpointPasses, "quality-checkpoint-passes", 0, "maximum lead self-review checkpoint passes before accepting final_response; embedded LCAgent enables one pass by default")
 	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -492,6 +494,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if searchRefineMinBytes < 0 {
 		return fmt.Errorf("search-refine-min-bytes must be >= 0")
 	}
+	if qualityCheckpointPasses < 0 {
+		return fmt.Errorf("quality-checkpoint-passes must be >= 0")
+	}
 	reasoningEffort = openRouterReasoningEffortForProvider(provider, reasoningEffort)
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
 	if err != nil {
@@ -550,6 +555,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["approval_mode"] = approvalMode
 	meta["request_timeout"] = requestTimeout.String()
 	meta["max_turns"] = maxTurns
+	meta["quality_checkpoint_passes"] = qualityCheckpointPasses
 	meta["require_final_response_tool"] = requireFinalResponseTool
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
@@ -751,7 +757,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, qualityCheckpointPasses, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -771,7 +777,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, qualityCheckpointPasses int, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -815,6 +821,11 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			workspaceRoot: runner.Files.Workspace.Root,
 		}
 	}
+	qualityPolicy := qualityCheckpointPolicy{
+		MaxPasses:       qualityCheckpointPasses,
+		CriticAvailable: critic.Enabled,
+		VisionAvailable: vision.Enabled,
+	}
 	if err := writer.Write(session.Event{
 		"type":       "search_refine_profile",
 		"session_id": runner.SessionID,
@@ -844,6 +855,17 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"provider":   vision.Provider,
 		"model":      vision.Model,
 		"message":    vision.Message,
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
+		"type":             "quality_checkpoint_profile",
+		"session_id":       runner.SessionID,
+		"enabled":          qualityPolicy.Enabled(),
+		"max_passes":       qualityPolicy.MaxPasses,
+		"critic_available": qualityPolicy.CriticAvailable,
+		"vision_available": qualityPolicy.VisionAvailable,
+		"message":          qualityPolicy.Message(),
 	}); err != nil {
 		return err
 	}
@@ -923,6 +945,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0
 	criticLeadFeedbacks := 0
+	qualityCheckpointFeedbacks := 0
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		select {
@@ -1055,6 +1078,15 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 				continue
 			}
+			if turn+1 < client.MaxTurns() {
+				if feedback, applied, err := maybeApplyQualityCheckpointFeedback(writer, runner, final, qualityPolicy, qualityCheckpointFeedbacks); err != nil {
+					return err
+				} else if applied {
+					qualityCheckpointFeedbacks++
+					messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+					continue
+				}
+			}
 			if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, messages, contextCompacted, criticLeadFeedbacks); err != nil {
 				return err
 			} else if applied {
@@ -1141,6 +1173,28 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					continue
 				}
 				snapshotMessages := appendFinalResponseForContextSnapshot(messages, call.ID, final)
+				if turn+1 < client.MaxTurns() {
+					if feedback, applied, err := maybeApplyQualityCheckpointFeedback(writer, runner, final, qualityPolicy, qualityCheckpointFeedbacks); err != nil {
+						return err
+					} else if applied {
+						qualityCheckpointFeedbacks++
+						if err := writeRejectedFinalResponseToolResult(writer, runner.SessionID, call, args, feedback); err != nil {
+							return err
+						}
+						result := tools.ToolResult{Success: false, Error: feedback}
+						resultJSON, marshalErr := json.Marshal(result)
+						if marshalErr != nil {
+							return marshalErr
+						}
+						messages = append(messages, modeladapter.Message{
+							Role:       "tool",
+							ToolCallID: call.ID,
+							Content:    string(resultJSON),
+						})
+						messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+						continue
+					}
+				}
 				if feedback, _, applied, err := maybeApplyCriticLeadFeedback(ctx, writer, runner, critic, final, snapshotMessages, contextCompacted, criticLeadFeedbacks); err != nil {
 					return err
 				} else if applied {
@@ -1294,6 +1348,139 @@ func shouldBounceFinalAudit(audit script.FinalResponseAudit, feedbackCount int) 
 		return true
 	}
 	return feedbackCount == 0
+}
+
+type qualityCheckpointPolicy struct {
+	MaxPasses       int
+	CriticAvailable bool
+	VisionAvailable bool
+}
+
+func (p qualityCheckpointPolicy) Enabled() bool {
+	return p.MaxPasses > 0
+}
+
+func (p qualityCheckpointPolicy) Message() string {
+	if !p.Enabled() {
+		return "LCAgent quality checkpoint disabled."
+	}
+	return fmt.Sprintf("LCAgent will require up to %d private lead quality checkpoint pass%s before final_response.", p.MaxPasses, lcagentPluralSuffix(p.MaxPasses))
+}
+
+func maybeApplyQualityCheckpointFeedback(writer *session.Writer, runner script.Runner, final script.Action, policy qualityCheckpointPolicy, feedbackCount int) (string, bool, error) {
+	if !policy.Enabled() || feedbackCount >= policy.MaxPasses {
+		return "", false, nil
+	}
+	pass := feedbackCount + 1
+	feedback := qualityCheckpointFeedbackMessage(runner, final, policy, pass)
+	if writer != nil {
+		if err := writer.Write(session.Event{
+			"type":         "quality_checkpoint_started",
+			"session_id":   runner.SessionID,
+			"pass":         pass,
+			"max_passes":   policy.MaxPasses,
+			"summary":      strings.TrimSpace(final.Summary),
+			"outcome":      normalizeQualityCheckpointOutcome(final.Outcome),
+			"files":        cleanQualityCheckpointStrings(final.FilesChanged),
+			"verification": cleanQualityCheckpointStrings(final.Verification),
+		}); err != nil {
+			return "", false, err
+		}
+		if err := writer.Write(session.Event{
+			"type":             "quality_checkpoint_feedback",
+			"session_id":       runner.SessionID,
+			"pass":             pass,
+			"max_passes":       policy.MaxPasses,
+			"message":          feedback,
+			"critic_available": policy.CriticAvailable,
+			"vision_available": policy.VisionAvailable,
+		}); err != nil {
+			return "", false, err
+		}
+	}
+	return feedback, true, nil
+}
+
+func qualityCheckpointFeedbackMessage(runner script.Runner, final script.Action, policy qualityCheckpointPolicy, pass int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Quality checkpoint before final_response (%d/%d): compare your candidate final answer against the active objective and the tool evidence.", pass, policy.MaxPasses)
+	b.WriteString("\n\nDo not answer this checkpoint directly. If an important requested outcome is missing, weak, unverified, or only implied, continue with one focused next step using tools. If the task is genuinely ready, call final_response again.")
+	if policy.CriticAvailable {
+		b.WriteString(" consult_critic is available if a focused second opinion would materially improve the decision.")
+	}
+	if policy.VisionAvailable {
+		b.WriteString(" If visual quality or screenshot appearance matters, use analyze_image on the relevant image before making final visual claims.")
+	}
+	if strings.TrimSpace(runner.Prompt) != "" {
+		b.WriteString("\n\nActive objective:\n")
+		b.WriteString(strings.TrimSpace(runner.Prompt))
+	}
+	if files := cleanQualityCheckpointStrings(final.FilesChanged); len(files) > 0 {
+		b.WriteString("\n\nCandidate files_changed: ")
+		b.WriteString(strings.Join(files, ", "))
+	}
+	if verification := cleanQualityCheckpointStrings(final.Verification); len(verification) > 0 {
+		b.WriteString("\nCandidate verification: ")
+		b.WriteString(strings.Join(verification, "; "))
+	}
+	if summary := strings.TrimSpace(final.Summary); summary != "" {
+		b.WriteString("\n\nCandidate final summary:\n")
+		b.WriteString(summary)
+	}
+	b.WriteString("\n\nKeep any continuation small and concrete. Do not repeat final_response unchanged unless you have explicitly checked the request against the current evidence.")
+	return b.String()
+}
+
+func writeRejectedFinalResponseToolResult(writer *session.Writer, sessionID string, call modeladapter.ToolCall, args json.RawMessage, feedback string) error {
+	if writer == nil {
+		return nil
+	}
+	if err := writer.Write(session.Event{
+		"type":       "tool_call",
+		"session_id": sessionID,
+		"tool":       call.Function.Name,
+		"args":       json.RawMessage(args),
+	}); err != nil {
+		return err
+	}
+	return writer.Write(session.Event{
+		"type":       "tool_result",
+		"session_id": sessionID,
+		"tool":       call.Function.Name,
+		"result":     tools.ToolResult{Success: false, Error: strings.TrimSpace(feedback)},
+	})
+}
+
+func normalizeQualityCheckpointOutcome(outcome string) string {
+	outcome = strings.ToLower(strings.TrimSpace(outcome))
+	if outcome == "" {
+		return "unknown"
+	}
+	return outcome
+}
+
+func cleanQualityCheckpointStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func lcagentPluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "es"
 }
 
 func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, runner script.Runner, critic criticProfile, final script.Action, messages []modeladapter.Message, compacted bool, feedbackCount int) (string, string, bool, error) {

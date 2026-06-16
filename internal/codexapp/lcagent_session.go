@@ -77,55 +77,60 @@ type lcagentSession struct {
 	notify            func()
 	playwrightPolicy  browserctl.Policy
 
-	mu                       sync.Mutex
-	cmd                      *exec.Cmd
-	stdin                    io.WriteCloser
-	cancel                   context.CancelFunc
-	threadID                 string
-	runID                    string
-	started                  bool
-	busy                     bool
-	closed                   bool
-	busySince                time.Time
-	lastBusyActivityAt       time.Time
-	lastActivityAt           time.Time
-	status                   string
-	lastError                string
-	model                    string
-	modelProvider            string
-	reasoningEffort          string
-	tokenUsage               *threadTokenUsage
-	pendingApproval          *ApprovalRequest
-	replayLoaded             bool
-	managedBrowserSessionKey string
-	browserProfileKey        string
-	browserLaunchMode        browserctl.ManagedLaunchMode
-	browserActivity          browserctl.SessionActivity
-	currentBrowserPageURL    string
-	currentBrowserPageStale  bool
-	pendingInitialUserEcho   string
-	pendingSteerEchoes       []string
-	entries                  []TranscriptEntry
-	revision                 uint64
-	cache                    transcriptExportCache
-	suggestedInputDraftID    string
-	suggestedInputDraft      string
-	criticActive             bool
-	criticReviews            int
-	criticConsultations      int
-	criticConsultConcerns    int
-	criticConcerns           int
-	criticLeadRevisions      int
-	criticFollowupDrafts     int
-	criticLastStatus         string
-	criticLastSummary        string
-	imageAnalysisActive      bool
-	imageAnalyses            int
-	imageAnalysisFailures    int
-	imageAnalysisLastSummary string
+	mu                           sync.Mutex
+	cmd                          *exec.Cmd
+	stdin                        io.WriteCloser
+	cancel                       context.CancelFunc
+	threadID                     string
+	runID                        string
+	started                      bool
+	busy                         bool
+	closed                       bool
+	busySince                    time.Time
+	lastBusyActivityAt           time.Time
+	lastActivityAt               time.Time
+	status                       string
+	lastError                    string
+	model                        string
+	modelProvider                string
+	reasoningEffort              string
+	tokenUsage                   *threadTokenUsage
+	pendingApproval              *ApprovalRequest
+	replayLoaded                 bool
+	managedBrowserSessionKey     string
+	browserProfileKey            string
+	browserLaunchMode            browserctl.ManagedLaunchMode
+	browserActivity              browserctl.SessionActivity
+	currentBrowserPageURL        string
+	currentBrowserPageStale      bool
+	pendingInitialUserEcho       string
+	pendingSteerEchoes           []string
+	entries                      []TranscriptEntry
+	revision                     uint64
+	cache                        transcriptExportCache
+	suggestedInputDraftID        string
+	suggestedInputDraft          string
+	criticActive                 bool
+	criticReviews                int
+	criticConsultations          int
+	criticConsultConcerns        int
+	criticConcerns               int
+	criticLeadRevisions          int
+	criticFollowupDrafts         int
+	criticLastStatus             string
+	criticLastSummary            string
+	imageAnalysisActive          bool
+	imageAnalyses                int
+	imageAnalysisFailures        int
+	imageAnalysisLastSummary     string
+	qualityCheckpointActive      bool
+	qualityCheckpointPasses      int
+	qualityCheckpointMaxPasses   int
+	qualityCheckpointLastSummary string
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
+const lcagentDefaultQualityCheckpointPasses = 1
 
 func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if err := req.Validate(); err != nil {
@@ -1478,6 +1483,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--web-search-backend", prepared.webSearchBackend,
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
+		"--quality-checkpoint-passes", strconv.Itoa(lcagentDefaultQualityCheckpointPasses),
 	)
 	if prepared.browserControl == "managed" {
 		args = append(args,
@@ -1970,6 +1976,40 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
+	case "quality_checkpoint_profile":
+		s.mu.Lock()
+		s.qualityCheckpointMaxPasses = rawJSONInt(event["max_passes"])
+		s.touchLocked()
+		s.mu.Unlock()
+	case "quality_checkpoint_started":
+		pass := rawJSONInt(event["pass"])
+		maxPasses := rawJSONInt(event["max_passes"])
+		text := lcagentQualityCheckpointStartedText(pass, maxPasses)
+		s.mu.Lock()
+		s.status = text
+		s.qualityCheckpointActive = true
+		if maxPasses > 0 {
+			s.qualityCheckpointMaxPasses = maxPasses
+		}
+		s.qualityCheckpointLastSummary = ""
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
+	case "quality_checkpoint_feedback":
+		pass := rawJSONInt(event["pass"])
+		maxPasses := rawJSONInt(event["max_passes"])
+		text := lcagentQualityCheckpointFeedbackText(pass, maxPasses)
+		s.mu.Lock()
+		s.status = text
+		s.qualityCheckpointActive = false
+		s.qualityCheckpointPasses++
+		if maxPasses > 0 {
+			s.qualityCheckpointMaxPasses = maxPasses
+		}
+		s.qualityCheckpointLastSummary = strings.TrimSpace(text)
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
 	case "critic_review_result":
 		s.handleLCAgentCriticReviewResult(event)
 	case "critic_lead_feedback":
@@ -2326,6 +2366,26 @@ func lcagentCriticLeadFeedbackText(event map[string]json.RawMessage) string {
 	return "LCAgent critic requested one private lead revision: " + lcagentCondenseStatusText(message, 220)
 }
 
+func lcagentQualityCheckpointStartedText(pass, maxPasses int) string {
+	if pass <= 0 {
+		return "LCAgent quality checkpoint reviewing candidate final"
+	}
+	if maxPasses > 0 {
+		return fmt.Sprintf("LCAgent quality checkpoint reviewing candidate final %d/%d", pass, maxPasses)
+	}
+	return fmt.Sprintf("LCAgent quality checkpoint reviewing candidate final %d", pass)
+}
+
+func lcagentQualityCheckpointFeedbackText(pass, maxPasses int) string {
+	if pass <= 0 {
+		return "LCAgent requested a private quality pass"
+	}
+	if maxPasses > 0 {
+		return fmt.Sprintf("LCAgent requested private quality pass %d/%d", pass, maxPasses)
+	}
+	return fmt.Sprintf("LCAgent requested private quality pass %d", pass)
+}
+
 func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.RawMessage) {
 	output := strings.TrimSpace(rawJSONString(event["output"]))
 	modelName := rawJSONString(event["model"])
@@ -2634,6 +2694,10 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.imageAnalyses = replay.imageAnalyses
 	s.imageAnalysisFailures = replay.imageAnalysisFailures
 	s.imageAnalysisLastSummary = strings.TrimSpace(replay.imageAnalysisLastSummary)
+	s.qualityCheckpointActive = replay.qualityCheckpointActive
+	s.qualityCheckpointPasses = replay.qualityCheckpointPasses
+	s.qualityCheckpointMaxPasses = replay.qualityCheckpointMaxPasses
+	s.qualityCheckpointLastSummary = strings.TrimSpace(replay.qualityCheckpointLastSummary)
 	s.suggestedInputDraftID = strings.TrimSpace(replay.suggestedInputDraftID)
 	s.suggestedInputDraft = strings.TrimSpace(replay.suggestedInputDraft)
 	label := firstNonEmpty(s.threadID, "history")
@@ -3084,50 +3148,54 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	criticModel, criticModelProvider := s.resolvedCriticModelLocked(modelProvider, model)
 	visionModel, visionModelProvider := s.resolvedVisionModelLocked(modelProvider, model)
 	return Snapshot{
-		Provider:                  ProviderLCAgent,
-		ProjectPath:               s.projectPath,
-		ThreadID:                  s.threadID,
-		BrowserActivity:           s.browserActivity.Normalize(),
-		ManagedBrowserSessionKey:  strings.TrimSpace(s.managedBrowserSessionKey),
-		CurrentBrowserPageURL:     strings.TrimSpace(s.currentBrowserPageURL),
-		CurrentBrowserPageStale:   s.currentBrowserPageStale,
-		TranscriptRevision:        s.revision,
-		Phase:                     phase,
-		Started:                   s.started,
-		Busy:                      s.busy,
-		BusySince:                 s.busySince,
-		LastBusyActivityAt:        s.lastBusyActivityAt,
-		Closed:                    s.closed,
-		Status:                    s.status,
-		LastError:                 s.lastError,
-		SuggestedInputDraftID:     suggestedDraftID,
-		SuggestedInputDraft:       suggestedDraft,
-		SuggestedInputDraftSource: suggestedDraftSource,
-		PendingApproval:           cloneApprovalRequest(s.pendingApproval),
-		LastActivityAt:            s.lastActivityAt,
-		CurrentCWD:                s.projectPath,
-		PermissionLevel:           s.effectiveAutoLocked(),
-		Model:                     model,
-		ModelProvider:             modelProvider,
-		CriticModel:               criticModel,
-		CriticModelProvider:       criticModelProvider,
-		VisionModel:               visionModel,
-		VisionModelProvider:       visionModelProvider,
-		ImageAnalysisActive:       s.imageAnalysisActive,
-		ImageAnalyses:             s.imageAnalyses,
-		ImageAnalysisFailures:     s.imageAnalysisFailures,
-		ImageAnalysisLastSummary:  strings.TrimSpace(s.imageAnalysisLastSummary),
-		CriticActive:              s.criticActive,
-		CriticReviews:             s.criticReviews,
-		CriticConsultations:       s.criticConsultations,
-		CriticConsultConcerns:     s.criticConsultConcerns,
-		CriticConcerns:            s.criticConcerns,
-		CriticLeadRevisions:       s.criticLeadRevisions,
-		CriticFollowupDrafts:      s.criticFollowupDrafts,
-		CriticLastStatus:          strings.TrimSpace(s.criticLastStatus),
-		CriticLastSummary:         strings.TrimSpace(s.criticLastSummary),
-		ReasoningEffort:           s.reasoningEffort,
-		TokenUsage:                exportedTokenUsageSnapshot(tokenUsage),
+		Provider:                     ProviderLCAgent,
+		ProjectPath:                  s.projectPath,
+		ThreadID:                     s.threadID,
+		BrowserActivity:              s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey:     strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:        strings.TrimSpace(s.currentBrowserPageURL),
+		CurrentBrowserPageStale:      s.currentBrowserPageStale,
+		TranscriptRevision:           s.revision,
+		Phase:                        phase,
+		Started:                      s.started,
+		Busy:                         s.busy,
+		BusySince:                    s.busySince,
+		LastBusyActivityAt:           s.lastBusyActivityAt,
+		Closed:                       s.closed,
+		Status:                       s.status,
+		LastError:                    s.lastError,
+		SuggestedInputDraftID:        suggestedDraftID,
+		SuggestedInputDraft:          suggestedDraft,
+		SuggestedInputDraftSource:    suggestedDraftSource,
+		PendingApproval:              cloneApprovalRequest(s.pendingApproval),
+		LastActivityAt:               s.lastActivityAt,
+		CurrentCWD:                   s.projectPath,
+		PermissionLevel:              s.effectiveAutoLocked(),
+		Model:                        model,
+		ModelProvider:                modelProvider,
+		CriticModel:                  criticModel,
+		CriticModelProvider:          criticModelProvider,
+		VisionModel:                  visionModel,
+		VisionModelProvider:          visionModelProvider,
+		ImageAnalysisActive:          s.imageAnalysisActive,
+		ImageAnalyses:                s.imageAnalyses,
+		ImageAnalysisFailures:        s.imageAnalysisFailures,
+		ImageAnalysisLastSummary:     strings.TrimSpace(s.imageAnalysisLastSummary),
+		QualityCheckpointActive:      s.qualityCheckpointActive,
+		QualityCheckpointPasses:      s.qualityCheckpointPasses,
+		QualityCheckpointMaxPasses:   s.qualityCheckpointMaxPasses,
+		QualityCheckpointLastSummary: strings.TrimSpace(s.qualityCheckpointLastSummary),
+		CriticActive:                 s.criticActive,
+		CriticReviews:                s.criticReviews,
+		CriticConsultations:          s.criticConsultations,
+		CriticConsultConcerns:        s.criticConsultConcerns,
+		CriticConcerns:               s.criticConcerns,
+		CriticLeadRevisions:          s.criticLeadRevisions,
+		CriticFollowupDrafts:         s.criticFollowupDrafts,
+		CriticLastStatus:             strings.TrimSpace(s.criticLastStatus),
+		CriticLastSummary:            strings.TrimSpace(s.criticLastSummary),
+		ReasoningEffort:              s.reasoningEffort,
+		TokenUsage:                   exportedTokenUsageSnapshot(tokenUsage),
 	}
 }
 

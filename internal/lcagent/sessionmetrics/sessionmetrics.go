@@ -63,6 +63,8 @@ type Summary struct {
 	VerificationStatuses        map[string]int     `json:"verification_statuses,omitempty"`
 	FinalResponseAudits         int                `json:"final_response_audits,omitempty"`
 	FinalResponseAuditOutcomes  map[string]int     `json:"final_response_audit_outcomes,omitempty"`
+	QualityCheckpointsStarted   int                `json:"quality_checkpoints_started,omitempty"`
+	QualityCheckpointFeedback   int                `json:"quality_checkpoint_feedback,omitempty"`
 	OperationalActions          int                `json:"operational_actions,omitempty"`
 	OperationalActionStatuses   map[string]int     `json:"operational_action_statuses,omitempty"`
 	ContextCompactions          int                `json:"context_compactions,omitempty"`
@@ -143,6 +145,7 @@ type TraceQuality struct {
 	CriticConsultations  int                   `json:"critic_consultations,omitempty"`
 	CriticLeadFeedback   int                   `json:"critic_lead_feedback,omitempty"`
 	CriticHumanPrompts   int                   `json:"critic_human_prompts,omitempty"`
+	QualityCheckpoints   int                   `json:"quality_checkpoints,omitempty"`
 	RepairEvents         int                   `json:"repair_events"`
 	VerifiedSessions     int                   `json:"verified_sessions"`
 	VerificationRate     float64               `json:"verification_rate"`
@@ -463,6 +466,10 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			outcome = "unknown"
 		}
 		s.FinalResponseAuditOutcomes[outcome]++
+	case "quality_checkpoint_started":
+		s.QualityCheckpointsStarted++
+	case "quality_checkpoint_feedback":
+		s.QualityCheckpointFeedback++
 	case "operational_action":
 		s.OperationalActions++
 		action := rawString(event["action"])
@@ -807,6 +814,7 @@ func (s Summary) computeTraceQuality() TraceQuality {
 		CriticConsultations:  s.CriticConsultResults,
 		CriticLeadFeedback:   s.CriticLeadFeedback,
 		CriticHumanPrompts:   s.CriticHumanPrompts,
+		QualityCheckpoints:   s.QualityCheckpointFeedback,
 		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
 		CachedInputTokenRate: ratio64(s.TokenUsage.CachedInputTokens, s.TokenUsage.InputTokens),
 		EstimatedCostUSD:     s.TokenUsage.EstimatedCostUSD,
@@ -873,6 +881,9 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	}
 	if s.CriticHumanPrompts > 0 {
 		quality.addFinding("info", "critic_human_prompts", fmt.Sprintf("%d critic review result(s) drafted human-facing follow-up.", s.CriticHumanPrompts))
+	}
+	if s.QualityCheckpointFeedback > 0 {
+		quality.addFinding("info", "quality_checkpoints", fmt.Sprintf("%d lead quality checkpoint pass(es) were requested.", s.QualityCheckpointFeedback))
 	}
 	if quality.ReadOverlapRate >= 0.25 && s.ReadFileLines >= 100 {
 		quality.addFinding("info", "read_overlap", fmt.Sprintf("%.0f%% of read_file lines overlapped earlier reads.", quality.ReadOverlapRate*100))

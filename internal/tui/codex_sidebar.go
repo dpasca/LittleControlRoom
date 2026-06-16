@@ -431,6 +431,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	contentWidth := max(12, width-2)
 	lines := []string{}
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSessionSection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarQualitySection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarCriticSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarVisionSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
@@ -600,6 +601,46 @@ func embeddedSidebarCriticRows(snapshot codexapp.Snapshot, width int) []string {
 		rows = append(rows, embeddedSidebarFieldRow("Drafts", fmt.Sprintf("%d", snapshot.CriticFollowupDrafts), detailWarningStyle, width))
 	}
 	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
+		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+	}
+	return rows
+}
+
+func (m Model) renderEmbeddedSidebarQualitySection(snapshot codexapp.Snapshot, width int) []string {
+	rows := embeddedSidebarQualityRows(snapshot, width)
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string{renderEmbeddedSidebarStaticHeader("Quality", width)}, rows...)
+}
+
+func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string {
+	if snapshot.Provider != codexapp.ProviderLCAgent {
+		return nil
+	}
+	if !snapshot.QualityCheckpointActive &&
+		snapshot.QualityCheckpointPasses == 0 &&
+		snapshot.QualityCheckpointMaxPasses == 0 &&
+		strings.TrimSpace(snapshot.QualityCheckpointLastSummary) == "" {
+		return nil
+	}
+	rows := []string{}
+	status := "idle"
+	style := detailMutedStyle
+	if snapshot.QualityCheckpointActive {
+		status = "checking"
+		style = detailValueStyle
+	} else if snapshot.QualityCheckpointPasses > 0 {
+		status = "checked"
+		style = detailValueStyle
+	}
+	rows = append(rows, embeddedSidebarFieldRow("Status", status, style, width))
+	passes := fmt.Sprintf("%d", max(0, snapshot.QualityCheckpointPasses))
+	if snapshot.QualityCheckpointMaxPasses > 0 {
+		passes += fmt.Sprintf("/%d", snapshot.QualityCheckpointMaxPasses)
+	}
+	rows = append(rows, embeddedSidebarFieldRow("Passes", passes, detailValueStyle, width))
+	if summary := strings.TrimSpace(snapshot.QualityCheckpointLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
 	return rows

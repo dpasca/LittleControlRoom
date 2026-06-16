@@ -428,6 +428,26 @@ func TestEmbeddedSidebarShowsLCAgentCriticActivity(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarShowsLCAgentQualityCheckpointActivity(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.QualityCheckpointPasses = 1
+	snapshot.QualityCheckpointMaxPasses = 1
+	snapshot.QualityCheckpointLastSummary = "LCAgent requested private quality pass 1/1"
+
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
+	for _, want := range []string{
+		"Quality",
+		"Status checked",
+		"Passes 1/1",
+		"LCAgent requested private quality pass 1/1",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("quality sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestEmbeddedSidebarSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Model = "openai/gpt-5"

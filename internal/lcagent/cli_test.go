@@ -375,6 +375,129 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterQualityCheckpointBouncesCandidateFinalOnce(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	sawQualityFeedback := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 1 model = %q, want lead model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_first_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_first_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "first answer",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 2 model = %q, want lead model", body["model"])
+			}
+			messagesJSON, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(messagesJSON), "Quality checkpoint before final_response") ||
+				!strings.Contains(string(messagesJSON), "first answer") {
+				t.Fatalf("lead retry did not receive quality checkpoint feedback:\n%s", messagesJSON)
+			}
+			sawQualityFeedback = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_checked_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_checked_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "checked answer",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
+			})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--quality-checkpoint-passes", "1",
+		"--max-turns", "3",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2\nstdout=%s", requests, stdout.String())
+	}
+	if !sawQualityFeedback {
+		t.Fatalf("server did not observe quality checkpoint feedback")
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"quality_checkpoint_profile"`,
+		`"type":"quality_checkpoint_started"`,
+		`"type":"quality_checkpoint_feedback"`,
+		`"type":"turn_complete"`,
+		`"summary":"checked answer"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -756,7 +879,7 @@ func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}
@@ -885,7 +1008,7 @@ func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false)
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}

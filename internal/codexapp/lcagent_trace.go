@@ -410,6 +410,9 @@ func (t LCAgentTrace) TraceQualitySummaryLabel() string {
 	if t.TraceQuality.RepairEvents > 0 {
 		parts = append(parts, fmt.Sprintf("repair events: %d", t.TraceQuality.RepairEvents))
 	}
+	if t.TraceQuality.QualityCheckpoints > 0 {
+		parts = append(parts, fmt.Sprintf("quality checkpoints: %d", t.TraceQuality.QualityCheckpoints))
+	}
 	return strings.Join(parts, ", ")
 }
 
