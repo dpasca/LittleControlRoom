@@ -244,6 +244,116 @@ func TestSettingsLCAgentModelPickerUtilityReasoningUsesProviderDefault(t *testin
 	}
 }
 
+func TestSettingsLCAgentModelValueLabelIncludesReasoning(t *testing.T) {
+	settings := config.EditableSettings{
+		LCAgentProvider:          "openai",
+		EmbeddedLCAgentModel:     "gpt-5.5",
+		EmbeddedLCAgentReasoning: "high",
+		LCAgentUtilityProvider:   "main",
+		LCAgentCriticProvider:    "deepseek",
+		LCAgentCriticModel:       "deepseek-v4-pro",
+		LCAgentVisionProvider:    "off",
+		LCAgentVisionModel:       "",
+		OpenRouterModel:          "deepseek/deepseek-v4-pro",
+		BossChatBackend:          config.AIBackendOpenRouter,
+		BossHelmModel:            "openai/gpt-5.5",
+		BossUtilityModel:         "",
+	}
+
+	mainLabel := settingsLCAgentModelValueLabel(settings, settingsFieldLCAgentModel)
+	if !strings.Contains(mainLabel, "reasoning: high") {
+		t.Fatalf("main label = %q, want reasoning effort", mainLabel)
+	}
+	utilityLabel := settingsLCAgentModelValueLabel(settings, settingsFieldLCAgentUtilityModel)
+	if !strings.Contains(utilityLabel, "Same as Main") || !strings.Contains(utilityLabel, "reasoning: high") {
+		t.Fatalf("utility label = %q, want same-as-main reasoning", utilityLabel)
+	}
+	criticLabel := settingsLCAgentModelValueLabel(settings, settingsFieldLCAgentCriticModel)
+	if !strings.Contains(criticLabel, "reasoning: Provider Default") {
+		t.Fatalf("critic label = %q, want provider default reasoning", criticLabel)
+	}
+	projectLabel := settingsLCAgentModelValueLabel(settings, settingsFieldOpenRouterModel)
+	if !strings.Contains(projectLabel, "OpenRouter / deepseek/deepseek-v4-pro") || !strings.Contains(projectLabel, "reasoning: Provider Default") {
+		t.Fatalf("project label = %q, want model and provider-default reasoning", projectLabel)
+	}
+	bossLabel := settingsLCAgentModelValueLabel(settings, settingsFieldBossChatModel)
+	if !strings.Contains(bossLabel, "OpenRouter / openai/gpt-5.5") || !strings.Contains(bossLabel, "reasoning: Provider Default") {
+		t.Fatalf("boss label = %q, want boss model and provider-default reasoning", bossLabel)
+	}
+}
+
+func TestSettingsModelPickerAPIKeyStepUpdatesSharedKeyBeforeModelList(t *testing.T) {
+	settings := config.EditableSettings{LCAgentProvider: "openrouter"}
+	apiKeyInput := newSettingsLCAgentModelPickerAPIKeyInput("moonshot", "mk-test")
+	m := Model{
+		settingsFields: newSettingsFields(settings),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldLCAgentModel,
+			Step:           settingsLCAgentModelPickerStepAPIKey,
+			Provider:       "moonshot",
+			APIKeyProvider: "moonshot",
+			APIKeyInput:    apiKeyInput,
+		},
+	}
+
+	updated, cmd := m.startSettingsLCAgentModelPickerModelList()
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("startSettingsLCAgentModelPickerModelList() command = nil, want model-list command")
+	}
+	if value := got.settingsFieldValue(settingsFieldMoonshotAPIKey); value != "mk-test" {
+		t.Fatalf("Moonshot API key field = %q, want mk-test", value)
+	}
+	state := got.settingsLCAgentModelPicker
+	if state == nil || state.Step != settingsLCAgentModelPickerStepModel || !state.Loading {
+		t.Fatalf("picker state = %#v, want loading model step", state)
+	}
+}
+
+func TestSettingsProjectModelPickerSelectionSwitchesBackendAndModelField(t *testing.T) {
+	settings := config.EditableSettings{AIBackend: config.AIBackendOpenRouter}
+	apiKeyInput := newSettingsLCAgentModelPickerAPIKeyInput("moonshot", "mk-project")
+	m := Model{
+		settingsFields: newSettingsFields(settings),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldOpenRouterModel,
+			Provider:       "moonshot",
+			APIKeyProvider: "moonshot",
+			APIKeyInput:    apiKeyInput,
+			PendingModel:   "kimi-k2.7-code",
+		},
+	}
+
+	updated, _ := m.applySettingsLCAgentModelPickerSelection()
+	got := updated.(Model)
+	if value := got.settingsFieldValue(settingsFieldAIBackend); value != string(config.AIBackendMoonshot) {
+		t.Fatalf("AI backend = %q, want moonshot", value)
+	}
+	if value := got.settingsFieldValue(settingsFieldMoonshotModel); value != "kimi-k2.7-code" {
+		t.Fatalf("Moonshot project model = %q, want kimi-k2.7-code", value)
+	}
+	if value := got.settingsFieldValue(settingsFieldOpenRouterModel); value != "" {
+		t.Fatalf("OpenRouter project model = %q, want untouched blank", value)
+	}
+	if value := got.settingsFieldValue(settingsFieldMoonshotAPIKey); value != "mk-project" {
+		t.Fatalf("Moonshot API key field = %q, want mk-project", value)
+	}
+}
+
+func TestSettingsBossModelPickerOnlyUsesCloudSelectorForCloudBackend(t *testing.T) {
+	localSettings := config.EditableSettings{BossChatBackend: config.AIBackendMLX}
+	localModel := Model{settingsFields: newSettingsFields(localSettings)}
+	if localModel.settingsFieldUsesUnifiedCloudModelPicker(settingsFieldBossChatModel) {
+		t.Fatal("Boss helm model should not use cloud selector for MLX backend")
+	}
+
+	cloudSettings := config.EditableSettings{BossChatBackend: config.AIBackendOpenRouter}
+	cloudModel := Model{settingsFields: newSettingsFields(cloudSettings)}
+	if !cloudModel.settingsFieldUsesUnifiedCloudModelPicker(settingsFieldBossChatModel) {
+		t.Fatal("Boss helm model should use cloud selector for OpenRouter backend")
+	}
+}
+
 func applySettingsLCAgentModelPickerSelectionForTest(t *testing.T, m Model, provider string, option codexapp.ModelOption) Model {
 	t.Helper()
 	if m.settingsLCAgentModelPicker == nil {

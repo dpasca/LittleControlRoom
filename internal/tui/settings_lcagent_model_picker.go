@@ -27,6 +27,7 @@ type settingsLCAgentModelPickerStep int
 
 const (
 	settingsLCAgentModelPickerStepProvider settingsLCAgentModelPickerStep = iota
+	settingsLCAgentModelPickerStepAPIKey
 	settingsLCAgentModelPickerStepModel
 	settingsLCAgentModelPickerStepReasoning
 )
@@ -38,6 +39,8 @@ type settingsLCAgentModelPickerState struct {
 	CurrentProvider    string
 	ProviderOptions    []settingsLCAgentProviderOption
 	ProviderSelected   int
+	APIKeyInput        textinput.Model
+	APIKeyProvider     string
 	Current            string
 	Models             []codexapp.ModelOption
 	FilteredModels     []codexapp.ModelOption
@@ -69,6 +72,41 @@ func settingsFieldUsesLCAgentModelPicker(index int) bool {
 		index == settingsFieldLCAgentVisionModel
 }
 
+func settingsFieldUsesProjectCloudModelPicker(index int) bool {
+	return index == settingsFieldOpenRouterModel ||
+		index == settingsFieldDeepSeekModel ||
+		index == settingsFieldMoonshotModel ||
+		index == settingsFieldXiaomiModel
+}
+
+func settingsFieldUsesBossCloudModelPicker(index int) bool {
+	return index == settingsFieldBossChatModel ||
+		index == settingsFieldBossUtilityModel
+}
+
+func settingsFieldUsesAnyCloudModelPicker(index int) bool {
+	return settingsFieldUsesLCAgentModelPicker(index) ||
+		settingsFieldUsesProjectCloudModelPicker(index) ||
+		settingsFieldUsesBossCloudModelPicker(index)
+}
+
+func settingsFieldUsesUnifiedCloudModelPicker(index int) bool {
+	return settingsFieldUsesLCAgentModelPicker(index) ||
+		settingsFieldUsesProjectCloudModelPicker(index)
+}
+
+func (m Model) settingsFieldUsesUnifiedCloudModelPicker(index int) bool {
+	if settingsFieldUsesUnifiedCloudModelPicker(index) {
+		return true
+	}
+	if !settingsFieldUsesBossCloudModelPicker(index) {
+		return false
+	}
+	settings := m.settingsDraftForInferenceStatus()
+	return settingsCloudModelProviderForBackend(settings.BossChatBackend) != "" ||
+		(settings.BossChatBackend == config.AIBackendUnset && strings.TrimSpace(settings.OpenAIAPIKey) != "")
+}
+
 func newSettingsLCAgentModelPickerFilterInput() textinput.Model {
 	input := textinput.New()
 	input.Prompt = ""
@@ -78,12 +116,25 @@ func newSettingsLCAgentModelPickerFilterInput() textinput.Model {
 	return input
 }
 
+func newSettingsLCAgentModelPickerAPIKeyInput(provider, value string) textinput.Model {
+	input := textinput.New()
+	input.Prompt = ""
+	input.Placeholder = "Paste " + settingsLCAgentModelPickerProviderLabel(provider) + " API key"
+	input.CharLimit = 512
+	input.EchoMode = textinput.EchoPassword
+	input.EchoCharacter = '*'
+	input.SetValue(strings.TrimSpace(value))
+	input.Focus()
+	input.CursorEnd()
+	return input
+}
+
 func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 	fieldIndex := m.settingsSelected
 	if m.setupMode && m.setupConfigMode {
 		fieldIndex = m.setupSelectedConfigFieldIndex()
 	}
-	if !settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+	if !m.settingsFieldUsesUnifiedCloudModelPicker(fieldIndex) {
 		return m, nil
 	}
 	settings := m.settingsDraftForInferenceStatus()
@@ -157,6 +208,20 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 		}
 		current = strings.TrimSpace(settings.LCAgentVisionModel)
 	}
+	if backend := settingsProjectCloudModelFieldBackend(fieldIndex); backend != config.AIBackendUnset {
+		provider = settingsCloudModelProviderForBackend(backend)
+		current = settingsProjectCloudModelRawValue(settings, backend)
+	}
+	if settingsFieldUsesBossCloudModelPicker(fieldIndex) {
+		provider = settingsCloudModelProviderForBackend(settings.BossChatBackend)
+		if provider == "" {
+			provider = "openai"
+		}
+		current = strings.TrimSpace(settings.BossHelmModel)
+		if fieldIndex == settingsFieldBossUtilityModel {
+			current = strings.TrimSpace(settings.BossUtilityModel)
+		}
+	}
 	if providerOverride = strings.ToLower(strings.TrimSpace(providerOverride)); providerOverride != "" {
 		if providerOverride == "off" {
 			return codexapp.LCAgentModelListConfig{}, "", "", false
@@ -174,7 +239,7 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 		Provider:         provider,
 		Model:            current,
 		IncludeAvailable: fieldIndex == settingsFieldLCAgentModel && strings.TrimSpace(providerOverride) == "",
-		EnvFile:          settings.LCAgentEnvFile,
+		EnvFile:          settingsModelPickerEnvFile(settings, fieldIndex),
 		OpenAIAPIKey:     settings.OpenAIAPIKey,
 		OpenRouterAPIKey: settings.OpenRouterAPIKey,
 		DeepSeekAPIKey:   settings.DeepSeekAPIKey,
@@ -197,10 +262,10 @@ func (m Model) applySettingsLCAgentModelListMsg(msg settingsLCAgentModelListMsg)
 	if len(msg.models) == 0 {
 		m.settingsLCAgentModelPicker = nil
 		if msg.err != nil {
-			m.reportError("LCAgent model list failed", msg.err, "")
+			m.reportError("Model list failed", msg.err, "")
 			return m, nil
 		}
-		m.status = "No LCAgent models are available for " + settingsLCAgentModelPickerProviderLabel(msg.provider) + "."
+		m.status = "No models are available for " + settingsLCAgentModelPickerProviderLabel(msg.provider) + "."
 		return m, nil
 	}
 	state.Loading = false
@@ -214,7 +279,7 @@ func (m Model) applySettingsLCAgentModelListMsg(msg settingsLCAgentModelListMsg)
 	}
 	state.Selected = settingsLCAgentModelPickerSelection(state.FilteredModels, state.Rows, state.Current)
 	if state.Err != "" {
-		m.status = "Showing curated LCAgent models; provider list check did not complete."
+		m.status = "Showing curated models; provider list check did not complete."
 	} else {
 		m.status = fmt.Sprintf("Loaded %d %s models.", len(state.Models), settingsLCAgentModelPickerProviderLabel(state.Provider))
 	}
@@ -253,6 +318,9 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	if state.Step == settingsLCAgentModelPickerStepProvider {
 		return m.updateSettingsLCAgentModelPickerProviderStep(msg)
 	}
+	if state.Step == settingsLCAgentModelPickerStepAPIKey {
+		return m.updateSettingsLCAgentModelPickerAPIKeyStep(msg)
+	}
 	if state.Step == settingsLCAgentModelPickerStepReasoning {
 		return m.updateSettingsLCAgentModelPickerReasoningStep(msg)
 	}
@@ -261,9 +329,14 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		case "esc":
 			m.closeSettingsLCAgentModelPicker("LCAgent model check canceled")
 		case "left", "h", "backspace":
-			m.settingsLCAgentModelPicker.Step = settingsLCAgentModelPickerStepProvider
+			if strings.TrimSpace(state.APIKeyProvider) != "" {
+				m.settingsLCAgentModelPicker.Step = settingsLCAgentModelPickerStepAPIKey
+				m.status = "Paste or confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " API key."
+			} else {
+				m.settingsLCAgentModelPicker.Step = settingsLCAgentModelPickerStepProvider
+				m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
+			}
 			m.settingsLCAgentModelPicker.Loading = false
-			m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
 		}
 		return m, nil
 	}
@@ -279,8 +352,13 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
 		return m, nil
 	case "left", "h", "backspace":
-		state.Step = settingsLCAgentModelPickerStepProvider
-		m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
+		if strings.TrimSpace(state.APIKeyProvider) != "" {
+			state.Step = settingsLCAgentModelPickerStepAPIKey
+			m.status = "Paste or confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " API key."
+		} else {
+			state.Step = settingsLCAgentModelPickerStepProvider
+			m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
+		}
 		return m, nil
 	case "up", "shift+tab":
 		state.Selected = settingsLCAgentPickerPrevSelectable(state.Rows, state.Selected)
@@ -367,14 +445,60 @@ func (m Model) chooseSettingsLCAgentModelPickerProvider(option settingsLCAgentPr
 	if settingsLCAgentModelPickerProviderSkipsModel(provider) {
 		return m.applySettingsLCAgentModelPickerSelection()
 	}
+	state.Step = settingsLCAgentModelPickerStepAPIKey
+	state.APIKeyProvider = provider
+	state.APIKeyInput = newSettingsLCAgentModelPickerAPIKeyInput(provider, settingsModelPickerSavedAPIKey(m.settingsDraftForInferenceStatus(), provider))
+	state.Loading = false
+	state.Err = ""
+	m.status = "Paste or confirm the shared " + settingsLCAgentModelPickerProviderLabel(provider) + " API key."
+	return m, nil
+}
+
+func (m Model) updateSettingsLCAgentModelPickerAPIKeyStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		return m, nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
+		return m, nil
+	case "shift+tab", "ctrl+p":
+		state.Step = settingsLCAgentModelPickerStepProvider
+		m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
+		return m, nil
+	case "enter":
+		return m.startSettingsLCAgentModelPickerModelList()
+	default:
+		input, cmd := state.APIKeyInput.Update(msg)
+		state.APIKeyInput = input
+		return m, cmd
+	}
+}
+
+func (m Model) startSettingsLCAgentModelPickerModelList() (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		return m, nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(state.Provider))
+	if provider == "" {
+		provider = strings.ToLower(strings.TrimSpace(state.APIKeyProvider))
+	}
+	if provider == "" {
+		m.status = "Choose a provider before checking models."
+		return m, nil
+	}
+	m.setSettingsModelPickerAPIKey(provider, state.APIKeyInput.Value())
 	settings := m.settingsDraftForInferenceStatus()
 	cfg, resolvedProvider, current, ok := settingsLCAgentModelListConfigForProvider(settings, state.FieldIndex, provider)
 	if !ok {
-		m.status = "No LCAgent model list is available for " + option.Label + "."
+		m.status = "No model list is available for " + settingsLCAgentModelPickerProviderLabel(provider) + "."
 		return m, nil
 	}
 	state.Step = settingsLCAgentModelPickerStepModel
 	state.Provider = resolvedProvider
+	state.APIKeyProvider = resolvedProvider
 	state.Current = current
 	state.FilterInput = newSettingsLCAgentModelPickerFilterInput()
 	state.Models = nil
@@ -498,6 +622,15 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 	if provider == "main" || provider == "off" {
 		model = ""
 	}
+	if strings.TrimSpace(state.APIKeyProvider) != "" {
+		m.setSettingsModelPickerAPIKey(provider, state.APIKeyInput.Value())
+	}
+	if settingsFieldUsesProjectCloudModelPicker(fieldIndex) {
+		return m.applySettingsProjectCloudModelPickerSelection(provider, model)
+	}
+	if settingsFieldUsesBossCloudModelPicker(fieldIndex) {
+		return m.applySettingsBossCloudModelPickerSelection(provider, model)
+	}
 	if fieldIndex >= 0 && fieldIndex < len(m.settingsFields) {
 		m.settingsFields[fieldIndex].input.SetValue(model)
 		m.settingsFields[fieldIndex].input.CursorEnd()
@@ -555,6 +688,65 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) applySettingsProjectCloudModelPickerSelection(provider, model string) (tea.Model, tea.Cmd) {
+	backend := settingsCloudModelBackendForProvider(provider)
+	if backend == config.AIBackendUnset || backend == config.AIBackendOpenAIAPI {
+		m.closeSettingsLCAgentModelPicker("Project reports do not have a direct model field for " + settingsLCAgentModelPickerProviderLabel(provider) + ".")
+		return m, nil
+	}
+	if len(m.settingsFields) > settingsFieldAIBackend {
+		m.settingsFields[settingsFieldAIBackend].input.SetValue(string(backend))
+	}
+	if fieldIndex := settingsProjectCloudModelFieldForBackend(backend); fieldIndex >= 0 && fieldIndex < len(m.settingsFields) {
+		m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(model))
+		m.settingsFields[fieldIndex].input.CursorEnd()
+	}
+	hint := "Press ctrl+s to save."
+	if m.setupMode {
+		hint = "Press ctrl+s to continue."
+	}
+	label := "Project reports model"
+	providerLabel := backend.Label()
+	if strings.TrimSpace(model) == "" {
+		m.closeSettingsLCAgentModelPicker(label + " reset to " + providerLabel + " default. " + hint)
+		return m, nil
+	}
+	m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + " / " + strings.TrimSpace(model) + ". " + hint)
+	return m, nil
+}
+
+func (m Model) applySettingsBossCloudModelPickerSelection(provider, model string) (tea.Model, tea.Cmd) {
+	backend := settingsCloudModelBackendForProvider(provider)
+	if backend == config.AIBackendUnset {
+		m.closeSettingsLCAgentModelPicker("Boss Chat does not have a model list for " + settingsLCAgentModelPickerProviderLabel(provider) + ".")
+		return m, nil
+	}
+	if len(m.settingsFields) > settingsFieldBossChatBackend {
+		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(backend))
+	}
+	fieldIndex := settingsFieldBossChatModel
+	label := "Boss helm model"
+	if m.settingsLCAgentModelPicker != nil && m.settingsLCAgentModelPicker.FieldIndex == settingsFieldBossUtilityModel {
+		fieldIndex = settingsFieldBossUtilityModel
+		label = "Boss utility model"
+	}
+	if fieldIndex >= 0 && fieldIndex < len(m.settingsFields) {
+		m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(model))
+		m.settingsFields[fieldIndex].input.CursorEnd()
+	}
+	hint := "Press ctrl+s to save."
+	if m.setupMode {
+		hint = "Press ctrl+s to continue."
+	}
+	providerLabel := backend.Label()
+	if strings.TrimSpace(model) == "" {
+		m.closeSettingsLCAgentModelPicker(label + " reset to " + providerLabel + " default. " + hint)
+		return m, nil
+	}
+	m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + " / " + strings.TrimSpace(model) + ". " + hint)
+	return m, nil
+}
+
 func (m Model) renderSettingsLCAgentModelPickerOverlay(body string, bodyW, bodyH int) string {
 	panel := m.renderSettingsLCAgentModelPickerPanel(bodyW, bodyH)
 	panelWidth := lipgloss.Width(panel)
@@ -572,12 +764,15 @@ func (m Model) renderSettingsLCAgentModelPickerPanel(bodyW, bodyH int) string {
 
 func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string {
 	state := m.settingsLCAgentModelPicker
-	title := "LCAgent Model"
+	title := "Model Selector"
 	if state != nil {
-		title = "LCAgent " + settingsLCAgentModelPickerRoleLabel(state.FieldIndex)
+		title = settingsLCAgentModelPickerDialogTitle(state.FieldIndex)
 	}
 	if state != nil && state.Step == settingsLCAgentModelPickerStepProvider {
 		return m.renderSettingsLCAgentModelPickerProviderContent(width, bodyH, title)
+	}
+	if state != nil && state.Step == settingsLCAgentModelPickerStepAPIKey {
+		return m.renderSettingsLCAgentModelPickerAPIKeyContent(width, bodyH, title)
 	}
 	if state != nil && state.Step == settingsLCAgentModelPickerStepReasoning {
 		return m.renderSettingsLCAgentModelPickerReasoningContent(width, bodyH, title)
@@ -586,7 +781,7 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 		commandPaletteTitleStyle.Render(title),
 		renderDialogAction("Type", "filter", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
-			renderDialogAction("Left", "provider", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Left", "key", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
@@ -665,6 +860,38 @@ func (m Model) renderSettingsLCAgentModelPickerProviderContent(width, bodyH int,
 	if strings.TrimSpace(selected.Description) != "" {
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(18, width), selected.Description)...)
 	}
+	if len(lines) > bodyH {
+		lines = lines[:bodyH]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderSettingsLCAgentModelPickerAPIKeyContent(width, bodyH int, title string) string {
+	state := m.settingsLCAgentModelPicker
+	lines := []string{
+		commandPaletteTitleStyle.Render(title),
+		renderDialogAction("Type", "API key", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Enter", "load models", commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("Shift+Tab", "provider", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	if state == nil {
+		return strings.Join(lines, "\n")
+	}
+	provider := firstNonEmptyTrimmed(state.APIKeyProvider, state.Provider)
+	input := state.APIKeyInput
+	input.Width = max(18, width)
+	lines = append(lines,
+		detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(provider)),
+		commandPaletteRowStyle.Render(settingsModelPickerAPIKeyLabel(provider)+": "+input.View()),
+	)
+	if suffix := maskedOpenAIKeySuffix(input.Value()); suffix != "" {
+		lines = append(lines, detailMutedStyle.Render("Shared key will be used for this provider and saved with settings. Ending "+suffix+"."))
+	} else {
+		fallback := settingsModelPickerAPIKeyFallbackText(m.settingsDraftForInferenceStatus(), state.FieldIndex, provider)
+		lines = append(lines, detailMutedStyle.Render(fallback))
+	}
+	lines = append(lines, "", detailMutedStyle.Render("Leave blank to keep provider defaults where the runtime can use them, or paste a key to fetch the full model list now."))
 	if len(lines) > bodyH {
 		lines = lines[:bodyH]
 	}
@@ -754,6 +981,24 @@ func settingsLCAgentModelPickerAutoLabel(settings config.EditableSettings, field
 
 func settingsLCAgentModelPickerAutoLabelForProvider(settings config.EditableSettings, fieldIndex int, provider string) string {
 	provider = strings.ToLower(strings.TrimSpace(provider))
+	if backend := settingsProjectCloudModelFieldBackend(fieldIndex); backend != config.AIBackendUnset {
+		if override := settingsCloudModelBackendForProvider(provider); override != config.AIBackendUnset {
+			backend = override
+		}
+		return backend.DefaultProjectModel()
+	}
+	if fieldIndex == settingsFieldBossChatModel || fieldIndex == settingsFieldBossUtilityModel {
+		backend := settingsCloudModelBackendForProvider(provider)
+		if backend == config.AIBackendUnset {
+			backend = settings.BossChatBackend
+		}
+		bossSettings := settings
+		bossSettings.BossChatBackend = backend
+		if fieldIndex == settingsFieldBossUtilityModel {
+			return settingsBossUtilityDefaultLabel(bossSettings)
+		}
+		return settingsBossHelmDefaultLabel(bossSettings)
+	}
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
 		return settingsLCAgentUtilityDefaultLabelForProvider(settings, provider)
 	}
@@ -777,8 +1022,76 @@ func settingsLCAgentModelPickerProviderOptions(fieldIndex int) []settingsLCAgent
 		return settingsLCAgentCriticProviderOptions()
 	case settingsFieldLCAgentVisionModel:
 		return settingsLCAgentVisionProviderOptions()
+	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel:
+		return settingsProjectCloudModelProviderOptions()
+	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
+		return settingsBossCloudModelProviderOptions()
 	default:
 		return settingsLCAgentProviderOptions()
+	}
+}
+
+func settingsProjectCloudModelProviderOptions() []settingsLCAgentProviderOption {
+	return []settingsLCAgentProviderOption{
+		{
+			Value:       "openrouter",
+			Label:       "OpenRouter",
+			Summary:     "Use OpenRouter for project reports and background summaries.",
+			Description: "Uses the shared OpenRouter API key and model list. Leave the model on Auto for the built-in project-report default.",
+		},
+		{
+			Value:       "deepseek",
+			Label:       "DeepSeek",
+			Summary:     "Use direct DeepSeek for project reports and background summaries.",
+			Description: "Uses the shared DeepSeek API key and direct DeepSeek model IDs.",
+		},
+		{
+			Value:       "moonshot",
+			Label:       "Moonshot",
+			Summary:     "Use direct Moonshot/Kimi for project reports and background summaries.",
+			Description: "Uses the shared Moonshot API key and Kimi model IDs.",
+		},
+		{
+			Value:       "xiaomi",
+			Label:       "Xiaomi",
+			Summary:     "Use direct Xiaomi MiMo for project reports and background summaries.",
+			Description: "Uses the shared Xiaomi API key and MiMo model IDs.",
+		},
+	}
+}
+
+func settingsBossCloudModelProviderOptions() []settingsLCAgentProviderOption {
+	return []settingsLCAgentProviderOption{
+		{
+			Value:       "openai",
+			Label:       "OpenAI",
+			Summary:     "Use direct OpenAI API inference for Boss Chat.",
+			Description: "Uses the shared OpenAI API key and direct OpenAI model IDs.",
+		},
+		{
+			Value:       "openrouter",
+			Label:       "OpenRouter",
+			Summary:     "Use OpenRouter for Boss Chat.",
+			Description: "Uses the shared OpenRouter API key and model list.",
+		},
+		{
+			Value:       "deepseek",
+			Label:       "DeepSeek",
+			Summary:     "Use direct DeepSeek for Boss Chat.",
+			Description: "Uses the shared DeepSeek API key and direct DeepSeek model IDs.",
+		},
+		{
+			Value:       "moonshot",
+			Label:       "Moonshot",
+			Summary:     "Use direct Moonshot/Kimi for Boss Chat.",
+			Description: "Uses the shared Moonshot API key and Kimi model IDs.",
+		},
+		{
+			Value:       "xiaomi",
+			Label:       "Xiaomi",
+			Summary:     "Use direct Xiaomi MiMo for Boss Chat.",
+			Description: "Uses the shared Xiaomi API key and MiMo model IDs.",
+		},
 	}
 }
 
@@ -803,6 +1116,15 @@ func settingsLCAgentProviderOptionValueForModelField(raw string) string {
 }
 
 func settingsLCAgentModelPickerProvider(settings config.EditableSettings, fieldIndex int) string {
+	if backend := settingsProjectCloudModelFieldBackend(fieldIndex); backend != config.AIBackendUnset {
+		return settingsCloudModelProviderForBackend(backend)
+	}
+	if settingsFieldUsesBossCloudModelPicker(fieldIndex) {
+		if provider := settingsCloudModelProviderForBackend(settings.BossChatBackend); provider != "" {
+			return provider
+		}
+		return "openai"
+	}
 	switch fieldIndex {
 	case settingsFieldLCAgentUtilityModel:
 		return settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
@@ -816,6 +1138,15 @@ func settingsLCAgentModelPickerProvider(settings config.EditableSettings, fieldI
 }
 
 func settingsLCAgentModelPickerRawModel(settings config.EditableSettings, fieldIndex int) string {
+	if backend := settingsProjectCloudModelFieldBackend(fieldIndex); backend != config.AIBackendUnset {
+		return settingsProjectCloudModelRawValue(settings, backend)
+	}
+	if fieldIndex == settingsFieldBossChatModel {
+		return strings.TrimSpace(settings.BossHelmModel)
+	}
+	if fieldIndex == settingsFieldBossUtilityModel {
+		return strings.TrimSpace(settings.BossUtilityModel)
+	}
 	switch fieldIndex {
 	case settingsFieldLCAgentUtilityModel:
 		return strings.TrimSpace(settings.LCAgentUtilityModel)
@@ -836,11 +1167,17 @@ func settingsLCAgentModelPickerRawReasoning(settings config.EditableSettings, fi
 }
 
 func settingsLCAgentModelPickerUsesReasoning(fieldIndex int) bool {
-	return settingsFieldUsesLCAgentModelPicker(fieldIndex)
+	return settingsFieldUsesAnyCloudModelPicker(fieldIndex)
 }
 
 func settingsLCAgentModelPickerRoleLabel(fieldIndex int) string {
 	switch fieldIndex {
+	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel:
+		return "Project reports model"
+	case settingsFieldBossChatModel:
+		return "Boss helm model"
+	case settingsFieldBossUtilityModel:
+		return "Boss utility model"
 	case settingsFieldLCAgentUtilityModel:
 		return "Utility model"
 	case settingsFieldLCAgentCriticModel:
@@ -850,6 +1187,13 @@ func settingsLCAgentModelPickerRoleLabel(fieldIndex int) string {
 	default:
 		return "Main model"
 	}
+}
+
+func settingsLCAgentModelPickerDialogTitle(fieldIndex int) string {
+	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+		return "LCAgent " + settingsLCAgentModelPickerRoleLabel(fieldIndex)
+	}
+	return settingsLCAgentModelPickerRoleLabel(fieldIndex)
 }
 
 func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPickerState) []settingsChoiceOption {
@@ -864,7 +1208,11 @@ func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPicke
 	}
 	if state.FieldIndex != settingsFieldLCAgentModel {
 		options[0].Summary = "Use provider default reasoning."
-		options[0].Description = "This role currently follows provider defaults; role-specific reasoning effort can be wired here when the LCAgent runtime supports it."
+		if settingsFieldUsesLCAgentModelPicker(state.FieldIndex) {
+			options[0].Description = "This role currently follows provider defaults; role-specific reasoning effort can be wired here when the LCAgent runtime supports it."
+		} else {
+			options[0].Description = "This model setting does not store a separate reasoning effort yet, so the selected provider or model decides."
+		}
 		return options
 	}
 	modelOption := state.PendingModelOption
@@ -933,19 +1281,41 @@ func (m Model) renderSettingsLCAgentModelValue(fieldIndex int, selected bool, in
 }
 
 func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex int) string {
+	if backend := settingsProjectCloudModelFieldBackend(fieldIndex); backend != config.AIBackendUnset {
+		provider := settingsCloudModelProviderForBackend(backend)
+		model := settingsProjectCloudModelRawValue(settings, backend)
+		if model == "" {
+			model = "Default: " + backend.DefaultProjectModel()
+		}
+		return settingsModelPickerAppendReasoning(settingsLCAgentModelPickerProviderLabel(provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
+	}
+	if fieldIndex == settingsFieldBossChatModel || fieldIndex == settingsFieldBossUtilityModel {
+		provider := settingsCloudModelProviderForBackend(settings.BossChatBackend)
+		if provider == "" {
+			provider = "openai"
+		}
+		model := strings.TrimSpace(settings.BossHelmModel)
+		if fieldIndex == settingsFieldBossUtilityModel {
+			model = strings.TrimSpace(settings.BossUtilityModel)
+		}
+		if model == "" {
+			model = "Default: " + settingsLCAgentModelPickerAutoLabelForProvider(settings, fieldIndex, provider)
+		}
+		return settingsModelPickerAppendReasoning(settingsLCAgentModelPickerProviderLabel(provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
+	}
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
 		provider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
 		switch provider {
 		case "off":
 			return "Off"
 		case "main":
-			return "Same as Main / " + settingsLCAgentMainModel(settings)
+			return settingsModelPickerAppendReasoning("Same as Main / "+settingsLCAgentMainModel(settings), settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
 		default:
 			model := strings.TrimSpace(settings.LCAgentUtilityModel)
 			if model == "" {
-				model = lcagentDefaultUtilityModelForProvider(provider)
+				model = "Default: " + lcagentDefaultUtilityModelForProvider(provider)
 			}
-			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentUtilityProvider, provider) + " / " + model
+			return settingsModelPickerAppendReasoning(settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentUtilityProvider, provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
 		}
 	}
 	if fieldIndex == settingsFieldLCAgentCriticModel {
@@ -954,13 +1324,13 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 		case "off":
 			return "Off"
 		case "main":
-			return "Same as Main / " + settingsLCAgentMainModel(settings)
+			return settingsModelPickerAppendReasoning("Same as Main / "+settingsLCAgentMainModel(settings), settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
 		default:
 			model := strings.TrimSpace(settings.LCAgentCriticModel)
 			if model == "" {
-				model = lcagentDefaultModelForProvider(provider)
+				model = "Default: " + lcagentDefaultModelForProvider(provider)
 			}
-			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentCriticProvider, provider) + " / " + model
+			return settingsModelPickerAppendReasoning(settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentCriticProvider, provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
 		}
 	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
@@ -969,17 +1339,38 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 		case "off":
 			return "Off"
 		case "main":
-			return "Same as Main / " + settingsLCAgentMainModel(settings)
+			return settingsModelPickerAppendReasoning("Same as Main / "+settingsLCAgentMainModel(settings), settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
 		default:
 			model := strings.TrimSpace(settings.LCAgentVisionModel)
 			if model == "" {
-				model = lcagentDefaultModelForProvider(provider)
+				model = "Default: " + lcagentDefaultModelForProvider(provider)
 			}
-			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentVisionProvider, provider) + " / " + model
+			return settingsModelPickerAppendReasoning(settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentVisionProvider, provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
 		}
 	}
 	provider := settingsLCAgentMainProvider(settings)
-	return settingsLCAgentProviderOptionLabel(provider) + " / " + settingsLCAgentMainModel(settings)
+	model := settingsLCAgentMainModel(settings)
+	if strings.TrimSpace(settings.LCAgentRoutePreset) == "" && strings.TrimSpace(settings.EmbeddedLCAgentModel) == "" {
+		model = "Default: " + model
+	}
+	return settingsModelPickerAppendReasoning(settingsLCAgentProviderOptionLabel(provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
+}
+
+func settingsModelPickerAppendReasoning(label, reasoning string) string {
+	reasoning = strings.TrimSpace(reasoning)
+	if reasoning == "" {
+		return label
+	}
+	return label + " / reasoning: " + reasoning
+}
+
+func settingsModelPickerReasoningDisplay(settings config.EditableSettings, fieldIndex int, provider string) string {
+	if fieldIndex == settingsFieldLCAgentModel || strings.EqualFold(strings.TrimSpace(provider), "main") {
+		if effort := strings.TrimSpace(settings.EmbeddedLCAgentReasoning); effort != "" {
+			return effort
+		}
+	}
+	return "Provider Default"
 }
 
 func settingsLCAgentModelPickerProviderLabel(provider string) string {
@@ -999,6 +1390,139 @@ func settingsLCAgentModelPickerProviderLabel(provider string) string {
 	default:
 		return "OpenRouter"
 	}
+}
+
+func settingsProjectCloudModelFieldBackend(fieldIndex int) config.AIBackend {
+	switch fieldIndex {
+	case settingsFieldOpenRouterModel:
+		return config.AIBackendOpenRouter
+	case settingsFieldDeepSeekModel:
+		return config.AIBackendDeepSeek
+	case settingsFieldMoonshotModel:
+		return config.AIBackendMoonshot
+	case settingsFieldXiaomiModel:
+		return config.AIBackendXiaomi
+	default:
+		return config.AIBackendUnset
+	}
+}
+
+func settingsProjectCloudModelFieldForBackend(backend config.AIBackend) int {
+	switch backend {
+	case config.AIBackendOpenRouter:
+		return settingsFieldOpenRouterModel
+	case config.AIBackendDeepSeek:
+		return settingsFieldDeepSeekModel
+	case config.AIBackendMoonshot:
+		return settingsFieldMoonshotModel
+	case config.AIBackendXiaomi:
+		return settingsFieldXiaomiModel
+	default:
+		return -1
+	}
+}
+
+func settingsProjectCloudModelRawValue(settings config.EditableSettings, backend config.AIBackend) string {
+	switch backend {
+	case config.AIBackendOpenRouter:
+		return strings.TrimSpace(settings.OpenRouterModel)
+	case config.AIBackendDeepSeek:
+		return strings.TrimSpace(settings.DeepSeekModel)
+	case config.AIBackendMoonshot:
+		return strings.TrimSpace(settings.MoonshotModel)
+	case config.AIBackendXiaomi:
+		return strings.TrimSpace(settings.XiaomiModel)
+	default:
+		return ""
+	}
+}
+
+func settingsCloudModelProviderForBackend(backend config.AIBackend) string {
+	switch backend {
+	case config.AIBackendOpenAIAPI:
+		return "openai"
+	case config.AIBackendOpenRouter:
+		return "openrouter"
+	case config.AIBackendDeepSeek:
+		return "deepseek"
+	case config.AIBackendMoonshot:
+		return "moonshot"
+	case config.AIBackendXiaomi:
+		return "xiaomi"
+	default:
+		return ""
+	}
+}
+
+func settingsCloudModelBackendForProvider(provider string) config.AIBackend {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return config.AIBackendOpenAIAPI
+	case "", "openrouter":
+		return config.AIBackendOpenRouter
+	case "deepseek":
+		return config.AIBackendDeepSeek
+	case "moonshot":
+		return config.AIBackendMoonshot
+	case "xiaomi":
+		return config.AIBackendXiaomi
+	default:
+		return config.AIBackendUnset
+	}
+}
+
+func settingsModelPickerEnvFile(settings config.EditableSettings, fieldIndex int) string {
+	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+		return strings.TrimSpace(settings.LCAgentEnvFile)
+	}
+	return ""
+}
+
+func settingsModelPickerSavedAPIKey(settings config.EditableSettings, provider string) string {
+	return lcagentProviderSavedAPIKey(settings, provider)
+}
+
+func settingsModelPickerAPIKeyLabel(provider string) string {
+	return lcagentProviderSavedKeyLabel(provider)
+}
+
+func settingsModelPickerAPIKeyField(provider string) int {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		return settingsFieldOpenAIAPIKey
+	case "", "openrouter":
+		return settingsFieldOpenRouterAPIKey
+	case "deepseek":
+		return settingsFieldDeepSeekAPIKey
+	case "moonshot":
+		return settingsFieldMoonshotAPIKey
+	case "xiaomi":
+		return settingsFieldXiaomiAPIKey
+	default:
+		return -1
+	}
+}
+
+func (m *Model) setSettingsModelPickerAPIKey(provider, apiKey string) {
+	fieldIndex := settingsModelPickerAPIKeyField(provider)
+	if fieldIndex < 0 || fieldIndex >= len(m.settingsFields) {
+		return
+	}
+	m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(apiKey))
+	m.settingsFields[fieldIndex].input.CursorEnd()
+}
+
+func settingsModelPickerAPIKeyFallbackText(settings config.EditableSettings, fieldIndex int, provider string) string {
+	keyName := lcagentProviderAPIKeyName(provider)
+	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+		if envFile := strings.TrimSpace(settings.LCAgentEnvFile); envFile != "" {
+			return "Blank checks " + keyName + " in the LCAgent env file, then the process environment, before falling back to curated models."
+		}
+	}
+	if keyName != "" {
+		return "Blank checks " + keyName + " in the process environment before falling back to curated models."
+	}
+	return "Blank falls back to curated models when provider discovery cannot authenticate."
 }
 
 func buildSettingsLCAgentPickerRows(models []codexapp.ModelOption, selectedProvider string) []settingsLCAgentPickerRow {

@@ -242,7 +242,7 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) {
 			return m.openSettingsPickerForField(m.setupSelectedConfigFieldIndex())
 		}
-		if settingsFieldUsesLCAgentModelPicker(m.setupSelectedConfigFieldIndex()) {
+		if m.settingsFieldUsesUnifiedCloudModelPicker(m.setupSelectedConfigFieldIndex()) {
 			return m.openSettingsLCAgentModelPicker()
 		}
 		return m.setupAdvance()
@@ -255,7 +255,7 @@ func (m Model) updateSetupConfigMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if settingsFieldUsesPicker(fieldIndex) {
 		return m, nil
 	}
-	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+	if m.settingsFieldUsesUnifiedCloudModelPicker(fieldIndex) {
 		return m, nil
 	}
 	input, cmd := m.settingsFields[fieldIndex].input.Update(msg)
@@ -1451,7 +1451,7 @@ func (m Model) setupActionSegments() []string {
 	if m.setupConfigMode {
 		if settingsFieldUsesPicker(m.setupSelectedConfigFieldIndex()) ||
 			settingsFieldUsesLocalBackendModelPicker(m.setupSelectedConfigFieldIndex()) ||
-			settingsFieldUsesLCAgentModelPicker(m.setupSelectedConfigFieldIndex()) {
+			m.settingsFieldUsesUnifiedCloudModelPicker(m.setupSelectedConfigFieldIndex()) {
 			ctrlSLabel := "continue"
 			if m.setupSectionNavigation {
 				ctrlSLabel = "save"

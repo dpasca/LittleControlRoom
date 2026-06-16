@@ -602,7 +602,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if settingsFieldUsesLocalBackendModelPicker(m.settingsSelected) {
 			return m.openLocalBackendModelPicker()
 		}
-		if settingsFieldUsesLCAgentModelPicker(m.settingsSelected) {
+		if m.settingsFieldUsesUnifiedCloudModelPicker(m.settingsSelected) {
 			return m.openSettingsLCAgentModelPicker()
 		}
 		m.status = "Press ctrl+s to save settings."
@@ -620,7 +620,7 @@ func (m Model) updateSettingsMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if settingsFieldUsesPicker(m.settingsSelected) {
 		return m, nil
 	}
-	if settingsFieldUsesLCAgentModelPicker(m.settingsSelected) {
+	if m.settingsFieldUsesUnifiedCloudModelPicker(m.settingsSelected) {
 		return m, nil
 	}
 	input, cmd := m.settingsFields[m.settingsSelected].input.Update(msg)
@@ -3073,7 +3073,7 @@ func (m Model) renderSettingsFieldRow(fieldIndex int, field settingsField, selec
 		}
 		return row
 	}
-	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
+	if m.settingsFieldUsesUnifiedCloudModelPicker(fieldIndex) {
 		row := labelStyle.Width(labelWidth).Render(label) + " " + m.renderSettingsLCAgentModelValue(fieldIndex, selected, inputWidth)
 		if selected {
 			return dialogSelectedRowStyle.Width(labelWidth + inputWidth + 1).Render(fitFooterWidth(row, labelWidth+inputWidth+1))
@@ -3230,7 +3230,7 @@ func (m Model) renderSettingsActions() string {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions...)
-	} else if settingsFieldUsesLocalBackendModelPicker(m.settingsSelected) || settingsFieldUsesLCAgentModelPicker(m.settingsSelected) {
+	} else if settingsFieldUsesLocalBackendModelPicker(m.settingsSelected) || m.settingsFieldUsesUnifiedCloudModelPicker(m.settingsSelected) {
 		actions = append([]string{
 			renderDialogAction("Enter", "choose", navigateActionKeyStyle, navigateActionTextStyle),
 		}, actions...)
