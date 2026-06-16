@@ -1111,21 +1111,21 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return settingsBossModelFieldsRelevant(settings)
 	case settingsFieldBossChatOllamaThinking:
 		return settings.BossChatBackend == config.AIBackendOllama
-	case settingsFieldLCAgentModel, settingsFieldLCAgentReasoning,
+	case settingsFieldLCAgentModel,
 		settingsFieldLCAgentAuto, settingsFieldLCAgentToolProfile, settingsFieldLCAgentContextProfile:
 		return strings.TrimSpace(settings.LCAgentRoutePreset) == ""
-	case settingsFieldLCAgentProvider:
+	case settingsFieldLCAgentProvider,
+		settingsFieldLCAgentReasoning,
+		settingsFieldLCAgentUtilityProvider,
+		settingsFieldLCAgentCriticProvider,
+		settingsFieldLCAgentVisionProvider:
 		return false
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendMLX)
 	case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
 		return settingsOpenAICompatibleFieldsRelevant(settings, config.AIBackendOllama)
-	case settingsFieldLCAgentUtilityModel:
-		return settingsLCAgentUtilityProviderValue(m.settingsFieldValue(settingsFieldLCAgentUtilityProvider)) != "off"
-	case settingsFieldLCAgentCriticModel:
-		return settingsLCAgentCriticProviderValue(m.settingsFieldValue(settingsFieldLCAgentCriticProvider)) != "off"
-	case settingsFieldLCAgentVisionModel:
-		return settingsLCAgentVisionProviderValue(m.settingsFieldValue(settingsFieldLCAgentVisionProvider)) != "off"
+	case settingsFieldLCAgentUtilityModel, settingsFieldLCAgentCriticModel, settingsFieldLCAgentVisionModel:
+		return true
 	case settingsFieldLCAgentWebSearchAPIKey:
 		backend := normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend))
 		return backend == "exa" || backend == "google"
@@ -1256,7 +1256,6 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 		if strings.TrimSpace(settings.LCAgentRoutePreset) == "" {
 			fields = append(fields,
 				settingsFieldLCAgentModel,
-				settingsFieldLCAgentReasoning,
 			)
 		}
 		fields = append(fields,
@@ -1338,6 +1337,14 @@ func settingsLCAgentConnectionFields(settings config.EditableSettings) []int {
 	utilityProvider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
 	if !strings.EqualFold(utilityProvider, "off") && !strings.EqualFold(utilityProvider, "main") {
 		fields = appendSettingsLCAgentConnectionFields(fields, utilityProvider)
+	}
+	criticProvider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+	if !strings.EqualFold(criticProvider, "off") && !strings.EqualFold(criticProvider, "main") {
+		fields = appendSettingsLCAgentConnectionFields(fields, criticProvider)
+	}
+	visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+	if !strings.EqualFold(visionProvider, "off") && !strings.EqualFold(visionProvider, "main") {
+		fields = appendSettingsLCAgentConnectionFields(fields, visionProvider)
 	}
 	return fields
 }
@@ -2673,7 +2680,11 @@ func settingsLCAgentMainModel(settings config.EditableSettings) string {
 }
 
 func settingsLCAgentUtilityDefaultLabel(settings config.EditableSettings) string {
-	provider := settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
+	return settingsLCAgentUtilityDefaultLabelForProvider(settings, settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider))
+}
+
+func settingsLCAgentUtilityDefaultLabelForProvider(settings config.EditableSettings, provider string) string {
+	provider = settingsLCAgentUtilityProviderValue(provider)
 	if provider == "off" {
 		return "off"
 	}
@@ -2700,7 +2711,11 @@ func settingsLCAgentUtilityProviderValue(raw string) string {
 }
 
 func settingsLCAgentCriticDefaultLabel(settings config.EditableSettings) string {
-	provider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+	return settingsLCAgentCriticDefaultLabelForProvider(settings, settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider))
+}
+
+func settingsLCAgentCriticDefaultLabelForProvider(settings config.EditableSettings, provider string) string {
+	provider = settingsLCAgentCriticProviderValue(provider)
 	if provider == "off" {
 		return "off"
 	}
@@ -2724,7 +2739,11 @@ func settingsLCAgentCriticProviderValue(raw string) string {
 }
 
 func settingsLCAgentVisionDefaultLabel(settings config.EditableSettings) string {
-	provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+	return settingsLCAgentVisionDefaultLabelForProvider(settings, settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider))
+}
+
+func settingsLCAgentVisionDefaultLabelForProvider(settings config.EditableSettings, provider string) string {
+	provider = settingsLCAgentVisionProviderValue(provider)
 	if provider == "off" {
 		return "off"
 	}
@@ -3415,7 +3434,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Main model",
-			"Press Enter to choose the provider and model for experimental LCAgent runs together. Leave blank to use the current provider default.",
+			"Press Enter to choose provider, model, and reasoning effort for experimental LCAgent runs. Choose Auto model to use the selected provider default.",
 			settings.EmbeddedLCAgentModel,
 			256,
 			"Default: "+lcagentDefaultModelForProvider(firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")),
@@ -3472,7 +3491,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Utility model",
-			"Secondary model used for helper work such as condensing oversized search results into read/search hints. Press Enter to check/fetch provider models when available.",
+			"Press Enter to choose the provider and model for helper work such as condensing oversized search results. Choose Auto model to use the selected provider default.",
 			settings.LCAgentUtilityModel,
 			256,
 			"Default: "+settingsLCAgentUtilityDefaultLabel(settings),
@@ -3487,7 +3506,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Critic model",
-			"Optional model ID for the post-turn trace-only critic. Blank uses the selected critic provider default.",
+			"Press Enter to choose the provider and model for the post-turn trace-only critic. Choose Auto model to use the selected provider default.",
 			settings.LCAgentCriticModel,
 			256,
 			"Default: "+settingsLCAgentCriticDefaultLabel(settings),
@@ -3502,7 +3521,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Vision model",
-			"Optional model ID for analyze_image. Choose a model that supports image input; blank uses the selected vision provider default.",
+			"Press Enter to choose the provider and model for analyze_image. Choose Auto model to use the selected provider default.",
 			settings.LCAgentVisionModel,
 			256,
 			"Default: "+settingsLCAgentVisionDefaultLabel(settings),
@@ -3917,10 +3936,10 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
 			settings := m.settingsDraftForInferenceStatus()
-			return "The Main Model will request " + settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings)) + " / " + model + ". Press Enter to choose a provider/model pair."
+			return "The Main Model will request " + settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings)) + " / " + model + ". Press Enter to choose provider, model, and reasoning."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses the Main Model default: " + settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings)) + " / " + settingsLCAgentMainModel(settings) + ". Press Enter to choose a provider/model pair."
+		return "Auto uses the Main Model default: " + settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings)) + " / " + settingsLCAgentMainModel(settings) + ". Press Enter to choose provider, model, and reasoning."
 	case settingsFieldLCAgentReasoning:
 		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
 			return "The Main Model will request reasoning effort " + effort + " when the selected provider supports it."
@@ -3947,10 +3966,10 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 	case settingsFieldLCAgentUtilityModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "The Utility Model will request " + model + ". Press Enter to check this provider's model list when available."
+			return "The Utility Model will request " + model + ". Press Enter to choose provider and model."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses " + settingsLCAgentUtilityDefaultLabel(settings) + ". Press Enter to fetch/select provider models when available, or type an exact ID."
+		return "Auto uses " + settingsLCAgentUtilityDefaultLabel(settings) + ". Press Enter to choose provider and model."
 	case settingsFieldLCAgentCriticProvider:
 		switch settingsLCAgentCriticProviderValue(field.input.Value()) {
 		case "off":
@@ -3972,10 +3991,10 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 	case settingsFieldLCAgentCriticModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "The post-turn trace-only critic will request " + model + " and can only review the captured turn packet."
+			return "The post-turn trace-only critic will request " + model + " and can only review the captured turn packet. Press Enter to choose provider and model."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses " + settingsLCAgentCriticDefaultLabel(settings) + ". The critic can suggest a follow-up draft, but cannot send it."
+		return "Auto uses " + settingsLCAgentCriticDefaultLabel(settings) + ". The critic can suggest a follow-up draft, but cannot send it."
 	case settingsFieldLCAgentVisionProvider:
 		switch settingsLCAgentVisionProviderValue(field.input.Value()) {
 		case "off":
@@ -3997,10 +4016,10 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 	case settingsFieldLCAgentVisionModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "analyze_image will request " + model + ". Press Enter to choose a model, or v to send a small image-input check."
+			return "analyze_image will request " + model + ". Press Enter to choose provider and model, or v to send a small image-input check."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Blank uses " + settingsLCAgentVisionDefaultLabel(settings) + ". Press v to check image input after choosing a provider."
+		return "Auto uses " + settingsLCAgentVisionDefaultLabel(settings) + ". Press v to check image input after choosing a provider."
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "off":

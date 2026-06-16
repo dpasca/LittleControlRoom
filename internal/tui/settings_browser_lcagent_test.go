@@ -156,14 +156,20 @@ func TestSettingsLCAgentMainModelEnterOpensProviderModelPicker(t *testing.T) {
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if cmd == nil {
-		t.Fatalf("LCAgent main model enter should start a model-list command")
+	if cmd != nil {
+		t.Fatalf("LCAgent main model enter should wait for provider selection before loading models")
 	}
-	if got.settingsLCAgentModelPicker == nil || !got.settingsLCAgentModelPicker.Loading {
-		t.Fatalf("LCAgent main model enter should open the provider/model picker")
+	if got.settingsLCAgentModelPicker == nil || got.settingsLCAgentModelPicker.Step != settingsLCAgentModelPickerStepProvider {
+		t.Fatalf("LCAgent main model enter should open the provider-first model picker")
 	}
-	if got.status != "Checking LCAgent provider/model options..." {
-		t.Fatalf("status = %q, want model picker loading status", got.status)
+	if got.status != "Choose the main model provider." {
+		t.Fatalf("status = %q, want provider picker status", got.status)
+	}
+	rendered := ansi.Strip(got.renderSettingsLCAgentModelPickerContent(72, 18))
+	for _, want := range []string{"LCAgent Main model", "OpenRouter", "Selected: OpenRouter"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("main model picker is missing %q: %q", want, rendered)
+		}
 	}
 }
 
@@ -335,22 +341,21 @@ func TestSettingsLCAgentMainModelPickerChoosesDeepSeek(t *testing.T) {
 		height:           24,
 		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
 			FieldIndex: settingsFieldLCAgentModel,
-			Provider:   "openrouter",
+			Provider:   "deepseek",
 		},
 	}
 
-	updated, _ := m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{
+	got := applySettingsLCAgentModelPickerSelectionForTest(t, m, "deepseek", codexapp.ModelOption{
 		Model:         "deepseek-v4-pro",
 		ModelProvider: "deepseek",
 	})
-	got := updated.(Model)
 	if got.settingsLCAgentModelPicker != nil {
 		t.Fatalf("LCAgent model picker should close after choosing")
 	}
 	if got.settingsFields[settingsFieldLCAgentProvider].input.Value() != "deepseek" {
 		t.Fatalf("hidden LCAgent provider = %q, want deepseek", got.settingsFields[settingsFieldLCAgentProvider].input.Value())
 	}
-	updated, _ = got.openSettingsDrilldown(settingsDrilldownLCAgent)
+	updated, _ := got.openSettingsDrilldown(settingsDrilldownLCAgent)
 	got = updated.(Model)
 	rendered := ansi.Strip(got.renderSettingsContent(84, 24))
 	if !strings.Contains(rendered, "DeepSeek API key") {
@@ -371,38 +376,40 @@ func TestSettingsLCAgentUtilityProviderPickerChoosesOff(t *testing.T) {
 		width:            100,
 		height:           24,
 	}
-	_ = m.setSettingsSelection(settingsFieldLCAgentUtilityProvider)
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
+	m = updated.(Model)
+	_ = m.setSettingsSelection(settingsFieldLCAgentUtilityModel)
 
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("utility provider picker enter should not save immediately")
+		t.Fatalf("utility model provider step should not load models until a provider is chosen")
 	}
-	if !got.settingsLCAgentProviderVisible {
-		t.Fatalf("utility provider enter should open the shared provider chooser")
+	if got.settingsLCAgentModelPicker == nil || got.settingsLCAgentModelPicker.Step != settingsLCAgentModelPickerStepProvider {
+		t.Fatalf("utility model enter should open the unified model picker")
 	}
-	if got.status != "Choose the Utility Model provider for LCAgent." {
+	if got.status != "Choose the utility model provider." {
 		t.Fatalf("status = %q, want utility chooser status", got.status)
 	}
-	rendered := ansi.Strip(got.renderSettingsLCAgentProviderPickerContent(56, 18))
-	for _, want := range []string{"Utility Model Provider", "> Same as Main  (current)", "Off", "Selected: Same as Main"} {
+	rendered := ansi.Strip(got.renderSettingsLCAgentModelPickerContent(56, 18))
+	for _, want := range []string{"LCAgent Utility model", "> Same as Main  (current)", "Off", "Selected: Same as Main"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("utility provider picker is missing %q: %q", want, rendered)
+			t.Fatalf("utility model picker is missing %q: %q", want, rendered)
 		}
 	}
 
-	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(Model)
-	updated, _ = got.updateSettingsLCAgentProviderPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
-	if got.settingsLCAgentProviderVisible {
-		t.Fatalf("utility provider picker should close after choosing")
+	if got.settingsLCAgentModelPicker != nil {
+		t.Fatalf("utility model picker should close after choosing")
 	}
 	if got.settingsFields[settingsFieldLCAgentUtilityProvider].input.Value() != "off" {
 		t.Fatalf("utility provider = %q, want off", got.settingsFields[settingsFieldLCAgentUtilityProvider].input.Value())
 	}
-	if got.settingsFieldVisible(settingsFieldLCAgentUtilityModel) {
-		t.Fatalf("utility model field should hide while utility provider is off")
+	if !got.settingsFieldVisible(settingsFieldLCAgentUtilityModel) {
+		t.Fatalf("utility model field should remain visible as the single Utility entry")
 	}
 }
 

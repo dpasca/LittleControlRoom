@@ -44,8 +44,7 @@ func TestSettingsLCAgentModelPickerSelectionUpdatesField(t *testing.T) {
 		},
 	}
 
-	gotModel, _ := m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{Model: "openai/gpt-5.5"})
-	got := gotModel.(Model)
+	got := applySettingsLCAgentModelPickerSelectionForTest(t, m, "openrouter", codexapp.ModelOption{Model: "openai/gpt-5.5"})
 	if value := got.settingsFieldValue(settingsFieldLCAgentModel); value != "openai/gpt-5.5" {
 		t.Fatalf("Main model field = %q, want openai/gpt-5.5", value)
 	}
@@ -66,15 +65,14 @@ func TestSettingsLCAgentModelPickerSelectionUpdatesMainProvider(t *testing.T) {
 		settingsFields: newSettingsFields(settings),
 		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
 			FieldIndex: settingsFieldLCAgentModel,
-			Provider:   "xiaomi",
+			Provider:   "deepseek",
 		},
 	}
 
-	gotModel, _ := m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{
+	got := applySettingsLCAgentModelPickerSelectionForTest(t, m, "deepseek", codexapp.ModelOption{
 		Model:         "deepseek-v4-pro",
 		ModelProvider: "deepseek",
 	})
-	got := gotModel.(Model)
 	if value := got.settingsFieldValue(settingsFieldLCAgentModel); value != "deepseek-v4-pro" {
 		t.Fatalf("Main model field = %q, want deepseek-v4-pro", value)
 	}
@@ -94,6 +92,7 @@ func TestSettingsLCAgentModelPickerJKTypeIntoFilter(t *testing.T) {
 	m := Model{
 		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
 			FieldIndex:     settingsFieldLCAgentModel,
+			Step:           settingsLCAgentModelPickerStepModel,
 			Provider:       "openrouter",
 			Models:         models,
 			FilteredModels: models,
@@ -137,6 +136,7 @@ func TestSettingsLCAgentModelPickerPageKeysSkipHeaders(t *testing.T) {
 	m := Model{
 		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
 			FieldIndex:     settingsFieldLCAgentModel,
+			Step:           settingsLCAgentModelPickerStepModel,
 			Provider:       "openai",
 			Models:         models,
 			FilteredModels: models,
@@ -164,6 +164,100 @@ func TestSettingsLCAgentModelPickerPageKeysSkipHeaders(t *testing.T) {
 	if got.settingsLCAgentModelPicker.Selected != 0 {
 		t.Fatalf("selected after pgup = %d, want Auto row", got.settingsLCAgentModelPicker.Selected)
 	}
+}
+
+func TestSettingsLCAgentModelPickerMainModelAdvancesToReasoning(t *testing.T) {
+	option := codexapp.ModelOption{
+		Model:         "openai/gpt-5.5",
+		ModelProvider: "openrouter",
+		SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+			{ReasoningEffort: "low", Description: "Light"},
+			{ReasoningEffort: "high", Description: "Deep"},
+		},
+		DefaultReasoningEffort: "low",
+	}
+	m := Model{
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldLCAgentModel,
+			Step:           settingsLCAgentModelPickerStepModel,
+			Provider:       "openrouter",
+			Models:         []codexapp.ModelOption{option},
+			FilteredModels: []codexapp.ModelOption{option},
+			Rows:           buildSettingsLCAgentPickerRows([]codexapp.ModelOption{option}, "openrouter"),
+			FilterInput:    newSettingsLCAgentModelPickerFilterInput(),
+			Selected:       2,
+		},
+	}
+
+	updated, _ := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil {
+		t.Fatal("model picker closed before reasoning step")
+	}
+	if state.Step != settingsLCAgentModelPickerStepReasoning {
+		t.Fatalf("picker step = %v, want reasoning", state.Step)
+	}
+	if state.PendingModel != "openai/gpt-5.5" {
+		t.Fatalf("pending model = %q, want openai/gpt-5.5", state.PendingModel)
+	}
+	options := settingsLCAgentModelPickerReasoningOptions(state)
+	if state.ReasoningSelected < 0 || state.ReasoningSelected >= len(options) || options[state.ReasoningSelected].Value != "low" {
+		t.Fatalf("selected reasoning index=%d options=%#v, want low", state.ReasoningSelected, options)
+	}
+}
+
+func TestSettingsLCAgentModelPickerUtilityReasoningUsesProviderDefault(t *testing.T) {
+	option := codexapp.ModelOption{
+		Model:         "deepseek-v4-flash",
+		ModelProvider: "deepseek",
+		SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+			{ReasoningEffort: "low", Description: "Light"},
+		},
+		DefaultReasoningEffort: "low",
+	}
+	m := Model{
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldLCAgentUtilityModel,
+			Step:           settingsLCAgentModelPickerStepModel,
+			Provider:       "deepseek",
+			Models:         []codexapp.ModelOption{option},
+			FilteredModels: []codexapp.ModelOption{option},
+			Rows:           buildSettingsLCAgentPickerRows([]codexapp.ModelOption{option}, "deepseek"),
+			FilterInput:    newSettingsLCAgentModelPickerFilterInput(),
+			Selected:       2,
+		},
+	}
+
+	updated, _ := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil {
+		t.Fatal("model picker closed before reasoning step")
+	}
+	if state.Step != settingsLCAgentModelPickerStepReasoning {
+		t.Fatalf("picker step = %v, want reasoning", state.Step)
+	}
+	options := settingsLCAgentModelPickerReasoningOptions(state)
+	if len(options) != 1 || options[0].Value != "" {
+		t.Fatalf("utility reasoning options = %#v, want provider default only", options)
+	}
+}
+
+func applySettingsLCAgentModelPickerSelectionForTest(t *testing.T, m Model, provider string, option codexapp.ModelOption) Model {
+	t.Helper()
+	if m.settingsLCAgentModelPicker == nil {
+		t.Fatal("settingsLCAgentModelPicker is nil")
+	}
+	m.settingsLCAgentModelPicker.Provider = provider
+	m.settingsLCAgentModelPicker.PendingModel = strings.TrimSpace(option.Model)
+	m.settingsLCAgentModelPicker.PendingModelOption = option
+	updated, _ := m.applySettingsLCAgentModelPickerSelection()
+	got, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("updated model = %T, want tui.Model", updated)
+	}
+	return got
 }
 
 func TestSettingsLCAgentKnownModelProviderMismatchBlocksSave(t *testing.T) {

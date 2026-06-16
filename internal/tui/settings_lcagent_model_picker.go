@@ -23,17 +23,35 @@ type settingsLCAgentPickerRow struct {
 	ModelIndex int    // index into FilteredModels; -1 for headers
 }
 
+type settingsLCAgentModelPickerStep int
+
+const (
+	settingsLCAgentModelPickerStepProvider settingsLCAgentModelPickerStep = iota
+	settingsLCAgentModelPickerStepModel
+	settingsLCAgentModelPickerStepReasoning
+)
+
 type settingsLCAgentModelPickerState struct {
-	FieldIndex     int
-	Provider       string
-	Current        string
-	Models         []codexapp.ModelOption
-	FilteredModels []codexapp.ModelOption
-	Rows           []settingsLCAgentPickerRow
-	FilterInput    textinput.Model
-	Selected       int
-	Loading        bool
-	Err            string
+	FieldIndex         int
+	Step               settingsLCAgentModelPickerStep
+	Provider           string
+	CurrentProvider    string
+	ProviderOptions    []settingsLCAgentProviderOption
+	ProviderSelected   int
+	Current            string
+	Models             []codexapp.ModelOption
+	FilteredModels     []codexapp.ModelOption
+	Rows               []settingsLCAgentPickerRow
+	FilterInput        textinput.Model
+	Selected           int
+	PendingModel       string
+	PendingModelAuto   bool
+	PendingModelOption codexapp.ModelOption
+	CurrentReasoning   string
+	PendingReasoning   string
+	ReasoningSelected  int
+	Loading            bool
+	Err                string
 }
 
 type settingsLCAgentModelListMsg struct {
@@ -45,7 +63,10 @@ type settingsLCAgentModelListMsg struct {
 }
 
 func settingsFieldUsesLCAgentModelPicker(index int) bool {
-	return index == settingsFieldLCAgentModel || index == settingsFieldLCAgentUtilityModel || index == settingsFieldLCAgentVisionModel
+	return index == settingsFieldLCAgentModel ||
+		index == settingsFieldLCAgentUtilityModel ||
+		index == settingsFieldLCAgentCriticModel ||
+		index == settingsFieldLCAgentVisionModel
 }
 
 func newSettingsLCAgentModelPickerFilterInput() textinput.Model {
@@ -66,24 +87,22 @@ func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	settings := m.settingsDraftForInferenceStatus()
-	cfg, provider, current, ok := settingsLCAgentModelListConfig(settings, fieldIndex)
-	if !ok {
-		m.status = "No LCAgent model list is available for that field."
-		return m, nil
-	}
+	provider := settingsLCAgentModelPickerProvider(settings, fieldIndex)
+	current := settingsLCAgentModelPickerRawModel(settings, fieldIndex)
+	providerOptions := settingsLCAgentModelPickerProviderOptions(fieldIndex)
 	m.settingsLCAgentModelPicker = &settingsLCAgentModelPickerState{
-		FieldIndex:  fieldIndex,
-		Provider:    provider,
-		Current:     current,
-		FilterInput: newSettingsLCAgentModelPickerFilterInput(),
-		Loading:     true,
+		FieldIndex:       fieldIndex,
+		Step:             settingsLCAgentModelPickerStepProvider,
+		Provider:         provider,
+		CurrentProvider:  provider,
+		ProviderOptions:  providerOptions,
+		ProviderSelected: settingsLCAgentModelPickerProviderSelection(providerOptions, provider),
+		Current:          current,
+		FilterInput:      newSettingsLCAgentModelPickerFilterInput(),
+		CurrentReasoning: settingsLCAgentModelPickerRawReasoning(settings, fieldIndex),
 	}
-	if fieldIndex == settingsFieldLCAgentModel {
-		m.status = "Checking LCAgent provider/model options..."
-	} else {
-		m.status = "Checking " + settingsLCAgentModelPickerProviderLabel(provider) + " models..."
-	}
-	return m, settingsLCAgentModelListCmd(fieldIndex, provider, current, cfg)
+	m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(fieldIndex)) + " provider."
+	return m, nil
 }
 
 func settingsLCAgentModelListCmd(fieldIndex int, provider, current string, cfg codexapp.LCAgentModelListConfig) tea.Cmd {
@@ -102,6 +121,10 @@ func settingsLCAgentModelListCmd(fieldIndex int, provider, current string, cfg c
 }
 
 func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex int) (codexapp.LCAgentModelListConfig, string, string, bool) {
+	return settingsLCAgentModelListConfigForProvider(settings, fieldIndex, "")
+}
+
+func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings, fieldIndex int, providerOverride string) (codexapp.LCAgentModelListConfig, string, string, bool) {
 	provider := settingsLCAgentMainProvider(settings)
 	current := strings.TrimSpace(settings.EmbeddedLCAgentModel)
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
@@ -114,6 +137,16 @@ func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex
 		}
 		current = strings.TrimSpace(settings.LCAgentUtilityModel)
 	}
+	if fieldIndex == settingsFieldLCAgentCriticModel {
+		criticProvider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+		if criticProvider == "off" {
+			return codexapp.LCAgentModelListConfig{}, "", "", false
+		}
+		if criticProvider != "main" {
+			provider = criticProvider
+		}
+		current = strings.TrimSpace(settings.LCAgentCriticModel)
+	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 		if visionProvider == "off" {
@@ -124,10 +157,23 @@ func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex
 		}
 		current = strings.TrimSpace(settings.LCAgentVisionModel)
 	}
+	if providerOverride = strings.ToLower(strings.TrimSpace(providerOverride)); providerOverride != "" {
+		if providerOverride == "off" {
+			return codexapp.LCAgentModelListConfig{}, "", "", false
+		}
+		if providerOverride == "main" {
+			provider = settingsLCAgentMainProvider(settings)
+		} else {
+			provider = providerOverride
+		}
+		if !strings.EqualFold(providerOverride, settingsLCAgentModelPickerProvider(settings, fieldIndex)) {
+			current = ""
+		}
+	}
 	cfg := codexapp.LCAgentModelListConfig{
 		Provider:         provider,
 		Model:            current,
-		IncludeAvailable: fieldIndex == settingsFieldLCAgentModel,
+		IncludeAvailable: fieldIndex == settingsFieldLCAgentModel && strings.TrimSpace(providerOverride) == "",
 		EnvFile:          settings.LCAgentEnvFile,
 		OpenAIAPIKey:     settings.OpenAIAPIKey,
 		OpenRouterAPIKey: settings.OpenRouterAPIKey,
@@ -142,7 +188,10 @@ func settingsLCAgentModelListConfig(settings config.EditableSettings, fieldIndex
 
 func (m Model) applySettingsLCAgentModelListMsg(msg settingsLCAgentModelListMsg) (tea.Model, tea.Cmd) {
 	state := m.settingsLCAgentModelPicker
-	if state == nil || state.FieldIndex != msg.fieldIndex || strings.TrimSpace(state.Provider) != strings.TrimSpace(msg.provider) {
+	if state == nil ||
+		state.Step != settingsLCAgentModelPickerStepModel ||
+		state.FieldIndex != msg.fieldIndex ||
+		strings.TrimSpace(state.Provider) != strings.TrimSpace(msg.provider) {
 		return m, nil
 	}
 	if len(msg.models) == 0 {
@@ -166,8 +215,6 @@ func (m Model) applySettingsLCAgentModelListMsg(msg settingsLCAgentModelListMsg)
 	state.Selected = settingsLCAgentModelPickerSelection(state.FilteredModels, state.Rows, state.Current)
 	if state.Err != "" {
 		m.status = "Showing curated LCAgent models; provider list check did not complete."
-	} else if state.FieldIndex == settingsFieldLCAgentModel {
-		m.status = fmt.Sprintf("Loaded %d LCAgent provider/model options.", len(state.Models))
 	} else {
 		m.status = fmt.Sprintf("Loaded %d %s models.", len(state.Models), settingsLCAgentModelPickerProviderLabel(state.Provider))
 	}
@@ -203,10 +250,20 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	if state == nil {
 		return m, nil
 	}
+	if state.Step == settingsLCAgentModelPickerStepProvider {
+		return m.updateSettingsLCAgentModelPickerProviderStep(msg)
+	}
+	if state.Step == settingsLCAgentModelPickerStepReasoning {
+		return m.updateSettingsLCAgentModelPickerReasoningStep(msg)
+	}
 	if state.Loading {
 		switch msg.String() {
 		case "esc":
 			m.closeSettingsLCAgentModelPicker("LCAgent model check canceled")
+		case "left", "h", "backspace":
+			m.settingsLCAgentModelPicker.Step = settingsLCAgentModelPickerStepProvider
+			m.settingsLCAgentModelPicker.Loading = false
+			m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
 		}
 		return m, nil
 	}
@@ -220,6 +277,10 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	switch msg.String() {
 	case "esc":
 		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
+		return m, nil
+	case "left", "h", "backspace":
+		state.Step = settingsLCAgentModelPickerStepProvider
+		m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
 		return m, nil
 	case "up", "shift+tab":
 		state.Selected = settingsLCAgentPickerPrevSelectable(state.Rows, state.Selected)
@@ -235,12 +296,12 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		return m, nil
 	case "enter":
 		if state.Selected == 0 {
-			return m.applySettingsLCAgentModelPickerSelection(codexapp.ModelOption{})
+			return m.chooseSettingsLCAgentModelPickerModel(codexapp.ModelOption{}, true)
 		}
 		if state.Selected > 0 && state.Selected <= len(state.Rows) {
 			row := state.Rows[state.Selected-1]
 			if !row.IsHeader && row.ModelIndex >= 0 && row.ModelIndex < len(state.FilteredModels) {
-				return m.applySettingsLCAgentModelPickerSelection(state.FilteredModels[row.ModelIndex])
+				return m.chooseSettingsLCAgentModelPickerModel(state.FilteredModels[row.ModelIndex], false)
 			}
 		}
 		return m, nil
@@ -258,6 +319,81 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (m Model) updateSettingsLCAgentModelPickerProviderStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		return m, nil
+	}
+	options := state.ProviderOptions
+	if len(options) == 0 {
+		m.closeSettingsLCAgentModelPicker("No LCAgent providers are available right now.")
+		return m, nil
+	}
+	if state.ProviderSelected < 0 {
+		state.ProviderSelected = 0
+	}
+	if state.ProviderSelected >= len(options) {
+		state.ProviderSelected = len(options) - 1
+	}
+	switch msg.String() {
+	case "esc":
+		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
+		return m, nil
+	case "up", "k", "shift+tab":
+		state.ProviderSelected = wrapIndex(state.ProviderSelected-1, len(options))
+		return m, nil
+	case "down", "j", "tab":
+		state.ProviderSelected = wrapIndex(state.ProviderSelected+1, len(options))
+		return m, nil
+	case "enter":
+		return m.chooseSettingsLCAgentModelPickerProvider(options[state.ProviderSelected])
+	}
+	return m, nil
+}
+
+func (m Model) chooseSettingsLCAgentModelPickerProvider(option settingsLCAgentProviderOption) (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		return m, nil
+	}
+	provider := strings.ToLower(strings.TrimSpace(option.Value))
+	state.Provider = provider
+	state.PendingModel = ""
+	state.PendingModelAuto = true
+	state.PendingModelOption = codexapp.ModelOption{}
+	state.PendingReasoning = strings.TrimSpace(state.CurrentReasoning)
+	if settingsLCAgentModelPickerProviderSkipsModel(provider) {
+		return m.applySettingsLCAgentModelPickerSelection()
+	}
+	settings := m.settingsDraftForInferenceStatus()
+	cfg, resolvedProvider, current, ok := settingsLCAgentModelListConfigForProvider(settings, state.FieldIndex, provider)
+	if !ok {
+		m.status = "No LCAgent model list is available for " + option.Label + "."
+		return m, nil
+	}
+	state.Step = settingsLCAgentModelPickerStepModel
+	state.Provider = resolvedProvider
+	state.Current = current
+	state.FilterInput = newSettingsLCAgentModelPickerFilterInput()
+	state.Models = nil
+	state.FilteredModels = nil
+	state.Rows = nil
+	state.Selected = 0
+	state.Loading = true
+	state.Err = ""
+	m.status = "Checking " + settingsLCAgentModelPickerProviderLabel(resolvedProvider) + " models..."
+	return m, settingsLCAgentModelListCmd(state.FieldIndex, resolvedProvider, current, cfg)
+}
+
+func settingsLCAgentModelPickerProviderSkipsModel(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "off", "main":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Model) applySettingsLCAgentModelPickerFilter() {
@@ -291,51 +427,131 @@ func (m *Model) applySettingsLCAgentModelPickerFilter() {
 	}
 }
 
-func (m Model) applySettingsLCAgentModelPickerSelection(option codexapp.ModelOption) (tea.Model, tea.Cmd) {
+func (m Model) chooseSettingsLCAgentModelPickerModel(option codexapp.ModelOption, auto bool) (tea.Model, tea.Cmd) {
 	state := m.settingsLCAgentModelPicker
 	if state == nil {
 		return m, nil
 	}
-	model := strings.TrimSpace(option.Model)
+	state.PendingModel = strings.TrimSpace(option.Model)
+	state.PendingModelAuto = auto
+	state.PendingModelOption = option
+	if settingsLCAgentModelPickerUsesReasoning(state.FieldIndex) {
+		state.Step = settingsLCAgentModelPickerStepReasoning
+		options := settingsLCAgentModelPickerReasoningOptions(state)
+		state.ReasoningSelected = settingsLCAgentModelPickerReasoningSelection(options, state)
+		if state.ReasoningSelected >= 0 && state.ReasoningSelected < len(options) {
+			state.PendingReasoning = strings.TrimSpace(options[state.ReasoningSelected].Value)
+		}
+		m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " reasoning effort."
+		return m, nil
+	}
+	return m.applySettingsLCAgentModelPickerSelection()
+}
+
+func (m Model) updateSettingsLCAgentModelPickerReasoningStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		return m, nil
+	}
+	options := settingsLCAgentModelPickerReasoningOptions(state)
+	if len(options) == 0 {
+		return m.applySettingsLCAgentModelPickerSelection()
+	}
+	if state.ReasoningSelected < 0 {
+		state.ReasoningSelected = 0
+	}
+	if state.ReasoningSelected >= len(options) {
+		state.ReasoningSelected = len(options) - 1
+	}
+	switch msg.String() {
+	case "esc":
+		m.closeSettingsLCAgentModelPicker("LCAgent model picker closed")
+		return m, nil
+	case "left", "h", "backspace":
+		state.Step = settingsLCAgentModelPickerStepModel
+		m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " model."
+		return m, nil
+	case "up", "k", "shift+tab":
+		state.ReasoningSelected = wrapIndex(state.ReasoningSelected-1, len(options))
+		return m, nil
+	case "down", "j", "tab":
+		state.ReasoningSelected = wrapIndex(state.ReasoningSelected+1, len(options))
+		return m, nil
+	case "enter":
+		state.PendingReasoning = strings.TrimSpace(options[state.ReasoningSelected].Value)
+		return m.applySettingsLCAgentModelPickerSelection()
+	}
+	return m, nil
+}
+
+func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		return m, nil
+	}
+	model := strings.TrimSpace(state.PendingModel)
 	fieldIndex := state.FieldIndex
+	provider := strings.ToLower(strings.TrimSpace(state.Provider))
+	if provider == "" {
+		provider = strings.ToLower(strings.TrimSpace(state.CurrentProvider))
+	}
+	if provider == "main" || provider == "off" {
+		model = ""
+	}
 	if fieldIndex >= 0 && fieldIndex < len(m.settingsFields) {
 		m.settingsFields[fieldIndex].input.SetValue(model)
 		m.settingsFields[fieldIndex].input.CursorEnd()
 	}
-	if model != "" && strings.TrimSpace(option.ModelProvider) != "" {
-		switch fieldIndex {
-		case settingsFieldLCAgentModel:
-			if len(m.settingsFields) > settingsFieldLCAgentRoutePreset {
-				m.settingsFields[settingsFieldLCAgentRoutePreset].input.SetValue("")
-			}
-			if len(m.settingsFields) > settingsFieldLCAgentProvider {
-				m.settingsFields[settingsFieldLCAgentProvider].input.SetValue(strings.TrimSpace(option.ModelProvider))
-			}
-		case settingsFieldLCAgentUtilityModel:
-			if len(m.settingsFields) > settingsFieldLCAgentUtilityProvider {
-				m.settingsFields[settingsFieldLCAgentUtilityProvider].input.SetValue(strings.TrimSpace(option.ModelProvider))
-			}
-		case settingsFieldLCAgentVisionModel:
-			if len(m.settingsFields) > settingsFieldLCAgentVisionProvider {
-				m.settingsFields[settingsFieldLCAgentVisionProvider].input.SetValue(strings.TrimSpace(option.ModelProvider))
-			}
+	switch fieldIndex {
+	case settingsFieldLCAgentModel:
+		if len(m.settingsFields) > settingsFieldLCAgentRoutePreset {
+			m.settingsFields[settingsFieldLCAgentRoutePreset].input.SetValue("")
+		}
+		if len(m.settingsFields) > settingsFieldLCAgentProvider && provider != "" {
+			m.settingsFields[settingsFieldLCAgentProvider].input.SetValue(provider)
+		}
+		if len(m.settingsFields) > settingsFieldLCAgentReasoning {
+			m.settingsFields[settingsFieldLCAgentReasoning].input.SetValue(strings.TrimSpace(state.PendingReasoning))
+		}
+	case settingsFieldLCAgentUtilityModel:
+		if len(m.settingsFields) > settingsFieldLCAgentUtilityProvider && provider != "" {
+			m.settingsFields[settingsFieldLCAgentUtilityProvider].input.SetValue(provider)
+		}
+	case settingsFieldLCAgentCriticModel:
+		if len(m.settingsFields) > settingsFieldLCAgentCriticProvider && provider != "" {
+			m.settingsFields[settingsFieldLCAgentCriticProvider].input.SetValue(provider)
+		}
+	case settingsFieldLCAgentVisionModel:
+		if len(m.settingsFields) > settingsFieldLCAgentVisionProvider && provider != "" {
+			m.settingsFields[settingsFieldLCAgentVisionProvider].input.SetValue(provider)
 		}
 	}
-	label := "Main model"
-	if fieldIndex == settingsFieldLCAgentUtilityModel {
-		label = "Utility model"
-	} else if fieldIndex == settingsFieldLCAgentVisionModel {
-		label = "Vision model"
+	label := settingsLCAgentModelPickerRoleLabel(fieldIndex)
+	hint := "Press ctrl+s to save."
+	if m.setupMode {
+		hint = "Press ctrl+s to continue."
 	}
-	providerLabel := strings.TrimSpace(option.ModelProvider)
+	providerLabel := provider
 	if providerLabel != "" {
 		providerLabel = settingsLCAgentModelPickerProviderLabel(providerLabel) + " / "
 	}
-	if strings.TrimSpace(model) == "" {
-		m.closeSettingsLCAgentModelPicker(label + " reset to provider default. Press ctrl+s to save.")
+	if provider == "off" {
+		m.closeSettingsLCAgentModelPicker(label + " turned off. " + hint)
 		return m, nil
 	}
-	m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + strings.TrimSpace(model) + ". Press ctrl+s to save.")
+	if provider == "main" {
+		m.closeSettingsLCAgentModelPicker(label + " set to Same as Main. " + hint)
+		return m, nil
+	}
+	if strings.TrimSpace(model) == "" {
+		m.closeSettingsLCAgentModelPicker(label + " reset to " + providerLabel + "default. " + hint)
+		return m, nil
+	}
+	if settingsLCAgentModelPickerUsesReasoning(fieldIndex) && strings.TrimSpace(state.PendingReasoning) != "" {
+		m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + strings.TrimSpace(model) + " with " + strings.TrimSpace(state.PendingReasoning) + " reasoning. " + hint)
+		return m, nil
+	}
+	m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + strings.TrimSpace(model) + ". " + hint)
 	return m, nil
 }
 
@@ -357,17 +573,20 @@ func (m Model) renderSettingsLCAgentModelPickerPanel(bodyW, bodyH int) string {
 func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string {
 	state := m.settingsLCAgentModelPicker
 	title := "LCAgent Model"
-	if state != nil && state.FieldIndex == settingsFieldLCAgentUtilityModel {
-		title = "LCAgent Utility Model"
-	} else if state != nil && state.FieldIndex == settingsFieldLCAgentVisionModel {
-		title = "LCAgent Vision Model"
-	} else if state != nil {
-		title = "LCAgent Main Model"
+	if state != nil {
+		title = "LCAgent " + settingsLCAgentModelPickerRoleLabel(state.FieldIndex)
+	}
+	if state != nil && state.Step == settingsLCAgentModelPickerStepProvider {
+		return m.renderSettingsLCAgentModelPickerProviderContent(width, bodyH, title)
+	}
+	if state != nil && state.Step == settingsLCAgentModelPickerStepReasoning {
+		return m.renderSettingsLCAgentModelPickerReasoningContent(width, bodyH, title)
 	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
 		renderDialogAction("Type", "filter", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Left", "provider", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
@@ -377,13 +596,9 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	}
 	current := strings.TrimSpace(state.Current)
 	if current == "" {
-		current = "Auto (" + settingsLCAgentModelPickerAutoLabel(m.settingsDraftForInferenceStatus(), state.FieldIndex) + ")"
+		current = "Auto (" + settingsLCAgentModelPickerAutoLabelForProvider(m.settingsDraftForInferenceStatus(), state.FieldIndex, state.Provider) + ")"
 	}
-	if state.FieldIndex == settingsFieldLCAgentModel {
-		lines = append(lines, detailMutedStyle.Render("Current: "+truncateText(settingsLCAgentModelValueLabel(m.settingsDraftForInferenceStatus(), state.FieldIndex), max(18, width-9))))
-	} else {
-		lines = append(lines, detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(state.Provider)+"   Current: "+truncateText(current, max(18, width-22))))
-	}
+	lines = append(lines, detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(state.Provider)+"   Current: "+truncateText(current, max(18, width-22))))
 	if state.Err != "" {
 		lines = append(lines, detailMutedStyle.Render("Provider check: "+truncateText(state.Err, max(18, width-16))))
 	}
@@ -425,9 +640,80 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	return strings.Join(lines, "\n")
 }
 
+func (m Model) renderSettingsLCAgentModelPickerProviderContent(width, bodyH int, title string) string {
+	state := m.settingsLCAgentModelPicker
+	lines := []string{
+		commandPaletteTitleStyle.Render(title),
+		renderDialogAction("Up/Down", "provider", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Enter", "continue", commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	if state == nil || len(state.ProviderOptions) == 0 {
+		lines = append(lines, "", commandPaletteHintStyle.Render("No provider options are available."))
+		return strings.Join(lines, "\n")
+	}
+	currentLabel := settingsLCAgentModelValueLabel(m.settingsDraftForInferenceStatus(), state.FieldIndex)
+	lines = append(lines, detailMutedStyle.Render("Current: "+truncateText(currentLabel, max(18, width-9))), "")
+	for i, option := range state.ProviderOptions {
+		lines = append(lines, renderSettingsLCAgentProviderPickerRow(option, i == state.ProviderSelected, option.Value == state.CurrentProvider, width))
+	}
+	selected := state.ProviderOptions[state.ProviderSelected]
+	lines = append(lines, "", detailField("Selected", detailValueStyle.Render(selected.Label)))
+	if strings.TrimSpace(selected.Summary) != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(18, width), selected.Summary)...)
+	}
+	if strings.TrimSpace(selected.Description) != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(18, width), selected.Description)...)
+	}
+	if len(lines) > bodyH {
+		lines = lines[:bodyH]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) renderSettingsLCAgentModelPickerReasoningContent(width, bodyH int, title string) string {
+	state := m.settingsLCAgentModelPicker
+	lines := []string{
+		commandPaletteTitleStyle.Render(title),
+		renderDialogAction("Up/Down", "reasoning", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Left", "model", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Enter", "choose", commitActionKeyStyle, commitActionTextStyle) + "   " +
+			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	}
+	if state == nil {
+		return strings.Join(lines, "\n")
+	}
+	modelLabel := "Auto (" + settingsLCAgentModelPickerAutoLabelForProvider(m.settingsDraftForInferenceStatus(), state.FieldIndex, state.Provider) + ")"
+	if strings.TrimSpace(state.PendingModel) != "" {
+		modelLabel = strings.TrimSpace(state.PendingModel)
+	}
+	lines = append(lines,
+		detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(state.Provider)+"   Model: "+truncateText(modelLabel, max(18, width-20))),
+		"",
+	)
+	options := settingsLCAgentModelPickerReasoningOptions(state)
+	for i, option := range options {
+		lines = append(lines, renderSettingsChoicePickerRow(option, i == state.ReasoningSelected, option.Value == state.CurrentReasoning, width))
+	}
+	if len(options) > 0 && state.ReasoningSelected >= 0 && state.ReasoningSelected < len(options) {
+		selected := options[state.ReasoningSelected]
+		lines = append(lines, "", detailField("Selected", detailValueStyle.Render(selected.Label)))
+		if strings.TrimSpace(selected.Summary) != "" {
+			lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, max(18, width), selected.Summary)...)
+		}
+		if strings.TrimSpace(selected.Description) != "" {
+			lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(18, width), selected.Description)...)
+		}
+	}
+	if len(lines) > bodyH {
+		lines = lines[:bodyH]
+	}
+	return strings.Join(lines, "\n")
+}
+
 func (m Model) renderSettingsLCAgentModelPickerRow(index int, state *settingsLCAgentModelPickerState, selected bool, width int) string {
 	label := "Auto"
-	right := settingsLCAgentModelPickerAutoLabel(m.settingsDraftForInferenceStatus(), state.FieldIndex)
+	right := settingsLCAgentModelPickerAutoLabelForProvider(m.settingsDraftForInferenceStatus(), state.FieldIndex, state.Provider)
 	if index > 0 {
 		row := state.Rows[index-1]
 		if row.IsHeader {
@@ -463,13 +749,176 @@ func (m Model) renderSettingsLCAgentModelPickerRow(index int, state *settingsLCA
 }
 
 func settingsLCAgentModelPickerAutoLabel(settings config.EditableSettings, fieldIndex int) string {
+	return settingsLCAgentModelPickerAutoLabelForProvider(settings, fieldIndex, settingsLCAgentModelPickerProvider(settings, fieldIndex))
+}
+
+func settingsLCAgentModelPickerAutoLabelForProvider(settings config.EditableSettings, fieldIndex int, provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
-		return settingsLCAgentUtilityDefaultLabel(settings)
+		return settingsLCAgentUtilityDefaultLabelForProvider(settings, provider)
+	}
+	if fieldIndex == settingsFieldLCAgentCriticModel {
+		return settingsLCAgentCriticDefaultLabelForProvider(settings, provider)
 	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
-		return settingsLCAgentVisionDefaultLabel(settings)
+		return settingsLCAgentVisionDefaultLabelForProvider(settings, provider)
+	}
+	if provider != "" {
+		return lcagentDefaultModelForProvider(provider)
 	}
 	return settingsLCAgentMainModel(settings)
+}
+
+func settingsLCAgentModelPickerProviderOptions(fieldIndex int) []settingsLCAgentProviderOption {
+	switch fieldIndex {
+	case settingsFieldLCAgentUtilityModel:
+		return settingsLCAgentUtilityProviderOptions()
+	case settingsFieldLCAgentCriticModel:
+		return settingsLCAgentCriticProviderOptions()
+	case settingsFieldLCAgentVisionModel:
+		return settingsLCAgentVisionProviderOptions()
+	default:
+		return settingsLCAgentProviderOptions()
+	}
+}
+
+func settingsLCAgentModelPickerProviderSelection(options []settingsLCAgentProviderOption, provider string) int {
+	provider = settingsLCAgentProviderOptionValueForModelField(provider)
+	for i, option := range options {
+		if option.Value == provider {
+			return i
+		}
+	}
+	return 0
+}
+
+func settingsLCAgentProviderOptionValueForModelField(raw string) string {
+	normalized := normalizeSettingsChoice(raw)
+	switch normalized {
+	case "", "same", "same-as-main":
+		return "main"
+	default:
+		return normalized
+	}
+}
+
+func settingsLCAgentModelPickerProvider(settings config.EditableSettings, fieldIndex int) string {
+	switch fieldIndex {
+	case settingsFieldLCAgentUtilityModel:
+		return settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
+	case settingsFieldLCAgentCriticModel:
+		return settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+	case settingsFieldLCAgentVisionModel:
+		return settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+	default:
+		return settingsLCAgentMainProvider(settings)
+	}
+}
+
+func settingsLCAgentModelPickerRawModel(settings config.EditableSettings, fieldIndex int) string {
+	switch fieldIndex {
+	case settingsFieldLCAgentUtilityModel:
+		return strings.TrimSpace(settings.LCAgentUtilityModel)
+	case settingsFieldLCAgentCriticModel:
+		return strings.TrimSpace(settings.LCAgentCriticModel)
+	case settingsFieldLCAgentVisionModel:
+		return strings.TrimSpace(settings.LCAgentVisionModel)
+	default:
+		return strings.TrimSpace(settings.EmbeddedLCAgentModel)
+	}
+}
+
+func settingsLCAgentModelPickerRawReasoning(settings config.EditableSettings, fieldIndex int) string {
+	if fieldIndex == settingsFieldLCAgentModel {
+		return strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
+	}
+	return ""
+}
+
+func settingsLCAgentModelPickerUsesReasoning(fieldIndex int) bool {
+	return settingsFieldUsesLCAgentModelPicker(fieldIndex)
+}
+
+func settingsLCAgentModelPickerRoleLabel(fieldIndex int) string {
+	switch fieldIndex {
+	case settingsFieldLCAgentUtilityModel:
+		return "Utility model"
+	case settingsFieldLCAgentCriticModel:
+		return "Critic model"
+	case settingsFieldLCAgentVisionModel:
+		return "Vision model"
+	default:
+		return "Main model"
+	}
+}
+
+func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPickerState) []settingsChoiceOption {
+	options := []settingsChoiceOption{{
+		Value:       "",
+		Label:       "Provider Default",
+		Summary:     "Omit explicit reasoning effort.",
+		Description: "Lets the selected provider or model decide the reasoning behavior.",
+	}}
+	if state == nil {
+		return options
+	}
+	if state.FieldIndex != settingsFieldLCAgentModel {
+		options[0].Summary = "Use provider default reasoning."
+		options[0].Description = "This role currently follows provider defaults; role-specific reasoning effort can be wired here when the LCAgent runtime supports it."
+		return options
+	}
+	modelOption := state.PendingModelOption
+	if state.PendingModelAuto || strings.TrimSpace(modelOption.Model) == "" {
+		modelOption = settingsLCAgentModelPickerDefaultOption(state.Models)
+	}
+	for _, effort := range modelOption.SupportedReasoningEfforts {
+		value := strings.TrimSpace(effort.ReasoningEffort)
+		if value == "" {
+			continue
+		}
+		options = append(options, settingsChoiceOption{
+			Value:       value,
+			Label:       strings.ToUpper(value[:1]) + value[1:],
+			Summary:     strings.TrimSpace(effort.Description),
+			Description: strings.TrimSpace(effort.Description),
+		})
+	}
+	return options
+}
+
+func settingsLCAgentModelPickerDefaultOption(models []codexapp.ModelOption) codexapp.ModelOption {
+	for _, option := range models {
+		if option.IsDefault {
+			return option
+		}
+	}
+	if len(models) > 0 {
+		return models[0]
+	}
+	return codexapp.ModelOption{}
+}
+
+func settingsLCAgentModelPickerReasoningSelection(options []settingsChoiceOption, state *settingsLCAgentModelPickerState) int {
+	desired := ""
+	if state != nil {
+		if state.FieldIndex != settingsFieldLCAgentModel {
+			return 0
+		}
+		desired = strings.TrimSpace(state.CurrentReasoning)
+		if desired == "" {
+			if state.PendingModelAuto || strings.TrimSpace(state.PendingModelOption.Model) == "" {
+				desired = strings.TrimSpace(settingsLCAgentModelPickerDefaultOption(state.Models).DefaultReasoningEffort)
+			} else {
+				desired = strings.TrimSpace(state.PendingModelOption.DefaultReasoningEffort)
+			}
+		}
+	}
+	for i, option := range options {
+		if strings.EqualFold(strings.TrimSpace(option.Value), desired) {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m Model) renderSettingsLCAgentModelValue(fieldIndex int, selected bool, inputWidth int) string {
@@ -499,6 +948,21 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentUtilityProvider, provider) + " / " + model
 		}
 	}
+	if fieldIndex == settingsFieldLCAgentCriticModel {
+		provider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+		switch provider {
+		case "off":
+			return "Off"
+		case "main":
+			return "Same as Main / " + settingsLCAgentMainModel(settings)
+		default:
+			model := strings.TrimSpace(settings.LCAgentCriticModel)
+			if model == "" {
+				model = lcagentDefaultModelForProvider(provider)
+			}
+			return settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentCriticProvider, provider) + " / " + model
+		}
+	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 		switch provider {
@@ -520,6 +984,10 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 
 func settingsLCAgentModelPickerProviderLabel(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "main":
+		return "Same as Main"
+	case "off":
+		return "Off"
 	case "openai":
 		return "OpenAI"
 	case "deepseek":
