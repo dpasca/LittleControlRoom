@@ -1212,7 +1212,9 @@ func codexReasoningOptionsFor(option codexapp.ModelOption) []codexapp.ReasoningE
 }
 
 func (m Model) codexReasoningOptionsForModel(option codexapp.ModelOption) []codexapp.ReasoningEffortOption {
-	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent && len(option.SupportedReasoningEfforts) == 0 {
+	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent &&
+		len(option.SupportedReasoningEfforts) == 0 &&
+		strings.TrimSpace(option.DefaultReasoningEffort) != "" {
 		if efforts := codexapp.LCAgentReasoningEffortOptionsForProvider(option.ModelProvider); len(efforts) > 0 {
 			return efforts
 		}

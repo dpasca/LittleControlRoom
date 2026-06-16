@@ -263,6 +263,64 @@ func TestSettingsLCAgentModelPickerMainModelAdvancesToReasoning(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentModelPickerReasoningMovesWithProviderFallback(t *testing.T) {
+	settings := config.EditableSettings{LCAgentProvider: "openai"}
+	option := codexapp.ModelOption{
+		Model:                  "gpt-5.5",
+		ModelProvider:          "openai",
+		DisplayName:            "GPT 5.5",
+		DefaultReasoningEffort: "low",
+	}
+	m := Model{
+		settingsFields: newSettingsFields(settings),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:       settingsFieldLCAgentModel,
+			Step:             settingsLCAgentModelPickerStepModel,
+			Provider:         "openai",
+			Models:           []codexapp.ModelOption{option},
+			FilteredModels:   []codexapp.ModelOption{option},
+			Rows:             buildSettingsLCAgentPickerRows([]codexapp.ModelOption{option}, "openai"),
+			FilterInput:      newSettingsLCAgentModelPickerFilterInput(),
+			Selected:         2,
+			CurrentReasoning: "",
+		},
+	}
+
+	updated, _ := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil || state.Step != settingsLCAgentModelPickerStepReasoning {
+		t.Fatalf("picker state after model enter = %#v, want reasoning step", state)
+	}
+	options := settingsLCAgentModelPickerReasoningOptions(state)
+	if len(options) != 4 {
+		t.Fatalf("reasoning options = %#v, want provider default plus low/medium/high", options)
+	}
+	if state.ReasoningSelected >= len(options) || options[state.ReasoningSelected].Value != "low" {
+		t.Fatalf("initial selected reasoning index=%d options=%#v, want low", state.ReasoningSelected, options)
+	}
+
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker.PendingReasoning != "medium" {
+		t.Fatalf("pending reasoning after one down = %q, want medium", got.settingsLCAgentModelPicker.PendingReasoning)
+	}
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker.PendingReasoning != "high" {
+		t.Fatalf("pending reasoning after two downs = %q, want high", got.settingsLCAgentModelPicker.PendingReasoning)
+	}
+
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker != nil {
+		t.Fatal("model picker should close after applying reasoning")
+	}
+	if value := got.settingsFieldValue(settingsFieldLCAgentReasoning); value != "high" {
+		t.Fatalf("LCAgent reasoning field = %q, want high", value)
+	}
+}
+
 func TestSettingsLCAgentModelPickerUtilityReasoningUsesProviderDefault(t *testing.T) {
 	option := codexapp.ModelOption{
 		Model:         "deepseek-v4-flash",

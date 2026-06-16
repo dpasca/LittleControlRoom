@@ -88,3 +88,44 @@ func TestRenderCodexModelPickerShowsSelectedModelStatus(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexModelPickerLCAgentDefaultOnlyReasoningUsesProviderOptions(t *testing.T) {
+	models := []codexapp.ModelOption{{
+		Model:                  "gpt-5.5",
+		ModelProvider:          "openai",
+		DisplayName:            "GPT 5.5",
+		DefaultReasoningEffort: "low",
+	}}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Provider:      codexapp.ProviderLCAgent,
+				ProjectPath:   "/tmp/demo",
+				Model:         "gpt-5.5",
+				ModelProvider: "openai",
+			},
+		},
+		codexModelPicker: &codexModelPickerState{
+			Models:         append([]codexapp.ModelOption(nil), models...),
+			FilteredModels: append([]codexapp.ModelOption(nil), models...),
+			SelectedModel:  "gpt-5.5",
+			ModelIndex:     0,
+			Focus:          codexModelPickerFocusEfforts,
+		},
+	}
+	m.setCodexModelPickerModel(models[0], "")
+
+	options := m.currentCodexReasoningOptions()
+	if len(options) != 3 {
+		t.Fatalf("reasoning options = %#v, want low/medium/high", options)
+	}
+	updated, _ := m.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got := updated.(Model)
+	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	selected, ok := got.currentCodexReasoningOption()
+	if !ok || selected.ReasoningEffort != "high" {
+		t.Fatalf("selected reasoning = %#v ok=%v, want high", selected, ok)
+	}
+}
