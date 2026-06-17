@@ -1752,6 +1752,72 @@ func TestCodexLinkPickerOpensRelativeMarkdownArtifactLinksAgainstProjectPath(t *
 	_ = updated
 }
 
+func TestCodexLinkPickerListsVisibleRelativeInlineCodeArtifactPaths(t *testing.T) {
+	projectPath := t.TempDir()
+	oldRel := "data/bjung/storyboard_openai/debug/scene02_current_order/current_order_contact.png"
+	visibleRel := "data/bjung/storyboard_openai/debug/scene02_current_order/interleaved_order_contact.png"
+	oldPath := filepath.Join(projectPath, filepath.FromSlash(oldRel))
+	visiblePath := filepath.Join(projectPath, filepath.FromSlash(visibleRel))
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Current runtime order:\n`" + oldRel + "`",
+			},
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Possible interleaved order:\n`" + visibleRel + "`",
+			},
+		},
+	}
+
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: snapshot,
+		},
+		codexViewport: viewport.New(140, 1),
+	}
+	rendered := m.renderAndCacheCodexTranscript(projectPath, snapshot, 140)
+	m.codexViewport.SetContent(rendered)
+	m.codexViewport.SetYOffset(3)
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("visible inline-code path picker state = %#v, want exactly one target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "image" || target.Path != visiblePath {
+		t.Fatalf("visible inline-code target = %#v, want image path %q", target, visiblePath)
+	}
+	if target.Path == oldPath {
+		t.Fatalf("off-screen inline-code path should not be listed: %#v", target)
+	}
+}
+
+func TestCodexInlineCodePathScanIgnoresFencesAndBareCodeTokens(t *testing.T) {
+	projectPath := t.TempDir()
+	rel := "data/bjung/storyboard_openai/debug/scene02_current_order/current_order_contact.png"
+	text := strings.Join([]string{
+		"Model `gpt-5.4` ran `go test ./...`.",
+		"```text",
+		"data/bjung/storyboard_openai/debug/scene02_current_order/hidden_order_contact.png",
+		"```",
+		"Current runtime order: `" + rel + "`",
+	}, "\n")
+
+	targets := codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)
+	if len(targets) != 1 {
+		t.Fatalf("inline code path targets = %#v, want exactly one real path", targets)
+	}
+	wantPath := filepath.Join(projectPath, filepath.FromSlash(rel))
+	if targets[0].Kind != "image" || targets[0].Path != wantPath {
+		t.Fatalf("inline code path target = %#v, want image path %q", targets[0], wantPath)
+	}
+}
+
 func TestCodexLinkPickerOpensPercentEscapedLocalMarkdownLinksAsFiles(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "Family Room", "jun_it_citizenship")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

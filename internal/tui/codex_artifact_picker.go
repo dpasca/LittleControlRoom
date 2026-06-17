@@ -259,6 +259,7 @@ func codexTargetsFromLinkSpans(links []codexTranscriptLinkSpan) []codexArtifactO
 const (
 	codexArtifactLinkScanEntryBudget = 24
 	codexArtifactLinkScanByteBudget  = 128 * 1024
+	codexInlineCodePathScanLimit     = codexMarkdownLinkTargetScanLimit
 )
 
 func (m *Model) maybeStartCodexArtifactLinkScan(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
@@ -345,7 +346,7 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 			break
 		}
 		scanLen := min(len(text)-textOffset, remainingBudget)
-		parseEnd := min(len(text), textOffset+scanLen+codexMarkdownLinkLabelScanLimit+codexMarkdownLinkTargetScanLimit+4)
+		parseEnd := min(len(text), textOffset+scanLen+codexMarkdownLinkLabelScanLimit+max(codexMarkdownLinkTargetScanLimit, codexInlineCodePathScanLimit)+4)
 		targets = append(targets, codexArtifactOpenTargetsFromMarkdownPrefixInProject(text[textOffset:parseEnd], scanLen, projectPath)...)
 		bytesScanned += scanLen
 		if textOffset+scanLen < len(text) {
@@ -1048,10 +1049,31 @@ func codexArtifactOpenTargetsFromMarkdownPrefixInProject(text string, scanLimit 
 	remaining := text
 	remainingScanLimit := scanLimit
 	for len(remaining) > 0 && remainingScanLimit > 0 {
-		idx := strings.IndexByte(remaining[:min(len(remaining), remainingScanLimit)], '[')
+		scanWindow := remaining[:min(len(remaining), remainingScanLimit)]
+		linkIdx := strings.IndexByte(scanWindow, '[')
+		codeIdx := strings.IndexByte(scanWindow, '`')
+		idx := earliestNonNegativeIndex(linkIdx, codeIdx)
 		if idx < 0 {
 			return targets
 		}
+
+		if codeIdx == idx {
+			code, consumed, ok := parseCodexInlineCodeSpan(remaining[idx:])
+			if !ok {
+				advance := idx + max(1, consumed)
+				remaining = remaining[advance:]
+				remainingScanLimit -= advance
+				continue
+			}
+			if target, ok := codexArtifactOpenTargetFromInlineCodePath(code, projectPath); ok {
+				targets = append(targets, target)
+			}
+			advance := idx + max(1, consumed)
+			remaining = remaining[advance:]
+			remainingScanLimit -= advance
+			continue
+		}
+
 		label, target, consumed, ok := parseCodexMarkdownLink(remaining[idx:])
 		if !ok {
 			remaining = remaining[idx+1:]
@@ -1076,6 +1098,84 @@ func codexArtifactOpenTargetsFromMarkdownPrefixInProject(text string, scanLimit 
 		remainingScanLimit -= advance
 	}
 	return targets
+}
+
+func earliestNonNegativeIndex(indexes ...int) int {
+	earliest := -1
+	for _, idx := range indexes {
+		if idx >= 0 && (earliest < 0 || idx < earliest) {
+			earliest = idx
+		}
+	}
+	return earliest
+}
+
+func parseCodexInlineCodeSpan(text string) (code string, consumed int, ok bool) {
+	if text == "" || text[0] != '`' {
+		return "", 0, false
+	}
+	runLength := leadingBacktickRunLength(text)
+	if runLength != 1 {
+		return "", runLength, false
+	}
+	closeOffset := boundedIndexByte(text[1:], '`', codexInlineCodePathScanLimit)
+	if closeOffset <= 0 {
+		return "", 1, false
+	}
+	code = strings.TrimSpace(text[1 : 1+closeOffset])
+	if code == "" {
+		return "", 1 + closeOffset + 1, false
+	}
+	return code, 1 + closeOffset + 1, true
+}
+
+func leadingBacktickRunLength(text string) int {
+	count := 0
+	for count < len(text) && text[count] == '`' {
+		count++
+	}
+	return count
+}
+
+func codexArtifactOpenTargetFromInlineCodePath(rawPath, projectPath string) (codexArtifactOpenTarget, bool) {
+	rawPath = strings.TrimSpace(rawPath)
+	if !codexInlineCodePathCandidate(rawPath) {
+		return codexArtifactOpenTarget{}, false
+	}
+	if localPath, ok := codexLocalLinkTextForProject(rawPath, projectPath); ok {
+		label := codexLocalLinkLabel("", localPath)
+		if artifactPath, kind, ok := codexLocalArtifactOpenTarget(label, localPath); ok {
+			return codexArtifactOpenTarget{Kind: kind, Label: label, Path: artifactPath}, true
+		}
+		if openPath, _ := codexLocalOpenPath(localPath); strings.TrimSpace(openPath) != "" {
+			return codexArtifactOpenTarget{
+				Kind:  codexLocalLinkKind(openPath, localPath),
+				Label: label,
+				Path:  openPath,
+			}, true
+		}
+	}
+	if externalTarget, ok := codexExternalLinkTarget(rawPath); ok {
+		return codexArtifactOpenTarget{Kind: "url", Label: externalTarget, Path: externalTarget}, true
+	}
+	return codexArtifactOpenTarget{}, false
+}
+
+func codexInlineCodePathCandidate(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" || strings.ContainsAny(text, "\r\n") {
+		return false
+	}
+	if strings.HasPrefix(text, "/") ||
+		strings.HasPrefix(text, "./") ||
+		strings.HasPrefix(text, "../") ||
+		strings.HasPrefix(text, "file://") ||
+		strings.HasPrefix(text, "http://") ||
+		strings.HasPrefix(text, "https://") {
+		return true
+	}
+	pathPart, _ := codexLocalOpenPath(text)
+	return strings.Contains(filepath.ToSlash(pathPart), "/") || strings.Contains(pathPart, "\\")
 }
 
 func normalizeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []codexArtifactOpenTarget {
