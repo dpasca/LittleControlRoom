@@ -19,9 +19,11 @@ STUCK_THRESHOLD ?= 4h
 SCREENSHOT_CONFIG ?= screenshots.local.toml
 SCREENSHOT_OUTPUT_DIR ?=
 MOCKUP_OUTPUT_DIR ?= /tmp/lcroom-mockups
+CRASH_LOG_DIR ?= $(DATA_DIR)/crash-dumps
 PARALLEL_DATA_DIR ?= /tmp/lcroom-parallel-$(shell id -un)
 PARALLEL_DB ?= $(PARALLEL_DATA_DIR)/little-control-room.sqlite
 PARALLEL_CONFIG ?= $(PARALLEL_DATA_DIR)/config.toml
+PARALLEL_CRASH_LOG_DIR ?= $(PARALLEL_DATA_DIR)/crash-dumps
 
 INCLUDE_PATHS_FLAG := $(if $(strip $(INCLUDE_PATHS)),--include-paths "$(INCLUDE_PATHS)",)
 EXCLUDE_PATHS_FLAG := $(if $(strip $(EXCLUDE_PATHS)),--exclude-paths "$(EXCLUDE_PATHS)",)
@@ -81,9 +83,11 @@ help:
 	@echo "  SCREENSHOT_CONFIG=$(SCREENSHOT_CONFIG)"
 	@echo "  SCREENSHOT_OUTPUT_DIR=$(SCREENSHOT_OUTPUT_DIR)"
 	@echo "  MOCKUP_OUTPUT_DIR=$(MOCKUP_OUTPUT_DIR)"
+	@echo "  CRASH_LOG_DIR=$(CRASH_LOG_DIR)"
 	@echo "  PARALLEL_DATA_DIR=$(PARALLEL_DATA_DIR)"
 	@echo "  PARALLEL_CONFIG=$(PARALLEL_CONFIG)"
 	@echo "  PARALLEL_DB=$(PARALLEL_DB)"
+	@echo "  PARALLEL_CRASH_LOG_DIR=$(PARALLEL_CRASH_LOG_DIR)"
 
 tidy:
 	$(GO) mod tidy
@@ -159,10 +163,22 @@ mockups:
 	$(GO) run ./cmd/$(APP) mockups --output-dir "$(MOCKUP_OUTPUT_DIR)"
 
 boss:
-	$(GO) run ./cmd/$(APP) boss $(COMMON_FLAGS) $(INTERVAL_FLAG)
+	@mkdir -p "$(CRASH_LOG_DIR)"
+	@log="$(CRASH_LOG_DIR)/$$(date +%Y%m%d-%H%M%S)-boss.stderr.log"; \
+	$(GO) run ./cmd/$(APP) boss $(COMMON_FLAGS) $(INTERVAL_FLAG) 2> >(tee "$$log" >&2); \
+	rc=$$?; \
+	if [ $$rc -eq 0 ] && [ ! -s "$$log" ]; then rm -f "$$log"; fi; \
+	if [ $$rc -ne 0 ]; then echo "stderr log: $$log" >&2; fi; \
+	exit $$rc
 
 tui:
-	$(GO) run ./cmd/$(APP) tui $(COMMON_FLAGS) $(INTERVAL_FLAG)
+	@mkdir -p "$(CRASH_LOG_DIR)"
+	@log="$(CRASH_LOG_DIR)/$$(date +%Y%m%d-%H%M%S)-tui.stderr.log"; \
+	$(GO) run ./cmd/$(APP) tui $(COMMON_FLAGS) $(INTERVAL_FLAG) 2> >(tee "$$log" >&2); \
+	rc=$$?; \
+	if [ $$rc -eq 0 ] && [ ! -s "$$log" ]; then rm -f "$$log"; fi; \
+	if [ $$rc -ne 0 ]; then echo "stderr log: $$log" >&2; fi; \
+	exit $$rc
 
 tui-parallel-clean:
 	@setopt local_options null_glob; \
@@ -185,7 +201,13 @@ tui-parallel:
 	@echo "Launching parallel TUI sandbox"
 	@echo "  config: $(PARALLEL_CONFIG)"
 	@echo "  db:     $(PARALLEL_DB)"
-	$(GO) run ./cmd/$(APP) tui $(PARALLEL_FLAGS) $(INTERVAL_FLAG)
+	@mkdir -p "$(PARALLEL_CRASH_LOG_DIR)"
+	@log="$(PARALLEL_CRASH_LOG_DIR)/$$(date +%Y%m%d-%H%M%S)-tui.stderr.log"; \
+	$(GO) run ./cmd/$(APP) tui $(PARALLEL_FLAGS) $(INTERVAL_FLAG) 2> >(tee "$$log" >&2); \
+	rc=$$?; \
+	if [ $$rc -eq 0 ] && [ ! -s "$$log" ]; then rm -f "$$log"; fi; \
+	if [ $$rc -ne 0 ]; then echo "stderr log: $$log" >&2; fi; \
+	exit $$rc
 
 serve:
 	$(GO) run ./cmd/$(APP) serve $(COMMON_FLAGS) $(INTERVAL_FLAG)
