@@ -45,6 +45,12 @@ codex_launch_preset = "yolo"
 # lcagent_utility_model override.
 # lcagent_utility_provider = "main"
 # lcagent_utility_model = ""
+# Critic Model defaults to off. Set provider to "main" to reuse the Main Model,
+# or choose "openrouter", "openai", "deepseek", "moonshot", or "xiaomi" with an
+# optional model and reasoning effort override.
+# lcagent_critic_provider = "off"
+# lcagent_critic_model = ""
+# lcagent_critic_reasoning_effort = ""
 # LCAgent permissions: "off" denies edits/non-read commands, "low" allows
 # workspace edits plus read-only/verification commands, and "medium" allows
 # workspace-contained commands without repeated approvals.

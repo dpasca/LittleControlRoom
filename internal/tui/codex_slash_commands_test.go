@@ -1205,6 +1205,12 @@ func TestVisibleLCAgentSlashCriticOpensPickerAndStagesSelection(t *testing.T) {
 				Model:         "deepseek-v4-pro",
 				ModelProvider: "deepseek",
 				DisplayName:   "DeepSeek V4 Pro",
+				SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+					{ReasoningEffort: "low"},
+					{ReasoningEffort: "medium"},
+					{ReasoningEffort: "high"},
+				},
+				DefaultReasoningEffort: "low",
 			},
 		},
 	}
@@ -1262,12 +1268,15 @@ func TestVisibleLCAgentSlashCriticOpensPickerAndStagesSelection(t *testing.T) {
 	if got.codexModelPicker.Target != codexModelPickerTargetCritic {
 		t.Fatalf("loaded picker target = %q, want critic", got.codexModelPicker.Target)
 	}
-	if options := got.currentCodexReasoningOptions(); len(options) != 0 {
-		t.Fatalf("critic picker should not show reasoning options: %#v", options)
-	}
 	got.codexModelPicker.Focus = codexModelPickerFocusModels
 	got.codexModelPicker.ModelIndex = 1
 	got.setCodexModelPickerModel(session.models[1], "")
+	options := got.currentCodexReasoningOptions()
+	if len(options) != 3 {
+		t.Fatalf("critic picker reasoning options = %#v, want low/medium/high", options)
+	}
+	got.codexModelPicker.Focus = codexModelPickerFocusEfforts
+	got.codexModelPicker.EffortIndex = 2
 
 	updated, cmd = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
@@ -1285,12 +1294,15 @@ func TestVisibleLCAgentSlashCriticOpensPickerAndStagesSelection(t *testing.T) {
 	if !action.criticModel {
 		t.Fatalf("/critic action should be marked as critic model")
 	}
+	if action.reasoning != "high" {
+		t.Fatalf("/critic action reasoning = %q, want high", action.reasoning)
+	}
 	if len(session.criticModelProviderStages) != 1 {
 		t.Fatalf("critic stages = %d, want 1", len(session.criticModelProviderStages))
 	}
 	stage := session.criticModelProviderStages[0]
-	if stage.Provider != "deepseek" || stage.Model != "deepseek-v4-pro" {
-		t.Fatalf("critic stage = %#v, want deepseek/deepseek-v4-pro", stage)
+	if stage.Provider != "deepseek" || stage.Model != "deepseek-v4-pro" || stage.Reasoning != "high" {
+		t.Fatalf("critic stage = %#v, want deepseek/deepseek-v4-pro high", stage)
 	}
 }
 

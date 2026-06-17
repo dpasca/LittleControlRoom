@@ -66,6 +66,7 @@ type EditableSettings struct {
 	LCAgentUtilityModel       string
 	LCAgentCriticProvider     string
 	LCAgentCriticModel        string
+	LCAgentCriticReasoning    string
 	LCAgentVisionProvider     string
 	LCAgentVisionModel        string
 	LCAgentWebSearchBackend   string
@@ -135,6 +136,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentUtilityModel:       cfg.LCAgentUtilityModel,
 		LCAgentCriticProvider:     cfg.LCAgentCriticProvider,
 		LCAgentCriticModel:        cfg.LCAgentCriticModel,
+		LCAgentCriticReasoning:    cfg.LCAgentCriticReasoning,
 		LCAgentVisionProvider:     cfg.LCAgentVisionProvider,
 		LCAgentVisionModel:        cfg.LCAgentVisionModel,
 		LCAgentWebSearchBackend:   cfg.LCAgentWebSearchBackend,
@@ -307,7 +309,7 @@ func trimLCAgentModelProviderPrefix(model, prefix string) string {
 	return model
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentCriticProviderRaw, lcagentCriticModelRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentCriticProviderRaw, lcagentCriticModelRaw, lcagentCriticReasoningRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -485,6 +487,7 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		LCAgentUtilityModel:      strings.TrimSpace(lcagentUtilityModelRaw),
 		LCAgentCriticProvider:    lcagentCriticProvider,
 		LCAgentCriticModel:       strings.TrimSpace(lcagentCriticModelRaw),
+		LCAgentCriticReasoning:   strings.TrimSpace(lcagentCriticReasoningRaw),
 		LCAgentVisionProvider:    lcagentVisionProvider,
 		LCAgentVisionModel:       strings.TrimSpace(lcagentVisionModelRaw),
 		LCAgentWebSearchBackend:  lcagentWebSearchBackend,
@@ -591,6 +594,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
 	cfg.LCAgentCriticProvider = strings.TrimSpace(settings.LCAgentCriticProvider)
 	cfg.LCAgentCriticModel = strings.TrimSpace(settings.LCAgentCriticModel)
+	cfg.LCAgentCriticReasoning = strings.TrimSpace(settings.LCAgentCriticReasoning)
 	cfg.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
 	cfg.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
 	cfg.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
@@ -825,6 +829,10 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if value := strings.TrimSpace(settings.LCAgentCriticModel); value != "" {
 		lines = append(lines, fmt.Sprintf("lcagent_critic_model = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentCriticReasoning); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_critic_reasoning_effort = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
 	if value, err := parseLCAgentVisionProvider(settings.LCAgentVisionProvider); err == nil && value != "" {

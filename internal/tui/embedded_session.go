@@ -227,7 +227,7 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.criticModel {
 		m.recordRecentModel(codexapp.ProviderLCAgent, msg.model, msg.modelProvider)
-		saveCmd := m.saveLCAgentCriticPreferenceCmd(msg.modelProvider, msg.model)
+		saveCmd := m.saveLCAgentCriticPreferenceCmd(msg.modelProvider, msg.model, msg.reasoning)
 		if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
 			return m, tea.Batch(refreshCmd, linkScanCmd, renameRefreshCmd, saveCmd, m.codexInput.Focus())
 		}
@@ -801,6 +801,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		LCAgentUtilityModel:      m.lcagentUtilityModel(),
 		LCAgentCriticProvider:    m.lcagentCriticProvider(),
 		LCAgentCriticModel:       m.lcagentCriticModel(),
+		LCAgentCriticReasoning:   m.lcagentCriticReasoning(),
 		LCAgentVisionProvider:    m.lcagentVisionProvider(),
 		LCAgentVisionModel:       m.lcagentVisionModel(),
 		LCAgentWebSearchBackend:  m.lcagentWebSearchBackend(),
@@ -899,6 +900,7 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		strings.TrimSpace(previous.LCAgentUtilityModel) != strings.TrimSpace(saved.LCAgentUtilityModel) ||
 		strings.TrimSpace(previous.LCAgentCriticProvider) != strings.TrimSpace(saved.LCAgentCriticProvider) ||
 		strings.TrimSpace(previous.LCAgentCriticModel) != strings.TrimSpace(saved.LCAgentCriticModel) ||
+		strings.TrimSpace(previous.LCAgentCriticReasoning) != strings.TrimSpace(saved.LCAgentCriticReasoning) ||
 		strings.TrimSpace(previous.LCAgentVisionProvider) != strings.TrimSpace(saved.LCAgentVisionProvider) ||
 		strings.TrimSpace(previous.LCAgentVisionModel) != strings.TrimSpace(saved.LCAgentVisionModel) ||
 		strings.TrimSpace(previous.LCAgentWebSearchBackend) != strings.TrimSpace(saved.LCAgentWebSearchBackend) ||
@@ -942,6 +944,7 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentUtilityModel:      strings.TrimSpace(settings.LCAgentUtilityModel),
 		LCAgentCriticProvider:    strings.TrimSpace(settings.LCAgentCriticProvider),
 		LCAgentCriticModel:       strings.TrimSpace(settings.LCAgentCriticModel),
+		LCAgentCriticReasoning:   strings.TrimSpace(settings.LCAgentCriticReasoning),
 		LCAgentVisionProvider:    strings.TrimSpace(settings.LCAgentVisionProvider),
 		LCAgentVisionModel:       strings.TrimSpace(settings.LCAgentVisionModel),
 		LCAgentWebSearchBackend:  strings.TrimSpace(settings.LCAgentWebSearchBackend),
@@ -1107,6 +1110,10 @@ func (m Model) lcagentCriticProvider() string {
 
 func (m Model) lcagentCriticModel() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentCriticModel)
+}
+
+func (m Model) lcagentCriticReasoning() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentCriticReasoning)
 }
 
 func (m Model) lcagentVisionProvider() string {

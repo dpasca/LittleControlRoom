@@ -73,6 +73,7 @@ type AppConfig struct {
 	LCAgentUtilityModel       string
 	LCAgentCriticProvider     string
 	LCAgentCriticModel        string
+	LCAgentCriticReasoning    string
 	LCAgentVisionProvider     string
 	LCAgentVisionModel        string
 	LCAgentWebSearchBackend   string
@@ -226,6 +227,7 @@ type fileConfig struct {
 	LCAgentUtilityModel       *string   `toml:"lcagent_utility_model"`
 	LCAgentCriticProvider     *string   `toml:"lcagent_critic_provider"`
 	LCAgentCriticModel        *string   `toml:"lcagent_critic_model"`
+	LCAgentCriticReasoning    *string   `toml:"lcagent_critic_reasoning_effort"`
 	LCAgentVisionProvider     *string   `toml:"lcagent_vision_provider"`
 	LCAgentVisionModel        *string   `toml:"lcagent_vision_model"`
 	LCAgentWebSearchBackend   *string   `toml:"lcagent_web_search_backend"`
@@ -320,6 +322,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentUtilityModel := fs.String("lcagent-utility-model", cfg.LCAgentUtilityModel, "LCAgent utility model for oversized search refinement; blank with provider main uses the main model")
 	lcagentCriticProvider := fs.String("lcagent-critic-provider", cfg.LCAgentCriticProvider, "LCAgent trace-only critic provider: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	lcagentCriticModel := fs.String("lcagent-critic-model", cfg.LCAgentCriticModel, "LCAgent trace-only critic model; blank with provider main uses the main model")
+	lcagentCriticReasoning := fs.String("lcagent-critic-reasoning-effort", cfg.LCAgentCriticReasoning, "optional LCAgent critic reasoning effort, for example low")
 	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	lcagentVisionModel := fs.String("lcagent-vision-model", cfg.LCAgentVisionModel, "LCAgent image-analysis model; blank with provider main uses the main model")
 	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, or searxng")
@@ -428,6 +431,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 		return AppConfig{}, err
 	}
 	cfg.LCAgentCriticModel = strings.TrimSpace(*lcagentCriticModel)
+	cfg.LCAgentCriticReasoning = strings.TrimSpace(*lcagentCriticReasoning)
 	cfg.LCAgentVisionProvider, err = parseLCAgentVisionProvider(*lcagentVisionProvider)
 	if err != nil {
 		return AppConfig{}, err
@@ -706,6 +710,7 @@ func applyConfigFile(cfg *AppConfig) error {
 		cfg.LCAgentCriticProvider = value
 	}
 	applyOptionalTrimmedString(&cfg.LCAgentCriticModel, fc.LCAgentCriticModel)
+	applyOptionalTrimmedString(&cfg.LCAgentCriticReasoning, fc.LCAgentCriticReasoning)
 	if fc.LCAgentVisionProvider != nil {
 		value, err := parseLCAgentVisionProvider(*fc.LCAgentVisionProvider)
 		if err != nil {

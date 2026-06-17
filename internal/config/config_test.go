@@ -119,6 +119,7 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"lcagent_request_timeout = \"10m\"\n" +
 		"lcagent_critic_provider = \"main\"\n" +
 		"lcagent_critic_model = \"gpt-5.5\"\n" +
+		"lcagent_critic_reasoning_effort = \"high\"\n" +
 		"lcagent_web_search_backend = \"google\"\n" +
 		"lcagent_web_search_api_key = \"google-key\"\n" +
 		"lcagent_web_search_engine_id = \"engine-id\"\n" +
@@ -246,6 +247,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.LCAgentCriticModel, "gpt-5.5"; got != want {
 		t.Fatalf("lcagent critic model = %q, want %q", got, want)
+	}
+	if got, want := cfg.LCAgentCriticReasoning, "high"; got != want {
+		t.Fatalf("lcagent critic reasoning = %q, want %q", got, want)
 	}
 	if got, want := cfg.LCAgentWebSearchBackend, "google"; got != want {
 		t.Fatalf("lcagent web search backend = %q, want %q", got, want)
@@ -533,7 +537,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "off", "", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "off", "", "", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -617,6 +621,9 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 	if got, want := settings.LCAgentCriticModel, ""; got != want {
 		t.Fatalf("lcagent critic model = %q, want blank", got)
+	}
+	if got, want := settings.LCAgentCriticReasoning, ""; got != want {
+		t.Fatalf("lcagent critic reasoning = %q, want blank", got)
 	}
 	if got, want := settings.LCAgentVisionProvider, "openai"; got != want {
 		t.Fatalf("lcagent vision provider = %q, want %q", got, want)
@@ -786,7 +793,7 @@ func TestSaveEditableSettingsNormalizesDirectLCAgentProviderModelPrefixes(t *tes
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "off", "", "", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "off", "", "off", "", "", "", "20m", "10m", "60s"); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -794,7 +801,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "off", "", "", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "off", "", "off", "", "", "", "20m", "2h", "60s"); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -802,7 +809,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "off", "", "", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "", "off", "", "off", "", "", "", "20m", "2h", "60s")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -899,6 +906,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		LCAgentUtilityModel:       "deepseek/deepseek-v4-flash",
 		LCAgentCriticProvider:     "main",
 		LCAgentCriticModel:        "gpt-5.5",
+		LCAgentCriticReasoning:    "high",
 		LCAgentVisionProvider:     "deepseek",
 		LCAgentVisionModel:        "deepseek/deepseek-v4-pro",
 		LCAgentWebSearchBackend:   "google",
@@ -1022,6 +1030,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		"lcagent_request_timeout = \"10m\"",
 		"lcagent_utility_provider = \"openrouter\"",
 		"lcagent_utility_model = \"deepseek/deepseek-v4-flash\"",
+		"lcagent_critic_provider = \"main\"",
+		"lcagent_critic_model = \"gpt-5.5\"",
+		"lcagent_critic_reasoning_effort = \"high\"",
 		"lcagent_web_search_backend = \"google\"",
 		"lcagent_web_search_api_key = \"google-key\"",
 		"lcagent_web_search_engine_id = \"engine-id\"",

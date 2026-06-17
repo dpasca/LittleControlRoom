@@ -348,7 +348,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw string
 	var utilityProviderRaw, utilityModel string
-	var criticProviderRaw, criticModel string
+	var criticProviderRaw, criticModel, criticReasoningEffort string
 	var visionProviderRaw, visionModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw string
@@ -376,6 +376,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
 	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "critic provider for one packet-bound pre-final review: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&criticModel, "critic-model", defaultCriticModel, "optional critic model; blank with provider main uses the main model")
+	fs.StringVar(&criticReasoningEffort, "critic-reasoning-effort", "", "optional critic reasoning effort, for example low")
 	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
@@ -489,6 +490,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if err != nil {
 		return err
 	}
+	criticReasoningEffort = openRouterReasoningEffortForProvider(criticProvider, criticReasoningEffort)
 	visionProvider, err := normalizeVisionProvider(visionProviderRaw)
 	if err != nil {
 		return err
@@ -754,6 +756,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			EnvFile:         envFile,
 			MaxTurns:        1,
 			RequestTimeout:  requestTimeout,
+			ReasoningEffort: criticReasoningEffort,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 		}, modeladapter.OpenRouterConfig{

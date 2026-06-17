@@ -587,6 +587,9 @@ func embeddedSidebarCriticRows(snapshot codexapp.Snapshot, width int) []string {
 	if model != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
 	}
+	if reasoning := strings.TrimSpace(snapshot.CriticReasoningEffort); reasoning != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Reasoning", reasoning, detailValueStyle, width))
+	}
 	if status != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Status", status, embeddedSidebarCriticStatusStyle(status), width))
 	}

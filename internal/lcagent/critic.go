@@ -29,8 +29,9 @@ type criticProfile struct {
 }
 
 type traceCritic struct {
-	provider string
-	client   *modeladapter.Client
+	provider        string
+	reasoningEffort string
+	client          *modeladapter.Client
 }
 
 type criticReviewPacket struct {
@@ -121,6 +122,7 @@ func newCriticProfile(provider string, cfg modeladapter.OpenRouterConfig, mainPr
 		provider = normalizeMainProvider(mainProvider)
 		cfg.Model = firstNonEmptyString(strings.TrimSpace(cfg.Model), strings.TrimSpace(mainModel), defaultMainModelForProvider(provider))
 	}
+	cfg.ReasoningEffort = openRouterReasoningEffortForProvider(provider, cfg.ReasoningEffort)
 	if provider == "off" {
 		return criticProfile{
 			Enabled:  false,
@@ -149,7 +151,11 @@ func newCriticProfile(provider string, cfg modeladapter.OpenRouterConfig, mainPr
 		Provider: provider,
 		Model:    client.Model(),
 		Message:  message,
-		Reviewer: traceCritic{provider: provider, client: client},
+		Reviewer: traceCritic{
+			provider:        provider,
+			reasoningEffort: strings.TrimSpace(cfg.ReasoningEffort),
+			client:          client,
+		},
 	}
 }
 
@@ -452,8 +458,10 @@ func (r traceCritic) ReviewAttempt(ctx context.Context, packet criticReviewPacke
 		return result
 	}
 	messages := criticReviewMessages(string(body), previousInvalid)
-	options := modeladapter.CompletionOptions{}
-	if !strings.EqualFold(r.provider, "openai") {
+	options := modeladapter.CompletionOptions{
+		ReasoningEffort: strings.TrimSpace(r.reasoningEffort),
+	}
+	if !strings.EqualFold(r.provider, "openai") && strings.TrimSpace(options.ReasoningEffort) == "" {
 		options.DisableThinking = true
 	}
 	completion, err := r.client.CompleteWithOptions(ctx, messages, nil, options)
@@ -484,8 +492,10 @@ func (r traceCritic) ConsultAttempt(ctx context.Context, packet criticConsultPac
 		return result
 	}
 	messages := criticConsultMessages(string(body), previousInvalid)
-	options := modeladapter.CompletionOptions{}
-	if !strings.EqualFold(r.provider, "openai") {
+	options := modeladapter.CompletionOptions{
+		ReasoningEffort: strings.TrimSpace(r.reasoningEffort),
+	}
+	if !strings.EqualFold(r.provider, "openai") && strings.TrimSpace(options.ReasoningEffort) == "" {
 		options.DisableThinking = true
 	}
 	completion, err := r.client.CompleteWithOptions(ctx, messages, nil, options)

@@ -546,6 +546,10 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 			if body["model"] != "critic/test-model" {
 				t.Fatalf("request 2 model = %q, want critic model", body["model"])
 			}
+			reasoning, _ := body["reasoning"].(map[string]any)
+			if reasoning["effort"] != "low" {
+				t.Fatalf("critic reasoning = %#v, want low effort", body["reasoning"])
+			}
 			messagesJSON, _ := json.Marshal(body["messages"])
 			if !strings.Contains(string(messagesJSON), "wrong answer") {
 				t.Fatalf("critic request did not include candidate final packet:\n%s", messagesJSON)
@@ -615,6 +619,7 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 		"--model", "deepseek/test-model",
 		"--critic-provider", "openrouter",
 		"--critic-model", "critic/test-model",
+		"--critic-reasoning-effort", "low",
 		"--max-turns", "4",
 		"answer directly",
 	}, &stdout, &stderr)

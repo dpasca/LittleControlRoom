@@ -66,6 +66,7 @@ type lcagentSession struct {
 	utilityModel      string
 	criticProvider    string
 	criticModel       string
+	criticReasoning   string
 	visionProvider    string
 	visionModel       string
 	modelWarning      string
@@ -220,6 +221,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		utilityModel:             utilityModel,
 		criticProvider:           criticProvider,
 		criticModel:              criticModel,
+		criticReasoning:          strings.TrimSpace(req.LCAgentCriticReasoning),
 		visionProvider:           visionProvider,
 		visionModel:              visionModel,
 		modelWarning:             modelWarning,
@@ -829,6 +831,14 @@ func LCAgentReasoningEffortOptionsForProvider(provider string) []ReasoningEffort
 	return append([]ReasoningEffortOption(nil), lcagentReasoningEffortOptionsForProvider(provider)...)
 }
 
+func lcagentReasoningEffortForProvider(provider, reasoningEffort string) string {
+	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	if len(lcagentReasoningEffortOptionsForProvider(provider)) == 0 {
+		return ""
+	}
+	return reasoningEffort
+}
+
 func lcagentDefaultReasoningEffort(provider, model string) string {
 	if strings.EqualFold(strings.TrimSpace(provider), "openai") ||
 		strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "openai/") {
@@ -1002,11 +1012,12 @@ func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEf
 	return nil
 }
 
-func (s *lcagentSession) StageCriticModelProviderOverride(provider, model string) error {
+func (s *lcagentSession) StageCriticModelProviderOverride(provider, model, reasoningEffort string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	model = strings.TrimSpace(model)
+	reasoningEffort = strings.TrimSpace(reasoningEffort)
 	if provider == "" && model == "" {
 		return fmt.Errorf("critic provider or model required")
 	}
@@ -1025,6 +1036,7 @@ func (s *lcagentSession) StageCriticModelProviderOverride(provider, model string
 	}
 	s.criticProvider = provider
 	s.criticModel = model
+	s.criticReasoning = reasoningEffort
 	s.status = "LCAgent critic model set to " + lcagentProviderDisplayName(provider) + " / " + model + "."
 	s.touchLocked()
 	return nil
@@ -1243,6 +1255,7 @@ type lcagentPreparedRun struct {
 	utilityAPIKey      string
 	criticProvider     string
 	criticModel        string
+	criticReasoning    string
 	criticAPIKeyName   string
 	criticAPIKey       string
 	visionProvider     string
@@ -1369,11 +1382,17 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
 	criticProvider := firstNonEmpty(s.criticProvider, lcagentDefaultCriticProvider)
 	criticModel := strings.TrimSpace(s.criticModel)
+	criticReasoning := strings.TrimSpace(s.criticReasoning)
+	if lcagentCriticProviderValue(criticProvider) == "main" && criticReasoning == "" {
+		criticReasoning = reasoningEffort
+	}
 	criticCredentialProvider := lcagentResolvedCriticProvider(routePreset, provider, criticProvider)
 	if criticCredentialProvider != "" {
 		criticModel = modeladapter.NormalizeModelForProvider(criticCredentialProvider, criticModel)
+		criticReasoning = lcagentReasoningEffortForProvider(criticCredentialProvider, criticReasoning)
 	} else {
 		criticModel = ""
+		criticReasoning = ""
 	}
 	criticAPIKeyName, criticAPIKey := s.providerCredentialLocked(criticCredentialProvider)
 	visionProvider := firstNonEmpty(s.visionProvider, lcagentDefaultVisionProvider)
@@ -1433,6 +1452,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		utilityAPIKey:      utilityAPIKey,
 		criticProvider:     criticProvider,
 		criticModel:        criticModel,
+		criticReasoning:    criticReasoning,
 		criticAPIKeyName:   criticAPIKeyName,
 		criticAPIKey:       criticAPIKey,
 		visionProvider:     visionProvider,
@@ -1507,6 +1527,9 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	}
 	if prepared.criticModel != "" {
 		args = append(args, "--critic-model", prepared.criticModel)
+	}
+	if prepared.criticReasoning != "" {
+		args = append(args, "--critic-reasoning-effort", prepared.criticReasoning)
 	}
 	if prepared.visionModel != "" {
 		args = append(args, "--vision-model", prepared.visionModel)
@@ -3256,6 +3279,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		ModelProvider:                modelProvider,
 		CriticModel:                  criticModel,
 		CriticModelProvider:          criticModelProvider,
+		CriticReasoningEffort:        s.resolvedCriticReasoningLocked(criticModelProvider),
 		VisionModel:                  visionModel,
 		VisionModelProvider:          visionModelProvider,
 		ImageAnalysisActive:          s.imageAnalysisActive,
@@ -3302,6 +3326,14 @@ func (s *lcagentSession) resolvedCriticModelLocked(mainProvider, mainModel strin
 	}
 	model = modeladapter.NormalizeModelForProvider(resolvedProvider, model)
 	return model, resolvedProvider
+}
+
+func (s *lcagentSession) resolvedCriticReasoningLocked(criticProvider string) string {
+	reasoning := strings.TrimSpace(s.criticReasoning)
+	if lcagentCriticProviderValue(s.criticProvider) == "main" && reasoning == "" {
+		reasoning = strings.TrimSpace(s.reasoningEffort)
+	}
+	return lcagentReasoningEffortForProvider(criticProvider, reasoning)
 }
 
 func (s *lcagentSession) resolvedVisionModelLocked(mainProvider, mainModel string) (string, string) {
