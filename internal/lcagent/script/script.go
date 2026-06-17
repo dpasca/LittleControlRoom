@@ -2689,6 +2689,12 @@ func patchFeedbackEvent(sessionID string, feedback PatchFeedback) session.Event 
 func finalVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck) (string, string) {
 	if len(actualChecks) > 0 {
 		finalChecks := latestVerificationOutcomes(relevantVerificationChecks(verification, actualChecks))
+		if len(finalChecks) == 0 && len(verification) > 0 {
+			finalChecks = latestVerificationOutcomes(passedVerificationChecks(actualChecks))
+		}
+		if len(finalChecks) == 0 {
+			finalChecks = latestVerificationOutcomes(actualChecks)
+		}
 		failed := failedVerificationChecks(finalChecks)
 		if len(failed) > 0 {
 			return "failed", "Verification checks failed: " + strings.Join(formatVerificationChecks(failed, 3), "; ")
@@ -2721,9 +2727,6 @@ func relevantVerificationChecks(reported []string, actual []tools.VerificationCh
 		}
 		seen[index] = true
 		relevant = append(relevant, actual[index])
-	}
-	if len(relevant) == 0 {
-		return actual
 	}
 	return relevant
 }
@@ -2781,6 +2784,16 @@ func failedVerificationChecks(checks []tools.VerificationCheck) []tools.Verifica
 		}
 	}
 	return failed
+}
+
+func passedVerificationChecks(checks []tools.VerificationCheck) []tools.VerificationCheck {
+	var passed []tools.VerificationCheck
+	for _, check := range checks {
+		if check.Status == tools.VerificationStatusPassed {
+			passed = append(passed, check)
+		}
+	}
+	return passed
 }
 
 func formatVerificationChecks(checks []tools.VerificationCheck, limit int) []string {

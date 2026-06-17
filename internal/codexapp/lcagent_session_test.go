@@ -154,6 +154,7 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 		"--auto", "medium",
 		"--output", "stream-json",
 		"--approval-mode", "ask",
+		"--require-final-response-tool",
 		"--quality-checkpoint-passes", "1",
 		"--quality-repair-passes", "3",
 		"--admin-write",

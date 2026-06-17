@@ -328,6 +328,8 @@ func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
 		"asks you to carry out a proposed plan or selected option",
 		"start executing it within the current autonomy and tool policy",
 		"continue with the in_progress step",
+		"an empty workspace is not a blocker",
+		"Choose a conventional workspace-relative filename",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)

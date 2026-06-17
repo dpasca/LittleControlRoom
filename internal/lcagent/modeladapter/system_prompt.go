@@ -120,6 +120,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"If LCAgent sends verification feedback, address it before final_response: repair failing checks, choose an approved argv-only alternative after denial, narrow timed-out checks, or clearly state why verification is blocked.",
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
+		"If the user asks you to create a new project, app, game, document, or single-file artifact from scratch, an empty workspace is not a blocker. Choose a conventional workspace-relative filename when the user did not specify one, then use create_file.",
 		"For initial file creation or generated files, prefer create_file with complete content instead of encoding a new file as apply_patch.",
 		"For whole-file rewrites, call read_file first and copy its sha256 value into replace_file expected_sha256; LCAgent calculates and verifies the hash, so do not try to calculate it yourself.",
 		"Use apply_patch for surgical source edits. Patches must use this exact shape: *** Begin Patch, *** Update File: path, @@, -old line, +new line, *** End Patch.",

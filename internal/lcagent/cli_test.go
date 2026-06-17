@@ -33,6 +33,27 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+func TestShouldDeferSynthesisForActiveQualityRepairWithoutEvidence(t *testing.T) {
+	guidance := openRouterProgressGuidance{
+		Turn:           40,
+		MaxTurns:       48,
+		TurnsRemaining: 8,
+		Phase:          "synthesis",
+		ForceSynthesis: true,
+	}
+	state := qualityRepairState{
+		Active: true,
+	}
+	runner := script.Runner{}
+	if !shouldDeferSynthesisForQualityRepair(guidance, state, runner) {
+		t.Fatal("expected synthesis to defer until repair has new concrete evidence")
+	}
+	state.Active = false
+	if shouldDeferSynthesisForQualityRepair(guidance, state, runner) {
+		t.Fatal("did not expect synthesis deferral when repair is inactive")
+	}
+}
+
 func TestRunExecScriptedStreamJSON(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -425,6 +446,7 @@ func TestRunExecOpenRouterQualityCheckpointBouncesCandidateFinalOnce(t *testing.
 			}
 			messagesJSON, _ := json.Marshal(body["messages"])
 			if !strings.Contains(string(messagesJSON), "Quality checkpoint before final_response") ||
+				!strings.Contains(string(messagesJSON), "an empty workspace is not by itself a blocker") ||
 				!strings.Contains(string(messagesJSON), "first answer") {
 				t.Fatalf("lead retry did not receive quality checkpoint feedback:\n%s", messagesJSON)
 			}
@@ -805,6 +827,129 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 		`"reason":"critic_material_finding"`,
 		`"reason":"no_new_evidence"`,
 		`"summary":"partial: visual quality remains unresolved"`,
+		`"final_outcome":"partial"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunExecOpenRouterQualityRepairReviewsUnknownPlainFinal(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	sawRepairFeedback := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_plain_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": "The visual game is complete and looks excellent.",
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "critic/test-model" {
+				t.Fatalf("request 2 model = %q, want critic model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_critic",
+				"model": "critic/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": `{"status":"concerns","confidence":0.9,"summary":"plain final overclaims visual quality","findings":[{"severity":"high","materiality":"high","claim":"visual quality is unverified but claimed complete","evidence_source":"final_summary","evidence":"the final says the visual game is complete and excellent without verification evidence","user_impact":"the user may accept a poor visual artifact as finished","suggested_followup":"verify visually or mark the outcome partial"}],"lead_instruction":"Run visual verification or finish partial; do not claim completion from this evidence.","human_prompt":"","proposed_user_message":""}`,
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
+			})
+		case 3:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 3 model = %q, want lead model", body["model"])
+			}
+			messagesJSON, _ := json.Marshal(body["messages"])
+			if !strings.Contains(string(messagesJSON), "Quality repair required") {
+				t.Fatalf("lead retry did not receive quality repair feedback:\n%s", messagesJSON)
+			}
+			sawRepairFeedback = true
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_partial_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_partial_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "partial: visual quality remains unverified",
+									"outcome":       "partial",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
+			})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--critic-provider", "openrouter",
+		"--critic-model", "critic/test-model",
+		"--quality-repair-passes", "3",
+		"--max-turns", "4",
+		"make a visual game",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3\nstdout=%s", requests, stdout.String())
+	}
+	if !sawRepairFeedback {
+		t.Fatalf("repair feedback was not observed")
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"quality_repair_feedback"`,
+		`"reason":"critic_material_finding"`,
 		`"final_outcome":"partial"`,
 	} {
 		if !strings.Contains(text, want) {
@@ -3997,6 +4142,104 @@ func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 	}
 	if strings.Contains(text, `"type":"final_handoff_compacted"`) {
 		t.Fatalf("synthesis should complete inside the normal loop, not final handoff:\n%s", text)
+	}
+	if requests != openRouterMinimumTurnBeforeSynthesis {
+		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis)
+	}
+}
+
+func TestRunExecOpenRouterSynthesisWithRequiredFinalResponseExposesOnlyFinalTool(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests < openRouterMinimumTurnBeforeSynthesis {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+			return
+		}
+		if body["model"] != "deepseek/final-model" {
+			t.Fatalf("synthesis request model = %#v, want final model", body["model"])
+		}
+		toolsValue, ok := body["tools"].([]any)
+		if !ok || len(toolsValue) != 1 {
+			t.Fatalf("synthesis request tools = %#v, want only final_response", body["tools"])
+		}
+		tool, _ := toolsValue[0].(map[string]any)
+		function, _ := tool["function"].(map[string]any)
+		if function["name"] != "final_response" {
+			t.Fatalf("synthesis tool = %#v, want final_response", toolsValue[0])
+		}
+		messages, _ := body["messages"].([]any)
+		if len(messages) == 0 {
+			t.Fatalf("synthesis request missing messages: %#v", body)
+		}
+		last := fmt.Sprint(messages[len(messages)-1])
+		for _, want := range []string{
+			"Only final_response is available",
+			"Set final_response.outcome honestly",
+			"keep reading until synthesis",
+		} {
+			if !strings.Contains(last, want) {
+				t.Fatalf("synthesis request missing %q in last message: %s", want, last)
+			}
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_synthesis_final",
+			"model":"deepseek/final-model",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"structured synthesis","outcome":"completed","files_changed":[],"verification":[]}}}]}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--final-model", "deepseek/final-model",
+		"--max-turns", "28",
+		"--require-final-response-tool",
+		"keep reading until synthesis",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"synthesis_requested"`,
+		`"model":"deepseek/final-model"`,
+		`"summary":"structured synthesis"`,
+		`"final_outcome":"completed"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
 	}
 	if requests != openRouterMinimumTurnBeforeSynthesis {
 		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis)
