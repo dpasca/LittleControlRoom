@@ -1015,12 +1015,20 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			contextCompacted = true
 		}
 		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{ToolProfile: string(toolProfile)})
+		if shouldDeferSynthesisForQualityRepair(guidance, qualityRepairState, runner) {
+			guidance.Phase = "consolidation"
+			guidance.ForceSynthesis = false
+		}
 		requestMessages := appendOpenRouterProgressNote(messages, guidance, readLedger)
 		requestTools := toolsDef
 		if guidance.ForceSynthesis {
 			var compaction finalHandoffCompactionStats
-			requestMessages, compaction = compactOpenRouterFinalMessagesWithOptions(messages, openRouterSynthesisFinalPrompt(guidance), readLedger, contextOptions)
-			requestTools = nil
+			requestMessages, compaction = compactOpenRouterFinalMessagesWithOptions(messages, openRouterSynthesisFinalPrompt(guidance, requireFinalResponseTool), readLedger, contextOptions)
+			if requireFinalResponseTool {
+				requestTools = finalResponseOnlyTools(toolsDef)
+			} else {
+				requestTools = nil
+			}
 			if err := writer.Write(session.Event{
 				"type":        "synthesis_requested",
 				"session_id":  runner.SessionID,
@@ -1057,7 +1065,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 		msg.Content = sanitizedContent
-		if guidance.ForceSynthesis && len(msg.ToolCalls) > 0 {
+		if guidance.ForceSynthesis && len(msg.ToolCalls) > 0 && (!requireFinalResponseTool || !allToolCallsNamed(msg.ToolCalls, "final_response")) {
 			return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s synthesis request returned tool calls", providerLabel))
 		}
 		messages = append(messages, msg)
@@ -1071,15 +1079,18 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			if strings.TrimSpace(msg.Content) == "" {
 				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response had no content or tool calls", providerLabel))
 			}
-			if requireFinalResponseTool && finalResponseToolFeedbacks == 0 {
+			if requireFinalResponseTool {
 				finalResponseToolFeedbacks++
-				feedback := "Final response feedback: call the final_response tool with summary, outcome, files_changed, and verification instead of returning plain assistant text."
+				feedback := finalResponseToolFeedbackMessage()
 				if err := writer.Write(session.Event{
 					"type":       "final_response_feedback",
 					"session_id": runner.SessionID,
 					"message":    feedback,
 				}); err != nil {
 					return err
+				}
+				if turn+1 >= client.MaxTurns() {
+					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s did not call final_response before the turn limit", providerLabel))
 				}
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
 				continue
@@ -1434,6 +1445,7 @@ func qualityCheckpointFeedbackMessage(runner script.Runner, final script.Action,
 	if policy.VisionAvailable {
 		b.WriteString(" If visual quality or screenshot appearance matters, use analyze_image on the relevant image before making final visual claims.")
 	}
+	b.WriteString(" For scratch creation requests, an empty workspace is not by itself a blocker; choose a conventional workspace-relative filename when needed and use create_file.")
 	if strings.TrimSpace(runner.Prompt) != "" {
 		b.WriteString("\n\nActive objective:\n")
 		b.WriteString(strings.TrimSpace(runner.Prompt))
@@ -1579,10 +1591,10 @@ func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, r
 	if feedbackCount > 0 && !repairPolicy.Enabled() {
 		return "", "", false, nil
 	}
-	if repairPolicy.Enabled() && qualityRepairFinalOutcome(final) != "completed" {
+	if repairPolicy.Enabled() && !qualityRepairShouldReviewFinal(final) {
 		return "", "", false, nil
 	}
-	if repairPolicy.Enabled() && repairState != nil && repairState.Active && qualityRepairFinalOutcome(final) == "completed" {
+	if repairPolicy.Enabled() && repairState != nil && repairState.Active && qualityRepairShouldReviewFinal(final) {
 		if !repairState.hasEvidenceAfterFeedback(runner) {
 			repairState.NoEvidenceReminders++
 			feedback := qualityRepairNoEvidenceMessage(*repairState, repairPolicy)
@@ -1645,9 +1657,25 @@ func qualityRepairFinalOutcome(final script.Action) string {
 	return outcome
 }
 
+func qualityRepairShouldReviewFinal(final script.Action) bool {
+	switch qualityRepairFinalOutcome(final) {
+	case "completed", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldDeferSynthesisForQualityRepair(guidance openRouterProgressGuidance, state qualityRepairState, runner script.Runner) bool {
+	if !guidance.ForceSynthesis || !state.Active || guidance.TurnsRemaining <= 0 {
+		return false
+	}
+	return !state.hasEvidenceAfterFeedback(runner)
+}
+
 func qualityRepairFeedbackMessage(criticFeedback string, review criticReviewPayload, pass int, maxPasses int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Quality repair required (%d/%d): LCAgent critic found material issues that block a completed final_response.", pass, maxPasses)
+	fmt.Fprintf(&b, "Quality repair required (%d/%d): LCAgent critic found material issues that block a completed or unqualified final_response.", pass, maxPasses)
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimSpace(criticFeedback))
 	b.WriteString("\n\nDo not satisfy this by only weakening the final summary. Make a concrete artifact change or run a concrete verification/re-analysis step targeted at the finding, then call final_response again with the new evidence.")
@@ -1664,7 +1692,7 @@ func qualityRepairNoEvidenceMessage(state qualityRepairState, policy qualityRepa
 		b.WriteString("\n\nPrevious critic summary: ")
 		b.WriteString(criticTrimFeedbackField(summary, 500))
 	}
-	b.WriteString("\n\nBefore claiming completed, make a concrete artifact change or run a targeted verification/re-analysis step that addresses the finding. If you cannot or should not fix it within this run, call final_response with outcome partial, blocked, or failed and explain the unresolved issue.")
+	b.WriteString("\n\nBefore claiming completion, make a concrete artifact change or run a targeted verification/re-analysis step that addresses the finding. If you cannot or should not fix it within this run, call final_response with outcome partial, blocked, or failed and explain the unresolved issue.")
 	return b.String()
 }
 
@@ -1675,7 +1703,7 @@ func qualityRepairExhaustedMessage(state qualityRepairState, policy qualityRepai
 		b.WriteString("\n\nLast critic summary: ")
 		b.WriteString(criticTrimFeedbackField(summary, 500))
 	}
-	b.WriteString("\n\nDo not use final_response outcome completed unless a later critic/vision check explicitly clears the issue. Finish with outcome partial, blocked, or failed and clearly name what remains unresolved.")
+	b.WriteString("\n\nDo not use final_response outcome completed or an unqualified plain-text final unless a later critic/vision check explicitly clears the issue. Finish with outcome partial, blocked, or failed and clearly name what remains unresolved.")
 	return b.String()
 }
 
@@ -2069,7 +2097,19 @@ func openRouterFinalCompletionOptions(cfg modeladapter.OpenRouterConfig) modelad
 	return openRouterCompletionOptions(cfg)
 }
 
-func openRouterSynthesisFinalPrompt(guidance openRouterProgressGuidance) string {
+func openRouterSynthesisFinalPrompt(guidance openRouterProgressGuidance, requireFinalResponseTool bool) string {
+	if requireFinalResponseTool {
+		return fmt.Sprintf(`This is a planned synthesis checkpoint at turn %d of %d, before the hard cap.
+
+Only final_response is available for this request. Call final_response now from the gathered evidence:
+- Do not say the turn budget was reached.
+- Answer the current user request directly in final_response.summary.
+- Set final_response.outcome honestly: completed only when the requested work is actually complete and verified; partial, blocked, or failed when important work remains or evidence is insufficient.
+- Distinguish confirmed gaps from unverified items.
+- A feature is not missing merely because there is no same-named file; it may be implemented inline in CLI, script, model adapter, or orchestration code.
+- Keep uncertainty where it is honest, but do not ask the user to continue unless a concrete blocker remains.
+- Prefer a concise structured answer over exhaustive audit notes.`, guidance.Turn, guidance.MaxTurns)
+	}
 	return fmt.Sprintf(`This is a planned synthesis checkpoint at turn %d of %d, before the hard cap.
 
 Tools are unavailable for this request. Produce the final user-facing answer now from the gathered evidence:
@@ -2097,6 +2137,31 @@ func hasToolCall(calls []modeladapter.ToolCall, name string) bool {
 		}
 	}
 	return false
+}
+
+func allToolCallsNamed(calls []modeladapter.ToolCall, name string) bool {
+	if len(calls) == 0 {
+		return false
+	}
+	for _, call := range calls {
+		if call.Function.Name != name {
+			return false
+		}
+	}
+	return true
+}
+
+func finalResponseOnlyTools(defs []modeladapter.ToolDefinition) []modeladapter.ToolDefinition {
+	for _, def := range defs {
+		if def.Function.Name == "final_response" {
+			return []modeladapter.ToolDefinition{def}
+		}
+	}
+	return nil
+}
+
+func finalResponseToolFeedbackMessage() string {
+	return "Final response feedback: call the final_response tool with summary, outcome, files_changed, and verification instead of returning plain assistant text."
 }
 
 func modelResponseEvent(sessionID string, provider string, phase string, turn int, completion modeladapter.Completion, toolCallCount int) session.Event {

@@ -842,6 +842,33 @@ func TestRunnerFinalResponseAuditBlocksCompletedAfterFailedVerification(t *testi
 	}
 }
 
+func TestRunnerFinalResponseAuditAllowsCompletedAfterUnmatchedFailedProbeWhenReportedBuildPassed(t *testing.T) {
+	runner := Runner{
+		verificationChecks: []tools.VerificationCheck{
+			{
+				Command:  "clang++ -o /tmp/probe -x c++ -",
+				Status:   tools.VerificationStatusFailed,
+				ExitCode: 1,
+			},
+			{
+				Command: "clang++ -O2 -o game game.cpp",
+				Status:  tools.VerificationStatusPassed,
+				Success: true,
+			},
+		},
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:         "final_response",
+		Summary:      "done",
+		Outcome:      "completed",
+		FilesChanged: []string{"game.cpp"},
+		Verification: []string{"clang++ compilation succeeded with zero errors"},
+	})
+	if audit.Outcome != "pass" || audit.Blocking || audit.VerificationStatus != "verified" {
+		t.Fatalf("audit = %#v, want pass using later passed reported verification", audit)
+	}
+}
+
 func TestRunnerFinalResponseAuditBlocksCompletedOperationalActionWithoutLaterVerification(t *testing.T) {
 	runner := Runner{
 		verificationChecks: []tools.VerificationCheck{{

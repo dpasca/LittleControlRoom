@@ -1488,6 +1488,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--web-search-backend", prepared.webSearchBackend,
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
+		"--require-final-response-tool",
 		"--quality-checkpoint-passes", strconv.Itoa(lcagentDefaultQualityCheckpointPasses),
 		"--quality-repair-passes", strconv.Itoa(lcagentDefaultQualityRepairPasses),
 	)
