@@ -3907,6 +3907,85 @@ func TestRunExecOpenRouterFinalHandoffPreservesFilesTouched(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterFinalHandoffToolCallFallsBackToPartial(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_read",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+		case 2:
+			if _, ok := body["tools"]; ok {
+				t.Fatalf("final handoff request should not include tools: %#v", body)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_bad_handoff",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read_again","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected request %d: %#v", requests, body)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "1",
+		"keep reading",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"final_handoff_fallback"`,
+		`final handoff tried to call tools`,
+		`"final_outcome":"partial"`,
+		`"type":"turn_complete"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"turn_aborted"`) {
+		t.Fatalf("final handoff fallback should not abort:\n%s", text)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestRunExecOpenRouterContinuesFromMaxTurnHandoff(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -4263,6 +4342,122 @@ func TestRunExecOpenRouterSynthesisWithRequiredFinalResponseExposesOnlyFinalTool
 	}
 	if requests != openRouterMinimumTurnBeforeSynthesis {
 		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis)
+	}
+}
+
+func TestRunExecOpenRouterSynthesisToolCallFallsBackToToolLoop(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests < openRouterMinimumTurnBeforeSynthesis {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+			return
+		}
+		if requests == openRouterMinimumTurnBeforeSynthesis {
+			if body["model"] != "deepseek/final-model" {
+				t.Fatalf("synthesis request model = %#v, want final model", body["model"])
+			}
+			toolsValue, ok := body["tools"].([]any)
+			if !ok || len(toolsValue) != 1 {
+				t.Fatalf("synthesis request tools = %#v, want only final_response", body["tools"])
+			}
+			tool, _ := toolsValue[0].(map[string]any)
+			function, _ := tool["function"].(map[string]any)
+			if function["name"] != "final_response" {
+				t.Fatalf("synthesis tool = %#v, want final_response", toolsValue[0])
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_bad_synthesis_tool",
+				"model":"deepseek/final-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read_after_synthesis","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+			return
+		}
+		if requests == openRouterMinimumTurnBeforeSynthesis+1 {
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("fallback request model = %#v, want lead model", body["model"])
+			}
+			toolsValue, ok := body["tools"].([]any)
+			if !ok {
+				t.Fatalf("fallback request tools = %#v, want tool list", body["tools"])
+			}
+			if !lcagentCLITestRequestHasTool(toolsValue, "read_file") {
+				t.Fatalf("fallback request missing read_file tool: %#v", body["tools"])
+			}
+			messagesText := fmt.Sprint(body["messages"])
+			if !strings.Contains(messagesText, "Synthesis feedback: this planned synthesis checkpoint could not accept the attempted tool call") {
+				t.Fatalf("fallback request missing synthesis feedback: %s", messagesText)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_final_after_fallback",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"finished after synthesis fallback","outcome":"completed","files_changed":[],"verification":[]}}}]}
+				}]
+			}`))
+			return
+		}
+		t.Fatalf("unexpected request %d: %#v", requests, body)
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--final-model", "deepseek/final-model",
+		"--max-turns", "28",
+		"--require-final-response-tool",
+		"keep reading until synthesis",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"synthesis_requested"`,
+		`"type":"synthesis_tool_call_rejected"`,
+		`"attempted_tools":["read_file"]`,
+		`"summary":"finished after synthesis fallback"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"turn_aborted"`) {
+		t.Fatalf("synthesis fallback should not abort:\n%s", text)
+	}
+	if requests != openRouterMinimumTurnBeforeSynthesis+1 {
+		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis+1)
 	}
 }
 

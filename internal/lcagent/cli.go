@@ -970,6 +970,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	qualityCheckpointFeedbacks := 0
 	qualityRepairState := qualityRepairState{}
 	lastPassedVerificationFileTouchEvents := 0
+	deferNextSynthesis := false
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		select {
@@ -1016,6 +1017,13 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			contextCompacted = true
 		}
 		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{ToolProfile: string(toolProfile)})
+		if deferNextSynthesis {
+			if guidance.ForceSynthesis && guidance.TurnsRemaining > 0 {
+				guidance.Phase = "consolidation"
+				guidance.ForceSynthesis = false
+			}
+			deferNextSynthesis = false
+		}
 		if shouldDeferSynthesisForQualityRepair(guidance, qualityRepairState, runner) {
 			guidance.Phase = "consolidation"
 			guidance.ForceSynthesis = false
@@ -1071,6 +1079,15 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 		msg.Content = sanitizedContent
 		if guidance.ForceSynthesis && len(msg.ToolCalls) > 0 && (!requireFinalResponseTool || !allToolCallsNamed(msg.ToolCalls, "final_response")) {
+			if guidance.TurnsRemaining > 0 {
+				feedback := synthesisToolCallRejectedFeedbackMessage()
+				if err := writeSynthesisToolCallRejected(writer, runner.SessionID, feedback, msg.ToolCalls); err != nil {
+					return err
+				}
+				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+				deferNextSynthesis = true
+				continue
+			}
 			return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s synthesis request returned tool calls", providerLabel))
 		}
 		messages = append(messages, msg)
@@ -1098,6 +1115,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s did not call final_response before the turn limit", providerLabel))
 				}
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+				deferNextSynthesis = true
 				continue
 			}
 			final := script.Action{
@@ -1115,6 +1133,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					return err
 				}
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
+				deferNextSynthesis = true
 				continue
 			}
 			if turn+1 < client.MaxTurns() {
@@ -1123,6 +1142,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				} else if applied {
 					qualityCheckpointFeedbacks++
 					messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+					deferNextSynthesis = true
 					continue
 				}
 			}
@@ -1131,6 +1151,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			} else if applied {
 				criticLeadFeedbacks++
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+				deferNextSynthesis = true
 				continue
 			}
 			if err := runner.Final(final); err != nil {
@@ -1209,6 +1230,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 						Content:    string(resultJSON),
 					})
 					messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
+					deferNextSynthesis = true
 					continue
 				}
 				snapshotMessages := appendFinalResponseForContextSnapshot(messages, call.ID, final)
@@ -1231,6 +1253,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 							Content:    string(resultJSON),
 						})
 						messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+						deferNextSynthesis = true
 						continue
 					}
 				}
@@ -1265,6 +1288,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 						Content:    string(resultJSON),
 					})
 					messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
+					deferNextSynthesis = true
 					continue
 				}
 				if err := runner.Final(final); err != nil {
@@ -1314,6 +1338,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 						return err
 					}
 					messages = append(messages, modeladapter.Message{Role: "user", Content: guidance})
+					deferNextSynthesis = true
 				}
 				continue
 			}
@@ -1321,6 +1346,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				return err
 			}
 			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
+			deferNextSynthesis = true
 		}
 		for _, feedback := range pendingVerificationFeedback {
 			if !feedbackTracker.Allow("verification", feedback.ModelMessage()) {
@@ -1333,6 +1359,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				return err
 			}
 			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
+			deferNextSynthesis = true
 		}
 		if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "tool_result", messages, contextCompacted); err != nil {
 			return err
@@ -1786,7 +1813,7 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 		return finalClient.CompleteWithOptions(ctx, compactedMessages, nil, openRouterFinalCompletionOptions(cfg))
 	})
 	if err != nil {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff failed: %w", providerLabel, err))
+		return finalizeMaxTurnsFallback(writer, runner, threadStore, compactedMessages, maxTurns, filesChanged, verification, fmt.Sprintf("%s final handoff failed: %v", providerLabel, err))
 	}
 	msg := completion.Message
 	if err := writer.Write(modelResponseEvent(runner.SessionID, providerLabel, "final_handoff", maxTurns+1, completion, len(msg.ToolCalls))); err != nil {
@@ -1794,14 +1821,14 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 	}
 	sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 	if len(msg.ToolCalls) > 0 {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff tried to call tools", providerLabel))
+		return finalizeMaxTurnsFallback(writer, runner, threadStore, compactedMessages, maxTurns, filesChanged, verification, fmt.Sprintf("%s final handoff tried to call tools", providerLabel))
 	}
 	if strippedProviderMarkup && strings.TrimSpace(sanitizedContent) == "" {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff contained only provider tool-call markup", providerLabel))
+		return finalizeMaxTurnsFallback(writer, runner, threadStore, compactedMessages, maxTurns, filesChanged, verification, fmt.Sprintf("%s final handoff contained only provider tool-call markup", providerLabel))
 	}
 	sanitizedContent = strings.TrimSpace(sanitizedContent)
 	if sanitizedContent == "" {
-		return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s model loop exceeded maximum turns; final handoff was empty", providerLabel))
+		return finalizeMaxTurnsFallback(writer, runner, threadStore, compactedMessages, maxTurns, filesChanged, verification, fmt.Sprintf("%s final handoff was empty", providerLabel))
 	}
 	final := script.Action{
 		Type:         "final_response",
@@ -1817,6 +1844,58 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 		return err
 	}
 	return maybeRunTraceCritic(ctx, writer, runner, critic, final, snapshotMessages, true)
+}
+
+func finalizeMaxTurnsFallback(writer *session.Writer, runner script.Runner, threadStore *threadStateStore, compactedMessages []modeladapter.Message, maxTurns int, filesChanged []string, verification []string, reason string) error {
+	summary := maxTurnsFallbackSummary(maxTurns, filesChanged, verification, reason)
+	if err := writer.Write(session.Event{
+		"type":             "final_handoff_fallback",
+		"session_id":       runner.SessionID,
+		"reason":           strings.TrimSpace(reason),
+		"files_changed":    filesChanged,
+		"verification":     verification,
+		"fallback_summary": summary,
+	}); err != nil {
+		return err
+	}
+	final := script.Action{
+		Type:         "final_response",
+		Summary:      summary,
+		Outcome:      "partial",
+		FilesChanged: filesChanged,
+		Verification: verification,
+	}
+	if err := runner.Final(final); err != nil {
+		return err
+	}
+	snapshotMessages := appendAssistantContentForContextSnapshot(compactedMessages, summary)
+	return writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_handoff_fallback", snapshotMessages, true)
+}
+
+func maxTurnsFallbackSummary(maxTurns int, filesChanged []string, verification []string, reason string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "The configured model turn budget was reached after %d turns before LCAgent could produce a normal final handoff.", maxTurns)
+	if reason = strings.TrimSpace(reason); reason != "" {
+		b.WriteString(" Final handoff fallback reason: ")
+		b.WriteString(reason)
+		b.WriteString(".")
+	}
+	if len(filesChanged) > 0 {
+		b.WriteString(" Files changed: ")
+		b.WriteString(strings.Join(filesChanged, ", "))
+		b.WriteString(".")
+	} else {
+		b.WriteString(" No file changes were recorded.")
+	}
+	if len(verification) > 0 {
+		b.WriteString(" Verification recorded: ")
+		b.WriteString(strings.Join(verification, "; "))
+		b.WriteString(".")
+	} else {
+		b.WriteString(" No verification evidence was recorded.")
+	}
+	b.WriteString(" The session state was saved so the task can be continued from this point.")
+	return b.String()
 }
 
 func openRouterMaxTurnsFinalPrompt(maxTurns int, filesChanged, verification []string) string {
@@ -1899,6 +1978,19 @@ func writeRepairGuidance(writer *session.Writer, sessionID, kind, message string
 		"message":    strings.TrimSpace(message),
 		"count":      count,
 		"reason":     "duplicate feedback escalated to strategy guidance",
+	})
+}
+
+func writeSynthesisToolCallRejected(writer *session.Writer, sessionID string, message string, calls []modeladapter.ToolCall) error {
+	if writer == nil {
+		return nil
+	}
+	return writer.Write(session.Event{
+		"type":            "synthesis_tool_call_rejected",
+		"session_id":      sessionID,
+		"message":         strings.TrimSpace(message),
+		"attempted_tools": toolCallNames(calls),
+		"reason":          "synthesis accepts only final_response or plain final content",
 	})
 }
 
@@ -2166,6 +2258,18 @@ func allToolCallsNamed(calls []modeladapter.ToolCall, name string) bool {
 	return true
 }
 
+func toolCallNames(calls []modeladapter.ToolCall) []string {
+	out := make([]string, 0, len(calls))
+	for _, call := range calls {
+		name := strings.TrimSpace(call.Function.Name)
+		if name == "" {
+			name = "unknown"
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
 func finalResponseOnlyTools(defs []modeladapter.ToolDefinition) []modeladapter.ToolDefinition {
 	for _, def := range defs {
 		if def.Function.Name == "final_response" {
@@ -2177,6 +2281,10 @@ func finalResponseOnlyTools(defs []modeladapter.ToolDefinition) []modeladapter.T
 
 func finalResponseToolFeedbackMessage() string {
 	return "Final response feedback: call the final_response tool with summary, outcome, files_changed, and verification instead of returning plain assistant text."
+}
+
+func synthesisToolCallRejectedFeedbackMessage() string {
+	return "Synthesis feedback: this planned synthesis checkpoint could not accept the attempted tool call. Return to the normal tool loop for one focused step: run the concrete tool if it is still necessary, otherwise call final_response."
 }
 
 func modelResponseEvent(sessionID string, provider string, phase string, turn int, completion modeladapter.Completion, toolCallCount int) session.Event {
