@@ -67,6 +67,7 @@ type Summary struct {
 	QualityCheckpointFeedback   int                `json:"quality_checkpoint_feedback,omitempty"`
 	QualityRepairFeedback       int                `json:"quality_repair_feedback,omitempty"`
 	QualityRepairCleared        int                `json:"quality_repair_cleared,omitempty"`
+	QualityPlanUpdates          int                `json:"quality_plan_updates,omitempty"`
 	OperationalActions          int                `json:"operational_actions,omitempty"`
 	OperationalActionStatuses   map[string]int     `json:"operational_action_statuses,omitempty"`
 	ContextCompactions          int                `json:"context_compactions,omitempty"`
@@ -149,6 +150,7 @@ type TraceQuality struct {
 	CriticHumanPrompts   int                   `json:"critic_human_prompts,omitempty"`
 	QualityCheckpoints   int                   `json:"quality_checkpoints,omitempty"`
 	QualityRepairs       int                   `json:"quality_repairs,omitempty"`
+	QualityPlans         int                   `json:"quality_plans,omitempty"`
 	RepairEvents         int                   `json:"repair_events"`
 	VerifiedSessions     int                   `json:"verified_sessions"`
 	VerificationRate     float64               `json:"verification_rate"`
@@ -477,6 +479,8 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.QualityRepairFeedback++
 	case "quality_repair_cleared":
 		s.QualityRepairCleared++
+	case "quality_plan_update":
+		s.QualityPlanUpdates++
 	case "operational_action":
 		s.OperationalActions++
 		action := rawString(event["action"])
@@ -823,6 +827,7 @@ func (s Summary) computeTraceQuality() TraceQuality {
 		CriticHumanPrompts:   s.CriticHumanPrompts,
 		QualityCheckpoints:   s.QualityCheckpointFeedback,
 		QualityRepairs:       s.QualityRepairFeedback,
+		QualityPlans:         s.QualityPlanUpdates,
 		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
 		CachedInputTokenRate: ratio64(s.TokenUsage.CachedInputTokens, s.TokenUsage.InputTokens),
 		EstimatedCostUSD:     s.TokenUsage.EstimatedCostUSD,
@@ -899,6 +904,9 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	}
 	if s.QualityRepairCleared > 0 {
 		quality.addFinding("info", "quality_repair_cleared", fmt.Sprintf("%d quality repair concern(s) were cleared by a later check.", s.QualityRepairCleared))
+	}
+	if s.QualityPlanUpdates > 0 {
+		quality.addFinding("info", "quality_plans", fmt.Sprintf("%d phased quality plan update(s) were recorded.", s.QualityPlanUpdates))
 	}
 	if quality.ReadOverlapRate >= 0.25 && s.ReadFileLines >= 100 {
 		quality.addFinding("info", "read_overlap", fmt.Sprintf("%.0f%% of read_file lines overlapped earlier reads.", quality.ReadOverlapRate*100))

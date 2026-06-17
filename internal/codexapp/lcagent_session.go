@@ -132,6 +132,14 @@ type lcagentSession struct {
 	qualityRepairPasses          int
 	qualityRepairMaxPasses       int
 	qualityRepairLastSummary     string
+	qualityPlanUpdates           int
+	qualityPlanPhases            int
+	qualityPlanVerified          int
+	qualityPlanSkipped           int
+	qualityPlanNeedsRepair       int
+	qualityPlanRequiresRuntime   bool
+	qualityPlanRequiresVisual    bool
+	qualityPlanLastSummary       string
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
@@ -2083,6 +2091,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
+	case "quality_plan_update":
+		s.handleLCAgentQualityPlanUpdate(event)
 	case "critic_review_result":
 		s.handleLCAgentCriticReviewResult(event)
 	case "critic_lead_feedback":
@@ -2487,6 +2497,83 @@ func lcagentQualityRepairClearedText(pass, maxPasses int) string {
 	return fmt.Sprintf("LCAgent quality repair cleared after %d", pass)
 }
 
+type lcagentQualityPlanStats struct {
+	Phases          int
+	Verified        int
+	Skipped         int
+	NeedsRepair     int
+	RequiresRuntime bool
+	RequiresVisual  bool
+}
+
+func lcagentQualityPlanStatsFromEvent(event map[string]json.RawMessage) lcagentQualityPlanStats {
+	stats := lcagentQualityPlanStats{
+		RequiresRuntime: rawJSONBool(event["requires_runtime_verification"]),
+		RequiresVisual:  rawJSONBool(event["requires_visual_verification"]),
+	}
+	var phases []struct {
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(event["phases"], &phases)
+	stats.Phases = len(phases)
+	for _, phase := range phases {
+		switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(phase.Status), "-", "_")) {
+		case "verified":
+			stats.Verified++
+		case "skipped":
+			stats.Skipped++
+		case "needs_repair":
+			stats.NeedsRepair++
+		}
+	}
+	return stats
+}
+
+func lcagentQualityPlanUpdateText(stats lcagentQualityPlanStats) string {
+	parts := []string{fmt.Sprintf("%d phase%s", stats.Phases, lcagentCountSuffix(stats.Phases))}
+	if stats.Verified > 0 {
+		parts = append(parts, fmt.Sprintf("%d verified", stats.Verified))
+	}
+	if stats.Skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", stats.Skipped))
+	}
+	if stats.NeedsRepair > 0 {
+		parts = append(parts, fmt.Sprintf("%d needs repair", stats.NeedsRepair))
+	}
+	if stats.RequiresRuntime {
+		parts = append(parts, "runtime evidence required")
+	}
+	if stats.RequiresVisual {
+		parts = append(parts, "visual evidence required")
+	}
+	return "LCAgent quality plan updated: " + strings.Join(parts, ", ")
+}
+
+func lcagentCountSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func (s *lcagentSession) handleLCAgentQualityPlanUpdate(event map[string]json.RawMessage) {
+	stats := lcagentQualityPlanStatsFromEvent(event)
+	text := lcagentQualityPlanUpdateText(stats)
+	s.mu.Lock()
+	s.status = text
+	s.qualityPlanUpdates++
+	s.qualityPlanPhases = stats.Phases
+	s.qualityPlanVerified = stats.Verified
+	s.qualityPlanSkipped = stats.Skipped
+	s.qualityPlanNeedsRepair = stats.NeedsRepair
+	s.qualityPlanRequiresRuntime = stats.RequiresRuntime
+	s.qualityPlanRequiresVisual = stats.RequiresVisual
+	s.qualityPlanLastSummary = text
+	s.touchLocked()
+	s.mu.Unlock()
+	s.appendAsync(TranscriptStatus, text)
+}
+
 func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.RawMessage) {
 	output := strings.TrimSpace(rawJSONString(event["output"]))
 	modelName := rawJSONString(event["model"])
@@ -2803,6 +2890,14 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.qualityRepairPasses = replay.qualityRepairPasses
 	s.qualityRepairMaxPasses = replay.qualityRepairMaxPasses
 	s.qualityRepairLastSummary = strings.TrimSpace(replay.qualityRepairLastSummary)
+	s.qualityPlanUpdates = replay.qualityPlanUpdates
+	s.qualityPlanPhases = replay.qualityPlanPhases
+	s.qualityPlanVerified = replay.qualityPlanVerified
+	s.qualityPlanSkipped = replay.qualityPlanSkipped
+	s.qualityPlanNeedsRepair = replay.qualityPlanNeedsRepair
+	s.qualityPlanRequiresRuntime = replay.qualityPlanRequiresRuntime
+	s.qualityPlanRequiresVisual = replay.qualityPlanRequiresVisual
+	s.qualityPlanLastSummary = strings.TrimSpace(replay.qualityPlanLastSummary)
 	s.suggestedInputDraftID = strings.TrimSpace(replay.suggestedInputDraftID)
 	s.suggestedInputDraft = strings.TrimSpace(replay.suggestedInputDraft)
 	label := firstNonEmpty(s.threadID, "history")
@@ -3295,6 +3390,14 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		QualityRepairPasses:          s.qualityRepairPasses,
 		QualityRepairMaxPasses:       s.qualityRepairMaxPasses,
 		QualityRepairLastSummary:     strings.TrimSpace(s.qualityRepairLastSummary),
+		QualityPlanUpdates:           s.qualityPlanUpdates,
+		QualityPlanPhases:            s.qualityPlanPhases,
+		QualityPlanVerified:          s.qualityPlanVerified,
+		QualityPlanSkipped:           s.qualityPlanSkipped,
+		QualityPlanNeedsRepair:       s.qualityPlanNeedsRepair,
+		QualityPlanRequiresRuntime:   s.qualityPlanRequiresRuntime,
+		QualityPlanRequiresVisual:    s.qualityPlanRequiresVisual,
+		QualityPlanLastSummary:       strings.TrimSpace(s.qualityPlanLastSummary),
 		CriticActive:                 s.criticActive,
 		CriticReviews:                s.criticReviews,
 		CriticConsultations:          s.criticConsultations,

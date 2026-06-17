@@ -1894,6 +1894,51 @@ func TestLCAgentReplayRestoresQualityCheckpointStats(t *testing.T) {
 	}
 }
 
+func TestLCAgentReplayRestoresQualityPlanStats(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_quality_plan"
+	started := time.Date(2026, 6, 16, 7, 1, 30, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "openrouter", "model": "deepseek/test"},
+		{
+			"type":                          "quality_plan_update",
+			"session_id":                    sessionID,
+			"artifact_type":                 "game",
+			"requires_runtime_verification": true,
+			"requires_visual_verification":  true,
+			"phases": []map[string]any{
+				{"name": "core movement", "status": "verified"},
+				{"name": "boardwalk environment", "status": "needs_repair"},
+				{"name": "HUD", "status": "skipped"},
+			},
+		},
+		{"type": "turn_complete", "session_id": sessionID, "summary": "partial answer", "final_outcome": "partial", "verification_status": "not_run"},
+	})
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
+	}
+	lca := &lcagentSession{
+		projectPath: root,
+		provider:    "openrouter",
+	}
+	lca.applyReplay(replay)
+	snapshot := lca.Snapshot()
+	if snapshot.QualityPlanUpdates != 1 || snapshot.QualityPlanPhases != 3 || snapshot.QualityPlanVerified != 1 || snapshot.QualityPlanSkipped != 1 || snapshot.QualityPlanNeedsRepair != 1 {
+		t.Fatalf("quality plan stats = updates:%d phases:%d verified:%d skipped:%d repair:%d", snapshot.QualityPlanUpdates, snapshot.QualityPlanPhases, snapshot.QualityPlanVerified, snapshot.QualityPlanSkipped, snapshot.QualityPlanNeedsRepair)
+	}
+	if !snapshot.QualityPlanRequiresRuntime || !snapshot.QualityPlanRequiresVisual {
+		t.Fatalf("quality plan requirements runtime=%v visual=%v, want both true", snapshot.QualityPlanRequiresRuntime, snapshot.QualityPlanRequiresVisual)
+	}
+	if !strings.Contains(snapshot.QualityPlanLastSummary, "visual evidence required") {
+		t.Fatalf("quality plan summary = %q", snapshot.QualityPlanLastSummary)
+	}
+	if !strings.Contains(snapshot.Transcript, "LCAgent quality plan updated: 3 phases") {
+		t.Fatalf("replayed transcript missing quality plan update:\n%s", snapshot.Transcript)
+	}
+}
+
 func TestLCAgentReplayRestoresQualityRepairStats(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

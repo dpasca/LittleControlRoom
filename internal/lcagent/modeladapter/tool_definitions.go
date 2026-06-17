@@ -447,6 +447,42 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "update_quality_plan",
+				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, and visual verification must have analyze_image evidence when required.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"artifact_type":                 map[string]any{"type": "string", "enum": []string{"game", "ui", "cli", "library", "doc", "other", "unknown"}, "description": "Primary artifact being produced or changed."},
+						"requires_runtime_verification": map[string]any{"type": "boolean", "description": "True when the artifact should be built, run, tested, or otherwise exercised before completed."},
+						"requires_visual_verification":  map[string]any{"type": "boolean", "description": "True when screenshot/image appearance matters enough that completed requires analyze_image evidence."},
+						"phases": map[string]any{
+							"type":        "array",
+							"minItems":    1,
+							"maxItems":    12,
+							"description": "Small implementation/refinement phases. Refresh statuses as work proceeds.",
+							"items": map[string]any{
+								"type":                 "object",
+								"additionalProperties": false,
+								"properties": map[string]any{
+									"name":       map[string]any{"type": "string", "maxLength": 240, "description": "Short phase name, such as core movement or HUD."},
+									"status":     map[string]any{"type": "string", "enum": []string{"planned", "in_progress", "implemented", "verified", "needs_repair", "skipped"}, "description": "Use verified only when evidence shows the phase is done. Use skipped only with a reason in notes or evidence."},
+									"acceptance": map[string]any{"type": "array", "maxItems": 8, "items": map[string]any{"type": "string", "maxLength": 240}, "description": "Concrete checks for this phase."},
+									"evidence":   map[string]any{"type": "array", "maxItems": 8, "items": map[string]any{"type": "string", "maxLength": 240}, "description": "Tool-backed evidence for this phase, such as compile command, test, screenshot path, or vision analysis."},
+									"notes":      map[string]any{"type": "string", "maxLength": 240, "description": "Short caveat, blocker, or skip reason."},
+								},
+								"required": []string{"name", "status"},
+							},
+						},
+						"notes": map[string]any{"type": "string", "maxLength": 240, "description": "Optional concise whole-plan caveat."},
+					},
+					"required": []string{"artifact_type", "requires_runtime_verification", "requires_visual_verification", "phases"},
+				},
+			},
+		},
+		ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "final_response",
 				Description: "Finish the session. The summary must be the complete user-facing answer, including findings, caveats, changed files, verification outcome, and next steps; do not put essential answer content only in verification. For operational tasks, separate confirmed facts, attempted actions, failures/timeouts, inferences, and blockers when they differ.",
 				Parameters: map[string]any{

@@ -36,7 +36,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 		names[tool.Function.Name] = true
 		descriptions[tool.Function.Name] = tool.Function.Description
 	}
-	for _, want := range []string{"read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "load_skill", "run_command", "create_file", "replace_file", "apply_patch", "replace_text", "replace_lines", "update_plan", "final_response"} {
+	for _, want := range []string{"read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "load_skill", "run_command", "create_file", "replace_file", "apply_patch", "replace_text", "replace_lines", "update_plan", "update_quality_plan", "final_response"} {
 		if !names[want] {
 			t.Fatalf("Tools() missing %s", want)
 		}
@@ -104,6 +104,14 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	}
 	if !strings.Contains(descriptions["update_plan"], `{"items":[{"step":"Inspect files","status":"completed"}`) {
 		t.Fatalf("update_plan description should include a concrete args example: %q", descriptions["update_plan"])
+	}
+	if !strings.Contains(descriptions["update_quality_plan"], "phased quality plan") || !strings.Contains(descriptions["update_quality_plan"], "completed final_response is audited") {
+		t.Fatalf("update_quality_plan description should explain phased audit behavior: %q", descriptions["update_quality_plan"])
+	}
+	qualityPlanSpec := toolSpec(t, Tools(), "update_quality_plan")
+	qualityPlanProps := qualityPlanSpec.Parameters["properties"].(map[string]any)
+	if _, ok := qualityPlanProps["phases"]; !ok {
+		t.Fatalf("update_quality_plan schema missing phases: %#v", qualityPlanProps)
 	}
 	if names["web_search"] {
 		t.Fatalf("Tools() should not expose web_search unless it is enabled")
@@ -328,6 +336,8 @@ func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
 		"asks you to carry out a proposed plan or selected option",
 		"start executing it within the current autonomy and tool policy",
 		"continue with the in_progress step",
+		"call update_quality_plan early",
+		"Use quality phases to layer the work",
 		"an empty workspace is not a blocker",
 		"Choose a conventional workspace-relative filename",
 	} {

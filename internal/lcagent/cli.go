@@ -1509,6 +1509,7 @@ func qualityCheckpointFeedbackMessage(runner script.Runner, final script.Action,
 	if policy.VisionAvailable {
 		b.WriteString(" If visual quality or screenshot appearance matters, use analyze_image on the relevant image before making final visual claims.")
 	}
+	b.WriteString(" For nontrivial artifact work, use update_quality_plan to keep phases and evidence current; completed final_response must not outrun that evidence.")
 	b.WriteString(" For scratch creation requests, an empty workspace is not by itself a blocker; choose a conventional workspace-relative filename when needed and use create_file.")
 	if strings.TrimSpace(runner.Prompt) != "" {
 		b.WriteString("\n\nActive objective:\n")
