@@ -4461,6 +4461,111 @@ func TestRunExecOpenRouterSynthesisToolCallFallsBackToToolLoop(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterMalformedFinalResponseArgumentsReturnToolResult(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_bad_final_args",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"type":"function","function":{"name":"final_response","arguments":{"summary":123,"outcome":"completed","files_changed":[],"verification":[]}}}]}
+				}]
+			}`))
+		case 2:
+			messages, _ := body["messages"].([]any)
+			var assistantToolCallID string
+			var toolResultCallID string
+			var toolResultContent string
+			for _, raw := range messages {
+				msg, _ := raw.(map[string]any)
+				switch msg["role"] {
+				case "assistant":
+					toolCalls, _ := msg["tool_calls"].([]any)
+					for _, rawCall := range toolCalls {
+						call, _ := rawCall.(map[string]any)
+						function, _ := call["function"].(map[string]any)
+						if function["name"] == "final_response" {
+							assistantToolCallID, _ = call["id"].(string)
+						}
+					}
+				case "tool":
+					if content, _ := msg["content"].(string); strings.Contains(content, "invalid final_response arguments") {
+						toolResultCallID, _ = msg["tool_call_id"].(string)
+						toolResultContent = content
+					}
+				}
+			}
+			if assistantToolCallID == "" {
+				t.Fatalf("fallback request missing synthesized assistant tool call id: %#v", messages)
+			}
+			if toolResultCallID != assistantToolCallID {
+				t.Fatalf("tool result call id = %q, want assistant id %q; messages=%#v", toolResultCallID, assistantToolCallID, messages)
+			}
+			if !strings.Contains(toolResultContent, "cannot unmarshal number") {
+				t.Fatalf("tool result content missing decode detail: %s", toolResultContent)
+			}
+			_, _ = w.Write([]byte(`{
+				"id":"resp_valid_final",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_final","type":"function","function":{"name":"final_response","arguments":{"summary":"recovered after malformed final_response arguments","outcome":"completed","files_changed":[],"verification":[]}}}]}
+				}]
+			}`))
+		default:
+			t.Fatalf("unexpected request %d: %#v", requests, body)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "3",
+		"--require-final-response-tool",
+		"finish with malformed args first",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"tool_result"`,
+		`invalid final_response arguments`,
+		`"summary":"recovered after malformed final_response arguments"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"turn_aborted"`) {
+		t.Fatalf("malformed final_response arguments should not abort:\n%s", text)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestRunExecLongRequestTimeoutExpandsDefaultMaxTurns(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

@@ -1,6 +1,7 @@
 package lcagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -1078,6 +1079,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		sanitizedContent, strippedProviderMarkup := modeladapter.SanitizeAssistantContent(msg.Content)
 		msg.Content = sanitizedContent
+		ensureToolCallIDs(msg.ToolCalls, turn+1)
 		if guidance.ForceSynthesis && len(msg.ToolCalls) > 0 && (!requireFinalResponseTool || !allToolCallsNamed(msg.ToolCalls, "final_response")) {
 			if guidance.TurnsRemaining > 0 {
 				feedback := synthesisToolCallRejectedFeedbackMessage()
@@ -1181,17 +1183,41 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
 			if err != nil {
-				toolName := strings.TrimSpace(call.Function.Name)
-				if toolName == "" {
-					toolName = "unknown tool"
+				result := invalidToolArgumentsResult(toolCallName(call), err)
+				if err := writeInvalidToolArgumentsResult(writer, runner.SessionID, call, call.Function.Arguments, result); err != nil {
+					return err
 				}
-				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode arguments for %s: %w", toolName, err))
+				resultJSON, marshalErr := json.Marshal(result)
+				if marshalErr != nil {
+					return marshalErr
+				}
+				messages = append(messages, modeladapter.Message{
+					Role:       "tool",
+					ToolCallID: call.ID,
+					Content:    string(resultJSON),
+				})
+				deferNextSynthesis = true
+				continue
 			}
 			action := script.Action{Type: "tool_call", Tool: call.Function.Name, Args: args}
 			if call.Function.Name == "final_response" {
 				final, err := script.DecodeFinalResponseArgs(args)
 				if err != nil {
-					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("decode final_response arguments: %w", err))
+					result := invalidToolArgumentsResult("final_response", err)
+					if err := writeInvalidToolArgumentsResult(writer, runner.SessionID, call, args, result); err != nil {
+						return err
+					}
+					resultJSON, marshalErr := json.Marshal(result)
+					if marshalErr != nil {
+						return marshalErr
+					}
+					messages = append(messages, modeladapter.Message{
+						Role:       "tool",
+						ToolCallID: call.ID,
+						Content:    string(resultJSON),
+					})
+					deferNextSynthesis = true
+					continue
 				}
 				audit := runner.FinalResponseAudit(final)
 				if shouldBounceFinalAudit(audit, finalVerificationFeedbacks) {
@@ -1994,6 +2020,35 @@ func writeSynthesisToolCallRejected(writer *session.Writer, sessionID string, me
 	})
 }
 
+func writeInvalidToolArgumentsResult(writer *session.Writer, sessionID string, call modeladapter.ToolCall, rawArgs json.RawMessage, result tools.ToolResult) error {
+	if writer == nil {
+		return nil
+	}
+	args := json.RawMessage(`null`)
+	rawArgs = json.RawMessage(bytes.TrimSpace(rawArgs))
+	event := session.Event{
+		"type":       "tool_call",
+		"session_id": sessionID,
+		"tool":       toolCallName(call),
+		"args":       args,
+	}
+	if json.Valid(rawArgs) {
+		event["args"] = rawArgs
+	} else if len(rawArgs) > 0 {
+		event["raw_args"] = string(rawArgs)
+	}
+	event["args_decode_error"] = strings.TrimSpace(result.Error)
+	if err := writer.Write(event); err != nil {
+		return err
+	}
+	return writer.Write(session.Event{
+		"type":       "tool_result",
+		"session_id": sessionID,
+		"tool":       toolCallName(call),
+		"result":     result,
+	})
+}
+
 const providerRetryMaxAttempts = 3
 
 var modelRequestProgressInterval = 15 * time.Second
@@ -2246,6 +2301,17 @@ func hasToolCall(calls []modeladapter.ToolCall, name string) bool {
 	return false
 }
 
+func ensureToolCallIDs(calls []modeladapter.ToolCall, turn int) {
+	for i := range calls {
+		if strings.TrimSpace(calls[i].ID) == "" {
+			calls[i].ID = fmt.Sprintf("call_lcagent_%d_%d", turn, i+1)
+		}
+		if strings.TrimSpace(calls[i].Type) == "" {
+			calls[i].Type = "function"
+		}
+	}
+}
+
 func allToolCallsNamed(calls []modeladapter.ToolCall, name string) bool {
 	if len(calls) == 0 {
 		return false
@@ -2258,14 +2324,14 @@ func allToolCallsNamed(calls []modeladapter.ToolCall, name string) bool {
 	return true
 }
 
+func toolCallName(call modeladapter.ToolCall) string {
+	return firstNonEmptyString(strings.TrimSpace(call.Function.Name), "unknown tool")
+}
+
 func toolCallNames(calls []modeladapter.ToolCall) []string {
 	out := make([]string, 0, len(calls))
 	for _, call := range calls {
-		name := strings.TrimSpace(call.Function.Name)
-		if name == "" {
-			name = "unknown"
-		}
-		out = append(out, name)
+		out = append(out, toolCallName(call))
 	}
 	return out
 }
@@ -2281,6 +2347,13 @@ func finalResponseOnlyTools(defs []modeladapter.ToolDefinition) []modeladapter.T
 
 func finalResponseToolFeedbackMessage() string {
 	return "Final response feedback: call the final_response tool with summary, outcome, files_changed, and verification instead of returning plain assistant text."
+}
+
+func invalidToolArgumentsResult(toolName string, err error) tools.ToolResult {
+	return tools.ToolResult{
+		Success: false,
+		Error:   fmt.Sprintf("invalid %s arguments: %v", firstNonEmptyString(strings.TrimSpace(toolName), "tool"), err),
+	}
 }
 
 func synthesisToolCallRejectedFeedbackMessage() string {
