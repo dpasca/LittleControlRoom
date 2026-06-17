@@ -969,6 +969,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	criticLeadFeedbacks := 0
 	qualityCheckpointFeedbacks := 0
 	qualityRepairState := qualityRepairState{}
+	lastPassedVerificationFileTouchEvents := 0
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		select {
@@ -1016,6 +1017,10 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{ToolProfile: string(toolProfile)})
 		if shouldDeferSynthesisForQualityRepair(guidance, qualityRepairState, runner) {
+			guidance.Phase = "consolidation"
+			guidance.ForceSynthesis = false
+		}
+		if shouldDeferSynthesisForUnverifiedChanges(guidance, runner.FileTouchEvents(), lastPassedVerificationFileTouchEvents) {
 			guidance.Phase = "consolidation"
 			guidance.ForceSynthesis = false
 		}
@@ -1285,6 +1290,9 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			})
 			if feedback, ok := runner.VerificationFeedbackForResult(result); ok {
 				pendingVerificationFeedback = append(pendingVerificationFeedback, feedback)
+			}
+			if strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) && result.Success {
+				lastPassedVerificationFileTouchEvents = runner.FileTouchEvents()
 			}
 			if feedback, ok := script.PatchFeedbackForResult(result); ok {
 				pendingPatchFeedback = append(pendingPatchFeedback, feedback)
@@ -1671,6 +1679,13 @@ func shouldDeferSynthesisForQualityRepair(guidance openRouterProgressGuidance, s
 		return false
 	}
 	return !state.hasEvidenceAfterFeedback(runner)
+}
+
+func shouldDeferSynthesisForUnverifiedChanges(guidance openRouterProgressGuidance, fileTouchEvents int, lastPassedVerificationFileTouchEvents int) bool {
+	if !guidance.ForceSynthesis || guidance.TurnsRemaining <= 0 {
+		return false
+	}
+	return fileTouchEvents > lastPassedVerificationFileTouchEvents
 }
 
 func qualityRepairFeedbackMessage(criticFeedback string, review criticReviewPayload, pass int, maxPasses int) string {

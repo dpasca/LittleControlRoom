@@ -54,6 +54,26 @@ func TestShouldDeferSynthesisForActiveQualityRepairWithoutEvidence(t *testing.T)
 	}
 }
 
+func TestShouldDeferSynthesisForUnverifiedChanges(t *testing.T) {
+	guidance := openRouterProgressGuidance{
+		Turn:           40,
+		MaxTurns:       48,
+		TurnsRemaining: 8,
+		Phase:          "synthesis",
+		ForceSynthesis: true,
+	}
+	if !shouldDeferSynthesisForUnverifiedChanges(guidance, 3, 2) {
+		t.Fatal("expected synthesis to defer while file changes are newer than passed verification")
+	}
+	if shouldDeferSynthesisForUnverifiedChanges(guidance, 3, 3) {
+		t.Fatal("did not expect synthesis deferral after current changes have passed verification")
+	}
+	guidance.TurnsRemaining = 0
+	if shouldDeferSynthesisForUnverifiedChanges(guidance, 4, 3) {
+		t.Fatal("did not expect synthesis deferral at the hard turn limit")
+	}
+}
+
 func TestRunExecScriptedStreamJSON(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
