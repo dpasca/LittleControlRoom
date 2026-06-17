@@ -625,7 +625,9 @@ func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string 
 		!snapshot.QualityRepairActive &&
 		snapshot.QualityRepairPasses == 0 &&
 		snapshot.QualityRepairMaxPasses == 0 &&
-		strings.TrimSpace(snapshot.QualityRepairLastSummary) == "" {
+		strings.TrimSpace(snapshot.QualityRepairLastSummary) == "" &&
+		snapshot.QualityPlanUpdates == 0 &&
+		strings.TrimSpace(snapshot.QualityPlanLastSummary) == "" {
 		return nil
 	}
 	rows := []string{}
@@ -654,10 +656,38 @@ func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string 
 	if snapshot.QualityRepairPasses > 0 || snapshot.QualityRepairMaxPasses > 0 || snapshot.QualityRepairActive {
 		rows = append(rows, embeddedSidebarFieldRow("Repairs", repairPasses, detailWarningStyle, width))
 	}
+	if snapshot.QualityPlanUpdates > 0 || snapshot.QualityPlanPhases > 0 {
+		phaseValue := fmt.Sprintf("%d", max(0, snapshot.QualityPlanPhases))
+		if snapshot.QualityPlanVerified > 0 || snapshot.QualityPlanSkipped > 0 {
+			phaseValue += fmt.Sprintf(" (%d verified", max(0, snapshot.QualityPlanVerified))
+			if snapshot.QualityPlanSkipped > 0 {
+				phaseValue += fmt.Sprintf(", %d skipped", snapshot.QualityPlanSkipped)
+			}
+			phaseValue += ")"
+		}
+		phaseStyle := detailValueStyle
+		if snapshot.QualityPlanNeedsRepair > 0 {
+			phaseStyle = detailWarningStyle
+		}
+		rows = append(rows, embeddedSidebarFieldRow("Plan", phaseValue, phaseStyle, width))
+		var requirements []string
+		if snapshot.QualityPlanRequiresRuntime {
+			requirements = append(requirements, "runtime")
+		}
+		if snapshot.QualityPlanRequiresVisual {
+			requirements = append(requirements, "visual")
+		}
+		if len(requirements) > 0 {
+			rows = append(rows, embeddedSidebarFieldRow("Evidence", strings.Join(requirements, "+"), detailWarningStyle, width))
+		}
+	}
 	if summary := strings.TrimSpace(snapshot.QualityCheckpointLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
 	if summary := strings.TrimSpace(snapshot.QualityRepairLastSummary); summary != "" {
+		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+	}
+	if summary := strings.TrimSpace(snapshot.QualityPlanLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
 	return rows

@@ -32,6 +32,10 @@ const (
 	maxImageAnalysisQuestionChars    = 1200
 	maxImageAnalysisContextChars     = 4000
 	maxImageAnalysisChecks           = 10
+	maxQualityPlanPhases             = 12
+	maxQualityPlanAcceptanceItems    = 8
+	maxQualityPlanEvidenceItems      = 8
+	maxQualityPlanTextChars          = 240
 )
 
 type Runner struct {
@@ -64,6 +68,9 @@ type Runner struct {
 	toolFailures           []tools.ToolResult
 	browserToolsUsed       bool
 	browserWaitForUserUsed bool
+	imageAnalyses          int
+	qualityPlan            *QualityPlan
+	qualityPlanUpdates     int
 }
 
 type SearchRefiner interface {
@@ -203,6 +210,22 @@ type FinalResponseAudit struct {
 	OperationalActions int    `json:"operational_actions,omitempty"`
 }
 
+type QualityPlan struct {
+	ArtifactType                string             `json:"artifact_type"`
+	RequiresRuntimeVerification bool               `json:"requires_runtime_verification"`
+	RequiresVisualVerification  bool               `json:"requires_visual_verification"`
+	Phases                      []QualityPlanPhase `json:"phases"`
+	Notes                       string             `json:"notes,omitempty"`
+}
+
+type QualityPlanPhase struct {
+	Name       string   `json:"name"`
+	Status     string   `json:"status"`
+	Acceptance []string `json:"acceptance,omitempty"`
+	Evidence   []string `json:"evidence,omitempty"`
+	Notes      string   `json:"notes,omitempty"`
+}
+
 type OperationalAction struct {
 	Action                   string `json:"action"`
 	ProcessID                string `json:"process_id,omitempty"`
@@ -274,6 +297,8 @@ type analyzeImageArgs struct {
 	Context  string   `json:"context,omitempty"`
 	Checks   []string `json:"checks,omitempty"`
 }
+
+type qualityPlanArgs QualityPlan
 
 type consultCriticFileArgs struct {
 	Path      string `json:"path"`
@@ -397,6 +422,13 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		return audit
 	}
 	if finalOutcome == "completed" {
+		if blocking := r.qualityPlanCompletionBlock(verificationChecks); blocking != nil {
+			audit.Outcome = "block"
+			audit.Blocking = true
+			audit.Code = blocking.Code
+			audit.Message = blocking.Message
+			return audit
+		}
 		if op, ok := latestOperationalActionRequiringVerification(operationalActions); ok && len(verificationChecks) <= op.VerificationChecksBefore {
 			audit.Outcome = "block"
 			audit.Blocking = true
@@ -404,6 +436,74 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		}
 	}
 	return audit
+}
+
+func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.VerificationCheck) *FinalResponseAudit {
+	if r == nil || r.qualityPlan == nil {
+		return nil
+	}
+	plan := r.qualityPlan
+	if phase := firstUnverifiedQualityPlanPhase(plan.Phases); phase.Name != "" {
+		return &FinalResponseAudit{
+			Code:    "quality_plan_phase_unverified",
+			Message: fmt.Sprintf("final_response outcome was completed, but quality plan phase %q is still %s. Mark planned phases verified with concrete evidence, skip them with a reason, or set outcome to partial/blocked/failed before calling final_response again.", phase.Name, qualityPlanPhaseStatusForMessage(phase.Status)),
+		}
+	}
+	if phase := firstQualityPlanPhaseMissingEvidence(plan.Phases); phase.Name != "" {
+		return &FinalResponseAudit{
+			Code:    "quality_plan_phase_evidence_missing",
+			Message: fmt.Sprintf("final_response outcome was completed, but quality plan phase %q is marked %s without evidence or a note. Add concrete phase evidence, add a skip reason, or set outcome to partial/blocked/failed before calling final_response again.", phase.Name, qualityPlanPhaseStatusForMessage(phase.Status)),
+		}
+	}
+	if plan.RequiresRuntimeVerification && len(passedVerificationChecks(verificationChecks)) == 0 {
+		return &FinalResponseAudit{
+			Code:    "quality_plan_runtime_evidence_missing",
+			Message: "final_response outcome was completed, but the quality plan requires runtime verification and no passing run_command check marked purpose=verify is recorded. Run an appropriate runtime/build/test check, or set outcome to partial/blocked/failed and explain why runtime verification is unavailable.",
+		}
+	}
+	if plan.RequiresVisualVerification && r.imageAnalyses == 0 {
+		return &FinalResponseAudit{
+			Code:    "quality_plan_visual_evidence_missing",
+			Message: "final_response outcome was completed, but the quality plan requires visual verification and no successful analyze_image result is recorded. Capture or locate a screenshot/image and use analyze_image, or set outcome to partial/blocked/failed and explain why visual verification is unavailable.",
+		}
+	}
+	return nil
+}
+
+func firstUnverifiedQualityPlanPhase(phases []QualityPlanPhase) QualityPlanPhase {
+	for _, phase := range phases {
+		switch normalizeQualityPlanPhaseStatus(phase.Status) {
+		case "verified", "skipped":
+			continue
+		default:
+			if strings.TrimSpace(phase.Name) != "" {
+				return phase
+			}
+		}
+	}
+	return QualityPlanPhase{}
+}
+
+func firstQualityPlanPhaseMissingEvidence(phases []QualityPlanPhase) QualityPlanPhase {
+	for _, phase := range phases {
+		switch normalizeQualityPlanPhaseStatus(phase.Status) {
+		case "verified", "skipped":
+			if len(cleanStringList(phase.Evidence)) == 0 && strings.TrimSpace(phase.Notes) == "" {
+				if strings.TrimSpace(phase.Name) != "" {
+					return phase
+				}
+			}
+		}
+	}
+	return QualityPlanPhase{}
+}
+
+func qualityPlanPhaseStatusForMessage(status string) string {
+	status = normalizeQualityPlanPhaseStatus(status)
+	if status == "" {
+		return "unverified"
+	}
+	return strings.ReplaceAll(status, "_", " ")
 }
 
 func latestOperationalActionRequiringVerification(actions []OperationalAction) (OperationalAction, bool) {
@@ -934,6 +1034,35 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		var err error
 		result, err = r.runAnalyzeImage(ctx, args)
 		if err != nil {
+			return tools.ToolResult{}, err
+		}
+		if result.Success {
+			r.imageAnalyses++
+		}
+	case "update_quality_plan":
+		var args qualityPlanArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		plan, planResult := normalizeQualityPlan(QualityPlan(args))
+		if !planResult.Success {
+			result = planResult
+			break
+		}
+		r.qualityPlan = &plan
+		r.qualityPlanUpdates++
+		result = tools.ToolResult{Success: true, Output: formatQualityPlanResult(plan)}
+		if err := r.Session.Write(session.Event{
+			"type":                          "quality_plan_update",
+			"session_id":                    r.SessionID,
+			"update":                        r.qualityPlanUpdates,
+			"artifact_type":                 plan.ArtifactType,
+			"requires_runtime_verification": plan.RequiresRuntimeVerification,
+			"requires_visual_verification":  plan.RequiresVisualVerification,
+			"phases":                        plan.Phases,
+			"notes":                         plan.Notes,
+		}); err != nil {
 			return tools.ToolResult{}, err
 		}
 	case "web_search":
@@ -2256,6 +2385,95 @@ func cleanImageAnalysisChecks(checks []string) []string {
 		}
 	}
 	return out
+}
+
+func normalizeQualityPlan(plan QualityPlan) (QualityPlan, tools.ToolResult) {
+	plan.ArtifactType = normalizeQualityPlanArtifactType(plan.ArtifactType)
+	plan.Notes, _ = boundedCriticConsultText(plan.Notes, maxQualityPlanTextChars)
+	if len(plan.Phases) == 0 {
+		return QualityPlan{}, tools.ToolResult{Success: false, Error: "update_quality_plan requires at least one phase"}
+	}
+	if len(plan.Phases) > maxQualityPlanPhases {
+		plan.Phases = plan.Phases[:maxQualityPlanPhases]
+	}
+	out := make([]QualityPlanPhase, 0, len(plan.Phases))
+	for _, phase := range plan.Phases {
+		phase.Name, _ = boundedCriticConsultText(phase.Name, maxQualityPlanTextChars)
+		if phase.Name == "" {
+			return QualityPlan{}, tools.ToolResult{Success: false, Error: "update_quality_plan phase name is required"}
+		}
+		phase.Status = normalizeQualityPlanPhaseStatus(phase.Status)
+		if phase.Status == "" {
+			phase.Status = "planned"
+		}
+		phase.Acceptance = cleanQualityPlanTextList(phase.Acceptance, maxQualityPlanAcceptanceItems)
+		phase.Evidence = cleanQualityPlanTextList(phase.Evidence, maxQualityPlanEvidenceItems)
+		phase.Notes, _ = boundedCriticConsultText(phase.Notes, maxQualityPlanTextChars)
+		out = append(out, phase)
+	}
+	plan.Phases = out
+	return plan, tools.ToolResult{Success: true}
+}
+
+func normalizeQualityPlanArtifactType(value string) string {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "-", "_")) {
+	case "game", "ui", "cli", "library", "doc", "other", "unknown":
+		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "-", "_"))
+	default:
+		return "unknown"
+	}
+}
+
+func normalizeQualityPlanPhaseStatus(value string) string {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "-", "_")) {
+	case "planned", "in_progress", "implemented", "verified", "needs_repair", "skipped":
+		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "-", "_"))
+	default:
+		return ""
+	}
+}
+
+func cleanQualityPlanTextList(values []string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	capacity := len(values)
+	if capacity > limit {
+		capacity = limit
+	}
+	out := make([]string, 0, capacity)
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		value, _ = boundedCriticConsultText(value, maxQualityPlanTextChars)
+		if value == "" {
+			continue
+		}
+		key := strings.ToLower(value)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, value)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func formatQualityPlanResult(plan QualityPlan) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "quality_plan: %s\n", plan.ArtifactType)
+	fmt.Fprintf(&b, "requires_runtime_verification: %t\n", plan.RequiresRuntimeVerification)
+	fmt.Fprintf(&b, "requires_visual_verification: %t\n", plan.RequiresVisualVerification)
+	b.WriteString("phases:\n")
+	for _, phase := range plan.Phases {
+		fmt.Fprintf(&b, "- [%s] %s\n", firstNonEmpty(phase.Status, "planned"), phase.Name)
+		if len(phase.Evidence) > 0 {
+			fmt.Fprintf(&b, "  evidence: %s\n", strings.Join(phase.Evidence, "; "))
+		}
+	}
+	return b.String()
 }
 
 func boundedCriticConsultText(value string, limit int) (string, bool) {

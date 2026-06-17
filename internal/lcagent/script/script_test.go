@@ -483,6 +483,95 @@ func TestRunnerAnalyzesImageWithConfiguredVisionModel(t *testing.T) {
 	}
 }
 
+func TestRunnerUpdatesQualityPlan(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "make a skate game",
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"verified","acceptance":["player moves"],"evidence":["manual code inspection"]},{"name":"boardwalk environment","status":"implemented","acceptance":["wooden boardwalk visible"]}]}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v", err)
+	}
+	if !result.Success || !strings.Contains(result.Output, "quality_plan: game") {
+		t.Fatalf("quality plan result = %#v", result)
+	}
+	if runner.qualityPlan == nil || runner.qualityPlan.ArtifactType != "game" || !runner.qualityPlan.RequiresVisualVerification {
+		t.Fatalf("runner quality plan = %#v", runner.qualityPlan)
+	}
+	text := stream.String()
+	for _, want := range []string{`"tool":"update_quality_plan"`, `"type":"quality_plan_update"`, `"artifact_type":"game"`, `"requires_visual_verification":true`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunnerFinalResponseAuditBlocksCompletedUntilQualityPlanEvidence(t *testing.T) {
+	runner := Runner{
+		qualityPlan: &QualityPlan{
+			ArtifactType:                "game",
+			RequiresRuntimeVerification: true,
+			RequiresVisualVerification:  true,
+			Phases: []QualityPlanPhase{
+				{Name: "core movement", Status: "verified", Evidence: []string{"compile passed"}},
+				{Name: "boardwalk environment", Status: "implemented", Evidence: []string{"created geometry"}},
+			},
+		},
+		verificationChecks: []tools.VerificationCheck{{
+			Command: "clang++ game.cpp",
+			Status:  tools.VerificationStatusPassed,
+			Success: true,
+		}},
+		imageAnalyses: 1,
+	}
+	audit := runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_phase_unverified" || !audit.Blocking {
+		t.Fatalf("audit = %#v, want unverified phase block", audit)
+	}
+
+	runner.qualityPlan.Phases[1].Status = "verified"
+	runner.qualityPlan.Phases[1].Evidence = nil
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_phase_evidence_missing" || !audit.Blocking {
+		t.Fatalf("audit = %#v, want missing phase evidence block", audit)
+	}
+
+	runner.qualityPlan.Phases[1].Evidence = []string{"visual inspection passed"}
+	runner.imageAnalyses = 0
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_visual_evidence_missing" || !audit.Blocking {
+		t.Fatalf("audit = %#v, want visual evidence block", audit)
+	}
+
+	runner.imageAnalyses = 1
+	runner.verificationChecks = nil
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_runtime_evidence_missing" || !audit.Blocking {
+		t.Fatalf("audit = %#v, want runtime evidence block", audit)
+	}
+
+	runner.verificationChecks = []tools.VerificationCheck{{
+		Command: "clang++ game.cpp",
+		Status:  tools.VerificationStatusPassed,
+		Success: true,
+	}}
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Outcome != "pass" || audit.Blocking {
+		t.Fatalf("audit = %#v, want pass after declared evidence exists", audit)
+	}
+}
+
 type fakeSearchRefiner struct {
 	request SearchRefineRequest
 }

@@ -54,6 +54,14 @@ type lcagentReplay struct {
 	qualityRepairPasses          int
 	qualityRepairMaxPasses       int
 	qualityRepairLastSummary     string
+	qualityPlanUpdates           int
+	qualityPlanPhases            int
+	qualityPlanVerified          int
+	qualityPlanSkipped           int
+	qualityPlanNeedsRepair       int
+	qualityPlanRequiresRuntime   bool
+	qualityPlanRequiresVisual    bool
+	qualityPlanLastSummary       string
 	suggestedInputDraftID        string
 	suggestedInputDraft          string
 	tokenUsage                   *threadTokenUsage
@@ -328,6 +336,16 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	if next.qualityRepairLastSummary != "" {
 		total.qualityRepairLastSummary = next.qualityRepairLastSummary
 	}
+	total.qualityPlanUpdates += next.qualityPlanUpdates
+	total.qualityPlanPhases = next.qualityPlanPhases
+	total.qualityPlanVerified = next.qualityPlanVerified
+	total.qualityPlanSkipped = next.qualityPlanSkipped
+	total.qualityPlanNeedsRepair = next.qualityPlanNeedsRepair
+	total.qualityPlanRequiresRuntime = next.qualityPlanRequiresRuntime
+	total.qualityPlanRequiresVisual = next.qualityPlanRequiresVisual
+	if next.qualityPlanLastSummary != "" {
+		total.qualityPlanLastSummary = next.qualityPlanLastSummary
+	}
 	if next.suggestedInputDraftID != "" || next.suggestedInputDraft != "" {
 		total.suggestedInputDraftID = next.suggestedInputDraftID
 		total.suggestedInputDraft = next.suggestedInputDraft
@@ -561,6 +579,8 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.applyQualityRepairFeedback(event)
 		case "quality_repair_cleared":
 			replay.applyQualityRepairCleared(event)
+		case "quality_plan_update":
+			replay.applyQualityPlanUpdate(event)
 		case "user_message":
 			replay.appendEntry(TranscriptUser, rawJSONString(event["message"]))
 		case "tool_call":
@@ -892,6 +912,23 @@ func (r *lcagentReplay) applyQualityRepairCleared(event map[string]json.RawMessa
 	}
 	text := lcagentQualityRepairClearedText(pass, maxPasses)
 	r.qualityRepairLastSummary = strings.TrimSpace(text)
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyQualityPlanUpdate(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	stats := lcagentQualityPlanStatsFromEvent(event)
+	text := lcagentQualityPlanUpdateText(stats)
+	r.qualityPlanUpdates++
+	r.qualityPlanPhases = stats.Phases
+	r.qualityPlanVerified = stats.Verified
+	r.qualityPlanSkipped = stats.Skipped
+	r.qualityPlanNeedsRepair = stats.NeedsRepair
+	r.qualityPlanRequiresRuntime = stats.RequiresRuntime
+	r.qualityPlanRequiresVisual = stats.RequiresVisual
+	r.qualityPlanLastSummary = strings.TrimSpace(text)
 	r.appendEntry(TranscriptStatus, text)
 }
 

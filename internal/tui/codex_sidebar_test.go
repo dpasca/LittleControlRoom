@@ -469,6 +469,30 @@ func TestEmbeddedSidebarShowsLCAgentQualityRepairActivity(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarShowsLCAgentQualityPlanActivity(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.QualityPlanUpdates = 2
+	snapshot.QualityPlanPhases = 4
+	snapshot.QualityPlanVerified = 3
+	snapshot.QualityPlanNeedsRepair = 1
+	snapshot.QualityPlanRequiresRuntime = true
+	snapshot.QualityPlanRequiresVisual = true
+	snapshot.QualityPlanLastSummary = "LCAgent quality plan updated: 4 phases, 3 verified, 1 needs repair, runtime evidence required, visual evidence required"
+
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
+	for _, want := range []string{
+		"Quality",
+		"Plan 4 (3 verified)",
+		"Evidence runtime+visual",
+		"LCAgent quality plan updated",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("quality sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestEmbeddedSidebarSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Model = "openai/gpt-5"

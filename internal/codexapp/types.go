@@ -525,6 +525,14 @@ type Snapshot struct {
 	QualityRepairPasses          int
 	QualityRepairMaxPasses       int
 	QualityRepairLastSummary     string
+	QualityPlanUpdates           int
+	QualityPlanPhases            int
+	QualityPlanVerified          int
+	QualityPlanSkipped           int
+	QualityPlanNeedsRepair       int
+	QualityPlanRequiresRuntime   bool
+	QualityPlanRequiresVisual    bool
+	QualityPlanLastSummary       string
 	CriticActive                 bool
 	CriticReviews                int
 	CriticConsultations          int
