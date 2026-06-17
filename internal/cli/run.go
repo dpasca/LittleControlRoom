@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -93,6 +94,9 @@ func Run(programName string, args []string) int {
 	if subcmd == "scope" {
 		runScope(cfg)
 		return 0
+	}
+	if subcmd == "tui" || subcmd == "boss" {
+		defer recoverInteractivePanic(cfg, subcmd)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -932,6 +936,65 @@ func runBoss(ctx context.Context, svc *service.Service) int {
 		return 1
 	}
 	return 0
+}
+
+func recoverInteractivePanic(cfg config.AppConfig, mode string) {
+	recovered := recover()
+	if recovered == nil {
+		return
+	}
+	path, err := writeInteractivePanicDump(cfg, mode, recovered)
+	if err != nil {
+		printPlainRuntimeError(fmt.Sprintf("%s panic dump failed: %v", brand.CLIName, err))
+	} else {
+		printPlainRuntimeError(fmt.Sprintf("%s panic dump written to %s", brand.CLIName, path))
+	}
+	panic(recovered)
+}
+
+func writeInteractivePanicDump(cfg config.AppConfig, mode string, recovered any) (string, error) {
+	dataDir := strings.TrimSpace(cfg.DataDir)
+	if dataDir == "" {
+		dataDir = filepath.Dir(strings.TrimSpace(cfg.DBPath))
+	}
+	if dataDir == "" || dataDir == "." {
+		dataDir = filepath.Join(".", brand.DataDirName)
+	}
+	now := time.Now()
+	dumpDir := filepath.Join(dataDir, "crash-dumps", now.Format("20060102-150405.000")+"-"+mode)
+	if err := os.MkdirAll(dumpDir, 0o755); err != nil {
+		return "", fmt.Errorf("create crash dump directory: %w", err)
+	}
+	stack := allGoroutineStack()
+	cwd, _ := os.Getwd()
+	payload := strings.Join([]string{
+		fmt.Sprintf("mode: %s", strings.TrimSpace(mode)),
+		fmt.Sprintf("time: %s", now.Format(time.RFC3339Nano)),
+		fmt.Sprintf("pid: %d", os.Getpid()),
+		fmt.Sprintf("cwd: %s", cwd),
+		fmt.Sprintf("db_path: %s", cfg.DBPath),
+		fmt.Sprintf("config_path: %s", cfg.ConfigPath),
+		fmt.Sprintf("panic: %v", recovered),
+		"",
+		string(stack),
+	}, "\n")
+	panicPath := filepath.Join(dumpDir, "panic.txt")
+	if err := os.WriteFile(panicPath, []byte(payload), 0o600); err != nil {
+		return "", fmt.Errorf("write panic dump: %w", err)
+	}
+	return panicPath, nil
+}
+
+func allGoroutineStack() []byte {
+	size := 1 << 20
+	for {
+		buf := make([]byte, size)
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return buf[:n]
+		}
+		size *= 2
+	}
 }
 
 func runServe(ctx context.Context, svc *service.Service) int {

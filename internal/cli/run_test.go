@@ -76,6 +76,40 @@ func TestFormatRuntimeConflictMessageIncludesRecovery(t *testing.T) {
 	}
 }
 
+func TestWriteInteractivePanicDump(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	cfg := config.AppConfig{
+		DataDir:    dir,
+		DBPath:     filepath.Join(dir, "little-control-room.sqlite"),
+		ConfigPath: filepath.Join(dir, "config.toml"),
+	}
+	path, err := writeInteractivePanicDump(cfg, "tui", "boom")
+	if err != nil {
+		t.Fatalf("writeInteractivePanicDump() error = %v", err)
+	}
+	if !strings.HasPrefix(path, filepath.Join(dir, "crash-dumps")+string(os.PathSeparator)) {
+		t.Fatalf("dump path = %s, want under crash-dumps", path)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read dump: %v", err)
+	}
+	text := string(raw)
+	for _, want := range []string{
+		"mode: tui",
+		"panic: boom",
+		"db_path: " + cfg.DBPath,
+		"config_path: " + cfg.ConfigPath,
+		"goroutine ",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("dump missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestLoadStoredProjectStates(t *testing.T) {
 	t.Parallel()
 
