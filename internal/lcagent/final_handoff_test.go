@@ -79,11 +79,15 @@ func TestOpenRouterContextProfileBudgets(t *testing.T) {
 
 func TestOpenRouterContextModelAwareBudgets(t *testing.T) {
 	deepseek := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "deepseek", "deepseek-v4-pro")
-	if deepseek.ModelContextWindowTokens != 128_000 || deepseek.LoopCompactionTokenBudget != 102_400 || deepseek.LoopCompactionUtilizationPercent != 80 {
-		t.Fatalf("deepseek context budget = %+v, want 128k window with 80%% / 102400 token threshold", deepseek)
+	if deepseek.ModelContextWindowTokens != 1_000_000 || deepseek.LoopCompactionTokenBudget != 500_000 || deepseek.LoopCompactionUtilizationPercent != 50 {
+		t.Fatalf("deepseek context budget = %+v, want 1M window with 50%% / 500000 token threshold", deepseek)
 	}
-	if deepseek.LoopCompactionCharThreshold != 409_600 || deepseek.LoopCompactionTranscriptChars != 122_880 {
-		t.Fatalf("deepseek char budgets = threshold %d transcript %d, want 409600/122880", deepseek.LoopCompactionCharThreshold, deepseek.LoopCompactionTranscriptChars)
+	if deepseek.LoopCompactionCharThreshold != 2_000_000 || deepseek.LoopCompactionTranscriptChars != 600_000 {
+		t.Fatalf("deepseek char budgets = threshold %d transcript %d, want 2000000/600000", deepseek.LoopCompactionCharThreshold, deepseek.LoopCompactionTranscriptChars)
+	}
+	compat := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "deepseek", "deepseek-chat")
+	if compat.ModelContextWindowTokens != 1_000_000 || compat.LoopCompactionTokenBudget != 500_000 {
+		t.Fatalf("deepseek compatibility context budget = %+v, want 1M window with 500000 token threshold", compat)
 	}
 
 	mimo := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "xiaomi", "mimo-v2.5-pro")

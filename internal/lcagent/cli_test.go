@@ -3105,7 +3105,7 @@ func TestRunExecPreflightCompactsOversizedResumeForSelectedModel(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"resp_final",
-			"model":"deepseek/deepseek-v4-pro",
+			"model":"provider/small-128k-model",
 			"choices":[{
 				"finish_reason":"stop",
 				"message":{"role":"assistant","content":"continued on smaller context budget"}
@@ -3125,7 +3125,7 @@ func TestRunExecPreflightCompactsOversizedResumeForSelectedModel(t *testing.T) {
 		"--auto", "off",
 		"--output", "stream-json",
 		"--provider", "openrouter",
-		"--model", "deepseek/deepseek-v4-pro",
+		"--model", "provider/small-128k-model",
 		"--continue-from", threadID,
 		"--max-turns", "2",
 		currentPrompt,
