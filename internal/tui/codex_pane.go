@@ -988,6 +988,9 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentCriticModel) == "" {
 			req.LCAgentCriticModel = m.lcagentCriticModel()
 		}
+		if strings.TrimSpace(req.LCAgentCriticReasoning) == "" {
+			req.LCAgentCriticReasoning = m.lcagentCriticReasoning()
+		}
 		if strings.TrimSpace(req.LCAgentVisionProvider) == "" {
 			req.LCAgentVisionProvider = m.lcagentVisionProvider()
 		}

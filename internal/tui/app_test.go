@@ -58,8 +58,9 @@ type fakeCodexSession struct {
 		Reasoning string
 	}
 	criticModelProviderStages []struct {
-		Provider string
-		Model    string
+		Provider  string
+		Model     string
+		Reasoning string
 	}
 }
 
@@ -343,16 +344,19 @@ func (s *fakeCodexSession) StageModelProviderOverride(provider, model, reasoning
 	return nil
 }
 
-func (s *fakeCodexSession) StageCriticModelProviderOverride(provider, model string) error {
+func (s *fakeCodexSession) StageCriticModelProviderOverride(provider, model, reasoningEffort string) error {
 	s.criticModelProviderStages = append(s.criticModelProviderStages, struct {
-		Provider string
-		Model    string
+		Provider  string
+		Model     string
+		Reasoning string
 	}{
-		Provider: provider,
-		Model:    model,
+		Provider:  provider,
+		Model:     model,
+		Reasoning: reasoningEffort,
 	})
 	s.snapshot.CriticModelProvider = provider
 	s.snapshot.CriticModel = model
+	s.snapshot.CriticReasoningEffort = reasoningEffort
 	return nil
 }
 

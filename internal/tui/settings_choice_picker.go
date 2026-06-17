@@ -24,6 +24,7 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 	switch fieldIndex {
 	case settingsFieldLCAgentRoutePreset,
 		settingsFieldLCAgentReasoning,
+		settingsFieldLCAgentCriticReasoning,
 		settingsFieldLCAgentAuto,
 		settingsFieldLCAgentAdminWrite,
 		settingsFieldBossChatOllamaThinking,
@@ -82,7 +83,7 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 				Description: "Useful for quick orientation, small follow-up tasks, and low-risk summaries.",
 			},
 		}
-	case settingsFieldLCAgentReasoning:
+	case settingsFieldLCAgentReasoning, settingsFieldLCAgentCriticReasoning:
 		return []settingsChoiceOption{
 			{Value: "", Label: "Provider Default", Summary: "Omit explicit reasoning effort.", Description: "Lets the selected provider or route preset decide the reasoning behavior."},
 			{Value: "low", Label: "Low", Summary: "Use light reasoning.", Description: "Good for ordinary coding turns where responsiveness matters."},
@@ -339,6 +340,8 @@ func settingsChoiceTitle(fieldIndex int) string {
 		return "LCAgent Route Preset"
 	case settingsFieldLCAgentReasoning:
 		return "LCAgent Reasoning"
+	case settingsFieldLCAgentCriticReasoning:
+		return "LCAgent Critic Reasoning"
 	case settingsFieldLCAgentAuto:
 		return "LCAgent Permissions"
 	case settingsFieldLCAgentAdminWrite:

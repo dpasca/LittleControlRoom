@@ -147,6 +147,7 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 		if state.Target == codexModelPickerTargetCritic {
 			desiredModel = strings.TrimSpace(snapshot.CriticModel)
 			desiredModelProvider = strings.TrimSpace(snapshot.CriticModelProvider)
+			desiredReasoning = strings.TrimSpace(snapshot.CriticReasoningEffort)
 		} else {
 			desiredModel = firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 			desiredModelProvider = strings.TrimSpace(snapshot.ModelProvider)
@@ -320,9 +321,6 @@ func (m *Model) setCodexModelPickerModel(option codexapp.ModelOption, preferredR
 }
 
 func (m Model) currentCodexReasoningOptions() []codexapp.ReasoningEffortOption {
-	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetCritic {
-		return nil
-	}
 	modelOption, ok := m.currentCodexModelOption()
 	if !ok {
 		return nil
@@ -850,6 +848,14 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 func (m Model) applyCodexCriticModelPickerSelection(modelOption codexapp.ModelOption) (tea.Model, tea.Cmd) {
 	modelName := strings.TrimSpace(modelOption.Model)
 	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
+	effort := ""
+	reasoningOptions := m.codexReasoningOptionsForModel(modelOption)
+	if len(reasoningOptions) > 0 {
+		effort = strings.TrimSpace(modelOption.DefaultReasoningEffort)
+		if selectedEffort, ok := m.currentCodexReasoningOption(); ok {
+			effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
+		}
+	}
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	snapshot, _ := m.currentCodexSnapshot()
 	if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
@@ -860,7 +866,7 @@ func (m Model) applyCodexCriticModelPickerSelection(modelOption codexapp.ModelOp
 		m.closeCodexModelPickerAndReturnToTodo("Configure " + settingsLCAgentProviderOptionLabel(modelProvider) + " credentials in settings before using that critic model")
 		return m, nil
 	}
-	perfOpID := m.beginAILatencyOp("Critic model apply", projectPath, strings.TrimSpace(modelProvider+" "+modelName))
+	perfOpID := m.beginAILatencyOp("Critic model apply", projectPath, strings.TrimSpace(modelProvider+" "+modelName+" "+effort))
 	m.closeCodexModelPicker("")
 	m.status = "Staging critic " + modelName + "..."
 	manager := m.codexManager
@@ -884,7 +890,7 @@ func (m Model) applyCodexCriticModelPickerSelection(modelOption codexapp.ModelOp
 			}
 		}
 		staged, ok := session.(interface {
-			StageCriticModelProviderOverride(string, string) error
+			StageCriticModelProviderOverride(string, string, string) error
 		})
 		if !ok {
 			return codexActionMsg{
@@ -894,7 +900,7 @@ func (m Model) applyCodexCriticModelPickerSelection(modelOption codexapp.ModelOp
 				err:          errors.New("/critic is only available for embedded LCAgent sessions"),
 			}
 		}
-		if err := staged.StageCriticModelProviderOverride(modelProvider, modelName); err != nil {
+		if err := staged.StageCriticModelProviderOverride(modelProvider, modelName, effort); err != nil {
 			return codexActionMsg{
 				projectPath:  projectPath,
 				perfOpID:     perfOpID,
@@ -902,12 +908,17 @@ func (m Model) applyCodexCriticModelPickerSelection(modelOption codexapp.ModelOp
 				err:          err,
 			}
 		}
+		status := "LCAgent critic model set to " + modelName + " for future reviews"
+		if effort != "" {
+			status += " with " + effort + " reasoning"
+		}
 		return codexActionMsg{
 			projectPath:   projectPath,
-			status:        "LCAgent critic model set to " + modelName + " for future reviews",
+			status:        status,
 			provider:      codexapp.ProviderLCAgent,
 			model:         modelName,
 			modelProvider: modelProvider,
+			reasoning:     effort,
 			criticModel:   true,
 			refreshView:   true,
 			perfOpID:      perfOpID,
@@ -968,7 +979,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		currentLabel := "Current"
 		if state.Target == codexModelPickerTargetCritic {
 			current = strings.TrimSpace(snapshot.CriticModel)
-			currentReasoning = ""
+			currentReasoning = strings.TrimSpace(snapshot.CriticReasoningEffort)
 			currentLabel = "Critic"
 		}
 		currentReasoningOption := ""

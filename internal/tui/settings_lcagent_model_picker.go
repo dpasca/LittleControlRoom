@@ -657,6 +657,9 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 		if len(m.settingsFields) > settingsFieldLCAgentCriticProvider && provider != "" {
 			m.settingsFields[settingsFieldLCAgentCriticProvider].input.SetValue(provider)
 		}
+		if len(m.settingsFields) > settingsFieldLCAgentCriticReasoning {
+			m.settingsFields[settingsFieldLCAgentCriticReasoning].input.SetValue(strings.TrimSpace(state.PendingReasoning))
+		}
 	case settingsFieldLCAgentVisionModel:
 		if len(m.settingsFields) > settingsFieldLCAgentVisionProvider && provider != "" {
 			m.settingsFields[settingsFieldLCAgentVisionProvider].input.SetValue(provider)
@@ -1166,6 +1169,9 @@ func settingsLCAgentModelPickerRawReasoning(settings config.EditableSettings, fi
 	if fieldIndex == settingsFieldLCAgentModel {
 		return strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	}
+	if fieldIndex == settingsFieldLCAgentCriticModel {
+		return strings.TrimSpace(settings.LCAgentCriticReasoning)
+	}
 	return ""
 }
 
@@ -1209,7 +1215,7 @@ func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPicke
 	if state == nil {
 		return options
 	}
-	if state.FieldIndex != settingsFieldLCAgentModel {
+	if state.FieldIndex != settingsFieldLCAgentModel && state.FieldIndex != settingsFieldLCAgentCriticModel {
 		options[0].Summary = "Use provider default reasoning."
 		if settingsFieldUsesLCAgentModelPicker(state.FieldIndex) {
 			options[0].Description = "This role currently follows provider defaults; role-specific reasoning effort can be wired here when the LCAgent runtime supports it."
@@ -1373,6 +1379,11 @@ func settingsModelPickerAppendReasoning(label, reasoning string) string {
 }
 
 func settingsModelPickerReasoningDisplay(settings config.EditableSettings, fieldIndex int, provider string) string {
+	if fieldIndex == settingsFieldLCAgentCriticModel {
+		if effort := strings.TrimSpace(settings.LCAgentCriticReasoning); effort != "" {
+			return effort
+		}
+	}
 	if fieldIndex == settingsFieldLCAgentModel || strings.EqualFold(strings.TrimSpace(provider), "main") {
 		if effort := strings.TrimSpace(settings.EmbeddedLCAgentReasoning); effort != "" {
 			return effort

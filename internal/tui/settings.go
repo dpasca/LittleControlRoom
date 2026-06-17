@@ -56,6 +56,7 @@ const (
 	settingsFieldLCAgentUtilityModel
 	settingsFieldLCAgentCriticProvider
 	settingsFieldLCAgentCriticModel
+	settingsFieldLCAgentCriticReasoning
 	settingsFieldLCAgentVisionProvider
 	settingsFieldLCAgentVisionModel
 	settingsFieldLCAgentWebSearchBackend
@@ -220,6 +221,7 @@ func settingsSections() []settingsSection {
 				settingsFieldLCAgentUtilityModel,
 				settingsFieldLCAgentCriticProvider,
 				settingsFieldLCAgentCriticModel,
+				settingsFieldLCAgentCriticReasoning,
 				settingsFieldLCAgentVisionProvider,
 				settingsFieldLCAgentVisionModel,
 				settingsFieldOpenRouterAPIKey,
@@ -811,6 +813,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldLCAgentUtilityModel),
 		m.settingsFieldValue(settingsFieldLCAgentCriticProvider),
 		m.settingsFieldValue(settingsFieldLCAgentCriticModel),
+		m.settingsFieldValue(settingsFieldLCAgentCriticReasoning),
 		m.settingsFieldValue(settingsFieldLCAgentVisionProvider),
 		m.settingsFieldValue(settingsFieldLCAgentVisionModel),
 		m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend),
@@ -1118,6 +1121,7 @@ func (m Model) settingsFieldVisible(index int) bool {
 		settingsFieldLCAgentReasoning,
 		settingsFieldLCAgentUtilityProvider,
 		settingsFieldLCAgentCriticProvider,
+		settingsFieldLCAgentCriticReasoning,
 		settingsFieldLCAgentVisionProvider:
 		return false
 	case settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel:
@@ -1587,14 +1591,16 @@ func (m Model) saveEmbeddedModelPreferencesCmd() tea.Cmd {
 	}
 }
 
-func (m Model) saveLCAgentCriticPreferenceCmd(provider, model string) tea.Cmd {
+func (m Model) saveLCAgentCriticPreferenceCmd(provider, model, reasoning string) tea.Cmd {
 	baseline := m.currentSettingsBaseline()
 	settings := baseline
 	settings.LCAgentCriticProvider = strings.TrimSpace(provider)
 	settings.LCAgentCriticModel = strings.TrimSpace(model)
+	settings.LCAgentCriticReasoning = strings.TrimSpace(reasoning)
 	settings.RecentLCAgentModels = append([]string(nil), m.recentLCAgentModels...)
 	if strings.TrimSpace(settings.LCAgentCriticProvider) == strings.TrimSpace(baseline.LCAgentCriticProvider) &&
 		strings.TrimSpace(settings.LCAgentCriticModel) == strings.TrimSpace(baseline.LCAgentCriticModel) &&
+		strings.TrimSpace(settings.LCAgentCriticReasoning) == strings.TrimSpace(baseline.LCAgentCriticReasoning) &&
 		trimmedStringSlicesEqual(settings.RecentLCAgentModels, baseline.RecentLCAgentModels) {
 		return nil
 	}
@@ -1717,6 +1723,7 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
 	settings.LCAgentCriticProvider = m.settingsFieldValue(settingsFieldLCAgentCriticProvider)
 	settings.LCAgentCriticModel = m.settingsFieldValue(settingsFieldLCAgentCriticModel)
+	settings.LCAgentCriticReasoning = m.settingsFieldValue(settingsFieldLCAgentCriticReasoning)
 	settings.LCAgentVisionProvider = m.settingsFieldValue(settingsFieldLCAgentVisionProvider)
 	settings.LCAgentVisionModel = m.settingsFieldValue(settingsFieldLCAgentVisionModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
@@ -2261,7 +2268,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Provider Credentials"
 		case settingsFieldLCAgentUtilityProvider, settingsFieldLCAgentUtilityModel:
 			return "Utility Model"
-		case settingsFieldLCAgentCriticProvider, settingsFieldLCAgentCriticModel:
+		case settingsFieldLCAgentCriticProvider, settingsFieldLCAgentCriticModel, settingsFieldLCAgentCriticReasoning:
 			return "Critic Model"
 		case settingsFieldLCAgentVisionProvider, settingsFieldLCAgentVisionModel:
 			return "Vision Model"
@@ -3513,6 +3520,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionLCAgent,
 		),
 		newSettingsField(
+			"Critic reasoning",
+			"Press Enter to choose critic reasoning effort, or use Provider Default to omit provider-specific effort controls.",
+			settings.LCAgentCriticReasoning,
+			32,
+			settingsSectionLCAgent,
+		),
+		newSettingsField(
 			"Vision model provider",
 			"Press Enter to choose the provider for analyze_image, use the Main Model, or turn image analysis off.",
 			settings.LCAgentVisionProvider,
@@ -3712,6 +3726,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
 	settings.LCAgentCriticProvider = strings.TrimSpace(settings.LCAgentCriticProvider)
 	settings.LCAgentCriticModel = strings.TrimSpace(settings.LCAgentCriticModel)
+	settings.LCAgentCriticReasoning = strings.TrimSpace(settings.LCAgentCriticReasoning)
 	settings.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
 	settings.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
 	settings.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
@@ -3943,6 +3958,11 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentReasoning:
 		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
 			return "The Main Model will request reasoning effort " + effort + " when the selected provider supports it."
+		}
+		return field.hint
+	case settingsFieldLCAgentCriticReasoning:
+		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
+			return "The post-turn trace-only critic will request reasoning effort " + effort + " when the selected provider supports it."
 		}
 		return field.hint
 	case settingsFieldLCAgentUtilityProvider:

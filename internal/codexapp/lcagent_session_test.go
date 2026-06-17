@@ -1480,22 +1480,25 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 
 	notify := make(chan struct{}, 20)
 	session, err := newLCAgentSession(LaunchRequest{
-		Provider:              ProviderLCAgent,
-		ProjectPath:           root,
-		AppDataDir:            t.TempDir(),
-		LCAgentPath:           exe,
-		LCAgentOpenAIAPIKey:   "saved-openai-key",
-		LCAgentRoutePreset:    "quality",
-		LCAgentProvider:       "deepseek",
-		LCAgentAuto:           "medium",
-		LCAgentAdminWrite:     true,
-		LCAgentToolProfile:    "generous",
-		LCAgentRequestTimeout: 37 * time.Minute,
-		PendingModel:          "",
-		PendingReasoning:      "high",
-		LCAgentEnvFile:        "/tmp/test.env",
-		LCAgentWebSearchURL:   "http://127.0.0.1:8888",
-		Prompt:                "use the configured route",
+		Provider:               ProviderLCAgent,
+		ProjectPath:            root,
+		AppDataDir:             t.TempDir(),
+		LCAgentPath:            exe,
+		LCAgentOpenAIAPIKey:    "saved-openai-key",
+		LCAgentRoutePreset:     "quality",
+		LCAgentProvider:        "deepseek",
+		LCAgentAuto:            "medium",
+		LCAgentAdminWrite:      true,
+		LCAgentToolProfile:     "generous",
+		LCAgentRequestTimeout:  37 * time.Minute,
+		LCAgentCriticProvider:  "deepseek",
+		LCAgentCriticModel:     "deepseek-v4-pro",
+		LCAgentCriticReasoning: "high",
+		PendingModel:           "",
+		PendingReasoning:       "high",
+		LCAgentEnvFile:         "/tmp/test.env",
+		LCAgentWebSearchURL:    "http://127.0.0.1:8888",
+		Prompt:                 "use the configured route",
 	}, func() {
 		select {
 		case notify <- struct{}{}:
@@ -1509,12 +1512,15 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	if snapshot.Model != "gpt-5.5" || snapshot.ModelProvider != "openai" {
 		t.Fatalf("snapshot model/provider = %q/%q, want quality route", snapshot.Model, snapshot.ModelProvider)
 	}
+	if snapshot.CriticModel != "deepseek-v4-pro" || snapshot.CriticModelProvider != "deepseek" || snapshot.CriticReasoningEffort != "high" {
+		t.Fatalf("snapshot critic = %q/%q reasoning=%q, want deepseek/deepseek-v4-pro high", snapshot.CriticModelProvider, snapshot.CriticModel, snapshot.CriticReasoningEffort)
+	}
 	argsBytes, err := os.ReadFile(argsPath)
 	if err != nil {
 		t.Fatalf("read fake args: %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
-	for _, want := range []string{"--route-preset", "quality", "--request-timeout", "37m0s", "--admin-write", "--env-file", "/tmp/test.env", "--web-search-url", "http://127.0.0.1:8888"} {
+	for _, want := range []string{"--route-preset", "quality", "--request-timeout", "37m0s", "--admin-write", "--env-file", "/tmp/test.env", "--critic-provider", "deepseek", "--critic-model", "deepseek-v4-pro", "--critic-reasoning-effort", "high", "--web-search-url", "http://127.0.0.1:8888"} {
 		if !lcagentTestStringSliceContains(args, want) {
 			t.Fatalf("args missing %q: %#v", want, args)
 		}

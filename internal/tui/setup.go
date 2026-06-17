@@ -645,6 +645,7 @@ func (m Model) setupConfigFieldIndexes() []int {
 			settingsFieldLCAgentUtilityModel,
 			settingsFieldLCAgentCriticProvider,
 			settingsFieldLCAgentCriticModel,
+			settingsFieldLCAgentCriticReasoning,
 			settingsFieldLCAgentVisionProvider,
 			settingsFieldLCAgentVisionModel,
 		)
@@ -759,6 +760,7 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.LCAgentUtilityModel = m.settingsFieldValue(settingsFieldLCAgentUtilityModel)
 	settings.LCAgentCriticProvider = m.settingsFieldValue(settingsFieldLCAgentCriticProvider)
 	settings.LCAgentCriticModel = m.settingsFieldValue(settingsFieldLCAgentCriticModel)
+	settings.LCAgentCriticReasoning = m.settingsFieldValue(settingsFieldLCAgentCriticReasoning)
 	settings.LCAgentVisionProvider = m.settingsFieldValue(settingsFieldLCAgentVisionProvider)
 	settings.LCAgentVisionModel = m.settingsFieldValue(settingsFieldLCAgentVisionModel)
 	settings.LCAgentWebSearchBackend = m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)
