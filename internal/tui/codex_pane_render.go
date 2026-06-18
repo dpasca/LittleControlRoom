@@ -938,11 +938,18 @@ func (m Model) renderCodexTranscriptContentFromSnapshotWithLinks(snapshot codexa
 
 func (m Model) renderCodexTranscriptContentFromSnapshotWithLinksForProject(projectPath string, snapshot codexapp.Snapshot, width int) (string, []codexTranscriptLinkSpan) {
 	projectPath = strings.TrimSpace(firstNonEmptyString(projectPath, snapshot.ProjectPath))
-	options := codexTranscriptRenderOptions{
-		fullHistory: m.codexTranscriptFullHistoryLoaded(projectPath),
-		projectPath: projectPath,
+	return renderCodexTranscriptContentFromSnapshotWithLinksForProjectOptions(snapshot, width, m.codexTranscriptRenderOptionsFor(projectPath))
+}
+
+func renderCodexTranscriptContentFromSnapshotWithLinksForProjectOptions(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan) {
+	if strings.TrimSpace(options.projectPath) == "" {
+		options.projectPath = strings.TrimSpace(snapshot.ProjectPath)
 	}
-	if rendered, links := m.renderCodexTranscriptEntriesWithLinksOptions(snapshot, width, options); strings.TrimSpace(rendered) != "" {
+	if !options.blockModeSet {
+		options.blockMode = codexDenseBlockSummary
+		options.blockModeSet = true
+	}
+	if rendered, links := renderCodexTranscriptEntriesWithLinksConfigured(snapshot, width, options); strings.TrimSpace(rendered) != "" {
 		return rendered, links
 	}
 	if snapshot.Closed {

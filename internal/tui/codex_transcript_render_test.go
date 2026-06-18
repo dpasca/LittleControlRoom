@@ -3206,6 +3206,64 @@ func TestRenderCodexViewDoesNotRenderTranscriptOnCacheMiss(t *testing.T) {
 	}
 }
 
+func TestSyncCodexViewportDefersHeavyTranscriptRender(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               80,
+		height:              20,
+	}
+	entries := make([]codexapp.TranscriptEntry, 0, codexCacheMissEntryLimit+1)
+	for i := 0; i <= codexCacheMissEntryLimit; i++ {
+		entries = append(entries, codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptAgent,
+			Text: fmt.Sprintf("deferred transcript content %02d", i),
+		})
+	}
+	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Started:  true,
+		Entries:  entries,
+	})
+
+	m.syncCodexViewport(true)
+	rendered := ansi.Strip(m.codexViewport.View())
+	if strings.Contains(rendered, "deferred transcript content") {
+		t.Fatalf("syncCodexViewport() should not render heavy transcript content synchronously: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("syncCodexViewport() should show a cache-miss placeholder: %q", rendered)
+	}
+	if m.codexTranscriptCache.rendered != "" {
+		t.Fatalf("transcript cache should not be populated synchronously on a heavy cache miss")
+	}
+
+	cmd := m.requestVisibleCodexTranscriptRenderCmd()
+	if cmd == nil {
+		t.Fatalf("heavy transcript cache miss should queue a deferred render")
+	}
+	msgs := collectCmdMsgs(cmd)
+	if len(msgs) != 1 {
+		t.Fatalf("deferred render messages = %#v, want one message", msgs)
+	}
+	renderMsg, ok := msgs[0].(codexTranscriptRenderedMsg)
+	if !ok {
+		t.Fatalf("deferred render message = %T, want codexTranscriptRenderedMsg", msgs[0])
+	}
+	updated, _ := m.applyCodexTranscriptRenderedMsg(renderMsg)
+	got := normalizeUpdateModel(updated)
+	rendered = ansi.Strip(got.codexViewport.View())
+	if !strings.Contains(rendered, "deferred transcript content 24") {
+		t.Fatalf("deferred render should populate the viewport with transcript content: %q", rendered)
+	}
+	if got.codexTranscriptCache.rendered == "" {
+		t.Fatalf("deferred render should populate the transcript cache")
+	}
+}
+
 func TestRenderCodexTranscriptEntriesLimitsLiveTail(t *testing.T) {
 	entries := make([]codexapp.TranscriptEntry, 0, codexTranscriptLiveEntryLimit+24)
 	for i := 0; i < codexTranscriptLiveEntryLimit+24; i++ {

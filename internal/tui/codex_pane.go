@@ -110,6 +110,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexDrafts == nil {
 		m.codexDrafts = make(map[string]codexDraft)
 	}
+	if m.codexTranscriptRenderInFlight == nil {
+		m.codexTranscriptRenderInFlight = make(map[codexTranscriptRenderKey]struct{})
+	}
 	if m.embeddedSidebarDiffs == nil {
 		m.embeddedSidebarDiffs = make(map[string]embeddedSidebarDiffState)
 	}
@@ -304,6 +307,10 @@ func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Sna
 		m.syncCodexViewport(true)
 		m.syncCodexComposerSize()
 	}
+	transcriptRenderCmd := tea.Cmd(nil)
+	if reveal {
+		transcriptRenderCmd = m.requestVisibleCodexTranscriptRenderCmd()
+	}
 	linkScanCmd := tea.Cmd(nil)
 	if reveal {
 		if cached, ok := m.codexCachedSnapshot(projectPath); ok {
@@ -314,7 +321,7 @@ func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Sna
 	if reveal {
 		sidebarCmd = m.refreshEmbeddedSidebarCmd(projectPath)
 	}
-	return batchCmds(m.markProjectSessionSeen(projectPath), asyncCmd, linkScanCmd, sidebarCmd)
+	return batchCmds(m.markProjectSessionSeen(projectPath), asyncCmd, transcriptRenderCmd, linkScanCmd, sidebarCmd)
 }
 
 func (m *Model) pruneCodexSessionVisibility() {
@@ -870,6 +877,13 @@ func (m *Model) setCodexViewportTranscript(projectPath string, snapshot codexapp
 	}
 	rendered, ok := m.cachedCodexTranscriptContent(projectPath, width)
 	if !ok {
+		if !m.codexTranscriptFullHistoryLoaded(projectPath) && !codexTranscriptCacheMissCanRender(snapshot) {
+			m.measureAISyncLatency("Embedded viewport content", projectPath, embeddedProvider(snapshot).Label(), func() {
+				m.codexViewport.SetContent(renderCodexTranscriptCacheMissContent(snapshot))
+			})
+			m.codexViewportContent = codexViewportContentState{}
+			return
+		}
 		rendered = m.renderAndCacheCodexTranscript(projectPath, snapshot, width)
 	}
 	m.measureAISyncLatency("Embedded viewport content", projectPath, embeddedProvider(snapshot).Label(), func() {
@@ -890,6 +904,123 @@ func (m Model) hasHiddenCodexSession() bool {
 
 type codexBusyElsewhereRefresher interface {
 	RefreshBusyElsewhere() error
+}
+
+type codexTranscriptRenderKey struct {
+	projectPath    string
+	width          int
+	denseBlockMode codexDenseBlockMode
+	fullHistory    bool
+	transcriptRev  uint64
+}
+
+func (m Model) codexTranscriptRenderKey(projectPath string, width int) codexTranscriptRenderKey {
+	projectPath = strings.TrimSpace(projectPath)
+	return codexTranscriptRenderKey{
+		projectPath:    projectPath,
+		width:          max(24, width),
+		denseBlockMode: m.codexDenseBlockMode.normalized(),
+		fullHistory:    m.codexTranscriptFullHistoryLoaded(projectPath),
+		transcriptRev:  m.codexTranscriptRevision(projectPath),
+	}
+}
+
+func (m Model) codexTranscriptRenderOptionsFor(projectPath string) codexTranscriptRenderOptions {
+	projectPath = strings.TrimSpace(projectPath)
+	return codexTranscriptRenderOptions{
+		projectPath:              projectPath,
+		fullHistory:              m.codexTranscriptFullHistoryLoaded(projectPath),
+		blockMode:                m.codexDenseBlockMode.normalized(),
+		blockModeSet:             true,
+		hideReasoningSections:    m.hideReasoningSections,
+		hideReasoningSectionsSet: true,
+		lcagentStatusVisible:     m.isCodexLCAgentStatusVisible(projectPath),
+		lcagentStatusVisibleSet:  true,
+	}
+}
+
+func (m *Model) requestVisibleCodexTranscriptRenderCmd() tea.Cmd {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" {
+		return nil
+	}
+	snapshot, ok := m.codexCachedSnapshot(projectPath)
+	if !ok {
+		return nil
+	}
+	width := m.codexViewport.Width
+	if width <= 0 {
+		width = m.embeddedCodexMainWidth()
+	}
+	if width <= 0 {
+		width = 120
+	}
+	return m.requestCodexTranscriptRenderCmd(projectPath, snapshot, width)
+}
+
+func (m *Model) requestCodexTranscriptRenderCmd(projectPath string, snapshot codexapp.Snapshot, width int) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return nil
+	}
+	width = max(24, width)
+	if m.codexTranscriptCacheMatches(projectPath, width) || codexTranscriptCacheMissCanRender(snapshot) {
+		return nil
+	}
+	key := m.codexTranscriptRenderKey(projectPath, width)
+	if m.codexTranscriptRenderInFlight == nil {
+		m.codexTranscriptRenderInFlight = make(map[codexTranscriptRenderKey]struct{})
+	}
+	if _, ok := m.codexTranscriptRenderInFlight[key]; ok {
+		return nil
+	}
+	m.codexTranscriptRenderInFlight[key] = struct{}{}
+	options := m.codexTranscriptRenderOptionsFor(projectPath)
+	return func() tea.Msg {
+		rendered, links := renderCodexTranscriptContentFromSnapshotWithLinksForProjectOptions(snapshot, width, options)
+		return codexTranscriptRenderedMsg{
+			key:      key,
+			rendered: rendered,
+			links:    links,
+		}
+	}
+}
+
+func (m Model) applyCodexTranscriptRenderedMsg(msg codexTranscriptRenderedMsg) (tea.Model, tea.Cmd) {
+	if msg.key.projectPath == "" {
+		return m, nil
+	}
+	if m.codexTranscriptRenderInFlight != nil {
+		delete(m.codexTranscriptRenderInFlight, msg.key)
+	}
+	currentKey := m.codexTranscriptRenderKey(msg.key.projectPath, msg.key.width)
+	if currentKey != msg.key {
+		return m, nil
+	}
+	m.codexTranscriptCache = codexTranscriptRenderCache{
+		projectPath:    msg.key.projectPath,
+		width:          msg.key.width,
+		denseBlockMode: msg.key.denseBlockMode,
+		fullHistory:    msg.key.fullHistory,
+		transcriptRev:  msg.key.transcriptRev,
+		rendered:       msg.rendered,
+		links:          msg.links,
+	}
+	if strings.TrimSpace(m.codexVisibleProject) == msg.key.projectPath {
+		stickToBottom := m.codexViewport.AtBottom()
+		m.codexViewport.SetContent(msg.rendered)
+		m.codexViewportContent = codexViewportContentState{
+			projectPath:    msg.key.projectPath,
+			width:          msg.key.width,
+			denseBlockMode: msg.key.denseBlockMode,
+			fullHistory:    msg.key.fullHistory,
+			transcriptRev:  msg.key.transcriptRev,
+		}
+		if stickToBottom {
+			m.codexViewport.GotoBottom()
+		}
+	}
+	return m, nil
 }
 
 type codexCloseWaiter interface {

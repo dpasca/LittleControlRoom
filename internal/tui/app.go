@@ -181,96 +181,97 @@ type Model struct {
 	lastUsageTotals       model.LLMUsage
 	haveUsageTotals       bool
 
-	mouseEnabled                bool
-	codexSelection              textSelection
-	codexManager                *codexapp.Manager
-	runtimeManager              *projectrun.Manager
-	runtimeRefreshInFlight      bool
-	runtimeRefreshQueued        bool
-	runtimeSnapshots            map[string]projectrun.Snapshot
-	runtimeProcessSnapshots     []projectrun.Snapshot
-	runtimeProcessSelected      map[string]string
-	cpuSnapshot                 procinspect.CPUSnapshot
-	cpuMonitorInFlight          bool
-	cpuMonitorQueued            bool
-	cpuDialog                   *cpuDialogState
-	cpuRemediationEditor        *cpuRemediationEditorState
-	processScanInFlight         bool
-	processScanQueued           bool
-	processScanQueuedDialogPath string
-	processReports              map[string]procinspect.ProjectReport
-	processDialog               *processDialogState
-	processWarningLastCount     int
-	codexSnapshots              map[string]codexapp.Snapshot
-	embeddedProviderOverrides   map[string]codexapp.Provider
-	lastEmbeddedProvider        codexapp.Provider
-	embeddedActivityInFlight    map[string]bool
-	embeddedActivityQueued      map[string]embeddedSessionActivityRecordRequest
-	embeddedActivityWatermark   map[string]time.Time
-	codexTranscriptRev          map[string]uint64
-	codexVisibleProject         string
-	codexHiddenProject          string
-	codexPendingOpen            *codexPendingOpenState
-	codexInput                  textarea.Model
-	codexDrafts                 map[string]codexDraft
-	codexSuggestedDraftsApplied map[string]string
-	codexPanelFocus             embeddedCodexPanelFocus
-	codexSidebarSelected        embeddedCodexSidebarSection
-	embeddedSidebarDetail       *embeddedSidebarDetailState
-	embeddedSidebarDiffs        map[string]embeddedSidebarDiffState
-	embeddedSidebarDiffSeq      int64
-	embeddedSidebarDiffAutoAt   map[string]time.Time
-	pendingGitOperations        map[string]pendingGitOperation
-	codexPasteTokenSeq          int
-	codexClosedHandled          map[string]struct{}
-	codexSkipNextLiveRefresh    map[string]struct{}
-	pendingGitSummaries         map[string]string
-	pendingGitSummaryExpireNext map[string]bool
-	codexPickerVisible          bool
-	codexPickerSelected         int
-	codexPickerChoices          []codexSessionChoice
-	codexPickerLoading          bool
-	codexPickerKind             codexPickerKind
-	codexPickerTitle            string
-	codexPickerHint             string
-	codexPickerEmpty            string
-	codexPickerProject          string
-	codexPickerProvider         codexapp.Provider
-	browserAttention            *browserAttentionNotification
-	browserController           *browserctl.Controller
-	browserLeaseSnapshot        browserctl.ControllerSnapshot
-	managedBrowserStates        map[string]browserctl.ManagedPlaywrightState
-	questionNotify              *questionNotification
-	codexInputCopyDialog        *inputcomposer.CopyDialogState
-	codexInputSelection         *codexInputSelectionState
-	codexComposerSelection      textSelection
-	codexModelPicker            *codexModelPickerState
-	codexLCAgentProviderSetup   *codexLCAgentProviderSetupState
-	embeddedModelPrefs          map[codexapp.Provider]embeddedModelPreference
-	recentCodexModels           []string
-	recentClaudeModels          []string
-	recentOpenCodeModels        []string
-	recentLCAgentModels         []string
-	codexDenseBlockMode         codexDenseBlockMode
-	codexArtifactPicker         *codexArtifactPickerState
-	codexArtifactLinkScans      map[string]codexArtifactLinkScanState
-	codexArtifactLinkScanSeq    int64
-	codexLCAgentStatusVisible   map[string]struct{}
-	codexSlashSelected          int
-	codexToolAnswers            map[string]codexToolAnswerState
-	codexViewport               viewport.Model
-	codexTranscriptCache        codexTranscriptRenderCache
-	codexViewportContent        codexViewportContentState
-	codexTranscriptFullHistory  map[string]struct{}
-	uiDiagnostics               *uiStallDiagnostics
-	aiLatencyNextID             int64
-	aiLatencyInFlight           map[int64]aiLatencyOp
-	aiLatencyRecent             []aiLatencySample
-	modelSettlePending          map[string]pendingModelSettleOp
-	lastSpinnerTickAt           time.Time
-	skillsInventorySeq          int64
-	pendingBossHostNotices      []bossHostNotice
-	bossTrackedTodos            map[string]bossTrackedTodo
+	mouseEnabled                  bool
+	codexSelection                textSelection
+	codexManager                  *codexapp.Manager
+	runtimeManager                *projectrun.Manager
+	runtimeRefreshInFlight        bool
+	runtimeRefreshQueued          bool
+	runtimeSnapshots              map[string]projectrun.Snapshot
+	runtimeProcessSnapshots       []projectrun.Snapshot
+	runtimeProcessSelected        map[string]string
+	cpuSnapshot                   procinspect.CPUSnapshot
+	cpuMonitorInFlight            bool
+	cpuMonitorQueued              bool
+	cpuDialog                     *cpuDialogState
+	cpuRemediationEditor          *cpuRemediationEditorState
+	processScanInFlight           bool
+	processScanQueued             bool
+	processScanQueuedDialogPath   string
+	processReports                map[string]procinspect.ProjectReport
+	processDialog                 *processDialogState
+	processWarningLastCount       int
+	codexSnapshots                map[string]codexapp.Snapshot
+	embeddedProviderOverrides     map[string]codexapp.Provider
+	lastEmbeddedProvider          codexapp.Provider
+	embeddedActivityInFlight      map[string]bool
+	embeddedActivityQueued        map[string]embeddedSessionActivityRecordRequest
+	embeddedActivityWatermark     map[string]time.Time
+	codexTranscriptRev            map[string]uint64
+	codexVisibleProject           string
+	codexHiddenProject            string
+	codexPendingOpen              *codexPendingOpenState
+	codexInput                    textarea.Model
+	codexDrafts                   map[string]codexDraft
+	codexSuggestedDraftsApplied   map[string]string
+	codexTranscriptRenderInFlight map[codexTranscriptRenderKey]struct{}
+	codexPanelFocus               embeddedCodexPanelFocus
+	codexSidebarSelected          embeddedCodexSidebarSection
+	embeddedSidebarDetail         *embeddedSidebarDetailState
+	embeddedSidebarDiffs          map[string]embeddedSidebarDiffState
+	embeddedSidebarDiffSeq        int64
+	embeddedSidebarDiffAutoAt     map[string]time.Time
+	pendingGitOperations          map[string]pendingGitOperation
+	codexPasteTokenSeq            int
+	codexClosedHandled            map[string]struct{}
+	codexSkipNextLiveRefresh      map[string]struct{}
+	pendingGitSummaries           map[string]string
+	pendingGitSummaryExpireNext   map[string]bool
+	codexPickerVisible            bool
+	codexPickerSelected           int
+	codexPickerChoices            []codexSessionChoice
+	codexPickerLoading            bool
+	codexPickerKind               codexPickerKind
+	codexPickerTitle              string
+	codexPickerHint               string
+	codexPickerEmpty              string
+	codexPickerProject            string
+	codexPickerProvider           codexapp.Provider
+	browserAttention              *browserAttentionNotification
+	browserController             *browserctl.Controller
+	browserLeaseSnapshot          browserctl.ControllerSnapshot
+	managedBrowserStates          map[string]browserctl.ManagedPlaywrightState
+	questionNotify                *questionNotification
+	codexInputCopyDialog          *inputcomposer.CopyDialogState
+	codexInputSelection           *codexInputSelectionState
+	codexComposerSelection        textSelection
+	codexModelPicker              *codexModelPickerState
+	codexLCAgentProviderSetup     *codexLCAgentProviderSetupState
+	embeddedModelPrefs            map[codexapp.Provider]embeddedModelPreference
+	recentCodexModels             []string
+	recentClaudeModels            []string
+	recentOpenCodeModels          []string
+	recentLCAgentModels           []string
+	codexDenseBlockMode           codexDenseBlockMode
+	codexArtifactPicker           *codexArtifactPickerState
+	codexArtifactLinkScans        map[string]codexArtifactLinkScanState
+	codexArtifactLinkScanSeq      int64
+	codexLCAgentStatusVisible     map[string]struct{}
+	codexSlashSelected            int
+	codexToolAnswers              map[string]codexToolAnswerState
+	codexViewport                 viewport.Model
+	codexTranscriptCache          codexTranscriptRenderCache
+	codexViewportContent          codexViewportContentState
+	codexTranscriptFullHistory    map[string]struct{}
+	uiDiagnostics                 *uiStallDiagnostics
+	aiLatencyNextID               int64
+	aiLatencyInFlight             map[int64]aiLatencyOp
+	aiLatencyRecent               []aiLatencySample
+	modelSettlePending            map[string]pendingModelSettleOp
+	lastSpinnerTickAt             time.Time
+	skillsInventorySeq            int64
+	pendingBossHostNotices        []bossHostNotice
+	bossTrackedTodos              map[string]bossTrackedTodo
 
 	pendingG      bool
 	todoLaunchSeq int64
@@ -631,70 +632,71 @@ func New(ctx context.Context, svc *service.Service) Model {
 	homeDir, _ := os.UserHomeDir()
 
 	m := Model{
-		ctx:                         ctx,
-		svc:                         svc,
-		busCh:                       busCh,
-		unsub:                       unsub,
-		loading:                     true,
-		status:                      initialProjectsStatus,
-		commandInput:                commandInput,
-		codexInput:                  codexInput,
-		codexPanelFocus:             embeddedCodexFocusMain,
-		embeddedSidebarDiffs:        make(map[string]embeddedSidebarDiffState),
-		embeddedSidebarDiffAutoAt:   make(map[string]time.Time),
-		dismissedSuspendedTurns:     make(map[string]struct{}),
-		codexDrafts:                 make(map[string]codexDraft),
-		codexSuggestedDraftsApplied: make(map[string]string),
-		codexClosedHandled:          make(map[string]struct{}),
-		pendingGitOperations:        make(map[string]pendingGitOperation),
-		pendingGitSummaries:         make(map[string]string),
-		codexSnapshots:              make(map[string]codexapp.Snapshot),
-		embeddedActivityInFlight:    make(map[string]bool),
-		embeddedActivityQueued:      make(map[string]embeddedSessionActivityRecordRequest),
-		embeddedActivityWatermark:   make(map[string]time.Time),
-		codexTranscriptRev:          make(map[string]uint64),
-		codexTranscriptFullHistory:  make(map[string]struct{}),
-		codexArtifactLinkScans:      make(map[string]codexArtifactLinkScanState),
-		codexToolAnswers:            make(map[string]codexToolAnswerState),
-		aiLatencyInFlight:           make(map[int64]aiLatencyOp),
-		detailViewport:              detailViewport,
-		runtimeViewport:             runtimeViewport,
-		codexViewport:               codexViewport,
-		uiDiagnostics:               newUIStallDiagnostics(strings.TrimSpace(homeDir), os.Getpid()),
-		focusedPane:                 focusProjects,
-		assessmentFlashUntil:        make(map[string]time.Time),
-		sortMode:                    sortByAttention,
-		visibility:                  visibilityAIFolders,
-		archiveMode:                 projectArchiveActive,
-		settingsBaseline:            &settingsBaseline,
-		settingsConfigPath:          strings.TrimSpace(initialConfig.ConfigPath),
-		appDataDirPath:              strings.TrimSpace(initialConfig.DataDir),
-		codexHomePath:               strings.TrimSpace(initialConfig.CodexHome),
-		excludeProjectPatterns:      append([]string(nil), initialSettings.ExcludeProjectPatterns...),
-		privacyMode:                 initialSettings.PrivacyMode,
-		privacyPatterns:             append([]string(nil), initialSettings.PrivacyPatterns...),
-		codexManager:                codexapp.NewManager(),
-		runtimeManager:              projectrun.NewManager(),
-		runtimeSnapshots:            make(map[string]projectrun.Snapshot),
-		runtimeProcessSnapshots:     nil,
-		runtimeProcessSelected:      make(map[string]string),
-		processReports:              make(map[string]procinspect.ProjectReport),
-		embeddedModelPrefs:          embeddedModelPreferencesFromSettings(initialSettings),
-		recentCodexModels:           append([]string(nil), initialSettings.RecentCodexModels...),
-		recentClaudeModels:          append([]string(nil), initialSettings.RecentClaudeModels...),
-		recentOpenCodeModels:        append([]string(nil), initialSettings.RecentOpenCodeModels...),
-		recentLCAgentModels:         append([]string(nil), initialSettings.RecentLCAgentModels...),
-		hideReasoningSections:       initialSettings.HideReasoningSections,
-		browserController:           browserctl.NewController(),
-		managedBrowserStates:        make(map[string]browserctl.ManagedPlaywrightState),
-		detailReloadInFlight:        make(map[string]bool),
-		detailReloadQueued:          make(map[string]bool),
-		detailReloadErrors:          make(map[string]string),
-		summaryReloadInFlight:       make(map[string]bool),
-		summaryReloadQueued:         make(map[string]bool),
-		nowFn:                       time.Now,
-		homeDirFn:                   os.UserHomeDir,
-		homeDir:                     strings.TrimSpace(homeDir),
+		ctx:                           ctx,
+		svc:                           svc,
+		busCh:                         busCh,
+		unsub:                         unsub,
+		loading:                       true,
+		status:                        initialProjectsStatus,
+		commandInput:                  commandInput,
+		codexInput:                    codexInput,
+		codexPanelFocus:               embeddedCodexFocusMain,
+		embeddedSidebarDiffs:          make(map[string]embeddedSidebarDiffState),
+		embeddedSidebarDiffAutoAt:     make(map[string]time.Time),
+		dismissedSuspendedTurns:       make(map[string]struct{}),
+		codexDrafts:                   make(map[string]codexDraft),
+		codexSuggestedDraftsApplied:   make(map[string]string),
+		codexTranscriptRenderInFlight: make(map[codexTranscriptRenderKey]struct{}),
+		codexClosedHandled:            make(map[string]struct{}),
+		pendingGitOperations:          make(map[string]pendingGitOperation),
+		pendingGitSummaries:           make(map[string]string),
+		codexSnapshots:                make(map[string]codexapp.Snapshot),
+		embeddedActivityInFlight:      make(map[string]bool),
+		embeddedActivityQueued:        make(map[string]embeddedSessionActivityRecordRequest),
+		embeddedActivityWatermark:     make(map[string]time.Time),
+		codexTranscriptRev:            make(map[string]uint64),
+		codexTranscriptFullHistory:    make(map[string]struct{}),
+		codexArtifactLinkScans:        make(map[string]codexArtifactLinkScanState),
+		codexToolAnswers:              make(map[string]codexToolAnswerState),
+		aiLatencyInFlight:             make(map[int64]aiLatencyOp),
+		detailViewport:                detailViewport,
+		runtimeViewport:               runtimeViewport,
+		codexViewport:                 codexViewport,
+		uiDiagnostics:                 newUIStallDiagnostics(strings.TrimSpace(homeDir), os.Getpid()),
+		focusedPane:                   focusProjects,
+		assessmentFlashUntil:          make(map[string]time.Time),
+		sortMode:                      sortByAttention,
+		visibility:                    visibilityAIFolders,
+		archiveMode:                   projectArchiveActive,
+		settingsBaseline:              &settingsBaseline,
+		settingsConfigPath:            strings.TrimSpace(initialConfig.ConfigPath),
+		appDataDirPath:                strings.TrimSpace(initialConfig.DataDir),
+		codexHomePath:                 strings.TrimSpace(initialConfig.CodexHome),
+		excludeProjectPatterns:        append([]string(nil), initialSettings.ExcludeProjectPatterns...),
+		privacyMode:                   initialSettings.PrivacyMode,
+		privacyPatterns:               append([]string(nil), initialSettings.PrivacyPatterns...),
+		codexManager:                  codexapp.NewManager(),
+		runtimeManager:                projectrun.NewManager(),
+		runtimeSnapshots:              make(map[string]projectrun.Snapshot),
+		runtimeProcessSnapshots:       nil,
+		runtimeProcessSelected:        make(map[string]string),
+		processReports:                make(map[string]procinspect.ProjectReport),
+		embeddedModelPrefs:            embeddedModelPreferencesFromSettings(initialSettings),
+		recentCodexModels:             append([]string(nil), initialSettings.RecentCodexModels...),
+		recentClaudeModels:            append([]string(nil), initialSettings.RecentClaudeModels...),
+		recentOpenCodeModels:          append([]string(nil), initialSettings.RecentOpenCodeModels...),
+		recentLCAgentModels:           append([]string(nil), initialSettings.RecentLCAgentModels...),
+		hideReasoningSections:         initialSettings.HideReasoningSections,
+		browserController:             browserctl.NewController(),
+		managedBrowserStates:          make(map[string]browserctl.ManagedPlaywrightState),
+		detailReloadInFlight:          make(map[string]bool),
+		detailReloadQueued:            make(map[string]bool),
+		detailReloadErrors:            make(map[string]string),
+		summaryReloadInFlight:         make(map[string]bool),
+		summaryReloadQueued:           make(map[string]bool),
+		nowFn:                         time.Now,
+		homeDirFn:                     os.UserHomeDir,
+		homeDir:                       strings.TrimSpace(homeDir),
 	}
 	if issue := settingsLocalFileIssue(initialSettings); issue != nil {
 		m.appendSettingsConfigIssue(issue)
@@ -1213,10 +1215,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCodexComposerSize()
 		m.syncCodexViewport(false)
 		m.syncRuntimeViewport(false)
+		codexTranscriptCmd := m.requestVisibleCodexTranscriptRenderCmd()
 		if m.bossMode {
-			return m.updateBossModeWindowSize()
+			updated, bossCmd := m.updateBossModeWindowSize()
+			return updated, batchCmds(codexTranscriptCmd, bossCmd)
 		}
-		return m, nil
+		return m, codexTranscriptCmd
 	case tea.MouseMsg:
 		if m.bossMode {
 			msg.Y--
@@ -2412,6 +2416,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexUpdateMsg(msg)
 	case codexDeferredSnapshotMsg:
 		return m.applyCodexDeferredSnapshotMsg(msg)
+	case codexTranscriptRenderedMsg:
+		return m.applyCodexTranscriptRenderedMsg(msg)
 	}
 
 	return m, nil

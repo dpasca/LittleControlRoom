@@ -18,8 +18,14 @@ func (m Model) renderCodexTranscriptEntries(snapshot codexapp.Snapshot, width in
 }
 
 type codexTranscriptRenderOptions struct {
-	fullHistory bool
-	projectPath string
+	fullHistory              bool
+	projectPath              string
+	blockMode                codexDenseBlockMode
+	blockModeSet             bool
+	hideReasoningSections    bool
+	hideReasoningSectionsSet bool
+	lcagentStatusVisible     bool
+	lcagentStatusVisibleSet  bool
 }
 
 const lcAgentStatusCollapsedText = "Embedded LCAgent status is hidden. Use /show-status (or /dev-show-status) to view it."
@@ -35,14 +41,40 @@ func (m Model) renderCodexTranscriptEntriesWithLinks(snapshot codexapp.Snapshot,
 }
 
 func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan) {
+	options = m.normalizeCodexTranscriptRenderOptions(snapshot, options)
+	return renderCodexTranscriptEntriesWithLinksConfigured(snapshot, width, options)
+}
+
+func (m Model) normalizeCodexTranscriptRenderOptions(snapshot codexapp.Snapshot, options codexTranscriptRenderOptions) codexTranscriptRenderOptions {
+	if strings.TrimSpace(options.projectPath) == "" {
+		options.projectPath = strings.TrimSpace(snapshot.ProjectPath)
+	}
+	if !options.blockModeSet {
+		options.blockMode = m.codexDenseBlockMode.normalized()
+		options.blockModeSet = true
+	} else {
+		options.blockMode = options.blockMode.normalized()
+	}
+	if !options.hideReasoningSectionsSet {
+		options.hideReasoningSections = m.hideReasoningSections
+		options.hideReasoningSectionsSet = true
+	}
+	if !options.lcagentStatusVisibleSet {
+		options.lcagentStatusVisible = m.isCodexLCAgentStatusVisible(options.projectPath)
+		options.lcagentStatusVisibleSet = true
+	}
+	return options
+}
+
+func renderCodexTranscriptEntriesWithLinksConfigured(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan) {
 	entries := codexTranscriptEntriesFromSnapshot(snapshot)
-	if !m.isCodexLCAgentStatusVisible(snapshot.ProjectPath) {
+	if !options.lcagentStatusVisible {
 		entries = collapseLCAgentStatusEntries(entries)
 	}
 	if len(entries) == 0 {
 		return "", nil
 	}
-	blockMode := m.codexDenseBlockMode.normalized()
+	blockMode := options.blockMode.normalized()
 	if snapshot.Provider.Normalized() == codexapp.ProviderCodex {
 		entries = collapseConsecutiveDuplicateTranscriptEntries(entries, blockMode.full())
 	}
@@ -83,7 +115,7 @@ func (m Model) renderCodexTranscriptEntriesWithLinksOptions(snapshot codexapp.Sn
 		reasoningLineCount = 0
 	}
 	for index, entry := range entries {
-		if m.hideReasoningSections && !blockMode.full() && entry.Kind == codexapp.TranscriptReasoning {
+		if options.hideReasoningSections && !blockMode.full() && entry.Kind == codexapp.TranscriptReasoning {
 			// Accumulate reasoning lines for compact indicator
 			text := strings.TrimSpace(entry.Text)
 			if text != "" {

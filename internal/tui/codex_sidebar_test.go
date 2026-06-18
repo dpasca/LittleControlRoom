@@ -769,6 +769,40 @@ func TestCodexSidebarAltSTogglesSidebarAndSession(t *testing.T) {
 	}
 }
 
+func TestCodexSidebarEscHidesEmbeddedSession(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got := normalizeUpdateModel(updated)
+	if got.codexVisibleProject != "" {
+		t.Fatalf("Esc from sidebar focus should hide embedded session, codexVisibleProject=%q", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != projectPath {
+		t.Fatalf("codexHiddenProject = %q, want %q", got.codexHiddenProject, projectPath)
+	}
+}
+
+func TestEmbeddedSidebarDetailAltUpHidesEmbeddedSession(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.embeddedSidebarDetail = &embeddedSidebarDetailState{
+		Section:     embeddedCodexSidebarQuality,
+		ProjectPath: projectPath,
+	}
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyUp, Alt: true})
+	got := normalizeUpdateModel(updated)
+	if got.codexVisibleProject != "" {
+		t.Fatalf("Alt+Up from sidebar detail should hide embedded session, codexVisibleProject=%q", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != projectPath {
+		t.Fatalf("codexHiddenProject = %q, want %q", got.codexHiddenProject, projectPath)
+	}
+}
+
 func TestCodexBannerAdvertisesSidebarShortcut(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)

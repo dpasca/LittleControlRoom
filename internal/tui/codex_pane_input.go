@@ -39,11 +39,23 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.normalizeEmbeddedCodexFocus()
 	m.normalizeEmbeddedSidebarSelection(snapshot)
 
+	if msg.String() == "alt+up" {
+		return m.hideCodexSession()
+	}
+
 	if m.embeddedSidebarDetail != nil {
 		return m.updateEmbeddedSidebarDetailMode(msg)
 	}
 
-	if msg.String() == "alt+up" {
+	if m.codexInputCopyDialog != nil {
+		return m.updateCodexInputCopyDialogMode(msg)
+	}
+
+	if m.codexInputSelectionActive() {
+		return m.updateCodexInputSelectionMode(msg)
+	}
+
+	if msg.String() == "esc" {
 		return m.hideCodexSession()
 	}
 	if msg.String() == "alt+s" {
@@ -57,19 +69,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateCodexSidebarMode(snapshot, msg)
 	}
 
-	if m.codexInputCopyDialog != nil {
-		return m.updateCodexInputCopyDialogMode(msg)
-	}
-
-	if m.codexInputSelectionActive() {
-		return m.updateCodexInputSelectionMode(msg)
-	}
-
 	switch msg.String() {
 	case "f3":
 		return m.cycleCodexSession(1)
-	case "esc":
-		return m.hideCodexSession()
 	case "alt+[", "alt+]":
 		return m, nil
 	case "alt+l":
