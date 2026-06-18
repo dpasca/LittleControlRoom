@@ -1192,6 +1192,31 @@ func embeddedSidebarVisionSummaryRows(snapshot codexapp.Snapshot, width int) []s
 	if model := embeddedSidebarVisionModelLabel(snapshot); model != "" {
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
 	}
+	status, style := embeddedSidebarVisionStatusSummary(snapshot)
+	rows = append(rows, embeddedSidebarWrappedFieldRows("State", status, style, width, 2)...)
+	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
+		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
+	}
+	return rows
+}
+
+func embeddedSidebarVisionDetailRows(snapshot codexapp.Snapshot, width int) []string {
+	if !embeddedSidebarVisionRelevant(snapshot) {
+		return nil
+	}
+	rows := []string{}
+	if model := embeddedSidebarVisionModelLabel(snapshot); model != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
+	}
+	status, style := embeddedSidebarVisionStatusSummary(snapshot)
+	rows = append(rows, embeddedSidebarWrappedFieldRows("Status", status, style, width, 2)...)
+	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
+		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
+	}
+	return rows
+}
+
+func embeddedSidebarVisionStatusSummary(snapshot codexapp.Snapshot) (string, lipgloss.Style) {
 	status := "idle"
 	style := detailValueStyle
 	if snapshot.ImageAnalysisActive {
@@ -1206,37 +1231,7 @@ func embeddedSidebarVisionSummaryRows(snapshot codexapp.Snapshot, width int) []s
 	if snapshot.ImageAnalysisFailures > 0 {
 		parts = append(parts, embeddedSidebarCountLabel(snapshot.ImageAnalysisFailures, "failure"))
 	}
-	rows = append(rows, embeddedSidebarWrappedFieldRows("State", strings.Join(parts, " | "), style, width, 2)...)
-	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
-	}
-	return rows
-}
-
-func embeddedSidebarVisionDetailRows(snapshot codexapp.Snapshot, width int) []string {
-	if !embeddedSidebarVisionRelevant(snapshot) {
-		return nil
-	}
-	rows := []string{}
-	if model := embeddedSidebarVisionModelLabel(snapshot); model != "" {
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
-	}
-	status := "idle"
-	style := detailValueStyle
-	if snapshot.ImageAnalysisActive {
-		status = "analyzing"
-	} else if snapshot.ImageAnalysisFailures > 0 {
-		style = detailWarningStyle
-	}
-	rows = append(rows, embeddedSidebarFieldRow("Status", status, style, width))
-	rows = append(rows, embeddedSidebarFieldRow("Analyses", fmt.Sprintf("%d", max(0, snapshot.ImageAnalyses)), detailValueStyle, width))
-	if snapshot.ImageAnalysisFailures > 0 {
-		rows = append(rows, embeddedSidebarFieldRow("Failures", fmt.Sprintf("%d", snapshot.ImageAnalysisFailures), detailWarningStyle, width))
-	}
-	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
-	}
-	return rows
+	return strings.Join(parts, " | "), style
 }
 
 func embeddedSidebarCriticStatus(snapshot codexapp.Snapshot) string {
