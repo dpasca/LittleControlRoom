@@ -1333,6 +1333,9 @@ func cpuProcessName(process procinspect.Process) string {
 	if command == "" {
 		return fmt.Sprintf("pid-%d", process.PID)
 	}
+	if label := projectRunCommandLabel(command); label != "" {
+		return label
+	}
 	first := strings.Fields(command)[0]
 	if base := filepath.Base(first); base != "." && base != string(filepath.Separator) && base != "" {
 		return base

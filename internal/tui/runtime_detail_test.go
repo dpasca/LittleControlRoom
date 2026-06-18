@@ -199,6 +199,47 @@ func TestRuntimePaneSwitchesBetweenManagedProcesses(t *testing.T) {
 	}
 }
 
+func TestRuntimePaneListsMultipleLocalListeners(t *testing.T) {
+	projectPath := "/tmp/okmain"
+	project := model.ProjectSummary{
+		Name:          "okmain",
+		Path:          projectPath,
+		PresentOnDisk: true,
+	}
+	m := Model{
+		width:                  100,
+		height:                 28,
+		projects:               []model.ProjectSummary{project},
+		allProjects:            []model.ProjectSummary{project},
+		selected:               0,
+		visibility:             visibilityAllFolders,
+		runtimeSnapshots:       map[string]projectrun.Snapshot{},
+		runtimeProcessSelected: make(map[string]string),
+		processReports: map[string]procinspect.ProjectReport{
+			projectPath: {
+				ProjectPath: projectPath,
+				Instances: []procinspect.ProjectInstance{
+					{Process: procinspect.Process{PID: 15448, PGID: 15448, Command: "node tune.mjs", Ports: []int{9878}}, ProjectPath: projectPath},
+					{Process: procinspect.Process{PID: 18471, PGID: 18471, Command: "node tune.mjs", Ports: []int{9877}}, ProjectPath: projectPath},
+					{Process: procinspect.Process{PID: 63523, PGID: 63523, Command: "node tune.mjs", Ports: []int{9879}}, ProjectPath: projectPath},
+				},
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderRuntimePanel(100, 18))
+	for _, want := range []string{
+		"Local listeners",
+		"tune.mjs pid 18471 on 9877",
+		"tune.mjs pid 15448 on 9878",
+		"tune.mjs pid 63523 on 9879",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderRuntimePanel() missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestStopRuntimeOpensExternalProcessConfirmation(t *testing.T) {
 	projectPath := "/tmp/demo"
 	m := modelWithExternalProcess(projectPath, 4321, 4017)

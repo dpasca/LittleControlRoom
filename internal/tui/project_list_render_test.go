@@ -804,6 +804,20 @@ func TestProjectRunSummaryIncludesCommandAndPort(t *testing.T) {
 	}
 }
 
+func TestProjectRunSummaryLabelsNodeScript(t *testing.T) {
+	got, state := projectRunSummary(projectrun.Snapshot{
+		Running: true,
+		Command: "/opt/homebrew/bin/node tune.mjs",
+		Ports:   []int{9877},
+	}, "")
+	if state != projectRunActive {
+		t.Fatalf("projectRunSummary() state = %v, want %v", state, projectRunActive)
+	}
+	if got != "tune.mjs@9877" {
+		t.Fatalf("projectRunSummary() = %q, want %q", got, "tune.mjs@9877")
+	}
+}
+
 func TestProjectRunSummaryUsesCommandAfterNestedCdPrefix(t *testing.T) {
 	got, state := projectRunSummary(projectrun.Snapshot{
 		Running: true,
@@ -815,6 +829,36 @@ func TestProjectRunSummaryUsesCommandAfterNestedCdPrefix(t *testing.T) {
 	}
 	if got != "pnpm@3000" {
 		t.Fatalf("projectRunSummary() = %q, want %q", got, "pnpm@3000")
+	}
+}
+
+func TestProjectLocalInstanceRunSummaryShowsExtraListeners(t *testing.T) {
+	project := model.ProjectSummary{
+		Name:          "okmain",
+		Path:          "/tmp/okmain",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+	}
+	m := Model{
+		projects: []model.ProjectSummary{project},
+		processReports: map[string]procinspect.ProjectReport{
+			project.Path: {
+				ProjectPath: project.Path,
+				Instances: []procinspect.ProjectInstance{
+					{Process: procinspect.Process{PID: 101, PGID: 101, Command: "node tune.mjs", Ports: []int{9878}}, ProjectPath: project.Path},
+					{Process: procinspect.Process{PID: 102, PGID: 102, Command: "node tune.mjs", Ports: []int{9877}}, ProjectPath: project.Path},
+					{Process: procinspect.Process{PID: 103, PGID: 103, Command: "node tune.mjs", Ports: []int{9879}}, ProjectPath: project.Path},
+				},
+			},
+		},
+	}
+
+	got, ok := m.projectLocalInstanceRunSummary(project.Path)
+	if !ok {
+		t.Fatalf("projectLocalInstanceRunSummary() ok = false, want true")
+	}
+	if got != "tune.mjs@9877+2" {
+		t.Fatalf("projectLocalInstanceRunSummary() = %q, want %q", got, "tune.mjs@9877+2")
 	}
 }
 

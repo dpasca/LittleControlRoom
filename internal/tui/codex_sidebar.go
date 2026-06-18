@@ -1408,7 +1408,7 @@ func (m Model) embeddedSidebarProcessRows(projectPath string, width, limit int) 
 		return nil
 	}
 	rows := make([]string, 0, limit)
-	for _, snapshot := range m.projectRuntimeSnapshots(projectPath) {
+	for _, snapshot := range m.projectManagedRuntimeSnapshots(projectPath) {
 		if len(rows) >= limit {
 			break
 		}
@@ -1466,7 +1466,8 @@ func embeddedSidebarLocalInstanceRow(snapshot projectrun.Snapshot, width int) st
 	} else if len(snapshot.Ports) > 0 {
 		label += " :" + joinPorts(snapshot.Ports)
 	}
-	return fitStyledWidth(detailValueStyle.Render("live")+" "+detailMutedStyle.Render(truncateText(label, max(1, width-6))), width)
+	badge := "port"
+	return fitStyledWidth(detailValueStyle.Render(badge)+" "+detailMutedStyle.Render(truncateText(label, max(1, width-len(badge)-1))), width)
 }
 
 func localInstanceDisplayLabel(snapshot projectrun.Snapshot) string {
@@ -1488,11 +1489,15 @@ func embeddedSidebarFindingRow(finding procinspect.Finding, width int) string {
 	if len(finding.Ports) > 0 {
 		label += " :" + joinPorts(finding.Ports)
 	}
+	badge := "proc"
 	style := detailWarningStyle
 	if finding.PortConflict {
 		style = detailDangerStyle
+		badge = "port!"
+	} else if len(finding.Ports) > 0 {
+		badge = "port!"
 	}
-	return fitStyledWidth(style.Render("proc")+" "+detailMutedStyle.Render(truncateText(label, max(1, width-6))), width)
+	return fitStyledWidth(style.Render(badge)+" "+detailMutedStyle.Render(truncateText(label, max(1, width-len(badge)-1))), width)
 }
 
 func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) []string {

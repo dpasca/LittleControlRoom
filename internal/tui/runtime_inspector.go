@@ -219,6 +219,9 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 		}
 		lines = append(lines, renderWrappedRuntimeField("Process", width, detailMutedStyle, processText)...)
 	}
+	if listeners := m.projectLocalInstanceDetailSummary(projectPath, snapshot.ID); listeners != "" {
+		lines = append(lines, renderWrappedRuntimeField("Local listeners", width, detailValueStyle, listeners)...)
+	}
 
 	runtimeStatus := renderRuntimeStatusValue(snapshot)
 	if snapshot.Running && !snapshot.StartedAt.IsZero() {

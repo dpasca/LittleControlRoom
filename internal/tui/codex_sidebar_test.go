@@ -116,7 +116,7 @@ func TestRenderCodexViewShowsEmbeddedSidebarSections(t *testing.T) {
 		"npm run dev",
 		"vite pid 2468",
 		"4017",
-		"node 64%",
+		"server.js 64%",
 		"2 files changed",
 	} {
 		if !strings.Contains(rendered, want) {
