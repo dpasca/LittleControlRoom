@@ -3264,6 +3264,78 @@ func TestSyncCodexViewportDefersHeavyTranscriptRender(t *testing.T) {
 	}
 }
 
+func TestStreamingTranscriptRenderCoalescesAndAppliesStaleContent(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 20),
+		width:               80,
+		height:              20,
+	}
+	first := streamingHeavyTranscriptSnapshot(projectPath, "first streaming transcript content")
+	m.storeCodexSnapshot(projectPath, first)
+	m.syncCodexViewport(true)
+	if rendered := ansi.Strip(m.codexViewport.View()); !strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("heavy streaming transcript should start with placeholder before deferred render: %q", rendered)
+	}
+	firstRenderCmd := m.requestVisibleCodexTranscriptRenderCmd()
+	if firstRenderCmd == nil {
+		t.Fatalf("heavy streaming transcript should queue first deferred render")
+	}
+
+	second := streamingHeavyTranscriptSnapshot(projectPath, "second streaming transcript content")
+	second.TranscriptRevision = first.TranscriptRevision + 1
+	m.storeCodexSnapshot(projectPath, second)
+	if nextRenderCmd := m.requestVisibleCodexTranscriptRenderCmd(); nextRenderCmd != nil {
+		t.Fatalf("new streaming revision should not queue another render while compatible render is in flight")
+	}
+
+	msgs := collectCmdMsgs(firstRenderCmd)
+	if len(msgs) != 1 {
+		t.Fatalf("first deferred render messages = %#v, want one", msgs)
+	}
+	renderMsg, ok := msgs[0].(codexTranscriptRenderedMsg)
+	if !ok {
+		t.Fatalf("first deferred render message = %T, want codexTranscriptRenderedMsg", msgs[0])
+	}
+	updated, cmd := m.applyCodexTranscriptRenderedMsg(renderMsg)
+	if cmd != nil {
+		t.Fatalf("busy stale render should apply without immediately queueing another render")
+	}
+	got := normalizeUpdateModel(updated)
+	rendered := ansi.Strip(got.codexViewport.View())
+	if strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("stale streaming render should replace placeholder: %q", rendered)
+	}
+	if !strings.Contains(rendered, "first streaming transcript content 24") {
+		t.Fatalf("stale streaming render should show latest completed render content: %q", rendered)
+	}
+	view := ansi.Strip(got.renderCodexView())
+	if strings.Contains(view, "Transcript is updating") {
+		t.Fatalf("render path should keep stale streaming content instead of restoring placeholder: %q", view)
+	}
+}
+
+func streamingHeavyTranscriptSnapshot(projectPath, prefix string) codexapp.Snapshot {
+	entries := make([]codexapp.TranscriptEntry, 0, codexCacheMissEntryLimit+1)
+	for i := 0; i <= codexCacheMissEntryLimit; i++ {
+		entries = append(entries, codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptAgent,
+			Text: fmt.Sprintf("%s %02d", prefix, i),
+		})
+	}
+	return codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		Started:            true,
+		Busy:               true,
+		TranscriptRevision: 1,
+		Entries:            entries,
+	}
+}
+
 func TestRenderCodexTranscriptEntriesLimitsLiveTail(t *testing.T) {
 	entries := make([]codexapp.TranscriptEntry, 0, codexTranscriptLiveEntryLimit+24)
 	for i := 0; i < codexTranscriptLiveEntryLimit+24; i++ {

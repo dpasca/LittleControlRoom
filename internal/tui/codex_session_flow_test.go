@@ -361,6 +361,65 @@ func TestShowCodexProjectQueuesDeferredSnapshotWhenRevealSnapshotIsContended(t *
 	}
 }
 
+func TestShowCodexProjectQueuesDeferredTranscriptRender(t *testing.T) {
+	entries := make([]codexapp.TranscriptEntry, 0, codexCacheMissEntryLimit+1)
+	for i := 0; i <= codexCacheMissEntryLimit; i++ {
+		entries = append(entries, codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptAgent,
+			Text: fmt.Sprintf("revealed transcript content %02d", i),
+		})
+	}
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			ThreadID: "thread-demo",
+			Status:   "Codex session ready",
+			Entries:  entries,
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager:  manager,
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(80, 20),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.showCodexProject("/tmp/demo", "Embedded session restored")
+	got := updated.(Model)
+	if got.codexVisibleProject != "/tmp/demo" {
+		t.Fatalf("codexVisibleProject = %q, want /tmp/demo", got.codexVisibleProject)
+	}
+	if !strings.Contains(ansi.Strip(got.codexViewport.View()), "Transcript is updating") {
+		t.Fatalf("initial heavy reveal should show placeholder before async render, got %q", ansi.Strip(got.codexViewport.View()))
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	foundRender := false
+	for _, msg := range msgs {
+		if _, ok := msg.(codexTranscriptRenderedMsg); ok {
+			foundRender = true
+			break
+		}
+	}
+	if !foundRender {
+		t.Fatalf("showCodexProject() should queue a deferred transcript render, got %#v", msgs)
+	}
+}
+
 func TestEnterDoesNotLaunchCodexFromDetailPane(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{

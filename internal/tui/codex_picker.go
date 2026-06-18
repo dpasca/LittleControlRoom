@@ -725,8 +725,10 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 		asyncCmd = m.deferredCodexSnapshotCmd(projectPath)
 	}
 	browserStateCmd := tea.Cmd(nil)
+	transcriptRenderCmd := tea.Cmd(nil)
 	if ok {
 		m.syncCodexViewport(true)
+		transcriptRenderCmd = m.requestVisibleCodexTranscriptRenderCmd()
 		browserStateCmd = m.maybeReadManagedBrowserStateCmd(snapshot)
 	}
 	seenCmd := m.markProjectSessionSeen(projectPath)
@@ -735,7 +737,7 @@ func (m Model) showCodexProject(projectPath, status string) (tea.Model, tea.Cmd)
 	}
 	focusCmd := m.focusProjectPath(projectPath)
 	sidebarCmd := m.refreshEmbeddedSidebarCmd(projectPath)
-	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath), seenCmd, asyncCmd, browserStateCmd, sidebarCmd)
+	return m, tea.Batch(m.codexInput.Focus(), focusCmd, m.refreshBusyElsewhereCmd(projectPath), seenCmd, asyncCmd, transcriptRenderCmd, browserStateCmd, sidebarCmd)
 }
 
 func (m *Model) focusProjectPath(projectPath string) tea.Cmd {

@@ -870,6 +870,20 @@ func (m Model) codexViewportContentMatches(projectPath string, width int) bool {
 		m.codexViewportContent.transcriptRev == m.codexTranscriptRevision(projectPath)
 }
 
+func (m Model) codexViewportContentCanStayStale(projectPath string, width int, snapshot codexapp.Snapshot) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || snapshot.Closed || !snapshot.Busy {
+		return false
+	}
+	currentRev := m.codexTranscriptRevision(projectPath)
+	return m.codexViewportContent.projectPath == projectPath &&
+		m.codexViewportContent.width == max(24, width) &&
+		m.codexViewportContent.denseBlockMode == m.codexDenseBlockMode.normalized() &&
+		m.codexViewportContent.fullHistory == m.codexTranscriptFullHistoryLoaded(projectPath) &&
+		m.codexViewportContent.transcriptRev > 0 &&
+		m.codexViewportContent.transcriptRev < currentRev
+}
+
 func (m *Model) setCodexViewportTranscript(projectPath string, snapshot codexapp.Snapshot, width int) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -925,6 +939,22 @@ func (m Model) codexTranscriptRenderKey(projectPath string, width int) codexTran
 	}
 }
 
+func codexTranscriptRenderKeysSameView(left, right codexTranscriptRenderKey) bool {
+	return left.projectPath == right.projectPath &&
+		left.width == right.width &&
+		left.denseBlockMode == right.denseBlockMode &&
+		left.fullHistory == right.fullHistory
+}
+
+func (m Model) codexTranscriptRenderCompatibleInFlight(key codexTranscriptRenderKey) bool {
+	for inFlight := range m.codexTranscriptRenderInFlight {
+		if codexTranscriptRenderKeysSameView(inFlight, key) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m Model) codexTranscriptRenderOptionsFor(projectPath string) codexTranscriptRenderOptions {
 	projectPath = strings.TrimSpace(projectPath)
 	return codexTranscriptRenderOptions{
@@ -964,14 +994,17 @@ func (m *Model) requestCodexTranscriptRenderCmd(projectPath string, snapshot cod
 		return nil
 	}
 	width = max(24, width)
-	if m.codexTranscriptCacheMatches(projectPath, width) || codexTranscriptCacheMissCanRender(snapshot) {
+	if m.codexTranscriptCacheMatches(projectPath, width) {
+		return nil
+	}
+	if codexTranscriptCacheMissCanRender(snapshot) && !m.codexViewportContentCanStayStale(projectPath, width, snapshot) {
 		return nil
 	}
 	key := m.codexTranscriptRenderKey(projectPath, width)
 	if m.codexTranscriptRenderInFlight == nil {
 		m.codexTranscriptRenderInFlight = make(map[codexTranscriptRenderKey]struct{})
 	}
-	if _, ok := m.codexTranscriptRenderInFlight[key]; ok {
+	if m.codexTranscriptRenderCompatibleInFlight(key) {
 		return nil
 	}
 	m.codexTranscriptRenderInFlight[key] = struct{}{}
@@ -995,8 +1028,25 @@ func (m Model) applyCodexTranscriptRenderedMsg(msg codexTranscriptRenderedMsg) (
 	}
 	currentKey := m.codexTranscriptRenderKey(msg.key.projectPath, msg.key.width)
 	if currentKey != msg.key {
-		return m, nil
+		if !codexTranscriptRenderKeysSameView(currentKey, msg.key) {
+			return m, nil
+		}
+		snapshot, ok := m.codexCachedSnapshot(msg.key.projectPath)
+		if !ok {
+			return m, nil
+		}
+		if snapshot.Closed || !snapshot.Busy {
+			return m, m.requestCodexTranscriptRenderCmd(msg.key.projectPath, snapshot, msg.key.width)
+		}
+		if msg.key.transcriptRev > currentKey.transcriptRev {
+			return m, nil
+		}
 	}
+	m.applyCodexTranscriptRenderedContent(msg)
+	return m, nil
+}
+
+func (m *Model) applyCodexTranscriptRenderedContent(msg codexTranscriptRenderedMsg) {
 	m.codexTranscriptCache = codexTranscriptRenderCache{
 		projectPath:    msg.key.projectPath,
 		width:          msg.key.width,
@@ -1020,7 +1070,6 @@ func (m Model) applyCodexTranscriptRenderedMsg(msg codexTranscriptRenderedMsg) (
 			m.codexViewport.GotoBottom()
 		}
 	}
-	return m, nil
 }
 
 type codexCloseWaiter interface {

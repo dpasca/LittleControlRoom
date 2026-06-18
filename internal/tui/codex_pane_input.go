@@ -848,9 +848,11 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 
 	offset := m.codexViewport.YOffset
 	if !m.codexViewportContentMatches(projectPath, m.codexViewport.Width) {
-		m.measureAISyncLatency("Embedded viewport sync", projectPath, providerLabel, func() {
-			m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
-		})
+		if !m.codexViewportContentCanStayStale(projectPath, m.codexViewport.Width, snapshot) {
+			m.measureAISyncLatency("Embedded viewport sync", projectPath, providerLabel, func() {
+				m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
+			})
+		}
 	}
 	// Keep the latest reply visible when lower assistant blocks appear or disappear
 	// while the transcript is already pinned to the end.

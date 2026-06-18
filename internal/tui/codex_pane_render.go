@@ -52,6 +52,7 @@ func (m Model) renderCodexMainView(snapshot codexapp.Snapshot, width, height int
 		if transcript.YOffset > maxOffset {
 			transcript.SetYOffset(maxOffset)
 		}
+	case m.codexViewportContentCanStayStale(projectPath, transcript.Width, snapshot):
 	case func() bool {
 		rendered, ok := m.cachedCodexTranscriptContent(projectPath, transcript.Width)
 		if !ok {
