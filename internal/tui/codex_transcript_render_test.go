@@ -3327,8 +3327,8 @@ func TestStreamingTranscriptRenderCoalescesAndAppliesStaleContent(t *testing.T) 
 		t.Fatalf("first deferred render message = %T, want codexTranscriptRenderedMsg", msgs[0])
 	}
 	updated, cmd := m.applyCodexTranscriptRenderedMsg(renderMsg)
-	if cmd != nil {
-		t.Fatalf("busy stale render should apply without immediately queueing another render")
+	if cmd == nil {
+		t.Fatalf("busy stale render should queue a follow-up render for the current revision")
 	}
 	got := normalizeUpdateModel(updated)
 	rendered := ansi.Strip(got.codexViewport.View())
@@ -3341,6 +3341,24 @@ func TestStreamingTranscriptRenderCoalescesAndAppliesStaleContent(t *testing.T) 
 	view := ansi.Strip(got.renderCodexView())
 	if strings.Contains(view, "Transcript is updating") {
 		t.Fatalf("render path should keep stale streaming content instead of restoring placeholder: %q", view)
+	}
+
+	msgs = collectCmdMsgs(cmd)
+	if len(msgs) != 1 {
+		t.Fatalf("follow-up render messages = %#v, want one", msgs)
+	}
+	followupMsg, ok := msgs[0].(codexTranscriptRenderedMsg)
+	if !ok {
+		t.Fatalf("follow-up render message = %T, want codexTranscriptRenderedMsg", msgs[0])
+	}
+	updated, cmd = got.applyCodexTranscriptRenderedMsg(followupMsg)
+	if cmd != nil {
+		t.Fatalf("current follow-up render should not queue another render")
+	}
+	got = normalizeUpdateModel(updated)
+	rendered = ansi.Strip(got.codexViewport.View())
+	if !strings.Contains(rendered, "second streaming transcript content 24") {
+		t.Fatalf("follow-up render should catch the viewport up to the latest transcript: %q", rendered)
 	}
 }
 
