@@ -448,7 +448,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "update_quality_plan",
-				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, and visual verification must have analyze_image evidence when required.",
+				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. Phases are sequential execution gates: keep at most one active phase, leave later phases planned, and advance at most one phase after concrete evidence. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, and visual verification must have analyze_image evidence when required.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -460,7 +460,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 							"type":        "array",
 							"minItems":    1,
 							"maxItems":    12,
-							"description": "Small implementation/refinement phases. Refresh statuses as work proceeds.",
+							"description": "Small implementation/refinement phases. Keep a completed prefix, at most one active phase, and a planned tail; refresh statuses as each phase gets evidence.",
 							"items": map[string]any{
 								"type":                 "object",
 								"additionalProperties": false,

@@ -36,6 +36,7 @@ const (
 	maxQualityPlanAcceptanceItems    = 8
 	maxQualityPlanEvidenceItems      = 8
 	maxQualityPlanTextChars          = 240
+	maxQualityPlanPhaseWriteLines    = 500
 )
 
 type Runner struct {
@@ -468,6 +469,123 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 		}
 	}
 	return nil
+}
+
+func (r *Runner) validateQualityPlanProgression(plan QualityPlan) tools.ToolResult {
+	if phase, ok := firstOutOfOrderQualityPlanPhase(plan.Phases); ok {
+		message := fmt.Sprintf("quality plan phases must advance one at a time; phase %q is %s before the previous phase is verified or skipped", phase.Name, qualityPlanPhaseStatusForMessage(phase.Status))
+		return tools.ToolResult{Success: false, Error: message}
+	}
+	newCompleted := qualityPlanCompletedPrefix(plan.Phases)
+	if r == nil || r.qualityPlan == nil {
+		if newCompleted > 0 {
+			message := "initial quality plan cannot start with verified or skipped phases; start with the first phase in_progress and keep later phases planned, then advance phases after concrete evidence"
+			return tools.ToolResult{Success: false, Error: message}
+		}
+		return tools.ToolResult{Success: true}
+	}
+	if len(plan.Phases) < len(r.qualityPlan.Phases) {
+		message := fmt.Sprintf("quality plan cannot shrink from %d phases to %d while work is active; keep the phase list stable and advance phases one at a time", len(r.qualityPlan.Phases), len(plan.Phases))
+		return tools.ToolResult{Success: false, Error: message}
+	}
+	if r.qualityPlan.RequiresRuntimeVerification && !plan.RequiresRuntimeVerification {
+		message := "quality plan cannot turn off runtime verification after it was required; keep the requirement or finish partial/blocked/failed if evidence is unavailable"
+		return tools.ToolResult{Success: false, Error: message}
+	}
+	if r.qualityPlan.RequiresVisualVerification && !plan.RequiresVisualVerification {
+		message := "quality plan cannot turn off visual verification after it was required; keep the requirement or finish partial/blocked/failed if evidence is unavailable"
+		return tools.ToolResult{Success: false, Error: message}
+	}
+	oldCompleted := qualityPlanCompletedPrefix(r.qualityPlan.Phases)
+	if newCompleted > oldCompleted+1 {
+		message := fmt.Sprintf("quality plan advanced %d phases at once; advance at most one phase per update after concrete evidence", newCompleted-oldCompleted)
+		return tools.ToolResult{Success: false, Error: message}
+	}
+	return tools.ToolResult{Success: true}
+}
+
+func (r *Runner) qualityPlanWriteGate(tool, path string, addedLines int) (tools.ToolResult, bool) {
+	if r == nil || r.qualityPlan == nil || addedLines <= maxQualityPlanPhaseWriteLines {
+		return tools.ToolResult{}, false
+	}
+	phase := firstUnverifiedQualityPlanPhase(r.qualityPlan.Phases)
+	if strings.TrimSpace(phase.Name) == "" {
+		return tools.ToolResult{}, false
+	}
+	target := strings.TrimSpace(path)
+	if target == "" {
+		target = "the requested patch"
+	}
+	message := fmt.Sprintf("%s for %s would write %d lines while quality plan phase %q is still %s. Build one phase at a time: write a smaller scaffold or current-phase slice (up to %d lines), gather concrete evidence, update_quality_plan to verify or skip that phase, then continue. A final single-file artifact is fine, but it should be assembled through verified phases instead of one broad write.",
+		tool,
+		target,
+		addedLines,
+		phase.Name,
+		qualityPlanPhaseStatusForMessage(phase.Status),
+		maxQualityPlanPhaseWriteLines,
+	)
+	return tools.ToolResult{
+		Success:      false,
+		Error:        message,
+		Denied:       true,
+		DenialReason: message,
+	}, true
+}
+
+func firstOutOfOrderQualityPlanPhase(phases []QualityPlanPhase) (QualityPlanPhase, bool) {
+	stage := 0 // verified/skipped prefix, then at most one active phase, then planned tail.
+	for _, phase := range phases {
+		status := normalizeQualityPlanPhaseStatus(phase.Status)
+		if status == "" {
+			status = "planned"
+		}
+		switch stage {
+		case 0:
+			switch {
+			case qualityPlanPhaseCompleteStatus(status):
+				continue
+			case qualityPlanPhaseActiveStatus(status):
+				stage = 1
+			case status == "planned":
+				stage = 2
+			}
+		case 1:
+			if status == "planned" {
+				stage = 2
+				continue
+			}
+			return phase, true
+		default:
+			if status != "planned" {
+				return phase, true
+			}
+		}
+	}
+	return QualityPlanPhase{}, false
+}
+
+func qualityPlanCompletedPrefix(phases []QualityPlanPhase) int {
+	completed := 0
+	for _, phase := range phases {
+		if !qualityPlanPhaseCompleteStatus(normalizeQualityPlanPhaseStatus(phase.Status)) {
+			break
+		}
+		completed++
+	}
+	return completed
+}
+
+func qualityPlanPhaseCompleteStatus(status string) bool {
+	return status == "verified" || status == "skipped"
+}
+
+func qualityPlanPhaseActiveStatus(status string) bool {
+	switch status {
+	case "in_progress", "implemented", "needs_repair":
+		return true
+	default:
+		return false
+	}
 }
 
 func firstUnverifiedQualityPlanPhase(phases []QualityPlanPhase) QualityPlanPhase {
@@ -1050,6 +1168,10 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = planResult
 			break
 		}
+		if planResult := r.validateQualityPlanProgression(plan); !planResult.Success {
+			result = planResult
+			break
+		}
 		r.qualityPlan = &plan
 		r.qualityPlanUpdates++
 		result = tools.ToolResult{Success: true, Output: formatQualityPlanResult(plan)}
@@ -1203,11 +1325,19 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = invalid
 			break
 		}
+		if gated, blocked := r.qualityPlanWriteGate("apply_patch", "", countApplyPatchAddedLines(args.Patch)); blocked {
+			result = gated
+			break
+		}
 		result = r.Patch.Apply(args.Patch)
 	case "create_file":
 		var args createFileArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
+			break
+		}
+		if gated, blocked := r.qualityPlanWriteGate("create_file", args.Path, countWriteLines(args.Content)); blocked {
+			result = gated
 			break
 		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.CreateFile(tools.CreateFileSpec{
@@ -1218,6 +1348,10 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		var args replaceFileArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
+			break
+		}
+		if gated, blocked := r.qualityPlanWriteGate("replace_file", args.Path, countWriteLines(args.Content)); blocked {
+			result = gated
 			break
 		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceFile(tools.ReplaceFileSpec{
@@ -1241,6 +1375,10 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		var args replaceLinesArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
+			break
+		}
+		if gated, blocked := r.qualityPlanWriteGate("replace_lines", args.Path, countWriteLines(args.NewText)); blocked {
+			result = gated
 			break
 		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceLines(tools.ReplaceLinesSpec{
@@ -2459,6 +2597,27 @@ func cleanQualityPlanTextList(values []string, limit int) []string {
 		}
 	}
 	return out
+}
+
+func countWriteLines(text string) int {
+	if text == "" {
+		return 0
+	}
+	lines := strings.Count(text, "\n")
+	if !strings.HasSuffix(text, "\n") {
+		lines++
+	}
+	return lines
+}
+
+func countApplyPatchAddedLines(patch string) int {
+	added := 0
+	for _, line := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			added++
+		}
+	}
+	return added
 }
 
 func formatQualityPlanResult(plan QualityPlan) string {

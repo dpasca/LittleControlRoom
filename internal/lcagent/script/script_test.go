@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -498,7 +499,7 @@ func TestRunnerUpdatesQualityPlan(t *testing.T) {
 	result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "update_quality_plan",
-		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"verified","acceptance":["player moves"],"evidence":["manual code inspection"]},{"name":"boardwalk environment","status":"implemented","acceptance":["wooden boardwalk visible"]}]}`),
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"in_progress","acceptance":["player moves"]},{"name":"boardwalk environment","status":"planned","acceptance":["wooden boardwalk visible"]}]}`),
 	})
 	if err != nil {
 		t.Fatalf("RunTool() error = %v", err)
@@ -511,6 +512,122 @@ func TestRunnerUpdatesQualityPlan(t *testing.T) {
 	}
 	text := stream.String()
 	for _, want := range []string{`"tool":"update_quality_plan"`, `"type":"quality_plan_update"`, `"artifact_type":"game"`, `"requires_visual_verification":true`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
+func TestRunnerRejectsQualityPlanPhaseJumps(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "make a skate game",
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"in_progress"},{"name":"boardwalk environment","status":"planned"},{"name":"HUD","status":"planned"}]}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("initial update = %#v err=%v", result, err)
+	}
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"verified","evidence":["screenshot shows movement"]},{"name":"boardwalk environment","status":"verified","evidence":["screenshot shows boardwalk"]},{"name":"HUD","status":"planned"}]}`),
+	})
+	if err == nil || result.Success || !strings.Contains(result.Error, "advanced 2 phases at once") {
+		t.Fatalf("jump update = %#v err=%v, want phase-jump denial", result, err)
+	}
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"full game","status":"in_progress"}]}`),
+	})
+	if err == nil || result.Success || !strings.Contains(result.Error, "cannot shrink") {
+		t.Fatalf("shrink update = %#v err=%v, want shrink denial", result, err)
+	}
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":false,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"verified","evidence":["screenshot shows movement"]},{"name":"boardwalk environment","status":"in_progress"},{"name":"HUD","status":"planned"}]}`),
+	})
+	if err == nil || result.Success || !strings.Contains(result.Error, "cannot turn off runtime verification") {
+		t.Fatalf("requirement downgrade = %#v err=%v, want runtime downgrade denial", result, err)
+	}
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"verified","evidence":["screenshot shows movement"]},{"name":"boardwalk environment","status":"in_progress"},{"name":"HUD","status":"planned"}]}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("single-step update = %#v err=%v", result, err)
+	}
+}
+
+func TestRunnerRejectsOutOfOrderQualityPlanUpdate(t *testing.T) {
+	runner := Runner{}
+	result := runner.validateQualityPlanProgression(QualityPlan{
+		ArtifactType:                "game",
+		RequiresRuntimeVerification: true,
+		RequiresVisualVerification:  true,
+		Phases: []QualityPlanPhase{
+			{Name: "core movement", Status: "planned"},
+			{Name: "boardwalk environment", Status: "in_progress"},
+		},
+	})
+	if result.Success || !strings.Contains(result.Error, "phases must advance one at a time") {
+		t.Fatalf("result = %#v, want out-of-order rejection", result)
+	}
+}
+
+func TestRunnerDeniesBroadWriteDuringActiveQualityPhase(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Patch:     tools.PatchApplier{Workspace: w},
+		qualityPlan: &QualityPlan{
+			ArtifactType:                "game",
+			RequiresRuntimeVerification: true,
+			RequiresVisualVerification:  true,
+			Phases: []QualityPlanPhase{
+				{Name: "core movement", Status: "in_progress"},
+				{Name: "environment", Status: "planned"},
+			},
+		},
+	}
+	content := strings.Repeat("int x = 0;\n", maxQualityPlanPhaseWriteLines+1)
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "create_file",
+		Args: raw(`{"path":"skate.cpp","content":` + strconv.Quote(content) + `}`),
+	})
+	if err == nil || result.Success || !result.Denied || !strings.Contains(result.Error, "Build one phase at a time") {
+		t.Fatalf("result = %#v err=%v, want broad write denial", result, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "skate.cpp")); !os.IsNotExist(statErr) {
+		t.Fatalf("skate.cpp stat err = %v, want file not created", statErr)
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"permission_denied"`, `"tool":"create_file"`, "Build one phase at a time"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
