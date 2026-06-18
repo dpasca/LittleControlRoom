@@ -78,6 +78,7 @@ type Runner struct {
 	inspectionEvidence     int
 	qualityPlan            *QualityPlan
 	qualityPlanUpdates     int
+	phaseWriteGateAdmitted string
 }
 
 type SearchRefiner interface {
@@ -461,14 +462,16 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		audit.Message = "final_response outcome was unknown after using the managed browser. If login, MFA, CAPTCHA, payment, or human judgment may unblock the browser task, call browser_wait_for_user instead of ending the turn. Otherwise set outcome to blocked, failed, partial, or completed and explain the concrete browser evidence."
 		return audit
 	}
-	if finalOutcome == "completed" {
-		if blocking := r.qualityPlanCompletionBlock(verificationChecks); blocking != nil {
+	if finalOutcome == "completed" || finalOutcome == "partial" || finalOutcome == "unknown" {
+		if blocking := r.qualityPlanTerminalBlock(finalOutcome, verificationChecks); blocking != nil {
 			audit.Outcome = "block"
 			audit.Blocking = true
 			audit.Code = blocking.Code
 			audit.Message = blocking.Message
 			return audit
 		}
+	}
+	if finalOutcome == "completed" {
 		if op, ok := latestOperationalActionRequiringVerification(operationalActions); ok && len(verificationChecks) <= op.VerificationChecksBefore {
 			audit.Outcome = "block"
 			audit.Blocking = true
@@ -476,6 +479,43 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		}
 	}
 	return audit
+}
+
+func (r *Runner) qualityPlanTerminalBlock(finalOutcome string, verificationChecks []tools.VerificationCheck) *FinalResponseAudit {
+	finalOutcome = normalizeFinalResponseOutcome(finalOutcome)
+	if finalOutcome == "completed" {
+		return r.qualityPlanCompletionBlock(verificationChecks)
+	}
+	if finalOutcome != "partial" && finalOutcome != "unknown" {
+		return nil
+	}
+	if r == nil {
+		return nil
+	}
+	if r.QualityPlanRequired && r.qualityPlan == nil {
+		scope := strings.TrimSpace(r.QualityPlanRequirementScope)
+		if scope == "" {
+			scope = "sizable"
+		}
+		reason := strings.TrimSpace(r.QualityPlanRequirementReason)
+		if reason != "" {
+			reason = " Preflight reason: " + reason
+		}
+		return &FinalResponseAudit{
+			Code:    "quality_plan_partial_unplanned",
+			Message: fmt.Sprintf("final_response outcome was %s, but planning preflight classified this as %s phased work and no quality plan has been recorded. Call update_quality_plan and start the first phase, or use outcome blocked/failed only for a concrete stop condition.%s", finalOutcome, scope, reason),
+		}
+	}
+	if r.qualityPlan == nil {
+		return nil
+	}
+	if phase := firstUnverifiedQualityPlanPhase(r.qualityPlan.Phases); phase.Name != "" {
+		return &FinalResponseAudit{
+			Code:    "quality_plan_partial_unfinished",
+			Message: fmt.Sprintf("final_response outcome was %s, but required quality plan phase %q is still %s. Continue with that phase now; use outcome blocked or failed only when work cannot continue for a concrete reason.", finalOutcome, phase.Name, qualityPlanPhaseStatusForMessage(phase.Status)),
+		}
+	}
+	return nil
 }
 
 func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.VerificationCheck) *FinalResponseAudit {
@@ -565,6 +605,10 @@ func (r *Runner) phaseWriteGateBlock(ctx context.Context, tool string, rawArgs j
 	if !ok {
 		return nil, nil
 	}
+	phaseKey := phaseWriteGateAdmissionKey(r.qualityPlan, activeIndex, activePhase)
+	if phaseKey != "" && phaseKey == r.phaseWriteGateAdmitted {
+		return nil, nil
+	}
 	argsText, truncated := boundedPhaseWriteGateArgs(rawArgs)
 	request := PhaseWriteGateRequest{
 		SessionID:           r.SessionID,
@@ -583,16 +627,25 @@ func (r *Runner) phaseWriteGateBlock(ctx context.Context, tool string, rawArgs j
 		if writeErr := r.writePhaseWriteGateFailedEvent(request, err); writeErr != nil {
 			return nil, writeErr
 		}
-		return &tools.ToolResult{Success: false, Error: "phase write gate failed: " + err.Error()}, nil
+		r.phaseWriteGateAdmitted = phaseKey
+		return nil, nil
 	}
 	if err := r.writePhaseWriteGateResultEvent(request, result); err != nil {
 		return nil, err
 	}
 	if result.Allow && result.FitsActivePhase && !result.ContainsLaterPhaseWork && !result.TooMuchAtOnce {
+		r.phaseWriteGateAdmitted = phaseKey
 		return nil, nil
 	}
 	message := formatPhaseWriteGateBlockMessage(request, result)
 	return &tools.ToolResult{Success: false, Error: message}, nil
+}
+
+func phaseWriteGateAdmissionKey(plan *QualityPlan, activeIndex int, activePhase QualityPlanPhase) string {
+	if plan == nil || activeIndex < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%s:%s", activeIndex, strings.TrimSpace(activePhase.Name), strings.TrimSpace(activePhase.Status))
 }
 
 func isWorkspaceWriteTool(tool string) bool {
@@ -715,6 +768,13 @@ func (r *Runner) validateQualityPlanProgression(plan QualityPlan) tools.ToolResu
 		return tools.ToolResult{Success: false, Error: message}
 	}
 	return tools.ToolResult{Success: true}
+}
+
+func (r *Runner) QualityPlanCompletedPrefix() int {
+	if r == nil || r.qualityPlan == nil {
+		return 0
+	}
+	return qualityPlanCompletedPrefix(r.qualityPlan.Phases)
 }
 
 func firstOutOfOrderQualityPlanPhase(phases []QualityPlanPhase) (QualityPlanPhase, bool) {
@@ -3089,6 +3149,7 @@ func (r *Runner) writePhaseWriteGateFailedEvent(request PhaseWriteGateRequest, e
 		"active_phase_index": request.ActivePhaseIndex,
 		"active_phase":       strings.TrimSpace(request.ActivePhase.Name),
 		"message":            strings.TrimSpace(message),
+		"fail_open":          true,
 	})
 }
 

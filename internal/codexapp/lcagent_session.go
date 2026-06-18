@@ -2120,6 +2120,9 @@ func (s *lcagentSession) handleEvent(line []byte) {
 	case "phase_write_gate_failed":
 		message := firstNonEmpty(rawJSONString(event["message"]), "phase write gate failed")
 		text := "LCAgent phase write gate failed: " + message
+		if rawJSONBool(event["fail_open"]) {
+			text += " (continuing current phase)"
+		}
 		s.mu.Lock()
 		s.status = text
 		s.touchLocked()

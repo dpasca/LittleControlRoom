@@ -946,7 +946,12 @@ func (r *lcagentReplay) applyPhaseWriteGateFailed(event map[string]json.RawMessa
 	}
 	message := firstNonEmpty(rawJSONString(event["message"]), "phase write gate failed")
 	text := "LCAgent phase write gate failed: " + message
-	r.lastError = text
+	if rawJSONBool(event["fail_open"]) {
+		text += " (continuing current phase)"
+	}
+	if !rawJSONBool(event["fail_open"]) {
+		r.lastError = text
+	}
 	r.appendEntry(TranscriptStatus, text)
 }
 

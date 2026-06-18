@@ -11,7 +11,7 @@ import (
 	"lcroom/internal/lcagent/session"
 )
 
-const phaseWriteGateMaxCompletionTokens = 700
+const phaseWriteGateMaxCompletionTokens = 1200
 
 type phaseWriteGateProfile struct {
 	Enabled     bool
@@ -127,8 +127,9 @@ func (g phaseWriteGate) EvaluatePhaseWrite(ctx context.Context, request script.P
 }
 
 func phaseWriteGateMessages(request script.PhaseWriteGateRequest) []modeladapter.Message {
-	system := `You are a phase write gate for a coding agent.
-Return only one JSON object. Do not include Markdown or prose.
+	system := `You are a phase-admission gate for a coding agent.
+Return exactly one JSON object. The first character must be "{" and the last character must be "}".
+Do not include Markdown, prose, code fences, comments, or multiple JSON values.
 
 Schema:
 {
@@ -140,8 +141,9 @@ Schema:
   "suggested_smaller_slice": "concrete smaller write to attempt when blocked"
 }
 
-Goal: positively prevent the lead model from biting off too much.
-Allow writes that implement the current active phase or small support scaffolding needed for that phase to compile/run.
+Goal: decide whether the lead may enter the current active phase with the proposed first write.
+This check runs at phase entry, not on every edit inside an admitted phase.
+Allow writes that implement the current active phase or support scaffolding needed for that phase to compile/run.
 Deny writes that substantially implement later phases, produce a broad all-in-one artifact when only an early slice is active, or skip the active phase.
 Judge semantically from the active phase and acceptance criteria, not by line count alone.`
 	user := phaseWriteGateUserPrompt(request)
@@ -200,7 +202,7 @@ func validatePhaseWriteGateCompletion(provider string) func(modeladapter.Complet
 				Provider:  provider,
 				Kind:      modeladapter.ProviderFailureMalformedResponse,
 				Message:   "phase write gate returned tool calls instead of JSON",
-				Retryable: true,
+				Retryable: false,
 			}
 		}
 		content, _ := modeladapter.SanitizeAssistantContent(completion.Message.Content)
@@ -209,7 +211,7 @@ func validatePhaseWriteGateCompletion(provider string) func(modeladapter.Complet
 				Provider:  provider,
 				Kind:      modeladapter.ProviderFailureMalformedResponse,
 				Message:   "phase write gate returned empty content",
-				Retryable: true,
+				Retryable: false,
 			}
 		}
 		if _, err := parsePhaseWriteGatePayload(content); err != nil {
@@ -217,7 +219,7 @@ func validatePhaseWriteGateCompletion(provider string) func(modeladapter.Complet
 				Provider:  provider,
 				Kind:      modeladapter.ProviderFailureMalformedResponse,
 				Message:   err.Error(),
-				Retryable: true,
+				Retryable: false,
 			}
 		}
 		return nil

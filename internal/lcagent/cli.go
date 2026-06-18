@@ -1020,6 +1020,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	deferNextSynthesis := false
 	feedbackTracker := newOpenRouterFeedbackTracker()
 	progressTracker := newOpenRouterLoopProgressTracker(messages, runner)
+	lastQualityPlanCompletedPrefix := runner.QualityPlanCompletedPrefix()
 	for turn := 0; turn < client.MaxTurns(); turn++ {
 		progressTracker.Observe(messages, runner)
 		select {
@@ -1245,6 +1246,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 		var pendingVerificationFeedback []script.VerificationFeedback
 		var pendingPatchFeedback []script.PatchFeedback
+		qualityPhaseCompactionPending := false
 		for _, call := range msg.ToolCalls {
 			args, err := modeladapter.NormalizeArguments(call.Function.Arguments)
 			if err != nil {
@@ -1394,6 +1396,13 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			if call.Function.Name == "read_file" {
 				readLedger.ObserveReadResult(result)
 			}
+			if call.Function.Name == "update_quality_plan" && result.Success {
+				completedPrefix := runner.QualityPlanCompletedPrefix()
+				if completedPrefix > lastQualityPlanCompletedPrefix {
+					lastQualityPlanCompletedPrefix = completedPrefix
+					qualityPhaseCompactionPending = true
+				}
+			}
 			resultJSON, marshalErr := json.Marshal(result)
 			if marshalErr != nil {
 				return marshalErr
@@ -1452,6 +1461,16 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			messages = append(messages, modeladapter.Message{Role: "user", Content: feedback.ModelMessage()})
 			deferNextSynthesis = true
 		}
+		if qualityPhaseCompactionPending {
+			compactedMessages, compacted, err := forceOpenRouterLoopCompaction(writer, runner.SessionID, turn+1, "quality_phase_completed", messages, readLedger, contextOptions)
+			if err != nil {
+				return err
+			}
+			if compacted {
+				messages = compactedMessages
+				contextCompacted = true
+			}
+		}
 		if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "tool_result", messages, contextCompacted); err != nil {
 			return err
 		}
@@ -1504,10 +1523,38 @@ func shouldBounceFinalAudit(audit script.FinalResponseAudit, feedbackCount int) 
 	if !audit.Blocking {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(audit.Code), "browser_wait_required") {
+	code := strings.TrimSpace(audit.Code)
+	if strings.EqualFold(code, "browser_wait_required") {
+		return true
+	}
+	if strings.HasPrefix(code, "quality_plan_") {
 		return true
 	}
 	return feedbackCount == 0
+}
+
+func forceOpenRouterLoopCompaction(writer *session.Writer, sessionID string, turn int, reason string, messages []modeladapter.Message, readLedger *readLedger, contextOptions openRouterContextOptions) ([]modeladapter.Message, bool, error) {
+	contextOptions = contextOptions.withDefaults()
+	forcedOptions := contextOptions
+	forcedOptions.LoopCompactionCharThreshold = 1
+	compactedMessages, compaction, compacted := compactOpenRouterLoopMessagesWithOptions(messages, readLedger, forcedOptions)
+	if !compacted {
+		return messages, false, nil
+	}
+	if writer != nil {
+		if err := writer.Write(session.Event{
+			"type":             "context_compacted",
+			"session_id":       sessionID,
+			"turn":             turn,
+			"threshold":        forcedOptions.LoopCompactionCharThreshold,
+			"threshold_tokens": contextOptions.LoopCompactionTokenBudget,
+			"reason":           strings.TrimSpace(reason),
+			"stats":            compaction,
+		}); err != nil {
+			return nil, false, err
+		}
+	}
+	return compactedMessages, true, nil
 }
 
 type qualityCheckpointPolicy struct {

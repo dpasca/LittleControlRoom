@@ -492,7 +492,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"summary":       map[string]any{"type": "string", "description": "Complete user-facing answer. Include the actual findings or outcome here, not only a preamble."},
-						"outcome":       map[string]any{"type": "string", "enum": []string{"completed", "blocked", "failed", "partial"}, "description": "Structured final state. Use completed only when requested work is actually complete and verification/evidence did not fail; use blocked for unresolved external/process blockers, failed when attempted work failed, and partial when some requested work remains."},
+						"outcome":       map[string]any{"type": "string", "enum": []string{"completed", "blocked", "failed", "partial"}, "description": "Structured final state. Use completed only when requested work is actually complete and verification/evidence did not fail; use blocked for unresolved external/process blockers, failed when attempted work failed, and partial when some requested work remains. For required quality plans, partial is not accepted while planned/in_progress/implemented/needs_repair phases remain; continue the next phase or use blocked/failed for a concrete stop condition."},
 						"files_changed": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Workspace files changed by this session, or an empty array."},
 						"verification":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Checks run, evidence reviewed, or an explicit not-run reason. This supports the summary; it is not a substitute for the answer."},
 					},
