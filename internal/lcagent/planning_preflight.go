@@ -29,13 +29,14 @@ type planningPreflightProfile struct {
 }
 
 type planningPreflightPayload struct {
-	Scope                       string                   `json:"scope"`
-	NeedsPreplan                bool                     `json:"needs_preplan"`
-	ArtifactType                string                   `json:"artifact_type"`
-	RequiresRuntimeVerification bool                     `json:"requires_runtime_verification"`
-	RequiresVisualVerification  bool                     `json:"requires_visual_verification"`
-	Reason                      string                   `json:"reason"`
-	SuggestedPhases             []planningPreflightPhase `json:"suggested_phases,omitempty"`
+	Scope                              string                   `json:"scope"`
+	NeedsPreplan                       bool                     `json:"needs_preplan"`
+	ArtifactType                       string                   `json:"artifact_type"`
+	RequiresRuntimeVerification        bool                     `json:"requires_runtime_verification"`
+	RequiresVisualVerification         bool                     `json:"requires_visual_verification"`
+	RequiresTemporalVisualVerification bool                     `json:"requires_temporal_visual_verification"`
+	Reason                             string                   `json:"reason"`
+	SuggestedPhases                    []planningPreflightPhase `json:"suggested_phases,omitempty"`
 }
 
 type planningPreflightPhase struct {
@@ -144,6 +145,7 @@ Schema:
   "artifact_type": "none" | "code_edit" | "game" | "app" | "ui" | "document" | "analysis" | "other",
   "requires_runtime_verification": boolean,
   "requires_visual_verification": boolean,
+  "requires_temporal_visual_verification": boolean,
   "reason": "one short reason",
   "suggested_phases": [
     {"name": "short phase name", "acceptance": ["observable acceptance check"]}
@@ -155,6 +157,7 @@ Use "medium" for normal code changes that benefit from a brief plan but do not n
 Use "simple" for direct answers, tiny inspections, or narrowly-scoped edits.
 Set needs_preplan true when the lead should publish a phased update_quality_plan before claiming completion.
 For games, apps, UI, and visual artifacts, set requires_visual_verification true when image analysis is available and the user-facing result should be judged visually.
+Set requires_temporal_visual_verification true when image analysis is available and the visual artifact is interactive, animated, camera-driven, live-updating, stateful, or otherwise expected to change over time; false for static visual artifacts.
 Keep suggested_phases concrete and ordered; omit them for simple tasks.`
 	user := "Vision image analysis is " + visualCapability + ".\n\nUser request:\n" + limitPlanningPreflightText(prompt)
 	return []modeladapter.Message{
@@ -223,6 +226,9 @@ func normalizePlanningPreflightPayload(payload planningPreflightPayload) plannin
 		payload.NeedsPreplan = true
 	}
 	payload.ArtifactType = normalizePlanningPreflightArtifactType(payload.ArtifactType)
+	if payload.RequiresTemporalVisualVerification {
+		payload.RequiresVisualVerification = true
+	}
 	payload.Reason = truncatePlanningPreflightText(payload.Reason, planningPreflightReasonLimit)
 	payload.SuggestedPhases = normalizePlanningPreflightPhases(payload.SuggestedPhases)
 	return payload
@@ -298,6 +304,9 @@ func planningPreflightLeadMessage(payload planningPreflightPayload) string {
 	if payload.RequiresVisualVerification {
 		b.WriteString("\nThe plan should require visual verification.")
 	}
+	if payload.RequiresTemporalVisualVerification {
+		b.WriteString("\nThe plan should require temporal visual verification with paired observations.")
+	}
 	if len(payload.SuggestedPhases) > 0 {
 		b.WriteString("\n\nSuggested phase outline:")
 		for _, phase := range payload.SuggestedPhases {
@@ -321,20 +330,21 @@ func writePlanningPreflightResult(writer *session.Writer, sessionID string, prof
 		return nil
 	}
 	return writer.Write(session.Event{
-		"type":                          "planning_preflight_result",
-		"session_id":                    sessionID,
-		"provider":                      strings.TrimSpace(profile.Provider),
-		"model":                         strings.TrimSpace(profile.Model),
-		"scope":                         strings.TrimSpace(payload.Scope),
-		"needs_preplan":                 payload.NeedsPreplan,
-		"requires_quality_plan":         planningPreflightRequiresQualityPlan(payload),
-		"artifact_type":                 strings.TrimSpace(payload.ArtifactType),
-		"requires_runtime_verification": payload.RequiresRuntimeVerification,
-		"requires_visual_verification":  payload.RequiresVisualVerification,
-		"reason":                        strings.TrimSpace(payload.Reason),
-		"suggested_phases":              payload.SuggestedPhases,
-		"usage":                         json.RawMessage(completion.Usage),
-		"usage_summary":                 completion.UsageSummary,
+		"type":                                  "planning_preflight_result",
+		"session_id":                            sessionID,
+		"provider":                              strings.TrimSpace(profile.Provider),
+		"model":                                 strings.TrimSpace(profile.Model),
+		"scope":                                 strings.TrimSpace(payload.Scope),
+		"needs_preplan":                         payload.NeedsPreplan,
+		"requires_quality_plan":                 planningPreflightRequiresQualityPlan(payload),
+		"artifact_type":                         strings.TrimSpace(payload.ArtifactType),
+		"requires_runtime_verification":         payload.RequiresRuntimeVerification,
+		"requires_visual_verification":          payload.RequiresVisualVerification,
+		"requires_temporal_visual_verification": payload.RequiresTemporalVisualVerification,
+		"reason":                                strings.TrimSpace(payload.Reason),
+		"suggested_phases":                      payload.SuggestedPhases,
+		"usage":                                 json.RawMessage(completion.Usage),
+		"usage_summary":                         completion.UsageSummary,
 	})
 }
 

@@ -478,7 +478,8 @@ func TestEmbeddedSidebarShowsLCAgentQualityPlanActivity(t *testing.T) {
 	snapshot.QualityPlanNeedsRepair = 1
 	snapshot.QualityPlanRequiresRuntime = true
 	snapshot.QualityPlanRequiresVisual = true
-	snapshot.QualityPlanLastSummary = "LCAgent quality plan updated: 4 phases, 3 verified, 1 needs repair, runtime evidence required, visual evidence required"
+	snapshot.QualityPlanRequiresTemporal = true
+	snapshot.QualityPlanLastSummary = "LCAgent quality plan updated: 4 phases, 3 verified, 1 needs repair, runtime evidence required, visual evidence required, temporal visual evidence required"
 	snapshot.QualityPlanPhaseItems = []codexapp.QualityPlanPhaseSnapshot{
 		{Name: "core movement", Status: "verified", EvidenceCount: 2},
 		{Name: "boardwalk environment", Status: "needs_repair", Notes: "needs visual pass"},
@@ -489,7 +490,7 @@ func TestEmbeddedSidebarShowsLCAgentQualityPlanActivity(t *testing.T) {
 	for _, want := range []string{
 		"Quality",
 		"Plan 4 (3 verified)",
-		"Evidence runtime+visual",
+		"Evidence runtime+visual+temporal",
 		"Plan phases",
 		"ok core movement [2 evidence]",
 		"fix boardwalk environment: needs visual pass",

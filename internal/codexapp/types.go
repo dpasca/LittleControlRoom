@@ -539,6 +539,7 @@ type Snapshot struct {
 	QualityPlanNeedsRepair       int
 	QualityPlanRequiresRuntime   bool
 	QualityPlanRequiresVisual    bool
+	QualityPlanRequiresTemporal  bool
 	QualityPlanLastSummary       string
 	QualityPlanPhaseItems        []QualityPlanPhaseSnapshot
 	CriticActive                 bool

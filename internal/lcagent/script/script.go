@@ -72,6 +72,7 @@ type Runner struct {
 	browserToolsUsed       bool
 	browserWaitForUserUsed bool
 	imageAnalyses          int
+	temporalImageAnalyses  int
 	inspectionEvidence     int
 	qualityPlan            *QualityPlan
 	qualityPlanUpdates     int
@@ -171,12 +172,13 @@ type CriticConsultResult struct {
 }
 
 type ImageAnalysisRequest struct {
-	SessionID   string
-	UserRequest string
-	Path        string
-	Question    string
-	Context     string
-	Checks      []string
+	SessionID      string
+	UserRequest    string
+	Path           string
+	ComparisonPath string
+	Question       string
+	Context        string
+	Checks         []string
 }
 
 type ImageAnalysisResult struct {
@@ -215,11 +217,12 @@ type FinalResponseAudit struct {
 }
 
 type QualityPlan struct {
-	ArtifactType                string             `json:"artifact_type"`
-	RequiresRuntimeVerification bool               `json:"requires_runtime_verification"`
-	RequiresVisualVerification  bool               `json:"requires_visual_verification"`
-	Phases                      []QualityPlanPhase `json:"phases"`
-	Notes                       string             `json:"notes,omitempty"`
+	ArtifactType                       string             `json:"artifact_type"`
+	RequiresRuntimeVerification        bool               `json:"requires_runtime_verification"`
+	RequiresVisualVerification         bool               `json:"requires_visual_verification"`
+	RequiresTemporalVisualVerification bool               `json:"requires_temporal_visual_verification,omitempty"`
+	Phases                             []QualityPlanPhase `json:"phases"`
+	Notes                              string             `json:"notes,omitempty"`
 }
 
 type QualityPlanPhase struct {
@@ -296,10 +299,11 @@ type consultCriticArgs struct {
 }
 
 type analyzeImageArgs struct {
-	Path     string   `json:"path"`
-	Question string   `json:"question"`
-	Context  string   `json:"context,omitempty"`
-	Checks   []string `json:"checks,omitempty"`
+	Path           string   `json:"path"`
+	ComparisonPath string   `json:"comparison_path,omitempty"`
+	Question       string   `json:"question"`
+	Context        string   `json:"context,omitempty"`
+	Checks         []string `json:"checks,omitempty"`
 }
 
 type qualityPlanArgs QualityPlan
@@ -482,6 +486,12 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 			Message: "final_response outcome was completed, but the quality plan requires runtime verification and no passing run_command check marked purpose=verify is recorded. Run an appropriate runtime/build/test check, or set outcome to partial/blocked/failed and explain why runtime verification is unavailable.",
 		}
 	}
+	if plan.RequiresTemporalVisualVerification && r.temporalImageAnalyses == 0 {
+		return &FinalResponseAudit{
+			Code:    "quality_plan_temporal_visual_evidence_missing",
+			Message: "final_response outcome was completed, but the quality plan requires temporal visual verification and no successful analyze_image result with comparison_path is recorded. Capture or locate two observations separated in time, use analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable.",
+		}
+	}
 	if plan.RequiresVisualVerification && r.imageAnalyses == 0 {
 		return &FinalResponseAudit{
 			Code:    "quality_plan_visual_evidence_missing",
@@ -537,6 +547,10 @@ func (r *Runner) validateQualityPlanProgression(plan QualityPlan) tools.ToolResu
 	}
 	if r.qualityPlan.RequiresVisualVerification && !plan.RequiresVisualVerification {
 		message := "quality plan cannot turn off visual verification after it was required; keep the requirement or finish partial/blocked/failed if evidence is unavailable"
+		return tools.ToolResult{Success: false, Error: message}
+	}
+	if r.qualityPlan.RequiresTemporalVisualVerification && !plan.RequiresTemporalVisualVerification {
+		message := "quality plan cannot turn off temporal visual verification after it was required; keep the requirement or finish partial/blocked/failed if evidence is unavailable"
 		return tools.ToolResult{Success: false, Error: message}
 	}
 	oldCompleted := qualityPlanCompletedPrefix(r.qualityPlan.Phases)
@@ -1191,14 +1205,15 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		r.qualityPlanUpdates++
 		result = tools.ToolResult{Success: true, Output: formatQualityPlanResult(plan)}
 		if err := r.Session.Write(session.Event{
-			"type":                          "quality_plan_update",
-			"session_id":                    r.SessionID,
-			"update":                        r.qualityPlanUpdates,
-			"artifact_type":                 plan.ArtifactType,
-			"requires_runtime_verification": plan.RequiresRuntimeVerification,
-			"requires_visual_verification":  plan.RequiresVisualVerification,
-			"phases":                        plan.Phases,
-			"notes":                         plan.Notes,
+			"type":                                  "quality_plan_update",
+			"session_id":                            r.SessionID,
+			"update":                                r.qualityPlanUpdates,
+			"artifact_type":                         plan.ArtifactType,
+			"requires_runtime_verification":         plan.RequiresRuntimeVerification,
+			"requires_visual_verification":          plan.RequiresVisualVerification,
+			"requires_temporal_visual_verification": plan.RequiresTemporalVisualVerification,
+			"phases":                                plan.Phases,
+			"notes":                                 plan.Notes,
 		}); err != nil {
 			return tools.ToolResult{}, err
 		}
@@ -2419,6 +2434,7 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	if path == "" {
 		return tools.ToolResult{Success: false, Error: "analyze_image path is required"}, nil
 	}
+	comparisonPath := strings.TrimSpace(args.ComparisonPath)
 	question, questionTruncated := boundedCriticConsultText(args.Question, maxImageAnalysisQuestionChars)
 	if question == "" {
 		return tools.ToolResult{Success: false, Error: "analyze_image question is required"}, nil
@@ -2426,12 +2442,13 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	contextText, contextTruncated := boundedCriticConsultText(args.Context, maxImageAnalysisContextChars)
 	checks := cleanImageAnalysisChecks(args.Checks)
 	request := ImageAnalysisRequest{
-		SessionID:   r.SessionID,
-		UserRequest: strings.TrimSpace(r.Prompt),
-		Path:        path,
-		Question:    question,
-		Context:     contextText,
-		Checks:      checks,
+		SessionID:      r.SessionID,
+		UserRequest:    strings.TrimSpace(r.Prompt),
+		Path:           path,
+		ComparisonPath: comparisonPath,
+		Question:       question,
+		Context:        contextText,
+		Checks:         checks,
 	}
 	inputTruncated := questionTruncated || contextTruncated || len(args.Checks) > len(checks)
 	if err := r.writeImageAnalysisStartedEvent(request, inputTruncated); err != nil {
@@ -2447,6 +2464,9 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	}
 	if err := r.writeImageAnalysisResultEvent(request, analyzed); err != nil {
 		return tools.ToolResult{}, err
+	}
+	if comparisonPath != "" {
+		r.temporalImageAnalyses++
 	}
 	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed), Truncated: inputTruncated}, nil
 }
@@ -2569,6 +2589,9 @@ func cleanImageAnalysisChecks(checks []string) []string {
 
 func normalizeQualityPlan(plan QualityPlan) (QualityPlan, tools.ToolResult) {
 	plan.ArtifactType = normalizeQualityPlanArtifactType(plan.ArtifactType)
+	if plan.RequiresTemporalVisualVerification {
+		plan.RequiresVisualVerification = true
+	}
 	if qualityPlanArtifactRequiresVisualVerification(plan.ArtifactType) {
 		plan.RequiresVisualVerification = true
 	}
@@ -2658,6 +2681,7 @@ func formatQualityPlanResult(plan QualityPlan) string {
 	fmt.Fprintf(&b, "quality_plan: %s\n", plan.ArtifactType)
 	fmt.Fprintf(&b, "requires_runtime_verification: %t\n", plan.RequiresRuntimeVerification)
 	fmt.Fprintf(&b, "requires_visual_verification: %t\n", plan.RequiresVisualVerification)
+	fmt.Fprintf(&b, "requires_temporal_visual_verification: %t\n", plan.RequiresTemporalVisualVerification)
 	b.WriteString("phases:\n")
 	for _, phase := range plan.Phases {
 		fmt.Fprintf(&b, "- [%s] %s\n", firstNonEmpty(phase.Status, "planned"), phase.Name)
@@ -2798,6 +2822,8 @@ func (r *Runner) writeImageAnalysisStartedEvent(request ImageAnalysisRequest, in
 		"type":            "image_analysis_started",
 		"session_id":      r.SessionID,
 		"path":            request.Path,
+		"comparison_path": request.ComparisonPath,
+		"temporal":        strings.TrimSpace(request.ComparisonPath) != "",
 		"question":        request.Question,
 		"checks":          request.Checks,
 		"input_truncated": inputTruncated,
@@ -2809,15 +2835,17 @@ func (r *Runner) writeImageAnalysisResultEvent(request ImageAnalysisRequest, res
 		return nil
 	}
 	return r.Session.Write(session.Event{
-		"type":          "image_analysis_result",
-		"session_id":    r.SessionID,
-		"path":          request.Path,
-		"question":      request.Question,
-		"provider":      strings.TrimSpace(result.Provider),
-		"model":         strings.TrimSpace(result.Model),
-		"output":        strings.TrimSpace(result.Output),
-		"usage":         json.RawMessage(result.Usage),
-		"usage_summary": result.UsageSummary,
+		"type":            "image_analysis_result",
+		"session_id":      r.SessionID,
+		"path":            request.Path,
+		"comparison_path": request.ComparisonPath,
+		"temporal":        strings.TrimSpace(request.ComparisonPath) != "",
+		"question":        request.Question,
+		"provider":        strings.TrimSpace(result.Provider),
+		"model":           strings.TrimSpace(result.Model),
+		"output":          strings.TrimSpace(result.Output),
+		"usage":           json.RawMessage(result.Usage),
+		"usage_summary":   result.UsageSummary,
 	})
 }
 
@@ -2826,11 +2854,13 @@ func (r *Runner) writeImageAnalysisFailedEvent(request ImageAnalysisRequest, mes
 		return nil
 	}
 	return r.Session.Write(session.Event{
-		"type":       "image_analysis_failed",
-		"session_id": r.SessionID,
-		"path":       request.Path,
-		"question":   request.Question,
-		"message":    strings.TrimSpace(message),
+		"type":            "image_analysis_failed",
+		"session_id":      r.SessionID,
+		"path":            request.Path,
+		"comparison_path": request.ComparisonPath,
+		"temporal":        strings.TrimSpace(request.ComparisonPath) != "",
+		"question":        request.Question,
+		"message":         strings.TrimSpace(message),
 	})
 }
 

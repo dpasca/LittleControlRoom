@@ -1897,11 +1897,12 @@ func TestLCAgentReplayRestoresQualityPlanStats(t *testing.T) {
 	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
 		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "openrouter", "model": "deepseek/test"},
 		{
-			"type":                          "quality_plan_update",
-			"session_id":                    sessionID,
-			"artifact_type":                 "game",
-			"requires_runtime_verification": true,
-			"requires_visual_verification":  true,
+			"type":                                  "quality_plan_update",
+			"session_id":                            sessionID,
+			"artifact_type":                         "game",
+			"requires_runtime_verification":         true,
+			"requires_visual_verification":          true,
+			"requires_temporal_visual_verification": true,
 			"phases": []map[string]any{
 				{"name": "core movement", "status": "verified", "evidence": []string{"runtime smoke"}},
 				{"name": "boardwalk environment", "status": "needs_repair", "notes": "needs visual pass"},
@@ -1923,10 +1924,10 @@ func TestLCAgentReplayRestoresQualityPlanStats(t *testing.T) {
 	if snapshot.QualityPlanUpdates != 1 || snapshot.QualityPlanPhases != 3 || snapshot.QualityPlanVerified != 1 || snapshot.QualityPlanSkipped != 1 || snapshot.QualityPlanNeedsRepair != 1 {
 		t.Fatalf("quality plan stats = updates:%d phases:%d verified:%d skipped:%d repair:%d", snapshot.QualityPlanUpdates, snapshot.QualityPlanPhases, snapshot.QualityPlanVerified, snapshot.QualityPlanSkipped, snapshot.QualityPlanNeedsRepair)
 	}
-	if !snapshot.QualityPlanRequiresRuntime || !snapshot.QualityPlanRequiresVisual {
-		t.Fatalf("quality plan requirements runtime=%v visual=%v, want both true", snapshot.QualityPlanRequiresRuntime, snapshot.QualityPlanRequiresVisual)
+	if !snapshot.QualityPlanRequiresRuntime || !snapshot.QualityPlanRequiresVisual || !snapshot.QualityPlanRequiresTemporal {
+		t.Fatalf("quality plan requirements runtime=%v visual=%v temporal=%v, want all true", snapshot.QualityPlanRequiresRuntime, snapshot.QualityPlanRequiresVisual, snapshot.QualityPlanRequiresTemporal)
 	}
-	if !strings.Contains(snapshot.QualityPlanLastSummary, "visual evidence required") {
+	if !strings.Contains(snapshot.QualityPlanLastSummary, "temporal visual evidence required") {
 		t.Fatalf("quality plan summary = %q", snapshot.QualityPlanLastSummary)
 	}
 	if len(snapshot.QualityPlanPhaseItems) != 3 {

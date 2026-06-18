@@ -484,6 +484,45 @@ func TestRunnerAnalyzesImageWithConfiguredVisionModel(t *testing.T) {
 	}
 }
 
+func TestRunnerAnalyzesImageWithComparisonPath(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	analyzer := &fakeImageAnalyzer{}
+	runner := Runner{
+		Session:       writer,
+		SessionID:     sessionID,
+		Prompt:        "verify a dynamic visual artifact",
+		ImageAnalyzer: analyzer,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "analyze_image",
+		Args: raw(`{"path":"first.png","comparison_path":"second.png","question":"Does the visual state remain stable between frames?"}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v", err)
+	}
+	if !result.Success {
+		t.Fatalf("analyze_image result = %#v", result)
+	}
+	if analyzer.request.Path != "first.png" || analyzer.request.ComparisonPath != "second.png" {
+		t.Fatalf("image request = %#v", analyzer.request)
+	}
+	if runner.imageAnalyses != 1 || runner.temporalImageAnalyses != 1 {
+		t.Fatalf("analysis counters image=%d temporal=%d, want 1/1", runner.imageAnalyses, runner.temporalImageAnalyses)
+	}
+	text := stream.String()
+	for _, want := range []string{`"comparison_path":"second.png"`, `"temporal":true`, `"type":"image_analysis_result"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunnerUpdatesQualityPlan(t *testing.T) {
 	var stream bytes.Buffer
 	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
@@ -620,6 +659,29 @@ func TestRunnerRejectsOutOfOrderQualityPlanUpdate(t *testing.T) {
 	})
 	if result.Success || !strings.Contains(result.Error, "phases must advance one at a time") {
 		t.Fatalf("result = %#v, want out-of-order rejection", result)
+	}
+}
+
+func TestRunnerRejectsTemporalQualityPlanDowngrade(t *testing.T) {
+	runner := Runner{
+		qualityPlan: &QualityPlan{
+			ArtifactType:                       "ui",
+			RequiresVisualVerification:         true,
+			RequiresTemporalVisualVerification: true,
+			Phases: []QualityPlanPhase{
+				{Name: "dynamic visual state", Status: "in_progress"},
+			},
+		},
+	}
+	result := runner.validateQualityPlanProgression(QualityPlan{
+		ArtifactType:               "ui",
+		RequiresVisualVerification: true,
+		Phases: []QualityPlanPhase{
+			{Name: "dynamic visual state", Status: "in_progress"},
+		},
+	})
+	if result.Success || !strings.Contains(result.Error, "cannot turn off temporal visual verification") {
+		t.Fatalf("result = %#v, want temporal requirement downgrade rejection", result)
 	}
 }
 
@@ -781,6 +843,30 @@ func TestRunnerFinalResponseAuditBlocksCompletedUntilQualityPlanEvidence(t *test
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
 	if audit.Outcome != "pass" || audit.Blocking {
 		t.Fatalf("audit = %#v, want pass after declared evidence exists", audit)
+	}
+}
+
+func TestRunnerFinalResponseAuditBlocksCompletedUntilTemporalVisualEvidence(t *testing.T) {
+	runner := Runner{
+		qualityPlan: &QualityPlan{
+			ArtifactType:                       "ui",
+			RequiresVisualVerification:         true,
+			RequiresTemporalVisualVerification: true,
+			Phases: []QualityPlanPhase{
+				{Name: "visual behavior", Status: "verified", Evidence: []string{"screenshots captured"}},
+			},
+		},
+		imageAnalyses: 1,
+	}
+	audit := runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_temporal_visual_evidence_missing" || !audit.Blocking {
+		t.Fatalf("audit = %#v, want temporal visual evidence block", audit)
+	}
+
+	runner.temporalImageAnalyses = 1
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Outcome != "pass" || audit.Blocking {
+		t.Fatalf("audit = %#v, want pass after paired visual evidence exists", audit)
 	}
 }
 

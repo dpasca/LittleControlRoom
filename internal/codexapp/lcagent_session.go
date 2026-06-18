@@ -138,6 +138,7 @@ type lcagentSession struct {
 	qualityPlanNeedsRepair       int
 	qualityPlanRequiresRuntime   bool
 	qualityPlanRequiresVisual    bool
+	qualityPlanRequiresTemporal  bool
 	qualityPlanLastSummary       string
 	qualityPlanPhaseItems        []QualityPlanPhaseSnapshot
 }
@@ -2498,23 +2499,31 @@ func lcagentPlanningPreflightText(event map[string]json.RawMessage) string {
 	if requiresPlan {
 		text += "; quality plan required"
 	}
+	if rawJSONBool(event["requires_temporal_visual_verification"]) {
+		text += "; temporal visual evidence required"
+	}
 	return text
 }
 
 type lcagentQualityPlanStats struct {
-	Phases          int
-	Verified        int
-	Skipped         int
-	NeedsRepair     int
-	RequiresRuntime bool
-	RequiresVisual  bool
-	Items           []QualityPlanPhaseSnapshot
+	Phases           int
+	Verified         int
+	Skipped          int
+	NeedsRepair      int
+	RequiresRuntime  bool
+	RequiresVisual   bool
+	RequiresTemporal bool
+	Items            []QualityPlanPhaseSnapshot
 }
 
 func lcagentQualityPlanStatsFromEvent(event map[string]json.RawMessage) lcagentQualityPlanStats {
 	stats := lcagentQualityPlanStats{
-		RequiresRuntime: rawJSONBool(event["requires_runtime_verification"]),
-		RequiresVisual:  rawJSONBool(event["requires_visual_verification"]),
+		RequiresRuntime:  rawJSONBool(event["requires_runtime_verification"]),
+		RequiresVisual:   rawJSONBool(event["requires_visual_verification"]),
+		RequiresTemporal: rawJSONBool(event["requires_temporal_visual_verification"]),
+	}
+	if stats.RequiresTemporal {
+		stats.RequiresVisual = true
 	}
 	var phases []struct {
 		Name     string   `json:"name"`
@@ -2579,6 +2588,9 @@ func lcagentQualityPlanUpdateText(stats lcagentQualityPlanStats) string {
 	if stats.RequiresVisual {
 		parts = append(parts, "visual evidence required")
 	}
+	if stats.RequiresTemporal {
+		parts = append(parts, "temporal visual evidence required")
+	}
 	return "LCAgent quality plan updated: " + strings.Join(parts, ", ")
 }
 
@@ -2601,6 +2613,7 @@ func (s *lcagentSession) handleLCAgentQualityPlanUpdate(event map[string]json.Ra
 	s.qualityPlanNeedsRepair = stats.NeedsRepair
 	s.qualityPlanRequiresRuntime = stats.RequiresRuntime
 	s.qualityPlanRequiresVisual = stats.RequiresVisual
+	s.qualityPlanRequiresTemporal = stats.RequiresTemporal
 	s.qualityPlanLastSummary = text
 	s.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(stats.Items)
 	s.touchLocked()
@@ -2623,6 +2636,9 @@ func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.
 	usage, usageOK := lcagentUsageFromModelResponseEvent(event, modelName)
 
 	text := "LCAgent vision analysis complete"
+	if rawJSONBool(event["temporal"]) {
+		text = "LCAgent temporal vision analysis complete"
+	}
 	if output != "" {
 		text += ": " + lcagentCondenseStatusText(output, 180)
 	}
@@ -2940,6 +2956,7 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.qualityPlanNeedsRepair = replay.qualityPlanNeedsRepair
 	s.qualityPlanRequiresRuntime = replay.qualityPlanRequiresRuntime
 	s.qualityPlanRequiresVisual = replay.qualityPlanRequiresVisual
+	s.qualityPlanRequiresTemporal = replay.qualityPlanRequiresTemporal
 	s.qualityPlanLastSummary = strings.TrimSpace(replay.qualityPlanLastSummary)
 	s.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(replay.qualityPlanPhaseItems)
 	s.suggestedInputDraftID = strings.TrimSpace(replay.suggestedInputDraftID)
@@ -3440,6 +3457,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		QualityPlanNeedsRepair:       s.qualityPlanNeedsRepair,
 		QualityPlanRequiresRuntime:   s.qualityPlanRequiresRuntime,
 		QualityPlanRequiresVisual:    s.qualityPlanRequiresVisual,
+		QualityPlanRequiresTemporal:  s.qualityPlanRequiresTemporal,
 		QualityPlanLastSummary:       strings.TrimSpace(s.qualityPlanLastSummary),
 		QualityPlanPhaseItems:        cloneQualityPlanPhaseSnapshots(s.qualityPlanPhaseItems),
 		CriticActive:                 s.criticActive,

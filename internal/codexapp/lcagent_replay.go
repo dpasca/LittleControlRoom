@@ -61,6 +61,7 @@ type lcagentReplay struct {
 	qualityPlanNeedsRepair       int
 	qualityPlanRequiresRuntime   bool
 	qualityPlanRequiresVisual    bool
+	qualityPlanRequiresTemporal  bool
 	qualityPlanLastSummary       string
 	qualityPlanPhaseItems        []QualityPlanPhaseSnapshot
 	suggestedInputDraftID        string
@@ -344,6 +345,7 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	total.qualityPlanNeedsRepair = next.qualityPlanNeedsRepair
 	total.qualityPlanRequiresRuntime = next.qualityPlanRequiresRuntime
 	total.qualityPlanRequiresVisual = next.qualityPlanRequiresVisual
+	total.qualityPlanRequiresTemporal = next.qualityPlanRequiresTemporal
 	if next.qualityPlanLastSummary != "" {
 		total.qualityPlanLastSummary = next.qualityPlanLastSummary
 	}
@@ -808,6 +810,9 @@ func (r *lcagentReplay) applyImageAnalysisStarted(event map[string]json.RawMessa
 		return
 	}
 	text := "LCAgent vision analyzing image"
+	if rawJSONBool(event["temporal"]) {
+		text = "LCAgent temporal vision analyzing images"
+	}
 	if question := rawJSONString(event["question"]); question != "" {
 		text += ": " + lcagentCondenseStatusText(question, 160)
 	}
@@ -832,6 +837,9 @@ func (r *lcagentReplay) applyImageAnalysisResult(event map[string]json.RawMessag
 		r.visionModel = model
 	}
 	text := "LCAgent vision analysis complete"
+	if rawJSONBool(event["temporal"]) {
+		text = "LCAgent temporal vision analysis complete"
+	}
 	if output != "" {
 		text += ": " + lcagentCondenseStatusText(output, 180)
 	}
@@ -932,6 +940,7 @@ func (r *lcagentReplay) applyQualityPlanUpdate(event map[string]json.RawMessage)
 	r.qualityPlanNeedsRepair = stats.NeedsRepair
 	r.qualityPlanRequiresRuntime = stats.RequiresRuntime
 	r.qualityPlanRequiresVisual = stats.RequiresVisual
+	r.qualityPlanRequiresTemporal = stats.RequiresTemporal
 	r.qualityPlanLastSummary = strings.TrimSpace(text)
 	r.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(stats.Items)
 	r.appendEntry(TranscriptStatus, text)

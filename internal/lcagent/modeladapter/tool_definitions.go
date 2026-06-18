@@ -214,15 +214,16 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "analyze_image",
-				Description: "Ask the configured vision model to inspect an image file or screenshot pixels. Use this for visual QA, screenshots, layout/rendering issues, or image contents; do not substitute deterministic pixel counts for visual judgment when this tool is available.",
+				Description: "Ask the configured vision model to inspect image or screenshot pixels. Use this for visual QA, screenshots, layout/rendering issues, image contents, or side-by-side temporal comparison with comparison_path; do not substitute deterministic pixel counts for visual judgment when this tool is available.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"path":     map[string]any{"type": "string", "description": "Workspace-relative image path, or absolute path for read-only inspection when produced by browser_screenshot or another tool."},
-						"question": map[string]any{"type": "string", "maxLength": 1200, "description": "Focused question for the vision model, for example 'Does this screenshot show the boardwalk surface, ocean, and player correctly?'"},
-						"context":  map[string]any{"type": "string", "maxLength": 4000, "description": "Optional task context, expected visual state, or specific UI/game details to inspect."},
-						"checks":   map[string]any{"type": "array", "maxItems": 10, "items": map[string]any{"type": "string", "maxLength": 100}, "description": "Optional visual checks, for example missing ground plane, overlapping text, clipped elements, or color contrast."},
+						"path":            map[string]any{"type": "string", "description": "Workspace-relative image path, or absolute path for read-only inspection when produced by browser_screenshot or another tool."},
+						"comparison_path": map[string]any{"type": "string", "description": "Optional second image path to compare against path. Use this for temporal/stateful visual verification with two observations separated in time; the vision model receives a side-by-side comparison."},
+						"question":        map[string]any{"type": "string", "maxLength": 1200, "description": "Focused question for the vision model, for example 'Does this screenshot show the expected surface, background, and player correctly?'"},
+						"context":         map[string]any{"type": "string", "maxLength": 4000, "description": "Optional task context, expected visual state, or specific UI/game details to inspect."},
+						"checks":          map[string]any{"type": "array", "maxItems": 10, "items": map[string]any{"type": "string", "maxLength": 100}, "description": "Optional visual checks, for example missing surfaces, overlapping text, clipped elements, unstable state, or color contrast."},
 					},
 					"required": []string{"path", "question"},
 				},
@@ -448,14 +449,15 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "update_quality_plan",
-				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. Phases are sequential execution gates: keep at most one active phase, leave later phases planned, and advance at most one phase after concrete evidence. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, and visual verification must have analyze_image evidence when required.",
+				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. Phases are sequential execution gates: keep at most one active phase, leave later phases planned, and advance at most one phase after concrete evidence. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, visual verification must have analyze_image evidence when required, and temporal visual verification must have analyze_image evidence with comparison_path when required.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"artifact_type":                 map[string]any{"type": "string", "enum": []string{"game", "ui", "cli", "library", "doc", "other", "unknown"}, "description": "Primary artifact being produced or changed."},
-						"requires_runtime_verification": map[string]any{"type": "boolean", "description": "True when the artifact should be built, run, tested, or otherwise exercised before completed."},
-						"requires_visual_verification":  map[string]any{"type": "boolean", "description": "True when screenshot/image appearance matters enough that completed requires analyze_image evidence."},
+						"artifact_type":                         map[string]any{"type": "string", "enum": []string{"game", "ui", "cli", "library", "doc", "other", "unknown"}, "description": "Primary artifact being produced or changed."},
+						"requires_runtime_verification":         map[string]any{"type": "boolean", "description": "True when the artifact should be built, run, tested, or otherwise exercised before completed."},
+						"requires_visual_verification":          map[string]any{"type": "boolean", "description": "True when screenshot/image appearance matters enough that completed requires analyze_image evidence."},
+						"requires_temporal_visual_verification": map[string]any{"type": "boolean", "description": "True when visual quality is stateful or time-dependent enough that completed requires analyze_image evidence comparing two observations via comparison_path."},
 						"phases": map[string]any{
 							"type":        "array",
 							"minItems":    1,
