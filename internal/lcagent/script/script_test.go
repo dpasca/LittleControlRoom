@@ -623,7 +623,7 @@ func TestRunnerRejectsOutOfOrderQualityPlanUpdate(t *testing.T) {
 	}
 }
 
-func TestRunnerDeniesBroadWriteDuringActiveQualityPhase(t *testing.T) {
+func TestRunnerAllowsBroadWriteDuringActiveQualityPhase(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
 	if err != nil {
@@ -649,20 +649,27 @@ func TestRunnerDeniesBroadWriteDuringActiveQualityPhase(t *testing.T) {
 			},
 		},
 	}
-	content := strings.Repeat("int x = 0;\n", maxQualityPlanPhaseWriteLines+1)
+	content := strings.Repeat("int x = 0;\n", 700)
 	result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "create_file",
 		Args: raw(`{"path":"skate.cpp","content":` + strconv.Quote(content) + `}`),
 	})
-	if err == nil || result.Success || !result.Denied || !strings.Contains(result.Error, "Build one phase at a time") {
-		t.Fatalf("result = %#v err=%v, want broad write denial", result, err)
+	if err != nil || !result.Success || result.Denied {
+		t.Fatalf("result = %#v err=%v, want broad write allowed", result, err)
 	}
-	if _, statErr := os.Stat(filepath.Join(root, "skate.cpp")); !os.IsNotExist(statErr) {
-		t.Fatalf("skate.cpp stat err = %v, want file not created", statErr)
+	data, err := os.ReadFile(filepath.Join(root, "skate.cpp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Fatalf("skate.cpp content length = %d, want %d", len(data), len(content))
 	}
 	text := stream.String()
-	for _, want := range []string{`"type":"permission_denied"`, `"tool":"create_file"`, "Build one phase at a time"} {
+	if strings.Contains(text, `"type":"permission_denied"`) {
+		t.Fatalf("stream unexpectedly denied broad write:\n%s", text)
+	}
+	for _, want := range []string{`"tool":"create_file"`, `"type":"files_touched"`, `"skate.cpp"`, `"type":"patch_diff_summary"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
