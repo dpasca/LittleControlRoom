@@ -37,6 +37,11 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	label := embeddedProvider(snapshot).Label()
 	m.normalizeEmbeddedCodexFocus()
+	m.normalizeEmbeddedSidebarSelection(snapshot)
+
+	if m.embeddedSidebarDetail != nil {
+		return m.updateEmbeddedSidebarDetailMode(msg)
+	}
 
 	if msg.String() == "alt+up" {
 		return m.hideCodexSession()

@@ -216,6 +216,7 @@ type Model struct {
 	codexSuggestedDraftsApplied map[string]string
 	codexPanelFocus             embeddedCodexPanelFocus
 	codexSidebarSelected        embeddedCodexSidebarSection
+	embeddedSidebarDetail       *embeddedSidebarDetailState
 	embeddedSidebarDiffs        map[string]embeddedSidebarDiffState
 	embeddedSidebarDiffSeq      int64
 	embeddedSidebarDiffAutoAt   map[string]time.Time

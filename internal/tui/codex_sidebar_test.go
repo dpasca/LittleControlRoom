@@ -213,8 +213,7 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 	rendered := ansi.Strip(m.renderEmbeddedCodexSidebar(snapshot, 46, 40))
 	for _, want := range []string{
 		"Session",
-		"Model gpt-5-codex",
-		"Reasoning high",
+		"Model gpt-5-codex / high",
 		"Next gpt-5 / medium",
 		"Context 6% of 200k",
 		"Tokens i10k c0% o2.0k",
@@ -359,7 +358,7 @@ func TestEmbeddedSidebarTreatsFreshPendingModelAsCurrent(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
-	for _, want := range []string{"Model gpt-5.4", "Reasoning high"} {
+	for _, want := range []string{"Model gpt-5.4 / high"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("sidebar model rows missing %q:\n%s", want, rendered)
 		}
@@ -404,20 +403,34 @@ func TestEmbeddedSidebarShowsLCAgentCriticActivity(t *testing.T) {
 	snapshot.CriticLastStatus = "concerns"
 	snapshot.CriticLastSummary = "verification was thin"
 
-	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarCriticSection(snapshot, 46), "\n"))
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarCriticSection(snapshot, 80), "\n"))
 	for _, want := range []string{
 		"Critic",
 		"Model deepseek/deepseek-v4-pro",
-		"Status concerns",
-		"Reviews 2",
-		"Consults 3",
-		"Concerns 1",
-		"Consult Concerns 1",
-		"Corrections 1",
+		"State concerns | 2 reviews | 3 consults | 2 concerns | 1 correction",
 		"verification was thin",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("critic sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Consult Concerns", "Corrections 1"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("critic summary should stay compact and omit %q:\n%s", unwanted, rendered)
+		}
+	}
+
+	detailModel := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
+	detailModel.codexPanelFocus = embeddedCodexFocusSidebar
+	detailModel.codexSidebarSelected = embeddedCodexSidebarCritic
+	detailRendered := ansi.Strip(strings.Join(detailModel.renderEmbeddedSidebarCriticSection(snapshot, 80), "\n"))
+	for _, want := range []string{
+		"Status concerns",
+		"Activity 2 reviews | 3 consults | 2 concerns | 1 correction",
+		"Concerns lead 1 | consult 1",
+	} {
+		if !strings.Contains(detailRendered, want) {
+			t.Fatalf("selected critic section missing detail %q:\n%s", want, detailRendered)
 		}
 	}
 
@@ -438,12 +451,24 @@ func TestEmbeddedSidebarShowsLCAgentQualityCheckpointActivity(t *testing.T) {
 	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
 	for _, want := range []string{
 		"Quality",
-		"Status checked",
-		"Checkpoints 1/1",
+		"State checked | checks 1/1",
 		"LCAgent requested private quality pass 1/1",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("quality sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Checkpoints 1/1") {
+		t.Fatalf("quality summary should hide full checkpoint rows until selected:\n%s", rendered)
+	}
+
+	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.codexSidebarSelected = embeddedCodexSidebarQuality
+	selected := ansi.Strip(strings.Join(m.renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
+	for _, want := range []string{"Status checked", "Checkpoints 1/1"} {
+		if !strings.Contains(selected, want) {
+			t.Fatalf("selected quality section missing %q:\n%s", want, selected)
 		}
 	}
 }
@@ -459,8 +484,7 @@ func TestEmbeddedSidebarShowsLCAgentQualityRepairActivity(t *testing.T) {
 	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
 	for _, want := range []string{
 		"Quality",
-		"Status repairing",
-		"Repairs 2/3",
+		"State repairing | repairs 2/3",
 		"LCAgent requested quality repair 2/3",
 	} {
 		if !strings.Contains(rendered, want) {
@@ -485,20 +509,114 @@ func TestEmbeddedSidebarShowsLCAgentQualityPlanActivity(t *testing.T) {
 		{Name: "HUD", Status: "implemented"},
 	}
 
-	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarQualitySection(snapshot, 80), "\n"))
 	for _, want := range []string{
 		"Quality",
+		"State needs repair | plan 4 (3 ok, 1 fix) | needs runtime+visual",
+		"LCAgent quality plan updated",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("quality sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Plan phases", "ok core movement", "fix boardwalk environment", "impl HUD"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("quality summary should hide phase detail %q:\n%s", unwanted, rendered)
+		}
+	}
+
+	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.codexSidebarSelected = embeddedCodexSidebarQuality
+	selected := ansi.Strip(strings.Join(m.renderEmbeddedSidebarQualitySection(snapshot, 80), "\n"))
+	for _, want := range []string{
 		"Plan 4 (3 verified)",
 		"Evidence runtime+visual",
 		"Plan phases",
 		"ok core movement [2 evidence]",
 		"fix boardwalk environment: needs visual pass",
 		"impl HUD",
-		"LCAgent quality plan updated",
+	} {
+		if !strings.Contains(selected, want) {
+			t.Fatalf("selected quality section missing %q:\n%s", want, selected)
+		}
+	}
+}
+
+func TestEmbeddedSidebarShowsLCAgentVisionSummaryAndSelectedDetail(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.VisionModel = "gpt-5-vision"
+	snapshot.VisionModelProvider = "openai"
+	snapshot.ImageAnalyses = 3
+	snapshot.ImageAnalysisFailures = 1
+	snapshot.ImageAnalysisLastSummary = "Screenshot review found a clipped toolbar"
+
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarVisionSection(snapshot, 80), "\n"))
+	for _, want := range []string{
+		"Vision",
+		"Model openai/gpt-5-vision",
+		"State idle | 3 analyses | 1 failure",
+		"Screenshot review found a clipped toolbar",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("quality sidebar section missing %q:\n%s", want, rendered)
+			t.Fatalf("vision sidebar section missing %q:\n%s", want, rendered)
 		}
+	}
+	for _, unwanted := range []string{"Analyses 3", "Failures 1"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("vision summary should hide full detail %q:\n%s", unwanted, rendered)
+		}
+	}
+
+	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.codexSidebarSelected = embeddedCodexSidebarVision
+	selected := ansi.Strip(strings.Join(m.renderEmbeddedSidebarVisionSection(snapshot, 80), "\n"))
+	for _, want := range []string{"Status idle", "Analyses 3", "Failures 1"} {
+		if !strings.Contains(selected, want) {
+			t.Fatalf("selected vision section missing %q:\n%s", want, selected)
+		}
+	}
+}
+
+func TestEmbeddedSidebarEnterOpensQualityDetailDialog(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.QualityPlanUpdates = 1
+	snapshot.QualityPlanPhases = 2
+	snapshot.QualityPlanNeedsRepair = 1
+	snapshot.QualityPlanPhaseItems = []codexapp.QualityPlanPhaseSnapshot{
+		{Name: "render sidebar", Status: "verified", EvidenceCount: 1},
+		{Name: "keyboard detail dialog", Status: "needs_repair", Notes: "needs popup coverage"},
+	}
+	m := testEmbeddedSidebarModel(projectPath)
+	m.codexSnapshots[projectPath] = snapshot
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.codexSidebarSelected = embeddedCodexSidebarQuality
+
+	updated, _ := m.updateCodexSidebarMode(snapshot, tea.KeyMsg{Type: tea.KeyEnter})
+	got := normalizeUpdateModel(updated)
+	if got.embeddedSidebarDetail == nil || got.embeddedSidebarDetail.Section != embeddedCodexSidebarQuality {
+		t.Fatalf("Enter should open quality detail dialog, got %#v", got.embeddedSidebarDetail)
+	}
+	rendered := ansi.Strip(got.renderEmbeddedSidebarDetailContent(80, 20))
+	for _, want := range []string{
+		"Quality",
+		"Plan phases",
+		"ok render sidebar [1 evidence]",
+		"fix keyboard detail dialog: needs popup coverage",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("quality detail dialog missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, _ = got.updateEmbeddedSidebarDetailMode(tea.KeyMsg{Type: tea.KeyEsc})
+	got = normalizeUpdateModel(updated)
+	if got.embeddedSidebarDetail != nil {
+		t.Fatalf("Esc should close quality detail dialog")
 	}
 }
 
@@ -508,7 +626,7 @@ func TestEmbeddedSidebarSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.
 	snapshot.ReasoningEffort = "high"
 
 	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
-	for _, want := range []string{"Model openai/gpt-5", "Reasoning high"} {
+	for _, want := range []string{"Model openai/gpt-5 / high"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("sidebar model rows missing %q:\n%s", want, rendered)
 		}

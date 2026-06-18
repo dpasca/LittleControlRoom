@@ -131,6 +131,17 @@ func (m Model) View() string {
 			}
 			return m.renderCodexInputCopyDialogOverlay(body, width, height)
 		}
+		if m.embeddedSidebarDetail != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderEmbeddedSidebarDetailOverlay(body, width, height)
+		}
 		if m.newProjectDialog != nil {
 			width := m.width
 			if width <= 0 {
