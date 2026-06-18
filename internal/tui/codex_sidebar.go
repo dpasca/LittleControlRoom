@@ -758,9 +758,9 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 		if reasoning != "" {
 			value += " / " + reasoning
 		}
-		rows = append(rows, embeddedSidebarFieldRow("Model", value, detailValueStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", value, detailValueStyle, width, 2)...)
 	} else if reasoning != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Reasoning", reasoning, detailValueStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Reasoning", reasoning, detailValueStyle, width, 2)...)
 	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
@@ -768,7 +768,7 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 		if nextReasoning != "" {
 			next += " / " + nextReasoning
 		}
-		rows = append(rows, embeddedSidebarFieldRow("Next", next, detailWarningStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Next", next, detailWarningStyle, width, 2)...)
 	}
 	return rows
 }
@@ -822,7 +822,7 @@ func embeddedSidebarCriticSummaryRows(snapshot codexapp.Snapshot, width int) []s
 	}
 	rows := []string{}
 	if model := embeddedSidebarCriticModelValue(snapshot); model != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
 	}
 	status := embeddedSidebarCriticStatus(snapshot)
 	activity := embeddedSidebarCriticActivitySummary(snapshot)
@@ -834,7 +834,7 @@ func embeddedSidebarCriticSummaryRows(snapshot codexapp.Snapshot, width int) []s
 			}
 			value += activity
 		}
-		rows = append(rows, embeddedSidebarFieldRow("State", value, embeddedSidebarCriticStatusStyle(status), width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("State", value, embeddedSidebarCriticStatusStyle(status), width, 3)...)
 	}
 	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
@@ -848,17 +848,17 @@ func embeddedSidebarCriticDetailRows(snapshot codexapp.Snapshot, width int) []st
 	}
 	rows := []string{}
 	if model := embeddedSidebarCriticModelValue(snapshot); model != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
 	}
 	status := embeddedSidebarCriticStatus(snapshot)
 	if status != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Status", status, embeddedSidebarCriticStatusStyle(status), width))
 	}
 	if activity := embeddedSidebarCriticActivitySummary(snapshot); activity != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Activity", activity, detailValueStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Activity", activity, detailValueStyle, width, 3)...)
 	}
 	if concerns := embeddedSidebarCriticConcernSummary(snapshot); concerns != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Concerns", concerns, detailWarningStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Concerns", concerns, detailWarningStyle, width, 2)...)
 	}
 	if snapshot.CriticFollowupDrafts > 0 {
 		rows = append(rows, embeddedSidebarFieldRow("Drafts", fmt.Sprintf("%d", snapshot.CriticFollowupDrafts), detailWarningStyle, width))
@@ -958,7 +958,7 @@ func embeddedSidebarQualitySummaryRows(snapshot codexapp.Snapshot, width int) []
 		parts = append(parts, "needs "+evidence)
 	}
 	rows := []string{}
-	rows = append(rows, embeddedSidebarFieldRow("State", strings.Join(parts, " | "), style, width))
+	rows = append(rows, embeddedSidebarWrappedFieldRows("State", strings.Join(parts, " | "), style, width, 3)...)
 	if summary := embeddedSidebarQualityLatestSummary(snapshot); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
@@ -991,7 +991,7 @@ func embeddedSidebarQualityDetailRows(snapshot codexapp.Snapshot, width int) []s
 		if snapshot.QualityPlanNeedsRepair > 0 {
 			phaseStyle = detailWarningStyle
 		}
-		rows = append(rows, embeddedSidebarFieldRow("Plan", phaseValue, phaseStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Plan", phaseValue, phaseStyle, width, 2)...)
 		var requirements []string
 		if snapshot.QualityPlanRequiresRuntime {
 			requirements = append(requirements, "runtime")
@@ -1187,7 +1187,7 @@ func embeddedSidebarVisionSummaryRows(snapshot codexapp.Snapshot, width int) []s
 	}
 	rows := []string{}
 	if model := embeddedSidebarVisionModelLabel(snapshot); model != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
 	}
 	status := "idle"
 	style := detailValueStyle
@@ -1203,7 +1203,7 @@ func embeddedSidebarVisionSummaryRows(snapshot codexapp.Snapshot, width int) []s
 	if snapshot.ImageAnalysisFailures > 0 {
 		parts = append(parts, embeddedSidebarCountLabel(snapshot.ImageAnalysisFailures, "failure"))
 	}
-	rows = append(rows, embeddedSidebarFieldRow("State", strings.Join(parts, " | "), style, width))
+	rows = append(rows, embeddedSidebarWrappedFieldRows("State", strings.Join(parts, " | "), style, width, 2)...)
 	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
@@ -1216,7 +1216,7 @@ func embeddedSidebarVisionDetailRows(snapshot codexapp.Snapshot, width int) []st
 	}
 	rows := []string{}
 	if model := embeddedSidebarVisionModelLabel(snapshot); model != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Model", model, detailValueStyle, width))
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
 	}
 	status := "idle"
 	style := detailValueStyle
@@ -1744,6 +1744,104 @@ func embeddedSidebarFieldRow(label, value string, style lipgloss.Style, width in
 	}
 	valueWidth := max(1, width-ansi.StringWidth(prefix))
 	return fitStyledWidth(detailMutedStyle.Render(prefix)+style.Render(truncateText(value, valueWidth)), width)
+}
+
+func embeddedSidebarWrappedFieldRows(label, value string, style lipgloss.Style, width, maxLines int) []string {
+	label = strings.TrimSpace(label)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if width <= 0 {
+		return nil
+	}
+	prefix := label
+	if prefix != "" {
+		prefix += " "
+	}
+	valueWidth := max(1, width-ansi.StringWidth(prefix))
+	if ansi.StringWidth(value) <= valueWidth {
+		return []string{embeddedSidebarFieldRow(label, value, style, width)}
+	}
+	lines := embeddedSidebarWrapFieldValue(value, valueWidth)
+	if len(lines) == 0 {
+		return nil
+	}
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[:maxLines]
+		last := maxLines - 1
+		lines[last] = truncateText(strings.TrimSpace(lines[last])+" ...", valueWidth)
+	}
+	rows := make([]string, 0, len(lines))
+	continuation := strings.Repeat(" ", min(width-1, ansi.StringWidth(prefix)))
+	for i, line := range lines {
+		rendered := style.Render(fitLine(line, valueWidth))
+		if i == 0 {
+			rows = append(rows, fitStyledWidth(detailMutedStyle.Render(prefix)+rendered, width))
+			continue
+		}
+		rows = append(rows, fitStyledWidth(detailMutedStyle.Render(continuation)+rendered, width))
+	}
+	return rows
+}
+
+func embeddedSidebarWrapFieldValue(value string, width int) []string {
+	value = strings.TrimSpace(value)
+	if value == "" || width <= 0 {
+		return nil
+	}
+	if strings.Contains(value, " | ") {
+		return embeddedSidebarWrapPipedValue(value, width)
+	}
+	return embeddedSidebarWrappedPlainLines(value, width)
+}
+
+func embeddedSidebarWrapPipedValue(value string, width int) []string {
+	parts := strings.Split(value, " | ")
+	lines := []string{}
+	current := ""
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if ansi.StringWidth(part) > width {
+			if current != "" {
+				lines = append(lines, current)
+				current = ""
+			}
+			lines = append(lines, embeddedSidebarWrappedPlainLines(part, width)...)
+			continue
+		}
+		next := part
+		if current != "" {
+			next = current + " | " + part
+		}
+		if ansi.StringWidth(next) <= width {
+			current = next
+			continue
+		}
+		if current != "" {
+			lines = append(lines, current)
+		}
+		current = part
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+func embeddedSidebarWrappedPlainLines(value string, width int) []string {
+	wrapped := strings.Split(ansi.Wrap(value, width, "/|-_."), "\n")
+	lines := make([]string, 0, len(wrapped))
+	for _, line := range wrapped {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func embeddedSidebarCountLabel(count int, singular string) string {

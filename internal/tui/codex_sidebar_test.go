@@ -636,6 +636,63 @@ func TestEmbeddedSidebarSkipsNextWhenPendingHasBeenAppliedBeforeOpen(t *testing.
 	}
 }
 
+func TestEmbeddedSidebarPackedRowsWrapAtNarrowWidth(t *testing.T) {
+	width := 34
+
+	modelSnapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	modelSnapshot.Model = "openrouter/compact-model"
+	modelSnapshot.ReasoningEffort = "xhigh"
+	modelRows := ansi.Strip(strings.Join(embeddedSidebarModelRows(modelSnapshot, width), "\n"))
+	for _, want := range []string{"openrouter", "compact-model", "xhigh"} {
+		if !strings.Contains(modelRows, want) {
+			t.Fatalf("wrapped model rows missing %q:\n%s", want, modelRows)
+		}
+	}
+	assertSidebarLinesWithinWidth(t, modelRows, width)
+
+	qualitySnapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	qualitySnapshot.Provider = codexapp.ProviderLCAgent
+	qualitySnapshot.QualityPlanUpdates = 1
+	qualitySnapshot.QualityPlanPhases = 4
+	qualitySnapshot.QualityPlanVerified = 3
+	qualitySnapshot.QualityPlanNeedsRepair = 1
+	qualitySnapshot.QualityPlanRequiresRuntime = true
+	qualitySnapshot.QualityPlanRequiresVisual = true
+	qualityRows := ansi.Strip(strings.Join(embeddedSidebarQualitySummaryRows(qualitySnapshot, width), "\n"))
+	for _, want := range []string{"needs repair", "3 ok", "1 fix", "runtime+visual"} {
+		if !strings.Contains(qualityRows, want) {
+			t.Fatalf("wrapped quality rows missing %q:\n%s", want, qualityRows)
+		}
+	}
+	assertSidebarLinesWithinWidth(t, qualityRows, width)
+
+	criticSnapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	criticSnapshot.Provider = codexapp.ProviderLCAgent
+	criticSnapshot.CriticModel = "critic-model"
+	criticSnapshot.CriticReviews = 2
+	criticSnapshot.CriticConsultations = 3
+	criticSnapshot.CriticConcerns = 1
+	criticSnapshot.CriticConsultConcerns = 1
+	criticSnapshot.CriticLeadRevisions = 1
+	criticSnapshot.CriticLastStatus = "concerns"
+	criticRows := ansi.Strip(strings.Join(embeddedSidebarCriticSummaryRows(criticSnapshot, width), "\n"))
+	for _, want := range []string{"2 reviews", "3 consults", "2 concerns", "1 correction"} {
+		if !strings.Contains(criticRows, want) {
+			t.Fatalf("wrapped critic rows missing %q:\n%s", want, criticRows)
+		}
+	}
+	assertSidebarLinesWithinWidth(t, criticRows, width)
+}
+
+func assertSidebarLinesWithinWidth(t *testing.T, rendered string, width int) {
+	t.Helper()
+	for _, line := range strings.Split(rendered, "\n") {
+		if got := ansi.StringWidth(line); got > width {
+			t.Fatalf("sidebar line width = %d, want <= %d: %q\n%s", got, width, line, rendered)
+		}
+	}
+}
+
 func TestFinishCodexPendingOpenRefreshesSidebarDiffWhenRevealed(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
