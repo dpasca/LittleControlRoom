@@ -359,7 +359,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var qualityCheckpointPasses int
 	var qualityRepairPasses int
 	var searchRefineMinBytes int
-	var adminWrite, requireFinalResponseTool bool
+	var adminWrite, requireFinalResponseTool, planningPreflightEnabled bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
@@ -385,6 +385,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
 	fs.BoolVar(&requireFinalResponseTool, "require-final-response-tool", false, "require provider runs to finish through the structured final_response tool")
+	fs.BoolVar(&planningPreflightEnabled, "planning-preflight", false, "run a model-based scope preflight and require phased quality plans for sizable artifact work")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
@@ -397,7 +398,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&browserLaunchModeRaw, "browser-launch-mode", string(browserctl.ManagedLaunchModeHeadless), "managed browser launch mode: headless, headed, or background")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
-	fs.IntVar(&qualityCheckpointPasses, "quality-checkpoint-passes", 0, "maximum lead self-review checkpoint passes before accepting final_response; embedded LCAgent enables one pass by default")
+	fs.IntVar(&qualityCheckpointPasses, "quality-checkpoint-passes", 0, "maximum lead self-review checkpoint passes before accepting final_response")
 	fs.IntVar(&qualityRepairPasses, "quality-repair-passes", 0, "maximum critic-driven artifact repair passes after material quality concerns; embedded LCAgent enables this for richer creation tasks")
 	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
 	if err := fs.Parse(args); err != nil {
@@ -567,6 +568,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["quality_checkpoint_passes"] = qualityCheckpointPasses
 	meta["quality_repair_passes"] = qualityRepairPasses
 	meta["require_final_response_tool"] = requireFinalResponseTool
+	meta["planning_preflight"] = planningPreflightEnabled
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
 		meta["root_session_id"] = resumeContext.rootSessionID()
@@ -768,7 +770,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, qualityCheckpointPasses, qualityRepairPasses, webSearchStatus.Enabled)
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, planningPreflightEnabled, qualityCheckpointPasses, qualityRepairPasses, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -788,7 +790,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, qualityCheckpointPasses int, qualityRepairPasses int, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, planningPreflightEnabled bool, qualityCheckpointPasses int, qualityRepairPasses int, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -832,6 +834,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			workspaceRoot: runner.Files.Workspace.Root,
 		}
 	}
+	planningPreflight := newPlanningPreflightProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
 	qualityPolicy := qualityCheckpointPolicy{
 		MaxPasses:       qualityCheckpointPasses,
 		CriticAvailable: critic.Enabled,
@@ -875,6 +878,16 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		return err
 	}
 	if err := writer.Write(session.Event{
+		"type":       "planning_preflight_profile",
+		"session_id": runner.SessionID,
+		"enabled":    planningPreflight.Enabled,
+		"provider":   planningPreflight.Provider,
+		"model":      planningPreflight.Model,
+		"message":    planningPreflight.Message,
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
 		"type":             "quality_checkpoint_profile",
 		"session_id":       runner.SessionID,
 		"enabled":          qualityPolicy.Enabled(),
@@ -895,6 +908,15 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"message":          qualityRepairPolicy.Message(),
 	}); err != nil {
 		return err
+	}
+	var planningLeadMessage string
+	if payload, ran, err := runPlanningPreflight(ctx, writer, runner.SessionID, planningPreflight, runner.Prompt, vision.Enabled); err != nil {
+		return err
+	} else if ran && planningPreflightRequiresQualityPlan(payload) {
+		runner.QualityPlanRequired = true
+		runner.QualityPlanRequirementReason = payload.Reason
+		runner.QualityPlanRequirementScope = payload.Scope
+		planningLeadMessage = planningPreflightLeadMessage(payload)
 	}
 	if err := writer.Write(session.Event{
 		"type":       "user_message",
@@ -960,6 +982,9 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: runner.Prompt},
 		}
+	}
+	if strings.TrimSpace(planningLeadMessage) != "" {
+		messages = append(messages, modeladapter.Message{Role: "user", Content: planningLeadMessage})
 	}
 	toolOptions := modelToolOptions(toolProfile, fileLimits)
 	toolOptions.WebSearchEnabled = webSearchEnabled

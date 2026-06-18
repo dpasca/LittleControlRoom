@@ -144,7 +144,7 @@ type lcagentSession struct {
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
-const lcagentDefaultQualityCheckpointPasses = 1
+const lcagentDefaultQualityCheckpointPasses = 0
 const lcagentDefaultQualityRepairPasses = 3
 
 func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
@@ -1522,6 +1522,7 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
 		"--require-final-response-tool",
+		"--planning-preflight",
 		"--quality-checkpoint-passes", strconv.Itoa(lcagentDefaultQualityCheckpointPasses),
 		"--quality-repair-passes", strconv.Itoa(lcagentDefaultQualityRepairPasses),
 	)
@@ -2092,6 +2093,21 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
+	case "planning_preflight_result":
+		text := lcagentPlanningPreflightText(event)
+		s.mu.Lock()
+		s.status = text
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
+	case "planning_preflight_failed":
+		message := firstNonEmpty(rawJSONString(event["message"]), "planning preflight failed")
+		text := "LCAgent planning preflight failed: " + message
+		s.mu.Lock()
+		s.status = text
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
 	case "quality_plan_update":
 		s.handleLCAgentQualityPlanUpdate(event)
 	case "critic_review_result":
@@ -2496,6 +2512,20 @@ func lcagentQualityRepairClearedText(pass, maxPasses int) string {
 		return fmt.Sprintf("LCAgent quality repair cleared after %d/%d", pass, maxPasses)
 	}
 	return fmt.Sprintf("LCAgent quality repair cleared after %d", pass)
+}
+
+func lcagentPlanningPreflightText(event map[string]json.RawMessage) string {
+	scope := firstNonEmpty(rawJSONString(event["scope"]), "unknown")
+	artifactType := strings.TrimSpace(rawJSONString(event["artifact_type"]))
+	requiresPlan := rawJSONBool(event["requires_quality_plan"])
+	text := "LCAgent planning preflight: " + scope
+	if artifactType != "" && artifactType != "none" {
+		text += " " + artifactType
+	}
+	if requiresPlan {
+		text += "; quality plan required"
+	}
+	return text
 }
 
 type lcagentQualityPlanStats struct {
