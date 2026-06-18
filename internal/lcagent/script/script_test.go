@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -902,6 +903,72 @@ func TestRunnerPhaseWriteGateAllowsActivePhaseCreateFile(t *testing.T) {
 	if gate.request.ActivePhase.Name != "render baseline" {
 		t.Fatalf("gate request active phase = %#v", gate.request.ActivePhase)
 	}
+	if gate.calls != 1 {
+		t.Fatalf("gate calls after first write = %d, want 1", gate.calls)
+	}
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "replace_text",
+		Args: raw(`{"path":"skate.cpp","old_text":"// render baseline only\n","new_text":"// render baseline only\n// small compile fix\n","expected_replacements":1}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("same-phase replace_text result = %#v err=%v, want success", result, err)
+	}
+	if gate.calls != 1 {
+		t.Fatalf("same-phase write should not call gate again; calls=%d", gate.calls)
+	}
+}
+
+func TestRunnerPhaseWriteGateFailureFailsOpenForCurrentPhase(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	gate := &fakePhaseWriteGate{err: errors.New("utility JSON unavailable")}
+	runner := Runner{
+		Session:             writer,
+		SessionID:           sessionID,
+		Prompt:              "make a boardwalk skate game",
+		Patch:               tools.PatchApplier{Workspace: w},
+		PhaseWriteGate:      gate,
+		QualityPlanRequired: true,
+		qualityPlan: &QualityPlan{
+			ArtifactType: "game",
+			Phases: []QualityPlanPhase{
+				{Name: "render baseline", Status: "in_progress", Acceptance: []string{"ground and player marker are visible"}},
+				{Name: "environment", Status: "planned"},
+			},
+		},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "create_file",
+		Args: raw(`{"path":"skate.cpp","content":"int main() { return 0; }\n"}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("create_file after gate failure = %#v err=%v, want fail-open success", result, err)
+	}
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "replace_text",
+		Args: raw(`{"path":"skate.cpp","old_text":"return 0;","new_text":"return 0;","expected_replacements":1}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("same-phase replace_text after gate failure = %#v err=%v, want success", result, err)
+	}
+	if gate.calls != 1 {
+		t.Fatalf("gate calls after fail-open phase admission = %d, want 1", gate.calls)
+	}
+	if text := stream.String(); !strings.Contains(text, `"type":"phase_write_gate_failed"`) || !strings.Contains(text, `"fail_open":true`) {
+		t.Fatalf("stream missing fail-open gate event:\n%s", text)
+	}
 }
 
 func TestRunnerFinalResponseAuditBlocksCompletedUntilQualityPlanEvidence(t *testing.T) {
@@ -995,8 +1062,29 @@ func TestRunnerFinalResponseAuditBlocksCompletedWhenRequiredQualityPlanMissing(t
 	}
 
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "partial", Outcome: "partial"})
+	if audit.Code != "quality_plan_partial_unplanned" || !audit.Blocking {
+		t.Fatalf("audit = %#v, partial outcome should be blocked before required quality plan exists", audit)
+	}
+}
+
+func TestRunnerFinalResponseAuditBlocksPartialWithOpenRequiredQualityPlan(t *testing.T) {
+	runner := Runner{
+		QualityPlanRequired: true,
+		qualityPlan: &QualityPlan{
+			ArtifactType: "game",
+			Phases: []QualityPlanPhase{
+				{Name: "foundation", Status: "verified", Evidence: []string{"compile passed"}},
+				{Name: "boardwalk environment", Status: "planned"},
+			},
+		},
+	}
+	audit := runner.FinalResponseAudit(Action{Type: "final_response", Summary: "phase 1 done", Outcome: "partial"})
+	if audit.Code != "quality_plan_partial_unfinished" || !audit.Blocking || !strings.Contains(audit.Message, "boardwalk environment") {
+		t.Fatalf("audit = %#v, want partial blocked while required phase remains", audit)
+	}
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "blocked by missing SDK", Outcome: "blocked"})
 	if audit.Blocking {
-		t.Fatalf("audit = %#v, partial outcome should not be blocked by missing plan", audit)
+		t.Fatalf("blocked outcome should be allowed for concrete stop conditions, audit=%#v", audit)
 	}
 }
 
@@ -1070,9 +1158,11 @@ type fakePhaseWriteGate struct {
 	request PhaseWriteGateRequest
 	result  PhaseWriteGateResult
 	err     error
+	calls   int
 }
 
 func (f *fakePhaseWriteGate) EvaluatePhaseWrite(_ context.Context, request PhaseWriteGateRequest) (PhaseWriteGateResult, error) {
+	f.calls++
 	f.request = request
 	return f.result, f.err
 }

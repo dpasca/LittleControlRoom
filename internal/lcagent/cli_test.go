@@ -3688,6 +3688,9 @@ func TestShouldBounceFinalAuditAlwaysBouncesBrowserWaitRequirement(t *testing.T)
 	if shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: true}, 1) {
 		t.Fatal("ordinary blocking audit should keep the existing one-feedback limit")
 	}
+	if !shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: true, Code: "quality_plan_partial_unfinished"}, 3) {
+		t.Fatal("quality plan audit should keep bouncing until the phase plan is resolved")
+	}
 }
 
 func TestRunExecOpenRouterFeedsPatchFailureBackToModel(t *testing.T) {
