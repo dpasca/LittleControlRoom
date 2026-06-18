@@ -1620,6 +1620,7 @@ type qualityRepairState struct {
 	LastSummary               string
 	LastFindings              []criticReviewFinding
 	FileTouchEventsAtFeedback int
+	InspectionAtFeedback      int
 	VerificationAtFeedback    int
 	LastFeedbackMessage       string
 	LastFeedbackPacketHash    string
@@ -1636,6 +1637,7 @@ func (s *qualityRepairState) recordFeedback(runner script.Runner, review criticR
 	s.LastSummary = strings.TrimSpace(review.Summary)
 	s.LastFindings = cleanCriticFindings(review.Findings)
 	s.FileTouchEventsAtFeedback = runner.FileTouchEvents()
+	s.InspectionAtFeedback = runner.InspectionEvidenceEvents()
 	s.VerificationAtFeedback = len(runner.VerificationDetails())
 	s.LastFeedbackMessage = strings.TrimSpace(feedback)
 	s.LastFeedbackPacketHash = strings.TrimSpace(packetHash)
@@ -1659,6 +1661,7 @@ func (s *qualityRepairState) hasEvidenceAfterFeedback(runner script.Runner) bool
 		return true
 	}
 	return runner.FileTouchEvents() > s.FileTouchEventsAtFeedback ||
+		runner.InspectionEvidenceEvents() > s.InspectionAtFeedback ||
 		len(runner.VerificationDetails()) > s.VerificationAtFeedback
 }
 
@@ -1874,7 +1877,7 @@ func qualityRepairFeedbackMessage(criticFeedback string, review criticReviewPayl
 	fmt.Fprintf(&b, "Quality repair required (%d/%d): LCAgent critic found material issues that block a completed or unqualified final_response.", pass, maxPasses)
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimSpace(criticFeedback))
-	b.WriteString("\n\nDo not satisfy this by only weakening the final summary. Make a concrete artifact change or run a concrete verification/re-analysis step targeted at the finding, then call final_response again with the new evidence.")
+	b.WriteString("\n\nDo not satisfy this by only weakening the final summary. Make a concrete artifact change, perform targeted inspection, or run a concrete verification/re-analysis step targeted at the finding, then call final_response again with the new evidence.")
 	if pass >= maxPasses {
 		b.WriteString(" This is the final configured repair pass; if the issue remains after this pass, finish with outcome partial, blocked, or failed instead of completed.")
 	}
@@ -1883,12 +1886,12 @@ func qualityRepairFeedbackMessage(criticFeedback string, review criticReviewPayl
 
 func qualityRepairNoEvidenceMessage(state qualityRepairState, policy qualityRepairPolicy) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Quality repair still required (%d/%d): the previous critic finding has not been followed by a new artifact change or verification check.", state.Passes, policy.MaxPasses)
+	fmt.Fprintf(&b, "Quality repair still required (%d/%d): the previous critic finding has not been followed by a new artifact change, targeted inspection, image analysis, or verification check.", state.Passes, policy.MaxPasses)
 	if summary := strings.TrimSpace(state.LastFeedbackCriticSummary); summary != "" {
 		b.WriteString("\n\nPrevious critic summary: ")
 		b.WriteString(criticTrimFeedbackField(summary, 500))
 	}
-	b.WriteString("\n\nBefore claiming completion, make a concrete artifact change or run a targeted verification/re-analysis step that addresses the finding. If you cannot or should not fix it within this run, call final_response with outcome partial, blocked, or failed and explain the unresolved issue.")
+	b.WriteString("\n\nBefore claiming completion, make a concrete artifact change, inspect the targeted artifact area, or run a focused verification/re-analysis step that addresses the finding. If you cannot or should not fix it within this run, call final_response with outcome partial, blocked, or failed and explain the unresolved issue.")
 	return b.String()
 }
 
