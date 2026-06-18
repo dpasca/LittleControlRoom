@@ -140,6 +140,7 @@ type lcagentSession struct {
 	qualityPlanRequiresRuntime   bool
 	qualityPlanRequiresVisual    bool
 	qualityPlanLastSummary       string
+	qualityPlanPhaseItems        []QualityPlanPhaseSnapshot
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
@@ -2504,6 +2505,7 @@ type lcagentQualityPlanStats struct {
 	NeedsRepair     int
 	RequiresRuntime bool
 	RequiresVisual  bool
+	Items           []QualityPlanPhaseSnapshot
 }
 
 func lcagentQualityPlanStatsFromEvent(event map[string]json.RawMessage) lcagentQualityPlanStats {
@@ -2512,12 +2514,17 @@ func lcagentQualityPlanStatsFromEvent(event map[string]json.RawMessage) lcagentQ
 		RequiresVisual:  rawJSONBool(event["requires_visual_verification"]),
 	}
 	var phases []struct {
-		Status string `json:"status"`
+		Name     string   `json:"name"`
+		Status   string   `json:"status"`
+		Evidence []string `json:"evidence"`
+		Notes    string   `json:"notes"`
 	}
 	_ = json.Unmarshal(event["phases"], &phases)
 	stats.Phases = len(phases)
-	for _, phase := range phases {
-		switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(phase.Status), "-", "_")) {
+	stats.Items = make([]QualityPlanPhaseSnapshot, 0, len(phases))
+	for i, phase := range phases {
+		status := lcagentQualityPlanStatusKey(phase.Status)
+		switch status {
 		case "verified":
 			stats.Verified++
 		case "skipped":
@@ -2525,8 +2532,31 @@ func lcagentQualityPlanStatsFromEvent(event map[string]json.RawMessage) lcagentQ
 		case "needs_repair":
 			stats.NeedsRepair++
 		}
+		name := strings.TrimSpace(phase.Name)
+		if name == "" {
+			name = fmt.Sprintf("phase %d", i+1)
+		}
+		evidenceCount := 0
+		for _, evidence := range phase.Evidence {
+			if strings.TrimSpace(evidence) != "" {
+				evidenceCount++
+			}
+		}
+		stats.Items = append(stats.Items, QualityPlanPhaseSnapshot{
+			Name:          name,
+			Status:        status,
+			EvidenceCount: evidenceCount,
+			Notes:         strings.TrimSpace(phase.Notes),
+		})
 	}
 	return stats
+}
+
+func lcagentQualityPlanStatusKey(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	status = strings.ReplaceAll(status, "-", "_")
+	status = strings.ReplaceAll(status, " ", "_")
+	return status
 }
 
 func lcagentQualityPlanUpdateText(stats lcagentQualityPlanStats) string {
@@ -2569,9 +2599,19 @@ func (s *lcagentSession) handleLCAgentQualityPlanUpdate(event map[string]json.Ra
 	s.qualityPlanRequiresRuntime = stats.RequiresRuntime
 	s.qualityPlanRequiresVisual = stats.RequiresVisual
 	s.qualityPlanLastSummary = text
+	s.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(stats.Items)
 	s.touchLocked()
 	s.mu.Unlock()
 	s.appendAsync(TranscriptStatus, text)
+}
+
+func cloneQualityPlanPhaseSnapshots(in []QualityPlanPhaseSnapshot) []QualityPlanPhaseSnapshot {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]QualityPlanPhaseSnapshot, len(in))
+	copy(out, in)
+	return out
 }
 
 func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.RawMessage) {
@@ -2898,6 +2938,7 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	s.qualityPlanRequiresRuntime = replay.qualityPlanRequiresRuntime
 	s.qualityPlanRequiresVisual = replay.qualityPlanRequiresVisual
 	s.qualityPlanLastSummary = strings.TrimSpace(replay.qualityPlanLastSummary)
+	s.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(replay.qualityPlanPhaseItems)
 	s.suggestedInputDraftID = strings.TrimSpace(replay.suggestedInputDraftID)
 	s.suggestedInputDraft = strings.TrimSpace(replay.suggestedInputDraft)
 	label := firstNonEmpty(s.threadID, "history")
@@ -3398,6 +3439,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		QualityPlanRequiresRuntime:   s.qualityPlanRequiresRuntime,
 		QualityPlanRequiresVisual:    s.qualityPlanRequiresVisual,
 		QualityPlanLastSummary:       strings.TrimSpace(s.qualityPlanLastSummary),
+		QualityPlanPhaseItems:        cloneQualityPlanPhaseSnapshots(s.qualityPlanPhaseItems),
 		CriticActive:                 s.criticActive,
 		CriticReviews:                s.criticReviews,
 		CriticConsultations:          s.criticConsultations,

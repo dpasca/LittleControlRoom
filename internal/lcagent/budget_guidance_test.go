@@ -22,9 +22,9 @@ func TestOpenRouterProgressGuidancePhases(t *testing.T) {
 	if mid.Phase != "consolidation" || mid.ForceSynthesis {
 		t.Fatalf("mid guidance = %+v, want consolidation without forced synthesis", mid)
 	}
-	late := openRouterGuidanceForTurn(24, 32, messages, nil)
-	if late.Phase != "synthesis" || !late.ForceSynthesis || late.TurnsRemaining != 8 {
-		t.Fatalf("late guidance = %+v, want forced synthesis with 8 turns remaining", late)
+	late := openRouterGuidanceForTurn(120, 128, messages, nil)
+	if late.Phase != "consolidation" || late.ForceSynthesis || late.TurnsRemaining != 8 {
+		t.Fatalf("late guidance = %+v, want consolidation without forced synthesis near hard cap", late)
 	}
 	shortRun := openRouterGuidanceForTurn(13, 16, messages, nil)
 	if shortRun.ForceSynthesis {
@@ -40,14 +40,25 @@ func TestOpenRouterProgressNoteIncludesReadLedgerAndSynthesisInstructions(t *tes
 	}) {
 		t.Fatal("ledger did not record read result")
 	}
-	guidance := openRouterGuidanceForTurn(24, 32, []modeladapter.Message{{Role: "tool", Content: `{}`}}, ledger)
+	guidance := openRouterProgressGuidance{
+		Turn:            24,
+		MaxTurns:        128,
+		TurnsRemaining:  104,
+		Phase:           "synthesis",
+		ForceSynthesis:  true,
+		SynthesisReason: "stalled",
+		NoProgressTurns: openRouterStallSynthesisAfterTurns,
+		ToolResults:     1,
+		ReadLedgerFiles: 1,
+	}
 	note := openRouterProgressNote(guidance, ledger)
 	for _, want := range []string{
 		openRouterProgressNotePrefix,
-		"turn: 24 of 32",
+		"turn: 24 of 128",
 		"phase: synthesis",
 		"- a.go: lines 1-80 of 200",
 		"Tools are unavailable",
+		"have not produced new tool evidence",
 		"not missing merely because there is no same-named file",
 	} {
 		if !strings.Contains(note, want) {

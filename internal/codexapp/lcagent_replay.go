@@ -62,6 +62,7 @@ type lcagentReplay struct {
 	qualityPlanRequiresRuntime   bool
 	qualityPlanRequiresVisual    bool
 	qualityPlanLastSummary       string
+	qualityPlanPhaseItems        []QualityPlanPhaseSnapshot
 	suggestedInputDraftID        string
 	suggestedInputDraft          string
 	tokenUsage                   *threadTokenUsage
@@ -345,6 +346,9 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	total.qualityPlanRequiresVisual = next.qualityPlanRequiresVisual
 	if next.qualityPlanLastSummary != "" {
 		total.qualityPlanLastSummary = next.qualityPlanLastSummary
+	}
+	if next.qualityPlanPhaseItems != nil {
+		total.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(next.qualityPlanPhaseItems)
 	}
 	if next.suggestedInputDraftID != "" || next.suggestedInputDraft != "" {
 		total.suggestedInputDraftID = next.suggestedInputDraftID
@@ -929,6 +933,7 @@ func (r *lcagentReplay) applyQualityPlanUpdate(event map[string]json.RawMessage)
 	r.qualityPlanRequiresRuntime = stats.RequiresRuntime
 	r.qualityPlanRequiresVisual = stats.RequiresVisual
 	r.qualityPlanLastSummary = strings.TrimSpace(text)
+	r.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(stats.Items)
 	r.appendEntry(TranscriptStatus, text)
 }
 

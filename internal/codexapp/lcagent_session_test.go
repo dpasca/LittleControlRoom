@@ -1908,9 +1908,9 @@ func TestLCAgentReplayRestoresQualityPlanStats(t *testing.T) {
 			"requires_runtime_verification": true,
 			"requires_visual_verification":  true,
 			"phases": []map[string]any{
-				{"name": "core movement", "status": "verified"},
-				{"name": "boardwalk environment", "status": "needs_repair"},
-				{"name": "HUD", "status": "skipped"},
+				{"name": "core movement", "status": "verified", "evidence": []string{"runtime smoke"}},
+				{"name": "boardwalk environment", "status": "needs_repair", "notes": "needs visual pass"},
+				{"name": "HUD", "status": "skipped", "notes": "not needed"},
 			},
 		},
 		{"type": "turn_complete", "session_id": sessionID, "summary": "partial answer", "final_outcome": "partial", "verification_status": "not_run"},
@@ -1933,6 +1933,15 @@ func TestLCAgentReplayRestoresQualityPlanStats(t *testing.T) {
 	}
 	if !strings.Contains(snapshot.QualityPlanLastSummary, "visual evidence required") {
 		t.Fatalf("quality plan summary = %q", snapshot.QualityPlanLastSummary)
+	}
+	if len(snapshot.QualityPlanPhaseItems) != 3 {
+		t.Fatalf("quality plan phase items = %#v, want 3", snapshot.QualityPlanPhaseItems)
+	}
+	if item := snapshot.QualityPlanPhaseItems[0]; item.Name != "core movement" || item.Status != "verified" || item.EvidenceCount != 1 {
+		t.Fatalf("first quality plan phase = %#v", item)
+	}
+	if item := snapshot.QualityPlanPhaseItems[1]; item.Name != "boardwalk environment" || item.Status != "needs_repair" || item.Notes != "needs visual pass" {
+		t.Fatalf("second quality plan phase = %#v", item)
 	}
 	if !strings.Contains(snapshot.Transcript, "LCAgent quality plan updated: 3 phases") {
 		t.Fatalf("replayed transcript missing quality plan update:\n%s", snapshot.Transcript)

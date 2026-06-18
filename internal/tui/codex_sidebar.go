@@ -683,6 +683,7 @@ func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string 
 		if len(requirements) > 0 {
 			rows = append(rows, embeddedSidebarFieldRow("Evidence", strings.Join(requirements, "+"), detailWarningStyle, width))
 		}
+		rows = append(rows, embeddedSidebarQualityPhaseRows(snapshot.QualityPlanPhaseItems, width)...)
 	}
 	if summary := strings.TrimSpace(snapshot.QualityCheckpointLastSummary); summary != "" {
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
@@ -694,6 +695,66 @@ func embeddedSidebarQualityRows(snapshot codexapp.Snapshot, width int) []string 
 		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
 	}
 	return rows
+}
+
+func embeddedSidebarQualityPhaseRows(phases []codexapp.QualityPlanPhaseSnapshot, width int) []string {
+	if len(phases) == 0 {
+		return nil
+	}
+	const limit = 8
+	rows := []string{detailMutedStyle.Render(fitLine("Plan phases", width))}
+	count := len(phases)
+	if count > limit {
+		count = limit
+	}
+	for _, phase := range phases[:count] {
+		status := embeddedSidebarQualityPhaseStatus(phase.Status)
+		text := status + " " + strings.TrimSpace(phase.Name)
+		if strings.TrimSpace(phase.Name) == "" {
+			text = status + " phase"
+		}
+		if note := strings.TrimSpace(phase.Notes); note != "" && (strings.EqualFold(phase.Status, "needs_repair") || strings.EqualFold(phase.Status, "skipped")) {
+			text += ": " + note
+		} else if phase.EvidenceCount > 0 {
+			evidenceLabel := "evidence"
+			text += fmt.Sprintf(" [%d %s]", phase.EvidenceCount, evidenceLabel)
+		}
+		rows = append(rows, embeddedSidebarQualityPhaseStyle(phase.Status).Render(fitLine(text, width)))
+	}
+	if len(phases) > limit {
+		rows = append(rows, detailMutedStyle.Render(fitLine(fmt.Sprintf("+%d more phases", len(phases)-limit), width)))
+	}
+	return rows
+}
+
+func embeddedSidebarQualityPhaseStatus(status string) string {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(status), "-", "_")) {
+	case "verified":
+		return "ok"
+	case "implemented":
+		return "impl"
+	case "in_progress":
+		return "doing"
+	case "needs_repair":
+		return "fix"
+	case "skipped":
+		return "skip"
+	case "planned", "":
+		return "todo"
+	default:
+		return strings.ToLower(strings.TrimSpace(status))
+	}
+}
+
+func embeddedSidebarQualityPhaseStyle(status string) lipgloss.Style {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(status), "-", "_")) {
+	case "verified", "implemented":
+		return detailValueStyle
+	case "needs_repair":
+		return detailWarningStyle
+	default:
+		return detailMutedStyle
+	}
 }
 
 func embeddedSidebarVisionModelLabel(snapshot codexapp.Snapshot) string {
