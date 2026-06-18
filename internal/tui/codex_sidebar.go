@@ -999,6 +999,9 @@ func embeddedSidebarQualityDetailRows(snapshot codexapp.Snapshot, width int) []s
 		if snapshot.QualityPlanRequiresVisual {
 			requirements = append(requirements, "visual")
 		}
+		if snapshot.QualityPlanRequiresTemporal {
+			requirements = append(requirements, "temporal")
+		}
 		if len(requirements) > 0 {
 			rows = append(rows, embeddedSidebarFieldRow("Evidence", strings.Join(requirements, "+"), detailWarningStyle, width))
 		}

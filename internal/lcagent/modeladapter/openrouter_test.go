@@ -105,13 +105,16 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["update_plan"], `{"items":[{"step":"Inspect files","status":"completed"}`) {
 		t.Fatalf("update_plan description should include a concrete args example: %q", descriptions["update_plan"])
 	}
-	if !strings.Contains(descriptions["update_quality_plan"], "phased quality plan") || !strings.Contains(descriptions["update_quality_plan"], "completed final_response is audited") {
+	if !strings.Contains(descriptions["update_quality_plan"], "phased quality plan") || !strings.Contains(descriptions["update_quality_plan"], "completed final_response is audited") || !strings.Contains(descriptions["update_quality_plan"], "comparison_path") {
 		t.Fatalf("update_quality_plan description should explain phased audit behavior: %q", descriptions["update_quality_plan"])
 	}
 	qualityPlanSpec := toolSpec(t, Tools(), "update_quality_plan")
 	qualityPlanProps := qualityPlanSpec.Parameters["properties"].(map[string]any)
 	if _, ok := qualityPlanProps["phases"]; !ok {
 		t.Fatalf("update_quality_plan schema missing phases: %#v", qualityPlanProps)
+	}
+	if _, ok := qualityPlanProps["requires_temporal_visual_verification"]; !ok {
+		t.Fatalf("update_quality_plan schema missing requires_temporal_visual_verification: %#v", qualityPlanProps)
 	}
 	if names["web_search"] {
 		t.Fatalf("Tools() should not expose web_search unless it is enabled")
@@ -156,11 +159,11 @@ func TestToolsWithOptionsExposeConsultCriticWhenEnabled(t *testing.T) {
 
 func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "analyze_image")
-	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") {
+	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") {
 		t.Fatalf("analyze_image description = %q", spec.Description)
 	}
 	props := spec.Parameters["properties"].(map[string]any)
-	for _, want := range []string{"path", "question", "context", "checks"} {
+	for _, want := range []string{"path", "comparison_path", "question", "context", "checks"} {
 		if _, ok := props[want]; !ok {
 			t.Fatalf("analyze_image missing %s property: %#v", want, props)
 		}

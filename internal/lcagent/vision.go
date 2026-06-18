@@ -1,9 +1,15 @@
 package lcagent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/draw"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -105,14 +111,25 @@ func (v visionAnalyzer) AnalyzeImage(ctx context.Context, request script.ImageAn
 	if !v.profile.Enabled || v.profile.Analyzer.client == nil {
 		return script.ImageAnalysisResult{}, fmt.Errorf("vision client is not configured")
 	}
-	image, err := loadVisionImage(request.Path, v.workspaceRoot)
+	primaryImage, err := loadVisionImage(request.Path, v.workspaceRoot)
 	if err != nil {
 		return script.ImageAnalysisResult{}, err
 	}
-	prompt := buildVisionPrompt(request, image)
+	promptImage := primaryImage
+	if comparisonPath := strings.TrimSpace(request.ComparisonPath); comparisonPath != "" {
+		comparisonImage, err := loadVisionImage(comparisonPath, v.workspaceRoot)
+		if err != nil {
+			return script.ImageAnalysisResult{}, err
+		}
+		promptImage, err = composeVisionComparisonImage(primaryImage, comparisonImage)
+		if err != nil {
+			return script.ImageAnalysisResult{}, err
+		}
+	}
+	prompt := buildVisionPrompt(request, promptImage)
 	completion, err := v.profile.Analyzer.client.CompleteVision(ctx, prompt, modeladapter.ImageInput{
-		MIMEType: image.MIMEType,
-		Data:     image.Data,
+		MIMEType: promptImage.MIMEType,
+		Data:     promptImage.Data,
 	})
 	if err != nil {
 		return script.ImageAnalysisResult{}, err
@@ -172,6 +189,43 @@ func loadVisionImage(path, workspaceRoot string) (visionImage, error) {
 	}, nil
 }
 
+func composeVisionComparisonImage(left, right visionImage) (visionImage, error) {
+	leftImage, _, err := image.Decode(bytes.NewReader(left.Data))
+	if err != nil {
+		return visionImage{}, fmt.Errorf("decode comparison primary image %s: %w", left.Path, err)
+	}
+	rightImage, _, err := image.Decode(bytes.NewReader(right.Data))
+	if err != nil {
+		return visionImage{}, fmt.Errorf("decode comparison image %s: %w", right.Path, err)
+	}
+	leftBounds := leftImage.Bounds()
+	rightBounds := rightImage.Bounds()
+	const gap = 8
+	width := leftBounds.Dx() + gap + rightBounds.Dx()
+	height := max(leftBounds.Dy(), rightBounds.Dy())
+	if width <= 0 || height <= 0 {
+		return visionImage{}, fmt.Errorf("comparison images have invalid dimensions")
+	}
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(canvas, image.Rect(0, 0, leftBounds.Dx(), leftBounds.Dy()), leftImage, leftBounds.Min, draw.Src)
+	rightPoint := image.Pt(leftBounds.Dx()+gap, 0)
+	draw.Draw(canvas, image.Rectangle{Min: rightPoint, Max: rightPoint.Add(rightBounds.Size())}, rightImage, rightBounds.Min, draw.Src)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, canvas); err != nil {
+		return visionImage{}, fmt.Errorf("encode comparison image: %w", err)
+	}
+	if buf.Len() > maxVisionImageBytes {
+		return visionImage{}, fmt.Errorf("comparison image is too large: %d bytes, max is %d", buf.Len(), maxVisionImageBytes)
+	}
+	return visionImage{
+		Path:     left.Path + " + " + right.Path,
+		MIMEType: "image/png",
+		Data:     buf.Bytes(),
+		Bytes:    int64(buf.Len()),
+	}, nil
+}
+
 func resolveVisionImagePath(path, workspaceRoot string) (string, error) {
 	clean := filepath.Clean(strings.TrimSpace(path))
 	if filepath.IsAbs(clean) {
@@ -214,7 +268,13 @@ func detectVisionMIMEType(path string, data []byte) string {
 func buildVisionPrompt(request script.ImageAnalysisRequest, image visionImage) string {
 	var b strings.Builder
 	b.WriteString("Inspect the attached image pixels and answer the user's visual question.\n")
-	fmt.Fprintf(&b, "Image path: %s\n", image.Path)
+	if comparisonPath := strings.TrimSpace(request.ComparisonPath); comparisonPath != "" {
+		b.WriteString("The attached image is a side-by-side temporal comparison: left is the primary image, right is the comparison image.\n")
+		fmt.Fprintf(&b, "Left image path: %s\n", strings.TrimSpace(request.Path))
+		fmt.Fprintf(&b, "Right image path: %s\n", comparisonPath)
+	} else {
+		fmt.Fprintf(&b, "Image path: %s\n", image.Path)
+	}
 	fmt.Fprintf(&b, "Image MIME type: %s\n", image.MIMEType)
 	fmt.Fprintf(&b, "Image bytes: %d\n", image.Bytes)
 	if userRequest := strings.TrimSpace(request.UserRequest); userRequest != "" {

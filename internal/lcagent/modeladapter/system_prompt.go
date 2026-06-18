@@ -83,6 +83,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.VisionAnalysisEnabled {
 		lines = append(lines,
 			"analyze_image is available for screenshot and image inspection. When user-facing visual quality matters, capture or locate the image, then use analyze_image with the expected visual state and specific checks before making final visual claims.",
+			"For dynamic, interactive, animated, camera-driven, live-updating, or otherwise stateful visual output, compare two observations separated in time; when available or required, use analyze_image with comparison_path so the vision model can judge temporal stability side by side.",
 		)
 	}
 	if !opts.BrowserAvailable {
@@ -122,7 +123,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"At low autonomy, use run_command argv for approved verification forms such as go test/list/vet, make test, npm test, pnpm exec wrappers around tsc/eslint/prettier/biome checks, cargo test/check, pytest, python -m unittest, ruff/prettier/eslint checks, and tsc --noEmit; shell strings and broad write-like commands are denied.",
 		"At low autonomy, toolchain probes such as which pnpm or pnpm --version are allowed as read-only inspection; dependency installs, package updates, corepack enable, and publish/deploy actions require medium autonomy or a manual user step.",
 		"If LCAgent sends verification feedback, address it before final_response: repair failing checks, choose an approved argv-only alternative after denial, narrow timed-out checks, or clearly state why verification is blocked.",
-		"If LCAgent sends quality-plan feedback, either update_quality_plan with verified/skipped phase evidence after concrete work, gather the missing runtime or visual evidence, or finish with partial/blocked/failed instead of completed.",
+		"If LCAgent sends quality-plan feedback, either update_quality_plan with verified/skipped phase evidence after concrete work, gather the missing runtime, visual, or temporal visual evidence, or finish with partial/blocked/failed instead of completed.",
 		"Never write provider tool-call markup such as DSML in assistant text; call tools only through structured tool_calls.",
 		"Skill descriptions in this prompt are metadata only; call load_skill before relying on any skill instructions.",
 		"If the user asks you to create a new project, app, game, document, or single-file artifact from scratch, an empty workspace is not a blocker. Choose a conventional workspace-relative filename when the user did not specify one, then use create_file.",
