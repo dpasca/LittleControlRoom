@@ -423,7 +423,7 @@ func TestRenderTopStatusLineShowsCPUUsageAtRight(t *testing.T) {
 	if !strings.Contains(rendered, "Ready") {
 		t.Fatalf("top status line missing left status: %q", rendered)
 	}
-	if !strings.HasSuffix(rendered, "CPU 133% node 82%") {
+	if !strings.HasSuffix(rendered, "CPU 133% server.js 82%") {
 		t.Fatalf("top status line should pin CPU summary to the right, got %q", rendered)
 	}
 }

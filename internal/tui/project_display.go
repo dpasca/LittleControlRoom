@@ -508,11 +508,15 @@ func projectRunSummary(snapshot projectrun.Snapshot, savedCommand string) (strin
 }
 
 func (m Model) projectLocalInstanceRunSummary(projectPath string) (string, bool) {
-	snapshot, ok := m.projectPrimaryLocalInstanceSnapshot(projectPath)
-	if !ok {
+	snapshots := m.projectLocalInstanceSnapshots(projectPath)
+	if len(snapshots) == 0 {
 		return "", false
 	}
+	snapshot := snapshots[0]
 	label, state := projectRunSummary(snapshot, "")
+	if state == projectRunActive && len(snapshots) > 1 && strings.TrimSpace(label) != "" {
+		label += fmt.Sprintf("+%d", len(snapshots)-1)
+	}
 	return label, state == projectRunActive && strings.TrimSpace(label) != ""
 }
 
@@ -549,7 +553,8 @@ func projectRunCommandLabel(command string) string {
 		if isShellEnvAssignment(token) {
 			continue
 		}
-		switch token {
+		tokenBase := filepath.Base(token)
+		switch tokenBase {
 		case "env", "command", "nohup", "time":
 			continue
 		case "sudo":
@@ -569,9 +574,40 @@ func projectRunCommandLabel(command string) string {
 				}
 			}
 			return "npx"
+		case "node", "nodejs", "bun", "deno":
+			if script := commandInterpreterTargetLabel(tokens[i+1:]); script != "" {
+				return script
+			}
+			return tokenBase
+		case "python", "python2", "python3", "ruby", "perl", "php":
+			if script := commandInterpreterTargetLabel(tokens[i+1:]); script != "" {
+				return script
+			}
+			return tokenBase
 		default:
-			return filepath.Base(token)
+			return tokenBase
 		}
+	}
+	return ""
+}
+
+func commandInterpreterTargetLabel(tokens []string) string {
+	for i := 0; i < len(tokens); i++ {
+		token := trimRunToken(tokens[i])
+		if token == "" {
+			continue
+		}
+		if token == "-m" && i+1 < len(tokens) {
+			module := trimRunToken(tokens[i+1])
+			if module != "" {
+				return filepath.Base(module)
+			}
+			continue
+		}
+		if strings.HasPrefix(token, "-") {
+			continue
+		}
+		return filepath.Base(token)
 	}
 	return ""
 }

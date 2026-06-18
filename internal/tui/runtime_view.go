@@ -23,6 +23,20 @@ func (m Model) projectRuntimeSnapshot(projectPath string) projectrun.Snapshot {
 }
 
 func (m Model) projectRuntimeSnapshots(projectPath string) []projectrun.Snapshot {
+	managed := m.projectManagedRuntimeSnapshots(projectPath)
+	local := m.projectLocalInstanceSnapshots(projectPath)
+	if len(local) == 0 {
+		return managed
+	}
+	if len(managed) == 0 {
+		return local
+	}
+	out := append([]projectrun.Snapshot(nil), managed...)
+	out = append(out, local...)
+	return out
+}
+
+func (m Model) projectManagedRuntimeSnapshots(projectPath string) []projectrun.Snapshot {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "." || projectPath == "" {
 		return nil
@@ -40,16 +54,7 @@ func (m Model) projectRuntimeSnapshots(projectPath string) []projectrun.Snapshot
 			managed = append(managed, snapshot)
 		}
 	}
-	local := m.projectLocalInstanceSnapshots(projectPath)
-	if len(local) == 0 {
-		return managed
-	}
-	if len(managed) == 0 {
-		return local
-	}
-	out := append([]projectrun.Snapshot(nil), managed...)
-	out = append(out, local...)
-	return out
+	return managed
 }
 
 func (m Model) projectLocalInstanceSnapshots(projectPath string) []projectrun.Snapshot {
@@ -126,6 +131,13 @@ func (m Model) projectLocalInstanceSummary(projectPath string) string {
 	if len(snapshots) == 0 {
 		return ""
 	}
+	if len(snapshots) > 1 {
+		ports := runtimeSnapshotPorts(snapshots)
+		if len(ports) > 0 {
+			return fmt.Sprintf("%d local listeners on %s", len(snapshots), joinPorts(ports))
+		}
+		return fmt.Sprintf("%d local listeners", len(snapshots))
+	}
 	snapshot := snapshots[0]
 	label := localInstanceDisplayLabel(snapshot)
 	if url := runtimePrimaryURL(snapshot); url != "" {
@@ -133,10 +145,54 @@ func (m Model) projectLocalInstanceSummary(projectPath string) string {
 	} else if len(snapshot.Ports) > 0 {
 		label += " on " + joinPorts(snapshot.Ports)
 	}
-	if len(snapshots) > 1 {
-		label += fmt.Sprintf(" (+%d more)", len(snapshots)-1)
+	return strings.TrimSpace(label)
+}
+
+func (m Model) projectLocalInstanceDetailSummary(projectPath, selectedID string) string {
+	snapshots := m.projectLocalInstanceSnapshots(projectPath)
+	if len(snapshots) == 0 {
+		return ""
+	}
+	selectedID = strings.TrimSpace(selectedID)
+	if len(snapshots) == 1 && selectedID != "" && strings.TrimSpace(snapshots[0].ID) == selectedID {
+		return ""
+	}
+	limit := min(4, len(snapshots))
+	parts := make([]string, 0, limit+1)
+	for i := 0; i < limit; i++ {
+		parts = append(parts, localInstanceDetailLabel(snapshots[i]))
+	}
+	if len(snapshots) > limit {
+		parts = append(parts, fmt.Sprintf("+%d more", len(snapshots)-limit))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func localInstanceDetailLabel(snapshot projectrun.Snapshot) string {
+	label := localInstanceDisplayLabel(snapshot)
+	if len(snapshot.Ports) > 0 {
+		label += " on " + joinPorts(snapshot.Ports)
 	}
 	return strings.TrimSpace(label)
+}
+
+func runtimeSnapshotPorts(snapshots []projectrun.Snapshot) []int {
+	seen := map[int]struct{}{}
+	ports := []int{}
+	for _, snapshot := range snapshots {
+		for _, port := range snapshot.Ports {
+			if port <= 0 {
+				continue
+			}
+			if _, ok := seen[port]; ok {
+				continue
+			}
+			seen[port] = struct{}{}
+			ports = append(ports, port)
+		}
+	}
+	sort.Ints(ports)
+	return ports
 }
 
 func localInstanceRuntimeSnapshot(instance procinspect.ProjectInstance) projectrun.Snapshot {
