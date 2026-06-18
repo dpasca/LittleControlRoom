@@ -1049,6 +1049,11 @@ func (m Model) applyCodexTranscriptRenderedMsg(msg codexTranscriptRenderedMsg) (
 		if msg.key.transcriptRev > currentKey.transcriptRev {
 			return m, nil
 		}
+		m.applyCodexTranscriptRenderedContent(msg)
+		if msg.key.transcriptRev < currentKey.transcriptRev {
+			return m, m.requestCodexTranscriptRenderCmd(msg.key.projectPath, snapshot, msg.key.width)
+		}
+		return m, nil
 	}
 	m.applyCodexTranscriptRenderedContent(msg)
 	return m, nil
