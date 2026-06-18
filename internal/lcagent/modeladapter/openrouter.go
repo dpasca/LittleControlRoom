@@ -23,7 +23,7 @@ const (
 	DefaultMoonshotModel      = "kimi-k2.7-code"
 	DefaultXiaomiModel        = "mimo-v2.5-pro"
 	DefaultXiaomiUtilityModel = "mimo-v2.5"
-	DefaultOpenRouterMaxTurns = 48
+	DefaultOpenRouterMaxTurns = 128
 	DefaultChatTemperature    = 0.2
 )
 
@@ -1152,14 +1152,7 @@ func (c *Client) MaxTurns() int {
 }
 
 func MaxTurnsForRequestTimeout(timeout time.Duration) int {
-	switch {
-	case timeout >= 45*time.Minute:
-		return 128
-	case timeout >= 20*time.Minute:
-		return 96
-	default:
-		return DefaultOpenRouterMaxTurns
-	}
+	return DefaultOpenRouterMaxTurns
 }
 
 func (c *Client) shouldEnableAnthropicPromptCache() bool {

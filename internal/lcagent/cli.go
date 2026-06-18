@@ -3,6 +3,7 @@ package lcagent
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -973,7 +974,9 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	lastPassedVerificationFileTouchEvents := 0
 	deferNextSynthesis := false
 	feedbackTracker := newOpenRouterFeedbackTracker()
+	progressTracker := newOpenRouterLoopProgressTracker(messages, runner)
 	for turn := 0; turn < client.MaxTurns(); turn++ {
+		progressTracker.Observe(messages, runner)
 		select {
 		case steerMsg := <-runner.SteerMessages:
 			if strings.TrimSpace(steerMsg) != "" {
@@ -1018,10 +1021,18 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			contextCompacted = true
 		}
 		guidance := openRouterGuidanceForTurnWithOptions(turn+1, client.MaxTurns(), messages, readLedger, openRouterGuidanceOptions{ToolProfile: string(toolProfile)})
+		if progressTracker.ShouldForceSynthesis(guidance) {
+			guidance.Phase = "synthesis"
+			guidance.ForceSynthesis = true
+			guidance.SynthesisReason = "stalled"
+			guidance.NoProgressTurns = progressTracker.NoProgressTurns()
+		}
 		if deferNextSynthesis {
 			if guidance.ForceSynthesis && guidance.TurnsRemaining > 0 {
 				guidance.Phase = "consolidation"
 				guidance.ForceSynthesis = false
+				guidance.SynthesisReason = ""
+				guidance.NoProgressTurns = 0
 			}
 			deferNextSynthesis = false
 		}
@@ -1081,26 +1092,35 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		msg.Content = sanitizedContent
 		ensureToolCallIDs(msg.ToolCalls, turn+1)
 		if guidance.ForceSynthesis && len(msg.ToolCalls) > 0 && (!requireFinalResponseTool || !allToolCallsNamed(msg.ToolCalls, "final_response")) {
+			feedback := synthesisToolCallRejectedFeedbackMessage()
+			if err := writeSynthesisToolCallRejected(writer, runner.SessionID, feedback, msg.ToolCalls); err != nil {
+				return err
+			}
 			if guidance.TurnsRemaining > 0 {
-				feedback := synthesisToolCallRejectedFeedbackMessage()
-				if err := writeSynthesisToolCallRejected(writer, runner.SessionID, feedback, msg.ToolCalls); err != nil {
-					return err
-				}
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
 				deferNextSynthesis = true
 				continue
 			}
-			return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s synthesis request returned tool calls", providerLabel))
+			return finalizeMaxTurnsFallback(writer, runner, threadStore, requestMessages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s synthesis request tried to call unavailable tools at the hard turn limit: %s", providerLabel, strings.Join(toolCallNames(msg.ToolCalls), ", ")))
 		}
 		messages = append(messages, msg)
 		if len(msg.ToolCalls) == 0 {
 			if strippedProviderMarkup {
+				if turn+1 >= client.MaxTurns() {
+					return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s response contained provider tool-call markup but no structured tool calls at the turn limit", providerLabel))
+				}
 				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response contained provider tool-call markup but no structured tool calls", providerLabel))
 			}
 			if strings.EqualFold(completion.FinishReason, "tool_calls") {
+				if turn+1 >= client.MaxTurns() {
+					return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s response finished with tool_calls but returned no structured tool calls at the turn limit", providerLabel))
+				}
 				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response finished with tool_calls but returned no structured tool calls", providerLabel))
 			}
 			if strings.TrimSpace(msg.Content) == "" {
+				if turn+1 >= client.MaxTurns() {
+					return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s response had no content or tool calls at the turn limit", providerLabel))
+				}
 				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response had no content or tool calls", providerLabel))
 			}
 			if requireFinalResponseTool {
@@ -1114,7 +1134,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 					return err
 				}
 				if turn+1 >= client.MaxTurns() {
-					return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s did not call final_response before the turn limit", providerLabel))
+					return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s did not call final_response before the turn limit", providerLabel))
 				}
 				messages = append(messages, modeladapter.Message{Role: "user", Content: feedback})
 				deferNextSynthesis = true
@@ -1732,6 +1752,9 @@ func shouldDeferSynthesisForQualityRepair(guidance openRouterProgressGuidance, s
 	if !guidance.ForceSynthesis || !state.Active || guidance.TurnsRemaining <= 0 {
 		return false
 	}
+	if strings.EqualFold(guidance.SynthesisReason, "stalled") {
+		return false
+	}
 	return !state.hasEvidenceAfterFeedback(runner)
 }
 
@@ -1739,7 +1762,111 @@ func shouldDeferSynthesisForUnverifiedChanges(guidance openRouterProgressGuidanc
 	if !guidance.ForceSynthesis || guidance.TurnsRemaining <= 0 {
 		return false
 	}
+	if strings.EqualFold(guidance.SynthesisReason, "stalled") {
+		return false
+	}
 	return fileTouchEvents > lastPassedVerificationFileTouchEvents
+}
+
+type openRouterLoopProgressTracker struct {
+	observedMessages       int
+	seenToolResultKeys     map[string]struct{}
+	lastFileTouchEvents    int
+	lastVerificationChecks int
+	noProgressTurns        int
+}
+
+func newOpenRouterLoopProgressTracker(messages []modeladapter.Message, runner script.Runner) *openRouterLoopProgressTracker {
+	return &openRouterLoopProgressTracker{
+		observedMessages:       len(messages),
+		seenToolResultKeys:     map[string]struct{}{},
+		lastFileTouchEvents:    runner.FileTouchEvents(),
+		lastVerificationChecks: len(runner.VerificationDetails()),
+	}
+}
+
+func (t *openRouterLoopProgressTracker) Observe(messages []modeladapter.Message, runner script.Runner) {
+	if t == nil {
+		return
+	}
+	if len(messages) < t.observedMessages {
+		t.observedMessages = len(messages)
+	}
+	hadNewObservation := len(messages) > t.observedMessages
+	progress := false
+	for _, msg := range messages[t.observedMessages:] {
+		if msg.Role != "tool" {
+			continue
+		}
+		key := openRouterToolResultProgressKey(msg.Content)
+		if key == "" {
+			continue
+		}
+		if _, ok := t.seenToolResultKeys[key]; ok {
+			continue
+		}
+		t.seenToolResultKeys[key] = struct{}{}
+		progress = true
+	}
+	t.observedMessages = len(messages)
+
+	fileTouchEvents := runner.FileTouchEvents()
+	if fileTouchEvents != t.lastFileTouchEvents {
+		hadNewObservation = true
+		if fileTouchEvents > t.lastFileTouchEvents {
+			progress = true
+		}
+		t.lastFileTouchEvents = fileTouchEvents
+	}
+	verificationChecks := len(runner.VerificationDetails())
+	if verificationChecks != t.lastVerificationChecks {
+		hadNewObservation = true
+		if verificationChecks > t.lastVerificationChecks {
+			progress = true
+		}
+		t.lastVerificationChecks = verificationChecks
+	}
+	if !hadNewObservation {
+		return
+	}
+	if progress {
+		t.noProgressTurns = 0
+		return
+	}
+	t.noProgressTurns++
+}
+
+func (t *openRouterLoopProgressTracker) ShouldForceSynthesis(guidance openRouterProgressGuidance) bool {
+	if t == nil || guidance.ForceSynthesis {
+		return false
+	}
+	if guidance.Turn < openRouterMinimumTurnBeforeStallCheck {
+		return false
+	}
+	return t.noProgressTurns >= openRouterStallSynthesisAfterTurns
+}
+
+func (t *openRouterLoopProgressTracker) NoProgressTurns() int {
+	if t == nil {
+		return 0
+	}
+	return t.noProgressTurns
+}
+
+func openRouterToolResultProgressKey(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	var result tools.ToolResult
+	if err := json.Unmarshal([]byte(content), &result); err == nil {
+		result.Duration = 0
+		if stable, err := json.Marshal(result); err == nil {
+			content = string(stable)
+		}
+	}
+	sum := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", sum)
 }
 
 func qualityRepairFeedbackMessage(criticFeedback string, review criticReviewPayload, pass int, maxPasses int) string {
@@ -2261,27 +2388,31 @@ func openRouterFinalCompletionOptions(cfg modeladapter.OpenRouterConfig) modelad
 }
 
 func openRouterSynthesisFinalPrompt(guidance openRouterProgressGuidance, requireFinalResponseTool bool) string {
+	reasonLine := "- Do not say the turn budget was reached."
+	if strings.EqualFold(guidance.SynthesisReason, "stalled") {
+		reasonLine = fmt.Sprintf("- Recent turns have not produced new tool evidence, file changes, or verification for %d turn%s. Finish honestly from the gathered evidence instead of continuing to churn.", guidance.NoProgressTurns, pluralSuffix(guidance.NoProgressTurns))
+	}
 	if requireFinalResponseTool {
 		return fmt.Sprintf(`This is a planned synthesis checkpoint at turn %d of %d, before the hard cap.
 
 Only final_response is available for this request. Call final_response now from the gathered evidence:
-- Do not say the turn budget was reached.
+%s
 - Answer the current user request directly in final_response.summary.
 - Set final_response.outcome honestly: completed only when the requested work is actually complete and verified; partial, blocked, or failed when important work remains or evidence is insufficient.
 - Distinguish confirmed gaps from unverified items.
 - A feature is not missing merely because there is no same-named file; it may be implemented inline in CLI, script, model adapter, or orchestration code.
 - Keep uncertainty where it is honest, but do not ask the user to continue unless a concrete blocker remains.
-- Prefer a concise structured answer over exhaustive audit notes.`, guidance.Turn, guidance.MaxTurns)
+- Prefer a concise structured answer over exhaustive audit notes.`, guidance.Turn, guidance.MaxTurns, reasonLine)
 	}
 	return fmt.Sprintf(`This is a planned synthesis checkpoint at turn %d of %d, before the hard cap.
 
 Tools are unavailable for this request. Produce the final user-facing answer now from the gathered evidence:
-- Do not say the turn budget was reached.
+%s
 - Answer the current user request directly.
 - Distinguish confirmed gaps from unverified items.
 - A feature is not missing merely because there is no same-named file; it may be implemented inline in CLI, script, model adapter, or orchestration code.
 - Keep uncertainty where it is honest, but do not ask the user to continue unless a concrete blocker remains.
-- Prefer a concise structured answer over exhaustive audit notes.`, guidance.Turn, guidance.MaxTurns)
+- Prefer a concise structured answer over exhaustive audit notes.`, guidance.Turn, guidance.MaxTurns, reasonLine)
 }
 
 func abortOpenRouterRun(writer *session.Writer, sessionID string, err error) error {

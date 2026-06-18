@@ -475,6 +475,13 @@ type ModelOption struct {
 	IsDefault                 bool
 }
 
+type QualityPlanPhaseSnapshot struct {
+	Name          string
+	Status        string
+	EvidenceCount int
+	Notes         string
+}
+
 type Snapshot struct {
 	Provider                     Provider
 	ProjectPath                  string
@@ -533,6 +540,7 @@ type Snapshot struct {
 	QualityPlanRequiresRuntime   bool
 	QualityPlanRequiresVisual    bool
 	QualityPlanLastSummary       string
+	QualityPlanPhaseItems        []QualityPlanPhaseSnapshot
 	CriticActive                 bool
 	CriticReviews                int
 	CriticConsultations          int

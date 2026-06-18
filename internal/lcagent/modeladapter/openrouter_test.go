@@ -1485,8 +1485,8 @@ func TestMaxTurnsForRequestTimeout(t *testing.T) {
 	}{
 		{name: "default", timeout: 0, want: DefaultOpenRouterMaxTurns},
 		{name: "short", timeout: 10 * time.Minute, want: DefaultOpenRouterMaxTurns},
-		{name: "medium", timeout: 20 * time.Minute, want: 96},
-		{name: "hour", timeout: time.Hour, want: 128},
+		{name: "medium", timeout: 20 * time.Minute, want: DefaultOpenRouterMaxTurns},
+		{name: "hour", timeout: time.Hour, want: DefaultOpenRouterMaxTurns},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

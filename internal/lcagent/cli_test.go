@@ -74,6 +74,46 @@ func TestShouldDeferSynthesisForUnverifiedChanges(t *testing.T) {
 	}
 }
 
+func TestOpenRouterLoopProgressTrackerForcesSynthesisAfterRepeatedEvidence(t *testing.T) {
+	tracker := newOpenRouterLoopProgressTracker(nil, script.Runner{})
+	messages := []modeladapter.Message{openRouterLoopProgressTestToolResult(t, "same evidence", time.Millisecond)}
+	tracker.Observe(messages, script.Runner{})
+	if tracker.NoProgressTurns() != 0 {
+		t.Fatalf("no progress turns after first evidence = %d, want 0", tracker.NoProgressTurns())
+	}
+	for i := 0; i < openRouterStallSynthesisAfterTurns; i++ {
+		messages = append(messages, openRouterLoopProgressTestToolResult(t, "same evidence", time.Duration(i+2)*time.Millisecond))
+		tracker.Observe(messages, script.Runner{})
+	}
+	guidance := openRouterProgressGuidance{
+		Turn:           openRouterMinimumTurnBeforeStallCheck,
+		MaxTurns:       modeladapter.DefaultOpenRouterMaxTurns,
+		TurnsRemaining: modeladapter.DefaultOpenRouterMaxTurns - openRouterMinimumTurnBeforeStallCheck,
+		Phase:          "consolidation",
+	}
+	if !tracker.ShouldForceSynthesis(guidance) {
+		t.Fatalf("expected repeated identical evidence to force stall synthesis after %d no-progress turns", tracker.NoProgressTurns())
+	}
+	messages = append(messages, openRouterLoopProgressTestToolResult(t, "new evidence", time.Millisecond))
+	tracker.Observe(messages, script.Runner{})
+	if tracker.NoProgressTurns() != 0 {
+		t.Fatalf("no progress turns after new evidence = %d, want reset", tracker.NoProgressTurns())
+	}
+	if tracker.ShouldForceSynthesis(guidance) {
+		t.Fatal("did not expect stall synthesis immediately after new evidence")
+	}
+}
+
+func openRouterLoopProgressTestToolResult(t *testing.T, output string, duration time.Duration) modeladapter.Message {
+	t.Helper()
+	result := tools.ToolResult{Success: true, Output: output, Duration: duration}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return modeladapter.Message{Role: "tool", Content: string(data)}
+}
+
 func TestRunExecScriptedStreamJSON(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -4145,7 +4185,7 @@ func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 			t.Fatalf("decode request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if requests < openRouterMinimumTurnBeforeSynthesis {
+		if requests < openRouterMinimumTurnBeforeStallCheck {
 			if body["model"] != "deepseek/test-model" {
 				t.Fatalf("tool loop request %d model = %#v", requests, body["model"])
 			}
@@ -4242,8 +4282,8 @@ func TestRunExecOpenRouterRequestsSynthesisBeforeLongRunMaxTurns(t *testing.T) {
 	if strings.Contains(text, `"type":"final_handoff_compacted"`) {
 		t.Fatalf("synthesis should complete inside the normal loop, not final handoff:\n%s", text)
 	}
-	if requests != openRouterMinimumTurnBeforeSynthesis {
-		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis)
+	if requests != openRouterMinimumTurnBeforeStallCheck {
+		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeStallCheck)
 	}
 }
 
@@ -4261,7 +4301,7 @@ func TestRunExecOpenRouterSynthesisWithRequiredFinalResponseExposesOnlyFinalTool
 			t.Fatalf("decode request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if requests < openRouterMinimumTurnBeforeSynthesis {
+		if requests < openRouterMinimumTurnBeforeStallCheck {
 			_, _ = w.Write([]byte(`{
 				"id":"resp_tool",
 				"model":"deepseek/test-model",
@@ -4340,8 +4380,8 @@ func TestRunExecOpenRouterSynthesisWithRequiredFinalResponseExposesOnlyFinalTool
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
 	}
-	if requests != openRouterMinimumTurnBeforeSynthesis {
-		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis)
+	if requests != openRouterMinimumTurnBeforeStallCheck {
+		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeStallCheck)
 	}
 }
 
@@ -4359,7 +4399,7 @@ func TestRunExecOpenRouterSynthesisToolCallFallsBackToToolLoop(t *testing.T) {
 			t.Fatalf("decode request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if requests < openRouterMinimumTurnBeforeSynthesis {
+		if requests < openRouterMinimumTurnBeforeStallCheck {
 			_, _ = w.Write([]byte(`{
 				"id":"resp_tool",
 				"model":"deepseek/test-model",
@@ -4370,7 +4410,7 @@ func TestRunExecOpenRouterSynthesisToolCallFallsBackToToolLoop(t *testing.T) {
 			}`))
 			return
 		}
-		if requests == openRouterMinimumTurnBeforeSynthesis {
+		if requests == openRouterMinimumTurnBeforeStallCheck {
 			if body["model"] != "deepseek/final-model" {
 				t.Fatalf("synthesis request model = %#v, want final model", body["model"])
 			}
@@ -4393,7 +4433,7 @@ func TestRunExecOpenRouterSynthesisToolCallFallsBackToToolLoop(t *testing.T) {
 			}`))
 			return
 		}
-		if requests == openRouterMinimumTurnBeforeSynthesis+1 {
+		if requests == openRouterMinimumTurnBeforeStallCheck+1 {
 			if body["model"] != "deepseek/test-model" {
 				t.Fatalf("fallback request model = %#v, want lead model", body["model"])
 			}
@@ -4456,8 +4496,92 @@ func TestRunExecOpenRouterSynthesisToolCallFallsBackToToolLoop(t *testing.T) {
 	if strings.Contains(text, `"type":"turn_aborted"`) {
 		t.Fatalf("synthesis fallback should not abort:\n%s", text)
 	}
-	if requests != openRouterMinimumTurnBeforeSynthesis+1 {
-		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeSynthesis+1)
+	if requests != openRouterMinimumTurnBeforeStallCheck+1 {
+		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeStallCheck+1)
+	}
+}
+
+func TestRunExecOpenRouterSynthesisToolCallAtHardLimitFallsBackToPartialFinal(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests < openRouterMinimumTurnBeforeStallCheck {
+			_, _ = w.Write([]byte(`{
+				"id":"resp_tool",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+				}]
+			}`))
+			return
+		}
+		if body["model"] != "deepseek/final-model" {
+			t.Fatalf("synthesis request model = %#v, want final model", body["model"])
+		}
+		toolsValue, ok := body["tools"].([]any)
+		if !ok || len(toolsValue) != 1 {
+			t.Fatalf("synthesis request tools = %#v, want only final_response", body["tools"])
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_bad_synthesis_tool",
+			"model":"deepseek/final-model",
+			"choices":[{
+				"finish_reason":"tool_calls",
+				"message":{"role":"assistant","tool_calls":[{"id":"call_read_at_hard_limit","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"README.md\",\"limit\":1}"}}]}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--final-model", "deepseek/final-model",
+		"--max-turns", fmt.Sprint(openRouterMinimumTurnBeforeStallCheck),
+		"--require-final-response-tool",
+		"keep reading until hard-limit synthesis",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"synthesis_requested"`,
+		`"type":"synthesis_tool_call_rejected"`,
+		`"attempted_tools":["read_file"]`,
+		`"type":"final_handoff_fallback"`,
+		`hard turn limit`,
+		`"final_outcome":"partial"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"turn_aborted"`) {
+		t.Fatalf("hard-limit synthesis fallback should not abort:\n%s", text)
+	}
+	if requests != openRouterMinimumTurnBeforeStallCheck {
+		t.Fatalf("requests = %d, want %d", requests, openRouterMinimumTurnBeforeStallCheck)
 	}
 }
 
