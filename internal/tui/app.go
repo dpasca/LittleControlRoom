@@ -263,6 +263,7 @@ type Model struct {
 	codexTranscriptCache          codexTranscriptRenderCache
 	codexViewportContent          codexViewportContentState
 	codexTranscriptFullHistory    map[string]struct{}
+	codexUpdateAckSeq             map[string]uint64
 	uiDiagnostics                 *uiStallDiagnostics
 	aiLatencyNextID               int64
 	aiLatencyInFlight             map[int64]aiLatencyOp
@@ -2414,6 +2415,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, sidebarDiffCmd)
 	case codexUpdateMsg:
 		return m.applyCodexUpdateMsg(msg)
+	case codexUpdateAckMsg:
+		return m.applyCodexUpdateAckMsg(msg)
 	case codexDeferredSnapshotMsg:
 		return m.applyCodexDeferredSnapshotMsg(msg)
 	case codexTranscriptRenderedMsg:

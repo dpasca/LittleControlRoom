@@ -55,6 +55,11 @@ type codexUpdateMsg struct {
 	projectPath string
 }
 
+type codexUpdateAckMsg struct {
+	projectPath string
+	seq         uint64
+}
+
 type codexActionMsg struct {
 	projectPath   string
 	perfOpID      int64
@@ -97,6 +102,8 @@ type codexTranscriptRenderedMsg struct {
 	rendered string
 	links    []codexTranscriptLinkSpan
 }
+
+const codexStreamingUpdateAckDelay = spinnerTickInterval
 
 func (m codexModelListMsg) statusSummary() string {
 	if m.err != nil {
@@ -308,10 +315,8 @@ func (m Model) applyCodexModelListMsg(msg codexModelListMsg) (tea.Model, tea.Cmd
 
 func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 	cmds := []tea.Cmd{m.waitCodexCmd()}
-	if m.codexManager != nil {
-		m.codexManager.AckUpdate(msg.projectPath)
-	}
 	if m.consumeCodexSkipNextLiveRefresh(msg.projectPath) {
+		m.ackCodexUpdate(msg.projectPath)
 		if deferred := m.deferredCodexSnapshotCmd(msg.projectPath); deferred != nil {
 			cmds = append(cmds, deferred)
 		}
@@ -380,6 +385,11 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	if m.shouldDeferCodexStreamingUpdateAck(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot, ok, needsAsync, transcriptChanged) {
+		cmds = append(cmds, m.deferredCodexUpdateAckCmd(msg.projectPath))
+	} else {
+		m.ackCodexUpdate(msg.projectPath)
+	}
 	if ok {
 		m.completeModelSettleLatency(msg.projectPath, snapshot)
 		if !snapshot.Closed {
@@ -417,6 +427,107 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		m.dropCodexSnapshot(msg.projectPath)
 	}
 	return m, tea.Batch(cmds...)
+}
+
+func (m *Model) ackCodexUpdate(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || m.codexManager == nil {
+		return
+	}
+	m.codexManager.AckUpdate(projectPath)
+}
+
+func (m *Model) deferredCodexUpdateAckCmd(projectPath string) tea.Cmd {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return nil
+	}
+	if m.codexUpdateAckSeq == nil {
+		m.codexUpdateAckSeq = make(map[string]uint64)
+	}
+	m.codexUpdateAckSeq[projectPath]++
+	seq := m.codexUpdateAckSeq[projectPath]
+	return tea.Tick(codexStreamingUpdateAckDelay, func(time.Time) tea.Msg {
+		return codexUpdateAckMsg{projectPath: projectPath, seq: seq}
+	})
+}
+
+func (m Model) applyCodexUpdateAckMsg(msg codexUpdateAckMsg) (tea.Model, tea.Cmd) {
+	projectPath := strings.TrimSpace(msg.projectPath)
+	if projectPath == "" {
+		return m, nil
+	}
+	if seq, ok := m.codexUpdateAckSeq[projectPath]; !ok || seq != msg.seq {
+		return m, nil
+	}
+	delete(m.codexUpdateAckSeq, projectPath)
+	m.ackCodexUpdate(projectPath)
+	return m, nil
+}
+
+func (m Model) shouldDeferCodexStreamingUpdateAck(projectPath string, hadPrev bool, prev, next codexapp.Snapshot, ok, needsAsync, transcriptChanged bool) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || strings.TrimSpace(m.codexVisibleProject) != projectPath {
+		return false
+	}
+	if !hadPrev || !ok || next.Closed || !next.Busy {
+		return false
+	}
+	if codexSnapshotHasPendingUserResponse(next) || codexSnapshotBrowserWaitingForUser(next) {
+		return false
+	}
+	if codexStreamingSnapshotNeedsImmediateAck(prev, next) {
+		return false
+	}
+	return transcriptChanged || needsAsync
+}
+
+func codexStreamingSnapshotNeedsImmediateAck(prev, next codexapp.Snapshot) bool {
+	if prev.Provider != next.Provider ||
+		prev.Started != next.Started ||
+		prev.Closed != next.Closed ||
+		prev.Busy != next.Busy ||
+		prev.BusyExternal != next.BusyExternal ||
+		prev.Phase != next.Phase ||
+		prev.ActiveTurnID != next.ActiveTurnID ||
+		prev.Status != next.Status ||
+		prev.LastError != next.LastError ||
+		prev.LastSystemNotice != next.LastSystemNotice ||
+		prev.SuggestedInputDraftID != next.SuggestedInputDraftID ||
+		prev.ManagedBrowserSessionKey != next.ManagedBrowserSessionKey ||
+		prev.CurrentBrowserPageURL != next.CurrentBrowserPageURL ||
+		prev.CurrentBrowserPageStale != next.CurrentBrowserPageStale {
+		return true
+	}
+	if codexPendingUserResponseFingerprint(prev) != codexPendingUserResponseFingerprint(next) {
+		return true
+	}
+	return codexBrowserActivityFingerprint(prev.BrowserActivity) != codexBrowserActivityFingerprint(next.BrowserActivity)
+}
+
+func codexPendingUserResponseFingerprint(snapshot codexapp.Snapshot) string {
+	switch {
+	case snapshot.PendingApproval != nil:
+		return "approval:" + strings.TrimSpace(snapshot.PendingApproval.ID)
+	case snapshot.PendingToolInput != nil:
+		return "tool:" + strings.TrimSpace(snapshot.PendingToolInput.ID)
+	case snapshot.PendingElicitation != nil:
+		return "elicitation:" + strings.TrimSpace(snapshot.PendingElicitation.ID)
+	default:
+		return ""
+	}
+}
+
+func codexBrowserActivityFingerprint(activity browserctl.SessionActivity) string {
+	activity = activity.Normalize()
+	policy := activity.Policy.Normalize()
+	return string(policy.ManagementMode) + "|" +
+		string(policy.DefaultBrowserMode) + "|" +
+		string(policy.LoginMode) + "|" +
+		string(policy.IsolationScope) + "|" +
+		string(activity.State) + "|" +
+		activity.ServerName + "|" +
+		activity.ToolName
 }
 
 func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.Model, tea.Cmd) {

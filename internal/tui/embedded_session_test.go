@@ -7,6 +7,8 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/model"
+
+	"github.com/charmbracelet/bubbles/viewport"
 )
 
 func TestEmbeddedSnapshotHelpersUseCachedStateWithoutTranscriptSnapshot(t *testing.T) {
@@ -278,6 +280,121 @@ func TestShouldRecordEmbeddedSessionActivityAfterBusyProgress(t *testing.T) {
 	}
 }
 
+func TestCodexUpdateDefersAckForVisibleStreamingTranscript(t *testing.T) {
+	projectPath := "/tmp/demo"
+	now := time.Date(2026, 6, 18, 9, 30, 0, 0, time.UTC)
+	prev := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		ProjectPath:              projectPath,
+		ThreadID:                 "thread-demo",
+		Started:                  true,
+		Busy:                     true,
+		Phase:                    codexapp.SessionPhaseRunning,
+		ActiveTurnID:             "turn-demo",
+		Status:                   "LCAgent is working...",
+		LastBusyActivityAt:       now,
+		TranscriptRevision:       1,
+		ManagedBrowserSessionKey: "browser-demo",
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "streaming",
+		}},
+	}
+	next := prev
+	next.LastBusyActivityAt = now.Add(10 * time.Millisecond)
+	next.TranscriptRevision = 2
+	next.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "streaming token",
+	}}
+
+	session, manager, notifySession := openFakeManagedCodexSession(t, projectPath, next)
+	requireManagerUpdate(t, manager, projectPath)
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 20),
+		width:               100,
+		height:              24,
+	}
+	m.storeCodexSnapshot(projectPath, prev)
+
+	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: projectPath})
+	got := normalizeUpdateModel(updated)
+	if _, ok := got.codexUpdateAckSeq[projectPath]; !ok {
+		t.Fatalf("visible streaming transcript update should defer manager ack")
+	}
+	if session.trySnapshotCalls == 0 {
+		t.Fatalf("applyCodexUpdateMsg() should refresh the session snapshot")
+	}
+
+	notifySession()
+	assertNoManagerUpdate(t, manager)
+
+	seq := got.codexUpdateAckSeq[projectPath]
+	updated, _ = got.applyCodexUpdateAckMsg(codexUpdateAckMsg{projectPath: projectPath, seq: seq})
+	got = normalizeUpdateModel(updated)
+	if _, ok := got.codexUpdateAckSeq[projectPath]; ok {
+		t.Fatalf("deferred ack state should clear after ack message")
+	}
+	requireManagerUpdate(t, manager, projectPath)
+}
+
+func TestCodexUpdateAcksImmediatelyForPendingApproval(t *testing.T) {
+	projectPath := "/tmp/demo"
+	prev := codexapp.Snapshot{
+		Provider:           codexapp.ProviderLCAgent,
+		ProjectPath:        projectPath,
+		ThreadID:           "thread-demo",
+		Started:            true,
+		Busy:               true,
+		Phase:              codexapp.SessionPhaseRunning,
+		ActiveTurnID:       "turn-demo",
+		Status:             "LCAgent is working...",
+		TranscriptRevision: 1,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "before approval",
+		}},
+	}
+	next := prev
+	next.Status = "Waiting for command approval"
+	next.TranscriptRevision = 2
+	next.PendingApproval = &codexapp.ApprovalRequest{
+		ID:      "approval-demo",
+		Kind:    codexapp.ApprovalCommandExecution,
+		Command: "make test",
+	}
+	next.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptStatus,
+		Text: "LCAgent requested command approval: make test",
+	}}
+
+	_, manager, notifySession := openFakeManagedCodexSession(t, projectPath, next)
+	requireManagerUpdate(t, manager, projectPath)
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 20),
+		width:               100,
+		height:              24,
+	}
+	m.storeCodexSnapshot(projectPath, prev)
+
+	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: projectPath})
+	got := normalizeUpdateModel(updated)
+	if _, ok := got.codexUpdateAckSeq[projectPath]; ok {
+		t.Fatalf("pending approval update should ack immediately")
+	}
+
+	notifySession()
+	requireManagerUpdate(t, manager, projectPath)
+}
+
 func TestEmbeddedSessionActivityFromSnapshotUsesBusyActivity(t *testing.T) {
 	now := time.Date(2026, 4, 10, 10, 57, 0, 0, time.UTC)
 	activity, ok := embeddedSessionActivityFromSnapshot("/tmp/demo", codexapp.Snapshot{
@@ -307,6 +424,51 @@ func TestEmbeddedSessionActivityFromSnapshotUsesBusyActivity(t *testing.T) {
 	}
 	if !activity.LatestTurnStateKnown || activity.LatestTurnCompleted {
 		t.Fatalf("turn state = known:%t completed:%t, want live incomplete", activity.LatestTurnStateKnown, activity.LatestTurnCompleted)
+	}
+}
+
+func openFakeManagedCodexSession(t *testing.T, projectPath string, snapshot codexapp.Snapshot) (*fakeCodexSession, *codexapp.Manager, func()) {
+	t.Helper()
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot:    snapshot,
+	}
+	var notifySession func()
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		notifySession = notify
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    snapshot.Provider,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	if notifySession == nil {
+		t.Fatalf("manager factory did not receive notify callback")
+	}
+	return session, manager, notifySession
+}
+
+func requireManagerUpdate(t *testing.T, manager *codexapp.Manager, want string) {
+	t.Helper()
+	select {
+	case got := <-manager.Updates():
+		if got != want {
+			t.Fatalf("manager update = %q, want %q", got, want)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("timed out waiting for manager update %q", want)
+	}
+}
+
+func assertNoManagerUpdate(t *testing.T, manager *codexapp.Manager) {
+	t.Helper()
+	select {
+	case got := <-manager.Updates():
+		t.Fatalf("unexpected manager update before deferred ack: %q", got)
+	default:
 	}
 }
 
