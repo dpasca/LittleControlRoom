@@ -602,7 +602,7 @@ func (m *Model) storeCodexSnapshot(projectPath string, snapshot codexapp.Snapsho
 	}
 	if prev, ok := m.codexSnapshots[projectPath]; !ok || codexTranscriptStateChanged(prev, snapshot) {
 		m.codexTranscriptRev[projectPath]++
-		m.resetCodexTranscriptCaches(projectPath)
+		m.invalidateCodexTranscriptDerivedCaches(projectPath)
 	}
 	m.codexSnapshots[projectPath] = snapshot
 	m.maybeApplyCodexSuggestedInputDraft(projectPath, snapshot)
@@ -708,11 +708,19 @@ func (m *Model) resetCodexTranscriptCaches(projectPath string) {
 	if projectPath == "" {
 		return
 	}
-	if m.codexTranscriptCache.projectPath == projectPath {
-		m.codexTranscriptCache = codexTranscriptRenderCache{}
-	}
+	m.invalidateCodexTranscriptDerivedCaches(projectPath)
 	if m.codexViewportContent.projectPath == projectPath {
 		m.codexViewportContent = codexViewportContentState{}
+	}
+}
+
+func (m *Model) invalidateCodexTranscriptDerivedCaches(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	if m.codexTranscriptCache.projectPath == projectPath {
+		m.codexTranscriptCache = codexTranscriptRenderCache{}
 	}
 	delete(m.codexArtifactLinkScans, projectPath)
 }

@@ -38,7 +38,7 @@ func (m Model) openCodexArtifactPicker(snapshot codexapp.Snapshot) (tea.Model, t
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	targets := m.codexOpenTargetsForPicker(snapshot)
 	if len(targets) == 0 {
-		scanCmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+		scanCmd := m.maybeStartCodexArtifactLinkScanForPicker(projectPath, snapshot)
 		if scanCmd == nil && !m.codexArtifactLinkScanInFlight(projectPath, m.codexTranscriptRevision(projectPath)) {
 			m.status = "No openable links in this embedded transcript"
 			return m, nil
@@ -263,8 +263,19 @@ const (
 )
 
 func (m *Model) maybeStartCodexArtifactLinkScan(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+	return m.maybeStartCodexArtifactLinkScanWithPolicy(projectPath, snapshot, false)
+}
+
+func (m *Model) maybeStartCodexArtifactLinkScanForPicker(projectPath string, snapshot codexapp.Snapshot) tea.Cmd {
+	return m.maybeStartCodexArtifactLinkScanWithPolicy(projectPath, snapshot, true)
+}
+
+func (m *Model) maybeStartCodexArtifactLinkScanWithPolicy(projectPath string, snapshot codexapp.Snapshot, allowBusy bool) tea.Cmd {
 	projectPath = strings.TrimSpace(firstNonEmptyString(projectPath, snapshot.ProjectPath, m.codexVisibleProject))
 	if projectPath == "" {
+		return nil
+	}
+	if snapshot.Busy && !allowBusy && !m.codexArtifactPickerOpenForProject(projectPath) {
 		return nil
 	}
 	transcriptRev := m.codexTranscriptRevision(projectPath)
@@ -293,6 +304,11 @@ func (m *Model) maybeStartCodexArtifactLinkScan(projectPath string, snapshot cod
 	startOffset := max(0, state.nextTextOffset)
 	m.codexArtifactLinkScans[projectPath] = state
 	return codexArtifactLinkScanCmd(projectPath, state.scanSeq, transcriptRev, entries, startEntry, startOffset)
+}
+
+func (m Model) codexArtifactPickerOpenForProject(projectPath string) bool {
+	projectPath = strings.TrimSpace(projectPath)
+	return projectPath != "" && m.codexArtifactPicker != nil && strings.TrimSpace(m.codexArtifactPicker.ProjectPath) == projectPath
 }
 
 func codexArtifactLinkScanCmd(projectPath string, scanSeq int64, transcriptRev uint64, entries []codexapp.TranscriptEntry, startEntry, startTextOffset int) tea.Cmd {

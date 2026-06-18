@@ -1483,6 +1483,32 @@ func TestCodexProgressiveLinkScanFindsHiddenDenseCommandOutput(t *testing.T) {
 	}
 }
 
+func TestCodexProgressiveLinkScanDefersPassiveBusyStreamingScan(t *testing.T) {
+	projectPath := "/tmp/demo"
+	snapshot := codexapp.Snapshot{
+		ProjectPath:        projectPath,
+		Busy:               true,
+		TranscriptRevision: 1,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptCommand,
+				Text: "$ generate-large-output\nOpen [hidden](https://hidden.example/docs).",
+			},
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(80, 4),
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	if cmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot); cmd != nil {
+		t.Fatalf("passive busy streaming scan should defer until the transcript settles")
+	}
+	if cmd := m.maybeStartCodexArtifactLinkScanForPicker(projectPath, snapshot); cmd == nil {
+		t.Fatalf("explicit picker scan should still run while the transcript is busy")
+	}
+}
+
 func TestCodexProgressiveLinkScanResolvesRelativeMarkdownArtifactLinks(t *testing.T) {
 	root := t.TempDir()
 	projectPath := filepath.Join(root, "proj_leaf")
@@ -3315,6 +3341,51 @@ func TestStreamingTranscriptRenderCoalescesAndAppliesStaleContent(t *testing.T) 
 	view := ansi.Strip(got.renderCodexView())
 	if strings.Contains(view, "Transcript is updating") {
 		t.Fatalf("render path should keep stale streaming content instead of restoring placeholder: %q", view)
+	}
+}
+
+func TestStreamingTranscriptSyncKeepsStaleSmallViewportContent(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 12),
+		width:               80,
+		height:              16,
+	}
+	first := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		Started:            true,
+		Busy:               true,
+		TranscriptRevision: 1,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "first streamed text",
+		}},
+	}
+	m.storeCodexSnapshot(projectPath, first)
+	m.syncCodexViewport(true)
+	if rendered := ansi.Strip(m.codexViewport.View()); !strings.Contains(rendered, "first streamed text") {
+		t.Fatalf("initial streaming content should render once: %q", rendered)
+	}
+
+	second := first
+	second.TranscriptRevision = 2
+	second.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "second streamed text",
+	}}
+	m.storeCodexSnapshot(projectPath, second)
+	m.syncCodexViewport(true)
+
+	rendered := ansi.Strip(m.codexViewport.View())
+	if !strings.Contains(rendered, "first streamed text") {
+		t.Fatalf("busy streaming sync should keep stale viewport content until deferred render lands: %q", rendered)
+	}
+	if strings.Contains(rendered, "second streamed text") {
+		t.Fatalf("busy streaming sync should not synchronously replace small transcript content: %q", rendered)
 	}
 }
 
