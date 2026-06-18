@@ -56,6 +56,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"For nontrivial artifact work, especially apps, games, user interfaces, generated documents, or multi-part implementations, call update_quality_plan early with a small phased plan. Refresh it as phases move from planned to implemented or verified.",
 		"Use quality phases to layer the work: build the core behavior first, then environment or UI details, then feedback/HUD/polish, then verification. Keep phases concrete and evidence-driven rather than aspirational.",
 		"Quality phases are sequential execution gates, not just a summary. Keep at most one phase active, leave later phases planned, and do not mark a phase verified or skipped until tool-backed evidence for that phase exists.",
+		"When LCAgent requires a phased quality plan, treat the current in_progress phase, or the first non-verified phase, as the active objective. Implement only that phase's realistic slice; do not include later-phase systems in early writes. LCAgent may reject writes that try to build too much at once or leak into later phases.",
 		"Do not claim to have inspected files or run verification unless a tool result shows that happened.",
 		"For unfamiliar source or Markdown files, prefer file_outline before raw reads.",
 		"For unfamiliar repositories, prefer repo_overview before list_files, module_outline, or broad reads.",

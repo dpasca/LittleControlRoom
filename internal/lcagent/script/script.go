@@ -36,6 +36,7 @@ const (
 	maxQualityPlanAcceptanceItems    = 8
 	maxQualityPlanEvidenceItems      = 8
 	maxQualityPlanTextChars          = 240
+	maxPhaseWriteGateArgsChars       = 30000
 )
 
 type Runner struct {
@@ -51,6 +52,7 @@ type Runner struct {
 	CodeScout                    CodeScout
 	CriticConsultant             CriticConsultant
 	ImageAnalyzer                ImageAnalyzer
+	PhaseWriteGate               PhaseWriteGate
 	SearchRefineMinBytes         int
 	Approvals                    ApprovalBroker
 	Processes                    ProcessBroker
@@ -92,6 +94,10 @@ type CriticConsultant interface {
 
 type ImageAnalyzer interface {
 	AnalyzeImage(context.Context, ImageAnalysisRequest) (ImageAnalysisResult, error)
+}
+
+type PhaseWriteGate interface {
+	EvaluatePhaseWrite(context.Context, PhaseWriteGateRequest) (PhaseWriteGateResult, error)
 }
 
 type BrowserRunner interface {
@@ -187,6 +193,32 @@ type ImageAnalysisResult struct {
 	Model        string
 	Usage        json.RawMessage
 	UsageSummary lcrmodel.LLMUsage
+}
+
+type PhaseWriteGateRequest struct {
+	SessionID           string
+	UserRequest         string
+	Tool                string
+	ToolArgs            string
+	ToolArgsTruncated   bool
+	QualityPlan         QualityPlan
+	ActivePhaseIndex    int
+	ActivePhase         QualityPlanPhase
+	CompletedPhaseNames []string
+	RemainingPhaseNames []string
+}
+
+type PhaseWriteGateResult struct {
+	Allow                  bool
+	FitsActivePhase        bool
+	ContainsLaterPhaseWork bool
+	TooMuchAtOnce          bool
+	Reason                 string
+	SuggestedSmallerSlice  string
+	Provider               string
+	Model                  string
+	Usage                  json.RawMessage
+	UsageSummary           lcrmodel.LLMUsage
 }
 
 type CriticConsultFinding struct {
@@ -505,9 +537,7 @@ func (r *Runner) qualityPlanWriteToolBlock(tool string) *tools.ToolResult {
 	if r == nil || !r.QualityPlanRequired || r.qualityPlan != nil {
 		return nil
 	}
-	switch tool {
-	case "apply_patch", "create_file", "replace_file", "replace_text", "replace_lines":
-	default:
+	if !isWorkspaceWriteTool(tool) {
 		return nil
 	}
 	scope := strings.TrimSpace(r.QualityPlanRequirementScope)
@@ -522,6 +552,132 @@ func (r *Runner) qualityPlanWriteToolBlock(tool string) *tools.ToolResult {
 		Success: false,
 		Error:   fmt.Sprintf("planning preflight classified this as %s work, so update_quality_plan must be called before write tools such as %s. Publish concrete phases first, then retry the write.%s", scope, tool, reason),
 	}
+}
+
+func (r *Runner) phaseWriteGateBlock(ctx context.Context, tool string, rawArgs json.RawMessage) (*tools.ToolResult, error) {
+	if r == nil || r.PhaseWriteGate == nil || !r.QualityPlanRequired || r.qualityPlan == nil || !isWorkspaceWriteTool(tool) {
+		return nil, nil
+	}
+	if len(r.qualityPlan.Phases) <= 1 {
+		return nil, nil
+	}
+	activePhase, activeIndex, ok := activeQualityPlanPhase(r.qualityPlan)
+	if !ok {
+		return nil, nil
+	}
+	argsText, truncated := boundedPhaseWriteGateArgs(rawArgs)
+	request := PhaseWriteGateRequest{
+		SessionID:           r.SessionID,
+		UserRequest:         strings.TrimSpace(r.Prompt),
+		Tool:                tool,
+		ToolArgs:            argsText,
+		ToolArgsTruncated:   truncated,
+		QualityPlan:         *r.qualityPlan,
+		ActivePhaseIndex:    activeIndex,
+		ActivePhase:         activePhase,
+		CompletedPhaseNames: completedQualityPlanPhaseNames(r.qualityPlan.Phases),
+		RemainingPhaseNames: remainingQualityPlanPhaseNames(r.qualityPlan.Phases, activeIndex),
+	}
+	result, err := r.PhaseWriteGate.EvaluatePhaseWrite(ctx, request)
+	if err != nil {
+		if writeErr := r.writePhaseWriteGateFailedEvent(request, err); writeErr != nil {
+			return nil, writeErr
+		}
+		return &tools.ToolResult{Success: false, Error: "phase write gate failed: " + err.Error()}, nil
+	}
+	if err := r.writePhaseWriteGateResultEvent(request, result); err != nil {
+		return nil, err
+	}
+	if result.Allow && result.FitsActivePhase && !result.ContainsLaterPhaseWork && !result.TooMuchAtOnce {
+		return nil, nil
+	}
+	message := formatPhaseWriteGateBlockMessage(request, result)
+	return &tools.ToolResult{Success: false, Error: message}, nil
+}
+
+func isWorkspaceWriteTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "apply_patch", "create_file", "replace_file", "replace_text", "replace_lines":
+		return true
+	default:
+		return false
+	}
+}
+
+func activeQualityPlanPhase(plan *QualityPlan) (QualityPlanPhase, int, bool) {
+	if plan == nil {
+		return QualityPlanPhase{}, -1, false
+	}
+	for i, phase := range plan.Phases {
+		switch lcQualityPlanStatusKey(phase.Status) {
+		case "in_progress", "implemented", "needs_repair":
+			return phase, i, true
+		}
+	}
+	for i, phase := range plan.Phases {
+		switch lcQualityPlanStatusKey(phase.Status) {
+		case "verified", "skipped":
+			continue
+		default:
+			return phase, i, true
+		}
+	}
+	return QualityPlanPhase{}, -1, false
+}
+
+func completedQualityPlanPhaseNames(phases []QualityPlanPhase) []string {
+	var out []string
+	for _, phase := range phases {
+		switch lcQualityPlanStatusKey(phase.Status) {
+		case "verified", "skipped":
+			if name := strings.TrimSpace(phase.Name); name != "" {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+func remainingQualityPlanPhaseNames(phases []QualityPlanPhase, activeIndex int) []string {
+	if activeIndex < 0 {
+		activeIndex = 0
+	}
+	var out []string
+	for i := activeIndex; i < len(phases); i++ {
+		if name := strings.TrimSpace(phases[i].Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+func lcQualityPlanStatusKey(status string) string {
+	status = strings.ToLower(strings.TrimSpace(status))
+	status = strings.ReplaceAll(status, "-", "_")
+	status = strings.ReplaceAll(status, " ", "_")
+	return status
+}
+
+func boundedPhaseWriteGateArgs(raw json.RawMessage) (string, bool) {
+	text := strings.TrimSpace(string(raw))
+	var compact bytes.Buffer
+	if len(raw) > 0 && json.Compact(&compact, raw) == nil {
+		text = compact.String()
+	}
+	return boundedCriticConsultText(text, maxPhaseWriteGateArgsChars)
+}
+
+func formatPhaseWriteGateBlockMessage(request PhaseWriteGateRequest, result PhaseWriteGateResult) string {
+	phaseName := firstNonEmpty(strings.TrimSpace(request.ActivePhase.Name), fmt.Sprintf("phase %d", request.ActivePhaseIndex+1))
+	reason := strings.TrimSpace(result.Reason)
+	if reason == "" {
+		reason = "the proposed write does not fit the current active phase"
+	}
+	message := fmt.Sprintf("phase write gate blocked %s: current active phase is %q, but %s.", request.Tool, phaseName, reason)
+	if suggestion := strings.TrimSpace(result.SuggestedSmallerSlice); suggestion != "" {
+		message += " Suggested smaller slice: " + suggestion
+	}
+	return message
 }
 
 func (r *Runner) validateQualityPlanProgression(plan QualityPlan) tools.ToolResult {
@@ -1359,6 +1515,12 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = invalid
 			break
 		}
+		if blocked, err := r.phaseWriteGateBlock(ctx, action.Tool, action.Args); err != nil {
+			return tools.ToolResult{}, err
+		} else if blocked != nil {
+			result = *blocked
+			break
+		}
 		result = r.Patch.Apply(args.Patch)
 	case "create_file":
 		if blocked := r.qualityPlanWriteToolBlock(action.Tool); blocked != nil {
@@ -1368,6 +1530,12 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		var args createFileArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
+			break
+		}
+		if blocked, err := r.phaseWriteGateBlock(ctx, action.Tool, action.Args); err != nil {
+			return tools.ToolResult{}, err
+		} else if blocked != nil {
+			result = *blocked
 			break
 		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.CreateFile(tools.CreateFileSpec{
@@ -1382,6 +1550,12 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		var args replaceFileArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
+			break
+		}
+		if blocked, err := r.phaseWriteGateBlock(ctx, action.Tool, action.Args); err != nil {
+			return tools.ToolResult{}, err
+		} else if blocked != nil {
+			result = *blocked
 			break
 		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceFile(tools.ReplaceFileSpec{
@@ -1399,6 +1573,12 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = invalid
 			break
 		}
+		if blocked, err := r.phaseWriteGateBlock(ctx, action.Tool, action.Args); err != nil {
+			return tools.ToolResult{}, err
+		} else if blocked != nil {
+			result = *blocked
+			break
+		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceText(tools.ReplaceTextSpec{
 			Path:                 args.Path,
 			OldText:              args.OldText,
@@ -1413,6 +1593,12 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		var args replaceLinesArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
+			break
+		}
+		if blocked, err := r.phaseWriteGateBlock(ctx, action.Tool, action.Args); err != nil {
+			return tools.ToolResult{}, err
+		} else if blocked != nil {
+			result = *blocked
 			break
 		}
 		result = tools.TextEditor{Workspace: r.Patch.Workspace}.ReplaceLines(tools.ReplaceLinesSpec{
@@ -2861,6 +3047,48 @@ func (r *Runner) writeImageAnalysisFailedEvent(request ImageAnalysisRequest, mes
 		"temporal":        strings.TrimSpace(request.ComparisonPath) != "",
 		"question":        request.Question,
 		"message":         strings.TrimSpace(message),
+	})
+}
+
+func (r *Runner) writePhaseWriteGateResultEvent(request PhaseWriteGateRequest, result PhaseWriteGateResult) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	return r.Session.Write(session.Event{
+		"type":                      "phase_write_gate_result",
+		"session_id":                r.SessionID,
+		"tool":                      request.Tool,
+		"active_phase_index":        request.ActivePhaseIndex,
+		"active_phase":              strings.TrimSpace(request.ActivePhase.Name),
+		"allow":                     result.Allow,
+		"fits_active_phase":         result.FitsActivePhase,
+		"contains_later_phase_work": result.ContainsLaterPhaseWork,
+		"too_much_at_once":          result.TooMuchAtOnce,
+		"reason":                    strings.TrimSpace(result.Reason),
+		"suggested_smaller_slice":   strings.TrimSpace(result.SuggestedSmallerSlice),
+		"provider":                  strings.TrimSpace(result.Provider),
+		"model":                     strings.TrimSpace(result.Model),
+		"usage":                     json.RawMessage(result.Usage),
+		"usage_summary":             result.UsageSummary,
+		"input_truncated":           request.ToolArgsTruncated,
+	})
+}
+
+func (r *Runner) writePhaseWriteGateFailedEvent(request PhaseWriteGateRequest, err error) error {
+	if r == nil || r.Session == nil {
+		return nil
+	}
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	return r.Session.Write(session.Event{
+		"type":               "phase_write_gate_failed",
+		"session_id":         r.SessionID,
+		"tool":               request.Tool,
+		"active_phase_index": request.ActivePhaseIndex,
+		"active_phase":       strings.TrimSpace(request.ActivePhase.Name),
+		"message":            strings.TrimSpace(message),
 	})
 }
 

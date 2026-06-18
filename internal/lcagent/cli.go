@@ -835,6 +835,13 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 	}
 	planningPreflight := newPlanningPreflightProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
+	phaseWriteGateProfile := newPhaseWriteGateProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
+	if phaseWriteGateProfile.Enabled {
+		runner.PhaseWriteGate = phaseWriteGate{
+			profile: phaseWriteGateProfile,
+			writer:  writer,
+		}
+	}
 	qualityPolicy := qualityCheckpointPolicy{
 		MaxPasses:       qualityCheckpointPasses,
 		CriticAvailable: critic.Enabled,
@@ -884,6 +891,16 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"provider":   planningPreflight.Provider,
 		"model":      planningPreflight.Model,
 		"message":    planningPreflight.Message,
+	}); err != nil {
+		return err
+	}
+	if err := writer.Write(session.Event{
+		"type":       "phase_write_gate_profile",
+		"session_id": runner.SessionID,
+		"enabled":    phaseWriteGateProfile.Enabled,
+		"provider":   phaseWriteGateProfile.Provider,
+		"model":      phaseWriteGateProfile.Model,
+		"message":    phaseWriteGateProfile.Message,
 	}); err != nil {
 		return err
 	}

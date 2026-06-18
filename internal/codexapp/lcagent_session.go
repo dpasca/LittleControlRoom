@@ -2109,6 +2109,22 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
+	case "phase_write_gate_result":
+		if text := lcagentPhaseWriteGateText(event); text != "" {
+			s.mu.Lock()
+			s.status = text
+			s.touchLocked()
+			s.mu.Unlock()
+			s.appendAsync(TranscriptStatus, text)
+		}
+	case "phase_write_gate_failed":
+		message := firstNonEmpty(rawJSONString(event["message"]), "phase write gate failed")
+		text := "LCAgent phase write gate failed: " + message
+		s.mu.Lock()
+		s.status = text
+		s.touchLocked()
+		s.mu.Unlock()
+		s.appendAsync(TranscriptStatus, text)
 	case "quality_plan_update":
 		s.handleLCAgentQualityPlanUpdate(event)
 	case "critic_review_result":
@@ -2528,6 +2544,21 @@ func lcagentPlanningPreflightText(event map[string]json.RawMessage) string {
 	}
 	if rawJSONBool(event["requires_temporal_visual_verification"]) {
 		text += "; temporal visual evidence required"
+	}
+	return text
+}
+
+func lcagentPhaseWriteGateText(event map[string]json.RawMessage) string {
+	if rawJSONBool(event["allow"]) && rawJSONBool(event["fits_active_phase"]) && !rawJSONBool(event["contains_later_phase_work"]) && !rawJSONBool(event["too_much_at_once"]) {
+		return ""
+	}
+	tool := firstNonEmpty(rawJSONString(event["tool"]), "write")
+	text := "LCAgent phase gate blocked " + tool
+	if phase := rawJSONString(event["active_phase"]); phase != "" {
+		text += " for " + phase
+	}
+	if reason := lcagentCondenseStatusText(rawJSONString(event["reason"]), 180); reason != "" {
+		text += ": " + reason
 	}
 	return text
 }

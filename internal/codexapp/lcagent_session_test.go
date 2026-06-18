@@ -1950,6 +1950,31 @@ func TestLCAgentReplayRestoresQualityPlanStats(t *testing.T) {
 	}
 }
 
+func TestLCAgentReplayRestoresPhaseWriteGateStatus(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_phase_write_gate"
+	started := time.Date(2026, 6, 18, 20, 44, 9, 0, time.UTC)
+	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "openrouter", "model": "deepseek/test"},
+		{"type": "phase_write_gate_result", "session_id": sessionID, "tool": "create_file", "active_phase": "render baseline", "allow": false, "fits_active_phase": false, "contains_later_phase_work": true, "too_much_at_once": true, "reason": "writes HUD and scoring before render baseline"},
+		{"type": "turn_complete", "session_id": sessionID, "summary": "partial answer", "final_outcome": "partial", "verification_status": "not_run"},
+	})
+	replay, err := parseLCAgentReplayFile(path)
+	if err != nil {
+		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
+	}
+	lca := &lcagentSession{
+		projectPath: root,
+		provider:    "openrouter",
+	}
+	lca.applyReplay(replay)
+	snapshot := lca.Snapshot()
+	if !strings.Contains(snapshot.Transcript, "LCAgent phase gate blocked create_file for render baseline") {
+		t.Fatalf("replayed transcript missing phase gate status:\n%s", snapshot.Transcript)
+	}
+}
+
 func TestLCAgentReplayRestoresQualityRepairStats(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

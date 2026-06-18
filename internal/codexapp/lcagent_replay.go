@@ -585,6 +585,10 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.applyQualityRepairFeedback(event)
 		case "quality_repair_cleared":
 			replay.applyQualityRepairCleared(event)
+		case "phase_write_gate_result":
+			replay.applyPhaseWriteGateResult(event)
+		case "phase_write_gate_failed":
+			replay.applyPhaseWriteGateFailed(event)
 		case "quality_plan_update":
 			replay.applyQualityPlanUpdate(event)
 		case "user_message":
@@ -924,6 +928,25 @@ func (r *lcagentReplay) applyQualityRepairCleared(event map[string]json.RawMessa
 	}
 	text := lcagentQualityRepairClearedText(pass, maxPasses)
 	r.qualityRepairLastSummary = strings.TrimSpace(text)
+	r.appendEntry(TranscriptStatus, text)
+}
+
+func (r *lcagentReplay) applyPhaseWriteGateResult(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	if text := lcagentPhaseWriteGateText(event); text != "" {
+		r.appendEntry(TranscriptStatus, text)
+	}
+}
+
+func (r *lcagentReplay) applyPhaseWriteGateFailed(event map[string]json.RawMessage) {
+	if r == nil {
+		return
+	}
+	message := firstNonEmpty(rawJSONString(event["message"]), "phase write gate failed")
+	text := "LCAgent phase write gate failed: " + message
+	r.lastError = text
 	r.appendEntry(TranscriptStatus, text)
 }
 
