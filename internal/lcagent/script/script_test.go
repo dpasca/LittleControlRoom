@@ -676,6 +676,59 @@ func TestRunnerAllowsBroadWriteDuringActiveQualityPhase(t *testing.T) {
 	}
 }
 
+func TestRunnerBlocksWriteUntilRequiredQualityPlanExists(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:                      writer,
+		SessionID:                    sessionID,
+		Patch:                        tools.PatchApplier{Workspace: w},
+		QualityPlanRequired:          true,
+		QualityPlanRequirementScope:  "sizable",
+		QualityPlanRequirementReason: "needs phased implementation",
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "create_file",
+		Args: raw(`{"path":"skate.cpp","content":"int main() { return 0; }\n"}`),
+	})
+	if err == nil || result.Success || !strings.Contains(result.Error, "update_quality_plan must be called before write tools") {
+		t.Fatalf("pre-plan write result = %#v err=%v, want planning block", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "skate.cpp")); !os.IsNotExist(err) {
+		t.Fatalf("pre-plan write created file, stat err=%v", err)
+	}
+
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"in_progress","acceptance":["player moves"]}]}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("quality plan result = %#v err=%v", result, err)
+	}
+	result, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "create_file",
+		Args: raw(`{"path":"skate.cpp","content":"int main() { return 0; }\n"}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("post-plan write result = %#v err=%v, want success", result, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "skate.cpp")); err != nil {
+		t.Fatalf("post-plan write did not create file: %v", err)
+	}
+}
+
 func TestRunnerFinalResponseAuditBlocksCompletedUntilQualityPlanEvidence(t *testing.T) {
 	runner := Runner{
 		qualityPlan: &QualityPlan{
@@ -728,6 +781,23 @@ func TestRunnerFinalResponseAuditBlocksCompletedUntilQualityPlanEvidence(t *test
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
 	if audit.Outcome != "pass" || audit.Blocking {
 		t.Fatalf("audit = %#v, want pass after declared evidence exists", audit)
+	}
+}
+
+func TestRunnerFinalResponseAuditBlocksCompletedWhenRequiredQualityPlanMissing(t *testing.T) {
+	runner := Runner{
+		QualityPlanRequired:          true,
+		QualityPlanRequirementScope:  "sizable",
+		QualityPlanRequirementReason: "substantial scratch game needs sequencing",
+	}
+	audit := runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_required_missing" || !audit.Blocking || !strings.Contains(audit.Message, "substantial scratch game") {
+		t.Fatalf("audit = %#v, want missing required quality plan block", audit)
+	}
+
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "partial", Outcome: "partial"})
+	if audit.Blocking {
+		t.Fatalf("audit = %#v, partial outcome should not be blocked by missing plan", audit)
 	}
 }
 

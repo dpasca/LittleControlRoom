@@ -618,6 +618,202 @@ func TestRunExecOpenRouterQualityCheckpointBouncesCandidateFinalOnce(t *testing.
 	}
 }
 
+func TestRunExecPlanningPreflightRequiresQualityPlanForSizableWork(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	sawPlanningLeadMessage := false
+	sawMissingPlanFeedback := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("request path = %s, want /chat/completions", r.URL.Path)
+		}
+		var body struct {
+			Model    string                 `json:"model"`
+			Messages []modeladapter.Message `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch requests {
+		case 1:
+			if body.Model != "deepseek/test-model" {
+				t.Fatalf("preflight model = %q, want lead model", body.Model)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_preflight",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": `{"scope":"sizable","needs_preplan":true,"artifact_type":"document","requires_runtime_verification":false,"requires_visual_verification":false,"reason":"substantial generated artifact benefits from sequencing","suggested_phases":[{"name":"structure","acceptance":["outline exists"]},{"name":"polish","acceptance":["final pass complete"]}]}`,
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			for _, msg := range body.Messages {
+				if strings.Contains(msg.Content, "planning preflight classified this request as sizable") {
+					sawPlanningLeadMessage = true
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_no_plan_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_no_plan_final",
+							"type": "function",
+							"function": map[string]any{
+								"name": "final_response",
+								"arguments": map[string]any{
+									"summary":       "done too soon",
+									"outcome":       "completed",
+									"files_changed": []any{},
+									"verification":  []any{},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
+			})
+		case 3:
+			for _, msg := range body.Messages {
+				if strings.Contains(msg.Content, "no quality plan has been recorded") {
+					sawMissingPlanFeedback = true
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_plan_started",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_plan_started",
+							"type": "function",
+							"function": map[string]any{
+								"name": "update_quality_plan",
+								"arguments": map[string]any{
+									"artifact_type":                 "document",
+									"requires_runtime_verification": false,
+									"requires_visual_verification":  false,
+									"phases": []any{map[string]any{
+										"name":       "structure",
+										"status":     "in_progress",
+										"acceptance": []any{"outline exists"},
+									}},
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+			})
+		case 4:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_plan_verified_final",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{
+							map[string]any{
+								"id":   "call_plan_verified",
+								"type": "function",
+								"function": map[string]any{
+									"name": "update_quality_plan",
+									"arguments": map[string]any{
+										"artifact_type":                 "document",
+										"requires_runtime_verification": false,
+										"requires_visual_verification":  false,
+										"phases": []any{map[string]any{
+											"name":       "structure",
+											"status":     "verified",
+											"acceptance": []any{"outline exists"},
+											"evidence":   []any{"created and reviewed final structure"},
+										}},
+									},
+								},
+							},
+							map[string]any{
+								"id":   "call_final_after_plan",
+								"type": "function",
+								"function": map[string]any{
+									"name": "final_response",
+									"arguments": map[string]any{
+										"summary":       "finished with plan evidence",
+										"outcome":       "completed",
+										"files_changed": []any{},
+										"verification":  []any{},
+									},
+								},
+							},
+						},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 11, "completion_tokens": 6, "total_tokens": 17},
+			})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "4",
+		"--require-final-response-tool",
+		"--planning-preflight",
+		"write a substantial project brief",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 4 {
+		t.Fatalf("requests = %d, want 4\nstdout=%s", requests, stdout.String())
+	}
+	if !sawPlanningLeadMessage {
+		t.Fatalf("lead request did not include planning preflight guidance")
+	}
+	if !sawMissingPlanFeedback {
+		t.Fatalf("lead request did not receive missing-plan audit feedback")
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"planning_preflight_profile"`,
+		`"type":"planning_preflight_result"`,
+		`"scope":"sizable"`,
+		`"code":"quality_plan_required_missing"`,
+		`"type":"quality_plan_update"`,
+		`"type":"turn_complete"`,
+		`"summary":"finished with plan evidence"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
@@ -1294,7 +1490,7 @@ func TestRunChatLoopUsesManagedProcessToolsWhenAvailable(t *testing.T) {
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, 0, false)
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false, 0, 0, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}
@@ -1423,7 +1619,7 @@ func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing
 		modeladapter.OpenRouterConfig{Model: "deepseek/test-model", MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
 		modeladapter.OpenRouterConfig{MaxTurns: 1, RequestTimeout: time.Minute},
-		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, 0, 0, false)
+		"openrouter", "main", "off", "off", script.DefaultSearchRefineMinBytes, tools.FileProfileBalanced, tools.FileLimitsForProfile(tools.FileProfileBalanced), openRouterContextOptions{}, true, false, 0, 0, false)
 	if err != nil {
 		t.Fatalf("runChatLoop error: %v\nstream:\n%s", err, stream.String())
 	}
