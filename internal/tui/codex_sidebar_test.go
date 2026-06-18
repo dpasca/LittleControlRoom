@@ -574,11 +574,42 @@ func TestEmbeddedSidebarShowsLCAgentVisionSummaryAndSelectedDetail(t *testing.T)
 	m.codexPanelFocus = embeddedCodexFocusSidebar
 	m.codexSidebarSelected = embeddedCodexSidebarVision
 	selected := ansi.Strip(strings.Join(m.renderEmbeddedSidebarVisionSection(snapshot, 80), "\n"))
-	for _, want := range []string{"Status idle", "Analyses 3", "Failures 1"} {
+	for _, want := range []string{"Status idle | 3 analyses | 1 failure"} {
 		if !strings.Contains(selected, want) {
 			t.Fatalf("selected vision section missing %q:\n%s", want, selected)
 		}
 	}
+	for _, unwanted := range []string{"Analyses 3", "Failures 1"} {
+		if strings.Contains(selected, unwanted) {
+			t.Fatalf("selected vision section should keep counts on the status row, found %q:\n%s", unwanted, selected)
+		}
+	}
+}
+
+func TestEmbeddedSidebarVisionAnalysisSummaryWraps(t *testing.T) {
+	width := 34
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.ImageAnalyses = 12
+	snapshot.ImageAnalysisLastSummary = "Screenshot review found the button text was clipped, the analysis panel overflowed, and the footer controls remained readable after resizing."
+
+	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.codexSidebarSelected = embeddedCodexSidebarVision
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarVisionSection(snapshot, width), "\n"))
+	for _, want := range []string{
+		"Status idle | 12 analyses",
+		"text was clipped",
+		"controls remained readable",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("wrapped vision section missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "...") {
+		t.Fatalf("vision analysis summary should wrap instead of ellipsizing:\n%s", rendered)
+	}
+	assertSidebarLinesWithinWidth(t, rendered, width)
 }
 
 func TestEmbeddedSidebarEnterOpensQualityDetailDialog(t *testing.T) {
