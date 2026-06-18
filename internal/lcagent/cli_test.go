@@ -54,6 +54,44 @@ func TestShouldDeferSynthesisForActiveQualityRepairWithoutEvidence(t *testing.T)
 	}
 }
 
+func TestQualityRepairEvidenceIncludesTargetedInspection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "game.cpp"), []byte("void drawHUD() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := script.Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Files:     tools.FileTools{Workspace: w},
+	}
+	state := qualityRepairState{}
+	state.recordFeedback(runner, criticReviewPayload{Summary: "confirm drawHUD still renders the combo text"}, "packet", "feedback")
+	if state.hasEvidenceAfterFeedback(runner) {
+		t.Fatal("repair state unexpectedly had evidence immediately after feedback")
+	}
+	result, err := runner.RunTool(context.Background(), script.Action{
+		Type: "tool_call",
+		Tool: "read_file",
+		Args: json.RawMessage(`{"path":"game.cpp","limit":20}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("read_file result = %#v err=%v", result, err)
+	}
+	if !state.hasEvidenceAfterFeedback(runner) {
+		t.Fatal("repair state did not accept targeted inspection as evidence")
+	}
+}
+
 func TestShouldDeferSynthesisForUnverifiedChanges(t *testing.T) {
 	guidance := openRouterProgressGuidance{
 		Turn:           40,
@@ -824,7 +862,7 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 				t.Fatalf("request 4 model = %q, want lead model", body["model"])
 			}
 			messagesJSON, _ := json.Marshal(body["messages"])
-			if !strings.Contains(string(messagesJSON), "has not been followed by a new artifact change or verification check") {
+			if !strings.Contains(string(messagesJSON), "has not been followed by a new artifact change, targeted inspection, image analysis, or verification check") {
 				t.Fatalf("lead retry did not receive no-evidence repair gate:\n%s", messagesJSON)
 			}
 			sawNoEvidenceFeedback = true

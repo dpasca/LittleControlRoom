@@ -338,6 +338,7 @@ func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
 		"continue with the in_progress step",
 		"call update_quality_plan early",
 		"Use quality phases to layer the work",
+		"favor clean, idiomatic, modern style",
 		"an empty workspace is not a blocker",
 		"Choose a conventional workspace-relative filename",
 	} {

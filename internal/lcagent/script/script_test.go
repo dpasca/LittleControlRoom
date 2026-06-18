@@ -499,7 +499,7 @@ func TestRunnerUpdatesQualityPlan(t *testing.T) {
 	result, err := runner.RunTool(context.Background(), Action{
 		Type: "tool_call",
 		Tool: "update_quality_plan",
-		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core movement","status":"in_progress","acceptance":["player moves"]},{"name":"boardwalk environment","status":"planned","acceptance":["wooden boardwalk visible"]}]}`),
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":false,"phases":[{"name":"core movement","status":"in_progress","acceptance":["player moves"]},{"name":"boardwalk environment","status":"planned","acceptance":["wooden boardwalk visible"]}]}`),
 	})
 	if err != nil {
 		t.Fatalf("RunTool() error = %v", err)
@@ -515,6 +515,41 @@ func TestRunnerUpdatesQualityPlan(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunnerCountsInspectionEvidenceTools(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Demo\n\nold behavior\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Files:     tools.FileTools{Workspace: w},
+	}
+	actions := []Action{
+		{Type: "tool_call", Tool: "read_file", Args: raw(`{"path":"README.md","limit":20}`)},
+		{Type: "tool_call", Tool: "search", Args: raw(`{"query":"old behavior","path":".","file_glob":"*.md","max_matches":10}`)},
+		{Type: "tool_call", Tool: "file_outline", Args: raw(`{"path":"README.md"}`)},
+	}
+	for _, action := range actions {
+		if result, err := runner.RunTool(context.Background(), action); err != nil || !result.Success {
+			t.Fatalf("%s result = %#v err=%v", action.Tool, result, err)
+		}
+	}
+	if got := runner.InspectionEvidenceEvents(); got != len(actions) {
+		t.Fatalf("InspectionEvidenceEvents() = %d, want %d", got, len(actions))
 	}
 }
 

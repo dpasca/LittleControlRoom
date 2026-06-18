@@ -70,6 +70,7 @@ type Runner struct {
 	browserToolsUsed       bool
 	browserWaitForUserUsed bool
 	imageAnalyses          int
+	inspectionEvidence     int
 	qualityPlan            *QualityPlan
 	qualityPlanUpdates     int
 }
@@ -1453,6 +1454,9 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			return tools.ToolResult{}, err
 		}
 	}
+	if result.Success && isInspectionEvidenceTool(action.Tool) {
+		r.inspectionEvidence++
+	}
 
 	if err := r.Session.Write(session.Event{
 		"type":       "tool_result",
@@ -1538,6 +1542,26 @@ func (r *Runner) runBrowserWaitForUser(ctx context.Context, args browserWaitForU
 func isBrowserTool(tool string) bool {
 	switch tool {
 	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_screenshot", "browser_current_page":
+		return true
+	default:
+		return false
+	}
+}
+
+func isInspectionEvidenceTool(tool string) bool {
+	switch tool {
+	case "read_file",
+		"list_files",
+		"repo_overview",
+		"search",
+		"scout_files",
+		"file_outline",
+		"module_outline",
+		"analyze_image",
+		"web_search",
+		"browser_snapshot",
+		"browser_current_page",
+		"browser_screenshot":
 		return true
 	default:
 		return false
@@ -2527,6 +2551,9 @@ func cleanImageAnalysisChecks(checks []string) []string {
 
 func normalizeQualityPlan(plan QualityPlan) (QualityPlan, tools.ToolResult) {
 	plan.ArtifactType = normalizeQualityPlanArtifactType(plan.ArtifactType)
+	if qualityPlanArtifactRequiresVisualVerification(plan.ArtifactType) {
+		plan.RequiresVisualVerification = true
+	}
 	plan.Notes, _ = boundedCriticConsultText(plan.Notes, maxQualityPlanTextChars)
 	if len(plan.Phases) == 0 {
 		return QualityPlan{}, tools.ToolResult{Success: false, Error: "update_quality_plan requires at least one phase"}
@@ -2559,6 +2586,15 @@ func normalizeQualityPlanArtifactType(value string) string {
 		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(value), "-", "_"))
 	default:
 		return "unknown"
+	}
+}
+
+func qualityPlanArtifactRequiresVisualVerification(value string) bool {
+	switch normalizeQualityPlanArtifactType(value) {
+	case "game", "ui":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -2935,6 +2971,13 @@ func (r *Runner) FileTouchEvents() int {
 		return 0
 	}
 	return r.fileTouchEvents
+}
+
+func (r *Runner) InspectionEvidenceEvents() int {
+	if r == nil {
+		return 0
+	}
+	return r.inspectionEvidence
 }
 
 func (r *Runner) VerificationDetails() []string {
