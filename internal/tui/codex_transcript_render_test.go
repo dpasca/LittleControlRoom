@@ -3290,6 +3290,113 @@ func TestSyncCodexViewportDefersHeavyTranscriptRender(t *testing.T) {
 	}
 }
 
+func TestModelApplyQueuesDeferredRenderForHeavyTranscriptPlaceholder(t *testing.T) {
+	projectPath := "/tmp/demo"
+	settings := config.EditableSettings{
+		EmbeddedCodexModel:     "gpt-5.4",
+		EmbeddedCodexReasoning: "high",
+		RecentCodexModels:      []string{"gpt-5.4"},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 20),
+		settingsBaseline:    &settings,
+		width:               80,
+		height:              20,
+	}
+	snapshot := streamingHeavyTranscriptSnapshot(projectPath, "model apply transcript content")
+	snapshot.Busy = false
+	snapshot.Model = "gpt-5"
+	snapshot.ReasoningEffort = "medium"
+	m.storeCodexSnapshot(projectPath, snapshot)
+	m.syncCodexViewport(true)
+	if rendered := ansi.Strip(m.codexViewport.View()); !strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("heavy transcript should start on the placeholder before deferred render: %q", rendered)
+	}
+
+	updated, cmd := m.Update(codexActionMsg{
+		projectPath:  projectPath,
+		provider:     codexapp.ProviderCodex,
+		model:        "gpt-5.4",
+		reasoning:    "high",
+		awaitSettle:  true,
+		perfDuration: time.Millisecond,
+	})
+	got := normalizeUpdateModel(updated)
+	msgs := collectCmdMsgs(cmd)
+	var renderMsg codexTranscriptRenderedMsg
+	found := false
+	for _, msg := range msgs {
+		if typed, ok := msg.(codexTranscriptRenderedMsg); ok {
+			renderMsg = typed
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("model apply command messages = %#v, want codexTranscriptRenderedMsg", msgs)
+	}
+	updated, _ = got.applyCodexTranscriptRenderedMsg(renderMsg)
+	got = normalizeUpdateModel(updated)
+	rendered := ansi.Strip(got.codexViewport.View())
+	if strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("model apply render should replace the placeholder: %q", rendered)
+	}
+	if !strings.Contains(rendered, "model apply transcript content 24") {
+		t.Fatalf("model apply render should populate the transcript: %q", rendered)
+	}
+}
+
+func TestSkippedModelApplyUpdateQueuesDeferredRenderForHeavyTranscriptPlaceholder(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 20),
+		width:               80,
+		height:              20,
+	}
+	snapshot := streamingHeavyTranscriptSnapshot(projectPath, "skipped update transcript content")
+	snapshot.Busy = false
+	m.storeCodexSnapshot(projectPath, snapshot)
+	m.syncCodexViewport(true)
+	if rendered := ansi.Strip(m.codexViewport.View()); !strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("heavy transcript should start on the placeholder before deferred render: %q", rendered)
+	}
+	m.markCodexSkipNextLiveRefresh(projectPath)
+
+	updated, cmd := m.Update(codexUpdateMsg{projectPath: projectPath})
+	got := normalizeUpdateModel(updated)
+	if _, ok := got.codexSkipNextLiveRefresh[projectPath]; ok {
+		t.Fatalf("codexUpdateMsg should consume the deferred-refresh hint")
+	}
+	msgs := collectCmdMsgs(cmd)
+	var renderMsg codexTranscriptRenderedMsg
+	found := false
+	for _, msg := range msgs {
+		if typed, ok := msg.(codexTranscriptRenderedMsg); ok {
+			renderMsg = typed
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("skipped update command messages = %#v, want codexTranscriptRenderedMsg", msgs)
+	}
+	updated, _ = got.applyCodexTranscriptRenderedMsg(renderMsg)
+	got = normalizeUpdateModel(updated)
+	rendered := ansi.Strip(got.codexViewport.View())
+	if strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("skipped update render should replace the placeholder: %q", rendered)
+	}
+	if !strings.Contains(rendered, "skipped update transcript content 24") {
+		t.Fatalf("skipped update render should populate the transcript: %q", rendered)
+	}
+}
+
 func TestStreamingTranscriptRenderCoalescesAndAppliesStaleContent(t *testing.T) {
 	projectPath := "/tmp/demo"
 	m := Model{
