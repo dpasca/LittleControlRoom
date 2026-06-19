@@ -831,7 +831,16 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 	}
 }
 
-func lcagentReasoningEffortOptions() []ReasoningEffortOption {
+func lcagentOpenAIStyleReasoningEffortOptions() []ReasoningEffortOption {
+	return []ReasoningEffortOption{
+		{ReasoningEffort: "low", Description: "Light reasoning for coding turns."},
+		{ReasoningEffort: "medium", Description: "More reasoning for harder coding turns."},
+		{ReasoningEffort: "high", Description: "Deeper reasoning for difficult reviews or refactors."},
+		{ReasoningEffort: "xhigh", Description: "Maximum OpenAI-style reasoning effort for the hardest coding turns."},
+	}
+}
+
+func lcagentGenericReasoningEffortOptions() []ReasoningEffortOption {
 	return []ReasoningEffortOption{
 		{ReasoningEffort: "low", Description: "Light reasoning for coding turns."},
 		{ReasoningEffort: "medium", Description: "More reasoning for harder coding turns."},
@@ -848,12 +857,14 @@ func lcagentDeepSeekReasoningEffortOptions() []ReasoningEffortOption {
 
 func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "", "openai", "openrouter", "xiaomi":
+		return lcagentOpenAIStyleReasoningEffortOptions()
 	case "moonshot":
 		return nil
 	case "deepseek":
 		return lcagentDeepSeekReasoningEffortOptions()
 	default:
-		return lcagentReasoningEffortOptions()
+		return lcagentGenericReasoningEffortOptions()
 	}
 }
 

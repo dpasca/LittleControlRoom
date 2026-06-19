@@ -293,8 +293,8 @@ func TestSettingsLCAgentModelPickerReasoningMovesWithProviderFallback(t *testing
 		t.Fatalf("picker state after model enter = %#v, want reasoning step", state)
 	}
 	options := settingsLCAgentModelPickerReasoningOptions(state)
-	if len(options) != 4 {
-		t.Fatalf("reasoning options = %#v, want provider default plus low/medium/high", options)
+	if len(options) != 5 {
+		t.Fatalf("reasoning options = %#v, want provider default plus low/medium/high/xhigh", options)
 	}
 	if state.ReasoningSelected >= len(options) || options[state.ReasoningSelected].Value != "low" {
 		t.Fatalf("initial selected reasoning index=%d options=%#v, want low", state.ReasoningSelected, options)
@@ -310,14 +310,19 @@ func TestSettingsLCAgentModelPickerReasoningMovesWithProviderFallback(t *testing
 	if got.settingsLCAgentModelPicker.PendingReasoning != "high" {
 		t.Fatalf("pending reasoning after two downs = %q, want high", got.settingsLCAgentModelPicker.PendingReasoning)
 	}
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	if got.settingsLCAgentModelPicker.PendingReasoning != "xhigh" {
+		t.Fatalf("pending reasoning after three downs = %q, want xhigh", got.settingsLCAgentModelPicker.PendingReasoning)
+	}
 
 	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if got.settingsLCAgentModelPicker != nil {
 		t.Fatal("model picker should close after applying reasoning")
 	}
-	if value := got.settingsFieldValue(settingsFieldLCAgentReasoning); value != "high" {
-		t.Fatalf("LCAgent reasoning field = %q, want high", value)
+	if value := got.settingsFieldValue(settingsFieldLCAgentReasoning); value != "xhigh" {
+		t.Fatalf("LCAgent reasoning field = %q, want xhigh", value)
 	}
 }
 

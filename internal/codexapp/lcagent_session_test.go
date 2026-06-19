@@ -1320,8 +1320,13 @@ func TestLCAgentSessionListModelsReturnsCuratedCodingRoutes(t *testing.T) {
 	}
 	for _, option := range models {
 		delete(want, option.Model)
-		if option.Model == "openai/gpt-5.5" && option.DefaultReasoningEffort != "low" {
-			t.Fatalf("GPT-5.5 default reasoning = %q, want low", option.DefaultReasoningEffort)
+		if option.Model == "openai/gpt-5.5" {
+			if option.DefaultReasoningEffort != "low" {
+				t.Fatalf("GPT-5.5 default reasoning = %q, want low", option.DefaultReasoningEffort)
+			}
+			if !reasoningEffortOptionSet(option.SupportedReasoningEfforts)["xhigh"] {
+				t.Fatalf("GPT-5.5 reasoning options = %#v, want xhigh", option.SupportedReasoningEfforts)
+			}
 		}
 	}
 	if len(want) > 0 {
@@ -1389,10 +1394,7 @@ func TestLCAgentModelOptionsForProviderDeepSeekIncludesMaxReasoning(t *testing.T
 	if len(options) == 0 {
 		t.Fatal("provider options empty, want direct DeepSeek models")
 	}
-	got := map[string]bool{}
-	for _, effort := range options[0].SupportedReasoningEfforts {
-		got[effort.ReasoningEffort] = true
-	}
+	got := reasoningEffortOptionSet(options[0].SupportedReasoningEfforts)
 	for _, want := range []string{"high", "max"} {
 		if !got[want] {
 			t.Fatalf("DeepSeek reasoning options = %#v, want %q", options[0].SupportedReasoningEfforts, want)
@@ -1401,6 +1403,40 @@ func TestLCAgentModelOptionsForProviderDeepSeekIncludesMaxReasoning(t *testing.T
 	if got["low"] || got["medium"] {
 		t.Fatalf("DeepSeek reasoning options should expose official high/max values, got %#v", options[0].SupportedReasoningEfforts)
 	}
+}
+
+func TestLCAgentModelOptionsForProviderOpenAIIncludesXHighReasoning(t *testing.T) {
+	options := lcagentModelOptionsForProvider("openai")
+	if len(options) == 0 {
+		t.Fatal("provider options empty, want direct OpenAI models")
+	}
+	got := reasoningEffortOptionSet(options[0].SupportedReasoningEfforts)
+	for _, want := range []string{"low", "medium", "high", "xhigh"} {
+		if !got[want] {
+			t.Fatalf("OpenAI reasoning options = %#v, want %q", options[0].SupportedReasoningEfforts, want)
+		}
+	}
+}
+
+func TestLCAgentModelOptionsForProviderXiaomiIncludesXHighReasoning(t *testing.T) {
+	options := lcagentModelOptionsForProvider("xiaomi")
+	if len(options) == 0 {
+		t.Fatal("provider options empty, want direct Xiaomi models")
+	}
+	got := reasoningEffortOptionSet(options[0].SupportedReasoningEfforts)
+	for _, want := range []string{"low", "medium", "high", "xhigh"} {
+		if !got[want] {
+			t.Fatalf("Xiaomi reasoning options = %#v, want %q", options[0].SupportedReasoningEfforts, want)
+		}
+	}
+}
+
+func reasoningEffortOptionSet(options []ReasoningEffortOption) map[string]bool {
+	got := map[string]bool{}
+	for _, effort := range options {
+		got[effort.ReasoningEffort] = true
+	}
+	return got
 }
 
 func TestLCAgentProviderModelOptionsMoonshotHasNoReasoningControls(t *testing.T) {

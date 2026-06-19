@@ -117,15 +117,16 @@ func TestCodexModelPickerLCAgentDefaultOnlyReasoningUsesProviderOptions(t *testi
 	m.setCodexModelPickerModel(models[0], "")
 
 	options := m.currentCodexReasoningOptions()
-	if len(options) != 3 {
-		t.Fatalf("reasoning options = %#v, want low/medium/high", options)
+	if len(options) != 4 {
+		t.Fatalf("reasoning options = %#v, want low/medium/high/xhigh", options)
 	}
-	updated, _ := m.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got := updated.(Model)
-	updated, _ = got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
-	got = updated.(Model)
+	got := m
+	for range 3 {
+		updated, _ := got.updateCodexModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+		got = updated.(Model)
+	}
 	selected, ok := got.currentCodexReasoningOption()
-	if !ok || selected.ReasoningEffort != "high" {
-		t.Fatalf("selected reasoning = %#v ok=%v, want high", selected, ok)
+	if !ok || selected.ReasoningEffort != "xhigh" {
+		t.Fatalf("selected reasoning = %#v ok=%v, want xhigh", selected, ok)
 	}
 }
