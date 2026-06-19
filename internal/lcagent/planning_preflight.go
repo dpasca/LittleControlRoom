@@ -159,7 +159,8 @@ Set needs_preplan true when the lead should publish a phased update_quality_plan
 For games, apps, UI, and visual artifacts, set requires_visual_verification true when image analysis is available and the user-facing result should be judged visually.
 Set requires_temporal_visual_verification true when image analysis is available and the visual artifact is interactive, animated, camera-driven, live-updating, stateful, or otherwise expected to change over time; false for static visual artifacts.
 Keep suggested_phases concrete and ordered; omit them for simple tasks.
-For games, UI, and visual artifacts, order phases so the recognizable user-facing scene appears early: first a stable render/movement foundation, then the main visible setting/composition, then controls/systems/HUD/NPCs/polish. Do not bury the requested visual identity in late phases behind invisible mechanics.`
+For games, UI, and visual artifacts, order phases so the recognizable user-facing scene appears early: first a stable render/movement foundation, then the main visible setting/composition, then controls/systems/HUD/NPCs/polish. Do not bury the requested visual identity in late phases behind invisible mechanics.
+For 3D or spatial visual artifacts, include acceptance checks for coordinate/transform sanity, grounded objects, camera framing, plausible scale, and layering/occlusion when those risks are relevant.`
 	user := "Vision image analysis is " + visualCapability + ".\n\nUser request:\n" + limitPlanningPreflightText(prompt)
 	return []modeladapter.Message{
 		{Role: "system", Content: system},
@@ -301,6 +302,7 @@ func planningPreflightLeadMessage(payload planningPreflightPayload) string {
 	b.WriteString("Call update_quality_plan before implementation writes or completion. Use phases as execution gates: establish the core behavior first, then the main user-facing shape of the artifact, then layer details, then verify. A full draft is acceptable when that is the natural write shape, but it is still a draft until the phases have concrete evidence.\n")
 	if payload.ArtifactType == "game" || payload.ArtifactType == "app" || payload.ArtifactType == "ui" {
 		b.WriteString("For visual artifact work, make the recognizable scene or interface an early phase after the technical foundation; do not defer the requested visual identity behind invisible mechanics.\n")
+		b.WriteString("For 3D or spatial visual work, include checks that objects are grounded or intentionally airborne, important surfaces are not covered by decorative layers, scale/camera framing is plausible, and coordinate transforms are understandable.\n")
 	}
 	if payload.RequiresRuntimeVerification {
 		b.WriteString("\nThe plan should require runtime verification.")

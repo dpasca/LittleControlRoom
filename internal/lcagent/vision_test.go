@@ -38,7 +38,7 @@ func TestComposeVisionComparisonImage(t *testing.T) {
 		ComparisonPath: "right.png",
 		Question:       "Is the visual state stable?",
 	}, combined)
-	for _, want := range []string{"side-by-side temporal comparison", "Left image path: left.png", "Right image path: right.png"} {
+	for _, want := range []string{"side-by-side temporal comparison", "Left image path: left.png", "Right image path: right.png", "Call out visible defects plainly", "floating or clipped objects"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
