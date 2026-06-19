@@ -145,7 +145,7 @@ type lcagentSession struct {
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
 const lcagentDefaultQualityCheckpointPasses = 0
-const lcagentDefaultQualityRepairPasses = 3
+const lcagentDefaultQualityRepairPasses = 0
 
 func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if err := req.Validate(); err != nil {

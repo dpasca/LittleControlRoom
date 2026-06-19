@@ -34,17 +34,18 @@ type traceCritic struct {
 }
 
 type criticReviewPacket struct {
-	SessionID       string                 `json:"session_id"`
-	UserRequest     string                 `json:"user_request"`
-	FinalOutcome    string                 `json:"final_outcome"`
-	FinalSummary    string                 `json:"final_summary"`
-	FilesChanged    []string               `json:"files_changed,omitempty"`
-	Verification    []string               `json:"verification,omitempty"`
-	ContextMode     string                 `json:"context_mode"`
-	MessagesOmitted int                    `json:"messages_omitted,omitempty"`
-	Messages        []criticPacketMessage  `json:"messages"`
-	EvidenceNotes   []string               `json:"evidence_notes,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	SessionID       string                       `json:"session_id"`
+	UserRequest     string                       `json:"user_request"`
+	FinalOutcome    string                       `json:"final_outcome"`
+	FinalSummary    string                       `json:"final_summary"`
+	FilesChanged    []string                     `json:"files_changed,omitempty"`
+	Verification    []string                     `json:"verification,omitempty"`
+	ChangeReview    *script.ChangeReviewEvidence `json:"change_review,omitempty"`
+	ContextMode     string                       `json:"context_mode"`
+	MessagesOmitted int                          `json:"messages_omitted,omitempty"`
+	Messages        []criticPacketMessage        `json:"messages"`
+	EvidenceNotes   []string                     `json:"evidence_notes,omitempty"`
+	Metadata        map[string]interface{}       `json:"metadata,omitempty"`
 }
 
 type criticConsultPacket struct {
@@ -170,6 +171,9 @@ func normalizeCriticProvider(raw string) (string, error) {
 }
 
 func maybeRunTraceCritic(ctx context.Context, writer *session.Writer, runner script.Runner, profile criticProfile, final script.Action, messages []modeladapter.Message, compacted bool) error {
+	if runner.FileTouchEvents() == 0 {
+		return nil
+	}
 	_, _, _, err := maybeRunCriticReview(ctx, writer, runner, profile, final, messages, compacted, "trace_only")
 	return err
 }
@@ -182,7 +186,7 @@ func maybeRunCriticReview(ctx context.Context, writer *session.Writer, runner sc
 	if mode == "" {
 		mode = "trace_only"
 	}
-	packet := buildCriticReviewPacket(runner.SessionID, runner.Prompt, final, messages, compacted)
+	packet := buildCriticReviewPacketForRunner(runner, final, messages, compacted)
 	packetHash := criticPacketHash(packet)
 	if err := writer.WritePrivate(session.Event{
 		"type":         "critic_review_packet",
@@ -596,8 +600,9 @@ func criticSystemPrompt() string {
 		"Review only the provided packet. You have no live tools and must not claim to inspect current files.",
 		"Find concrete evidence that the lead turn may be wrong, incomplete, overclaimed, unsafe, insufficiently verified, or on a poor trajectory for the original user request.",
 		"Be direct. If packet evidence shows something is wrong, missing, visibly broken, or not actually verified, say so plainly instead of softening it.",
+		"When change_review is present, prioritize the produced changes: current file snapshots, patch summaries, quality plan, and verification evidence. Use the recent messages only to interpret the lead's final claim.",
 		"Optimize for material user outcome, not transcript perfection. A true but low-impact wording nit should be a note, not a follow-up.",
-		"Use evidence_source values only from: tool_trace, patch, verification, lead_final, missing_evidence.",
+		"Use evidence_source values only from: change_packet, file_snapshot, quality_plan, tool_trace, patch, verification, lead_final, missing_evidence.",
 		"If a concern cannot cite packet evidence, do not include it as a finding.",
 		"Use severity for factual risk and materiality for impact on the original user request.",
 		"Set status=needs_followup only when the task should be reopened because the issue materially blocks or weakens the requested outcome.",
@@ -609,7 +614,7 @@ func criticSystemPrompt() string {
 		"Do not claim that a string, file, or page content was absent from a truncated message solely because it is absent from the visible content; at most report missing_evidence when no excerpt or other packet evidence supports the lead claim.",
 		"Return only JSON. Do not use markdown.",
 		"The JSON shape is:",
-		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","claim":"concrete issue","evidence_source":"tool_trace|patch|verification|lead_final|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what should happen next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
+		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","claim":"concrete issue","evidence_source":"change_packet|file_snapshot|quality_plan|tool_trace|patch|verification|lead_final|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what should happen next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
 	}, "\n")
 }
 
@@ -631,8 +636,33 @@ func criticConsultSystemPrompt() string {
 	}, "\n")
 }
 
+func buildCriticReviewPacketForRunner(runner script.Runner, final script.Action, messages []modeladapter.Message, compacted bool) criticReviewPacket {
+	if runner.FileTouchEvents() == 0 {
+		return buildCriticReviewPacket(runner.SessionID, runner.Prompt, final, messages, compacted)
+	}
+	packet := buildCriticReviewPacketWithMaxMessages(runner.SessionID, runner.Prompt, final, messages, compacted, 12)
+	changeReview := runner.ChangeReviewEvidence()
+	packet.ChangeReview = &changeReview
+	packet.Metadata = map[string]interface{}{
+		"review_focus":       "produced_change",
+		"change_review_hash": criticPacketHash(changeReview),
+	}
+	packet.EvidenceNotes = append([]string{
+		"The critic is reviewing a compact produced-change packet captured after the lead model requested final_response.",
+		"Prioritize change_review.files snapshots, patch_summaries, quality_plan, and verification over transcript reconstruction.",
+		"Current file snapshots are bounded; a missing detail in a truncated snapshot is missing_evidence unless another packet field proves it.",
+	}, packet.EvidenceNotes...)
+	return packet
+}
+
 func buildCriticReviewPacket(sessionID, userRequest string, final script.Action, messages []modeladapter.Message, compacted bool) criticReviewPacket {
-	const maxMessages = 80
+	return buildCriticReviewPacketWithMaxMessages(sessionID, userRequest, final, messages, compacted, 80)
+}
+
+func buildCriticReviewPacketWithMaxMessages(sessionID, userRequest string, final script.Action, messages []modeladapter.Message, compacted bool, maxMessages int) criticReviewPacket {
+	if maxMessages <= 0 {
+		maxMessages = 80
+	}
 	start := 0
 	if len(messages) > maxMessages {
 		start = len(messages) - maxMessages
@@ -1118,7 +1148,7 @@ func normalizeCriticMateriality(materiality, fallback string) string {
 
 func normalizeCriticEvidenceSource(source string) string {
 	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "tool_trace", "patch", "verification", "lead_final", "consult_question", "provided_context", "candidate", "file_excerpt", "missing_evidence":
+	case "change_packet", "file_snapshot", "quality_plan", "tool_trace", "patch", "verification", "lead_final", "consult_question", "provided_context", "candidate", "file_excerpt", "missing_evidence":
 		return strings.ToLower(strings.TrimSpace(source))
 	default:
 		return "missing_evidence"

@@ -835,6 +835,32 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 				t.Fatalf("request 1 model = %q, want lead model", body["model"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_write_file",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_create_file",
+							"type": "function",
+							"function": map[string]any{
+								"name": "create_file",
+								"arguments": map[string]any{
+									"path":    "answer.txt",
+									"content": "wrong answer\n",
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 2 model = %q, want lead model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":    "resp_bad_final",
 				"model": "deepseek/test-model",
 				"choices": []any{map[string]any{
@@ -856,15 +882,15 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 						}},
 					},
 				}},
-				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
 			})
-		case 2:
+		case 3:
 			if body["model"] != "critic/test-model" {
-				t.Fatalf("request 2 model = %q, want critic model", body["model"])
+				t.Fatalf("request 3 model = %q, want critic model", body["model"])
 			}
 			messagesJSON, _ := json.Marshal(body["messages"])
-			if !strings.Contains(string(messagesJSON), "wrong answer") {
-				t.Fatalf("critic request did not include candidate final packet:\n%s", messagesJSON)
+			if !strings.Contains(string(messagesJSON), "wrong answer") || !strings.Contains(string(messagesJSON), "change_review") {
+				t.Fatalf("critic request did not include produced-change final packet:\n%s", messagesJSON)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":    "resp_critic",
@@ -878,9 +904,9 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 				}},
 				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
 			})
-		case 3:
+		case 4:
 			if body["model"] != "deepseek/test-model" {
-				t.Fatalf("request 3 model = %q, want lead model", body["model"])
+				t.Fatalf("request 4 model = %q, want lead model", body["model"])
 			}
 			messagesJSON, _ := json.Marshal(body["messages"])
 			if !strings.Contains(string(messagesJSON), "Critic feedback before final_response") {
@@ -925,20 +951,20 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 		"exec",
 		"--cwd", root,
 		"--data-dir", t.TempDir(),
-		"--auto", "off",
+		"--auto", "low",
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", "deepseek/test-model",
 		"--critic-provider", "openrouter",
 		"--critic-model", "critic/test-model",
-		"--max-turns", "4",
-		"answer directly",
+		"--max-turns", "5",
+		"write an answer file",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if requests != 3 {
-		t.Fatalf("requests = %d, want 3\nstdout=%s", requests, stdout.String())
+	if requests != 4 {
+		t.Fatalf("requests = %d, want 4\nstdout=%s", requests, stdout.String())
 	}
 	if !sawCriticFeedback {
 		t.Fatalf("server did not observe critic feedback retry")
@@ -1270,6 +1296,32 @@ func TestRunExecOpenRouterCriticRetriesInvalidJSONOnce(t *testing.T) {
 		switch requests {
 		case 1:
 			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_write_file",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_create_file",
+							"type": "function",
+							"function": map[string]any{
+								"name": "create_file",
+								"arguments": map[string]any{
+									"path":    "answer.txt",
+									"content": "candidate answer\n",
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 2 model = %q, want lead model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":    "resp_final",
 				"model": "deepseek/test-model",
 				"choices": []any{map[string]any{
@@ -1291,11 +1343,11 @@ func TestRunExecOpenRouterCriticRetriesInvalidJSONOnce(t *testing.T) {
 						}},
 					},
 				}},
-				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
 			})
-		case 2:
+		case 3:
 			if body["model"] != "critic/test-model" {
-				t.Fatalf("request 2 model = %q, want critic model", body["model"])
+				t.Fatalf("request 3 model = %q, want critic model", body["model"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":    "resp_critic_invalid",
@@ -1309,9 +1361,9 @@ func TestRunExecOpenRouterCriticRetriesInvalidJSONOnce(t *testing.T) {
 				}},
 				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
 			})
-		case 3:
+		case 4:
 			if body["model"] != "critic/test-model" {
-				t.Fatalf("request 3 model = %q, want critic model", body["model"])
+				t.Fatalf("request 4 model = %q, want critic model", body["model"])
 			}
 			messagesJSON, _ := json.Marshal(body["messages"])
 			if !strings.Contains(string(messagesJSON), "Your previous critic response was not valid JSON") || !strings.Contains(string(messagesJSON), "This is not JSON") {
@@ -1343,20 +1395,20 @@ func TestRunExecOpenRouterCriticRetriesInvalidJSONOnce(t *testing.T) {
 		"exec",
 		"--cwd", root,
 		"--data-dir", dataDir,
-		"--auto", "off",
+		"--auto", "low",
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", "deepseek/test-model",
 		"--critic-provider", "openrouter",
 		"--critic-model", "critic/test-model",
-		"--max-turns", "3",
-		"answer directly",
+		"--max-turns", "4",
+		"write an answer file",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if requests != 3 {
-		t.Fatalf("requests = %d, want 3\nstdout=%s", requests, stdout.String())
+	if requests != 4 {
+		t.Fatalf("requests = %d, want 4\nstdout=%s", requests, stdout.String())
 	}
 	text := stdout.String()
 	for _, want := range []string{

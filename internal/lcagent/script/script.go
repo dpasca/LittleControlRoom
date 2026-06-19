@@ -37,6 +37,9 @@ const (
 	maxQualityPlanEvidenceItems      = 8
 	maxQualityPlanTextChars          = 240
 	maxPhaseWriteGateArgsChars       = 30000
+	maxChangeReviewFiles             = 8
+	maxChangeReviewLinesPerFile      = 260
+	maxChangeReviewTotalChars        = 36000
 )
 
 type Runner struct {
@@ -79,6 +82,7 @@ type Runner struct {
 	qualityPlan            *QualityPlan
 	qualityPlanUpdates     int
 	phaseWriteGateAdmitted string
+	editSummaries          []tools.PatchSummary
 }
 
 type SearchRefiner interface {
@@ -264,6 +268,25 @@ type QualityPlanPhase struct {
 	Acceptance []string `json:"acceptance,omitempty"`
 	Evidence   []string `json:"evidence,omitempty"`
 	Notes      string   `json:"notes,omitempty"`
+}
+
+type ChangeReviewEvidence struct {
+	FileTouchEvents int                       `json:"file_touch_events"`
+	FilesTouched    []string                  `json:"files_touched,omitempty"`
+	PatchSummaries  []tools.PatchSummary      `json:"patch_summaries,omitempty"`
+	Files           []ChangeReviewFile        `json:"files,omitempty"`
+	Verification    []tools.VerificationCheck `json:"verification,omitempty"`
+	QualityPlan     *QualityPlan              `json:"quality_plan,omitempty"`
+	Truncated       bool                      `json:"truncated,omitempty"`
+}
+
+type ChangeReviewFile struct {
+	Path              string `json:"path"`
+	Exists            bool   `json:"exists"`
+	Snapshot          string `json:"snapshot,omitempty"`
+	SnapshotTruncated bool   `json:"snapshot_truncated,omitempty"`
+	Error             string `json:"error,omitempty"`
+	Binary            bool   `json:"binary,omitempty"`
 }
 
 type OperationalAction struct {
@@ -1688,6 +1711,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 	}
 
 	if action.Tool == "apply_patch" || action.Tool == "create_file" || action.Tool == "replace_file" || action.Tool == "replace_text" || action.Tool == "replace_lines" {
+		r.recordEditSummary(result.PatchSummary)
 		if len(result.FilesTouched) > 0 {
 			r.fileTouchEvents++
 			r.filesTouched = appendCleanUniqueStrings(r.filesTouched, result.FilesTouched...)
@@ -3301,6 +3325,104 @@ func (r *Runner) VerificationDetails() []string {
 		return nil
 	}
 	return formatVerificationChecks(r.verificationChecks, len(r.verificationChecks))
+}
+
+func (r *Runner) ChangeReviewEvidence() ChangeReviewEvidence {
+	if r == nil {
+		return ChangeReviewEvidence{}
+	}
+	evidence := ChangeReviewEvidence{
+		FileTouchEvents: r.fileTouchEvents,
+		FilesTouched:    r.FilesTouched(),
+		PatchSummaries:  r.editSummaryCopies(),
+		Verification:    append([]tools.VerificationCheck(nil), r.verificationChecks...),
+		QualityPlan:     r.qualityPlanCopy(),
+	}
+	remainingChars := maxChangeReviewTotalChars
+	for i, path := range evidence.FilesTouched {
+		if i >= maxChangeReviewFiles {
+			evidence.Truncated = true
+			break
+		}
+		file := r.changeReviewFile(path, &remainingChars)
+		if file.SnapshotTruncated {
+			evidence.Truncated = true
+		}
+		evidence.Files = append(evidence.Files, file)
+	}
+	return evidence
+}
+
+func (r *Runner) recordEditSummary(summary *tools.PatchSummary) {
+	if r == nil || summary == nil {
+		return
+	}
+	r.editSummaries = append(r.editSummaries, copyPatchSummaryValue(*summary))
+}
+
+func (r *Runner) editSummaryCopies() []tools.PatchSummary {
+	if r == nil || len(r.editSummaries) == 0 {
+		return nil
+	}
+	out := make([]tools.PatchSummary, 0, len(r.editSummaries))
+	for _, summary := range r.editSummaries {
+		out = append(out, copyPatchSummaryValue(summary))
+	}
+	return out
+}
+
+func copyPatchSummaryValue(summary tools.PatchSummary) tools.PatchSummary {
+	out := summary
+	out.Files = append([]tools.FilePatchSummary(nil), summary.Files...)
+	return out
+}
+
+func (r *Runner) qualityPlanCopy() *QualityPlan {
+	if r == nil || r.qualityPlan == nil {
+		return nil
+	}
+	plan := *r.qualityPlan
+	plan.Phases = make([]QualityPlanPhase, len(r.qualityPlan.Phases))
+	for i, phase := range r.qualityPlan.Phases {
+		plan.Phases[i] = QualityPlanPhase{
+			Name:       phase.Name,
+			Status:     phase.Status,
+			Acceptance: append([]string(nil), phase.Acceptance...),
+			Evidence:   append([]string(nil), phase.Evidence...),
+			Notes:      phase.Notes,
+		}
+	}
+	return &plan
+}
+
+func (r *Runner) changeReviewFile(path string, remainingChars *int) ChangeReviewFile {
+	file := ChangeReviewFile{Path: strings.TrimSpace(path)}
+	if file.Path == "" {
+		file.Error = "empty path"
+		return file
+	}
+	result := r.Files.Read(file.Path, 1, maxChangeReviewLinesPerFile)
+	file.Exists = result.Success
+	if !result.Success {
+		file.Error = strings.TrimSpace(result.Error)
+		file.Binary = result.Binary
+		return file
+	}
+	snapshot := strings.TrimSpace(result.Output)
+	if remainingChars != nil {
+		if *remainingChars <= 0 {
+			file.SnapshotTruncated = snapshot != ""
+			return file
+		}
+		var truncated bool
+		snapshot, truncated = boundedCriticConsultText(snapshot, *remainingChars)
+		file.SnapshotTruncated = truncated || result.Truncated
+		*remainingChars -= len([]rune(snapshot))
+	} else {
+		file.SnapshotTruncated = result.Truncated
+	}
+	file.Snapshot = snapshot
+	return file
 }
 
 func formatLoadedSkill(loaded skillcatalog.LoadedSkill) string {
