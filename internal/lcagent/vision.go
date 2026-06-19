@@ -268,6 +268,8 @@ func detectVisionMIMEType(path string, data []byte) string {
 func buildVisionPrompt(request script.ImageAnalysisRequest, image visionImage) string {
 	var b strings.Builder
 	b.WriteString("Inspect the attached image pixels and answer the user's visual question.\n")
+	b.WriteString("Be direct and concrete. Call out visible defects plainly: wrong app/window, missing requested elements, floating or clipped objects, surfaces or layers covering the wrong areas, bad camera framing, unreadable text, broken scale, or unstable frame-to-frame state.\n")
+	b.WriteString("Do not soften a real visual problem with vague phrasing. If something important is absent, misplaced, floating, occluded, or visibly wrong, say so explicitly.\n")
 	if comparisonPath := strings.TrimSpace(request.ComparisonPath); comparisonPath != "" {
 		b.WriteString("The attached image is a side-by-side temporal comparison: left is the primary image, right is the comparison image.\n")
 		fmt.Fprintf(&b, "Left image path: %s\n", strings.TrimSpace(request.Path))
@@ -297,6 +299,6 @@ func buildVisionPrompt(request script.ImageAnalysisRequest, image visionImage) s
 	}
 	b.WriteString("\nQuestion:\n")
 	b.WriteString(strings.TrimSpace(request.Question))
-	b.WriteString("\n\nRespond concisely with observed visual facts, likely issues, and any uncertainty. Do not claim to inspect code or files beyond the image.")
+	b.WriteString("\n\nRespond concisely with observed visual facts, likely issues, and any uncertainty. Prioritize the most user-impacting visible defects. Do not claim to inspect code or files beyond the image.")
 	return b.String()
 }

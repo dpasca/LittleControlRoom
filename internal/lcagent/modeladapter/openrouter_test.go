@@ -159,7 +159,7 @@ func TestToolsWithOptionsExposeConsultCriticWhenEnabled(t *testing.T) {
 
 func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "analyze_image")
-	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") {
+	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") || !strings.Contains(spec.Description, "call out visible defects plainly") {
 		t.Fatalf("analyze_image description = %q", spec.Description)
 	}
 	props := spec.Parameters["properties"].(map[string]any)
@@ -342,6 +342,8 @@ func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
 		"call update_quality_plan early",
 		"Use quality phases to layer the work",
 		"recognizable user-facing scene",
+		"Prefer names that include both spaces",
+		"objects are grounded",
 		"LCAgent may reject writes",
 		"keep working the next phase",
 		"favor clean, idiomatic, modern style",

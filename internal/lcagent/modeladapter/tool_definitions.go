@@ -214,7 +214,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "analyze_image",
-				Description: "Ask the configured vision model to inspect image or screenshot pixels. Use this for visual QA, screenshots, layout/rendering issues, image contents, or side-by-side temporal comparison with comparison_path; do not substitute deterministic pixel counts for visual judgment when this tool is available.",
+				Description: "Ask the configured vision model to inspect image or screenshot pixels. Use this for direct visual QA, screenshots, layout/rendering issues, image contents, or side-by-side temporal comparison with comparison_path; ask it to call out visible defects plainly.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -223,7 +223,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 						"comparison_path": map[string]any{"type": "string", "description": "Optional second image path to compare against path. Use this for temporal/stateful visual verification with two observations separated in time; the vision model receives a side-by-side comparison."},
 						"question":        map[string]any{"type": "string", "maxLength": 1200, "description": "Focused question for the vision model, for example 'Does this screenshot show the expected surface, background, and player correctly?'"},
 						"context":         map[string]any{"type": "string", "maxLength": 4000, "description": "Optional task context, expected visual state, or specific UI/game details to inspect."},
-						"checks":          map[string]any{"type": "array", "maxItems": 10, "items": map[string]any{"type": "string", "maxLength": 100}, "description": "Optional visual checks, for example missing surfaces, overlapping text, clipped elements, unstable state, or color contrast."},
+						"checks":          map[string]any{"type": "array", "maxItems": 10, "items": map[string]any{"type": "string", "maxLength": 100}, "description": "Optional visual checks, for example wrong window, missing surfaces, floating/clipped objects, bad layering, overlapping text, unstable state, or color contrast."},
 					},
 					"required": []string{"path", "question"},
 				},
