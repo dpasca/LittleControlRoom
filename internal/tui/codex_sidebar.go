@@ -45,6 +45,7 @@ const (
 
 const (
 	embeddedSidebarDiffAutoInterval = 2 * time.Second
+	embeddedSidebarPreviewTextLimit = 52
 )
 
 type embeddedSidebarDiffState struct {
@@ -74,6 +75,7 @@ type embeddedSidebarDiffPreviewMsg struct {
 type embeddedSidebarDetailState struct {
 	Section     embeddedCodexSidebarSection
 	ProjectPath string
+	Offset      int
 }
 
 func codexSidebarTargetWidth(width int) int {
@@ -308,8 +310,100 @@ func (m Model) updateEmbeddedSidebarDetailMode(msg tea.KeyMsg) (tea.Model, tea.C
 		m.embeddedSidebarDetail = nil
 		m.status = title + " details closed"
 		return m, nil
+	case "up", "k":
+		return m.moveEmbeddedSidebarDetailOffset(-1), nil
+	case "down", "j":
+		return m.moveEmbeddedSidebarDetailOffset(1), nil
+	case "pgup", "ctrl+u":
+		return m.moveEmbeddedSidebarDetailOffset(-m.embeddedSidebarDetailPageSize()), nil
+	case "pgdown", "ctrl+d":
+		return m.moveEmbeddedSidebarDetailOffset(m.embeddedSidebarDetailPageSize()), nil
+	case "home":
+		if m.embeddedSidebarDetail != nil {
+			m.embeddedSidebarDetail.Offset = 0
+			m.status = embeddedSidebarSectionTitle(m.embeddedSidebarDetail.Section) + " details top"
+		}
+		return m, nil
+	case "end":
+		if m.embeddedSidebarDetail != nil {
+			_, maxOffset, _ := m.embeddedSidebarDetailScrollBounds()
+			m.embeddedSidebarDetail.Offset = maxOffset
+			m.status = embeddedSidebarSectionTitle(m.embeddedSidebarDetail.Section) + " details bottom"
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) moveEmbeddedSidebarDetailOffset(delta int) Model {
+	if m.embeddedSidebarDetail == nil || delta == 0 {
+		return m
+	}
+	offset, maxOffset, _ := m.embeddedSidebarDetailScrollBounds()
+	next := clampInt(offset+delta, 0, maxOffset)
+	m.embeddedSidebarDetail.Offset = next
+	title := embeddedSidebarSectionTitle(m.embeddedSidebarDetail.Section)
+	if maxOffset == 0 {
+		m.status = title + " details fit"
+	} else {
+		m.status = fmt.Sprintf("%s details %d/%d", title, next+1, maxOffset+1)
+	}
+	return m
+}
+
+func (m Model) embeddedSidebarDetailPageSize() int {
+	_, _, pageSize := m.embeddedSidebarDetailScrollBounds()
+	return max(1, pageSize)
+}
+
+func (m Model) embeddedSidebarDetailScrollBounds() (offset, maxOffset, pageSize int) {
+	detail := m.embeddedSidebarDetail
+	if detail == nil {
+		return 0, 0, 1
+	}
+	width, maxHeight := m.embeddedSidebarDetailContentGeometry()
+	rows := m.embeddedSidebarDetailRowsForCurrentSnapshot(width)
+	rowLimit := embeddedSidebarDetailRowLimit(maxHeight)
+	maxOffset = max(0, len(rows)-rowLimit)
+	offset = clampInt(detail.Offset, 0, maxOffset)
+	pageSize = rowLimit
+	return offset, maxOffset, pageSize
+}
+
+func (m Model) embeddedSidebarDetailContentGeometry() (width, maxHeight int) {
+	bodyW := m.width
+	if bodyW <= 0 {
+		bodyW = 120
+	}
+	bodyH := m.height
+	if bodyH <= 0 {
+		bodyH = 30
+	}
+	panelWidth := min(bodyW, min(max(58, bodyW-16), 94))
+	return max(32, panelWidth-4), max(8, bodyH-4)
+}
+
+func embeddedSidebarDetailRowLimit(maxHeight int) int {
+	const headerRows = 1
+	const actionRows = 2
+	return max(1, maxHeight-headerRows-actionRows)
+}
+
+func (m Model) embeddedSidebarDetailRowsForCurrentSnapshot(width int) []string {
+	detail := m.embeddedSidebarDetail
+	if detail == nil {
+		return nil
+	}
+	snapshot, ok := m.currentCodexSnapshot()
+	if !ok {
+		return nil
+	}
+	projectPath := normalizeProjectPath(firstNonEmptyString(detail.ProjectPath, m.embeddedSidebarProjectPath(snapshot)))
+	rows := m.embeddedSidebarDetailRows(detail.Section, snapshot, projectPath, width)
+	if len(rows) == 0 {
+		return []string{detailMutedStyle.Render(fitLine("No details available", width))}
+	}
+	return rows
 }
 
 func (m Model) renderEmbeddedSidebarDetailOverlay(body string, bodyW, bodyH int) string {
@@ -353,19 +447,27 @@ func (m Model) renderEmbeddedSidebarDetailContent(width, maxHeight int) string {
 	if len(rows) == 0 {
 		rows = []string{detailMutedStyle.Render(fitLine("No details available", width))}
 	}
+	rowLimit := embeddedSidebarDetailRowLimit(maxHeight)
+	maxOffset := max(0, len(rows)-rowLimit)
+	offset := clampInt(detail.Offset, 0, maxOffset)
+	if len(rows) > rowLimit {
+		rows = append([]string{}, rows[offset:min(len(rows), offset+rowLimit)]...)
+	}
+	actions := []string{
+		renderDialogAction("Up/Dn", "scroll", navigateActionKeyStyle, navigateActionTextStyle),
+	}
+	if maxOffset == 0 {
+		actions = nil
+	}
+	actions = append(actions,
+		renderDialogAction("Enter", "close", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
+	)
 	actionRows := []string{
 		"",
-		renderHelpPanelActionRow(
-			renderDialogAction("Enter", "close", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
-		),
+		renderHelpPanelActionRow(actions...),
 	}
 	headerRows := []string{renderDialogHeader(embeddedSidebarSectionTitle(detail.Section), "", "", width)}
-	rowLimit := max(1, maxHeight-len(headerRows)-len(actionRows))
-	if len(rows) > rowLimit {
-		remaining := len(rows) - rowLimit + 1
-		rows = append(rows[:max(0, rowLimit-1)], detailMutedStyle.Render(fitLine(fmt.Sprintf("+%d more rows", remaining), width)))
-	}
 	lines := append(headerRows, rows...)
 	lines = append(lines, actionRows...)
 	return strings.Join(lines, "\n")
@@ -374,7 +476,7 @@ func (m Model) renderEmbeddedSidebarDetailContent(width, maxHeight int) string {
 func (m Model) embeddedSidebarDetailRows(section embeddedCodexSidebarSection, snapshot codexapp.Snapshot, projectPath string, width int) []string {
 	switch section {
 	case embeddedCodexSidebarSession:
-		return m.embeddedSidebarSessionRows(snapshot, width)
+		return embeddedSidebarSessionDetailRows(snapshot, width)
 	case embeddedCodexSidebarQuality:
 		return embeddedSidebarQualityDetailRows(snapshot, width)
 	case embeddedCodexSidebarCritic:
@@ -382,9 +484,9 @@ func (m Model) embeddedSidebarDetailRows(section embeddedCodexSidebarSection, sn
 	case embeddedCodexSidebarVision:
 		return embeddedSidebarVisionDetailRows(snapshot, width)
 	case embeddedCodexSidebarBrowser:
-		return m.embeddedSidebarBrowserRows(snapshot, width)
+		return m.embeddedSidebarBrowserDetailRows(snapshot, width)
 	case embeddedCodexSidebarProcesses:
-		rows := m.embeddedSidebarProcessRows(projectPath, width, 20)
+		rows := m.embeddedSidebarProcessDetailRows(projectPath, width, 0)
 		if len(rows) == 0 {
 			return []string{detailMutedStyle.Render(fitLine("No active project processes", width))}
 		}
@@ -690,7 +792,7 @@ func (m Model) renderEmbeddedSidebarSectionHeader(section embeddedCodexSidebarSe
 	}
 	text := marker + " " + title
 	if selected {
-		return uistyle.SidebarSectionHeaderStyle.Width(width).Render(truncateText(text, max(1, width)))
+		return commandPaletteSelectStyle.Width(width).Render(fitFooterWidth(text, max(1, width)))
 	}
 	return uistyle.SidebarSectionHeaderStyle.Render(fitLine(text, width))
 }
@@ -704,8 +806,20 @@ func (m Model) renderEmbeddedSidebarSessionSection(snapshot codexapp.Snapshot, w
 }
 
 func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int) []string {
+	return embeddedSidebarSessionRows(snapshot, width, false)
+}
+
+func embeddedSidebarSessionDetailRows(snapshot codexapp.Snapshot, width int) []string {
+	return embeddedSidebarSessionRows(snapshot, width, true)
+}
+
+func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bool) []string {
 	rows := []string{}
-	rows = append(rows, embeddedSidebarModelRows(snapshot, width)...)
+	modelLineLimit := 2
+	if detail {
+		modelLineLimit = 0
+	}
+	rows = append(rows, embeddedSidebarModelRowsWithLimit(snapshot, width, modelLineLimit)...)
 	if row := embeddedSidebarContextRow(snapshot, width); row != "" {
 		rows = append(rows, row)
 	}
@@ -722,7 +836,11 @@ func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int)
 		}
 		rows = append(rows, embeddedSidebarFieldRow("Goal", label, embeddedSidebarGoalStyle(goal.Status), width))
 		if objective := strings.TrimSpace(goal.Objective); objective != "" {
-			rows = append(rows, detailMutedStyle.Render(fitLine(objective, width)))
+			if detail {
+				rows = append(rows, embeddedSidebarWrappedRows(objective, detailMutedStyle, width)...)
+			} else {
+				rows = append(rows, embeddedSidebarPreviewRows(objective, detailMutedStyle, width)...)
+			}
 		}
 	}
 	return rows
@@ -745,6 +863,10 @@ func embeddedSidebarModelCommands(snapshot codexapp.Snapshot) string {
 }
 
 func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
+	return embeddedSidebarModelRowsWithLimit(snapshot, width, 2)
+}
+
+func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLines int) []string {
 	rows := []string{}
 	model := strings.TrimSpace(snapshot.Model)
 	reasoning := strings.TrimSpace(snapshot.ReasoningEffort)
@@ -758,9 +880,9 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 		if reasoning != "" {
 			value += " / " + reasoning
 		}
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", value, detailValueStyle, width, 2)...)
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", value, detailValueStyle, width, maxLines)...)
 	} else if reasoning != "" {
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Reasoning", reasoning, detailValueStyle, width, 2)...)
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Reasoning", reasoning, detailValueStyle, width, maxLines)...)
 	}
 	if nextModel := strings.TrimSpace(snapshot.PendingModel); nextModel != "" && !showPendingAsCurrent {
 		nextReasoning := firstNonEmptyCodexLabel(strings.TrimSpace(snapshot.PendingReasoning), strings.TrimSpace(snapshot.ReasoningEffort))
@@ -768,13 +890,9 @@ func embeddedSidebarModelRows(snapshot codexapp.Snapshot, width int) []string {
 		if nextReasoning != "" {
 			next += " / " + nextReasoning
 		}
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Next", next, detailWarningStyle, width, 2)...)
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Next", next, detailWarningStyle, width, maxLines)...)
 	}
 	return rows
-}
-
-func (m Model) embeddedSidebarSectionSelected(section embeddedCodexSidebarSection) bool {
-	return m.codexPanelFocus == embeddedCodexFocusSidebar && m.codexSidebarSelected == section
 }
 
 func embeddedSidebarCriticModelLabel(snapshot codexapp.Snapshot) string {
@@ -791,9 +909,6 @@ func embeddedSidebarCriticModelLabel(snapshot codexapp.Snapshot) string {
 
 func (m Model) renderEmbeddedSidebarCriticSection(snapshot codexapp.Snapshot, width int) []string {
 	rows := embeddedSidebarCriticSummaryRows(snapshot, width)
-	if m.embeddedSidebarSectionSelected(embeddedCodexSidebarCritic) {
-		rows = embeddedSidebarCriticDetailRows(snapshot, width)
-	}
 	if len(rows) == 0 {
 		return nil
 	}
@@ -837,7 +952,7 @@ func embeddedSidebarCriticSummaryRows(snapshot codexapp.Snapshot, width int) []s
 		rows = append(rows, embeddedSidebarWrappedFieldRows("State", value, embeddedSidebarCriticStatusStyle(status), width, 3)...)
 	}
 	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+		rows = append(rows, embeddedSidebarPreviewRows(summary, detailMutedStyle, width)...)
 	}
 	return rows
 }
@@ -864,7 +979,7 @@ func embeddedSidebarCriticDetailRows(snapshot codexapp.Snapshot, width int) []st
 		rows = append(rows, embeddedSidebarFieldRow("Drafts", fmt.Sprintf("%d", snapshot.CriticFollowupDrafts), detailWarningStyle, width))
 	}
 	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
 	}
 	return rows
 }
@@ -913,9 +1028,6 @@ func embeddedSidebarCriticConcernSummary(snapshot codexapp.Snapshot) string {
 
 func (m Model) renderEmbeddedSidebarQualitySection(snapshot codexapp.Snapshot, width int) []string {
 	rows := embeddedSidebarQualitySummaryRows(snapshot, width)
-	if m.embeddedSidebarSectionSelected(embeddedCodexSidebarQuality) {
-		rows = embeddedSidebarQualityDetailRows(snapshot, width)
-	}
 	if len(rows) == 0 {
 		return nil
 	}
@@ -960,7 +1072,7 @@ func embeddedSidebarQualitySummaryRows(snapshot codexapp.Snapshot, width int) []
 	rows := []string{}
 	rows = append(rows, embeddedSidebarWrappedFieldRows("State", strings.Join(parts, " | "), style, width, 3)...)
 	if summary := embeddedSidebarQualityLatestSummary(snapshot); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+		rows = append(rows, embeddedSidebarPreviewRows(summary, detailMutedStyle, width)...)
 	}
 	return rows
 }
@@ -1008,13 +1120,13 @@ func embeddedSidebarQualityDetailRows(snapshot codexapp.Snapshot, width int) []s
 		rows = append(rows, embeddedSidebarQualityPhaseRows(snapshot.QualityPlanPhaseItems, width)...)
 	}
 	if summary := strings.TrimSpace(snapshot.QualityCheckpointLastSummary); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
 	}
 	if summary := strings.TrimSpace(snapshot.QualityRepairLastSummary); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
 	}
 	if summary := strings.TrimSpace(snapshot.QualityPlanLastSummary); summary != "" {
-		rows = append(rows, detailMutedStyle.Render(fitLine(summary, width)))
+		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
 	}
 	return rows
 }
@@ -1093,13 +1205,8 @@ func embeddedSidebarQualityPhaseRows(phases []codexapp.QualityPlanPhaseSnapshot,
 	if len(phases) == 0 {
 		return nil
 	}
-	const limit = 8
 	rows := []string{detailMutedStyle.Render(fitLine("Plan phases", width))}
-	count := len(phases)
-	if count > limit {
-		count = limit
-	}
-	for _, phase := range phases[:count] {
+	for _, phase := range phases {
 		status := embeddedSidebarQualityPhaseStatus(phase.Status)
 		text := status + " " + strings.TrimSpace(phase.Name)
 		if strings.TrimSpace(phase.Name) == "" {
@@ -1111,10 +1218,7 @@ func embeddedSidebarQualityPhaseRows(phases []codexapp.QualityPlanPhaseSnapshot,
 			evidenceLabel := "evidence"
 			text += fmt.Sprintf(" [%d %s]", phase.EvidenceCount, evidenceLabel)
 		}
-		rows = append(rows, embeddedSidebarQualityPhaseStyle(phase.Status).Render(fitLine(text, width)))
-	}
-	if len(phases) > limit {
-		rows = append(rows, detailMutedStyle.Render(fitLine(fmt.Sprintf("+%d more phases", len(phases)-limit), width)))
+		rows = append(rows, embeddedSidebarWrappedRows(text, embeddedSidebarQualityPhaseStyle(phase.Status), width)...)
 	}
 	return rows
 }
@@ -1163,9 +1267,6 @@ func embeddedSidebarVisionModelLabel(snapshot codexapp.Snapshot) string {
 
 func (m Model) renderEmbeddedSidebarVisionSection(snapshot codexapp.Snapshot, width int) []string {
 	rows := embeddedSidebarVisionSummaryRows(snapshot, width)
-	if m.embeddedSidebarSectionSelected(embeddedCodexSidebarVision) {
-		rows = embeddedSidebarVisionDetailRows(snapshot, width)
-	}
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1195,7 +1296,7 @@ func embeddedSidebarVisionSummaryRows(snapshot codexapp.Snapshot, width int) []s
 	status, style := embeddedSidebarVisionStatusSummary(snapshot)
 	rows = append(rows, embeddedSidebarWrappedFieldRows("State", status, style, width, 2)...)
 	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
-		rows = append(rows, embeddedSidebarWrappedRowsLimited(summary, detailMutedStyle, width, 2)...)
+		rows = append(rows, embeddedSidebarPreviewRows(summary, detailMutedStyle, width)...)
 	}
 	return rows
 }
@@ -1323,6 +1424,14 @@ func (m Model) renderEmbeddedSidebarBrowserSection(snapshot codexapp.Snapshot, w
 }
 
 func (m Model) embeddedSidebarBrowserRows(snapshot codexapp.Snapshot, width int) []string {
+	return m.embeddedSidebarBrowserRowsWithMode(snapshot, width, false)
+}
+
+func (m Model) embeddedSidebarBrowserDetailRows(snapshot codexapp.Snapshot, width int) []string {
+	return m.embeddedSidebarBrowserRowsWithMode(snapshot, width, true)
+}
+
+func (m Model) embeddedSidebarBrowserRowsWithMode(snapshot codexapp.Snapshot, width int, detail bool) []string {
 	if snapshot.Closed {
 		return nil
 	}
@@ -1337,7 +1446,11 @@ func (m Model) embeddedSidebarBrowserRows(snapshot codexapp.Snapshot, width int)
 	if request := snapshot.PendingElicitation; request != nil && request.Mode == codexapp.ElicitationModeURL {
 		rows = append(rows, detailWarningStyle.Render(fitLine("Input requested", width)))
 		if requestURL := strings.TrimSpace(request.URL); requestURL != "" {
-			rows = append(rows, embeddedSidebarURLRow("URL", requestURL, width))
+			if detail {
+				rows = append(rows, embeddedSidebarURLDetailRows("URL", requestURL, width)...)
+			} else {
+				rows = append(rows, embeddedSidebarURLRow("URL", requestURL, width))
+			}
 		}
 	}
 	activity := snapshot.BrowserActivity.Normalize()
@@ -1345,15 +1458,27 @@ func (m Model) embeddedSidebarBrowserRows(snapshot codexapp.Snapshot, width int)
 	switch activity.State {
 	case browserctl.SessionActivityStateWaitingForUser:
 		rows = append(rows, embeddedSidebarFieldRow("State", "waiting", detailWarningStyle, width))
-		rows = append(rows, embeddedSidebarFieldRow("Source", source, detailMutedStyle, width))
+		if detail {
+			rows = append(rows, embeddedSidebarWrappedFieldRows("Source", source, detailMutedStyle, width, 0)...)
+		} else {
+			rows = append(rows, embeddedSidebarFieldRow("Source", source, detailMutedStyle, width))
+		}
 	case browserctl.SessionActivityStateActive:
 		rows = append(rows, embeddedSidebarFieldRow("State", "active", detailValueStyle, width))
-		rows = append(rows, embeddedSidebarFieldRow("Source", source, detailMutedStyle, width))
+		if detail {
+			rows = append(rows, embeddedSidebarWrappedFieldRows("Source", source, detailMutedStyle, width, 0)...)
+		} else {
+			rows = append(rows, embeddedSidebarFieldRow("Source", source, detailMutedStyle, width))
+		}
 	}
 	if pageURL := managedBrowserCurrentPageURL(snapshot); pageURL != "" &&
 		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" &&
 		!snapshot.CurrentBrowserPageStale {
-		rows = append(rows, embeddedSidebarURLRow("Page", pageURL, width))
+		if detail {
+			rows = append(rows, embeddedSidebarURLDetailRows("Page", pageURL, width)...)
+		} else {
+			rows = append(rows, embeddedSidebarURLRow("Page", pageURL, width))
+		}
 		if hint := m.managedBrowserCurrentPageHint(snapshot); hint != "" {
 			rows = append(rows, detailMutedStyle.Render(fitLine("ctrl+o reveals browser", width)))
 		}
@@ -1380,7 +1505,7 @@ func (m Model) renderEmbeddedSidebarSummarySection(snapshot codexapp.Snapshot, w
 	if !ok {
 		return nil
 	}
-	rows := embeddedSidebarWrappedRows(summary, style, width)
+	rows := embeddedSidebarPreviewRows(summary, style, width)
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1429,6 +1554,45 @@ func (m Model) embeddedSidebarProcessRows(projectPath string, width, limit int) 
 	return rows
 }
 
+func (m Model) embeddedSidebarProcessDetailRows(projectPath string, width, limit int) []string {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return nil
+	}
+	capacity := limit
+	if capacity < 0 {
+		capacity = 0
+	}
+	rows := make([]string, 0, capacity)
+	for _, snapshot := range m.projectManagedRuntimeSnapshots(projectPath) {
+		if limit > 0 && len(rows) >= limit {
+			break
+		}
+		if !runtimeDetailAvailable("", snapshot) {
+			continue
+		}
+		rows = append(rows, embeddedSidebarRuntimeDetailRows(snapshot, width)...)
+	}
+	for _, snapshot := range m.projectVisibleLocalInstanceSnapshots(projectPath) {
+		if limit > 0 && len(rows) >= limit {
+			break
+		}
+		rows = append(rows, embeddedSidebarLocalInstanceDetailRows(snapshot, width)...)
+	}
+	if report, ok := m.projectProcessReport(projectPath); ok {
+		for _, finding := range report.Findings {
+			if limit > 0 && len(rows) >= limit {
+				break
+			}
+			rows = append(rows, embeddedSidebarFindingDetailRows(finding, width)...)
+		}
+	}
+	if limit > 0 && len(rows) > limit {
+		return rows[:limit]
+	}
+	return rows
+}
+
 func (m Model) embeddedSidebarRuntimeRow(snapshot projectrun.Snapshot, width int) string {
 	status := "idle"
 	style := detailMutedStyle
@@ -1453,6 +1617,33 @@ func (m Model) embeddedSidebarRuntimeRow(snapshot projectrun.Snapshot, width int
 	return fitStyledWidth(style.Render(status)+" "+detailMutedStyle.Render(truncateText(label, max(1, width-5))), width)
 }
 
+func embeddedSidebarRuntimeDetailRows(snapshot projectrun.Snapshot, width int) []string {
+	status := "idle"
+	style := detailMutedStyle
+	if snapshot.Running {
+		status = "running"
+		style = detailValueStyle
+	} else if snapshot.ExitCodeKnown && snapshot.ExitCode != 0 {
+		status = fmt.Sprintf("exited %d", snapshot.ExitCode)
+		style = detailDangerStyle
+	}
+	rows := []string{style.Render(fitLine("Runtime "+status, width))}
+	if command := strings.TrimSpace(snapshot.Command); command != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Command", command, detailMutedStyle, width, 0)...)
+	} else if label := runtimeProcessLabel(snapshot); label != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Process", label, detailMutedStyle, width, 0)...)
+	}
+	if snapshot.PID > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("PID", fmt.Sprintf("%d", snapshot.PID), detailMutedStyle, width))
+	}
+	if url := runtimeURLSummary(snapshot); url != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("URL", url, detailValueStyle, width, 0)...)
+	} else if len(snapshot.Ports) > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("Ports", joinPorts(snapshot.Ports), detailValueStyle, width))
+	}
+	return rows
+}
+
 func embeddedSidebarLocalInstanceRow(snapshot projectrun.Snapshot, width int) string {
 	label := localInstanceDisplayLabel(snapshot)
 	if len(snapshot.AnnouncedURLs) > 0 {
@@ -1463,6 +1654,22 @@ func embeddedSidebarLocalInstanceRow(snapshot projectrun.Snapshot, width int) st
 	}
 	badge := "port"
 	return fitStyledWidth(detailValueStyle.Render(badge)+" "+detailMutedStyle.Render(truncateText(label, max(1, width-len(badge)-1))), width)
+}
+
+func embeddedSidebarLocalInstanceDetailRows(snapshot projectrun.Snapshot, width int) []string {
+	rows := []string{detailValueStyle.Render(fitLine("Local port", width))}
+	if command := strings.TrimSpace(snapshot.Command); command != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Command", command, detailMutedStyle, width, 0)...)
+	}
+	if snapshot.PID > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("PID", fmt.Sprintf("%d", snapshot.PID), detailMutedStyle, width))
+	}
+	if url := runtimeURLSummary(snapshot); url != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("URL", url, detailValueStyle, width, 0)...)
+	} else if len(snapshot.Ports) > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("Ports", joinPorts(snapshot.Ports), detailValueStyle, width))
+	}
+	return rows
 }
 
 func localInstanceDisplayLabel(snapshot projectrun.Snapshot) string {
@@ -1493,6 +1700,37 @@ func embeddedSidebarFindingRow(finding procinspect.Finding, width int) string {
 		badge = "port!"
 	}
 	return fitStyledWidth(style.Render(badge)+" "+detailMutedStyle.Render(truncateText(label, max(1, width-len(badge)-1))), width)
+}
+
+func embeddedSidebarFindingDetailRows(finding procinspect.Finding, width int) []string {
+	style := detailWarningStyle
+	title := "Process"
+	if finding.PortConflict {
+		style = detailDangerStyle
+		title = "Port conflict"
+	}
+	rows := []string{style.Render(fitLine(title, width))}
+	if finding.PID > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("PID", fmt.Sprintf("%d", finding.PID), detailMutedStyle, width))
+	}
+	if name := cpuProcessName(finding.Process); name != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Name", name, detailMutedStyle, width, 0)...)
+	}
+	if command := strings.TrimSpace(finding.Process.Command); command != "" {
+		rows = append(rows, embeddedSidebarWrappedFieldRows("Command", command, detailMutedStyle, width, 0)...)
+	}
+	if finding.CPU > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("CPU", formatCPUPercent(finding.CPU), detailWarningStyle, width))
+	}
+	if len(finding.Ports) > 0 {
+		rows = append(rows, embeddedSidebarFieldRow("Ports", joinPorts(finding.Ports), detailWarningStyle, width))
+	}
+	for _, reason := range finding.Reasons {
+		if reason = strings.TrimSpace(reason); reason != "" {
+			rows = append(rows, embeddedSidebarWrappedFieldRows("Reason", reason, detailMutedStyle, width, 0)...)
+		}
+	}
+	return rows
 }
 
 func (m Model) renderEmbeddedSidebarDiffSection(projectPath string, width int) []string {
@@ -1715,27 +1953,28 @@ func embeddedSidebarWrappedRows(text string, style lipgloss.Style, width int) []
 	return renderWrappedDialogTextLines(style, max(1, width), strings.TrimSpace(text))
 }
 
-func embeddedSidebarWrappedRowsLimited(text string, style lipgloss.Style, width, maxLines int) []string {
-	rows := embeddedSidebarWrappedRows(text, style, width)
-	if maxLines <= 0 || len(rows) <= maxLines {
-		return rows
+func embeddedSidebarPreviewRows(text string, style lipgloss.Style, width int) []string {
+	text = embeddedSidebarPreviewText(text)
+	if text == "" {
+		return nil
 	}
-	rows = append([]string{}, rows[:maxLines]...)
-	last := maxLines - 1
-	suffix := " ..."
-	suffixWidth := ansi.StringWidth(suffix)
-	if width <= suffixWidth {
-		rows[last] = style.Render(ansi.Truncate(strings.TrimSpace(suffix), max(1, width), ""))
-		return rows
+	return embeddedSidebarWrappedRows(text, style, width)
+}
+
+func embeddedSidebarPreviewText(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return ""
 	}
-	line := strings.TrimRight(ansi.Strip(rows[last]), " ")
-	line = strings.TrimRight(ansi.Truncate(line, max(1, width-suffixWidth), ""), " ")
-	rows[last] = style.Render(fitLine(line+suffix, width))
-	return rows
+	return fitFooterWidth(text, embeddedSidebarPreviewTextLimit)
 }
 
 func embeddedSidebarURLRow(label, rawURL string, width int) string {
 	return embeddedSidebarFieldRow(label, embeddedSidebarCompactURL(rawURL), detailMutedStyle, width)
+}
+
+func embeddedSidebarURLDetailRows(label, rawURL string, width int) []string {
+	return embeddedSidebarWrappedFieldRows(label, rawURL, detailMutedStyle, width, 0)
 }
 
 func embeddedSidebarCompactURL(rawURL string) string {

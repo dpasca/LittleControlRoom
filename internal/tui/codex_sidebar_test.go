@@ -239,7 +239,7 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSidebarSummaryWrapsProjectListSummary(t *testing.T) {
+func TestEmbeddedSidebarSummaryPreviewWrapsAndClampsProjectListSummary(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
 	m.allProjects = []model.ProjectSummary{{
@@ -253,18 +253,46 @@ func TestEmbeddedSidebarSummaryWrapsProjectListSummary(t *testing.T) {
 
 	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarSummarySection(testEmbeddedSidebarSnapshot(projectPath), 32), "\n"))
 	if !strings.Contains(rendered, "Summary") ||
-		!strings.Contains(rendered, "dashboard assessment text") ||
-		!strings.Contains(rendered, "without ellipses") {
+		!strings.Contains(rendered, "dashboard assessment tex") ||
+		!strings.Contains(rendered, "...") {
 		t.Fatalf("wrapped sidebar summary missing expected text:\n%s", rendered)
-	}
-	if strings.Contains(rendered, "...") {
-		t.Fatalf("sidebar summary should wrap instead of ellipsizing:\n%s", rendered)
 	}
 	for _, line := range strings.Split(rendered, "\n") {
 		if width := ansi.StringWidth(line); width > 32 {
 			t.Fatalf("wrapped sidebar summary line width = %d, want <= 32: %q\n%s", width, line, rendered)
 		}
 	}
+}
+
+func TestEmbeddedSidebarSessionGoalPreviewClampsAndDetailWraps(t *testing.T) {
+	width := 34
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Goal = &codexapp.ThreadGoal{
+		Objective: "Unify the AI engineer sidebar so long objectives wrap in the detail dialog while the compact sidebar preview stays readable.",
+		Status:    codexapp.ThreadGoalStatusActive,
+	}
+
+	preview := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").embeddedSidebarSessionRows(snapshot, width), "\n"))
+	for _, want := range []string{"Goal active", "Unify the AI engineer", "..."} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("goal preview missing %q:\n%s", want, preview)
+		}
+	}
+	if strings.Contains(preview, "compact sidebar preview stays readable") {
+		t.Fatalf("goal preview should clamp long objectives:\n%s", preview)
+	}
+	assertSidebarLinesWithinWidth(t, preview, width)
+
+	detail := ansi.Strip(strings.Join(embeddedSidebarSessionDetailRows(snapshot, width), "\n"))
+	for _, want := range []string{"long objectives wrap", "dialog while the compact sidebar", "preview stays readable"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("goal detail missing %q:\n%s", want, detail)
+		}
+	}
+	if strings.Contains(detail, "...") {
+		t.Fatalf("goal detail should wrap full text without preview ellipses:\n%s", detail)
+	}
+	assertSidebarLinesWithinWidth(t, detail, width)
 }
 
 func TestEmbeddedSidebarLiveSummaryDropsLargeCodeBlock(t *testing.T) {
@@ -443,10 +471,7 @@ func TestEmbeddedSidebarShowsLCAgentCriticActivity(t *testing.T) {
 		}
 	}
 
-	detailModel := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
-	detailModel.codexPanelFocus = embeddedCodexFocusSidebar
-	detailModel.codexSidebarSelected = embeddedCodexSidebarCritic
-	detailRendered := ansi.Strip(strings.Join(detailModel.renderEmbeddedSidebarCriticSection(snapshot, 80), "\n"))
+	detailRendered := ansi.Strip(strings.Join(embeddedSidebarCriticDetailRows(snapshot, 80), "\n"))
 	for _, want := range []string{
 		"Status concerns",
 		"Activity 2 reviews | 3 consults | 2 concerns | 1 correction",
@@ -485,10 +510,7 @@ func TestEmbeddedSidebarShowsLCAgentQualityCheckpointActivity(t *testing.T) {
 		t.Fatalf("quality summary should hide full checkpoint rows until selected:\n%s", rendered)
 	}
 
-	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
-	m.codexPanelFocus = embeddedCodexFocusSidebar
-	m.codexSidebarSelected = embeddedCodexSidebarQuality
-	selected := ansi.Strip(strings.Join(m.renderEmbeddedSidebarQualitySection(snapshot, 46), "\n"))
+	selected := ansi.Strip(strings.Join(embeddedSidebarQualityDetailRows(snapshot, 46), "\n"))
 	for _, want := range []string{"Status checked", "Checkpoints 1/1"} {
 		if !strings.Contains(selected, want) {
 			t.Fatalf("selected quality section missing %q:\n%s", want, selected)
@@ -549,10 +571,7 @@ func TestEmbeddedSidebarShowsLCAgentQualityPlanActivity(t *testing.T) {
 		}
 	}
 
-	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
-	m.codexPanelFocus = embeddedCodexFocusSidebar
-	m.codexSidebarSelected = embeddedCodexSidebarQuality
-	selected := ansi.Strip(strings.Join(m.renderEmbeddedSidebarQualitySection(snapshot, 80), "\n"))
+	selected := ansi.Strip(strings.Join(embeddedSidebarQualityDetailRows(snapshot, 80), "\n"))
 	for _, want := range []string{
 		"Plan 4 (3 verified)",
 		"Evidence runtime+visual+temporal",
@@ -593,10 +612,7 @@ func TestEmbeddedSidebarShowsLCAgentVisionSummaryAndSelectedDetail(t *testing.T)
 		}
 	}
 
-	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
-	m.codexPanelFocus = embeddedCodexFocusSidebar
-	m.codexSidebarSelected = embeddedCodexSidebarVision
-	selected := ansi.Strip(strings.Join(m.renderEmbeddedSidebarVisionSection(snapshot, 80), "\n"))
+	selected := ansi.Strip(strings.Join(embeddedSidebarVisionDetailRows(snapshot, 80), "\n"))
 	for _, want := range []string{"Status idle | 3 analyses | 1 failure"} {
 		if !strings.Contains(selected, want) {
 			t.Fatalf("selected vision section missing %q:\n%s", want, selected)
@@ -616,10 +632,7 @@ func TestEmbeddedSidebarVisionAnalysisSummaryWraps(t *testing.T) {
 	snapshot.ImageAnalyses = 12
 	snapshot.ImageAnalysisLastSummary = "Screenshot review found the button text was clipped, the analysis panel overflowed, and the footer controls remained readable after resizing."
 
-	m := testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo")
-	m.codexPanelFocus = embeddedCodexFocusSidebar
-	m.codexSidebarSelected = embeddedCodexSidebarVision
-	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarVisionSection(snapshot, width), "\n"))
+	rendered := ansi.Strip(strings.Join(embeddedSidebarVisionDetailRows(snapshot, width), "\n"))
 	for _, want := range []string{
 		"Status idle | 12 analyses",
 		"text was clipped",
@@ -695,6 +708,47 @@ func TestEmbeddedSidebarEnterOpensQualityDetailDialog(t *testing.T) {
 	got = normalizeUpdateModel(updated)
 	if got.embeddedSidebarDetail != nil {
 		t.Fatalf("Esc should close quality detail dialog")
+	}
+}
+
+func TestEmbeddedSidebarDetailDialogScrollsOverflowingRows(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.QualityPlanUpdates = 1
+	snapshot.QualityPlanPhases = 8
+	snapshot.QualityPlanPhaseItems = []codexapp.QualityPlanPhaseSnapshot{
+		{Name: "phase one", Status: "verified"},
+		{Name: "phase two", Status: "verified"},
+		{Name: "phase three", Status: "verified"},
+		{Name: "phase four", Status: "verified"},
+		{Name: "phase five", Status: "verified"},
+		{Name: "phase six", Status: "verified"},
+		{Name: "phase seven", Status: "verified"},
+		{Name: "phase eight", Status: "verified"},
+	}
+	m := testEmbeddedSidebarModel(projectPath)
+	m.width = 80
+	m.height = 12
+	m.codexSnapshots[projectPath] = snapshot
+	m.embeddedSidebarDetail = &embeddedSidebarDetailState{
+		Section:     embeddedCodexSidebarQuality,
+		ProjectPath: projectPath,
+	}
+
+	top := ansi.Strip(m.renderEmbeddedSidebarDetailContent(60, 8))
+	if strings.Contains(top, "phase eight") {
+		t.Fatalf("top of short detail dialog should not already include tail row:\n%s", top)
+	}
+
+	updated, _ := m.updateEmbeddedSidebarDetailMode(tea.KeyMsg{Type: tea.KeyEnd})
+	got := normalizeUpdateModel(updated)
+	bottom := ansi.Strip(got.renderEmbeddedSidebarDetailContent(60, 8))
+	if !strings.Contains(bottom, "phase eight") {
+		t.Fatalf("End should scroll detail dialog to tail rows:\n%s", bottom)
+	}
+	if got.embeddedSidebarDetail == nil || got.embeddedSidebarDetail.Offset == 0 {
+		t.Fatalf("detail scroll offset should move, got %#v", got.embeddedSidebarDetail)
 	}
 }
 

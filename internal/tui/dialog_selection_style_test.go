@@ -48,6 +48,18 @@ func TestLocalBackendModelPickerRowsUseDialogSelectionContrast(t *testing.T) {
 	requireDialogSelectedContrast(t, row)
 }
 
+func TestEmbeddedSidebarSelectedSectionUsesDialogSelectionContrast(t *testing.T) {
+	withANSI256DarkBackground(t)
+	m := Model{
+		codexPanelFocus:      embeddedCodexFocusSidebar,
+		codexSidebarSelected: embeddedCodexSidebarProcesses,
+	}
+
+	row := m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarProcesses, "Active Processes", 40)
+
+	requireDialogSelectedContrast(t, row)
+}
+
 func withANSI256DarkBackground(t *testing.T) {
 	t.Helper()
 	prevProfile := lipgloss.ColorProfile()
