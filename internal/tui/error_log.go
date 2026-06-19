@@ -397,7 +397,7 @@ func (m Model) renderErrorLogRow(entry errorLogEntry, selected bool, width int) 
 	}
 	row := strings.Join(lines, "\n")
 	if selected {
-		return projectListSelectedRowStyle.Render(row)
+		return dialogSelectedRowStyle.Width(width).Render(row)
 	}
 	if len(lines) == 1 {
 		return row

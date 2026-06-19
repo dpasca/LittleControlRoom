@@ -976,7 +976,7 @@ func (m Model) renderSettingsLCAgentModelPickerRow(index int, state *settingsLCA
 		row = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(leftWidth).Render(row), "  ", detailMutedStyle.Render(truncateText(right, max(8, width-leftWidth-2))))
 	}
 	if selected {
-		return projectListSelectedRowStyle.Width(width).Render(row)
+		return dialogSelectedRowStyle.Width(width).Render(row)
 	}
 	return lipgloss.NewStyle().Width(width).Render(row)
 }

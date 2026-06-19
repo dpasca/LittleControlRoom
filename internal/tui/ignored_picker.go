@@ -244,7 +244,7 @@ func (m Model) renderIgnoredPickerRow(item model.IgnoredProject, selected bool, 
 		detailMutedStyle.Width(lipgloss.Width(right)).Align(lipgloss.Right).Render(right),
 	)
 	if selected {
-		return projectListSelectedRowStyle.Render(row)
+		return dialogSelectedRowStyle.Width(width).Render(row)
 	}
 	return row
 }

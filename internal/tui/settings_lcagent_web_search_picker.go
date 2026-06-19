@@ -163,7 +163,7 @@ func (m Model) renderSettingsLCAgentWebSearchPickerRow(option settingsLCAgentWeb
 	}
 	row = fitFooterWidth(row, width)
 	if selected {
-		return projectListSelectedRowStyle.Width(width).Render(row)
+		return dialogSelectedRowStyle.Width(width).Render(row)
 	}
 	return lipgloss.NewStyle().Width(width).Render(row)
 }

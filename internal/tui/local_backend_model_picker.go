@@ -249,7 +249,7 @@ func (m Model) renderLocalBackendModelPickerRow(index int, models []string, sele
 		row = lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(leftWidth).Render(row), "  ", detailMutedStyle.Render(truncateText(right, max(10, width-leftWidth-2))))
 	}
 	if selected {
-		return projectListSelectedRowStyle.Render(row)
+		return dialogSelectedRowStyle.Width(width).Render(row)
 	}
 	return row
 }
