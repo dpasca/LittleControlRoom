@@ -7,9 +7,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"lcroom/internal/lcagent/modeladapter"
+	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/script"
+	"lcroom/internal/lcagent/session"
 	"lcroom/internal/lcagent/tools"
 )
 
@@ -257,6 +260,62 @@ func TestBuildCriticReviewPacketAddsEvidenceExcerptsForTruncatedToolOutput(t *te
 		if !strings.Contains(evidence, want) {
 			t.Fatalf("evidence excerpts missing %q:\n%s", want, evidence)
 		}
+	}
+}
+
+func TestBuildCriticReviewPacketForRunnerUsesProducedChangeEvidence(t *testing.T) {
+	root := t.TempDir()
+	workspace, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := script.Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "create a small README",
+		Patch:     tools.PatchApplier{Workspace: workspace},
+		Files:     tools.FileTools{Workspace: workspace},
+	}
+	result, err := runner.RunTool(context.Background(), script.Action{
+		Type: "tool_call",
+		Tool: "create_file",
+		Args: json.RawMessage(`{"path":"README.md","content":"# Demo\n\nhello world\n"}`),
+	})
+	if err != nil || !result.Success {
+		t.Fatalf("create_file result = %#v err=%v", result, err)
+	}
+	messages := make([]modeladapter.Message, 20)
+	for i := range messages {
+		messages[i] = modeladapter.Message{Role: "assistant", Content: "trace message"}
+	}
+	packet := buildCriticReviewPacketForRunner(runner, script.Action{
+		Outcome:      "completed",
+		Summary:      "Created README.md.",
+		FilesChanged: []string{"README.md"},
+	}, messages, false)
+
+	if packet.ChangeReview == nil {
+		t.Fatalf("ChangeReview is nil")
+	}
+	if len(packet.Messages) != 12 {
+		t.Fatalf("messages = %d, want compact 12", len(packet.Messages))
+	}
+	if got := packet.Metadata["review_focus"]; got != "produced_change" {
+		t.Fatalf("review_focus = %#v, want produced_change", got)
+	}
+	if len(packet.ChangeReview.Files) != 1 || packet.ChangeReview.Files[0].Path != "README.md" {
+		t.Fatalf("change files = %#v", packet.ChangeReview.Files)
+	}
+	if snapshot := packet.ChangeReview.Files[0].Snapshot; !strings.Contains(snapshot, "hello world") || !strings.Contains(snapshot, "sha256:") {
+		t.Fatalf("snapshot missing file evidence:\n%s", snapshot)
+	}
+	if len(packet.ChangeReview.PatchSummaries) != 1 || packet.ChangeReview.PatchSummaries[0].TotalAddedLines == 0 {
+		t.Fatalf("patch summaries = %#v", packet.ChangeReview.PatchSummaries)
 	}
 }
 

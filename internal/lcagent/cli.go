@@ -376,7 +376,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
-	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "critic provider for one packet-bound pre-final review: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
+	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "critic provider for one packet-bound final review, focused on produced changes when files were edited: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&criticModel, "critic-model", defaultCriticModel, "optional critic model; blank with provider main uses the main model")
 	fs.StringVar(&criticReasoningEffort, "critic-reasoning-effort", "", "optional critic reasoning effort, for example low")
 	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
@@ -399,7 +399,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
 	fs.IntVar(&qualityCheckpointPasses, "quality-checkpoint-passes", 0, "maximum lead self-review checkpoint passes before accepting final_response")
-	fs.IntVar(&qualityRepairPasses, "quality-repair-passes", 0, "maximum critic-driven artifact repair passes after material quality concerns; embedded LCAgent enables this for richer creation tasks")
+	fs.IntVar(&qualityRepairPasses, "quality-repair-passes", 0, "maximum extra critic-driven artifact repair passes after material quality concerns")
 	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -835,7 +835,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 	}
 	planningPreflight := newPlanningPreflightProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
-	phaseWriteGateProfile := newPhaseWriteGateProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
+	phaseWriteGateProfile := newPhaseWriteGateProfile(false, utilityProvider, utilityCfg, providerLabel, client.Model())
 	if phaseWriteGateProfile.Enabled {
 		runner.PhaseWriteGate = phaseWriteGate{
 			profile: phaseWriteGateProfile,
@@ -1766,6 +1766,9 @@ func lcagentPluralSuffix(count int) string {
 
 func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, runner script.Runner, critic criticProfile, final script.Action, messages []modeladapter.Message, compacted bool, feedbackCount int, repairPolicy qualityRepairPolicy, repairState *qualityRepairState) (string, string, bool, error) {
 	if feedbackCount > 0 && !repairPolicy.Enabled() {
+		return "", "", false, nil
+	}
+	if !repairPolicy.Enabled() && runner.FileTouchEvents() == 0 {
 		return "", "", false, nil
 	}
 	if repairPolicy.Enabled() && !qualityRepairShouldReviewFinal(final) {

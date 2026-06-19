@@ -157,7 +157,7 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 		"--require-final-response-tool",
 		"--planning-preflight",
 		"--quality-checkpoint-passes", "0",
-		"--quality-repair-passes", "3",
+		"--quality-repair-passes", "0",
 		"--admin-write",
 		"--utility-provider", "deepseek",
 		"--utility-model", "test-model",
