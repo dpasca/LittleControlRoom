@@ -584,13 +584,13 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 	if plan.RequiresTemporalVisualVerification && r.temporalImageAnalyses == 0 {
 		return &FinalResponseAudit{
 			Code:    "quality_plan_temporal_visual_evidence_missing",
-			Message: "final_response outcome was completed, but the quality plan requires temporal visual verification and no successful analyze_image result with comparison_path is recorded. Capture or locate two observations separated in time, use analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable.",
+			Message: "final_response outcome was completed, but the quality plan requires temporal visual verification and no successful analyze_image result with comparison_path is recorded. Capture or locate two observations separated in time, run one focused analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable.",
 		}
 	}
 	if plan.RequiresVisualVerification && r.imageAnalyses == 0 {
 		return &FinalResponseAudit{
 			Code:    "quality_plan_visual_evidence_missing",
-			Message: "final_response outcome was completed, but the quality plan requires visual verification and no successful analyze_image result is recorded. Capture or locate a screenshot/image and use analyze_image, or set outcome to partial/blocked/failed and explain why visual verification is unavailable.",
+			Message: "final_response outcome was completed, but the quality plan requires visual verification and no successful analyze_image result is recorded. Capture or locate a screenshot/image and run one focused analyze_image check, or set outcome to partial/blocked/failed and explain why visual verification is unavailable.",
 		}
 	}
 	return nil

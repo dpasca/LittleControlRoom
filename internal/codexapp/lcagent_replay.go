@@ -723,16 +723,6 @@ func (r *lcagentReplay) applyCriticReviewResult(event map[string]json.RawMessage
 	if status != "" && status != "clean" {
 		r.criticConcerns++
 	}
-	proposed := strings.TrimSpace(firstNonEmpty(rawJSONString(event["proposed_user_message"]), rawJSONString(event["human_prompt"])))
-	if proposed != "" && status == "needs_followup" {
-		packetHash := strings.TrimSpace(rawJSONString(event["packet_hash"]))
-		if packetHash == "" {
-			packetHash = strings.TrimSpace(rawJSONString(event["session_id"]))
-		}
-		r.suggestedInputDraftID = firstNonEmpty(packetHash, fmt.Sprintf("critic-%d", len(r.entries)+1))
-		r.suggestedInputDraft = proposed
-		r.criticFollowupDrafts++
-	}
 	r.appendEntry(TranscriptStatus, text)
 }
 

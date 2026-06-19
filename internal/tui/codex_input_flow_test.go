@@ -53,7 +53,7 @@ func TestVisibleCodexAltEnterInsertsNewline(t *testing.T) {
 	}
 }
 
-func TestStoreCodexSnapshotAppliesCriticSuggestedDraftOnce(t *testing.T) {
+func TestStoreCodexSnapshotIgnoresLCAgentCriticSuggestedDraft(t *testing.T) {
 	projectPath := "/tmp/demo"
 	m := Model{
 		codexVisibleProject: projectPath,
@@ -62,38 +62,58 @@ func TestStoreCodexSnapshotAppliesCriticSuggestedDraftOnce(t *testing.T) {
 	}
 
 	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
-		Provider:              codexapp.ProviderLCAgent,
-		ProjectPath:           projectPath,
-		SuggestedInputDraftID: "critic-1",
-		SuggestedInputDraft:   "Please verify the failing test before continuing.",
+		Provider:                  codexapp.ProviderLCAgent,
+		ProjectPath:               projectPath,
+		SuggestedInputDraftID:     "critic-1",
+		SuggestedInputDraft:       "Please verify the failing test before continuing.",
+		SuggestedInputDraftSource: "lcagent_critic",
 	})
-	if got := m.codexInput.Value(); got != "Please verify the failing test before continuing." {
+	if got := m.codexInput.Value(); got != "" {
 		t.Fatalf("composer draft = %q", got)
 	}
-	if got := m.status; got != "LCAgent critic drafted a follow-up for review." {
+}
+
+func TestStoreCodexSnapshotAppliesNonLCAgentSuggestedDraftOnce(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+	}
+
+	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
+		Provider:              codexapp.ProviderCodex,
+		ProjectPath:           projectPath,
+		SuggestedInputDraftID: "draft-1",
+		SuggestedInputDraft:   "Please inspect the changed files.",
+	})
+	if got := m.codexInput.Value(); got != "Please inspect the changed files." {
+		t.Fatalf("composer draft = %q", got)
+	}
+	if got := m.status; got != "Suggested follow-up draft ready for review." {
 		t.Fatalf("status = %q", got)
 	}
 
 	m.codexInput.SetValue("")
 	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
-		Provider:              codexapp.ProviderLCAgent,
+		Provider:              codexapp.ProviderCodex,
 		ProjectPath:           projectPath,
-		SuggestedInputDraftID: "critic-1",
-		SuggestedInputDraft:   "Please verify the failing test before continuing.",
+		SuggestedInputDraftID: "draft-1",
+		SuggestedInputDraft:   "Please inspect the changed files.",
 	})
 	if got := m.codexInput.Value(); got != "" {
-		t.Fatalf("same critic draft reapplied after clearing = %q", got)
+		t.Fatalf("same draft reapplied after clearing = %q", got)
 	}
 
 	m.codexInput.SetValue("human draft")
 	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
-		Provider:              codexapp.ProviderLCAgent,
+		Provider:              codexapp.ProviderCodex,
 		ProjectPath:           projectPath,
-		SuggestedInputDraftID: "critic-2",
-		SuggestedInputDraft:   "Please inspect the changed files.",
+		SuggestedInputDraftID: "draft-2",
+		SuggestedInputDraft:   "Please inspect the changed files again.",
 	})
 	if got := m.codexInput.Value(); got != "human draft" {
-		t.Fatalf("critic draft overwrote human draft = %q", got)
+		t.Fatalf("suggested draft overwrote human draft = %q", got)
 	}
 }
 

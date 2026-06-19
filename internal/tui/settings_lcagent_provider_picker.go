@@ -102,7 +102,7 @@ func settingsLCAgentCriticProviderOptions() []settingsLCAgentProviderOption {
 			Value:       "main",
 			Label:       "Same as Main",
 			Summary:     "Use the Main Model provider and model for critic review.",
-			Description: "The critic runs after the lead turn completes, reviews only the captured trace packet, and can draft a follow-up for you to send.",
+			Description: "The critic runs after the lead turn completes, reviews only the captured packet, and sends material feedback back to the lead.",
 		},
 		{
 			Value:       "openrouter",

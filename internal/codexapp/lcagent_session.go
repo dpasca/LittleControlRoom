@@ -2379,15 +2379,6 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.RawMessage) {
 	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
 	summary := strings.TrimSpace(rawJSONString(event["summary"]))
-	proposed := firstNonEmpty(
-		rawJSONString(event["proposed_user_message"]),
-		rawJSONString(event["human_prompt"]),
-	)
-	proposed = strings.TrimSpace(proposed)
-	packetHash := strings.TrimSpace(rawJSONString(event["packet_hash"]))
-	if packetHash == "" {
-		packetHash = strings.TrimSpace(rawJSONString(event["session_id"]))
-	}
 
 	text := "LCAgent critic review complete"
 	if status != "" && status != "clean" {
@@ -2407,11 +2398,6 @@ func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.R
 	s.criticLastSummary = summary
 	if status != "" && status != "clean" {
 		s.criticConcerns++
-	}
-	if proposed != "" && status == "needs_followup" {
-		s.suggestedInputDraftID = firstNonEmpty(packetHash, fmt.Sprintf("critic-%d", s.revision+1))
-		s.suggestedInputDraft = proposed
-		s.criticFollowupDrafts++
 	}
 	s.appendEntryLocked(TranscriptStatus, text)
 	s.touchLocked()

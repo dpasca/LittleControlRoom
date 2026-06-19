@@ -127,11 +127,8 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 	if snapshot.TokenUsage.ModelContextWindow != 150_000 {
 		t.Fatalf("TokenUsage.ModelContextWindow = %d, want LCAgent large compaction token budget", snapshot.TokenUsage.ModelContextWindow)
 	}
-	if snapshot.SuggestedInputDraftID != "critic-packet-1" {
-		t.Fatalf("SuggestedInputDraftID = %q, want critic packet id", snapshot.SuggestedInputDraftID)
-	}
-	if snapshot.SuggestedInputDraft != "Please run the missing verification and report the result." {
-		t.Fatalf("SuggestedInputDraft = %q", snapshot.SuggestedInputDraft)
+	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
+		t.Fatalf("critic review should not create composer draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
 	}
 	for _, want := range []string{"please run the fake agent", "I logged in", "Tool run_command running", "command ok", "Plan:\n[x] exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
@@ -212,7 +209,7 @@ func TestLCAgentCriticConcernsDoNotCreateSuggestedDraft(t *testing.T) {
 	}
 }
 
-func TestLCAgentCriticNeedsFollowupCreatesSuggestedDraft(t *testing.T) {
+func TestLCAgentCriticNeedsFollowupDoesNotCreateSuggestedDraft(t *testing.T) {
 	session := &lcagentSession{
 		projectPath: t.TempDir(),
 		started:     true,
@@ -233,14 +230,11 @@ func TestLCAgentCriticNeedsFollowupCreatesSuggestedDraft(t *testing.T) {
 	})
 
 	snapshot := session.Snapshot()
-	if snapshot.SuggestedInputDraftID != "critic-packet-followup" {
-		t.Fatalf("SuggestedInputDraftID = %q, want critic packet", snapshot.SuggestedInputDraftID)
+	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
+		t.Fatalf("critic follow-up should not create composer draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
 	}
-	if snapshot.SuggestedInputDraft != "Please rerun the failing verification and fix it." {
-		t.Fatalf("SuggestedInputDraft = %q", snapshot.SuggestedInputDraft)
-	}
-	if snapshot.CriticReviews != 1 || snapshot.CriticConcerns != 1 || snapshot.CriticFollowupDrafts != 1 {
-		t.Fatalf("critic metrics = reviews %d concerns %d drafts %d, want 1/1/1", snapshot.CriticReviews, snapshot.CriticConcerns, snapshot.CriticFollowupDrafts)
+	if snapshot.CriticReviews != 1 || snapshot.CriticConcerns != 1 || snapshot.CriticFollowupDrafts != 0 {
+		t.Fatalf("critic metrics = reviews %d concerns %d drafts %d, want 1/1/0", snapshot.CriticReviews, snapshot.CriticConcerns, snapshot.CriticFollowupDrafts)
 	}
 }
 

@@ -3994,7 +3994,7 @@ func (m Model) settingsFieldHint(index int) string {
 			return "The post-turn trace-only critic will request " + model + " and can only review the captured turn packet. Press Enter to choose provider and model."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Auto uses " + settingsLCAgentCriticDefaultLabel(settings) + ". The critic can suggest a follow-up draft, but cannot send it."
+		return "Auto uses " + settingsLCAgentCriticDefaultLabel(settings) + ". Material critic feedback is sent back to the lead."
 	case settingsFieldLCAgentVisionProvider:
 		switch settingsLCAgentVisionProviderValue(field.input.Value()) {
 		case "off":

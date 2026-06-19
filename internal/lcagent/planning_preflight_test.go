@@ -24,7 +24,7 @@ func TestPlanningPreflightTemporalVisualRequirementImpliesVisual(t *testing.T) {
 		t.Fatalf("normalized requirements visual=%v temporal=%v, want both true", normalized.RequiresVisualVerification, normalized.RequiresTemporalVisualVerification)
 	}
 	message := planningPreflightLeadMessage(payload)
-	if !strings.Contains(message, "temporal visual verification") || !strings.Contains(message, "paired observations") || !strings.Contains(message, "recognizable scene or interface") || !strings.Contains(message, "objects are grounded") {
+	if !strings.Contains(message, "temporal visual verification") || !strings.Contains(message, "one paired observation") || !strings.Contains(message, "recognizable scene or interface") || !strings.Contains(message, "objects are grounded") {
 		t.Fatalf("planning lead message missing temporal visual guidance:\n%s", message)
 	}
 }
