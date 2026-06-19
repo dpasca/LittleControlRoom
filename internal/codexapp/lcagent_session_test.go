@@ -1115,6 +1115,53 @@ func TestLCAgentSessionReplaysRequestedArtifact(t *testing.T) {
 	}
 }
 
+func TestLCAgentSessionReplayKeepsHistoricalModelAndStagesLaunchPreference(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_model_preference"
+	started := time.Date(2026, 5, 9, 9, 45, 0, 0, time.UTC)
+	writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{
+			"type":       "session_meta",
+			"id":         sessionID,
+			"cwd":        root,
+			"started_at": started.Format(time.RFC3339Nano),
+			"provider":   "deepseek",
+			"model":      "deepseek-v4-pro",
+		},
+		{
+			"type":       "assistant_message",
+			"session_id": sessionID,
+			"timestamp":  started.Add(time.Second).Format(time.RFC3339Nano),
+			"message":    "Historical answer",
+		},
+	})
+
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:         ProviderLCAgent,
+		ProjectPath:      root,
+		AppDataDir:       dataDir,
+		ResumeID:         sessionID,
+		LCAgentProvider:  "xiaomi",
+		PendingModel:     "mimo-v2.5-pro",
+		PendingReasoning: "high",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Model != "deepseek-v4-pro" || snapshot.ModelProvider != "deepseek" {
+		t.Fatalf("model = %q/%q, want replayed deepseek model", snapshot.ModelProvider, snapshot.Model)
+	}
+	if snapshot.ReasoningEffort != "" {
+		t.Fatalf("ReasoningEffort = %q, want no replayed reasoning", snapshot.ReasoningEffort)
+	}
+	if snapshot.PendingModel != "mimo-v2.5-pro" || snapshot.PendingReasoning != "high" {
+		t.Fatalf("pending model/reasoning = %q/%q, want mimo-v2.5-pro/high", snapshot.PendingModel, snapshot.PendingReasoning)
+	}
+}
+
 func TestLCAgentSessionReplayStitchesAncestorHistory(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()

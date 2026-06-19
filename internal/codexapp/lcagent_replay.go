@@ -26,6 +26,7 @@ type lcagentReplay struct {
 	projectPath                  string
 	model                        string
 	modelProvider                string
+	reasoningEffort              string
 	criticModel                  string
 	criticModelProvider          string
 	visionModel                  string
@@ -183,6 +184,9 @@ func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (
 		}
 		if replay.modelProvider != "" {
 			combined.modelProvider = replay.modelProvider
+		}
+		if replay.reasoningEffort != "" {
+			combined.reasoningEffort = replay.reasoningEffort
 		}
 		if replay.startedAt.Before(combined.startedAt) || combined.startedAt.IsZero() {
 			combined.startedAt = replay.startedAt
@@ -521,6 +525,10 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			if replay.lastActivityAt.IsZero() {
 				replay.lastActivityAt = replay.startedAt
 			}
+		case "route_preset":
+			replay.model = firstNonEmpty(rawJSONString(event["resolved_model"]), replay.model)
+			replay.modelProvider = firstNonEmpty(rawJSONString(event["resolved_provider"]), replay.modelProvider)
+			replay.reasoningEffort = firstNonEmpty(rawJSONString(event["reasoning_effort"]), replay.reasoningEffort)
 		case "model_request_started", "model_request_progress":
 			replay.upsertEntry(lcagentModelRequestItemID(event), TranscriptStatus, lcagentModelRequestText(event))
 		case "model_response":

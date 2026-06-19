@@ -95,6 +95,9 @@ type lcagentSession struct {
 	model                        string
 	modelProvider                string
 	reasoningEffort              string
+	pendingModel                 string
+	pendingModelProvider         string
+	pendingReasoning             string
 	tokenUsage                   *threadTokenUsage
 	pendingApproval              *ApprovalRequest
 	replayLoaded                 bool
@@ -195,6 +198,9 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	}
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
+	launchModel := lcagentResolvedModelForSelection(modelProvider, routePreset, model)
+	launchReasoning := firstNonEmpty(strings.TrimSpace(req.PendingReasoning), lcagentRoutePresetReasoningEffort(routePreset))
+	hasLaunchOverride := strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != "" || strings.TrimSpace(routePreset) != ""
 	modelWarning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(req.PendingModel), routePreset, provider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
@@ -255,6 +261,9 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		return nil, err
 	} else if replay != nil {
 		session.applyReplay(replay)
+		if hasLaunchOverride {
+			session.stagePendingLaunchSelection(launchModel, modelProvider, launchReasoning)
+		}
 	}
 	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
 		if err := session.Submit(prompt); err != nil {
@@ -480,8 +489,8 @@ func (s *lcagentSession) Review() error {
 func (s *lcagentSession) ListModels() ([]ModelOption, error) {
 	s.mu.Lock()
 	cfg := LCAgentModelListConfig{
-		Provider:         s.provider,
-		Model:            s.model,
+		Provider:         firstNonEmpty(s.pendingModelProvider, s.provider),
+		Model:            firstNonEmpty(s.pendingModel, s.model),
 		IncludeAvailable: true,
 		EnvFile:          s.envFile,
 		OpenAIAPIKey:     s.openAIAPIKey,
@@ -996,9 +1005,6 @@ func (s *lcagentSession) StageModelOverride(model, reasoningEffort string) error
 func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEffort string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	originalProvider := strings.TrimSpace(s.provider)
-	originalRoutePreset := strings.TrimSpace(s.routePreset)
-	originalModel := strings.TrimSpace(model)
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	model = strings.TrimSpace(model)
 	if model != "" && strings.TrimSpace(s.routePreset) != "" && !lcagentRoutePresetMatchesModel(s.routePreset, model) {
@@ -1006,31 +1012,79 @@ func (s *lcagentSession) StageModelProviderOverride(provider, model, reasoningEf
 	}
 	if provider != "" {
 		s.provider = provider
-		s.modelProvider = provider
 		s.routePreset = ""
 		model = modeladapter.NormalizeModelForProvider(provider, model)
 	} else if model != "" && strings.TrimSpace(s.routePreset) == "" {
 		provider = lcagentProviderForExplicitModel(s.provider, model)
 		if provider != "" && !strings.EqualFold(provider, strings.TrimSpace(s.provider)) {
 			s.provider = provider
-			s.modelProvider = provider
 			model = modeladapter.NormalizeModelForProvider(provider, model)
 		}
 	}
-	if model != "" {
-		s.model = model
-	} else if provider != "" {
-		// Provider changed without an explicit model; clear stale model
-		// so the next run defaults to the correct model for the new provider.
-		s.model = ""
+	if provider == "" {
+		provider = firstNonEmpty(lcagentRoutePresetProvider(s.routePreset), s.provider, s.modelProvider, lcagentDefaultProvider)
 	}
-	if provider != "" {
-		s.modelWarning = ""
-	} else {
-		s.modelWarning = lcagentModelSelectionWarning(originalRoutePreset, originalProvider, originalModel, s.routePreset, s.provider, s.model)
+	if model == "" && provider != "" {
+		model = lcagentDefaultModel(provider)
 	}
-	s.reasoningEffort = strings.TrimSpace(reasoningEffort)
+	s.modelWarning = ""
+	s.setPendingLaunchSelectionLocked(model, provider, reasoningEffort)
 	return nil
+}
+
+func (s *lcagentSession) stagePendingLaunchSelection(model, provider, reasoningEffort string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setPendingLaunchSelectionLocked(model, provider, reasoningEffort)
+}
+
+func (s *lcagentSession) setPendingLaunchSelectionLocked(model, provider, reasoningEffort string) {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.TrimSpace(model)
+	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	currentProvider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), s.provider, lcagentDefaultProvider)
+	currentModel := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(currentProvider))
+	currentReasoning := strings.TrimSpace(s.reasoningEffort)
+	if provider == "" && model != "" {
+		provider = lcagentProviderForExplicitModel(currentProvider, model)
+	}
+	if provider == "" {
+		provider = currentProvider
+	}
+	if model == "" && reasoningEffort != "" {
+		model = currentModel
+	}
+	if model != "" {
+		model = modeladapter.NormalizeModelForProvider(provider, model)
+	}
+	if model == "" && reasoningEffort == "" {
+		s.pendingModel = ""
+		s.pendingModelProvider = ""
+		s.pendingReasoning = ""
+		return
+	}
+	if lcagentSameModelSelection(currentProvider, currentModel, currentReasoning, provider, model, reasoningEffort) {
+		s.pendingModel = ""
+		s.pendingModelProvider = ""
+		s.pendingReasoning = ""
+		return
+	}
+	s.pendingModel = model
+	s.pendingModelProvider = provider
+	s.pendingReasoning = reasoningEffort
+}
+
+func lcagentSameModelSelection(leftProvider, leftModel, leftReasoning, rightProvider, rightModel, rightReasoning string) bool {
+	leftProvider = strings.ToLower(strings.TrimSpace(leftProvider))
+	rightProvider = strings.ToLower(strings.TrimSpace(rightProvider))
+	leftModel = modeladapter.NormalizeModelForProvider(leftProvider, leftModel)
+	rightModel = modeladapter.NormalizeModelForProvider(rightProvider, rightModel)
+	return strings.EqualFold(leftProvider, rightProvider) &&
+		strings.EqualFold(strings.TrimSpace(leftModel), strings.TrimSpace(rightModel)) &&
+		strings.EqualFold(strings.TrimSpace(leftReasoning), strings.TrimSpace(rightReasoning))
 }
 
 func (s *lcagentSession) StageCriticModelProviderOverride(provider, model, reasoningEffort string) error {
@@ -1349,7 +1403,12 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	configuredRoutePreset := routePreset
 	sessionAuto := strings.TrimSpace(s.sessionAuto)
 	autoLevel := lcagentAutoLevel(firstNonEmpty(opts.autoOverride, s.sessionAuto, s.auto))
-	model := strings.TrimSpace(s.model)
+	pendingModel := strings.TrimSpace(s.pendingModel)
+	pendingProvider := strings.TrimSpace(s.pendingModelProvider)
+	if pendingProvider != "" {
+		provider = pendingProvider
+	}
+	model := strings.TrimSpace(firstNonEmpty(pendingModel, s.model))
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
@@ -1362,10 +1421,21 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	if routePreset == "" && !modeladapter.ModelIsKnownForProvider(modelProvider, model) {
 		model = lcagentDefaultModel(modelProvider)
 	}
-	if warning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(s.model), routePreset, provider, model); warning != "" {
+	requestedModel := strings.TrimSpace(firstNonEmpty(pendingModel, s.model))
+	if warning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, requestedModel, routePreset, provider, model); warning != "" {
 		s.modelWarning = warning
 	}
 	s.appendModelSelectionWarningLocked()
+	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
+	reasoningEffort := strings.TrimSpace(firstNonEmpty(pendingReasoning, s.reasoningEffort))
+	s.provider = provider
+	s.routePreset = routePreset
+	s.model = model
+	s.modelProvider = modelProvider
+	s.reasoningEffort = reasoningEffort
+	s.pendingModel = ""
+	s.pendingModelProvider = ""
+	s.pendingReasoning = ""
 	toolProfile := firstNonEmpty(s.toolProfile, lcagentDefaultToolProfile)
 	contextProfile := firstNonEmpty(s.contextProfile, lcagentDefaultContextProfile)
 	adminWrite := s.adminWrite
@@ -1374,7 +1444,6 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		requestTimeout = lcagentDefaultRequestTimeout
 	}
 	maxTurns := modeladapter.MaxTurnsForRequestTimeout(requestTimeout)
-	reasoningEffort := strings.TrimSpace(s.reasoningEffort)
 	credentialProvider := modelProvider
 	providerAPIKeyName, providerAPIKey := s.providerCredentialLocked(credentialProvider)
 	preflightAccess := s.preflightAccess
@@ -2980,7 +3049,9 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	}
 	if provider := strings.TrimSpace(replay.modelProvider); provider != "" {
 		s.modelProvider = provider
+		s.provider = provider
 	}
+	s.reasoningEffort = strings.TrimSpace(replay.reasoningEffort)
 	if provider := strings.TrimSpace(replay.criticModelProvider); provider != "" {
 		s.criticProvider = provider
 	}
@@ -2992,12 +3063,6 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 	}
 	if model := strings.TrimSpace(replay.visionModel); model != "" {
 		s.visionModel = model
-	}
-	// If the restored model doesn't belong to the session's current provider,
-	// clear it so the next run defaults to the correct model.
-	sessionProvider := firstNonEmpty(s.provider, lcagentDefaultProvider)
-	if s.model != "" && !modeladapter.ModelIsKnownForProvider(sessionProvider, s.model) {
-		s.model = ""
 	}
 	s.tokenUsage = cloneThreadTokenUsage(replay.tokenUsage)
 	s.criticActive = replay.criticActive
@@ -3369,6 +3434,27 @@ func lcagentRoutePresetModel(preset string) string {
 	}
 }
 
+func lcagentRoutePresetReasoningEffort(preset string) string {
+	switch strings.ToLower(strings.TrimSpace(preset)) {
+	case "balanced":
+		return "high"
+	case "quality", "mimo-2.5-pro-low":
+		return "low"
+	case "mimo-2.5-pro-high":
+		return "high"
+	case "mimo-2.5-pro-max":
+		return "xhigh"
+	default:
+		return ""
+	}
+}
+
+func lcagentResolvedModelForSelection(provider, routePreset, model string) string {
+	provider = firstNonEmpty(provider, lcagentRoutePresetProvider(routePreset), lcagentDefaultProvider)
+	model = firstNonEmpty(model, lcagentRoutePresetModel(routePreset), lcagentDefaultModel(provider))
+	return modeladapter.NormalizeModelForProvider(provider, model)
+}
+
 func lcagentRoutePresetMatchesModel(preset string, model string) bool {
 	provider := lcagentRoutePresetProvider(preset)
 	routeModel := lcagentRoutePresetModel(preset)
@@ -3480,6 +3566,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	modelProvider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider)
 	criticModel, criticModelProvider := s.resolvedCriticModelLocked(modelProvider, model)
 	visionModel, visionModelProvider := s.resolvedVisionModelLocked(modelProvider, model)
+	pendingModel, pendingReasoning := s.pendingModelSnapshotLocked(modelProvider, model, s.reasoningEffort)
 	return Snapshot{
 		Provider:                     ProviderLCAgent,
 		ProjectPath:                  s.projectPath,
@@ -3543,8 +3630,27 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		CriticLastStatus:             strings.TrimSpace(s.criticLastStatus),
 		CriticLastSummary:            strings.TrimSpace(s.criticLastSummary),
 		ReasoningEffort:              s.reasoningEffort,
+		PendingModel:                 pendingModel,
+		PendingReasoning:             pendingReasoning,
 		TokenUsage:                   exportedTokenUsageSnapshot(tokenUsage),
 	}
+}
+
+func (s *lcagentSession) pendingModelSnapshotLocked(currentProvider, currentModel, currentReasoning string) (string, string) {
+	pendingModel := strings.TrimSpace(s.pendingModel)
+	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
+	if pendingModel == "" && pendingReasoning == "" {
+		return "", ""
+	}
+	pendingProvider := firstNonEmpty(s.pendingModelProvider, currentProvider, lcagentDefaultProvider)
+	if pendingModel == "" {
+		pendingModel = currentModel
+	}
+	pendingModel = modeladapter.NormalizeModelForProvider(pendingProvider, pendingModel)
+	if lcagentSameModelSelection(currentProvider, currentModel, currentReasoning, pendingProvider, pendingModel, pendingReasoning) {
+		return "", ""
+	}
+	return pendingModel, pendingReasoning
 }
 
 func (s *lcagentSession) resolvedCriticModelLocked(mainProvider, mainModel string) (string, string) {
