@@ -92,6 +92,49 @@ func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentReasoningPickerUsesProviderOptions(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "deepseek"
+	m := Model{
+		settingsMode:   true,
+		settingsFields: newSettingsFields(settings),
+		width:          100,
+		height:         24,
+	}
+
+	options := m.settingsChoiceOptionsForField(settingsFieldLCAgentReasoning)
+	labels := map[string]bool{}
+	for _, option := range options {
+		labels[option.Label] = true
+	}
+	for _, want := range []string{"Provider Default", "High", "Max"} {
+		if !labels[want] {
+			t.Fatalf("DeepSeek reasoning picker labels = %#v, want %q", labels, want)
+		}
+	}
+	if labels["Low"] || labels["Medium"] {
+		t.Fatalf("DeepSeek reasoning picker should not expose low/medium labels: %#v", labels)
+	}
+
+	m.settingsFields[settingsFieldLCAgentProvider].input.SetValue("openrouter")
+	m.settingsFields[settingsFieldLCAgentRoutePreset].input.SetValue("balanced")
+	options = m.settingsChoiceOptionsForField(settingsFieldLCAgentReasoning)
+	labels = map[string]bool{}
+	for _, option := range options {
+		labels[option.Label] = true
+	}
+	if !labels["Max"] {
+		t.Fatalf("Balanced route preset should expose DeepSeek Max reasoning, labels = %#v", labels)
+	}
+
+	m.settingsFields[settingsFieldLCAgentRoutePreset].input.SetValue("")
+	m.settingsFields[settingsFieldLCAgentProvider].input.SetValue("moonshot")
+	options = m.settingsChoiceOptionsForField(settingsFieldLCAgentReasoning)
+	if len(options) != 1 || options[0].Label != "Provider Default" {
+		t.Fatalf("Moonshot reasoning picker options = %#v, want only Provider Default", options)
+	}
+}
+
 func TestCommandEnterOpensRunCommandDialogWhenUnset(t *testing.T) {
 	tests := []struct {
 		name    string

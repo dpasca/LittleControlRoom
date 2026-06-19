@@ -549,7 +549,12 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 		if opts.DisableThinking {
 			body["thinking"] = map[string]any{"type": "disabled"}
 		} else if effort := strings.TrimSpace(opts.ReasoningEffort); effort != "" {
-			body["thinking"] = map[string]any{"type": "enabled", "reasoning_effort": effort}
+			if c.providerName == "deepseek" {
+				body["thinking"] = map[string]any{"type": "enabled"}
+				body["reasoning_effort"] = effort
+			} else {
+				body["thinking"] = map[string]any{"type": "enabled", "reasoning_effort": effort}
+			}
 		}
 	case "moonshot":
 		if strings.TrimSpace(opts.ReasoningEffort) != "" || opts.ReasoningMaxTokens > 0 {

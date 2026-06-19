@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"lcroom/internal/codexapp"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -121,8 +123,47 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 	}
 }
 
+func (m Model) settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
+	switch fieldIndex {
+	case settingsFieldLCAgentReasoning:
+		settings := m.settingsDraftForInferenceStatus()
+		return settingsReasoningChoiceOptions(codexapp.LCAgentReasoningEffortOptionsForProvider(settingsLCAgentMainProvider(settings)))
+	case settingsFieldLCAgentCriticReasoning:
+		settings := m.settingsDraftForInferenceStatus()
+		provider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
+		switch provider {
+		case "main":
+			provider = settingsLCAgentMainProvider(settings)
+		case "off":
+			return settingsReasoningChoiceOptions(nil)
+		}
+		return settingsReasoningChoiceOptions(codexapp.LCAgentReasoningEffortOptionsForProvider(provider))
+	default:
+		return settingsChoiceOptionsForField(fieldIndex)
+	}
+}
+
+func settingsReasoningChoiceOptions(efforts []codexapp.ReasoningEffortOption) []settingsChoiceOption {
+	options := []settingsChoiceOption{
+		{Value: "", Label: "Provider Default", Summary: "Omit explicit reasoning effort.", Description: "Lets the selected provider or route preset decide the reasoning behavior."},
+	}
+	for _, effort := range efforts {
+		value := strings.TrimSpace(effort.ReasoningEffort)
+		if value == "" {
+			continue
+		}
+		options = append(options, settingsChoiceOption{
+			Value:       value,
+			Label:       strings.ToUpper(value[:1]) + value[1:],
+			Summary:     strings.TrimSpace(effort.Description),
+			Description: strings.TrimSpace(effort.Description),
+		})
+	}
+	return options
+}
+
 func (m Model) openSettingsChoicePicker(fieldIndex int) (tea.Model, tea.Cmd) {
-	options := settingsChoiceOptionsForField(fieldIndex)
+	options := m.settingsChoiceOptionsForField(fieldIndex)
 	if len(options) == 0 {
 		return m, nil
 	}
@@ -156,7 +197,7 @@ func (m Model) updateSettingsChoicePickerMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 		return m, nil
 	}
 	fieldIndex := m.settingsChoicePicker.FieldIndex
-	options := settingsChoiceOptionsForField(fieldIndex)
+	options := m.settingsChoiceOptionsForField(fieldIndex)
 	if len(options) == 0 {
 		m.closeSettingsChoicePicker("No choices are available right now.")
 		return m, nil
@@ -221,7 +262,7 @@ func (m Model) renderSettingsChoicePickerContent(width, bodyH int) string {
 		return ""
 	}
 	fieldIndex := m.settingsChoicePicker.FieldIndex
-	options := settingsChoiceOptionsForField(fieldIndex)
+	options := m.settingsChoiceOptionsForField(fieldIndex)
 	if len(options) == 0 {
 		return ""
 	}
@@ -237,7 +278,7 @@ func (m Model) renderSettingsChoicePickerContent(width, bodyH int) string {
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
 	}
 	currentValue := settingsChoiceOptionValueForField(fieldIndex, m.settingsFieldValue(fieldIndex))
-	currentLabel := settingsChoiceOptionLabelForField(fieldIndex, m.settingsFieldValue(fieldIndex))
+	currentLabel := m.settingsChoiceOptionLabelForField(fieldIndex, m.settingsFieldValue(fieldIndex))
 	lines = append(lines, detailField("Current", detailValueStyle.Render(currentLabel)), "")
 	for i, option := range options {
 		lines = append(lines, renderSettingsChoicePickerRow(option, i == selectedIndex, option.Value == currentValue, width))
@@ -322,8 +363,16 @@ func settingsChoiceOptionValueForField(fieldIndex int, raw string) string {
 }
 
 func settingsChoiceOptionLabelForField(fieldIndex int, raw string) string {
+	return settingsChoiceOptionLabelFromOptions(settingsChoiceOptionsForField(fieldIndex), fieldIndex, raw)
+}
+
+func (m Model) settingsChoiceOptionLabelForField(fieldIndex int, raw string) string {
+	return settingsChoiceOptionLabelFromOptions(m.settingsChoiceOptionsForField(fieldIndex), fieldIndex, raw)
+}
+
+func settingsChoiceOptionLabelFromOptions(options []settingsChoiceOption, fieldIndex int, raw string) string {
 	value := settingsChoiceOptionValueForField(fieldIndex, raw)
-	for _, option := range settingsChoiceOptionsForField(fieldIndex) {
+	for _, option := range options {
 		if option.Value == value {
 			return option.Label
 		}
@@ -358,7 +407,7 @@ func settingsChoiceTitle(fieldIndex int) string {
 }
 
 func (m Model) renderSettingsChoiceValue(fieldIndex int, selected bool, inputWidth int) string {
-	label := settingsChoiceOptionLabelForField(fieldIndex, m.settingsFieldValue(fieldIndex))
+	label := m.settingsChoiceOptionLabelForField(fieldIndex, m.settingsFieldValue(fieldIndex))
 	value := detailValueStyle.Bold(true).Render(label + " ▼")
 	if selected {
 		value = projectListSelectedRowStyle.Render(label + " ▼")

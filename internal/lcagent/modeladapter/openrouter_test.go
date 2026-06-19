@@ -1195,6 +1195,47 @@ func TestDeepSeekClientUsesDirectEndpointShape(t *testing.T) {
 	}
 }
 
+func TestDeepSeekClientSendsReasoningEffortMax(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ReasoningEffort string `json:"reasoning_effort"`
+			Thinking        struct {
+				Type            string `json:"type"`
+				ReasoningEffort string `json:"reasoning_effort"`
+			} `json:"thinking"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if req.Thinking.Type != "enabled" {
+			t.Fatalf("thinking.type = %q, want enabled", req.Thinking.Type)
+		}
+		if req.ReasoningEffort != "max" {
+			t.Fatalf("reasoning_effort = %q, want max", req.ReasoningEffort)
+		}
+		if req.Thinking.ReasoningEffort != "" {
+			t.Fatalf("nested thinking.reasoning_effort = %q, want empty", req.Thinking.ReasoningEffort)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewDeepSeekClient(OpenRouterConfig{
+		APIKey:  "deepseek-key",
+		BaseURL: server.URL,
+		Model:   "deepseek-v4-pro",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.CompleteWithOptions(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, CompletionOptions{
+		ReasoningEffort: "max",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMoonshotClientUsesDirectEndpointShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

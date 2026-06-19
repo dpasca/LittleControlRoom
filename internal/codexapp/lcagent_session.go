@@ -830,11 +830,22 @@ func lcagentReasoningEffortOptions() []ReasoningEffortOption {
 	}
 }
 
-func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {
-	if strings.EqualFold(strings.TrimSpace(provider), "moonshot") {
-		return nil
+func lcagentDeepSeekReasoningEffortOptions() []ReasoningEffortOption {
+	return []ReasoningEffortOption{
+		{ReasoningEffort: "high", Description: "DeepSeek thinking mode default for coding turns."},
+		{ReasoningEffort: "max", Description: "DeepSeek maximum reasoning effort for the hardest turns."},
 	}
-	return lcagentReasoningEffortOptions()
+}
+
+func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "moonshot":
+		return nil
+	case "deepseek":
+		return lcagentDeepSeekReasoningEffortOptions()
+	default:
+		return lcagentReasoningEffortOptions()
+	}
 }
 
 func LCAgentReasoningEffortOptionsForProvider(provider string) []ReasoningEffortOption {

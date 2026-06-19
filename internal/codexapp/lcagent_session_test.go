@@ -1337,6 +1337,25 @@ func TestLCAgentModelOptionsForProviderMoonshotHasNoReasoningControls(t *testing
 	}
 }
 
+func TestLCAgentModelOptionsForProviderDeepSeekIncludesMaxReasoning(t *testing.T) {
+	options := lcagentModelOptionsForProvider("deepseek")
+	if len(options) == 0 {
+		t.Fatal("provider options empty, want direct DeepSeek models")
+	}
+	got := map[string]bool{}
+	for _, effort := range options[0].SupportedReasoningEfforts {
+		got[effort.ReasoningEffort] = true
+	}
+	for _, want := range []string{"high", "max"} {
+		if !got[want] {
+			t.Fatalf("DeepSeek reasoning options = %#v, want %q", options[0].SupportedReasoningEfforts, want)
+		}
+	}
+	if got["low"] || got["medium"] {
+		t.Fatalf("DeepSeek reasoning options should expose official high/max values, got %#v", options[0].SupportedReasoningEfforts)
+	}
+}
+
 func TestLCAgentProviderModelOptionsMoonshotHasNoReasoningControls(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
