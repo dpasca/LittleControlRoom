@@ -615,6 +615,11 @@ func (m *Model) maybeApplyCodexSuggestedInputDraft(projectPath string, snapshot 
 	if projectPath == "" || draftID == "" || text == "" {
 		return
 	}
+	if snapshot.Provider == codexapp.ProviderLCAgent &&
+		(strings.TrimSpace(snapshot.SuggestedInputDraftSource) == "" ||
+			strings.EqualFold(strings.TrimSpace(snapshot.SuggestedInputDraftSource), "lcagent_critic")) {
+		return
+	}
 	if m.codexSuggestedDraftsApplied == nil {
 		m.codexSuggestedDraftsApplied = make(map[string]string)
 	}
@@ -627,7 +632,7 @@ func (m *Model) maybeApplyCodexSuggestedInputDraft(projectPath string, snapshot 
 	m.codexSuggestedDraftsApplied[projectPath] = draftID
 	m.restoreCodexDraft(projectPath, codexDraft{Text: text})
 	if strings.TrimSpace(m.codexVisibleProject) == projectPath {
-		m.status = "LCAgent critic drafted a follow-up for review."
+		m.status = "Suggested follow-up draft ready for review."
 		m.syncCodexComposerSize()
 	}
 }

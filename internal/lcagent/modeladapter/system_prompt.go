@@ -87,8 +87,9 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.VisionAnalysisEnabled {
 		lines = append(lines,
 			"analyze_image is available for screenshot and image inspection. When user-facing visual quality matters, capture or locate the image, then use analyze_image with the expected visual state and specific checks before making final visual claims.",
+			"Use visual review sparingly and actionably: first render/open-state checks, after meaningful visual fixes, and final visual sanity are usually enough. Do not repeatedly ask for visual reviews of essentially the same scene unless the previous review exposed a material issue and you changed the artifact or need a paired temporal comparison.",
 			"Ask analyze_image direct visual QA questions. Include checks for wrong window/app, missing requested elements, floating or clipped objects, surfaces/layers covering the wrong things, bad camera framing, unreadable text, and frame-to-frame instability when relevant.",
-			"For dynamic, interactive, animated, camera-driven, live-updating, or otherwise stateful visual output, compare two observations separated in time; when available or required, use analyze_image with comparison_path so the vision model can judge temporal stability side by side.",
+			"For dynamic, interactive, animated, camera-driven, live-updating, or otherwise stateful visual output, one paired comparison is usually the right temporal sanity check. When available or required, use analyze_image with comparison_path so the vision model can judge temporal stability side by side.",
 		)
 	}
 	if !opts.BrowserAvailable {

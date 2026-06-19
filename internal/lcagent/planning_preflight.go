@@ -157,7 +157,7 @@ Use "medium" for normal code changes that benefit from a brief plan but do not n
 Use "simple" for direct answers, tiny inspections, or narrowly-scoped edits.
 Set needs_preplan true when the lead should publish a phased update_quality_plan before claiming completion.
 For games, apps, UI, and visual artifacts, set requires_visual_verification true when image analysis is available and the user-facing result should be judged visually.
-Set requires_temporal_visual_verification true when image analysis is available and the visual artifact is interactive, animated, camera-driven, live-updating, stateful, or otherwise expected to change over time; false for static visual artifacts.
+Set requires_temporal_visual_verification true when image analysis is available and the visual artifact is interactive, animated, camera-driven, live-updating, stateful, or otherwise expected to change over time; false for static visual artifacts. This should imply one paired temporal sanity check, not repeated visual review loops.
 Keep suggested_phases concrete and ordered; omit them for simple tasks.
 For games, UI, and visual artifacts, order phases so the recognizable user-facing scene appears early: first a stable render/movement foundation, then the main visible setting/composition, then controls/systems/HUD/NPCs/polish. Do not bury the requested visual identity in late phases behind invisible mechanics.
 For 3D or spatial visual artifacts, include acceptance checks for coordinate/transform sanity, grounded objects, camera framing, plausible scale, and layering/occlusion when those risks are relevant.`
@@ -308,10 +308,10 @@ func planningPreflightLeadMessage(payload planningPreflightPayload) string {
 		b.WriteString("\nThe plan should require runtime verification.")
 	}
 	if payload.RequiresVisualVerification {
-		b.WriteString("\nThe plan should require visual verification.")
+		b.WriteString("\nThe plan should require bounded visual verification.")
 	}
 	if payload.RequiresTemporalVisualVerification {
-		b.WriteString("\nThe plan should require temporal visual verification with paired observations.")
+		b.WriteString("\nThe plan should require temporal visual verification with one paired observation unless a material visual defect is fixed.")
 	}
 	if len(payload.SuggestedPhases) > 0 {
 		b.WriteString("\n\nSuggested phase outline:")
