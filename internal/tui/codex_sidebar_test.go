@@ -370,6 +370,29 @@ func TestEmbeddedSidebarTreatsFreshPendingModelAsCurrent(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarShowsReplayedLCAgentModelBeforeNextModel(t *testing.T) {
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.Model = "deepseek-v4-pro"
+	snapshot.ModelProvider = "deepseek"
+	snapshot.PendingModel = "mimo-v2.5-pro"
+	snapshot.PendingReasoning = "high"
+	snapshot.Entries = []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptStatus, Text: "Loaded LCAgent thread lca_demo from disk."},
+		{Kind: codexapp.TranscriptAgent, Text: "Historical answer"},
+	}
+
+	rendered := ansi.Strip(strings.Join(embeddedSidebarModelRows(snapshot, 46), "\n"))
+	for _, want := range []string{
+		"Model deepseek-v4-pro",
+		"Next mimo-v2.5-pro / high",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("sidebar model rows missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestEmbeddedSidebarKeepsLCAgentCriticModelOutOfSessionSection(t *testing.T) {
 	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
 	snapshot.Provider = codexapp.ProviderLCAgent
