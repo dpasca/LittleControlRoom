@@ -1195,7 +1195,7 @@ func embeddedSidebarVisionSummaryRows(snapshot codexapp.Snapshot, width int) []s
 	status, style := embeddedSidebarVisionStatusSummary(snapshot)
 	rows = append(rows, embeddedSidebarWrappedFieldRows("State", status, style, width, 2)...)
 	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
-		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
+		rows = append(rows, embeddedSidebarWrappedRowsLimited(summary, detailMutedStyle, width, 2)...)
 	}
 	return rows
 }
@@ -1209,7 +1209,7 @@ func embeddedSidebarVisionDetailRows(snapshot codexapp.Snapshot, width int) []st
 		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
 	}
 	status, style := embeddedSidebarVisionStatusSummary(snapshot)
-	rows = append(rows, embeddedSidebarWrappedFieldRows("Status", status, style, width, 2)...)
+	rows = append(rows, embeddedSidebarWrappedFieldRows("Status", status, style, width, 0)...)
 	if summary := strings.TrimSpace(snapshot.ImageAnalysisLastSummary); summary != "" {
 		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
 	}
@@ -1713,6 +1713,25 @@ func embeddedSidebarWrappedRows(text string, style lipgloss.Style, width int) []
 		return nil
 	}
 	return renderWrappedDialogTextLines(style, max(1, width), strings.TrimSpace(text))
+}
+
+func embeddedSidebarWrappedRowsLimited(text string, style lipgloss.Style, width, maxLines int) []string {
+	rows := embeddedSidebarWrappedRows(text, style, width)
+	if maxLines <= 0 || len(rows) <= maxLines {
+		return rows
+	}
+	rows = append([]string{}, rows[:maxLines]...)
+	last := maxLines - 1
+	suffix := " ..."
+	suffixWidth := ansi.StringWidth(suffix)
+	if width <= suffixWidth {
+		rows[last] = style.Render(ansi.Truncate(strings.TrimSpace(suffix), max(1, width), ""))
+		return rows
+	}
+	line := strings.TrimRight(ansi.Strip(rows[last]), " ")
+	line = strings.TrimRight(ansi.Truncate(line, max(1, width-suffixWidth), ""), " ")
+	rows[last] = style.Render(fitLine(line+suffix, width))
+	return rows
 }
 
 func embeddedSidebarURLRow(label, rawURL string, width int) string {
