@@ -612,6 +612,29 @@ func TestEmbeddedSidebarVisionAnalysisSummaryWraps(t *testing.T) {
 	assertSidebarLinesWithinWidth(t, rendered, width)
 }
 
+func TestEmbeddedSidebarVisionCollapsedSummaryUsesWrappedPreview(t *testing.T) {
+	width := 34
+	snapshot := testEmbeddedSidebarSnapshot("/tmp/lcr-sidebar-demo")
+	snapshot.Provider = codexapp.ProviderLCAgent
+	snapshot.ImageAnalyses = 12
+	snapshot.ImageAnalysisLastSummary = "Screenshot review found the button text was clipped, the analysis panel overflowed, and the footer controls remained readable after resizing."
+
+	rendered := ansi.Strip(strings.Join(testEmbeddedSidebarModel("/tmp/lcr-sidebar-demo").renderEmbeddedSidebarVisionSection(snapshot, width), "\n"))
+	for _, want := range []string{
+		"State idle | 12 analyses",
+		"Screenshot review found",
+		"...",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("collapsed vision section missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "controls remained readable") {
+		t.Fatalf("collapsed vision section should preview long analysis text, got:\n%s", rendered)
+	}
+	assertSidebarLinesWithinWidth(t, rendered, width)
+}
+
 func TestEmbeddedSidebarEnterOpensQualityDetailDialog(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	snapshot := testEmbeddedSidebarSnapshot(projectPath)
