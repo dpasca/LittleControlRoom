@@ -10,7 +10,7 @@ import (
 
 var (
 	dialogButtonStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Padding(0, 1)
-	dialogButtonSelectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Bold(true).Padding(0, 1)
+	dialogButtonSelectedStyle = dialogSelectedRowStyle.Padding(0, 1)
 	todoListIndicatorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 )
 

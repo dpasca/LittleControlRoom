@@ -89,7 +89,7 @@ var (
 	commandPaletteHintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
 	commandPaletteRowStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	commandPalettePickStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("153")).Bold(true)
-	commandPaletteSelectStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24")).Bold(true)
+	commandPaletteSelectStyle = dialogSelectedRowStyle
 	commitPreviewInfoStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	commitPreviewValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Bold(true)
 	dialogProjectTitleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
