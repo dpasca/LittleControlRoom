@@ -74,9 +74,6 @@ type liveEvalScore struct {
 	PermissionDenials        int     `json:"permission_denials"`
 	PatchFeedback            int     `json:"patch_feedback"`
 	VerificationFeedback     int     `json:"verification_feedback"`
-	CriticReviews            int     `json:"critic_reviews,omitempty"`
-	CriticLeadFeedback       int     `json:"critic_lead_feedback,omitempty"`
-	CriticHumanPrompts       int     `json:"critic_human_prompts,omitempty"`
 	ReadFileCalls            int     `json:"read_file_calls"`
 	ReadFileLines            int     `json:"read_file_lines"`
 	OverlappingReadCalls     int     `json:"overlapping_read_calls"`
@@ -366,9 +363,6 @@ func liveEvalScoreFromMetrics(summary sessionmetrics.Summary) liveEvalScore {
 		PermissionDenials:        summary.PermissionDenials,
 		PatchFeedback:            summary.PatchFeedback,
 		VerificationFeedback:     summary.VerificationFeedback,
-		CriticReviews:            summary.CriticReviewResults,
-		CriticLeadFeedback:       summary.CriticLeadFeedback,
-		CriticHumanPrompts:       summary.CriticHumanPrompts,
 		ReadFileCalls:            summary.ReadFileCalls,
 		ReadFileLines:            summary.ReadFileLines,
 		OverlappingReadCalls:     summary.ReadFileOverlappingCalls,
@@ -1123,7 +1117,7 @@ func writeLiveEvalReport(stdout io.Writer, outputRaw string, report liveEvalRepo
 			if result.Error != "" {
 				fmt.Fprintf(stdout, "  error: %s\n", result.Error)
 			}
-			fmt.Fprintf(stdout, "  score: correctness=%v verified=%v verification_status=%s expected_verification=%v trace_quality=%d/%s reads=%d/%d overlap=%d denials=%d feedback=%d critic_reviews=%d critic_bounces=%d critic_human_prompts=%d tokens=%d cost=%.6f\n",
+			fmt.Fprintf(stdout, "  score: correctness=%v verified=%v verification_status=%s expected_verification=%v trace_quality=%d/%s reads=%d/%d overlap=%d denials=%d feedback=%d tokens=%d cost=%.6f\n",
 				result.Score.Correctness,
 				result.Score.Verified,
 				result.Score.VerificationStatus,
@@ -1135,9 +1129,6 @@ func writeLiveEvalReport(stdout io.Writer, outputRaw string, report liveEvalRepo
 				result.Score.OverlappingReadCalls,
 				result.Score.PermissionDenials,
 				result.Score.PatchFeedback+result.Score.VerificationFeedback,
-				result.Score.CriticReviews,
-				result.Score.CriticLeadFeedback,
-				result.Score.CriticHumanPrompts,
 				result.Score.TotalTokens,
 				result.Score.EstimatedCostUSD,
 			)

@@ -350,14 +350,11 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.SetOutput(io.Discard)
 	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw string
 	var utilityProviderRaw, utilityModel string
-	var criticProviderRaw, criticModel, criticReasoningEffort string
 	var visionProviderRaw, visionModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
 	var browserControlRaw, browserSessionKey, browserProfileKey, browserLaunchModeRaw string
 	var requestTimeout time.Duration
 	var maxTurns int
-	var qualityCheckpointPasses int
-	var qualityRepairPasses int
 	var searchRefineMinBytes int
 	var adminWrite, requireFinalResponseTool, planningPreflightEnabled bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
@@ -376,9 +373,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
 	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
-	fs.StringVar(&criticProviderRaw, "critic-provider", defaultCriticProvider, "critic provider for optional consult_critic tool calls: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
-	fs.StringVar(&criticModel, "critic-model", defaultCriticModel, "optional critic model; blank with provider main uses the main model")
-	fs.StringVar(&criticReasoningEffort, "critic-reasoning-effort", "", "optional critic reasoning effort, for example low")
 	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
@@ -398,8 +392,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&browserLaunchModeRaw, "browser-launch-mode", string(browserctl.ManagedLaunchModeHeadless), "managed browser launch mode: headless, headed, or background")
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
-	fs.IntVar(&qualityCheckpointPasses, "quality-checkpoint-passes", 0, "deprecated no-op; LCAgent now relies on quality plans and verification evidence")
-	fs.IntVar(&qualityRepairPasses, "quality-repair-passes", 0, "deprecated no-op; LCAgent no longer runs automatic critic repair passes")
 	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -489,23 +481,12 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	if err != nil {
 		return err
 	}
-	criticProvider, err := normalizeCriticProvider(criticProviderRaw)
-	if err != nil {
-		return err
-	}
-	criticReasoningEffort = openRouterReasoningEffortForProvider(criticProvider, criticReasoningEffort)
 	visionProvider, err := normalizeVisionProvider(visionProviderRaw)
 	if err != nil {
 		return err
 	}
 	if searchRefineMinBytes < 0 {
 		return fmt.Errorf("search-refine-min-bytes must be >= 0")
-	}
-	if qualityCheckpointPasses < 0 {
-		return fmt.Errorf("quality-checkpoint-passes must be >= 0")
-	}
-	if qualityRepairPasses < 0 {
-		return fmt.Errorf("quality-repair-passes must be >= 0")
 	}
 	reasoningEffort = openRouterReasoningEffortForProvider(provider, reasoningEffort)
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
@@ -565,8 +546,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["approval_mode"] = approvalMode
 	meta["request_timeout"] = requestTimeout.String()
 	meta["max_turns"] = maxTurns
-	meta["quality_checkpoint_passes"] = qualityCheckpointPasses
-	meta["quality_repair_passes"] = qualityRepairPasses
 	meta["require_final_response_tool"] = requireFinalResponseTool
 	meta["planning_preflight"] = planningPreflightEnabled
 	if resumeContext != nil {
@@ -756,21 +735,13 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 		}, modeladapter.OpenRouterConfig{
-			Model:           criticModel,
-			EnvFile:         envFile,
-			MaxTurns:        1,
-			RequestTimeout:  requestTimeout,
-			ReasoningEffort: criticReasoningEffort,
-			Temperature:     temperature,
-			OmitTemperature: omitTemperature,
-		}, modeladapter.OpenRouterConfig{
 			Model:           visionModel,
 			EnvFile:         envFile,
 			MaxTurns:        1,
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, criticProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, planningPreflightEnabled, qualityCheckpointPasses, qualityRepairPasses, webSearchStatus.Enabled)
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, planningPreflightEnabled, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -790,7 +761,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, criticCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, criticProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, planningPreflightEnabled bool, qualityCheckpointPasses int, qualityRepairPasses int, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, planningPreflightEnabled bool, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -820,13 +791,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		runner.CodeScout = searchRefine.Scout
 		runner.SearchRefineMinBytes = searchRefine.MinBytes
 	}
-	critic := newCriticProfile(criticProvider, criticCfg, providerLabel, client.Model())
-	if critic.Enabled {
-		runner.CriticConsultant = criticConsultant{
-			profile: critic,
-			writer:  writer,
-		}
-	}
 	vision := newVisionProfile(visionProvider, visionCfg, providerLabel, client.Model())
 	if vision.Enabled {
 		runner.ImageAnalyzer = visionAnalyzer{
@@ -835,16 +799,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 	}
 	planningPreflight := newPlanningPreflightProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
-	qualityPolicy := qualityCheckpointPolicy{
-		MaxPasses:       qualityCheckpointPasses,
-		CriticAvailable: critic.Enabled,
-		VisionAvailable: vision.Enabled,
-	}
-	qualityRepairPolicy := qualityRepairPolicy{
-		MaxPasses:       qualityRepairPasses,
-		CriticAvailable: critic.Enabled,
-		VisionAvailable: vision.Enabled,
-	}
 	if err := writer.Write(session.Event{
 		"type":       "search_refine_profile",
 		"session_id": runner.SessionID,
@@ -853,17 +807,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"model":      searchRefine.Model,
 		"min_bytes":  searchRefine.MinBytes,
 		"message":    searchRefine.Message,
-	}); err != nil {
-		return err
-	}
-	if err := writer.Write(session.Event{
-		"type":       "critic_profile",
-		"session_id": runner.SessionID,
-		"enabled":    critic.Enabled,
-		"provider":   critic.Provider,
-		"model":      critic.Model,
-		"mode":       "optional_tool",
-		"message":    critic.Message,
 	}); err != nil {
 		return err
 	}
@@ -884,28 +827,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"provider":   planningPreflight.Provider,
 		"model":      planningPreflight.Model,
 		"message":    planningPreflight.Message,
-	}); err != nil {
-		return err
-	}
-	if err := writer.Write(session.Event{
-		"type":             "quality_checkpoint_profile",
-		"session_id":       runner.SessionID,
-		"enabled":          qualityPolicy.Enabled(),
-		"max_passes":       qualityPolicy.MaxPasses,
-		"critic_available": qualityPolicy.CriticAvailable,
-		"vision_available": qualityPolicy.VisionAvailable,
-		"message":          qualityPolicy.Message(),
-	}); err != nil {
-		return err
-	}
-	if err := writer.Write(session.Event{
-		"type":             "quality_repair_profile",
-		"session_id":       runner.SessionID,
-		"enabled":          qualityRepairPolicy.Enabled(),
-		"max_passes":       qualityRepairPolicy.MaxPasses,
-		"critic_available": qualityRepairPolicy.CriticAvailable,
-		"vision_available": qualityRepairPolicy.VisionAvailable,
-		"message":          qualityRepairPolicy.Message(),
 	}); err != nil {
 		return err
 	}
@@ -946,7 +867,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.ManagedProcessesEnabled = runner.Processes != nil
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
-	systemPromptOptions.CriticConsultEnabled = critic.Enabled
 	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
 	if resumeSection := resumeContext.systemPromptSection(); resumeSection != "" {
 		projectInstructionPrompt = strings.TrimSpace(projectInstructionPrompt + "\n\n" + resumeSection)
@@ -991,7 +911,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.ManagedProcessesEnabled = runner.Processes != nil
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolOptions.BrowserAvailable = runner.BrowserAvailable
-	toolOptions.CriticConsultEnabled = critic.Enabled
 	toolOptions.VisionAnalysisEnabled = vision.Enabled
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
@@ -1456,40 +1375,6 @@ func forceOpenRouterLoopCompaction(writer *session.Writer, sessionID string, tur
 		}
 	}
 	return compactedMessages, true, nil
-}
-
-type qualityCheckpointPolicy struct {
-	MaxPasses       int
-	CriticAvailable bool
-	VisionAvailable bool
-}
-
-func (p qualityCheckpointPolicy) Enabled() bool {
-	return false
-}
-
-func (p qualityCheckpointPolicy) Message() string {
-	if p.MaxPasses > 0 {
-		return "LCAgent quality checkpoint passes are deprecated no-ops; use quality plans and verification evidence instead."
-	}
-	return "LCAgent quality checkpoint disabled."
-}
-
-type qualityRepairPolicy struct {
-	MaxPasses       int
-	CriticAvailable bool
-	VisionAvailable bool
-}
-
-func (p qualityRepairPolicy) Enabled() bool {
-	return false
-}
-
-func (p qualityRepairPolicy) Message() string {
-	if p.MaxPasses > 0 {
-		return "LCAgent quality repair passes are deprecated no-ops; automatic critic repair is disabled."
-	}
-	return "LCAgent quality repair disabled."
 }
 
 func shouldDeferSynthesisForUnverifiedChanges(guidance openRouterProgressGuidance, fileTouchEvents int, lastPassedVerificationFileTouchEvents int) bool {

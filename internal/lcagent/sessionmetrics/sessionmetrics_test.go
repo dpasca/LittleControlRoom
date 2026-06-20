@@ -85,68 +85,10 @@ func TestAnalyzeFilesSummarizesLCAgentSession(t *testing.T) {
 	}
 }
 
-func TestAnalyzeFilesSummarizesCriticSignals(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "critic-session.jsonl")
-	body := `{"type":"session_meta","id":"lca_critic","cwd":"/repo"}
-{"type":"critic_review_started","mode":"pre_final"}
-{"type":"critic_model_response","model":"critic/test","usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}
-{"type":"critic_review_result","mode":"pre_final","status":"needs_followup","summary":"material issue","lead_instruction":"fix it","findings":[{"severity":"medium","materiality":"high","claim":"bad final","evidence_source":"lead_final","evidence":"bad"}]}
-{"type":"critic_lead_feedback","message":"Critic feedback before final_response: fix it"}
-{"type":"critic_review_started","mode":"trace_only"}
-{"type":"critic_model_response_invalid","mode":"trace_only","attempt":1,"message":"critic returned invalid JSON","usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}
-{"type":"critic_review_result","mode":"trace_only","status":"concerns","summary":"minor concern","proposed_user_message":"Please ask the user."}
-{"type":"critic_review_failed","mode":"trace_only","message":"critic unavailable"}
-{"type":"critic_consult_started","kind":"patch","question":"Does this patch need another test?"}
-{"type":"critic_consult_result","kind":"patch","status":"concerns","summary":"targeted test would help","usage":{"prompt_tokens":11,"completion_tokens":4,"total_tokens":15}}
-{"type":"critic_consult_failed","kind":"debug","message":"critic unavailable"}
-{"type":"verification_summary","status":"verified"}
-`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	summary, err := AnalyzeFiles([]string{path})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if summary.CriticReviewsStarted != 2 || summary.CriticReviewResults != 2 || summary.CriticReviewFailures != 1 {
-		t.Fatalf("critic review counts = started %d results %d failures %d", summary.CriticReviewsStarted, summary.CriticReviewResults, summary.CriticReviewFailures)
-	}
-	if summary.CriticReviewModes["pre_final"] != 1 || summary.CriticReviewModes["trace_only"] != 2 {
-		t.Fatalf("critic modes = %#v", summary.CriticReviewModes)
-	}
-	if summary.CriticReviewStatuses["needs_followup"] != 1 || summary.CriticReviewStatuses["concerns"] != 1 {
-		t.Fatalf("critic statuses = %#v", summary.CriticReviewStatuses)
-	}
-	if summary.CriticLeadFeedback != 1 || summary.CriticHumanPrompts != 1 || summary.CriticModelResponses != 1 || summary.CriticInvalidModelResponses != 1 {
-		t.Fatalf("critic friction = lead %d human %d model %d invalid %d", summary.CriticLeadFeedback, summary.CriticHumanPrompts, summary.CriticModelResponses, summary.CriticInvalidModelResponses)
-	}
-	if summary.CriticConsultsStarted != 1 || summary.CriticConsultResults != 1 || summary.CriticConsultFailures != 1 {
-		t.Fatalf("critic consult counts = started %d results %d failures %d", summary.CriticConsultsStarted, summary.CriticConsultResults, summary.CriticConsultFailures)
-	}
-	if summary.CriticConsultStatuses["concerns"] != 1 {
-		t.Fatalf("critic consult statuses = %#v", summary.CriticConsultStatuses)
-	}
-	if summary.TokenUsage.InputTokens != 19 || summary.TokenUsage.OutputTokens != 7 || summary.TokenUsage.TotalTokens != 26 {
-		t.Fatalf("critic token usage = %+v", summary.TokenUsage)
-	}
-	if summary.TraceQuality.CriticReviews != 2 || summary.TraceQuality.CriticConsultations != 1 || summary.TraceQuality.CriticLeadFeedback != 1 || summary.TraceQuality.CriticHumanPrompts != 1 {
-		t.Fatalf("trace quality critic fields = %#v", summary.TraceQuality)
-	}
-	if !traceQualityHasFinding(summary.TraceQuality, "critic_lead_feedback") || !traceQualityHasFinding(summary.TraceQuality, "critic_human_prompts") || !traceQualityHasFinding(summary.TraceQuality, "critic_consultations") {
-		t.Fatalf("trace quality findings = %#v", summary.TraceQuality.Findings)
-	}
-}
-
-func TestAnalyzeFilesSummarizesQualityCheckpoints(t *testing.T) {
+func TestAnalyzeFilesSummarizesQualityPlan(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "quality-session.jsonl")
 	body := `{"type":"session_meta","id":"lca_quality","cwd":"/repo"}
-{"type":"quality_checkpoint_started","pass":1,"max_passes":1}
-{"type":"quality_checkpoint_feedback","pass":1,"max_passes":1,"message":"Quality checkpoint before final_response"}
-{"type":"quality_repair_feedback","pass":1,"max_passes":3,"reason":"critic_material_finding","message":"Quality repair required"}
-{"type":"quality_repair_cleared","passes":1,"max_passes":3,"summary":"clean after repair"}
 {"type":"quality_plan_update","artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"core","status":"verified"}]}
 {"type":"verification_summary","status":"verified"}
 `
@@ -157,20 +99,8 @@ func TestAnalyzeFilesSummarizesQualityCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.QualityCheckpointsStarted != 1 || summary.QualityCheckpointFeedback != 1 {
-		t.Fatalf("quality checkpoint counts = started %d feedback %d", summary.QualityCheckpointsStarted, summary.QualityCheckpointFeedback)
-	}
-	if summary.QualityRepairFeedback != 1 || summary.QualityRepairCleared != 1 {
-		t.Fatalf("quality repair counts = feedback %d cleared %d", summary.QualityRepairFeedback, summary.QualityRepairCleared)
-	}
 	if summary.QualityPlanUpdates != 1 {
 		t.Fatalf("quality plan updates = %d, want 1", summary.QualityPlanUpdates)
-	}
-	if summary.TraceQuality.QualityCheckpoints != 1 || !traceQualityHasFinding(summary.TraceQuality, "quality_checkpoints") {
-		t.Fatalf("trace quality checkpoint fields = %#v", summary.TraceQuality)
-	}
-	if summary.TraceQuality.QualityRepairs != 1 || !traceQualityHasFinding(summary.TraceQuality, "quality_repairs") || !traceQualityHasFinding(summary.TraceQuality, "quality_repair_cleared") {
-		t.Fatalf("trace quality repair fields = %#v", summary.TraceQuality)
 	}
 	if summary.TraceQuality.QualityPlans != 1 || !traceQualityHasFinding(summary.TraceQuality, "quality_plans") {
 		t.Fatalf("trace quality plan fields = %#v", summary.TraceQuality)

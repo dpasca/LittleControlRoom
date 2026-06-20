@@ -394,8 +394,6 @@ func TestSettingsLCAgentModelValueLabelIncludesReasoning(t *testing.T) {
 		EmbeddedLCAgentModel:     "gpt-5.5",
 		EmbeddedLCAgentReasoning: "high",
 		LCAgentUtilityProvider:   "main",
-		LCAgentCriticProvider:    "deepseek",
-		LCAgentCriticModel:       "deepseek-v4-pro",
 		LCAgentVisionProvider:    "off",
 		LCAgentVisionModel:       "",
 		OpenRouterModel:          "deepseek/deepseek-v4-pro",
@@ -411,10 +409,6 @@ func TestSettingsLCAgentModelValueLabelIncludesReasoning(t *testing.T) {
 	utilityLabel := settingsLCAgentModelValueLabel(settings, settingsFieldLCAgentUtilityModel)
 	if !strings.Contains(utilityLabel, "Same as Main") || !strings.Contains(utilityLabel, "reasoning: high") {
 		t.Fatalf("utility label = %q, want same-as-main reasoning", utilityLabel)
-	}
-	criticLabel := settingsLCAgentModelValueLabel(settings, settingsFieldLCAgentCriticModel)
-	if !strings.Contains(criticLabel, "reasoning: Provider Default") {
-		t.Fatalf("critic label = %q, want provider default reasoning", criticLabel)
 	}
 	projectLabel := settingsLCAgentModelValueLabel(settings, settingsFieldOpenRouterModel)
 	if !strings.Contains(projectLabel, "OpenRouter / deepseek/deepseek-v4-pro") || !strings.Contains(projectLabel, "reasoning: Provider Default") {

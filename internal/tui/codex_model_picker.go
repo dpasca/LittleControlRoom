@@ -26,7 +26,6 @@ type codexModelPickerTarget string
 
 const (
 	codexModelPickerTargetLeader codexModelPickerTarget = ""
-	codexModelPickerTargetCritic codexModelPickerTarget = "critic"
 )
 
 type codexModelPickerState struct {
@@ -91,18 +90,11 @@ func (m Model) currentEmbeddedSessionProvider() codexapp.Provider {
 }
 
 func (m Model) codexModelPickerTargetLabel() string {
-	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetCritic {
-		return "critic"
-	}
 	return "model"
 }
 
 func (m *Model) openCodexModelPickerLoading() {
 	m.openCodexModelPickerLoadingFor(codexModelPickerTargetLeader)
-}
-
-func (m *Model) openCodexCriticModelPickerLoading() {
-	m.openCodexModelPickerLoadingFor(codexModelPickerTargetCritic)
 }
 
 func (m *Model) openCodexModelPickerLoadingFor(target codexModelPickerTarget) {
@@ -144,15 +136,9 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	desiredModelProvider := ""
 	desiredReasoning := ""
 	if snapshot, ok := m.currentCodexSnapshot(); ok {
-		if state.Target == codexModelPickerTargetCritic {
-			desiredModel = strings.TrimSpace(snapshot.CriticModel)
-			desiredModelProvider = strings.TrimSpace(snapshot.CriticModelProvider)
-			desiredReasoning = strings.TrimSpace(snapshot.CriticReasoningEffort)
-		} else {
-			desiredModel = firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
-			desiredModelProvider = strings.TrimSpace(snapshot.ModelProvider)
-			desiredReasoning = firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
-		}
+		desiredModel = firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
+		desiredModelProvider = strings.TrimSpace(snapshot.ModelProvider)
+		desiredReasoning = firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 	}
 
 	state.ModelIndex = codexModelOptionIndexForProvider(state.FilteredModels, desiredModel, desiredModelProvider)
@@ -733,9 +719,6 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 		m.closeCodexModelPickerAndReturnToTodo("No embedded " + m.codexModelPickerTargetLabel() + " choices are available")
 		return m, nil
 	}
-	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetCritic {
-		return m.applyCodexCriticModelPickerSelection(modelOption)
-	}
 	effort := ""
 	reasoningOptions := m.codexReasoningOptionsForModel(modelOption)
 	if len(reasoningOptions) > 0 {
@@ -845,88 +828,6 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m Model) applyCodexCriticModelPickerSelection(modelOption codexapp.ModelOption) (tea.Model, tea.Cmd) {
-	modelName := strings.TrimSpace(modelOption.Model)
-	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
-	effort := ""
-	reasoningOptions := m.codexReasoningOptionsForModel(modelOption)
-	if len(reasoningOptions) > 0 {
-		effort = strings.TrimSpace(modelOption.DefaultReasoningEffort)
-		if selectedEffort, ok := m.currentCodexReasoningOption(); ok {
-			effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
-		}
-	}
-	projectPath := strings.TrimSpace(m.codexVisibleProject)
-	snapshot, _ := m.currentCodexSnapshot()
-	if embeddedProvider(snapshot) != codexapp.ProviderLCAgent {
-		m.closeCodexModelPickerAndReturnToTodo("/critic is only available for embedded LCAgent sessions")
-		return m, nil
-	}
-	if modelProvider != "" && !m.lcagentModelProviderReady(modelProvider) {
-		m.closeCodexModelPickerAndReturnToTodo("Configure " + settingsLCAgentProviderOptionLabel(modelProvider) + " credentials in settings before using that critic model")
-		return m, nil
-	}
-	perfOpID := m.beginAILatencyOp("Critic model apply", projectPath, strings.TrimSpace(modelProvider+" "+modelName+" "+effort))
-	m.closeCodexModelPicker("")
-	m.status = "Staging critic " + modelName + "..."
-	manager := m.codexManager
-	return m, func() tea.Msg {
-		startedAt := time.Now()
-		if manager == nil {
-			return codexActionMsg{
-				projectPath:  projectPath,
-				perfOpID:     perfOpID,
-				perfDuration: time.Since(startedAt),
-				err:          errors.New("embedded session unavailable"),
-			}
-		}
-		session, ok := manager.Session(projectPath)
-		if !ok {
-			return codexActionMsg{
-				projectPath:  projectPath,
-				perfOpID:     perfOpID,
-				perfDuration: time.Since(startedAt),
-				err:          errors.New("embedded session unavailable"),
-			}
-		}
-		staged, ok := session.(interface {
-			StageCriticModelProviderOverride(string, string, string) error
-		})
-		if !ok {
-			return codexActionMsg{
-				projectPath:  projectPath,
-				perfOpID:     perfOpID,
-				perfDuration: time.Since(startedAt),
-				err:          errors.New("/critic is only available for embedded LCAgent sessions"),
-			}
-		}
-		if err := staged.StageCriticModelProviderOverride(modelProvider, modelName, effort); err != nil {
-			return codexActionMsg{
-				projectPath:  projectPath,
-				perfOpID:     perfOpID,
-				perfDuration: time.Since(startedAt),
-				err:          err,
-			}
-		}
-		status := "LCAgent critic model set to " + modelName + " for future reviews"
-		if effort != "" {
-			status += " with " + effort + " reasoning"
-		}
-		return codexActionMsg{
-			projectPath:   projectPath,
-			status:        status,
-			provider:      codexapp.ProviderLCAgent,
-			model:         modelName,
-			modelProvider: modelProvider,
-			reasoning:     effort,
-			criticModel:   true,
-			refreshView:   true,
-			perfOpID:      perfOpID,
-			perfDuration:  time.Since(startedAt),
-		}
-	}
-}
-
 func (m Model) renderCodexModelPickerOverlay(body string, bodyW, bodyH int) string {
 	panel := m.renderCodexModelPicker(bodyW, bodyH)
 	panelWidth := lipgloss.Width(panel)
@@ -952,9 +853,6 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	label := m.currentEmbeddedSessionLabel()
 	targetLabel := m.codexModelPickerTargetLabel()
 	titleLabel := label
-	if state != nil && state.Target == codexModelPickerTargetCritic {
-		titleLabel = label + " critic"
-	}
 	header := []string{
 		commandPaletteTitleStyle.Render("Embedded Model Picker (" + titleLabel + ")"),
 		renderDialogAction("Enter", "apply", commitActionKeyStyle, commitActionTextStyle) + "   " +
@@ -977,11 +875,6 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		current := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 		currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 		currentLabel := "Current"
-		if state.Target == codexModelPickerTargetCritic {
-			current = strings.TrimSpace(snapshot.CriticModel)
-			currentReasoning = strings.TrimSpace(snapshot.CriticReasoningEffort)
-			currentLabel = "Critic"
-		}
 		currentReasoningOption := ""
 		if options := m.currentCodexReasoningOptions(); len(options) > 0 {
 			currentReasoningOption = firstNonEmptyTrimmed(currentReasoning)

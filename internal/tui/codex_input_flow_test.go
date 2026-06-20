@@ -53,7 +53,7 @@ func TestVisibleCodexAltEnterInsertsNewline(t *testing.T) {
 	}
 }
 
-func TestStoreCodexSnapshotIgnoresLCAgentCriticSuggestedDraft(t *testing.T) {
+func TestStoreCodexSnapshotIgnoresLCAgentSuggestedDraftWithoutSource(t *testing.T) {
 	projectPath := "/tmp/demo"
 	m := Model{
 		codexVisibleProject: projectPath,
@@ -62,11 +62,10 @@ func TestStoreCodexSnapshotIgnoresLCAgentCriticSuggestedDraft(t *testing.T) {
 	}
 
 	m.storeCodexSnapshot(projectPath, codexapp.Snapshot{
-		Provider:                  codexapp.ProviderLCAgent,
-		ProjectPath:               projectPath,
-		SuggestedInputDraftID:     "critic-1",
-		SuggestedInputDraft:       "Please verify the failing test before continuing.",
-		SuggestedInputDraftSource: "lcagent_critic",
+		Provider:              codexapp.ProviderLCAgent,
+		ProjectPath:           projectPath,
+		SuggestedInputDraftID: "draft-1",
+		SuggestedInputDraft:   "Please verify the failing test before continuing.",
 	})
 	if got := m.codexInput.Value(); got != "" {
 		t.Fatalf("composer draft = %q", got)

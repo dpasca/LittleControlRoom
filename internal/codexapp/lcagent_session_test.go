@@ -73,7 +73,6 @@ printf '%s\n' '{"type":"plan_update","items":[{"step":"exercise fake agent","sta
 printf '%s\n' '{"type":"assistant_message","message":"fake lcagent response"}'
 printf '%s\n' '{"type":"files_touched","files":["README.md"]}'
 printf '%s\n' '{"type":"turn_complete"}'
-printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","status":"needs_followup","summary":"verification was thin","proposed_user_message":"Please run the missing verification and report the result."}'
 `
 	if err := os.WriteFile(exe, []byte(script), 0o700); err != nil {
 		t.Fatalf("write fake lcagent: %v", err)
@@ -127,9 +126,6 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 	if snapshot.TokenUsage.ModelContextWindow != 150_000 {
 		t.Fatalf("TokenUsage.ModelContextWindow = %d, want LCAgent large compaction token budget", snapshot.TokenUsage.ModelContextWindow)
 	}
-	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
-		t.Fatalf("critic review should not create composer draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
-	}
 	for _, want := range []string{"please run the fake agent", "I logged in", "Tool run_command running", "command ok", "Plan:\n[x] exercise fake agent", "fake lcagent response", "Files touched:\nREADME.md"} {
 		if !strings.Contains(snapshot.Transcript, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
@@ -153,12 +149,9 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 		"--approval-mode", "ask",
 		"--require-final-response-tool",
 		"--planning-preflight",
-		"--quality-checkpoint-passes", "0",
-		"--quality-repair-passes", "0",
 		"--admin-write",
 		"--utility-provider", "deepseek",
 		"--utility-model", "test-model",
-		"--critic-provider", "off",
 		"--provider", "deepseek",
 		"--model", "test-model",
 		"--tool-profile", "generous",
@@ -171,144 +164,6 @@ printf '%s\n' '{"type":"critic_review_result","packet_hash":"critic-packet-1","s
 		if !lcagentTestStringSliceContains(args, want) {
 			t.Fatalf("args missing %q: %#v", want, args)
 		}
-	}
-}
-
-func TestLCAgentCriticConcernsDoNotCreateSuggestedDraft(t *testing.T) {
-	session := &lcagentSession{
-		projectPath: t.TempDir(),
-		started:     true,
-	}
-	raw := func(value string) json.RawMessage {
-		body, err := json.Marshal(value)
-		if err != nil {
-			t.Fatalf("marshal %q: %v", value, err)
-		}
-		return body
-	}
-
-	session.handleLCAgentCriticReviewResult(map[string]json.RawMessage{
-		"packet_hash":           raw("critic-packet-note"),
-		"status":                raw("concerns"),
-		"summary":               raw("minor wording concern"),
-		"proposed_user_message": raw("Please clarify a minor wording issue."),
-	})
-
-	snapshot := session.Snapshot()
-	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
-		t.Fatalf("concerns should not create draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
-	}
-	if !strings.Contains(snapshot.Status, "LCAgent critic found concerns") {
-		t.Fatalf("status = %q, want critic concern status", snapshot.Status)
-	}
-	if snapshot.CriticReviews != 1 || snapshot.CriticConcerns != 1 || snapshot.CriticLastStatus != "concerns" {
-		t.Fatalf("critic metrics = reviews %d concerns %d status %q, want 1/1/concerns", snapshot.CriticReviews, snapshot.CriticConcerns, snapshot.CriticLastStatus)
-	}
-	if snapshot.CriticLastSummary != "minor wording concern" {
-		t.Fatalf("critic summary = %q", snapshot.CriticLastSummary)
-	}
-}
-
-func TestLCAgentCriticNeedsFollowupDoesNotCreateSuggestedDraft(t *testing.T) {
-	session := &lcagentSession{
-		projectPath: t.TempDir(),
-		started:     true,
-	}
-	raw := func(value string) json.RawMessage {
-		body, err := json.Marshal(value)
-		if err != nil {
-			t.Fatalf("marshal %q: %v", value, err)
-		}
-		return body
-	}
-
-	session.handleLCAgentCriticReviewResult(map[string]json.RawMessage{
-		"packet_hash":           raw("critic-packet-followup"),
-		"status":                raw("needs-followup"),
-		"summary":               raw("verification is still failing"),
-		"proposed_user_message": raw("Please rerun the failing verification and fix it."),
-	})
-
-	snapshot := session.Snapshot()
-	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
-		t.Fatalf("critic follow-up should not create composer draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
-	}
-	if snapshot.CriticReviews != 1 || snapshot.CriticConcerns != 1 || snapshot.CriticFollowupDrafts != 0 {
-		t.Fatalf("critic metrics = reviews %d concerns %d drafts %d, want 1/1/0", snapshot.CriticReviews, snapshot.CriticConcerns, snapshot.CriticFollowupDrafts)
-	}
-}
-
-func TestLCAgentCriticConsultResultTracksConsultMetrics(t *testing.T) {
-	session := &lcagentSession{
-		projectPath:   t.TempDir(),
-		started:       true,
-		criticActive:  true,
-		criticReviews: 2,
-	}
-	raw := func(value any) json.RawMessage {
-		body, err := json.Marshal(value)
-		if err != nil {
-			t.Fatalf("marshal %#v: %v", value, err)
-		}
-		return body
-	}
-
-	session.handleLCAgentCriticConsultResult(map[string]json.RawMessage{
-		"status":  raw("concerns"),
-		"summary": raw("patch likely needs a targeted test"),
-		"model":   raw("critic/test"),
-		"usage": raw(map[string]any{
-			"prompt_tokens":     7,
-			"completion_tokens": 3,
-			"total_tokens":      10,
-		}),
-	})
-
-	snapshot := session.Snapshot()
-	if snapshot.CriticActive {
-		t.Fatal("critic should no longer be active after consultation result")
-	}
-	if snapshot.CriticConsultations != 1 || snapshot.CriticConsultConcerns != 1 {
-		t.Fatalf("consult metrics = %d/%d, want 1/1", snapshot.CriticConsultations, snapshot.CriticConsultConcerns)
-	}
-	if snapshot.CriticReviews != 2 || snapshot.CriticConcerns != 0 {
-		t.Fatalf("review metrics changed: reviews=%d concerns=%d", snapshot.CriticReviews, snapshot.CriticConcerns)
-	}
-	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
-		t.Fatalf("consultation should not create draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
-	}
-	if !strings.Contains(snapshot.Status, "LCAgent critic consultation found concerns") {
-		t.Fatalf("status = %q, want consultation concern status", snapshot.Status)
-	}
-	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Total.TotalTokens != 10 {
-		t.Fatalf("token usage = %#v, want total 10", snapshot.TokenUsage)
-	}
-}
-
-func TestLCAgentCriticLeadFeedbackUpdatesStatusWithoutDraft(t *testing.T) {
-	session := &lcagentSession{
-		projectPath: t.TempDir(),
-		started:     true,
-	}
-
-	body, err := json.Marshal(map[string]any{
-		"type":    "critic_lead_feedback",
-		"message": "Critic feedback before final_response: rerun verification before final.",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	session.handleEvent(body)
-
-	snapshot := session.Snapshot()
-	if snapshot.SuggestedInputDraftID != "" || snapshot.SuggestedInputDraft != "" {
-		t.Fatalf("private lead feedback should not create draft: id=%q draft=%q", snapshot.SuggestedInputDraftID, snapshot.SuggestedInputDraft)
-	}
-	if !strings.Contains(snapshot.Status, "private lead revision") {
-		t.Fatalf("status = %q, want private lead revision", snapshot.Status)
-	}
-	if snapshot.CriticLeadRevisions != 1 || snapshot.CriticLastStatus != "lead revision" {
-		t.Fatalf("critic lead metrics = revisions %d status %q, want 1/lead revision", snapshot.CriticLeadRevisions, snapshot.CriticLastStatus)
 	}
 }
 
@@ -610,32 +465,6 @@ func TestLCAgentDirectFileToolSummaries(t *testing.T) {
 	replaceArgs := json.RawMessage(`{"path":"README.md","content":"hidden from transcript\n","expected_sha256":"abc"}`)
 	if got := lcagentToolArgsSummary("replace_file", replaceArgs); got != "README.md" {
 		t.Fatalf("replace_file args summary = %q", got)
-	}
-}
-
-func TestLCAgentCriticInvalidJSONIsDistinctFromUnavailable(t *testing.T) {
-	session := &lcagentSession{
-		projectPath: t.TempDir(),
-		started:     true,
-	}
-	session.handleEvent([]byte(`{"type":"critic_model_response_invalid","session_id":"lca_critic_invalid","provider":"openrouter","model":"critic/test","attempt":1,"retrying":true,"message":"critic returned invalid JSON","usage_summary":{"input_tokens":5,"output_tokens":2,"total_tokens":7}}`))
-	session.handleEvent([]byte(`{"type":"critic_review_retry","session_id":"lca_critic_invalid","message":"critic returned invalid structured output; retrying once with stricter JSON-only instructions"}`))
-	session.handleEvent([]byte(`{"type":"critic_review_failed","session_id":"lca_critic_invalid","failure_kind":"invalid_json","message":"critic returned invalid JSON after retry"}`))
-
-	snapshot := session.Snapshot()
-	if snapshot.Status != "LCAgent critic invalid structured output" {
-		t.Fatalf("status = %q", snapshot.Status)
-	}
-	for _, want := range []string{"LCAgent critic returned invalid structured output on attempt 1; retrying", "retrying once with stricter JSON-only instructions", "LCAgent critic invalid structured output: critic returned invalid JSON after retry"} {
-		if !strings.Contains(snapshot.Transcript, want) {
-			t.Fatalf("transcript missing %q:\n%s", want, snapshot.Transcript)
-		}
-	}
-	if strings.Contains(snapshot.Transcript, "LCAgent critic unavailable") {
-		t.Fatalf("invalid JSON should not be rendered as unavailable:\n%s", snapshot.Transcript)
-	}
-	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Total.TotalTokens != 7 {
-		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
 	}
 }
 
@@ -1577,25 +1406,22 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 
 	notify := make(chan struct{}, 20)
 	session, err := newLCAgentSession(LaunchRequest{
-		Provider:               ProviderLCAgent,
-		ProjectPath:            root,
-		AppDataDir:             t.TempDir(),
-		LCAgentPath:            exe,
-		LCAgentOpenAIAPIKey:    "saved-openai-key",
-		LCAgentRoutePreset:     "quality",
-		LCAgentProvider:        "deepseek",
-		LCAgentAuto:            "medium",
-		LCAgentAdminWrite:      true,
-		LCAgentToolProfile:     "generous",
-		LCAgentRequestTimeout:  37 * time.Minute,
-		LCAgentCriticProvider:  "deepseek",
-		LCAgentCriticModel:     "deepseek-v4-pro",
-		LCAgentCriticReasoning: "high",
-		PendingModel:           "",
-		PendingReasoning:       "high",
-		LCAgentEnvFile:         "/tmp/test.env",
-		LCAgentWebSearchURL:    "http://127.0.0.1:8888",
-		Prompt:                 "use the configured route",
+		Provider:              ProviderLCAgent,
+		ProjectPath:           root,
+		AppDataDir:            t.TempDir(),
+		LCAgentPath:           exe,
+		LCAgentOpenAIAPIKey:   "saved-openai-key",
+		LCAgentRoutePreset:    "quality",
+		LCAgentProvider:       "deepseek",
+		LCAgentAuto:           "medium",
+		LCAgentAdminWrite:     true,
+		LCAgentToolProfile:    "generous",
+		LCAgentRequestTimeout: 37 * time.Minute,
+		PendingModel:          "",
+		PendingReasoning:      "high",
+		LCAgentEnvFile:        "/tmp/test.env",
+		LCAgentWebSearchURL:   "http://127.0.0.1:8888",
+		Prompt:                "use the configured route",
 	}, func() {
 		select {
 		case notify <- struct{}{}:
@@ -1609,15 +1435,12 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 	if snapshot.Model != "gpt-5.5" || snapshot.ModelProvider != "openai" {
 		t.Fatalf("snapshot model/provider = %q/%q, want quality route", snapshot.Model, snapshot.ModelProvider)
 	}
-	if snapshot.CriticModel != "deepseek-v4-pro" || snapshot.CriticModelProvider != "deepseek" || snapshot.CriticReasoningEffort != "high" {
-		t.Fatalf("snapshot critic = %q/%q reasoning=%q, want deepseek/deepseek-v4-pro high", snapshot.CriticModelProvider, snapshot.CriticModel, snapshot.CriticReasoningEffort)
-	}
 	argsBytes, err := os.ReadFile(argsPath)
 	if err != nil {
 		t.Fatalf("read fake args: %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsBytes)), "\n")
-	for _, want := range []string{"--route-preset", "quality", "--request-timeout", "37m0s", "--admin-write", "--env-file", "/tmp/test.env", "--critic-provider", "deepseek", "--critic-model", "deepseek-v4-pro", "--critic-reasoning-effort", "high", "--web-search-url", "http://127.0.0.1:8888"} {
+	for _, want := range []string{"--route-preset", "quality", "--request-timeout", "37m0s", "--admin-write", "--env-file", "/tmp/test.env", "--web-search-url", "http://127.0.0.1:8888"} {
 		if !lcagentTestStringSliceContains(args, want) {
 			t.Fatalf("args missing %q: %#v", want, args)
 		}
@@ -1896,101 +1719,6 @@ func TestLCAgentReplayShowsModelRequestFailureAndProviderRetry(t *testing.T) {
 	}
 }
 
-func TestLCAgentReplayRestoresCriticInvalidJSONFailure(t *testing.T) {
-	root := t.TempDir()
-	dataDir := t.TempDir()
-	sessionID := "lca_replay_critic_failure"
-	started := time.Date(2026, 6, 16, 2, 42, 0, 0, time.UTC)
-	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
-		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "xiaomi", "model": "mimo-v2.5-pro"},
-		{"type": "critic_profile", "session_id": sessionID, "enabled": true, "provider": "deepseek", "model": "deepseek-v4-pro"},
-		{"type": "critic_review_started", "session_id": sessionID, "mode": "pre_final"},
-		{"type": "critic_model_response_invalid", "session_id": sessionID, "attempt": 1, "retrying": true, "message": "critic returned invalid JSON", "usage_summary": map[string]any{"input_tokens": 5, "output_tokens": 2, "total_tokens": 7}},
-		{"type": "critic_review_retry", "session_id": sessionID, "message": "critic returned invalid structured output; retrying once with stricter JSON-only instructions"},
-		{"type": "critic_model_response_invalid", "session_id": sessionID, "attempt": 2, "message": "critic returned invalid JSON", "usage_summary": map[string]any{"input_tokens": 11, "output_tokens": 3, "total_tokens": 14}},
-		{"type": "critic_review_failed", "session_id": sessionID, "failure_kind": "invalid_json", "message": "critic returned invalid JSON after retry"},
-	})
-	replay, err := parseLCAgentReplayFile(path)
-	if err != nil {
-		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
-	}
-	lca := &lcagentSession{
-		projectPath: root,
-		provider:    "xiaomi",
-	}
-	lca.applyReplay(replay)
-	snapshot := lca.Snapshot()
-	if snapshot.CriticModelProvider != "deepseek" || snapshot.CriticModel != "deepseek-v4-pro" {
-		t.Fatalf("critic model = %q/%q, want deepseek/deepseek-v4-pro", snapshot.CriticModelProvider, snapshot.CriticModel)
-	}
-	if snapshot.CriticActive {
-		t.Fatal("critic should not be active after failed replay")
-	}
-	if snapshot.CriticLastStatus != "failed" || snapshot.CriticLastSummary != "critic returned invalid JSON after retry" {
-		t.Fatalf("critic status = %q summary %q, want failed invalid JSON summary", snapshot.CriticLastStatus, snapshot.CriticLastSummary)
-	}
-	if snapshot.CriticReviews != 0 || snapshot.CriticConcerns != 0 {
-		t.Fatalf("failed critic review should not count as completed review: reviews=%d concerns=%d", snapshot.CriticReviews, snapshot.CriticConcerns)
-	}
-	for _, want := range []string{
-		"LCAgent critic returned invalid structured output on attempt 1; retrying",
-		"retrying once with stricter JSON-only instructions",
-		"LCAgent critic returned invalid structured output on attempt 2",
-		"LCAgent critic invalid structured output: critic returned invalid JSON after retry",
-	} {
-		if !strings.Contains(snapshot.Transcript, want) {
-			t.Fatalf("replayed transcript missing %q:\n%s", want, snapshot.Transcript)
-		}
-	}
-	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Total.TotalTokens != 21 {
-		t.Fatalf("token usage = %#v, want total 21", snapshot.TokenUsage)
-	}
-	if snapshot.LastError != "" {
-		t.Fatalf("LastError = %q, want empty for critic failure", snapshot.LastError)
-	}
-}
-
-func TestLCAgentReplayRestoresQualityCheckpointStats(t *testing.T) {
-	root := t.TempDir()
-	dataDir := t.TempDir()
-	sessionID := "lca_replay_quality_checkpoint"
-	started := time.Date(2026, 6, 16, 7, 1, 0, 0, time.UTC)
-	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
-		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "openrouter", "model": "deepseek/test"},
-		{"type": "quality_checkpoint_profile", "session_id": sessionID, "enabled": true, "max_passes": 1},
-		{"type": "quality_checkpoint_started", "session_id": sessionID, "pass": 1, "max_passes": 1, "summary": "first answer"},
-		{"type": "quality_checkpoint_feedback", "session_id": sessionID, "pass": 1, "max_passes": 1, "message": "Quality checkpoint before final_response"},
-		{"type": "turn_complete", "session_id": sessionID, "summary": "checked answer", "verification_status": "not_run"},
-	})
-	replay, err := parseLCAgentReplayFile(path)
-	if err != nil {
-		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
-	}
-	lca := &lcagentSession{
-		projectPath: root,
-		provider:    "openrouter",
-	}
-	lca.applyReplay(replay)
-	snapshot := lca.Snapshot()
-	if snapshot.QualityCheckpointActive {
-		t.Fatal("quality checkpoint should not be active after feedback replay")
-	}
-	if snapshot.QualityCheckpointPasses != 1 || snapshot.QualityCheckpointMaxPasses != 1 {
-		t.Fatalf("quality checkpoint stats = %d/%d, want 1/1", snapshot.QualityCheckpointPasses, snapshot.QualityCheckpointMaxPasses)
-	}
-	if snapshot.QualityCheckpointLastSummary != "LCAgent requested private quality pass 1/1" {
-		t.Fatalf("quality checkpoint summary = %q", snapshot.QualityCheckpointLastSummary)
-	}
-	for _, want := range []string{
-		"LCAgent quality checkpoint reviewing candidate final 1/1",
-		"LCAgent requested private quality pass 1/1",
-	} {
-		if !strings.Contains(snapshot.Transcript, want) {
-			t.Fatalf("replayed transcript missing %q:\n%s", want, snapshot.Transcript)
-		}
-	}
-}
-
 func TestLCAgentReplayRestoresQualityPlanStats(t *testing.T) {
 	root := t.TempDir()
 	dataDir := t.TempDir()
@@ -2068,41 +1796,6 @@ func TestLCAgentReplayRestoresPhaseWriteGateStatus(t *testing.T) {
 	snapshot := lca.Snapshot()
 	if !strings.Contains(snapshot.Transcript, "LCAgent phase gate blocked create_file for render baseline") {
 		t.Fatalf("replayed transcript missing phase gate status:\n%s", snapshot.Transcript)
-	}
-}
-
-func TestLCAgentReplayRestoresQualityRepairStats(t *testing.T) {
-	root := t.TempDir()
-	dataDir := t.TempDir()
-	sessionID := "lca_replay_quality_repair"
-	started := time.Date(2026, 6, 16, 7, 2, 0, 0, time.UTC)
-	path := writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
-		{"type": "session_meta", "id": sessionID, "cwd": root, "started_at": started.Format(time.RFC3339Nano), "provider": "openrouter", "model": "deepseek/test"},
-		{"type": "quality_repair_profile", "session_id": sessionID, "enabled": true, "max_passes": 3},
-		{"type": "quality_repair_feedback", "session_id": sessionID, "pass": 2, "max_passes": 3, "reason": "critic_material_finding", "message": "Quality repair required"},
-		{"type": "turn_complete", "session_id": sessionID, "summary": "partial answer", "final_outcome": "partial", "verification_status": "not_run"},
-	})
-	replay, err := parseLCAgentReplayFile(path)
-	if err != nil {
-		t.Fatalf("parseLCAgentReplayFile() error = %v", err)
-	}
-	lca := &lcagentSession{
-		projectPath: root,
-		provider:    "openrouter",
-	}
-	lca.applyReplay(replay)
-	snapshot := lca.Snapshot()
-	if !snapshot.QualityRepairActive {
-		t.Fatal("quality repair should remain active after unresolved repair replay")
-	}
-	if snapshot.QualityRepairPasses != 2 || snapshot.QualityRepairMaxPasses != 3 {
-		t.Fatalf("quality repair stats = %d/%d, want 2/3", snapshot.QualityRepairPasses, snapshot.QualityRepairMaxPasses)
-	}
-	if snapshot.QualityRepairLastSummary != "LCAgent requested quality repair 2/3" {
-		t.Fatalf("quality repair summary = %q", snapshot.QualityRepairLastSummary)
-	}
-	if !strings.Contains(snapshot.Transcript, "LCAgent requested quality repair 2/3") {
-		t.Fatalf("replayed transcript missing repair feedback:\n%s", snapshot.Transcript)
 	}
 }
 

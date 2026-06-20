@@ -90,53 +90,6 @@ func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
 	}
 }
 
-func settingsLCAgentCriticProviderOptions() []settingsLCAgentProviderOption {
-	return []settingsLCAgentProviderOption{
-		{
-			Value:       "off",
-			Label:       "Off",
-			Summary:     "Disable consult_critic.",
-			Description: "Default for normal use. LCAgent completes turns without offering a separate critic model.",
-		},
-		{
-			Value:       "main",
-			Label:       "Same as Main",
-			Summary:     "Use the Main Model provider and model for optional consult_critic calls.",
-			Description: "The lead can ask the same model for a bounded second opinion when it decides that would help.",
-		},
-		{
-			Value:       "openrouter",
-			Label:       "OpenRouter",
-			Summary:     "Use OpenRouter for optional consult_critic calls.",
-			Description: "Uses the saved OpenRouter API key. Leave Critic Model blank to use the standard OpenRouter LCAgent model default.",
-		},
-		{
-			Value:       "openai",
-			Label:       "OpenAI",
-			Summary:     "Use direct OpenAI for optional consult_critic calls.",
-			Description: "Useful when the lead should be able to ask a stronger model for a bounded second opinion.",
-		},
-		{
-			Value:       "deepseek",
-			Label:       "DeepSeek",
-			Summary:     "Use direct DeepSeek for optional consult_critic calls.",
-			Description: "Uses the saved DeepSeek API key. Leave Critic Model blank to use the standard DeepSeek LCAgent model default.",
-		},
-		{
-			Value:       "moonshot",
-			Label:       "Moonshot",
-			Summary:     "Use direct Moonshot/Kimi for optional consult_critic calls.",
-			Description: "Uses the saved Moonshot API key when the lead asks for a bounded second opinion.",
-		},
-		{
-			Value:       "xiaomi",
-			Label:       "Xiaomi",
-			Summary:     "Use direct Xiaomi MiMo for optional consult_critic calls.",
-			Description: "Uses the saved Xiaomi API key when the lead asks for a bounded second opinion.",
-		},
-	}
-}
-
 func settingsLCAgentVisionProviderOptions() []settingsLCAgentProviderOption {
 	return []settingsLCAgentProviderOption{
 		{
@@ -194,9 +147,6 @@ func settingsLCAgentProviderOptionsForField(fieldIndex int) []settingsLCAgentPro
 	if fieldIndex == settingsFieldLCAgentVisionProvider {
 		return settingsLCAgentVisionProviderOptions()
 	}
-	if fieldIndex == settingsFieldLCAgentCriticProvider {
-		return settingsLCAgentCriticProviderOptions()
-	}
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		return settingsLCAgentUtilityProviderOptions()
 	}
@@ -211,8 +161,6 @@ func (m Model) openSettingsLCAgentProviderPicker() (tea.Model, tea.Cmd) {
 	m.status = "Choose the Main Model provider for LCAgent."
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		m.status = "Choose the Utility Model provider for LCAgent."
-	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
-		m.status = "Choose the Critic Model provider for LCAgent."
 	} else if fieldIndex == settingsFieldLCAgentVisionProvider {
 		m.status = "Choose the Vision Model provider for LCAgent."
 	}
@@ -230,9 +178,6 @@ func (m *Model) closeSettingsLCAgentProviderPicker(status string) {
 func (m Model) settingsLCAgentProviderPickerField() int {
 	if m.settingsSelected == settingsFieldLCAgentUtilityProvider {
 		return settingsFieldLCAgentUtilityProvider
-	}
-	if m.settingsSelected == settingsFieldLCAgentCriticProvider {
-		return settingsFieldLCAgentCriticProvider
 	}
 	if m.settingsSelected == settingsFieldLCAgentVisionProvider {
 		return settingsFieldLCAgentVisionProvider
@@ -292,8 +237,6 @@ func (m Model) applySettingsLCAgentProviderPickerSelection(option settingsLCAgen
 	target := "LCAgent provider"
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		target = "Utility Model provider"
-	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
-		target = "Critic Model provider"
 	} else if fieldIndex == settingsFieldLCAgentVisionProvider {
 		target = "Vision Model provider"
 	} else {
@@ -324,8 +267,6 @@ func (m Model) renderSettingsLCAgentProviderPickerContent(width, bodyH int) stri
 	title := "LCAgent Provider"
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		title = "Utility Model Provider"
-	} else if fieldIndex == settingsFieldLCAgentCriticProvider {
-		title = "Critic Model Provider"
 	} else if fieldIndex == settingsFieldLCAgentVisionProvider {
 		title = "Vision Model Provider"
 	} else {
@@ -397,16 +338,6 @@ func settingsLCAgentProviderOptionValueForField(fieldIndex int, raw string) stri
 		}
 		return normalized
 	}
-	if fieldIndex == settingsFieldLCAgentCriticProvider {
-		switch normalized {
-		case "", "off":
-			return "off"
-		case "main", "same", "same-as-main":
-			return "main"
-		default:
-			return normalized
-		}
-	}
 	if fieldIndex == settingsFieldLCAgentVisionProvider {
 		switch normalized {
 		case "", "auto":
@@ -434,9 +365,6 @@ func settingsLCAgentProviderOptionLabelForField(fieldIndex int, raw string) stri
 	}
 	if fieldIndex == settingsFieldLCAgentUtilityProvider {
 		return "Same as Main"
-	}
-	if fieldIndex == settingsFieldLCAgentCriticProvider {
-		return "Off"
 	}
 	if fieldIndex == settingsFieldLCAgentVisionProvider {
 		return "Auto"

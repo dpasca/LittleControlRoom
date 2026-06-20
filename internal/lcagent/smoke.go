@@ -508,15 +508,6 @@ func writeSmokeReport(stdout io.Writer, report smokeReport, outputRaw string, ru
 		if len(report.Metrics.VerificationStatuses) > 0 {
 			fmt.Fprintf(stdout, "verification=%v denials=%d patch_diff_summaries=%d\n", report.Metrics.VerificationStatuses, report.Metrics.PermissionDenials, report.Metrics.PatchDiffSummaries)
 		}
-		if report.Metrics.CriticReviewResults > 0 || report.Metrics.CriticLeadFeedback > 0 || report.Metrics.CriticHumanPrompts > 0 {
-			fmt.Fprintf(stdout, "critic_reviews=%d modes=%v statuses=%v lead_feedback=%d human_prompts=%d\n",
-				report.Metrics.CriticReviewResults,
-				report.Metrics.CriticReviewModes,
-				report.Metrics.CriticReviewStatuses,
-				report.Metrics.CriticLeadFeedback,
-				report.Metrics.CriticHumanPrompts,
-			)
-		}
 	}
 	if runErr != nil {
 		return runErr

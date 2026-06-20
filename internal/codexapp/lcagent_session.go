@@ -30,7 +30,6 @@ const (
 	lcagentDefaultContextProfile  = "balanced"
 	lcagentDefaultRequestTimeout  = 10 * time.Minute
 	lcagentDefaultUtilityProvider = "main"
-	lcagentDefaultCriticProvider  = "off"
 	lcagentDefaultVisionProvider  = "off"
 	lcagentDefaultWebSearch       = "off"
 )
@@ -64,9 +63,6 @@ type lcagentSession struct {
 	requestTimeout    time.Duration
 	utilityProvider   string
 	utilityModel      string
-	criticProvider    string
-	criticModel       string
-	criticReasoning   string
 	visionProvider    string
 	visionModel       string
 	modelWarning      string
@@ -78,78 +74,59 @@ type lcagentSession struct {
 	notify            func()
 	playwrightPolicy  browserctl.Policy
 
-	mu                           sync.Mutex
-	cmd                          *exec.Cmd
-	stdin                        io.WriteCloser
-	cancel                       context.CancelFunc
-	threadID                     string
-	runID                        string
-	started                      bool
-	busy                         bool
-	closed                       bool
-	busySince                    time.Time
-	lastBusyActivityAt           time.Time
-	lastActivityAt               time.Time
-	status                       string
-	lastError                    string
-	model                        string
-	modelProvider                string
-	reasoningEffort              string
-	pendingModel                 string
-	pendingModelProvider         string
-	pendingReasoning             string
-	tokenUsage                   *threadTokenUsage
-	pendingApproval              *ApprovalRequest
-	replayLoaded                 bool
-	managedBrowserSessionKey     string
-	browserProfileKey            string
-	browserLaunchMode            browserctl.ManagedLaunchMode
-	browserActivity              browserctl.SessionActivity
-	currentBrowserPageURL        string
-	currentBrowserPageStale      bool
-	pendingInitialUserEcho       string
-	pendingSteerEchoes           []string
-	entries                      []TranscriptEntry
-	revision                     uint64
-	cache                        transcriptExportCache
-	suggestedInputDraftID        string
-	suggestedInputDraft          string
-	criticActive                 bool
-	criticReviews                int
-	criticConsultations          int
-	criticConsultConcerns        int
-	criticConcerns               int
-	criticLeadRevisions          int
-	criticFollowupDrafts         int
-	criticLastStatus             string
-	criticLastSummary            string
-	imageAnalysisActive          bool
-	imageAnalyses                int
-	imageAnalysisFailures        int
-	imageAnalysisLastSummary     string
-	qualityCheckpointActive      bool
-	qualityCheckpointPasses      int
-	qualityCheckpointMaxPasses   int
-	qualityCheckpointLastSummary string
-	qualityRepairActive          bool
-	qualityRepairPasses          int
-	qualityRepairMaxPasses       int
-	qualityRepairLastSummary     string
-	qualityPlanUpdates           int
-	qualityPlanPhases            int
-	qualityPlanVerified          int
-	qualityPlanSkipped           int
-	qualityPlanNeedsRepair       int
-	qualityPlanRequiresRuntime   bool
-	qualityPlanRequiresVisual    bool
-	qualityPlanRequiresTemporal  bool
-	qualityPlanLastSummary       string
-	qualityPlanPhaseItems        []QualityPlanPhaseSnapshot
+	mu                          sync.Mutex
+	cmd                         *exec.Cmd
+	stdin                       io.WriteCloser
+	cancel                      context.CancelFunc
+	threadID                    string
+	runID                       string
+	started                     bool
+	busy                        bool
+	closed                      bool
+	busySince                   time.Time
+	lastBusyActivityAt          time.Time
+	lastActivityAt              time.Time
+	status                      string
+	lastError                   string
+	model                       string
+	modelProvider               string
+	reasoningEffort             string
+	pendingModel                string
+	pendingModelProvider        string
+	pendingReasoning            string
+	tokenUsage                  *threadTokenUsage
+	pendingApproval             *ApprovalRequest
+	replayLoaded                bool
+	managedBrowserSessionKey    string
+	browserProfileKey           string
+	browserLaunchMode           browserctl.ManagedLaunchMode
+	browserActivity             browserctl.SessionActivity
+	currentBrowserPageURL       string
+	currentBrowserPageStale     bool
+	pendingInitialUserEcho      string
+	pendingSteerEchoes          []string
+	entries                     []TranscriptEntry
+	revision                    uint64
+	cache                       transcriptExportCache
+	suggestedInputDraftID       string
+	suggestedInputDraft         string
+	imageAnalysisActive         bool
+	imageAnalyses               int
+	imageAnalysisFailures       int
+	imageAnalysisLastSummary    string
+	qualityPlanUpdates          int
+	qualityPlanPhases           int
+	qualityPlanVerified         int
+	qualityPlanSkipped          int
+	qualityPlanNeedsRepair      int
+	qualityPlanRequiresRuntime  bool
+	qualityPlanRequiresVisual   bool
+	qualityPlanRequiresTemporal bool
+	qualityPlanLastSummary      string
+	qualityPlanPhaseItems       []QualityPlanPhaseSnapshot
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
-const lcagentDefaultQualityCheckpointPasses = 0
-const lcagentDefaultQualityRepairPasses = 0
 
 func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	if err := req.Validate(); err != nil {
@@ -204,11 +181,6 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	modelWarning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(req.PendingModel), routePreset, provider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
-	criticProvider := lcagentCriticProviderValue(req.LCAgentCriticProvider)
-	criticModel := ""
-	if resolvedCriticProvider := lcagentResolvedCriticProvider(routePreset, provider, criticProvider); resolvedCriticProvider != "" {
-		criticModel = modeladapter.NormalizeModelForProvider(resolvedCriticProvider, req.LCAgentCriticModel)
-	}
 	visionProvider := lcagentVisionProviderValue(req.LCAgentVisionProvider)
 	visionModel := ""
 	if resolvedVisionProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider); resolvedVisionProvider != "" {
@@ -235,9 +207,6 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		requestTimeout:           requestTimeout,
 		utilityProvider:          utilityProvider,
 		utilityModel:             utilityModel,
-		criticProvider:           criticProvider,
-		criticModel:              criticModel,
-		criticReasoning:          strings.TrimSpace(req.LCAgentCriticReasoning),
 		visionProvider:           visionProvider,
 		visionModel:              visionModel,
 		modelWarning:             modelWarning,
@@ -1098,36 +1067,6 @@ func lcagentSameModelSelection(leftProvider, leftModel, leftReasoning, rightProv
 		strings.EqualFold(strings.TrimSpace(leftReasoning), strings.TrimSpace(rightReasoning))
 }
 
-func (s *lcagentSession) StageCriticModelProviderOverride(provider, model, reasoningEffort string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	model = strings.TrimSpace(model)
-	reasoningEffort = strings.TrimSpace(reasoningEffort)
-	if provider == "" && model == "" {
-		return fmt.Errorf("critic provider or model required")
-	}
-	if provider == "" {
-		provider = lcagentProviderForExplicitModel(lcagentResolvedCriticProvider(s.routePreset, s.provider, s.criticProvider), model)
-	}
-	if provider == "" {
-		provider = lcagentResolvedCriticProvider(s.routePreset, s.provider, s.criticProvider)
-	}
-	if provider == "" || strings.EqualFold(provider, "off") {
-		return fmt.Errorf("critic provider must be openrouter, openai, deepseek, moonshot, or xiaomi")
-	}
-	model = modeladapter.NormalizeModelForProvider(provider, model)
-	if model == "" {
-		model = lcagentDefaultModel(provider)
-	}
-	s.criticProvider = provider
-	s.criticModel = model
-	s.criticReasoning = reasoningEffort
-	s.status = "LCAgent critic model set to " + lcagentProviderDisplayName(provider) + " / " + model + "."
-	s.touchLocked()
-	return nil
-}
-
 func (s *lcagentSession) Interrupt() error {
 	s.mu.Lock()
 	cancel := s.cancel
@@ -1339,11 +1278,6 @@ type lcagentPreparedRun struct {
 	utilityModel       string
 	utilityAPIKeyName  string
 	utilityAPIKey      string
-	criticProvider     string
-	criticModel        string
-	criticReasoning    string
-	criticAPIKeyName   string
-	criticAPIKey       string
 	visionProvider     string
 	visionModel        string
 	visionAPIKeyName   string
@@ -1481,21 +1415,6 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	utilityProvider := firstNonEmpty(s.utilityProvider, lcagentDefaultUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, s.utilityModel)
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
-	criticProvider := firstNonEmpty(s.criticProvider, lcagentDefaultCriticProvider)
-	criticModel := strings.TrimSpace(s.criticModel)
-	criticReasoning := strings.TrimSpace(s.criticReasoning)
-	if lcagentCriticProviderValue(criticProvider) == "main" && criticReasoning == "" {
-		criticReasoning = reasoningEffort
-	}
-	criticCredentialProvider := lcagentResolvedCriticProvider(routePreset, provider, criticProvider)
-	if criticCredentialProvider != "" {
-		criticModel = modeladapter.NormalizeModelForProvider(criticCredentialProvider, criticModel)
-		criticReasoning = lcagentReasoningEffortForProvider(criticCredentialProvider, criticReasoning)
-	} else {
-		criticModel = ""
-		criticReasoning = ""
-	}
-	criticAPIKeyName, criticAPIKey := s.providerCredentialLocked(criticCredentialProvider)
 	visionProvider := firstNonEmpty(s.visionProvider, lcagentDefaultVisionProvider)
 	visionModel := strings.TrimSpace(s.visionModel)
 	visionCredentialProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
@@ -1551,11 +1470,6 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		utilityModel:       utilityModel,
 		utilityAPIKeyName:  utilityAPIKeyName,
 		utilityAPIKey:      utilityAPIKey,
-		criticProvider:     criticProvider,
-		criticModel:        criticModel,
-		criticReasoning:    criticReasoning,
-		criticAPIKeyName:   criticAPIKeyName,
-		criticAPIKey:       criticAPIKey,
 		visionProvider:     visionProvider,
 		visionModel:        visionModel,
 		visionAPIKeyName:   visionAPIKeyName,
@@ -1608,15 +1522,12 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--output", "stream-json",
 		"--approval-mode", "ask",
 		"--utility-provider", prepared.utilityProvider,
-		"--critic-provider", prepared.criticProvider,
 		"--vision-provider", prepared.visionProvider,
 		"--web-search-backend", prepared.webSearchBackend,
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
 		"--require-final-response-tool",
 		"--planning-preflight",
-		"--quality-checkpoint-passes", strconv.Itoa(lcagentDefaultQualityCheckpointPasses),
-		"--quality-repair-passes", strconv.Itoa(lcagentDefaultQualityRepairPasses),
 	)
 	if prepared.browserControl == "managed" {
 		args = append(args,
@@ -1627,12 +1538,6 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	}
 	if prepared.utilityModel != "" {
 		args = append(args, "--utility-model", prepared.utilityModel)
-	}
-	if prepared.criticModel != "" {
-		args = append(args, "--critic-model", prepared.criticModel)
-	}
-	if prepared.criticReasoning != "" {
-		args = append(args, "--critic-reasoning-effort", prepared.criticReasoning)
 	}
 	if prepared.visionModel != "" {
 		args = append(args, "--vision-model", prepared.visionModel)
@@ -1689,13 +1594,10 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	if prepared.utilityAPIKeyName != "" && prepared.utilityAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, prepared.utilityAPIKeyName, prepared.utilityAPIKey)
 	}
-	if prepared.criticAPIKeyName != "" && prepared.criticAPIKey != "" {
-		cmd.Env = setCommandEnv(cmd.Env, prepared.criticAPIKeyName, prepared.criticAPIKey)
-	}
 	if prepared.visionAPIKeyName != "" && prepared.visionAPIKey != "" {
 		cmd.Env = setCommandEnv(cmd.Env, prepared.visionAPIKeyName, prepared.visionAPIKey)
 	}
-	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi") || strings.EqualFold(lcagentResolvedCriticProvider(prepared.routePreset, prepared.provider, prepared.criticProvider), "xiaomi") || strings.EqualFold(lcagentResolvedVisionProvider(prepared.routePreset, prepared.provider, prepared.visionProvider), "xiaomi")) {
+	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi") || strings.EqualFold(lcagentResolvedVisionProvider(prepared.routePreset, prepared.provider, prepared.visionProvider), "xiaomi")) {
 		cmd.Env = setCommandEnv(cmd.Env, "XIAOMI_BASE_URL", prepared.xiaomiBaseURL)
 	}
 	if prepared.webSearchAPIKey != "" {
@@ -2010,83 +1912,6 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		} else if message := rawJSONString(event["message"]); message != "" {
 			s.appendAsync(TranscriptStatus, "LCAgent search refinement skipped: "+message)
 		}
-	case "critic_review_started":
-		status := "LCAgent critic reviewing turn"
-		if strings.EqualFold(rawJSONString(event["mode"]), "pre_final") {
-			status = "LCAgent critic reviewing candidate final"
-		}
-		s.mu.Lock()
-		s.status = status
-		s.criticActive = true
-		s.criticLastStatus = "reviewing"
-		s.criticLastSummary = ""
-		s.touchLocked()
-		s.mu.Unlock()
-	case "critic_model_response":
-		modelName := rawJSONString(event["model"])
-		usage, ok := lcagentUsageFromModelResponseEvent(event, modelName)
-		s.mu.Lock()
-		if ok {
-			s.addTokenUsageLocked(usage)
-		}
-		s.touchLocked()
-		s.mu.Unlock()
-	case "critic_model_response_invalid":
-		modelName := rawJSONString(event["model"])
-		usage, ok := lcagentUsageFromModelResponseEvent(event, modelName)
-		attempt := rawJSONInt(event["attempt"])
-		text := "LCAgent critic returned invalid structured output"
-		if attempt > 0 {
-			text += fmt.Sprintf(" on attempt %d", attempt)
-		}
-		if rawJSONBool(event["retrying"]) {
-			text += "; retrying"
-		}
-		s.mu.Lock()
-		if ok {
-			s.addTokenUsageLocked(usage)
-		}
-		s.status = text
-		s.criticLastStatus = "invalid_json"
-		s.criticLastSummary = strings.TrimSpace(firstNonEmpty(rawJSONString(event["message"]), text))
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "critic_review_retry":
-		message := firstNonEmpty(rawJSONString(event["message"]), "LCAgent critic retrying")
-		s.mu.Lock()
-		s.status = message
-		s.criticLastStatus = "retrying"
-		s.criticLastSummary = strings.TrimSpace(message)
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, message)
-	case "critic_consult_started":
-		text := "LCAgent critic consulting"
-		if question := rawJSONString(event["question"]); question != "" {
-			text += ": " + lcagentCondenseStatusText(question, 160)
-		}
-		s.mu.Lock()
-		s.status = text
-		s.criticActive = true
-		s.criticLastStatus = "consulting"
-		s.criticLastSummary = ""
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "critic_consult_result":
-		s.handleLCAgentCriticConsultResult(event)
-	case "critic_consult_failed":
-		message := firstNonEmpty(rawJSONString(event["message"]), "critic consultation failed")
-		text := "LCAgent critic consultation failed: " + message
-		s.mu.Lock()
-		s.status = text
-		s.criticActive = false
-		s.criticLastStatus = "consult failed"
-		s.criticLastSummary = strings.TrimSpace(message)
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
 	case "image_analysis_started":
 		text := "LCAgent vision analyzing image"
 		if question := rawJSONString(event["question"]); question != "" {
@@ -2109,79 +1934,6 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.imageAnalysisActive = false
 		s.imageAnalysisFailures++
 		s.imageAnalysisLastSummary = strings.TrimSpace(message)
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "quality_checkpoint_profile":
-		s.mu.Lock()
-		s.qualityCheckpointMaxPasses = rawJSONInt(event["max_passes"])
-		s.touchLocked()
-		s.mu.Unlock()
-	case "quality_checkpoint_started":
-		pass := rawJSONInt(event["pass"])
-		maxPasses := rawJSONInt(event["max_passes"])
-		text := lcagentQualityCheckpointStartedText(pass, maxPasses)
-		s.mu.Lock()
-		s.status = text
-		s.qualityCheckpointActive = true
-		if maxPasses > 0 {
-			s.qualityCheckpointMaxPasses = maxPasses
-		}
-		s.qualityCheckpointLastSummary = ""
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "quality_checkpoint_feedback":
-		pass := rawJSONInt(event["pass"])
-		maxPasses := rawJSONInt(event["max_passes"])
-		text := lcagentQualityCheckpointFeedbackText(pass, maxPasses)
-		s.mu.Lock()
-		s.status = text
-		s.qualityCheckpointActive = false
-		s.qualityCheckpointPasses++
-		if maxPasses > 0 {
-			s.qualityCheckpointMaxPasses = maxPasses
-		}
-		s.qualityCheckpointLastSummary = strings.TrimSpace(text)
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "quality_repair_profile":
-		s.mu.Lock()
-		s.qualityRepairMaxPasses = rawJSONInt(event["max_passes"])
-		s.touchLocked()
-		s.mu.Unlock()
-	case "quality_repair_feedback":
-		pass := rawJSONInt(event["pass"])
-		maxPasses := rawJSONInt(event["max_passes"])
-		text := lcagentQualityRepairFeedbackText(event, pass, maxPasses)
-		s.mu.Lock()
-		s.status = text
-		s.qualityRepairActive = true
-		if pass > s.qualityRepairPasses {
-			s.qualityRepairPasses = pass
-		}
-		if maxPasses > 0 {
-			s.qualityRepairMaxPasses = maxPasses
-		}
-		s.qualityRepairLastSummary = strings.TrimSpace(text)
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "quality_repair_cleared":
-		pass := rawJSONInt(event["passes"])
-		maxPasses := rawJSONInt(event["max_passes"])
-		text := lcagentQualityRepairClearedText(pass, maxPasses)
-		s.mu.Lock()
-		s.status = text
-		s.qualityRepairActive = false
-		if pass > s.qualityRepairPasses {
-			s.qualityRepairPasses = pass
-		}
-		if maxPasses > 0 {
-			s.qualityRepairMaxPasses = maxPasses
-		}
-		s.qualityRepairLastSummary = strings.TrimSpace(text)
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
@@ -2221,34 +1973,6 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.appendAsync(TranscriptStatus, text)
 	case "quality_plan_update":
 		s.handleLCAgentQualityPlanUpdate(event)
-	case "critic_review_result":
-		s.handleLCAgentCriticReviewResult(event)
-	case "critic_lead_feedback":
-		text := lcagentCriticLeadFeedbackText(event)
-		s.mu.Lock()
-		s.status = text
-		s.criticLeadRevisions++
-		s.criticLastStatus = "lead revision"
-		s.criticLastSummary = strings.TrimSpace(text)
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "critic_review_failed":
-		message := firstNonEmpty(rawJSONString(event["message"]), "critic review failed")
-		status := "LCAgent critic unavailable"
-		prefix := "LCAgent critic unavailable: "
-		if strings.EqualFold(rawJSONString(event["failure_kind"]), "invalid_json") {
-			status = "LCAgent critic invalid structured output"
-			prefix = "LCAgent critic invalid structured output: "
-		}
-		s.mu.Lock()
-		s.status = status
-		s.criticActive = false
-		s.criticLastStatus = "failed"
-		s.criticLastSummary = strings.TrimSpace(message)
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, prefix+message)
 	case "plan_update":
 		s.appendAsync(TranscriptPlan, lcagentPlanText(event["items"]))
 	case "assistant_message":
@@ -2494,123 +2218,6 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	bridge.handle(request)
 }
 
-func (s *lcagentSession) handleLCAgentCriticReviewResult(event map[string]json.RawMessage) {
-	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
-	summary := strings.TrimSpace(rawJSONString(event["summary"]))
-
-	text := "LCAgent critic review complete"
-	if status != "" && status != "clean" {
-		text = "LCAgent critic found " + strings.ReplaceAll(status, "_", " ")
-	} else if status == "clean" {
-		text = "LCAgent critic found no concerns"
-	}
-	if summary != "" {
-		text += ": " + summary
-	}
-
-	s.mu.Lock()
-	s.status = text
-	s.criticActive = false
-	s.criticReviews++
-	s.criticLastStatus = firstNonEmpty(status, "complete")
-	s.criticLastSummary = summary
-	if status != "" && status != "clean" {
-		s.criticConcerns++
-	}
-	s.appendEntryLocked(TranscriptStatus, text)
-	s.touchLocked()
-	s.mu.Unlock()
-}
-
-func (s *lcagentSession) handleLCAgentCriticConsultResult(event map[string]json.RawMessage) {
-	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
-	summary := strings.TrimSpace(rawJSONString(event["summary"]))
-	modelName := rawJSONString(event["model"])
-	usage, usageOK := lcagentUsageFromModelResponseEvent(event, modelName)
-
-	text := "LCAgent critic consultation complete"
-	if status != "" && status != "clean" {
-		text = "LCAgent critic consultation found " + strings.ReplaceAll(status, "_", " ")
-	} else if status == "clean" {
-		text = "LCAgent critic consultation found no concerns"
-	}
-	if summary != "" {
-		text += ": " + summary
-	}
-
-	s.mu.Lock()
-	s.status = text
-	s.criticActive = false
-	s.criticConsultations++
-	s.criticLastStatus = firstNonEmpty(status, "consulted")
-	s.criticLastSummary = summary
-	if status != "" && status != "clean" {
-		s.criticConsultConcerns++
-	}
-	if usageOK {
-		s.addTokenUsageLocked(usage)
-	}
-	s.appendEntryLocked(TranscriptStatus, text)
-	s.touchLocked()
-	s.mu.Unlock()
-}
-
-func lcagentCriticLeadFeedbackText(event map[string]json.RawMessage) string {
-	message := strings.TrimSpace(rawJSONString(event["message"]))
-	if message == "" {
-		return "LCAgent critic requested one private lead revision"
-	}
-	return "LCAgent critic requested one private lead revision: " + lcagentCondenseStatusText(message, 220)
-}
-
-func lcagentQualityCheckpointStartedText(pass, maxPasses int) string {
-	if pass <= 0 {
-		return "LCAgent quality checkpoint reviewing candidate final"
-	}
-	if maxPasses > 0 {
-		return fmt.Sprintf("LCAgent quality checkpoint reviewing candidate final %d/%d", pass, maxPasses)
-	}
-	return fmt.Sprintf("LCAgent quality checkpoint reviewing candidate final %d", pass)
-}
-
-func lcagentQualityCheckpointFeedbackText(pass, maxPasses int) string {
-	if pass <= 0 {
-		return "LCAgent requested a private quality pass"
-	}
-	if maxPasses > 0 {
-		return fmt.Sprintf("LCAgent requested private quality pass %d/%d", pass, maxPasses)
-	}
-	return fmt.Sprintf("LCAgent requested private quality pass %d", pass)
-}
-
-func lcagentQualityRepairFeedbackText(event map[string]json.RawMessage, pass, maxPasses int) string {
-	reason := strings.TrimSpace(rawJSONString(event["reason"]))
-	base := "LCAgent requested quality repair"
-	switch reason {
-	case "no_new_evidence":
-		base = "LCAgent still requires quality repair evidence"
-	case "repair_budget_exhausted":
-		base = "LCAgent quality repair budget exhausted"
-	}
-	if pass <= 0 {
-		return base
-	}
-	if maxPasses > 0 {
-		return fmt.Sprintf("%s %d/%d", base, pass, maxPasses)
-	}
-	return fmt.Sprintf("%s %d", base, pass)
-}
-
-func lcagentQualityRepairClearedText(pass, maxPasses int) string {
-	if pass <= 0 {
-		return "LCAgent quality repair cleared"
-	}
-	if maxPasses > 0 {
-		return fmt.Sprintf("LCAgent quality repair cleared after %d/%d", pass, maxPasses)
-	}
-	return fmt.Sprintf("LCAgent quality repair cleared after %d", pass)
-}
-
 func lcagentPlanningPreflightText(event map[string]json.RawMessage) string {
 	scope := firstNonEmpty(rawJSONString(event["scope"]), "unknown")
 	artifactType := strings.TrimSpace(rawJSONString(event["artifact_type"]))
@@ -2798,19 +2405,6 @@ func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.
 	s.appendEntryLocked(TranscriptStatus, text)
 	s.touchLocked()
 	s.mu.Unlock()
-}
-
-func normalizeLCAgentCriticReviewStatus(status string) string {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "clean":
-		return "clean"
-	case "needs_followup", "needs-followup", "followup", "needs_investigation", "needs-investigation":
-		return "needs_followup"
-	case "concern", "concerns", "warning", "warnings":
-		return "concerns"
-	default:
-		return "concerns"
-	}
 }
 
 func (s *lcagentSession) finishRun(processState string, ok bool, err error) {
@@ -3049,12 +2643,6 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 		s.provider = provider
 	}
 	s.reasoningEffort = strings.TrimSpace(replay.reasoningEffort)
-	if provider := strings.TrimSpace(replay.criticModelProvider); provider != "" {
-		s.criticProvider = provider
-	}
-	if model := strings.TrimSpace(replay.criticModel); model != "" {
-		s.criticModel = model
-	}
 	if provider := strings.TrimSpace(replay.visionModelProvider); provider != "" {
 		s.visionProvider = provider
 	}
@@ -3062,27 +2650,10 @@ func (s *lcagentSession) applyReplay(replay *lcagentReplay) {
 		s.visionModel = model
 	}
 	s.tokenUsage = cloneThreadTokenUsage(replay.tokenUsage)
-	s.criticActive = replay.criticActive
-	s.criticReviews = replay.criticReviews
-	s.criticConsultations = replay.criticConsultations
-	s.criticConsultConcerns = replay.criticConsultConcerns
-	s.criticConcerns = replay.criticConcerns
-	s.criticLeadRevisions = replay.criticLeadRevisions
-	s.criticFollowupDrafts = replay.criticFollowupDrafts
-	s.criticLastStatus = strings.TrimSpace(replay.criticLastStatus)
-	s.criticLastSummary = strings.TrimSpace(replay.criticLastSummary)
 	s.imageAnalysisActive = replay.imageAnalysisActive
 	s.imageAnalyses = replay.imageAnalyses
 	s.imageAnalysisFailures = replay.imageAnalysisFailures
 	s.imageAnalysisLastSummary = strings.TrimSpace(replay.imageAnalysisLastSummary)
-	s.qualityCheckpointActive = replay.qualityCheckpointActive
-	s.qualityCheckpointPasses = replay.qualityCheckpointPasses
-	s.qualityCheckpointMaxPasses = replay.qualityCheckpointMaxPasses
-	s.qualityCheckpointLastSummary = strings.TrimSpace(replay.qualityCheckpointLastSummary)
-	s.qualityRepairActive = replay.qualityRepairActive
-	s.qualityRepairPasses = replay.qualityRepairPasses
-	s.qualityRepairMaxPasses = replay.qualityRepairMaxPasses
-	s.qualityRepairLastSummary = strings.TrimSpace(replay.qualityRepairLastSummary)
 	s.qualityPlanUpdates = replay.qualityPlanUpdates
 	s.qualityPlanPhases = replay.qualityPlanPhases
 	s.qualityPlanVerified = replay.qualityPlanVerified
@@ -3293,33 +2864,6 @@ func lcagentResolvedUtilityModel(routePreset string, mainProvider string, mainMo
 		return modeladapter.DefaultXiaomiUtilityModel
 	}
 	return firstNonEmpty(lcagentRoutePresetModel(routePreset), mainModel)
-}
-
-func lcagentCriticProviderValue(configured string) string {
-	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_CRITIC_PROVIDER"))))
-	value = strings.ReplaceAll(value, "_", "-")
-	switch value {
-	case "auto":
-		return "auto"
-	case "main", "same", "same-as-main":
-		return "main"
-	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
-		return value
-	default:
-		return lcagentDefaultCriticProvider
-	}
-}
-
-func lcagentResolvedCriticProvider(routePreset string, mainProvider string, configured string) string {
-	criticProvider := lcagentCriticProviderValue(configured)
-	switch criticProvider {
-	case "off":
-		return ""
-	case "main":
-		return firstNonEmpty(lcagentRoutePresetProvider(routePreset), mainProvider, lcagentDefaultProvider)
-	default:
-		return criticProvider
-	}
 }
 
 func lcagentVisionProviderValue(configured string) string {
@@ -3558,80 +3102,56 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 	suggestedDraftID := strings.TrimSpace(s.suggestedInputDraftID)
 	suggestedDraft := strings.TrimSpace(s.suggestedInputDraft)
 	suggestedDraftSource := ""
-	if suggestedDraftID != "" && suggestedDraft != "" {
-		suggestedDraftSource = "lcagent_critic"
-	}
 	model := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(s.provider))
 	modelProvider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), lcagentDefaultProvider)
-	criticModel, criticModelProvider := s.resolvedCriticModelLocked(modelProvider, model)
 	visionModel, visionModelProvider := s.resolvedVisionModelLocked(modelProvider, model)
 	pendingModel, pendingReasoning := s.pendingModelSnapshotLocked(modelProvider, model, s.reasoningEffort)
 	return Snapshot{
-		Provider:                     ProviderLCAgent,
-		ProjectPath:                  s.projectPath,
-		ThreadID:                     s.threadID,
-		BrowserActivity:              s.browserActivity.Normalize(),
-		ManagedBrowserSessionKey:     strings.TrimSpace(s.managedBrowserSessionKey),
-		CurrentBrowserPageURL:        strings.TrimSpace(s.currentBrowserPageURL),
-		CurrentBrowserPageStale:      s.currentBrowserPageStale,
-		TranscriptRevision:           s.revision,
-		Phase:                        phase,
-		Started:                      s.started,
-		Busy:                         s.busy,
-		BusySince:                    s.busySince,
-		LastBusyActivityAt:           s.lastBusyActivityAt,
-		Closed:                       s.closed,
-		Status:                       s.status,
-		LastError:                    s.lastError,
-		SuggestedInputDraftID:        suggestedDraftID,
-		SuggestedInputDraft:          suggestedDraft,
-		SuggestedInputDraftSource:    suggestedDraftSource,
-		PendingApproval:              cloneApprovalRequest(s.pendingApproval),
-		LastActivityAt:               s.lastActivityAt,
-		CurrentCWD:                   s.projectPath,
-		PermissionLevel:              s.effectiveAutoLocked(),
-		Model:                        model,
-		ModelProvider:                modelProvider,
-		CriticModel:                  criticModel,
-		CriticModelProvider:          criticModelProvider,
-		CriticReasoningEffort:        s.resolvedCriticReasoningLocked(criticModelProvider),
-		VisionModel:                  visionModel,
-		VisionModelProvider:          visionModelProvider,
-		ImageAnalysisActive:          s.imageAnalysisActive,
-		ImageAnalyses:                s.imageAnalyses,
-		ImageAnalysisFailures:        s.imageAnalysisFailures,
-		ImageAnalysisLastSummary:     strings.TrimSpace(s.imageAnalysisLastSummary),
-		QualityCheckpointActive:      s.qualityCheckpointActive,
-		QualityCheckpointPasses:      s.qualityCheckpointPasses,
-		QualityCheckpointMaxPasses:   s.qualityCheckpointMaxPasses,
-		QualityCheckpointLastSummary: strings.TrimSpace(s.qualityCheckpointLastSummary),
-		QualityRepairActive:          s.qualityRepairActive,
-		QualityRepairPasses:          s.qualityRepairPasses,
-		QualityRepairMaxPasses:       s.qualityRepairMaxPasses,
-		QualityRepairLastSummary:     strings.TrimSpace(s.qualityRepairLastSummary),
-		QualityPlanUpdates:           s.qualityPlanUpdates,
-		QualityPlanPhases:            s.qualityPlanPhases,
-		QualityPlanVerified:          s.qualityPlanVerified,
-		QualityPlanSkipped:           s.qualityPlanSkipped,
-		QualityPlanNeedsRepair:       s.qualityPlanNeedsRepair,
-		QualityPlanRequiresRuntime:   s.qualityPlanRequiresRuntime,
-		QualityPlanRequiresVisual:    s.qualityPlanRequiresVisual,
-		QualityPlanRequiresTemporal:  s.qualityPlanRequiresTemporal,
-		QualityPlanLastSummary:       strings.TrimSpace(s.qualityPlanLastSummary),
-		QualityPlanPhaseItems:        cloneQualityPlanPhaseSnapshots(s.qualityPlanPhaseItems),
-		CriticActive:                 s.criticActive,
-		CriticReviews:                s.criticReviews,
-		CriticConsultations:          s.criticConsultations,
-		CriticConsultConcerns:        s.criticConsultConcerns,
-		CriticConcerns:               s.criticConcerns,
-		CriticLeadRevisions:          s.criticLeadRevisions,
-		CriticFollowupDrafts:         s.criticFollowupDrafts,
-		CriticLastStatus:             strings.TrimSpace(s.criticLastStatus),
-		CriticLastSummary:            strings.TrimSpace(s.criticLastSummary),
-		ReasoningEffort:              s.reasoningEffort,
-		PendingModel:                 pendingModel,
-		PendingReasoning:             pendingReasoning,
-		TokenUsage:                   exportedTokenUsageSnapshot(tokenUsage),
+		Provider:                    ProviderLCAgent,
+		ProjectPath:                 s.projectPath,
+		ThreadID:                    s.threadID,
+		BrowserActivity:             s.browserActivity.Normalize(),
+		ManagedBrowserSessionKey:    strings.TrimSpace(s.managedBrowserSessionKey),
+		CurrentBrowserPageURL:       strings.TrimSpace(s.currentBrowserPageURL),
+		CurrentBrowserPageStale:     s.currentBrowserPageStale,
+		TranscriptRevision:          s.revision,
+		Phase:                       phase,
+		Started:                     s.started,
+		Busy:                        s.busy,
+		BusySince:                   s.busySince,
+		LastBusyActivityAt:          s.lastBusyActivityAt,
+		Closed:                      s.closed,
+		Status:                      s.status,
+		LastError:                   s.lastError,
+		SuggestedInputDraftID:       suggestedDraftID,
+		SuggestedInputDraft:         suggestedDraft,
+		SuggestedInputDraftSource:   suggestedDraftSource,
+		PendingApproval:             cloneApprovalRequest(s.pendingApproval),
+		LastActivityAt:              s.lastActivityAt,
+		CurrentCWD:                  s.projectPath,
+		PermissionLevel:             s.effectiveAutoLocked(),
+		Model:                       model,
+		ModelProvider:               modelProvider,
+		VisionModel:                 visionModel,
+		VisionModelProvider:         visionModelProvider,
+		ImageAnalysisActive:         s.imageAnalysisActive,
+		ImageAnalyses:               s.imageAnalyses,
+		ImageAnalysisFailures:       s.imageAnalysisFailures,
+		ImageAnalysisLastSummary:    strings.TrimSpace(s.imageAnalysisLastSummary),
+		QualityPlanUpdates:          s.qualityPlanUpdates,
+		QualityPlanPhases:           s.qualityPlanPhases,
+		QualityPlanVerified:         s.qualityPlanVerified,
+		QualityPlanSkipped:          s.qualityPlanSkipped,
+		QualityPlanNeedsRepair:      s.qualityPlanNeedsRepair,
+		QualityPlanRequiresRuntime:  s.qualityPlanRequiresRuntime,
+		QualityPlanRequiresVisual:   s.qualityPlanRequiresVisual,
+		QualityPlanRequiresTemporal: s.qualityPlanRequiresTemporal,
+		QualityPlanLastSummary:      strings.TrimSpace(s.qualityPlanLastSummary),
+		QualityPlanPhaseItems:       cloneQualityPlanPhaseSnapshots(s.qualityPlanPhaseItems),
+		ReasoningEffort:             s.reasoningEffort,
+		PendingModel:                pendingModel,
+		PendingReasoning:            pendingReasoning,
+		TokenUsage:                  exportedTokenUsageSnapshot(tokenUsage),
 	}
 }
 
@@ -3650,34 +3170,6 @@ func (s *lcagentSession) pendingModelSnapshotLocked(currentProvider, currentMode
 		return "", ""
 	}
 	return pendingModel, pendingReasoning
-}
-
-func (s *lcagentSession) resolvedCriticModelLocked(mainProvider, mainModel string) (string, string) {
-	criticProvider := lcagentCriticProviderValue(s.criticProvider)
-	if criticProvider == "off" {
-		return "", ""
-	}
-	resolvedProvider := lcagentResolvedCriticProvider(s.routePreset, firstNonEmpty(s.provider, mainProvider), criticProvider)
-	if resolvedProvider == "" {
-		return "", ""
-	}
-	model := strings.TrimSpace(s.criticModel)
-	if model == "" && criticProvider == "main" {
-		model = strings.TrimSpace(mainModel)
-	}
-	if model == "" {
-		model = lcagentDefaultModel(resolvedProvider)
-	}
-	model = modeladapter.NormalizeModelForProvider(resolvedProvider, model)
-	return model, resolvedProvider
-}
-
-func (s *lcagentSession) resolvedCriticReasoningLocked(criticProvider string) string {
-	reasoning := strings.TrimSpace(s.criticReasoning)
-	if lcagentCriticProviderValue(s.criticProvider) == "main" && reasoning == "" {
-		reasoning = strings.TrimSpace(s.reasoningEffort)
-	}
-	return lcagentReasoningEffortForProvider(criticProvider, reasoning)
 }
 
 func (s *lcagentSession) resolvedVisionModelLocked(mainProvider, mainModel string) (string, string) {

@@ -20,25 +20,17 @@ import (
 )
 
 const (
-	DefaultSearchRefineMinBytes      = 12000
-	maxCriticConsultQuestionChars    = 1200
-	maxCriticConsultContextChars     = 6000
-	maxCriticConsultCandidateChars   = 18000
-	maxCriticConsultFiles            = 8
-	maxCriticConsultLinesPerFile     = 220
-	defaultCriticConsultLinesPerFile = 160
-	maxCriticConsultFileChars        = 7000
-	maxCriticConsultTotalFileChars   = 24000
-	maxImageAnalysisQuestionChars    = 1200
-	maxImageAnalysisContextChars     = 4000
-	maxImageAnalysisChecks           = 10
-	maxQualityPlanPhases             = 12
-	maxQualityPlanAcceptanceItems    = 8
-	maxQualityPlanEvidenceItems      = 8
-	maxQualityPlanTextChars          = 240
-	maxChangeReviewFiles             = 8
-	maxChangeReviewLinesPerFile      = 260
-	maxChangeReviewTotalChars        = 36000
+	DefaultSearchRefineMinBytes   = 12000
+	maxImageAnalysisQuestionChars = 1200
+	maxImageAnalysisContextChars  = 4000
+	maxImageAnalysisChecks        = 10
+	maxQualityPlanPhases          = 12
+	maxQualityPlanAcceptanceItems = 8
+	maxQualityPlanEvidenceItems   = 8
+	maxQualityPlanTextChars       = 240
+	maxChangeReviewFiles          = 8
+	maxChangeReviewLinesPerFile   = 260
+	maxChangeReviewTotalChars     = 36000
 )
 
 type Runner struct {
@@ -52,7 +44,6 @@ type Runner struct {
 	Browser                      BrowserRunner
 	SearchRefiner                SearchRefiner
 	CodeScout                    CodeScout
-	CriticConsultant             CriticConsultant
 	ImageAnalyzer                ImageAnalyzer
 	SearchRefineMinBytes         int
 	Approvals                    ApprovalBroker
@@ -88,10 +79,6 @@ type SearchRefiner interface {
 
 type CodeScout interface {
 	ScoutFiles(context.Context, ScoutFilesRequest) (ScoutFilesResult, error)
-}
-
-type CriticConsultant interface {
-	ConsultCritic(context.Context, CriticConsultRequest) (CriticConsultResult, error)
 }
 
 type ImageAnalyzer interface {
@@ -141,40 +128,6 @@ type SearchRefineResult struct {
 	UsageSummary lcrmodel.LLMUsage
 }
 
-type CriticConsultRequest struct {
-	SessionID   string
-	UserRequest string
-	Kind        string
-	Question    string
-	Context     string
-	Candidate   string
-	Checks      []string
-	Files       []CriticConsultFile
-}
-
-type CriticConsultFile struct {
-	Path      string `json:"path"`
-	StartLine int    `json:"start_line,omitempty"`
-	EndLine   int    `json:"end_line,omitempty"`
-	Role      string `json:"role,omitempty"`
-	Excerpt   string `json:"excerpt,omitempty"`
-	Truncated bool   `json:"truncated,omitempty"`
-}
-
-type CriticConsultResult struct {
-	Status              string
-	Summary             string
-	Findings            []CriticConsultFinding
-	LeadInstruction     string
-	HumanPrompt         string
-	ProposedUserMessage string
-	Provider            string
-	Model               string
-	PacketHash          string
-	Usage               json.RawMessage
-	UsageSummary        lcrmodel.LLMUsage
-}
-
 type ImageAnalysisRequest struct {
 	SessionID      string
 	UserRequest    string
@@ -191,17 +144,6 @@ type ImageAnalysisResult struct {
 	Model        string
 	Usage        json.RawMessage
 	UsageSummary lcrmodel.LLMUsage
-}
-
-type CriticConsultFinding struct {
-	Severity          string `json:"severity"`
-	Materiality       string `json:"materiality,omitempty"`
-	Basis             string `json:"basis,omitempty"`
-	Claim             string `json:"claim"`
-	EvidenceSource    string `json:"evidence_source"`
-	Evidence          string `json:"evidence"`
-	UserImpact        string `json:"user_impact,omitempty"`
-	SuggestedFollowup string `json:"suggested_followup"`
 }
 
 type VerificationFeedback struct {
@@ -313,15 +255,6 @@ type replaceFileArgs struct {
 	ExpectedSHA256 string `json:"expected_sha256"`
 }
 
-type consultCriticArgs struct {
-	Kind      string                  `json:"kind"`
-	Question  string                  `json:"question"`
-	Context   string                  `json:"context,omitempty"`
-	Candidate string                  `json:"candidate,omitempty"`
-	Checks    []string                `json:"checks,omitempty"`
-	Files     []consultCriticFileArgs `json:"files,omitempty"`
-}
-
 type analyzeImageArgs struct {
 	Path           string   `json:"path"`
 	ComparisonPath string   `json:"comparison_path,omitempty"`
@@ -331,13 +264,6 @@ type analyzeImageArgs struct {
 }
 
 type qualityPlanArgs QualityPlan
-
-type consultCriticFileArgs struct {
-	Path      string `json:"path"`
-	StartLine int    `json:"start_line,omitempty"`
-	EndLine   int    `json:"end_line,omitempty"`
-	Role      string `json:"role,omitempty"`
-}
 
 type finalResponseArgs struct {
 	Summary      string   `json:"summary"`
@@ -1241,17 +1167,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 		var err error
 		result, err = r.runScoutFiles(ctx, args)
-		if err != nil {
-			return tools.ToolResult{}, err
-		}
-	case "consult_critic":
-		var args consultCriticArgs
-		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
-			result = invalid
-			break
-		}
-		var err error
-		result, err = r.runConsultCritic(ctx, args)
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
@@ -2464,52 +2379,6 @@ func (r *Runner) runScoutFiles(ctx context.Context, args scoutFilesArgs) (tools.
 	return tools.ToolResult{Success: true, Output: strings.TrimSpace(scouted.Output) + "\n", Truncated: true}, nil
 }
 
-func (r *Runner) runConsultCritic(ctx context.Context, args consultCriticArgs) (tools.ToolResult, error) {
-	if r.CriticConsultant == nil {
-		return tools.ToolResult{Success: false, Error: "consult_critic is not available for this LCAgent run"}, nil
-	}
-	question, questionTruncated := boundedCriticConsultText(args.Question, maxCriticConsultQuestionChars)
-	if question == "" {
-		return tools.ToolResult{Success: false, Error: "consult_critic question is required"}, nil
-	}
-	contextText, contextTruncated := boundedCriticConsultText(args.Context, maxCriticConsultContextChars)
-	candidate, candidateTruncated := boundedCriticConsultText(args.Candidate, maxCriticConsultCandidateChars)
-	files, filesTruncated, failure := r.criticConsultFiles(args.Files)
-	if failure.Error != "" {
-		return failure, nil
-	}
-	request := CriticConsultRequest{
-		SessionID:   r.SessionID,
-		UserRequest: strings.TrimSpace(r.Prompt),
-		Kind:        normalizeCriticConsultKind(args.Kind),
-		Question:    question,
-		Context:     contextText,
-		Candidate:   candidate,
-		Checks:      cleanCriticConsultChecks(args.Checks),
-		Files:       files,
-	}
-	inputTruncated := questionTruncated || contextTruncated || candidateTruncated || filesTruncated
-	if err := r.writeCriticConsultStartedEvent(request, inputTruncated); err != nil {
-		return tools.ToolResult{}, err
-	}
-	consulted, err := r.CriticConsultant.ConsultCritic(ctx, request)
-	if err != nil {
-		message := err.Error()
-		failureKind := ""
-		if strings.Contains(message, "invalid JSON") {
-			failureKind = "invalid_json"
-		}
-		if writeErr := r.writeCriticConsultFailedEvent(request, message, failureKind); writeErr != nil {
-			return tools.ToolResult{}, writeErr
-		}
-		return tools.ToolResult{Success: false, Error: "critic consultation failed: " + message}, nil
-	}
-	if err := r.writeCriticConsultResultEvent(request, consulted); err != nil {
-		return tools.ToolResult{}, err
-	}
-	return tools.ToolResult{Success: true, Output: formatCriticConsultResult(consulted), Truncated: inputTruncated}, nil
-}
-
 func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (tools.ToolResult, error) {
 	if r.ImageAnalyzer == nil {
 		return tools.ToolResult{Success: false, Error: "analyze_image is not available for this LCAgent run"}, nil
@@ -2519,11 +2388,11 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 		return tools.ToolResult{Success: false, Error: "analyze_image path is required"}, nil
 	}
 	comparisonPath := strings.TrimSpace(args.ComparisonPath)
-	question, questionTruncated := boundedCriticConsultText(args.Question, maxImageAnalysisQuestionChars)
+	question, questionTruncated := boundedToolText(args.Question, maxImageAnalysisQuestionChars)
 	if question == "" {
 		return tools.ToolResult{Success: false, Error: "analyze_image question is required"}, nil
 	}
-	contextText, contextTruncated := boundedCriticConsultText(args.Context, maxImageAnalysisContextChars)
+	contextText, contextTruncated := boundedToolText(args.Context, maxImageAnalysisContextChars)
 	checks := cleanImageAnalysisChecks(args.Checks)
 	request := ImageAnalysisRequest{
 		SessionID:      r.SessionID,
@@ -2555,106 +2424,11 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed), Truncated: inputTruncated}, nil
 }
 
-func (r *Runner) criticConsultFiles(files []consultCriticFileArgs) ([]CriticConsultFile, bool, tools.ToolResult) {
-	if len(files) == 0 {
-		return nil, false, tools.ToolResult{}
-	}
-	truncated := false
-	if len(files) > maxCriticConsultFiles {
-		files = files[:maxCriticConsultFiles]
-		truncated = true
-	}
-	out := make([]CriticConsultFile, 0, len(files))
-	totalChars := 0
-	for _, file := range files {
-		path := strings.TrimSpace(file.Path)
-		if path == "" {
-			return nil, truncated, tools.ToolResult{Success: false, Error: "consult_critic file path is required"}
-		}
-		startLine := file.StartLine
-		if startLine <= 0 {
-			startLine = 1
-		}
-		limit := defaultCriticConsultLinesPerFile
-		endLine := file.EndLine
-		if endLine > 0 {
-			if endLine < startLine {
-				return nil, truncated, tools.ToolResult{Success: false, Error: fmt.Sprintf("consult_critic file range for %s has end_line before start_line", path)}
-			}
-			limit = endLine - startLine + 1
-		}
-		if limit > maxCriticConsultLinesPerFile {
-			limit = maxCriticConsultLinesPerFile
-			endLine = startLine + limit - 1
-			truncated = true
-		}
-		result := r.Files.Read(path, startLine, limit)
-		if !result.Success {
-			return nil, truncated, tools.ToolResult{Success: false, Error: fmt.Sprintf("consult_critic could not read %s: %s", path, result.Error)}
-		}
-		excerpt, excerptTruncated := boundedCriticConsultText(result.Output, maxCriticConsultFileChars)
-		if excerptTruncated || result.Truncated {
-			truncated = true
-		}
-		excerptChars := len([]rune(excerpt))
-		if totalChars+excerptChars > maxCriticConsultTotalFileChars {
-			remaining := maxCriticConsultTotalFileChars - totalChars
-			if remaining < 64 {
-				truncated = true
-				break
-			}
-			excerpt, _ = boundedCriticConsultText(excerpt, remaining)
-			excerptChars = len([]rune(excerpt))
-			truncated = true
-		}
-		totalChars += excerptChars
-		out = append(out, CriticConsultFile{
-			Path:      path,
-			StartLine: startLine,
-			EndLine:   endLine,
-			Role:      strings.TrimSpace(file.Role),
-			Excerpt:   excerpt,
-			Truncated: excerptTruncated || result.Truncated,
-		})
-	}
-	return out, truncated, tools.ToolResult{}
-}
-
-func normalizeCriticConsultKind(kind string) string {
-	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(kind), "-", "_")) {
-	case "plan", "code", "patch", "debug", "final_claims", "other":
-		return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(kind), "-", "_"))
-	default:
-		return "other"
-	}
-}
-
-func cleanCriticConsultChecks(checks []string) []string {
-	out := make([]string, 0, len(checks))
-	seen := map[string]struct{}{}
-	for _, check := range checks {
-		check, _ = boundedCriticConsultText(check, 80)
-		if check == "" {
-			continue
-		}
-		key := strings.ToLower(check)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, check)
-		if len(out) >= 8 {
-			break
-		}
-	}
-	return out
-}
-
 func cleanImageAnalysisChecks(checks []string) []string {
 	out := make([]string, 0, len(checks))
 	seen := map[string]struct{}{}
 	for _, check := range checks {
-		check, _ = boundedCriticConsultText(check, 100)
+		check, _ = boundedToolText(check, 100)
 		if check == "" {
 			continue
 		}
@@ -2679,7 +2453,7 @@ func normalizeQualityPlan(plan QualityPlan) (QualityPlan, tools.ToolResult) {
 	if qualityPlanArtifactRequiresVisualVerification(plan.ArtifactType) {
 		plan.RequiresVisualVerification = true
 	}
-	plan.Notes, _ = boundedCriticConsultText(plan.Notes, maxQualityPlanTextChars)
+	plan.Notes, _ = boundedToolText(plan.Notes, maxQualityPlanTextChars)
 	if len(plan.Phases) == 0 {
 		return QualityPlan{}, tools.ToolResult{Success: false, Error: "update_quality_plan requires at least one phase"}
 	}
@@ -2688,7 +2462,7 @@ func normalizeQualityPlan(plan QualityPlan) (QualityPlan, tools.ToolResult) {
 	}
 	out := make([]QualityPlanPhase, 0, len(plan.Phases))
 	for _, phase := range plan.Phases {
-		phase.Name, _ = boundedCriticConsultText(phase.Name, maxQualityPlanTextChars)
+		phase.Name, _ = boundedToolText(phase.Name, maxQualityPlanTextChars)
 		if phase.Name == "" {
 			return QualityPlan{}, tools.ToolResult{Success: false, Error: "update_quality_plan phase name is required"}
 		}
@@ -2698,7 +2472,7 @@ func normalizeQualityPlan(plan QualityPlan) (QualityPlan, tools.ToolResult) {
 		}
 		phase.Acceptance = cleanQualityPlanTextList(phase.Acceptance, maxQualityPlanAcceptanceItems)
 		phase.Evidence = cleanQualityPlanTextList(phase.Evidence, maxQualityPlanEvidenceItems)
-		phase.Notes, _ = boundedCriticConsultText(phase.Notes, maxQualityPlanTextChars)
+		phase.Notes, _ = boundedToolText(phase.Notes, maxQualityPlanTextChars)
 		out = append(out, phase)
 	}
 	plan.Phases = out
@@ -2743,7 +2517,7 @@ func cleanQualityPlanTextList(values []string, limit int) []string {
 	out := make([]string, 0, capacity)
 	seen := map[string]struct{}{}
 	for _, value := range values {
-		value, _ = boundedCriticConsultText(value, maxQualityPlanTextChars)
+		value, _ = boundedToolText(value, maxQualityPlanTextChars)
 		if value == "" {
 			continue
 		}
@@ -2776,7 +2550,7 @@ func formatQualityPlanResult(plan QualityPlan) string {
 	return b.String()
 }
 
-func boundedCriticConsultText(value string, limit int) (string, bool) {
+func boundedToolText(value string, limit int) (string, bool) {
 	value = strings.TrimSpace(value)
 	if limit <= 0 || value == "" {
 		return "", value != ""
@@ -2797,110 +2571,6 @@ func formatImageAnalysisResult(result ImageAnalysisResult) string {
 		output = "vision model returned no substantive image analysis"
 	}
 	return "image_analysis:\n" + output + "\n"
-}
-
-func formatCriticConsultResult(result CriticConsultResult) string {
-	status := strings.TrimSpace(result.Status)
-	if status == "" {
-		status = "concerns"
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "critic_consultation: %s\n", status)
-	if summary := strings.TrimSpace(result.Summary); summary != "" {
-		fmt.Fprintf(&b, "summary: %s\n", summary)
-	}
-	if instruction := strings.TrimSpace(result.LeadInstruction); instruction != "" {
-		fmt.Fprintf(&b, "suggested_next_step: %s\n", instruction)
-	}
-	if len(result.Findings) > 0 {
-		b.WriteString("findings:\n")
-		for _, finding := range result.Findings {
-			claim := strings.TrimSpace(finding.Claim)
-			if claim == "" {
-				claim = strings.TrimSpace(finding.Evidence)
-			}
-			if claim == "" {
-				continue
-			}
-			severity := firstNonEmpty(strings.TrimSpace(finding.Severity), "medium")
-			materiality := strings.TrimSpace(finding.Materiality)
-			basis := strings.TrimSpace(finding.Basis)
-			if materiality != "" && basis != "" {
-				fmt.Fprintf(&b, "- [%s/%s, %s] %s\n", severity, materiality, basis, claim)
-			} else if materiality != "" {
-				fmt.Fprintf(&b, "- [%s/%s] %s\n", severity, materiality, claim)
-			} else if basis != "" {
-				fmt.Fprintf(&b, "- [%s, %s] %s\n", severity, basis, claim)
-			} else {
-				fmt.Fprintf(&b, "- [%s] %s\n", severity, claim)
-			}
-			if evidence := strings.TrimSpace(finding.Evidence); evidence != "" {
-				fmt.Fprintf(&b, "  evidence: %s\n", evidence)
-			}
-			if followup := strings.TrimSpace(finding.SuggestedFollowup); followup != "" {
-				fmt.Fprintf(&b, "  suggested_followup: %s\n", followup)
-			}
-		}
-	}
-	if strings.TrimSpace(result.Summary) == "" && len(result.Findings) == 0 {
-		b.WriteString("summary: critic returned no substantive advisory content\n")
-	}
-	return b.String()
-}
-
-func (r *Runner) writeCriticConsultStartedEvent(request CriticConsultRequest, inputTruncated bool) error {
-	if r == nil || r.Session == nil {
-		return nil
-	}
-	return r.Session.Write(session.Event{
-		"type":            "critic_consult_started",
-		"session_id":      r.SessionID,
-		"kind":            request.Kind,
-		"question":        request.Question,
-		"checks":          request.Checks,
-		"file_count":      len(request.Files),
-		"input_truncated": inputTruncated,
-	})
-}
-
-func (r *Runner) writeCriticConsultResultEvent(request CriticConsultRequest, result CriticConsultResult) error {
-	if r == nil || r.Session == nil {
-		return nil
-	}
-	return r.Session.Write(session.Event{
-		"type":                  "critic_consult_result",
-		"session_id":            r.SessionID,
-		"kind":                  request.Kind,
-		"question":              request.Question,
-		"provider":              strings.TrimSpace(result.Provider),
-		"model":                 strings.TrimSpace(result.Model),
-		"packet_hash":           strings.TrimSpace(result.PacketHash),
-		"status":                strings.TrimSpace(result.Status),
-		"summary":               strings.TrimSpace(result.Summary),
-		"findings":              result.Findings,
-		"lead_instruction":      strings.TrimSpace(result.LeadInstruction),
-		"human_prompt":          strings.TrimSpace(result.HumanPrompt),
-		"proposed_user_message": strings.TrimSpace(result.ProposedUserMessage),
-		"usage":                 json.RawMessage(result.Usage),
-		"usage_summary":         result.UsageSummary,
-	})
-}
-
-func (r *Runner) writeCriticConsultFailedEvent(request CriticConsultRequest, message, failureKind string) error {
-	if r == nil || r.Session == nil {
-		return nil
-	}
-	event := session.Event{
-		"type":       "critic_consult_failed",
-		"session_id": r.SessionID,
-		"kind":       request.Kind,
-		"question":   request.Question,
-		"message":    strings.TrimSpace(message),
-	}
-	if strings.TrimSpace(failureKind) != "" {
-		event["failure_kind"] = strings.TrimSpace(failureKind)
-	}
-	return r.Session.Write(event)
 }
 
 func (r *Runner) writeImageAnalysisStartedEvent(request ImageAnalysisRequest, inputTruncated bool) error {
@@ -3191,7 +2861,7 @@ func (r *Runner) changeReviewFile(path string, remainingChars *int) ChangeReview
 			return file
 		}
 		var truncated bool
-		snapshot, truncated = boundedCriticConsultText(snapshot, *remainingChars)
+		snapshot, truncated = boundedToolText(snapshot, *remainingChars)
 		file.SnapshotTruncated = truncated || result.Truncated
 		*remainingChars -= len([]rune(snapshot))
 	} else {

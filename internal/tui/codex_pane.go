@@ -616,8 +616,7 @@ func (m *Model) maybeApplyCodexSuggestedInputDraft(projectPath string, snapshot 
 		return
 	}
 	if snapshot.Provider == codexapp.ProviderLCAgent &&
-		(strings.TrimSpace(snapshot.SuggestedInputDraftSource) == "" ||
-			strings.EqualFold(strings.TrimSpace(snapshot.SuggestedInputDraftSource), "lcagent_critic")) {
+		strings.TrimSpace(snapshot.SuggestedInputDraftSource) == "" {
 		return
 	}
 	if m.codexSuggestedDraftsApplied == nil {
@@ -1179,15 +1178,6 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		}
 		if strings.TrimSpace(req.LCAgentUtilityModel) == "" {
 			req.LCAgentUtilityModel = m.lcagentUtilityModel()
-		}
-		if strings.TrimSpace(req.LCAgentCriticProvider) == "" {
-			req.LCAgentCriticProvider = m.lcagentCriticProvider()
-		}
-		if strings.TrimSpace(req.LCAgentCriticModel) == "" {
-			req.LCAgentCriticModel = m.lcagentCriticModel()
-		}
-		if strings.TrimSpace(req.LCAgentCriticReasoning) == "" {
-			req.LCAgentCriticReasoning = m.lcagentCriticReasoning()
 		}
 		if strings.TrimSpace(req.LCAgentVisionProvider) == "" {
 			req.LCAgentVisionProvider = m.lcagentVisionProvider()

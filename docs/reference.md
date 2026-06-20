@@ -63,9 +63,6 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `lcagent_tool_profile`
 - `lcagent_context_profile`
 - `lcagent_request_timeout`
-- `lcagent_critic_provider`
-- `lcagent_critic_model`
-- `lcagent_critic_reasoning_effort`
 - `playwright_management_mode`
 - `playwright_default_browser_mode`
 - `playwright_login_mode`

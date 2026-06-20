@@ -16,7 +16,6 @@ const (
 	KindStatus      Kind = "status"
 	KindShowStatus  Kind = "show-status"
 	KindModel       Kind = "model"
-	KindCritic      Kind = "critic"
 	KindReconnect   Kind = "reconnect"
 	KindCompact     Kind = "compact"
 	KindReview      Kind = "review"
@@ -60,7 +59,6 @@ var specs = []Spec{
 	{Name: "sessions", Usage: "/sessions [session-id]", Summary: "Pick from this project's saved embedded sessions"},
 	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /resume", Hidden: true},
 	{Name: "model", Usage: "/model", Summary: "Pick the embedded model and reasoning effort for this and future embedded sessions of the same tool, even after restarting LCR"},
-	{Name: "critic", Usage: "/critic", Summary: "Pick the LCAgent critic model used for pre-final review"},
 	{Name: "status", Usage: "/status", Summary: "Show embedded session config, limits, and token usage"},
 	{Name: "show-status", Usage: "/show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
 	{Name: "dev-show-status", Usage: "/dev-show-status", Summary: "Show embedded session config, limits, and token usage", Hidden: true},
@@ -119,12 +117,6 @@ func Suggestions(input string) []Suggestion {
 			Insert:  "/model",
 			Display: "/model",
 			Summary: "Open a local picker for the embedded model and reasoning effort used by this and future embedded sessions of the same tool, even after restarting LCR",
-		}}
-	case "critic":
-		return []Suggestion{{
-			Insert:  "/critic",
-			Display: "/critic",
-			Summary: "Open a local picker for the LCAgent critic model used by pre-final review",
 		}}
 	case "status":
 		return []Suggestion{{
@@ -332,14 +324,6 @@ func Parse(input string) (Invocation, error) {
 		return Invocation{
 			Kind:      KindModel,
 			Canonical: "/model",
-		}, nil
-	case "critic":
-		if strings.TrimSpace(rawArgs) != "" {
-			return Invocation{}, fmt.Errorf("usage: /critic")
-		}
-		return Invocation{
-			Kind:      KindCritic,
-			Canonical: "/critic",
 		}, nil
 	case "status":
 		if strings.TrimSpace(rawArgs) != "" {

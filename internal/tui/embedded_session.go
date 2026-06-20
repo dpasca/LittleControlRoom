@@ -21,12 +21,6 @@ type embeddedModelPreferencesSavedMsg struct {
 	err      error
 }
 
-type embeddedCriticPreferenceSavedMsg struct {
-	settings config.EditableSettings
-	path     string
-	err      error
-}
-
 type codexSessionOpenedMsg struct {
 	projectPath      string
 	snapshot         codexapp.Snapshot
@@ -70,7 +64,6 @@ type codexActionMsg struct {
 	provider      codexapp.Provider
 	model         string
 	modelProvider string
-	criticModel   bool
 	reasoning     string
 	awaitSettle   bool
 	refreshView   bool
@@ -239,14 +232,6 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 				m.markCodexSessionLive(msg.projectPath)
 			}
 		}
-	}
-	if msg.criticModel {
-		m.recordRecentModel(codexapp.ProviderLCAgent, msg.model, msg.modelProvider)
-		saveCmd := m.saveLCAgentCriticPreferenceCmd(msg.modelProvider, msg.model, msg.reasoning)
-		if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) && m.todoDialog == nil && m.todoCopyDialog == nil {
-			return m, tea.Batch(refreshCmd, transcriptRenderCmd, linkScanCmd, renameRefreshCmd, saveCmd, m.codexInput.Focus())
-		}
-		return m, tea.Batch(refreshCmd, transcriptRenderCmd, linkScanCmd, renameRefreshCmd, saveCmd)
 	}
 	if msg.provider.Normalized() != "" && (strings.TrimSpace(msg.model) != "" || strings.TrimSpace(msg.reasoning) != "") {
 		var asyncCmd tea.Cmd
@@ -929,9 +914,6 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		LCAgentRequestTimeout:    m.lcagentRequestTimeout(),
 		LCAgentUtilityProvider:   m.lcagentUtilityProvider(),
 		LCAgentUtilityModel:      m.lcagentUtilityModel(),
-		LCAgentCriticProvider:    m.lcagentCriticProvider(),
-		LCAgentCriticModel:       m.lcagentCriticModel(),
-		LCAgentCriticReasoning:   m.lcagentCriticReasoning(),
 		LCAgentVisionProvider:    m.lcagentVisionProvider(),
 		LCAgentVisionModel:       m.lcagentVisionModel(),
 		LCAgentWebSearchBackend:  m.lcagentWebSearchBackend(),
@@ -1028,9 +1010,6 @@ func lcagentLaunchSettingsChanged(previous, saved config.EditableSettings) bool 
 		previous.LCAgentRequestTimeout != saved.LCAgentRequestTimeout ||
 		strings.TrimSpace(previous.LCAgentUtilityProvider) != strings.TrimSpace(saved.LCAgentUtilityProvider) ||
 		strings.TrimSpace(previous.LCAgentUtilityModel) != strings.TrimSpace(saved.LCAgentUtilityModel) ||
-		strings.TrimSpace(previous.LCAgentCriticProvider) != strings.TrimSpace(saved.LCAgentCriticProvider) ||
-		strings.TrimSpace(previous.LCAgentCriticModel) != strings.TrimSpace(saved.LCAgentCriticModel) ||
-		strings.TrimSpace(previous.LCAgentCriticReasoning) != strings.TrimSpace(saved.LCAgentCriticReasoning) ||
 		strings.TrimSpace(previous.LCAgentVisionProvider) != strings.TrimSpace(saved.LCAgentVisionProvider) ||
 		strings.TrimSpace(previous.LCAgentVisionModel) != strings.TrimSpace(saved.LCAgentVisionModel) ||
 		strings.TrimSpace(previous.LCAgentWebSearchBackend) != strings.TrimSpace(saved.LCAgentWebSearchBackend) ||
@@ -1072,9 +1051,6 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentRequestTimeout:    settings.LCAgentRequestTimeout,
 		LCAgentUtilityProvider:   strings.TrimSpace(settings.LCAgentUtilityProvider),
 		LCAgentUtilityModel:      strings.TrimSpace(settings.LCAgentUtilityModel),
-		LCAgentCriticProvider:    strings.TrimSpace(settings.LCAgentCriticProvider),
-		LCAgentCriticModel:       strings.TrimSpace(settings.LCAgentCriticModel),
-		LCAgentCriticReasoning:   strings.TrimSpace(settings.LCAgentCriticReasoning),
 		LCAgentVisionProvider:    settingsLCAgentVisionProviderForLaunch(settings),
 		LCAgentVisionModel:       settingsLCAgentVisionModelForLaunch(settings),
 		LCAgentWebSearchBackend:  strings.TrimSpace(settings.LCAgentWebSearchBackend),
@@ -1232,18 +1208,6 @@ func (m Model) lcagentUtilityProvider() string {
 
 func (m Model) lcagentUtilityModel() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentUtilityModel)
-}
-
-func (m Model) lcagentCriticProvider() string {
-	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentCriticProvider)
-}
-
-func (m Model) lcagentCriticModel() string {
-	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentCriticModel)
-}
-
-func (m Model) lcagentCriticReasoning() string {
-	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentCriticReasoning)
 }
 
 func (m Model) lcagentVisionProvider() string {

@@ -28,8 +28,6 @@ type Summary struct {
 	ToolProfiles                map[string]int     `json:"tool_profiles,omitempty"`
 	ContextProfiles             map[string]int     `json:"context_profiles,omitempty"`
 	ModelResponses              int                `json:"model_responses"`
-	CriticModelResponses        int                `json:"critic_model_responses,omitempty"`
-	CriticInvalidModelResponses int                `json:"critic_invalid_model_responses,omitempty"`
 	ToolCalls                   map[string]int     `json:"tool_calls"`
 	ToolResults                 map[string]int     `json:"tool_results"`
 	ToolSuccesses               map[string]int     `json:"tool_successes,omitempty"`
@@ -39,17 +37,6 @@ type Summary struct {
 	ProviderRetrySuccesses      int                `json:"provider_retry_successes"`
 	SearchRefinements           int                `json:"search_refinements,omitempty"`
 	SearchRefinementFailures    int                `json:"search_refinement_failures,omitempty"`
-	CriticReviewsStarted        int                `json:"critic_reviews_started,omitempty"`
-	CriticReviewResults         int                `json:"critic_review_results,omitempty"`
-	CriticReviewFailures        int                `json:"critic_review_failures,omitempty"`
-	CriticReviewStatuses        map[string]int     `json:"critic_review_statuses,omitempty"`
-	CriticReviewModes           map[string]int     `json:"critic_review_modes,omitempty"`
-	CriticConsultsStarted       int                `json:"critic_consults_started,omitempty"`
-	CriticConsultResults        int                `json:"critic_consult_results,omitempty"`
-	CriticConsultFailures       int                `json:"critic_consult_failures,omitempty"`
-	CriticConsultStatuses       map[string]int     `json:"critic_consult_statuses,omitempty"`
-	CriticLeadFeedback          int                `json:"critic_lead_feedback,omitempty"`
-	CriticHumanPrompts          int                `json:"critic_human_prompts,omitempty"`
 	Continuations               int                `json:"continuations"`
 	ResumeContexts              int                `json:"resume_contexts"`
 	PermissionDenials           int                `json:"permission_denials"`
@@ -63,10 +50,6 @@ type Summary struct {
 	VerificationStatuses        map[string]int     `json:"verification_statuses,omitempty"`
 	FinalResponseAudits         int                `json:"final_response_audits,omitempty"`
 	FinalResponseAuditOutcomes  map[string]int     `json:"final_response_audit_outcomes,omitempty"`
-	QualityCheckpointsStarted   int                `json:"quality_checkpoints_started,omitempty"`
-	QualityCheckpointFeedback   int                `json:"quality_checkpoint_feedback,omitempty"`
-	QualityRepairFeedback       int                `json:"quality_repair_feedback,omitempty"`
-	QualityRepairCleared        int                `json:"quality_repair_cleared,omitempty"`
 	QualityPlanUpdates          int                `json:"quality_plan_updates,omitempty"`
 	OperationalActions          int                `json:"operational_actions,omitempty"`
 	OperationalActionStatuses   map[string]int     `json:"operational_action_statuses,omitempty"`
@@ -144,12 +127,6 @@ type TraceQuality struct {
 	ToolFailureRate      float64               `json:"tool_failure_rate"`
 	ProviderFailures     int                   `json:"provider_failures"`
 	ProviderRetries      int                   `json:"provider_retries"`
-	CriticReviews        int                   `json:"critic_reviews,omitempty"`
-	CriticConsultations  int                   `json:"critic_consultations,omitempty"`
-	CriticLeadFeedback   int                   `json:"critic_lead_feedback,omitempty"`
-	CriticHumanPrompts   int                   `json:"critic_human_prompts,omitempty"`
-	QualityCheckpoints   int                   `json:"quality_checkpoints,omitempty"`
-	QualityRepairs       int                   `json:"quality_repairs,omitempty"`
 	QualityPlans         int                   `json:"quality_plans,omitempty"`
 	RepairEvents         int                   `json:"repair_events"`
 	VerifiedSessions     int                   `json:"verified_sessions"`
@@ -262,15 +239,6 @@ func (s *Summary) init() {
 	if s.ContextProfiles == nil {
 		s.ContextProfiles = map[string]int{}
 	}
-	if s.CriticReviewStatuses == nil {
-		s.CriticReviewStatuses = map[string]int{}
-	}
-	if s.CriticReviewModes == nil {
-		s.CriticReviewModes = map[string]int{}
-	}
-	if s.CriticConsultStatuses == nil {
-		s.CriticConsultStatuses = map[string]int{}
-	}
 	if s.VerificationStatuses == nil {
 		s.VerificationStatuses = map[string]int{}
 	}
@@ -380,14 +348,6 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		s.ModelResponses++
 		usage := usageFromEvent(event)
 		s.addUsage(usage)
-	case "critic_model_response":
-		s.CriticModelResponses++
-		usage := usageFromEvent(event)
-		s.addUsage(usage)
-	case "critic_model_response_invalid":
-		s.CriticInvalidModelResponses++
-		usage := usageFromEvent(event)
-		s.addUsage(usage)
 	case "permission_denied":
 		s.PermissionDenials++
 	case "provider_failure":
@@ -406,37 +366,6 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 		} else {
 			s.SearchRefinementFailures++
 		}
-	case "critic_review_started":
-		s.CriticReviewsStarted++
-	case "critic_review_result":
-		s.CriticReviewResults++
-		s.addCriticReviewMode(rawString(event["mode"]))
-		status := rawString(event["status"])
-		if status == "" {
-			status = "unknown"
-		}
-		s.CriticReviewStatuses[status]++
-		if strings.TrimSpace(firstNonEmpty(rawString(event["human_prompt"]), rawString(event["proposed_user_message"]))) != "" {
-			s.CriticHumanPrompts++
-		}
-	case "critic_review_failed":
-		s.CriticReviewFailures++
-		s.addCriticReviewMode(rawString(event["mode"]))
-	case "critic_consult_started":
-		s.CriticConsultsStarted++
-	case "critic_consult_result":
-		s.CriticConsultResults++
-		status := rawString(event["status"])
-		if status == "" {
-			status = "unknown"
-		}
-		s.CriticConsultStatuses[status]++
-		usage := usageFromEvent(event)
-		s.addUsage(usage)
-	case "critic_consult_failed":
-		s.CriticConsultFailures++
-	case "critic_lead_feedback":
-		s.CriticLeadFeedback++
 	case "continuation":
 		s.Continuations++
 	case "resume_context":
@@ -471,14 +400,6 @@ func (s *Summary) addEvent(source string, event map[string]json.RawMessage) {
 			outcome = "unknown"
 		}
 		s.FinalResponseAuditOutcomes[outcome]++
-	case "quality_checkpoint_started":
-		s.QualityCheckpointsStarted++
-	case "quality_checkpoint_feedback":
-		s.QualityCheckpointFeedback++
-	case "quality_repair_feedback":
-		s.QualityRepairFeedback++
-	case "quality_repair_cleared":
-		s.QualityRepairCleared++
 	case "quality_plan_update":
 		s.QualityPlanUpdates++
 	case "operational_action":
@@ -626,14 +547,6 @@ func (s *Summary) addSlowestToolRun(run ToolRunTiming) {
 
 func toolTimingKey(source, tool string) string {
 	return source + "\x00" + tool
-}
-
-func (s *Summary) addCriticReviewMode(mode string) {
-	mode = strings.TrimSpace(mode)
-	if mode == "" {
-		mode = "unknown"
-	}
-	s.CriticReviewModes[mode]++
 }
 
 func usageFromEvent(event map[string]json.RawMessage) lcrmodel.LLMUsage {
@@ -819,14 +732,8 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	quality := TraceQuality{
 		Score:                100,
 		VerifiedSessions:     s.VerificationStatuses["verified"],
-		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed + s.RepairGuidance + s.QualityRepairFeedback,
+		RepairEvents:         s.PermissionDenials + s.PatchFeedback + s.VerificationFeedback + s.RepairFeedbackSuppressed + s.RepairGuidance,
 		ProviderRetries:      s.ProviderRetries,
-		CriticReviews:        s.CriticReviewResults,
-		CriticConsultations:  s.CriticConsultResults,
-		CriticLeadFeedback:   s.CriticLeadFeedback,
-		CriticHumanPrompts:   s.CriticHumanPrompts,
-		QualityCheckpoints:   s.QualityCheckpointFeedback,
-		QualityRepairs:       s.QualityRepairFeedback,
 		QualityPlans:         s.QualityPlanUpdates,
 		ReadOverlapRate:      ratio(s.ReadFileOverlappingLines, s.ReadFileLines),
 		CachedInputTokenRate: ratio64(s.TokenUsage.CachedInputTokens, s.TokenUsage.InputTokens),
@@ -885,25 +792,6 @@ func (s Summary) computeTraceQuality() TraceQuality {
 	if s.RepairGuidance > 0 {
 		quality.addFinding("warn", "repair_guidance", fmt.Sprintf("%d repair guidance escalation event(s) were needed.", s.RepairGuidance))
 		quality.Score -= minInt(10, s.RepairGuidance*5)
-	}
-	if s.CriticLeadFeedback > 0 {
-		quality.addFinding("info", "critic_lead_feedback", fmt.Sprintf("%d private critic lead revision event(s) were recorded.", s.CriticLeadFeedback))
-	}
-	if s.CriticConsultResults > 0 {
-		quality.addFinding("info", "critic_consultations", fmt.Sprintf("%d lead-initiated critic consultation(s) were recorded.", s.CriticConsultResults))
-	}
-	if s.CriticHumanPrompts > 0 {
-		quality.addFinding("info", "critic_human_prompts", fmt.Sprintf("%d critic review result(s) drafted human-facing follow-up.", s.CriticHumanPrompts))
-	}
-	if s.QualityCheckpointFeedback > 0 {
-		quality.addFinding("info", "quality_checkpoints", fmt.Sprintf("%d lead quality checkpoint pass(es) were requested.", s.QualityCheckpointFeedback))
-	}
-	if s.QualityRepairFeedback > 0 {
-		quality.addFinding("warn", "quality_repairs", fmt.Sprintf("%d quality repair feedback event(s) were needed.", s.QualityRepairFeedback))
-		quality.Score -= minInt(15, s.QualityRepairFeedback*3)
-	}
-	if s.QualityRepairCleared > 0 {
-		quality.addFinding("info", "quality_repair_cleared", fmt.Sprintf("%d quality repair concern(s) were cleared by a later check.", s.QualityRepairCleared))
 	}
 	if s.QualityPlanUpdates > 0 {
 		quality.addFinding("info", "quality_plans", fmt.Sprintf("%d phased quality plan update(s) were recorded.", s.QualityPlanUpdates))

@@ -34,7 +34,6 @@ type embeddedCodexSidebarSection int
 const (
 	embeddedCodexSidebarSession embeddedCodexSidebarSection = iota
 	embeddedCodexSidebarQuality
-	embeddedCodexSidebarCritic
 	embeddedCodexSidebarVision
 	embeddedCodexSidebarBrowser
 	embeddedCodexSidebarDiff
@@ -166,7 +165,6 @@ func (m Model) embeddedSidebarVisibleSections(snapshot codexapp.Snapshot) []embe
 	candidates := []embeddedCodexSidebarSection{
 		embeddedCodexSidebarSession,
 		embeddedCodexSidebarQuality,
-		embeddedCodexSidebarCritic,
 		embeddedCodexSidebarVision,
 		embeddedCodexSidebarBrowser,
 		embeddedCodexSidebarDiff,
@@ -188,8 +186,6 @@ func (m Model) embeddedSidebarSectionAvailable(snapshot codexapp.Snapshot, proje
 		return len(m.embeddedSidebarSessionRows(snapshot, 1)) > 0
 	case embeddedCodexSidebarQuality:
 		return embeddedSidebarQualityRelevant(snapshot)
-	case embeddedCodexSidebarCritic:
-		return embeddedSidebarCriticRelevant(snapshot)
 	case embeddedCodexSidebarVision:
 		return embeddedSidebarVisionRelevant(snapshot)
 	case embeddedCodexSidebarBrowser:
@@ -269,8 +265,6 @@ func embeddedSidebarSectionTitle(section embeddedCodexSidebarSection) string {
 		return "Session"
 	case embeddedCodexSidebarQuality:
 		return "Quality"
-	case embeddedCodexSidebarCritic:
-		return "Critic"
 	case embeddedCodexSidebarVision:
 		return "Vision"
 	case embeddedCodexSidebarBrowser:
@@ -479,8 +473,6 @@ func (m Model) embeddedSidebarDetailRows(section embeddedCodexSidebarSection, sn
 		return embeddedSidebarSessionDetailRows(snapshot, width)
 	case embeddedCodexSidebarQuality:
 		return embeddedSidebarQualityDetailRows(snapshot, width)
-	case embeddedCodexSidebarCritic:
-		return embeddedSidebarCriticDetailRows(snapshot, width)
 	case embeddedCodexSidebarVision:
 		return embeddedSidebarVisionDetailRows(snapshot, width)
 	case embeddedCodexSidebarBrowser:
@@ -761,7 +753,6 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	lines := []string{}
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSessionSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarQualitySection(snapshot, contentWidth))
-	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarCriticSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarVisionSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth))
@@ -848,13 +839,12 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 
 func embeddedSidebarModelCommands(snapshot codexapp.Snapshot) string {
 	if strings.TrimSpace(snapshot.Model) == "" &&
-		strings.TrimSpace(snapshot.PendingModel) == "" &&
-		strings.TrimSpace(snapshot.CriticModel) == "" {
+		strings.TrimSpace(snapshot.PendingModel) == "" {
 		return ""
 	}
 	switch snapshot.Provider {
 	case codexapp.ProviderLCAgent:
-		return "/model /critic"
+		return "/model"
 	case codexapp.ProviderCodex, codexapp.ProviderClaudeCode, codexapp.ProviderOpenCode:
 		return "/model"
 	default:
@@ -895,137 +885,6 @@ func embeddedSidebarModelRowsWithLimit(snapshot codexapp.Snapshot, width, maxLin
 	return rows
 }
 
-func embeddedSidebarCriticModelLabel(snapshot codexapp.Snapshot) string {
-	model := strings.TrimSpace(snapshot.CriticModel)
-	if model == "" {
-		return ""
-	}
-	provider := strings.TrimSpace(snapshot.CriticModelProvider)
-	if provider == "" || strings.EqualFold(provider, strings.TrimSpace(snapshot.ModelProvider)) {
-		return model
-	}
-	return provider + "/" + model
-}
-
-func (m Model) renderEmbeddedSidebarCriticSection(snapshot codexapp.Snapshot, width int) []string {
-	rows := embeddedSidebarCriticSummaryRows(snapshot, width)
-	if len(rows) == 0 {
-		return nil
-	}
-	return append([]string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarCritic, "Critic", width)}, rows...)
-}
-
-func embeddedSidebarCriticRelevant(snapshot codexapp.Snapshot) bool {
-	if snapshot.Provider != codexapp.ProviderLCAgent {
-		return false
-	}
-	model := embeddedSidebarCriticModelLabel(snapshot)
-	status := embeddedSidebarCriticStatus(snapshot)
-	return model != "" ||
-		status != "" ||
-		snapshot.CriticReviews != 0 ||
-		snapshot.CriticConsultations != 0 ||
-		snapshot.CriticConsultConcerns != 0 ||
-		snapshot.CriticConcerns != 0 ||
-		snapshot.CriticLeadRevisions != 0 ||
-		snapshot.CriticFollowupDrafts != 0
-}
-
-func embeddedSidebarCriticSummaryRows(snapshot codexapp.Snapshot, width int) []string {
-	if !embeddedSidebarCriticRelevant(snapshot) {
-		return nil
-	}
-	rows := []string{}
-	if model := embeddedSidebarCriticModelValue(snapshot); model != "" {
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
-	}
-	status := embeddedSidebarCriticStatus(snapshot)
-	activity := embeddedSidebarCriticActivitySummary(snapshot)
-	if status != "" || activity != "" {
-		value := strings.TrimSpace(status)
-		if activity != "" {
-			if value != "" {
-				value += " | "
-			}
-			value += activity
-		}
-		rows = append(rows, embeddedSidebarWrappedFieldRows("State", value, embeddedSidebarCriticStatusStyle(status), width, 3)...)
-	}
-	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
-		rows = append(rows, embeddedSidebarPreviewRows(summary, detailMutedStyle, width)...)
-	}
-	return rows
-}
-
-func embeddedSidebarCriticDetailRows(snapshot codexapp.Snapshot, width int) []string {
-	if !embeddedSidebarCriticRelevant(snapshot) {
-		return nil
-	}
-	rows := []string{}
-	if model := embeddedSidebarCriticModelValue(snapshot); model != "" {
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Model", model, detailValueStyle, width, 2)...)
-	}
-	status := embeddedSidebarCriticStatus(snapshot)
-	if status != "" {
-		rows = append(rows, embeddedSidebarFieldRow("Status", status, embeddedSidebarCriticStatusStyle(status), width))
-	}
-	if activity := embeddedSidebarCriticActivitySummary(snapshot); activity != "" {
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Activity", activity, detailValueStyle, width, 3)...)
-	}
-	if concerns := embeddedSidebarCriticConcernSummary(snapshot); concerns != "" {
-		rows = append(rows, embeddedSidebarWrappedFieldRows("Concerns", concerns, detailWarningStyle, width, 2)...)
-	}
-	if snapshot.CriticFollowupDrafts > 0 {
-		rows = append(rows, embeddedSidebarFieldRow("Drafts", fmt.Sprintf("%d", snapshot.CriticFollowupDrafts), detailWarningStyle, width))
-	}
-	if summary := strings.TrimSpace(snapshot.CriticLastSummary); summary != "" {
-		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
-	}
-	return rows
-}
-
-func embeddedSidebarCriticModelValue(snapshot codexapp.Snapshot) string {
-	model := embeddedSidebarCriticModelLabel(snapshot)
-	if model == "" {
-		return ""
-	}
-	if reasoning := strings.TrimSpace(snapshot.CriticReasoningEffort); reasoning != "" {
-		model += " / " + reasoning
-	}
-	return model
-}
-
-func embeddedSidebarCriticActivitySummary(snapshot codexapp.Snapshot) string {
-	parts := []string{}
-	if snapshot.CriticReviews > 0 {
-		parts = append(parts, embeddedSidebarCountLabel(snapshot.CriticReviews, "review"))
-	}
-	if snapshot.CriticConsultations > 0 {
-		parts = append(parts, embeddedSidebarCountLabel(snapshot.CriticConsultations, "consult"))
-	}
-	if concerns := max(0, snapshot.CriticConcerns) + max(0, snapshot.CriticConsultConcerns); concerns > 0 {
-		parts = append(parts, embeddedSidebarCountLabel(concerns, "concern"))
-	}
-	if snapshot.CriticLeadRevisions > 0 {
-		parts = append(parts, embeddedSidebarCountLabel(snapshot.CriticLeadRevisions, "correction"))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return strings.Join(parts, " | ")
-}
-
-func embeddedSidebarCriticConcernSummary(snapshot codexapp.Snapshot) string {
-	parts := []string{}
-	if snapshot.CriticConcerns > 0 {
-		parts = append(parts, fmt.Sprintf("lead %d", snapshot.CriticConcerns))
-	}
-	if snapshot.CriticConsultConcerns > 0 {
-		parts = append(parts, fmt.Sprintf("consult %d", snapshot.CriticConsultConcerns))
-	}
-	return strings.Join(parts, " | ")
-}
-
 func (m Model) renderEmbeddedSidebarQualitySection(snapshot codexapp.Snapshot, width int) []string {
 	rows := embeddedSidebarQualitySummaryRows(snapshot, width)
 	if len(rows) == 0 {
@@ -1038,15 +897,7 @@ func embeddedSidebarQualityRelevant(snapshot codexapp.Snapshot) bool {
 	if snapshot.Provider != codexapp.ProviderLCAgent {
 		return false
 	}
-	return snapshot.QualityCheckpointActive ||
-		snapshot.QualityCheckpointPasses != 0 ||
-		snapshot.QualityCheckpointMaxPasses != 0 ||
-		strings.TrimSpace(snapshot.QualityCheckpointLastSummary) != "" ||
-		snapshot.QualityRepairActive ||
-		snapshot.QualityRepairPasses != 0 ||
-		snapshot.QualityRepairMaxPasses != 0 ||
-		strings.TrimSpace(snapshot.QualityRepairLastSummary) != "" ||
-		snapshot.QualityPlanUpdates != 0 ||
+	return snapshot.QualityPlanUpdates != 0 ||
 		snapshot.QualityPlanPhases != 0 ||
 		strings.TrimSpace(snapshot.QualityPlanLastSummary) != ""
 }
@@ -1057,12 +908,6 @@ func embeddedSidebarQualitySummaryRows(snapshot codexapp.Snapshot, width int) []
 	}
 	status, style := embeddedSidebarQualityStatus(snapshot)
 	parts := []string{status}
-	if snapshot.QualityCheckpointActive || snapshot.QualityCheckpointPasses > 0 || snapshot.QualityCheckpointMaxPasses > 0 {
-		parts = append(parts, "checks "+embeddedSidebarPassLabel(snapshot.QualityCheckpointPasses, snapshot.QualityCheckpointMaxPasses))
-	}
-	if snapshot.QualityRepairActive || snapshot.QualityRepairPasses > 0 || snapshot.QualityRepairMaxPasses > 0 {
-		parts = append(parts, "repairs "+embeddedSidebarPassLabel(snapshot.QualityRepairPasses, snapshot.QualityRepairMaxPasses))
-	}
 	if plan := embeddedSidebarQualityPlanSummary(snapshot); plan != "" {
 		parts = append(parts, plan)
 	}
@@ -1084,12 +929,6 @@ func embeddedSidebarQualityDetailRows(snapshot codexapp.Snapshot, width int) []s
 	rows := []string{}
 	status, style := embeddedSidebarQualityStatus(snapshot)
 	rows = append(rows, embeddedSidebarFieldRow("Status", status, style, width))
-	passes := embeddedSidebarPassLabel(snapshot.QualityCheckpointPasses, snapshot.QualityCheckpointMaxPasses)
-	rows = append(rows, embeddedSidebarFieldRow("Checkpoints", passes, detailValueStyle, width))
-	repairPasses := embeddedSidebarPassLabel(snapshot.QualityRepairPasses, snapshot.QualityRepairMaxPasses)
-	if snapshot.QualityRepairPasses > 0 || snapshot.QualityRepairMaxPasses > 0 || snapshot.QualityRepairActive {
-		rows = append(rows, embeddedSidebarFieldRow("Repairs", repairPasses, detailWarningStyle, width))
-	}
 	if snapshot.QualityPlanUpdates > 0 || snapshot.QualityPlanPhases > 0 {
 		phaseValue := fmt.Sprintf("%d", max(0, snapshot.QualityPlanPhases))
 		if snapshot.QualityPlanVerified > 0 || snapshot.QualityPlanSkipped > 0 {
@@ -1119,12 +958,6 @@ func embeddedSidebarQualityDetailRows(snapshot codexapp.Snapshot, width int) []s
 		}
 		rows = append(rows, embeddedSidebarQualityPhaseRows(snapshot.QualityPlanPhaseItems, width)...)
 	}
-	if summary := strings.TrimSpace(snapshot.QualityCheckpointLastSummary); summary != "" {
-		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
-	}
-	if summary := strings.TrimSpace(snapshot.QualityRepairLastSummary); summary != "" {
-		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
-	}
 	if summary := strings.TrimSpace(snapshot.QualityPlanLastSummary); summary != "" {
 		rows = append(rows, embeddedSidebarWrappedRows(summary, detailMutedStyle, width)...)
 	}
@@ -1133,27 +966,13 @@ func embeddedSidebarQualityDetailRows(snapshot codexapp.Snapshot, width int) []s
 
 func embeddedSidebarQualityStatus(snapshot codexapp.Snapshot) (string, lipgloss.Style) {
 	switch {
-	case snapshot.QualityCheckpointActive:
-		return "checking", detailValueStyle
-	case snapshot.QualityRepairActive:
-		return "repairing", detailWarningStyle
 	case snapshot.QualityPlanNeedsRepair > 0:
 		return "needs repair", detailWarningStyle
-	case snapshot.QualityCheckpointPasses > 0:
-		return "checked", detailValueStyle
 	case snapshot.QualityPlanUpdates > 0 || snapshot.QualityPlanPhases > 0:
 		return "planned", detailValueStyle
 	default:
 		return "idle", detailMutedStyle
 	}
-}
-
-func embeddedSidebarPassLabel(passes, maxPasses int) string {
-	label := fmt.Sprintf("%d", max(0, passes))
-	if maxPasses > 0 {
-		label += fmt.Sprintf("/%d", maxPasses)
-	}
-	return label
 }
 
 func embeddedSidebarQualityPlanSummary(snapshot codexapp.Snapshot) string {
@@ -1189,14 +1008,8 @@ func embeddedSidebarQualityEvidenceSummary(snapshot codexapp.Snapshot) string {
 }
 
 func embeddedSidebarQualityLatestSummary(snapshot codexapp.Snapshot) string {
-	for _, summary := range []string{
-		snapshot.QualityRepairLastSummary,
-		snapshot.QualityCheckpointLastSummary,
-		snapshot.QualityPlanLastSummary,
-	} {
-		if summary = strings.TrimSpace(summary); summary != "" {
-			return summary
-		}
+	if summary := strings.TrimSpace(snapshot.QualityPlanLastSummary); summary != "" {
+		return summary
 	}
 	return ""
 }
@@ -1333,45 +1146,6 @@ func embeddedSidebarVisionStatusSummary(snapshot codexapp.Snapshot) (string, lip
 		parts = append(parts, embeddedSidebarCountLabel(snapshot.ImageAnalysisFailures, "failure"))
 	}
 	return strings.Join(parts, " | "), style
-}
-
-func embeddedSidebarCriticStatus(snapshot codexapp.Snapshot) string {
-	if snapshot.CriticActive {
-		if strings.EqualFold(strings.TrimSpace(snapshot.CriticLastStatus), "consulting") {
-			return "consulting"
-		}
-		return "reviewing"
-	}
-	status := strings.ToLower(strings.TrimSpace(snapshot.CriticLastStatus))
-	switch status {
-	case "":
-		if strings.TrimSpace(snapshot.CriticModel) != "" {
-			return "idle"
-		}
-		return ""
-	case "clean":
-		return "clean"
-	case "needs-followup":
-		return "needs follow-up"
-	case "needs_followup":
-		return "needs follow-up"
-	default:
-		return strings.ReplaceAll(status, "_", " ")
-	}
-}
-
-func embeddedSidebarCriticStatusStyle(status string) lipgloss.Style {
-	status = strings.ToLower(strings.TrimSpace(status))
-	switch {
-	case status == "reviewing", status == "clean":
-		return detailValueStyle
-	case strings.Contains(status, "concern"), strings.Contains(status, "revision"):
-		return detailWarningStyle
-	case strings.Contains(status, "follow"), strings.Contains(status, "failed"):
-		return detailDangerStyle
-	default:
-		return detailMutedStyle
-	}
 }
 
 func embeddedSidebarContextRow(snapshot codexapp.Snapshot, width int) string {

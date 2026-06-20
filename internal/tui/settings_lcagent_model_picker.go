@@ -68,7 +68,6 @@ type settingsLCAgentModelListMsg struct {
 func settingsFieldUsesLCAgentModelPicker(index int) bool {
 	return index == settingsFieldLCAgentModel ||
 		index == settingsFieldLCAgentUtilityModel ||
-		index == settingsFieldLCAgentCriticModel ||
 		index == settingsFieldLCAgentVisionModel
 }
 
@@ -188,16 +187,6 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 			provider = utilityProvider
 		}
 		current = strings.TrimSpace(settings.LCAgentUtilityModel)
-	}
-	if fieldIndex == settingsFieldLCAgentCriticModel {
-		criticProvider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
-		if criticProvider == "off" && providerOverride == "" {
-			return codexapp.LCAgentModelListConfig{}, "", "", false
-		}
-		if criticProvider != "main" {
-			provider = criticProvider
-		}
-		current = strings.TrimSpace(settings.LCAgentCriticModel)
 	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
@@ -653,13 +642,6 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 		if len(m.settingsFields) > settingsFieldLCAgentUtilityProvider && provider != "" {
 			m.settingsFields[settingsFieldLCAgentUtilityProvider].input.SetValue(provider)
 		}
-	case settingsFieldLCAgentCriticModel:
-		if len(m.settingsFields) > settingsFieldLCAgentCriticProvider && provider != "" {
-			m.settingsFields[settingsFieldLCAgentCriticProvider].input.SetValue(provider)
-		}
-		if len(m.settingsFields) > settingsFieldLCAgentCriticReasoning {
-			m.settingsFields[settingsFieldLCAgentCriticReasoning].input.SetValue(strings.TrimSpace(state.PendingReasoning))
-		}
 	case settingsFieldLCAgentVisionModel:
 		if len(m.settingsFields) > settingsFieldLCAgentVisionProvider && provider != "" {
 			m.settingsFields[settingsFieldLCAgentVisionProvider].input.SetValue(provider)
@@ -1008,9 +990,6 @@ func settingsLCAgentModelPickerAutoLabelForProvider(settings config.EditableSett
 	if fieldIndex == settingsFieldLCAgentUtilityModel {
 		return settingsLCAgentUtilityDefaultLabelForProvider(settings, provider)
 	}
-	if fieldIndex == settingsFieldLCAgentCriticModel {
-		return settingsLCAgentCriticDefaultLabelForProvider(settings, provider)
-	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		return settingsLCAgentVisionDefaultLabelForProvider(settings, provider)
 	}
@@ -1024,8 +1003,6 @@ func settingsLCAgentModelPickerProviderOptions(fieldIndex int) []settingsLCAgent
 	switch fieldIndex {
 	case settingsFieldLCAgentUtilityModel:
 		return settingsLCAgentUtilityProviderOptions()
-	case settingsFieldLCAgentCriticModel:
-		return settingsLCAgentCriticProviderOptions()
 	case settingsFieldLCAgentVisionModel:
 		return settingsLCAgentVisionProviderOptions()
 	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel:
@@ -1134,8 +1111,6 @@ func settingsLCAgentModelPickerProvider(settings config.EditableSettings, fieldI
 	switch fieldIndex {
 	case settingsFieldLCAgentUtilityModel:
 		return settingsLCAgentUtilityProviderValue(settings.LCAgentUtilityProvider)
-	case settingsFieldLCAgentCriticModel:
-		return settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
 	case settingsFieldLCAgentVisionModel:
 		return settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 	default:
@@ -1156,8 +1131,6 @@ func settingsLCAgentModelPickerRawModel(settings config.EditableSettings, fieldI
 	switch fieldIndex {
 	case settingsFieldLCAgentUtilityModel:
 		return strings.TrimSpace(settings.LCAgentUtilityModel)
-	case settingsFieldLCAgentCriticModel:
-		return strings.TrimSpace(settings.LCAgentCriticModel)
 	case settingsFieldLCAgentVisionModel:
 		return strings.TrimSpace(settings.LCAgentVisionModel)
 	default:
@@ -1168,9 +1141,6 @@ func settingsLCAgentModelPickerRawModel(settings config.EditableSettings, fieldI
 func settingsLCAgentModelPickerRawReasoning(settings config.EditableSettings, fieldIndex int) string {
 	if fieldIndex == settingsFieldLCAgentModel {
 		return strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
-	}
-	if fieldIndex == settingsFieldLCAgentCriticModel {
-		return strings.TrimSpace(settings.LCAgentCriticReasoning)
 	}
 	return ""
 }
@@ -1189,8 +1159,6 @@ func settingsLCAgentModelPickerRoleLabel(fieldIndex int) string {
 		return "Boss utility model"
 	case settingsFieldLCAgentUtilityModel:
 		return "Utility model"
-	case settingsFieldLCAgentCriticModel:
-		return "Critic model"
 	case settingsFieldLCAgentVisionModel:
 		return "Vision model"
 	default:
@@ -1215,7 +1183,7 @@ func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPicke
 	if state == nil {
 		return options
 	}
-	if state.FieldIndex != settingsFieldLCAgentModel && state.FieldIndex != settingsFieldLCAgentCriticModel {
+	if state.FieldIndex != settingsFieldLCAgentModel {
 		options[0].Summary = "Use provider default reasoning."
 		if settingsFieldUsesLCAgentModelPicker(state.FieldIndex) {
 			options[0].Description = "This role currently follows provider defaults; role-specific reasoning effort can be wired here when the LCAgent runtime supports it."
@@ -1332,21 +1300,6 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 			return settingsModelPickerAppendReasoning(settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentUtilityProvider, provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
 		}
 	}
-	if fieldIndex == settingsFieldLCAgentCriticModel {
-		provider := settingsLCAgentCriticProviderValue(settings.LCAgentCriticProvider)
-		switch provider {
-		case "off":
-			return "Off"
-		case "main":
-			return settingsModelPickerAppendReasoning("Same as Main / "+settingsLCAgentMainModel(settings), settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
-		default:
-			model := strings.TrimSpace(settings.LCAgentCriticModel)
-			if model == "" {
-				model = "Default: " + lcagentDefaultModelForProvider(provider)
-			}
-			return settingsModelPickerAppendReasoning(settingsLCAgentProviderOptionLabelForField(settingsFieldLCAgentCriticProvider, provider)+" / "+model, settingsModelPickerReasoningDisplay(settings, fieldIndex, provider))
-		}
-	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 		switch provider {
@@ -1381,11 +1334,6 @@ func settingsModelPickerAppendReasoning(label, reasoning string) string {
 }
 
 func settingsModelPickerReasoningDisplay(settings config.EditableSettings, fieldIndex int, provider string) string {
-	if fieldIndex == settingsFieldLCAgentCriticModel {
-		if effort := strings.TrimSpace(settings.LCAgentCriticReasoning); effort != "" {
-			return effort
-		}
-	}
 	if fieldIndex == settingsFieldLCAgentModel || strings.EqualFold(strings.TrimSpace(provider), "main") {
 		if effort := strings.TrimSpace(settings.EmbeddedLCAgentReasoning); effort != "" {
 			return effort

@@ -20,59 +20,40 @@ import (
 const lcagentReplayMaxDepth = 20
 
 type lcagentReplay struct {
-	sessionID                    string
-	threadID                     string
-	parentID                     string
-	projectPath                  string
-	model                        string
-	modelProvider                string
-	reasoningEffort              string
-	criticModel                  string
-	criticModelProvider          string
-	visionModel                  string
-	visionModelProvider          string
-	startedAt                    time.Time
-	lastActivityAt               time.Time
-	lastError                    string
-	criticActive                 bool
-	criticReviews                int
-	criticConsultations          int
-	criticConsultConcerns        int
-	criticConcerns               int
-	criticLeadRevisions          int
-	criticFollowupDrafts         int
-	criticLastStatus             string
-	criticLastSummary            string
-	imageAnalysisActive          bool
-	imageAnalyses                int
-	imageAnalysisFailures        int
-	imageAnalysisLastSummary     string
-	qualityCheckpointActive      bool
-	qualityCheckpointPasses      int
-	qualityCheckpointMaxPasses   int
-	qualityCheckpointLastSummary string
-	qualityRepairActive          bool
-	qualityRepairPasses          int
-	qualityRepairMaxPasses       int
-	qualityRepairLastSummary     string
-	qualityPlanUpdates           int
-	qualityPlanPhases            int
-	qualityPlanVerified          int
-	qualityPlanSkipped           int
-	qualityPlanNeedsRepair       int
-	qualityPlanRequiresRuntime   bool
-	qualityPlanRequiresVisual    bool
-	qualityPlanRequiresTemporal  bool
-	qualityPlanLastSummary       string
-	qualityPlanPhaseItems        []QualityPlanPhaseSnapshot
-	suggestedInputDraftID        string
-	suggestedInputDraft          string
-	tokenUsage                   *threadTokenUsage
-	browserActivity              browserctl.SessionActivity
-	managedBrowserSessionKey     string
-	currentBrowserPageURL        string
-	currentBrowserPageStale      bool
-	entries                      []TranscriptEntry
+	sessionID                   string
+	threadID                    string
+	parentID                    string
+	projectPath                 string
+	model                       string
+	modelProvider               string
+	reasoningEffort             string
+	visionModel                 string
+	visionModelProvider         string
+	startedAt                   time.Time
+	lastActivityAt              time.Time
+	lastError                   string
+	imageAnalysisActive         bool
+	imageAnalyses               int
+	imageAnalysisFailures       int
+	imageAnalysisLastSummary    string
+	qualityPlanUpdates          int
+	qualityPlanPhases           int
+	qualityPlanVerified         int
+	qualityPlanSkipped          int
+	qualityPlanNeedsRepair      int
+	qualityPlanRequiresRuntime  bool
+	qualityPlanRequiresVisual   bool
+	qualityPlanRequiresTemporal bool
+	qualityPlanLastSummary      string
+	qualityPlanPhaseItems       []QualityPlanPhaseSnapshot
+	suggestedInputDraftID       string
+	suggestedInputDraft         string
+	tokenUsage                  *threadTokenUsage
+	browserActivity             browserctl.SessionActivity
+	managedBrowserSessionKey    string
+	currentBrowserPageURL       string
+	currentBrowserPageStale     bool
+	entries                     []TranscriptEntry
 }
 
 func loadLCAgentReplay(req LaunchRequest) (*lcagentReplay, error) {
@@ -210,7 +191,7 @@ func loadLCAgentThreadReplay(dataDir string, info lcagentcore.ThreadStateInfo) (
 		}
 		combined.entries = appendReplayEntries(combined.entries, replay.entries)
 		combined.tokenUsage = mergeReplayTokenUsage(combined.tokenUsage, replay.tokenUsage)
-		mergeReplayCriticState(combined, replay)
+		mergeReplayAgentState(combined, replay)
 	}
 	return combined, nil
 }
@@ -293,15 +274,9 @@ func mergeReplayTokenUsage(total, next *threadTokenUsage) *threadTokenUsage {
 	return out
 }
 
-func mergeReplayCriticState(total, next *lcagentReplay) {
+func mergeReplayAgentState(total, next *lcagentReplay) {
 	if total == nil || next == nil {
 		return
-	}
-	if next.criticModel != "" {
-		total.criticModel = next.criticModel
-	}
-	if next.criticModelProvider != "" {
-		total.criticModelProvider = next.criticModelProvider
 	}
 	if next.visionModel != "" {
 		total.visionModel = next.visionModel
@@ -309,38 +284,11 @@ func mergeReplayCriticState(total, next *lcagentReplay) {
 	if next.visionModelProvider != "" {
 		total.visionModelProvider = next.visionModelProvider
 	}
-	total.criticActive = next.criticActive
-	total.criticReviews += next.criticReviews
-	total.criticConsultations += next.criticConsultations
-	total.criticConsultConcerns += next.criticConsultConcerns
-	total.criticConcerns += next.criticConcerns
-	total.criticLeadRevisions += next.criticLeadRevisions
-	total.criticFollowupDrafts += next.criticFollowupDrafts
-	if next.criticLastStatus != "" {
-		total.criticLastStatus = next.criticLastStatus
-		total.criticLastSummary = next.criticLastSummary
-	}
 	total.imageAnalysisActive = next.imageAnalysisActive
 	total.imageAnalyses += next.imageAnalyses
 	total.imageAnalysisFailures += next.imageAnalysisFailures
 	if next.imageAnalysisLastSummary != "" {
 		total.imageAnalysisLastSummary = next.imageAnalysisLastSummary
-	}
-	total.qualityCheckpointActive = next.qualityCheckpointActive
-	total.qualityCheckpointPasses += next.qualityCheckpointPasses
-	if next.qualityCheckpointMaxPasses > 0 {
-		total.qualityCheckpointMaxPasses = next.qualityCheckpointMaxPasses
-	}
-	if next.qualityCheckpointLastSummary != "" {
-		total.qualityCheckpointLastSummary = next.qualityCheckpointLastSummary
-	}
-	total.qualityRepairActive = next.qualityRepairActive
-	total.qualityRepairPasses += next.qualityRepairPasses
-	if next.qualityRepairMaxPasses > 0 {
-		total.qualityRepairMaxPasses = next.qualityRepairMaxPasses
-	}
-	if next.qualityRepairLastSummary != "" {
-		total.qualityRepairLastSummary = next.qualityRepairLastSummary
 	}
 	total.qualityPlanUpdates += next.qualityPlanUpdates
 	total.qualityPlanPhases = next.qualityPlanPhases
@@ -540,59 +488,17 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 				replay.addTokenUsage(usage)
 			}
 			replay.upsertExistingEntry(lcagentModelRequestItemID(event), TranscriptStatus, lcagentModelResponseText(event))
-		case "critic_profile":
-			if rawJSONBool(event["enabled"]) {
-				replay.criticModel = rawJSONString(event["model"])
-				replay.criticModelProvider = rawJSONString(event["provider"])
-			}
 		case "vision_profile":
 			if rawJSONBool(event["enabled"]) {
 				replay.visionModel = rawJSONString(event["model"])
 				replay.visionModelProvider = rawJSONString(event["provider"])
 			}
-		case "critic_review_started":
-			replay.criticActive = true
-			replay.criticLastStatus = "reviewing"
-			replay.criticLastSummary = ""
-		case "critic_model_response":
-			modelName := rawJSONString(event["model"])
-			if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
-				replay.addTokenUsage(usage)
-			}
-		case "critic_model_response_invalid":
-			replay.applyCriticInvalidModelResponse(event)
-		case "critic_review_retry":
-			replay.applyCriticReviewRetry(event)
-		case "critic_review_result":
-			replay.applyCriticReviewResult(event)
-		case "critic_review_failed":
-			replay.applyCriticReviewFailed(event)
-		case "critic_lead_feedback":
-			replay.applyCriticLeadFeedback(event)
-		case "critic_consult_started":
-			replay.applyCriticConsultStarted(event)
-		case "critic_consult_result":
-			replay.applyCriticConsultResult(event)
-		case "critic_consult_failed":
-			replay.applyCriticConsultFailed(event)
 		case "image_analysis_started":
 			replay.applyImageAnalysisStarted(event)
 		case "image_analysis_result":
 			replay.applyImageAnalysisResult(event)
 		case "image_analysis_failed":
 			replay.applyImageAnalysisFailed(event)
-		case "quality_checkpoint_profile":
-			replay.qualityCheckpointMaxPasses = rawJSONInt(event["max_passes"])
-		case "quality_checkpoint_started":
-			replay.applyQualityCheckpointStarted(event)
-		case "quality_checkpoint_feedback":
-			replay.applyQualityCheckpointFeedback(event)
-		case "quality_repair_profile":
-			replay.qualityRepairMaxPasses = rawJSONInt(event["max_passes"])
-		case "quality_repair_feedback":
-			replay.applyQualityRepairFeedback(event)
-		case "quality_repair_cleared":
-			replay.applyQualityRepairCleared(event)
 		case "phase_write_gate_result":
 			replay.applyPhaseWriteGateResult(event)
 		case "phase_write_gate_failed":
@@ -686,127 +592,6 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 	return replay, nil
 }
 
-func (r *lcagentReplay) applyCriticInvalidModelResponse(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	modelName := rawJSONString(event["model"])
-	if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
-		r.addTokenUsage(usage)
-	}
-	attempt := rawJSONInt(event["attempt"])
-	text := "LCAgent critic returned invalid structured output"
-	if attempt > 0 {
-		text += fmt.Sprintf(" on attempt %d", attempt)
-	}
-	if rawJSONBool(event["retrying"]) {
-		text += "; retrying"
-	}
-	r.criticLastStatus = "invalid_json"
-	r.criticLastSummary = strings.TrimSpace(firstNonEmpty(rawJSONString(event["message"]), text))
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyCriticReviewRetry(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	message := firstNonEmpty(rawJSONString(event["message"]), "LCAgent critic retrying")
-	r.criticLastStatus = "retrying"
-	r.criticLastSummary = strings.TrimSpace(message)
-	r.appendEntry(TranscriptStatus, message)
-}
-
-func (r *lcagentReplay) applyCriticReviewResult(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
-	summary := strings.TrimSpace(rawJSONString(event["summary"]))
-	text := lcagentCriticReviewResultText(status, summary)
-	r.criticActive = false
-	r.criticReviews++
-	r.criticLastStatus = firstNonEmpty(status, "complete")
-	r.criticLastSummary = summary
-	if status != "" && status != "clean" {
-		r.criticConcerns++
-	}
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyCriticReviewFailed(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	message := firstNonEmpty(rawJSONString(event["message"]), "critic review failed")
-	prefix := "LCAgent critic unavailable: "
-	if strings.EqualFold(rawJSONString(event["failure_kind"]), "invalid_json") {
-		prefix = "LCAgent critic invalid structured output: "
-	}
-	r.criticActive = false
-	r.criticLastStatus = "failed"
-	r.criticLastSummary = strings.TrimSpace(message)
-	r.appendEntry(TranscriptStatus, prefix+message)
-}
-
-func (r *lcagentReplay) applyCriticLeadFeedback(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	text := lcagentCriticLeadFeedbackText(event)
-	r.criticLeadRevisions++
-	r.criticLastStatus = "lead revision"
-	r.criticLastSummary = strings.TrimSpace(text)
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyCriticConsultStarted(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	text := "LCAgent critic consulting"
-	if question := rawJSONString(event["question"]); question != "" {
-		text += ": " + lcagentCondenseStatusText(question, 160)
-	}
-	r.criticActive = true
-	r.criticLastStatus = "consulting"
-	r.criticLastSummary = ""
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyCriticConsultResult(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	status := normalizeLCAgentCriticReviewStatus(rawJSONString(event["status"]))
-	summary := strings.TrimSpace(rawJSONString(event["summary"]))
-	modelName := rawJSONString(event["model"])
-	if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
-		r.addTokenUsage(usage)
-	}
-	text := lcagentCriticConsultResultText(status, summary)
-	r.criticActive = false
-	r.criticConsultations++
-	r.criticLastStatus = firstNonEmpty(status, "consulted")
-	r.criticLastSummary = summary
-	if status != "" && status != "clean" {
-		r.criticConsultConcerns++
-	}
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyCriticConsultFailed(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	message := firstNonEmpty(rawJSONString(event["message"]), "critic consultation failed")
-	text := "LCAgent critic consultation failed: " + message
-	r.criticActive = false
-	r.criticLastStatus = "consult failed"
-	r.criticLastSummary = strings.TrimSpace(message)
-	r.appendEntry(TranscriptStatus, text)
-}
-
 func (r *lcagentReplay) applyImageAnalysisStarted(event map[string]json.RawMessage) {
 	if r == nil {
 		return
@@ -862,73 +647,6 @@ func (r *lcagentReplay) applyImageAnalysisFailed(event map[string]json.RawMessag
 	r.appendEntry(TranscriptStatus, "LCAgent vision analysis failed: "+message)
 }
 
-func (r *lcagentReplay) applyQualityCheckpointStarted(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	pass := rawJSONInt(event["pass"])
-	maxPasses := rawJSONInt(event["max_passes"])
-	r.qualityCheckpointActive = true
-	if maxPasses > 0 {
-		r.qualityCheckpointMaxPasses = maxPasses
-	}
-	text := lcagentQualityCheckpointStartedText(pass, maxPasses)
-	r.qualityCheckpointLastSummary = ""
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyQualityCheckpointFeedback(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	pass := rawJSONInt(event["pass"])
-	maxPasses := rawJSONInt(event["max_passes"])
-	r.qualityCheckpointActive = false
-	r.qualityCheckpointPasses++
-	if maxPasses > 0 {
-		r.qualityCheckpointMaxPasses = maxPasses
-	}
-	text := lcagentQualityCheckpointFeedbackText(pass, maxPasses)
-	r.qualityCheckpointLastSummary = strings.TrimSpace(text)
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyQualityRepairFeedback(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	pass := rawJSONInt(event["pass"])
-	maxPasses := rawJSONInt(event["max_passes"])
-	r.qualityRepairActive = true
-	if pass > r.qualityRepairPasses {
-		r.qualityRepairPasses = pass
-	}
-	if maxPasses > 0 {
-		r.qualityRepairMaxPasses = maxPasses
-	}
-	text := lcagentQualityRepairFeedbackText(event, pass, maxPasses)
-	r.qualityRepairLastSummary = strings.TrimSpace(text)
-	r.appendEntry(TranscriptStatus, text)
-}
-
-func (r *lcagentReplay) applyQualityRepairCleared(event map[string]json.RawMessage) {
-	if r == nil {
-		return
-	}
-	pass := rawJSONInt(event["passes"])
-	maxPasses := rawJSONInt(event["max_passes"])
-	r.qualityRepairActive = false
-	if pass > r.qualityRepairPasses {
-		r.qualityRepairPasses = pass
-	}
-	if maxPasses > 0 {
-		r.qualityRepairMaxPasses = maxPasses
-	}
-	text := lcagentQualityRepairClearedText(pass, maxPasses)
-	r.qualityRepairLastSummary = strings.TrimSpace(text)
-	r.appendEntry(TranscriptStatus, text)
-}
-
 func (r *lcagentReplay) applyPhaseWriteGateResult(event map[string]json.RawMessage) {
 	if r == nil {
 		return
@@ -970,32 +688,6 @@ func (r *lcagentReplay) applyQualityPlanUpdate(event map[string]json.RawMessage)
 	r.qualityPlanLastSummary = strings.TrimSpace(text)
 	r.qualityPlanPhaseItems = cloneQualityPlanPhaseSnapshots(stats.Items)
 	r.appendEntry(TranscriptStatus, text)
-}
-
-func lcagentCriticReviewResultText(status, summary string) string {
-	text := "LCAgent critic review complete"
-	if status != "" && status != "clean" {
-		text = "LCAgent critic found " + strings.ReplaceAll(status, "_", " ")
-	} else if status == "clean" {
-		text = "LCAgent critic found no concerns"
-	}
-	if strings.TrimSpace(summary) != "" {
-		text += ": " + strings.TrimSpace(summary)
-	}
-	return text
-}
-
-func lcagentCriticConsultResultText(status, summary string) string {
-	text := "LCAgent critic consultation complete"
-	if status != "" && status != "clean" {
-		text = "LCAgent critic consultation found " + strings.ReplaceAll(status, "_", " ")
-	} else if status == "clean" {
-		text = "LCAgent critic consultation found no concerns"
-	}
-	if strings.TrimSpace(summary) != "" {
-		text += ": " + strings.TrimSpace(summary)
-	}
-	return text
 }
 
 func (r *lcagentReplay) addTokenUsage(usage lcrmodel.LLMUsage) {

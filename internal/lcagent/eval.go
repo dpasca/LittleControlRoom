@@ -514,16 +514,6 @@ func writeEvalTextReport(stdout io.Writer, report evalReport) {
 	if report.Summary.OperationalActions > 0 {
 		fmt.Fprintf(stdout, "operational_actions=%d statuses=%v\n", report.Summary.OperationalActions, report.Summary.OperationalActionStatuses)
 	}
-	if report.Summary.CriticReviewResults > 0 || report.Summary.CriticLeadFeedback > 0 || report.Summary.CriticHumanPrompts > 0 || report.Summary.CriticReviewFailures > 0 {
-		fmt.Fprintf(stdout, "critic_reviews=%d modes=%v statuses=%v lead_feedback=%d human_prompts=%d failures=%d\n",
-			report.Summary.CriticReviewResults,
-			report.Summary.CriticReviewModes,
-			report.Summary.CriticReviewStatuses,
-			report.Summary.CriticLeadFeedback,
-			report.Summary.CriticHumanPrompts,
-			report.Summary.CriticReviewFailures,
-		)
-	}
 }
 
 func lcagentEvalSessionFileSet(dataDir string) (map[string]struct{}, error) {
