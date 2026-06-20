@@ -157,7 +157,7 @@ Use "medium" for normal code changes that benefit from a brief plan but do not n
 Use "simple" for direct answers, tiny inspections, or narrowly-scoped edits.
 Set needs_preplan true when the lead should publish a phased update_quality_plan before claiming completion.
 For games, apps, UI, and visual artifacts, set requires_visual_verification true when image analysis is available and the user-facing result should be judged visually.
-Set requires_temporal_visual_verification true when image analysis is available and the visual artifact is interactive, animated, camera-driven, live-updating, stateful, or otherwise expected to change over time; false for static visual artifacts. This should imply one paired temporal sanity check, not repeated visual review loops.
+Set requires_temporal_visual_verification true only when the requested outcome specifically depends on visible change over time, such as animation stability, NPC motion, camera motion, live-updating UI state, or frame-to-frame consistency. Do not set it merely because the artifact is interactive; put targeted temporal acceptance checks in the relevant phase instead.
 Keep suggested_phases concrete and ordered; omit them for simple tasks.
 For games, UI, and visual artifacts, order phases so the recognizable user-facing scene appears early: first a stable render/movement foundation, then the main visible setting/composition, then controls/systems/HUD/NPCs/polish. Do not bury the requested visual identity in late phases behind invisible mechanics.
 For 3D or spatial visual artifacts, include acceptance checks for coordinate/transform sanity, grounded objects, camera framing, plausible scale, and layering/occlusion when those risks are relevant.`
@@ -299,7 +299,7 @@ func planningPreflightLeadMessage(payload planningPreflightPayload) string {
 		b.WriteString(")")
 	}
 	b.WriteString(" and requires a phased quality plan before write tools or completed final_response.\n\n")
-	b.WriteString("Call update_quality_plan before implementation writes or completion. Use phases as execution gates: establish the core behavior first, then the main user-facing shape of the artifact, then layer details, then verify. A full draft is acceptable when that is the natural write shape, but it is still a draft until the phases have concrete evidence.\n")
+	b.WriteString("Call update_quality_plan before implementation writes or completion. Use phases as execution gates: establish the core behavior first, then the main user-facing shape of the artifact, then layer details, then verify. Start by implementing the current phase's realistic slice; do not fold later-phase systems into the first write just because the final artifact will be a single file.\n")
 	if payload.ArtifactType == "game" || payload.ArtifactType == "app" || payload.ArtifactType == "ui" {
 		b.WriteString("For visual artifact work, make the recognizable scene or interface an early phase after the technical foundation; do not defer the requested visual identity behind invisible mechanics.\n")
 		b.WriteString("For 3D or spatial visual work, include checks that objects are grounded or intentionally airborne, important surfaces are not covered by decorative layers, scale/camera framing is plausible, and coordinate transforms are understandable.\n")
@@ -311,7 +311,7 @@ func planningPreflightLeadMessage(payload planningPreflightPayload) string {
 		b.WriteString("\nThe plan should require bounded visual verification.")
 	}
 	if payload.RequiresTemporalVisualVerification {
-		b.WriteString("\nThe plan should require temporal visual verification with one paired observation unless a material visual defect is fixed.")
+		b.WriteString("\nThe plan should include a targeted temporal visual check only for phases whose acceptance depends on visible change over time.")
 	}
 	if len(payload.SuggestedPhases) > 0 {
 		b.WriteString("\n\nSuggested phase outline:")

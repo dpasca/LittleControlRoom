@@ -663,7 +663,7 @@ func TestRunnerRejectsOutOfOrderQualityPlanUpdate(t *testing.T) {
 	}
 }
 
-func TestRunnerRejectsTemporalQualityPlanDowngrade(t *testing.T) {
+func TestRunnerAllowsTemporalQualityPlanDowngrade(t *testing.T) {
 	runner := Runner{
 		qualityPlan: &QualityPlan{
 			ArtifactType:                       "ui",
@@ -681,8 +681,8 @@ func TestRunnerRejectsTemporalQualityPlanDowngrade(t *testing.T) {
 			{Name: "dynamic visual state", Status: "in_progress"},
 		},
 	})
-	if result.Success || !strings.Contains(result.Error, "cannot turn off temporal visual verification") {
-		t.Fatalf("result = %#v, want temporal requirement downgrade rejection", result)
+	if !result.Success {
+		t.Fatalf("result = %#v, want temporal requirement downgrade allowed", result)
 	}
 }
 
@@ -1062,12 +1062,12 @@ func TestRunnerFinalResponseAuditBlocksCompletedWhenRequiredQualityPlanMissing(t
 	}
 
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "partial", Outcome: "partial"})
-	if audit.Code != "quality_plan_partial_unplanned" || !audit.Blocking {
-		t.Fatalf("audit = %#v, partial outcome should be blocked before required quality plan exists", audit)
+	if audit.Blocking {
+		t.Fatalf("audit = %#v, partial outcome should be allowed as honest handoff", audit)
 	}
 }
 
-func TestRunnerFinalResponseAuditBlocksPartialWithOpenRequiredQualityPlan(t *testing.T) {
+func TestRunnerFinalResponseAuditAllowsPartialWithOpenRequiredQualityPlan(t *testing.T) {
 	runner := Runner{
 		QualityPlanRequired: true,
 		qualityPlan: &QualityPlan{
@@ -1079,8 +1079,8 @@ func TestRunnerFinalResponseAuditBlocksPartialWithOpenRequiredQualityPlan(t *tes
 		},
 	}
 	audit := runner.FinalResponseAudit(Action{Type: "final_response", Summary: "phase 1 done", Outcome: "partial"})
-	if audit.Code != "quality_plan_partial_unfinished" || !audit.Blocking || !strings.Contains(audit.Message, "boardwalk environment") {
-		t.Fatalf("audit = %#v, want partial blocked while required phase remains", audit)
+	if audit.Blocking {
+		t.Fatalf("audit = %#v, want partial allowed while required phase remains", audit)
 	}
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "blocked by missing SDK", Outcome: "blocked"})
 	if audit.Blocking {
@@ -1485,6 +1485,25 @@ func TestRunnerFinalResponseAuditAllowsCompletedAfterUnmatchedFailedProbeWhenRep
 	})
 	if audit.Outcome != "pass" || audit.Blocking || audit.VerificationStatus != "verified" {
 		t.Fatalf("audit = %#v, want pass using later passed reported verification", audit)
+	}
+}
+
+func TestRunnerFinalResponseAuditUsesLatestVerificationWhenFinalDoesNotListDetails(t *testing.T) {
+	checks := []tools.VerificationCheck{
+		{
+			Command:  "g++ skate.cpp -o skate -lglfw -framework OpenGL",
+			Status:   tools.VerificationStatusFailed,
+			ExitCode: 1,
+		},
+		{
+			Command: "g++ -I/opt/homebrew/include skate.cpp -o skate -L/opt/homebrew/lib -lglfw -framework OpenGL",
+			Status:  tools.VerificationStatusPassed,
+			Success: true,
+		},
+	}
+	status, message := finalVerificationStatus([]string{"skate.cpp"}, nil, checks)
+	if status != "verified" || !strings.Contains(message, "superseded") {
+		t.Fatalf("status=%q message=%q, want latest passing verification with superseded failure note", status, message)
 	}
 }
 

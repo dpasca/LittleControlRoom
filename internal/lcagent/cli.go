@@ -399,7 +399,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.DurationVar(&requestTimeout, "request-timeout", 0, "provider HTTP request timeout, for example 10m; default 2m")
 	fs.IntVar(&maxTurns, "max-turns", defaultMaxTurns, "maximum model turns for provider loops")
 	fs.IntVar(&qualityCheckpointPasses, "quality-checkpoint-passes", 0, "maximum lead self-review checkpoint passes before accepting final_response")
-	fs.IntVar(&qualityRepairPasses, "quality-repair-passes", 0, "maximum extra critic-driven artifact repair passes after material quality concerns")
+	fs.IntVar(&qualityRepairPasses, "quality-repair-passes", 0, "deprecated no-op; LCAgent now uses one bounded pre-final critic review")
 	fs.IntVar(&searchRefineMinBytes, "search-refine-min-bytes", script.DefaultSearchRefineMinBytes, "minimum search output bytes before utility refinement or compaction")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -835,7 +835,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		}
 	}
 	planningPreflight := newPlanningPreflightProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
-	phaseWriteGateProfile := newPhaseWriteGateProfile(false, utilityProvider, utilityCfg, providerLabel, client.Model())
+	phaseWriteGateProfile := newPhaseWriteGateProfile(planningPreflight.Enabled, utilityProvider, utilityCfg, providerLabel, client.Model())
 	if phaseWriteGateProfile.Enabled {
 		runner.PhaseWriteGate = phaseWriteGate{
 			profile: phaseWriteGateProfile,
@@ -1692,17 +1692,14 @@ type qualityRepairPolicy struct {
 }
 
 func (p qualityRepairPolicy) Enabled() bool {
-	return p.MaxPasses > 0 && p.CriticAvailable
+	return false
 }
 
 func (p qualityRepairPolicy) Message() string {
-	if !p.Enabled() {
-		if p.MaxPasses > 0 && !p.CriticAvailable {
-			return "LCAgent quality repair disabled because no critic is configured."
-		}
-		return "LCAgent quality repair disabled."
+	if p.MaxPasses > 0 {
+		return "LCAgent quality repair passes are deprecated; using one bounded pre-final critic review instead."
 	}
-	return fmt.Sprintf("LCAgent may require up to %d critic-driven artifact repair pass%s before accepting completed final_response.", p.MaxPasses, lcagentPluralSuffix(p.MaxPasses))
+	return "LCAgent quality repair disabled; using phase gates and bounded critic review."
 }
 
 type qualityRepairState struct {
@@ -1766,6 +1763,9 @@ func lcagentPluralSuffix(count int) string {
 
 func maybeApplyCriticLeadFeedback(ctx context.Context, writer *session.Writer, runner script.Runner, critic criticProfile, final script.Action, messages []modeladapter.Message, compacted bool, feedbackCount int, repairPolicy qualityRepairPolicy, repairState *qualityRepairState) (string, string, bool, error) {
 	if feedbackCount > 0 && !repairPolicy.Enabled() {
+		return "", "", false, nil
+	}
+	if !repairPolicy.Enabled() && !qualityRepairShouldReviewFinal(final) {
 		return "", "", false, nil
 	}
 	if !repairPolicy.Enabled() && runner.FileTouchEvents() == 0 {
