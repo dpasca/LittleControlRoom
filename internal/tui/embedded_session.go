@@ -407,7 +407,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		}
 		m.cancelModelSettleLatency(msg.projectPath, "session closed")
 		if !m.markCodexSessionClosedHandled(msg.projectPath) {
-			return m, tea.Batch(cmds...)
+			return m, batchCmds(append(cmds, transcriptRenderCmd, statusRefreshCmd, sidebarDiffRefreshCmd, bossNoticeCmd)...)
 		}
 		if m.codexHiddenProject == msg.projectPath {
 			m.codexHiddenProject = ""
@@ -433,7 +433,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		}
 		m.dropCodexSnapshot(msg.projectPath)
 	}
-	return m, tea.Batch(cmds...)
+	return m, batchCmds(append(cmds, transcriptRenderCmd, statusRefreshCmd, sidebarDiffRefreshCmd, bossNoticeCmd)...)
 }
 
 func (m *Model) ackCodexUpdate(projectPath string) {
@@ -594,7 +594,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 	m.removeManagedBrowserLease(projectPath, snapshot)
 	m.cancelModelSettleLatency(projectPath, "session closed")
 	if !m.markCodexSessionClosedHandled(projectPath) {
-		return m, nil
+		return m, batchCmds(transcriptRenderCmd, linkScanCmd, browserStateCmd, bossNoticeCmd)
 	}
 	if m.codexHiddenProject == projectPath {
 		m.codexHiddenProject = ""
@@ -605,7 +605,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		m.status = snapshot.Status
 	}
 	m.loading = true
-	cmds := []tea.Cmd{linkScanCmd, browserStateCmd, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))}
+	cmds := []tea.Cmd{transcriptRenderCmd, statusRefreshCmd, sidebarDiffRefreshCmd, linkScanCmd, browserStateCmd, bossNoticeCmd, m.requestProjectInvalidationCmd(invalidateProjectScan("", false))}
 	if shouldRecordEmbeddedSessionSettledAfterClose(hadPrev, prevSnapshot, snapshot) {
 		cmds = append([]tea.Cmd{m.recordEmbeddedSessionSettledCmd(projectPath, snapshot)}, cmds...)
 	}

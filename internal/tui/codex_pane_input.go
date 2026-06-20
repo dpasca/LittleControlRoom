@@ -78,7 +78,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.codexDenseBlockMode = m.codexDenseBlockMode.next()
 		m.status = m.codexDenseBlockMode.statusText()
 		m.syncCodexViewport(false)
-		return m, nil
+		return m, m.requestVisibleCodexTranscriptRenderCmd()
 	case "alt+o":
 		return m.openCodexArtifactPicker(snapshot)
 	case "ctrl+c":

@@ -3469,6 +3469,101 @@ func TestStreamingTranscriptRenderCoalescesAndAppliesStaleContent(t *testing.T) 
 	}
 }
 
+func TestClosedHeavyTranscriptUpdateReturnsDeferredRender(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 20),
+		width:               80,
+		height:              20,
+	}
+	snapshot := streamingHeavyTranscriptSnapshot(projectPath, "closed transcript content")
+	snapshot.Busy = false
+	snapshot.Closed = true
+	snapshot.Status = "Codex session closed"
+	m.storeCodexSnapshot(projectPath, snapshot)
+
+	updated, cmd := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: projectPath})
+	got := normalizeUpdateModel(updated)
+	if rendered := ansi.Strip(got.codexViewport.View()); strings.Contains(rendered, "closed transcript content") {
+		t.Fatalf("closed heavy transcript should not render synchronously: %q", rendered)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var renderMsg codexTranscriptRenderedMsg
+	found := false
+	for _, msg := range msgs {
+		if typed, ok := msg.(codexTranscriptRenderedMsg); ok {
+			renderMsg = typed
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("closed heavy transcript update command messages = %#v, want codexTranscriptRenderedMsg", msgs)
+	}
+
+	updated, _ = got.applyCodexTranscriptRenderedMsg(renderMsg)
+	got = normalizeUpdateModel(updated)
+	rendered := ansi.Strip(got.codexViewport.View())
+	if strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("closed heavy transcript render should replace the placeholder: %q", rendered)
+	}
+	if !strings.Contains(rendered, "closed transcript content 24") {
+		t.Fatalf("closed heavy transcript render should populate the transcript: %q", rendered)
+	}
+}
+
+func TestCodexAltLDenseModeQueuesDeferredRenderForHeavyTranscript(t *testing.T) {
+	projectPath := "/tmp/demo"
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(80, 20),
+		width:               80,
+		height:              20,
+	}
+	snapshot := streamingHeavyTranscriptSnapshot(projectPath, "alt l transcript content")
+	snapshot.Busy = false
+	m.storeCodexSnapshot(projectPath, snapshot)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
+	got := normalizeUpdateModel(updated)
+	if got.codexDenseBlockMode != codexDenseBlockPreview {
+		t.Fatalf("codexDenseBlockMode = %v, want preview", got.codexDenseBlockMode)
+	}
+	if rendered := ansi.Strip(got.codexViewport.View()); !strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("heavy transcript mode change should show placeholder before deferred render: %q", rendered)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var renderMsg codexTranscriptRenderedMsg
+	found := false
+	for _, msg := range msgs {
+		if typed, ok := msg.(codexTranscriptRenderedMsg); ok {
+			renderMsg = typed
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("heavy transcript mode change command messages = %#v, want codexTranscriptRenderedMsg", msgs)
+	}
+
+	updated, _ = got.applyCodexTranscriptRenderedMsg(renderMsg)
+	got = normalizeUpdateModel(updated)
+	rendered := ansi.Strip(got.codexViewport.View())
+	if strings.Contains(rendered, "Transcript is updating") {
+		t.Fatalf("heavy transcript mode render should replace the placeholder: %q", rendered)
+	}
+	if !strings.Contains(rendered, "alt l transcript content 24") {
+		t.Fatalf("heavy transcript mode render should populate the transcript: %q", rendered)
+	}
+}
+
 func TestStreamingTranscriptSyncKeepsStaleSmallViewportContent(t *testing.T) {
 	projectPath := "/tmp/demo"
 	m := Model{
