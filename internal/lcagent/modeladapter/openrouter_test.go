@@ -105,7 +105,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["update_plan"], `{"items":[{"step":"Inspect files","status":"completed"}`) {
 		t.Fatalf("update_plan description should include a concrete args example: %q", descriptions["update_plan"])
 	}
-	if !strings.Contains(descriptions["update_quality_plan"], "phased quality plan") || !strings.Contains(descriptions["update_quality_plan"], "completed final_response is audited") || !strings.Contains(descriptions["update_quality_plan"], "comparison_path") {
+	if !strings.Contains(descriptions["update_quality_plan"], "phased quality plan") || !strings.Contains(descriptions["update_quality_plan"], "completed final_response is audited") || !strings.Contains(descriptions["update_quality_plan"], "comparison_path") || !strings.Contains(descriptions["update_quality_plan"], "Do not mark visual") {
 		t.Fatalf("update_quality_plan description should explain phased audit behavior: %q", descriptions["update_quality_plan"])
 	}
 	qualityPlanSpec := toolSpec(t, Tools(), "update_quality_plan")
@@ -134,7 +134,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 
 func TestToolsWithOptionsExposeConsultCriticWhenEnabled(t *testing.T) {
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{CriticConsultEnabled: true}), "consult_critic")
-	if !strings.Contains(spec.Description, "critic model") || !strings.Contains(spec.Description, "advisory") {
+	if !strings.Contains(spec.Description, "critic model") || !strings.Contains(spec.Description, "advisory") || !strings.Contains(spec.Description, "still room to act") {
 		t.Fatalf("consult_critic description = %q", spec.Description)
 	}
 	props := spec.Parameters["properties"].(map[string]any)
@@ -184,6 +184,18 @@ func TestSystemPromptVisionGuidanceIsBounded(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("vision prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestSystemPromptQualityEvidenceRejectsCodeOnlyVerification(t *testing.T) {
+	prompt := SystemPrompt("", "")
+	for _, want := range []string{
+		"Do not mark a visual, interactive, or user-facing phase verified merely because the code contains objects or functions for it",
+		"Verification evidence must show the requested behavior or visible result actually works or appears",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("quality prompt missing %q:\n%s", want, prompt)
 		}
 	}
 }
@@ -443,7 +455,7 @@ func TestSystemPromptIncludesCriticConsultGuidanceWhenEnabled(t *testing.T) {
 		t.Fatalf("default prompt should not mention consult_critic:\n%s", disabled)
 	}
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{CriticConsultEnabled: true})
-	for _, want := range []string{"consult_critic is available", "optional advisory review", "focused second opinions"} {
+	for _, want := range []string{"consult_critic is available", "optional advisory review", "focused second opinions", "while there is still room to act"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("critic consult prompt missing %q:\n%s", want, prompt)
 		}

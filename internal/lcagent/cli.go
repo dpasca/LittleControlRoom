@@ -2092,7 +2092,7 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 	if err := writeModelContextSnapshot(writer, threadStore, runner.SessionID, "final_handoff", snapshotMessages, true); err != nil {
 		return err
 	}
-	return maybeRunTraceCritic(ctx, writer, runner, critic, final, snapshotMessages, true)
+	return nil
 }
 
 func finalizeMaxTurnsFallback(writer *session.Writer, runner script.Runner, threadStore *threadStateStore, compactedMessages []modeladapter.Message, maxTurns int, filesChanged []string, verification []string, reason string) error {

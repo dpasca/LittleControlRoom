@@ -229,6 +229,7 @@ type PhaseWriteGateResult struct {
 type CriticConsultFinding struct {
 	Severity          string `json:"severity"`
 	Materiality       string `json:"materiality,omitempty"`
+	Basis             string `json:"basis,omitempty"`
 	Claim             string `json:"claim"`
 	EvidenceSource    string `json:"evidence_source"`
 	Evidence          string `json:"evidence"`
@@ -3010,8 +3011,13 @@ func formatCriticConsultResult(result CriticConsultResult) string {
 			}
 			severity := firstNonEmpty(strings.TrimSpace(finding.Severity), "medium")
 			materiality := strings.TrimSpace(finding.Materiality)
-			if materiality != "" {
+			basis := strings.TrimSpace(finding.Basis)
+			if materiality != "" && basis != "" {
+				fmt.Fprintf(&b, "- [%s/%s, %s] %s\n", severity, materiality, basis, claim)
+			} else if materiality != "" {
 				fmt.Fprintf(&b, "- [%s/%s] %s\n", severity, materiality, claim)
+			} else if basis != "" {
+				fmt.Fprintf(&b, "- [%s, %s] %s\n", severity, basis, claim)
 			} else {
 				fmt.Fprintf(&b, "- [%s] %s\n", severity, claim)
 			}

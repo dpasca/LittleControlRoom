@@ -177,7 +177,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "consult_critic",
-				Description: "Ask the configured critic model for a focused advisory second opinion. Use this when you are uncertain about a plan, patch, debugging hypothesis, or final claims. It is advisory only: keep working from tool evidence and remain responsible for the decision.",
+				Description: "Ask the configured critic model for a focused advisory second opinion. Use this when you are uncertain about a plan, patch, debugging hypothesis, phase-level quality, or final claims, preferably while there is still room to act. It is advisory only: keep working from tool evidence and remain responsible for the decision.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -449,7 +449,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "update_quality_plan",
-				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. Phases are sequential execution gates: keep at most one active phase, leave later phases planned, and advance at most one phase after concrete evidence. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, visual verification must have analyze_image evidence when required, and temporal visual verification must have analyze_image evidence with comparison_path when required. Visual evidence is a bounded gate, not a loop; one focused visual check, or one paired temporal check, is normally enough per meaningful visual state.",
+				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. Phases are sequential execution gates: keep at most one active phase, leave later phases planned, and advance at most one phase after concrete evidence. Do not mark visual, interactive, or user-facing phases verified merely because code for them exists; evidence must show the requested behavior or visible result actually works or appears. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, visual verification must have analyze_image evidence when required, and temporal visual verification must have analyze_image evidence with comparison_path when required. Visual evidence is a bounded gate, not a loop; one focused visual check, or one paired temporal check, is normally enough per meaningful visual state.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
