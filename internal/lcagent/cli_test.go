@@ -983,12 +983,11 @@ func TestRunExecOpenRouterCriticBouncesCandidateFinalOnce(t *testing.T) {
 	}
 }
 
-func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing.T) {
+func TestRunExecOpenRouterDeprecatedQualityRepairUsesSingleCriticFeedback(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	sawRepairFeedback := false
-	sawNoEvidenceFeedback := false
+	sawCriticFeedback := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.URL.Path != "/chat/completions" {
@@ -1001,6 +1000,58 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 		w.Header().Set("Content-Type", "application/json")
 		switch requests {
 		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_create_file",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_create_file",
+							"type": "function",
+							"function": map[string]any{
+								"name": "create_file",
+								"arguments": map[string]any{
+									"path":    "game.txt",
+									"content": "rough visual game placeholder\n",
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 2:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 2 model = %q, want lead model", body["model"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":    "resp_verify_file",
+				"model": "deepseek/test-model",
+				"choices": []any{map[string]any{
+					"finish_reason": "tool_calls",
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []any{map[string]any{
+							"id":   "call_verify_file",
+							"type": "function",
+							"function": map[string]any{
+								"name": "run_command",
+								"arguments": map[string]any{
+									"argv":    []any{"test", "-f", "game.txt"},
+									"purpose": "verify",
+								},
+							},
+						}},
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
+			})
+		case 3:
+			if body["model"] != "deepseek/test-model" {
+				t.Fatalf("request 3 model = %q, want lead model", body["model"])
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":    "resp_bad_final",
 				"model": "deepseek/test-model",
@@ -1016,7 +1067,7 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 								"arguments": map[string]any{
 									"summary":       "visual game is excellent",
 									"outcome":       "completed",
-									"files_changed": []any{},
+									"files_changed": []any{"game.txt"},
 									"verification":  []any{},
 								},
 							},
@@ -1025,9 +1076,9 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 				}},
 				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
 			})
-		case 2:
+		case 4:
 			if body["model"] != "critic/test-model" {
-				t.Fatalf("request 2 model = %q, want critic model", body["model"])
+				t.Fatalf("request 4 model = %q, want critic model", body["model"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":    "resp_critic",
@@ -1041,48 +1092,15 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 				}},
 				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
 			})
-		case 3:
+		case 5:
 			if body["model"] != "deepseek/test-model" {
-				t.Fatalf("request 3 model = %q, want lead model", body["model"])
+				t.Fatalf("request 5 model = %q, want lead model", body["model"])
 			}
 			messagesJSON, _ := json.Marshal(body["messages"])
-			if !strings.Contains(string(messagesJSON), "Quality repair required") {
-				t.Fatalf("lead retry did not receive quality repair feedback:\n%s", messagesJSON)
+			if !strings.Contains(string(messagesJSON), "Critic feedback before final_response") {
+				t.Fatalf("lead retry did not receive critic feedback:\n%s", messagesJSON)
 			}
-			sawRepairFeedback = true
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":    "resp_repeated_completed",
-				"model": "deepseek/test-model",
-				"choices": []any{map[string]any{
-					"finish_reason": "tool_calls",
-					"message": map[string]any{
-						"role": "assistant",
-						"tool_calls": []any{map[string]any{
-							"id":   "call_repeated_final",
-							"type": "function",
-							"function": map[string]any{
-								"name": "final_response",
-								"arguments": map[string]any{
-									"summary":       "toned down summary only",
-									"outcome":       "completed",
-									"files_changed": []any{},
-									"verification":  []any{},
-								},
-							},
-						}},
-					},
-				}},
-				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
-			})
-		case 4:
-			if body["model"] != "deepseek/test-model" {
-				t.Fatalf("request 4 model = %q, want lead model", body["model"])
-			}
-			messagesJSON, _ := json.Marshal(body["messages"])
-			if !strings.Contains(string(messagesJSON), "has not been followed by a new artifact change, targeted inspection, image analysis, or verification check") {
-				t.Fatalf("lead retry did not receive no-evidence repair gate:\n%s", messagesJSON)
-			}
-			sawNoEvidenceFeedback = true
+			sawCriticFeedback = true
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":    "resp_partial_final",
 				"model": "deepseek/test-model",
@@ -1121,31 +1139,30 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 		"exec",
 		"--cwd", root,
 		"--data-dir", t.TempDir(),
-		"--auto", "off",
+		"--auto", "medium",
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", "deepseek/test-model",
 		"--critic-provider", "openrouter",
 		"--critic-model", "critic/test-model",
 		"--quality-repair-passes", "3",
-		"--max-turns", "5",
+		"--max-turns", "7",
 		"make a visual game",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if requests != 4 {
-		t.Fatalf("requests = %d, want 4\nstdout=%s", requests, stdout.String())
+	if requests != 5 {
+		t.Fatalf("requests = %d, want 5\nstdout=%s", requests, stdout.String())
 	}
-	if !sawRepairFeedback || !sawNoEvidenceFeedback {
-		t.Fatalf("repair feedback observed = %v no-evidence = %v", sawRepairFeedback, sawNoEvidenceFeedback)
+	if !sawCriticFeedback {
+		t.Fatalf("critic feedback was not observed")
 	}
 	text := stdout.String()
 	for _, want := range []string{
 		`"type":"quality_repair_profile"`,
-		`"type":"quality_repair_feedback"`,
-		`"reason":"critic_material_finding"`,
-		`"reason":"no_new_evidence"`,
+		`"enabled":false`,
+		`"type":"critic_lead_feedback"`,
 		`"summary":"partial: visual quality remains unresolved"`,
 		`"final_outcome":"partial"`,
 	} {
@@ -1155,11 +1172,10 @@ func TestRunExecOpenRouterQualityRepairBlocksCompletedWithoutEvidence(t *testing
 	}
 }
 
-func TestRunExecOpenRouterQualityRepairReviewsUnknownPlainFinal(t *testing.T) {
+func TestRunExecOpenRouterDeprecatedQualityRepairDoesNotReviewPlainFinalWithoutChanges(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
 	requests := 0
-	sawRepairFeedback := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.URL.Path != "/chat/completions" {
@@ -1183,55 +1199,6 @@ func TestRunExecOpenRouterQualityRepairReviewsUnknownPlainFinal(t *testing.T) {
 					},
 				}},
 				"usage": map[string]any{"prompt_tokens": 8, "completion_tokens": 4, "total_tokens": 12},
-			})
-		case 2:
-			if body["model"] != "critic/test-model" {
-				t.Fatalf("request 2 model = %q, want critic model", body["model"])
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":    "resp_critic",
-				"model": "critic/test-model",
-				"choices": []any{map[string]any{
-					"finish_reason": "stop",
-					"message": map[string]any{
-						"role":    "assistant",
-						"content": `{"status":"concerns","confidence":0.9,"summary":"plain final overclaims visual quality","findings":[{"severity":"high","materiality":"high","claim":"visual quality is unverified but claimed complete","evidence_source":"final_summary","evidence":"the final says the visual game is complete and excellent without verification evidence","user_impact":"the user may accept a poor visual artifact as finished","suggested_followup":"verify visually or mark the outcome partial"}],"lead_instruction":"Run visual verification or finish partial; do not claim completion from this evidence.","human_prompt":"","proposed_user_message":""}`,
-					},
-				}},
-				"usage": map[string]any{"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18},
-			})
-		case 3:
-			if body["model"] != "deepseek/test-model" {
-				t.Fatalf("request 3 model = %q, want lead model", body["model"])
-			}
-			messagesJSON, _ := json.Marshal(body["messages"])
-			if !strings.Contains(string(messagesJSON), "Quality repair required") {
-				t.Fatalf("lead retry did not receive quality repair feedback:\n%s", messagesJSON)
-			}
-			sawRepairFeedback = true
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":    "resp_partial_final",
-				"model": "deepseek/test-model",
-				"choices": []any{map[string]any{
-					"finish_reason": "tool_calls",
-					"message": map[string]any{
-						"role": "assistant",
-						"tool_calls": []any{map[string]any{
-							"id":   "call_partial_final",
-							"type": "function",
-							"function": map[string]any{
-								"name": "final_response",
-								"arguments": map[string]any{
-									"summary":       "partial: visual quality remains unverified",
-									"outcome":       "partial",
-									"files_changed": []any{},
-									"verification":  []any{},
-								},
-							},
-						}},
-					},
-				}},
-				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 4, "total_tokens": 13},
 			})
 		default:
 			t.Fatalf("unexpected request %d", requests)
@@ -1260,21 +1227,21 @@ func TestRunExecOpenRouterQualityRepairReviewsUnknownPlainFinal(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	if requests != 3 {
-		t.Fatalf("requests = %d, want 3\nstdout=%s", requests, stdout.String())
-	}
-	if !sawRepairFeedback {
-		t.Fatalf("repair feedback was not observed")
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1\nstdout=%s", requests, stdout.String())
 	}
 	text := stdout.String()
 	for _, want := range []string{
-		`"type":"quality_repair_feedback"`,
-		`"reason":"critic_material_finding"`,
-		`"final_outcome":"partial"`,
+		`"type":"quality_repair_profile"`,
+		`"enabled":false`,
+		`"summary":"The visual game is complete and looks excellent."`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, `"type":"quality_repair_feedback"`) || strings.Contains(text, `"type":"critic_review_started"`) {
+		t.Fatalf("deprecated repair path unexpectedly reviewed plain final:\n%s", text)
 	}
 }
 
@@ -3740,8 +3707,8 @@ func TestShouldBounceFinalAuditAlwaysBouncesBrowserWaitRequirement(t *testing.T)
 	if shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: true}, 1) {
 		t.Fatal("ordinary blocking audit should keep the existing one-feedback limit")
 	}
-	if !shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: true, Code: "quality_plan_partial_unfinished"}, 3) {
-		t.Fatal("quality plan audit should keep bouncing until the phase plan is resolved")
+	if shouldBounceFinalAudit(script.FinalResponseAudit{Blocking: false, Code: "quality_plan_partial_unfinished"}, 3) {
+		t.Fatal("non-blocking quality plan partial handoff should not bounce")
 	}
 }
 

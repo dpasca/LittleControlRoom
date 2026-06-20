@@ -510,7 +510,10 @@ func (r *Runner) qualityPlanTerminalBlock(finalOutcome string, verificationCheck
 	if finalOutcome == "completed" {
 		return r.qualityPlanCompletionBlock(verificationChecks)
 	}
-	if finalOutcome != "partial" && finalOutcome != "unknown" {
+	if finalOutcome == "partial" {
+		return nil
+	}
+	if finalOutcome != "unknown" {
 		return nil
 	}
 	if r == nil {
@@ -780,10 +783,6 @@ func (r *Runner) validateQualityPlanProgression(plan QualityPlan) tools.ToolResu
 	}
 	if r.qualityPlan.RequiresVisualVerification && !plan.RequiresVisualVerification {
 		message := "quality plan cannot turn off visual verification after it was required; keep the requirement or finish partial/blocked/failed if evidence is unavailable"
-		return tools.ToolResult{Success: false, Error: message}
-	}
-	if r.qualityPlan.RequiresTemporalVisualVerification && !plan.RequiresTemporalVisualVerification {
-		message := "quality plan cannot turn off temporal visual verification after it was required; keep the requirement or finish partial/blocked/failed if evidence is unavailable"
 		return tools.ToolResult{Success: false, Error: message}
 	}
 	oldCompleted := qualityPlanCompletedPrefix(r.qualityPlan.Phases)
@@ -3552,18 +3551,25 @@ func patchFeedbackEvent(sessionID string, feedback PatchFeedback) session.Event 
 
 func finalVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck) (string, string) {
 	if len(actualChecks) > 0 {
-		finalChecks := latestVerificationOutcomes(relevantVerificationChecks(verification, actualChecks))
-		if len(finalChecks) == 0 && len(verification) > 0 {
-			finalChecks = latestVerificationOutcomes(passedVerificationChecks(actualChecks))
+		finalChecks := []tools.VerificationCheck(nil)
+		if len(verification) > 0 {
+			finalChecks = latestVerificationOutcomes(relevantVerificationChecks(verification, actualChecks))
+			if len(finalChecks) == 0 {
+				finalChecks = latestVerificationOutcomes(passedVerificationChecks(actualChecks))
+			}
 		}
 		if len(finalChecks) == 0 {
-			finalChecks = latestVerificationOutcomes(actualChecks)
+			latest := actualChecks[len(actualChecks)-1]
+			finalChecks = []tools.VerificationCheck{latest}
 		}
 		failed := failedVerificationChecks(finalChecks)
 		if len(failed) > 0 {
 			return "failed", "Verification checks failed: " + strings.Join(formatVerificationChecks(failed, 3), "; ")
 		}
 		message := "Verification checks passed: " + strings.Join(formatVerificationChecks(finalChecks, 3), "; ")
+		if len(olderFailedVerificationChecks(actualChecks, finalChecks)) > 0 {
+			message += ". Earlier failed verification attempts were superseded by the latest passing check."
+		}
 		if len(verification) == 0 {
 			message += ". final_response did not list verification details."
 		}
@@ -3658,6 +3664,28 @@ func passedVerificationChecks(checks []tools.VerificationCheck) []tools.Verifica
 		}
 	}
 	return passed
+}
+
+func olderFailedVerificationChecks(allChecks, finalChecks []tools.VerificationCheck) []tools.VerificationCheck {
+	if len(allChecks) == 0 || len(finalChecks) == 0 {
+		return nil
+	}
+	finalKeys := make(map[string]int, len(finalChecks))
+	for _, check := range finalChecks {
+		finalKeys[verificationCheckIdentity(check)]++
+	}
+	var out []tools.VerificationCheck
+	for _, check := range allChecks {
+		key := verificationCheckIdentity(check)
+		if finalKeys[key] > 0 {
+			finalKeys[key]--
+			continue
+		}
+		if check.Status != tools.VerificationStatusPassed {
+			out = append(out, check)
+		}
+	}
+	return out
 }
 
 func formatVerificationChecks(checks []tools.VerificationCheck, limit int) []string {
