@@ -862,7 +862,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"enabled":    critic.Enabled,
 		"provider":   critic.Provider,
 		"model":      critic.Model,
-		"mode":       "pre_final",
+		"mode":       "optional_tool",
 		"message":    critic.Message,
 	}); err != nil {
 		return err

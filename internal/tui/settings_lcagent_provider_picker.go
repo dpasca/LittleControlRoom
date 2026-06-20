@@ -95,44 +95,44 @@ func settingsLCAgentCriticProviderOptions() []settingsLCAgentProviderOption {
 		{
 			Value:       "off",
 			Label:       "Off",
-			Summary:     "Disable the post-turn critic.",
-			Description: "Default for normal use. LCAgent completes turns without an extra trace-only model review.",
+			Summary:     "Disable consult_critic.",
+			Description: "Default for normal use. LCAgent completes turns without offering a separate critic model.",
 		},
 		{
 			Value:       "main",
 			Label:       "Same as Main",
-			Summary:     "Use the Main Model provider and model for critic review.",
-			Description: "The critic runs after the lead turn completes, reviews only the captured packet, and sends material feedback back to the lead.",
+			Summary:     "Use the Main Model provider and model for optional consult_critic calls.",
+			Description: "The lead can ask the same model for a bounded second opinion when it decides that would help.",
 		},
 		{
 			Value:       "openrouter",
 			Label:       "OpenRouter",
-			Summary:     "Use OpenRouter for post-turn critic review.",
+			Summary:     "Use OpenRouter for optional consult_critic calls.",
 			Description: "Uses the saved OpenRouter API key. Leave Critic Model blank to use the standard OpenRouter LCAgent model default.",
 		},
 		{
 			Value:       "openai",
 			Label:       "OpenAI",
-			Summary:     "Use direct OpenAI for post-turn critic review.",
-			Description: "Useful for a high-grade no-tool review model that looks only at the captured turn packet.",
+			Summary:     "Use direct OpenAI for optional consult_critic calls.",
+			Description: "Useful when the lead should be able to ask a stronger model for a bounded second opinion.",
 		},
 		{
 			Value:       "deepseek",
 			Label:       "DeepSeek",
-			Summary:     "Use direct DeepSeek for post-turn critic review.",
+			Summary:     "Use direct DeepSeek for optional consult_critic calls.",
 			Description: "Uses the saved DeepSeek API key. Leave Critic Model blank to use the standard DeepSeek LCAgent model default.",
 		},
 		{
 			Value:       "moonshot",
 			Label:       "Moonshot",
-			Summary:     "Use direct Moonshot/Kimi for post-turn critic review.",
-			Description: "Uses the saved Moonshot API key. The critic receives no tools and cannot change files.",
+			Summary:     "Use direct Moonshot/Kimi for optional consult_critic calls.",
+			Description: "Uses the saved Moonshot API key when the lead asks for a bounded second opinion.",
 		},
 		{
 			Value:       "xiaomi",
 			Label:       "Xiaomi",
-			Summary:     "Use direct Xiaomi MiMo for post-turn critic review.",
-			Description: "Uses the saved Xiaomi API key. The critic receives no tools and cannot change files.",
+			Summary:     "Use direct Xiaomi MiMo for optional consult_critic calls.",
+			Description: "Uses the saved Xiaomi API key when the lead asks for a bounded second opinion.",
 		},
 	}
 }
@@ -140,10 +140,16 @@ func settingsLCAgentCriticProviderOptions() []settingsLCAgentProviderOption {
 func settingsLCAgentVisionProviderOptions() []settingsLCAgentProviderOption {
 	return []settingsLCAgentProviderOption{
 		{
+			Value:       "auto",
+			Label:       "Auto",
+			Summary:     "Use the Main Model only after it passes the live image-input check.",
+			Description: "Default for normal use. Press v on the Main Model or Vision Provider field to verify image input; until verified, image analysis stays off.",
+		},
+		{
 			Value:       "off",
 			Label:       "Off",
 			Summary:     "Disable image analysis.",
-			Description: "Default for normal use. LCAgent still captures screenshot paths, but it will not call a vision model to inspect pixels.",
+			Description: "LCAgent still captures screenshot paths, but it will not call a vision model to inspect pixels.",
 		},
 		{
 			Value:       "main",
@@ -403,7 +409,9 @@ func settingsLCAgentProviderOptionValueForField(fieldIndex int, raw string) stri
 	}
 	if fieldIndex == settingsFieldLCAgentVisionProvider {
 		switch normalized {
-		case "", "off":
+		case "", "auto":
+			return "auto"
+		case "off":
 			return "off"
 		case "main", "same", "same-as-main":
 			return "main"
@@ -431,7 +439,7 @@ func settingsLCAgentProviderOptionLabelForField(fieldIndex int, raw string) stri
 		return "Off"
 	}
 	if fieldIndex == settingsFieldLCAgentVisionProvider {
-		return "Off"
+		return "Auto"
 	}
 	return "OpenRouter"
 }

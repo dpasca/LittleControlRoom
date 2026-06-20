@@ -201,7 +201,7 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 	}
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
-		if visionProvider == "off" && providerOverride == "" {
+		if (visionProvider == "off" || visionProvider == "auto") && providerOverride == "" {
 			return codexapp.LCAgentModelListConfig{}, "", "", false
 		}
 		if visionProvider != "main" {
@@ -1350,6 +1350,8 @@ func settingsLCAgentModelValueLabel(settings config.EditableSettings, fieldIndex
 	if fieldIndex == settingsFieldLCAgentVisionModel {
 		provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 		switch provider {
+		case "auto":
+			return settingsLCAgentVisionAutoLabel(settings)
 		case "off":
 			return "Off"
 		case "main":

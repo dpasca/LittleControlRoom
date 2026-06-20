@@ -34,6 +34,31 @@ func TestSettingsLCAgentModelListConfigUsesUtilityProvider(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentVisionAutoUsesVerifiedMainForLaunch(t *testing.T) {
+	settings := config.EditableSettings{
+		LCAgentProvider:       "openai",
+		EmbeddedLCAgentModel:  "gpt-5.4",
+		LCAgentVisionProvider: "auto",
+		LCAgentVisionModel:    "gpt-5.4-mini",
+	}
+
+	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "off" {
+		t.Fatalf("unverified auto launch provider = %q, want off", got)
+	}
+	if got := settingsLCAgentVisionModelForLaunch(settings); got != "" {
+		t.Fatalf("unverified auto launch model = %q, want blank", got)
+	}
+
+	settings.LCAgentMainVisionProvider = "openai"
+	settings.LCAgentMainVisionModel = "gpt-5.4"
+	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "main" {
+		t.Fatalf("verified auto launch provider = %q, want main", got)
+	}
+	if got := settingsLCAgentVisionModelForLaunch(settings); got != "" {
+		t.Fatalf("verified auto launch model = %q, want blank", got)
+	}
+}
+
 func TestSettingsLCAgentModelListConfigProviderOverrideWorksWhenRoleIsOff(t *testing.T) {
 	settings := config.EditableSettings{
 		LCAgentProvider:       "deepseek",

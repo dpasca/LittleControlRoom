@@ -518,8 +518,17 @@ type settingsSavedMsg struct {
 }
 
 type settingsLCAgentVisionCheckMsg struct {
-	result codexapp.LCAgentVisionCheckResult
-	err    error
+	result       codexapp.LCAgentVisionCheckResult
+	err          error
+	checkedMain  bool
+	mainProvider string
+	mainModel    string
+}
+
+type settingsLCAgentVisionCapabilitySavedMsg struct {
+	settings config.EditableSettings
+	path     string
+	err      error
 }
 
 type codexLCAgentProviderSetupSavedMsg struct {
@@ -2263,6 +2272,16 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applySettingsLCAgentModelListMsg(msg)
 	case settingsLCAgentVisionCheckMsg:
 		return m.applySettingsLCAgentVisionCheckMsg(msg)
+	case settingsLCAgentVisionCapabilitySavedMsg:
+		if msg.err != nil {
+			m.reportError("LCAgent vision capability save failed", msg.err, "")
+			m.status = "LCAgent vision capability check succeeded, but saving the capability cache failed: " + truncateText(msg.err.Error(), 160)
+			return m, nil
+		}
+		saved := cloneEditableSettings(msg.settings)
+		m.settingsBaseline = &saved
+		m.settingsConfigPath = strings.TrimSpace(msg.path)
+		return m, nil
 	case codexLCAgentProviderSetupSavedMsg:
 		return m.applyCodexLCAgentProviderSetupSavedMsg(msg)
 	case setupSavedMsg:
