@@ -3185,6 +3185,8 @@ func lcagentCriticProviderValue(configured string) string {
 	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_CRITIC_PROVIDER"))))
 	value = strings.ReplaceAll(value, "_", "-")
 	switch value {
+	case "auto":
+		return "auto"
 	case "main", "same", "same-as-main":
 		return "main"
 	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
@@ -3222,7 +3224,7 @@ func lcagentVisionProviderValue(configured string) string {
 func lcagentResolvedVisionProvider(routePreset string, mainProvider string, configured string) string {
 	visionProvider := lcagentVisionProviderValue(configured)
 	switch visionProvider {
-	case "off":
+	case "auto", "off":
 		return ""
 	case "main":
 		return firstNonEmpty(lcagentRoutePresetProvider(routePreset), mainProvider, lcagentDefaultProvider)

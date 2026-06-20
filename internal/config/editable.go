@@ -68,6 +68,8 @@ type EditableSettings struct {
 	LCAgentCriticModel        string
 	LCAgentVisionProvider     string
 	LCAgentVisionModel        string
+	LCAgentMainVisionProvider string
+	LCAgentMainVisionModel    string
 	LCAgentWebSearchBackend   string
 	LCAgentWebSearchAPIKey    string
 	LCAgentWebSearchEngineID  string
@@ -137,6 +139,8 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentCriticModel:        cfg.LCAgentCriticModel,
 		LCAgentVisionProvider:     cfg.LCAgentVisionProvider,
 		LCAgentVisionModel:        cfg.LCAgentVisionModel,
+		LCAgentMainVisionProvider: cfg.LCAgentMainVisionProvider,
+		LCAgentMainVisionModel:    cfg.LCAgentMainVisionModel,
 		LCAgentWebSearchBackend:   cfg.LCAgentWebSearchBackend,
 		LCAgentWebSearchAPIKey:    cfg.LCAgentWebSearchAPIKey,
 		LCAgentWebSearchEngineID:  cfg.LCAgentWebSearchEngineID,
@@ -247,7 +251,7 @@ func lcagentEffectiveCriticProvider(routePreset, mainProvider, criticProvider st
 	if value == "main" {
 		return lcagentEffectiveMainProvider(routePreset, mainProvider)
 	}
-	if value == "off" {
+	if value == "auto" || value == "off" {
 		return ""
 	}
 	return value
@@ -833,6 +837,14 @@ func renderEditableSettings(settings EditableSettings) string {
 	}
 	if value := strings.TrimSpace(settings.LCAgentVisionModel); value != "" {
 		lines = append(lines, fmt.Sprintf("lcagent_vision_model = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentMainVisionProvider); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_main_vision_provider = %s", strconv.Quote(value)))
+		wroteLCAgentConfig = true
+	}
+	if value := strings.TrimSpace(settings.LCAgentMainVisionModel); value != "" {
+		lines = append(lines, fmt.Sprintf("lcagent_main_vision_model = %s", strconv.Quote(value)))
 		wroteLCAgentConfig = true
 	}
 	if value, err := parseLCAgentWebSearchBackend(settings.LCAgentWebSearchBackend); err == nil && value != "" {

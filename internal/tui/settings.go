@@ -826,6 +826,9 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.status = err.Error()
 		return m, nil
 	}
+	baseline := m.currentSettingsBaseline()
+	settings.LCAgentMainVisionProvider = strings.TrimSpace(baseline.LCAgentMainVisionProvider)
+	settings.LCAgentMainVisionModel = strings.TrimSpace(baseline.LCAgentMainVisionModel)
 	settings.OpenRouterModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldOpenRouterModel))
 	settings.DeepSeekModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldDeepSeekModel))
 	settings.MoonshotModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldMoonshotModel))
@@ -833,7 +836,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.XiaomiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiModel))
 	lcagentRoutePreset := settings.LCAgentRoutePreset
 	lcagentProvider := settings.LCAgentProvider
-	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(m.currentSettingsBaseline()))
+	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(baseline))
 	settings.LCAgentRoutePreset = lcagentRoutePreset
 	settings.LCAgentProvider = lcagentProvider
 	settings.EmbeddedLCAgentModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldLCAgentModel))
@@ -1171,6 +1174,7 @@ func settingsLCAgentCredentialFieldRelevant(settings config.EditableSettings, pr
 	}
 	visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 	return !strings.EqualFold(visionProvider, "off") &&
+		!strings.EqualFold(visionProvider, "auto") &&
 		!strings.EqualFold(visionProvider, "main") &&
 		strings.EqualFold(strings.TrimSpace(visionProvider), strings.TrimSpace(provider))
 }
@@ -1343,7 +1347,7 @@ func settingsLCAgentConnectionFields(settings config.EditableSettings) []int {
 		fields = appendSettingsLCAgentConnectionFields(fields, criticProvider)
 	}
 	visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
-	if !strings.EqualFold(visionProvider, "off") && !strings.EqualFold(visionProvider, "main") {
+	if !strings.EqualFold(visionProvider, "off") && !strings.EqualFold(visionProvider, "auto") && !strings.EqualFold(visionProvider, "main") {
 		fields = appendSettingsLCAgentConnectionFields(fields, visionProvider)
 	}
 	return fields
@@ -2124,7 +2128,7 @@ func settingsLCAgentKnownModelProviderIssue(settings config.EditableSettings) (s
 		}
 	}
 	visionProvider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
-	if visionProvider != "main" && visionProvider != "off" {
+	if visionProvider != "main" && visionProvider != "off" && visionProvider != "auto" {
 		if issue, ok := settingsLCAgentKnownModelProviderIssueFor("Vision model", "Vision Model provider", visionProvider, settings.LCAgentVisionModel); ok {
 			return issue, true
 		}
@@ -2744,6 +2748,9 @@ func settingsLCAgentVisionDefaultLabel(settings config.EditableSettings) string 
 
 func settingsLCAgentVisionDefaultLabelForProvider(settings config.EditableSettings, provider string) string {
 	provider = settingsLCAgentVisionProviderValue(provider)
+	if provider == "auto" {
+		return settingsLCAgentVisionAutoLabel(settings)
+	}
 	if provider == "off" {
 		return "off"
 	}
@@ -2757,13 +2764,52 @@ func settingsLCAgentVisionDefaultLabelForProvider(settings config.EditableSettin
 func settingsLCAgentVisionProviderValue(raw string) string {
 	normalized := normalizeSettingsChoice(raw)
 	switch normalized {
-	case "", "off":
+	case "", "auto":
+		return "auto"
+	case "off":
 		return "off"
 	case "main", "same", "same-as-main":
 		return "main"
 	default:
 		return normalized
 	}
+}
+
+func settingsLCAgentMainVisionVerified(settings config.EditableSettings) bool {
+	provider := strings.TrimSpace(settingsLCAgentMainProvider(settings))
+	model := strings.TrimSpace(settingsLCAgentMainModel(settings))
+	return provider != "" &&
+		model != "" &&
+		strings.EqualFold(strings.TrimSpace(settings.LCAgentMainVisionProvider), provider) &&
+		strings.EqualFold(strings.TrimSpace(settings.LCAgentMainVisionModel), model)
+}
+
+func settingsLCAgentVisionProviderForLaunch(settings config.EditableSettings) string {
+	provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
+	if provider == "auto" {
+		if settingsLCAgentMainVisionVerified(settings) {
+			return "main"
+		}
+		return "off"
+	}
+	return provider
+}
+
+func settingsLCAgentVisionModelForLaunch(settings config.EditableSettings) string {
+	provider := settingsLCAgentVisionProviderForLaunch(settings)
+	if provider == "off" || provider == "main" {
+		return ""
+	}
+	return strings.TrimSpace(settings.LCAgentVisionModel)
+}
+
+func settingsLCAgentVisionAutoLabel(settings config.EditableSettings) string {
+	mainProvider := settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings))
+	mainModel := settingsLCAgentMainModel(settings)
+	if settingsLCAgentMainVisionVerified(settings) {
+		return "auto: verified Main Model (" + mainProvider + " / " + mainModel + ")"
+	}
+	return "auto: off until Main Model passes image check"
 }
 
 func settingsBossHelmDefaultLabel(settings config.EditableSettings) string {
@@ -3997,6 +4043,9 @@ func (m Model) settingsFieldHint(index int) string {
 		return "Auto uses " + settingsLCAgentCriticDefaultLabel(settings) + ". The lead can call consult_critic for optional second opinions."
 	case settingsFieldLCAgentVisionProvider:
 		switch settingsLCAgentVisionProviderValue(field.input.Value()) {
+		case "auto":
+			settings := m.settingsDraftForInferenceStatus()
+			return settingsLCAgentVisionAutoLabel(settings) + ". Press v to check the Main Model."
 		case "off":
 			return "Image analysis is off; screenshots and image files remain paths only unless another tool inspects them."
 		case "main":
@@ -4015,10 +4064,13 @@ func (m Model) settingsFieldHint(index int) string {
 			return field.hint
 		}
 	case settingsFieldLCAgentVisionModel:
+		settings := m.settingsDraftForInferenceStatus()
+		if settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider) == "auto" {
+			return settingsLCAgentVisionAutoLabel(settings) + ". Choose a specific provider to use a separate vision model."
+		}
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
 			return "analyze_image will request " + model + ". Press Enter to choose provider and model, or v to send a small image-input check."
 		}
-		settings := m.settingsDraftForInferenceStatus()
 		return "Auto uses " + settingsLCAgentVisionDefaultLabel(settings) + ". Press v to check image input after choosing a provider."
 	case settingsFieldLCAgentAuto:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {

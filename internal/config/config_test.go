@@ -783,6 +783,34 @@ func TestSaveEditableSettingsNormalizesDirectLCAgentProviderModelPrefixes(t *tes
 	}
 }
 
+func TestSaveEditableSettingsPersistsLCAgentMainVisionStamp(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	settings := EditableSettingsFromAppConfig(Default())
+	settings.LCAgentProvider = "openai"
+	settings.EmbeddedLCAgentModel = "gpt-5.4"
+	settings.LCAgentVisionProvider = "auto"
+	settings.LCAgentMainVisionProvider = "openai"
+	settings.LCAgentMainVisionModel = "gpt-5.4"
+
+	if err := SaveEditableSettings(configPath, settings); err != nil {
+		t.Fatalf("SaveEditableSettings() error = %v", err)
+	}
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if got, want := cfg.LCAgentVisionProvider, "auto"; got != want {
+		t.Fatalf("lcagent vision provider = %q, want %q", got, want)
+	}
+	if got, want := cfg.LCAgentMainVisionProvider, "openai"; got != want {
+		t.Fatalf("lcagent main vision provider = %q, want %q", got, want)
+	}
+	if got, want := cfg.LCAgentMainVisionModel, "gpt-5.4"; got != want {
+		t.Fatalf("lcagent main vision model = %q, want %q", got, want)
+	}
+}
+
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 

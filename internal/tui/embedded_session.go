@@ -942,8 +942,8 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentUtilityModel:      strings.TrimSpace(settings.LCAgentUtilityModel),
 		LCAgentCriticProvider:    strings.TrimSpace(settings.LCAgentCriticProvider),
 		LCAgentCriticModel:       strings.TrimSpace(settings.LCAgentCriticModel),
-		LCAgentVisionProvider:    strings.TrimSpace(settings.LCAgentVisionProvider),
-		LCAgentVisionModel:       strings.TrimSpace(settings.LCAgentVisionModel),
+		LCAgentVisionProvider:    settingsLCAgentVisionProviderForLaunch(settings),
+		LCAgentVisionModel:       settingsLCAgentVisionModelForLaunch(settings),
 		LCAgentWebSearchBackend:  strings.TrimSpace(settings.LCAgentWebSearchBackend),
 		LCAgentWebSearchAPIKey:   strings.TrimSpace(settings.LCAgentWebSearchAPIKey),
 		LCAgentWebSearchEngineID: strings.TrimSpace(settings.LCAgentWebSearchEngineID),
@@ -1110,11 +1110,11 @@ func (m Model) lcagentCriticModel() string {
 }
 
 func (m Model) lcagentVisionProvider() string {
-	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentVisionProvider)
+	return settingsLCAgentVisionProviderForLaunch(m.currentSettingsBaseline())
 }
 
 func (m Model) lcagentVisionModel() string {
-	return strings.TrimSpace(m.currentSettingsBaseline().LCAgentVisionModel)
+	return settingsLCAgentVisionModelForLaunch(m.currentSettingsBaseline())
 }
 
 func (m Model) lcagentWebSearchBackend() string {

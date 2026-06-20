@@ -50,6 +50,9 @@ func CheckLCAgentVisionAccess(ctx context.Context, req LaunchRequest) (LCAgentVi
 	}
 
 	visionProvider := lcagentVisionProviderValue(req.LCAgentVisionProvider)
+	if visionProvider == "auto" {
+		visionProvider = "main"
+	}
 	resolvedProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
 	if resolvedProvider == "" {
 		return LCAgentVisionCheckResult{}, fmt.Errorf("LCAgent vision provider is off")
