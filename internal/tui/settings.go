@@ -3506,14 +3506,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Critic model provider",
-			"Press Enter to choose the post-turn trace-only critic provider, use the Main Model, or turn the critic off.",
+			"Press Enter to choose the provider for optional consult_critic calls, use the Main Model, or turn the critic off.",
 			settings.LCAgentCriticProvider,
 			32,
 			settingsSectionLCAgent,
 		),
 		newSettingsFieldWithPlaceholder(
 			"Critic model",
-			"Press Enter to choose the provider and model for the post-turn trace-only critic. Choose Auto model to use the selected provider default.",
+			"Press Enter to choose the provider and model for optional consult_critic calls. Choose Auto model to use the selected provider default.",
 			settings.LCAgentCriticModel,
 			256,
 			"Default: "+settingsLCAgentCriticDefaultLabel(settings),
@@ -3993,28 +3993,28 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentCriticProvider:
 		switch settingsLCAgentCriticProviderValue(field.input.Value()) {
 		case "off":
-			return "The post-turn trace-only critic is off."
+			return "consult_critic is off."
 		case "main":
-			return "The post-turn trace-only critic will use the same provider and model as the Main Model."
+			return "consult_critic will use the same provider and model as the Main Model when the lead calls it."
 		case "openrouter":
-			return "The post-turn trace-only critic will use OpenRouter without tools after each completed turn."
+			return "consult_critic will use OpenRouter when the lead calls it."
 		case "deepseek":
-			return "The post-turn trace-only critic will use direct DeepSeek without tools after each completed turn."
+			return "consult_critic will use direct DeepSeek when the lead calls it."
 		case "openai":
-			return "The post-turn trace-only critic will use direct OpenAI without tools after each completed turn."
+			return "consult_critic will use direct OpenAI when the lead calls it."
 		case "moonshot":
-			return "The post-turn trace-only critic will use direct Moonshot/Kimi without tools after each completed turn."
+			return "consult_critic will use direct Moonshot/Kimi when the lead calls it."
 		case "xiaomi":
-			return "The post-turn trace-only critic will use direct Xiaomi MiMo without tools after each completed turn."
+			return "consult_critic will use direct Xiaomi MiMo when the lead calls it."
 		default:
 			return field.hint
 		}
 	case settingsFieldLCAgentCriticModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "The post-turn trace-only critic will request " + model + " and can only review the captured turn packet. Press Enter to choose provider and model."
+			return "consult_critic will request " + model + " when the lead asks for a bounded second opinion. Press Enter to choose provider and model."
 		}
 		settings := m.settingsDraftForInferenceStatus()
-		return "Auto uses " + settingsLCAgentCriticDefaultLabel(settings) + ". Material critic feedback is sent back to the lead."
+		return "Auto uses " + settingsLCAgentCriticDefaultLabel(settings) + ". The lead can call consult_critic for optional second opinions."
 	case settingsFieldLCAgentVisionProvider:
 		switch settingsLCAgentVisionProviderValue(field.input.Value()) {
 		case "off":

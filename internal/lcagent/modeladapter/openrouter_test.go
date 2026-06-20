@@ -134,7 +134,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 
 func TestToolsWithOptionsExposeConsultCriticWhenEnabled(t *testing.T) {
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{CriticConsultEnabled: true}), "consult_critic")
-	if !strings.Contains(spec.Description, "critic model") || !strings.Contains(spec.Description, "advisory") || !strings.Contains(spec.Description, "still room to act") {
+	if !strings.Contains(spec.Description, "critic model") || !strings.Contains(spec.Description, "advisory") || !strings.Contains(spec.Description, "materially improve") {
 		t.Fatalf("consult_critic description = %q", spec.Description)
 	}
 	props := spec.Parameters["properties"].(map[string]any)
@@ -159,7 +159,7 @@ func TestToolsWithOptionsExposeConsultCriticWhenEnabled(t *testing.T) {
 
 func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "analyze_image")
-	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") || !strings.Contains(spec.Description, "call out visible defects plainly") || !strings.Contains(spec.Description, "Use sparingly") {
+	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") || !strings.Contains(spec.Description, "pixel-level evidence") {
 		t.Fatalf("analyze_image description = %q", spec.Description)
 	}
 	props := spec.Parameters["properties"].(map[string]any)
@@ -177,10 +177,10 @@ func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
 func TestSystemPromptVisionGuidanceIsBounded(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{VisionAnalysisEnabled: true})
 	for _, want := range []string{
-		"Use visual review sparingly and actionably",
-		"first render/open-state checks",
-		"Do not repeatedly ask for visual reviews",
-		"one paired comparison is usually the right temporal sanity check",
+		"Use it only when pixel-level evidence would materially improve",
+		"Keep visual review sparse and actionable",
+		"ask a direct question about a concrete image",
+		"use comparison_path for one focused side-by-side check",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("vision prompt missing %q:\n%s", want, prompt)
@@ -366,11 +366,9 @@ func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
 		"start executing it within the current autonomy and tool policy",
 		"continue with the in_progress step",
 		"call update_quality_plan early",
-		"Use quality phases to layer the work",
-		"recognizable user-facing scene",
-		"Prefer names that include both spaces",
-		"objects are grounded",
-		"LCAgent may reject writes",
+		"Use quality phases to break sizable work",
+		"observable progress toward the user's request",
+		"create or update the plan before workspace writes",
 		"keep working the next phase",
 		"favor clean, idiomatic, modern style",
 		"an empty workspace is not a blocker",
@@ -455,7 +453,7 @@ func TestSystemPromptIncludesCriticConsultGuidanceWhenEnabled(t *testing.T) {
 		t.Fatalf("default prompt should not mention consult_critic:\n%s", disabled)
 	}
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{CriticConsultEnabled: true})
-	for _, want := range []string{"consult_critic is available", "optional advisory review", "focused second opinions", "while there is still room to act"} {
+	for _, want := range []string{"consult_critic is available", "optional advisory review", "focused second opinion", "bounded context"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("critic consult prompt missing %q:\n%s", want, prompt)
 		}

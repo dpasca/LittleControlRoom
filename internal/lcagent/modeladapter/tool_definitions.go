@@ -177,7 +177,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "consult_critic",
-				Description: "Ask the configured critic model for a focused advisory second opinion. Use this when you are uncertain about a plan, patch, debugging hypothesis, phase-level quality, or final claims, preferably while there is still room to act. It is advisory only: keep working from tool evidence and remain responsible for the decision.",
+				Description: "Ask the configured critic model for a focused advisory second opinion. Use this only when bounded outside review would materially improve a plan, patch, debugging hypothesis, or final claim. It is advisory only: keep working from tool evidence and remain responsible for the decision.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -214,7 +214,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "analyze_image",
-				Description: "Ask the configured vision model to inspect image or screenshot pixels. Use this for direct visual QA, screenshots, layout/rendering issues, image contents, or side-by-side temporal comparison with comparison_path; ask it to call out visible defects plainly. Use sparingly: first render/open-state checks, after meaningful visual fixes, and final visual sanity are usually enough.",
+				Description: "Ask the configured vision model to inspect image or screenshot pixels. Use this when pixel-level evidence would materially improve verification or the answer, including direct visual QA, image contents, or side-by-side comparison with comparison_path.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
