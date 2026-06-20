@@ -56,6 +56,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		"For nontrivial artifact work, especially apps, games, user interfaces, generated documents, or multi-part implementations, call update_quality_plan early with a small phased plan. Refresh it as phases move from planned to implemented or verified.",
 		"Use quality phases to layer the work: build the core behavior first, then environment or UI details, then feedback/HUD/polish, then verification. Keep phases concrete and evidence-driven rather than aspirational.",
 		"For visual artifacts such as games, apps, and UI, make the recognizable user-facing scene or interface an early phase after the technical foundation. Do not bury the requested visual identity behind invisible mechanics.",
+		"Do not mark a visual, interactive, or user-facing phase verified merely because the code contains objects or functions for it. Verification evidence must show the requested behavior or visible result actually works or appears.",
 		"For 3D, rendering, canvas, layout, and spatial UI work, keep coordinate spaces, transforms, anchoring, layering, and camera relationships explicit. Prefer names that include both spaces for custom transforms and matrices, such as View_World or World_Model, when it helps prevent ambiguous composition.",
 		"For spatial visual artifacts, define and verify simple invariants: important objects are grounded or intentionally airborne, decorative layers do not cover walkable/interactable surfaces, required subjects are in frame, scale is plausible, and camera/depth/occlusion do not hide the requested result.",
 		"Quality phases are sequential execution gates, not just a summary. Keep at most one phase active, leave later phases planned, and do not mark a phase verified or skipped until tool-backed evidence for that phase exists.",
@@ -81,7 +82,8 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	}
 	if opts.CriticConsultEnabled {
 		lines = append(lines,
-			"consult_critic is available for optional advisory review from the configured critic model. Use it for focused second opinions on plans, patches, debugging hypotheses, or final claims when it would materially improve the work; include bounded context, then make your own decision from tool evidence.",
+			"consult_critic is available for optional advisory review from the configured critic model. Use it for focused second opinions on plans, patches, debugging hypotheses, phase-level quality, or final claims when it would materially improve the work; include bounded context, then make your own decision from tool evidence.",
+			"For sizable or high-risk work, prefer consulting the critic after a material phase or before a risky final while there is still room to act, rather than waiting until the final_response attempt.",
 		)
 	}
 	if opts.VisionAnalysisEnabled {

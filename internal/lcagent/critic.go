@@ -101,6 +101,7 @@ type criticReviewPayload struct {
 type criticReviewFinding struct {
 	Severity          string `json:"severity"`
 	Materiality       string `json:"materiality,omitempty"`
+	Basis             string `json:"basis,omitempty"`
 	Claim             string `json:"claim"`
 	EvidenceSource    string `json:"evidence_source"`
 	Evidence          string `json:"evidence"`
@@ -353,6 +354,7 @@ func scriptCriticConsultFindings(findings []criticReviewFinding) []script.Critic
 		out = append(out, script.CriticConsultFinding{
 			Severity:          strings.TrimSpace(finding.Severity),
 			Materiality:       strings.TrimSpace(finding.Materiality),
+			Basis:             strings.TrimSpace(finding.Basis),
 			Claim:             strings.TrimSpace(finding.Claim),
 			EvidenceSource:    strings.TrimSpace(finding.EvidenceSource),
 			Evidence:          strings.TrimSpace(finding.Evidence),
@@ -556,7 +558,7 @@ func criticJSONRepairPrompt() string {
 		"Return only one JSON object. Do not include markdown, prose, code fences, comments, or multiple JSON values.",
 		"Use exactly this top-level shape:",
 		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[],"lead_instruction":"","human_prompt":"","proposed_user_message":""}`,
-		"If there are findings, each item must include severity, materiality, claim, evidence_source, evidence, user_impact, and suggested_followup.",
+		"If there are findings, each item must include severity, materiality, basis, claim, evidence_source, evidence, user_impact, and suggested_followup.",
 	}, "\n")
 }
 
@@ -613,7 +615,9 @@ func criticSystemPrompt() string {
 		"When change_review is present, prioritize the produced changes: current file snapshots, patch summaries, quality plan, and verification evidence. Use the recent messages only to interpret the lead's final claim.",
 		"Optimize for material user outcome, not transcript perfection. A true but low-impact wording nit should be a note, not a follow-up.",
 		"Use evidence_source values only from: change_packet, file_snapshot, quality_plan, tool_trace, patch, verification, lead_final, missing_evidence.",
+		"Each finding must include basis: confirmed, suspected, visual_or_product_gap, or missing_evidence. Use confirmed only when the packet directly proves the claim. Use suspected for plausible code diagnoses that are not mechanically proven. Use visual_or_product_gap for screenshot/product mismatches. Use missing_evidence when the packet lacks evidence for a lead claim.",
 		"If a concern cannot cite packet evidence, do not include it as a finding.",
+		"For code-level claims, quote the exact relevant lines or snapshot text. If exact packet evidence is ambiguous, mark the finding suspected and phrase it as a hypothesis.",
 		"Use severity for factual risk and materiality for impact on the original user request.",
 		"Set status=needs_followup only when the task should be reopened because the issue materially blocks or weakens the requested outcome.",
 		"Use status=concerns for trace notes that are true but do not justify another lead turn.",
@@ -624,7 +628,7 @@ func criticSystemPrompt() string {
 		"Do not claim that a string, file, or page content was absent from a truncated message solely because it is absent from the visible content; at most report missing_evidence when no excerpt or other packet evidence supports the lead claim.",
 		"Return only JSON. Do not use markdown.",
 		"The JSON shape is:",
-		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","claim":"concrete issue","evidence_source":"change_packet|file_snapshot|quality_plan|tool_trace|patch|verification|lead_final|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what should happen next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
+		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short review summary","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","basis":"confirmed|suspected|visual_or_product_gap|missing_evidence","claim":"concrete issue","evidence_source":"change_packet|file_snapshot|quality_plan|tool_trace|patch|verification|lead_final|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what should happen next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
 	}, "\n")
 }
 
@@ -636,13 +640,14 @@ func criticConsultSystemPrompt() string {
 		"Be direct. If the candidate is wrong, missing a required piece, visually broken, or unverified from the packet, say so plainly.",
 		"Do not rewrite the whole solution unless that is the simplest way to explain the concern.",
 		"Use evidence_source values from: consult_question, provided_context, candidate, file_excerpt, missing_evidence.",
+		"Each finding must include basis: confirmed, suspected, visual_or_product_gap, or missing_evidence. Use confirmed only when the packet directly proves the claim; use suspected for plausible but unproven code or debugging hypotheses.",
 		"Set status=clean when the candidate or plan looks sound from the packet.",
 		"Set status=concerns when there are risks or improvements the lead should consider.",
 		"Set status=needs_followup only when the lead should gather more evidence, change course, or ask the user before proceeding.",
 		"Use lead_instruction for the most useful private next step for the lead. Leave human_prompt and proposed_user_message blank unless user input is truly needed.",
 		"Return only JSON. Do not use markdown.",
 		"The JSON shape is:",
-		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short advisory answer","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","claim":"concrete issue or reassurance","evidence_source":"consult_question|provided_context|candidate|file_excerpt|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what the lead should do next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
+		`{"status":"clean|concerns|needs_followup","confidence":0.0,"summary":"short advisory answer","findings":[{"severity":"low|medium|high","materiality":"low|medium|high","basis":"confirmed|suspected|visual_or_product_gap|missing_evidence","claim":"concrete issue or reassurance","evidence_source":"consult_question|provided_context|candidate|file_excerpt|missing_evidence","evidence":"specific packet evidence","user_impact":"why this matters to the original user request","suggested_followup":"what the lead should do next, if anything"}],"lead_instruction":"private instruction for the lead when useful, blank otherwise","human_prompt":"draft only when human input is truly needed, blank otherwise","proposed_user_message":"same as human_prompt for backward compatibility, blank unless status=needs_followup"}`,
 	}, "\n")
 }
 
@@ -1006,6 +1011,7 @@ func cleanCriticFindings(findings []criticReviewFinding) []criticReviewFinding {
 	for _, finding := range findings {
 		finding.Severity = normalizeCriticSeverity(finding.Severity)
 		finding.Materiality = normalizeCriticMateriality(finding.Materiality, finding.Severity)
+		finding.Basis = normalizeCriticFindingBasis(finding.Basis)
 		finding.EvidenceSource = normalizeCriticEvidenceSource(finding.EvidenceSource)
 		finding.Claim = strings.TrimSpace(finding.Claim)
 		finding.Evidence = strings.TrimSpace(finding.Evidence)
@@ -1106,26 +1112,76 @@ func criticLeadFeedbackMessage(review criticReviewPayload) string {
 	var b strings.Builder
 	b.WriteString("Critic feedback before final_response: ")
 	b.WriteString(criticTrimFeedbackField(instruction, 700))
-	for _, finding := range review.Findings {
+	materialFindings := criticMaterialFindings(review.Findings, 4)
+	if len(materialFindings) > 0 {
+		b.WriteString("\n\nTop material findings:")
+	}
+	for i, finding := range materialFindings {
+		fmt.Fprintf(&b, "\n%d. [%s/%s", i+1, firstNonEmptyString(finding.Severity, "medium"), firstNonEmptyString(finding.Materiality, "medium"))
+		if basis := strings.TrimSpace(finding.Basis); basis != "" {
+			b.WriteString(", ")
+			b.WriteString(basis)
+		}
+		b.WriteString("]")
+		if claim := criticTrimFeedbackField(finding.Claim, 360); claim != "" {
+			b.WriteString(" Issue: ")
+			b.WriteString(claim)
+		}
+		if evidence := criticTrimFeedbackField(finding.Evidence, 520); evidence != "" {
+			b.WriteString("\n   Evidence: ")
+			b.WriteString(evidence)
+		}
+		if impact := criticTrimFeedbackField(finding.UserImpact, 360); impact != "" {
+			b.WriteString("\n   Why it matters: ")
+			b.WriteString(impact)
+		}
+		if followup := criticTrimFeedbackField(finding.SuggestedFollowup, 420); followup != "" {
+			b.WriteString("\n   Suggested fix: ")
+			b.WriteString(followup)
+		}
+	}
+	if len(materialFindings) == 0 {
+		for _, finding := range review.Findings {
+			if finding.Materiality != "high" && finding.Materiality != "medium" {
+				continue
+			}
+			if claim := criticTrimFeedbackField(finding.Claim, 320); claim != "" {
+				b.WriteString("\n\nMaterial finding: ")
+				b.WriteString(claim)
+			}
+			if evidence := criticTrimFeedbackField(finding.Evidence, 500); evidence != "" {
+				b.WriteString("\nEvidence: ")
+				b.WriteString(evidence)
+			}
+			if impact := criticTrimFeedbackField(finding.UserImpact, 320); impact != "" {
+				b.WriteString("\nUser impact: ")
+				b.WriteString(impact)
+			}
+			break
+		}
+	}
+	b.WriteString("\n\nTreat this as private review guidance. Reopen the work only for material issues affecting the user's request. Treat suspected code findings as hypotheses to inspect, not as proven facts. If the critic is wrong, proceed and explain briefly in final_response.")
+	return b.String()
+}
+
+func criticMaterialFindings(findings []criticReviewFinding, limit int) []criticReviewFinding {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]criticReviewFinding, 0, limit)
+	for _, finding := range findings {
 		if finding.Materiality != "high" && finding.Materiality != "medium" {
 			continue
 		}
-		if claim := criticTrimFeedbackField(finding.Claim, 320); claim != "" {
-			b.WriteString("\n\nMaterial finding: ")
-			b.WriteString(claim)
+		if strings.TrimSpace(finding.Claim) == "" && strings.TrimSpace(finding.Evidence) == "" {
+			continue
 		}
-		if evidence := criticTrimFeedbackField(finding.Evidence, 500); evidence != "" {
-			b.WriteString("\nEvidence: ")
-			b.WriteString(evidence)
+		out = append(out, finding)
+		if len(out) >= limit {
+			break
 		}
-		if impact := criticTrimFeedbackField(finding.UserImpact, 320); impact != "" {
-			b.WriteString("\nUser impact: ")
-			b.WriteString(impact)
-		}
-		break
 	}
-	b.WriteString("\n\nTreat this as private review guidance. Reopen the work only for material issues affecting the user's request. If the critic is wrong, proceed and explain briefly in final_response.")
-	return b.String()
+	return out
 }
 
 func criticTrimFeedbackField(value string, limit int) string {
@@ -1156,10 +1212,33 @@ func normalizeCriticMateriality(materiality, fallback string) string {
 	return normalizeCriticSeverity(fallback)
 }
 
+func normalizeCriticFindingBasis(basis string) string {
+	value := strings.ToLower(strings.TrimSpace(basis))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	switch value {
+	case "confirmed", "suspected", "visual_or_product_gap", "missing_evidence":
+		return value
+	case "visual", "product", "product_gap", "visual_gap", "visual_product_gap":
+		return "visual_or_product_gap"
+	case "missing", "unverified", "no_evidence":
+		return "missing_evidence"
+	default:
+		return "unspecified"
+	}
+}
+
 func normalizeCriticEvidenceSource(source string) string {
-	switch strings.ToLower(strings.TrimSpace(source)) {
+	value := strings.ToLower(strings.TrimSpace(source))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	switch value {
 	case "change_packet", "file_snapshot", "quality_plan", "tool_trace", "patch", "verification", "lead_final", "consult_question", "provided_context", "candidate", "file_excerpt", "missing_evidence":
-		return strings.ToLower(strings.TrimSpace(source))
+		return value
+	case "image_analysis", "vision", "visual_analysis":
+		return "verification"
+	case "final_summary", "final_response", "lead_summary":
+		return "lead_final"
 	default:
 		return "missing_evidence"
 	}

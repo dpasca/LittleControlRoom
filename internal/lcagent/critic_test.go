@@ -125,6 +125,7 @@ func TestCriticLeadFeedbackMessageRequiresMaterialFollowup(t *testing.T) {
 		Findings: []criticReviewFinding{{
 			Severity:          "medium",
 			Materiality:       "high",
+			Basis:             "confirmed",
 			Claim:             "verification was not run",
 			EvidenceSource:    "lead_final",
 			Evidence:          "verification array was empty",
@@ -133,7 +134,7 @@ func TestCriticLeadFeedbackMessageRequiresMaterialFollowup(t *testing.T) {
 		}},
 	})
 	feedback := criticLeadFeedbackMessage(material)
-	if !strings.Contains(feedback, "Run the missing verification") || !strings.Contains(feedback, "Material finding") {
+	if !strings.Contains(feedback, "Run the missing verification") || !strings.Contains(feedback, "Top material findings") || !strings.Contains(feedback, "Suggested fix: run the relevant test") {
 		t.Fatalf("material feedback = %q", feedback)
 	}
 
@@ -143,14 +144,57 @@ func TestCriticLeadFeedbackMessageRequiresMaterialFollowup(t *testing.T) {
 		Findings: []criticReviewFinding{{
 			Severity:       "medium",
 			Materiality:    "medium",
+			Basis:          "confirmed",
 			Claim:          "final answer overstates verification",
 			EvidenceSource: "lead_final",
 			Evidence:       "final answer says done but verification is thin",
 		}},
 	})
 	feedback = criticLeadFeedbackMessage(concern)
-	if !strings.Contains(feedback, "Tighten the final answer") || !strings.Contains(feedback, "Material finding") {
+	if !strings.Contains(feedback, "Tighten the final answer") || !strings.Contains(feedback, "Top material findings") {
 		t.Fatalf("material concern feedback = %q", feedback)
+	}
+}
+
+func TestCriticLeadFeedbackIncludesMultipleStructuredFindings(t *testing.T) {
+	review := normalizeCriticReviewForRouting(criticReviewPayload{
+		Status:          "needs_followup",
+		LeadInstruction: "Fix the visible game gaps before final_response.",
+		Findings: []criticReviewFinding{
+			{
+				Severity:          "high",
+				Materiality:       "high",
+				Basis:             "visual_or_product_gap",
+				Claim:             "water is not visible",
+				EvidenceSource:    "verification",
+				Evidence:          "vision analysis says no water effects are visible",
+				UserImpact:        "the user requested a boardwalk with water effects",
+				SuggestedFollowup: "make water visible and rerun one focused screenshot check",
+			},
+			{
+				Severity:          "medium",
+				Materiality:       "high",
+				Basis:             "suspected",
+				Claim:             "HUD rendering may not be readable",
+				EvidenceSource:    "file_snapshot",
+				Evidence:          "HUD uses colored quads instead of readable text",
+				UserImpact:        "the user requested controls and scoring on screen",
+				SuggestedFollowup: "inspect HUD rendering and add readable text if needed",
+			},
+		},
+	})
+
+	feedback := criticLeadFeedbackMessage(review)
+	for _, want := range []string{
+		"Top material findings",
+		"1. [high/high, visual_or_product_gap] Issue: water is not visible",
+		"Suggested fix: make water visible and rerun one focused screenshot check",
+		"2. [medium/high, suspected] Issue: HUD rendering may not be readable",
+		"Treat suspected code findings as hypotheses",
+	} {
+		if !strings.Contains(feedback, want) {
+			t.Fatalf("feedback missing %q:\n%s", want, feedback)
+		}
 	}
 }
 

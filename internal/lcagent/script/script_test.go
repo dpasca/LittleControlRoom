@@ -432,7 +432,7 @@ func TestRunnerConsultsCriticWithFileExcerpt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTool() error = %v", err)
 	}
-	if !result.Success || !strings.Contains(result.Output, "critic_consultation: concerns") || !strings.Contains(result.Output, "suggested_next_step") {
+	if !result.Success || !strings.Contains(result.Output, "critic_consultation: concerns") || !strings.Contains(result.Output, "suggested_next_step") || !strings.Contains(result.Output, "[medium/medium, confirmed]") {
 		t.Fatalf("consult result = %#v", result)
 	}
 	if critic.request.Kind != "patch" || critic.request.Question != "Does this change need another test?" {
@@ -1131,6 +1131,7 @@ func (f *fakeCriticConsultant) ConsultCritic(_ context.Context, request CriticCo
 		Findings: []CriticConsultFinding{{
 			Severity:          "medium",
 			Materiality:       "medium",
+			Basis:             "confirmed",
 			Claim:             "The candidate changes behavior without showing a test.",
 			EvidenceSource:    "candidate",
 			Evidence:          request.Candidate,
