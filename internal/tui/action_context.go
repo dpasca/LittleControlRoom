@@ -11,6 +11,8 @@ const (
 	tuiQuickActionTimeout   = 8 * time.Second
 	tuiProjectActionTimeout = 20 * time.Second
 	tuiGitActionTimeout     = 60 * time.Second
+	// Push can run repository hooks, including native release builds.
+	tuiGitPushActionTimeout = 5 * time.Minute
 )
 
 func (m Model) actionContext(timeout time.Duration) (context.Context, context.CancelFunc) {

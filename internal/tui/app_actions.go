@@ -1303,11 +1303,17 @@ func (m Model) resolveSubmodulesAndContinueCmd(path string, intent service.GitAc
 
 func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCommit bool) tea.Cmd {
 	completedTodoIDs := selectedCommitTodoIDs(m.commitTodoCompletions)
+	timeout := tuiGitActionTimeout
+	action := "applying the commit"
+	if pushAfterCommit {
+		timeout = tuiGitPushActionTimeout
+		action = "applying the commit and pushing the project"
+	}
 	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		ctx, cancel := m.actionContext(timeout)
 		defer cancel()
 		result, err := m.svc.ApplyCommit(ctx, preview, pushAfterCommit, completedTodoIDs)
-		err = timeoutActionError(err, tuiGitActionTimeout, "applying the commit")
+		err = timeoutActionError(err, timeout, action)
 		if err != nil {
 			return actionMsg{projectPath: preview.ProjectPath, status: "Commit failed", clearPendingGitSummary: true, err: err}
 		}
@@ -1334,10 +1340,10 @@ func (m Model) applyCommitPreviewCmd(preview service.CommitPreview, pushAfterCom
 
 func (m Model) pushCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		ctx, cancel := m.actionContext(tuiGitPushActionTimeout)
 		defer cancel()
 		result, err := m.svc.PushProject(ctx, path)
-		err = timeoutActionError(err, tuiGitActionTimeout, "pushing the project")
+		err = timeoutActionError(err, tuiGitPushActionTimeout, "pushing the project")
 		if err != nil {
 			return actionMsg{projectPath: path, status: "Push failed", clearPendingGitSummary: true, err: err}
 		}

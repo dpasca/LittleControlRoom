@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-var defaultPushTimeout = 90 * time.Second
+// Push may run user-defined hooks, including release builds.
+var defaultPushTimeout = 5 * time.Minute
 var defaultPullTimeout = 90 * time.Second
 
 func ReadDiffStat(ctx context.Context, path string, cached bool) (string, error) {
@@ -184,13 +185,8 @@ func Push(ctx context.Context, path string) error {
 
 	cmd := exec.CommandContext(pushCtx, "git", "-C", path, "push")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		if appliedTimeout > 0 && errors.Is(pushCtx.Err(), context.DeadlineExceeded) {
-			timeoutText := appliedTimeout.Round(time.Millisecond).String()
-			trimmed := strings.TrimSpace(string(out))
-			if trimmed != "" {
-				return fmt.Errorf("push %s timed out after %s: %w: %s", path, timeoutText, context.DeadlineExceeded, trimmed)
-			}
-			return fmt.Errorf("push %s timed out after %s: %w", path, timeoutText, context.DeadlineExceeded)
+		if timeoutErr := commandTimeoutError("push", path, pushCtx, appliedTimeout, out); timeoutErr != nil {
+			return timeoutErr
 		}
 		return fmt.Errorf("push %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
@@ -203,17 +199,28 @@ func Pull(ctx context.Context, path string) error {
 
 	cmd := exec.CommandContext(pullCtx, "git", "-C", path, "pull")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		if appliedTimeout > 0 && errors.Is(pullCtx.Err(), context.DeadlineExceeded) {
-			timeoutText := appliedTimeout.Round(time.Millisecond).String()
-			trimmed := strings.TrimSpace(string(out))
-			if trimmed != "" {
-				return fmt.Errorf("pull %s timed out after %s: %w: %s", path, timeoutText, context.DeadlineExceeded, trimmed)
-			}
-			return fmt.Errorf("pull %s timed out after %s: %w", path, timeoutText, context.DeadlineExceeded)
+		if timeoutErr := commandTimeoutError("pull", path, pullCtx, appliedTimeout, out); timeoutErr != nil {
+			return timeoutErr
 		}
 		return fmt.Errorf("pull %s: %w: %s", path, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func commandTimeoutError(operation, path string, ctx context.Context, appliedTimeout time.Duration, out []byte) error {
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(string(out))
+	timeoutText := ""
+	if appliedTimeout > 0 {
+		timeoutText = " after " + appliedTimeout.Round(time.Millisecond).String()
+	}
+	if trimmed != "" {
+		return fmt.Errorf("%s %s timed out%s: %w: %s", operation, path, timeoutText, context.DeadlineExceeded, trimmed)
+	}
+	return fmt.Errorf("%s %s timed out%s: %w", operation, path, timeoutText, context.DeadlineExceeded)
 }
 
 func withDefaultTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc, time.Duration) {
