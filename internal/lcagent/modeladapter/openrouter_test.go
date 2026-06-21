@@ -131,7 +131,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 
 func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "analyze_image")
-	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") || !strings.Contains(spec.Description, "pixel-level evidence") {
+	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") || !strings.Contains(spec.Description, "pixel-level evidence") || !strings.Contains(spec.Description, "pass/fail/uncertain") {
 		t.Fatalf("analyze_image description = %q", spec.Description)
 	}
 	props := spec.Parameters["properties"].(map[string]any)
@@ -150,6 +150,8 @@ func TestSystemPromptVisionGuidanceIsBounded(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{VisionAnalysisEnabled: true})
 	for _, want := range []string{
 		"Use it only when pixel-level evidence would materially improve",
+		"Treat analyze_image verdict pass as visual evidence",
+		"Treat fail or uncertain as non-passing evidence",
 		"Keep visual review sparse and actionable",
 		"ask a direct question about a concrete image",
 		"use comparison_path for one focused side-by-side check",

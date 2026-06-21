@@ -135,13 +135,59 @@ func (v visionAnalyzer) AnalyzeImage(ctx context.Context, request script.ImageAn
 		return script.ImageAnalysisResult{}, err
 	}
 	modelName := firstNonEmptyString(strings.TrimSpace(completion.Model), v.profile.Model)
-	return script.ImageAnalysisResult{
-		Output:       strings.TrimSpace(completion.Message.Content),
-		Provider:     v.profile.Provider,
-		Model:        modelName,
-		Usage:        json.RawMessage(completion.Usage),
-		UsageSummary: completion.UsageSummary,
-	}, nil
+	result := parseVisionStructuredResponse(completion.Message.Content)
+	result.Provider = v.profile.Provider
+	result.Model = modelName
+	result.Usage = json.RawMessage(completion.Usage)
+	result.UsageSummary = completion.UsageSummary
+	return result, nil
+}
+
+type visionStructuredResponse struct {
+	Verdict        string   `json:"verdict"`
+	Summary        string   `json:"summary"`
+	Observations   []string `json:"observations"`
+	BlockingIssues []string `json:"blocking_issues"`
+}
+
+func parseVisionStructuredResponse(raw string) script.ImageAnalysisResult {
+	raw = strings.TrimSpace(raw)
+	result := script.ImageAnalysisResult{Output: raw}
+	if raw == "" {
+		result.Verdict = script.ImageAnalysisVerdictUncertain
+		result.Summary = "vision model returned no substantive image analysis"
+		result.BlockingIssues = []string{"empty vision response"}
+		return result
+	}
+	var parsed visionStructuredResponse
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		result.Verdict = script.ImageAnalysisVerdictUncertain
+		result.Summary = "vision model returned non-JSON image analysis"
+		result.BlockingIssues = []string{"vision response was not structured JSON"}
+		return result
+	}
+	result.Verdict = script.NormalizeImageAnalysisVerdict(parsed.Verdict)
+	result.Summary = strings.TrimSpace(parsed.Summary)
+	result.Observations = cleanVisionStructuredStrings(parsed.Observations)
+	result.BlockingIssues = cleanVisionStructuredStrings(parsed.BlockingIssues)
+	if result.Summary == "" {
+		result.Summary = "vision model did not provide a summary"
+	}
+	if result.Verdict != script.ImageAnalysisVerdictPass && len(result.BlockingIssues) == 0 {
+		result.BlockingIssues = []string{"vision verdict was " + result.Verdict}
+	}
+	return result
+}
+
+func cleanVisionStructuredStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 type visionImage struct {
@@ -299,6 +345,8 @@ func buildVisionPrompt(request script.ImageAnalysisRequest, image visionImage) s
 	}
 	b.WriteString("\nQuestion:\n")
 	b.WriteString(strings.TrimSpace(request.Question))
-	b.WriteString("\n\nRespond concisely with observed visual facts, likely issues, and any uncertainty. Prioritize the most user-impacting visible defects. Do not claim to inspect code or files beyond the image.")
+	b.WriteString("\n\nRespond only as a compact JSON object with exactly these fields:\n")
+	b.WriteString(`{"verdict":"pass|fail|uncertain","summary":"one concise sentence","observations":["visible fact"],"blocking_issues":["user-impacting visible defect"]}`)
+	b.WriteString("\nUse verdict pass only when the requested visual state is actually visible and no important requested element is absent, garbled, blank, hidden, or broken. Use fail when user-impacting visual defects are visible. Use uncertain when the image is insufficient, unreadable, or the requested state cannot be judged from pixels. Do not claim to inspect code or files beyond the image.")
 	return b.String()
 }

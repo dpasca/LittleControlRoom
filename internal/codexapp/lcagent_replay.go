@@ -613,6 +613,8 @@ func (r *lcagentReplay) applyImageAnalysisResult(event map[string]json.RawMessag
 		return
 	}
 	output := strings.TrimSpace(rawJSONString(event["output"]))
+	verdict := strings.TrimSpace(rawJSONString(event["verdict"]))
+	summary := strings.TrimSpace(rawJSONString(event["summary"]))
 	modelName := rawJSONString(event["model"])
 	if usage, ok := lcagentUsageFromModelResponseEvent(event, modelName); ok {
 		r.addTokenUsage(usage)
@@ -627,12 +629,17 @@ func (r *lcagentReplay) applyImageAnalysisResult(event map[string]json.RawMessag
 	if rawJSONBool(event["temporal"]) {
 		text = "LCAgent temporal vision analysis complete"
 	}
-	if output != "" {
+	if verdict != "" {
+		text += " (" + verdict + ")"
+	}
+	if summary != "" {
+		text += ": " + lcagentCondenseStatusText(summary, 180)
+	} else if output != "" {
 		text += ": " + lcagentCondenseStatusText(output, 180)
 	}
 	r.imageAnalysisActive = false
 	r.imageAnalyses++
-	r.imageAnalysisLastSummary = output
+	r.imageAnalysisLastSummary = firstNonEmpty(summary, output)
 	r.appendEntry(TranscriptStatus, text)
 }
 

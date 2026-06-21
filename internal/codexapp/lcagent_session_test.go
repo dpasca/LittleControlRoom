@@ -117,8 +117,8 @@ printf '%s\n' '{"type":"turn_complete"}'
 	if snapshot.Busy {
 		t.Fatalf("Busy = true, want false")
 	}
-	if snapshot.Model != "test-model" || snapshot.ModelProvider != "deepseek" || snapshot.ReasoningEffort != "low" {
-		t.Fatalf("model = %q/%q reasoning=%q, want deepseek/test-model low", snapshot.ModelProvider, snapshot.Model, snapshot.ReasoningEffort)
+	if snapshot.Model != "test-model" || snapshot.ModelProvider != "deepseek" || snapshot.ReasoningEffort != "high" {
+		t.Fatalf("model = %q/%q reasoning=%q, want deepseek/test-model high", snapshot.ModelProvider, snapshot.Model, snapshot.ReasoningEffort)
 	}
 	if snapshot.TokenUsage == nil || snapshot.TokenUsage.Last.InputTokens != 120 || snapshot.TokenUsage.Last.OutputTokens != 30 || snapshot.TokenUsage.Last.CachedInputTokens != 40 || snapshot.TokenUsage.Total.TotalTokens != 150 {
 		t.Fatalf("TokenUsage = %#v", snapshot.TokenUsage)
@@ -156,7 +156,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--tool-profile", "generous",
 		"--context-profile", "large",
 		"--request-timeout", "10m0s",
-		"--reasoning-effort", "low",
+		"--reasoning-effort", "high",
 		"--env-file", envPath,
 		"please run the fake agent",
 	} {
@@ -1253,6 +1253,9 @@ func TestLCAgentModelOptionsForProviderDeepSeekIncludesMaxReasoning(t *testing.T
 	}
 	if got["low"] || got["medium"] {
 		t.Fatalf("DeepSeek reasoning options should expose official high/max values, got %#v", options[0].SupportedReasoningEfforts)
+	}
+	if options[0].DefaultReasoningEffort != "high" {
+		t.Fatalf("DeepSeek default reasoning = %q, want high", options[0].DefaultReasoningEffort)
 	}
 }
 

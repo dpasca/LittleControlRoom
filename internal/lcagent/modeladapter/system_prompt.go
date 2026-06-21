@@ -80,7 +80,8 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	if opts.VisionAnalysisEnabled {
 		lines = append(lines,
 			"analyze_image is available for screenshot and image inspection. Use it only when pixel-level evidence would materially improve the answer or verification.",
-			"Keep visual review sparse and actionable: ask a direct question about a concrete image, then change the artifact or finish honestly from the evidence.",
+			"Treat analyze_image verdict pass as visual evidence. Treat fail or uncertain as non-passing evidence: fix the visible issue and rerun one focused check, or finish partial/blocked/failed if the remaining visual defect cannot be fixed with available tools.",
+			"Keep visual review sparse and actionable: ask a direct question about a concrete image, then change the artifact or finish honestly from the evidence. After repeated non-passing visual checks, change strategy before another repair attempt.",
 			"When comparing visual state over time, use comparison_path for one focused side-by-side check.",
 		)
 	}

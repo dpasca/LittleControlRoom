@@ -176,7 +176,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "analyze_image",
-				Description: "Ask the configured vision model to inspect image or screenshot pixels. Use this when pixel-level evidence would materially improve verification or the answer, including direct visual QA, image contents, or side-by-side comparison with comparison_path.",
+				Description: "Ask the configured vision model to inspect image or screenshot pixels and return a structured pass/fail/uncertain visual verdict. Use this when pixel-level evidence would materially improve verification or the answer, including direct visual QA, image contents, or side-by-side comparison with comparison_path. A fail or uncertain verdict is not completion evidence.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -411,7 +411,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "update_quality_plan",
-				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. Phases are sequential execution gates: keep at most one active phase, leave later phases planned, and advance at most one phase after concrete evidence. Implement the current phase's realistic slice before later-phase systems, even when the final deliverable is a single file. Do not mark visual, interactive, or user-facing phases verified merely because code for them exists; evidence must show the requested behavior or visible result actually works or appears. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, visual verification must have analyze_image evidence when required, and temporal visual verification must have analyze_image evidence with comparison_path when required. Visual evidence is a bounded gate, not a loop; one focused visual check, or one paired temporal check for the phase that needs it, is normally enough.",
+				Description: "Publish or refresh a phased quality plan for nontrivial artifact work. Use this before or during implementation to make expected phases, acceptance checks, and evidence explicit. Phases are sequential execution gates: keep at most one active phase, leave later phases planned, and advance at most one phase after concrete evidence. Implement the current phase's realistic slice before later-phase systems, even when the final deliverable is a single file. Do not mark visual, interactive, or user-facing phases verified merely because code for them exists; evidence must show the requested behavior or visible result actually works or appears. A completed final_response is audited against this plan: phases must be verified or skipped with evidence, runtime verification must have a passing purpose=verify check when required, visual verification must have a passing analyze_image verdict when required, and temporal visual verification must have a passing analyze_image verdict with comparison_path when required. Visual evidence is a bounded gate, not a loop; one focused visual check, or one paired temporal check for the phase that needs it, is normally enough.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

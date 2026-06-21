@@ -422,14 +422,14 @@ func TestRunnerAnalyzesImageWithConfiguredVisionModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTool() error = %v", err)
 	}
-	if !result.Success || !strings.Contains(result.Output, "boardwalk is missing") {
+	if !result.Success || !strings.Contains(result.Output, "verdict: fail") || !strings.Contains(result.Output, "boardwalk is missing") {
 		t.Fatalf("analyze_image result = %#v", result)
 	}
 	if analyzer.request.Path != "screenshot.png" || analyzer.request.Question != "Is the boardwalk visible?" {
 		t.Fatalf("image request = %#v", analyzer.request)
 	}
 	text := stream.String()
-	for _, want := range []string{`"tool":"analyze_image"`, `"type":"image_analysis_started"`, `"type":"image_analysis_result"`, `"model":"fake-vision"`} {
+	for _, want := range []string{`"tool":"analyze_image"`, `"type":"image_analysis_started"`, `"type":"image_analysis_result"`, `"model":"fake-vision"`, `"verdict":"fail"`} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %s:\n%s", want, text)
 		}
@@ -466,6 +466,9 @@ func TestRunnerAnalyzesImageWithComparisonPath(t *testing.T) {
 	}
 	if runner.imageAnalyses != 1 || runner.temporalImageAnalyses != 1 {
 		t.Fatalf("analysis counters image=%d temporal=%d, want 1/1", runner.imageAnalyses, runner.temporalImageAnalyses)
+	}
+	if runner.passingImageAnalyses != 0 || runner.passingTemporalImageAnalyses != 0 || runner.nonPassingImageAnalyses != 1 {
+		t.Fatalf("verdict counters passing=%d temporal=%d nonpassing=%d, want 0/0/1", runner.passingImageAnalyses, runner.passingTemporalImageAnalyses, runner.nonPassingImageAnalyses)
 	}
 	text := stream.String()
 	for _, want := range []string{`"comparison_path":"second.png"`, `"temporal":true`, `"type":"image_analysis_result"`} {
@@ -736,7 +739,8 @@ func TestRunnerFinalResponseAuditBlocksCompletedUntilQualityPlanEvidence(t *test
 			Status:  tools.VerificationStatusPassed,
 			Success: true,
 		}},
-		imageAnalyses: 1,
+		imageAnalyses:        1,
+		passingImageAnalyses: 1,
 	}
 	audit := runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
 	if audit.Code != "quality_plan_phase_unverified" || !audit.Blocking {
@@ -752,12 +756,20 @@ func TestRunnerFinalResponseAuditBlocksCompletedUntilQualityPlanEvidence(t *test
 
 	runner.qualityPlan.Phases[1].Evidence = []string{"visual inspection passed"}
 	runner.imageAnalyses = 0
+	runner.passingImageAnalyses = 0
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
 	if audit.Code != "quality_plan_visual_evidence_missing" || !audit.Blocking {
 		t.Fatalf("audit = %#v, want visual evidence block", audit)
 	}
 
 	runner.imageAnalyses = 1
+	runner.passingImageAnalyses = 0
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_visual_evidence_not_passing" || !audit.Blocking {
+		t.Fatalf("audit = %#v, want non-passing visual evidence block", audit)
+	}
+
+	runner.passingImageAnalyses = 1
 	runner.verificationChecks = nil
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
 	if audit.Code != "quality_plan_runtime_evidence_missing" || !audit.Blocking {
@@ -785,7 +797,8 @@ func TestRunnerFinalResponseAuditBlocksCompletedUntilTemporalVisualEvidence(t *t
 				{Name: "visual behavior", Status: "verified", Evidence: []string{"screenshots captured"}},
 			},
 		},
-		imageAnalyses: 1,
+		imageAnalyses:        1,
+		passingImageAnalyses: 1,
 	}
 	audit := runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
 	if audit.Code != "quality_plan_temporal_visual_evidence_missing" || !audit.Blocking {
@@ -793,6 +806,12 @@ func TestRunnerFinalResponseAuditBlocksCompletedUntilTemporalVisualEvidence(t *t
 	}
 
 	runner.temporalImageAnalyses = 1
+	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
+	if audit.Code != "quality_plan_temporal_visual_evidence_not_passing" || !audit.Blocking {
+		t.Fatalf("audit = %#v, want non-passing temporal visual evidence block", audit)
+	}
+
+	runner.passingTemporalImageAnalyses = 1
 	audit = runner.FinalResponseAudit(Action{Type: "final_response", Summary: "done", Outcome: "completed"})
 	if audit.Outcome != "pass" || audit.Blocking {
 		t.Fatalf("audit = %#v, want pass after paired visual evidence exists", audit)
@@ -854,10 +873,14 @@ type fakeImageAnalyzer struct {
 func (f *fakeImageAnalyzer) AnalyzeImage(_ context.Context, request ImageAnalysisRequest) (ImageAnalysisResult, error) {
 	f.request = request
 	return ImageAnalysisResult{
-		Output:       "The boardwalk is missing; props appear to float over a blue background.",
-		Provider:     "fake",
-		Model:        "fake-vision",
-		UsageSummary: lcrmodel.LLMUsage{InputTokens: 30, OutputTokens: 9, TotalTokens: 39},
+		Output:         "The boardwalk is missing; props appear to float over a blue background.",
+		Verdict:        ImageAnalysisVerdictFail,
+		Summary:        "The boardwalk is missing; props appear to float over a blue background.",
+		Observations:   []string{"props appear to float over a blue background"},
+		BlockingIssues: []string{"missing boardwalk"},
+		Provider:       "fake",
+		Model:          "fake-vision",
+		UsageSummary:   lcrmodel.LLMUsage{InputTokens: 30, OutputTokens: 9, TotalTokens: 39},
 	}, nil
 }
 

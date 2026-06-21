@@ -43,6 +43,37 @@ func TestComposeVisionComparisonImage(t *testing.T) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
 	}
+	for _, want := range []string{`"verdict":"pass|fail|uncertain"`, "Respond only as a compact JSON object", "Use verdict pass only when"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("structured prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestParseVisionStructuredResponse(t *testing.T) {
+	result := parseVisionStructuredResponse(`{"verdict":"pass","summary":"The requested boardwalk is visible.","observations":["wooden planks are visible"],"blocking_issues":[]}`)
+	if result.Verdict != script.ImageAnalysisVerdictPass {
+		t.Fatalf("Verdict = %q, want pass", result.Verdict)
+	}
+	if result.Summary != "The requested boardwalk is visible." {
+		t.Fatalf("Summary = %q", result.Summary)
+	}
+	if len(result.Observations) != 1 || result.Observations[0] != "wooden planks are visible" {
+		t.Fatalf("Observations = %#v", result.Observations)
+	}
+	if len(result.BlockingIssues) != 0 {
+		t.Fatalf("BlockingIssues = %#v, want none", result.BlockingIssues)
+	}
+}
+
+func TestParseVisionStructuredResponseTreatsNonJSONAsUncertain(t *testing.T) {
+	result := parseVisionStructuredResponse("boardwalk missing")
+	if result.Verdict != script.ImageAnalysisVerdictUncertain {
+		t.Fatalf("Verdict = %q, want uncertain", result.Verdict)
+	}
+	if result.Summary == "" || len(result.BlockingIssues) == 0 {
+		t.Fatalf("result = %#v, want summary and blocking issue", result)
+	}
 }
 
 func testVisionPNG(t *testing.T, path string, width, height int, c color.Color) visionImage {

@@ -183,6 +183,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	model = modeladapter.NormalizeModelForProvider(modelProvider, model)
 	launchModel := lcagentResolvedModelForSelection(modelProvider, routePreset, model)
 	launchReasoning := firstNonEmpty(strings.TrimSpace(req.PendingReasoning), lcagentRoutePresetReasoningEffort(routePreset))
+	launchReasoning = lcagentReasoningEffortForProvider(modelProvider, launchReasoning)
 	hasLaunchOverride := strings.TrimSpace(req.PendingModel) != "" || strings.TrimSpace(req.PendingReasoning) != "" || strings.TrimSpace(routePreset) != ""
 	modelWarning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(req.PendingModel), routePreset, provider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
@@ -240,7 +241,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightPolicy:         playwrightPolicy,
 		model:                    model,
 		modelProvider:            modelProvider,
-		reasoningEffort:          strings.TrimSpace(req.PendingReasoning),
+		reasoningEffort:          lcagentReasoningEffortForProvider(modelProvider, strings.TrimSpace(req.PendingReasoning)),
 		status:                   "Ready",
 		managedBrowserSessionKey: managedSessionKey,
 		browserProfileKey:        browserProfileKey,
@@ -838,8 +839,8 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		}
 	case "deepseek":
 		return []ModelOption{
-			option(modeladapter.DefaultDeepSeekModel, "Balanced: DeepSeek V4 Pro", "Direct DeepSeek coding route.", "", defaultModel == modeladapter.DefaultDeepSeekModel),
-			option("deepseek-v4-flash", "Cheap Scout: DeepSeek V4 Flash", "Lower-cost direct DeepSeek exploration route.", "", defaultModel == "deepseek-v4-flash"),
+			option(modeladapter.DefaultDeepSeekModel, "Balanced: DeepSeek V4 Pro", "Direct DeepSeek coding route.", lcagentDefaultReasoningEffort(provider, modeladapter.DefaultDeepSeekModel), defaultModel == modeladapter.DefaultDeepSeekModel),
+			option("deepseek-v4-flash", "Cheap Scout: DeepSeek V4 Flash", "Lower-cost direct DeepSeek exploration route.", lcagentDefaultReasoningEffort(provider, "deepseek-v4-flash"), defaultModel == "deepseek-v4-flash"),
 		}
 	case "moonshot":
 		return []ModelOption{
@@ -881,8 +882,8 @@ func lcagentGenericReasoningEffortOptions() []ReasoningEffortOption {
 
 func lcagentDeepSeekReasoningEffortOptions() []ReasoningEffortOption {
 	return []ReasoningEffortOption{
-		{ReasoningEffort: "high", Description: "DeepSeek thinking mode default for coding turns."},
-		{ReasoningEffort: "max", Description: "DeepSeek maximum reasoning effort for the hardest turns."},
+		{ReasoningEffort: "high", Description: "Recommended DeepSeek thinking effort for coding turns; this is the safer default."},
+		{ReasoningEffort: "max", Description: "Experimental maximum DeepSeek reasoning for hard diagnostics; can cost more and over-invest in a bad repair path."},
 	}
 }
 
@@ -905,15 +906,25 @@ func LCAgentReasoningEffortOptionsForProvider(provider string) []ReasoningEffort
 
 func lcagentReasoningEffortForProvider(provider, reasoningEffort string) string {
 	reasoningEffort = strings.TrimSpace(reasoningEffort)
-	if len(lcagentReasoningEffortOptionsForProvider(provider)) == 0 {
+	options := lcagentReasoningEffortOptionsForProvider(provider)
+	if len(options) == 0 || reasoningEffort == "" {
 		return ""
 	}
-	return reasoningEffort
+	for _, option := range options {
+		if strings.EqualFold(strings.TrimSpace(option.ReasoningEffort), reasoningEffort) {
+			return strings.TrimSpace(option.ReasoningEffort)
+		}
+	}
+	return lcagentDefaultReasoningEffort(provider, "")
 }
 
 func lcagentDefaultReasoningEffort(provider, model string) string {
-	if strings.EqualFold(strings.TrimSpace(provider), "openai") ||
-		strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "openai/") {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.ToLower(strings.TrimSpace(model))
+	if provider == "deepseek" {
+		return "high"
+	}
+	if provider == "openai" || strings.HasPrefix(model, "openai/") {
 		return "low"
 	}
 	return ""
@@ -1088,7 +1099,8 @@ func (s *lcagentSession) stagePendingLaunchSelection(model, provider, reasoningE
 func (s *lcagentSession) setPendingLaunchSelectionLocked(model, provider, reasoningEffort string) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	model = strings.TrimSpace(model)
-	reasoningEffort = strings.TrimSpace(reasoningEffort)
+	requestedReasoning := strings.TrimSpace(reasoningEffort)
+	reasoningEffort = requestedReasoning
 	currentProvider := firstNonEmpty(s.modelProvider, lcagentRoutePresetProvider(s.routePreset), s.provider, lcagentDefaultProvider)
 	currentModel := firstNonEmpty(s.model, lcagentRoutePresetModel(s.routePreset), lcagentDefaultModel(currentProvider))
 	currentReasoning := strings.TrimSpace(s.reasoningEffort)
@@ -1103,6 +1115,9 @@ func (s *lcagentSession) setPendingLaunchSelectionLocked(model, provider, reason
 	}
 	if model != "" {
 		model = modeladapter.NormalizeModelForProvider(provider, model)
+	}
+	if requestedReasoning != "" {
+		reasoningEffort = lcagentReasoningEffortForProvider(provider, requestedReasoning)
 	}
 	if model == "" && reasoningEffort == "" {
 		s.pendingModel = ""
@@ -1440,7 +1455,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	}
 	s.appendModelSelectionWarningLocked()
 	pendingReasoning := strings.TrimSpace(s.pendingReasoning)
-	reasoningEffort := strings.TrimSpace(firstNonEmpty(pendingReasoning, s.reasoningEffort))
+	reasoningEffort := lcagentReasoningEffortForProvider(modelProvider, firstNonEmpty(pendingReasoning, s.reasoningEffort, lcagentRoutePresetReasoningEffort(routePreset)))
 	s.provider = provider
 	s.routePreset = routePreset
 	s.model = model
@@ -2434,6 +2449,8 @@ func cloneQualityPlanPhaseSnapshots(in []QualityPlanPhaseSnapshot) []QualityPlan
 
 func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.RawMessage) {
 	output := strings.TrimSpace(rawJSONString(event["output"]))
+	verdict := strings.TrimSpace(rawJSONString(event["verdict"]))
+	summary := strings.TrimSpace(rawJSONString(event["summary"]))
 	modelName := rawJSONString(event["model"])
 	usage, usageOK := lcagentUsageFromModelResponseEvent(event, modelName)
 
@@ -2441,7 +2458,12 @@ func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.
 	if rawJSONBool(event["temporal"]) {
 		text = "LCAgent temporal vision analysis complete"
 	}
-	if output != "" {
+	if verdict != "" {
+		text += " (" + verdict + ")"
+	}
+	if summary != "" {
+		text += ": " + lcagentCondenseStatusText(summary, 180)
+	} else if output != "" {
 		text += ": " + lcagentCondenseStatusText(output, 180)
 	}
 
@@ -2449,7 +2471,7 @@ func (s *lcagentSession) handleLCAgentImageAnalysisResult(event map[string]json.
 	s.status = text
 	s.imageAnalysisActive = false
 	s.imageAnalyses++
-	s.imageAnalysisLastSummary = strings.TrimSpace(output)
+	s.imageAnalysisLastSummary = firstNonEmpty(summary, output)
 	if model := strings.TrimSpace(modelName); model != "" {
 		s.visionModel = model
 	}

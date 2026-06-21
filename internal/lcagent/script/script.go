@@ -33,6 +33,12 @@ const (
 	maxChangeReviewTotalChars     = 36000
 )
 
+const (
+	ImageAnalysisVerdictPass      = "pass"
+	ImageAnalysisVerdictFail      = "fail"
+	ImageAnalysisVerdictUncertain = "uncertain"
+)
+
 type Runner struct {
 	Session              *session.Writer
 	Command              tools.CommandRunner
@@ -54,20 +60,23 @@ type Runner struct {
 	ArtifactsDir         string
 	SteerMessages        <-chan string
 
-	verificationChecks     []tools.VerificationCheck
-	operationalActions     []OperationalAction
-	filesTouched           []string
-	fileTouchEvents        int
-	commandApprovalGrants  []commandApprovalGrant
-	toolFailures           []tools.ToolResult
-	browserToolsUsed       bool
-	browserWaitForUserUsed bool
-	imageAnalyses          int
-	temporalImageAnalyses  int
-	inspectionEvidence     int
-	qualityPlan            *QualityPlan
-	qualityPlanUpdates     int
-	editSummaries          []tools.PatchSummary
+	verificationChecks           []tools.VerificationCheck
+	operationalActions           []OperationalAction
+	filesTouched                 []string
+	fileTouchEvents              int
+	commandApprovalGrants        []commandApprovalGrant
+	toolFailures                 []tools.ToolResult
+	browserToolsUsed             bool
+	browserWaitForUserUsed       bool
+	imageAnalyses                int
+	temporalImageAnalyses        int
+	passingImageAnalyses         int
+	passingTemporalImageAnalyses int
+	nonPassingImageAnalyses      int
+	inspectionEvidence           int
+	qualityPlan                  *QualityPlan
+	qualityPlanUpdates           int
+	editSummaries                []tools.PatchSummary
 }
 
 type SearchRefiner interface {
@@ -136,11 +145,32 @@ type ImageAnalysisRequest struct {
 }
 
 type ImageAnalysisResult struct {
-	Output       string
-	Provider     string
-	Model        string
-	Usage        json.RawMessage
-	UsageSummary lcrmodel.LLMUsage
+	Output         string
+	Verdict        string
+	Summary        string
+	Observations   []string
+	BlockingIssues []string
+	Provider       string
+	Model          string
+	Usage          json.RawMessage
+	UsageSummary   lcrmodel.LLMUsage
+}
+
+func NormalizeImageAnalysisVerdict(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ImageAnalysisVerdictPass:
+		return ImageAnalysisVerdictPass
+	case ImageAnalysisVerdictFail:
+		return ImageAnalysisVerdictFail
+	case ImageAnalysisVerdictUncertain:
+		return ImageAnalysisVerdictUncertain
+	default:
+		return ImageAnalysisVerdictUncertain
+	}
+}
+
+func imageAnalysisPassed(result ImageAnalysisResult) bool {
+	return NormalizeImageAnalysisVerdict(result.Verdict) == ImageAnalysisVerdictPass
 }
 
 type VerificationFeedback struct {
@@ -447,16 +477,28 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 			Message: "final_response outcome was completed, but the quality plan requires runtime verification and no passing run_command check marked purpose=verify is recorded. Run an appropriate runtime/build/test check, or set outcome to partial/blocked/failed and explain why runtime verification is unavailable.",
 		}
 	}
-	if plan.RequiresTemporalVisualVerification && r.temporalImageAnalyses == 0 {
+	if plan.RequiresTemporalVisualVerification && r.passingTemporalImageAnalyses == 0 {
+		code := "quality_plan_temporal_visual_evidence_missing"
+		message := "final_response outcome was completed, but the quality plan requires temporal visual verification and no passing analyze_image verdict with comparison_path is recorded. Capture or locate two observations separated in time, run one focused analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable."
+		if r.temporalImageAnalyses > 0 {
+			code = "quality_plan_temporal_visual_evidence_not_passing"
+			message = "final_response outcome was completed, but the quality plan requires temporal visual verification and the recorded analyze_image result with comparison_path did not return a passing verdict. Fix the visible issue and rerun one focused temporal check, or set outcome to partial/blocked/failed and explain the remaining visual defect."
+		}
 		return &FinalResponseAudit{
-			Code:    "quality_plan_temporal_visual_evidence_missing",
-			Message: "final_response outcome was completed, but the quality plan requires temporal visual verification and no successful analyze_image result with comparison_path is recorded. Capture or locate two observations separated in time, run one focused analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable.",
+			Code:    code,
+			Message: message,
 		}
 	}
-	if plan.RequiresVisualVerification && r.imageAnalyses == 0 {
+	if plan.RequiresVisualVerification && r.passingImageAnalyses == 0 {
+		code := "quality_plan_visual_evidence_missing"
+		message := "final_response outcome was completed, but the quality plan requires visual verification and no passing analyze_image verdict is recorded. Capture or locate a screenshot/image and run one focused analyze_image check, or set outcome to partial/blocked/failed and explain why visual verification is unavailable."
+		if r.imageAnalyses > 0 {
+			code = "quality_plan_visual_evidence_not_passing"
+			message = "final_response outcome was completed, but the quality plan requires visual verification and the recorded analyze_image result did not return a passing verdict. Fix the visible issue and rerun one focused visual check, or set outcome to partial/blocked/failed and explain the remaining visual defect."
+		}
 		return &FinalResponseAudit{
-			Code:    "quality_plan_visual_evidence_missing",
-			Message: "final_response outcome was completed, but the quality plan requires visual verification and no successful analyze_image result is recorded. Capture or locate a screenshot/image and run one focused analyze_image check, or set outcome to partial/blocked/failed and explain why visual verification is unavailable.",
+			Code:    code,
+			Message: message,
 		}
 	}
 	return nil
@@ -2334,13 +2376,33 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 		}
 		return tools.ToolResult{Success: false, Error: "image analysis failed: " + message}, nil
 	}
+	analyzed = normalizeImageAnalysisResult(analyzed)
+	if imageAnalysisPassed(analyzed) {
+		r.passingImageAnalyses++
+		if comparisonPath != "" {
+			r.passingTemporalImageAnalyses++
+		}
+	} else {
+		r.nonPassingImageAnalyses++
+	}
 	if err := r.writeImageAnalysisResultEvent(request, analyzed); err != nil {
 		return tools.ToolResult{}, err
 	}
 	if comparisonPath != "" {
 		r.temporalImageAnalyses++
 	}
-	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed), Truncated: inputTruncated}, nil
+	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed, r.nonPassingImageAnalyses), Truncated: inputTruncated}, nil
+}
+
+func normalizeImageAnalysisResult(result ImageAnalysisResult) ImageAnalysisResult {
+	result.Output = strings.TrimSpace(result.Output)
+	result.Verdict = NormalizeImageAnalysisVerdict(result.Verdict)
+	result.Summary = strings.TrimSpace(result.Summary)
+	result.Observations = cleanStringList(result.Observations)
+	result.BlockingIssues = cleanStringList(result.BlockingIssues)
+	result.Provider = strings.TrimSpace(result.Provider)
+	result.Model = strings.TrimSpace(result.Model)
+	return result
 }
 
 func cleanImageAnalysisChecks(checks []string) []string {
@@ -2484,12 +2546,40 @@ func boundedToolText(value string, limit int) (string, bool) {
 	return strings.TrimSpace(string(runes[:limit-24])) + "\n...[truncated]...", true
 }
 
-func formatImageAnalysisResult(result ImageAnalysisResult) string {
-	output := strings.TrimSpace(result.Output)
-	if output == "" {
-		output = "vision model returned no substantive image analysis"
+func formatImageAnalysisResult(result ImageAnalysisResult, nonPassingCount int) string {
+	result = normalizeImageAnalysisResult(result)
+	var b strings.Builder
+	b.WriteString("image_analysis:\n")
+	fmt.Fprintf(&b, "verdict: %s\n", result.Verdict)
+	if result.Summary != "" {
+		fmt.Fprintf(&b, "summary: %s\n", result.Summary)
 	}
-	return "image_analysis:\n" + output + "\n"
+	if len(result.Observations) > 0 {
+		b.WriteString("observations:\n")
+		for _, observation := range result.Observations {
+			fmt.Fprintf(&b, "- %s\n", observation)
+		}
+	}
+	if len(result.BlockingIssues) > 0 {
+		b.WriteString("blocking_issues:\n")
+		for _, issue := range result.BlockingIssues {
+			fmt.Fprintf(&b, "- %s\n", issue)
+		}
+	}
+	if result.Summary == "" && len(result.Observations) == 0 && len(result.BlockingIssues) == 0 {
+		output := strings.TrimSpace(result.Output)
+		if output == "" {
+			output = "vision model returned no substantive image analysis"
+		}
+		fmt.Fprintf(&b, "raw_output: %s\n", output)
+	}
+	if !imageAnalysisPassed(result) {
+		b.WriteString("completion_evidence: non_passing_visual_verdict\n")
+		if nonPassingCount >= 2 {
+			b.WriteString("guidance: repeated non-passing visual verdicts are not completion evidence; change strategy before another repair attempt, or finish partial/blocked/failed if the remaining visual defect cannot be fixed with available tools.\n")
+		}
+	}
+	return b.String()
 }
 
 func (r *Runner) writeImageAnalysisStartedEvent(request ImageAnalysisRequest, inputTruncated bool) error {
@@ -2519,6 +2609,10 @@ func (r *Runner) writeImageAnalysisResultEvent(request ImageAnalysisRequest, res
 		"comparison_path": request.ComparisonPath,
 		"temporal":        strings.TrimSpace(request.ComparisonPath) != "",
 		"question":        request.Question,
+		"verdict":         NormalizeImageAnalysisVerdict(result.Verdict),
+		"summary":         strings.TrimSpace(result.Summary),
+		"observations":    cleanStringList(result.Observations),
+		"blocking_issues": cleanStringList(result.BlockingIssues),
 		"provider":        strings.TrimSpace(result.Provider),
 		"model":           strings.TrimSpace(result.Model),
 		"output":          strings.TrimSpace(result.Output),
