@@ -627,6 +627,19 @@ func TestPreferredEmbeddedProviderUsesOneShotOverrideBeforeStoredLatest(t *testi
 	}
 }
 
+func TestPreferredEmbeddedProviderUsesPersistedPreferredSourceWhenNoSession(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:                   "/tmp/demo",
+		Name:                   "demo",
+		PreferredSessionSource: model.SessionSourceLCAgent,
+	}
+	m := Model{}
+
+	if got := m.preferredEmbeddedProviderForProject(project); got != codexapp.ProviderLCAgent {
+		t.Fatalf("preferred provider = %q, want LCAgent", got)
+	}
+}
+
 func TestPreferredEmbeddedProviderKeepsLiveSessionBeforeOneShotOverride(t *testing.T) {
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		return &fakeCodexSession{

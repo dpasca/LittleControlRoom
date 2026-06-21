@@ -102,6 +102,8 @@ func (m Model) createScratchTaskCmd(request string, provider codexapp.Provider) 
 		}
 	}
 	request = strings.TrimSpace(request)
+	provider = explicitEmbeddedProvider(provider)
+	preferredSource := modelSessionSourceFromCodexProvider(provider)
 	return func() tea.Msg {
 		ctx := m.ctx
 		if ctx == nil {
@@ -109,9 +111,12 @@ func (m Model) createScratchTaskCmd(request string, provider codexapp.Provider) 
 		}
 		ctx, cancel := context.WithTimeout(ctx, newTaskCreateTimeout)
 		defer cancel()
-		result, err := m.svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{Request: request})
+		result, err := m.svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{
+			Request:                request,
+			PreferredSessionSource: preferredSource,
+		})
 		err = timeoutActionError(err, newTaskCreateTimeout, "creating the scratch task")
-		return newTaskResultMsg{result: result, provider: explicitEmbeddedProvider(provider), err: err}
+		return newTaskResultMsg{result: result, provider: provider, err: err}
 	}
 }
 

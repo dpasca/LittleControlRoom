@@ -1398,6 +1398,9 @@ func preferredEmbeddedProviderFromProjectSummary(project model.ProjectSummary) c
 	if provider := providerForSessionFormat(project.LatestSessionFormat); provider != "" {
 		return provider
 	}
+	if provider := codexProviderFromSessionSource(project.PreferredSessionSource); provider != "" {
+		return provider
+	}
 	return codexapp.ProviderCodex
 }
 
@@ -1482,6 +1485,9 @@ func (m Model) embeddedProviderHintForProject(project model.ProjectSummary) (cod
 		return provider, true
 	}
 	if provider := providerForSessionFormat(project.LatestSessionFormat); provider != "" {
+		return provider, true
+	}
+	if provider := codexProviderFromSessionSource(project.PreferredSessionSource); provider != "" {
 		return provider, true
 	}
 	return "", false

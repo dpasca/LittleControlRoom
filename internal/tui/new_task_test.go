@@ -144,6 +144,16 @@ func TestDispatchNewTaskCommandCanPreselectAssistant(t *testing.T) {
 	if got.preferredEmbeddedProviderForProject(model.ProjectSummary{Path: msg.result.TaskPath}) != codexapp.ProviderOpenCode {
 		t.Fatalf("fresh scratch task should prefer the explicit assistant")
 	}
+	summary, err := st.GetProjectSummary(ctx, msg.result.TaskPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.PreferredSessionSource != model.SessionSourceOpenCode {
+		t.Fatalf("persisted preferred source = %q, want %q", summary.PreferredSessionSource, model.SessionSourceOpenCode)
+	}
+	if fresh := (Model{}).preferredEmbeddedProviderForProject(summary); fresh != codexapp.ProviderOpenCode {
+		t.Fatalf("fresh model preferred provider = %q, want OpenCode", fresh)
+	}
 	if !strings.Contains(got.status, "Enter opens OpenCode") {
 		t.Fatalf("status = %q, want OpenCode launch hint", got.status)
 	}

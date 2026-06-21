@@ -145,6 +145,53 @@ func TestUpsertProjectStateKeepsManualProjectVisibleAgainstStaleSnapshot(t *test
 	}
 }
 
+func TestProjectPreferredSessionSourceSurvivesStateRefresh(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	projectPath := "/tmp/provider-preference"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "provider-preference",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if err := st.SetProjectPreferredSessionSource(ctx, projectPath, model.SessionSourceLCAgent); err != nil {
+		t.Fatalf("set preferred session source: %v", err)
+	}
+
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "provider-preference",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("refresh project state: %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.PreferredSessionSource != model.SessionSourceLCAgent {
+		t.Fatalf("preferred source = %q, want %q", summary.PreferredSessionSource, model.SessionSourceLCAgent)
+	}
+}
+
 func TestProjectMissingSincePersistsUntilRediscovered(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

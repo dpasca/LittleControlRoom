@@ -18,9 +18,10 @@ import (
 const recentProjectParentPathLimit = 3
 
 type CreateOrAttachProjectRequest struct {
-	ParentPath    string
-	Name          string
-	CreateGitRepo bool
+	ParentPath             string
+	Name                   string
+	CreateGitRepo          bool
+	PreferredSessionSource model.SessionSource
 }
 
 type CreateOrAttachProjectAction string
@@ -108,6 +109,9 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 	if err := s.trackProjectPath(ctx, existing, projectPath, projectName, model.ProjectKindProject); err != nil {
 		return CreateOrAttachProjectResult{}, err
 	}
+	if err := s.persistProjectPreferredSessionSource(ctx, projectPath, req.PreferredSessionSource); err != nil {
+		return CreateOrAttachProjectResult{}, fmt.Errorf("persist preferred engineer provider: %w", err)
+	}
 	if err := s.store.RememberRecentProjectParentPath(ctx, parentPath, recentProjectParentPathLimit); err != nil {
 		return CreateOrAttachProjectResult{}, fmt.Errorf("remember recent parent path: %w", err)
 	}
@@ -159,6 +163,14 @@ func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSu
 		return nil
 	}
 	return s.upsertManualProjectState(ctx, existing, projectPath, name, kind)
+}
+
+func (s *Service) persistProjectPreferredSessionSource(ctx context.Context, projectPath string, source model.SessionSource) error {
+	source = model.NormalizeSessionSource(source)
+	if source == model.SessionSourceUnknown || s == nil || s.store == nil {
+		return nil
+	}
+	return s.store.SetProjectPreferredSessionSource(ctx, projectPath, source)
 }
 
 func (s *Service) ensureProjectManuallyTracked(ctx context.Context, existing model.ProjectSummary, projectPath string) error {
@@ -238,32 +250,33 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	}
 
 	state := model.ProjectState{
-		Path:                 projectPath,
-		Name:                 displayName,
-		Kind:                 kind,
-		Status:               score.Status,
-		AttentionScore:       score.Score,
-		PresentOnDisk:        presentOnDisk,
-		WorktreeRootPath:     worktreeRootPath,
-		WorktreeKind:         worktreeKind,
-		WorktreeParentBranch: worktreeParentBranch,
-		WorktreeMergeStatus:  worktreeMergeStatus,
-		WorktreeOriginTodoID: existing.WorktreeOriginTodoID,
-		RepoBranch:           repoBranch,
-		RepoDirty:            repoDirty,
-		RepoConflict:         repoConflict,
-		RepoSyncStatus:       repoSyncStatus,
-		RepoAheadCount:       repoAheadCount,
-		RepoBehindCount:      repoBehindCount,
-		ManuallyAdded:        true,
-		InScope:              true,
-		Pinned:               existing.Pinned,
-		SnoozedUntil:         existing.SnoozedUntil,
-		MovedFromPath:        existing.MovedFromPath,
-		MovedAt:              existing.MovedAt,
-		AttentionReason:      score.Reasons,
-		CreatedAt:            createdAt,
-		UpdatedAt:            now,
+		Path:                   projectPath,
+		Name:                   displayName,
+		Kind:                   kind,
+		Status:                 score.Status,
+		AttentionScore:         score.Score,
+		PresentOnDisk:          presentOnDisk,
+		WorktreeRootPath:       worktreeRootPath,
+		WorktreeKind:           worktreeKind,
+		WorktreeParentBranch:   worktreeParentBranch,
+		WorktreeMergeStatus:    worktreeMergeStatus,
+		WorktreeOriginTodoID:   existing.WorktreeOriginTodoID,
+		RepoBranch:             repoBranch,
+		RepoDirty:              repoDirty,
+		RepoConflict:           repoConflict,
+		RepoSyncStatus:         repoSyncStatus,
+		RepoAheadCount:         repoAheadCount,
+		RepoBehindCount:        repoBehindCount,
+		ManuallyAdded:          true,
+		InScope:                true,
+		Pinned:                 existing.Pinned,
+		SnoozedUntil:           existing.SnoozedUntil,
+		MovedFromPath:          existing.MovedFromPath,
+		MovedAt:                existing.MovedAt,
+		PreferredSessionSource: existing.PreferredSessionSource,
+		AttentionReason:        score.Reasons,
+		CreatedAt:              createdAt,
+		UpdatedAt:              now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return fmt.Errorf("persist project state: %w", err)

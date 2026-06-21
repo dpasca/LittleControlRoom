@@ -173,12 +173,13 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "Project path and name are required"
 			return m, nil
 		}
-		req := service.CreateOrAttachProjectRequest{
-			ParentPath:    preview.ParentPath,
-			Name:          preview.Name,
-			CreateGitRepo: dialog.CreateGitRepo,
-		}
 		provider := dialog.explicitProvider()
+		req := service.CreateOrAttachProjectRequest{
+			ParentPath:             preview.ParentPath,
+			Name:                   preview.Name,
+			CreateGitRepo:          dialog.CreateGitRepo,
+			PreferredSessionSource: modelSessionSourceFromCodexProvider(provider),
+		}
 		m.closeNewProjectDialog("")
 		if preview.Exists && preview.ExistingDir {
 			m.status = "Adding existing folder to the list..."

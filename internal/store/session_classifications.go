@@ -783,6 +783,7 @@ func (s *Store) GetProjectDetail(ctx context.Context, path string, eventLimit in
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
 			p.moved_from_path, p.moved_at,
+			COALESCE(p.preferred_session_source, ''),
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.source, ''),
 			COALESCE(ps.raw_session_id, ''),

@@ -403,38 +403,39 @@ type DetectorProjectActivity struct {
 }
 
 type ProjectState struct {
-	Path                 string
-	Name                 string
-	Kind                 ProjectKind
-	LastActivity         time.Time
-	Status               ProjectStatus
-	AttentionScore       int
-	PresentOnDisk        bool
-	WorktreeRootPath     string
-	WorktreeKind         WorktreeKind
-	WorktreeParentBranch string
-	WorktreeMergeStatus  WorktreeMergeStatus
-	WorktreeOriginTodoID int64
-	RepoBranch           string
-	RepoDirty            bool
-	RepoConflict         bool
-	RepoSyncStatus       RepoSyncStatus
-	RepoAheadCount       int
-	RepoBehindCount      int
-	Forgotten            bool
-	ManuallyAdded        bool
-	InScope              bool
-	Archived             bool
-	Pinned               bool
-	SnoozedUntil         *time.Time
-	RunCommand           string
-	MovedFromPath        string
-	MovedAt              time.Time
-	AttentionReason      []AttentionReason
-	Sessions             []SessionEvidence
-	Artifacts            []ArtifactEvidence
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	Path                   string
+	Name                   string
+	Kind                   ProjectKind
+	LastActivity           time.Time
+	Status                 ProjectStatus
+	AttentionScore         int
+	PresentOnDisk          bool
+	WorktreeRootPath       string
+	WorktreeKind           WorktreeKind
+	WorktreeParentBranch   string
+	WorktreeMergeStatus    WorktreeMergeStatus
+	WorktreeOriginTodoID   int64
+	RepoBranch             string
+	RepoDirty              bool
+	RepoConflict           bool
+	RepoSyncStatus         RepoSyncStatus
+	RepoAheadCount         int
+	RepoBehindCount        int
+	Forgotten              bool
+	ManuallyAdded          bool
+	InScope                bool
+	Archived               bool
+	Pinned                 bool
+	SnoozedUntil           *time.Time
+	RunCommand             string
+	MovedFromPath          string
+	MovedAt                time.Time
+	PreferredSessionSource SessionSource
+	AttentionReason        []AttentionReason
+	Sessions               []SessionEvidence
+	Artifacts              []ArtifactEvidence
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 type ProjectSummary struct {
@@ -467,6 +468,7 @@ type ProjectSummary struct {
 	RunCommand                                    string
 	MovedFromPath                                 string
 	MovedAt                                       time.Time
+	PreferredSessionSource                        SessionSource
 	LatestSessionSource                           SessionSource
 	LatestSessionID                               string
 	LatestRawSessionID                            string

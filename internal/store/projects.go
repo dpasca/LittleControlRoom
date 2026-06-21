@@ -19,6 +19,7 @@ func projectSummaryBaseQuery() string {
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
 			p.moved_from_path, p.moved_at,
+			COALESCE(p.preferred_session_source, ''),
 			COALESCE(ps.session_id, ''),
 			COALESCE(ps.source, ''),
 			COALESCE(ps.raw_session_id, ''),
@@ -142,6 +143,7 @@ func scanSummaryRow(scanner interface {
 		worktreeKind                                                                         string
 		worktreeOriginTodoID                                                                 int64
 		lastActivity, snoozedUntil, lastSessionSeenAt, createdAt, movedAt                    sql.NullInt64
+		preferredSessionSource                                                               string
 		latestSessionLastEventAt, latestTurnStartedAt                                        sql.NullInt64
 		latestSessionID, latestSessionSource, latestRawSessionID                             sql.NullString
 		latestSessionFormat, latestSessionDetectedPath, latestSessionSnapshotHash            sql.NullString
@@ -188,6 +190,7 @@ func scanSummaryRow(scanner interface {
 		&runCommand,
 		&movedFromPath,
 		&movedAt,
+		&preferredSessionSource,
 		&latestSessionID,
 		&latestSessionSource,
 		&latestRawSessionID,
@@ -243,6 +246,7 @@ func scanSummaryRow(scanner interface {
 		TotalTODOCount:                           totalTODOCount,
 		RunCommand:                               runCommand,
 		MovedFromPath:                            movedFromPath,
+		PreferredSessionSource:                   model.NormalizeSessionSource(model.SessionSource(preferredSessionSource)),
 		LatestSessionSource:                      normalizedSource,
 		LatestSessionID:                          normalizedSessionID,
 		LatestRawSessionID:                       normalizedRawSessionID,
@@ -337,6 +341,7 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 		state.Name = filepath.Base(state.Path)
 	}
 	state.Kind = model.NormalizeProjectKind(state.Kind)
+	state.PreferredSessionSource = model.NormalizeSessionSource(state.PreferredSessionSource)
 	if state.UpdatedAt.IsZero() {
 		state.UpdatedAt = time.Now()
 	}
@@ -369,8 +374,8 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 	}
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, moved_from_path, moved_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, moved_from_path, moved_at, preferred_session_source, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			name=excluded.name,
 			kind=excluded.kind,
@@ -425,9 +430,13 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 				WHEN excluded.moved_at IS NOT NULL THEN excluded.moved_at
 				ELSE projects.moved_at
 			END,
+			preferred_session_source=CASE
+				WHEN excluded.preferred_session_source != '' THEN excluded.preferred_session_source
+				ELSE projects.preferred_session_source
+			END,
 			created_at=COALESCE(projects.created_at, excluded.created_at),
 			updated_at=excluded.updated_at
-	`, state.Path, state.Name, string(state.Kind), lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), missingSince, strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Archived), boolToInt(state.Pinned), snoozedUntil, state.MovedFromPath, movedAt, createdAt, state.UpdatedAt.Unix())
+	`, state.Path, state.Name, string(state.Kind), lastActivity, string(state.Status), state.AttentionScore, boolToInt(state.PresentOnDisk), missingSince, strings.TrimSpace(state.WorktreeRootPath), string(state.WorktreeKind), strings.TrimSpace(state.WorktreeParentBranch), string(state.WorktreeMergeStatus), state.WorktreeOriginTodoID, strings.TrimSpace(state.RepoBranch), boolToInt(state.RepoDirty), boolToInt(state.RepoConflict), string(state.RepoSyncStatus), state.RepoAheadCount, state.RepoBehindCount, boolToInt(state.Forgotten), boolToInt(state.ManuallyAdded), boolToInt(state.InScope), boolToInt(state.Archived), boolToInt(state.Pinned), snoozedUntil, state.MovedFromPath, movedAt, string(state.PreferredSessionSource), createdAt, state.UpdatedAt.Unix())
 	if err != nil {
 		return err
 	}
@@ -506,6 +515,35 @@ func (s *Store) UpsertProjectState(ctx context.Context, state model.ProjectState
 
 	if err = tx.Commit(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) SetProjectPreferredSessionSource(ctx context.Context, projectPath string, source model.SessionSource) error {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return errors.New("project path is required")
+	}
+	source = model.NormalizeSessionSource(source)
+	if source == model.SessionSourceUnknown {
+		return nil
+	}
+	updatedAt := time.Now().Unix()
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE projects
+		SET preferred_session_source = ?,
+			updated_at = ?
+		WHERE path = ?
+	`, string(source), updatedAt, projectPath)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return sql.ErrNoRows
 	}
 	return nil
 }
@@ -780,8 +818,8 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 	}
 
 	result, err := tx.ExecContext(ctx, `
-		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at, created_at, updated_at)
-		SELECT ?, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, ?, ?, created_at, ?
+		INSERT INTO projects(path, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at, preferred_session_source, created_at, updated_at)
+		SELECT ?, name, kind, last_activity, status, attention_score, present_on_disk, missing_since, worktree_root_path, worktree_kind, worktree_parent_branch, worktree_merge_status, worktree_origin_todo_id, repo_branch, repo_dirty, repo_conflict, repo_sync_status, repo_ahead_count, repo_behind_count, forgotten, manually_added, in_scope, archived, pinned, snoozed_until, last_session_seen_at, run_command, ?, ?, preferred_session_source, created_at, ?
 		FROM projects
 		WHERE path = ?
 	`, newPath, oldPath, movedAt.Unix(), movedAt.Unix(), oldPath)
@@ -840,25 +878,26 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 	}()
 
 	type projectRow struct {
-		manuallyAdded bool
-		pinned        bool
-		forgotten     bool
-		archived      bool
-		snoozedUntil  sql.NullInt64
-		lastSeenAt    sql.NullInt64
-		runCommand    string
-		movedFromPath string
-		movedAt       sql.NullInt64
+		manuallyAdded   bool
+		pinned          bool
+		forgotten       bool
+		archived        bool
+		snoozedUntil    sql.NullInt64
+		lastSeenAt      sql.NullInt64
+		runCommand      string
+		movedFromPath   string
+		movedAt         sql.NullInt64
+		preferredSource string
 	}
 
 	loadProject := func(path string) (projectRow, error) {
 		var row projectRow
 		var manuallyAdded, pinned, forgotten, archived int
 		err := tx.QueryRowContext(ctx, `
-			SELECT manually_added, pinned, forgotten, archived, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at
+			SELECT manually_added, pinned, forgotten, archived, snoozed_until, last_session_seen_at, run_command, moved_from_path, moved_at, preferred_session_source
 			FROM projects
 			WHERE path = ?
-		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &archived, &row.snoozedUntil, &row.lastSeenAt, &row.runCommand, &row.movedFromPath, &row.movedAt)
+		`, path).Scan(&manuallyAdded, &pinned, &forgotten, &archived, &row.snoozedUntil, &row.lastSeenAt, &row.runCommand, &row.movedFromPath, &row.movedAt, &row.preferredSource)
 		if err != nil {
 			return projectRow{}, err
 		}
@@ -892,6 +931,10 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 	if mergedRunCommand == "" {
 		mergedRunCommand = strings.TrimSpace(oldProject.runCommand)
 	}
+	mergedPreferredSource := strings.TrimSpace(newProject.preferredSource)
+	if mergedPreferredSource == "" {
+		mergedPreferredSource = strings.TrimSpace(oldProject.preferredSource)
+	}
 	mergedSnoozedUntil := pickLaterNullInt64(oldProject.snoozedUntil, newProject.snoozedUntil)
 	mergedLastSeenAt := pickLaterNullInt64(oldProject.lastSeenAt, newProject.lastSeenAt)
 	mergedMovedFromPath := strings.TrimSpace(newProject.movedFromPath)
@@ -915,11 +958,12 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 			snoozed_until = ?,
 			last_session_seen_at = ?,
 			run_command = ?,
+			preferred_session_source = ?,
 			moved_from_path = ?,
 			moved_at = ?,
 			updated_at = ?
 		WHERE path = ?
-	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), boolToInt(mergedArchived), nullableInt64Value(mergedSnoozedUntil), nullableInt64Value(mergedLastSeenAt), mergedRunCommand, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
+	`, boolToInt(mergedManuallyAdded), boolToInt(mergedPinned), boolToInt(mergedForgotten), boolToInt(mergedArchived), nullableInt64Value(mergedSnoozedUntil), nullableInt64Value(mergedLastSeenAt), mergedRunCommand, mergedPreferredSource, mergedMovedFromPath, nullableInt64Value(mergedMovedAt), movedAt.Unix(), newPath); err != nil {
 		return err
 	}
 

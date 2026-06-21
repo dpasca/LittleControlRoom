@@ -20,8 +20,9 @@ const defaultScratchTaskTitlePrefix = "New task"
 const scratchTaskRequestTitleLimit = 120
 
 type CreateScratchTaskRequest struct {
-	Title   string
-	Request string
+	Title                  string
+	Request                string
+	PreferredSessionSource model.SessionSource
 }
 
 type CreateScratchTaskResult struct {
@@ -79,6 +80,9 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 	}
 
 	if err := s.upsertManualProjectState(ctx, model.ProjectSummary{}, taskPath, title, model.ProjectKindScratchTask); err != nil {
+		return cleanupOnError(err)
+	}
+	if err := s.persistProjectPreferredSessionSource(ctx, taskPath, req.PreferredSessionSource); err != nil {
 		return cleanupOnError(err)
 	}
 	cleanupTaskPath = false
