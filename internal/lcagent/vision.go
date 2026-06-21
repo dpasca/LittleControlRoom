@@ -100,10 +100,10 @@ func normalizeVisionProvider(raw string) (string, error) {
 	switch value {
 	case "main", "same", "same-as-main":
 		return "main", nil
-	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
 	default:
-		return "", fmt.Errorf("vision provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi")
+		return "", fmt.Errorf("vision provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi, ollama")
 	}
 }
 

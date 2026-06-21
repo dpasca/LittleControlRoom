@@ -23,6 +23,7 @@ const (
 	DefaultMoonshotModel      = "kimi-k2.7-code"
 	DefaultXiaomiModel        = "mimo-v2.5-pro"
 	DefaultXiaomiUtilityModel = "mimo-v2.5"
+	DefaultOllamaBaseURL      = "http://127.0.0.1:11434/v1"
 	DefaultOpenRouterMaxTurns = 128
 	DefaultChatTemperature    = 0.2
 )
@@ -244,6 +245,21 @@ func NewXiaomiClient(cfg OpenRouterConfig) (*Client, error) {
 	})
 }
 
+func NewOllamaClient(cfg OpenRouterConfig) (*Client, error) {
+	return newChatCompletionsClient(cfg, chatProviderProfile{
+		Name:            "ollama",
+		APIKeyEnv:       "OLLAMA_API_KEY",
+		BaseURLEnv:      "OLLAMA_BASE_URL",
+		DefaultBaseURL:  DefaultOllamaBaseURL,
+		DefaultModel:    "",
+		MaxTokensField:  "max_completion_tokens",
+		ReasoningStyle:  "ollama",
+		ExtraHeaders:    map[string]string{},
+		APIKeyOptional:  true,
+		OmitTemperature: true,
+	})
+}
+
 type chatProviderProfile struct {
 	Name            string
 	APIKeyEnv       string
@@ -255,6 +271,7 @@ type chatProviderProfile struct {
 	ReasoningStyle  string
 	ExtraHeaders    map[string]string
 	OmitTemperature bool
+	APIKeyOptional  bool
 }
 
 func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile) (*Client, error) {
@@ -267,7 +284,7 @@ func newChatCompletionsClient(cfg OpenRouterConfig, profile chatProviderProfile)
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv(profile.APIKeyEnv))
 	}
-	if apiKey == "" {
+	if apiKey == "" && !profile.APIKeyOptional {
 		return nil, fmt.Errorf("%s is required for provider=%s", profile.APIKeyEnv, profile.Name)
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
@@ -340,8 +357,8 @@ func trimProviderModelPrefix(model, prefix string) string {
 }
 
 // ModelIsKnownForProvider reports whether model is a recognized model ID
-// for the given direct provider. For openrouter or unknown providers it
-// returns true (anything is routable). For direct providers (deepseek,
+// for the given direct provider. For openrouter, ollama, or unknown providers
+// it returns true (anything is routable). For direct providers (deepseek,
 // xiaomi, moonshot, openai) it checks against the known model set.
 func ModelIsKnownForProvider(provider, model string) bool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
@@ -350,7 +367,7 @@ func ModelIsKnownForProvider(provider, model string) bool {
 		return false
 	}
 	switch provider {
-	case "openrouter", "":
+	case "openrouter", "", "ollama":
 		return true // anything can be routed through openrouter
 	case "openai":
 		return model == DefaultOpenAIModel
@@ -398,6 +415,9 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []ToolD
 func (c *Client) CompleteVision(ctx context.Context, prompt string, image ImageInput) (Completion, error) {
 	if c == nil {
 		return Completion{}, fmt.Errorf("provider client is not configured")
+	}
+	if strings.TrimSpace(c.model) == "" {
+		return Completion{}, fmt.Errorf("%s model is required", c.providerLabel())
 	}
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -506,6 +526,9 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 	if c.reasoningStyle == "openai" {
 		return c.completeResponses(ctx, messages, tools, opts)
 	}
+	if strings.TrimSpace(c.model) == "" {
+		return Completion{}, fmt.Errorf("%s model is required", c.providerLabel())
+	}
 	requestMessages := messages
 	if c.shouldEnableAnthropicPromptCache() {
 		requestMessages = withAnthropicPromptCache(messages)
@@ -562,6 +585,13 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 		}
 		if opts.DisableThinking && moonshotSupportsDisableThinking(c.model) {
 			body["thinking"] = map[string]any{"type": "disabled"}
+		}
+	case "ollama":
+		if opts.ReasoningMaxTokens > 0 {
+			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning max_tokens option", c.providerLabel())
+		}
+		if effort := strings.TrimSpace(opts.ReasoningEffort); effort != "" {
+			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning effort option", c.providerLabel())
 		}
 	default:
 		reasoning := map[string]any{}
@@ -1186,7 +1216,13 @@ func (c *Client) Model() string {
 	if model := strings.TrimSpace(c.model); model != "" {
 		return model
 	}
-	return firstNonEmpty(c.defaultModel, DefaultOpenRouterModel)
+	if model := strings.TrimSpace(c.defaultModel); model != "" {
+		return model
+	}
+	if strings.EqualFold(strings.TrimSpace(c.providerName), "ollama") {
+		return ""
+	}
+	return DefaultOpenRouterModel
 }
 
 func (c *Client) providerLabel() string {

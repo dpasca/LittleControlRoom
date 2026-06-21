@@ -1152,6 +1152,15 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if strings.TrimSpace(req.LCAgentXiaomiBaseURL) == "" {
 			req.LCAgentXiaomiBaseURL = m.xiaomiBaseURL()
 		}
+		if strings.TrimSpace(req.LCAgentOllamaAPIKey) == "" {
+			req.LCAgentOllamaAPIKey = m.ollamaAPIKey()
+		}
+		if strings.TrimSpace(req.LCAgentOllamaBaseURL) == "" {
+			req.LCAgentOllamaBaseURL = m.ollamaBaseURL()
+		}
+		if strings.TrimSpace(req.LCAgentOllamaModel) == "" {
+			req.LCAgentOllamaModel = m.ollamaModel()
+		}
 		if strings.TrimSpace(req.LCAgentRoutePreset) == "" && strings.TrimSpace(req.PendingModel) == "" && strings.TrimSpace(req.PendingReasoning) == "" {
 			req.LCAgentRoutePreset = m.lcagentRoutePreset()
 		}

@@ -52,6 +52,9 @@ type lcagentSession struct {
 	moonshotAPIKey    string
 	xiaomiAPIKey      string
 	xiaomiBaseURL     string
+	ollamaAPIKey      string
+	ollamaBaseURL     string
+	ollamaModel       string
 	preflightAccess   bool
 	routePreset       string
 	provider          string
@@ -164,6 +167,9 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	configuredProvider := provider
 	configuredRoutePreset := routePreset
 	model := strings.TrimSpace(req.PendingModel)
+	if model == "" && strings.EqualFold(provider, "ollama") {
+		model = strings.TrimSpace(req.LCAgentOllamaModel)
+	}
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
@@ -181,10 +187,22 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 	modelWarning := lcagentModelSelectionWarning(configuredRoutePreset, configuredProvider, strings.TrimSpace(req.PendingModel), routePreset, provider, model)
 	utilityProvider := lcagentResolvedUtilityProvider(routePreset, provider, req.LCAgentUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, lcagentResolvedUtilityModel(routePreset, provider, model, req.LCAgentUtilityProvider, req.LCAgentUtilityModel))
+	if utilityModel == "" && strings.EqualFold(utilityProvider, "ollama") {
+		utilityModel = strings.TrimSpace(req.LCAgentOllamaModel)
+		if utilityModel == "" && strings.EqualFold(modelProvider, "ollama") {
+			utilityModel = model
+		}
+	}
 	visionProvider := lcagentVisionProviderValue(req.LCAgentVisionProvider)
 	visionModel := ""
 	if resolvedVisionProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider); resolvedVisionProvider != "" {
 		visionModel = modeladapter.NormalizeModelForProvider(resolvedVisionProvider, req.LCAgentVisionModel)
+		if visionModel == "" && strings.EqualFold(resolvedVisionProvider, "ollama") {
+			visionModel = strings.TrimSpace(req.LCAgentOllamaModel)
+			if visionModel == "" && strings.EqualFold(modelProvider, "ollama") {
+				visionModel = model
+			}
+		}
 	}
 	session := &lcagentSession{
 		projectPath:              strings.TrimSpace(req.ProjectPath),
@@ -197,6 +215,9 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		moonshotAPIKey:           strings.TrimSpace(req.LCAgentMoonshotAPIKey),
 		xiaomiAPIKey:             strings.TrimSpace(req.LCAgentXiaomiAPIKey),
 		xiaomiBaseURL:            strings.TrimSpace(req.LCAgentXiaomiBaseURL),
+		ollamaAPIKey:             strings.TrimSpace(req.LCAgentOllamaAPIKey),
+		ollamaBaseURL:            strings.TrimSpace(req.LCAgentOllamaBaseURL),
+		ollamaModel:              strings.TrimSpace(req.LCAgentOllamaModel),
 		preflightAccess:          req.LCAgentPreflightAccess,
 		routePreset:              routePreset,
 		provider:                 provider,
@@ -468,6 +489,9 @@ func (s *lcagentSession) ListModels() ([]ModelOption, error) {
 		MoonshotAPIKey:   s.moonshotAPIKey,
 		XiaomiAPIKey:     s.xiaomiAPIKey,
 		XiaomiBaseURL:    s.xiaomiBaseURL,
+		OllamaAPIKey:     s.ollamaAPIKey,
+		OllamaBaseURL:    s.ollamaBaseURL,
+		OllamaModel:      s.ollamaModel,
 		RequestTimeout:   s.requestTimeout,
 	}
 	s.mu.Unlock()
@@ -489,6 +513,9 @@ type LCAgentModelListConfig struct {
 	MoonshotAPIKey   string
 	XiaomiAPIKey     string
 	XiaomiBaseURL    string
+	OllamaAPIKey     string
+	OllamaBaseURL    string
+	OllamaModel      string
 	RequestTimeout   time.Duration
 }
 
@@ -496,6 +523,9 @@ func LCAgentModelOptions(ctx context.Context, cfg LCAgentModelListConfig) ([]Mod
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	if provider == "" {
 		provider = lcagentDefaultProvider
+	}
+	if strings.TrimSpace(cfg.Model) == "" && strings.EqualFold(provider, "ollama") {
+		cfg.Model = strings.TrimSpace(cfg.OllamaModel)
 	}
 	if cfg.IncludeAvailable {
 		return lcagentAvailableModelOptions(ctx, cfg, provider)
@@ -521,6 +551,9 @@ func CheckLCAgentProviderAccess(ctx context.Context, req LaunchRequest) error {
 	}
 	modelProvider := firstNonEmpty(lcagentRoutePresetProvider(routePreset), provider)
 	model := modeladapter.NormalizeModelForProvider(modelProvider, req.PendingModel)
+	if model == "" && strings.EqualFold(modelProvider, "ollama") {
+		model = strings.TrimSpace(req.LCAgentOllamaModel)
+	}
 	if model == "" {
 		model = lcagentDefaultModel(modelProvider)
 	}
@@ -537,6 +570,9 @@ func CheckLCAgentProviderAccess(ctx context.Context, req LaunchRequest) error {
 		MoonshotAPIKey:   req.LCAgentMoonshotAPIKey,
 		XiaomiAPIKey:     req.LCAgentXiaomiAPIKey,
 		XiaomiBaseURL:    req.LCAgentXiaomiBaseURL,
+		OllamaAPIKey:     req.LCAgentOllamaAPIKey,
+		OllamaBaseURL:    req.LCAgentOllamaBaseURL,
+		OllamaModel:      req.LCAgentOllamaModel,
 		RequestTimeout:   req.LCAgentRequestTimeout,
 	}
 	checkCtx := ctx
@@ -552,6 +588,9 @@ func CheckLCAgentProviderAccess(ctx context.Context, req LaunchRequest) error {
 }
 
 func lcagentLaunchHasCredential(req LaunchRequest, provider string) bool {
+	if strings.EqualFold(strings.TrimSpace(provider), "ollama") {
+		return true
+	}
 	if strings.TrimSpace(req.LCAgentEnvFile) != "" {
 		return true
 	}
@@ -574,6 +613,8 @@ func lcagentLaunchCredential(req LaunchRequest, provider string) (string, string
 		return "MOONSHOT_API_KEY", strings.TrimSpace(req.LCAgentMoonshotAPIKey)
 	case "xiaomi":
 		return "XIAOMI_API_KEY", strings.TrimSpace(req.LCAgentXiaomiAPIKey)
+	case "ollama":
+		return "OLLAMA_API_KEY", strings.TrimSpace(req.LCAgentOllamaAPIKey)
 	default:
 		return "", ""
 	}
@@ -619,7 +660,7 @@ func lcagentAvailableModelProviders(cfg LCAgentModelListConfig, selectedProvider
 	if selectedProvider == "" {
 		selectedProvider = lcagentDefaultProvider
 	}
-	all := []string{"openrouter", "openai", "deepseek", "moonshot", "xiaomi"}
+	all := []string{"openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama"}
 	out := []string{selectedProvider}
 	for _, provider := range all {
 		if provider == selectedProvider {
@@ -648,6 +689,11 @@ func lcagentModelListErrorShouldSurface(cfg LCAgentModelListConfig, selectedProv
 		return strings.TrimSpace(os.Getenv("MOONSHOT_API_KEY")) != ""
 	case "xiaomi":
 		return strings.TrimSpace(os.Getenv("XIAOMI_API_KEY")) != ""
+	case "ollama":
+		return strings.TrimSpace(cfg.OllamaBaseURL) != "" ||
+			strings.TrimSpace(cfg.OllamaAPIKey) != "" ||
+			strings.TrimSpace(os.Getenv("OLLAMA_BASE_URL")) != "" ||
+			strings.TrimSpace(os.Getenv("OLLAMA_API_KEY")) != ""
 	default:
 		return strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != ""
 	}
@@ -699,7 +745,7 @@ func lcagentModelListClient(provider string, cfg LCAgentModelListConfig) (*model
 	adapterCfg := modeladapter.OpenRouterConfig{
 		APIKey:         lcagentModelListAPIKey(provider, cfg),
 		BaseURL:        lcagentModelListBaseURL(provider, cfg),
-		Model:          firstNonEmpty(strings.TrimSpace(cfg.Model), lcagentDefaultModel(provider)),
+		Model:          firstNonEmpty(strings.TrimSpace(cfg.Model), lcagentModelListDefaultModel(provider, cfg)),
 		EnvFile:        strings.TrimSpace(cfg.EnvFile),
 		RequestTimeout: lcagentModelListTimeout(cfg.RequestTimeout),
 	}
@@ -712,14 +758,19 @@ func lcagentModelListClient(provider string, cfg LCAgentModelListConfig) (*model
 		return modeladapter.NewMoonshotClient(adapterCfg)
 	case "xiaomi":
 		return modeladapter.NewXiaomiClient(adapterCfg)
+	case "ollama":
+		return modeladapter.NewOllamaClient(adapterCfg)
 	default:
 		return modeladapter.NewOpenRouterClient(adapterCfg)
 	}
 }
 
 func lcagentModelListBaseURL(provider string, cfg LCAgentModelListConfig) string {
-	if strings.EqualFold(strings.TrimSpace(provider), "xiaomi") {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xiaomi":
 		return strings.TrimSpace(cfg.XiaomiBaseURL)
+	case "ollama":
+		return strings.TrimSpace(cfg.OllamaBaseURL)
 	}
 	return ""
 }
@@ -734,9 +785,18 @@ func lcagentModelListAPIKey(provider string, cfg LCAgentModelListConfig) string 
 		return strings.TrimSpace(cfg.MoonshotAPIKey)
 	case "xiaomi":
 		return strings.TrimSpace(cfg.XiaomiAPIKey)
+	case "ollama":
+		return strings.TrimSpace(cfg.OllamaAPIKey)
 	default:
 		return strings.TrimSpace(cfg.OpenRouterAPIKey)
 	}
+}
+
+func lcagentModelListDefaultModel(provider string, cfg LCAgentModelListConfig) string {
+	if strings.EqualFold(strings.TrimSpace(provider), "ollama") {
+		return strings.TrimSpace(cfg.OllamaModel)
+	}
+	return lcagentDefaultModel(provider)
 }
 
 func lcagentModelListTimeout(timeout time.Duration) time.Duration {
@@ -793,6 +853,8 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		return []ModelOption{
 			option(modeladapter.DefaultOpenAIModel, "Quality: GPT-5.5", "Direct OpenAI coding route.", "low", true),
 		}
+	case "ollama":
+		return nil
 	default:
 		return []ModelOption{
 			option(defaultModel, defaultModel, "Experimental LCAgent tool-calling model.", "", true),
@@ -828,7 +890,7 @@ func lcagentReasoningEffortOptionsForProvider(provider string) []ReasoningEffort
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "", "openai", "openrouter", "xiaomi":
 		return lcagentOpenAIStyleReasoningEffortOptions()
-	case "moonshot":
+	case "moonshot", "ollama":
 		return nil
 	case "deepseek":
 		return lcagentDeepSeekReasoningEffortOptions()
@@ -922,6 +984,8 @@ func lcagentProviderDisplayName(provider string) string {
 		return "Moonshot"
 	case "xiaomi":
 		return "Xiaomi"
+	case "ollama":
+		return "Ollama"
 	default:
 		return "OpenRouter"
 	}
@@ -1274,6 +1338,7 @@ type lcagentPreparedRun struct {
 	webSearchEngineID  string
 	webSearchURL       string
 	xiaomiBaseURL      string
+	ollamaBaseURL      string
 	utilityProvider    string
 	utilityModel       string
 	utilityAPIKeyName  string
@@ -1354,6 +1419,9 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		provider = pendingProvider
 	}
 	model := strings.TrimSpace(firstNonEmpty(pendingModel, s.model))
+	if model == "" && strings.EqualFold(provider, "ollama") {
+		model = strings.TrimSpace(s.ollamaModel)
+	}
 	if model == "" && routePreset == "" {
 		model = lcagentDefaultModel(provider)
 	}
@@ -1403,6 +1471,9 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		LCAgentMoonshotAPIKey:   s.moonshotAPIKey,
 		LCAgentXiaomiAPIKey:     s.xiaomiAPIKey,
 		LCAgentXiaomiBaseURL:    s.xiaomiBaseURL,
+		LCAgentOllamaAPIKey:     s.ollamaAPIKey,
+		LCAgentOllamaBaseURL:    s.ollamaBaseURL,
+		LCAgentOllamaModel:      s.ollamaModel,
 		LCAgentRoutePreset:      routePreset,
 		LCAgentProvider:         provider,
 		LCAgentRequestTimeout:   requestTimeout,
@@ -1412,14 +1483,27 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	webSearchEngineID := strings.TrimSpace(s.webSearchEngineID)
 	webSearchURL := strings.TrimSpace(s.webSearchURL)
 	xiaomiBaseURL := strings.TrimSpace(s.xiaomiBaseURL)
+	ollamaBaseURL := strings.TrimSpace(s.ollamaBaseURL)
 	utilityProvider := firstNonEmpty(s.utilityProvider, lcagentDefaultUtilityProvider)
 	utilityModel := modeladapter.NormalizeModelForProvider(utilityProvider, s.utilityModel)
+	if utilityModel == "" && strings.EqualFold(utilityProvider, "ollama") {
+		utilityModel = strings.TrimSpace(s.ollamaModel)
+		if utilityModel == "" && strings.EqualFold(modelProvider, "ollama") {
+			utilityModel = model
+		}
+	}
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
 	visionProvider := firstNonEmpty(s.visionProvider, lcagentDefaultVisionProvider)
 	visionModel := strings.TrimSpace(s.visionModel)
 	visionCredentialProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
 	if visionCredentialProvider != "" {
 		visionModel = modeladapter.NormalizeModelForProvider(visionCredentialProvider, visionModel)
+		if visionModel == "" && strings.EqualFold(visionCredentialProvider, "ollama") {
+			visionModel = strings.TrimSpace(s.ollamaModel)
+			if visionModel == "" && strings.EqualFold(modelProvider, "ollama") {
+				visionModel = model
+			}
+		}
 	} else {
 		visionModel = ""
 	}
@@ -1466,6 +1550,7 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 		webSearchEngineID:  webSearchEngineID,
 		webSearchURL:       webSearchURL,
 		xiaomiBaseURL:      xiaomiBaseURL,
+		ollamaBaseURL:      ollamaBaseURL,
 		utilityProvider:    utilityProvider,
 		utilityModel:       utilityModel,
 		utilityAPIKeyName:  utilityAPIKeyName,
@@ -1600,6 +1685,9 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 	if prepared.xiaomiBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "xiaomi") || strings.EqualFold(prepared.utilityProvider, "xiaomi") || strings.EqualFold(lcagentResolvedVisionProvider(prepared.routePreset, prepared.provider, prepared.visionProvider), "xiaomi")) {
 		cmd.Env = setCommandEnv(cmd.Env, "XIAOMI_BASE_URL", prepared.xiaomiBaseURL)
 	}
+	if prepared.ollamaBaseURL != "" && (strings.EqualFold(prepared.credentialProvider, "ollama") || strings.EqualFold(prepared.utilityProvider, "ollama") || strings.EqualFold(lcagentResolvedVisionProvider(prepared.routePreset, prepared.provider, prepared.visionProvider), "ollama")) {
+		cmd.Env = setCommandEnv(cmd.Env, "OLLAMA_BASE_URL", prepared.ollamaBaseURL)
+	}
 	if prepared.webSearchAPIKey != "" {
 		switch prepared.webSearchBackend {
 		case "exa":
@@ -1685,6 +1773,8 @@ func (s *lcagentSession) providerCredentialLocked(provider string) (string, stri
 		return "MOONSHOT_API_KEY", strings.TrimSpace(s.moonshotAPIKey)
 	case "xiaomi":
 		return "XIAOMI_API_KEY", strings.TrimSpace(s.xiaomiAPIKey)
+	case "ollama":
+		return "OLLAMA_API_KEY", strings.TrimSpace(s.ollamaAPIKey)
 	default:
 		return "", ""
 	}
@@ -2767,10 +2857,10 @@ func lcagentProviderValue(configured string) (string, error) {
 		return lcagentDefaultProvider, nil
 	}
 	switch value {
-	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
 	default:
-		return "", fmt.Errorf("LCAgent provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi")
+		return "", fmt.Errorf("LCAgent provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi, ollama")
 	}
 }
 
@@ -2833,7 +2923,7 @@ func lcagentUtilityProviderValue(configured string) string {
 	switch value {
 	case "main", "same", "same-as-main":
 		return lcagentDefaultUtilityProvider
-	case "off", "openai", "deepseek", "moonshot", "xiaomi":
+	case "off", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value
 	case "openrouter":
 		return "openrouter"
@@ -2872,7 +2962,7 @@ func lcagentVisionProviderValue(configured string) string {
 	switch value {
 	case "main", "same", "same-as-main":
 		return "main"
-	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value
 	default:
 		return lcagentDefaultVisionProvider
@@ -2944,6 +3034,8 @@ func lcagentDefaultModel(provider string) string {
 		return modeladapter.DefaultMoonshotModel
 	case "xiaomi":
 		return modeladapter.DefaultXiaomiModel
+	case "ollama":
+		return ""
 	default:
 		return modeladapter.DefaultOpenRouterModel
 	}

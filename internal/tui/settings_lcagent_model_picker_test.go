@@ -34,6 +34,90 @@ func TestSettingsLCAgentModelListConfigUsesUtilityProvider(t *testing.T) {
 	}
 }
 
+func TestSettingsLCAgentModelListConfigUsesOllamaConnection(t *testing.T) {
+	settings := config.EditableSettings{
+		LCAgentProvider: "ollama",
+		OllamaBaseURL:   "http://127.0.0.1:11435/v1",
+		OllamaAPIKey:    "ollama-key",
+		OllamaModel:     "qwen3:8b",
+	}
+	cfg, provider, current, ok := settingsLCAgentModelListConfig(settings, settingsFieldLCAgentModel)
+	if !ok {
+		t.Fatal("settingsLCAgentModelListConfig() ok = false")
+	}
+	if provider != "ollama" || current != "qwen3:8b" {
+		t.Fatalf("provider/current = %q/%q, want ollama/qwen3:8b", provider, current)
+	}
+	if cfg.Provider != "ollama" || cfg.Model != "qwen3:8b" || cfg.OllamaBaseURL != "http://127.0.0.1:11435/v1" || cfg.OllamaAPIKey != "ollama-key" || cfg.OllamaModel != "qwen3:8b" {
+		t.Fatalf("cfg = %#v", cfg)
+	}
+}
+
+func TestSettingsLCAgentModelPickerStoresOllamaBaseURLBeforeLoading(t *testing.T) {
+	settings := config.EditableSettings{LCAgentProvider: "ollama"}
+	m := Model{
+		settingsFields: newSettingsFields(settings),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:         settingsFieldLCAgentModel,
+			Step:               settingsLCAgentModelPickerStepAPIKey,
+			Provider:           "ollama",
+			APIKeyProvider:     "ollama",
+			APIKeyInput:        newSettingsLCAgentModelPickerAPIKeyInput("ollama", "ollama-key"),
+			BaseURLInput:       newSettingsLCAgentModelPickerBaseURLInput("ollama", "http://127.0.0.1:11435/v1"),
+			ConnectionSelected: 1,
+		},
+	}
+
+	updated, cmd := m.startSettingsLCAgentModelPickerModelList()
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("startSettingsLCAgentModelPickerModelList() cmd = nil, want model-list command")
+	}
+	if value := got.settingsFieldValue(settingsFieldOllamaBaseURL); value != "http://127.0.0.1:11435/v1" {
+		t.Fatalf("Ollama base URL field = %q", value)
+	}
+	if value := got.settingsFieldValue(settingsFieldOllamaAPIKey); value != "ollama-key" {
+		t.Fatalf("Ollama API key field = %q", value)
+	}
+}
+
+func TestOpenEmbeddedLCAgentModelPickerUsesUnifiedPicker(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "ollama"
+	m := Model{
+		settingsBaseline:    &settings,
+		codexVisibleProject: "/tmp/project",
+	}
+
+	updated, cmd := m.openEmbeddedLCAgentModelPicker()
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("openEmbeddedLCAgentModelPicker() cmd = %v, want nil", cmd)
+	}
+	if got.codexModelPicker != nil {
+		t.Fatal("legacy codex model picker should not open for embedded LCAgent")
+	}
+	if got.settingsLCAgentModelPicker == nil {
+		t.Fatal("settings LCAgent model picker is nil")
+	}
+	if !got.settingsLCAgentModelPicker.EmbeddedApply || got.settingsLCAgentModelPicker.EmbeddedProject != "/tmp/project" {
+		t.Fatalf("embedded picker state = %#v", got.settingsLCAgentModelPicker)
+	}
+	if got.settingsLCAgentModelPicker.FieldIndex != settingsFieldLCAgentModel {
+		t.Fatalf("field index = %d, want main model", got.settingsLCAgentModelPicker.FieldIndex)
+	}
+	foundOllama := false
+	for _, option := range got.settingsLCAgentModelPicker.ProviderOptions {
+		if option.Value == "ollama" {
+			foundOllama = true
+			break
+		}
+	}
+	if !foundOllama {
+		t.Fatalf("provider options = %#v, want ollama", got.settingsLCAgentModelPicker.ProviderOptions)
+	}
+}
+
 func TestSettingsLCAgentVisionAutoUsesVerifiedMainForLaunch(t *testing.T) {
 	settings := config.EditableSettings{
 		LCAgentProvider:       "openai",
