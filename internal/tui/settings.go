@@ -1332,9 +1332,15 @@ func settingsLCAgentConnectionFields(settings config.EditableSettings) []int {
 }
 
 func appendSettingsLCAgentConnectionFields(fields []int, provider string) []int {
-	if strings.EqualFold(strings.TrimSpace(provider), "xiaomi") {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xiaomi":
 		fields = appendUniqueSettingsField(fields, settingsFieldXiaomiBaseURL)
 		fields = appendUniqueSettingsField(fields, settingsFieldXiaomiAPIKey)
+		return fields
+	case "ollama":
+		fields = appendUniqueSettingsField(fields, settingsFieldOllamaBaseURL)
+		fields = appendUniqueSettingsField(fields, settingsFieldOllamaAPIKey)
+		fields = appendUniqueSettingsField(fields, settingsFieldOllamaModel)
 		return fields
 	}
 	if credentialField := settingsLCAgentCredentialFieldForProvider(provider); credentialField >= 0 {
@@ -1362,6 +1368,8 @@ func settingsLCAgentCredentialFieldForProvider(provider string) int {
 		return settingsFieldMoonshotAPIKey
 	case "xiaomi":
 		return settingsFieldXiaomiAPIKey
+	case "ollama":
+		return settingsFieldOllamaAPIKey
 	default:
 		return -1
 	}
@@ -2488,6 +2496,19 @@ func settingsLCAgentStepState(settings config.EditableSettings) (string, string,
 
 func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipgloss.Style, string) {
 	provider := settingsLCAgentMainProvider(settings)
+	if strings.EqualFold(provider, "ollama") {
+		endpoint := strings.TrimSpace(settings.OllamaBaseURL)
+		if endpoint == "" {
+			endpoint = config.AIBackendOllama.DefaultOpenAICompatibleBaseURL()
+		}
+		if model := strings.TrimSpace(settings.EmbeddedLCAgentModel); model != "" {
+			return "ready", footerPrimaryLabelStyle, "Ollama endpoint " + endpoint + " with LCAgent model " + model + "."
+		}
+		if model := strings.TrimSpace(settings.OllamaModel); model != "" {
+			return "ready", footerPrimaryLabelStyle, "Ollama endpoint " + endpoint + " with shared model " + model + "."
+		}
+		return "optional", detailWarningStyle, "Ollama will use " + endpoint + " and auto-pick the first local /v1/models result."
+	}
 	keyName := lcagentProviderAPIKeyName(provider)
 	if keyName == "" {
 		return "unknown", detailWarningStyle, "Unknown LCAgent provider " + provider + "."
@@ -2529,6 +2550,8 @@ func lcagentProviderSavedAPIKey(settings config.EditableSettings, provider strin
 		return strings.TrimSpace(settings.MoonshotAPIKey)
 	case "xiaomi":
 		return strings.TrimSpace(settings.XiaomiAPIKey)
+	case "ollama":
+		return strings.TrimSpace(settings.OllamaAPIKey)
 	default:
 		return ""
 	}
@@ -2546,6 +2569,8 @@ func lcagentProviderSavedKeyLabel(provider string) string {
 		return "Moonshot API key"
 	case "xiaomi":
 		return "Xiaomi API key"
+	case "ollama":
+		return "Ollama API key"
 	default:
 		return "Provider key"
 	}
@@ -2591,6 +2616,8 @@ func lcagentProviderAPIKeyName(provider string) string {
 		return "MOONSHOT_API_KEY"
 	case "xiaomi":
 		return "XIAOMI_API_KEY"
+	case "ollama":
+		return "OLLAMA_API_KEY"
 	default:
 		return ""
 	}
@@ -2606,6 +2633,8 @@ func lcagentDefaultModelForProvider(provider string) string {
 		return config.DefaultMoonshotModel
 	case "xiaomi":
 		return "mimo-v2.5-pro"
+	case "ollama":
+		return "first local Ollama model"
 	default:
 		return "deepseek/deepseek-v4-pro"
 	}
@@ -2615,6 +2644,8 @@ func lcagentDefaultUtilityModelForProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "xiaomi":
 		return "mimo-v2.5"
+	case "ollama":
+		return "first local Ollama model"
 	default:
 		return lcagentDefaultModelForProvider(provider)
 	}
@@ -2629,6 +2660,9 @@ func settingsLCAgentMainModel(settings config.EditableSettings) string {
 		if model := strings.TrimSpace(settings.EmbeddedLCAgentModel); model != "" {
 			return model
 		}
+	}
+	if strings.EqualFold(settingsLCAgentMainProvider(settings), "ollama") {
+		return firstNonEmptyTrimmed(strings.TrimSpace(settings.OllamaModel), "first local Ollama model")
 	}
 	return firstNonEmptyTrimmed(lcagentModelForRoutePreset(settings.LCAgentRoutePreset), lcagentDefaultModelForProvider(settingsLCAgentMainProvider(settings)))
 }
@@ -2657,7 +2691,7 @@ func settingsLCAgentUtilityProviderValue(raw string) string {
 	switch normalized {
 	case "", "main", "same", "same-as-main":
 		return "main"
-	case "off", "openrouter", "openai", "deepseek", "moonshot":
+	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return normalized
 	default:
 		return normalized
@@ -3877,6 +3911,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return "The Main Model will call Moonshot directly and use Kimi model IDs."
 		case "xiaomi":
 			return "The Main Model will call Xiaomi directly and use MiMo model IDs."
+		case "ollama":
+			return "The Main Model will call the shared local Ollama OpenAI-compatible endpoint."
 		case "openai":
 			return "The Main Model will call the OpenAI Responses API directly."
 		default:
@@ -3910,6 +3946,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return "The Utility Model will use direct Moonshot/Kimi."
 		case "xiaomi":
 			return "The Utility Model will use direct Xiaomi MiMo."
+		case "ollama":
+			return "The Utility Model will use local Ollama. Pick a model here unless Same as Main already uses an Ollama model."
 		default:
 			return field.hint
 		}
@@ -3938,6 +3976,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return "analyze_image will use direct Moonshot/Kimi. Pick a model that supports image input; press v to check the selected route."
 		case "xiaomi":
 			return "analyze_image will use direct Xiaomi MiMo. Pick a model that supports image input; press v to check the selected route."
+		case "ollama":
+			return "analyze_image will use local Ollama. Pick a vision-capable model; press v to check the selected route."
 		default:
 			return field.hint
 		}

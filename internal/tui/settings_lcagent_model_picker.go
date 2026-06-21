@@ -34,12 +34,16 @@ const (
 
 type settingsLCAgentModelPickerState struct {
 	FieldIndex         int
+	EmbeddedApply      bool
+	EmbeddedProject    string
 	Step               settingsLCAgentModelPickerStep
 	Provider           string
 	CurrentProvider    string
 	ProviderOptions    []settingsLCAgentProviderOption
 	ProviderSelected   int
 	APIKeyInput        textinput.Model
+	BaseURLInput       textinput.Model
+	ConnectionSelected int
 	APIKeyProvider     string
 	Current            string
 	Models             []codexapp.ModelOption
@@ -128,6 +132,16 @@ func newSettingsLCAgentModelPickerAPIKeyInput(provider, value string) textinput.
 	return input
 }
 
+func newSettingsLCAgentModelPickerBaseURLInput(provider, value string) textinput.Model {
+	input := textinput.New()
+	input.Prompt = ""
+	input.Placeholder = settingsModelPickerBaseURLPlaceholder(provider)
+	input.CharLimit = 512
+	input.SetValue(strings.TrimSpace(value))
+	input.CursorEnd()
+	return input
+}
+
 func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 	fieldIndex := m.settingsSelected
 	if m.setupMode && m.setupConfigMode {
@@ -153,6 +167,23 @@ func (m Model) openSettingsLCAgentModelPicker() (tea.Model, tea.Cmd) {
 	}
 	m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(fieldIndex)) + " provider."
 	return m, nil
+}
+
+func (m Model) openEmbeddedLCAgentModelPicker() (tea.Model, tea.Cmd) {
+	m.settingsFields = newSettingsFields(m.currentSettingsBaseline())
+	m.settingsSelected = settingsFieldLCAgentModel
+	next, cmd := m.openSettingsLCAgentModelPicker()
+	updated, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	m = updated
+	if state := m.settingsLCAgentModelPicker; state != nil {
+		state.EmbeddedApply = true
+		state.EmbeddedProject = strings.TrimSpace(m.codexVisibleProject)
+	}
+	m.status = "Choose the LCAgent provider and model."
+	return m, cmd
 }
 
 func settingsLCAgentModelListCmd(fieldIndex int, provider, current string, cfg codexapp.LCAgentModelListConfig) tea.Cmd {
@@ -225,6 +256,9 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 			current = ""
 		}
 	}
+	if strings.EqualFold(provider, "ollama") && strings.TrimSpace(current) == "" {
+		current = strings.TrimSpace(settings.OllamaModel)
+	}
 	cfg := codexapp.LCAgentModelListConfig{
 		Provider:         provider,
 		Model:            current,
@@ -236,6 +270,9 @@ func settingsLCAgentModelListConfigForProvider(settings config.EditableSettings,
 		MoonshotAPIKey:   settings.MoonshotAPIKey,
 		XiaomiAPIKey:     settings.XiaomiAPIKey,
 		XiaomiBaseURL:    settings.XiaomiBaseURL,
+		OllamaAPIKey:     settings.OllamaAPIKey,
+		OllamaBaseURL:    settings.OllamaBaseURL,
+		OllamaModel:      settings.OllamaModel,
 		RequestTimeout:   settings.LCAgentRequestTimeout,
 	}
 	return cfg, provider, current, true
@@ -321,7 +358,7 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		case "left", "h", "backspace":
 			if strings.TrimSpace(state.APIKeyProvider) != "" {
 				m.settingsLCAgentModelPicker.Step = settingsLCAgentModelPickerStepAPIKey
-				m.status = "Paste or confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " API key."
+				m.status = "Confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " connection."
 			} else {
 				m.settingsLCAgentModelPicker.Step = settingsLCAgentModelPickerStepProvider
 				m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
@@ -344,7 +381,7 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 	case "left", "h":
 		if strings.TrimSpace(state.APIKeyProvider) != "" {
 			state.Step = settingsLCAgentModelPickerStepAPIKey
-			m.status = "Paste or confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " API key."
+			m.status = "Confirm the shared " + settingsLCAgentModelPickerProviderLabel(state.APIKeyProvider) + " connection."
 		} else {
 			state.Step = settingsLCAgentModelPickerStepProvider
 			m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
@@ -438,9 +475,12 @@ func (m Model) chooseSettingsLCAgentModelPickerProvider(option settingsLCAgentPr
 	state.Step = settingsLCAgentModelPickerStepAPIKey
 	state.APIKeyProvider = provider
 	state.APIKeyInput = newSettingsLCAgentModelPickerAPIKeyInput(provider, settingsModelPickerSavedAPIKey(m.settingsDraftForInferenceStatus(), provider))
+	state.BaseURLInput = newSettingsLCAgentModelPickerBaseURLInput(provider, settingsModelPickerSavedBaseURL(m.settingsDraftForInferenceStatus(), provider))
+	state.ConnectionSelected = 0
+	state.focusConnectionInput()
 	state.Loading = false
 	state.Err = ""
-	m.status = "Paste or confirm the shared " + settingsLCAgentModelPickerProviderLabel(provider) + " API key."
+	m.status = "Confirm the shared " + settingsLCAgentModelPickerProviderLabel(provider) + " connection."
 	return m, nil
 }
 
@@ -457,13 +497,44 @@ func (m Model) updateSettingsLCAgentModelPickerAPIKeyStep(msg tea.KeyMsg) (tea.M
 		state.Step = settingsLCAgentModelPickerStepProvider
 		m.status = "Choose the " + strings.ToLower(settingsLCAgentModelPickerRoleLabel(state.FieldIndex)) + " provider."
 		return m, nil
+	case "tab", "down", "up":
+		if settingsModelPickerBaseURLField(state.APIKeyProvider) >= 0 {
+			if state.ConnectionSelected == 0 {
+				state.ConnectionSelected = 1
+			} else {
+				state.ConnectionSelected = 0
+			}
+			state.focusConnectionInput()
+		}
+		return m, nil
 	case "enter":
 		return m.startSettingsLCAgentModelPickerModelList()
 	default:
+		if state.ConnectionSelected == 1 && settingsModelPickerBaseURLField(state.APIKeyProvider) >= 0 {
+			input, cmd := state.BaseURLInput.Update(msg)
+			state.BaseURLInput = input
+			return m, cmd
+		}
 		input, cmd := state.APIKeyInput.Update(msg)
 		state.APIKeyInput = input
 		return m, cmd
 	}
+}
+
+func (s *settingsLCAgentModelPickerState) focusConnectionInput() {
+	if s == nil {
+		return
+	}
+	if s.ConnectionSelected == 1 && settingsModelPickerBaseURLField(s.APIKeyProvider) >= 0 {
+		s.APIKeyInput.Blur()
+		s.BaseURLInput.Focus()
+		s.BaseURLInput.CursorEnd()
+		return
+	}
+	s.ConnectionSelected = 0
+	s.BaseURLInput.Blur()
+	s.APIKeyInput.Focus()
+	s.APIKeyInput.CursorEnd()
 }
 
 func (m Model) startSettingsLCAgentModelPickerModelList() (tea.Model, tea.Cmd) {
@@ -480,6 +551,7 @@ func (m Model) startSettingsLCAgentModelPickerModelList() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setSettingsModelPickerAPIKey(provider, state.APIKeyInput.Value())
+	m.setSettingsModelPickerBaseURL(provider, state.BaseURLInput.Value())
 	settings := m.settingsDraftForInferenceStatus()
 	cfg, resolvedProvider, current, ok := settingsLCAgentModelListConfigForProvider(settings, state.FieldIndex, provider)
 	if !ok {
@@ -645,6 +717,30 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 	case settingsFieldLCAgentVisionModel:
 		if len(m.settingsFields) > settingsFieldLCAgentVisionProvider && provider != "" {
 			m.settingsFields[settingsFieldLCAgentVisionProvider].input.SetValue(provider)
+		}
+	}
+	if state.EmbeddedApply {
+		settings := config.NormalizeEditableSettings(m.settingsDraftForInferenceStatus())
+		settings.RecentLCAgentModels = appendRecentString(settings.RecentLCAgentModels, formatLCAgentRecentModelID(provider, model), 5)
+		path := m.currentWritableConfigPath()
+		projectPath := strings.TrimSpace(state.EmbeddedProject)
+		if projectPath == "" {
+			projectPath = strings.TrimSpace(m.codexVisibleProject)
+		}
+		m.settingsLCAgentModelPicker = nil
+		if strings.TrimSpace(model) == "" {
+			m.status = "Saving LCAgent " + settingsLCAgentModelPickerProviderLabel(provider) + " auto model..."
+		} else {
+			m.status = "Saving LCAgent " + settingsLCAgentModelPickerProviderLabel(provider) + " model..."
+		}
+		return m, func() tea.Msg {
+			err := config.SaveEditableSettings(path, settings)
+			return codexLCAgentProviderSetupSavedMsg{
+				projectPath: projectPath,
+				settings:    settings,
+				path:        path,
+				err:         err,
+			}
 		}
 	}
 	label := settingsLCAgentModelPickerRoleLabel(fieldIndex)
@@ -856,9 +952,14 @@ func (m Model) renderSettingsLCAgentModelPickerProviderContent(width, bodyH int,
 
 func (m Model) renderSettingsLCAgentModelPickerAPIKeyContent(width, bodyH int, title string) string {
 	state := m.settingsLCAgentModelPicker
+	action := renderDialogAction("Type", "API key", navigateActionKeyStyle, navigateActionTextStyle)
+	if state != nil && settingsModelPickerBaseURLField(firstNonEmptyTrimmed(state.APIKeyProvider, state.Provider)) >= 0 {
+		action = renderDialogAction("Type", "connection", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+			renderDialogAction("Tab", "field", navigateActionKeyStyle, navigateActionTextStyle)
+	}
 	lines := []string{
 		commandPaletteTitleStyle.Render(title),
-		renderDialogAction("Type", "API key", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
+		action + "   " +
 			renderDialogAction("Enter", "load models", commitActionKeyStyle, commitActionTextStyle) + "   " +
 			renderDialogAction("Shift+Tab", "provider", navigateActionKeyStyle, navigateActionTextStyle) + "   " +
 			renderDialogAction("Esc", "close", cancelActionKeyStyle, cancelActionTextStyle),
@@ -869,17 +970,28 @@ func (m Model) renderSettingsLCAgentModelPickerAPIKeyContent(width, bodyH int, t
 	provider := firstNonEmptyTrimmed(state.APIKeyProvider, state.Provider)
 	input := state.APIKeyInput
 	input.Width = max(18, width)
-	lines = append(lines,
-		detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(provider)),
-		commandPaletteRowStyle.Render(settingsModelPickerAPIKeyLabel(provider)+": "+input.View()),
-	)
+	rowStyle := commandPaletteRowStyle
+	if state.ConnectionSelected == 0 {
+		rowStyle = dialogSelectedRowStyle
+	}
+	lines = append(lines, detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(provider)))
+	if settingsModelPickerBaseURLField(provider) >= 0 {
+		baseInput := state.BaseURLInput
+		baseInput.Width = max(18, width)
+		baseStyle := commandPaletteRowStyle
+		if state.ConnectionSelected == 1 {
+			baseStyle = dialogSelectedRowStyle
+		}
+		lines = append(lines, baseStyle.Render(settingsModelPickerBaseURLLabel(provider)+": "+baseInput.View()))
+	}
+	lines = append(lines, rowStyle.Render(settingsModelPickerAPIKeyLabel(provider)+": "+input.View()))
 	if suffix := maskedOpenAIKeySuffix(input.Value()); suffix != "" {
 		lines = append(lines, detailMutedStyle.Render("Shared key will be used for this provider and saved with settings. Ending "+suffix+"."))
 	} else {
 		fallback := settingsModelPickerAPIKeyFallbackText(m.settingsDraftForInferenceStatus(), state.FieldIndex, provider)
 		lines = append(lines, detailMutedStyle.Render(fallback))
 	}
-	lines = append(lines, "", detailMutedStyle.Render("Leave blank to keep provider defaults where the runtime can use them, or paste a key to fetch the full model list now."))
+	lines = append(lines, "", detailMutedStyle.Render("Leave blank to keep provider defaults where the runtime can use them, or fill the shared connection fields before loading models."))
 	if len(lines) > bodyH {
 		lines = lines[:bodyH]
 	}
@@ -994,6 +1106,12 @@ func settingsLCAgentModelPickerAutoLabelForProvider(settings config.EditableSett
 		return settingsLCAgentVisionDefaultLabelForProvider(settings, provider)
 	}
 	if provider != "" {
+		if strings.EqualFold(provider, "ollama") {
+			if model := strings.TrimSpace(settings.OllamaModel); model != "" {
+				return model
+			}
+			return "first local Ollama model"
+		}
 		return lcagentDefaultModelForProvider(provider)
 	}
 	return settingsLCAgentMainModel(settings)
@@ -1356,6 +1474,8 @@ func settingsLCAgentModelPickerProviderLabel(provider string) string {
 		return "Moonshot"
 	case "xiaomi":
 		return "Xiaomi"
+	case "ollama":
+		return "Ollama"
 	default:
 		return "OpenRouter"
 	}
@@ -1467,8 +1587,54 @@ func settingsModelPickerAPIKeyField(provider string) int {
 		return settingsFieldMoonshotAPIKey
 	case "xiaomi":
 		return settingsFieldXiaomiAPIKey
+	case "ollama":
+		return settingsFieldOllamaAPIKey
 	default:
 		return -1
+	}
+}
+
+func settingsModelPickerBaseURLField(provider string) int {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xiaomi":
+		return settingsFieldXiaomiBaseURL
+	case "ollama":
+		return settingsFieldOllamaBaseURL
+	default:
+		return -1
+	}
+}
+
+func settingsModelPickerSavedBaseURL(settings config.EditableSettings, provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xiaomi":
+		return strings.TrimSpace(settings.XiaomiBaseURL)
+	case "ollama":
+		return strings.TrimSpace(settings.OllamaBaseURL)
+	default:
+		return ""
+	}
+}
+
+func settingsModelPickerBaseURLLabel(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xiaomi":
+		return "Xiaomi base URL"
+	case "ollama":
+		return "Ollama base URL"
+	default:
+		return "Base URL"
+	}
+}
+
+func settingsModelPickerBaseURLPlaceholder(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "xiaomi":
+		return config.AIBackendXiaomi.DefaultOpenAICompatibleBaseURL()
+	case "ollama":
+		return config.AIBackendOllama.DefaultOpenAICompatibleBaseURL()
+	default:
+		return "https://provider.example/v1"
 	}
 }
 
@@ -1481,7 +1647,23 @@ func (m *Model) setSettingsModelPickerAPIKey(provider, apiKey string) {
 	m.settingsFields[fieldIndex].input.CursorEnd()
 }
 
+func (m *Model) setSettingsModelPickerBaseURL(provider, baseURL string) {
+	fieldIndex := settingsModelPickerBaseURLField(provider)
+	if fieldIndex < 0 || fieldIndex >= len(m.settingsFields) {
+		return
+	}
+	m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(baseURL))
+	m.settingsFields[fieldIndex].input.CursorEnd()
+}
+
 func settingsModelPickerAPIKeyFallbackText(settings config.EditableSettings, fieldIndex int, provider string) string {
+	if strings.EqualFold(strings.TrimSpace(provider), "ollama") {
+		endpoint := strings.TrimSpace(settings.OllamaBaseURL)
+		if endpoint == "" {
+			endpoint = config.AIBackendOllama.DefaultOpenAICompatibleBaseURL()
+		}
+		return "Blank uses the local Ollama endpoint at " + endpoint + "; the API key is optional for the default server."
+	}
 	keyName := lcagentProviderAPIKeyName(provider)
 	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
 		if envFile := strings.TrimSpace(settings.LCAgentEnvFile); envFile != "" {
@@ -1549,6 +1731,8 @@ func settingsLCAgentPickerProviderSortOrder(provider string) int {
 		return 3
 	case "xiaomi":
 		return 4
+	case "ollama":
+		return 5
 	default:
 		return 100
 	}

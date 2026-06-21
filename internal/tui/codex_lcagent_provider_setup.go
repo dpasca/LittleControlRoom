@@ -25,7 +25,7 @@ type codexLCAgentProviderSetupState struct {
 
 func (m Model) lcagentModelProviderReady(provider string) bool {
 	state, _, _ := lcagentCredentialSmokeCheckForProvider(m.currentSettingsBaseline(), provider)
-	return state == "ready"
+	return state == "ready" || state == "optional"
 }
 
 func lcagentCredentialSmokeCheckForProvider(settings config.EditableSettings, provider string) (string, lipgloss.Style, string) {
@@ -191,6 +191,9 @@ func (s *codexLCAgentProviderSetupState) missingRequiredCredentialField() (int, 
 	if s == nil {
 		return 0, false
 	}
+	if strings.EqualFold(strings.TrimSpace(s.Provider), "ollama") {
+		return 0, false
+	}
 	credentialField := settingsLCAgentCredentialFieldForProvider(s.Provider)
 	if credentialField < 0 {
 		return 0, false
@@ -226,6 +229,12 @@ func (m Model) settingsFromCodexLCAgentProviderSetup(state *codexLCAgentProvider
 			settings.XiaomiBaseURL = value
 		case settingsFieldXiaomiAPIKey:
 			settings.XiaomiAPIKey = value
+		case settingsFieldOllamaBaseURL:
+			settings.OllamaBaseURL = value
+		case settingsFieldOllamaAPIKey:
+			settings.OllamaAPIKey = value
+		case settingsFieldOllamaModel:
+			settings.OllamaModel = value
 		}
 	}
 	settings.LCAgentRoutePreset = ""
@@ -274,11 +283,16 @@ func (m Model) applyCodexLCAgentProviderSetupSavedMsg(msg codexLCAgentProviderSe
 	m.recentLCAgentModels = append([]string(nil), saved.RecentLCAgentModels...)
 	m.codexLCAgentProviderSetup = nil
 	m.codexModelPicker = nil
+	m.settingsLCAgentModelPicker = nil
 	projectPath := strings.TrimSpace(msg.projectPath)
 	if projectPath == "" {
 		projectPath = strings.TrimSpace(m.codexVisibleProject)
 	}
-	m.status = fmt.Sprintf("Saved %s setup. Restarting LCAgent with %s.", msg.path, saved.EmbeddedLCAgentModel)
+	modelLabel := strings.TrimSpace(saved.EmbeddedLCAgentModel)
+	if modelLabel == "" {
+		modelLabel = settingsLCAgentMainModel(saved)
+	}
+	m.status = fmt.Sprintf("Saved %s. Restarting LCAgent with %s.", msg.path, modelLabel)
 	cmds := []tea.Cmd{m.applyEditableSettingsCmd(saved)}
 	if projectPath != "" {
 		cmds = append(cmds, m.reloadEmbeddedLCAgentAfterSettingsCmd(projectPath, saved))

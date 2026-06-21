@@ -674,6 +674,32 @@ func TestOpenRouterClientListModels(t *testing.T) {
 	}
 }
 
+func TestOllamaClientListModelsAllowsBlankAPIKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %s, want /models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want blank", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen3:8b","name":"qwen3:8b"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOllamaClient(OpenRouterConfig{BaseURL: server.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels() error = %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "qwen3:8b" {
+		t.Fatalf("models = %#v, want qwen3:8b", models)
+	}
+}
+
 func TestOpenRouterClientSendsCompletionOptions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

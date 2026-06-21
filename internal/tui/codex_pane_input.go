@@ -238,6 +238,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.beginCodexPendingOpen(m.codexVisibleProject, embeddedProvider(snapshot))
 				return m, m.reconnectVisibleCodexSessionCmd()
 			case codexslash.KindModel:
+				if embeddedProvider(snapshot).Normalized() == codexapp.ProviderLCAgent {
+					return m.openEmbeddedLCAgentModelPicker()
+				}
 				m.openCodexModelPickerLoading()
 				m.status = "Loading embedded " + label + " models..."
 				return m, m.openCodexModelPickerCmd()

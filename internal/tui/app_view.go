@@ -109,6 +109,17 @@ func (m Model) View() string {
 			}
 			return body
 		}
+		if m.settingsLCAgentModelPicker != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderSettingsLCAgentModelPickerOverlay(body, width, height)
+		}
 		if m.codexPickerVisible {
 			width := m.width
 			if width <= 0 {

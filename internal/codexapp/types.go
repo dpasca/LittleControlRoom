@@ -590,6 +590,9 @@ type LaunchRequest struct {
 	LCAgentMoonshotAPIKey    string
 	LCAgentXiaomiAPIKey      string
 	LCAgentXiaomiBaseURL     string
+	LCAgentOllamaAPIKey      string
+	LCAgentOllamaBaseURL     string
+	LCAgentOllamaModel       string
 	LCAgentPreflightAccess   bool
 	LCAgentRoutePreset       string
 	LCAgentProvider          string

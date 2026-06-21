@@ -1165,6 +1165,8 @@ func TestLCAgentAvailableModelOptionsIncludesUnconfiguredProviders(t *testing.T)
 	t.Setenv("DEEPSEEK_API_KEY", "")
 	t.Setenv("MOONSHOT_API_KEY", "")
 	t.Setenv("XIAOMI_API_KEY", "")
+	t.Setenv("OLLAMA_API_KEY", "")
+	t.Setenv("OLLAMA_BASE_URL", "")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
 			t.Fatalf("path = %q, want /models", r.URL.Path)
@@ -1196,6 +1198,33 @@ func TestLCAgentAvailableModelOptionsIncludesUnconfiguredProviders(t *testing.T)
 		if !found[want] {
 			t.Fatalf("missing model option %q in %#v", want, models)
 		}
+	}
+}
+
+func TestLCAgentModelOptionsForOllamaUsesLocalModelList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %q, want /models", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want blank", got)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"qwen3:8b","name":"Qwen 3 8B"}]}`))
+	}))
+	defer server.Close()
+
+	models, err := LCAgentModelOptions(context.Background(), LCAgentModelListConfig{
+		Provider:      "ollama",
+		OllamaBaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("LCAgentModelOptions() error = %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("LCAgentModelOptions() returned %d models, want 1: %#v", len(models), models)
+	}
+	if models[0].ModelProvider != "ollama" || models[0].Model != "qwen3:8b" || len(models[0].SupportedReasoningEfforts) != 0 {
+		t.Fatalf("ollama model option = %#v", models[0])
 	}
 }
 

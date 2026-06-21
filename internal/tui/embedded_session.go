@@ -904,6 +904,9 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
 		LCAgentXiaomiAPIKey:      m.xiaomiAPIKey(),
 		LCAgentXiaomiBaseURL:     m.xiaomiBaseURL(),
+		LCAgentOllamaAPIKey:      m.ollamaAPIKey(),
+		LCAgentOllamaBaseURL:     m.ollamaBaseURL(),
+		LCAgentOllamaModel:       m.ollamaModel(),
 		LCAgentPreflightAccess:   true,
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
@@ -1041,6 +1044,9 @@ func (m Model) lcagentLaunchRequestFromSettings(projectPath string, settings con
 		LCAgentMoonshotAPIKey:    strings.TrimSpace(settings.MoonshotAPIKey),
 		LCAgentXiaomiAPIKey:      strings.TrimSpace(settings.XiaomiAPIKey),
 		LCAgentXiaomiBaseURL:     strings.TrimSpace(settings.XiaomiBaseURL),
+		LCAgentOllamaAPIKey:      strings.TrimSpace(settings.OllamaAPIKey),
+		LCAgentOllamaBaseURL:     strings.TrimSpace(settings.OllamaBaseURL),
+		LCAgentOllamaModel:       strings.TrimSpace(settings.OllamaModel),
 		LCAgentPreflightAccess:   true,
 		LCAgentRoutePreset:       strings.TrimSpace(settings.LCAgentRoutePreset),
 		LCAgentProvider:          strings.TrimSpace(settings.LCAgentProvider),
@@ -1164,6 +1170,18 @@ func (m Model) xiaomiAPIKey() string {
 
 func (m Model) xiaomiBaseURL() string {
 	return strings.TrimSpace(m.currentSettingsBaseline().XiaomiBaseURL)
+}
+
+func (m Model) ollamaAPIKey() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().OllamaAPIKey)
+}
+
+func (m Model) ollamaBaseURL() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().OllamaBaseURL)
+}
+
+func (m Model) ollamaModel() string {
+	return strings.TrimSpace(m.currentSettingsBaseline().OllamaModel)
 }
 
 func (m Model) lcagentPath() string {

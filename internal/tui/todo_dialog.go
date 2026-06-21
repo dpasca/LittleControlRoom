@@ -1245,6 +1245,9 @@ func (m Model) openPinnedTodoWorkSession(item model.TodoItem) (tea.Model, tea.Cm
 		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
 		LCAgentXiaomiAPIKey:      m.xiaomiAPIKey(),
 		LCAgentXiaomiBaseURL:     m.xiaomiBaseURL(),
+		LCAgentOllamaAPIKey:      m.ollamaAPIKey(),
+		LCAgentOllamaBaseURL:     m.ollamaBaseURL(),
+		LCAgentOllamaModel:       m.ollamaModel(),
 		LCAgentPreflightAccess:   true,
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
@@ -1416,6 +1419,9 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 		LCAgentMoonshotAPIKey:    m.moonshotAPIKey(),
 		LCAgentXiaomiAPIKey:      m.xiaomiAPIKey(),
 		LCAgentXiaomiBaseURL:     m.xiaomiBaseURL(),
+		LCAgentOllamaAPIKey:      m.ollamaAPIKey(),
+		LCAgentOllamaBaseURL:     m.ollamaBaseURL(),
+		LCAgentOllamaModel:       m.ollamaModel(),
 		LCAgentPreflightAccess:   true,
 		LCAgentRoutePreset:       m.lcagentRoutePreset(),
 		LCAgentProvider:          m.lcagentProvider(),
@@ -2225,14 +2231,14 @@ func todoCopyLCAgentReadiness(settings config.EditableSettings) todoCopyProvider
 	if keyName == "" {
 		return todoCopyProviderReadiness{
 			State:  "needs config",
-			Detail: "Unknown LCAgent provider " + provider + ". Open /settings and choose openrouter, openai, deepseek, moonshot, or xiaomi.",
+			Detail: "Unknown LCAgent provider " + provider + ". Open /settings and choose openrouter, openai, deepseek, moonshot, xiaomi, or ollama.",
 			Style:  detailWarningStyle,
 		}
 	}
 	state, style, detail := lcagentCredentialSmokeCheck(settings)
 	readinessState := state
 	switch state {
-	case "ready":
+	case "ready", "optional":
 		readinessState = "ready"
 	case "blocked":
 		readinessState = "blocked"

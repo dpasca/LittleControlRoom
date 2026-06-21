@@ -669,6 +669,30 @@ func TestParseNormalizesDirectLCAgentProviderModelPrefixes(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsOllamaLCAgentProviders(t *testing.T) {
+	provider, err := parseLCAgentProvider("ollama")
+	if err != nil {
+		t.Fatalf("parseLCAgentProvider() error = %v", err)
+	}
+	if provider != "ollama" {
+		t.Fatalf("parseLCAgentProvider() = %q, want ollama", provider)
+	}
+	utilityProvider, err := parseLCAgentUtilityProvider("ollama")
+	if err != nil {
+		t.Fatalf("parseLCAgentUtilityProvider() error = %v", err)
+	}
+	if utilityProvider != "ollama" {
+		t.Fatalf("parseLCAgentUtilityProvider() = %q, want ollama", utilityProvider)
+	}
+	visionProvider, err := parseLCAgentVisionProvider("ollama")
+	if err != nil {
+		t.Fatalf("parseLCAgentVisionProvider() error = %v", err)
+	}
+	if visionProvider != "ollama" {
+		t.Fatalf("parseLCAgentVisionProvider() = %q, want ollama", visionProvider)
+	}
+}
+
 func TestAppConfigFromEditableSettingsCopiesSharedFields(t *testing.T) {
 	settingsValue := reflect.ValueOf(&EditableSettings{}).Elem()
 	settingsType := settingsValue.Type()

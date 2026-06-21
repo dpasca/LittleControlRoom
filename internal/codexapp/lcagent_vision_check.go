@@ -61,6 +61,9 @@ func CheckLCAgentVisionAccess(ctx context.Context, req LaunchRequest) (LCAgentVi
 	if visionModel == "" && visionProvider == "main" {
 		visionModel = mainModel
 	}
+	if visionModel == "" && strings.EqualFold(resolvedProvider, "ollama") {
+		visionModel = strings.TrimSpace(req.LCAgentOllamaModel)
+	}
 	if visionModel == "" {
 		visionModel = lcagentDefaultModel(resolvedProvider)
 	}
@@ -76,6 +79,9 @@ func CheckLCAgentVisionAccess(ctx context.Context, req LaunchRequest) (LCAgentVi
 		MoonshotAPIKey:   req.LCAgentMoonshotAPIKey,
 		XiaomiAPIKey:     req.LCAgentXiaomiAPIKey,
 		XiaomiBaseURL:    req.LCAgentXiaomiBaseURL,
+		OllamaAPIKey:     req.LCAgentOllamaAPIKey,
+		OllamaBaseURL:    req.LCAgentOllamaBaseURL,
+		OllamaModel:      req.LCAgentOllamaModel,
 		RequestTimeout:   req.LCAgentRequestTimeout,
 	}
 	client, err := lcagentModelListClient(resolvedProvider, cfg)

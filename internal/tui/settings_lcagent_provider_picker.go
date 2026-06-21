@@ -40,6 +40,12 @@ func settingsLCAgentProviderOptions() []settingsLCAgentProviderOption {
 			Summary:     "Use the direct Xiaomi MiMo route for LCAgent.",
 			Description: "Uses the saved Xiaomi API key, with env file or process environment as an advanced fallback.",
 		},
+		{
+			Value:       "ollama",
+			Label:       "Ollama",
+			Summary:     "Use a local Ollama OpenAI-compatible endpoint for LCAgent.",
+			Description: "Uses the shared Ollama base URL, optional API key, and preferred local model. Leave the model on Auto to use the saved Ollama model or the first local /v1/models result.",
+		},
 	}
 }
 
@@ -86,6 +92,12 @@ func settingsLCAgentUtilityProviderOptions() []settingsLCAgentProviderOption {
 			Label:       "Xiaomi",
 			Summary:     "Use the direct Xiaomi MiMo route for utility work.",
 			Description: "Uses the saved Xiaomi API key. Leave Utility Model blank to use the standard Xiaomi LCAgent model default.",
+		},
+		{
+			Value:       "ollama",
+			Label:       "Ollama",
+			Summary:     "Use local Ollama for utility work.",
+			Description: "Uses the shared Ollama endpoint. Leave Utility Model blank to use the Main Model when Utility Provider is Same as Main, or pick a local model here.",
 		},
 	}
 }
@@ -139,6 +151,12 @@ func settingsLCAgentVisionProviderOptions() []settingsLCAgentProviderOption {
 			Label:       "Xiaomi",
 			Summary:     "Use direct Xiaomi MiMo for image analysis.",
 			Description: "Uses the saved Xiaomi API key. Choose a model that supports image input.",
+		},
+		{
+			Value:       "ollama",
+			Label:       "Ollama",
+			Summary:     "Use local Ollama for image analysis.",
+			Description: "Uses the shared Ollama endpoint. Choose an Ollama vision-capable model and run the image-input check before relying on it.",
 		},
 	}
 }

@@ -363,7 +363,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
 	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout; explicit flags override preset values")
-	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, or xiaomi")
+	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
 	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "approval mode for denied low-autonomy commands: deny or ask")
@@ -371,9 +371,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
 	fs.StringVar(&providerOnlyRaw, "openrouter-provider-only", "", "comma-separated OpenRouter provider slugs allowed for this request, for example anthropic")
-	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, or xiaomi")
+	fs.StringVar(&utilityProviderRaw, "utility-provider", defaultUtilityProvider, "utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	fs.StringVar(&utilityModel, "utility-model", defaultUtilityModel, "utility model for oversized search refinement; blank with provider main uses the main model")
-	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
+	fs.StringVar(&visionProviderRaw, "vision-provider", defaultVisionProvider, "vision provider for analyze_image: off, main, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	fs.StringVar(&visionModel, "vision-model", defaultVisionModel, "optional vision model; blank with provider main uses the main model")
 	fs.StringVar(&toolProfileRaw, "tool-profile", string(tools.FileProfileBalanced), "file tool budget profile: balanced or generous")
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets")
@@ -505,6 +505,12 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			model = modeladapter.DefaultMoonshotModel
 		case "xiaomi":
 			model = modeladapter.DefaultXiaomiModel
+		case "ollama":
+			resolved, err := resolveOllamaModel(context.Background(), envFile, requestTimeout)
+			if err != nil {
+				return err
+			}
+			model = resolved
 		default:
 			model = "scripted"
 		}
@@ -716,7 +722,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			return err
 		}
 		runErr = runner.Run(context.Background(), actions)
-	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		runErr = runChatLoop(context.Background(), writer, runner, threadStore, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
 			Model:           model,
 			FinalModel:      finalModel,
@@ -1308,9 +1314,37 @@ func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (
 		return modeladapter.NewMoonshotClient(cfg)
 	case "xiaomi":
 		return modeladapter.NewXiaomiClient(cfg)
+	case "ollama":
+		return modeladapter.NewOllamaClient(cfg)
 	default:
 		return modeladapter.NewOpenRouterClient(cfg)
 	}
+}
+
+func resolveOllamaModel(ctx context.Context, envFile string, timeout time.Duration) (string, error) {
+	requestTimeout := timeout
+	if requestTimeout <= 0 || requestTimeout > 30*time.Second {
+		requestTimeout = 15 * time.Second
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	client, err := modeladapter.NewOllamaClient(modeladapter.OpenRouterConfig{
+		EnvFile:        envFile,
+		RequestTimeout: requestTimeout,
+	})
+	if err != nil {
+		return "", err
+	}
+	models, err := client.ListModels(checkCtx)
+	if err != nil {
+		return "", fmt.Errorf("ollama model is required and /v1/models could not be read: %w", err)
+	}
+	for _, item := range models {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("ollama model is required and /v1/models returned no usable models")
 }
 
 func openRouterFinalClient(provider string, cfg modeladapter.OpenRouterConfig, client *modeladapter.Client) (*modeladapter.Client, error) {
@@ -1335,6 +1369,9 @@ func openRouterFinalModel(provider string, cfg modeladapter.OpenRouterConfig) st
 	}
 	if strings.EqualFold(strings.TrimSpace(provider), "moonshot") {
 		return strings.TrimSpace(os.Getenv("MOONSHOT_FINAL_MODEL"))
+	}
+	if strings.EqualFold(strings.TrimSpace(provider), "ollama") {
+		return strings.TrimSpace(os.Getenv("OLLAMA_FINAL_MODEL"))
 	}
 	return strings.TrimSpace(os.Getenv("OPENROUTER_FINAL_MODEL"))
 }
@@ -1874,7 +1911,7 @@ func validateVisibleCompletion(provider string) func(modeladapter.Completion) er
 func openRouterReasoningEffortForProvider(provider, reasoningEffort string) string {
 	reasoningEffort = strings.TrimSpace(reasoningEffort)
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "moonshot":
+	case "moonshot", "ollama":
 		return ""
 	default:
 		return reasoningEffort

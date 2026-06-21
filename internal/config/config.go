@@ -309,15 +309,15 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentPath := fs.String("lcagent-path", cfg.LCAgentPath, "Path to lcagent executable")
 	lcagentEnvFile := fs.String("lcagent-env-file", cfg.LCAgentEnvFile, "Path to lcagent env file containing provider credentials")
 	lcagentRoutePreset := fs.String("lcagent-route-preset", cfg.LCAgentRoutePreset, "LCAgent coding route preset: blank, balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout")
-	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, moonshot, or xiaomi")
+	lcagentProvider := fs.String("lcagent-provider", cfg.LCAgentProvider, "LCAgent provider: openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	lcagentAuto := fs.String("lcagent-auto", cfg.LCAgentAuto, "LCAgent permission level: off, low, or medium")
 	lcagentAdminWrite := fs.Bool("lcagent-admin-write", cfg.LCAgentAdminWrite, "Allow LCAgent write tools to edit absolute paths outside the workspace")
 	lcagentToolProfile := fs.String("lcagent-tool-profile", cfg.LCAgentToolProfile, "LCAgent file tool budget profile: balanced or generous")
 	lcagentContextProfile := fs.String("lcagent-context-profile", cfg.LCAgentContextProfile, "LCAgent provider loop context profile: balanced or large; known model windows adapt packing budgets")
 	lcagentRequestTimeout := fs.Duration("lcagent-request-timeout", cfg.LCAgentRequestTimeout, "LCAgent provider HTTP request timeout")
-	lcagentUtilityProvider := fs.String("lcagent-utility-provider", cfg.LCAgentUtilityProvider, "LCAgent utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, or moonshot")
+	lcagentUtilityProvider := fs.String("lcagent-utility-provider", cfg.LCAgentUtilityProvider, "LCAgent utility provider for oversized search refinement: main, off, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	lcagentUtilityModel := fs.String("lcagent-utility-model", cfg.LCAgentUtilityModel, "LCAgent utility model for oversized search refinement; blank with provider main uses the main model")
-	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: auto, off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
+	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
 	lcagentVisionModel := fs.String("lcagent-vision-model", cfg.LCAgentVisionModel, "LCAgent image-analysis model; blank with provider main uses the main model")
 	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, or searxng")
 	lcagentWebSearchAPIKey := fs.String("lcagent-web-search-api-key", cfg.LCAgentWebSearchAPIKey, "LCAgent web search API key for Exa or Google")
@@ -842,10 +842,10 @@ func parseLCAgentProvider(raw string) (string, error) {
 		return "openrouter", nil
 	}
 	switch value {
-	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi")
+		return "", fmt.Errorf("lcagent-provider must be one of: openrouter, openai, deepseek, moonshot, xiaomi, ollama")
 	}
 }
 
@@ -897,10 +897,10 @@ func parseLCAgentUtilityProvider(raw string) (string, error) {
 	switch value {
 	case "main", "same", "same-as-main":
 		return "main", nil
-	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+	case "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-utility-provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi")
+		return "", fmt.Errorf("lcagent-utility-provider must be one of: main, off, openrouter, openai, deepseek, moonshot, xiaomi, ollama")
 	}
 }
 
@@ -913,10 +913,10 @@ func parseLCAgentVisionProvider(raw string) (string, error) {
 	switch value {
 	case "main", "same", "same-as-main":
 		return "main", nil
-	case "auto", "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi":
+	case "auto", "off", "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-vision-provider must be one of: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi")
+		return "", fmt.Errorf("lcagent-vision-provider must be one of: auto, off, main, openrouter, openai, deepseek, moonshot, xiaomi, ollama")
 	}
 }
 
