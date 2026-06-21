@@ -551,6 +551,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["approval_mode"] = approvalMode
 	meta["request_timeout"] = requestTimeout.String()
 	meta["max_turns"] = maxTurns
+	meta["reasoning_effort"] = reasoningEffort
 	meta["require_final_response_tool"] = requireFinalResponseTool
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID

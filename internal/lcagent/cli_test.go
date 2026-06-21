@@ -1259,6 +1259,10 @@ func TestRunExecRoutePresetAppliesCodingDefaults(t *testing.T) {
 		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	text := stdout.String()
+	sessionMeta := lcagentCLITestEventFromStream(t, text, "session_meta")
+	if got := lcagentCLITestJSONStringField(t, sessionMeta, "reasoning_effort"); got != "low" {
+		t.Fatalf("session_meta reasoning_effort = %q, want low\n%s", got, text)
+	}
 	for _, want := range []string{
 		`"type":"session_meta"`,
 		`"provider":"openai"`,
@@ -4494,32 +4498,25 @@ func writeLCAgentCLITestArtifact(t *testing.T, dataDir string, started time.Time
 
 func lcagentCLITestSessionIDFromStream(t *testing.T, stream string) string {
 	t.Helper()
-	for _, line := range strings.Split(stream, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var event map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			continue
-		}
-		var eventType string
-		_ = json.Unmarshal(event["type"], &eventType)
-		if strings.TrimSpace(eventType) == "session_meta" {
-			var id string
-			_ = json.Unmarshal(event["id"], &id)
-			id = strings.TrimSpace(id)
-			if id == "" {
-				t.Fatalf("session_meta missing id in stream:\n%s", stream)
-			}
-			return id
-		}
+	event := lcagentCLITestEventFromStream(t, stream, "session_meta")
+	id := strings.TrimSpace(lcagentCLITestJSONStringField(t, event, "id"))
+	if id == "" {
+		t.Fatalf("session_meta missing id in stream:\n%s", stream)
 	}
-	t.Fatalf("stream missing session_meta:\n%s", stream)
-	return ""
+	return id
 }
 
 func lcagentCLITestThreadIDFromStream(t *testing.T, stream string) string {
+	t.Helper()
+	event := lcagentCLITestEventFromStream(t, stream, "session_meta")
+	id := strings.TrimSpace(lcagentCLITestJSONStringField(t, event, "thread_id"))
+	if id == "" {
+		t.Fatalf("session_meta missing thread_id in stream:\n%s", stream)
+	}
+	return id
+}
+
+func lcagentCLITestEventFromStream(t *testing.T, stream, eventType string) map[string]json.RawMessage {
 	t.Helper()
 	for _, line := range strings.Split(stream, "\n") {
 		line = strings.TrimSpace(line)
@@ -4530,20 +4527,23 @@ func lcagentCLITestThreadIDFromStream(t *testing.T, stream string) string {
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			continue
 		}
-		var eventType string
-		_ = json.Unmarshal(event["type"], &eventType)
-		if strings.TrimSpace(eventType) == "session_meta" {
-			var id string
-			_ = json.Unmarshal(event["thread_id"], &id)
-			id = strings.TrimSpace(id)
-			if id == "" {
-				t.Fatalf("session_meta missing thread_id in stream:\n%s", stream)
-			}
-			return id
+		var gotType string
+		_ = json.Unmarshal(event["type"], &gotType)
+		if strings.TrimSpace(gotType) == eventType {
+			return event
 		}
 	}
-	t.Fatalf("stream missing session_meta:\n%s", stream)
-	return ""
+	t.Fatalf("stream missing %s:\n%s", eventType, stream)
+	return nil
+}
+
+func lcagentCLITestJSONStringField(t *testing.T, event map[string]json.RawMessage, field string) string {
+	t.Helper()
+	var value string
+	if err := json.Unmarshal(event[field], &value); err != nil {
+		t.Fatalf("event field %q is not a string: %v", field, err)
+	}
+	return value
 }
 
 func isolateSkillHomes(t *testing.T) {

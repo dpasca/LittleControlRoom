@@ -883,7 +883,7 @@ func lcagentGenericReasoningEffortOptions() []ReasoningEffortOption {
 func lcagentDeepSeekReasoningEffortOptions() []ReasoningEffortOption {
 	return []ReasoningEffortOption{
 		{ReasoningEffort: "high", Description: "Recommended DeepSeek thinking effort for coding turns; this is the safer default."},
-		{ReasoningEffort: "max", Description: "Experimental maximum DeepSeek reasoning for hard diagnostics; can cost more and over-invest in a bad repair path."},
+		{ReasoningEffort: "max", Description: "Maximum DeepSeek reasoning for hard diagnostics; can cost more and over-invest in a bad repair path."},
 	}
 }
 
