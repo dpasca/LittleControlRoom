@@ -42,40 +42,40 @@ type lcagentRunOptions struct {
 }
 
 type lcagentSession struct {
-	projectPath       string
-	dataDir           string
-	execPath          string
-	envFile           string
-	openAIAPIKey      string
-	openRouterAPIKey  string
-	deepSeekAPIKey    string
-	moonshotAPIKey    string
-	xiaomiAPIKey      string
-	xiaomiBaseURL     string
-	ollamaAPIKey      string
-	ollamaBaseURL     string
-	ollamaModel       string
-	preflightAccess   bool
-	routePreset       string
-	provider          string
-	auto              string
-	sessionAuto       string
-	adminWrite        bool
-	toolProfile       string
-	contextProfile    string
-	requestTimeout    time.Duration
-	utilityProvider   string
-	utilityModel      string
-	visionProvider    string
-	visionModel       string
-	modelWarning      string
-	webSearchBackend  string
-	webSearchAPIKey   string
-	webSearchEngineID string
-	webSearchURL      string
-	runtimeManager    *projectrun.Manager
-	notify            func()
-	playwrightPolicy  browserctl.Policy
+	projectPath         string
+	dataDir             string
+	execPath            string
+	envFile             string
+	openAIAPIKey        string
+	openRouterAPIKey    string
+	deepSeekAPIKey      string
+	moonshotAPIKey      string
+	xiaomiAPIKey        string
+	xiaomiBaseURL       string
+	ollamaAPIKey        string
+	ollamaBaseURL       string
+	ollamaModel         string
+	providerAccessCheck bool
+	routePreset         string
+	provider            string
+	auto                string
+	sessionAuto         string
+	adminWrite          bool
+	toolProfile         string
+	contextProfile      string
+	requestTimeout      time.Duration
+	utilityProvider     string
+	utilityModel        string
+	visionProvider      string
+	visionModel         string
+	modelWarning        string
+	webSearchBackend    string
+	webSearchAPIKey     string
+	webSearchEngineID   string
+	webSearchURL        string
+	runtimeManager      *projectrun.Manager
+	notify              func()
+	playwrightPolicy    browserctl.Policy
 
 	mu                          sync.Mutex
 	cmd                         *exec.Cmd
@@ -218,7 +218,7 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		ollamaAPIKey:             strings.TrimSpace(req.LCAgentOllamaAPIKey),
 		ollamaBaseURL:            strings.TrimSpace(req.LCAgentOllamaBaseURL),
 		ollamaModel:              strings.TrimSpace(req.LCAgentOllamaModel),
-		preflightAccess:          req.LCAgentPreflightAccess,
+		providerAccessCheck:      req.LCAgentProviderAccessCheck,
 		routePreset:              routePreset,
 		provider:                 provider,
 		auto:                     strings.TrimSpace(req.LCAgentAuto),
@@ -1312,45 +1312,45 @@ func (s *lcagentSession) startRunAsync(prompt, displayPrompt string) error {
 }
 
 type lcagentPreparedRun struct {
-	prompt             string
-	resumeID           string
-	provider           string
-	routePreset        string
-	autoOverride       string
-	autoLevel          string
-	sessionAuto        string
-	runningStatus      string
-	model              string
-	modelProvider      string
-	toolProfile        string
-	contextProfile     string
-	adminWrite         bool
-	requestTimeout     time.Duration
-	maxTurns           int
-	reasoningEffort    string
-	credentialProvider string
-	providerAPIKeyName string
-	providerAPIKey     string
-	preflightAccess    bool
-	preflightReq       LaunchRequest
-	webSearchBackend   string
-	webSearchAPIKey    string
-	webSearchEngineID  string
-	webSearchURL       string
-	xiaomiBaseURL      string
-	ollamaBaseURL      string
-	utilityProvider    string
-	utilityModel       string
-	utilityAPIKeyName  string
-	utilityAPIKey      string
-	visionProvider     string
-	visionModel        string
-	visionAPIKeyName   string
-	visionAPIKey       string
-	browserControl     string
-	browserSessionKey  string
-	browserProfileKey  string
-	browserLaunchMode  browserctl.ManagedLaunchMode
+	prompt              string
+	resumeID            string
+	provider            string
+	routePreset         string
+	autoOverride        string
+	autoLevel           string
+	sessionAuto         string
+	runningStatus       string
+	model               string
+	modelProvider       string
+	toolProfile         string
+	contextProfile      string
+	adminWrite          bool
+	requestTimeout      time.Duration
+	maxTurns            int
+	reasoningEffort     string
+	credentialProvider  string
+	providerAPIKeyName  string
+	providerAPIKey      string
+	providerAccessCheck bool
+	providerAccessReq   LaunchRequest
+	webSearchBackend    string
+	webSearchAPIKey     string
+	webSearchEngineID   string
+	webSearchURL        string
+	xiaomiBaseURL       string
+	ollamaBaseURL       string
+	utilityProvider     string
+	utilityModel        string
+	utilityAPIKeyName   string
+	utilityAPIKey       string
+	visionProvider      string
+	visionModel         string
+	visionAPIKeyName    string
+	visionAPIKey        string
+	browserControl      string
+	browserSessionKey   string
+	browserProfileKey   string
+	browserLaunchMode   browserctl.ManagedLaunchMode
 }
 
 func (s *lcagentSession) startRunWithOptions(prompt, displayPrompt string, opts lcagentRunOptions) error {
@@ -1459,8 +1459,8 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	maxTurns := modeladapter.MaxTurnsForRequestTimeout(requestTimeout)
 	credentialProvider := modelProvider
 	providerAPIKeyName, providerAPIKey := s.providerCredentialLocked(credentialProvider)
-	preflightAccess := s.preflightAccess
-	preflightReq := LaunchRequest{
+	providerAccessCheck := s.providerAccessCheck
+	providerAccessReq := LaunchRequest{
 		Provider:                ProviderLCAgent,
 		ProjectPath:             s.projectPath,
 		PendingModel:            model,
@@ -1524,45 +1524,45 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	}
 
 	return lcagentPreparedRun{
-		prompt:             prompt,
-		resumeID:           resumeID,
-		provider:           provider,
-		routePreset:        routePreset,
-		autoOverride:       opts.autoOverride,
-		autoLevel:          autoLevel,
-		sessionAuto:        sessionAuto,
-		runningStatus:      opts.runningStatus,
-		model:              model,
-		modelProvider:      modelProvider,
-		toolProfile:        toolProfile,
-		contextProfile:     contextProfile,
-		adminWrite:         adminWrite,
-		requestTimeout:     requestTimeout,
-		maxTurns:           maxTurns,
-		reasoningEffort:    reasoningEffort,
-		credentialProvider: credentialProvider,
-		providerAPIKeyName: providerAPIKeyName,
-		providerAPIKey:     providerAPIKey,
-		preflightAccess:    preflightAccess,
-		preflightReq:       preflightReq,
-		webSearchBackend:   webSearchBackend,
-		webSearchAPIKey:    webSearchAPIKey,
-		webSearchEngineID:  webSearchEngineID,
-		webSearchURL:       webSearchURL,
-		xiaomiBaseURL:      xiaomiBaseURL,
-		ollamaBaseURL:      ollamaBaseURL,
-		utilityProvider:    utilityProvider,
-		utilityModel:       utilityModel,
-		utilityAPIKeyName:  utilityAPIKeyName,
-		utilityAPIKey:      utilityAPIKey,
-		visionProvider:     visionProvider,
-		visionModel:        visionModel,
-		visionAPIKeyName:   visionAPIKeyName,
-		visionAPIKey:       visionAPIKey,
-		browserControl:     browserControl,
-		browserSessionKey:  browserSessionKey,
-		browserProfileKey:  browserProfileKey,
-		browserLaunchMode:  browserLaunchMode,
+		prompt:              prompt,
+		resumeID:            resumeID,
+		provider:            provider,
+		routePreset:         routePreset,
+		autoOverride:        opts.autoOverride,
+		autoLevel:           autoLevel,
+		sessionAuto:         sessionAuto,
+		runningStatus:       opts.runningStatus,
+		model:               model,
+		modelProvider:       modelProvider,
+		toolProfile:         toolProfile,
+		contextProfile:      contextProfile,
+		adminWrite:          adminWrite,
+		requestTimeout:      requestTimeout,
+		maxTurns:            maxTurns,
+		reasoningEffort:     reasoningEffort,
+		credentialProvider:  credentialProvider,
+		providerAPIKeyName:  providerAPIKeyName,
+		providerAPIKey:      providerAPIKey,
+		providerAccessCheck: providerAccessCheck,
+		providerAccessReq:   providerAccessReq,
+		webSearchBackend:    webSearchBackend,
+		webSearchAPIKey:     webSearchAPIKey,
+		webSearchEngineID:   webSearchEngineID,
+		webSearchURL:        webSearchURL,
+		xiaomiBaseURL:       xiaomiBaseURL,
+		ollamaBaseURL:       ollamaBaseURL,
+		utilityProvider:     utilityProvider,
+		utilityModel:        utilityModel,
+		utilityAPIKeyName:   utilityAPIKeyName,
+		utilityAPIKey:       utilityAPIKey,
+		visionProvider:      visionProvider,
+		visionModel:         visionModel,
+		visionAPIKeyName:    visionAPIKeyName,
+		visionAPIKey:        visionAPIKey,
+		browserControl:      browserControl,
+		browserSessionKey:   browserSessionKey,
+		browserProfileKey:   browserProfileKey,
+		browserLaunchMode:   browserLaunchMode,
 	}, nil
 }
 
@@ -1587,8 +1587,8 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		}
 	}
 
-	if prepared.preflightAccess {
-		if err := CheckLCAgentProviderAccess(ctx, prepared.preflightReq); err != nil {
+	if prepared.providerAccessCheck {
+		if err := CheckLCAgentProviderAccess(ctx, prepared.providerAccessReq); err != nil {
 			s.finishRun("", false, err)
 			return err
 		}
@@ -1612,7 +1612,6 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--browser-control", prepared.browserControl,
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
 		"--require-final-response-tool",
-		"--planning-preflight",
 	)
 	if prepared.browserControl == "managed" {
 		args = append(args,
@@ -2027,21 +2026,6 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		s.touchLocked()
 		s.mu.Unlock()
 		s.appendAsync(TranscriptStatus, text)
-	case "planning_preflight_result":
-		text := lcagentPlanningPreflightText(event)
-		s.mu.Lock()
-		s.status = text
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
-	case "planning_preflight_failed":
-		message := firstNonEmpty(rawJSONString(event["message"]), "planning preflight failed")
-		text := "LCAgent planning preflight failed: " + message
-		s.mu.Lock()
-		s.status = text
-		s.touchLocked()
-		s.mu.Unlock()
-		s.appendAsync(TranscriptStatus, text)
 	case "phase_write_gate_result":
 		if text := lcagentPhaseWriteGateText(event); text != "" {
 			s.mu.Lock()
@@ -2306,23 +2290,6 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	s.mu.Unlock()
 
 	bridge.handle(request)
-}
-
-func lcagentPlanningPreflightText(event map[string]json.RawMessage) string {
-	scope := firstNonEmpty(rawJSONString(event["scope"]), "unknown")
-	artifactType := strings.TrimSpace(rawJSONString(event["artifact_type"]))
-	requiresPlan := rawJSONBool(event["requires_quality_plan"])
-	text := "LCAgent planning preflight: " + scope
-	if artifactType != "" && artifactType != "none" {
-		text += " " + artifactType
-	}
-	if requiresPlan {
-		text += "; quality plan required"
-	}
-	if rawJSONBool(event["requires_temporal_visual_verification"]) {
-		text += "; temporal visual evidence required"
-	}
-	return text
 }
 
 func lcagentPhaseWriteGateText(event map[string]json.RawMessage) string {

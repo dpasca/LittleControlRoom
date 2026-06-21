@@ -1124,7 +1124,7 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		provider = codexapp.ProviderCodex
 	}
 	if provider == codexapp.ProviderLCAgent {
-		req.LCAgentPreflightAccess = true
+		req.LCAgentProviderAccessCheck = true
 		if req.RuntimeManager == nil {
 			req.RuntimeManager = m.runtimeManager
 		}
@@ -1210,11 +1210,11 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
 	previousThreadID := ""
 	if manager != nil {
-		preflightStarted := time.Now()
+		providerCheckStarted := time.Now()
 		if snapshot, ok := m.nonBlockingCodexSnapshot(req.ProjectPath); ok {
 			previousThreadID = strings.TrimSpace(snapshot.ThreadID)
 		}
-		m.recordAISyncLatency("Embedded preflight", req.ProjectPath, provider.Label(), time.Since(preflightStarted), "")
+		m.recordAISyncLatency("Embedded provider check", req.ProjectPath, provider.Label(), time.Since(providerCheckStarted), "")
 	}
 	threadIDsToAvoid := map[string]struct{}{}
 	if previousThreadID != "" {

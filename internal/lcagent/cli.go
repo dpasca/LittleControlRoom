@@ -356,7 +356,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	var requestTimeout time.Duration
 	var maxTurns int
 	var searchRefineMinBytes int
-	var adminWrite, requireFinalResponseTool, planningPreflightEnabled bool
+	var adminWrite, requireFinalResponseTool bool
 	fs.StringVar(&cwd, "cwd", "", "workspace root")
 	fs.StringVar(&dataDir, "data-dir", "", "artifact data root")
 	fs.StringVar(&autoRaw, "auto", defaultAuto, "permission level: off denies edits and non-read commands; low allows workspace edits/read/verifiers; medium allows workspace commands")
@@ -379,7 +379,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&contextProfileRaw, "context-profile", string(openRouterContextProfileBalanced), "provider loop context profile: balanced or large; known model windows adapt packing budgets")
 	fs.BoolVar(&adminWrite, "admin-write", false, "allow write tools to use absolute paths outside the workspace for explicit system/admin edits")
 	fs.BoolVar(&requireFinalResponseTool, "require-final-response-tool", false, "require provider runs to finish through the structured final_response tool")
-	fs.BoolVar(&planningPreflightEnabled, "planning-preflight", false, "run a model-based scope preflight and require phased quality plans for sizable artifact work")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
@@ -553,7 +552,6 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	meta["request_timeout"] = requestTimeout.String()
 	meta["max_turns"] = maxTurns
 	meta["require_final_response_tool"] = requireFinalResponseTool
-	meta["planning_preflight"] = planningPreflightEnabled
 	if resumeContext != nil {
 		meta["parent_session_id"] = resumeContext.SourceSessionID
 		meta["root_session_id"] = resumeContext.rootSessionID()
@@ -747,7 +745,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, planningPreflightEnabled, webSearchStatus.Enabled)
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -767,7 +765,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, planningPreflightEnabled bool, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -804,7 +802,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			workspaceRoot: runner.Files.Workspace.Root,
 		}
 	}
-	planningPreflight := newPlanningPreflightProfile(planningPreflightEnabled, utilityProvider, utilityCfg, providerLabel, client.Model())
 	if err := writer.Write(session.Event{
 		"type":       "search_refine_profile",
 		"session_id": runner.SessionID,
@@ -825,25 +822,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 		"message":    vision.Message,
 	}); err != nil {
 		return err
-	}
-	if err := writer.Write(session.Event{
-		"type":       "planning_preflight_profile",
-		"session_id": runner.SessionID,
-		"enabled":    planningPreflight.Enabled,
-		"provider":   planningPreflight.Provider,
-		"model":      planningPreflight.Model,
-		"message":    planningPreflight.Message,
-	}); err != nil {
-		return err
-	}
-	var planningLeadMessage string
-	if payload, ran, err := runPlanningPreflight(ctx, writer, runner.SessionID, planningPreflight, runner.Prompt, vision.Enabled); err != nil {
-		return err
-	} else if ran && planningPreflightRequiresQualityPlan(payload) {
-		runner.QualityPlanRequired = true
-		runner.QualityPlanRequirementReason = payload.Reason
-		runner.QualityPlanRequirementScope = payload.Scope
-		planningLeadMessage = planningPreflightLeadMessage(payload)
 	}
 	if err := writer.Write(session.Event{
 		"type":       "user_message",
@@ -895,7 +873,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				"turn":             0,
 				"threshold":        contextOptions.LoopCompactionCharThreshold,
 				"threshold_tokens": contextOptions.LoopCompactionTokenBudget,
-				"reason":           "continuation_preflight",
+				"reason":           "continuation_compaction",
 				"stats":            compaction,
 			}); err != nil {
 				return err
@@ -908,9 +886,6 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: runner.Prompt},
 		}
-	}
-	if strings.TrimSpace(planningLeadMessage) != "" {
-		messages = append(messages, modeladapter.Message{Role: "user", Content: planningLeadMessage})
 	}
 	toolOptions := modelToolOptions(toolProfile, fileLimits)
 	toolOptions.WebSearchEnabled = webSearchEnabled

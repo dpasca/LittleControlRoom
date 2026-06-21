@@ -34,28 +34,25 @@ const (
 )
 
 type Runner struct {
-	Session                      *session.Writer
-	Command                      tools.CommandRunner
-	Patch                        tools.PatchApplier
-	Files                        tools.FileTools
-	WebSearch                    tools.WebSearchRunner
-	WebSearchOn                  bool
-	BrowserAvailable             bool
-	Browser                      BrowserRunner
-	SearchRefiner                SearchRefiner
-	CodeScout                    CodeScout
-	ImageAnalyzer                ImageAnalyzer
-	SearchRefineMinBytes         int
-	Approvals                    ApprovalBroker
-	Processes                    ProcessBroker
-	Skills                       skillcatalog.Catalog
-	SessionID                    string
-	Prompt                       string
-	ArtifactsDir                 string
-	SteerMessages                <-chan string
-	QualityPlanRequired          bool
-	QualityPlanRequirementReason string
-	QualityPlanRequirementScope  string
+	Session              *session.Writer
+	Command              tools.CommandRunner
+	Patch                tools.PatchApplier
+	Files                tools.FileTools
+	WebSearch            tools.WebSearchRunner
+	WebSearchOn          bool
+	BrowserAvailable     bool
+	Browser              BrowserRunner
+	SearchRefiner        SearchRefiner
+	CodeScout            CodeScout
+	ImageAnalyzer        ImageAnalyzer
+	SearchRefineMinBytes int
+	Approvals            ApprovalBroker
+	Processes            ProcessBroker
+	Skills               skillcatalog.Catalog
+	SessionID            string
+	Prompt               string
+	ArtifactsDir         string
+	SteerMessages        <-chan string
 
 	verificationChecks     []tools.VerificationCheck
 	operationalActions     []OperationalAction
@@ -412,20 +409,6 @@ func (r *Runner) qualityPlanTerminalBlock(finalOutcome string, verificationCheck
 	if r == nil {
 		return nil
 	}
-	if r.QualityPlanRequired && r.qualityPlan == nil {
-		scope := strings.TrimSpace(r.QualityPlanRequirementScope)
-		if scope == "" {
-			scope = "sizable"
-		}
-		reason := strings.TrimSpace(r.QualityPlanRequirementReason)
-		if reason != "" {
-			reason = " Preflight reason: " + reason
-		}
-		return &FinalResponseAudit{
-			Code:    "quality_plan_partial_unplanned",
-			Message: fmt.Sprintf("final_response outcome was %s, but planning preflight classified this as %s phased work and no quality plan has been recorded. Call update_quality_plan and start the first phase, or use outcome blocked/failed only for a concrete stop condition.%s", finalOutcome, scope, reason),
-		}
-	}
 	if r.qualityPlan == nil {
 		return nil
 	}
@@ -441,20 +424,6 @@ func (r *Runner) qualityPlanTerminalBlock(finalOutcome string, verificationCheck
 func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.VerificationCheck) *FinalResponseAudit {
 	if r == nil {
 		return nil
-	}
-	if r.QualityPlanRequired && r.qualityPlan == nil {
-		scope := strings.TrimSpace(r.QualityPlanRequirementScope)
-		if scope == "" {
-			scope = "sizable"
-		}
-		reason := strings.TrimSpace(r.QualityPlanRequirementReason)
-		if reason != "" {
-			reason = " Preflight reason: " + reason
-		}
-		return &FinalResponseAudit{
-			Code:    "quality_plan_required_missing",
-			Message: fmt.Sprintf("final_response outcome was completed, but planning preflight classified this as %s work and no quality plan has been recorded. Call update_quality_plan with concrete phases and evidence requirements, or set outcome to partial/blocked/failed if a phased plan is not appropriate.%s", scope, reason),
-		}
 	}
 	if r.qualityPlan == nil {
 		return nil
@@ -491,36 +460,6 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 		}
 	}
 	return nil
-}
-
-func (r *Runner) qualityPlanWriteToolBlock(tool string) *tools.ToolResult {
-	if r == nil || !r.QualityPlanRequired || r.qualityPlan != nil {
-		return nil
-	}
-	if !isWorkspaceWriteTool(tool) {
-		return nil
-	}
-	scope := strings.TrimSpace(r.QualityPlanRequirementScope)
-	if scope == "" {
-		scope = "sizable"
-	}
-	reason := strings.TrimSpace(r.QualityPlanRequirementReason)
-	if reason != "" {
-		reason = " Preflight reason: " + reason
-	}
-	return &tools.ToolResult{
-		Success: false,
-		Error:   fmt.Sprintf("planning preflight classified this as %s work, so update_quality_plan must be called before write tools such as %s. Publish concrete phases first, then retry the write.%s", scope, tool, reason),
-	}
-}
-
-func isWorkspaceWriteTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "apply_patch", "create_file", "replace_file", "replace_text", "replace_lines":
-		return true
-	default:
-		return false
-	}
 }
 
 func lcQualityPlanStatusKey(status string) string {
@@ -1348,10 +1287,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			ProcessID: strings.TrimSpace(args.ProcessID),
 		})
 	case "apply_patch":
-		if blocked := r.qualityPlanWriteToolBlock(action.Tool); blocked != nil {
-			result = *blocked
-			break
-		}
 		var args patchArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
@@ -1359,10 +1294,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 		result = r.Patch.Apply(args.Patch)
 	case "create_file":
-		if blocked := r.qualityPlanWriteToolBlock(action.Tool); blocked != nil {
-			result = *blocked
-			break
-		}
 		var args createFileArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
@@ -1373,10 +1304,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			Content: args.Content,
 		})
 	case "replace_file":
-		if blocked := r.qualityPlanWriteToolBlock(action.Tool); blocked != nil {
-			result = *blocked
-			break
-		}
 		var args replaceFileArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
@@ -1388,10 +1315,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			ExpectedSHA256: args.ExpectedSHA256,
 		})
 	case "replace_text":
-		if blocked := r.qualityPlanWriteToolBlock(action.Tool); blocked != nil {
-			result = *blocked
-			break
-		}
 		var args replaceTextArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid
@@ -1404,10 +1327,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			ExpectedReplacements: args.ExpectedReplacements,
 		})
 	case "replace_lines":
-		if blocked := r.qualityPlanWriteToolBlock(action.Tool); blocked != nil {
-			result = *blocked
-			break
-		}
 		var args replaceLinesArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
 			result = invalid

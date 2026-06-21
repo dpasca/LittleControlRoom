@@ -148,7 +148,6 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--output", "stream-json",
 		"--approval-mode", "ask",
 		"--require-final-response-tool",
-		"--planning-preflight",
 		"--admin-write",
 		"--utility-provider", "deepseek",
 		"--utility-model", "test-model",
@@ -167,20 +166,20 @@ printf '%s\n' '{"type":"turn_complete"}'
 	}
 }
 
-func TestLCAgentSubmitReturnsBeforeSlowPreflight(t *testing.T) {
+func TestLCAgentSubmitReturnsBeforeSlowProviderCheck(t *testing.T) {
 	root := t.TempDir()
-	releasePreflight := make(chan struct{})
-	preflightStarted := make(chan struct{})
+	releaseProviderCheck := make(chan struct{})
+	providerCheckStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
 			t.Fatalf("path = %s, want /models", r.URL.Path)
 		}
 		select {
-		case <-preflightStarted:
+		case <-providerCheckStarted:
 		default:
-			close(preflightStarted)
+			close(providerCheckStarted)
 		}
-		<-releasePreflight
+		<-releaseProviderCheck
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[{"id":"mimo-v2.5-pro","name":"MiMo"}]}`))
 	}))
@@ -188,7 +187,7 @@ func TestLCAgentSubmitReturnsBeforeSlowPreflight(t *testing.T) {
 
 	exe := filepath.Join(t.TempDir(), "fake-lcagent")
 	script := `#!/bin/sh
-printf '%s\n' '{"type":"assistant_message","message":"slow preflight still did not trap the UI"}'
+printf '%s\n' '{"type":"assistant_message","message":"slow provider check still did not trap the UI"}'
 printf '%s\n' '{"type":"turn_complete","status":"ok"}'
 `
 	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
@@ -196,15 +195,15 @@ printf '%s\n' '{"type":"turn_complete","status":"ok"}'
 	}
 	notify := make(chan struct{}, 20)
 	session, err := newLCAgentSession(LaunchRequest{
-		Provider:               ProviderLCAgent,
-		ProjectPath:            root,
-		AppDataDir:             t.TempDir(),
-		LCAgentPath:            exe,
-		LCAgentProvider:        "xiaomi",
-		LCAgentXiaomiAPIKey:    "test-xiaomi-key",
-		LCAgentXiaomiBaseURL:   server.URL,
-		LCAgentPreflightAccess: true,
-		LCAgentRequestTimeout:  time.Second,
+		Provider:                   ProviderLCAgent,
+		ProjectPath:                root,
+		AppDataDir:                 t.TempDir(),
+		LCAgentPath:                exe,
+		LCAgentProvider:            "xiaomi",
+		LCAgentXiaomiAPIKey:        "test-xiaomi-key",
+		LCAgentXiaomiBaseURL:       server.URL,
+		LCAgentProviderAccessCheck: true,
+		LCAgentRequestTimeout:      time.Second,
 	}, func() {
 		select {
 		case notify <- struct{}{}:
@@ -217,7 +216,7 @@ printf '%s\n' '{"type":"turn_complete","status":"ok"}'
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- session.SubmitInput(Submission{Text: "exercise async preflight"})
+		errCh <- session.SubmitInput(Submission{Text: "exercise async provider check"})
 	}()
 	select {
 	case err := <-errCh:
@@ -225,19 +224,19 @@ printf '%s\n' '{"type":"turn_complete","status":"ok"}'
 			t.Fatalf("SubmitInput() error = %v", err)
 		}
 	case <-time.After(100 * time.Millisecond):
-		t.Fatal("SubmitInput blocked behind provider preflight")
+		t.Fatal("SubmitInput blocked behind provider access check")
 	}
 	if snapshot := session.Snapshot(); !snapshot.Busy {
 		t.Fatalf("snapshot.Busy = false, want prompt accepted and run marked busy")
 	}
 	select {
-	case <-preflightStarted:
+	case <-providerCheckStarted:
 	case <-time.After(time.Second):
-		t.Fatal("preflight did not start")
+		t.Fatal("provider access check did not start")
 	}
-	close(releasePreflight)
+	close(releaseProviderCheck)
 	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
-	if !strings.Contains(snapshot.Transcript, "slow preflight still did not trap the UI") {
+	if !strings.Contains(snapshot.Transcript, "slow provider check still did not trap the UI") {
 		t.Fatalf("transcript missing fake response:\n%s", snapshot.Transcript)
 	}
 }

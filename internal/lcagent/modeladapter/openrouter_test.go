@@ -337,14 +337,16 @@ func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
 		"asks you to carry out a proposed plan or selected option",
 		"start executing it within the current autonomy and tool policy",
 		"continue with the in_progress step",
-		"call update_quality_plan early",
+		"make the implementation plan yourself before editing",
+		"Call update_quality_plan early",
 		"Use quality phases to break sizable work",
 		"observable progress toward the user's request",
-		"create or update the plan before workspace writes",
+		"preserve room for domain-specific detail and polish",
 		"keep working the next phase",
 		"favor clean, idiomatic, modern style",
 		"an empty workspace is not a blocker",
 		"Choose a conventional workspace-relative filename",
+		"publish your own quality plan first when it helps manage scope",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
