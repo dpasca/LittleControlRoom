@@ -306,7 +306,7 @@ func (m Model) applySettingsLCAgentModelListMsg(msg settingsLCAgentModelListMsg)
 	}
 	state.Selected = settingsLCAgentModelPickerSelection(state.FilteredModels, state.Rows, state.Current)
 	if state.Err != "" {
-		m.status = "Showing curated models; provider list check did not complete."
+		m.status = "Provider model list unavailable; showing curated fallback models only."
 	} else {
 		m.status = fmt.Sprintf("Loaded %d %s models.", len(state.Models), settingsLCAgentModelPickerProviderLabel(state.Provider))
 	}
@@ -879,6 +879,8 @@ func (m Model) renderSettingsLCAgentModelPickerContent(width, bodyH int) string 
 	}
 	lines = append(lines, detailMutedStyle.Render("Provider: "+settingsLCAgentModelPickerProviderLabel(state.Provider)+"   Current: "+truncateText(current, max(18, width-22))))
 	if state.Err != "" {
+		lines = append(lines, detailWarningStyle.Render("Warning: full provider model list unavailable."))
+		lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, max(18, width), "Showing curated fallback models only. Check the shared API key, base URL, env file, or process environment before choosing.")...)
 		lines = append(lines, detailMutedStyle.Render("Provider check: "+truncateText(state.Err, max(18, width-16))))
 	}
 	lines = append(lines, commandPaletteRowStyle.Render("Filter: "+state.FilterInput.View()), "")
@@ -991,7 +993,7 @@ func (m Model) renderSettingsLCAgentModelPickerAPIKeyContent(width, bodyH int, t
 		fallback := settingsModelPickerAPIKeyFallbackText(m.settingsDraftForInferenceStatus(), state.FieldIndex, provider)
 		lines = append(lines, detailMutedStyle.Render(fallback))
 	}
-	lines = append(lines, "", detailMutedStyle.Render("Leave blank to keep provider defaults where the runtime can use them, or fill the shared connection fields before loading models."))
+	lines = append(lines, "", detailMutedStyle.Render("Leave blank to try provider defaults or env values. If discovery cannot authenticate, the next list is a clearly marked curated fallback."))
 	if len(lines) > bodyH {
 		lines = lines[:bodyH]
 	}
@@ -1667,13 +1669,13 @@ func settingsModelPickerAPIKeyFallbackText(settings config.EditableSettings, fie
 	keyName := lcagentProviderAPIKeyName(provider)
 	if settingsFieldUsesLCAgentModelPicker(fieldIndex) {
 		if envFile := strings.TrimSpace(settings.LCAgentEnvFile); envFile != "" {
-			return "Blank checks " + keyName + " in the LCAgent env file, then the process environment, before falling back to curated models."
+			return "Blank checks " + keyName + " in the LCAgent env file, then the process environment. If discovery fails, only curated fallback models are shown."
 		}
 	}
 	if keyName != "" {
-		return "Blank checks " + keyName + " in the process environment before falling back to curated models."
+		return "Blank checks " + keyName + " in the process environment. If discovery fails, only curated fallback models are shown."
 	}
-	return "Blank falls back to curated models when provider discovery cannot authenticate."
+	return "Blank shows only curated fallback models when provider discovery cannot authenticate."
 }
 
 func buildSettingsLCAgentPickerRows(models []codexapp.ModelOption, selectedProvider string) []settingsLCAgentPickerRow {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"lcroom/internal/config"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestSettingsLCAgentModelListConfigUsesUtilityProvider(t *testing.T) {
@@ -115,6 +117,58 @@ func TestOpenEmbeddedLCAgentModelPickerUsesUnifiedPicker(t *testing.T) {
 	}
 	if !foundOllama {
 		t.Fatalf("provider options = %#v, want ollama", got.settingsLCAgentModelPicker.ProviderOptions)
+	}
+}
+
+func TestSettingsLCAgentModelPickerWarnsWhenProviderDiscoveryFallsBack(t *testing.T) {
+	models := []codexapp.ModelOption{{
+		Model:         "deepseek/deepseek-v4-pro",
+		ModelProvider: "openrouter",
+		DisplayName:   "DeepSeek V4 Pro",
+		Description:   "Curated fallback model.",
+	}}
+	m := Model{
+		settingsFields: newSettingsFields(config.EditableSettings{LCAgentProvider: "openrouter"}),
+		width:          100,
+		height:         24,
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:  settingsFieldLCAgentModel,
+			Step:        settingsLCAgentModelPickerStepModel,
+			Provider:    "openrouter",
+			Current:     "",
+			FilterInput: newSettingsLCAgentModelPickerFilterInput(),
+			Loading:     true,
+		},
+	}
+
+	updated, cmd := m.applySettingsLCAgentModelListMsg(settingsLCAgentModelListMsg{
+		fieldIndex: settingsFieldLCAgentModel,
+		provider:   "openrouter",
+		models:     models,
+		err:        errors.New("OPENROUTER_API_KEY is required for provider=openrouter"),
+	})
+	if cmd != nil {
+		t.Fatalf("applySettingsLCAgentModelListMsg() cmd = %v, want nil", cmd)
+	}
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil || state.Err == "" {
+		t.Fatalf("picker state = %#v, want retained provider-list error", state)
+	}
+	if !strings.Contains(got.status, "curated fallback models only") {
+		t.Fatalf("status = %q, want curated fallback warning", got.status)
+	}
+
+	rendered := ansi.Strip(got.renderSettingsLCAgentModelPickerContent(84, 24))
+	for _, want := range []string{
+		"Warning: full provider model list unavailable.",
+		"Showing curated fallback models only.",
+		"Check the shared API key",
+		"OPENROUTER_API_KEY is required",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered picker missing %q:\n%s", want, rendered)
+		}
 	}
 }
 
