@@ -347,6 +347,7 @@ func TestSystemPromptIncludesProactiveExecutionGuidance(t *testing.T) {
 		"an empty workspace is not a blocker",
 		"Choose a conventional workspace-relative filename",
 		"publish your own quality plan first when it helps manage scope",
+		"avoid one giant model response or tool call",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
@@ -1690,7 +1691,7 @@ func TestOpenRouterClientClassifiesMalformedResponse(t *testing.T) {
 	if !ok {
 		t.Fatalf("error type = %T, want ProviderError: %v", err, err)
 	}
-	if providerErr.Kind != ProviderFailureMalformedResponse || providerErr.Retryable {
-		t.Fatalf("provider error = %#v, want non-retryable malformed_response", providerErr)
+	if providerErr.Kind != ProviderFailureMalformedResponse || !providerErr.Retryable {
+		t.Fatalf("provider error = %#v, want retryable malformed_response", providerErr)
 	}
 }

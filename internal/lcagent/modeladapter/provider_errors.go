@@ -111,7 +111,7 @@ func newProviderDecodeError(provider string, err error) error {
 		Provider:  provider,
 		Kind:      ProviderFailureMalformedResponse,
 		Message:   "response decode failed: " + err.Error(),
-		Retryable: false,
+		Retryable: true,
 		Cause:     err,
 	}
 }

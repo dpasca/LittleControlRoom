@@ -1004,7 +1004,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 			return requestClient.CompleteWithOptions(ctx, requestMessages, requestTools, requestOptions)
 		})
 		if err != nil {
-			return abortOpenRouterRun(writer, runner.SessionID, err)
+			return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, err)
 		}
 		msg := completion.Message
 		if err := writer.Write(modelResponseEvent(runner.SessionID, providerLabel, requestPhase, turn+1, completion, len(msg.ToolCalls))); err != nil {
@@ -1031,19 +1031,19 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				if turn+1 >= client.MaxTurns() {
 					return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s response contained provider tool-call markup but no structured tool calls at the turn limit", providerLabel))
 				}
-				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response contained provider tool-call markup but no structured tool calls", providerLabel))
+				return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, fmt.Errorf("%s response contained provider tool-call markup but no structured tool calls", providerLabel))
 			}
 			if strings.EqualFold(completion.FinishReason, "tool_calls") {
 				if turn+1 >= client.MaxTurns() {
 					return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s response finished with tool_calls but returned no structured tool calls at the turn limit", providerLabel))
 				}
-				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response finished with tool_calls but returned no structured tool calls", providerLabel))
+				return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, fmt.Errorf("%s response finished with tool_calls but returned no structured tool calls", providerLabel))
 			}
 			if strings.TrimSpace(msg.Content) == "" {
 				if turn+1 >= client.MaxTurns() {
 					return finalizeMaxTurnsFallback(writer, runner, threadStore, messages, client.MaxTurns(), runner.FilesTouched(), runner.VerificationDetails(), fmt.Sprintf("%s response had no content or tool calls at the turn limit", providerLabel))
 				}
-				return abortOpenRouterRun(writer, runner.SessionID, fmt.Errorf("%s response had no content or tool calls", providerLabel))
+				return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, fmt.Errorf("%s response had no content or tool calls", providerLabel))
 			}
 			if requireFinalResponseTool {
 				finalResponseToolFeedbacks++
@@ -1970,12 +1970,23 @@ Tools are unavailable for this request. Produce the final user-facing answer now
 - Prefer a concise structured answer over exhaustive audit notes.`, guidance.Turn, guidance.MaxTurns, reasonLine)
 }
 
-func abortOpenRouterRun(writer *session.Writer, sessionID string, err error) error {
-	_ = writer.Write(session.Event{
+func abortOpenRouterRun(writer *session.Writer, threadStore *threadStateStore, sessionID string, messages []modeladapter.Message, compacted bool, err error) error {
+	var checkpointErr error
+	if threadStore != nil && len(messages) > 0 {
+		checkpointErr = threadStore.SaveCheckpoint("turn_aborted", messages, compacted)
+	}
+	event := session.Event{
 		"type":       "turn_aborted",
 		"session_id": sessionID,
 		"reason":     err.Error(),
-	})
+	}
+	if checkpointErr != nil {
+		event["checkpoint_error"] = checkpointErr.Error()
+	}
+	_ = writer.Write(event)
+	if checkpointErr != nil {
+		return fmt.Errorf("%w (also failed to save abort checkpoint: %v)", err, checkpointErr)
+	}
 	return err
 }
 

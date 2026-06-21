@@ -598,6 +598,36 @@ func TestRunnerRejectsQualityPlanPhaseJumps(t *testing.T) {
 	}
 }
 
+func TestRunnerAllowsInitialQualityPlanWithEvidencedCompletedPrefix(t *testing.T) {
+	runner := Runner{}
+	result := runner.validateQualityPlanProgression(QualityPlan{
+		ArtifactType:                "game",
+		RequiresRuntimeVerification: true,
+		RequiresVisualVerification:  true,
+		Phases: []QualityPlanPhase{
+			{Name: "toolchain", Status: "verified", Evidence: []string{"clang++ --version passed"}},
+			{Name: "single-file game", Status: "in_progress"},
+			{Name: "visual verification", Status: "planned"},
+		},
+	})
+	if !result.Success {
+		t.Fatalf("result = %#v, want evidenced completed prefix allowed", result)
+	}
+
+	result = runner.validateQualityPlanProgression(QualityPlan{
+		ArtifactType:                "game",
+		RequiresRuntimeVerification: true,
+		RequiresVisualVerification:  true,
+		Phases: []QualityPlanPhase{
+			{Name: "toolchain", Status: "verified"},
+			{Name: "single-file game", Status: "in_progress"},
+		},
+	})
+	if result.Success || !strings.Contains(result.Error, "has no evidence") {
+		t.Fatalf("result = %#v, want unevidenced completed prefix rejected", result)
+	}
+}
+
 func TestRunnerRejectsOutOfOrderQualityPlanUpdate(t *testing.T) {
 	runner := Runner{}
 	result := runner.validateQualityPlanProgression(QualityPlan{

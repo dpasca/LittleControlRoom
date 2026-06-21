@@ -476,8 +476,8 @@ func (r *Runner) validateQualityPlanProgression(plan QualityPlan) tools.ToolResu
 	}
 	newCompleted := qualityPlanCompletedPrefix(plan.Phases)
 	if r == nil || r.qualityPlan == nil {
-		if newCompleted > 0 {
-			message := "initial quality plan cannot start with verified or skipped phases; start with the first phase in_progress and keep later phases planned, then advance phases after concrete evidence"
+		if phase := firstQualityPlanPhaseMissingEvidence(plan.Phases[:newCompleted]); phase.Name != "" {
+			message := fmt.Sprintf("initial quality plan phase %q is %s but has no evidence; include concrete evidence for already completed phases, or start with that phase in_progress", phase.Name, qualityPlanPhaseStatusForMessage(phase.Status))
 			return tools.ToolResult{Success: false, Error: message}
 		}
 		return tools.ToolResult{Success: true}

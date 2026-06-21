@@ -951,6 +951,128 @@ func TestRunExecOpenRouterRetriesEmptyProviderCompletion(t *testing.T) {
 	}
 }
 
+func TestRunExecOpenRouterRetriesMalformedProviderResponse(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		if requests == 1 {
+			_, _ = w.Write([]byte(`{"id":`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id":"resp_after_malformed",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done after malformed retry"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want retry once", requests)
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"provider_failure"`,
+		`"kind":"malformed_response"`,
+		`"retryable":true`,
+		`"retrying":true`,
+		`"type":"provider_retry"`,
+		`"attempt":2`,
+		`"type":"provider_retry_succeeded"`,
+		`"summary":"done after malformed retry"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"type":"turn_aborted"`) {
+		t.Fatalf("stdout should not abort after malformed response retry:\n%s", text)
+	}
+}
+
+func TestRunExecOpenRouterStabilizesThreadAfterMalformedProviderAbort(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	dataDir := t.TempDir()
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--max-turns", "2",
+		"answer directly",
+	}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("code = 0, want provider failure stdout=%s", stdout.String())
+	}
+	if requests != providerRetryMaxAttempts {
+		t.Fatalf("requests = %d, want %d", requests, providerRetryMaxAttempts)
+	}
+	threadID := lcagentCLITestThreadIDFromStream(t, stdout.String())
+	state, ok, err := loadThreadState(dataDir, threadID, root)
+	if err != nil || !ok {
+		t.Fatalf("load thread state ok=%v err=%v", ok, err)
+	}
+	if state.Status != threadStateStatusStable || state.PendingReason != "" {
+		t.Fatalf("state status/reason = %q/%q, want stable with no pending reason", state.Status, state.PendingReason)
+	}
+	if len(state.Messages) == 0 || state.Messages[len(state.Messages)-1].Role != "user" {
+		t.Fatalf("state messages = %#v, want stable checkpoint at latest user request", state.Messages)
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"provider_failure"`,
+		`"kind":"malformed_response"`,
+		`"retryable":true`,
+		`"retrying":false`,
+		`"type":"turn_aborted"`,
+		`response decode failed: unexpected end of JSON input`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunPresetsListsCodingRoutes(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"presets", "--output", "json"}, &stdout, &stderr)
