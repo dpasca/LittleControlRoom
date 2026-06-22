@@ -13,6 +13,7 @@ const (
 	openRouterStallSynthesisAfterTurns    = 6
 	openRouterMinimumTurnBeforeStallCheck = 12
 	openRouterConsolidationTurnMultiplier = 2
+	openRouterEndgameTurnPercent          = 85
 )
 
 type openRouterProgressGuidance struct {
@@ -56,7 +57,9 @@ func openRouterGuidanceForTurnWithOptions(turn, maxTurns int, messages []modelad
 		ReadLedgerFiles:  files,
 		ReadLedgerRanges: ranges,
 	}
-	if turn*openRouterConsolidationTurnMultiplier >= maxTurns {
+	if turn*100 >= maxTurns*openRouterEndgameTurnPercent {
+		guidance.Phase = "endgame"
+	} else if turn*openRouterConsolidationTurnMultiplier >= maxTurns {
 		guidance.Phase = "consolidation"
 	}
 	return guidance
@@ -105,6 +108,10 @@ func openRouterProgressNote(guidance openRouterProgressGuidance, ledger *readLed
 		b.WriteString("- Start converging on the answer. Each new tool call should resolve a named blocker for the final response.\n")
 		b.WriteString("- Prefer final_response once the main question can be answered with the evidence already collected; for execution requests, do not skip to final_response before acting or reporting a blocker.\n")
 		b.WriteString("- Do not audit every file for completeness; prioritize the user-visible conclusion.")
+	case "endgame":
+		b.WriteString("- This is the endgame phase: stop adding optional scope and converge on evidence.\n")
+		b.WriteString("- Each tool call should resolve a concrete completion blocker: build/run/test, visual evidence, requirement evidence, or final_response.\n")
+		b.WriteString("- Prefer repairing failed evidence over adding new features; finish partial/blocked/failed honestly when remaining gaps cannot be closed with the available tools.")
 	default:
 		if strings.EqualFold(guidance.ToolProfile, "generous") {
 			b.WriteString("- Be evidence-complete rather than overly terse. Use outline/search to choose files, then read larger contiguous ranges for central files.\n")

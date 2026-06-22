@@ -1505,7 +1505,9 @@ func finalizeChatLoopAfterMaxTurns(ctx context.Context, writer *session.Writer, 
 	maxTurns := client.MaxTurns()
 	filesChanged := runner.FilesTouched()
 	verification := runner.VerificationDetails()
-	compactedMessages, compaction := compactOpenRouterFinalMessagesWithOptions(messages, openRouterMaxTurnsFinalPrompt(maxTurns, filesChanged, verification), readLedger, contextOptions)
+	visualEvidence := runner.VisualEvidenceDetails()
+	requirementEvidence := runner.RequirementEvidenceDetails(filesChanged)
+	compactedMessages, compaction := compactOpenRouterFinalMessagesWithOptions(messages, openRouterMaxTurnsFinalPrompt(maxTurns, filesChanged, verification, visualEvidence, requirementEvidence), readLedger, contextOptions)
 	if err := writer.Write(session.Event{
 		"type":        "final_handoff_compacted",
 		"session_id":  runner.SessionID,
@@ -1608,7 +1610,7 @@ func maxTurnsFallbackSummary(maxTurns int, filesChanged []string, verification [
 	return b.String()
 }
 
-func openRouterMaxTurnsFinalPrompt(maxTurns int, filesChanged, verification []string) string {
+func openRouterMaxTurnsFinalPrompt(maxTurns int, filesChanged, verification, visualEvidence, requirementEvidence []string) string {
 	prompt := fmt.Sprintf(`You have reached the configured maximum of %d model turns.
 
 Do not call more tools. Produce a concise handoff for the user instead:
@@ -1623,6 +1625,12 @@ Do not call more tools. Produce a concise handoff for the user instead:
 	}
 	if len(verification) > 0 {
 		state = append(state, "Verification checks already recorded: "+strings.Join(verification, "; "))
+	}
+	if len(visualEvidence) > 0 {
+		state = append(state, "Visual evidence already recorded: "+strings.Join(visualEvidence, "; "))
+	}
+	if len(requirementEvidence) > 0 {
+		state = append(state, "Requirement evidence already recorded: "+strings.Join(requirementEvidence, "; "))
 	}
 	if len(state) > 0 {
 		prompt += "\n\nHarness-known continuation state:\n- " + strings.Join(state, "\n- ")

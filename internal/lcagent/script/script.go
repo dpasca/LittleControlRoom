@@ -79,6 +79,10 @@ type Runner struct {
 	passingImageAnalyses         int
 	passingTemporalImageAnalyses int
 	nonPassingImageAnalyses      int
+	latestImageAnalysisVerdict   string
+	latestImageAnalysisPath      string
+	latestImageAnalysisCompare   string
+	latestImageAnalysisSummary   string
 	inspectionEvidence           int
 	qualityPlan                  *QualityPlan
 	qualityPlanUpdates           int
@@ -162,6 +166,19 @@ type ImageAnalysisResult struct {
 	UsageSummary   lcrmodel.LLMUsage
 }
 
+type ImageAnalysisEvidence struct {
+	Analyses             int    `json:"analyses,omitempty"`
+	Passing              int    `json:"passing,omitempty"`
+	NonPassing           int    `json:"non_passing,omitempty"`
+	Temporal             int    `json:"temporal,omitempty"`
+	PassingTemporal      int    `json:"passing_temporal,omitempty"`
+	LatestVerdict        string `json:"latest_verdict,omitempty"`
+	LatestPath           string `json:"latest_path,omitempty"`
+	LatestComparisonPath string `json:"latest_comparison_path,omitempty"`
+	LatestSummary        string `json:"latest_summary,omitempty"`
+	LatestTemporal       bool   `json:"latest_temporal,omitempty"`
+}
+
 func NormalizeImageAnalysisVerdict(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case ImageAnalysisVerdictPass:
@@ -194,6 +211,8 @@ type FinalResponseAudit struct {
 	Blocking           bool   `json:"blocking,omitempty"`
 	ToolFailures       int    `json:"tool_failures,omitempty"`
 	OperationalActions int    `json:"operational_actions,omitempty"`
+	RequirementStatus  string `json:"requirement_status,omitempty"`
+	RequirementIssues  int    `json:"requirement_issues,omitempty"`
 }
 
 type QualityPlan struct {
@@ -365,6 +384,10 @@ func (r *Runner) VerificationFeedbackForFinal(action Action) (VerificationFeedba
 }
 
 func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
+	return r.finalResponseAudit(action, r.requirementEvidenceAuditForAction(action))
+}
+
+func (r *Runner) finalResponseAudit(action Action, requirementAudit RequirementEvidenceAudit) FinalResponseAudit {
 	action.FilesChanged = cleanStringList(action.FilesChanged)
 	action.Verification = cleanStringList(action.Verification)
 	finalOutcome := normalizeFinalResponseOutcome(action.Outcome)
@@ -376,11 +399,13 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		operationalActions = append([]OperationalAction(nil), r.operationalActions...)
 		toolFailures = len(r.toolFailures)
 	}
-	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, verificationChecks)
+	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, verificationChecks, r.VisualEvidence())
 	audit := FinalResponseAudit{
 		Outcome:            "pass",
 		FinalOutcome:       finalOutcome,
 		VerificationStatus: verificationStatus,
+		RequirementStatus:  requirementAudit.Status,
+		RequirementIssues:  len(requirementAudit.Issues),
 		Message:            "Final response audit passed.",
 		ToolFailures:       toolFailures,
 		OperationalActions: len(operationalActions),
@@ -404,6 +429,11 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 	if toolFailures > 0 {
 		audit.Outcome = "warn"
 		audit.Message = fmt.Sprintf("Final response audit warning: %d tool failure(s) occurred in this turn; the final response must not imply failed actions succeeded.", toolFailures)
+	}
+	if requirementAudit.Status == RequirementEvidenceStatusWarn && audit.Outcome == "pass" {
+		audit.Outcome = "warn"
+		audit.Code = "requirement_evidence_warn"
+		audit.Message = "Final response audit warning: generated artifact evidence has requirement-relevant caveats. " + requirementEvidenceAuditMessage(requirementAudit)
 	}
 	if finalOutcome == "unknown" && r != nil && r.BrowserAvailable && r.browserToolsUsed && !r.browserWaitForUserUsed {
 		audit.Outcome = "block"
@@ -2624,6 +2654,10 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	} else {
 		r.nonPassingImageAnalyses++
 	}
+	r.latestImageAnalysisVerdict = analyzed.Verdict
+	r.latestImageAnalysisPath = path
+	r.latestImageAnalysisCompare = comparisonPath
+	r.latestImageAnalysisSummary = analyzed.Summary
 	if err := r.writeImageAnalysisResultEvent(request, analyzed); err != nil {
 		return tools.ToolResult{}, err
 	}
@@ -3025,6 +3059,44 @@ func (r *Runner) VerificationDetails() []string {
 	return formatVerificationChecks(r.verificationChecks, len(r.verificationChecks))
 }
 
+func (r *Runner) VisualEvidence() ImageAnalysisEvidence {
+	if r == nil {
+		return ImageAnalysisEvidence{}
+	}
+	latestVerdict := strings.TrimSpace(r.latestImageAnalysisVerdict)
+	if latestVerdict != "" {
+		latestVerdict = NormalizeImageAnalysisVerdict(latestVerdict)
+	}
+	return ImageAnalysisEvidence{
+		Analyses:             r.imageAnalyses,
+		Passing:              r.passingImageAnalyses,
+		NonPassing:           r.nonPassingImageAnalyses,
+		Temporal:             r.temporalImageAnalyses,
+		PassingTemporal:      r.passingTemporalImageAnalyses,
+		LatestVerdict:        latestVerdict,
+		LatestPath:           strings.TrimSpace(r.latestImageAnalysisPath),
+		LatestComparisonPath: strings.TrimSpace(r.latestImageAnalysisCompare),
+		LatestSummary:        strings.TrimSpace(r.latestImageAnalysisSummary),
+		LatestTemporal:       strings.TrimSpace(r.latestImageAnalysisCompare) != "",
+	}
+}
+
+func (e ImageAnalysisEvidence) HasEvidence() bool {
+	return e.Analyses > 0 || strings.TrimSpace(e.LatestVerdict) != ""
+}
+
+func (r *Runner) VisualEvidenceDetails() []string {
+	evidence := r.VisualEvidence()
+	if !evidence.HasEvidence() {
+		return nil
+	}
+	detail := visualEvidenceLabel(evidence)
+	if evidence.Passing > 0 || evidence.NonPassing > 0 {
+		detail += fmt.Sprintf(" (%d passing, %d non-passing analyze_image verdicts)", evidence.Passing, evidence.NonPassing)
+	}
+	return []string{detail}
+}
+
 func (r *Runner) ChangeReviewEvidence() ChangeReviewEvidence {
 	if r == nil {
 		return ChangeReviewEvidence{}
@@ -3143,11 +3215,18 @@ func (r *Runner) Final(action Action) error {
 	action.FilesChanged = cleanStringList(action.FilesChanged)
 	action.Verification = cleanStringList(action.Verification)
 	finalOutcome := normalizeFinalResponseOutcome(action.Outcome)
-	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, r.verificationChecks)
-	if err := r.WriteFinalResponseAudit(r.FinalResponseAudit(action)); err != nil {
+	visualEvidence := r.VisualEvidence()
+	requirementAudit := r.requirementEvidenceAuditForAction(action)
+	verificationStatus, verificationMessage := finalVerificationStatus(action.FilesChanged, action.Verification, r.verificationChecks, visualEvidence)
+	if requirementAudit.HasEvidence() {
+		if err := r.WriteRequirementEvidenceAudit(requirementAudit); err != nil {
+			return err
+		}
+	}
+	if err := r.WriteFinalResponseAudit(r.finalResponseAudit(action, requirementAudit)); err != nil {
 		return err
 	}
-	if err := r.Session.Write(session.Event{
+	verificationEvent := session.Event{
 		"type":                "verification_summary",
 		"session_id":          r.SessionID,
 		"status":              verificationStatus,
@@ -3155,7 +3234,14 @@ func (r *Runner) Final(action Action) error {
 		"files_changed":       action.FilesChanged,
 		"verification_checks": action.Verification,
 		"actual_checks":       append([]tools.VerificationCheck(nil), r.verificationChecks...),
-	}); err != nil {
+	}
+	if visualEvidence.HasEvidence() {
+		verificationEvent["visual_evidence"] = visualEvidence
+	}
+	if requirementAudit.HasEvidence() {
+		verificationEvent["requirement_evidence"] = requirementAudit
+	}
+	if err := r.Session.Write(verificationEvent); err != nil {
 		return err
 	}
 	if err := r.Session.Write(session.Event{
@@ -3168,7 +3254,7 @@ func (r *Runner) Final(action Action) error {
 	}); err != nil {
 		return err
 	}
-	return r.Session.Write(session.Event{
+	turnComplete := session.Event{
 		"type":                "turn_complete",
 		"session_id":          r.SessionID,
 		"summary":             action.Summary,
@@ -3177,7 +3263,14 @@ func (r *Runner) Final(action Action) error {
 		"verification":        action.Verification,
 		"verification_status": verificationStatus,
 		"actual_checks":       append([]tools.VerificationCheck(nil), r.verificationChecks...),
-	})
+	}
+	if visualEvidence.HasEvidence() {
+		turnComplete["visual_evidence"] = visualEvidence
+	}
+	if requirementAudit.HasEvidence() {
+		turnComplete["requirement_evidence"] = requirementAudit
+	}
+	return r.Session.Write(turnComplete)
 }
 
 func finalResponseAuditEvent(sessionID string, audit FinalResponseAudit) session.Event {
@@ -3196,6 +3289,8 @@ func finalResponseAuditEvent(sessionID string, audit FinalResponseAudit) session
 		"blocking":            audit.Blocking,
 		"tool_failures":       audit.ToolFailures,
 		"operational_actions": audit.OperationalActions,
+		"requirement_status":  strings.TrimSpace(audit.RequirementStatus),
+		"requirement_issues":  audit.RequirementIssues,
 	}
 }
 
@@ -3242,7 +3337,22 @@ func patchFeedbackEvent(sessionID string, feedback PatchFeedback) session.Event 
 	return event
 }
 
-func finalVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck) (string, string) {
+func finalVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck, visualEvidence ...ImageAnalysisEvidence) (string, string) {
+	visual := ImageAnalysisEvidence{}
+	if len(visualEvidence) > 0 {
+		visual = visualEvidence[0]
+	}
+	status, message := commandVerificationStatus(filesChanged, verification, actualChecks)
+	if visualLatestVerdictNonPassing(visual) {
+		return "failed", visualFailureMessage(visual, status, message)
+	}
+	if visualLatestVerdictPassing(visual) && status == "verified" {
+		return status, message + ". Latest visual analysis also passed: " + visualEvidenceLabel(visual)
+	}
+	return status, message
+}
+
+func commandVerificationStatus(filesChanged, verification []string, actualChecks []tools.VerificationCheck) (string, string) {
 	if len(actualChecks) > 0 {
 		finalChecks := []tools.VerificationCheck(nil)
 		if len(verification) > 0 {
@@ -3275,6 +3385,47 @@ func finalVerificationStatus(filesChanged, verification []string, actualChecks [
 		return "missing_after_changes", "No verification check was run or reported for changed files."
 	}
 	return "not_run", "No verification check was run."
+}
+
+func visualLatestVerdictPassing(e ImageAnalysisEvidence) bool {
+	if strings.TrimSpace(e.LatestVerdict) == "" {
+		return false
+	}
+	return NormalizeImageAnalysisVerdict(e.LatestVerdict) == ImageAnalysisVerdictPass
+}
+
+func visualLatestVerdictNonPassing(e ImageAnalysisEvidence) bool {
+	if strings.TrimSpace(e.LatestVerdict) == "" {
+		return false
+	}
+	verdict := NormalizeImageAnalysisVerdict(e.LatestVerdict)
+	return e.HasEvidence() && verdict != "" && verdict != ImageAnalysisVerdictPass
+}
+
+func visualFailureMessage(e ImageAnalysisEvidence, commandStatus, commandMessage string) string {
+	message := "Visual verification did not pass: " + visualEvidenceLabel(e)
+	if commandStatus != "" && commandStatus != "not_run" {
+		message += ". Command verification status was " + commandStatus + ": " + commandMessage
+	}
+	return message
+}
+
+func visualEvidenceLabel(e ImageAnalysisEvidence) string {
+	verdict := NormalizeImageAnalysisVerdict(e.LatestVerdict)
+	if verdict == "" {
+		verdict = ImageAnalysisVerdictUncertain
+	}
+	parts := []string{"latest analyze_image verdict " + verdict}
+	if path := strings.TrimSpace(e.LatestPath); path != "" {
+		parts = append(parts, "path "+path)
+	}
+	if e.LatestTemporal {
+		parts = append(parts, "temporal comparison")
+	}
+	if summary := strings.TrimSpace(e.LatestSummary); summary != "" {
+		parts = append(parts, summary)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func relevantVerificationChecks(reported []string, actual []tools.VerificationCheck) []tools.VerificationCheck {

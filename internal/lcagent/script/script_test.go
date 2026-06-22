@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -1077,6 +1078,27 @@ func TestFinalVerificationStatusKeepsLatestFailure(t *testing.T) {
 	}
 }
 
+func TestFinalVerificationStatusKeepsLatestVisualFailure(t *testing.T) {
+	status, message := finalVerificationStatus(nil, []string{"game compiled"}, []tools.VerificationCheck{
+		{Command: "g++ skate.cpp -o skate", Status: tools.VerificationStatusPassed, Success: true},
+	}, ImageAnalysisEvidence{
+		Analyses:      3,
+		Passing:       1,
+		NonPassing:    2,
+		LatestVerdict: ImageAnalysisVerdictFail,
+		LatestPath:    "screenshot5.png",
+		LatestSummary: "lock screen captured instead of game window",
+	})
+	if status != "failed" {
+		t.Fatalf("status = %q, want failed; message=%s", status, message)
+	}
+	for _, want := range []string{"Visual verification did not pass", "screenshot5.png", "lock screen", "Command verification status was verified"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("message missing %q: %s", want, message)
+		}
+	}
+}
+
 func TestVerificationFeedbackForFailedCheck(t *testing.T) {
 	result := tools.ToolResult{
 		Success:  false,
@@ -1291,6 +1313,51 @@ func TestRunnerFinalResponseAuditUsesLatestVerificationWhenFinalDoesNotListDetai
 	status, message := finalVerificationStatus([]string{"skate.cpp"}, nil, checks)
 	if status != "verified" || !strings.Contains(message, "superseded") {
 		t.Fatalf("status=%q message=%q, want latest passing verification with superseded failure note", status, message)
+	}
+}
+
+func TestRunnerRequirementEvidenceAuditWarnsOnExternalCppDependencies(t *testing.T) {
+	root := t.TempDir()
+	source := strings.Join([]string{
+		"#include <iostream>",
+		"#include <GLFW/glfw3.h>",
+		"#include <glm/glm.hpp>",
+		"int main(){ return 0; }",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(root, "skate.cpp"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := Runner{
+		Files: tools.FileTools{Workspace: w},
+		verificationChecks: []tools.VerificationCheck{{
+			Command: "g++ -I/opt/homebrew/include skate.cpp -o skate -L/opt/homebrew/lib -lglfw -framework OpenGL",
+			Status:  tools.VerificationStatusPassed,
+			Success: true,
+		}},
+	}
+	audit := runner.RequirementEvidenceAudit([]string{"skate.cpp"}, runner.verificationChecks)
+	if audit.Status != RequirementEvidenceStatusWarn || len(audit.Issues) == 0 {
+		t.Fatalf("audit = %#v, want warning with issues", audit)
+	}
+	message := requirementEvidenceAuditMessage(audit)
+	for _, want := range []string{"GLFW/glfw3.h", "glm/glm.hpp", "/opt/homebrew"} {
+		if !strings.Contains(message, want) && !strings.Contains(fmt.Sprint(audit), want) {
+			t.Fatalf("audit missing %q: %#v message=%s", want, audit, message)
+		}
+	}
+	finalAudit := runner.FinalResponseAudit(Action{
+		Type:         "final_response",
+		Summary:      "complete",
+		Outcome:      "completed",
+		FilesChanged: []string{"skate.cpp"},
+		Verification: []string{"g++ build passed"},
+	})
+	if finalAudit.Outcome != "warn" || finalAudit.Code != "requirement_evidence_warn" || finalAudit.RequirementIssues == 0 {
+		t.Fatalf("final audit = %#v, want requirement evidence warning", finalAudit)
 	}
 }
 

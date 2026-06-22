@@ -22,9 +22,9 @@ func TestOpenRouterProgressGuidancePhases(t *testing.T) {
 	if mid.Phase != "consolidation" || mid.ForceSynthesis {
 		t.Fatalf("mid guidance = %+v, want consolidation without forced synthesis", mid)
 	}
-	late := openRouterGuidanceForTurn(120, 128, messages, nil)
-	if late.Phase != "consolidation" || late.ForceSynthesis || late.TurnsRemaining != 8 {
-		t.Fatalf("late guidance = %+v, want consolidation without forced synthesis near hard cap", late)
+	late := openRouterGuidanceForTurn(136, 160, messages, nil)
+	if late.Phase != "endgame" || late.ForceSynthesis || late.TurnsRemaining != 24 {
+		t.Fatalf("late guidance = %+v, want endgame without forced synthesis near hard cap", late)
 	}
 	shortRun := openRouterGuidanceForTurn(13, 16, messages, nil)
 	if shortRun.ForceSynthesis {
@@ -73,6 +73,16 @@ func TestOpenRouterProgressNoteKeepsConsolidationExecutionAware(t *testing.T) {
 	for _, want := range []string{"phase: consolidation", "for execution requests", "do not skip to final_response before acting"} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("consolidation progress note missing %q:\n%s", want, note)
+		}
+	}
+}
+
+func TestOpenRouterProgressNoteUsesEndgameGuidance(t *testing.T) {
+	guidance := openRouterGuidanceForTurn(136, 160, nil, nil)
+	note := openRouterProgressNote(guidance, nil)
+	for _, want := range []string{"phase: endgame", "stop adding optional scope", "visual evidence", "requirement evidence"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("endgame progress note missing %q:\n%s", want, note)
 		}
 	}
 }

@@ -24,7 +24,7 @@ const (
 	DefaultXiaomiModel        = "mimo-v2.5-pro"
 	DefaultXiaomiUtilityModel = "mimo-v2.5"
 	DefaultOllamaBaseURL      = "http://127.0.0.1:11434/v1"
-	DefaultOpenRouterMaxTurns = 128
+	DefaultOpenRouterMaxTurns = 160
 	DefaultChatTemperature    = 0.2
 )
 

@@ -4213,7 +4213,7 @@ func TestRunExecLongRequestTimeoutExpandsDefaultMaxTurns(t *testing.T) {
 	text := stdout.String()
 	for _, want := range []string{
 		`"request_timeout":"1h0m0s"`,
-		`"max_turns":128`,
+		`"max_turns":160`,
 		`"summary":"done"`,
 	} {
 		if !strings.Contains(text, want) {
