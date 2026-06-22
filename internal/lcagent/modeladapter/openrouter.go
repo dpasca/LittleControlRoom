@@ -370,7 +370,16 @@ func ModelIsKnownForProvider(provider, model string) bool {
 	case "openrouter", "", "ollama":
 		return true // anything can be routed through openrouter
 	case "openai":
-		return model == DefaultOpenAIModel
+		model = strings.ToLower(NormalizeModelForProvider("openai", model))
+		switch strings.ToLower(model) {
+		case strings.ToLower(DefaultOpenAIModel), "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano":
+			return true
+		default:
+			return hasVersionedOpenAIModelPrefix(model, "gpt-5.5-") ||
+				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-") ||
+				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-mini-") ||
+				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-nano-")
+		}
 	case "deepseek":
 		return model == DefaultDeepSeekModel || model == "deepseek-v4-flash"
 	case "moonshot":
@@ -381,6 +390,14 @@ func ModelIsKnownForProvider(provider, model string) bool {
 	default:
 		return true
 	}
+}
+
+func hasVersionedOpenAIModelPrefix(model, prefix string) bool {
+	if !strings.HasPrefix(model, prefix) {
+		return false
+	}
+	suffix := strings.TrimPrefix(model, prefix)
+	return suffix != "" && suffix[0] >= '0' && suffix[0] <= '9'
 }
 
 func normalizeAuthHeader(header string) string {

@@ -132,7 +132,19 @@ func (v visionAnalyzer) AnalyzeImage(ctx context.Context, request script.ImageAn
 		Data:     promptImage.Data,
 	})
 	if err != nil {
-		return script.ImageAnalysisResult{}, err
+		result := script.ImageAnalysisResult{
+			Provider: v.profile.Provider,
+			Model:    v.profile.Model,
+		}
+		if providerErr, ok := modeladapter.AsProviderError(err); ok {
+			result.ErrorKind = string(providerErr.Kind)
+			result.ErrorRetryable = providerErr.Retryable
+			result.ErrorStatus = providerErr.StatusCode
+			if provider := strings.TrimSpace(providerErr.Provider); provider != "" {
+				result.Provider = provider
+			}
+		}
+		return result, err
 	}
 	modelName := firstNonEmptyString(strings.TrimSpace(completion.Model), v.profile.Model)
 	result := parseVisionStructuredResponse(completion.Message.Content)

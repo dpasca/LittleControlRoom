@@ -1406,6 +1406,33 @@ func TestModelIsKnownForProviderKeepsMoonshotK26(t *testing.T) {
 	}
 }
 
+func TestModelIsKnownForProviderRecognizesOpenAIQualityModels(t *testing.T) {
+	for _, model := range []string{
+		"gpt-5.5",
+		"openai/gpt-5.5",
+		"gpt-5.5-2026-04-23",
+		"openai/gpt-5.5-2026-04-23",
+		"gpt-5.4",
+		"openai/gpt-5.4",
+		"gpt-5.4-2026-03-17",
+		"gpt-5.4-mini",
+		"openai/gpt-5.4-mini",
+		"gpt-5.4-mini-2026-03-17",
+		"gpt-5.4-nano",
+		"openai/gpt-5.4-nano",
+		"gpt-5.4-nano-2026-03-17",
+	} {
+		if !ModelIsKnownForProvider("openai", model) {
+			t.Fatalf("%s should be known for direct OpenAI routing", model)
+		}
+	}
+	for _, model := range []string{"gpt-5.3-mini", "openai/gpt-5.3-mini"} {
+		if ModelIsKnownForProvider("openai", model) {
+			t.Fatalf("%s should not be known for direct OpenAI routing", model)
+		}
+	}
+}
+
 func TestXiaomiClientUsesAPIKeyHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

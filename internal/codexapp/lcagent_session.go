@@ -195,6 +195,11 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		}
 	}
 	visionProvider := lcagentVisionProviderValue(req.LCAgentVisionProvider)
+	if visionProvider == "auto" {
+		if inferred := lcagentDirectProviderForKnownModel(req.LCAgentVisionModel); inferred != "" {
+			visionProvider = inferred
+		}
+	}
 	visionModel := ""
 	if resolvedVisionProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider); resolvedVisionProvider != "" {
 		visionModel = modeladapter.NormalizeModelForProvider(resolvedVisionProvider, req.LCAgentVisionModel)
@@ -1509,6 +1514,11 @@ func (s *lcagentSession) prepareRun(prompt, displayPrompt string, opts lcagentRu
 	}
 	utilityAPIKeyName, utilityAPIKey := s.providerCredentialLocked(utilityProvider)
 	visionProvider := firstNonEmpty(s.visionProvider, lcagentDefaultVisionProvider)
+	if lcagentVisionProviderValue(visionProvider) == "auto" {
+		if inferred := lcagentDirectProviderForKnownModel(s.visionModel); inferred != "" {
+			visionProvider = inferred
+		}
+	}
 	visionModel := strings.TrimSpace(s.visionModel)
 	visionCredentialProvider := lcagentResolvedVisionProvider(routePreset, provider, visionProvider)
 	if visionCredentialProvider != "" {
@@ -2951,6 +2961,8 @@ func lcagentVisionProviderValue(configured string) string {
 	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_VISION_PROVIDER"))))
 	value = strings.ReplaceAll(value, "_", "-")
 	switch value {
+	case "auto":
+		return "auto"
 	case "main", "same", "same-as-main":
 		return "main"
 	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":

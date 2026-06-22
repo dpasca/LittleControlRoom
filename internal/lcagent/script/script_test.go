@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -504,6 +505,43 @@ func TestRunnerAnalyzesImageWithConfiguredVisionModel(t *testing.T) {
 	}
 }
 
+func TestRunnerRecordsImageAnalysisProviderFailureAsUncertainEvidence(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	analyzer := &fakeFailingImageAnalyzer{}
+	runner := Runner{
+		Session:       writer,
+		SessionID:     sessionID,
+		Prompt:        "verify the game window",
+		ImageAnalyzer: analyzer,
+	}
+	_, err = runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "analyze_image",
+		Args: raw(`{"path":"screenshot.png","question":"Is the game visible?"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "provider=deepseek") || !strings.Contains(err.Error(), "error_kind=provider_schema") {
+		t.Fatalf("RunTool() error = %v, want provider/model/kind details", err)
+	}
+	evidence := runner.VisualEvidence()
+	if evidence.Analyses != 1 || evidence.Passing != 0 || evidence.NonPassing != 1 || evidence.LatestVerdict != ImageAnalysisVerdictUncertain {
+		t.Fatalf("visual evidence = %#v", evidence)
+	}
+	if evidence.LatestProvider != "deepseek" || evidence.LatestModel != "deepseek-v4-pro" || evidence.LatestErrorKind != "provider_schema" {
+		t.Fatalf("visual route evidence = %#v", evidence)
+	}
+	text := stream.String()
+	for _, want := range []string{`"type":"image_analysis_failed"`, `"type":"image_analysis_result"`, `"verdict":"uncertain"`, `"provider":"deepseek"`, `"model":"deepseek-v4-pro"`, `"error_kind":"provider_schema"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunnerAnalyzesImageWithComparisonPath(t *testing.T) {
 	var stream bytes.Buffer
 	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
@@ -950,6 +988,20 @@ func (f *fakeImageAnalyzer) AnalyzeImage(_ context.Context, request ImageAnalysi
 		Model:          "fake-vision",
 		UsageSummary:   lcrmodel.LLMUsage{InputTokens: 30, OutputTokens: 9, TotalTokens: 39},
 	}, nil
+}
+
+type fakeFailingImageAnalyzer struct {
+	request ImageAnalysisRequest
+}
+
+func (f *fakeFailingImageAnalyzer) AnalyzeImage(_ context.Context, request ImageAnalysisRequest) (ImageAnalysisResult, error) {
+	f.request = request
+	return ImageAnalysisResult{
+		Provider:       "deepseek",
+		Model:          "deepseek-v4-pro",
+		ErrorKind:      "provider_schema",
+		ErrorRetryable: false,
+	}, errors.New("HTTP 400: unknown variant image_url")
 }
 
 type fakeApprovalBroker struct {

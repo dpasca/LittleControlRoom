@@ -83,6 +83,9 @@ type Runner struct {
 	latestImageAnalysisPath      string
 	latestImageAnalysisCompare   string
 	latestImageAnalysisSummary   string
+	latestImageAnalysisProvider  string
+	latestImageAnalysisModel     string
+	latestImageAnalysisErrorKind string
 	inspectionEvidence           int
 	qualityPlan                  *QualityPlan
 	qualityPlanUpdates           int
@@ -162,6 +165,9 @@ type ImageAnalysisResult struct {
 	BlockingIssues []string
 	Provider       string
 	Model          string
+	ErrorKind      string
+	ErrorRetryable bool
+	ErrorStatus    int
 	Usage          json.RawMessage
 	UsageSummary   lcrmodel.LLMUsage
 }
@@ -177,6 +183,9 @@ type ImageAnalysisEvidence struct {
 	LatestComparisonPath string `json:"latest_comparison_path,omitempty"`
 	LatestSummary        string `json:"latest_summary,omitempty"`
 	LatestTemporal       bool   `json:"latest_temporal,omitempty"`
+	LatestProvider       string `json:"latest_provider,omitempty"`
+	LatestModel          string `json:"latest_model,omitempty"`
+	LatestErrorKind      string `json:"latest_error_kind,omitempty"`
 }
 
 func NormalizeImageAnalysisVerdict(value string) string {
@@ -1200,9 +1209,6 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		result, err = r.runAnalyzeImage(ctx, args)
 		if err != nil {
 			return tools.ToolResult{}, err
-		}
-		if result.Success {
-			r.imageAnalyses++
 		}
 	case "update_quality_plan":
 		var args qualityPlanArgs
@@ -2639,13 +2645,26 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 	}
 	analyzed, err := r.ImageAnalyzer.AnalyzeImage(ctx, request)
 	if err != nil {
-		message := err.Error()
-		if writeErr := r.writeImageAnalysisFailedEvent(request, message); writeErr != nil {
+		analyzed = normalizeImageAnalysisFailure(analyzed, err)
+		message := formatImageAnalysisFailureMessage(analyzed, err)
+		if writeErr := r.writeImageAnalysisFailedEvent(request, analyzed, message); writeErr != nil {
+			return tools.ToolResult{}, writeErr
+		}
+		if writeErr := r.recordImageAnalysisResult(request, analyzed); writeErr != nil {
 			return tools.ToolResult{}, writeErr
 		}
 		return tools.ToolResult{Success: false, Error: "image analysis failed: " + message}, nil
 	}
 	analyzed = normalizeImageAnalysisResult(analyzed)
+	if err := r.recordImageAnalysisResult(request, analyzed); err != nil {
+		return tools.ToolResult{}, err
+	}
+	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed, r.nonPassingImageAnalyses), Truncated: inputTruncated}, nil
+}
+
+func (r *Runner) recordImageAnalysisResult(request ImageAnalysisRequest, analyzed ImageAnalysisResult) error {
+	analyzed = normalizeImageAnalysisResult(analyzed)
+	comparisonPath := strings.TrimSpace(request.ComparisonPath)
 	if imageAnalysisPassed(analyzed) {
 		r.passingImageAnalyses++
 		if comparisonPath != "" {
@@ -2655,16 +2674,17 @@ func (r *Runner) runAnalyzeImage(ctx context.Context, args analyzeImageArgs) (to
 		r.nonPassingImageAnalyses++
 	}
 	r.latestImageAnalysisVerdict = analyzed.Verdict
-	r.latestImageAnalysisPath = path
+	r.latestImageAnalysisPath = strings.TrimSpace(request.Path)
 	r.latestImageAnalysisCompare = comparisonPath
 	r.latestImageAnalysisSummary = analyzed.Summary
-	if err := r.writeImageAnalysisResultEvent(request, analyzed); err != nil {
-		return tools.ToolResult{}, err
-	}
+	r.latestImageAnalysisProvider = analyzed.Provider
+	r.latestImageAnalysisModel = analyzed.Model
+	r.latestImageAnalysisErrorKind = analyzed.ErrorKind
 	if comparisonPath != "" {
 		r.temporalImageAnalyses++
 	}
-	return tools.ToolResult{Success: true, Output: formatImageAnalysisResult(analyzed, r.nonPassingImageAnalyses), Truncated: inputTruncated}, nil
+	r.imageAnalyses++
+	return r.writeImageAnalysisResultEvent(request, analyzed)
 }
 
 func normalizeImageAnalysisResult(result ImageAnalysisResult) ImageAnalysisResult {
@@ -2675,7 +2695,63 @@ func normalizeImageAnalysisResult(result ImageAnalysisResult) ImageAnalysisResul
 	result.BlockingIssues = cleanStringList(result.BlockingIssues)
 	result.Provider = strings.TrimSpace(result.Provider)
 	result.Model = strings.TrimSpace(result.Model)
+	result.ErrorKind = strings.TrimSpace(result.ErrorKind)
 	return result
+}
+
+func normalizeImageAnalysisFailure(result ImageAnalysisResult, err error) ImageAnalysisResult {
+	result = normalizeImageAnalysisResult(result)
+	message := ""
+	if err != nil {
+		message = strings.TrimSpace(err.Error())
+	}
+	result.Verdict = ImageAnalysisVerdictUncertain
+	result.Output = message
+	if result.Summary == "" {
+		result.Summary = "image analysis failed"
+		if route := imageAnalysisFailureRoute(result); route != "" {
+			result.Summary += ": " + route
+		}
+	}
+	if message != "" {
+		result.BlockingIssues = append(result.BlockingIssues, message)
+	}
+	if len(result.BlockingIssues) == 0 {
+		result.BlockingIssues = []string{"image analysis provider failed"}
+	}
+	return result
+}
+
+func formatImageAnalysisFailureMessage(result ImageAnalysisResult, err error) string {
+	message := ""
+	if err != nil {
+		message = strings.TrimSpace(err.Error())
+	}
+	route := imageAnalysisFailureRoute(result)
+	if route != "" && message != "" {
+		return route + ": " + message
+	}
+	if route != "" {
+		return route
+	}
+	if message != "" {
+		return message
+	}
+	return "image analysis provider failed"
+}
+
+func imageAnalysisFailureRoute(result ImageAnalysisResult) string {
+	parts := []string{}
+	if provider := strings.TrimSpace(result.Provider); provider != "" {
+		parts = append(parts, "provider="+provider)
+	}
+	if model := strings.TrimSpace(result.Model); model != "" {
+		parts = append(parts, "model="+model)
+	}
+	if kind := strings.TrimSpace(result.ErrorKind); kind != "" {
+		parts = append(parts, "error_kind="+kind)
+	}
+	return strings.Join(parts, " ")
 }
 
 func cleanImageAnalysisChecks(checks []string) []string {
@@ -2888,13 +2964,16 @@ func (r *Runner) writeImageAnalysisResultEvent(request ImageAnalysisRequest, res
 		"blocking_issues": cleanStringList(result.BlockingIssues),
 		"provider":        strings.TrimSpace(result.Provider),
 		"model":           strings.TrimSpace(result.Model),
+		"error_kind":      strings.TrimSpace(result.ErrorKind),
+		"error_retryable": result.ErrorRetryable,
+		"error_status":    result.ErrorStatus,
 		"output":          strings.TrimSpace(result.Output),
 		"usage":           json.RawMessage(result.Usage),
 		"usage_summary":   result.UsageSummary,
 	})
 }
 
-func (r *Runner) writeImageAnalysisFailedEvent(request ImageAnalysisRequest, message string) error {
+func (r *Runner) writeImageAnalysisFailedEvent(request ImageAnalysisRequest, result ImageAnalysisResult, message string) error {
 	if r == nil || r.Session == nil {
 		return nil
 	}
@@ -2906,6 +2985,11 @@ func (r *Runner) writeImageAnalysisFailedEvent(request ImageAnalysisRequest, mes
 		"temporal":        strings.TrimSpace(request.ComparisonPath) != "",
 		"question":        request.Question,
 		"message":         strings.TrimSpace(message),
+		"provider":        strings.TrimSpace(result.Provider),
+		"model":           strings.TrimSpace(result.Model),
+		"error_kind":      strings.TrimSpace(result.ErrorKind),
+		"error_retryable": result.ErrorRetryable,
+		"error_status":    result.ErrorStatus,
 	})
 }
 
@@ -3078,6 +3162,9 @@ func (r *Runner) VisualEvidence() ImageAnalysisEvidence {
 		LatestComparisonPath: strings.TrimSpace(r.latestImageAnalysisCompare),
 		LatestSummary:        strings.TrimSpace(r.latestImageAnalysisSummary),
 		LatestTemporal:       strings.TrimSpace(r.latestImageAnalysisCompare) != "",
+		LatestProvider:       strings.TrimSpace(r.latestImageAnalysisProvider),
+		LatestModel:          strings.TrimSpace(r.latestImageAnalysisModel),
+		LatestErrorKind:      strings.TrimSpace(r.latestImageAnalysisErrorKind),
 	}
 }
 
@@ -3424,6 +3511,15 @@ func visualEvidenceLabel(e ImageAnalysisEvidence) string {
 	}
 	if summary := strings.TrimSpace(e.LatestSummary); summary != "" {
 		parts = append(parts, summary)
+	}
+	if provider := strings.TrimSpace(e.LatestProvider); provider != "" {
+		parts = append(parts, "provider "+provider)
+	}
+	if model := strings.TrimSpace(e.LatestModel); model != "" {
+		parts = append(parts, "model "+model)
+	}
+	if kind := strings.TrimSpace(e.LatestErrorKind); kind != "" {
+		parts = append(parts, "error "+kind)
 	}
 	return strings.Join(parts, "; ")
 }

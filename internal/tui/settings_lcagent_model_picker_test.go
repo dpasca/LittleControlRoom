@@ -180,6 +180,22 @@ func TestSettingsLCAgentVisionAutoUsesVerifiedMainForLaunch(t *testing.T) {
 		LCAgentVisionModel:    "gpt-5.4-mini",
 	}
 
+	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "openai" {
+		t.Fatalf("configured auto launch provider = %q, want openai", got)
+	}
+	if got := settingsLCAgentVisionModelForLaunch(settings); got != "gpt-5.4-mini" {
+		t.Fatalf("configured auto launch model = %q, want gpt-5.4-mini", got)
+	}
+
+	settings.LCAgentVisionModel = "gpt-5.3-mini"
+	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "off" {
+		t.Fatalf("unknown explicit auto launch provider = %q, want off", got)
+	}
+	if got := settingsLCAgentVisionModelForLaunch(settings); got != "" {
+		t.Fatalf("unknown explicit auto launch model = %q, want blank", got)
+	}
+
+	settings.LCAgentVisionModel = ""
 	if got := settingsLCAgentVisionProviderForLaunch(settings); got != "off" {
 		t.Fatalf("unverified auto launch provider = %q, want off", got)
 	}

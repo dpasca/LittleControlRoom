@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
+	"lcroom/internal/lcagent/modeladapter"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -2743,6 +2744,9 @@ func settingsLCAgentMainVisionVerified(settings config.EditableSettings) bool {
 func settingsLCAgentVisionProviderForLaunch(settings config.EditableSettings) string {
 	provider := settingsLCAgentVisionProviderValue(settings.LCAgentVisionProvider)
 	if provider == "auto" {
+		if inferred := settingsLCAgentProviderForExplicitVisionModel(settings.LCAgentVisionModel); inferred != "" {
+			return inferred
+		}
 		if settingsLCAgentMainVisionVerified(settings) {
 			return "main"
 		}
@@ -2759,7 +2763,24 @@ func settingsLCAgentVisionModelForLaunch(settings config.EditableSettings) strin
 	return strings.TrimSpace(settings.LCAgentVisionModel)
 }
 
+func settingsLCAgentProviderForExplicitVisionModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	for _, provider := range []string{"openai", "deepseek", "moonshot", "xiaomi"} {
+		normalized := modeladapter.NormalizeModelForProvider(provider, model)
+		if modeladapter.ModelIsKnownForProvider(provider, normalized) {
+			return provider
+		}
+	}
+	return ""
+}
+
 func settingsLCAgentVisionAutoLabel(settings config.EditableSettings) string {
+	if inferred := settingsLCAgentProviderForExplicitVisionModel(settings.LCAgentVisionModel); inferred != "" {
+		return "auto: " + settingsLCAgentModelPickerProviderLabel(inferred) + " / " + strings.TrimSpace(settings.LCAgentVisionModel)
+	}
 	mainProvider := settingsLCAgentProviderOptionLabel(settingsLCAgentMainProvider(settings))
 	mainModel := settingsLCAgentMainModel(settings)
 	if settingsLCAgentMainVisionVerified(settings) {
