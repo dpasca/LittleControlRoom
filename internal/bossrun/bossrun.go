@@ -28,6 +28,9 @@ const (
 	PlanStepVerify   PlanStepKind = "verify"
 	PlanStepBranch   PlanStepKind = "branch"
 	PlanStepReport   PlanStepKind = "report"
+
+	lcagentGoalResultTraceMaxChars = 420
+	lcagentGoalResultItemMaxChars  = 120
 )
 
 type PlanStepKind string
@@ -392,11 +395,11 @@ func FormatGoalResult(result GoalResult) string {
 func formatLCAgentResultQuality(result GoalResult) string {
 	quality := strings.TrimSpace(result.LCAgentTraceQuality)
 	if quality != "" {
-		return "Trace: " + quality + "."
+		return "Trace: " + limitGoalResultDisplayText(quality, lcagentGoalResultTraceMaxChars) + "."
 	}
 	parts := []string{}
 	if len(result.LCAgentActualChecks) > 0 {
-		parts = append(parts, "actual checks: "+strings.Join(limitStrings(result.LCAgentActualChecks, 3), "; "))
+		parts = append(parts, "actual checks: "+strings.Join(limitGoalResultDisplayStrings(result.LCAgentActualChecks, 3, lcagentGoalResultItemMaxChars), "; "))
 	}
 	if result.LCAgentPermissionDenials > 0 {
 		parts = append(parts, fmt.Sprintf("denials: %d", result.LCAgentPermissionDenials))
@@ -413,7 +416,7 @@ func formatLCAgentResultQuality(result GoalResult) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "Trace: " + strings.Join(parts, "; ") + "."
+	return "Trace: " + limitGoalResultDisplayText(strings.Join(parts, "; "), lcagentGoalResultTraceMaxChars) + "."
 }
 
 func formatLCAgentGoalProposalPreview(proposal GoalProposal) string {
@@ -679,4 +682,40 @@ func limitStrings(values []string, limit int) []string {
 	out := append([]string(nil), values[:limit]...)
 	out = append(out, fmt.Sprintf("%d more", len(values)-limit))
 	return out
+}
+
+func limitGoalResultDisplayStrings(values []string, limit, itemLimit int) []string {
+	limited := limitStrings(values, limit)
+	out := make([]string, 0, len(limited))
+	for _, value := range limited {
+		out = append(out, limitGoalResultDisplayText(value, itemLimit))
+	}
+	return out
+}
+
+func limitGoalResultDisplayText(text string, limit int) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if limit <= 0 {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	const marker = "..."
+	if limit <= len(marker) {
+		return string(runes[:limit])
+	}
+	keep := limit - len(marker)
+	prefix := keep / 2
+	suffix := keep - prefix
+	start := strings.TrimSpace(string(runes[:prefix]))
+	end := strings.TrimSpace(string(runes[len(runes)-suffix:]))
+	if start == "" {
+		return marker + end
+	}
+	if end == "" {
+		return start + marker
+	}
+	return start + marker + end
 }

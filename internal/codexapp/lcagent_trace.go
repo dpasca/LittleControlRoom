@@ -12,6 +12,14 @@ import (
 	lcrmodel "lcroom/internal/model"
 )
 
+const (
+	lcagentTraceListItemMaxChars       = 96
+	lcagentTraceCheckSummaryMaxChars   = 120
+	lcagentTraceCompactSummaryMaxChars = 420
+	lcagentTraceQualitySummaryMaxChars = 420
+	lcagentTurnCompleteTraceMaxChars   = 420
+)
+
 type LCAgentTrace struct {
 	SessionID                 string
 	ThreadID                  string
@@ -306,8 +314,10 @@ func (t LCAgentTrace) CompactSummary() string {
 		parts = append(parts, fmt.Sprintf("%d file%s changed", len(t.FilesChanged), pluralSuffix(len(t.FilesChanged))))
 	}
 	if len(t.ActualChecks) > 0 {
-		checks := t.ActualCheckSummaries()
-		parts = append(parts, fmt.Sprintf("%d verification check%s: %s", len(t.ActualChecks), pluralSuffix(len(t.ActualChecks)), strings.Join(limitStrings(checks, 2), "; ")))
+		summary := compactLCAgentVerificationCheckSummary(t.ActualChecks, 2, lcagentTraceCheckSummaryMaxChars)
+		if summary != "" {
+			parts = append(parts, fmt.Sprintf("%d verification check%s: %s", len(t.ActualChecks), pluralSuffix(len(t.ActualChecks)), summary))
+		}
 	}
 	if len(t.VerificationFeedback) > 0 {
 		parts = append(parts, fmt.Sprintf("%d verification feedback item%s", len(t.VerificationFeedback), pluralSuffix(len(t.VerificationFeedback))))
@@ -331,9 +341,9 @@ func (t LCAgentTrace) CompactSummary() string {
 		parts = append(parts, usageSummary)
 	}
 	if summary := strings.TrimSpace(t.Summary); summary != "" {
-		parts = append(parts, summary)
+		parts = append(parts, limitLCAgentDisplayText(summary, lcagentTraceListItemMaxChars))
 	}
-	return strings.Join(parts, "; ")
+	return joinLCAgentDisplayParts(parts, lcagentTraceCompactSummaryMaxChars)
 }
 
 func (t LCAgentTrace) TraceQualitySummary() string {
@@ -357,13 +367,13 @@ func (t LCAgentTrace) TraceQualitySummary() string {
 		parts = append(parts, "handoff source: "+source)
 	}
 	if len(t.PendingFiles) > 0 {
-		parts = append(parts, "pending files: "+strings.Join(limitStrings(t.PendingFiles, 4), ", "))
+		parts = append(parts, "pending files: "+strings.Join(limitLCAgentDisplayStrings(t.PendingFiles, 4, lcagentTraceListItemMaxChars), ", "))
 	}
-	if checks := t.ActualCheckSummaries(); len(checks) > 0 {
-		parts = append(parts, "actual checks: "+strings.Join(limitStrings(checks, 3), "; "))
+	if summary := compactLCAgentVerificationCheckSummary(t.ActualChecks, 3, lcagentTraceCheckSummaryMaxChars); summary != "" {
+		parts = append(parts, "actual checks: "+summary)
 	}
 	if len(t.FilesChanged) > 0 {
-		parts = append(parts, "files changed: "+strings.Join(limitStrings(t.FilesChanged, 4), ", "))
+		parts = append(parts, "files changed: "+strings.Join(limitLCAgentDisplayStrings(t.FilesChanged, 4, lcagentTraceListItemMaxChars), ", "))
 	}
 	if len(t.PermissionDenials) > 0 {
 		parts = append(parts, fmt.Sprintf("denials: %d", len(t.PermissionDenials)))
@@ -386,7 +396,7 @@ func (t LCAgentTrace) TraceQualitySummary() string {
 	if usageSummary := t.TokenUsageSummary(); usageSummary != "" {
 		parts = append(parts, usageSummary)
 	}
-	return strings.Join(parts, "; ")
+	return joinLCAgentDisplayParts(parts, lcagentTraceQualitySummaryMaxChars)
 }
 
 func (t LCAgentTrace) TraceQualitySummaryLabel() string {
@@ -510,22 +520,18 @@ func lcagentTurnCompleteTraceText(event map[string]json.RawMessage) string {
 	verification := rawJSONStringList(event["verification"])
 	parts := []string{"Trace: verification " + status}
 	if len(files) > 0 {
-		parts = append(parts, "files "+strings.Join(limitStrings(files, 4), ", "))
-	}
-	if len(verification) > 0 {
-		parts = append(parts, "checks "+strings.Join(limitStrings(verification, 3), ", "))
+		parts = append(parts, "files "+strings.Join(limitLCAgentDisplayStrings(files, 4, lcagentTraceListItemMaxChars), ", "))
 	}
 	actualChecks := lcagentVerificationChecksFromRaw(event["actual_checks"])
 	if len(actualChecks) > 0 {
-		var checkText []string
-		for _, check := range actualChecks {
-			if text := formatLCAgentVerificationCheck(check); text != "" {
-				checkText = append(checkText, text)
-			}
+		if summary := compactLCAgentVerificationCheckSummary(actualChecks, 3, lcagentTraceCheckSummaryMaxChars); summary != "" {
+			parts = append(parts, fmt.Sprintf("actual %d check%s: %s", len(actualChecks), pluralSuffix(len(actualChecks)), summary))
 		}
-		parts = append(parts, "actual "+strings.Join(limitStrings(checkText, 3), "; "))
 	}
-	return strings.Join(parts, "; ")
+	if len(verification) > 0 {
+		parts = append(parts, "checks "+strings.Join(limitLCAgentDisplayStrings(verification, 3, lcagentTraceListItemMaxChars), ", "))
+	}
+	return joinLCAgentDisplayParts(parts, lcagentTurnCompleteTraceMaxChars)
 }
 
 func lcagentVerificationCheckFromEvent(event map[string]json.RawMessage) LCAgentVerificationCheck {
@@ -573,6 +579,43 @@ func formatLCAgentVerificationCheck(check LCAgentVerificationCheck) string {
 		text += fmt.Sprintf(" exit %d", check.ExitCode)
 	}
 	return strings.TrimSpace(text)
+}
+
+func compactLCAgentVerificationCheckSummary(checks []LCAgentVerificationCheck, limit, itemLimit int) string {
+	if len(checks) == 0 {
+		return ""
+	}
+	parts := []string{}
+	if counts := lcagentVerificationCheckStatusCounts(checks); counts != "" && len(checks) > 1 {
+		parts = append(parts, counts)
+	}
+	display := make([]string, 0, len(checks))
+	for _, check := range checks {
+		text := formatLCAgentVerificationCheck(check)
+		if text == "" {
+			continue
+		}
+		display = append(display, limitLCAgentDisplayText(text, itemLimit))
+	}
+	parts = append(parts, limitStrings(display, limit)...)
+	return strings.Join(parts, "; ")
+}
+
+func lcagentVerificationCheckStatusCounts(checks []LCAgentVerificationCheck) string {
+	counts := map[string]int{}
+	order := []string{}
+	for _, check := range checks {
+		status := firstNonEmpty(strings.TrimSpace(check.Status), "unknown")
+		if _, ok := counts[status]; !ok {
+			order = append(order, status)
+		}
+		counts[status]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, status := range order {
+		parts = append(parts, fmt.Sprintf("%d %s", counts[status], status))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func correctedLCAgentVerificationStatus(status string, reported []string, actual []LCAgentVerificationCheck) string {
@@ -1041,6 +1084,72 @@ func limitStrings(values []string, limit int) []string {
 	out := append([]string(nil), values[:limit]...)
 	out = append(out, fmt.Sprintf("%d more", len(values)-limit))
 	return out
+}
+
+func limitLCAgentDisplayStrings(values []string, limit, itemLimit int) []string {
+	limited := limitStrings(values, limit)
+	out := make([]string, 0, len(limited))
+	for _, value := range limited {
+		out = append(out, limitLCAgentDisplayText(value, itemLimit))
+	}
+	return out
+}
+
+func joinLCAgentDisplayParts(parts []string, limit int) string {
+	if limit <= 0 {
+		return strings.Join(parts, "; ")
+	}
+	out := []string{}
+	for index, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		candidate := strings.Join(append(append([]string(nil), out...), part), "; ")
+		if len([]rune(candidate)) <= limit {
+			out = append(out, part)
+			continue
+		}
+		remaining := len(parts) - index
+		more := fmt.Sprintf("%d more", remaining)
+		if len(out) == 0 {
+			out = append(out, limitLCAgentDisplayText(part, limit))
+			break
+		}
+		candidate = strings.Join(append(append([]string(nil), out...), more), "; ")
+		if len([]rune(candidate)) <= limit {
+			out = append(out, more)
+		}
+		break
+	}
+	return strings.Join(out, "; ")
+}
+
+func limitLCAgentDisplayText(text string, limit int) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if limit <= 0 {
+		return text
+	}
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	const marker = "..."
+	if limit <= len(marker) {
+		return string(runes[:limit])
+	}
+	keep := limit - len(marker)
+	prefix := keep / 2
+	suffix := keep - prefix
+	start := strings.TrimSpace(string(runes[:prefix]))
+	end := strings.TrimSpace(string(runes[len(runes)-suffix:]))
+	if start == "" {
+		return marker + end
+	}
+	if end == "" {
+		return start + marker
+	}
+	return start + marker + end
 }
 
 func firstPositiveInt(values ...int) int {
