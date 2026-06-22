@@ -279,7 +279,9 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
-					"properties":           map[string]any{},
+					"properties": map[string]any{
+						"purpose": map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "Use verify when this is a runtime liveness check after start_process; it passes only when at least one managed process is reported running."},
+					},
 				},
 			},
 		},
@@ -450,7 +452,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "final_response",
-				Description: "Finish the session. The summary must be the complete user-facing answer, including findings, caveats, changed files, verification outcome, and next steps; do not put essential answer content only in verification. For operational tasks, separate confirmed facts, attempted actions, failures/timeouts, inferences, and blockers when they differ.",
+				Description: "Finish the session. The summary must be the complete user-facing answer, including findings, caveats, changed files, verification outcome, and next steps; do not put essential answer content only in verification. For operational tasks, separate confirmed facts, attempted actions, failures/timeouts, inferences, and blockers when they differ. For generated artifacts, distinguish directly verified behavior from features only inferred by code inspection.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -562,7 +564,7 @@ func browserToolDefinitions() []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "browser_screenshot",
-				Description: "Save a screenshot artifact from the managed browser page and return the artifact path." + descSuffix,
+				Description: "Save a screenshot artifact from the managed browser page and return the artifact path. The artifact must exist, decode as an image, and not be blank/uniform to count as successful visual evidence." + descSuffix,
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

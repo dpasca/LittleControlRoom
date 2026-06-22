@@ -682,7 +682,7 @@ func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing
 		case 3:
 			feedbackSeen := false
 			for _, msg := range body.Messages {
-				if msg.Role == "user" && strings.Contains(msg.Content, "managed process action") && strings.Contains(msg.Content, "no later run_command check marked purpose=verify") {
+				if msg.Role == "user" && strings.Contains(msg.Content, "managed process action") && strings.Contains(msg.Content, "no later verification check") {
 					feedbackSeen = true
 				}
 			}
@@ -749,7 +749,7 @@ func TestRunChatLoopRequiresVerificationAfterManagedProcessCompletion(t *testing
 		`"tool":"start_process"`,
 		`"type":"final_response_audit"`,
 		`"outcome":"block"`,
-		`managed process action \"start\" has no later run_command check marked purpose=verify`,
+		`managed process action \"start\" has no later verification check`,
 		`"type":"verification_feedback"`,
 		`"tool":"run_command"`,
 		`"type":"verification_check"`,

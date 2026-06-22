@@ -19,9 +19,10 @@ const (
 	defaultCommandTimeout = 10 * time.Second
 	maxCommandTimeout     = 60 * time.Second
 
-	CommandWorkspaceWriteDenialReason = "run_command appears to write workspace files"
-	CommandSystemMutationDenialReason = "run_command appears to mutate user/system configuration"
-	CommandAdminScopeSystem           = "system"
+	CommandWorkspaceWriteDenialReason  = "run_command appears to write workspace files"
+	CommandSystemMutationDenialReason  = "run_command appears to mutate user/system configuration"
+	CommandArgvShellSyntaxDenialReason = "run_command argv contains shell syntax"
+	CommandAdminScopeSystem            = "system"
 )
 
 type CommandRunner struct {
@@ -63,6 +64,20 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 			result.DenialReason = policy.DenialReason(err)
 		}
 		return result
+	}
+	if reason := commandArgvShellSyntaxDenialReason(spec); reason != "" {
+		return ToolResult{
+			Success:          false,
+			Error:            reason,
+			Denied:           true,
+			DenialReason:     reason,
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwd,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AdminScope:       normalizeCommandAdminScope(spec.AdminScope),
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
+		}
 	}
 	if reason := commandWorkspaceWriteDenialReason(spec); reason != "" {
 		return ToolResult{
@@ -189,6 +204,28 @@ func commandWorkspaceWriteDenialReason(spec CommandSpec) string {
 		return ""
 	}
 	return CommandWorkspaceWriteDenialReason + " (" + detail + "); use create_file, replace_file, apply_patch, replace_lines, or replace_text for source edits instead"
+}
+
+func commandArgvShellSyntaxDenialReason(spec CommandSpec) string {
+	token := argvShellSyntaxToken(cleanArgv(spec.Argv))
+	if token == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s (%q); use command with shell=true for shell operators, redirects, or multiple commands, or split this into separate argv-only run_command calls", CommandArgvShellSyntaxDenialReason, token)
+}
+
+func argvShellSyntaxToken(argv []string) string {
+	for _, arg := range argv {
+		token := strings.TrimSpace(arg)
+		switch token {
+		case "&&", "||", ";", "|", "|&", "&", ">", ">>", "<", "<<", "2>", "2>>", "1>", "1>>":
+			return token
+		}
+		if strings.HasPrefix(token, "2>") || strings.HasPrefix(token, "1>") {
+			return token
+		}
+	}
+	return ""
 }
 
 func commandSystemMutationDenialReason(spec CommandSpec, adminWrite bool) string {

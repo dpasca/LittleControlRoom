@@ -46,6 +46,7 @@ type ProcessRequest struct {
 	Name            string
 	Command         string
 	CWD             string
+	Purpose         string
 	CreateNew       bool
 	ReplaceExisting bool
 }

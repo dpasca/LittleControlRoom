@@ -182,6 +182,24 @@ func TestCommandRunnerDeniesArgvTeeAtMedium(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerDeniesShellSyntaxTokenInArgv(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}.RunSpec(context.Background(), CommandSpec{
+		Argv:      []string{"bash", "scripts/check.sh", "&&", "python3", "scripts/capture.py"},
+		TimeoutMS: 1000,
+		Purpose:   CommandPurposeVerify,
+	})
+	if result.Success || !result.Denied {
+		t.Fatalf("result = %#v, want denied shell syntax in argv", result)
+	}
+	if !strings.Contains(result.DenialReason, CommandArgvShellSyntaxDenialReason) || !strings.Contains(result.DenialReason, "shell=true") {
+		t.Fatalf("denial reason = %q", result.DenialReason)
+	}
+}
+
 func TestCommandRunnerDeniesArgvShellWriteAtMedium(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
 	if err != nil {

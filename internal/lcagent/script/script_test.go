@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -206,6 +209,70 @@ func TestRunnerDispatchesBrowserToolsThroughBrowserRunner(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("stream missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunnerBrowserScreenshotValidatesArtifact(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	path := filepath.Join(t.TempDir(), "screen.png")
+	writeTestScreenshotPNG(t, path, false)
+	browser := &fakeBrowserRunner{results: map[string]tools.ToolResult{
+		"browser_screenshot": {
+			Success:      true,
+			Output:       "status: screenshot\nartifact: " + path + "\n",
+			ArtifactPath: path,
+		},
+	}}
+	runner := Runner{
+		Session:          writer,
+		SessionID:        sessionID,
+		BrowserAvailable: true,
+		Browser:          browser,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "browser_screenshot",
+		Args: raw(`{}`),
+	})
+	if err != nil || !result.Success || result.ArtifactPath != path {
+		t.Fatalf("RunTool() result=%#v err=%v, want valid screenshot artifact", result, err)
+	}
+}
+
+func TestRunnerBrowserScreenshotRejectsBlankArtifact(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	path := filepath.Join(t.TempDir(), "blank.png")
+	writeTestScreenshotPNG(t, path, true)
+	browser := &fakeBrowserRunner{results: map[string]tools.ToolResult{
+		"browser_screenshot": {
+			Success:      true,
+			Output:       "status: screenshot\nartifact: " + path + "\n",
+			ArtifactPath: path,
+		},
+	}}
+	runner := Runner{
+		Session:          writer,
+		SessionID:        sessionID,
+		BrowserAvailable: true,
+		Browser:          browser,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "browser_screenshot",
+		Args: raw(`{}`),
+	})
+	if err == nil || result.Success || !strings.Contains(result.Error, "blank or uniform") {
+		t.Fatalf("RunTool() result=%#v err=%v, want blank screenshot rejection", result, err)
 	}
 }
 
@@ -920,13 +987,17 @@ func (f *fakeProcessBroker) RequestProcess(_ context.Context, request ProcessReq
 }
 
 type fakeBrowserRunner struct {
-	calls []string
-	args  []json.RawMessage
+	calls   []string
+	args    []json.RawMessage
+	results map[string]tools.ToolResult
 }
 
 func (f *fakeBrowserRunner) RunBrowserTool(_ context.Context, tool string, args json.RawMessage) tools.ToolResult {
 	f.calls = append(f.calls, tool)
 	f.args = append(f.args, append(json.RawMessage(nil), args...))
+	if result, ok := f.results[tool]; ok {
+		return result
+	}
 	switch tool {
 	case "browser_navigate":
 		return tools.ToolResult{Success: true, Output: "url: https://example.test/\ntitle: Example\nstatus: navigated\n"}
@@ -1120,7 +1191,7 @@ func TestRunnerFinalVerificationFeedbackAfterChangedFiles(t *testing.T) {
 	if !ok {
 		t.Fatal("VerificationFeedbackForFinal returned ok=false, want feedback")
 	}
-	if feedback.Status != "reported_only" || !strings.Contains(feedback.Message, "no run_command check marked purpose=verify") {
+	if feedback.Status != "reported_only" || !strings.Contains(feedback.Message, "no purpose=verify check") {
 		t.Fatalf("feedback = %#v", feedback)
 	}
 	audit := runner.FinalResponseAudit(Action{
@@ -1242,7 +1313,7 @@ func TestRunnerFinalResponseAuditBlocksCompletedOperationalActionWithoutLaterVer
 		Summary: "server started",
 		Outcome: "completed",
 	})
-	if audit.Outcome != "block" || !audit.Blocking || !strings.Contains(audit.Message, "no later run_command check marked purpose=verify") {
+	if audit.Outcome != "block" || !audit.Blocking || !strings.Contains(audit.Message, "no later verification check") {
 		t.Fatalf("audit = %#v, want blocking missing post-operation verification", audit)
 	}
 }
@@ -1276,6 +1347,94 @@ func TestRunnerFinalResponseAuditAllowsCompletedOperationalActionWithLaterVerifi
 	})
 	if audit.Outcome != "pass" || audit.Blocking || audit.VerificationStatus != "verified" {
 		t.Fatalf("audit = %#v, want pass after post-operation verification", audit)
+	}
+}
+
+func TestRunnerListProcessesVerifyRecordsLivenessCheck(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	processes := &fakeProcessBroker{result: tools.ToolResult{
+		Output: "running; ./skate; id rt_1; pid 42",
+		ManagedProcesses: []tools.ManagedProcessEvidence{{
+			Action:    "list",
+			ProcessID: "rt_1",
+			Name:      "skate-game",
+			Command:   "./skate",
+			CWD:       "/tmp/task",
+			PID:       42,
+			Running:   true,
+		}},
+	}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Processes: processes,
+		operationalActions: []OperationalAction{{
+			Action:                   string(ProcessActionStart),
+			Command:                  "./skate",
+			Success:                  true,
+			VerificationChecksBefore: 0,
+		}},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "list_processes",
+		Args: raw(`{"purpose":"verify"}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if len(runner.verificationChecks) != 1 || runner.verificationChecks[0].Status != tools.VerificationStatusPassed || runner.verificationChecks[0].Command != "list_processes" {
+		t.Fatalf("verification checks = %#v, want passing list_processes check", runner.verificationChecks)
+	}
+	audit := runner.FinalResponseAudit(Action{
+		Type:    "final_response",
+		Summary: "game is running",
+		Outcome: "completed",
+	})
+	if audit.Outcome != "pass" || audit.Blocking || audit.VerificationStatus != "verified" {
+		t.Fatalf("audit = %#v, want pass after process liveness verification", audit)
+	}
+	if !strings.Contains(stream.String(), `"type":"verification_check"`) || !strings.Contains(stream.String(), `"command":"list_processes"`) {
+		t.Fatalf("stream missing process verification event:\n%s", stream.String())
+	}
+}
+
+func TestRunnerListProcessesVerifyFailsWithoutRunningProcess(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	processes := &fakeProcessBroker{result: tools.ToolResult{
+		Output: "stopped; ./skate; id rt_1; pid 42",
+		ManagedProcesses: []tools.ManagedProcessEvidence{{
+			Action:    "list",
+			ProcessID: "rt_1",
+			Command:   "./skate",
+			Running:   false,
+		}},
+	}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Processes: processes,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "list_processes",
+		Args: raw(`{"purpose":"verify"}`),
+	})
+	if err == nil {
+		t.Fatalf("RunTool() error = nil; result=%#v, want failed liveness verification", result)
+	}
+	if len(runner.verificationChecks) != 1 || runner.verificationChecks[0].Status != tools.VerificationStatusFailed || !strings.Contains(runner.verificationChecks[0].Error, "no running") {
+		t.Fatalf("verification checks = %#v, want failed no-running check", runner.verificationChecks)
 	}
 }
 
@@ -1890,4 +2049,29 @@ func TestRunnerFinalMarksMissingVerificationAfterChanges(t *testing.T) {
 
 func raw(value string) json.RawMessage {
 	return json.RawMessage(value)
+}
+
+func writeTestScreenshotPNG(t *testing.T, path string, blank bool) {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 16, 16))
+	for y := 0; y < 16; y++ {
+		for x := 0; x < 16; x++ {
+			img.Set(x, y, color.NRGBA{R: 255, G: 255, B: 255, A: 255})
+		}
+	}
+	if !blank {
+		for y := 4; y < 12; y++ {
+			for x := 4; x < 12; x++ {
+				img.Set(x, y, color.NRGBA{R: 40, G: 120, B: 220, A: 255})
+			}
+		}
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if err := png.Encode(file, img); err != nil {
+		t.Fatal(err)
+	}
 }

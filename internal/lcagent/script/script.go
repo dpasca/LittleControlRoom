@@ -6,11 +6,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/session"
@@ -419,7 +425,7 @@ func (r *Runner) FinalResponseAudit(action Action) FinalResponseAudit {
 		if op, ok := latestOperationalActionRequiringVerification(operationalActions); ok && len(verificationChecks) <= op.VerificationChecksBefore {
 			audit.Outcome = "block"
 			audit.Blocking = true
-			audit.Message = fmt.Sprintf("final_response outcome was completed, but managed process action %q has no later run_command check marked purpose=verify. Run a separate verification probe after the operation, or set outcome to blocked, failed, or partial and explain why verification is blocked before calling final_response again.", op.Action)
+			audit.Message = fmt.Sprintf("final_response outcome was completed, but managed process action %q has no later verification check. Run a separate purpose=verify probe after the operation, such as list_processes for runtime liveness or a run_command probe against the service, or set outcome to blocked, failed, or partial and explain why verification is blocked before calling final_response again.", op.Action)
 		}
 	}
 	return audit
@@ -474,7 +480,7 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 	if plan.RequiresRuntimeVerification && len(passedVerificationChecks(verificationChecks)) == 0 {
 		return &FinalResponseAudit{
 			Code:    "quality_plan_runtime_evidence_missing",
-			Message: "final_response outcome was completed, but the quality plan requires runtime verification and no passing run_command check marked purpose=verify is recorded. Run an appropriate runtime/build/test check, or set outcome to partial/blocked/failed and explain why runtime verification is unavailable.",
+			Message: "final_response outcome was completed, but the quality plan requires runtime verification and no passing purpose=verify check is recorded. Run an appropriate runtime/build/test check, or use list_processes with purpose=verify for managed-process liveness, or set outcome to partial/blocked/failed and explain why runtime verification is unavailable.",
 		}
 	}
 	if plan.RequiresTemporalVisualVerification && r.passingTemporalImageAnalyses == 0 {
@@ -677,9 +683,9 @@ func (a FinalResponseAudit) VerificationFeedback() (VerificationFeedback, bool) 
 func finalAuditBlockingMessage(status string) string {
 	switch status {
 	case "reported_only":
-		return "final_response reported verification, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
+		return "final_response reported verification, but no purpose=verify check has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
 	default:
-		return "final_response listed changed files, but no run_command check marked purpose=verify has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
+		return "final_response listed changed files, but no purpose=verify check has run. Run an appropriate verification command, or explain clearly why verification is blocked, then call final_response again."
 	}
 }
 
@@ -775,6 +781,7 @@ type processArgs struct {
 	CWD             string `json:"cwd"`
 	ProcessID       string `json:"process_id"`
 	Name            string `json:"name"`
+	Purpose         string `json:"purpose"`
 	CreateNew       bool   `json:"create_new"`
 	ReplaceExisting bool   `json:"replace_existing"`
 }
@@ -1223,6 +1230,9 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.Browser.RunBrowserTool(ctx, action.Tool, action.Args)
+		if action.Tool == "browser_screenshot" {
+			result = validateBrowserScreenshotResult(result)
+		}
 	case "browser_wait_for_user":
 		r.browserWaitForUserUsed = true
 		var args browserWaitForUserArgs
@@ -1313,13 +1323,20 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			Command:         spec.Command,
 			CWD:             spec.CWD,
 			Name:            strings.TrimSpace(args.Name),
+			Purpose:         args.Purpose,
 			CreateNew:       args.CreateNew,
 			ReplaceExisting: args.ReplaceExisting,
 		}, spec, "start_process")
 	case "list_processes":
+		var args processArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
 		result = r.runProcess(ctx, ProcessRequest{
 			SessionID: r.SessionID,
 			Action:    ProcessActionList,
+			Purpose:   args.Purpose,
 		})
 	case "stop_process":
 		var args processArgs
@@ -1331,6 +1348,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			SessionID: r.SessionID,
 			Action:    ProcessActionStop,
 			ProcessID: strings.TrimSpace(args.ProcessID),
+			Purpose:   args.Purpose,
 		})
 	case "apply_patch":
 		var args patchArgs
@@ -1543,6 +1561,121 @@ func isBrowserTool(tool string) bool {
 	default:
 		return false
 	}
+}
+
+func validateBrowserScreenshotResult(result tools.ToolResult) tools.ToolResult {
+	if !result.Success {
+		return result
+	}
+	path := strings.TrimSpace(result.ArtifactPath)
+	if path == "" {
+		path = browserScreenshotArtifactPathFromOutput(result.Output)
+	}
+	if path == "" {
+		result.Success = false
+		result.Error = "browser_screenshot did not report an artifact path"
+		return result
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		result.Success = false
+		result.Error = "browser_screenshot artifact missing: " + err.Error()
+		return result
+	}
+	if info.IsDir() {
+		result.Success = false
+		result.Error = "browser_screenshot artifact is a directory: " + path
+		return result
+	}
+	if info.Size() == 0 {
+		result.Success = false
+		result.Error = "browser_screenshot artifact is empty: " + path
+		return result
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		result.Success = false
+		result.Error = "open browser_screenshot artifact: " + err.Error()
+		return result
+	}
+	defer file.Close()
+	img, _, err := image.Decode(file)
+	if err != nil {
+		result.Success = false
+		result.Error = "decode browser_screenshot artifact: " + err.Error()
+		return result
+	}
+	if img.Bounds().Dx() <= 0 || img.Bounds().Dy() <= 0 {
+		result.Success = false
+		result.Error = "browser_screenshot artifact has invalid dimensions: " + path
+		return result
+	}
+	if imageLooksUniform(img) {
+		result.Success = false
+		result.Error = "browser_screenshot artifact appears blank or uniform: " + path
+		return result
+	}
+	result.ArtifactPath = path
+	return result
+}
+
+func browserScreenshotArtifactPathFromOutput(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(key), "artifact") {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func imageLooksUniform(img image.Image) bool {
+	bounds := img.Bounds()
+	if bounds.Empty() {
+		return true
+	}
+	stepX := maxInt(1, bounds.Dx()/32)
+	stepY := maxInt(1, bounds.Dy()/32)
+	var first color.NRGBA
+	sampled := false
+	for y := bounds.Min.Y; y < bounds.Max.Y; y += stepY {
+		for x := bounds.Min.X; x < bounds.Max.X; x += stepX {
+			current := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			if !sampled {
+				first = current
+				sampled = true
+				continue
+			}
+			if colorDistance(first, current) > 3 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func colorDistance(a, b color.NRGBA) int {
+	return absInt(int(a.R)-int(b.R)) +
+		absInt(int(a.G)-int(b.G)) +
+		absInt(int(a.B)-int(b.B)) +
+		absInt(int(a.A)-int(b.A))
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func isInspectionEvidenceTool(tool string) bool {
@@ -1760,7 +1893,103 @@ func (r *Runner) runProcess(ctx context.Context, request ProcessRequest) tools.T
 		result = tools.ToolResult{Success: false, Error: err.Error()}
 	}
 	_ = r.writeOperationalAction(request, result)
+	if err := r.recordProcessVerification(request, &result); err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error()}
+	}
 	return result
+}
+
+func (r *Runner) recordProcessVerification(request ProcessRequest, result *tools.ToolResult) error {
+	if r == nil || result == nil {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(request.Purpose), tools.CommandPurposeVerify) {
+		return nil
+	}
+	check := processVerificationCheck(request, *result)
+	r.verificationChecks = append(r.verificationChecks, check)
+	if r.Session != nil {
+		if err := r.Session.Write(verificationCheckEvent(r.SessionID, check)); err != nil {
+			return err
+		}
+	}
+	if !check.Success && result.Success {
+		result.Success = false
+		result.Error = firstNonEmpty(check.Error, "managed process verification failed")
+	}
+	return nil
+}
+
+func processVerificationCheck(request ProcessRequest, result tools.ToolResult) tools.VerificationCheck {
+	check := tools.VerificationCheck{
+		Command: processVerificationCommand(request),
+		CWD:     strings.TrimSpace(firstNonEmpty(result.CWD, request.CWD, processVerificationCWD(result))),
+		Purpose: tools.CommandPurposeVerify,
+		Status:  tools.VerificationStatusFailed,
+		Error:   strings.TrimSpace(result.Error),
+		Denied:  result.Denied,
+	}
+	if result.Denied {
+		check.Status = tools.VerificationStatusDenied
+		return check
+	}
+	if !result.Success {
+		if check.Error == "" {
+			check.Error = "managed process request failed"
+		}
+		return check
+	}
+	switch request.Action {
+	case ProcessActionList:
+		if managedProcessEvidenceHasRunning(result) {
+			check.Status = tools.VerificationStatusPassed
+			check.Success = true
+			return check
+		}
+		check.Error = "no running managed process reported"
+		return check
+	default:
+		check.Status = tools.VerificationStatusPassed
+		check.Success = true
+		return check
+	}
+}
+
+func processVerificationCommand(request ProcessRequest) string {
+	switch request.Action {
+	case ProcessActionStart:
+		return "start_process"
+	case ProcessActionStop:
+		return "stop_process"
+	case ProcessActionList:
+		return "list_processes"
+	default:
+		return "managed process"
+	}
+}
+
+func managedProcessEvidenceHasRunning(result tools.ToolResult) bool {
+	if result.ManagedProcess != nil && result.ManagedProcess.Running {
+		return true
+	}
+	for _, process := range result.ManagedProcesses {
+		if process.Running {
+			return true
+		}
+	}
+	return false
+}
+
+func processVerificationCWD(result tools.ToolResult) string {
+	if result.ManagedProcess != nil && strings.TrimSpace(result.ManagedProcess.CWD) != "" {
+		return strings.TrimSpace(result.ManagedProcess.CWD)
+	}
+	for _, process := range result.ManagedProcesses {
+		if strings.TrimSpace(process.CWD) != "" {
+			return strings.TrimSpace(process.CWD)
+		}
+	}
+	return ""
 }
 
 func (r *Runner) writeOperationalAction(request ProcessRequest, result tools.ToolResult) error {
@@ -3040,7 +3269,7 @@ func finalVerificationStatus(filesChanged, verification []string, actualChecks [
 		return "verified", message
 	}
 	if len(verification) > 0 {
-		return "reported_only", "Verification was reported in final_response, but no run_command check was marked with purpose=verify."
+		return "reported_only", "Verification was reported in final_response, but no purpose=verify check was recorded."
 	}
 	if len(filesChanged) > 0 {
 		return "missing_after_changes", "No verification check was run or reported for changed files."
