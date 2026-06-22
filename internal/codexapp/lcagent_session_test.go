@@ -839,6 +839,82 @@ func TestLCAgentVerificationCheckTextIncludesCWD(t *testing.T) {
 	}
 }
 
+func TestLCAgentTraceSummariesLimitLongVerificationChecks(t *testing.T) {
+	command := longLCAgentCompileCommandForTest()
+	cwd := "/Users/davide/LittleControlRoom/tasks/2026-06-20-new-task-13-05-06"
+	checks := []LCAgentVerificationCheck{
+		{Command: command, CWD: cwd, Status: "failed", ExitCode: 1},
+		{Command: command, CWD: cwd, Status: "passed", Success: true},
+	}
+	trace := LCAgentTrace{
+		Completed:          true,
+		FilesChanged:       []string{"main.cpp"},
+		VerificationStatus: "verified",
+		ActualChecks:       checks,
+		Summary:            strings.Repeat("final status detail ", 20),
+	}
+
+	for name, got := range map[string]string{
+		"compact": trace.CompactSummary(),
+		"quality": trace.TraceQualitySummary(),
+	} {
+		if len([]rune(got)) > lcagentTraceCompactSummaryMaxChars {
+			t.Fatalf("%s summary length = %d, want <= %d:\n%s", name, len([]rune(got)), lcagentTraceCompactSummaryMaxChars, got)
+		}
+		if strings.Contains(got, command) {
+			t.Fatalf("%s summary contains full compile command:\n%s", name, got)
+		}
+		if !strings.Contains(got, "1 failed, 1 passed") || !strings.Contains(got, "...") {
+			t.Fatalf("%s summary = %q, want status counts and clipped command", name, got)
+		}
+	}
+	if full := trace.ActualCheckSummaries(); len(full) != 2 || !strings.Contains(full[0], command) {
+		t.Fatalf("ActualCheckSummaries() = %#v, want raw full checks preserved", full)
+	}
+}
+
+func TestLCAgentTurnCompleteTraceTextLimitsLongVerificationChecks(t *testing.T) {
+	command := longLCAgentCompileCommandForTest()
+	checks := []LCAgentVerificationCheck{
+		{Command: command, CWD: "/Users/davide/LittleControlRoom/tasks/2026-06-20-new-task-13-05-06", Status: "failed", ExitCode: 1},
+		{Command: command, CWD: "/Users/davide/LittleControlRoom/tasks/2026-06-20-new-task-13-05-06", Status: "passed", Success: true},
+	}
+	got := lcagentTurnCompleteTraceText(map[string]json.RawMessage{
+		"verification_status": json.RawMessage(`"verified"`),
+		"files_changed":       jsonRawValue(t, []string{"main.cpp"}),
+		"verification":        jsonRawValue(t, []string{command}),
+		"actual_checks":       jsonRawValue(t, checks),
+	})
+	if len([]rune(got)) > lcagentTurnCompleteTraceMaxChars {
+		t.Fatalf("trace text length = %d, want <= %d:\n%s", len([]rune(got)), lcagentTurnCompleteTraceMaxChars, got)
+	}
+	if strings.Contains(got, command) {
+		t.Fatalf("trace text contains full compile command:\n%s", got)
+	}
+	if !strings.Contains(got, "actual 2 checks: 1 failed, 1 passed") || !strings.Contains(got, "...") {
+		t.Fatalf("trace text = %q, want status counts and clipped command", got)
+	}
+}
+
+func longLCAgentCompileCommandForTest() string {
+	return "clang++ -std=c++17 -O2 -Wall -Wno-deprecated-declarations -o skate main.cpp " +
+		"-I/opt/homebrew/Cellar/glfw/3.4/include " +
+		"-I/opt/homebrew/Cellar/glew/2.2.0_1/include " +
+		"-I/opt/homebrew/Cellar/glm/1.0.2/include " +
+		"-L/opt/homebrew/Cellar/glfw/3.4/lib " +
+		"-L/opt/homebrew/Cellar/glew/2.2.0_1/lib " +
+		"-lglfw -lGLEW -framework OpenGL -framework Cocoa -framework IOKit"
+}
+
+func jsonRawValue(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal raw json: %v", err)
+	}
+	return raw
+}
+
 func TestLCAgentContinuationStatusOmitsOldSummaryBody(t *testing.T) {
 	event := map[string]json.RawMessage{
 		"parent_session_id":   json.RawMessage(`"lca_previous"`),

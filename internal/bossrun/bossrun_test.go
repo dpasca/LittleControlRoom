@@ -197,3 +197,58 @@ func TestFormatGoalResultSummarizesVerifiedLCAgentTask(t *testing.T) {
 		t.Fatalf("FormatGoalResult() = %q, want LCAgent outcome summary", got)
 	}
 }
+
+func TestFormatGoalResultLimitsLongLCAgentTraceQuality(t *testing.T) {
+	t.Parallel()
+
+	command := longGoalResultCompileCommandForTest()
+	got := FormatGoalResult(GoalResult{
+		Kind:                      GoalKindLCAgentTask,
+		CreatedTaskIDs:            []string{"agt_lca"},
+		Verified:                  true,
+		LCAgentVerificationStatus: "verified",
+		LCAgentTraceQuality:       "verification verified; actual checks: " + command + " failed; " + command + " passed; tokens: 150",
+	})
+	if strings.Contains(got, command) {
+		t.Fatalf("FormatGoalResult() contains full compile command:\n%s", got)
+	}
+	if !strings.Contains(got, "Trace:") || !strings.Contains(got, "...") {
+		t.Fatalf("FormatGoalResult() = %q, want clipped trace quality", got)
+	}
+	max := 180 + lcagentGoalResultTraceMaxChars
+	if len([]rune(got)) > max {
+		t.Fatalf("FormatGoalResult() length = %d, want <= %d:\n%s", len([]rune(got)), max, got)
+	}
+}
+
+func TestFormatGoalResultLimitsLongLCAgentActualChecks(t *testing.T) {
+	t.Parallel()
+
+	command := longGoalResultCompileCommandForTest()
+	got := FormatGoalResult(GoalResult{
+		Kind:                      GoalKindLCAgentTask,
+		CreatedTaskIDs:            []string{"agt_lca"},
+		Verified:                  true,
+		LCAgentVerificationStatus: "verified",
+		LCAgentActualChecks: []string{
+			command + " in /Users/davide/LittleControlRoom/tasks/2026-06-20-new-task-13-05-06 failed",
+			command + " in /Users/davide/LittleControlRoom/tasks/2026-06-20-new-task-13-05-06 passed",
+		},
+	})
+	if strings.Contains(got, command) {
+		t.Fatalf("FormatGoalResult() contains full compile command:\n%s", got)
+	}
+	if !strings.Contains(got, "actual checks:") || !strings.Contains(got, "...") {
+		t.Fatalf("FormatGoalResult() = %q, want clipped actual checks", got)
+	}
+}
+
+func longGoalResultCompileCommandForTest() string {
+	return "clang++ -std=c++17 -O2 -Wall -Wno-deprecated-declarations -o skate main.cpp " +
+		"-I/opt/homebrew/Cellar/glfw/3.4/include " +
+		"-I/opt/homebrew/Cellar/glew/2.2.0_1/include " +
+		"-I/opt/homebrew/Cellar/glm/1.0.2/include " +
+		"-L/opt/homebrew/Cellar/glfw/3.4/lib " +
+		"-L/opt/homebrew/Cellar/glew/2.2.0_1/lib " +
+		"-lglfw -lGLEW -framework OpenGL -framework Cocoa -framework IOKit"
+}
