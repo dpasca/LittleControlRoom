@@ -2280,12 +2280,14 @@ func lcagentApprovalResolvedText(event map[string]json.RawMessage) string {
 
 func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMessage) {
 	request := lcagentManagedProcessRequest{
-		ID:        rawJSONString(event["id"]),
-		Action:    strings.TrimSpace(rawJSONString(event["action"])),
-		ProcessID: strings.TrimSpace(rawJSONString(event["process_id"])),
-		Name:      strings.TrimSpace(rawJSONString(event["name"])),
-		Command:   strings.TrimSpace(rawJSONString(event["command"])),
-		CWD:       strings.TrimSpace(rawJSONString(event["cwd"])),
+		ID:              rawJSONString(event["id"]),
+		Action:          strings.TrimSpace(rawJSONString(event["action"])),
+		ProcessID:       strings.TrimSpace(rawJSONString(event["process_id"])),
+		Name:            strings.TrimSpace(rawJSONString(event["name"])),
+		Command:         strings.TrimSpace(rawJSONString(event["command"])),
+		CWD:             strings.TrimSpace(rawJSONString(event["cwd"])),
+		CreateNew:       rawJSONBool(event["create_new"]),
+		ReplaceExisting: rawJSONBool(event["replace_existing"]),
 	}
 	if request.ID == "" {
 		return

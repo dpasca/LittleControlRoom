@@ -198,6 +198,12 @@ func TestToolsWithOptionsExposeManagedProcessesWhenEnabled(t *testing.T) {
 	if _, ok := startProps["name"]; !ok {
 		t.Fatalf("start_process missing name property: %#v", startProps)
 	}
+	if _, ok := startProps["create_new"]; !ok {
+		t.Fatalf("start_process missing create_new property: %#v", startProps)
+	}
+	if _, ok := startProps["replace_existing"]; !ok {
+		t.Fatalf("start_process missing replace_existing property: %#v", startProps)
+	}
 	_ = toolSpec(t, tools, "list_processes")
 	stopSpec := toolSpec(t, tools, "stop_process")
 	stopProps := stopSpec.Parameters["properties"].(map[string]any)

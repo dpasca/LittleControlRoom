@@ -207,7 +207,7 @@ func (b *stdioApprovalBroker) RequestProcess(ctx context.Context, request script
 	request.SessionID = firstNonEmptyString(strings.TrimSpace(request.SessionID), b.sessionID)
 	request.Command = strings.TrimSpace(request.Command)
 	request.CWD = firstNonEmptyString(strings.TrimSpace(request.CWD), b.cwd)
-	if err := b.writer.Write(session.Event{
+	event := session.Event{
 		"type":       "process_request",
 		"session_id": request.SessionID,
 		"id":         request.ID,
@@ -216,7 +216,14 @@ func (b *stdioApprovalBroker) RequestProcess(ctx context.Context, request script
 		"name":       request.Name,
 		"command":    request.Command,
 		"cwd":        request.CWD,
-	}); err != nil {
+	}
+	if request.CreateNew {
+		event["create_new"] = true
+	}
+	if request.ReplaceExisting {
+		event["replace_existing"] = true
+	}
+	if err := b.writer.Write(event); err != nil {
 		return tools.ToolResult{}, err
 	}
 	for {

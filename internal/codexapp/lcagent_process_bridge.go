@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -13,12 +14,14 @@ import (
 )
 
 type lcagentManagedProcessRequest struct {
-	ID        string
-	Action    string
-	ProcessID string
-	Name      string
-	Command   string
-	CWD       string
+	ID              string
+	Action          string
+	ProcessID       string
+	Name            string
+	Command         string
+	CWD             string
+	CreateNew       bool
+	ReplaceExisting bool
 }
 
 type lcagentProcessBridge struct {
@@ -65,20 +68,44 @@ func (b lcagentProcessBridge) run(request lcagentManagedProcessRequest) tools.To
 		if command == "" {
 			return tools.ToolResult{Success: false, Error: "managed process command is required"}
 		}
-		snapshot, err := b.manager.Start(projectrun.StartRequest{
-			ProjectPath: projectPath,
-			Command:     command,
-			CWD:         strings.TrimSpace(request.CWD),
-			Name:        strings.TrimSpace(request.Name),
-			CreateNew:   true,
-		})
-		if errors.Is(err, projectrun.ErrAlreadyRunning) {
-			return lcagentManagedProcessResult("Managed process already running", snapshot, true)
+		if request.CreateNew && request.ReplaceExisting {
+			return tools.ToolResult{Success: false, Error: "create_new and replace_existing cannot both be true", Command: command, CWD: strings.TrimSpace(request.CWD)}
 		}
+		cwd, err := lcagentNormalizeManagedProcessCWD(projectPath, request.CWD)
 		if err != nil {
 			return tools.ToolResult{Success: false, Error: err.Error(), Command: command, CWD: strings.TrimSpace(request.CWD)}
 		}
-		return lcagentManagedProcessResult("Started managed process", snapshot, true)
+		replacedCount := 0
+		if !request.CreateNew {
+			matches := lcagentMatchingManagedProcesses(b.manager.SnapshotsForProject(projectPath), command, cwd)
+			if len(matches) > 0 {
+				if !request.ReplaceExisting {
+					return lcagentManagedProcessResult("Managed process already running", matches[0], true)
+				}
+				if err := b.stopMatchingManagedProcesses(projectPath, matches); err != nil {
+					return tools.ToolResult{Success: false, Error: err.Error(), Command: command, CWD: cwd}
+				}
+				replacedCount = len(matches)
+			}
+		}
+		prefix := "Started managed process"
+		if replacedCount > 0 {
+			prefix = fmt.Sprintf("Replaced %d matching managed process", replacedCount)
+			if replacedCount != 1 {
+				prefix += "es"
+			}
+		}
+		snapshot, err := b.manager.Start(projectrun.StartRequest{
+			ProjectPath: projectPath,
+			Command:     command,
+			CWD:         cwd,
+			Name:        strings.TrimSpace(request.Name),
+			CreateNew:   true,
+		})
+		if err != nil {
+			return tools.ToolResult{Success: false, Error: err.Error(), Command: command, CWD: cwd}
+		}
+		return lcagentManagedProcessResult(prefix, snapshot, true)
 	case "list":
 		return lcagentManagedProcessListResult(b.manager.SnapshotsForProject(projectPath))
 	case "stop":
@@ -97,6 +124,62 @@ func (b lcagentProcessBridge) run(request lcagentManagedProcessRequest) tools.To
 	default:
 		return tools.ToolResult{Success: false, Error: "unsupported managed process action: " + request.Action}
 	}
+}
+
+func lcagentNormalizeManagedProcessCWD(projectPath, cwd string) (string, error) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return "", errors.New("project path is required")
+	}
+	projectPath = filepath.Clean(projectPath)
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		return projectPath, nil
+	}
+	if !filepath.IsAbs(cwd) {
+		cwd = filepath.Join(projectPath, cwd)
+	}
+	cwd = filepath.Clean(cwd)
+	rel, err := filepath.Rel(projectPath, cwd)
+	if err != nil {
+		return "", fmt.Errorf("resolve runtime cwd: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("runtime cwd must stay inside project: %s", cwd)
+	}
+	return cwd, nil
+}
+
+func lcagentMatchingManagedProcesses(snapshots []projectrun.Snapshot, command, cwd string) []projectrun.Snapshot {
+	command = strings.TrimSpace(command)
+	cwd = filepath.Clean(strings.TrimSpace(cwd))
+	matches := []projectrun.Snapshot{}
+	for _, snapshot := range snapshots {
+		if !snapshot.Running {
+			continue
+		}
+		snapshotCommand := strings.TrimSpace(snapshot.Command)
+		snapshotCWD := filepath.Clean(firstNonEmpty(strings.TrimSpace(snapshot.CWD), strings.TrimSpace(snapshot.ProjectPath)))
+		if snapshotCommand == command && snapshotCWD == cwd {
+			matches = append(matches, snapshot)
+		}
+	}
+	return matches
+}
+
+func (b lcagentProcessBridge) stopMatchingManagedProcesses(projectPath string, matches []projectrun.Snapshot) error {
+	for _, snapshot := range matches {
+		processID := strings.TrimSpace(snapshot.ID)
+		if processID == "" {
+			continue
+		}
+		if err := b.manager.StopProcess(projectPath, processID); err != nil {
+			if !errors.Is(err, projectrun.ErrNotRunning) {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (b lcagentProcessBridge) append(kind TranscriptKind, text string) {

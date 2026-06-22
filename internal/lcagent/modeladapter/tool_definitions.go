@@ -256,14 +256,16 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "start_process",
-				Description: "Start a long-running managed background process through Little Control Room, for dev servers, watchers, and long deploy/publish/promote/upload/release operations that should remain inspectable after the tool returns. Use this instead of run_command for processes expected to keep running or exceed bounded command timeouts.",
+				Description: "Start a long-running managed background process through Little Control Room, for dev servers, watchers, and long deploy/publish/promote/upload/release operations that should remain inspectable after the tool returns. Use this instead of run_command for processes expected to keep running or exceed bounded command timeouts. By default, if the same command is already running in the same cwd, the existing process is reused instead of launching a duplicate.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"command": map[string]any{"type": "string", "description": "Shell command to run as the managed process, for example \"pnpm dev\". Keep it to the foreground server/watch command; LCR owns backgrounding and stopping."},
-						"cwd":     map[string]any{"type": "string", "description": "Optional workspace-relative working directory for the process, for example \"frontend\". Absolute or parent-directory cwd values outside the workspace are rejected."},
-						"name":    map[string]any{"type": "string", "description": "Optional short label for this process, such as \"frontend\" or \"emulators\"."},
+						"command":          map[string]any{"type": "string", "description": "Shell command to run as the managed process, for example \"pnpm dev\". Keep it to the foreground server/watch command; LCR owns backgrounding and stopping."},
+						"cwd":              map[string]any{"type": "string", "description": "Optional workspace-relative working directory for the process, for example \"frontend\". Absolute or parent-directory cwd values outside the workspace are rejected."},
+						"name":             map[string]any{"type": "string", "description": "Optional short label for this process, such as \"frontend\" or \"emulators\"."},
+						"create_new":       map[string]any{"type": "boolean", "description": "Set true only when the user needs another concurrent copy of the same command in the same cwd. Leave false for ordinary launch/relaunch and screenshot/verification workflows."},
+						"replace_existing": map[string]any{"type": "boolean", "description": "Set true to stop running managed processes with the same command and cwd before starting a fresh one. Do not combine with create_new."},
 					},
 					"required": []string{"command"},
 				},

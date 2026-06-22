@@ -771,10 +771,12 @@ type commandArgs struct {
 }
 
 type processArgs struct {
-	Command   string `json:"command"`
-	CWD       string `json:"cwd"`
-	ProcessID string `json:"process_id"`
-	Name      string `json:"name"`
+	Command         string `json:"command"`
+	CWD             string `json:"cwd"`
+	ProcessID       string `json:"process_id"`
+	Name            string `json:"name"`
+	CreateNew       bool   `json:"create_new"`
+	ReplaceExisting bool   `json:"replace_existing"`
 }
 
 type patchArgs struct {
@@ -1306,11 +1308,13 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.runProcessWithApproval(ctx, ProcessRequest{
-			SessionID: r.SessionID,
-			Action:    ProcessActionStart,
-			Command:   spec.Command,
-			CWD:       spec.CWD,
-			Name:      strings.TrimSpace(args.Name),
+			SessionID:       r.SessionID,
+			Action:          ProcessActionStart,
+			Command:         spec.Command,
+			CWD:             spec.CWD,
+			Name:            strings.TrimSpace(args.Name),
+			CreateNew:       args.CreateNew,
+			ReplaceExisting: args.ReplaceExisting,
 		}, spec, "start_process")
 	case "list_processes":
 		result = r.runProcess(ctx, ProcessRequest{
@@ -1797,6 +1801,12 @@ func (r *Runner) writeOperationalAction(request ProcessRequest, result tools.Too
 		"success":    action.Success,
 		"denied":     action.Denied,
 		"error":      action.Error,
+	}
+	if request.CreateNew {
+		event["create_new"] = true
+	}
+	if request.ReplaceExisting {
+		event["replace_existing"] = true
 	}
 	if result.ExitCode != 0 {
 		event["exit_code"] = result.ExitCode

@@ -39,13 +39,15 @@ const (
 )
 
 type ProcessRequest struct {
-	ID        string
-	SessionID string
-	Action    ProcessAction
-	ProcessID string
-	Name      string
-	Command   string
-	CWD       string
+	ID              string
+	SessionID       string
+	Action          ProcessAction
+	ProcessID       string
+	Name            string
+	Command         string
+	CWD             string
+	CreateNew       bool
+	ReplaceExisting bool
 }
 
 type ProcessBroker interface {

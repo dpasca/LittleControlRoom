@@ -575,7 +575,7 @@ func TestLCAgentProcessRequestStartsDistinctManagedRuntimes(t *testing.T) {
 	}
 
 	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","name":"frontend","command":"sleep 30"}`))
-	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-2","action":"start","name":"emulators","command":"sleep 30"}`))
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-2","action":"start","name":"emulators","command":"sleep 30","create_new":true}`))
 
 	if got := strings.Join(stdin.writes, ""); !strings.Contains(got, `"id":"process-1"`) ||
 		!strings.Contains(got, `"id":"process-2"`) ||
@@ -600,6 +600,67 @@ func TestLCAgentProcessRequestStartsDistinctManagedRuntimes(t *testing.T) {
 	}
 	if len(ids) != 2 || !names["frontend"] || !names["emulators"] {
 		t.Fatalf("snapshots should have distinct IDs and names: %+v", snapshots)
+	}
+}
+
+func TestLCAgentProcessRequestReusesDuplicateManagedRuntime(t *testing.T) {
+	projectPath := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","name":"skate-final","command":"sleep 30"}`))
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-2","action":"start","name":"skate-game","command":"sleep 30"}`))
+
+	got := strings.Join(stdin.writes, "")
+	if !strings.Contains(got, `"id":"process-1"`) ||
+		!strings.Contains(got, `"id":"process-2"`) ||
+		!strings.Contains(got, "Managed process already running") {
+		t.Fatalf("process response payloads = %q", got)
+	}
+	snapshots := manager.SnapshotsForProject(projectPath)
+	if len(snapshots) != 1 {
+		t.Fatalf("SnapshotsForProject() len = %d, want 1: %+v", len(snapshots), snapshots)
+	}
+	if !snapshots[0].Running || snapshots[0].Name != "skate-final" {
+		t.Fatalf("reused runtime snapshot = %#v", snapshots[0])
+	}
+}
+
+func TestLCAgentProcessRequestReplaceExistingStartsFreshRuntime(t *testing.T) {
+	projectPath := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","name":"old-preview","command":"sleep 30"}`))
+	firstRunning := waitForManagedRuntimeCount(t, manager, projectPath, 1)
+	firstID := firstRunning[0].ID
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-2","action":"start","name":"fresh-preview","command":"sleep 30","replace_existing":true}`))
+
+	got := strings.Join(stdin.writes, "")
+	if !strings.Contains(got, "Replaced 1 matching managed process") {
+		t.Fatalf("process response payloads = %q", got)
+	}
+	running := waitForManagedRuntimeCount(t, manager, projectPath, 1)
+	if running[0].ID == firstID || running[0].Name != "fresh-preview" {
+		t.Fatalf("running snapshot after replace = %#v, first id %q", running[0], firstID)
 	}
 }
 
@@ -2596,6 +2657,30 @@ func waitForLCAgentTranscript(t *testing.T, session Session, want string) Snapsh
 		case <-tick.C:
 		case <-deadline:
 			t.Fatalf("timed out waiting for lcagent transcript %q; snapshot=%#v", want, snapshot)
+		}
+	}
+}
+
+func waitForManagedRuntimeCount(t *testing.T, manager *projectrun.Manager, projectPath string, want int) []projectrun.Snapshot {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		snapshots := manager.SnapshotsForProject(projectPath)
+		running := make([]projectrun.Snapshot, 0, len(snapshots))
+		for _, snapshot := range snapshots {
+			if snapshot.Running {
+				running = append(running, snapshot)
+			}
+		}
+		if len(running) == want {
+			return running
+		}
+		select {
+		case <-tick.C:
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d running managed runtimes; snapshots=%#v", want, snapshots)
 		}
 	}
 }
