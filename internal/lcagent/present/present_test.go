@@ -44,6 +44,20 @@ func TestCommandSuppressesBinaryOutput(t *testing.T) {
 	}
 }
 
+func TestCommandOutputAllowsUTF8RuneAtSampleBoundary(t *testing.T) {
+	p := Command(CommandOutput{
+		Stdout:   []byte(strings.Repeat("a", 4095) + "┌ ok\n"),
+		ExitCode: 0,
+		Duration: time.Millisecond,
+	})
+	if p.Binary {
+		t.Fatalf("Binary = true, want valid UTF-8 output to remain visible: %q", p.Text)
+	}
+	if !strings.Contains(p.Text, "┌ ok") {
+		t.Fatalf("Text missing UTF-8 output: %q", p.Text)
+	}
+}
+
 func TestCommandTimeoutSaysProcessGroupWasTerminated(t *testing.T) {
 	p := Command(CommandOutput{
 		Stdout:   []byte("ready on localhost\n"),

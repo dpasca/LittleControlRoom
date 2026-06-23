@@ -29,7 +29,7 @@ type Presented struct {
 	ArtifactPath string
 }
 
-const maxInlineBytes = 64 * 1024
+const maxInlineBytes = 24 * 1024
 
 func Command(result CommandOutput) Presented {
 	full := combine(result.Stdout, result.Stderr)
@@ -45,10 +45,14 @@ func Command(result CommandOutput) Presented {
 		p.ArtifactPath = writeArtifact(result.ArtifactDir, full)
 		inline := string(full[:maxInlineBytes])
 		p.Text = strings.TrimRight(inline, "\n") + "\n\n" +
-			fmt.Sprintf("--- output truncated (%d bytes) ---\n", len(full)) +
-			fmt.Sprintf("Full output: %s\n", p.ArtifactPath) +
-			"Explore: tail -100 " + p.ArtifactPath + "\n" +
-			metadata(result)
+			fmt.Sprintf("--- output truncated (%d bytes) ---\n", len(full))
+		if p.ArtifactPath != "" {
+			p.Text += fmt.Sprintf("Full output: %s\n", p.ArtifactPath) +
+				"Explore: tail -100 " + p.ArtifactPath + "\n"
+		} else {
+			p.Text += "Full output artifact unavailable.\n"
+		}
+		p.Text += metadata(result)
 	} else {
 		p.Text = strings.TrimRight(string(full), "\n")
 		if p.Text != "" {
@@ -98,7 +102,21 @@ func hasBinary(data []byte) bool {
 	if len(sample) > 4096 {
 		sample = sample[:4096]
 	}
-	return !utf8.Valid(sample)
+	return textSampleLooksBinary(sample)
+}
+
+func textSampleLooksBinary(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	for len(data) > 0 {
+		r, size := utf8.DecodeRune(data)
+		if r == utf8.RuneError && size == 1 {
+			return utf8.FullRune(data)
+		}
+		data = data[size:]
+	}
+	return false
 }
 
 func textOrEmpty(data []byte) string {

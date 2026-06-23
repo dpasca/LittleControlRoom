@@ -11,8 +11,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	_ "image/gif"
 	_ "image/jpeg"
@@ -54,6 +57,7 @@ type Runner struct {
 	WebSearchOn          bool
 	BrowserAvailable     bool
 	Browser              BrowserRunner
+	DesktopScreenshot    DesktopScreenshotRunner
 	SearchRefiner        SearchRefiner
 	CodeScout            CodeScout
 	ImageAnalyzer        ImageAnalyzer
@@ -106,6 +110,16 @@ type ImageAnalyzer interface {
 
 type BrowserRunner interface {
 	RunBrowserTool(context.Context, string, json.RawMessage) tools.ToolResult
+}
+
+type DesktopScreenshotRunner interface {
+	CaptureScreenshot(context.Context, string, time.Duration) tools.ToolResult
+}
+
+type DesktopScreenshotFunc func(context.Context, string, time.Duration) tools.ToolResult
+
+func (f DesktopScreenshotFunc) CaptureScreenshot(ctx context.Context, path string, delay time.Duration) tools.ToolResult {
+	return f(ctx, path, delay)
 }
 
 type SearchRefineRequest struct {
@@ -324,6 +338,11 @@ type analyzeImageArgs struct {
 	Checks         []string `json:"checks,omitempty"`
 }
 
+type captureScreenshotArgs struct {
+	Path    string `json:"path,omitempty"`
+	DelayMS int    `json:"delay_ms,omitempty"`
+}
+
 type qualityPlanArgs QualityPlan
 
 type finalResponseArgs struct {
@@ -524,7 +543,7 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 	}
 	if plan.RequiresTemporalVisualVerification && r.passingTemporalImageAnalyses == 0 {
 		code := "quality_plan_temporal_visual_evidence_missing"
-		message := "final_response outcome was completed, but the quality plan requires temporal visual verification and no passing analyze_image verdict with comparison_path is recorded. Capture or locate two observations separated in time, run one focused analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable."
+		message := "final_response outcome was completed, but the quality plan requires temporal visual verification and no passing analyze_image verdict with comparison_path is recorded. Capture or locate two observations separated in time, using capture_screenshot or browser_screenshot when available, run one focused analyze_image with path and comparison_path, or set outcome to partial/blocked/failed and explain why temporal visual verification is unavailable."
 		if r.temporalImageAnalyses > 0 {
 			code = "quality_plan_temporal_visual_evidence_not_passing"
 			message = "final_response outcome was completed, but the quality plan requires temporal visual verification and the recorded analyze_image result with comparison_path did not return a passing verdict. Fix the visible issue and rerun one focused temporal check, or set outcome to partial/blocked/failed and explain the remaining visual defect."
@@ -536,7 +555,7 @@ func (r *Runner) qualityPlanCompletionBlock(verificationChecks []tools.Verificat
 	}
 	if plan.RequiresVisualVerification && r.passingImageAnalyses == 0 {
 		code := "quality_plan_visual_evidence_missing"
-		message := "final_response outcome was completed, but the quality plan requires visual verification and no passing analyze_image verdict is recorded. Capture or locate a screenshot/image and run one focused analyze_image check, or set outcome to partial/blocked/failed and explain why visual verification is unavailable."
+		message := "final_response outcome was completed, but the quality plan requires visual verification and no passing analyze_image verdict is recorded. Capture or locate a screenshot/image, using capture_screenshot or browser_screenshot when available, and run one focused analyze_image check, or set outcome to partial/blocked/failed and explain why visual verification is unavailable."
 		if r.imageAnalyses > 0 {
 			code = "quality_plan_visual_evidence_not_passing"
 			message = "final_response outcome was completed, but the quality plan requires visual verification and the recorded analyze_image result did not return a passing verdict. Fix the visible issue and rerun one focused visual check, or set outcome to partial/blocked/failed and explain the remaining visual defect."
@@ -1210,6 +1229,13 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
+	case "capture_screenshot":
+		var args captureScreenshotArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		result = r.runCaptureScreenshot(ctx, args)
 	case "update_quality_plan":
 		var args qualityPlanArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -1524,6 +1550,122 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 	return result, nil
 }
 
+func (r *Runner) runCaptureScreenshot(ctx context.Context, args captureScreenshotArgs) tools.ToolResult {
+	path, err := r.captureScreenshotPath(args.Path)
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error()}
+	}
+	delay := time.Duration(clampScreenshotDelayMS(args.DelayMS)) * time.Millisecond
+	capturer := r.DesktopScreenshot
+	if capturer == nil {
+		capturer = osDesktopScreenshotRunner{}
+	}
+	result := capturer.CaptureScreenshot(ctx, path, delay)
+	result = validateScreenshotArtifactResult(result, "capture_screenshot")
+	if result.Success {
+		if strings.TrimSpace(result.Output) == "" {
+			result.Output = "status: screenshot\nartifact: " + result.ArtifactPath + "\n"
+		}
+		if r.Session != nil {
+			_ = r.Session.Write(session.Event{
+				"type":       "screenshot_artifact",
+				"session_id": r.SessionID,
+				"tool":       "capture_screenshot",
+				"path":       result.ArtifactPath,
+			})
+		}
+	}
+	return result
+}
+
+func (r *Runner) captureScreenshotPath(raw string) (string, error) {
+	dir := strings.TrimSpace(r.ArtifactsDir)
+	if dir == "" {
+		return "", fmt.Errorf("capture_screenshot artifact directory is not configured")
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(absDir, 0o755); err != nil {
+		return "", err
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return filepath.Join(absDir, fmt.Sprintf("desktop-screenshot-%d.png", time.Now().UnixNano())), nil
+	}
+	var target string
+	if filepath.IsAbs(raw) {
+		target = filepath.Clean(raw)
+		if !pathWithin(absDir, target) {
+			return "", fmt.Errorf("capture_screenshot path must stay inside the session artifact directory: %s", raw)
+		}
+	} else {
+		clean := filepath.Clean(raw)
+		if clean == "." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || clean == ".." {
+			return "", fmt.Errorf("capture_screenshot path escapes the session artifact directory: %s", raw)
+		}
+		target = filepath.Join(absDir, clean)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
+func clampScreenshotDelayMS(delay int) int {
+	switch {
+	case delay < 0:
+		return 0
+	case delay > 5000:
+		return 5000
+	default:
+		return delay
+	}
+}
+
+func pathWithin(root, target string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(target))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
+}
+
+type osDesktopScreenshotRunner struct{}
+
+func (osDesktopScreenshotRunner) CaptureScreenshot(ctx context.Context, path string, delay time.Duration) tools.ToolResult {
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return tools.ToolResult{Success: false, Error: ctx.Err().Error(), ArtifactPath: path}
+		case <-timer.C:
+		}
+	}
+	if runtime.GOOS != "darwin" {
+		return tools.ToolResult{Success: false, Error: "capture_screenshot is only implemented for macOS desktop sessions in this build", ArtifactPath: path}
+	}
+	cmd := exec.CommandContext(ctx, "/usr/sbin/screencapture", "-x", path)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return tools.ToolResult{Success: false, Error: ctx.Err().Error(), ArtifactPath: path}
+	}
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail != "" {
+			return tools.ToolResult{Success: false, Error: fmt.Sprintf("desktop screenshot failed: %v: %s", err, detail), ArtifactPath: path}
+		}
+		return tools.ToolResult{Success: false, Error: fmt.Sprintf("desktop screenshot failed: %v", err), ArtifactPath: path}
+	}
+	return tools.ToolResult{
+		Success:      true,
+		Output:       "status: screenshot\nartifact: " + path + "\n",
+		ArtifactPath: path,
+	}
+}
+
 func (r *Runner) runBrowserWaitForUser(ctx context.Context, args browserWaitForUserArgs) tools.ToolResult {
 	message := strings.TrimSpace(args.Message)
 	if message == "" {
@@ -1600,6 +1742,10 @@ func isBrowserTool(tool string) bool {
 }
 
 func validateBrowserScreenshotResult(result tools.ToolResult) tools.ToolResult {
+	return validateScreenshotArtifactResult(result, "browser_screenshot")
+}
+
+func validateScreenshotArtifactResult(result tools.ToolResult, toolName string) tools.ToolResult {
 	if !result.Success {
 		return result
 	}
@@ -1609,46 +1755,46 @@ func validateBrowserScreenshotResult(result tools.ToolResult) tools.ToolResult {
 	}
 	if path == "" {
 		result.Success = false
-		result.Error = "browser_screenshot did not report an artifact path"
+		result.Error = toolName + " did not report an artifact path"
 		return result
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		result.Success = false
-		result.Error = "browser_screenshot artifact missing: " + err.Error()
+		result.Error = toolName + " artifact missing: " + err.Error()
 		return result
 	}
 	if info.IsDir() {
 		result.Success = false
-		result.Error = "browser_screenshot artifact is a directory: " + path
+		result.Error = toolName + " artifact is a directory: " + path
 		return result
 	}
 	if info.Size() == 0 {
 		result.Success = false
-		result.Error = "browser_screenshot artifact is empty: " + path
+		result.Error = toolName + " artifact is empty: " + path
 		return result
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		result.Success = false
-		result.Error = "open browser_screenshot artifact: " + err.Error()
+		result.Error = "open " + toolName + " artifact: " + err.Error()
 		return result
 	}
 	defer file.Close()
 	img, _, err := image.Decode(file)
 	if err != nil {
 		result.Success = false
-		result.Error = "decode browser_screenshot artifact: " + err.Error()
+		result.Error = "decode " + toolName + " artifact: " + err.Error()
 		return result
 	}
 	if img.Bounds().Dx() <= 0 || img.Bounds().Dy() <= 0 {
 		result.Success = false
-		result.Error = "browser_screenshot artifact has invalid dimensions: " + path
+		result.Error = toolName + " artifact has invalid dimensions: " + path
 		return result
 	}
 	if imageLooksUniform(img) {
 		result.Success = false
-		result.Error = "browser_screenshot artifact appears blank or uniform: " + path
+		result.Error = toolName + " artifact appears blank or uniform: " + path
 		return result
 	}
 	result.ArtifactPath = path
@@ -1723,6 +1869,7 @@ func isInspectionEvidenceTool(tool string) bool {
 		"scout_files",
 		"file_outline",
 		"module_outline",
+		"capture_screenshot",
 		"analyze_image",
 		"web_search",
 		"browser_snapshot",

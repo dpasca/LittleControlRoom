@@ -97,6 +97,34 @@ func TestFileToolsReadListAndSearch(t *testing.T) {
 	}
 }
 
+func TestFileToolsTreatsUTF8BoundaryAsText(t *testing.T) {
+	root := t.TempDir()
+	// Put the first byte of a multi-byte rune exactly at the 4096-byte binary
+	// sniff boundary. The file is valid UTF-8, so it must remain readable.
+	source := strings.Repeat("a", 4095) + "┌ decorative comment\n\nint main() {\n    return 0;\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "skate.cpp"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := policy.NewWorkspace(root, policy.AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := FileTools{Workspace: w}
+
+	read := files.Read("skate.cpp", 1, 10)
+	if !read.Success || read.Binary {
+		t.Fatalf("read = %#v, want valid UTF-8 source text", read)
+	}
+	search := files.Search("int main", ".", "*.cpp", 10)
+	if !search.Success || !strings.Contains(search.Output, "skate.cpp:3: int main()") {
+		t.Fatalf("search = %#v", search)
+	}
+	outline := files.Outline("skate.cpp")
+	if !outline.Success || !strings.Contains(outline.Output, "type: c/c++") {
+		t.Fatalf("outline = %#v", outline)
+	}
+}
+
 func TestFileToolsListGlobCaseSensitivity(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "Tools", "render_sprites")

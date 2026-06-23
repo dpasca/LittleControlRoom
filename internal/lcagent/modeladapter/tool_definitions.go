@@ -175,6 +175,21 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		defs = append(defs, ToolDefinition{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "capture_screenshot",
+				Description: "Capture a native desktop screenshot artifact for visual verification of GUI apps, games, or windows outside the managed browser. Returns an artifact path; after a successful capture, call analyze_image on that path when visual evidence is required. This can fail when the desktop is locked, unavailable, or missing screen-capture permission.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"path":     map[string]any{"type": "string", "description": "Optional screenshot filename or relative path under the session artifact directory. Defaults to a timestamped PNG artifact."},
+						"delay_ms": map[string]any{"type": "integer", "minimum": 0, "maximum": 5000, "description": "Optional delay before capture, useful after launching or interacting with a GUI. Defaults to 0."},
+					},
+				},
+			},
+		})
+		defs = append(defs, ToolDefinition{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "analyze_image",
 				Description: "Ask the configured vision model to inspect image or screenshot pixels and return a structured pass/fail/uncertain visual verdict. Use this when pixel-level evidence would materially improve verification or the answer, including direct visual QA, image contents, or side-by-side comparison with comparison_path. A fail or uncertain verdict is not completion evidence.",
 				Parameters: map[string]any{

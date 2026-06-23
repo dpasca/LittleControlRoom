@@ -278,6 +278,71 @@ func TestRunnerBrowserScreenshotRejectsBlankArtifact(t *testing.T) {
 	}
 }
 
+func TestRunnerCaptureScreenshotStoresValidArtifact(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	artifactDir := t.TempDir()
+	var capturedPath string
+	var capturedDelay time.Duration
+	runner := Runner{
+		Session:      writer,
+		SessionID:    sessionID,
+		ArtifactsDir: artifactDir,
+		DesktopScreenshot: DesktopScreenshotFunc(func(_ context.Context, path string, delay time.Duration) tools.ToolResult {
+			capturedPath = path
+			capturedDelay = delay
+			writeTestScreenshotPNG(t, path, false)
+			return tools.ToolResult{Success: true, ArtifactPath: path}
+		}),
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "capture_screenshot",
+		Args: raw(`{"path":"native/gui.png","delay_ms":25}`),
+	})
+	wantPath := filepath.Join(artifactDir, "native", "gui.png")
+	if err != nil || !result.Success || result.ArtifactPath != wantPath {
+		t.Fatalf("RunTool() result=%#v err=%v, want screenshot artifact %s", result, err, wantPath)
+	}
+	if capturedPath != wantPath || capturedDelay != 25*time.Millisecond {
+		t.Fatalf("captured path=%q delay=%s, want %q/25ms", capturedPath, capturedDelay, wantPath)
+	}
+	for _, want := range []string{`"type":"screenshot_artifact"`, `"tool":"capture_screenshot"`, `"artifact_path":"` + wantPath + `"`} {
+		if !strings.Contains(stream.String(), want) {
+			t.Fatalf("stream missing %q:\n%s", want, stream.String())
+		}
+	}
+	if got := runner.InspectionEvidenceEvents(); got != 1 {
+		t.Fatalf("InspectionEvidenceEvents() = %d, want 1", got)
+	}
+}
+
+func TestRunnerCaptureScreenshotRejectsArtifactEscape(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:      writer,
+		SessionID:    sessionID,
+		ArtifactsDir: t.TempDir(),
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "capture_screenshot",
+		Args: raw(`{"path":"../outside.png"}`),
+	})
+	if err == nil || result.Success || !strings.Contains(result.Error, "escapes the session artifact directory") {
+		t.Fatalf("RunTool() result=%#v err=%v, want artifact escape rejection", result, err)
+	}
+}
+
 func TestRunnerBrowserWaitForUserPausesUntilSteerMessage(t *testing.T) {
 	var stream bytes.Buffer
 	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)

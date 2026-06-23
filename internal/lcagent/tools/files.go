@@ -1294,7 +1294,24 @@ func fileLooksBinary(file *os.File) (bool, error) {
 		return false, err
 	}
 	data := sample[:n]
-	return bytes.IndexByte(data, 0) >= 0 || (len(data) > 0 && !utf8.Valid(data)), nil
+	return textSampleLooksBinary(data), nil
+}
+
+func textSampleLooksBinary(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return true
+	}
+	for len(data) > 0 {
+		r, size := utf8.DecodeRune(data)
+		if r == utf8.RuneError && size == 1 {
+			return utf8.FullRune(data)
+		}
+		data = data[size:]
+	}
+	return false
 }
 
 func fileGlobMatches(glob, path string) bool {

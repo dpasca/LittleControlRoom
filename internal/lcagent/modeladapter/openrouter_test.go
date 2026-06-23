@@ -122,6 +122,9 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if names["analyze_image"] {
 		t.Fatalf("Tools() should not expose analyze_image unless vision analysis is enabled")
 	}
+	if names["capture_screenshot"] {
+		t.Fatalf("Tools() should not expose capture_screenshot unless vision analysis is enabled")
+	}
 	for _, processTool := range []string{"start_process", "list_processes", "stop_process"} {
 		if names[processTool] {
 			t.Fatalf("Tools() should not expose %s outside managed-process sessions", processTool)
@@ -130,6 +133,17 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 }
 
 func TestToolsWithOptionsExposeAnalyzeImageWhenEnabled(t *testing.T) {
+	screenshot := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "capture_screenshot")
+	if !strings.Contains(screenshot.Description, "native desktop screenshot") || !strings.Contains(screenshot.Description, "analyze_image") {
+		t.Fatalf("capture_screenshot description = %q", screenshot.Description)
+	}
+	screenshotProps := screenshot.Parameters["properties"].(map[string]any)
+	for _, want := range []string{"path", "delay_ms"} {
+		if _, ok := screenshotProps[want]; !ok {
+			t.Fatalf("capture_screenshot missing %s property: %#v", want, screenshotProps)
+		}
+	}
+
 	spec := toolSpec(t, ToolsWithOptions(ToolOptions{VisionAnalysisEnabled: true}), "analyze_image")
 	if !strings.Contains(spec.Description, "vision model") || !strings.Contains(spec.Description, "screenshot") || !strings.Contains(spec.Description, "comparison_path") || !strings.Contains(spec.Description, "pixel-level evidence") || !strings.Contains(spec.Description, "pass/fail/uncertain") {
 		t.Fatalf("analyze_image description = %q", spec.Description)
@@ -150,6 +164,8 @@ func TestSystemPromptVisionGuidanceIsBounded(t *testing.T) {
 	prompt := SystemPromptWithOptions("", "", SystemPromptOptions{VisionAnalysisEnabled: true})
 	for _, want := range []string{
 		"Use it only when pixel-level evidence would materially improve",
+		"capture_screenshot is available for native desktop screenshots",
+		"capture one screenshot artifact and then call analyze_image on that path",
 		"Treat analyze_image verdict pass as visual evidence",
 		"Treat fail or uncertain as non-passing evidence",
 		"Keep visual review sparse and actionable",
