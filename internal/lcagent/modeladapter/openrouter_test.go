@@ -183,6 +183,12 @@ func TestSystemPromptQualityEvidenceRejectsCodeOnlyVerification(t *testing.T) {
 	for _, want := range []string{
 		"Do not mark a visual, interactive, or user-facing phase verified merely because the code contains objects or functions for it",
 		"Verification evidence must show the requested behavior or visible result actually works or appears",
+		"choose the architecture you believe best satisfies the request",
+		"identify the main risks in your chosen architecture",
+		"build toward an end-to-end observable slice first",
+		"For spatial, 3D, or graphics work, build in observability early",
+		"Persistent user-facing state should be deterministic across frames",
+		"change strategy instead of spending many iterations patching symptoms",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("quality prompt missing %q:\n%s", want, prompt)
