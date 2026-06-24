@@ -27,6 +27,15 @@ func providerSupportsManagedPlaywright(provider Provider) bool {
 	}
 }
 
+func providerSupportsRuntimeMCP(provider Provider) bool {
+	switch provider.Normalized() {
+	case ProviderCodex, ProviderOpenCode:
+		return true
+	default:
+		return false
+	}
+}
+
 func ensureManagedPlaywrightSessionKey(req *LaunchRequest) {
 	if req == nil {
 		return
@@ -52,6 +61,16 @@ func applyCodexPlaywrightMCPOverrides(cmd *exec.Cmd, req LaunchRequest) {
 	}
 }
 
+func applyCodexMCPOverrides(cmd *exec.Cmd, req LaunchRequest) {
+	if cmd == nil {
+		return
+	}
+	applyCodexPlaywrightMCPOverrides(cmd, req)
+	for _, override := range codexRuntimeMCPConfigOverrides(req) {
+		cmd.Args = append(cmd.Args, "-c", override)
+	}
+}
+
 func codexPlaywrightMCPConfigOverrides(req LaunchRequest) []string {
 	executablePath, args, ok := managedPlaywrightMCPCommand(req)
 	if !ok {
@@ -61,6 +80,17 @@ func codexPlaywrightMCPConfigOverrides(req LaunchRequest) []string {
 	return []string{
 		fmt.Sprintf("mcp_servers.playwright.command=%s", strconv.Quote(executablePath)),
 		fmt.Sprintf("mcp_servers.playwright.args=%s", formatCodexConfigStringArray(args)),
+	}
+}
+
+func codexRuntimeMCPConfigOverrides(req LaunchRequest) []string {
+	executablePath, args, ok := runtimeMCPCommand(req)
+	if !ok {
+		return nil
+	}
+	return []string{
+		fmt.Sprintf("mcp_servers.lcr_runtime.command=%s", strconv.Quote(executablePath)),
+		fmt.Sprintf("mcp_servers.lcr_runtime.args=%s", formatCodexConfigStringArray(args)),
 	}
 }
 
@@ -110,6 +140,39 @@ func managedPlaywrightMCPCommand(req LaunchRequest) (string, []string, bool) {
 	return executablePath, args, true
 }
 
+func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
+	if req.RuntimeManager == nil {
+		return "", nil, false
+	}
+	provider := req.Provider.Normalized()
+	if provider == "" {
+		provider = ProviderCodex
+	}
+	if !providerSupportsRuntimeMCP(provider) {
+		return "", nil, false
+	}
+	projectPath := strings.TrimSpace(req.ProjectPath)
+	if projectPath == "" {
+		return "", nil, false
+	}
+	executablePath, err := managedPlaywrightMCPExecutablePath(req)
+	if err != nil || strings.TrimSpace(executablePath) == "" {
+		return "", nil, false
+	}
+	args := []string{
+		"runtime-mcp",
+		"--provider", string(provider),
+		"--project-path", projectPath,
+	}
+	if dataDir := strings.TrimSpace(req.AppDataDir); dataDir != "" {
+		args = append(args, "--data-dir", dataDir)
+	}
+	if sessionKey := firstNonEmpty(strings.TrimSpace(req.ManagedBrowserSessionKey), strings.TrimSpace(req.ResumeID)); sessionKey != "" {
+		args = append(args, "--session-key", sessionKey)
+	}
+	return executablePath, args, true
+}
+
 type openCodeMCPServerOverride struct {
 	Type    string   `json:"type,omitempty"`
 	Command []string `json:"command,omitempty"`
@@ -118,6 +181,23 @@ type openCodeMCPServerOverride struct {
 
 func openCodePlaywrightMCPOverride(req LaunchRequest) (json.RawMessage, bool, error) {
 	executablePath, args, ok := managedPlaywrightMCPCommand(req)
+	if !ok {
+		return nil, false, nil
+	}
+	enabled := true
+	raw, err := json.Marshal(openCodeMCPServerOverride{
+		Type:    "local",
+		Command: append([]string{executablePath}, args...),
+		Enabled: &enabled,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return raw, true, nil
+}
+
+func openCodeRuntimeMCPOverride(req LaunchRequest) (json.RawMessage, bool, error) {
+	executablePath, args, ok := runtimeMCPCommand(req)
 	if !ok {
 		return nil, false, nil
 	}

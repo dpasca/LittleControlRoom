@@ -26,6 +26,7 @@ const (
 	codexReconnectSuggestion  = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
 	codexHomeCleanupWarning   = "Codex home cleanup warning: could not repair stale rollout paths in state_5.sqlite before startup. Saved-session discovery may still show stale paths until a later cleanup succeeds."
 	playwrightMCPReadyTimeout = 12 * time.Second
+	runtimeMCPReadyTimeout    = 8 * time.Second
 )
 
 var errBusyTurnLikelyStuck = errors.New("embedded Codex session seems stuck or disconnected. Interrupt the current turn or use /reconnect before sending another prompt")
@@ -63,6 +64,7 @@ type appServerSession struct {
 	rpcCallHook              func(context.Context, string, any) (json.RawMessage, error)
 	playwrightPolicy         browserctl.Policy
 	playwrightMCPExpected    bool
+	runtimeMCPExpected       bool
 	managedBrowserSessionKey string
 	dataDir                  string
 	codexHomeOverlay         string
@@ -123,6 +125,7 @@ type appServerSession struct {
 	browserToolCalls        map[string]browserToolCall
 	mcpServerStartup        map[string]mcpServerStartupState
 	playwrightMCPReady      bool
+	runtimeMCPReady         bool
 	entries                 []transcriptEntry
 	entryIndex              map[string]int
 	transcriptRevision      uint64

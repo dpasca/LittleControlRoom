@@ -18,10 +18,10 @@ import (
 func (s *appServerSession) start(req LaunchRequest) error {
 	cmd := exec.Command("codex", "app-server")
 	cmd.Dir = req.ProjectPath
-	applyCodexPlaywrightMCPOverrides(cmd, req)
+	applyCodexMCPOverrides(cmd, req)
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderCodex, req.PlaywrightPolicy)
-	if shouldShadowPlaywrightSkill(req.PlaywrightPolicy) {
+	if shouldPrepareEmbeddedSkillOverlay(req) {
 		sourceHome, err := effectiveCodexHome(req.CodexHome)
 		if err != nil {
 			return err

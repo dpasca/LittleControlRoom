@@ -16,6 +16,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/projectrun"
 )
 
 func TestNewOpenCodeHTTPClientHasNoGlobalTimeout(t *testing.T) {
@@ -413,11 +414,14 @@ func TestOpenCodeManagedPlaywrightConfigSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Executable() error = %v", err)
 	}
+	runtimeManager := projectrun.NewManager()
+	defer func() { _ = runtimeManager.CloseAll() }()
 	req := LaunchRequest{
 		Provider:          ProviderOpenCode,
 		ProjectPath:       "/tmp/demo",
 		AppDataDir:        "/tmp/lcr-data",
 		CLIExecutablePath: executablePath,
+		RuntimeManager:    runtimeManager,
 		PlaywrightPolicy: browserctl.Policy{
 			ManagementMode:     browserctl.ManagementModeManaged,
 			DefaultBrowserMode: browserctl.BrowserModeHeadless,
@@ -453,6 +457,16 @@ func TestOpenCodeManagedPlaywrightConfigSmoke(t *testing.T) {
 	}
 	if !containsString(override.Command, "playwright-mcp") {
 		t.Fatalf("resolved playwright command = %#v, want playwright-mcp args", override.Command)
+	}
+	runtimeOverride, ok := cfg.MCP["lcr_runtime"]
+	if !ok {
+		t.Fatalf("resolved config MCP override = %#v, want lcr_runtime entry", cfg.MCP)
+	}
+	if len(runtimeOverride.Command) < 2 || runtimeOverride.Command[0] != executablePath {
+		t.Fatalf("resolved runtime command = %#v, want lcroom executable %q", runtimeOverride.Command, executablePath)
+	}
+	if !containsString(runtimeOverride.Command, "runtime-mcp") {
+		t.Fatalf("resolved runtime command = %#v, want runtime-mcp args", runtimeOverride.Command)
 	}
 }
 

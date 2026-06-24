@@ -17,8 +17,14 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 	if err := os.MkdirAll(filepath.Join(sourceSkillsDir, "other"), 0o755); err != nil {
 		t.Fatalf("mkdir other skill: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(sourceSkillsDir, "runtime"), 0o755); err != nil {
+		t.Fatalf("mkdir runtime skill: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sourceSkillsDir, "playwright", "SKILL.md"), []byte("original playwright skill"), 0o644); err != nil {
 		t.Fatalf("write original playwright skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceSkillsDir, "runtime", "SKILL.md"), []byte("original runtime skill"), 0o644); err != nil {
+		t.Fatalf("write original runtime skill: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(sourceSkillsDir, "other", "SKILL.md"), []byte("other skill"), 0o644); err != nil {
 		t.Fatalf("write other skill: %v", err)
@@ -54,6 +60,19 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 	text := string(raw)
 	if !strings.Contains(text, "Use the embedded Playwright MCP tools already wired through Little Control Room") {
 		t.Fatalf("overlay Playwright skill text missing managed browser guidance: %s", text)
+	}
+
+	runtimeSkillPath := filepath.Join(overlayRoot, "opencode", "skills", "runtime", "SKILL.md")
+	runtimeRaw, err := os.ReadFile(runtimeSkillPath)
+	if err != nil {
+		t.Fatalf("read overlay runtime skill: %v", err)
+	}
+	runtimeText := string(runtimeRaw)
+	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") {
+		t.Fatalf("overlay runtime skill text missing runtime MCP guidance: %s", runtimeText)
+	}
+	if strings.Contains(runtimeText, "original runtime skill") {
+		t.Fatalf("overlay runtime skill should not mirror original runtime skill: %s", runtimeText)
 	}
 }
 

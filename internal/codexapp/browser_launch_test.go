@@ -9,6 +9,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/projectrun"
 )
 
 func TestCodexPlaywrightMCPConfigOverridesManagedHeadless(t *testing.T) {
@@ -193,6 +194,75 @@ func TestOpenCodePlaywrightMCPOverrideClassicBrowserBehavior(t *testing.T) {
 	}
 }
 
+func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	req := LaunchRequest{
+		Provider:          ProviderCodex,
+		ProjectPath:       "/tmp/demo",
+		AppDataDir:        "/tmp/lcr-data",
+		CLIExecutablePath: "/tmp/lcroom-test-bin",
+		ResumeID:          "session-demo",
+		RuntimeManager:    manager,
+	}
+
+	got := codexRuntimeMCPConfigOverrides(req)
+	if len(got) != 2 {
+		t.Fatalf("codexRuntimeMCPConfigOverrides() len = %d, want 2", len(got))
+	}
+	if got[0] != `mcp_servers.lcr_runtime.command="/tmp/lcroom-test-bin"` {
+		t.Fatalf("runtime command override = %q, want configured lcroom executable", got[0])
+	}
+	for _, want := range []string{
+		`"runtime-mcp"`,
+		`"--provider","codex"`,
+		`"--project-path","/tmp/demo"`,
+		`"--data-dir","/tmp/lcr-data"`,
+		`"--session-key","session-demo"`,
+	} {
+		if !strings.Contains(got[1], want) {
+			t.Fatalf("runtime args override = %q, want substring %q", got[1], want)
+		}
+	}
+}
+
+func TestOpenCodeRuntimeMCPOverride(t *testing.T) {
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	req := LaunchRequest{
+		Provider:          ProviderOpenCode,
+		ProjectPath:       "/tmp/demo",
+		AppDataDir:        "/tmp/lcr-data",
+		CLIExecutablePath: "/tmp/lcroom-test-bin",
+		ResumeID:          "session-demo",
+		RuntimeManager:    manager,
+	}
+
+	raw, ok, err := openCodeRuntimeMCPOverride(req)
+	if err != nil {
+		t.Fatalf("openCodeRuntimeMCPOverride() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("openCodeRuntimeMCPOverride() ok = false, want true")
+	}
+	var got struct {
+		Type    string   `json:"type"`
+		Command []string `json:"command"`
+		Enabled bool     `json:"enabled"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal runtime override: %v", err)
+	}
+	if got.Type != "local" || !got.Enabled {
+		t.Fatalf("runtime override type/enabled = %q/%t, want local/true", got.Type, got.Enabled)
+	}
+	for _, want := range []string{"/tmp/lcroom-test-bin", "runtime-mcp", "--provider", "opencode", "--project-path", "/tmp/demo"} {
+		if !containsString(got.Command, want) {
+			t.Fatalf("runtime override command = %#v, want entry %q", got.Command, want)
+		}
+	}
+}
+
 func TestBuildOpenCodeServerCommandForLaunchAppliesDataHomeOverride(t *testing.T) {
 	req := LaunchRequest{
 		Provider:         ProviderOpenCode,
@@ -241,6 +311,36 @@ func TestApplyCodexPlaywrightMCPOverridesAppendsConfigArgs(t *testing.T) {
 	}
 	if !strings.Contains(cmd.Args[5], `"playwright-mcp"`) {
 		t.Fatalf("args override = %q, want lcroom wrapper args", cmd.Args[5])
+	}
+}
+
+func TestApplyCodexMCPOverridesAppendsPlaywrightAndRuntimeConfigArgs(t *testing.T) {
+	cmd := exec.Command("codex", "app-server")
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	applyCodexMCPOverrides(cmd, LaunchRequest{
+		Provider:                 ProviderCodex,
+		ProjectPath:              "/tmp/demo",
+		AppDataDir:               "/tmp/lcr-data",
+		ManagedBrowserSessionKey: "session-demo",
+		CLIExecutablePath:        "/tmp/lcroom-test-bin",
+		RuntimeManager:           manager,
+		PlaywrightPolicy: browserctl.Policy{
+			ManagementMode:     browserctl.ManagementModeManaged,
+			DefaultBrowserMode: browserctl.BrowserModeHeadless,
+			LoginMode:          browserctl.LoginModePromote,
+			IsolationScope:     browserctl.IsolationScopeTask,
+		},
+	})
+
+	if len(cmd.Args) != 10 {
+		t.Fatalf("cmd.Args len = %d, want 10: %#v", len(cmd.Args), cmd.Args)
+	}
+	if !strings.Contains(cmd.Args[3], `mcp_servers.playwright.command=`) ||
+		!strings.Contains(cmd.Args[5], `"playwright-mcp"`) ||
+		!strings.Contains(cmd.Args[7], `mcp_servers.lcr_runtime.command=`) ||
+		!strings.Contains(cmd.Args[9], `"runtime-mcp"`) {
+		t.Fatalf("cmd.Args = %#v, want playwright and runtime MCP overrides", cmd.Args)
 	}
 }
 

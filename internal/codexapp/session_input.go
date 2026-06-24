@@ -56,8 +56,6 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	s.mu.Unlock()
 	s.notify()
 
-	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
-
 	if goalToResume != nil {
 		goalCtx, goalCancel := context.WithTimeout(context.Background(), rpcTimeout)
 		err := s.reactivateThreadGoal(goalCtx, threadID, goalToResume)
@@ -74,6 +72,10 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 		s.appendSystemError(err)
 		return err
 	}
+	if err := s.ensureRuntimeMCPReady(ctx); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
 
 	if pauseGoalForManualPrompt {
 		if err := s.pauseGoalForManualPrompt(ctx, threadID, activeTurnID, goalToPause); err != nil {
@@ -84,14 +86,14 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 			s.appendSystemError(err)
 			return err
 		}
-		return s.startTurnWithInput(ctx, threadID, modelInput, pendingModel, pendingReasoning, currentModel, currentReasoning)
+		return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
 	}
 
 	if busy && activeTurnID != "" {
-		return s.submitBusyInput(ctx, threadID, activeTurnID, modelInput, pendingModel, pendingReasoning, currentModel, currentReasoning, refreshBusyBeforeSteer)
+		return s.submitBusyInput(ctx, threadID, activeTurnID, input, pendingModel, pendingReasoning, currentModel, currentReasoning, refreshBusyBeforeSteer)
 	}
 
-	return s.startTurnWithInput(ctx, threadID, modelInput, pendingModel, pendingReasoning, currentModel, currentReasoning)
+	return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
 }
 
 func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, activeTurnID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string, refreshBusyBeforeSteer bool) error {
@@ -169,7 +171,7 @@ func (s *appServerSession) ensurePlaywrightMCPReady(parent context.Context) erro
 	defer ticker.Stop()
 
 	for {
-		ready, err := s.readPlaywrightMCPReady(ctx)
+		ready, err := s.readMCPServerReady(ctx, "playwright")
 		if err == nil && ready {
 			s.mu.Lock()
 			s.playwrightMCPReady = true
@@ -194,7 +196,57 @@ func (s *appServerSession) ensurePlaywrightMCPReady(parent context.Context) erro
 	}
 }
 
-func (s *appServerSession) readPlaywrightMCPReady(ctx context.Context) (bool, error) {
+func (s *appServerSession) ensureRuntimeMCPReady(parent context.Context) error {
+	if s == nil || !s.runtimeMCPExpected {
+		return nil
+	}
+
+	s.mu.Lock()
+	if s.runtimeMCPReady {
+		s.mu.Unlock()
+		return nil
+	}
+	s.status = "Waiting for runtime tools..."
+	s.mu.Unlock()
+	s.notify()
+
+	ctx := parent
+	if _, hasDeadline := parent.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, runtimeMCPReadyTimeout)
+		defer cancel()
+	}
+
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		ready, err := s.readMCPServerReady(ctx, "lcr_runtime")
+		if err == nil && ready {
+			s.mu.Lock()
+			s.runtimeMCPReady = true
+			s.mu.Unlock()
+			return nil
+		}
+
+		s.mu.Lock()
+		status := s.mcpServerStartup["lcr_runtime"]
+		s.mu.Unlock()
+		if status == mcpServerStartupStateFailed || status == mcpServerStartupStateCancelled {
+			s.appendSystemNotice("Runtime MCP server did not become ready. Runtime tools may need a retry.")
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			s.appendSystemNotice("Runtime tools are still starting. The first runtime request may need a retry.")
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *appServerSession) readMCPServerReady(ctx context.Context, name string) (bool, error) {
 	result, err := s.call(ctx, "mcpServerStatus/list", mcpServerStatusListParams{Detail: "toolsAndAuthOnly"})
 	if err != nil {
 		return false, err
@@ -204,7 +256,7 @@ func (s *appServerSession) readPlaywrightMCPReady(ctx context.Context) (bool, er
 		return false, err
 	}
 	for _, entry := range response.Data {
-		if strings.TrimSpace(entry.Name) != "playwright" {
+		if strings.TrimSpace(entry.Name) != name {
 			continue
 		}
 		return len(entry.Tools) > 0, nil

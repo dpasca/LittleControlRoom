@@ -473,8 +473,7 @@ func (s *openCodeSession) SubmitInput(input Submission) error {
 	s.mu.Unlock()
 	s.notify()
 
-	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
-	payload, err := buildOpenCodePromptRequest(modelInput, agent, model, reasoning)
+	payload, err := buildOpenCodePromptRequest(input, agent, model, reasoning)
 	if err != nil {
 		s.appendSystemError(err)
 		return err
@@ -781,7 +780,7 @@ func (s *openCodeSession) ReconcileBusyState() error {
 
 func (s *openCodeSession) start(parent context.Context, req LaunchRequest) error {
 	xdgConfigHome := ""
-	if shouldShadowPlaywrightSkill(req.PlaywrightPolicy) {
+	if shouldPrepareEmbeddedSkillOverlay(req) {
 		overlay, err := prepareOpenCodeConfigOverlay(req.AppDataDir, "")
 		if err != nil {
 			return err
@@ -1865,6 +1864,14 @@ func openCodeConfigContentForLaunch(req LaunchRequest) (string, error) {
 		override.MCP = map[string]json.RawMessage{
 			"playwright": raw,
 		}
+	}
+	if raw, ok, err := openCodeRuntimeMCPOverride(req); err != nil {
+		return "", err
+	} else if ok {
+		if override.MCP == nil {
+			override.MCP = map[string]json.RawMessage{}
+		}
+		override.MCP["lcr_runtime"] = raw
 	}
 	encoded, err := json.Marshal(override)
 	if err != nil {

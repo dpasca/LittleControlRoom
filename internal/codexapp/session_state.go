@@ -16,6 +16,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		notify:                   notify,
 		playwrightPolicy:         policy,
 		playwrightMCPExpected:    shouldShadowPlaywrightSkill(policy),
+		runtimeMCPExpected:       shouldShadowRuntimeSkill(req),
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		dataDir:                  strings.TrimSpace(req.AppDataDir),
 		runtimeManager:           req.RuntimeManager,

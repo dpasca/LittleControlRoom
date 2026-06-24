@@ -55,6 +55,9 @@ func Run(programName string, args []string) int {
 	if subcmd == "playwright-mcp" {
 		return runPlaywrightMCP(args[1:])
 	}
+	if subcmd == "runtime-mcp" {
+		return runRuntimeMCP(args[1:])
+	}
 	if subcmd == "browser" {
 		return runBrowser(args[1:])
 	}
