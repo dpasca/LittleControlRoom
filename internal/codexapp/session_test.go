@@ -2172,6 +2172,97 @@ func TestEnsurePlaywrightMCPReadyTimesOutWithNotice(t *testing.T) {
 	}
 }
 
+func TestSubmitWaitsForRuntimeMCPToolsBeforeTurnStart(t *testing.T) {
+	callCount := 0
+
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		runtimeMCPExpected: true,
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			switch callCount {
+			case 1:
+				if method != "mcpServerStatus/list" {
+					t.Fatalf("call 1 method = %q, want mcpServerStatus/list", method)
+				}
+				request, ok := params.(mcpServerStatusListParams)
+				if !ok {
+					t.Fatalf("call 1 params = %#v, want mcpServerStatusListParams", params)
+				}
+				if request.Detail != "toolsAndAuthOnly" {
+					t.Fatalf("call 1 detail = %q, want toolsAndAuthOnly", request.Detail)
+				}
+				return json.RawMessage(`{"data":[{"name":"lcr_runtime","tools":{}}]}`), nil
+			case 2:
+				if method != "mcpServerStatus/list" {
+					t.Fatalf("call 2 method = %q, want mcpServerStatus/list", method)
+				}
+				return json.RawMessage(`{"data":[{"name":"lcr_runtime","tools":{"start_process":{"name":"start_process","inputSchema":{}}}}]}`), nil
+			case 3:
+				if method != "turn/start" {
+					t.Fatalf("call 3 method = %q, want turn/start", method)
+				}
+				return json.RawMessage(`{"turn":{"id":"turn_fresh"}}`), nil
+			default:
+				t.Fatalf("unexpected rpc call %d: %s", callCount, method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.Submit("start the app"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if callCount != 3 {
+		t.Fatalf("rpc call count = %d, want 3", callCount)
+	}
+	if !s.runtimeMCPReady {
+		t.Fatalf("runtimeMCPReady = false, want true")
+	}
+	snapshot := s.Snapshot()
+	if !snapshot.Busy {
+		t.Fatalf("busy = false, want true")
+	}
+	if snapshot.ActiveTurnID != "turn_fresh" {
+		t.Fatalf("active turn id = %q, want turn_fresh", snapshot.ActiveTurnID)
+	}
+	if strings.Contains(snapshot.Transcript, "Little Control Room runtime context") {
+		t.Fatalf("transcript should not include injected runtime context:\n%s", snapshot.Transcript)
+	}
+}
+
+func TestEnsureRuntimeMCPReadyTimesOutWithNotice(t *testing.T) {
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		runtimeMCPExpected: true,
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "mcpServerStatus/list" {
+				t.Fatalf("method = %q, want mcpServerStatus/list", method)
+			}
+			return json.RawMessage(`{"data":[]}`), nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	if err := s.ensureRuntimeMCPReady(ctx); err != nil {
+		t.Fatalf("ensureRuntimeMCPReady() error = %v, want nil", err)
+	}
+	snapshot := s.Snapshot()
+	if !strings.Contains(snapshot.LastSystemNotice, "Runtime tools are still starting") {
+		t.Fatalf("last system notice = %q, want timeout notice", snapshot.LastSystemNotice)
+	}
+	if s.runtimeMCPReady {
+		t.Fatalf("runtimeMCPReady = true, want false")
+	}
+}
+
 func TestManagedPlaywrightMCPReadyInTrustedProject(t *testing.T) {
 	if os.Getenv("LCROOM_EMBEDDED_CX_BROWSER_SMOKE") == "" {
 		t.Skip("set LCROOM_EMBEDDED_CX_BROWSER_SMOKE=1 to run the real embedded Codex Playwright smoke test")

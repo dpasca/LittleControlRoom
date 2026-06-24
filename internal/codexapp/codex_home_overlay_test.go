@@ -20,8 +20,14 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	if err := os.MkdirAll(filepath.Join(sourceSkillsDir, "playwright"), 0o755); err != nil {
 		t.Fatalf("mkdir playwright skill: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(sourceSkillsDir, "runtime"), 0o755); err != nil {
+		t.Fatalf("mkdir runtime skill: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(sourceSkillsDir, "playwright", "SKILL.md"), []byte("original skill"), 0o644); err != nil {
 		t.Fatalf("write original playwright skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceSkillsDir, "runtime", "SKILL.md"), []byte("original runtime skill"), 0o644); err != nil {
+		t.Fatalf("write original runtime skill: %v", err)
 	}
 
 	overlay, err := prepareCodexHomeOverlay(t.TempDir(), sourceHome)
@@ -53,6 +59,19 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	if scriptInfo.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("overlay wrapper permissions = %v, want executable bit", scriptInfo.Mode().Perm())
 	}
+
+	runtimeSkillPath := filepath.Join(overlay, "skills", "runtime", "SKILL.md")
+	runtimeData, err := os.ReadFile(runtimeSkillPath)
+	if err != nil {
+		t.Fatalf("read overlay runtime skill: %v", err)
+	}
+	runtimeText := string(runtimeData)
+	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") {
+		t.Fatalf("overlay runtime skill = %q, want runtime MCP guidance", runtimeText)
+	}
+	if strings.Contains(runtimeText, "original runtime skill") {
+		t.Fatalf("overlay runtime skill should not mirror original contents: %q", runtimeText)
+	}
 }
 
 func TestPrepareCodexHomeOverlayCreatesStandaloneShadowSkillWhenSourceHomeMissing(t *testing.T) {
@@ -62,12 +81,12 @@ func TestPrepareCodexHomeOverlayCreatesStandaloneShadowSkillWhenSourceHomeMissin
 		t.Fatalf("prepareCodexHomeOverlay() error = %v", err)
 	}
 
-	skillPath := filepath.Join(overlay, "skills", "playwright", "SKILL.md")
+	skillPath := filepath.Join(overlay, "skills", "runtime", "SKILL.md")
 	data, err := os.ReadFile(skillPath)
 	if err != nil {
 		t.Fatalf("read overlay skill: %v", err)
 	}
-	if !strings.Contains(string(data), "Little Control Room") {
+	if !strings.Contains(string(data), "Little Control Room") || !strings.Contains(string(data), "lcr_runtime") {
 		t.Fatalf("overlay skill = %q, want LCR guidance", string(data))
 	}
 }

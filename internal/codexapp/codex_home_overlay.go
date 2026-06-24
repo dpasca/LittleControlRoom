@@ -43,6 +43,26 @@ echo "Use the embedded Playwright MCP tools or reveal the managed browser window
 exit 2
 `
 
+const shadowRuntimeSkillMarkdown = `---
+name: "runtime"
+description: "Use Little Control Room runtime MCP tools for local dev servers, watchers, and project-local port checks. Do not launch duplicate long-running server processes from the shell."
+---
+
+# Embedded Runtime Skill
+
+This embedded Little Control Room session has an ` + "`lcr_runtime`" + ` MCP server registered.
+Use its runtime tools for local app/server/watch processes:
+
+- Call ` + "`list_processes`" + ` before starting a local server or watcher when a matching process may already be active.
+- Call ` + "`start_process`" + ` for long-running foreground server/watch commands that should stay inspectable after the tool returns.
+- Leave ` + "`create_new`" + ` false for ordinary launch and verification work.
+- Set ` + "`create_new`" + ` true only when the user needs another concurrent copy of the same command/cwd.
+- Set ` + "`replace_existing`" + ` true only when a fresh managed instance is needed.
+- Call ` + "`stop_process`" + ` only when the user asks to stop a managed runtime or when cleaning up a temporary process you started.
+
+Do not use shell backgrounding, ad-hoc port hopping, or a bounded terminal command for dev servers/watchers when the runtime MCP tools are available.
+`
+
 func prepareCodexHomeOverlay(dataDir, requestedHome string) (string, error) {
 	sourceHome, err := effectiveCodexHome(requestedHome)
 	if err != nil {
@@ -116,7 +136,7 @@ func installShadowPlaywrightSkill(overlayRoot, sourceHome string) error {
 	}
 	for _, entry := range sourceEntries {
 		name := strings.TrimSpace(entry.Name())
-		if name == "" || name == "playwright" {
+		if name == "" || name == "playwright" || name == "runtime" {
 			continue
 		}
 		sourcePath := filepath.Join(sourceSkillsDir, name)
@@ -137,6 +157,13 @@ func installShadowPlaywrightSkill(overlayRoot, sourceHome string) error {
 	if err := os.WriteFile(filepath.Join(overlayScriptsDir, "playwright_cli.sh"), []byte(shadowPlaywrightWrapperScript), 0o755); err != nil {
 		return fmt.Errorf("write overlay Playwright wrapper: %w", err)
 	}
+	overlayRuntimeDir := filepath.Join(overlaySkillsDir, "runtime")
+	if err := os.MkdirAll(overlayRuntimeDir, 0o700); err != nil {
+		return fmt.Errorf("mkdir overlay runtime skill dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(overlayRuntimeDir, "SKILL.md"), []byte(shadowRuntimeSkillMarkdown), 0o644); err != nil {
+		return fmt.Errorf("write overlay runtime SKILL.md: %w", err)
+	}
 	return nil
 }
 
@@ -156,6 +183,15 @@ func effectiveCodexHome(requestedHome string) (string, error) {
 
 func shouldShadowPlaywrightSkill(policy browserctl.Policy) bool {
 	return !policy.Normalize().UsesLegacyLaunchBehavior()
+}
+
+func shouldShadowRuntimeSkill(req LaunchRequest) bool {
+	_, _, ok := runtimeMCPCommand(req)
+	return ok
+}
+
+func shouldPrepareEmbeddedSkillOverlay(req LaunchRequest) bool {
+	return shouldShadowPlaywrightSkill(req.PlaywrightPolicy) || shouldShadowRuntimeSkill(req)
 }
 
 func withEnvOverride(base []string, key, value string) []string {

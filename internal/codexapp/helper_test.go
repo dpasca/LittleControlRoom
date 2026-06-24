@@ -28,4 +28,7 @@ func TestPromptHelperLaunchRequestDisablesManagedPlaywright(t *testing.T) {
 	if got := codexPlaywrightMCPConfigOverrides(req); got != nil {
 		t.Fatalf("prompt helper should not configure Playwright MCP, got %#v", got)
 	}
+	if got := codexRuntimeMCPConfigOverrides(req); got != nil {
+		t.Fatalf("prompt helper should not configure runtime MCP, got %#v", got)
+	}
 }
