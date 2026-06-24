@@ -615,11 +615,7 @@ func (m Model) openDiffFileFolderCmd(projectPath string, file service.DiffFilePr
 		if err != nil {
 			return browserOpenMsg{projectPath: projectPath, err: err}
 		}
-		folder, err := containingFolderForPath(path)
-		if err != nil {
-			return browserOpenMsg{projectPath: projectPath, err: err}
-		}
-		if err := externalPathOpener(folder); err != nil {
+		if err := externalPathRevealer(path); err != nil {
 			return browserOpenMsg{projectPath: projectPath, err: err}
 		}
 		return browserOpenMsg{projectPath: projectPath, status: "Opened containing folder"}

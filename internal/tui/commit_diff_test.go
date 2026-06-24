@@ -2421,7 +2421,7 @@ func TestDiffModeEnterOpensSelectedFile(t *testing.T) {
 	}
 }
 
-func TestDiffModeAltFOpensSelectedFileFolder(t *testing.T) {
+func TestDiffModeAltFRevealsSelectedFileInFolder(t *testing.T) {
 	projectPath := t.TempDir()
 	dir := filepath.Join(projectPath, "docs")
 	if err := os.Mkdir(dir, 0o700); err != nil {
@@ -2446,12 +2446,12 @@ func TestDiffModeAltFOpensSelectedFileFolder(t *testing.T) {
 	}
 
 	opened := ""
-	oldOpener := externalPathOpener
-	externalPathOpener = func(path string) error {
+	oldRevealer := externalPathRevealer
+	externalPathRevealer = func(path string) error {
 		opened = path
 		return nil
 	}
-	t.Cleanup(func() { externalPathOpener = oldOpener })
+	t.Cleanup(func() { externalPathRevealer = oldRevealer })
 
 	m := Model{
 		diffView:     diffState,
@@ -2484,8 +2484,8 @@ func TestDiffModeAltFOpensSelectedFileFolder(t *testing.T) {
 	if openMsg.status != "Opened containing folder" {
 		t.Fatalf("folder open status = %q, want success", openMsg.status)
 	}
-	if opened != dir {
-		t.Fatalf("opened path = %q, want %q", opened, dir)
+	if opened != path {
+		t.Fatalf("revealed path = %q, want selected file %q", opened, path)
 	}
 }
 

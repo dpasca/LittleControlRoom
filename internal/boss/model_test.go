@@ -1293,10 +1293,17 @@ func TestModelAltOOpensPercentEscapedLocalPathsAndFolders(t *testing.T) {
 	}
 
 	oldPathOpener := bossExternalPathOpener
+	oldPathRevealer := bossExternalPathRevealer
 	defer func() { bossExternalPathOpener = oldPathOpener }()
+	defer func() { bossExternalPathRevealer = oldPathRevealer }()
 	opened := ""
+	revealed := ""
 	bossExternalPathOpener = func(path string) error {
 		opened = path
+		return nil
+	}
+	bossExternalPathRevealer = func(path string) error {
+		revealed = path
 		return nil
 	}
 
@@ -1318,14 +1325,14 @@ func TestModelAltOOpensPercentEscapedLocalPathsAndFolders(t *testing.T) {
 	}
 	_ = updated
 
-	opened = ""
+	revealed = ""
 	updated, cmd = folderModel.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
 	if cmd == nil {
 		t.Fatalf("f should return a containing-folder open command")
 	}
 	msg = cmd()
-	if opened != dir {
-		t.Fatalf("opened folder = %q, want decoded containing folder %q", opened, dir)
+	if revealed != path {
+		t.Fatalf("revealed path = %q, want decoded file path %q", revealed, path)
 	}
 	openMsg, ok = msg.(bossOpenTargetOpenedMsg)
 	if !ok {

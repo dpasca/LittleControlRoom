@@ -2436,7 +2436,7 @@ func TestCodexArtifactPickerRowsUseFixedColumns(t *testing.T) {
 	}
 }
 
-func TestCodexArtifactPickerOpensContainingFolder(t *testing.T) {
+func TestCodexArtifactPickerRevealsSelectedFileInContainingFolder(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "brief.pdf")
 	if err := os.WriteFile(path, []byte("%PDF-1.7\n"), 0o600); err != nil {
@@ -2453,12 +2453,12 @@ func TestCodexArtifactPickerOpensContainingFolder(t *testing.T) {
 	}
 
 	opened := ""
-	oldOpener := externalPathOpener
-	externalPathOpener = func(path string) error {
+	oldRevealer := externalPathRevealer
+	externalPathRevealer = func(path string) error {
 		opened = path
 		return nil
 	}
-	t.Cleanup(func() { externalPathOpener = oldOpener })
+	t.Cleanup(func() { externalPathRevealer = oldRevealer })
 
 	m := Model{
 		codexVisibleProject: "/tmp/demo",
@@ -2497,8 +2497,8 @@ func TestCodexArtifactPickerOpensContainingFolder(t *testing.T) {
 	if openMsg.status != "Opened containing folder" {
 		t.Fatalf("folder open status = %q, want success", openMsg.status)
 	}
-	if opened != dir {
-		t.Fatalf("folder picker opened %q, want %q", opened, dir)
+	if opened != path {
+		t.Fatalf("folder picker revealed %q, want selected file %q", opened, path)
 	}
 	got = normalizeUpdateModel(updated)
 	if got.codexArtifactPicker != nil {
