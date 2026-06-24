@@ -187,16 +187,16 @@ func (m Model) embeddedSidebarSectionAvailable(snapshot codexapp.Snapshot, proje
 	case embeddedCodexSidebarSession:
 		return len(m.embeddedSidebarSessionRows(snapshot, 1)) > 0
 	case embeddedCodexSidebarQuality:
-		return embeddedSidebarQualityRelevant(snapshot)
+		return len(embeddedSidebarQualitySummaryRows(snapshot, 1)) > 0
 	case embeddedCodexSidebarVision:
-		return embeddedSidebarVisionRelevant(snapshot)
+		return len(embeddedSidebarVisionSummaryRows(snapshot, 1)) > 0
 	case embeddedCodexSidebarBrowser:
-		return !snapshot.Closed && embeddedSidebarBrowserRelevant(snapshot)
+		return len(m.embeddedSidebarBrowserRows(snapshot, 1)) > 0
 	case embeddedCodexSidebarDiff, embeddedCodexSidebarProcesses:
 		return normalizeProjectPath(projectPath) != ""
 	case embeddedCodexSidebarSummary:
-		_, _, ok := m.embeddedSidebarSummary(snapshot)
-		return ok
+		summary, style, ok := m.embeddedSidebarSummary(snapshot)
+		return ok && len(embeddedSidebarPreviewRows(summary, style, 1)) > 0
 	default:
 		return false
 	}
