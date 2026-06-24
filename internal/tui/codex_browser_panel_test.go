@@ -366,6 +366,87 @@ func TestVisibleCodexManagedBrowserWithoutCurrentPageURLHydratesState(t *testing
 	}
 }
 
+func TestVisibleCodexBrowserWaitCanRevealWithoutCachedState(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			ThreadID: "thread-demo",
+			Preset:   codexcli.PresetYolo,
+			Status:   "Browser needs attention",
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+			ManagedBrowserSessionKey: "managed-demo",
+			CurrentBrowserPageURL:    "https://example.test/login",
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	previousSessionRevealer := managedBrowserSessionRevealer
+	defer func() {
+		managedBrowserSessionRevealer = previousSessionRevealer
+	}()
+
+	revealedSessionKey := ""
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealedSessionKey = sessionKey
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+
+	renderedBlocks := ansi.Strip(m.renderCodexBrowserPanel(session.snapshot, 120))
+	if !strings.Contains(renderedBlocks, "Press ctrl+o to reveal the managed browser window for this same session.") {
+		t.Fatalf("renderCodexBrowserPanel() missing ctrl+o reveal hint without cached state: %q", renderedBlocks)
+	}
+	footer := ansi.Strip(m.renderCodexFooter(session.snapshot, 160))
+	if !strings.Contains(footer, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() missing ctrl+o reveal action without cached state: %q", footer)
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+o should queue the managed browser reveal without cached state")
+	}
+	if got.status != "Showing the managed browser window..." {
+		t.Fatalf("status = %q, want managed browser reveal notice", got.status)
+	}
+
+	msg := cmd()
+	openMsg, ok := msg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want browserOpenMsg", msg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
+	}
+	if revealedSessionKey != "managed-demo" {
+		t.Fatalf("revealed session key = %q, want managed-demo", revealedSessionKey)
+	}
+}
+
 func TestVisibleCodexURLBasedElicitationBlocksWhenInteractiveLeaseOwnedElsewhere(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",

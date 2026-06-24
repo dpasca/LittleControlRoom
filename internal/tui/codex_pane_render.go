@@ -6,6 +6,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/brand"
+	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/uistyle"
@@ -744,8 +745,7 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 }
 
 func (m Model) managedBrowserCurrentPageLabel(snapshot codexapp.Snapshot) string {
-	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) && !state.Normalize().Hidden {
+	if m.managedBrowserCachedVisible(snapshot) {
 		return "Managed browser page: "
 	}
 	return "Background browser page: "
@@ -755,27 +755,59 @@ func (m Model) managedBrowserCurrentPageHint(snapshot codexapp.Snapshot) string 
 	if !m.managedBrowserCanReveal(snapshot) {
 		return ""
 	}
-	state, ok := m.cachedManagedBrowserState(snapshot.ManagedBrowserSessionKey)
-	if !ok || !state.Normalize().Hidden {
+	if m.managedBrowserCachedVisible(snapshot) {
 		return ""
 	}
 	return "Press ctrl+o to reveal the managed browser window for this same session."
 }
 
 func (m Model) managedBrowserCurrentPageFooterLabel(snapshot codexapp.Snapshot) string {
-	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) && !state.Normalize().Hidden {
+	if m.managedBrowserCachedVisible(snapshot) {
 		return "focus browser"
 	}
 	return "show browser"
 }
 
 func (m Model) managedBrowserCanReveal(snapshot codexapp.Snapshot) bool {
-	if strings.TrimSpace(snapshot.ManagedBrowserSessionKey) == "" || snapshot.BusyExternal || snapshot.Closed {
+	if !managedBrowserRevealTargetAttached(snapshot) {
 		return false
 	}
+	if _, ok := m.freshManagedBrowserState(snapshot); ok {
+		return true
+	}
+	return managedBrowserActivityCanReveal(embeddedProvider(snapshot), snapshot.BrowserActivity)
+}
+
+func managedBrowserRevealTargetAttached(snapshot codexapp.Snapshot) bool {
+	return strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" &&
+		!snapshot.BusyExternal &&
+		!snapshot.Closed &&
+		!snapshot.CurrentBrowserPageStale
+}
+
+func managedBrowserActivityCanReveal(provider codexapp.Provider, activity browserctl.SessionActivity) bool {
+	if provider.Normalized() != codexapp.ProviderCodex {
+		return false
+	}
+	switch activity.Normalize().State {
+	case browserctl.SessionActivityStateActive, browserctl.SessionActivityStateWaitingForUser:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) managedBrowserCachedVisible(snapshot codexapp.Snapshot) bool {
+	state, ok := m.freshManagedBrowserState(snapshot)
+	return ok && !state.Normalize().Hidden
+}
+
+func (m Model) freshManagedBrowserState(snapshot codexapp.Snapshot) (browserctl.ManagedPlaywrightState, bool) {
 	state, ok := m.cachedManagedBrowserState(snapshot.ManagedBrowserSessionKey)
-	return ok && managedBrowserStateFreshForUI(state, m.currentTime())
+	if !ok || !managedBrowserStateFreshForUI(state, m.currentTime()) {
+		return browserctl.ManagedPlaywrightState{}, false
+	}
+	return state.Normalize(), true
 }
 
 func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.Cmd {
