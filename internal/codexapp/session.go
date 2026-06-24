@@ -7,6 +7,7 @@ import (
 	"io"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/projectrun"
 	"os/exec"
 	"strings"
 	"sync"
@@ -65,6 +66,7 @@ type appServerSession struct {
 	managedBrowserSessionKey string
 	dataDir                  string
 	codexHomeOverlay         string
+	runtimeManager           *projectrun.Manager
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser

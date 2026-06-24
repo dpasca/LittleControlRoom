@@ -16,6 +16,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/projectrun"
 )
 
 const (
@@ -42,6 +43,7 @@ type claudeCodeSession struct {
 	preset           codexcli.Preset
 	notify           func()
 	playwrightPolicy browserctl.Policy
+	runtimeManager   *projectrun.Manager
 
 	mu                 sync.Mutex
 	claudeHome         string
@@ -138,6 +140,7 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		preset:           preset,
 		notify:           notify,
 		playwrightPolicy: req.PlaywrightPolicy.Normalize(),
+		runtimeManager:   req.RuntimeManager,
 		claudeHome:       claudeHome,
 		pendingModel:     strings.TrimSpace(req.PendingModel),
 		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
@@ -387,7 +390,8 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 		}
 	}
 
-	payload, err := buildClaudeStreamInput(input.Text)
+	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
+	payload, err := buildClaudeStreamInput(modelInput.Text)
 	if err != nil {
 		if startStream {
 			_ = terminateAppServerCommand(cmd)

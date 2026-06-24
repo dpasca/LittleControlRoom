@@ -56,6 +56,8 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 	s.mu.Unlock()
 	s.notify()
 
+	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
+
 	if goalToResume != nil {
 		goalCtx, goalCancel := context.WithTimeout(context.Background(), rpcTimeout)
 		err := s.reactivateThreadGoal(goalCtx, threadID, goalToResume)
@@ -82,14 +84,14 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 			s.appendSystemError(err)
 			return err
 		}
-		return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
+		return s.startTurnWithInput(ctx, threadID, modelInput, pendingModel, pendingReasoning, currentModel, currentReasoning)
 	}
 
 	if busy && activeTurnID != "" {
-		return s.submitBusyInput(ctx, threadID, activeTurnID, input, pendingModel, pendingReasoning, currentModel, currentReasoning, refreshBusyBeforeSteer)
+		return s.submitBusyInput(ctx, threadID, activeTurnID, modelInput, pendingModel, pendingReasoning, currentModel, currentReasoning, refreshBusyBeforeSteer)
 	}
 
-	return s.startTurnWithInput(ctx, threadID, input, pendingModel, pendingReasoning, currentModel, currentReasoning)
+	return s.startTurnWithInput(ctx, threadID, modelInput, pendingModel, pendingReasoning, currentModel, currentReasoning)
 }
 
 func (s *appServerSession) submitBusyInput(ctx context.Context, threadID, activeTurnID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string, refreshBusyBeforeSteer bool) error {

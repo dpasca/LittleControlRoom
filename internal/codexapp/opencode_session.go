@@ -20,6 +20,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/projectrun"
 )
 
 const (
@@ -42,6 +43,7 @@ type openCodeSession struct {
 	browserActivity          browserctl.SessionActivity
 	currentBrowserPageURL    string
 	openCodeConfigOverlay    string
+	runtimeManager           *projectrun.Manager
 
 	cmd      *exec.Cmd
 	http     *http.Client
@@ -287,6 +289,7 @@ func newOpenCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightPolicy:         policy,
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		browserActivity:          browserctl.DefaultSessionActivity(policy),
+		runtimeManager:           req.RuntimeManager,
 		http:                     newOpenCodeHTTPClient(),
 		agent:                    openCodeDefaultAgent,
 		cancel:                   cancel,
@@ -470,7 +473,8 @@ func (s *openCodeSession) SubmitInput(input Submission) error {
 	s.mu.Unlock()
 	s.notify()
 
-	payload, err := buildOpenCodePromptRequest(input, agent, model, reasoning)
+	modelInput := augmentSubmissionWithRuntimeContext(input, s.runtimeManager, s.projectPath)
+	payload, err := buildOpenCodePromptRequest(modelInput, agent, model, reasoning)
 	if err != nil {
 		s.appendSystemError(err)
 		return err

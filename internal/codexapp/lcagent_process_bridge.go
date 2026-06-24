@@ -75,37 +75,29 @@ func (b lcagentProcessBridge) run(request lcagentManagedProcessRequest) tools.To
 		if err != nil {
 			return tools.ToolResult{Success: false, Error: err.Error(), Command: command, CWD: strings.TrimSpace(request.CWD)}
 		}
-		replacedCount := 0
-		if !request.CreateNew {
-			matches := lcagentMatchingManagedProcesses(b.manager.SnapshotsForProject(projectPath), command, cwd)
-			if len(matches) > 0 {
-				if !request.ReplaceExisting {
-					return lcagentManagedProcessResult("Managed process already running", matches[0], true)
-				}
-				if err := b.stopMatchingManagedProcesses(projectPath, matches); err != nil {
-					return tools.ToolResult{Success: false, Error: err.Error(), Command: command, CWD: cwd}
-				}
-				replacedCount = len(matches)
-			}
-		}
-		prefix := "Started managed process"
-		if replacedCount > 0 {
-			prefix = fmt.Sprintf("Replaced %d matching managed process", replacedCount)
-			if replacedCount != 1 {
-				prefix += "es"
-			}
-		}
-		snapshot, err := b.manager.Start(projectrun.StartRequest{
-			ProjectPath: projectPath,
-			Command:     command,
-			CWD:         cwd,
-			Name:        strings.TrimSpace(request.Name),
-			CreateNew:   true,
+		result, err := b.manager.StartManaged(projectrun.StartRequest{
+			ProjectPath:     projectPath,
+			Command:         command,
+			CWD:             cwd,
+			Name:            strings.TrimSpace(request.Name),
+			CreateNew:       true,
+			ReuseMatching:   !request.CreateNew,
+			ReplaceExisting: request.ReplaceExisting,
 		})
 		if err != nil {
 			return tools.ToolResult{Success: false, Error: err.Error(), Command: command, CWD: cwd}
 		}
-		return lcagentManagedProcessResult(prefix, snapshot, true)
+		prefix := "Started managed process"
+		switch result.Disposition {
+		case projectrun.StartDispositionReused:
+			prefix = "Managed process already running"
+		case projectrun.StartDispositionReplaced:
+			prefix = fmt.Sprintf("Replaced %d matching managed process", result.ReplacedCount)
+			if result.ReplacedCount != 1 {
+				prefix += "es"
+			}
+		}
+		return lcagentManagedProcessResult(prefix, result.Snapshot, true)
 	case "list":
 		return lcagentManagedProcessListResult(b.manager.SnapshotsForProject(projectPath))
 	case "stop":
@@ -148,38 +140,6 @@ func lcagentNormalizeManagedProcessCWD(projectPath, cwd string) (string, error) 
 		return "", fmt.Errorf("runtime cwd must stay inside project: %s", cwd)
 	}
 	return cwd, nil
-}
-
-func lcagentMatchingManagedProcesses(snapshots []projectrun.Snapshot, command, cwd string) []projectrun.Snapshot {
-	command = strings.TrimSpace(command)
-	cwd = filepath.Clean(strings.TrimSpace(cwd))
-	matches := []projectrun.Snapshot{}
-	for _, snapshot := range snapshots {
-		if !snapshot.Running {
-			continue
-		}
-		snapshotCommand := strings.TrimSpace(snapshot.Command)
-		snapshotCWD := filepath.Clean(firstNonEmpty(strings.TrimSpace(snapshot.CWD), strings.TrimSpace(snapshot.ProjectPath)))
-		if snapshotCommand == command && snapshotCWD == cwd {
-			matches = append(matches, snapshot)
-		}
-	}
-	return matches
-}
-
-func (b lcagentProcessBridge) stopMatchingManagedProcesses(projectPath string, matches []projectrun.Snapshot) error {
-	for _, snapshot := range matches {
-		processID := strings.TrimSpace(snapshot.ID)
-		if processID == "" {
-			continue
-		}
-		if err := b.manager.StopProcess(projectPath, processID); err != nil {
-			if !errors.Is(err, projectrun.ErrNotRunning) {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (b lcagentProcessBridge) append(kind TranscriptKind, text string) {

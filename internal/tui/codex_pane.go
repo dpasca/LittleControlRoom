@@ -1123,11 +1123,11 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 	if provider == "" {
 		provider = codexapp.ProviderCodex
 	}
+	if req.RuntimeManager == nil {
+		req.RuntimeManager = m.runtimeManager
+	}
 	if provider == codexapp.ProviderLCAgent {
 		req.LCAgentProviderAccessCheck = true
-		if req.RuntimeManager == nil {
-			req.RuntimeManager = m.runtimeManager
-		}
 		if strings.TrimSpace(req.LCAgentPath) == "" {
 			req.LCAgentPath = m.lcagentPath()
 		}

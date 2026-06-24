@@ -32,6 +32,14 @@ var (
 	announcedURLPattern = regexp.MustCompile(`https?://[^\s"'<>]+`)
 )
 
+type StartDisposition string
+
+const (
+	StartDispositionStarted  StartDisposition = "started"
+	StartDispositionReused   StartDisposition = "reused"
+	StartDispositionReplaced StartDisposition = "replaced"
+)
+
 type Snapshot struct {
 	ID            string
 	Name          string
@@ -55,12 +63,20 @@ type Snapshot struct {
 }
 
 type StartRequest struct {
-	ProjectPath string
-	Command     string
-	CWD         string
-	ProcessID   string
-	Name        string
-	CreateNew   bool
+	ProjectPath     string
+	Command         string
+	CWD             string
+	ProcessID       string
+	Name            string
+	CreateNew       bool
+	ReuseMatching   bool
+	ReplaceExisting bool
+}
+
+type StartResult struct {
+	Snapshot      Snapshot
+	Disposition   StartDisposition
+	ReplacedCount int
 }
 
 type Manager struct {
@@ -325,6 +341,149 @@ func (m *Manager) Start(req StartRequest) (Snapshot, error) {
 	go m.waitForExit(runtimeKey, cmd)
 	m.refreshPorts()
 	return m.SnapshotProcess(projectPath, runtimeID)
+}
+
+func (m *Manager) StartManaged(req StartRequest) (StartResult, error) {
+	if m == nil {
+		return StartResult{}, errors.New("runtime manager unavailable")
+	}
+	projectPath := filepath.Clean(strings.TrimSpace(req.ProjectPath))
+	command := strings.TrimSpace(req.Command)
+	if projectPath == "" {
+		return StartResult{}, errors.New("project path is required")
+	}
+	if command == "" {
+		return StartResult{}, errors.New("run command is required")
+	}
+	cwd, err := normalizeRuntimeCWD(projectPath, req.CWD)
+	if err != nil {
+		return StartResult{}, err
+	}
+	if req.ReplaceExisting && req.CreateNew && !req.ReuseMatching {
+		return StartResult{}, errors.New("replace_existing cannot be combined with forced create_new")
+	}
+
+	unlock := m.opLocks.Lock("managed:" + projectPath + "\x00" + cwd + "\x00" + command)
+	defer unlock()
+
+	replacedCount := 0
+	if req.ReuseMatching || req.ReplaceExisting {
+		matches := m.MatchingRunning(projectPath, command, cwd)
+		if len(matches) > 0 {
+			if !req.ReplaceExisting {
+				return StartResult{
+					Snapshot:    matches[0],
+					Disposition: StartDispositionReused,
+				}, nil
+			}
+			if err := m.stopMatching(projectPath, matches); err != nil {
+				return StartResult{}, err
+			}
+			replacedCount = len(matches)
+			if err := m.waitForStoppedSnapshots(projectPath, matches, 3*time.Second); err != nil {
+				return StartResult{}, err
+			}
+		}
+	}
+
+	startReq := req
+	startReq.ProjectPath = projectPath
+	startReq.Command = command
+	startReq.CWD = cwd
+	startReq.ReuseMatching = false
+	startReq.ReplaceExisting = false
+	snapshot, err := m.Start(startReq)
+	if errors.Is(err, ErrAlreadyRunning) {
+		return StartResult{
+			Snapshot:    snapshot,
+			Disposition: StartDispositionReused,
+		}, nil
+	}
+	if err != nil {
+		return StartResult{}, err
+	}
+	disposition := StartDispositionStarted
+	if replacedCount > 0 {
+		disposition = StartDispositionReplaced
+	}
+	return StartResult{
+		Snapshot:      snapshot,
+		Disposition:   disposition,
+		ReplacedCount: replacedCount,
+	}, nil
+}
+
+func (m *Manager) MatchingRunning(projectPath, command, cwd string) []Snapshot {
+	if m == nil {
+		return nil
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	command = strings.TrimSpace(command)
+	cwd = filepath.Clean(strings.TrimSpace(cwd))
+	if projectPath == "" || command == "" || cwd == "" {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	portOwners := m.portOwnersLocked()
+	matches := []Snapshot{}
+	for _, runtime := range m.runtimes {
+		if runtime == nil || !runtime.running || runtime.projectPath != projectPath {
+			continue
+		}
+		runtimeCommand := strings.TrimSpace(runtime.command)
+		runtimeCWD := filepath.Clean(firstNonEmptyRuntimeString(runtime.cwd, runtime.projectPath))
+		if runtimeCommand == command && runtimeCWD == cwd {
+			matches = append(matches, snapshotFromRuntime(runtime, portOwners))
+		}
+	}
+	sortRuntimeSnapshots(matches)
+	return matches
+}
+
+func (m *Manager) stopMatching(projectPath string, matches []Snapshot) error {
+	var firstErr error
+	for _, snapshot := range matches {
+		processID := strings.TrimSpace(snapshot.ID)
+		if processID == "" {
+			continue
+		}
+		if err := m.StopProcess(projectPath, processID); err != nil && !errors.Is(err, ErrNotRunning) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (m *Manager) waitForStoppedSnapshots(projectPath string, snapshots []Snapshot, timeout time.Duration) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		running := false
+		for _, snapshot := range snapshots {
+			processID := strings.TrimSpace(snapshot.ID)
+			if processID == "" {
+				continue
+			}
+			current, err := m.SnapshotProcess(projectPath, processID)
+			if err != nil {
+				return err
+			}
+			if current.Running {
+				running = true
+				break
+			}
+		}
+		if !running {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("timed out waiting for matching runtimes to stop")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func normalizeRuntimeCWD(projectPath, cwd string) (string, error) {

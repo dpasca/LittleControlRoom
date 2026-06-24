@@ -170,22 +170,17 @@ func (m Model) startProjectRuntimeCmd(projectPath, command string) tea.Cmd {
 		if m.runtimeManager == nil {
 			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("runtime manager unavailable")}
 		}
-		snapshot, err := m.runtimeManager.Start(projectrun.StartRequest{
-			ProjectPath: projectPath,
-			Command:     command,
+		result, err := m.runtimeManager.StartManaged(projectrun.StartRequest{
+			ProjectPath:   projectPath,
+			Command:       command,
+			ReuseMatching: true,
 		})
-		if errors.Is(err, projectrun.ErrAlreadyRunning) {
-			return runtimeActionMsg{
-				projectPath: projectPath,
-				status:      runtimeStartStatus(snapshot),
-			}
-		}
 		if err != nil {
 			return runtimeActionMsg{projectPath: projectPath, err: fmt.Errorf("start runtime: %w", err)}
 		}
 		return runtimeActionMsg{
 			projectPath: projectPath,
-			status:      runtimeStartStatus(snapshot),
+			status:      runtimeStartResultStatus(result),
 		}
 	}
 }
@@ -238,6 +233,16 @@ func (m Model) restartProjectRuntimeCmd(projectPath, processID, command, cwd str
 
 func runtimeStartStatus(snapshot projectrun.Snapshot) string {
 	return runtimeActionStatus("Started runtime", snapshot)
+}
+
+func runtimeStartResultStatus(result projectrun.StartResult) string {
+	if result.Disposition == projectrun.StartDispositionReused {
+		return runtimeActionStatus("Runtime already running", result.Snapshot)
+	}
+	if result.Disposition == projectrun.StartDispositionReplaced {
+		return runtimeActionStatus("Restarted runtime", result.Snapshot)
+	}
+	return runtimeStartStatus(result.Snapshot)
 }
 
 func runtimeActionStatus(label string, snapshot projectrun.Snapshot) string {

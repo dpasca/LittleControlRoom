@@ -18,6 +18,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		playwrightMCPExpected:    shouldShadowPlaywrightSkill(policy),
 		managedBrowserSessionKey: strings.TrimSpace(req.ManagedBrowserSessionKey),
 		dataDir:                  strings.TrimSpace(req.AppDataDir),
+		runtimeManager:           req.RuntimeManager,
 		pending:                  make(map[string]chan rpcEnvelope),
 		exitCh:                   make(chan struct{}),
 		activeItems:              make(map[string]struct{}),

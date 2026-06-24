@@ -193,6 +193,149 @@ func TestStartCreateNewAllowsMultipleProcessesForSameProject(t *testing.T) {
 	t.Fatalf("stopping first process should leave second running: first=%+v second=%+v", firstSnapshot, secondSnapshot)
 }
 
+func TestStartManagedReusesMatchingProcessByDefault(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	first, err := manager.StartManaged(StartRequest{
+		ProjectPath:   dir,
+		Command:       "sleep 30",
+		Name:          "dev-server",
+		CreateNew:     true,
+		ReuseMatching: true,
+	})
+	if err != nil {
+		t.Fatalf("first StartManaged() error = %v", err)
+	}
+	if first.Disposition != StartDispositionStarted {
+		t.Fatalf("first disposition = %q, want started", first.Disposition)
+	}
+
+	second, err := manager.StartManaged(StartRequest{
+		ProjectPath:   dir,
+		Command:       "sleep 30",
+		Name:          "dev-server",
+		CreateNew:     true,
+		ReuseMatching: true,
+	})
+	if err != nil {
+		t.Fatalf("second StartManaged() error = %v", err)
+	}
+	if second.Disposition != StartDispositionReused {
+		t.Fatalf("second disposition = %q, want reused", second.Disposition)
+	}
+	if second.Snapshot.ID != first.Snapshot.ID {
+		t.Fatalf("reused ID = %q, want first ID %q", second.Snapshot.ID, first.Snapshot.ID)
+	}
+
+	running := 0
+	for _, snapshot := range manager.SnapshotsForProject(dir) {
+		if snapshot.Running {
+			running++
+		}
+	}
+	if running != 1 {
+		t.Fatalf("running snapshots = %d, want 1: %+v", running, manager.SnapshotsForProject(dir))
+	}
+}
+
+func TestStartManagedCreateNewCanForceDuplicateProcess(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	first, err := manager.StartManaged(StartRequest{
+		ProjectPath:   dir,
+		Command:       "sleep 30",
+		Name:          "dev-server",
+		CreateNew:     true,
+		ReuseMatching: true,
+	})
+	if err != nil {
+		t.Fatalf("first StartManaged() error = %v", err)
+	}
+
+	second, err := manager.StartManaged(StartRequest{
+		ProjectPath: dir,
+		Command:     "sleep 30",
+		Name:        "dev-server",
+		CreateNew:   true,
+	})
+	if err != nil {
+		t.Fatalf("second StartManaged() error = %v", err)
+	}
+	if second.Disposition != StartDispositionStarted {
+		t.Fatalf("second disposition = %q, want started", second.Disposition)
+	}
+	if second.Snapshot.ID == first.Snapshot.ID {
+		t.Fatalf("forced duplicate reused ID %q", second.Snapshot.ID)
+	}
+
+	running := 0
+	for _, snapshot := range manager.SnapshotsForProject(dir) {
+		if snapshot.Running {
+			running++
+		}
+	}
+	if running != 2 {
+		t.Fatalf("running snapshots = %d, want 2: %+v", running, manager.SnapshotsForProject(dir))
+	}
+}
+
+func TestStartManagedReplaceExistingMatchingProcess(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+
+	first, err := manager.StartManaged(StartRequest{
+		ProjectPath:   dir,
+		Command:       "sleep 30",
+		Name:          "dev-server",
+		CreateNew:     true,
+		ReuseMatching: true,
+	})
+	if err != nil {
+		t.Fatalf("first StartManaged() error = %v", err)
+	}
+
+	replacement, err := manager.StartManaged(StartRequest{
+		ProjectPath:     dir,
+		Command:         "sleep 30",
+		Name:            "dev-server",
+		CreateNew:       true,
+		ReuseMatching:   true,
+		ReplaceExisting: true,
+	})
+	if err != nil {
+		t.Fatalf("replacement StartManaged() error = %v", err)
+	}
+	if replacement.Disposition != StartDispositionReplaced {
+		t.Fatalf("replacement disposition = %q, want replaced", replacement.Disposition)
+	}
+	if replacement.ReplacedCount != 1 {
+		t.Fatalf("ReplacedCount = %d, want 1", replacement.ReplacedCount)
+	}
+	if replacement.Snapshot.ID == first.Snapshot.ID {
+		t.Fatalf("replacement reused old ID %q", replacement.Snapshot.ID)
+	}
+
+	firstSnapshot, err := manager.SnapshotProcess(dir, first.Snapshot.ID)
+	if err != nil {
+		t.Fatalf("first SnapshotProcess() error = %v", err)
+	}
+	if firstSnapshot.Running {
+		t.Fatalf("first process should be stopped after replace: %+v", firstSnapshot)
+	}
+	replacementSnapshot, err := manager.SnapshotProcess(dir, replacement.Snapshot.ID)
+	if err != nil {
+		t.Fatalf("replacement SnapshotProcess() error = %v", err)
+	}
+	if !replacementSnapshot.Running {
+		t.Fatalf("replacement should be running: %+v", replacementSnapshot)
+	}
+}
+
 func TestStartRunsCommandInRequestedCWD(t *testing.T) {
 	dir := t.TempDir()
 	frontend := filepath.Join(dir, "frontend")
