@@ -124,6 +124,8 @@ type appServerSession struct {
 	currentBrowserPageStale bool
 	browserToolCalls        map[string]browserToolCall
 	mcpServerStartup        map[string]mcpServerStartupState
+	mcpUsage                map[string]*mcpUsageStats
+	mcpUsageItemIDs         map[string]struct{}
 	playwrightMCPReady      bool
 	runtimeMCPReady         bool
 	entries                 []transcriptEntry

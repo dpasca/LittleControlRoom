@@ -292,6 +292,10 @@ func TestHydrateResumedThreadTracksCurrentPlaywrightPageURL(t *testing.T) {
 	if !snapshot.CurrentBrowserPageStale {
 		t.Fatalf("current browser page should be marked stale after resume")
 	}
+	playwright := requireMCPUsage(t, snapshot, "playwright")
+	if playwright.ToolCalls != 1 || playwright.LastTool != "browser_click" || mcpToolCalls(playwright, "browser_click") != 1 {
+		t.Fatalf("resumed Playwright MCP usage = %#v, want one browser_click call", playwright)
+	}
 }
 
 func mustGeneratedImageTestPNG(t *testing.T) []byte {
@@ -313,6 +317,26 @@ func jsonStringRaw(t *testing.T, text string) json.RawMessage {
 		t.Fatalf("marshal json string: %v", err)
 	}
 	return raw
+}
+
+func requireMCPUsage(t *testing.T, snapshot Snapshot, serverName string) MCPUsageSnapshot {
+	t.Helper()
+	for _, usage := range snapshot.MCPUsage {
+		if usage.ServerName == serverName {
+			return usage
+		}
+	}
+	t.Fatalf("MCP usage for %q not found in %#v", serverName, snapshot.MCPUsage)
+	return MCPUsageSnapshot{}
+}
+
+func mcpToolCalls(usage MCPUsageSnapshot, toolName string) int {
+	for _, tool := range usage.Tools {
+		if tool.Name == toolName {
+			return tool.Calls
+		}
+	}
+	return 0
 }
 
 func TestHydrateResumedThreadMarksActiveTurnBusy(t *testing.T) {
@@ -1197,6 +1221,52 @@ func TestHandleItemCompletedUpdatesToolStatus(t *testing.T) {
 	}
 	if text != "Tool request_user_input [completed]" {
 		t.Fatalf("tool text = %q, want completed status", text)
+	}
+}
+
+func TestAppServerSessionTracksMCPUsage(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.handleItemStarted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser",
+			"type": "mcpToolCall",
+			"server": "playwright",
+			"tool": "browser_navigate",
+			"status": "inProgress"
+		}
+	}`))
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser",
+			"type": "mcpToolCall",
+			"server": "playwright",
+			"tool": "browser_navigate",
+			"status": "completed"
+		}
+	}`))
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_runtime",
+			"type": "mcpToolCall",
+			"server": "lcr_runtime",
+			"tool": "process_list",
+			"status": "completed"
+		}
+	}`))
+
+	snapshot := s.Snapshot()
+	playwright := requireMCPUsage(t, snapshot, "playwright")
+	if playwright.ToolCalls != 1 || playwright.LastTool != "browser_navigate" || mcpToolCalls(playwright, "browser_navigate") != 1 {
+		t.Fatalf("playwright MCP usage = %#v, want one browser_navigate call", playwright)
+	}
+	runtime := requireMCPUsage(t, snapshot, "lcr_runtime")
+	if runtime.ToolCalls != 1 || runtime.LastTool != "process_list" || mcpToolCalls(runtime, "process_list") != 1 {
+		t.Fatalf("runtime MCP usage = %#v, want one process_list call", runtime)
 	}
 }
 

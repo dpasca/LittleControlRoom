@@ -155,6 +155,7 @@ func TestEmbeddedSidebarOmitsOptionalSectionsWithoutState(t *testing.T) {
 		"AI Engineer",
 		"Session",
 		"Browser",
+		"Used MCPs",
 		"Recent Activity",
 		"Goal",
 		"Ready to work",
@@ -162,6 +163,66 @@ func TestEmbeddedSidebarOmitsOptionalSectionsWithoutState(t *testing.T) {
 		if strings.Contains(rendered, absent) {
 			t.Fatalf("sidebar should omit optional %q without relevant state:\n%s", absent, rendered)
 		}
+	}
+}
+
+func TestEmbeddedSidebarShowsUsedMCPsAndDetail(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.MCPUsage = []codexapp.MCPUsageSnapshot{
+		{
+			ServerName: "playwright",
+			ToolCalls:  2,
+			LastTool:   "browser_click",
+			Tools: []codexapp.MCPToolUsageSnapshot{
+				{Name: "browser_click", Calls: 1},
+				{Name: "browser_navigate", Calls: 1},
+			},
+		},
+		{
+			ServerName: "lcr_runtime",
+			ToolCalls:  1,
+			LastTool:   "process_list",
+			Tools: []codexapp.MCPToolUsageSnapshot{
+				{Name: "process_list", Calls: 1},
+			},
+		},
+	}
+
+	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarMCPSection(snapshot, 46), "\n"))
+	for _, want := range []string{
+		"Used MCPs",
+		"playwright 2 calls | last browser_click",
+		"lcr_runtime 1 call | last process_list",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("MCP sidebar section missing %q:\n%s", want, rendered)
+		}
+	}
+
+	detail := ansi.Strip(strings.Join(embeddedSidebarMCPDetailRows(snapshot, 46), "\n"))
+	for _, want := range []string{
+		"playwright 2 calls | last browser_click",
+		"- browser_click 1 call",
+		"- browser_navigate 1 call",
+		"lcr_runtime 1 call | last process_list",
+		"- process_list 1 call",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("MCP detail rows missing %q:\n%s", want, detail)
+		}
+	}
+	assertSidebarLinesWithinWidth(t, rendered, 46)
+	assertSidebarLinesWithinWidth(t, detail, 46)
+
+	m.codexSnapshots[projectPath] = snapshot
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.codexSidebarSelected = embeddedCodexSidebarMCP
+	updated, _ := m.updateCodexSidebarMode(snapshot, tea.KeyMsg{Type: tea.KeyEnter})
+	got := normalizeUpdateModel(updated)
+	if got.embeddedSidebarDetail == nil || got.embeddedSidebarDetail.Section != embeddedCodexSidebarMCP {
+		t.Fatalf("Enter should open Used MCPs detail dialog, got %#v", got.embeddedSidebarDetail)
 	}
 }
 

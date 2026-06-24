@@ -115,6 +115,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		ServiceTier:              s.serviceTier,
 		PendingModel:             s.pendingModel,
 		PendingReasoning:         s.pendingReasoning,
+		MCPUsage:                 exportedMCPUsageSnapshot(s.mcpUsage),
 		TokenUsage:               tokenUsage,
 		UsageWindows:             usageWindows,
 		Goal:                     cloneThreadGoal(s.goal),

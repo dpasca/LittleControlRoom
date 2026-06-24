@@ -36,6 +36,7 @@ const (
 	embeddedCodexSidebarQuality
 	embeddedCodexSidebarVision
 	embeddedCodexSidebarBrowser
+	embeddedCodexSidebarMCP
 	embeddedCodexSidebarDiff
 	embeddedCodexSidebarProcesses
 	embeddedCodexSidebarSummary
@@ -169,6 +170,7 @@ func (m Model) embeddedSidebarVisibleSections(snapshot codexapp.Snapshot) []embe
 		embeddedCodexSidebarQuality,
 		embeddedCodexSidebarVision,
 		embeddedCodexSidebarBrowser,
+		embeddedCodexSidebarMCP,
 		embeddedCodexSidebarDiff,
 		embeddedCodexSidebarProcesses,
 		embeddedCodexSidebarSummary,
@@ -192,6 +194,8 @@ func (m Model) embeddedSidebarSectionAvailable(snapshot codexapp.Snapshot, proje
 		return len(embeddedSidebarVisionSummaryRows(snapshot, 1)) > 0
 	case embeddedCodexSidebarBrowser:
 		return len(m.embeddedSidebarBrowserRows(snapshot, 1)) > 0
+	case embeddedCodexSidebarMCP:
+		return len(embeddedSidebarMCPRows(snapshot, 1, 1)) > 0
 	case embeddedCodexSidebarDiff, embeddedCodexSidebarProcesses:
 		return normalizeProjectPath(projectPath) != ""
 	case embeddedCodexSidebarSummary:
@@ -271,6 +275,8 @@ func embeddedSidebarSectionTitle(section embeddedCodexSidebarSection) string {
 		return "Vision"
 	case embeddedCodexSidebarBrowser:
 		return "Browser"
+	case embeddedCodexSidebarMCP:
+		return "Used MCPs"
 	case embeddedCodexSidebarDiff:
 		return "Diff Summary"
 	case embeddedCodexSidebarProcesses:
@@ -479,6 +485,8 @@ func (m Model) embeddedSidebarDetailRows(section embeddedCodexSidebarSection, sn
 		return embeddedSidebarVisionDetailRows(snapshot, width)
 	case embeddedCodexSidebarBrowser:
 		return m.embeddedSidebarBrowserDetailRows(snapshot, width)
+	case embeddedCodexSidebarMCP:
+		return embeddedSidebarMCPDetailRows(snapshot, width)
 	case embeddedCodexSidebarProcesses:
 		rows := m.embeddedSidebarProcessDetailRows(projectPath, width, 0)
 		if len(rows) == 0 {
@@ -757,6 +765,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarQualitySection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarVisionSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarMCPSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarDiffSection(projectPath, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarProcessSection(projectPath, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSummarySection(snapshot, contentWidth))
@@ -1282,6 +1291,88 @@ func embeddedSidebarBrowserRelevant(snapshot codexapp.Snapshot) bool {
 	}
 	return strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != "" ||
 		strings.TrimSpace(snapshot.CurrentBrowserPageURL) != ""
+}
+
+func (m Model) renderEmbeddedSidebarMCPSection(snapshot codexapp.Snapshot, width int) []string {
+	rows := embeddedSidebarMCPRows(snapshot, width, 3)
+	if len(rows) == 0 {
+		return nil
+	}
+	return append([]string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarMCP, "Used MCPs", width)}, rows...)
+}
+
+func embeddedSidebarMCPRows(snapshot codexapp.Snapshot, width, limit int) []string {
+	usage := filteredMCPUsage(snapshot.MCPUsage)
+	if len(usage) == 0 || width <= 0 {
+		return nil
+	}
+	if limit <= 0 || limit > len(usage) {
+		limit = len(usage)
+	}
+	rows := make([]string, 0, limit+1)
+	for _, item := range usage[:limit] {
+		row := embeddedSidebarFieldRow(item.ServerName, embeddedSidebarMCPUsageSummary(item, true), detailValueStyle, width)
+		if row != "" {
+			rows = append(rows, row)
+		}
+	}
+	if remaining := len(usage) - limit; remaining > 0 {
+		rows = append(rows, embeddedSidebarMutedStyle.Render(fitLine(fmt.Sprintf("+%d more", remaining), width)))
+	}
+	return rows
+}
+
+func embeddedSidebarMCPDetailRows(snapshot codexapp.Snapshot, width int) []string {
+	usage := filteredMCPUsage(snapshot.MCPUsage)
+	if len(usage) == 0 || width <= 0 {
+		return nil
+	}
+	rows := []string{}
+	for _, item := range usage {
+		rows = append(rows, embeddedSidebarWrappedFieldRows(item.ServerName, embeddedSidebarMCPUsageSummary(item, true), detailValueStyle, width, 0)...)
+		for _, tool := range item.Tools {
+			if strings.TrimSpace(tool.Name) == "" || tool.Calls <= 0 {
+				continue
+			}
+			rows = append(rows, embeddedSidebarMCPToolRow(tool, width))
+		}
+	}
+	return rows
+}
+
+func filteredMCPUsage(usage []codexapp.MCPUsageSnapshot) []codexapp.MCPUsageSnapshot {
+	if len(usage) == 0 {
+		return nil
+	}
+	filtered := make([]codexapp.MCPUsageSnapshot, 0, len(usage))
+	for _, item := range usage {
+		item.ServerName = strings.TrimSpace(item.ServerName)
+		item.LastTool = strings.TrimSpace(item.LastTool)
+		if item.ServerName == "" || item.ToolCalls <= 0 {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func embeddedSidebarMCPUsageSummary(usage codexapp.MCPUsageSnapshot, includeLast bool) string {
+	parts := []string{embeddedSidebarCountLabel(usage.ToolCalls, "call")}
+	if includeLast {
+		if lastTool := strings.TrimSpace(usage.LastTool); lastTool != "" {
+			parts = append(parts, "last "+lastTool)
+		}
+	}
+	return strings.Join(parts, " | ")
+}
+
+func embeddedSidebarMCPToolRow(tool codexapp.MCPToolUsageSnapshot, width int) string {
+	name := strings.TrimSpace(tool.Name)
+	if name == "" || tool.Calls <= 0 || width <= 0 {
+		return ""
+	}
+	text := "- " + name + " " + embeddedSidebarCountLabel(tool.Calls, "call")
+	return embeddedSidebarMutedStyle.Render(fitLine(text, width))
 }
 
 func (m Model) renderEmbeddedSidebarSummarySection(snapshot codexapp.Snapshot, width int) []string {

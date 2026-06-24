@@ -482,6 +482,18 @@ type QualityPlanPhaseSnapshot struct {
 	Notes         string
 }
 
+type MCPToolUsageSnapshot struct {
+	Name  string
+	Calls int
+}
+
+type MCPUsageSnapshot struct {
+	ServerName string
+	ToolCalls  int
+	LastTool   string
+	Tools      []MCPToolUsageSnapshot
+}
+
 type Snapshot struct {
 	Provider                    Provider
 	ProjectPath                 string
@@ -536,6 +548,7 @@ type Snapshot struct {
 	ServiceTier                 string
 	PendingModel                string
 	PendingReasoning            string
+	MCPUsage                    []MCPUsageSnapshot
 	TokenUsage                  *TokenUsageSnapshot
 	UsageWindows                []UsageWindowSnapshot
 	Goal                        *ThreadGoal

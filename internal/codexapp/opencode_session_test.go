@@ -685,6 +685,33 @@ func TestOpenCodeSessionTracksPlaywrightBrowserActivityFromLiveToolPart(t *testi
 	if got, want := snapshot.CurrentBrowserPageURL, "https://example.com/"; got != want {
 		t.Fatalf("snapshot.CurrentBrowserPageURL = %q, want %q", got, want)
 	}
+	playwright := requireMCPUsage(t, snapshot, "playwright")
+	if playwright.ToolCalls != 1 || playwright.LastTool != "browser_navigate" || mcpToolCalls(playwright, "browser_navigate") != 1 {
+		t.Fatalf("snapshot MCP usage = %#v, want one browser_navigate call", playwright)
+	}
+
+	session.handleEventData(`{
+		"type":"message.part.updated",
+		"properties":{
+			"part":{
+				"id":"part_tool_1",
+				"sessionID":"ses_test",
+				"messageID":"msg_tool_1",
+				"type":"tool",
+				"tool":"playwright_browser_navigate",
+				"state":{
+					"status":"completed",
+					"input":{"url":"https://example.com"},
+					"output":"Page URL: https://example.com/\nPage Title: Example Domain"
+				}
+			}
+		}
+	}`)
+	snapshot = session.Snapshot()
+	playwright = requireMCPUsage(t, snapshot, "playwright")
+	if playwright.ToolCalls != 1 {
+		t.Fatalf("duplicate OpenCode tool update should not double count MCP usage: %#v", playwright)
+	}
 
 	session.handleEventData(`{"type":"session.idle","properties":{"sessionID":"ses_test"}}`)
 	snapshot = session.Snapshot()

@@ -63,6 +63,8 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 	currentBrowserPageURL := ""
 	for _, turn := range thread.Turns {
 		for _, item := range turn.Items {
+			itemID := strings.TrimSpace(decodeRawString(item["id"]))
+			s.recordCodexMCPToolUsageLocked(itemID, item)
 			if call, ok := s.browserToolCallForItem(item); ok {
 				if pageURL := extractPlaywrightPageURL(item["result"]); pageURL != "" {
 					currentBrowserPageURL = pageURL

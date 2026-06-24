@@ -950,6 +950,7 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 		s.markItemActiveLocked(msg.TurnID, itemID)
 	}
 	if itemType == "mcpToolCall" {
+		s.recordCodexMCPToolUsageLocked(itemID, msg.Item)
 		if call, ok := s.browserToolCallForItem(msg.Item); ok {
 			if s.browserToolCalls == nil {
 				s.browserToolCalls = make(map[string]browserToolCall)
@@ -1013,6 +1014,7 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 		}
 	}
 	if itemType == "mcpToolCall" {
+		s.recordCodexMCPToolUsageLocked(itemID, msg.Item)
 		if call, ok := s.browserToolCallForItem(msg.Item); ok {
 			if s.browserToolCalls == nil {
 				s.browserToolCalls = make(map[string]browserToolCall)

@@ -83,6 +83,8 @@ type openCodeSession struct {
 	modelOptionsByKey  map[string]ModelOption
 	pendingApproval    *ApprovalRequest
 	pendingToolInput   *ToolInputRequest
+	mcpUsage           map[string]*mcpUsageStats
+	mcpUsageItemIDs    map[string]struct{}
 	transcriptRevision uint64
 	transcriptCache    transcriptExportCache
 }
@@ -379,6 +381,7 @@ func (s *openCodeSession) stateSnapshotLocked() Snapshot {
 		ReasoningEffort:          s.reasoningEffort,
 		PendingModel:             s.pendingModel,
 		PendingReasoning:         s.pendingReasoning,
+		MCPUsage:                 exportedMCPUsageSnapshot(s.mcpUsage),
 		TokenUsage:               exportedTokenUsageSnapshot(s.tokenUsage),
 	}
 }
@@ -1305,6 +1308,14 @@ func (s *openCodeSession) applyPartLocked(role string, raw json.RawMessage, repl
 	if partID != "" {
 		s.partKind[partID] = kind
 		s.partType[partID] = partType
+	}
+	if strings.EqualFold(partType, "tool") {
+		var payload struct {
+			Tool string `json:"tool"`
+		}
+		if err := json.Unmarshal(raw, &payload); err == nil {
+			s.recordOpenCodeMCPToolUsageLocked(partID, payload.Tool)
+		}
 	}
 	s.applyPlaywrightToolStateLocked(raw)
 	if strings.TrimSpace(text) == "" {
