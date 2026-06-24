@@ -165,6 +165,27 @@ func TestEmbeddedSidebarOmitsOptionalSectionsWithoutState(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarSelectionSkipsHiddenBrowserSection(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	m.codexPanelFocus = embeddedCodexFocusSidebar
+	m.codexSidebarSelected = embeddedCodexSidebarProcesses
+
+	sections := m.embeddedSidebarVisibleSections(snapshot)
+	for _, section := range sections {
+		if section == embeddedCodexSidebarBrowser {
+			t.Fatalf("visible selection sections include hidden Browser: %#v", sections)
+		}
+	}
+
+	updated, _ := m.updateCodexSidebarMode(snapshot, tea.KeyMsg{Type: tea.KeyDown})
+	got := normalizeUpdateModel(updated)
+	if got.codexSidebarSelected != embeddedCodexSidebarDiff {
+		t.Fatalf("down from Active Processes selected %s, want Diff Summary", embeddedSidebarSectionTitle(got.codexSidebarSelected))
+	}
+}
+
 func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
