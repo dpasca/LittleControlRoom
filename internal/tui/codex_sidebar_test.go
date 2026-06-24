@@ -239,6 +239,28 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSidebarBrowserHintHighlightsCtrlO(t *testing.T) {
+	projectPath := "/tmp/lcr-sidebar-demo"
+	m := testEmbeddedSidebarModel(projectPath)
+	snapshot := testEmbeddedSidebarSnapshot(projectPath)
+	snapshot.BrowserActivity = browserctl.SessionActivity{
+		Policy:     settingsAutomaticPlaywrightPolicy,
+		State:      browserctl.SessionActivityStateWaitingForUser,
+		ServerName: "playwright",
+		ToolName:   "browser_navigate",
+	}
+	snapshot.CurrentBrowserPageURL = "https://example.com/login?state=demo"
+
+	rendered := strings.Join(m.renderEmbeddedSidebarBrowserSection(snapshot, 46), "\n")
+	if stripped := ansi.Strip(rendered); !strings.Contains(stripped, "ctrl+o reveals browser") {
+		t.Fatalf("browser sidebar should advertise ctrl+o reveal hint:\n%s", stripped)
+	}
+	expectedAction := footerNavAction("ctrl+o", "reveals browser").render()
+	if !strings.Contains(rendered, expectedAction) {
+		t.Fatalf("browser sidebar should render ctrl+o with footer action styling:\n%s", rendered)
+	}
+}
+
 func TestEmbeddedSidebarSummaryPreviewWrapsAndClampsProjectListSummary(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
