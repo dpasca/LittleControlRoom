@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
+	"lcroom/internal/model"
 	"lcroom/internal/service"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -40,6 +42,8 @@ type newProjectDialogState struct {
 	PathManuallyEdited     bool
 	PathSuggestionsPending bool
 	PathSuggestionSeq      int64
+	PathSuggestionItems    []newProjectPathSuggestion
+	PathSuggestionHidden   int
 	Preview                newProjectPreview
 	PreviewPending         bool
 	PreviewSeq             int64
@@ -62,8 +66,8 @@ type newProjectPreviewMsg struct {
 }
 
 type newProjectPathSuggestionsMsg struct {
-	seq         int64
-	suggestions []string
+	seq    int64
+	result newProjectPathSuggestionsResult
 }
 
 type newProjectPreview struct {
@@ -75,6 +79,33 @@ type newProjectPreview struct {
 	ExistingDir         bool
 	NameDerivedFromPath bool
 	Error               string
+}
+
+type newProjectPathSuggestionSource string
+
+const (
+	newProjectPathSuggestionRecent        newProjectPathSuggestionSource = "recent"
+	newProjectPathSuggestionScope         newProjectPathSuggestionSource = "scope"
+	newProjectPathSuggestionProjectParent newProjectPathSuggestionSource = "project"
+	newProjectPathSuggestionFolder        newProjectPathSuggestionSource = "folder"
+)
+
+type newProjectPathSuggestion struct {
+	Path   string
+	Source newProjectPathSuggestionSource
+}
+
+type newProjectPathSuggestionsResult struct {
+	Suggestions []newProjectPathSuggestion
+	HiddenCount int
+}
+
+type newProjectPathSuggestionContext struct {
+	RecentParents   []string
+	IncludePaths    []string
+	Projects        []model.ProjectSummary
+	PrivacyMode     bool
+	PrivacyPatterns []string
 }
 
 func (m Model) loadRecentProjectParentsCmd() tea.Cmd {
@@ -136,18 +167,23 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				dialog.PathInput.SetValue(suggestion)
 				dialog.PathInput.CursorEnd()
 				dialog.PathInput.SetSuggestions(nil)
+				dialog.PathSuggestionItems = nil
+				dialog.PathSuggestionHidden = 0
 				dialog.PathManuallyEdited = true
 				m.status = fmt.Sprintf("Using path suggestion %d", index+1)
 				return m, batchCmds(m.refreshNewProjectPreview(), m.refreshNewProjectPathSuggestions())
 			}
 		}
-		if index >= 0 && index < len(m.newProjectRecentParents) && index < newProjectRecentPathLimit {
-			dialog.PathInput.SetValue(m.newProjectRecentParents[index])
+		recentParents := m.visibleNewProjectRecentParents()
+		if index >= 0 && index < len(recentParents) && index < newProjectRecentPathLimit {
+			dialog.PathInput.SetValue(recentParents[index])
 			dialog.PathInput.CursorEnd()
 			dialog.PathInput.SetSuggestions(nil)
+			dialog.PathSuggestionItems = nil
+			dialog.PathSuggestionHidden = 0
 			dialog.PathManuallyEdited = false
 			m.status = fmt.Sprintf("Using recent parent path %d", index+1)
-			return m, m.refreshNewProjectPreview()
+			return m, batchCmds(m.refreshNewProjectPreview(), m.refreshNewProjectPathSuggestions())
 		}
 	}
 
@@ -318,8 +354,8 @@ func (s newProjectDialogState) explicitProvider() codexapp.Provider {
 }
 
 func (m Model) defaultNewProjectParentPath() string {
-	if len(m.newProjectRecentParents) > 0 {
-		return m.newProjectRecentParents[0]
+	if recentParents := m.visibleNewProjectRecentParents(); len(recentParents) > 0 {
+		return recentParents[0]
 	}
 	if m.homeDirFn != nil {
 		if home, err := m.homeDirFn(); err == nil && strings.TrimSpace(home) != "" {
@@ -327,6 +363,23 @@ func (m Model) defaultNewProjectParentPath() string {
 		}
 	}
 	return "."
+}
+
+func (m Model) visibleNewProjectRecentParents() []string {
+	if len(m.newProjectRecentParents) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m.newProjectRecentParents))
+	for _, path := range m.newProjectRecentParents {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		if m.privacyMode && newProjectPathHiddenByPrivacy(path, nil, m.privacyPatterns) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
 }
 
 func newNewProjectTextInput(value string, charLimit int) textinput.Model {
@@ -401,6 +454,8 @@ func (m *Model) refreshNewProjectPathSuggestions() tea.Cmd {
 	rawPath := dialog.PathInput.Value()
 	if strings.TrimSpace(trimNewProjectWrappingQuotes(rawPath)) == "" {
 		dialog.PathInput.SetSuggestions(nil)
+		dialog.PathSuggestionItems = nil
+		dialog.PathSuggestionHidden = 0
 		dialog.PathSuggestionsPending = false
 		return nil
 	}
@@ -409,10 +464,18 @@ func (m *Model) refreshNewProjectPathSuggestions() tea.Cmd {
 }
 
 func (m Model) loadNewProjectPathSuggestionsCmd(seq int64, rawPath string) tea.Cmd {
+	settings := m.currentSettingsBaseline()
+	ctx := newProjectPathSuggestionContext{
+		RecentParents:   append([]string(nil), m.newProjectRecentParents...),
+		IncludePaths:    append([]string(nil), settings.IncludePaths...),
+		Projects:        append([]model.ProjectSummary(nil), m.allProjects...),
+		PrivacyMode:     m.privacyMode,
+		PrivacyPatterns: append([]string(nil), m.privacyPatterns...),
+	}
 	return func() tea.Msg {
 		return newProjectPathSuggestionsMsg{
-			seq:         seq,
-			suggestions: newProjectExistingPathSuggestions(m.homeDirFn, rawPath, newProjectPathSuggestionLimit),
+			seq:    seq,
+			result: newProjectPathSuggestionItems(m.homeDirFn, rawPath, newProjectPathSuggestionLimit, ctx),
 		}
 	}
 }
@@ -487,45 +550,170 @@ func inspectNewProjectPreviewPath(preview newProjectPreview) newProjectPreview {
 }
 
 func newProjectExistingPathSuggestions(homeDirFn func() (string, error), raw string, limit int) []string {
-	if limit <= 0 {
-		return nil
-	}
+	result := newProjectPathSuggestionItems(homeDirFn, raw, limit, newProjectPathSuggestionContext{})
+	return newProjectPathSuggestionStrings(result.Suggestions)
+}
+
+func newProjectPathSuggestionItems(homeDirFn func() (string, error), raw string, limit int, ctx newProjectPathSuggestionContext) newProjectPathSuggestionsResult {
 	displayPath := trimNewProjectWrappingQuotes(strings.TrimSpace(raw))
-	if displayPath == "" {
-		return nil
-	}
-	inspectPath := displayPath
-	if expanded := expandNewProjectHomePath(homeDirFn, inspectPath); expanded != "" {
-		inspectPath = expanded
-	}
-	if absPath, err := filepath.Abs(inspectPath); err == nil {
-		inspectPath = absPath
+	if limit <= 0 || displayPath == "" {
+		return newProjectPathSuggestionsResult{}
 	}
 
-	if newProjectPathHasTrailingSeparator(displayPath) || newProjectPathIsDir(inspectPath) {
-		if newProjectPathIsDir(inspectPath) {
-			return []string{ensureNewProjectTrailingSeparator(displayPath)}
-		}
+	inspectPath := newProjectInspectPath(homeDirFn, displayPath)
+	collector := newNewProjectPathSuggestionCollector(homeDirFn, displayPath, limit, ctx)
+	collector.addSourcePaths(ctx.RecentParents, newProjectPathSuggestionRecent)
+	collector.addSourcePaths(ctx.IncludePaths, newProjectPathSuggestionScope)
+	collector.addProjectParentPaths(ctx.Projects)
+	collector.addFilesystemPaths(inspectPath)
+	return collector.result()
+}
+
+func newProjectPathSuggestionStrings(suggestions []newProjectPathSuggestion) []string {
+	if len(suggestions) == 0 {
 		return nil
+	}
+	out := make([]string, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		if path := strings.TrimSpace(suggestion.Path); path != "" {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+type newProjectPathSuggestionCollector struct {
+	homeDirFn   func() (string, error)
+	displayPath string
+	limit       int
+	ctx         newProjectPathSuggestionContext
+	seen        map[string]struct{}
+	out         []newProjectPathSuggestion
+	hidden      int
+}
+
+func newNewProjectPathSuggestionCollector(homeDirFn func() (string, error), displayPath string, limit int, ctx newProjectPathSuggestionContext) *newProjectPathSuggestionCollector {
+	return &newProjectPathSuggestionCollector{
+		homeDirFn:   homeDirFn,
+		displayPath: trimNewProjectWrappingQuotes(strings.TrimSpace(displayPath)),
+		limit:       limit,
+		ctx:         ctx,
+		seen:        make(map[string]struct{}),
+	}
+}
+
+func (c *newProjectPathSuggestionCollector) result() newProjectPathSuggestionsResult {
+	return newProjectPathSuggestionsResult{
+		Suggestions: append([]newProjectPathSuggestion(nil), c.out...),
+		HiddenCount: c.hidden,
+	}
+}
+
+func (c *newProjectPathSuggestionCollector) addSourcePaths(paths []string, source newProjectPathSuggestionSource) {
+	for _, path := range paths {
+		c.addSourcePath(path, source, nil)
+	}
+}
+
+func (c *newProjectPathSuggestionCollector) addProjectParentPaths(projects []model.ProjectSummary) {
+	for _, project := range projects {
+		projectPath := strings.TrimSpace(project.Path)
+		if projectPath == "" || project.Forgotten || project.Archived || !projectSummaryActive(project) {
+			continue
+		}
+		parentPath := filepath.Dir(filepath.Clean(projectPath))
+		c.addSourcePath(parentPath, newProjectPathSuggestionProjectParent, []string{
+			project.Name,
+			project.Path,
+			filepath.Base(project.Path),
+		})
+	}
+}
+
+func (c *newProjectPathSuggestionCollector) addSourcePath(rawPath string, source newProjectPathSuggestionSource, privacyValues []string) {
+	inspectPath := newProjectInspectPath(c.homeDirFn, rawPath)
+	if strings.TrimSpace(inspectPath) == "" {
+		return
+	}
+	displayPath := newProjectDisplayPathForCandidate(c.homeDirFn, c.displayPath, inspectPath)
+	c.addDisplayPath(displayPath, inspectPath, source, privacyValues, true)
+}
+
+func (c *newProjectPathSuggestionCollector) addFilesystemPaths(inspectPath string) {
+	if strings.TrimSpace(inspectPath) == "" {
+		return
+	}
+	if c.ctx.PrivacyMode && newProjectPathHiddenByPrivacy(inspectPath, nil, c.ctx.PrivacyPatterns) {
+		c.hidden++
+		return
+	}
+
+	if newProjectPathHasTrailingSeparator(c.displayPath) || newProjectPathIsDir(inspectPath) {
+		displayPrefix := ensureNewProjectTrailingSeparator(c.displayPath)
+		children := newProjectChildDirectorySuggestions(filepath.Clean(inspectPath), displayPrefix, "")
+		before := len(c.out)
+		for _, child := range children {
+			c.addDisplayPath(child, newProjectInspectPath(c.homeDirFn, child), newProjectPathSuggestionFolder, nil, false)
+		}
+		if len(c.out) == before && newProjectPathIsDir(inspectPath) {
+			c.addDisplayPath(ensureNewProjectTrailingSeparator(c.displayPath), inspectPath, newProjectPathSuggestionFolder, nil, false)
+		}
+		return
 	}
 
 	dirPath := filepath.Dir(filepath.Clean(inspectPath))
+	if c.ctx.PrivacyMode && newProjectPathHiddenByPrivacy(dirPath, nil, c.ctx.PrivacyPatterns) {
+		c.hidden++
+		return
+	}
 	namePrefix := filepath.Base(inspectPath)
-	displayPrefix, displayNamePrefix := splitNewProjectDisplayPath(displayPath)
+	displayPrefix, displayNamePrefix := splitNewProjectDisplayPath(c.displayPath)
 	if displayNamePrefix != "" {
 		namePrefix = displayNamePrefix
 	}
-	return newProjectChildDirectorySuggestions(dirPath, displayPrefix, namePrefix, limit)
+	for _, child := range newProjectChildDirectorySuggestions(dirPath, displayPrefix, namePrefix) {
+		c.addDisplayPath(child, newProjectInspectPath(c.homeDirFn, child), newProjectPathSuggestionFolder, nil, false)
+	}
 }
 
-func newProjectChildDirectorySuggestions(dirPath, displayPrefix, namePrefix string, limit int) []string {
+func (c *newProjectPathSuggestionCollector) addDisplayPath(displayPath, inspectPath string, source newProjectPathSuggestionSource, privacyValues []string, skipExactInput bool) {
+	displayPath = ensureNewProjectTrailingSeparator(strings.TrimSpace(displayPath))
+	if displayPath == "" || !newProjectSuggestionCompletesInput(c.displayPath, displayPath) {
+		return
+	}
+	inspectPath = filepath.Clean(strings.TrimSpace(inspectPath))
+	if inspectPath == "" || inspectPath == "." {
+		return
+	}
+	if skipExactInput && newProjectSamePath(c.homeDirFn, c.displayPath, displayPath) {
+		return
+	}
+	if c.ctx.PrivacyMode && newProjectPathHiddenByPrivacy(inspectPath, privacyValues, c.ctx.PrivacyPatterns) {
+		c.hidden++
+		return
+	}
+	key := filepath.Clean(inspectPath)
+	if _, ok := c.seen[key]; ok {
+		return
+	}
+	c.seen[key] = struct{}{}
+	if len(c.out) >= c.limit {
+		return
+	}
+	c.out = append(c.out, newProjectPathSuggestion{
+		Path:   displayPath,
+		Source: source,
+	})
+}
+
+func newProjectChildDirectorySuggestions(dirPath, displayPrefix, namePrefix string) []string {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil
 	}
 	namePrefixLower := strings.ToLower(namePrefix)
 	showHidden := strings.HasPrefix(namePrefix, ".")
-	suggestions := make([]string, 0, min(limit, len(entries)))
+	suggestions := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == "." || name == ".." {
@@ -541,9 +729,6 @@ func newProjectChildDirectorySuggestions(dirPath, displayPrefix, namePrefix stri
 			continue
 		}
 		suggestions = append(suggestions, joinNewProjectDisplayPath(displayPrefix, name))
-		if len(suggestions) >= limit {
-			break
-		}
 	}
 	return suggestions
 }
@@ -557,6 +742,115 @@ func newProjectDirEntryIsDir(parent string, entry os.DirEntry) bool {
 	}
 	info, err := os.Stat(filepath.Join(parent, entry.Name()))
 	return err == nil && info.IsDir()
+}
+
+func newProjectInspectPath(homeDirFn func() (string, error), raw string) string {
+	path := trimNewProjectWrappingQuotes(strings.TrimSpace(raw))
+	if path == "" {
+		return ""
+	}
+	if expanded := expandNewProjectHomePath(homeDirFn, path); expanded != "" {
+		path = expanded
+	}
+	if absPath, err := filepath.Abs(path); err == nil {
+		path = absPath
+	}
+	return filepath.Clean(path)
+}
+
+func newProjectDisplayPathForCandidate(homeDirFn func() (string, error), rawInput, candidatePath string) string {
+	candidatePath = filepath.Clean(strings.TrimSpace(candidatePath))
+	if candidatePath == "" || candidatePath == "." {
+		return ""
+	}
+	rawInput = trimNewProjectWrappingQuotes(strings.TrimSpace(rawInput))
+	if strings.HasPrefix(rawInput, "~") {
+		if homePath, ok := newProjectHomePath(homeDirFn); ok {
+			if displayPath, ok := newProjectHomeRelativeDisplayPath(homePath, candidatePath); ok {
+				return ensureNewProjectTrailingSeparator(displayPath)
+			}
+		}
+	}
+	return ensureNewProjectTrailingSeparator(candidatePath)
+}
+
+func newProjectHomePath(homeDirFn func() (string, error)) (string, bool) {
+	if homeDirFn == nil {
+		return "", false
+	}
+	home, err := homeDirFn()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return "", false
+	}
+	return filepath.Clean(home), true
+}
+
+func newProjectHomeRelativeDisplayPath(homePath, candidatePath string) (string, bool) {
+	homePath = filepath.Clean(strings.TrimSpace(homePath))
+	candidatePath = filepath.Clean(strings.TrimSpace(candidatePath))
+	if homePath == "" || candidatePath == "" {
+		return "", false
+	}
+	relPath, err := filepath.Rel(homePath, candidatePath)
+	if err != nil {
+		return "", false
+	}
+	if relPath == "." {
+		return "~", true
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) || filepath.IsAbs(relPath) {
+		return "", false
+	}
+	return "~/" + filepath.ToSlash(relPath), true
+}
+
+func newProjectSuggestionCompletesInput(input, suggestion string) bool {
+	input = strings.ToLower(trimNewProjectWrappingQuotes(strings.TrimSpace(input)))
+	suggestion = strings.ToLower(strings.TrimSpace(suggestion))
+	return input == "" || strings.HasPrefix(suggestion, input)
+}
+
+func newProjectSamePath(homeDirFn func() (string, error), left, right string) bool {
+	left = newProjectInspectPath(homeDirFn, left)
+	right = newProjectInspectPath(homeDirFn, right)
+	return left != "" && right != "" && filepath.Clean(left) == filepath.Clean(right)
+}
+
+func newProjectPathHiddenByPrivacy(path string, values []string, patterns []string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	candidates := []string{
+		strings.TrimSpace(path),
+		filepath.Base(strings.TrimSpace(path)),
+	}
+	candidates = append(candidates, newProjectPathComponents(path)...)
+	candidates = append(candidates, values...)
+	for _, candidate := range candidates {
+		if config.MatchesPrivacyPattern(candidate, patterns) {
+			return true
+		}
+	}
+	return false
+}
+
+func newProjectPathComponents(path string) []string {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
+		return nil
+	}
+	volume := filepath.VolumeName(path)
+	path = strings.TrimPrefix(path, volume)
+	parts := strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func newProjectPathIsDir(path string) bool {
@@ -733,11 +1027,12 @@ func (m Model) renderNewProjectContent(width int) string {
 
 	lines = append(lines, m.renderNewProjectStatus(preview, width)...)
 
-	if len(m.newProjectRecentParents) > 0 && len(dialog.PathInput.MatchedSuggestions()) == 0 {
+	recentParents := m.visibleNewProjectRecentParents()
+	if len(recentParents) > 0 && len(dialog.PathInput.MatchedSuggestions()) == 0 && dialog.PathSuggestionHidden == 0 {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("Recent Paths"))
 		lines = append(lines, commandPaletteHintStyle.Render("Alt+1..3 applies a remembered parent path."))
-		for i, path := range m.newProjectRecentParents {
+		for i, path := range recentParents {
 			label := fmt.Sprintf("Alt+%d ", i+1)
 			rowStyle := commandPaletteRowStyle
 			if normalizeNewProjectPathInput(m.homeDirFn, dialog.PathInput.Value()) == filepath.Clean(path) {
@@ -765,17 +1060,32 @@ func (m Model) renderNewProjectPathSuggestions(width int) []string {
 				commandPaletteHintStyle.Render("Looking for matching folders..."),
 			}
 		}
+		if dialog.PathSuggestionHidden > 0 {
+			return []string{
+				commandPaletteTitleStyle.Render("Path Suggestions"),
+				commandPaletteHintStyle.Render(newProjectHiddenSuggestionText(dialog.PathSuggestionHidden)),
+			}
+		}
 		return nil
 	}
 	limit := min(newProjectPathSuggestionLimit, len(suggestions))
 	lines := []string{
 		commandPaletteTitleStyle.Render("Path Suggestions"),
-		commandPaletteHintStyle.Render("Right completes the inline folder; Alt+1..8 picks from suggestions."),
+		commandPaletteHintStyle.Render("Right completes the highlighted path; Alt+1..8 picks; Alt+Up/Down cycles."),
+	}
+	if dialog.PathSuggestionHidden > 0 {
+		lines = append(lines, commandPaletteHintStyle.Render(newProjectHiddenSuggestionText(dialog.PathSuggestionHidden)))
 	}
 	selected := dialog.PathInput.CurrentSuggestionIndex()
 	for i := 0; i < limit; i++ {
 		label := fmt.Sprintf("Alt+%d ", i+1)
-		row := label + truncateText(suggestions[i], max(12, width-len(label)))
+		source := "folder"
+		if suggestion, ok := newProjectPathSuggestionForPath(dialog.PathSuggestionItems, suggestions[i]); ok {
+			source = suggestion.Source.Label()
+		}
+		source = truncateText(fmt.Sprintf("%-7s", source), 7)
+		rowPrefix := label + source + " "
+		row := rowPrefix + truncateText(suggestions[i], max(12, width-len(rowPrefix)))
 		rowStyle := commandPaletteRowStyle
 		if i == selected {
 			rowStyle = commandPaletteSelectStyle
@@ -783,6 +1093,37 @@ func (m Model) renderNewProjectPathSuggestions(width int) []string {
 		lines = append(lines, rowStyle.Width(width).Render(row))
 	}
 	return lines
+}
+
+func newProjectPathSuggestionForPath(suggestions []newProjectPathSuggestion, path string) (newProjectPathSuggestion, bool) {
+	for _, suggestion := range suggestions {
+		if suggestion.Path == path {
+			return suggestion, true
+		}
+	}
+	return newProjectPathSuggestion{}, false
+}
+
+func (s newProjectPathSuggestionSource) Label() string {
+	switch s {
+	case newProjectPathSuggestionRecent:
+		return "recent"
+	case newProjectPathSuggestionScope:
+		return "scope"
+	case newProjectPathSuggestionProjectParent:
+		return "project"
+	case newProjectPathSuggestionFolder:
+		return "folder"
+	default:
+		return "folder"
+	}
+}
+
+func newProjectHiddenSuggestionText(count int) string {
+	if count <= 1 {
+		return "1 private path suggestion hidden while /privacy is on."
+	}
+	return fmt.Sprintf("%d private path suggestions hidden while /privacy is on.", count)
 }
 
 func (m Model) renderNewProjectInputRow(label string, selected bool, labelWidth, inputWidth int, input textinput.Model) string {

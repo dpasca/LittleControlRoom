@@ -1523,7 +1523,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.newProjectDialog == nil || msg.seq != m.newProjectDialog.PathSuggestionSeq {
 			return m, nil
 		}
-		m.newProjectDialog.PathInput.SetSuggestions(msg.suggestions)
+		m.newProjectDialog.PathSuggestionItems = append([]newProjectPathSuggestion(nil), msg.result.Suggestions...)
+		m.newProjectDialog.PathSuggestionHidden = msg.result.HiddenCount
+		m.newProjectDialog.PathInput.SetSuggestions(newProjectPathSuggestionStrings(msg.result.Suggestions))
 		m.newProjectDialog.PathSuggestionsPending = false
 		return m, nil
 	case setupSnapshotMsg:

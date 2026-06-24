@@ -307,9 +307,7 @@ func TestNewProjectDialogAltDigitAppliesRecentPath(t *testing.T) {
 
 	updated, cmd := got.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}, Alt: true})
 	got = updated.(Model)
-	if cmd != nil {
-		t.Fatalf("alt+digit should not return an async command")
-	}
+	got = drainCmdMsgs(got, cmd)
 	if got.newProjectDialog.PathInput.Value() != "/tmp/two" {
 		t.Fatalf("path input = %q, want /tmp/two", got.newProjectDialog.PathInput.Value())
 	}
@@ -392,7 +390,7 @@ func TestNewProjectPathSuggestionsPreserveHomePrefix(t *testing.T) {
 	}
 }
 
-func TestNewProjectPathSuggestionsCollapseExactExistingDirectory(t *testing.T) {
+func TestNewProjectPathSuggestionsExpandExactExistingDirectory(t *testing.T) {
 	t.Parallel()
 
 	parent := t.TempDir()
@@ -402,16 +400,26 @@ func TestNewProjectPathSuggestionsCollapseExactExistingDirectory(t *testing.T) {
 		}
 	}
 
-	want := parent + string(os.PathSeparator)
-	for _, raw := range []string{parent, want} {
+	want := []string{
+		filepath.Join(parent, "alpha") + string(os.PathSeparator),
+		filepath.Join(parent, "beta") + string(os.PathSeparator),
+		filepath.Join(parent, "gamma") + string(os.PathSeparator),
+	}
+	parentWithSeparator := parent + string(os.PathSeparator)
+	for _, raw := range []string{parent, parentWithSeparator} {
 		suggestions := newProjectExistingPathSuggestions(func() (string, error) { return "/Users/tester", nil }, raw, 8)
-		if len(suggestions) != 1 || suggestions[0] != want {
-			t.Fatalf("suggestions for %q = %v, want only %q", raw, suggestions, want)
+		if len(suggestions) != len(want) {
+			t.Fatalf("suggestions for %q = %v, want %v", raw, suggestions, want)
+		}
+		for i := range want {
+			if suggestions[i] != want[i] {
+				t.Fatalf("suggestions for %q = %v, want %v", raw, suggestions, want)
+			}
 		}
 	}
 }
 
-func TestNewProjectPathSuggestionsCollapseExactHomeDirectory(t *testing.T) {
+func TestNewProjectPathSuggestionsExpandExactHomeDirectory(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
@@ -423,8 +431,106 @@ func TestNewProjectPathSuggestionsCollapseExactHomeDirectory(t *testing.T) {
 	}
 
 	suggestions := newProjectExistingPathSuggestions(func() (string, error) { return home, nil }, "~/dev/repos", 8)
-	if len(suggestions) != 1 || suggestions[0] != "~/dev/repos/" {
-		t.Fatalf("suggestions = %v, want only ~/dev/repos/", suggestions)
+	want := []string{"~/dev/repos/LittleControlRoom/", "~/dev/repos/OtherProject/"}
+	if len(suggestions) != len(want) {
+		t.Fatalf("suggestions = %v, want %v", suggestions, want)
+	}
+	for i := range want {
+		if suggestions[i] != want[i] {
+			t.Fatalf("suggestions = %v, want %v", suggestions, want)
+		}
+	}
+}
+
+func TestNewProjectPathSuggestionsUseRecentScopeAndProjectParents(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	recent := filepath.Join(home, "scratch")
+	scope := filepath.Join(home, "dev", "repos")
+	projectParent := filepath.Join(home, "client-work")
+	for _, path := range []string{recent, scope, projectParent} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	result := newProjectPathSuggestionItems(
+		func() (string, error) { return home, nil },
+		home,
+		8,
+		newProjectPathSuggestionContext{
+			RecentParents: []string{recent},
+			IncludePaths:  []string{scope},
+			Projects: []model.ProjectSummary{
+				{Path: filepath.Join(projectParent, "demo"), Name: "demo", InScope: true},
+			},
+		},
+	)
+
+	for _, want := range []newProjectPathSuggestion{
+		{Path: recent + string(os.PathSeparator), Source: newProjectPathSuggestionRecent},
+		{Path: scope + string(os.PathSeparator), Source: newProjectPathSuggestionScope},
+		{Path: projectParent + string(os.PathSeparator), Source: newProjectPathSuggestionProjectParent},
+	} {
+		got, ok := newProjectPathSuggestionForPath(result.Suggestions, want.Path)
+		if !ok {
+			t.Fatalf("suggestions missing %s in %#v", want.Path, result.Suggestions)
+		}
+		if got.Source != want.Source {
+			t.Fatalf("suggestion %s source = %s, want %s", want.Path, got.Source, want.Source)
+		}
+	}
+}
+
+func TestNewProjectPathSuggestionsRespectPrivacyMode(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	visible := filepath.Join(parent, "visible-client")
+	private := filepath.Join(parent, "secret-client")
+	for _, path := range []string{visible, private} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		width:                   100,
+		height:                  28,
+		homeDirFn:               func() (string, error) { return parent, nil },
+		settingsBaseline:        &settings,
+		privacyMode:             true,
+		privacyPatterns:         []string{"*secret*"},
+		newProjectRecentParents: []string{private, parent},
+		newProjectDialog: &newProjectDialogState{
+			PathInput:     newNewProjectTextInput(parent, 1024),
+			NameInput:     newNewProjectTextInput("", 256),
+			Selected:      newProjectFieldPath,
+			CreateGitRepo: true,
+		},
+	}
+	configureNewProjectPathInput(&m.newProjectDialog.PathInput)
+
+	if got := m.defaultNewProjectParentPath(); got != parent {
+		t.Fatalf("default parent path = %q, want privacy-visible recent parent %q", got, parent)
+	}
+
+	m = drainCmdMsgs(m, m.refreshNewProjectPathSuggestions())
+	suggestions := m.newProjectDialog.PathInput.MatchedSuggestions()
+	if len(suggestions) != 1 || suggestions[0] != visible+string(os.PathSeparator) {
+		t.Fatalf("privacy-filtered suggestions = %v, want only visible client", suggestions)
+	}
+	if m.newProjectDialog.PathSuggestionHidden == 0 {
+		t.Fatalf("expected hidden private suggestion count")
+	}
+	rendered := m.renderNewProjectContent(100)
+	if strings.Contains(rendered, "secret-client") {
+		t.Fatalf("rendered suggestions leaked private path: %q", rendered)
+	}
+	if !strings.Contains(rendered, "private path suggestions hidden") {
+		t.Fatalf("rendered suggestions missing privacy hidden note: %q", rendered)
 	}
 }
 
