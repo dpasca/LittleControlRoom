@@ -238,7 +238,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider; fresh projects and scratch tasks default to Codex unless their create flow preselected another assistant
 - `Esc` hide the visible embedded session pane
-- `Alt+O` opens transcript links or generated artifacts when an embedded pane advertises available links
+- `Alt+O` opens transcript links or generated artifacts when an embedded pane advertises available links; in that picker, `Alt+F` reveals the selected file in its folder when supported, otherwise opens the containing folder
 - `PgUp/PgDn/Home/End` fast scrolling in long project lists
 - `Tab` or `Shift+Tab` switch focus between list, detail, and runtime
 - `f` open the temporary project-name filter dialog
@@ -262,7 +262,7 @@ While the diff screen is visible:
 - The left pane groups `Staged` files first and `Unstaged` files below them
 - `-` stages the selected file when it is unstaged, and unstages it when it already has staged changes
 - `Up/Down` or `j/k` moves between files when the file list is focused
-- `Enter` opens the selected file with the system app, and `Alt+F` opens its containing folder
+- `Enter` opens the selected file with the system app, and `Alt+F` reveals it in its folder when supported, otherwise opens its containing folder
 - `Right` or `Tab` moves focus into the diff pane
 - `Left` or `Tab` moves focus back to the file list
 - `PgUp/PgDn/Home/End` pages or jumps within the focused pane

@@ -17,6 +17,7 @@ import (
 
 var externalBrowserOpener = openExternalBrowserURL
 var externalPathOpener = openExternalPath
+var externalPathRevealer = revealExternalPath
 var managedBrowserSessionRevealer = browserctl.RevealManagedPlaywrightSession
 var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
 
@@ -173,6 +174,39 @@ func openExternalPath(path string) error {
 		cmd = exec.Command("cmd", "/c", "start", "", path)
 	default:
 		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Run()
+}
+
+func revealExternalPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("path is required")
+	}
+	info, err := os.Stat(path)
+	if err == nil && info.IsDir() {
+		return externalPathOpener(path)
+	}
+	if err != nil {
+		folder, folderErr := containingFolderForPath(path)
+		if folderErr != nil {
+			return folderErr
+		}
+		return externalPathOpener(folder)
+	}
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", "-R", path)
+	case "windows":
+		cmd = exec.Command("explorer", "/select,"+path)
+	default:
+		folder, folderErr := containingFolderForPath(path)
+		if folderErr != nil {
+			return folderErr
+		}
+		return externalPathOpener(folder)
 	}
 	return cmd.Run()
 }

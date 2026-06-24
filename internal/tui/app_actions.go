@@ -1027,23 +1027,14 @@ func (m Model) openCodexLinkTargetCmd(target codexArtifactOpenTarget) tea.Cmd {
 func (m Model) openCodexLinkTargetFolderCmd(target codexArtifactOpenTarget) tea.Cmd {
 	projectPath := m.codexVisibleProject
 	return func() tea.Msg {
-		folder, err := codexArtifactContainingFolder(target)
-		if err != nil {
-			return browserOpenMsg{projectPath: projectPath, err: err}
+		if strings.TrimSpace(target.Kind) == "url" {
+			return browserOpenMsg{projectPath: projectPath, err: fmt.Errorf("links do not have containing folders")}
 		}
-		if err := externalPathOpener(folder); err != nil {
+		if err := externalPathRevealer(target.Path); err != nil {
 			return browserOpenMsg{projectPath: projectPath, err: err}
 		}
 		return browserOpenMsg{projectPath: projectPath, status: "Opened containing folder"}
 	}
-}
-
-func codexArtifactContainingFolder(target codexArtifactOpenTarget) (string, error) {
-	if strings.TrimSpace(target.Kind) == "url" {
-		return "", fmt.Errorf("links do not have containing folders")
-	}
-	path := strings.TrimSpace(target.Path)
-	return containingFolderForPath(path)
 }
 
 func containingFolderForPath(path string) (string, error) {

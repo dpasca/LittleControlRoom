@@ -442,11 +442,10 @@ func (m Model) openBossOpenTargetCmd(target bossOpenTarget) tea.Cmd {
 func (m Model) openBossOpenTargetFolderCmd(target bossOpenTarget) tea.Cmd {
 	target = normalizedBossOpenTarget(target)
 	return func() tea.Msg {
-		folder, err := bossOpenTargetContainingFolder(target)
-		if err != nil {
-			return bossOpenTargetOpenedMsg{err: err}
+		if strings.TrimSpace(target.Kind) == "url" {
+			return bossOpenTargetOpenedMsg{err: fmt.Errorf("links do not have containing folders")}
 		}
-		if err := bossExternalPathOpener(folder); err != nil {
+		if err := bossExternalPathRevealer(target.Path); err != nil {
 			return bossOpenTargetOpenedMsg{err: err}
 		}
 		return bossOpenTargetOpenedMsg{status: "Opened containing folder"}
@@ -495,6 +494,7 @@ func bossOpenTargetContainingFolder(target bossOpenTarget) (string, error) {
 var (
 	bossExternalBrowserOpener = bossOpenExternalBrowserURL
 	bossExternalPathOpener    = bossOpenExternalPath
+	bossExternalPathRevealer  = bossRevealExternalPath
 )
 
 func bossOpenBrowserURL(rawURL, action string) error {
@@ -537,6 +537,39 @@ func bossOpenExternalPath(path string) error {
 		cmd = exec.Command("cmd", "/c", "start", "", path)
 	default:
 		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Run()
+}
+
+func bossRevealExternalPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("path is required")
+	}
+	info, err := os.Stat(path)
+	if err == nil && info.IsDir() {
+		return bossExternalPathOpener(path)
+	}
+	if err != nil {
+		folder, folderErr := bossOpenTargetContainingFolder(bossOpenTarget{Kind: "file", Path: path})
+		if folderErr != nil {
+			return folderErr
+		}
+		return bossExternalPathOpener(folder)
+	}
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", "-R", path)
+	case "windows":
+		cmd = exec.Command("explorer", "/select,"+path)
+	default:
+		folder, folderErr := bossOpenTargetContainingFolder(bossOpenTarget{Kind: "file", Path: path})
+		if folderErr != nil {
+			return folderErr
+		}
+		return bossExternalPathOpener(folder)
 	}
 	return cmd.Run()
 }
