@@ -146,6 +146,9 @@ func (m Model) renderFooter(width int) string {
 	if m.cpuDialog != nil {
 		return m.renderModalFooter(width, "CPU inspector: ↑↓ select, Space mark, a ask scoped, A ask all, r refresh, Esc close", supplementSegments...)
 	}
+	if m.portsDialog != nil {
+		return m.renderModalFooter(width, "Ports inspector: ↑↓ select, s stop external, r refresh, Esc close", supplementSegments...)
+	}
 	if m.processDialog != nil {
 		return m.renderModalFooter(width, "Process inspector: ↑↓ select, r refresh, Esc close", supplementSegments...)
 	}
@@ -1272,7 +1275,7 @@ func helpPanelLines() []string {
 			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("?", "toggle help", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /cpu, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /cpu, /ports, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),

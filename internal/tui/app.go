@@ -200,6 +200,7 @@ type Model struct {
 	processScanQueuedDialogPath   string
 	processReports                map[string]procinspect.ProjectReport
 	processDialog                 *processDialogState
+	portsDialog                   *portsDialogState
 	processWarningLastCount       int
 	codexSnapshots                map[string]codexapp.Snapshot
 	embeddedProviderOverrides     map[string]codexapp.Provider
@@ -1333,6 +1334,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.cpuDialog != nil {
 			return m.updateCPUDialogMode(msg)
+		}
+		if m.portsDialog != nil {
+			return m.updatePortsDialogMode(msg)
 		}
 		if m.processDialog != nil {
 			return m.updateProcessDialogMode(msg)

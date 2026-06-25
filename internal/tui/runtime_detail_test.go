@@ -1201,6 +1201,36 @@ func TestCPUCommandOpensProcessInspector(t *testing.T) {
 	}
 }
 
+func TestPortsCommandOpensPortsInspector(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		allProjects: []model.ProjectSummary{{
+			Name:          "demo",
+			Path:          "/tmp/demo",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindPorts})
+	got := updated.(Model)
+	if got.portsDialog == nil {
+		t.Fatalf("/ports should open the ports inspector")
+	}
+	if !got.portsDialog.Loading {
+		t.Fatalf("dialog should start in loading state")
+	}
+	if cmd == nil {
+		t.Fatalf("/ports should queue an async process scan")
+	}
+}
+
 func TestQuitKeyStopsManagedRuntimes(t *testing.T) {
 	dir := t.TempDir()
 	manager := projectrun.NewManager()

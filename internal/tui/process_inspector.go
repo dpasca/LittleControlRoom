@@ -326,6 +326,7 @@ func (m *Model) applyProcessScanMsg(msg processScanMsg) tea.Cmd {
 	if msg.err == nil && m.cpuDialog != nil {
 		m.refreshCPUDialogFlaggedProcesses()
 	}
+	m.applyPortsProcessScanMsg(msg)
 	stats := m.totalProcessWarningStats()
 	if strings.TrimSpace(msg.dialogProjectPath) == "" && m.processDialog == nil && stats.Total > 0 && stats.Total != m.processWarningLastCount {
 		m.status = processWarningStatus(stats)

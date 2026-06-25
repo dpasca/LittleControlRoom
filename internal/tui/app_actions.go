@@ -548,6 +548,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openRuntimeInspectorForSelection()
 	case commands.KindCPU:
 		return m, m.openCPUDialog()
+	case commands.KindPorts:
+		return m, m.openPortsDialog()
 	case commands.KindStop:
 		p, ok := m.selectedProject()
 		if !ok {

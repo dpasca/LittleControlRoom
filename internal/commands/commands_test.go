@@ -426,6 +426,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "ports",
+			raw:  "/ports",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindPorts {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindPorts)
+				}
+				if inv.Canonical != "/ports" {
+					t.Fatalf("canonical = %q, want /ports", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "run edit",
 			raw:  "/run-edit",
 			check: func(t *testing.T, inv Invocation) {

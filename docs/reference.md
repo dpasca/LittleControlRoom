@@ -296,6 +296,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/restart`
 - `/run-edit`
 - `/runtime`
+- `/ports`
 - `/stop`
 - `/diff`
 - `/codex`
@@ -365,6 +366,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/restart` restarts the selected project's managed runtime with the saved command, or with the active runtime command when one is already known.
 - `/run-edit` opens the saved runtime command for editing without starting it.
 - `/runtime` focuses the runtime pane for the selected project.
+- `/ports` opens a port-focused inspector for tracked project listeners, including managed runtimes, external listeners, orphaned PID 1 listeners, and detected conflicts. Press `s` on an external project-local listener to open a stop confirmation.
 - `/stop` stops the selected project's managed runtime when one is running.
 - `/codex` resumes the selected project's latest known Codex session when available, otherwise it starts a new one.
 - `/codex-new` always starts a fresh Codex session.
