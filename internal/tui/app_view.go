@@ -568,6 +568,7 @@ func topStatusNeedsAttention(status string) bool {
 		"Stop the runtime before ",
 		"Close the embedded agent session before ",
 		"A commit is still in progress.",
+		"Pull first:",
 	} {
 		if strings.HasPrefix(status, prefix) {
 			return true
@@ -580,6 +581,7 @@ func topStatusNeedsAttention(status string) bool {
 		"Finish or close it before ",
 		"Close it before ",
 		"Switch it to ",
+		"Pull first:",
 	} {
 		if strings.Contains(status, snippet) {
 			return true
