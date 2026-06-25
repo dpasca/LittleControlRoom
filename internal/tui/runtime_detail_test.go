@@ -240,6 +240,47 @@ func TestRuntimePaneListsMultipleLocalListeners(t *testing.T) {
 	}
 }
 
+func TestRuntimePaneWrapsProcessWarningSummary(t *testing.T) {
+	projectPath := "/tmp/demo"
+	project := model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+	m := Model{
+		projects:    []model.ProjectSummary{project},
+		allProjects: []model.ProjectSummary{project},
+		selected:    0,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			projectPath: {ProjectPath: projectPath},
+		},
+		processReports: map[string]procinspect.ProjectReport{
+			projectPath: {
+				ProjectPath: projectPath,
+				Findings: []procinspect.Finding{
+					{Process: procinspect.Process{PID: 111, PPID: 1, CPU: 82.4}},
+					{Process: procinspect.Process{PID: 222, PPID: 1, Ports: []int{3000}}},
+					{Process: procinspect.Process{PID: 333, PPID: 1}, PortConflict: true, ConflictPorts: []int{3000}},
+				},
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderRuntimePanel(40, 18))
+	if !strings.Contains(rendered, "Processes: 3 suspicious project-local") {
+		t.Fatalf("renderRuntimePanel() missing process warning start:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Use /cpu to inspect.") {
+		t.Fatalf("renderRuntimePanel() should preserve wrapped process warning tail:\n%s", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if ansi.StringWidth(line) > 40 {
+			t.Fatalf("runtime panel line width = %d, want <= 40: %q", ansi.StringWidth(line), line)
+		}
+	}
+}
+
 func TestStopRuntimeOpensExternalProcessConfirmation(t *testing.T) {
 	projectPath := "/tmp/demo"
 	m := modelWithExternalProcess(projectPath, 4321, 4017)

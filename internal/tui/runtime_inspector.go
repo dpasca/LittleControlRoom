@@ -251,10 +251,10 @@ func (m Model) renderRuntimePanelSummary(width int, projectPath string) []string
 	if strings.TrimSpace(snapshot.LastError) != "" {
 		statusFields = append(statusFields, detailField("Runtime err", detailDangerStyle.Render(snapshot.LastError)))
 	}
-	if summary := m.projectProcessWarningSummary(projectPath); summary != "" {
-		statusFields = append(statusFields, detailField("Processes", detailWarningStyle.Render(summary)))
-	}
 	lines = appendDetailFields(lines, width, statusFields...)
+	if summary := m.projectProcessWarningSummary(projectPath); summary != "" {
+		lines = append(lines, renderWrappedRuntimeField("Processes", width, detailWarningStyle, summary)...)
+	}
 	return lines
 }
 
