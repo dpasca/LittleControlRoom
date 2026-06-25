@@ -81,7 +81,7 @@ func goalProposalFromBossAction(action bossAction) (bossrun.GoalProposal, string
 	if err != nil {
 		return bossrun.GoalProposal{}, "", err
 	}
-	return normalized, normalized.Preview, nil
+	return normalized, proposalContentWithScopeNote(action.Answer, normalized.Preview), nil
 }
 
 func (m Model) GoalConfirmationActive() bool {

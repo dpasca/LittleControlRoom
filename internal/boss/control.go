@@ -159,7 +159,20 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 	if err != nil {
 		return control.Invocation{}, "", err
 	}
-	return normalized, content, nil
+	return normalized, proposalContentWithScopeNote(action.Answer, content), nil
+}
+
+func proposalContentWithScopeNote(scopeNote, content string) string {
+	scopeNote = strings.TrimSpace(scopeNote)
+	content = strings.TrimSpace(content)
+	switch {
+	case scopeNote == "":
+		return content
+	case content == "":
+		return scopeNote
+	default:
+		return scopeNote + "\n\n" + content
+	}
 }
 
 func bossLosslessControlPrompt(action bossAction) string {

@@ -115,7 +115,7 @@ func bossActionSchema() map[string]any {
 			"kind": bossEnumStringSchema(bossActionKindStrings(), ""),
 			"answer": map[string]any{
 				"type":        "string",
-				"description": "Final user-facing answer when kind is answer; otherwise empty.",
+				"description": "Final user-facing answer when kind is answer. For propose_control/propose_goal, optional one-sentence scope note before confirmation; do not claim any action has already been sent, run, or completed.",
 			},
 			"target": map[string]any{
 				"type":        "string",

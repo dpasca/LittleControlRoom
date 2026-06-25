@@ -228,6 +228,7 @@ var bossPlannerCapabilityCatalogPrompt = []string{
 
 var bossPlannerControlRoutingPrompt = []string{
 	"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
+	"An engineer.send_prompt control proposal sends to exactly one loaded project. If the user asks for work across multiple loaded projects, do not silently pick one and drop the rest; either ask/answer that Boss can prepare one project handoff at a time while naming the targets, or propose the first clearly chosen handoff and put a one-sentence scope note in answer naming what remains.",
 	"Use settings.update for user requests to change Little Control Room app settings, including project scope settings, privacy filters/privacy patterns, privacy mode, reasoning visibility, and Codex launch preset. Do not route app settings changes through the Little Control Room repo or an engineer session.",
 	"Boss Chat does not have a native git commit control action or a bridge into the current operator conversation. Do not use engineer.send_prompt merely to create a git commit; for a simple commit-now request, choose answer and explain that it should use the existing commit flow or current operator session unless the user explicitly asks a separate engineer to prepare or review the commit.",
 	"Project implementation requests are not TODO requests. For loaded-project work the user wants handled now, propose engineer.send_prompt with session_mode=new even if that project already has an open idle Codex or OpenCode engineer session.",
@@ -261,6 +262,7 @@ var bossPlannerAgentTaskPrompt = []string{
 var bossPlannerProposalPayloadPrompt = []string{
 	"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue for generic or host-level work.",
 	"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
+	"For propose_control/propose_goal, leave answer empty unless a short scope note is needed. A proposal answer must not say the action was already sent, run, completed, or approved.",
 	"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. " +
 		"Default project handoffs to session_mode=new so unrelated work does not inherit stale engineer context. " +
 		"It is fine to start a fresh Codex/OpenCode handoff for a project that already has an open idle session; only a session in the middle of a turn is a blocker. " +
@@ -389,6 +391,7 @@ var bossActionPlannerForcedInstructions = []string{
 	"If the user asks to change Little Control Room app settings, choose kind=\"propose_control\" with control_capability=\"settings.update\".",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
+	"If the user asked for loaded-project work across multiple projects, do not silently collapse the request to one target. Choose kind=\"answer\" to name the targets and say Boss can prepare one handoff at a time, unless one first target is clearly chosen; then use answer as a scope note naming the remaining targets.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
 	"Choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" for a known related task.",
 	"Choose control_capability=\"engineer.send_prompt\" for loaded-project work.",
@@ -427,6 +430,7 @@ var bossActionPlannerNormalInstructions = []string{
 	"If the user asks to change Little Control Room app settings, choose control_capability=\"settings.update\". Use settings.update for privacy filters/privacy patterns instead of delegating work to the Little Control Room repo.",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now and the project is ambiguous, choose a read-only query or ask for the project; when the project is known, choose control_capability=\"todo.add\".",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
+	"If the user asked for loaded-project work across multiple projects, do not silently collapse the request to one target. Choose kind=\"answer\" to name the targets and say Boss can prepare one handoff at a time, unless one first target is clearly chosen; then use answer as a scope note naming the remaining targets.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
 	"Use read-only context only to identify the relevant task/project.",
 	"Then choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" for a known related task, control_capability=\"engineer.send_prompt\" for loaded-project work, or control_capability=\"agent_task.create\" for generic research with no natural loaded project.",

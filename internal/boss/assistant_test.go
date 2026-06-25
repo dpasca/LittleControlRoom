@@ -1036,6 +1036,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"agent_task.create",
 		"project.set_archive_state",
 		"scratch_task.archive",
+		"engineer.send_prompt control proposal sends to exactly one loaded project",
+		"do not silently pick one and drop the rest",
 		"agent_task_report",
 		"Use agent_task_report when the user asks about open, active, completed, archived, historical, or delegated agent tasks",
 		"include_historical=true on agent_task_report",
@@ -1069,6 +1071,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"assents to a prior Boss Chat plan",
 		"Do not answer with only a priority order",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue",
+		"leave answer empty unless a short scope note is needed",
 		"user confirmation",
 		"context_command",
 		"recall/context, not fresh research",
@@ -1249,6 +1252,29 @@ func TestAssistantPlannerUserTextSteersOpenTaskCleanupToArchive(t *testing.T) {
 	} {
 		if !strings.Contains(forced, want) {
 			t.Fatalf("forced planner user text missing %q:\n%s", want, forced)
+		}
+	}
+}
+
+func TestAssistantPlannerUserTextSteersMultiProjectHandoffScope(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{
+		StateBrief: "Hot projects:\n- talk-alpha; latest work: needs source verification.\n- talk-beta; latest work: needs source verification.",
+		Messages:   []ChatMessage{{Role: "user", Content: "ask the two talk projects to check whether their source assumptions still hold"}},
+	}
+	for _, got := range []string{
+		bossActionPlannerUserText(req, nil, false),
+		bossActionPlannerUserText(req, nil, true),
+	} {
+		for _, want := range []string{
+			"do not silently collapse the request to one target",
+			"Boss can prepare one handoff at a time",
+			"scope note naming the remaining targets",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("planner user text missing %q:\n%s", want, got)
+			}
 		}
 	}
 }
@@ -1516,6 +1542,48 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 	if resp.Usage.TotalTokens != 17 {
 		t.Fatalf("usage total = %d, want 17", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReplyIncludesControlProposalScopeNote(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				Answer:            "This prepares the Alpha handoff only; Beta still needs its own project handoff after this confirmation.",
+				ControlCapability: "engineer.send_prompt",
+				ProjectPath:       "/tmp/alpha",
+				ProjectName:       "Alpha",
+				EngineerProvider:  "auto",
+				SessionMode:       "new",
+				Prompt:            "Check whether Alpha's source assumptions still hold and report what needs follow-up.",
+				Reason:            "The user asked for work across two projects; this proposal covers the first target explicitly.",
+			}),
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Hot projects:\n- Alpha\n- Beta",
+		Messages:   []ChatMessage{{Role: "user", Content: "ask Alpha and Beta to check their assumptions"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want engineer.send_prompt proposal")
+	}
+	if !strings.HasPrefix(resp.Content, "This prepares the Alpha handoff only; Beta still needs its own project handoff") ||
+		!strings.Contains(resp.Content, "Send this to the preferred engineer session for Alpha.") ||
+		!strings.Contains(resp.Content, "Enter sends") {
+		t.Fatalf("proposal content = %q, want scope note plus confirmation", resp.Content)
 	}
 }
 
