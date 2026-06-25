@@ -288,6 +288,8 @@ func (m Model) View() string {
 		body = m.renderErrorLogOverlay(body, layout.width, layout.height)
 	} else if m.cpuDialog != nil {
 		body = m.renderCPUDialogOverlay(body, layout.width, layout.height)
+	} else if m.portsDialog != nil {
+		body = m.renderPortsDialogOverlay(body, layout.width, layout.height)
 	} else if m.processDialog != nil {
 		body = m.renderProcessDialogOverlay(body, layout.width, layout.height)
 	} else if m.skillsDialog != nil {

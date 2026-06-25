@@ -148,6 +148,7 @@ The main TUI command palette opens with `/`.
 - `/restart`: Restart the selected project's managed runtime.
 - `/run-edit`: Edit the saved runtime command.
 - `/runtime`: Focus the runtime pane.
+- `/ports`: Inspect project-local TCP listeners and confirm-stop external ones.
 - `/stop`: Stop the selected project's managed runtime.
 - `/todo`: Open the TODO list for the selected project. Add items, toggle done, and start a fresh embedded session from any item.
 - `/diff`: Open the full-screen git diff.
