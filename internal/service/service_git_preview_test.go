@@ -1236,6 +1236,56 @@ func TestPushProjectReportsNothingToPushWhenBranchAlreadySynced(t *testing.T) {
 	}
 }
 
+func TestPushProjectWarnsPullFirstWhenRemoteRejectsStalePush(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	remotePath := filepath.Join(root, "origin.git")
+	seedPath := filepath.Join(root, "seed")
+	projectPath := filepath.Join(root, "repo")
+	initBareGitRepo(t, remotePath)
+	initGitRepo(t, seedPath)
+	branch := strings.TrimSpace(gitOutput(t, seedPath, "git", "branch", "--show-current"))
+	runGit(t, seedPath, "git", "remote", "add", "origin", remotePath)
+	runGit(t, seedPath, "git", "push", "-u", "origin", branch)
+	runGit(t, root, "git", "clone", remotePath, projectPath)
+	runGit(t, projectPath, "git", "config", "user.email", "test@example.com")
+	runGit(t, projectPath, "git", "config", "user.name", "Little Control Room Test")
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nlocal\n"), 0o644); err != nil {
+		t.Fatalf("update local README: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "README.md")
+	runGit(t, projectPath, "git", "commit", "-m", "local update")
+
+	if err := os.WriteFile(filepath.Join(seedPath, "README.md"), []byte("hello\nremote\n"), 0o644); err != nil {
+		t.Fatalf("update remote README: %v", err)
+	}
+	runGit(t, seedPath, "git", "add", "README.md")
+	runGit(t, seedPath, "git", "commit", "-m", "remote update")
+	runGit(t, seedPath, "git", "push")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+
+	result, err := svc.PushProject(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("push project: %v", err)
+	}
+	if result.Pushed {
+		t.Fatalf("stale push should not report Pushed=true, got %#v", result)
+	}
+	if result.Summary != pushRejectedNeedsPullWarning {
+		t.Fatalf("summary = %q, want pull-first warning", result.Summary)
+	}
+}
+
 func TestPullProjectPullsFreshRemoteChanges(t *testing.T) {
 	t.Parallel()
 

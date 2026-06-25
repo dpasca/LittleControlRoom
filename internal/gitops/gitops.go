@@ -193,6 +193,21 @@ func Push(ctx context.Context, path string) error {
 	return nil
 }
 
+func IsPushRejectedNeedsPull(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	if !strings.Contains(text, "push ") || !strings.Contains(text, "rejected") {
+		return false
+	}
+	hasRemoteWorkHint := strings.Contains(text, "failed to push some refs") &&
+		strings.Contains(text, "remote contains work that you do not")
+	return strings.Contains(text, "fetch first") ||
+		hasRemoteWorkHint ||
+		strings.Contains(text, "non-fast-forward")
+}
+
 func Pull(ctx context.Context, path string) error {
 	pullCtx, cancel, appliedTimeout := withDefaultTimeout(ctx, defaultPullTimeout)
 	defer cancel()

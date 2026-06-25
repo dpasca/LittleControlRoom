@@ -849,6 +849,107 @@ func TestPushCmdRefreshesProjectStatusAndTargetsProjectReload(t *testing.T) {
 	}
 }
 
+func TestPushCmdTreatsRemoteAheadRejectionAsWarning(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	remotePath := filepath.Join(root, "origin.git")
+	seedPath := filepath.Join(root, "seed")
+	projectPath := filepath.Join(root, "repo")
+	runTUITestGit(t, "", "init", "--bare", remotePath)
+	runTUITestGit(t, "", "init", seedPath)
+	runTUITestGit(t, seedPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, seedPath, "config", "user.email", "tests@example.com")
+	if err := os.WriteFile(filepath.Join(seedPath, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write seed README.md: %v", err)
+	}
+	runTUITestGit(t, seedPath, "add", "README.md")
+	runTUITestGit(t, seedPath, "commit", "-m", "initial commit")
+	branch := runTUITestGit(t, seedPath, "branch", "--show-current")
+	runTUITestGit(t, seedPath, "remote", "add", "origin", remotePath)
+	runTUITestGit(t, seedPath, "push", "-u", "origin", branch)
+	runTUITestGit(t, root, "clone", remotePath, projectPath)
+	runTUITestGit(t, projectPath, "config", "user.name", "Little Control Room Tests")
+	runTUITestGit(t, projectPath, "config", "user.email", "tests@example.com")
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("hello\nlocal\n"), 0o644); err != nil {
+		t.Fatalf("update local README.md: %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+	runTUITestGit(t, projectPath, "commit", "-m", "local update")
+
+	if err := os.WriteFile(filepath.Join(seedPath, "README.md"), []byte("hello\nremote\n"), 0o644); err != nil {
+		t.Fatalf("update seed README.md: %v", err)
+	}
+	runTUITestGit(t, seedPath, "add", "README.md")
+	runTUITestGit(t, seedPath, "commit", "-m", "remote update")
+	runTUITestGit(t, seedPath, "push")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "repo",
+		PresentOnDisk:  true,
+		InScope:        true,
+		RepoBranch:     branch,
+		RepoSyncStatus: model.RepoSyncAhead,
+		RepoAheadCount: 1,
+		UpdatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed project state: %v", err)
+	}
+
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "repo",
+		}},
+		allProjects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "repo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: projectPath,
+				Name: "repo",
+			},
+		},
+	}
+
+	raw := m.pushCmd(projectPath)()
+	msg, ok := raw.(actionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want actionMsg", raw)
+	}
+	if msg.err != nil {
+		t.Fatalf("push action err = %v", msg.err)
+	}
+	if !strings.HasPrefix(msg.status, "Pull first:") {
+		t.Fatalf("status = %q, want pull-first warning", msg.status)
+	}
+
+	updated, _ := m.Update(msg)
+	got := updated.(Model)
+	if got.status != msg.status {
+		t.Fatalf("status = %q, want warning status %q", got.status, msg.status)
+	}
+	if len(got.errorLogEntries) != 0 {
+		t.Fatalf("remote-ahead push warning should not enter error log, got %#v", got.errorLogEntries)
+	}
+	if severity := topStatusSeverityForMessage(got.status, got.err); severity != topStatusSeverityWarning {
+		t.Fatalf("top status severity = %v, want warning", severity)
+	}
+}
+
 func TestPullCmdRefreshesProjectStatusAndTargetsProjectReload(t *testing.T) {
 	t.Parallel()
 

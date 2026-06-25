@@ -25,6 +25,7 @@ const (
 	GitActionFinish GitActionIntent = "finish"
 
 	defaultCommitAssistantTimeout = 45 * time.Second
+	pushRejectedNeedsPullWarning  = "Pull first: remote has commits you do not have locally, then push again."
 )
 
 type GitStageMode string
@@ -449,7 +450,11 @@ func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAf
 	if pushAfterCommit {
 		pushErr := gitops.Push(ctx, preview.ProjectPath)
 		if pushErr != nil {
-			result.Warning = fmt.Sprintf("Committed %s, but push failed: %s", hash, pushErr)
+			if gitops.IsPushRejectedNeedsPull(pushErr) {
+				result.Warning = fmt.Sprintf("Committed %s. %s", hash, pushRejectedNeedsPullWarning)
+			} else {
+				result.Warning = fmt.Sprintf("Committed %s, but push failed: %s", hash, pushErr)
+			}
 		} else {
 			result.Pushed = true
 			action = "git_finish"
@@ -557,6 +562,10 @@ func (s *Service) PushProject(ctx context.Context, projectPath string) (PushResu
 	}
 
 	if err := gitops.Push(ctx, projectPath); err != nil {
+		if gitops.IsPushRejectedNeedsPull(err) {
+			result.Summary = pushRejectedNeedsPullWarning
+			return result, nil
+		}
 		return PushResult{}, err
 	}
 	now := time.Now()

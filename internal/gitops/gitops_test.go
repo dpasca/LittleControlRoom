@@ -117,6 +117,29 @@ func TestPullTimesOutHungGitProcess(t *testing.T) {
 	}
 }
 
+func TestIsPushRejectedNeedsPull(t *testing.T) {
+	err := errors.New(`push /tmp/repo: exit status 1: Locking support detected on remote "origin".
+To https://example.test/repo.git
+ ! [rejected]        topic -> topic (fetch first)
+error: failed to push some refs to 'https://example.test/repo.git'
+hint: Updates were rejected because the remote contains work that you do not
+hint: have locally. This is usually caused by another repository pushing to
+hint: the same ref. If you want to integrate the remote changes, use
+hint: 'git pull' before pushing again.`)
+
+	if !IsPushRejectedNeedsPull(err) {
+		t.Fatalf("IsPushRejectedNeedsPull() = false, want true")
+	}
+}
+
+func TestIsPushRejectedNeedsPullIgnoresOtherPushErrors(t *testing.T) {
+	err := errors.New("push /tmp/repo: exit status 128: fatal: could not read Username for 'https://example.test'")
+
+	if IsPushRejectedNeedsPull(err) {
+		t.Fatalf("IsPushRejectedNeedsPull() = true, want false")
+	}
+}
+
 func runGitopsTestGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
