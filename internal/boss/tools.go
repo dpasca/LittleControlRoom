@@ -64,6 +64,8 @@ type bossAction struct {
 	TodoText                 string                   `json:"todo_text"`
 	TodoEvidence             string                   `json:"todo_evidence"`
 	SettingsChanges          []control.SettingsChange `json:"settings_changes"`
+	CommitMessage            string                   `json:"commit_message"`
+	PushAfterCommit          bool                     `json:"push_after_commit"`
 	EngineerProvider         string                   `json:"engineer_provider"`
 	SessionMode              string                   `json:"session_mode"`
 	Prompt                   string                   `json:"prompt"`

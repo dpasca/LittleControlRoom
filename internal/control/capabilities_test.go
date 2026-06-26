@@ -257,6 +257,25 @@ func TestSettingsUpdateCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestGitPrepareCommitCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityGitPrepareCommit)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityGitPrepareCommit)
+	}
+	if capability.Name != CapabilityGitPrepareCommit {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilityGitPrepareCommit)
+	}
+	if capability.Risk != RiskWrite || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected git prepare commit capability metadata: %#v", capability)
+	}
+	if !stringSliceContains(capability.HostEffects, HostEffectMayPrepareGitCommit) {
+		t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, HostEffectMayPrepareGitCommit)
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("git prepare commit schemas should be object schemas")
+	}
+}
+
 func TestNormalizeEngineerSendPromptInput(t *testing.T) {
 	input, err := NormalizeEngineerSendPromptInput(EngineerSendPromptInput{
 		RequestID:   " req-1 ",
@@ -511,6 +530,31 @@ func TestValidateInvocationNormalizesTodoCompleteArgs(t *testing.T) {
 		input.TodoText != "Add tracking." ||
 		input.Evidence != "Engineer verified it." {
 		t.Fatalf("normalized todo complete input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesGitPrepareCommitArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-git ",
+		Capability: CapabilityGitPrepareCommit,
+		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":" Demo ","message":"  Ship   talk cleanup  ","push_after_commit":true}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	if inv.RequestID != "boss-turn-git" {
+		t.Fatalf("RequestID = %q, want boss-turn-git", inv.RequestID)
+	}
+	var input GitPrepareCommitInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if input.RequestID != "boss-turn-git" ||
+		input.ProjectPath != "/tmp/demo" ||
+		input.ProjectName != "Demo" ||
+		input.Message != "Ship talk cleanup" ||
+		!input.PushAfterCommit {
+		t.Fatalf("normalized git prepare commit input = %#v", input)
 	}
 }
 

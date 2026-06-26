@@ -139,6 +139,14 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			RequestID: strings.TrimSpace(action.RequestID),
 			Changes:   append([]control.SettingsChange(nil), action.SettingsChanges...),
 		}
+	case control.CapabilityGitPrepareCommit:
+		payload = control.GitPrepareCommitInput{
+			RequestID:       strings.TrimSpace(action.RequestID),
+			ProjectPath:     strings.TrimSpace(action.ProjectPath),
+			ProjectName:     strings.TrimSpace(action.ProjectName),
+			Message:         strings.TrimSpace(action.CommitMessage),
+			PushAfterCommit: action.PushAfterCommit,
+		}
 	default:
 		return control.Invocation{}, "", fmt.Errorf("unsupported control capability: %s", capability)
 	}
@@ -392,6 +400,33 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 		}
 		lines = append(lines, "", "Enter saves these settings; Esc cancels.")
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityGitPrepareCommit:
+		var input control.GitPrepareCommitInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath)
+		if target == "" {
+			target = "the selected project"
+		}
+		action := "commit preview"
+		confirm := "The normal commit dialog will still require Enter before committing."
+		if input.PushAfterCommit {
+			action = "commit & push preview"
+			confirm = "The normal commit dialog will still require Alt+Enter before committing and pushing."
+		}
+		lines := []string{
+			fmt.Sprintf("Open the %s for %s?", action, target),
+		}
+		if message := strings.TrimSpace(input.Message); message != "" {
+			lines = append(lines, "", "Message seed: "+message)
+		}
+		lines = append(lines,
+			"",
+			confirm,
+			"Enter opens the preview; Esc cancels.",
+		)
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	default:
 		return "", fmt.Errorf("unsupported control capability: %s", inv.Capability)
 	}
@@ -515,6 +550,8 @@ func controlProposalStatus(inv control.Invocation) string {
 		return "Ready to send to engineer with Enter, or Esc to cancel"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return "Ready to run engineer task with Enter, or Esc to cancel"
+	case control.CapabilityGitPrepareCommit:
+		return "Ready to open commit preview with Enter, or Esc to cancel"
 	default:
 		return "Confirm control action with Enter, or Esc to cancel"
 	}
@@ -523,6 +560,9 @@ func controlProposalStatus(inv control.Invocation) string {
 func controlProposalFooterHint(inv control.Invocation) string {
 	if controlProposalIsEngineerHandoff(inv) {
 		return "Enter sends to engineer | Esc cancels"
+	}
+	if inv.Capability == control.CapabilityGitPrepareCommit {
+		return "Enter opens commit preview | Esc cancels"
 	}
 	return "Enter confirms action | Esc cancels"
 }
@@ -533,6 +573,8 @@ func controlProposalSubmittingStatus(inv control.Invocation) string {
 		return "Sending request to engineer session..."
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return "Sending request to engineer task..."
+	case control.CapabilityGitPrepareCommit:
+		return "Opening commit preview..."
 	default:
 		return "Running control action..."
 	}

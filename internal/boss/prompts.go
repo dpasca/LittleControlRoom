@@ -137,7 +137,7 @@ var bossAssistantStylePrompt = []string{
 var bossAssistantControlBoundaryPrompt = []string{
 	"You can propose project engineer prompts or generic agent-task actions through structured control actions, but the user must confirm before anything is sent or changed.",
 	"Do not say agent work will be done unless you are returning a control proposal for that work or clearly saying it still needs confirmation.",
-	"Boss Chat does not have a native git commit control action or a bridge into the current operator conversation. If the user asks Boss to make a commit now, do not pretend a separate engineer handoff is the same thing; say to use the existing commit flow or current operator session unless they explicitly want a separate engineer to prepare or review it.",
+	"Boss Chat can propose opening the normal TUI commit preview through git.prepare_commit, but it cannot apply the commit or push itself; the operator must still confirm in that dialog.",
 	"State the next useful check directly when follow-up work is needed.",
 }
 
@@ -220,7 +220,7 @@ var bossPlannerReadOnlyPrompt = []string{
 }
 
 var bossPlannerCapabilityCatalogPrompt = []string{
-	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, or settings.update.",
+	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
 	"Available goal action kind: propose_goal. Supported goal_kind values are agent_task_cleanup and lcagent_task. " +
 		"agent_task_cleanup archives multiple delegated agent task records under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. " +
 		"lcagent_task creates one Boss-owned LCAgent agent task, launches LCAgent with scoped authority, records the handoff, waits for completion, harvests the trace, and verifies LCAgent reported checks.",
@@ -230,7 +230,8 @@ var bossPlannerControlRoutingPrompt = []string{
 	"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
 	"An engineer.send_prompt control proposal sends to exactly one loaded project. If the user asks for work across multiple loaded projects, do not silently pick one and drop the rest; either ask/answer that Boss can prepare one project handoff at a time while naming the targets, or propose the first clearly chosen handoff and put a one-sentence scope note in answer naming what remains.",
 	"Use settings.update for user requests to change Little Control Room app settings, including project scope settings, privacy filters/privacy patterns, privacy mode, reasoning visibility, and Codex launch preset. Do not route app settings changes through the Little Control Room repo or an engineer session.",
-	"Boss Chat does not have a native git commit control action or a bridge into the current operator conversation. Do not use engineer.send_prompt merely to create a git commit; for a simple commit-now request, choose answer and explain that it should use the existing commit flow or current operator session unless the user explicitly asks a separate engineer to prepare or review the commit.",
+	"Use git.prepare_commit for a simple commit or commit-and-push request on a loaded project. It opens the existing commit preview flow only; the operator still confirms Enter for commit or Alt+Enter for commit and push. Do not use engineer.send_prompt merely to create a git commit.",
+	"A git.prepare_commit control proposal opens exactly one loaded project preview. If the user asks to commit or push multiple loaded projects, do not silently pick one and drop the rest; propose the first clearly chosen preview and put a one-sentence scope note in answer naming what remains, or ask which project to start with.",
 	"Project implementation requests are not TODO requests. For loaded-project work the user wants handled now, propose engineer.send_prompt with session_mode=new even if that project already has an open idle Codex or OpenCode engineer session.",
 	"Use todo.add only when the user explicitly asks to make a TODO/backlog/queue/reminder, or when same-project active engineer work is in the middle of a turn and the user accepts parking unrelated work for later. An open idle engineer session alone must not cause todo.add.",
 	"Use todo.complete when the user asks to mark, close, finish, resolve, or clear an existing project TODO as done, or when gathered engineer/project evidence directly satisfies a linked TODO; never silently complete a TODO without a control confirmation.",
@@ -387,7 +388,7 @@ var bossActionPlannerForcedInstructions = []string{
 	"Use the gathered data; do not request more read-only queries.",
 
 	// Work parking and delegation.
-	"For a simple request to make a git commit now, choose kind=\"answer\" and say Boss should use the existing commit flow or current operator session, unless the user explicitly asks a separate engineer to prepare or review the commit.",
+	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
 	"If the user asks to change Little Control Room app settings, choose kind=\"propose_control\" with control_capability=\"settings.update\".",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
@@ -444,7 +445,7 @@ var bossActionPlannerNormalInstructions = []string{
 	"Use search_context instead when the target is a matching term rather than a specific project.",
 
 	// Control and goal selection.
-	"For a simple request to make a git commit now, choose kind=\"answer\" and say Boss should use the existing commit flow or current operator session, unless the user explicitly asks a separate engineer to prepare or review the commit.",
+	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
 	"Choose kind=\"propose_control\" if the user asked to change app settings, delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
 	"Also choose kind=\"propose_control\" if the user wants to archive/unarchive one or more regular loaded projects, or archive/remove a scratch task whose project metadata says kind=scratch_task.",
 	"Also choose kind=\"propose_control\" if the user wants fresh external research from an engineer.",

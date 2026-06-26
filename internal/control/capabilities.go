@@ -18,6 +18,7 @@ const (
 	FeatureAddTodo          = "add_todo"
 	FeatureCompleteTodo     = "complete_todo"
 	FeatureUpdateSettings   = "update_settings"
+	FeaturePrepareCommit    = "prepare_commit"
 	FeatureApprovalResponse = "approval_response"
 	FeatureReview           = "review"
 	FeatureCompact          = "compact"
@@ -30,6 +31,7 @@ const (
 	HostEffectMayCreateProjectTodo     = "may_create_project_todo"
 	HostEffectMayCompleteProjectTodo   = "may_complete_project_todo"
 	HostEffectMayUpdateSettings        = "may_update_settings"
+	HostEffectMayPrepareGitCommit      = "may_prepare_git_commit_preview"
 )
 
 type AgentTaskKind string
@@ -326,6 +328,14 @@ type SettingsUpdateInput struct {
 	Changes   []SettingsChange `json:"changes"`
 }
 
+type GitPrepareCommitInput struct {
+	RequestID       string `json:"request_id,omitempty"`
+	ProjectPath     string `json:"project_path"`
+	ProjectName     string `json:"project_name"`
+	Message         string `json:"message,omitempty"`
+	PushAfterCommit bool   `json:"push_after_commit"`
+}
+
 func Capabilities() []Capability {
 	return []Capability{
 		EngineerSendPromptCapability(),
@@ -337,6 +347,7 @@ func Capabilities() []Capability {
 		TodoAddCapability(),
 		TodoCompleteCapability(),
 		SettingsUpdateCapability(),
+		GitPrepareCommitCapability(),
 	}
 }
 
@@ -360,6 +371,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return TodoCompleteCapability(), true
 	case CapabilitySettingsUpdate:
 		return SettingsUpdateCapability(), true
+	case CapabilityGitPrepareCommit:
+		return GitPrepareCommitCapability(), true
 	default:
 		return Capability{}, false
 	}
@@ -527,6 +540,24 @@ func SettingsUpdateCapability() Capability {
 			ID:        ProviderAuto,
 			Available: true,
 			Features:  []string{FeatureUpdateSettings},
+		}},
+	}
+}
+
+func GitPrepareCommitCapability() Capability {
+	return Capability{
+		Name:         CapabilityGitPrepareCommit,
+		Description:  "Open the existing project commit preview flow for a loaded project. Preparing the preview never commits or pushes; the operator must confirm in the normal TUI commit dialog.",
+		InputSchema:  gitPrepareCommitInputSchema(),
+		OutputSchema: gitPrepareCommitOutputSchema(),
+		Risk:         RiskWrite,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects:  []string{HostEffectMayPrepareGitCommit},
+		Providers: []ProviderCapability{{
+			ID:        ProviderAuto,
+			Available: true,
+			Features:  []string{FeaturePrepareCommit},
 		}},
 	}
 }
@@ -710,6 +741,24 @@ func NormalizeSettingsUpdateInput(input SettingsUpdateInput) (SettingsUpdateInpu
 		return SettingsUpdateInput{}, fmt.Errorf("at least one settings change is required")
 	}
 	return out, nil
+}
+
+func NormalizeGitPrepareCommitInput(input GitPrepareCommitInput) (GitPrepareCommitInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" {
+		input.ProjectPath = filepath.Clean(input.ProjectPath)
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	input.Message = strings.TrimSpace(input.Message)
+	if strings.ContainsAny(input.Message, "\r\n") {
+		return GitPrepareCommitInput{}, fmt.Errorf("commit message must be one line")
+	}
+	input.Message = strings.Join(strings.Fields(input.Message), " ")
+	if input.ProjectPath == "" && input.ProjectName == "" {
+		return GitPrepareCommitInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	return input, nil
 }
 
 func NormalizeSettingsChange(change SettingsChange) (SettingsChange, error) {
@@ -1037,6 +1086,34 @@ func validateSettingsUpdateInvocation(inv Invocation) (Invocation, error) {
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilitySettingsUpdate, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateGitPrepareCommitInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityGitPrepareCommit)
+	}
+	var input GitPrepareCommitInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityGitPrepareCommit, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityGitPrepareCommit)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeGitPrepareCommitInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityGitPrepareCommit, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -1425,6 +1502,42 @@ func settingsUpdateOutputSchema() map[string]any {
 			"status":      map[string]any{"type": "string"},
 		},
 		"required": []string{"changed", "config_path", "status"},
+	}
+}
+
+func gitPrepareCommitInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":   map[string]any{"type": "string"},
+			"project_path": map[string]any{"type": "string"},
+			"project_name": map[string]any{"type": "string"},
+			"message": map[string]any{
+				"type":        "string",
+				"description": "Optional one-line commit message seed for the normal commit preview dialog; empty lets LCR generate one.",
+			},
+			"push_after_commit": map[string]any{
+				"type":        "boolean",
+				"description": "True when the user asked to commit and push. This prepares the finish/commit-and-push preview only; applying it still requires the normal TUI confirmation.",
+			},
+		},
+		"required": []string{"project_path", "project_name", "message", "push_after_commit"},
+	}
+}
+
+func gitPrepareCommitOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"project_path":      map[string]any{"type": "string"},
+			"push_after_commit": map[string]any{"type": "boolean"},
+			"preview_opened":    map[string]any{"type": "boolean"},
+			"operator_confirms": map[string]any{"type": "boolean"},
+			"status":            map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "push_after_commit", "preview_opened", "operator_confirms", "status"},
 	}
 }
 

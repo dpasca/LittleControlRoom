@@ -19,6 +19,7 @@ const (
 	CapabilityTodoAdd            CapabilityName = "todo.add"
 	CapabilityTodoComplete       CapabilityName = "todo.complete"
 	CapabilitySettingsUpdate     CapabilityName = "settings.update"
+	CapabilityGitPrepareCommit   CapabilityName = "git.prepare_commit"
 )
 
 func CapabilityNameValues() []CapabilityName {
@@ -32,6 +33,7 @@ func CapabilityNameValues() []CapabilityName {
 		CapabilityTodoAdd,
 		CapabilityTodoComplete,
 		CapabilitySettingsUpdate,
+		CapabilityGitPrepareCommit,
 	}
 }
 
@@ -238,6 +240,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateTodoCompleteInvocation(inv)
 	case CapabilitySettingsUpdate:
 		return validateSettingsUpdateInvocation(inv)
+	case CapabilityGitPrepareCommit:
+		return validateGitPrepareCommitInvocation(inv)
 	case "":
 		return Invocation{}, fmt.Errorf("capability is required")
 	default:

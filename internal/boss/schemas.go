@@ -232,6 +232,14 @@ func bossActionSchema() map[string]any {
 				},
 				"description": "For settings.update proposals, the list of app settings changes to apply. Otherwise empty.",
 			},
+			"commit_message": map[string]any{
+				"type":        "string",
+				"description": "For git.prepare_commit proposals, optional one-line commit message seed. Empty lets LCR generate the message.",
+			},
+			"push_after_commit": map[string]any{
+				"type":        "boolean",
+				"description": "For git.prepare_commit proposals, true when the user asked to commit and push. This only prepares the normal commit-and-push preview; the operator still confirms in the TUI.",
+			},
 			"engineer_provider": map[string]any{
 				"type":        "string",
 				"enum":        control.ProviderStrings(true),
@@ -383,6 +391,8 @@ func bossActionSchema() map[string]any {
 			"todo_text",
 			"todo_evidence",
 			"settings_changes",
+			"commit_message",
+			"push_after_commit",
 			"engineer_provider",
 			"session_mode",
 			"prompt",

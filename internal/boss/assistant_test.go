@@ -1011,8 +1011,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"structured control action",
 		"user must confirm",
 		"Do not say agent work will be done",
-		"Boss Chat does not have a native git commit control action",
-		"do not pretend a separate engineer handoff is the same thing",
+		"Boss Chat can propose opening the normal TUI commit preview through git.prepare_commit",
+		"operator must still confirm in that dialog",
 		"recommend one next move",
 	} {
 		if !strings.Contains(directPrompt, want) {
@@ -1044,8 +1044,12 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"project TODOs are separate from delegated agent tasks",
 		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
+		"git.prepare_commit",
+		"Use git.prepare_commit for a simple commit or commit-and-push request",
+		"operator still confirms Enter for commit or Alt+Enter for commit and push",
+		"A git.prepare_commit control proposal opens exactly one loaded project preview",
+		"do not silently pick one and drop the rest",
 		"Do not use engineer.send_prompt merely to create a git commit",
-		"current operator session",
 		"Project implementation requests are not TODO requests",
 		"open idle Codex or OpenCode engineer session",
 		"Use todo.add only when the user explicitly asks",
@@ -1542,6 +1546,62 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 	if resp.Usage.TotalTokens != 17 {
 		t.Fatalf("usage total = %d, want 17", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReplyCanProposeGitPrepareCommitControl(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: "git.prepare_commit",
+				ProjectPath:       "/tmp/talk",
+				ProjectName:       "talk_gamedev_lessons",
+				CommitMessage:     "Publish talk cleanup",
+				PushAfterCommit:   true,
+				Reason:            "The user asked for a normal commit-and-push on the loaded talk project.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 16},
+		}},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.\n- talk_gamedev_lessons at /tmp/talk",
+		Messages:   []ChatMessage{{Role: "user", Content: "commit and push the talk gamedev lessons work"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want git.prepare_commit proposal")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityGitPrepareCommit {
+		t.Fatalf("capability = %q", resp.ControlInvocation.Capability)
+	}
+	if !strings.Contains(resp.Content, "Open the commit & push preview for talk_gamedev_lessons?") ||
+		!strings.Contains(resp.Content, "Message seed: Publish talk cleanup") ||
+		!strings.Contains(resp.Content, "normal commit dialog") ||
+		!strings.Contains(resp.Content, "Alt+Enter") ||
+		!strings.Contains(resp.Content, "Enter opens") {
+		t.Fatalf("proposal content = %q, want commit-preview confirmation", resp.Content)
+	}
+	var input control.GitPrepareCommitInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode invocation args: %v", err)
+	}
+	if input.ProjectPath != "/tmp/talk" ||
+		input.ProjectName != "talk_gamedev_lessons" ||
+		input.Message != "Publish talk cleanup" ||
+		!input.PushAfterCommit {
+		t.Fatalf("invocation args = %#v", input)
 	}
 }
 

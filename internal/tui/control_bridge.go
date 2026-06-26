@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/model"
+	"lcroom/internal/service"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -132,6 +133,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeSettingsUpdateControlWithOutcome(input)
+	case control.CapabilityGitPrepareCommit:
+		var input control.GitPrepareCommitInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeGitPrepareCommitControlWithOutcome(input)
 	default:
 		err := fmt.Errorf("unsupported capability: %s", normalized.Capability)
 		m.status = "Control request unsupported: " + string(normalized.Capability)
@@ -244,6 +252,9 @@ func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, er
 	if saved, ok := msg.(settingsSavedMsg); ok && inv.Capability == control.CapabilitySettingsUpdate {
 		return bossSettingsUpdateSavedStatus(inv, saved), saved.err
 	}
+	if preview, ok := msg.(commitPreviewMsg); ok && inv.Capability == control.CapabilityGitPrepareCommit {
+		return bossGitPrepareCommitStatus(inv, preview), preview.err
+	}
 	return "Control action completed.", nil
 }
 
@@ -256,6 +267,24 @@ func bossSettingsUpdateSavedStatus(inv control.Invocation, saved settingsSavedMs
 		summary = "Updated settings."
 	}
 	return summary
+}
+
+func bossGitPrepareCommitStatus(_ control.Invocation, preview commitPreviewMsg) string {
+	if preview.err != nil {
+		return "Commit preview failed"
+	}
+	project := strings.TrimSpace(preview.preview.ProjectName)
+	if project == "" {
+		project = bossControlProjectTargetLabel(preview.projectPath)
+	}
+	if project == "" {
+		project = "the project"
+	}
+	action := "commit preview"
+	if preview.intent == service.GitActionFinish {
+		action = "commit & push preview"
+	}
+	return "Opened the " + action + " for " + project + ". Review it in the normal commit dialog before applying it."
 }
 
 func bossSettingsUpdateSummary(inv control.Invocation) string {
@@ -1117,6 +1146,37 @@ func (m Model) executeTodoCompleteControlWithOutcome(input control.TodoCompleteI
 	m = m.clearBossTrackedTodo(projectPath, input.TodoID)
 	m.status = fmt.Sprintf("Marked TODO #%d complete in %s", input.TodoID, name)
 	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) executeGitPrepareCommitControlWithOutcome(input control.GitPrepareCommitInput) controlInvocationOutcome {
+	if m.svc == nil {
+		err := errors.New("service unavailable")
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	project, err := m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	if !project.PresentOnDisk {
+		err := errors.New("Commit preview requires a folder present on disk")
+		m.status = err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	intent := service.GitActionCommit
+	if input.PushAfterCommit {
+		intent = service.GitActionFinish
+	}
+	target := projectNameForPicker(project, project.Path)
+	m.closeBossMode("Opening commit preview for " + target)
+	cmd := m.startCommitPreview(project, intent, input.Message)
+	if cmd == nil {
+		err := errors.New("commit preview did not start")
+		m.status = err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	return controlInvocationOutcome{model: m, cmd: cmd}
 }
 
 func (m Model) executeSettingsUpdateControlWithOutcome(input control.SettingsUpdateInput) controlInvocationOutcome {

@@ -49,6 +49,7 @@ func normalizeBossAction(action *bossAction) {
 	action.TodoText = strings.TrimSpace(action.TodoText)
 	action.TodoEvidence = strings.TrimSpace(action.TodoEvidence)
 	action.SettingsChanges = normalizeBossSettingsChanges(action.SettingsChanges)
+	action.CommitMessage = strings.TrimSpace(action.CommitMessage)
 	if provider := control.NormalizeProvider(action.EngineerProvider); provider != "" {
 		action.EngineerProvider = string(provider)
 	} else {

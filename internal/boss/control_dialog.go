@@ -40,6 +40,8 @@ func (m Model) controlConfirmationTitle() string {
 		return "Engineer Handoff"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return "Engineer Task"
+	case control.CapabilityGitPrepareCommit:
+		return "Commit Preview"
 	default:
 		return "Confirm Control Action"
 	}
@@ -232,6 +234,36 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				"",
 				strings.Join([]string{
 					renderBossControlAction("Enter", "mark done", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+				}, "   "),
+			)
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityGitPrepareCommit:
+		var input control.GitPrepareCommitInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			target := firstNonEmpty(input.ProjectName, input.ProjectPath, "selected project")
+			mode := "commit"
+			if input.PushAfterCommit {
+				mode = "commit & push"
+			}
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: open the normal commit preview", width)),
+				"",
+				renderBossControlDetail("Project", target, width),
+				renderBossControlDetail("Mode", mode, width),
+			}
+			if message := strings.TrimSpace(input.Message); message != "" {
+				lines = append(lines,
+					"",
+					bossControlSectionStyle.Render(fitLine("Message", width)),
+					renderBossControlPromptBox(message, width),
+				)
+			}
+			lines = append(lines,
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "open", uistyle.DialogActionPrimary),
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
 			)

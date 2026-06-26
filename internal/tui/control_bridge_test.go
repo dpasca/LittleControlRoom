@@ -706,6 +706,57 @@ func TestExecuteSettingsUpdateControlAddsPrivacyPattern(t *testing.T) {
 	}
 }
 
+func TestExecuteBossGitPrepareCommitControlOpensPreview(t *testing.T) {
+	projectPath := t.TempDir()
+	project := model.ProjectSummary{
+		Path:                 projectPath,
+		Name:                 "talk_gamedev_lessons",
+		PresentOnDisk:        true,
+		LatestSessionSummary: "Recent talk outline cleanup",
+	}
+	m := Model{
+		ctx:         context.Background(),
+		svc:         newControlTestService(t),
+		allProjects: []model.ProjectSummary{project},
+		projects:    []model.ProjectSummary{project},
+		bossMode:    true,
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationRawForTest(t, control.CapabilityGitPrepareCommit, control.GitPrepareCommitInput{
+			ProjectPath:     projectPath,
+			ProjectName:     "talk_gamedev_lessons",
+			Message:         "Publish talk cleanup",
+			PushAfterCommit: true,
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want commit preview command")
+	}
+	if got.bossMode {
+		t.Fatalf("bossMode = true, want Boss hidden while commit preview opens")
+	}
+	if got.commitPreview == nil {
+		t.Fatalf("commitPreview = nil, want loading preview")
+	}
+	if got.commitPreview.Intent != service.GitActionFinish {
+		t.Fatalf("commit preview intent = %q, want finish", got.commitPreview.Intent)
+	}
+	if got.commitPreview.ProjectPath != projectPath || got.commitPreview.ProjectName != "talk_gamedev_lessons" {
+		t.Fatalf("commit preview target = %#v, want talk project", got.commitPreview)
+	}
+	if got.commitPreview.Message != "Publish talk cleanup" || got.commitPreviewMessageOverride != "Publish talk cleanup" {
+		t.Fatalf("commit preview message = %q/%q, want seeded message", got.commitPreview.Message, got.commitPreviewMessageOverride)
+	}
+	if !got.commitPreviewRefreshing {
+		t.Fatalf("commitPreviewRefreshing = false, want async preview loading")
+	}
+	if got.status != "Preparing finish preview..." {
+		t.Fatalf("status = %q, want preparing finish preview", got.status)
+	}
+}
+
 func TestExecuteScratchTaskArchiveControlArchivesTask(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Default()
