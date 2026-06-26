@@ -206,7 +206,11 @@ func (b *stdioApprovalBroker) RequestProcess(ctx context.Context, request script
 	request.ID = firstNonEmptyString(strings.TrimSpace(request.ID), b.nextProcessID())
 	request.SessionID = firstNonEmptyString(strings.TrimSpace(request.SessionID), b.sessionID)
 	request.Command = strings.TrimSpace(request.Command)
-	request.CWD = firstNonEmptyString(strings.TrimSpace(request.CWD), b.cwd)
+	request.ProjectPath = strings.TrimSpace(request.ProjectPath)
+	request.CWD = strings.TrimSpace(request.CWD)
+	if request.CWD == "" && request.ProjectPath == "" {
+		request.CWD = b.cwd
+	}
 	event := session.Event{
 		"type":       "process_request",
 		"session_id": request.SessionID,
@@ -216,6 +220,9 @@ func (b *stdioApprovalBroker) RequestProcess(ctx context.Context, request script
 		"name":       request.Name,
 		"command":    request.Command,
 		"cwd":        request.CWD,
+	}
+	if request.ProjectPath != "" {
+		event["project_path"] = request.ProjectPath
 	}
 	if request.CreateNew {
 		event["create_new"] = true

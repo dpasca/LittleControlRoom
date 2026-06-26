@@ -560,6 +560,84 @@ func TestLCAgentProcessRequestStartsManagedRuntime(t *testing.T) {
 	}
 }
 
+func TestLCAgentProcessRequestStartsSiblingProjectRuntime(t *testing.T) {
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "site")
+	siblingPath := filepath.Join(parent, "game")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(siblingPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	siblingCanon, err := filepath.EvalSymlinks(siblingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","project_path":"../game","command":"pwd; sleep 30","name":"promo-export"}`))
+
+	got := strings.Join(stdin.writes, "")
+	if !strings.Contains(got, `"id":"process-1"`) ||
+		!strings.Contains(got, `"success":true`) ||
+		!strings.Contains(got, `"project_path":"`+siblingCanon+`"`) ||
+		!strings.Contains(got, `"cwd":"`+siblingCanon+`"`) {
+		t.Fatalf("process response payload = %q", got)
+	}
+	if siteSnapshots := manager.SnapshotsForProject(projectPath); len(siteSnapshots) != 0 {
+		t.Fatalf("site snapshots = %+v, want none", siteSnapshots)
+	}
+	siblingSnapshots := manager.SnapshotsForProject(siblingCanon)
+	if len(siblingSnapshots) != 1 || !siblingSnapshots[0].Running || siblingSnapshots[0].Command != "pwd; sleep 30" {
+		t.Fatalf("sibling snapshots = %+v, want one running export", siblingSnapshots)
+	}
+	transcript := session.Snapshot().Transcript
+	if !strings.Contains(transcript, "for ../game") || !strings.Contains(transcript, "project "+siblingCanon) {
+		t.Fatalf("transcript missing sibling project status:\n%s", transcript)
+	}
+}
+
+func TestLCAgentProcessRequestRejectsNonSiblingProjectRuntime(t *testing.T) {
+	projectPath := t.TempDir()
+	otherParent := t.TempDir()
+	otherPath := filepath.Join(otherParent, "other")
+	if err := os.MkdirAll(otherPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","project_path":"` + otherPath + `","command":"sleep 30"}`))
+
+	got := strings.Join(stdin.writes, "")
+	if !strings.Contains(got, `"success":false`) || !strings.Contains(got, "must be the session workspace or a sibling project") {
+		t.Fatalf("process response payload = %q", got)
+	}
+	if snapshots := manager.Snapshots(); len(snapshots) != 0 {
+		t.Fatalf("snapshots = %+v, want none", snapshots)
+	}
+}
+
 func TestLCAgentProcessRequestStartsDistinctManagedRuntimes(t *testing.T) {
 	projectPath := t.TempDir()
 	manager := projectrun.NewManager()

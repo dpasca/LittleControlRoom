@@ -836,6 +836,7 @@ type commandArgs struct {
 
 type processArgs struct {
 	Command         string `json:"command"`
+	ProjectPath     string `json:"project_path"`
 	CWD             string `json:"cwd"`
 	ProcessID       string `json:"process_id"`
 	Name            string `json:"name"`
@@ -1379,16 +1380,23 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = tools.ToolResult{Success: false, Error: "start_process command is required"}
 			break
 		}
+		approvalCWD := spec.CWD
+		if strings.TrimSpace(approvalCWD) == "" {
+			approvalCWD = strings.TrimSpace(args.ProjectPath)
+		}
+		approvalSpec := spec
+		approvalSpec.CWD = approvalCWD
 		result = r.runProcessWithApproval(ctx, ProcessRequest{
 			SessionID:       r.SessionID,
 			Action:          ProcessActionStart,
+			ProjectPath:     strings.TrimSpace(args.ProjectPath),
 			Command:         spec.Command,
 			CWD:             spec.CWD,
 			Name:            strings.TrimSpace(args.Name),
 			Purpose:         args.Purpose,
 			CreateNew:       args.CreateNew,
 			ReplaceExisting: args.ReplaceExisting,
-		}, spec, "start_process")
+		}, approvalSpec, "start_process")
 	case "list_processes":
 		var args processArgs
 		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
@@ -1396,9 +1404,10 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.runProcess(ctx, ProcessRequest{
-			SessionID: r.SessionID,
-			Action:    ProcessActionList,
-			Purpose:   args.Purpose,
+			SessionID:   r.SessionID,
+			Action:      ProcessActionList,
+			ProjectPath: strings.TrimSpace(args.ProjectPath),
+			Purpose:     args.Purpose,
 		})
 	case "stop_process":
 		var args processArgs
@@ -1407,10 +1416,11 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.runProcess(ctx, ProcessRequest{
-			SessionID: r.SessionID,
-			Action:    ProcessActionStop,
-			ProcessID: strings.TrimSpace(args.ProcessID),
-			Purpose:   args.Purpose,
+			SessionID:   r.SessionID,
+			Action:      ProcessActionStop,
+			ProjectPath: strings.TrimSpace(args.ProjectPath),
+			ProcessID:   strings.TrimSpace(args.ProcessID),
+			Purpose:     args.Purpose,
 		})
 	case "apply_patch":
 		var args patchArgs
@@ -2192,7 +2202,7 @@ func (r *Runner) writeOperationalAction(request ProcessRequest, result tools.Too
 		ProcessID:                processID,
 		Name:                     name,
 		Command:                  strings.TrimSpace(firstNonEmpty(result.Command, request.Command)),
-		CWD:                      strings.TrimSpace(firstNonEmpty(result.CWD, request.CWD)),
+		CWD:                      strings.TrimSpace(firstNonEmpty(result.CWD, request.CWD, request.ProjectPath)),
 		Success:                  result.Success,
 		Denied:                   result.Denied,
 		Error:                    strings.TrimSpace(result.Error),

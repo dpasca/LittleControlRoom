@@ -216,9 +216,15 @@ func TestToolsWithOptionsExposeManagedProcessesWhenEnabled(t *testing.T) {
 	if !strings.Contains(startSpec.Description, "deploy/publish/promote/upload/release") {
 		t.Fatalf("start_process description missing operational guidance: %q", startSpec.Description)
 	}
+	if !strings.Contains(startSpec.Description, "Dropbox") {
+		t.Fatalf("start_process description missing external sync-folder guidance: %q", startSpec.Description)
+	}
 	startProps := startSpec.Parameters["properties"].(map[string]any)
 	if _, ok := startProps["name"]; !ok {
 		t.Fatalf("start_process missing name property: %#v", startProps)
+	}
+	if _, ok := startProps["project_path"]; !ok {
+		t.Fatalf("start_process missing project_path property: %#v", startProps)
 	}
 	if _, ok := startProps["create_new"]; !ok {
 		t.Fatalf("start_process missing create_new property: %#v", startProps)
@@ -226,9 +232,16 @@ func TestToolsWithOptionsExposeManagedProcessesWhenEnabled(t *testing.T) {
 	if _, ok := startProps["replace_existing"]; !ok {
 		t.Fatalf("start_process missing replace_existing property: %#v", startProps)
 	}
-	_ = toolSpec(t, tools, "list_processes")
+	listSpec := toolSpec(t, tools, "list_processes")
+	listProps := listSpec.Parameters["properties"].(map[string]any)
+	if _, ok := listProps["project_path"]; !ok {
+		t.Fatalf("list_processes missing project_path property: %#v", listProps)
+	}
 	stopSpec := toolSpec(t, tools, "stop_process")
 	stopProps := stopSpec.Parameters["properties"].(map[string]any)
+	if _, ok := stopProps["project_path"]; !ok {
+		t.Fatalf("stop_process missing project_path property: %#v", stopProps)
+	}
 	if _, ok := stopProps["process_id"]; !ok {
 		t.Fatalf("stop_process missing process_id property: %#v", stopProps)
 	}
@@ -406,6 +419,10 @@ func TestSystemPromptIncludesManagedProcessGuidanceWhenEnabled(t *testing.T) {
 	for _, want := range []string{
 		"call start_process first",
 		"list_processes",
+		"video/export jobs",
+		"external local sync folder such as Dropbox",
+		"project_path",
+		"maximum timeout of 60000 ms",
 		"stop_process",
 		"continues under Little Control Room after this turn ends",
 		"do not promise that you will keep watching",

@@ -250,7 +250,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
-				Description: "Run a bounded command in the workspace. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use create_file, replace_file, apply_patch, replace_lines, or replace_text. Do not use bounded run_command for deploy/publish/promote/upload/release operations that may exceed the timeout when managed process support is available.",
+				Description: "Run a bounded command in the workspace. The maximum timeout is 60000 ms; use start_process for operations that may exceed that. Prefer argv. Use shell command strings only when shell behavior is genuinely needed. Do not use this to edit files through redirects, heredocs, tee, in-place rewrites, or mutating file commands; use create_file, replace_file, apply_patch, replace_lines, or replace_text. Do not use bounded run_command for deploy/publish/promote/upload/release operations that may exceed the timeout when managed process support is available.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
@@ -271,13 +271,14 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "start_process",
-				Description: "Start a long-running managed background process through Little Control Room, for dev servers, watchers, and long deploy/publish/promote/upload/release operations that should remain inspectable after the tool returns. Use this instead of run_command for processes expected to keep running or exceed bounded command timeouts. By default, if the same command is already running in the same cwd, the existing process is reused instead of launching a duplicate.",
+				Description: "Start a long-running managed background process through Little Control Room, for dev servers, watchers, video/export jobs, external local sync folder copies such as Dropbox, and long deploy/publish/promote/upload/release operations that should remain inspectable after the tool returns. Use this instead of run_command for processes expected to keep running or exceed the 60000 ms bounded-command timeout. Do not truncate long-operation output with head/tail pipes just to fit run_command. By default, if the same command is already running in the same cwd, the existing process is reused instead of launching a duplicate.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"command":          map[string]any{"type": "string", "description": "Shell command to run as the managed process, for example \"pnpm dev\". Keep it to the foreground server/watch command; LCR owns backgrounding and stopping."},
-						"cwd":              map[string]any{"type": "string", "description": "Optional workspace-relative working directory for the process, for example \"frontend\". Absolute or parent-directory cwd values outside the workspace are rejected."},
+						"project_path":     map[string]any{"type": "string", "description": "Optional project root for a cross-project managed process. Use the current workspace by default. Absolute paths or relative paths such as \"../SiblingProject\" are accepted only when the embedded host allows that project."},
+						"cwd":              map[string]any{"type": "string", "description": "Optional working directory inside project_path/current workspace, for example \"frontend\". Absolute or parent-directory cwd values outside the chosen project are rejected."},
 						"name":             map[string]any{"type": "string", "description": "Optional short label for this process, such as \"frontend\" or \"emulators\"."},
 						"create_new":       map[string]any{"type": "boolean", "description": "Set true only when the user needs another concurrent copy of the same command in the same cwd. Leave false for ordinary launch/relaunch and screenshot/verification workflows."},
 						"replace_existing": map[string]any{"type": "boolean", "description": "Set true to stop running managed processes with the same command and cwd before starting a fresh one. Do not combine with create_new."},
@@ -290,12 +291,13 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "list_processes",
-				Description: "List managed background processes for this workspace, including running state, process id, PID, ports, URLs, and recent output. Use this to verify whether a dev server is actually still running.",
+				Description: "List managed background processes for this workspace or optional project_path, including running state, process id, PID, ports, URLs, and recent output. Use this to verify whether a dev server or long operation is actually still running.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"purpose": map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "Use verify when this is a runtime liveness check after start_process; it passes only when at least one managed process is reported running."},
+						"project_path": map[string]any{"type": "string", "description": "Optional project root matching a start_process project_path when checking a cross-project managed process."},
+						"purpose":      map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "Use verify when this is a runtime liveness check after start_process; it passes only when at least one managed process is reported running."},
 					},
 				},
 			},
@@ -304,12 +306,13 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "stop_process",
-				Description: "Stop a managed background process through Little Control Room. This only affects LCR-owned managed runtimes. Use process_id from list_processes when more than one process is active.",
+				Description: "Stop a managed background process through Little Control Room. This only affects LCR-owned managed runtimes. Use project_path for cross-project managed processes, and process_id from list_processes when more than one process is active.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
 					"properties": map[string]any{
-						"process_id": map[string]any{"type": "string", "description": "Optional managed process id from list_processes. If omitted, LCR stops the selected/default process for this workspace."},
+						"project_path": map[string]any{"type": "string", "description": "Optional project root matching a start_process project_path when stopping a cross-project managed process."},
+						"process_id":   map[string]any{"type": "string", "description": "Optional managed process id from list_processes. If omitted, LCR stops the selected/default process for this workspace/project_path."},
 					},
 				},
 			},

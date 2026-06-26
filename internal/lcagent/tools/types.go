@@ -31,6 +31,7 @@ type ToolResult struct {
 
 type ManagedProcessEvidence struct {
 	Action        string   `json:"action,omitempty"`
+	ProjectPath   string   `json:"project_path,omitempty"`
 	ProcessID     string   `json:"process_id,omitempty"`
 	Name          string   `json:"name,omitempty"`
 	Command       string   `json:"command,omitempty"`

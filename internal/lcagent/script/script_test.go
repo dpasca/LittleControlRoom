@@ -1836,6 +1836,83 @@ func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	}
 }
 
+func TestRunnerStartProcessPassesProjectPathToProcessBroker(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	processes := &fakeProcessBroker{result: tools.ToolResult{Output: "started cross-project export"}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Processes: processes,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "start_process",
+		Args: raw(`{"command":"pnpm run export","project_path":"../SiblingGame","name":"promo-export"}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if len(processes.requests) != 1 {
+		t.Fatalf("process requests = %#v", processes.requests)
+	}
+	request := processes.requests[0]
+	if request.ProjectPath != "../SiblingGame" || request.CWD != "" || request.Command != "pnpm run export" {
+		t.Fatalf("process request = %#v", request)
+	}
+	if !strings.Contains(stream.String(), `"project_path":"../SiblingGame"`) {
+		t.Fatalf("stream missing project_path: %s", stream.String())
+	}
+}
+
+func TestRunnerStartProcessApprovalUsesProjectPathWhenCWDIsBlank(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyLow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
+	processes := &fakeProcessBroker{result: tools.ToolResult{Output: "started cross-project export"}}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+		Processes: processes,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "start_process",
+		Args: raw(`{"command":"pnpm run export","project_path":"../SiblingGame","name":"promo-export"}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	expectedCWD := filepath.Clean(filepath.Join(w.Root, "../SiblingGame"))
+	if approvals.calls != 1 || approvals.requests[0].CWD != expectedCWD {
+		t.Fatalf("approval requests = %#v calls=%d, want cwd %q", approvals.requests, approvals.calls, expectedCWD)
+	}
+	if len(processes.requests) != 1 || processes.requests[0].ProjectPath != "../SiblingGame" || processes.requests[0].CWD != "" {
+		t.Fatalf("process requests = %#v", processes.requests)
+	}
+}
+
 func TestRunnerProcessApprovalGrantDoesNotReuseRunCommandGrant(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyLow)

@@ -90,3 +90,46 @@ func TestStdioApprovalBrokerEmitsProcessRequestAndReceivesResult(t *testing.T) {
 		}
 	}
 }
+
+func TestStdioApprovalBrokerEmitsProcessProjectPathWithoutDefaultCWD(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	broker := newStdioApprovalBroker(
+		writer,
+		sessionID,
+		"/repo/site",
+		strings.NewReader(`{"type":"process_response","id":"lca_process_1","result":{"success":true,"output":"started","command":"pnpm run export","cwd":"/repo/game"}}`+"\n"),
+	)
+	result, err := broker.RequestProcess(context.Background(), script.ProcessRequest{
+		Action:      script.ProcessActionStart,
+		ProjectPath: "../game",
+		Name:        "promo-export",
+		Command:     "pnpm run export",
+	})
+	if err != nil {
+		t.Fatalf("RequestProcess() error = %v", err)
+	}
+	if !result.Success || result.CWD != "/repo/game" {
+		t.Fatalf("result = %#v", result)
+	}
+	text := stream.String()
+	for _, want := range []string{
+		`"type":"process_request"`,
+		`"id":"lca_process_1"`,
+		`"project_path":"../game"`,
+		`"command":"pnpm run export"`,
+		`"name":"promo-export"`,
+		`"cwd":""`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stream missing %s:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, `"cwd":"/repo/site"`) {
+		t.Fatalf("process request defaulted cwd to session project despite project_path:\n%s", text)
+	}
+}

@@ -16,6 +16,7 @@ import (
 type lcagentManagedProcessRequest struct {
 	ID              string
 	Action          string
+	ProjectPath     string
 	ProcessID       string
 	Name            string
 	Command         string
@@ -61,7 +62,10 @@ func (b lcagentProcessBridge) run(request lcagentManagedProcessRequest) tools.To
 	if b.manager == nil {
 		return tools.ToolResult{Success: false, Error: "runtime manager unavailable"}
 	}
-	projectPath := strings.TrimSpace(b.projectPath)
+	projectPath, err := lcagentResolveManagedProcessProjectPath(b.projectPath, request.ProjectPath)
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error(), CWD: strings.TrimSpace(request.CWD)}
+	}
 	switch strings.TrimSpace(request.Action) {
 	case "start":
 		command := strings.TrimSpace(request.Command)
@@ -118,6 +122,34 @@ func (b lcagentProcessBridge) run(request lcagentManagedProcessRequest) tools.To
 	}
 }
 
+func lcagentResolveManagedProcessProjectPath(sessionProjectPath, requestedProjectPath string) (string, error) {
+	sessionProjectPath = strings.TrimSpace(sessionProjectPath)
+	if sessionProjectPath == "" {
+		return "", errors.New("project path is required")
+	}
+	sessionProjectPath = filepath.Clean(sessionProjectPath)
+	requestedProjectPath = strings.TrimSpace(requestedProjectPath)
+	if requestedProjectPath == "" {
+		return sessionProjectPath, nil
+	}
+	if !filepath.IsAbs(requestedProjectPath) {
+		requestedProjectPath = filepath.Join(sessionProjectPath, requestedProjectPath)
+	}
+	requestedProjectPath = filepath.Clean(requestedProjectPath)
+	sessionCanon, err := filepath.EvalSymlinks(sessionProjectPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve session project path: %w", err)
+	}
+	targetCanon, err := filepath.EvalSymlinks(requestedProjectPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve managed process project_path: %w", err)
+	}
+	if targetCanon == sessionCanon || filepath.Dir(targetCanon) == filepath.Dir(sessionCanon) {
+		return targetCanon, nil
+	}
+	return "", fmt.Errorf("managed process project_path must be the session workspace or a sibling project: %s", requestedProjectPath)
+}
+
 func lcagentNormalizeManagedProcessCWD(projectPath, cwd string) (string, error) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -162,12 +194,15 @@ func lcagentProcessRequestStatus(action string) string {
 	}
 }
 
-func lcagentProcessRequestText(action, command, cwd string) string {
+func lcagentProcessRequestText(action, command, cwd, projectPath string) string {
 	switch strings.TrimSpace(action) {
 	case "start":
 		message := "LCAgent starting managed process"
 		if command = strings.TrimSpace(command); command != "" {
 			message += ": " + command
+		}
+		if projectPath = strings.TrimSpace(projectPath); projectPath != "" {
+			message += " for " + projectPath
 		}
 		if cwd = strings.TrimSpace(cwd); cwd != "" {
 			message += " in " + cwd
@@ -230,6 +265,7 @@ func lcagentManagedProcessEvidence(action string, snapshot projectrun.Snapshot) 
 	}
 	return &tools.ManagedProcessEvidence{
 		Action:        strings.TrimSpace(action),
+		ProjectPath:   strings.TrimSpace(snapshot.ProjectPath),
 		ProcessID:     strings.TrimSpace(snapshot.ID),
 		Name:          strings.TrimSpace(snapshot.Name),
 		Command:       strings.TrimSpace(snapshot.Command),

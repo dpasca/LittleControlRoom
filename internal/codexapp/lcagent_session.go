@@ -2292,6 +2292,7 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	request := lcagentManagedProcessRequest{
 		ID:              rawJSONString(event["id"]),
 		Action:          strings.TrimSpace(rawJSONString(event["action"])),
+		ProjectPath:     strings.TrimSpace(rawJSONString(event["project_path"])),
 		ProcessID:       strings.TrimSpace(rawJSONString(event["process_id"])),
 		Name:            strings.TrimSpace(rawJSONString(event["name"])),
 		Command:         strings.TrimSpace(rawJSONString(event["command"])),
@@ -2310,7 +2311,7 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 		appendAsync: s.appendAsync,
 	}
 	s.status = lcagentProcessRequestStatus(request.Action)
-	if text := lcagentProcessRequestText(request.Action, request.Command, request.CWD); text != "" {
+	if text := lcagentProcessRequestText(request.Action, request.Command, request.CWD, request.ProjectPath); text != "" {
 		s.appendEntryLocked(TranscriptStatus, text)
 	}
 	s.touchLocked()
