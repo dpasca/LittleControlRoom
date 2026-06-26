@@ -560,6 +560,39 @@ func TestLCAgentProcessRequestStartsManagedRuntime(t *testing.T) {
 	}
 }
 
+func TestLCAgentProcessRequestAcknowledgesManagedRuntimeExit(t *testing.T) {
+	projectPath := t.TempDir()
+	manager := projectrun.NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath:    projectPath,
+		runtimeManager: manager,
+		stdin:          stdin,
+		started:        true,
+		busy:           true,
+		status:         "LCAgent running",
+	}
+
+	session.handleEvent([]byte(`{"type":"process_request","session_id":"lca_process_session","id":"process-1","action":"start","name":"short-export","command":"echo process-done; sleep 0.2"}`))
+
+	snapshot := waitForLCAgentTranscript(t, session, "Managed process finished")
+	transcript := snapshot.Transcript
+	for _, want := range []string{
+		"Managed process finished",
+		"exited 0",
+		"name short-export",
+		"recent process-done",
+	} {
+		if !strings.Contains(transcript, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, transcript)
+		}
+	}
+	if got := strings.Count(transcript, "Managed process finished"); got != 1 {
+		t.Fatalf("managed process exit acknowledgement count = %d, want 1:\n%s", got, transcript)
+	}
+}
+
 func TestLCAgentProcessRequestStartsSiblingProjectRuntime(t *testing.T) {
 	parent := t.TempDir()
 	projectPath := filepath.Join(parent, "site")

@@ -26,10 +26,11 @@ type lcagentManagedProcessRequest struct {
 }
 
 type lcagentProcessBridge struct {
-	manager     *projectrun.Manager
-	projectPath string
-	stdin       io.Writer
-	appendAsync func(TranscriptKind, string)
+	manager          *projectrun.Manager
+	projectPath      string
+	stdin            io.Writer
+	appendAsync      func(TranscriptKind, string)
+	watchProcessExit func(projectrun.Snapshot)
 }
 
 func (b lcagentProcessBridge) handle(request lcagentManagedProcessRequest) {
@@ -100,6 +101,9 @@ func (b lcagentProcessBridge) run(request lcagentManagedProcessRequest) tools.To
 			if result.ReplacedCount != 1 {
 				prefix += "es"
 			}
+		}
+		if b.watchProcessExit != nil {
+			b.watchProcessExit(result.Snapshot)
 		}
 		return lcagentManagedProcessResult(prefix, result.Snapshot, true)
 	case "list":

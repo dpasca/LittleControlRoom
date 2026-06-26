@@ -32,6 +32,8 @@ const (
 	lcagentDefaultUtilityProvider = "main"
 	lcagentDefaultVisionProvider  = "off"
 	lcagentDefaultWebSearch       = "off"
+
+	lcagentManagedProcessExitPollInterval = 250 * time.Millisecond
 )
 
 type lcagentRunOptions struct {
@@ -127,6 +129,7 @@ type lcagentSession struct {
 	qualityPlanRequiresTemporal bool
 	qualityPlanLastSummary      string
 	qualityPlanPhaseItems       []QualityPlanPhaseSnapshot
+	watchedManagedProcesses     map[string]struct{}
 }
 
 const lcagentIdleShutdownNotice = "Closed embedded LCAgent session after 1 hour of inactivity."
@@ -2305,10 +2308,11 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	}
 	s.mu.Lock()
 	bridge := lcagentProcessBridge{
-		manager:     s.runtimeManager,
-		projectPath: s.projectPath,
-		stdin:       s.stdin,
-		appendAsync: s.appendAsync,
+		manager:          s.runtimeManager,
+		projectPath:      s.projectPath,
+		stdin:            s.stdin,
+		appendAsync:      s.appendAsync,
+		watchProcessExit: s.watchManagedProcessExit,
 	}
 	s.status = lcagentProcessRequestStatus(request.Action)
 	if text := lcagentProcessRequestText(request.Action, request.Command, request.CWD, request.ProjectPath); text != "" {
@@ -2318,6 +2322,123 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	s.mu.Unlock()
 
 	bridge.handle(request)
+}
+
+func (s *lcagentSession) watchManagedProcessExit(snapshot projectrun.Snapshot) {
+	if s == nil || s.runtimeManager == nil || !lcagentSnapshotHasProcessDetail(snapshot) {
+		return
+	}
+	watchKey := lcagentManagedProcessWatchKey(snapshot)
+	projectPath := filepath.Clean(strings.TrimSpace(snapshot.ProjectPath))
+	processID := strings.TrimSpace(snapshot.ID)
+	if watchKey == "" || projectPath == "" || processID == "" {
+		return
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	if s.watchedManagedProcesses == nil {
+		s.watchedManagedProcesses = make(map[string]struct{})
+	}
+	if _, exists := s.watchedManagedProcesses[watchKey]; exists {
+		s.mu.Unlock()
+		return
+	}
+	s.watchedManagedProcesses[watchKey] = struct{}{}
+	manager := s.runtimeManager
+	s.mu.Unlock()
+
+	if !snapshot.Running {
+		s.appendManagedProcessExit(snapshot)
+		return
+	}
+	go s.waitForManagedProcessExit(manager, watchKey, projectPath, processID)
+}
+
+func (s *lcagentSession) waitForManagedProcessExit(manager *projectrun.Manager, watchKey, projectPath, processID string) {
+	if s == nil || manager == nil {
+		return
+	}
+	ticker := time.NewTicker(lcagentManagedProcessExitPollInterval)
+	defer ticker.Stop()
+	for {
+		snapshot, err := manager.SnapshotProcess(projectPath, processID)
+		if err != nil {
+			s.appendAsync(TranscriptError, "Managed process exit watch failed: "+err.Error())
+			return
+		}
+		if lcagentManagedProcessWatchKey(snapshot) != watchKey {
+			return
+		}
+		if !snapshot.Running {
+			s.appendManagedProcessExit(snapshot)
+			return
+		}
+		s.mu.Lock()
+		closed := s.closed
+		s.mu.Unlock()
+		if closed {
+			return
+		}
+		<-ticker.C
+	}
+}
+
+func (s *lcagentSession) appendManagedProcessExit(snapshot projectrun.Snapshot) {
+	text := lcagentManagedProcessExitText(snapshot)
+	if text == "" {
+		return
+	}
+	kind := TranscriptStatus
+	if strings.TrimSpace(snapshot.LastError) != "" || (snapshot.ExitCodeKnown && snapshot.ExitCode != 0) {
+		kind = TranscriptError
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.status = text
+	s.appendEntryLocked(kind, text)
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify()
+	}
+}
+
+func lcagentManagedProcessWatchKey(snapshot projectrun.Snapshot) string {
+	projectPath := filepath.Clean(strings.TrimSpace(snapshot.ProjectPath))
+	processID := strings.TrimSpace(snapshot.ID)
+	if projectPath == "" || processID == "" {
+		return ""
+	}
+	startedAt := "unknown"
+	if !snapshot.StartedAt.IsZero() {
+		startedAt = snapshot.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return strings.Join([]string{
+		projectPath,
+		processID,
+		startedAt,
+		strings.TrimSpace(snapshot.Command),
+	}, "\x00")
+}
+
+func lcagentManagedProcessExitText(snapshot projectrun.Snapshot) string {
+	line := lcagentManagedProcessLine(snapshot)
+	if line == "" {
+		return ""
+	}
+	prefix := "Managed process stopped"
+	if strings.TrimSpace(snapshot.LastError) != "" || (snapshot.ExitCodeKnown && snapshot.ExitCode != 0) {
+		prefix = "Managed process failed"
+	} else if snapshot.ExitCodeKnown {
+		prefix = "Managed process finished"
+	}
+	return prefix + ": " + line
 }
 
 func lcagentPhaseWriteGateText(event map[string]json.RawMessage) string {
