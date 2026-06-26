@@ -2141,7 +2141,7 @@ func (s *lcagentSession) handleUserMessageEvent(event map[string]json.RawMessage
 }
 
 func (s *lcagentSession) shouldSuppressPendingSteerEchoLocked(message, origin string) bool {
-	if !strings.EqualFold(origin, "steer") {
+	if !strings.EqualFold(origin, "steer") && !strings.EqualFold(origin, "browser_handoff") {
 		return false
 	}
 	message = strings.TrimSpace(message)

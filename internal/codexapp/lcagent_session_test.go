@@ -384,6 +384,28 @@ func TestLCAgentSubmitInputQueuesSteerDuringBusyRun(t *testing.T) {
 	}
 }
 
+func TestLCAgentSubmitInputSuppressesBrowserHandoffEchoDuringBusyRun(t *testing.T) {
+	stdin := &recordingWriteCloser{}
+	session := &lcagentSession{
+		projectPath: t.TempDir(),
+		stdin:       stdin,
+		started:     true,
+		busy:        true,
+		status:      "Browser waiting for user input",
+	}
+
+	const message = "I selected the upload file, continue"
+	if err := session.SubmitInput(Submission{Text: message}); err != nil {
+		t.Fatalf("SubmitInput() error = %v", err)
+	}
+
+	session.handleEvent([]byte(`{"type":"user_message","origin":"browser_handoff","message":"` + message + `"}`))
+	snapshot := session.Snapshot()
+	if got := strings.Count(snapshot.Transcript, message); got != 1 {
+		t.Fatalf("browser handoff echo count = %d, want 1:\n%s", got, snapshot.Transcript)
+	}
+}
+
 func TestLCAgentSessionModelRequestProgressUpdatesInPlace(t *testing.T) {
 	session := &lcagentSession{
 		projectPath: t.TempDir(),
