@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -419,32 +418,7 @@ func (s *PlaywrightMCPBrowserSession) forget(id string) {
 }
 
 func (s *PlaywrightMCPBrowserSession) browserExecutablePath() string {
-	if path := strings.TrimSpace(os.Getenv("LCR_PLAYWRIGHT_BROWSER_EXECUTABLE")); path != "" {
-		return path
-	}
-	if path := strings.TrimSpace(s.cfg.BrowserPath); path != "" {
-		return path
-	}
-	if s.paths.LaunchMode == ManagedLaunchModeHeadless {
-		return ""
-	}
-	for _, path := range defaultInteractiveBrowserExecutables() {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
-	}
-	return ""
-}
-
-func defaultInteractiveBrowserExecutables() []string {
-	if runtime.GOOS == "darwin" {
-		return []string{
-			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-			"/Applications/Chromium.app/Contents/MacOS/Chromium",
-			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-		}
-	}
-	return nil
+	return managedBrowserExecutablePathForConfig(s.cfg, s.paths.LaunchMode)
 }
 
 func (s *PlaywrightMCPBrowserSession) markMCPStarted(pid int) {

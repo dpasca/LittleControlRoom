@@ -69,13 +69,7 @@ func runPlaywrightMCP(args []string) int {
 		return 1
 	}
 
-	childArgs := []string{
-		"--output-dir", paths.OutputDir,
-		"--user-data-dir", paths.ProfileDir,
-	}
-	if opts.launchMode == browserctl.ManagedLaunchModeHeadless {
-		childArgs = append([]string{"--headless"}, childArgs...)
-	}
+	childArgs := playwrightMCPChildArgs(paths, opts.launchMode)
 
 	cmd := exec.Command("mcp-server-playwright", childArgs...)
 	cmd.Stdin = os.Stdin
@@ -114,6 +108,20 @@ func runPlaywrightMCP(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "playwright-mcp wait failed: %v\n", err)
 	return 1
+}
+
+func playwrightMCPChildArgs(paths browserctl.ManagedPlaywrightPaths, launchMode browserctl.ManagedLaunchMode) []string {
+	args := []string{
+		"--output-dir", paths.OutputDir,
+		"--user-data-dir", paths.ProfileDir,
+	}
+	if launchMode.Normalize() == browserctl.ManagedLaunchModeHeadless {
+		args = append([]string{"--headless"}, args...)
+	}
+	if browserPath := browserctl.ManagedBrowserExecutablePathForLaunchMode(launchMode); browserPath != "" {
+		args = append(args, "--executable-path", browserPath)
+	}
+	return args
 }
 
 func parsePlaywrightMCPOptions(args []string) (playwrightMCPOptions, error) {

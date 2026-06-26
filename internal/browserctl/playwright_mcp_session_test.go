@@ -168,10 +168,14 @@ done
 	}
 }
 
-func TestDefaultInteractiveBrowserExecutablesPrefersChromeBeforeBrave(t *testing.T) {
+func TestDefaultInteractiveBrowserExecutablesMovesDetectedDefaultBrowserLast(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS browser application preference only applies on darwin")
 	}
+	previous := detectMacDefaultBrowserBundleID
+	detectMacDefaultBrowserBundleID = func() string { return "com.google.Chrome" }
+	t.Cleanup(func() { detectMacDefaultBrowserBundleID = previous })
+
 	got := strings.Join(defaultInteractiveBrowserExecutables(), "\n")
 	chrome := strings.Index(got, "Google Chrome.app")
 	chromium := strings.Index(got, "Chromium.app")
@@ -179,8 +183,8 @@ func TestDefaultInteractiveBrowserExecutablesPrefersChromeBeforeBrave(t *testing
 	if chrome < 0 || chromium < 0 || brave < 0 {
 		t.Fatalf("browser candidates = %q, want Chrome, Chromium, and Brave", got)
 	}
-	if !(chrome < chromium && chromium < brave) {
-		t.Fatalf("browser candidates = %q, want Chrome then Chromium then Brave", got)
+	if !(chromium < brave && brave < chrome) {
+		t.Fatalf("browser candidates = %q, want default Chrome moved after Chromium and Brave", got)
 	}
 }
 

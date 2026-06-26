@@ -1,11 +1,46 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/browserctl"
 )
+
+func TestPlaywrightMCPChildArgsUsesManagedBrowserExecutableOverride(t *testing.T) {
+	t.Setenv("LCR_PLAYWRIGHT_BROWSER_EXECUTABLE", "/tmp/lcr-browser")
+	args := playwrightMCPChildArgs(browserctl.ManagedPlaywrightPaths{
+		OutputDir:  "/tmp/output",
+		ProfileDir: "/tmp/profile",
+	}, browserctl.ManagedLaunchModeBackground)
+
+	got := strings.Join(args, "\n")
+	for _, want := range []string{
+		"--output-dir\n/tmp/output",
+		"--user-data-dir\n/tmp/profile",
+		"--executable-path\n/tmp/lcr-browser",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("args = %#v, want substring %q", args, want)
+		}
+	}
+	if strings.Contains(got, "--headless") {
+		t.Fatalf("args = %#v, did not want --headless for background launch", args)
+	}
+}
+
+func TestPlaywrightMCPChildArgsKeepsHeadlessMode(t *testing.T) {
+	t.Setenv("LCR_PLAYWRIGHT_BROWSER_EXECUTABLE", "")
+	args := playwrightMCPChildArgs(browserctl.ManagedPlaywrightPaths{
+		OutputDir:  "/tmp/output",
+		ProfileDir: "/tmp/profile",
+	}, browserctl.ManagedLaunchModeHeadless)
+
+	if len(args) == 0 || args[0] != "--headless" {
+		t.Fatalf("args = %#v, want --headless first", args)
+	}
+}
 
 func TestReconcileManagedPlaywrightBrowserKeepsBackgroundBrowserHiddenUntilReveal(t *testing.T) {
 	paths, err := browserctl.ManagedPlaywrightPathsFor(
