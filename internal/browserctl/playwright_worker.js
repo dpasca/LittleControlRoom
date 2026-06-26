@@ -99,6 +99,142 @@ async function snapshot(maxChars) {
   return pageState({ Status: "snapshot", Snapshot: text });
 }
 
+function browserSearchQuery(params) {
+  const parts = [String(params.query || "").trim()];
+  const site = String(params.site || "").trim();
+  if (site) parts.push(`site:${site.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0]}`);
+  const recencyDays = Number(params.recency_days || 0);
+  if (recencyDays > 0) {
+    const after = new Date(Date.now() - recencyDays * 24 * 60 * 60 * 1000);
+    parts.push(`after:${after.toISOString().slice(0, 10)}`);
+  }
+  return parts.filter(Boolean).join(" ");
+}
+
+function formatBrowserSearchOutput(query, results) {
+  const lines = [
+    "backend: browser",
+    `query: ${String(query || "").trim()}`,
+    `results: ${results.length}`,
+    "",
+  ];
+  if (results.length === 0) {
+    lines.push("No results.");
+  }
+  results.forEach((result, index) => {
+    lines.push(`${index + 1}. ${result.title}`);
+    if (result.url) lines.push(`   url: ${result.url}`);
+    lines.push("   source: Google via managed browser");
+    if (result.snippet) lines.push(`   snippet: ${result.snippet}`);
+  });
+  return lines.join("\n") + "\n";
+}
+
+async function clickGoogleConsent(p) {
+  await p.evaluate(() => {
+    const clean = (value) => (value || "").replace(/\s+/g, " ").trim();
+    const labels = [
+      "accept all",
+      "i agree",
+      "agree",
+      "accetta tutto",
+      "tout accepter",
+      "aceptar todo",
+      "alle akzeptieren",
+    ];
+    const elements = Array.from(document.querySelectorAll("button,[role=button],input[type=submit],a"));
+    for (const el of elements) {
+      const text = clean(el.innerText || el.value || el.textContent).toLowerCase();
+      if (text && labels.some((label) => text.includes(label))) {
+        el.click();
+        break;
+      }
+    }
+  }).catch(() => {});
+}
+
+async function searchGoogle(params) {
+  const maxResults = Math.max(1, Math.min(10, Number(params.max_results || 5)));
+  const displayQuery = String(params.query || "").trim();
+  if (!displayQuery) throw new Error("search_google query is required");
+
+  await ensurePage();
+  const searchPage = await context.newPage();
+  try {
+    const url = new URL("https://www.google.com/search");
+    url.searchParams.set("q", browserSearchQuery(params));
+    url.searchParams.set("hl", "en");
+    await searchPage.goto(url.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+    await clickGoogleConsent(searchPage);
+    await searchPage.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    await searchPage.waitForTimeout(300).catch(() => {});
+    const extracted = await searchPage.evaluate((limit) => {
+      const clean = (value) => (value || "").replace(/\s+/g, " ").trim();
+      const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+      };
+      const badHost = (host) =>
+        host.endsWith("google.com") ||
+        host.includes(".google.") ||
+        host.endsWith("gstatic.com") ||
+        host.endsWith("googleusercontent.com");
+      const bodyText = clean(document.body.innerText || "");
+      if ((bodyText.toLowerCase().includes("unusual traffic") || bodyText.toLowerCase().includes("not a robot")) && !document.querySelector("a[href]")) {
+        return { blocked: true, url: location.href, title: document.title || "", results: [] };
+      }
+      const seen = new Set();
+      const results = [];
+      for (const a of document.querySelectorAll("a[href]")) {
+        if (!visible(a)) continue;
+        let href = a.href || "";
+        try {
+          const maybe = new URL(href);
+          if (maybe.pathname === "/url" && maybe.searchParams.get("q")) href = maybe.searchParams.get("q");
+        } catch (_) {}
+        let parsed;
+        try {
+          parsed = new URL(href);
+        } catch (_) {
+          continue;
+        }
+        if (!/^https?:$/.test(parsed.protocol) || badHost(parsed.hostname) || seen.has(parsed.href)) continue;
+        const title = clean(a.innerText || a.textContent);
+        if (title.length < 3) continue;
+        let container = a;
+        for (let i = 0; i < 5 && container.parentElement; i++) {
+          const parentText = clean(container.parentElement.innerText || container.parentElement.textContent);
+          if (parentText.length > title.length + 20) {
+            container = container.parentElement;
+          } else {
+            break;
+          }
+        }
+        const fullText = clean(container.innerText || container.textContent);
+        let snippet = fullText.replace(title, "").trim();
+        if (snippet.length > 320) snippet = snippet.slice(0, 320).trim();
+        seen.add(parsed.href);
+        results.push({ title: title.slice(0, 180), url: parsed.href, snippet });
+        if (results.length >= limit) break;
+      }
+      return { blocked: false, url: location.href, title: document.title || "", results };
+    }, maxResults);
+    if (extracted.blocked) {
+      throw new Error("Google search page appears to require CAPTCHA or unusual-traffic verification");
+    }
+    return {
+      URL: extracted.url || searchPage.url(),
+      Title: extracted.title || await searchPage.title().catch(() => ""),
+      Status: "searched",
+      Snapshot: formatBrowserSearchOutput(displayQuery, extracted.results || []),
+      Fresh: true,
+    };
+  } finally {
+    await searchPage.close().catch(() => {});
+  }
+}
+
 async function byRef(ref) {
   const p = await ensurePage();
   const locator = p.locator(`[data-lcr-ref="${String(ref).replace(/"/g, '\\"')}"]`).first();
@@ -110,6 +246,7 @@ async function byRef(ref) {
 
 async function handle(method, params) {
   const p = await ensurePage();
+  if (method === "search_google") return searchGoogle(params);
   if (method === "navigate") {
     const response = await p.goto(params.url, { waitUntil: "domcontentloaded", timeout: 30000 });
     return pageState({ Status: response ? `navigated ${response.status()}` : "navigated" });

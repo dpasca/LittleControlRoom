@@ -9,6 +9,22 @@ import (
 	"testing"
 )
 
+type fakeBrowserWebSearcher struct {
+	query       string
+	maxResults  int
+	site        string
+	recencyDays int
+	result      ToolResult
+}
+
+func (f *fakeBrowserWebSearcher) SearchBrowser(ctx context.Context, query string, maxResults int, site string, recencyDays int) ToolResult {
+	f.query = query
+	f.maxResults = maxResults
+	f.site = site
+	f.recencyDays = recencyDays
+	return f.result
+}
+
 func TestWebSearchRunnerSearXNG(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.Query().Get("q"); got != "lcagent site:example.com" {
@@ -77,6 +93,40 @@ func TestWebSearchRunnerExa(t *testing.T) {
 		if !strings.Contains(result.Output, want) {
 			t.Fatalf("output missing %q:\n%s", want, result.Output)
 		}
+	}
+}
+
+func TestWebSearchRunnerBrowser(t *testing.T) {
+	browser := &fakeBrowserWebSearcher{
+		result: ToolResult{Success: true, Output: "backend: browser\nquery: lcagent\nresults: 1\n\n1. LCAgent Browser\n   url: https://example.com/browser\n"},
+	}
+	runner, status := NewWebSearchRunner(WebSearchConfig{
+		Backend: "browser",
+		Browser: browser,
+	})
+	if !status.Enabled {
+		t.Fatalf("status = %#v, want enabled", status)
+	}
+
+	result := runner.Search(context.Background(), "lcagent", 42, "https://example.com/docs", 14)
+	if !result.Success {
+		t.Fatalf("Search() failed: %#v", result)
+	}
+	if browser.query != "lcagent" || browser.maxResults != maxWebSearchMaxResults || browser.site != "https://example.com/docs" || browser.recencyDays != 14 {
+		t.Fatalf("browser call = query %q max %d site %q recency %d", browser.query, browser.maxResults, browser.site, browser.recencyDays)
+	}
+	if !strings.Contains(result.Output, "backend: browser") || !strings.Contains(result.Output, "https://example.com/browser") {
+		t.Fatalf("output = %q", result.Output)
+	}
+}
+
+func TestWebSearchRunnerBrowserRequiresManagedBrowser(t *testing.T) {
+	_, status := NewWebSearchRunner(WebSearchConfig{Backend: "browser"})
+	if status.Enabled {
+		t.Fatalf("status = %#v, want disabled", status)
+	}
+	if !strings.Contains(status.Message, "managed browser control") {
+		t.Fatalf("message = %q", status.Message)
 	}
 }
 

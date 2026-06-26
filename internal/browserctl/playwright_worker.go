@@ -101,6 +101,15 @@ func (s *PlaywrightBrowserSession) CurrentPage(ctx context.Context) (BrowserActi
 	return s.call(ctx, "current_page", map[string]any{})
 }
 
+func (s *PlaywrightBrowserSession) SearchGoogle(ctx context.Context, query string, maxResults int, site string, recencyDays int) (BrowserActionResult, error) {
+	return s.call(ctx, "search_google", map[string]any{
+		"query":        strings.TrimSpace(query),
+		"max_results":  maxResults,
+		"site":         strings.TrimSpace(site),
+		"recency_days": recencyDays,
+	})
+}
+
 func (s *PlaywrightBrowserSession) Close() error {
 	s.mu.Lock()
 	cmd := s.cmd

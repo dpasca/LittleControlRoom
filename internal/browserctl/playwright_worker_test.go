@@ -17,6 +17,8 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
   if printf '%s' "$line" | grep -q '"method":"navigate"'; then
     printf '{"id":"%s","ok":true,"result":{"URL":"https://example.test/","Title":"Example","Status":"navigated","Fresh":true}}\n' "$id"
+  elif printf '%s' "$line" | grep -q '"method":"search_google"'; then
+    printf '{"id":"%s","ok":true,"result":{"URL":"https://www.google.com/search?q=lcagent","Title":"lcagent - Google Search","Status":"searched","Snapshot":"backend: browser\\nquery: lcagent\\nresults: 1\\n\\n1. LCAgent Browser\\n   url: https://example.test/browser\\n","Fresh":true}}\n' "$id"
   elif printf '%s' "$line" | grep -q '"method":"current_page"'; then
     printf '{"id":"%s","ok":true,"result":{"URL":"https://example.test/","Title":"Example","Status":"current_page","Fresh":true}}\n' "$id"
   else
@@ -71,6 +73,13 @@ done
 	}
 	if !strings.Contains(current.URL, "example.test") {
 		t.Fatalf("current page = %#v", current)
+	}
+	search, err := session.SearchGoogle(context.Background(), "lcagent", 5, "example.test", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if search.Status != "searched" || !strings.Contains(search.Snapshot, "backend: browser") || !strings.Contains(search.Snapshot, "LCAgent Browser") {
+		t.Fatalf("search result = %#v", search)
 	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)

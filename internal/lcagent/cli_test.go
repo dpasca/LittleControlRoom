@@ -170,6 +170,70 @@ func TestRunExecEmitsManagedBrowserCapability(t *testing.T) {
 	}
 }
 
+func TestRunExecBrowserWebSearchUsesManagedBrowserWorker(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	binDir := t.TempDir()
+	fakeNode := filepath.Join(binDir, "node")
+	nodeScript := `#!/bin/sh
+while IFS= read -r line; do
+  id=${line#*\"id\":\"}
+  id=${id%%\"*}
+  case "$line" in
+    *\"method\":\"search_google\"*)
+      printf '{"id":"%s","ok":true,"result":{"URL":"https://www.google.com/search?q=lcagent","Title":"lcagent - Google Search","Status":"searched","Snapshot":"backend: browser\\nquery: lcagent\\nresults: 1\\n\\n1. LCAgent Browser\\n   url: https://example.test/browser\\n","Fresh":true}}\n' "$id"
+      ;;
+    *)
+      printf '{"id":"%s","ok":false,"error":"unexpected method"}\n' "$id"
+      ;;
+  esac
+done
+`
+	if err := os.WriteFile(fakeNode, []byte(nodeScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	scriptPath := filepath.Join(t.TempDir(), "script.jsonl")
+	script := `{"type":"tool_call","tool":"web_search","args":{"query":"lcagent","max_results":5}}
+{"type":"final_response","summary":"done","files_changed":[],"verification":[]}
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", t.TempDir(),
+		"--auto", "low",
+		"--output", "stream-json",
+		"--script", scriptPath,
+		"--browser-control", "managed",
+		"--browser-session-key", "session-demo",
+		"--browser-profile-key", "profile-demo",
+		"--browser-launch-mode", "headless",
+		"--web-search-backend", "browser",
+		"browser web search",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	for _, want := range []string{
+		`"type":"web_search_profile"`,
+		`"enabled":true`,
+		`"backend":"browser"`,
+		`"tool":"web_search"`,
+		`backend: browser`,
+		`https://example.test/browser`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestRunExecShadowsPlaywrightSkillWhenBrowserUnavailable(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()

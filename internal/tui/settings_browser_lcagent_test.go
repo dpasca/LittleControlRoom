@@ -611,7 +611,7 @@ func TestSetupLCAgentWebSearchEnterRendersPicker(t *testing.T) {
 		t.Fatalf("web search enter should open the chooser")
 	}
 	rendered := ansi.Strip(got.View())
-	for _, want := range []string{"LCAgent Web Search", "Off", "Exa", "Google", "SearXNG"} {
+	for _, want := range []string{"LCAgent Web Search", "Off", "Exa", "Google", "SearXNG", "Browser"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("setup web search picker view missing %q:\n%s", want, rendered)
 		}
@@ -647,6 +647,11 @@ func TestSettingsLCAgentWebSearchShowsOnlyRelevantFields(t *testing.T) {
 			backend: "searxng",
 			want:    []string{"LCAgent SearXNG URL"},
 			hide:    []string{"LCAgent search key", "LCAgent search engine"},
+		},
+		{
+			name:    "browser",
+			backend: "browser",
+			hide:    []string{"LCAgent search key", "LCAgent search engine", "LCAgent SearXNG URL"},
 		},
 	}
 
