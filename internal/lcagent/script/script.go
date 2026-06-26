@@ -986,6 +986,10 @@ type browserPressArgs struct {
 	Key string `json:"key"`
 }
 
+type browserFileUploadArgs struct {
+	Paths []string `json:"paths"`
+}
+
 type browserScreenshotArgs struct {
 	Path string `json:"path"`
 }
@@ -1279,7 +1283,7 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			break
 		}
 		result = r.WebSearch.Search(ctx, args.Query, args.MaxResults, args.Site, args.RecencyDays)
-	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_screenshot", "browser_current_page":
+	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_file_upload", "browser_screenshot", "browser_current_page":
 		if invalid, ok := validateBrowserToolArgs(action.Tool, action.Args); !ok {
 			result = invalid
 			break
@@ -1744,7 +1748,7 @@ func (r *Runner) runBrowserWaitForUser(ctx context.Context, args browserWaitForU
 
 func isBrowserTool(tool string) bool {
 	switch tool {
-	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_screenshot", "browser_current_page":
+	case "browser_navigate", "browser_snapshot", "browser_click", "browser_fill", "browser_press", "browser_file_upload", "browser_screenshot", "browser_current_page":
 		return true
 	default:
 		return false
@@ -1992,6 +1996,19 @@ func validateBrowserToolArgs(tool string, raw json.RawMessage) (tools.ToolResult
 		}
 		if strings.TrimSpace(args.Key) == "" {
 			return tools.ToolResult{Success: false, Error: "browser_press key is required"}, false
+		}
+	case "browser_file_upload":
+		var args browserFileUploadArgs
+		if invalid, ok := decodeToolArgs(tool, raw, &args); !ok {
+			return invalid, false
+		}
+		if len(args.Paths) == 0 {
+			return tools.ToolResult{Success: false, Error: "browser_file_upload paths is required"}, false
+		}
+		for _, path := range args.Paths {
+			if strings.TrimSpace(path) == "" {
+				return tools.ToolResult{Success: false, Error: "browser_file_upload paths cannot contain empty entries"}, false
+			}
 		}
 	case "browser_screenshot":
 		var args browserScreenshotArgs

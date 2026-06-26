@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -109,6 +110,77 @@ done
 	}
 	if strings.Contains(string(raw), "--headless") {
 		t.Fatalf("background handoff should be headed for reveal, args = %q", raw)
+	}
+}
+
+func TestPlaywrightMCPBrowserSessionUploadsFiles(t *testing.T) {
+	dir := t.TempDir()
+	fakeMCP := filepath.Join(dir, "fake-mcp.sh")
+	callsPath := filepath.Join(dir, "calls.log")
+	script := `#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$CALLS_PATH"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+  if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+    printf '{"id":"%s","jsonrpc":"2.0","result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"Playwright","version":"test"}}}\n' "$id"
+  elif printf '%s' "$line" | grep -q '"method":"tools/call"'; then
+    printf '{"id":"%s","jsonrpc":"2.0","result":{"content":[{"type":"text","text":"### Page state\\n- Page URL: https://studio.example/upload\\n- Page Title: Upload"}]}}\n' "$id"
+  fi
+done
+`
+	if err := os.WriteFile(fakeMCP, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	origCommand := playwrightMCPCommand
+	playwrightMCPCommand = fakeMCP
+	t.Cleanup(func() { playwrightMCPCommand = origCommand })
+	t.Setenv("CALLS_PATH", callsPath)
+
+	session, err := NewPlaywrightMCPBrowserSession(BrowserSessionConfig{
+		DataDir:     dir,
+		Provider:    "lcagent",
+		ProjectPath: "/tmp/demo",
+		SessionKey:  "session-demo",
+		ProfileKey:  "profile-demo",
+		LaunchMode:  ManagedLaunchModeHeadless,
+		Policy:      DefaultPolicy(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	result, err := session.FileUpload(context.Background(), []string{"/tmp/video.mp4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://studio.example/upload" || result.Status != "file_uploaded" {
+		t.Fatalf("upload result = %#v", result)
+	}
+	raw, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"name":"browser_file_upload"`, `"/tmp/video.mp4"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("MCP calls missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestDefaultInteractiveBrowserExecutablesPrefersChromeBeforeBrave(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS browser application preference only applies on darwin")
+	}
+	got := strings.Join(defaultInteractiveBrowserExecutables(), "\n")
+	chrome := strings.Index(got, "Google Chrome.app")
+	chromium := strings.Index(got, "Chromium.app")
+	brave := strings.Index(got, "Brave Browser.app")
+	if chrome < 0 || chromium < 0 || brave < 0 {
+		t.Fatalf("browser candidates = %q, want Chrome, Chromium, and Brave", got)
+	}
+	if !(chrome < chromium && chromium < brave) {
+		t.Fatalf("browser candidates = %q, want Chrome then Chromium then Brave", got)
 	}
 }
 

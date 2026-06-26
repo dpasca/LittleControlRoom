@@ -115,6 +115,20 @@ func (s *PlaywrightMCPBrowserSession) Press(ctx context.Context, key string) (Br
 	return browserActionResultFromMCPText("pressed", text, ""), nil
 }
 
+func (s *PlaywrightMCPBrowserSession) FileUpload(ctx context.Context, paths []string) (BrowserActionResult, error) {
+	cleaned := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path = strings.TrimSpace(path); path != "" {
+			cleaned = append(cleaned, path)
+		}
+	}
+	text, err := s.callTool(ctx, "browser_file_upload", map[string]any{"paths": cleaned})
+	if err != nil {
+		return BrowserActionResult{}, err
+	}
+	return browserActionResultFromMCPText("file_uploaded", text, ""), nil
+}
+
 func (s *PlaywrightMCPBrowserSession) Screenshot(ctx context.Context, path string) (BrowserActionResult, error) {
 	args := map[string]any{"fullPage": true}
 	requested := strings.TrimSpace(path)
@@ -425,8 +439,9 @@ func (s *PlaywrightMCPBrowserSession) browserExecutablePath() string {
 func defaultInteractiveBrowserExecutables() []string {
 	if runtime.GOOS == "darwin" {
 		return []string{
-			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 			"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+			"/Applications/Chromium.app/Contents/MacOS/Chromium",
+			"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
 		}
 	}
 	return nil
