@@ -276,7 +276,9 @@ const playwrightNativeToolsSkillBody = `# Playwright
 
 This LCAgent run has native browser tools managed by Little Control Room.
 
-Use browser_navigate, browser_snapshot, browser_click, browser_fill, browser_press, browser_screenshot, browser_current_page, and browser_wait_for_user from the tool schema.
+Use browser_navigate, browser_snapshot, browser_click, browser_fill, browser_press, browser_file_upload, browser_screenshot, browser_current_page, and browser_wait_for_user from the tool schema.
+
+When an upload/select-files control opens a file chooser and the local file path is known, call browser_file_upload with that path.
 
 Do not launch a separate browser from the terminal. Do not run npx, playwright-mcp, playwright-cli, playwright_cli.sh, MCP setup commands, or provider-specific Playwright wrappers.
 

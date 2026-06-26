@@ -268,6 +268,11 @@ func TestToolsWithOptionsExposeBrowserToolsWhenEnabled(t *testing.T) {
 	_ = toolSpec(t, tools, "browser_click")
 	_ = toolSpec(t, tools, "browser_fill")
 	_ = toolSpec(t, tools, "browser_press")
+	upload := toolSpec(t, tools, "browser_file_upload")
+	uploadProps := upload.Parameters["properties"].(map[string]any)
+	if _, ok := uploadProps["paths"]; !ok {
+		t.Fatalf("browser_file_upload missing paths property: %#v", uploadProps)
+	}
 	_ = toolSpec(t, tools, "browser_screenshot")
 	current := toolSpec(t, tools, "browser_current_page")
 	props := current.Parameters["properties"].(map[string]any)

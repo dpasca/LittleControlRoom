@@ -189,13 +189,17 @@ func TestRunnerDispatchesBrowserToolsThroughBrowserRunner(t *testing.T) {
 	actions := []Action{
 		{Type: "tool_call", Tool: "browser_navigate", Args: raw(`{"url":"https://example.test"}`)},
 		{Type: "tool_call", Tool: "browser_snapshot", Args: raw(`{"max_chars":2000}`)},
+		{Type: "tool_call", Tool: "browser_file_upload", Args: raw(`{"paths":["/tmp/video.mp4"]}`)},
 		{Type: "final_response", Summary: "browser done", Verification: []string{"scripted browser fake"}},
 	}
 	if err := runner.Run(context.Background(), actions); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(browser.calls, ","); got != "browser_navigate,browser_snapshot" {
+	if got := strings.Join(browser.calls, ","); got != "browser_navigate,browser_snapshot,browser_file_upload" {
 		t.Fatalf("browser calls = %q", got)
+	}
+	if len(browser.args) != 3 || !strings.Contains(string(browser.args[2]), "/tmp/video.mp4") {
+		t.Fatalf("browser upload args = %#v", browser.args)
 	}
 	text := stream.String()
 	for _, want := range []string{
@@ -204,6 +208,7 @@ func TestRunnerDispatchesBrowserToolsThroughBrowserRunner(t *testing.T) {
 		`"type":"browser_activity_finished"`,
 		`"tool":"browser_navigate"`,
 		`"tool":"browser_snapshot"`,
+		`"tool":"browser_file_upload"`,
 		`"url":"https://example.test/"`,
 		"title: Example",
 		`button \"Continue\"`,

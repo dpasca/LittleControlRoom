@@ -209,6 +209,12 @@ func (r lcagentBrowserRunner) RunBrowserTool(ctx context.Context, tool string, a
 		}
 		_ = json.Unmarshal(args, &parsed)
 		result, err = r.session.Press(ctx, parsed.Key)
+	case "browser_file_upload":
+		var parsed struct {
+			Paths []string `json:"paths"`
+		}
+		_ = json.Unmarshal(args, &parsed)
+		result, err = r.session.FileUpload(ctx, parsed.Paths)
 	case "browser_screenshot":
 		var parsed struct {
 			Path string `json:"path"`

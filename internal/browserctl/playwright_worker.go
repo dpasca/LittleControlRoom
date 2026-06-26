@@ -93,6 +93,10 @@ func (s *PlaywrightBrowserSession) Press(ctx context.Context, key string) (Brows
 	return s.call(ctx, "press", map[string]any{"key": strings.TrimSpace(key)})
 }
 
+func (s *PlaywrightBrowserSession) FileUpload(ctx context.Context, paths []string) (BrowserActionResult, error) {
+	return BrowserActionResult{}, fmt.Errorf("file upload is only supported by Playwright MCP browser sessions")
+}
+
 func (s *PlaywrightBrowserSession) Screenshot(ctx context.Context, path string) (BrowserActionResult, error) {
 	return s.call(ctx, "screenshot", map[string]any{"path": strings.TrimSpace(path)})
 }

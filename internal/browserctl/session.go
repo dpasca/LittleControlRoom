@@ -8,6 +8,7 @@ type BrowserSession interface {
 	Click(context.Context, string) (BrowserActionResult, error)
 	Fill(context.Context, string, string) (BrowserActionResult, error)
 	Press(context.Context, string) (BrowserActionResult, error)
+	FileUpload(context.Context, []string) (BrowserActionResult, error)
 	Screenshot(context.Context, string) (BrowserActionResult, error)
 	CurrentPage(context.Context) (BrowserActionResult, error)
 	Close() error

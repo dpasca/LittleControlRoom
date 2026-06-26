@@ -581,6 +581,26 @@ func browserToolDefinitions() []ToolDefinition {
 		{
 			Type: "function",
 			Function: FunctionSpec{
+				Name:        "browser_file_upload",
+				Description: "Upload one or more local files into the currently open managed-browser file chooser. Use this after clicking an upload/select-files control when the local file path is known, instead of asking the user to pick the file manually." + descSuffix,
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"paths": map[string]any{
+							"type":        "array",
+							"description": "Absolute local file paths to upload.",
+							"items":       map[string]any{"type": "string"},
+							"minItems":    1,
+						},
+					},
+					"required": []string{"paths"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
 				Name:        "browser_screenshot",
 				Description: "Save a screenshot artifact from the managed browser page and return the artifact path. The artifact must exist, decode as an image, and not be blank/uniform to count as successful visual evidence." + descSuffix,
 				Parameters: map[string]any{

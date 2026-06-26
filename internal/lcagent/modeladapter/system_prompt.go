@@ -99,6 +99,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	} else {
 		lines = append(lines,
 			"Use native browser_* tools for browser work. Do not launch Playwright, MCP servers, or browser automation wrappers from run_command.",
+			"When a managed browser upload control opens a file chooser and the local file path is known, call browser_file_upload with that path.",
 			"If a browser step needs login, MFA, payment, CAPTCHA, or human judgment, call browser_wait_for_user with a short instruction instead of final_response. After the user replies, inspect the current page and continue.",
 		)
 	}
