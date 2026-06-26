@@ -1455,6 +1455,25 @@ func TestModelIsKnownForProviderRecognizesOpenAIQualityModels(t *testing.T) {
 	}
 }
 
+func TestModelIsKnownForProviderRecognizesXiaomiMimo25Variants(t *testing.T) {
+	for _, model := range []string{
+		DefaultXiaomiUtilityModel,
+		DefaultXiaomiModel,
+		"xiaomi/" + DefaultXiaomiModel,
+		"mimo-v2.5-pro-ultraspeed",
+		"xiaomi/mimo-v2.5-pro-ultraspeed",
+	} {
+		if !ModelIsKnownForProvider("xiaomi", model) {
+			t.Fatalf("%s should be known for direct Xiaomi routing", model)
+		}
+	}
+	for _, model := range []string{"mimo-v2.4-pro", "xiaomi/mimo-v2.4-pro"} {
+		if ModelIsKnownForProvider("xiaomi", model) {
+			t.Fatalf("%s should not be known for direct Xiaomi routing", model)
+		}
+	}
+}
+
 func TestXiaomiClientUsesAPIKeyHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {

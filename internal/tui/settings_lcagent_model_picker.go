@@ -588,6 +588,9 @@ func (m *Model) applySettingsLCAgentModelPickerFilter() {
 		return
 	}
 	state.FilteredModels = codexFilterModels(state.Models, state.FilterInput.Value())
+	if custom, ok := settingsLCAgentModelPickerCustomOption(state); ok {
+		state.FilteredModels = append(state.FilteredModels, custom)
+	}
 	state.Rows = buildSettingsLCAgentPickerRows(state.FilteredModels, state.Provider)
 
 	// Preserve the current selection when the selected model is still
@@ -611,6 +614,52 @@ func (m *Model) applySettingsLCAgentModelPickerFilter() {
 	if state.Selected > len(state.Rows) {
 		state.Selected = len(state.Rows)
 	}
+}
+
+func settingsLCAgentModelPickerCustomOption(state *settingsLCAgentModelPickerState) (codexapp.ModelOption, bool) {
+	if state == nil {
+		return codexapp.ModelOption{}, false
+	}
+	model := strings.TrimSpace(state.FilterInput.Value())
+	if model == "" || settingsLCAgentModelPickerHasModel(state.Models, model) {
+		return codexapp.ModelOption{}, false
+	}
+	provider := strings.ToLower(strings.TrimSpace(state.Provider))
+	if provider == "" {
+		provider = strings.ToLower(strings.TrimSpace(state.CurrentProvider))
+	}
+	return codexapp.ModelOption{
+		ID:                        model,
+		Model:                     model,
+		ModelProvider:             provider,
+		DisplayName:               "Custom: " + model,
+		Description:               "Use this provider model ID exactly as typed.",
+		SupportedReasoningEfforts: codexapp.LCAgentReasoningEffortOptionsForProvider(provider),
+		DefaultReasoningEffort:    settingsLCAgentModelPickerDefaultReasoning(provider, model),
+	}, true
+}
+
+func settingsLCAgentModelPickerHasModel(models []codexapp.ModelOption, model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	for _, option := range models {
+		if strings.EqualFold(strings.TrimSpace(option.Model), model) ||
+			strings.EqualFold(strings.TrimSpace(option.ID), model) ||
+			strings.EqualFold(strings.TrimSpace(option.DisplayName), model) {
+			return true
+		}
+	}
+	return false
+}
+
+func settingsLCAgentModelPickerDefaultReasoning(provider, model string) string {
+	options := codexapp.LCAgentReasoningEffortOptionsForProvider(provider)
+	if len(options) > 0 {
+		return strings.TrimSpace(options[0].ReasoningEffort)
+	}
+	return ""
 }
 
 func (m Model) chooseSettingsLCAgentModelPickerModel(option codexapp.ModelOption, auto bool) (tea.Model, tea.Cmd) {
@@ -987,8 +1036,8 @@ func (m Model) renderSettingsLCAgentModelPickerAPIKeyContent(width, bodyH int, t
 		lines = append(lines, baseStyle.Render(settingsModelPickerBaseURLLabel(provider)+": "+baseInput.View()))
 	}
 	lines = append(lines, rowStyle.Render(settingsModelPickerAPIKeyLabel(provider)+": "+input.View()))
-	if suffix := maskedOpenAIKeySuffix(input.Value()); suffix != "" {
-		lines = append(lines, detailMutedStyle.Render("Shared key will be used for this provider and saved with settings. Ending "+suffix+"."))
+	if strings.TrimSpace(input.Value()) != "" {
+		lines = append(lines, detailMutedStyle.Render("Shared key will be used for this provider and saved with settings. It remains hidden while editing."))
 	} else {
 		fallback := settingsModelPickerAPIKeyFallbackText(m.settingsDraftForInferenceStatus(), state.FieldIndex, provider)
 		lines = append(lines, detailMutedStyle.Render(fallback))

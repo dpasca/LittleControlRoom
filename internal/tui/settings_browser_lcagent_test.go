@@ -1824,10 +1824,11 @@ func TestSettingsAPIKeyHintShowsMaskedSuffix(t *testing.T) {
 	settings.OpenAIAPIKey = "sk-live-12345"
 
 	m := Model{
-		settingsMode:   true,
-		settingsFields: newSettingsFields(settings),
-		width:          100,
-		height:         24,
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
 	}
 	updated, _ := m.openSettingsDrilldown(settingsDrilldownProjectReports)
 	m = updated.(Model)
@@ -1839,6 +1840,61 @@ func TestSettingsAPIKeyHintShowsMaskedSuffix(t *testing.T) {
 	}
 	if strings.Contains(rendered, "sk-live-12345") {
 		t.Fatalf("settings modal should not show the full api key: %q", rendered)
+	}
+}
+
+func TestSettingsAPIKeyHintHidesDraftSuffixWhileEditing(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.LCAgentProvider = "xiaomi"
+	settings.XiaomiAPIKey = "xm-live-12345"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownLCAgent)
+	m = updated.(Model)
+	_ = m.setSettingsSelection(settingsFieldXiaomiAPIKey)
+	m.settingsFields[settingsFieldXiaomiAPIKey].input.SetValue("xm-live-1234")
+
+	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
+	if !strings.Contains(rendered, "Key is being edited") || !strings.Contains(rendered, "hidden until you save.") {
+		t.Fatalf("settings modal should say edited keys remain hidden: %q", rendered)
+	}
+	for _, leaked := range []string{"...1234", "...12345", "xm-live-1234", "xm-live-12345"} {
+		if strings.Contains(rendered, leaked) {
+			t.Fatalf("settings modal leaked edited api key fragment %q: %q", leaked, rendered)
+		}
+	}
+}
+
+func TestSettingsClearedSelectedAPIKeyRemainsVisible(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.XiaomiAPIKey = "xm-live-12345"
+
+	m := Model{
+		settingsMode:            true,
+		settingsSectionSelected: settingsSectionIndexByID(settingsSectionLCAgent),
+		settingsFields:          newSettingsFields(settings),
+		settingsBaseline:        &settings,
+		width:                   100,
+		height:                  24,
+	}
+	_ = m.setSettingsSelection(settingsFieldXiaomiAPIKey)
+	m.settingsFields[settingsFieldXiaomiAPIKey].input.SetValue("")
+
+	if !m.settingsFieldVisible(settingsFieldXiaomiAPIKey) {
+		t.Fatal("cleared selected Xiaomi API key field should remain visible")
+	}
+	rendered := ansi.Strip(m.renderSettingsContent(72, 18))
+	if !strings.Contains(rendered, "Xiaomi API key") || !strings.Contains(rendered, "Key cleared in this draft.") {
+		t.Fatalf("settings modal should keep cleared Xiaomi key field visible with replacement hint: %q", rendered)
+	}
+	if strings.Contains(rendered, "...12345") || strings.Contains(rendered, "xm-live-12345") {
+		t.Fatalf("settings modal leaked cleared api key suffix: %q", rendered)
 	}
 }
 

@@ -1064,7 +1064,9 @@ func (m Model) renderSetupReview(width int) string {
 	}
 	if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
 		keyText := "saved"
-		if suffix := maskedOpenAIKeySuffix(settings.OpenAIAPIKey); suffix != "" {
+		if m.settingsSensitiveAPIKeyEdited(settingsFieldOpenAIAPIKey) {
+			keyText = "entered and hidden until saved"
+		} else if suffix := m.settingsSensitiveAPIKeyStableSuffix(settingsFieldOpenAIAPIKey); suffix != "" {
 			keyText += " " + suffix
 		}
 		lines = append(lines, renderWrappedDetailField("OpenAI key", detailValueStyle, width, keyText))
@@ -1281,7 +1283,7 @@ func (m Model) setupConfigTitle() string {
 
 func (m Model) lcagentSetupSmokeLine() string {
 	settings := m.setupDraftSettingsForProviderChoices()
-	return renderLCAgentCredentialSmokeLine(settings)
+	return m.renderLCAgentCredentialSmokeLine(settings)
 }
 
 func (m Model) setupNoConfigText() string {

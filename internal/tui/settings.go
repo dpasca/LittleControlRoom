@@ -1058,6 +1058,11 @@ func (m Model) currentSettingsFieldOrder() []int {
 }
 
 func (m Model) settingsFieldVisible(index int) bool {
+	if index >= 0 && index < len(m.settingsFields) &&
+		settingsFieldIsSensitiveAPIKey(index) &&
+		(index == m.settingsSelected || m.settingsSensitiveAPIKeyEdited(index)) {
+		return true
+	}
 	settings := m.settingsDraftForInferenceStatus()
 	switch index {
 	case settingsFieldOpenAIAPIKey:
@@ -1130,6 +1135,80 @@ func (m Model) settingsFieldVisible(index int) bool {
 	default:
 		return true
 	}
+}
+
+func settingsFieldIsSensitiveAPIKey(index int) bool {
+	switch index {
+	case settingsFieldOpenAIAPIKey,
+		settingsFieldOpenRouterAPIKey,
+		settingsFieldDeepSeekAPIKey,
+		settingsFieldMoonshotAPIKey,
+		settingsFieldXiaomiAPIKey,
+		settingsFieldMLXAPIKey,
+		settingsFieldOllamaAPIKey,
+		settingsFieldLCAgentWebSearchAPIKey:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) settingsSensitiveAPIKeyBaselineValue(index int) string {
+	settings := m.currentSettingsBaseline()
+	switch index {
+	case settingsFieldOpenAIAPIKey:
+		return strings.TrimSpace(settings.OpenAIAPIKey)
+	case settingsFieldOpenRouterAPIKey:
+		return strings.TrimSpace(settings.OpenRouterAPIKey)
+	case settingsFieldDeepSeekAPIKey:
+		return strings.TrimSpace(settings.DeepSeekAPIKey)
+	case settingsFieldMoonshotAPIKey:
+		return strings.TrimSpace(settings.MoonshotAPIKey)
+	case settingsFieldXiaomiAPIKey:
+		return strings.TrimSpace(settings.XiaomiAPIKey)
+	case settingsFieldMLXAPIKey:
+		return strings.TrimSpace(settings.MLXAPIKey)
+	case settingsFieldOllamaAPIKey:
+		return strings.TrimSpace(settings.OllamaAPIKey)
+	case settingsFieldLCAgentWebSearchAPIKey:
+		return strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
+	default:
+		return ""
+	}
+}
+
+func (m Model) settingsSensitiveAPIKeyEdited(index int) bool {
+	if !settingsFieldIsSensitiveAPIKey(index) || len(m.settingsFields) == 0 || index < 0 || index >= len(m.settingsFields) {
+		return false
+	}
+	return strings.TrimSpace(m.settingsFieldValue(index)) != m.settingsSensitiveAPIKeyBaselineValue(index)
+}
+
+func (m Model) settingsSensitiveAPIKeyStableSuffix(index int) string {
+	if m.settingsSensitiveAPIKeyEdited(index) {
+		return ""
+	}
+	return maskedOpenAIKeySuffix(m.settingsSensitiveAPIKeyBaselineValue(index))
+}
+
+func (m Model) settingsSensitiveAPIKeyEditHint(index int) (string, bool) {
+	if !m.settingsSensitiveAPIKeyEdited(index) {
+		return "", false
+	}
+	if strings.TrimSpace(m.settingsFieldValue(index)) == "" {
+		return "Key cleared in this draft. Paste a replacement here, or press ctrl+s to save the removal.", true
+	}
+	return "Key is being edited and remains hidden until you save.", true
+}
+
+func (m Model) settingsAPIKeyStateHint(index int, prefix string, suffixTail string) (string, bool) {
+	if editHint, edited := m.settingsSensitiveAPIKeyEditHint(index); edited {
+		return prefix + " " + editHint, true
+	}
+	if suffix := m.settingsSensitiveAPIKeyStableSuffix(index); suffix != "" {
+		return prefix + " Stored key ends with " + suffix + suffixTail, true
+	}
+	return "", false
 }
 
 func (m Model) settingsShowingLCAgentCredentials() bool {
@@ -2161,7 +2240,7 @@ func (m Model) renderSettingsDrilldownStatus(width int) []string {
 	case settingsDrilldownLCAgent:
 		provider := settingsLCAgentMainProvider(settings)
 		label := settingsLCAgentProviderOptionLabel(provider) + " connection"
-		lines = append(lines, detailField(label, renderLCAgentCredentialSmokeLine(settings)))
+		lines = append(lines, detailField(label, m.renderLCAgentCredentialSmokeLine(settings)))
 		return lines
 	case settingsDrilldownProjectScope:
 		_, state, style, detail := m.settingsProjectRootsStepState()
@@ -2261,7 +2340,7 @@ func (m Model) renderProviderConnectionsStatus(width int) []string {
 
 	provider := firstNonEmptyTrimmed(lcagentProviderForRoutePreset(settings.LCAgentRoutePreset), settings.LCAgentProvider, "openrouter")
 	label := "LCAgent " + settingsLCAgentProviderOptionLabel(provider)
-	lines = append(lines, renderWrappedDetailField(label, detailValueStyle, width, renderLCAgentCredentialSmokeLine(settings)))
+	lines = append(lines, renderWrappedDetailField(label, detailValueStyle, width, m.renderLCAgentCredentialSmokeLine(settings)))
 	return lines
 }
 
@@ -2284,8 +2363,17 @@ func (m Model) renderProviderConnectionLine(label string, state string, users []
 	return renderWrappedDetailField(label, detailValueStyle, width, style.Render(state)+detailMutedStyle.Render(" - "+detail))
 }
 
+func (m Model) renderLCAgentCredentialSmokeLine(settings config.EditableSettings) string {
+	state, style, detail := m.lcagentCredentialSmokeCheck(settings)
+	return renderLCAgentCredentialSmokeState(state, style, detail)
+}
+
 func renderLCAgentCredentialSmokeLine(settings config.EditableSettings) string {
 	state, style, detail := lcagentCredentialSmokeCheck(settings)
+	return renderLCAgentCredentialSmokeState(state, style, detail)
+}
+
+func renderLCAgentCredentialSmokeState(state string, style lipgloss.Style, detail string) string {
 	if strings.TrimSpace(detail) == "" {
 		return style.Render(state)
 	}
@@ -2392,7 +2480,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 	bossChoice := m.selectedSettingsProviderChoice(providerChoiceRoleBossChat, settings.BossChatBackend, settings)
 	projectValue := settingsProjectReportsOverviewValue(settings, projectChoice)
 	bossValue := settingsBossChatOverviewValue(settings, bossChoice)
-	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := settingsLCAgentStepState(settings)
+	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := m.settingsLCAgentStepState(settings)
 	return []settingsGettingStartedStep{
 		{
 			Number:     "1",
@@ -2480,19 +2568,47 @@ func (m Model) selectedSettingsProviderChoice(role providerChoiceRole, backend c
 }
 
 func settingsLCAgentStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
+	return settingsLCAgentStepStateWithCredentialCheck(settings, lcagentCredentialSmokeCheck)
+}
+
+func (m Model) settingsLCAgentStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
+	return settingsLCAgentStepStateWithCredentialCheck(settings, m.lcagentCredentialSmokeCheck)
+}
+
+func settingsLCAgentStepStateWithCredentialCheck(settings config.EditableSettings, credentialCheck func(config.EditableSettings) (string, lipgloss.Style, string)) (string, string, lipgloss.Style, string) {
 	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
-		state, style, detail := lcagentCredentialSmokeCheck(settings)
+		state, style, detail := credentialCheck(settings)
 		return settingsChoiceOptionLabelForField(settingsFieldLCAgentRoutePreset, preset), state, style, detail
 	}
 	provider := settingsLCAgentMainProvider(settings)
 	providerLabel := settingsLCAgentProviderOptionLabel(provider)
 	model := settingsLCAgentMainModel(settings)
-	state, style, detail := lcagentCredentialSmokeCheck(settings)
+	state, style, detail := credentialCheck(settings)
 	value := providerLabel + " / " + model
 	if state == "optional" {
 		value = providerLabel
 	}
 	return value, state, style, detail
+}
+
+func (m Model) lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipgloss.Style, string) {
+	if state, style, detail, ok := m.settingsEditedLCAgentCredentialState(settings); ok {
+		return state, style, detail
+	}
+	return lcagentCredentialSmokeCheck(settings)
+}
+
+func (m Model) settingsEditedLCAgentCredentialState(settings config.EditableSettings) (string, lipgloss.Style, string, bool) {
+	provider := settingsLCAgentMainProvider(settings)
+	field := settingsLCAgentCredentialFieldForProvider(provider)
+	if field < 0 || !m.settingsSensitiveAPIKeyEdited(field) {
+		return "", lipgloss.Style{}, "", false
+	}
+	label := lcagentProviderSavedKeyLabel(provider)
+	if strings.TrimSpace(m.settingsFieldValue(field)) == "" {
+		return "needed", detailWarningStyle, label + " cleared in this draft; paste a replacement here or press ctrl+s to save the removal.", true
+	}
+	return "editing", detailWarningStyle, label + " is being edited and remains hidden until saved.", true
 }
 
 func lcagentCredentialSmokeCheck(settings config.EditableSettings) (string, lipgloss.Style, string) {
@@ -3174,13 +3290,17 @@ func (m Model) renderSettingsGettingStartedNextAction(width int) string {
 	case settingsFieldLCAgentRoutePreset:
 		action = "Next: press Enter to configure LCAgent Main Model, Utility Model, credentials, and web search."
 	case settingsFieldOpenAIAPIKey:
-		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(settingsFieldOpenAIAPIKey)); suffix != "" {
+		if editHint, edited := m.settingsSensitiveAPIKeyEditHint(m.settingsSelected); edited {
+			action = editHint
+		} else if suffix := m.settingsSensitiveAPIKeyStableSuffix(m.settingsSelected); suffix != "" {
 			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change API keys."
 		} else {
 			action = "Next: paste a key here for the selected OpenAI API path, or go back and choose a local/off provider."
 		}
 	case settingsFieldOpenRouterAPIKey, settingsFieldDeepSeekAPIKey, settingsFieldMoonshotAPIKey, settingsFieldXiaomiAPIKey:
-		if suffix := maskedOpenAIKeySuffix(m.settingsFieldValue(m.settingsSelected)); suffix != "" {
+		if editHint, edited := m.settingsSensitiveAPIKeyEditHint(m.settingsSelected); edited {
+			action = editHint
+		} else if suffix := m.settingsSensitiveAPIKeyStableSuffix(m.settingsSelected); suffix != "" {
 			action = "Stored key ends with " + suffix + ". Replace it here only if you want to change this provider key."
 		} else {
 			action = "Next: paste the selected LCAgent model provider key, or go back and choose a different provider."
@@ -3756,8 +3876,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return backend.Label() + " backend selected. Project reports and commit help will use this provider."
 		}
 	case settingsFieldOpenAIAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for OpenAI API backed features. Stored key ends with " + suffix + "."
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for OpenAI API backed features.", "."); ok {
+			return hint
 		}
 		settings := m.settingsDraftForInferenceStatus()
 		if settings.AIBackend == config.AIBackendOpenAIAPI || settings.BossChatBackend == config.AIBackendOpenAIAPI || settingsLCAgentCredentialFieldRelevant(settings, "openai") {
@@ -3765,8 +3885,8 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 		return field.hint
 	case settingsFieldOpenRouterAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for OpenRouter-backed features. Stored key ends with " + suffix + "."
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for OpenRouter-backed features.", "."); ok {
+			return hint
 		}
 		settings := m.settingsDraftForInferenceStatus()
 		if settings.AIBackend == config.AIBackendOpenRouter || settings.BossChatBackend == config.AIBackendOpenRouter || settingsLCAgentCredentialFieldRelevant(settings, "openrouter") {
@@ -3774,8 +3894,8 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 		return field.hint
 	case settingsFieldDeepSeekAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for DeepSeek-backed features. Stored key ends with " + suffix + "."
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for DeepSeek-backed features.", "."); ok {
+			return hint
 		}
 		settings := m.settingsDraftForInferenceStatus()
 		if settings.AIBackend == config.AIBackendDeepSeek || settings.BossChatBackend == config.AIBackendDeepSeek || settingsLCAgentCredentialFieldRelevant(settings, "deepseek") {
@@ -3783,8 +3903,8 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 		return field.hint
 	case settingsFieldMoonshotAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for Moonshot-backed features. Stored key ends with " + suffix + "."
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for Moonshot-backed features.", "."); ok {
+			return hint
 		}
 		settings := m.settingsDraftForInferenceStatus()
 		if settings.AIBackend == config.AIBackendMoonshot || settings.BossChatBackend == config.AIBackendMoonshot || settingsLCAgentCredentialFieldRelevant(settings, "moonshot") {
@@ -3802,15 +3922,21 @@ func (m Model) settingsFieldHint(index int) string {
 		}
 		return "Blank uses " + config.AIBackendXiaomi.DefaultOpenAICompatibleBaseURL() + ". Token Plan keys may need a regional token-plan URL."
 	case settingsFieldXiaomiAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			settings := m.settingsDraftForInferenceStatus()
+		settings := m.settingsDraftForInferenceStatus()
+		if editHint, edited := m.settingsSensitiveAPIKeyEditHint(index); edited {
+			if config.LooksLikeXiaomiTokenPlanAPIKey(settings.XiaomiAPIKey) &&
+				config.LooksLikeRegularXiaomiBaseURL(settings.XiaomiBaseURL) {
+				return "BLOCKED: Token Plan key detected; set Xiaomi base URL to the regional Token Plan URL. " + editHint
+			}
+			return "Used for Xiaomi-backed features. " + editHint
+		}
+		if suffix := m.settingsSensitiveAPIKeyStableSuffix(index); suffix != "" {
 			if config.LooksLikeXiaomiTokenPlanAPIKey(settings.XiaomiAPIKey) &&
 				config.LooksLikeRegularXiaomiBaseURL(settings.XiaomiBaseURL) {
 				return "BLOCKED: Token Plan key detected; set Xiaomi base URL to the regional Token Plan URL. Stored key ends with " + suffix + "."
 			}
 			return "Used for Xiaomi-backed features. Stored key ends with " + suffix + "."
 		}
-		settings := m.settingsDraftForInferenceStatus()
 		if settings.AIBackend == config.AIBackendXiaomi || settings.BossChatBackend == config.AIBackendXiaomi || settingsLCAgentCredentialFieldRelevant(settings, "xiaomi") {
 			return field.hint + " The selected Xiaomi path still needs a saved key."
 		}
@@ -3870,8 +3996,8 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldMLXBaseURL:
 		return field.hint
 	case settingsFieldMLXAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for the MLX backend. Stored key ends with " + suffix + ". Leave blank to use mlx."
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for the MLX backend.", ". Leave blank to use mlx."); ok {
+			return hint
 		}
 		return field.hint
 	case settingsFieldMLXModel:
@@ -3882,8 +4008,8 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldOllamaBaseURL:
 		return field.hint
 	case settingsFieldOllamaAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for the Ollama backend. Stored key ends with " + suffix + ". Leave blank to use ollama."
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for the Ollama backend.", ". Leave blank to use ollama."); ok {
+			return hint
 		}
 		return field.hint
 	case settingsFieldOllamaModel:
@@ -4064,8 +4190,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return field.hint
 		}
 	case settingsFieldLCAgentWebSearchAPIKey:
-		if suffix := maskedOpenAIKeySuffix(field.input.Value()); suffix != "" {
-			return "Used for Exa or Google backed LCAgent web_search. Stored key ends with " + suffix + "."
+		if hint, ok := m.settingsAPIKeyStateHint(index, "Used for Exa or Google backed LCAgent web_search.", "."); ok {
+			return hint
 		}
 		return field.hint
 	case settingsFieldLCAgentWebSearchEngineID:

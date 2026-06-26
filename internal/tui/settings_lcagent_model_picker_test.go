@@ -83,6 +83,31 @@ func TestSettingsLCAgentModelPickerStoresOllamaBaseURLBeforeLoading(t *testing.T
 	}
 }
 
+func TestSettingsLCAgentModelPickerAPIKeyStepHidesEditingSuffix(t *testing.T) {
+	m := Model{
+		settingsFields: newSettingsFields(config.EditableSettings{LCAgentProvider: "xiaomi"}),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:         settingsFieldLCAgentModel,
+			Step:               settingsLCAgentModelPickerStepAPIKey,
+			Provider:           "xiaomi",
+			APIKeyProvider:     "xiaomi",
+			APIKeyInput:        newSettingsLCAgentModelPickerAPIKeyInput("xiaomi", "xm-live-12345"),
+			BaseURLInput:       newSettingsLCAgentModelPickerBaseURLInput("xiaomi", config.AIBackendXiaomi.DefaultOpenAICompatibleBaseURL()),
+			ConnectionSelected: 0,
+		},
+	}
+
+	rendered := ansi.Strip(m.renderSettingsLCAgentModelPickerAPIKeyContent(84, 24, "Xiaomi API key"))
+	if !strings.Contains(rendered, "It remains hidden while editing.") {
+		t.Fatalf("picker should explain edited keys remain hidden: %q", rendered)
+	}
+	for _, leaked := range []string{"...12345", "xm-live-12345"} {
+		if strings.Contains(rendered, leaked) {
+			t.Fatalf("picker leaked edited api key fragment %q: %q", leaked, rendered)
+		}
+	}
+}
+
 func TestOpenEmbeddedLCAgentModelPickerUsesUnifiedPicker(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.LCAgentProvider = "ollama"
@@ -356,6 +381,67 @@ func TestSettingsLCAgentModelPickerBackspaceEditsFilter(t *testing.T) {
 	}
 	if state.FilterInput.Value() != "gp" {
 		t.Fatalf("filter after backspace = %q, want gp", state.FilterInput.Value())
+	}
+}
+
+func TestSettingsLCAgentModelPickerCanSelectCustomFilteredModel(t *testing.T) {
+	const customModel = "mimo-v2.5-pro-ultraspeed"
+	models := []codexapp.ModelOption{{
+		Model:         "mimo-v2.5-pro",
+		ModelProvider: "xiaomi",
+		DisplayName:   "MiMo 2.5 Pro",
+	}}
+	input := newSettingsLCAgentModelPickerFilterInput()
+	input.SetValue(customModel)
+	m := Model{
+		settingsFields: newSettingsFields(config.EditableSettings{
+			LCAgentProvider: "xiaomi",
+		}),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:     settingsFieldLCAgentModel,
+			Step:           settingsLCAgentModelPickerStepModel,
+			Provider:       "xiaomi",
+			Models:         models,
+			FilteredModels: models,
+			Rows:           buildSettingsLCAgentPickerRows(models, "xiaomi"),
+			FilterInput:    input,
+			Selected:       0,
+		},
+	}
+
+	m.applySettingsLCAgentModelPickerFilter()
+	state := m.settingsLCAgentModelPicker
+	if state == nil {
+		t.Fatal("model picker closed unexpectedly")
+	}
+	if len(state.FilteredModels) != 1 || state.FilteredModels[0].Model != customModel {
+		t.Fatalf("filtered models = %#v, want custom model only", state.FilteredModels)
+	}
+	if state.Selected == 0 || state.Rows[state.Selected-1].ModelIndex != 0 {
+		t.Fatalf("selected row = %d rows=%#v, want custom model row", state.Selected, state.Rows)
+	}
+	rendered := ansi.Strip(m.renderSettingsLCAgentModelPickerContent(84, 24))
+	if !strings.Contains(rendered, "Custom: "+customModel) {
+		t.Fatalf("rendered picker missing custom model row:\n%s", rendered)
+	}
+
+	updated, _ := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	state = got.settingsLCAgentModelPicker
+	if state == nil || state.Step != settingsLCAgentModelPickerStepReasoning {
+		t.Fatalf("picker state after choosing custom model = %#v, want reasoning step", state)
+	}
+	if state.PendingModel != customModel || state.PendingModelOption.ModelProvider != "xiaomi" {
+		t.Fatalf("pending custom model/provider = %q/%q, want %q/xiaomi", state.PendingModel, state.PendingModelOption.ModelProvider, customModel)
+	}
+
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if value := got.settingsFieldValue(settingsFieldLCAgentModel); value != customModel {
+		t.Fatalf("Main model field = %q, want %q", value, customModel)
+	}
+	if value := got.settingsFieldValue(settingsFieldLCAgentProvider); value != "xiaomi" {
+		t.Fatalf("LCAgent provider = %q, want xiaomi", value)
 	}
 }
 

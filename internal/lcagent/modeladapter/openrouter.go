@@ -386,7 +386,10 @@ func ModelIsKnownForProvider(provider, model string) bool {
 		model = strings.ToLower(NormalizeModelForProvider("moonshot", model))
 		return model == DefaultMoonshotModel || model == "kimi-k2.6"
 	case "xiaomi":
-		return model == DefaultXiaomiModel
+		model = strings.ToLower(NormalizeModelForProvider("xiaomi", model))
+		return model == DefaultXiaomiUtilityModel ||
+			model == DefaultXiaomiModel ||
+			strings.HasPrefix(model, "mimo-v2.5-")
 	default:
 		return true
 	}
