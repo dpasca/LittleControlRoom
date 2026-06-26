@@ -1248,6 +1248,7 @@ func settingsBossModelFieldsRelevant(settings config.EditableSettings) bool {
 		settings.BossChatBackend == config.AIBackendOpenRouter ||
 		settings.BossChatBackend == config.AIBackendDeepSeek ||
 		settings.BossChatBackend == config.AIBackendMoonshot ||
+		settings.BossChatBackend == config.AIBackendXiaomi ||
 		settings.BossChatBackend == config.AIBackendMLX ||
 		settings.BossChatBackend == config.AIBackendOllama ||
 		strings.TrimSpace(settings.OpenAIAPIKey) != ""

@@ -1329,6 +1329,67 @@ func TestSettingsDeepSeekProjectAndBossModelsAreSeparate(t *testing.T) {
 	}
 }
 
+func TestSettingsXiaomiBossChatDrilldownShowsModelFields(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendXiaomi
+	settings.XiaomiAPIKey = "xm-shared-example"
+
+	m := Model{
+		settingsMode:     true,
+		settingsFields:   newSettingsFields(settings),
+		settingsBaseline: &settings,
+		width:            120,
+		height:           30,
+	}
+
+	updated, _ := m.openSettingsDrilldown(settingsDrilldownBossChat)
+	got := updated.(Model)
+	fields := got.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
+	for _, want := range []int{
+		settingsFieldXiaomiBaseURL,
+		settingsFieldXiaomiAPIKey,
+		settingsFieldBossChatModel,
+		settingsFieldBossUtilityModel,
+	} {
+		if !slices.Contains(fields, want) {
+			t.Fatalf("boss chat Xiaomi drilldown fields = %#v, missing %d", fields, want)
+		}
+	}
+	if slices.Contains(fields, settingsFieldXiaomiModel) {
+		t.Fatalf("boss chat drilldown should use Boss model fields, not the project Xiaomi model field: %#v", fields)
+	}
+
+	rendered := ansi.Strip(got.renderSettingsContent(100, 24))
+	for _, want := range []string{
+		"Boss Chat Setup",
+		"Shared Xiaomi Connection",
+		"Xiaomi base URL",
+		"Xiaomi API key",
+		"Boss Models",
+		"Boss helm model",
+		"Default: " + config.DefaultXiaomiProModel + " from Xiaomi",
+		"Boss utility model",
+		"Default: " + config.DefaultXiaomiModel + " from Xiaomi",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("boss chat Xiaomi drilldown missing %q: %q", want, rendered)
+		}
+	}
+
+	_ = got.setSettingsSelection(settingsFieldBossChatModel)
+	updated, cmd := got.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("opening Boss Xiaomi model picker should not immediately load models")
+	}
+	if got.settingsLCAgentModelPicker == nil {
+		t.Fatalf("Boss Xiaomi model row should open the unified model picker")
+	}
+	if got.settingsLCAgentModelPicker.Provider != "xiaomi" {
+		t.Fatalf("model picker provider = %q, want xiaomi", got.settingsLCAgentModelPicker.Provider)
+	}
+}
+
 func TestSettingsProviderPickerDrillsIntoNeededDetailField(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	m := Model{
