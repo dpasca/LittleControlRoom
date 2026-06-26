@@ -325,7 +325,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentCriticReasoning := fs.String("lcagent-critic-reasoning-effort", cfg.LCAgentCriticReasoning, "optional LCAgent critic reasoning effort, for example low")
 	lcagentVisionProvider := fs.String("lcagent-vision-provider", cfg.LCAgentVisionProvider, "LCAgent image-analysis provider: off, main, openrouter, openai, deepseek, moonshot, or xiaomi")
 	lcagentVisionModel := fs.String("lcagent-vision-model", cfg.LCAgentVisionModel, "LCAgent image-analysis model; blank with provider main uses the main model")
-	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, or searxng")
+	lcagentWebSearchBackend := fs.String("lcagent-web-search-backend", cfg.LCAgentWebSearchBackend, "LCAgent web search backend: off, exa, google, searxng, or browser")
 	lcagentWebSearchAPIKey := fs.String("lcagent-web-search-api-key", cfg.LCAgentWebSearchAPIKey, "LCAgent web search API key for Exa or Google")
 	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
 	lcagentWebSearchURL := fs.String("lcagent-web-search-url", cfg.LCAgentWebSearchURL, "LCAgent web search endpoint URL, used by SearXNG")
@@ -965,10 +965,10 @@ func parseLCAgentWebSearchBackend(raw string) (string, error) {
 		return "off", nil
 	}
 	switch value {
-	case "off", "exa", "google", "searxng":
+	case "off", "exa", "google", "searxng", "browser":
 		return value, nil
 	default:
-		return "", fmt.Errorf("lcagent-web-search-backend must be one of: off, exa, google, searxng")
+		return "", fmt.Errorf("lcagent-web-search-backend must be one of: off, exa, google, searxng, browser")
 	}
 }
 

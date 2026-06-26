@@ -152,8 +152,21 @@ func resolveBrowserCapability(controlRaw, sessionKeyRaw, profileKeyRaw, launchMo
 	}
 }
 
+func lcagentBrowserWebSearchRequested(backend string) bool {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "browser", "google-browser", "chrome", "chrome-browser":
+		return true
+	default:
+		return false
+	}
+}
+
 type lcagentBrowserRunner struct {
 	session browserctl.BrowserSession
+}
+
+type browserSearchSession interface {
+	SearchGoogle(context.Context, string, int, string, int) (browserctl.BrowserActionResult, error)
 }
 
 func (r lcagentBrowserRunner) RunBrowserTool(ctx context.Context, tool string, args json.RawMessage) tools.ToolResult {
@@ -211,6 +224,32 @@ func (r lcagentBrowserRunner) RunBrowserTool(ctx context.Context, tool string, a
 		return tools.ToolResult{Success: false, Error: err.Error()}
 	}
 	return browserToolResult(result)
+}
+
+func (r lcagentBrowserRunner) SearchBrowser(ctx context.Context, query string, maxResults int, site string, recencyDays int) tools.ToolResult {
+	searcher, ok := r.session.(browserSearchSession)
+	if !ok || searcher == nil {
+		return tools.ToolResult{Success: false, Error: "managed browser runtime does not support browser web search"}
+	}
+	started := time.Now()
+	result, err := searcher.SearchGoogle(ctx, query, maxResults, site, recencyDays)
+	duration := time.Since(started)
+	if err != nil {
+		return tools.ToolResult{Success: false, Error: err.Error(), Duration: duration}
+	}
+	output := strings.TrimSpace(result.Snapshot)
+	if output == "" {
+		output = strings.TrimSpace(browserToolResult(result).Output)
+	}
+	if output != "" {
+		output += "\n"
+	}
+	return tools.ToolResult{
+		Success:      true,
+		Output:       output,
+		Duration:     duration,
+		ArtifactPath: strings.TrimSpace(result.ArtifactPath),
+	}
 }
 
 func browserToolResult(result browserctl.BrowserActionResult) tools.ToolResult {
@@ -387,7 +426,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.BoolVar(&requireFinalResponseTool, "require-final-response-tool", false, "require provider runs to finish through the structured final_response tool")
 	fs.StringVar(&resumeRaw, "resume", "", "previous LCAgent thread id to continue from")
 	fs.StringVar(&continueRaw, "continue-from", "", "previous LCAgent thread id to continue from")
-	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, or searxng")
+	fs.StringVar(&webSearchBackend, "web-search-backend", "", "web search backend: off, exa, google, searxng, or browser")
 	fs.StringVar(&webSearchAPIKey, "web-search-api-key", "", "optional web search API key, used by exa or google")
 	fs.StringVar(&webSearchEngineID, "web-search-engine-id", "", "optional Google Programmable Search engine ID")
 	fs.StringVar(&webSearchURL, "web-search-url", "", "optional web search endpoint URL, used by searxng")
@@ -669,10 +708,21 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		}
 	}
 
+	webSearchCfg := tools.WebSearchConfig{
+		Backend:        webSearchBackend,
+		APIKey:         webSearchAPIKey,
+		SearchEngineID: webSearchEngineID,
+		URL:            webSearchURL,
+		EnvFile:        envFile,
+	}
+	_, webSearchPreflightStatus := tools.NewWebSearchRunner(webSearchCfg)
+	browserWebSearchRequested := lcagentBrowserWebSearchRequested(webSearchPreflightStatus.Backend)
+
 	artifactDir := filepath.Join(filepath.Dir(writer.Path()), sessionID+"-artifacts")
 	var browserRunner script.BrowserRunner
+	var webSearchBrowser tools.BrowserWebSearcher
 	if browserCapability.Enabled {
-		browserSession, err := browserctl.NewPlaywrightMCPBrowserSession(browserctl.BrowserSessionConfig{
+		browserCfg := browserctl.BrowserSessionConfig{
 			DataDir:     dataDir,
 			Provider:    "lcagent",
 			ProjectPath: workspace.Root,
@@ -680,20 +730,25 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			ProfileKey:  browserCapability.ProfileKey,
 			LaunchMode:  browserCapability.LaunchMode,
 			Policy:      browserctl.PolicyFromEnv(),
-		})
+		}
+		var browserSession browserctl.BrowserSession
+		var err error
+		if browserWebSearchRequested {
+			browserSession, err = browserctl.NewPlaywrightBrowserSession(browserCfg)
+		} else {
+			browserSession, err = browserctl.NewPlaywrightMCPBrowserSession(browserCfg)
+		}
 		if err != nil {
 			return err
 		}
 		defer browserSession.Close()
 		browserRunner = lcagentBrowserRunner{session: browserSession}
+		if browserWebSearchRequested {
+			webSearchBrowser = lcagentBrowserRunner{session: browserSession}
+		}
 	}
-	webSearch, webSearchStatus := tools.NewWebSearchRunner(tools.WebSearchConfig{
-		Backend:        webSearchBackend,
-		APIKey:         webSearchAPIKey,
-		SearchEngineID: webSearchEngineID,
-		URL:            webSearchURL,
-		EnvFile:        envFile,
-	})
+	webSearchCfg.Browser = webSearchBrowser
+	webSearch, webSearchStatus := tools.NewWebSearchRunner(webSearchCfg)
 	if err := writer.Write(session.Event{
 		"type":       "web_search_profile",
 		"session_id": sessionID,

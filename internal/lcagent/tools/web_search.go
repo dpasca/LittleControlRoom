@@ -28,6 +28,7 @@ type WebSearchConfig struct {
 	URL            string
 	ExaURL         string
 	EnvFile        string
+	Browser        BrowserWebSearcher
 	HTTPClient     *http.Client
 }
 
@@ -37,7 +38,12 @@ type WebSearchRunner struct {
 	SearchEngineID string
 	URL            string
 	ExaURL         string
+	Browser        BrowserWebSearcher
 	HTTPClient     *http.Client
+}
+
+type BrowserWebSearcher interface {
+	SearchBrowser(context.Context, string, int, string, int) ToolResult
 }
 
 type WebSearchStatus struct {
@@ -55,6 +61,7 @@ func NewWebSearchRunner(cfg WebSearchConfig) (WebSearchRunner, WebSearchStatus) 
 		SearchEngineID: firstNonEmpty(cfg.SearchEngineID, os.Getenv("GOOGLE_SEARCH_ENGINE_ID"), os.Getenv("GOOGLE_CSE_ID")),
 		URL:            firstNonEmpty(cfg.URL, os.Getenv("LCAGENT_WEB_SEARCH_URL"), os.Getenv("LCAGENT_SEARXNG_URL")),
 		ExaURL:         firstNonEmpty(cfg.ExaURL, os.Getenv("LCAGENT_EXA_URL")),
+		Browser:        cfg.Browser,
 		HTTPClient:     cfg.HTTPClient,
 	}
 	if runner.HTTPClient == nil {
@@ -93,10 +100,18 @@ func (r WebSearchRunner) Status() WebSearchStatus {
 			}
 		}
 		return WebSearchStatus{Enabled: true, Backend: string(r.Backend)}
+	case WebSearchBackendBrowser:
+		if r.Browser == nil {
+			return WebSearchStatus{
+				Backend: string(r.Backend),
+				Message: "Web search is disabled: browser search needs managed browser control. Enable managed browser automation in /settings.",
+			}
+		}
+		return WebSearchStatus{Enabled: true, Backend: string(r.Backend)}
 	default:
 		return WebSearchStatus{
 			Backend: string(WebSearchBackendOff),
-			Message: "Web search is disabled for LCAgent. Configure a web search backend and API key in /settings to enable web_search.",
+			Message: "Web search is disabled for LCAgent. Configure a web search backend in /settings to enable web_search.",
 		}
 	}
 }
@@ -114,6 +129,11 @@ func (r WebSearchRunner) Search(ctx context.Context, query string, maxResults in
 		return r.searchGoogle(ctx, query, maxResults, site, recencyDays)
 	case WebSearchBackendSearXNG:
 		return r.searchSearXNG(ctx, query, maxResults, site, recencyDays)
+	case WebSearchBackendBrowser:
+		if r.Browser == nil {
+			return ToolResult{Success: false, Error: "browser web search is not configured"}
+		}
+		return r.Browser.SearchBrowser(ctx, query, maxResults, site, recencyDays)
 	default:
 		status := r.Status()
 		return ToolResult{Success: false, Error: firstNonEmpty(status.Message, "web search is not configured")}
@@ -352,6 +372,8 @@ func parseWebSearchBackend(raw string) WebSearchBackend {
 		return WebSearchBackendGoogle
 	case "searxng", "searx":
 		return WebSearchBackendSearXNG
+	case "browser", "google-browser", "chrome", "chrome-browser":
+		return WebSearchBackendBrowser
 	default:
 		return WebSearchBackendOff
 	}

@@ -59,6 +59,9 @@ codex_launch_preset = "yolo"
 # lcagent_route_preset = "balanced" # blank, balanced, quality, mimo-2.5-pro-low/high/max, cheap-scout
 # lcagent_context_profile = "balanced" # known model windows adapt packing budgets; unknown models fall back to balanced ~200k chars / large ~600k
 # lcagent_request_timeout = "60m"
+# Web search: "off", "exa", "google", "searxng", or "browser".
+# "browser" uses managed browser automation as a no-API-key fallback.
+# lcagent_web_search_backend = "off"
 
 # Quiet browser automation by default; LCR opens a visible browser only when needed.
 playwright_management_mode = "managed"

@@ -34,6 +34,12 @@ func settingsLCAgentWebSearchOptions() []settingsLCAgentWebSearchOption {
 			Summary:     "Use a self-hosted or trusted SearXNG endpoint.",
 			Description: "Useful for local or private setups. Public instances can be uneven, so this is best for users who already run or trust a SearXNG instance.",
 		},
+		{
+			Value:       "browser",
+			Label:       "Browser",
+			Summary:     "Use managed browser automation to search Google without a search API key.",
+			Description: "Good as a cheap fallback when managed browser automation is enabled. Results can be less reliable if Google asks for consent, CAPTCHA, or unusual-traffic checks.",
+		},
 	}
 }
 

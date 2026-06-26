@@ -96,7 +96,8 @@ LCR session parity:
   models or validate provider credentials.
 - `web_search` is off by default. Exa-backed search needs an Exa API key;
   Google-backed search needs a Programmable Search API key and search engine
-  ID; SearXNG-backed search needs a base URL.
+  ID; SearXNG-backed search needs a base URL; browser-backed search needs
+  managed browser automation.
 
 Setup and product UX:
 

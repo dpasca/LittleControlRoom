@@ -53,6 +53,7 @@ const (
 	WebSearchBackendExa     WebSearchBackend = "exa"
 	WebSearchBackendGoogle  WebSearchBackend = "google"
 	WebSearchBackendSearXNG WebSearchBackend = "searxng"
+	WebSearchBackendBrowser WebSearchBackend = "browser"
 )
 
 type PlanItem struct {

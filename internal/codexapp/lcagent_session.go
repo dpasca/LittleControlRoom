@@ -1893,7 +1893,7 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		message := rawJSONString(event["message"])
 		backend := rawJSONString(event["backend"])
 		if !enabled {
-			s.appendAsync(TranscriptStatus, firstNonEmpty(message, "LCAgent web search is not available. Use /settings here to configure a web search backend and API key."))
+			s.appendAsync(TranscriptStatus, firstNonEmpty(message, "LCAgent web search is not available. Use /settings here to configure a web search backend."))
 		} else if backend != "" {
 			s.appendAsync(TranscriptStatus, "LCAgent web search enabled: "+backend)
 		}
@@ -3095,7 +3095,7 @@ func lcagentContextProfileValue(configured string) (string, error) {
 func lcagentWebSearchBackendValue(configured string) string {
 	value := strings.ToLower(strings.TrimSpace(firstNonEmpty(configured, os.Getenv("LCROOM_LCAGENT_WEB_SEARCH_BACKEND"))))
 	switch value {
-	case "exa", "google", "searxng":
+	case "exa", "google", "searxng", "browser":
 		return value
 	default:
 		return lcagentDefaultWebSearch
@@ -3216,8 +3216,12 @@ func (s *lcagentSession) webSearchWarningLocked() string {
 		if !hasURL && strings.TrimSpace(s.envFile) == "" {
 			return "LCAgent web search is not available. Use /settings here to configure the SearXNG URL."
 		}
+	case "browser":
+		if s.playwrightPolicy.Normalize().UsesLegacyLaunchBehavior() || strings.TrimSpace(s.managedBrowserSessionKey) == "" || strings.TrimSpace(s.browserProfileKey) == "" {
+			return "LCAgent browser web search is not available. Use /settings here to enable managed browser automation."
+		}
 	default:
-		return "LCAgent web search is not available. Use /settings here to configure a web search backend and API key."
+		return "LCAgent web search is not available. Use /settings here to configure a web search backend."
 	}
 	return ""
 }

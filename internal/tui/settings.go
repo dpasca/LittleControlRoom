@@ -3543,7 +3543,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"LCAgent web search",
-			"Press Enter to choose Off, Exa, Google, or SearXNG.",
+			"Press Enter to choose Off, Exa, Google, SearXNG, or Browser.",
 			settings.LCAgentWebSearchBackend,
 			32,
 			settingsSectionLCAgent,
@@ -4087,6 +4087,8 @@ func (m Model) settingsFieldHint(index int) string {
 			return "LCAgent will expose web_search using Google Programmable Search when the key and search engine ID are saved."
 		case "searxng":
 			return "LCAgent will expose web_search using the configured SearXNG base URL."
+		case "browser":
+			return "LCAgent will expose web_search using managed browser automation as a no-API-key fallback."
 		case "", "off":
 			return "LCAgent web_search will be unavailable, and new sessions will show a setup warning."
 		default:
