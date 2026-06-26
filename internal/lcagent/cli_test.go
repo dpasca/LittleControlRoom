@@ -428,6 +428,12 @@ func TestRunExecOpenRouterEmitsModelRequestProgress(t *testing.T) {
 func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 	isolateSkillHomes(t)
 	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module demo\n\ngo 1.25.4\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "demo_test.go"), []byte("package demo\n\nimport \"testing\"\n\nfunc TestDemo(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
@@ -439,7 +445,28 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 			t.Fatalf("decode request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if requests == 2 {
+		switch requests {
+		case 1:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_verify",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"tool_calls",
+					"message":{"role":"assistant","tool_calls":[{"id":"call_verify","type":"function","function":{"name":"run_command","arguments":{"argv":["go","test","./..."],"shell":false,"purpose":"verify","timeout_ms":120000}}}]}
+				}],
+				"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
+			}`))
+		case 2:
+			_, _ = w.Write([]byte(`{
+				"id":"resp_plain",
+				"model":"deepseek/test-model",
+				"choices":[{
+					"finish_reason":"stop",
+					"message":{"role":"assistant","content":"plain final after verification"}
+				}],
+				"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
+			}`))
+		case 3:
 			_, _ = w.Write([]byte(`{
 				"id":"resp_final",
 				"model":"deepseek/test-model",
@@ -449,17 +476,9 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 				}],
 				"usage":{"prompt_tokens":8,"completion_tokens":4,"total_tokens":12}
 			}`))
-			return
+		default:
+			t.Fatalf("unexpected request %d", requests)
 		}
-		_, _ = w.Write([]byte(`{
-			"id":"resp_plain",
-			"model":"deepseek/test-model",
-			"choices":[{
-				"finish_reason":"stop",
-				"message":{"role":"assistant","content":"plain final"}
-			}],
-			"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}
-		}`))
 	}))
 	defer server.Close()
 
@@ -471,13 +490,13 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 		"exec",
 		"--cwd", root,
 		"--data-dir", t.TempDir(),
-		"--auto", "off",
+		"--auto", "low",
 		"--output", "stream-json",
 		"--provider", "openrouter",
 		"--model", "deepseek/test-model",
-		"--max-turns", "2",
+		"--max-turns", "3",
 		"--require-final-response-tool",
-		"answer directly",
+		"verify and answer directly",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -494,8 +513,89 @@ func TestRunExecOpenRouterRequiresFinalResponseTool(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, text)
 		}
 	}
-	if requests != 2 {
-		t.Fatalf("requests = %d, want 2", requests)
+	if requests != 3 {
+		t.Fatalf("requests = %d, want 3", requests)
+	}
+}
+
+func TestRunExecOpenRouterRequireFinalResponseToolAcceptsPlainNoWorkContinuation(t *testing.T) {
+	isolateSkillHomes(t)
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	threadID := "lct_plain_thanks"
+	previousSummary := "Everything complete and confirmed working: previous deployment summary"
+	store := newThreadStateStore(dataDir, threadID, root, "lca_previous", time.Date(2026, 6, 26, 10, 0, 0, 0, time.UTC))
+	if err := store.SaveCheckpoint("final_response", []modeladapter.Message{
+		{Role: "system", Content: "previous system prompt"},
+		{Role: "user", Content: "deploy the promo"},
+		{Role: "assistant", Content: previousSummary},
+	}, false); err != nil {
+		t.Fatalf("write thread state: %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body struct {
+			Messages []modeladapter.Message `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		foundCurrent := false
+		foundPrevious := false
+		for _, msg := range body.Messages {
+			if msg.Role == "user" && msg.Content == "thanks !" {
+				foundCurrent = true
+			}
+			if msg.Role == "assistant" && msg.Content == previousSummary {
+				foundPrevious = true
+			}
+		}
+		if !foundCurrent || !foundPrevious {
+			t.Fatalf("request current=%v previous=%v messages=%#v", foundCurrent, foundPrevious, body.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"resp_thanks",
+			"model":"deepseek/test-model",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"You're welcome. Glad it worked."}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("OPENROUTER_BASE_URL", server.URL)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"exec",
+		"--cwd", root,
+		"--data-dir", dataDir,
+		"--auto", "off",
+		"--output", "stream-json",
+		"--provider", "openrouter",
+		"--model", "deepseek/test-model",
+		"--continue-from", threadID,
+		"--max-turns", "2",
+		"--require-final-response-tool",
+		"thanks !",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	text := stdout.String()
+	if strings.Contains(text, `"type":"final_response_feedback"`) {
+		t.Fatalf("stdout should not request final_response for no-work conversational reply:\n%s", text)
+	}
+	if !strings.Contains(text, `"summary":"You're welcome. Glad it worked."`) {
+		t.Fatalf("stdout missing accepted plain final:\n%s", text)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
 	}
 }
 

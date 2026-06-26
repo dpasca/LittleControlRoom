@@ -1107,7 +1107,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 				}
 				return abortOpenRouterRun(writer, threadStore, runner.SessionID, messages, contextCompacted, fmt.Errorf("%s response had no content or tool calls", providerLabel))
 			}
-			if requireFinalResponseTool {
+			if requireFinalResponseTool && runner.HasStructuredFinalState() {
 				finalResponseToolFeedbacks++
 				feedback := finalResponseToolFeedbackMessage()
 				if err := writer.Write(session.Event{

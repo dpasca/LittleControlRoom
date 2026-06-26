@@ -3303,6 +3303,19 @@ func (r *Runner) FileTouchEvents() int {
 	return r.fileTouchEvents
 }
 
+func (r *Runner) HasStructuredFinalState() bool {
+	if r == nil {
+		return false
+	}
+	return r.fileTouchEvents > 0 ||
+		len(r.verificationChecks) > 0 ||
+		len(r.operationalActions) > 0 ||
+		len(r.toolFailures) > 0 ||
+		r.browserToolsUsed ||
+		r.imageAnalyses > 0 ||
+		r.qualityPlanUpdates > 0
+}
+
 func (r *Runner) InspectionEvidenceEvents() int {
 	if r == nil {
 		return 0
