@@ -187,6 +187,64 @@ func TestProjectArchiveTabSwitchesVisibleProjects(t *testing.T) {
 	}
 }
 
+func TestProjectCategoryTabSwitchesVisibleProjects(t *testing.T) {
+	main := model.ProjectSummary{
+		Name:          "main-demo",
+		Path:          "/tmp/main-demo",
+		InScope:       true,
+		PresentOnDisk: true,
+	}
+	client := model.ProjectSummary{
+		Name:          "client-demo",
+		Path:          "/tmp/client-demo",
+		CategoryID:    "cat_client",
+		CategoryName:  "Client",
+		InScope:       true,
+		PresentOnDisk: true,
+	}
+	archived := model.ProjectSummary{
+		Name:          "archived-demo",
+		Path:          "/tmp/archived-demo",
+		InScope:       true,
+		Archived:      true,
+		PresentOnDisk: true,
+	}
+	m := Model{
+		allProjects:      []model.ProjectSummary{main, client},
+		archivedProjects: []model.ProjectSummary{archived},
+		projectCategories: []model.ProjectCategory{{
+			ID:   "cat_client",
+			Name: "Client",
+		}},
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
+		width:      100,
+		height:     24,
+	}
+	m.rebuildProjectList("")
+	if len(m.projects) != 1 || m.projects[0].Path != main.Path {
+		t.Fatalf("main projects = %#v, want uncategorized project", m.projects)
+	}
+
+	updated, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindTab, Tab: commands.ProjectTabCategory, CategoryName: "client"})
+	got := updated.(Model)
+	if got.archiveMode != projectArchiveCategory || got.selectedCategoryID != "cat_client" {
+		t.Fatalf("tab state = %q/%q, want category/cat_client", got.archiveMode, got.selectedCategoryID)
+	}
+	if len(got.projects) != 1 || got.projects[0].Path != client.Path {
+		t.Fatalf("client projects = %#v, want categorized project", got.projects)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	got = updated.(Model)
+	if got.archiveMode != projectArchiveArchived {
+		t.Fatalf("archiveMode after cycling from category = %q, want archived", got.archiveMode)
+	}
+	if len(got.projects) != 1 || got.projects[0].Path != archived.Path {
+		t.Fatalf("archived projects = %#v, want archived project", got.projects)
+	}
+}
+
 func TestRenderedListShowsProjectArchiveTabs(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{{
@@ -215,8 +273,8 @@ func TestRenderedListShowsProjectArchiveTabs(t *testing.T) {
 	}
 
 	list := ansi.Strip(m.renderProjectList(120, 12))
-	if !strings.Contains(list, "[Active 1]") || !strings.Contains(list, "Archived 1") {
-		t.Fatalf("rendered list = %q, want active and archived tabs", list)
+	if !strings.Contains(list, "[Main 1]") || !strings.Contains(list, "Archived 1") || !strings.Contains(list, "/category") {
+		t.Fatalf("rendered list = %q, want main/archived tabs and category hint", list)
 	}
 	lines := strings.Split(list, "\n")
 	if len(lines) < 2 {

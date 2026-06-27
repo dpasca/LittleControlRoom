@@ -97,6 +97,53 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 	}
 }
 
+func TestProjectCategoryAssignmentAndDelete(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/category-demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "category-demo",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	category, err := st.CreateProjectCategory(ctx, "Client Work")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	if err := st.SetResourceCategory(ctx, model.CategoryResourceProject, projectPath, category.ID); err != nil {
+		t.Fatalf("SetResourceCategory() error = %v", err)
+	}
+	summary, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.CategoryID != category.ID || summary.CategoryName != "Client Work" {
+		t.Fatalf("summary category = %q/%q, want %q/Client Work", summary.CategoryID, summary.CategoryName, category.ID)
+	}
+	if _, err := st.DeleteProjectCategory(ctx, "client work"); err != nil {
+		t.Fatalf("DeleteProjectCategory() error = %v", err)
+	}
+	summary, err = st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() after delete error = %v", err)
+	}
+	if summary.CategoryID != "" || summary.CategoryName != "" {
+		t.Fatalf("summary category after delete = %q/%q, want Main", summary.CategoryID, summary.CategoryName)
+	}
+}
+
 func TestUpsertProjectStateKeepsManualProjectVisibleAgainstStaleSnapshot(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

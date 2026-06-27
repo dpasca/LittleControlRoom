@@ -62,10 +62,12 @@ func (s *Store) GetAgentTask(ctx context.Context, id string) (model.AgentTask, e
 	}
 	task, err := scanAgentTask(s.db.QueryRowContext(ctx, `
 		SELECT
-			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
-			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
-		FROM agent_tasks
-		WHERE id = ?
+			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
+			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
+		FROM agent_tasks at
+		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
+		LEFT JOIN project_categories pc ON pc.id = ca.category_id
+		WHERE at.id = ?
 	`, id))
 	if err != nil {
 		return model.AgentTask{}, err
@@ -82,7 +84,7 @@ func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter
 	where := []string{}
 	args := []any{}
 	if kind := model.NormalizeAgentTaskKind(filter.Kind); filter.Kind != "" {
-		where = append(where, "kind = ?")
+		where = append(where, "at.kind = ?")
 		args = append(args, string(kind))
 	}
 	if len(filter.Statuses) > 0 {
@@ -91,22 +93,24 @@ func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter
 			parts = append(parts, "?")
 			args = append(args, string(model.NormalizeAgentTaskStatus(status)))
 		}
-		where = append(where, "status IN ("+strings.Join(parts, ", ")+")")
+		where = append(where, "at.status IN ("+strings.Join(parts, ", ")+")")
 	} else if !filter.IncludeArchived {
-		where = append(where, "status != ?")
+		where = append(where, "at.status != ?")
 		args = append(args, string(model.AgentTaskStatusArchived))
 	}
 
 	query := `
 		SELECT
-			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
-			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
-		FROM agent_tasks
+			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
+			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
+		FROM agent_tasks at
+		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
+		LEFT JOIN project_categories pc ON pc.id = ca.category_id
 	`
 	if len(where) > 0 {
 		query += " WHERE " + strings.Join(where, " AND ")
 	}
-	query += " ORDER BY last_touched_at DESC, created_at DESC"
+	query += " ORDER BY at.last_touched_at DESC, at.created_at DESC"
 	if filter.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, filter.Limit)
@@ -147,11 +151,13 @@ func (s *Store) ListExpiredAgentTasks(ctx context.Context, now time.Time) ([]mod
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			id, parent_task_id, title, kind, status, summary, capabilities, provider, session_id, workspace_path,
-			expires_at, created_at, last_touched_at, completed_at, archived_at, updated_at
-		FROM agent_tasks
-		WHERE status = ? AND expires_at IS NOT NULL AND expires_at <= ?
-		ORDER BY expires_at ASC
+			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
+			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
+		FROM agent_tasks at
+		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
+		LEFT JOIN project_categories pc ON pc.id = ca.category_id
+		WHERE at.status = ? AND at.expires_at IS NOT NULL AND at.expires_at <= ?
+		ORDER BY at.expires_at ASC
 	`, string(model.AgentTaskStatusArchived), now.Unix())
 	if err != nil {
 		return nil, fmt.Errorf("list expired agent tasks: %w", err)
@@ -185,6 +191,9 @@ func (s *Store) DeleteAgentTask(ctx context.Context, id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return errors.New("agent task id is required")
+	}
+	if err := s.SetResourceCategory(ctx, model.CategoryResourceAgentTask, id, ""); err != nil {
+		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM agent_tasks WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete agent task: %w", err)
@@ -365,6 +374,8 @@ func scanAgentTask(scanner interface {
 		&task.Title,
 		&kind,
 		&status,
+		&task.CategoryID,
+		&task.CategoryName,
 		&task.Summary,
 		&capabilities,
 		&provider,
@@ -381,6 +392,8 @@ func scanAgentTask(scanner interface {
 	}
 	task.Kind = model.NormalizeAgentTaskKind(model.AgentTaskKind(kind))
 	task.Status = model.NormalizeAgentTaskStatus(model.AgentTaskStatus(status))
+	task.CategoryID = strings.TrimSpace(task.CategoryID)
+	task.CategoryName = strings.TrimSpace(task.CategoryName)
 	task.Capabilities = decodeAgentTaskCapabilities(capabilities)
 	task.Provider = model.NormalizeSessionSource(model.SessionSource(provider))
 	if expiresAt.Valid {

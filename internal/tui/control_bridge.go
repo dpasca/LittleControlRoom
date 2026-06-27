@@ -955,7 +955,7 @@ func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArch
 		if !project.InScope {
 			m.status = fmt.Sprintf("%q is outside project scope", name)
 		} else {
-			m.status = fmt.Sprintf("%q is already active", name)
+			m.status = fmt.Sprintf("%q is not archived", name)
 		}
 		return controlInvocationOutcome{model: m}
 	}
@@ -1047,7 +1047,7 @@ func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.Projec
 	default:
 		state := "archived"
 		if !archive {
-			state = "active"
+			state = "not archived"
 		}
 		m.status = fmt.Sprintf("All %d projects were already %s", len(targets), state)
 	}
@@ -1713,6 +1713,8 @@ func projectSummaryForAgentTask(task model.AgentTask) (model.ProjectSummary, err
 		Path:                            path,
 		Name:                            name,
 		Kind:                            model.ProjectKindAgentTask,
+		CategoryID:                      strings.TrimSpace(task.CategoryID),
+		CategoryName:                    strings.TrimSpace(task.CategoryName),
 		LastActivity:                    agentTaskLastActivity(task),
 		Status:                          agentTaskProjectStatus(task),
 		AttentionScore:                  agentTaskAttentionScore(task),

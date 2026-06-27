@@ -31,6 +31,7 @@ const embeddedSessionActivityRecordMinInterval = 5 * time.Second
 type projectsMsg struct {
 	projects                []model.ProjectSummary
 	archivedProjects        []model.ProjectSummary
+	categories              []model.ProjectCategory
 	openAgentTasks          []model.AgentTask
 	orphanedWorktreesByRoot map[string][]model.ProjectSummary
 	excludeProjectPatterns  []string
@@ -550,7 +551,7 @@ func (m *Model) requestProjectInvalidationCmd(intent projectInvalidationIntent) 
 
 func actionChangesProjectStructure(action string) bool {
 	switch strings.TrimSpace(action) {
-	case "archive_project", "unarchive_project", "forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted", "scratch_task_renamed":
+	case "archive_project", "unarchive_project", "forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted", "scratch_task_renamed", "project_category_created", "project_category_deleted", "project_category_changed", "agent_task_category_changed":
 		return true
 	default:
 		return false
@@ -604,6 +605,13 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 			return projectsMsg{err: err}
 		}
 		projects, archivedProjects := splitProjectArchiveSummaries(allProjects)
+		categories, err := m.svc.ListProjectCategories(ctx)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				err = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
+			}
+			return projectsMsg{err: err}
+		}
 		summaries, err := m.svc.Store().GetProjectSummaryMap(ctx)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
@@ -622,6 +630,7 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 		return projectsMsg{
 			projects:                projects,
 			archivedProjects:        archivedProjects,
+			categories:              categories,
 			openAgentTasks:          openAgentTasks,
 			orphanedWorktreesByRoot: buildOrphanedWorktreeMap(summaries),
 			excludeProjectPatterns:  patterns,

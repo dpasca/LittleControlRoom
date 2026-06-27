@@ -381,7 +381,7 @@ func TestViewWithCommandModeRespectsHeight(t *testing.T) {
 		t.Fatalf("View() missing selected project context: %q", rendered)
 	}
 	visible := ansi.Strip(rendered)
-	if !strings.Contains(visible, "Active 0") || !strings.Contains(visible, "Path:") {
+	if !strings.Contains(visible, "Main 0") || !strings.Contains(visible, "Path:") {
 		t.Fatalf("View() should preserve background list and detail context under the command palette: %q", rendered)
 	}
 }

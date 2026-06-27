@@ -240,6 +240,8 @@ type AgentTask struct {
 	Title         string
 	Kind          AgentTaskKind
 	Status        AgentTaskStatus
+	CategoryID    string
+	CategoryName  string
 	Summary       string
 	Capabilities  []string
 	Provider      SessionSource
@@ -442,6 +444,8 @@ type ProjectSummary struct {
 	Path                                          string
 	Name                                          string
 	Kind                                          ProjectKind
+	CategoryID                                    string
+	CategoryName                                  string
 	LastActivity                                  time.Time
 	Status                                        ProjectStatus
 	AttentionScore                                int
@@ -723,6 +727,30 @@ type ProjectDetail struct {
 	Artifacts                   []ArtifactEvidence
 	RecentEvents                []StoredEvent
 	LatestSessionClassification *SessionClassification
+}
+
+type ProjectCategory struct {
+	ID        string
+	Name      string
+	Position  int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type CategoryResourceKind string
+
+const (
+	CategoryResourceProject   CategoryResourceKind = "project"
+	CategoryResourceAgentTask CategoryResourceKind = "agent_task"
+)
+
+func NormalizeCategoryResourceKind(kind CategoryResourceKind) CategoryResourceKind {
+	switch kind {
+	case CategoryResourceProject, CategoryResourceAgentTask:
+		return kind
+	default:
+		return ""
+	}
 }
 
 type StoredEvent struct {

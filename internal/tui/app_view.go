@@ -706,17 +706,28 @@ func (m Model) selectedProject() (model.ProjectSummary, bool) {
 }
 
 func (m Model) renderProjectArchiveTabs(width int) string {
-	activeLabel := fmt.Sprintf("Active %d", len(m.allProjects))
-	archivedLabel := fmt.Sprintf("Archived %d", len(m.archivedProjects))
-	if width > 0 && width < 34 {
-		activeLabel = "Active"
-		archivedLabel = "Archived"
+	parts := []string{}
+	currentMode := m.archiveMode
+	if currentMode == "" {
+		currentMode = projectArchiveMain
 	}
-	line := renderProjectArchiveTab(activeLabel, m.archiveMode != projectArchiveArchived) +
-		" " +
-		renderProjectArchiveTab(archivedLabel, m.archiveMode == projectArchiveArchived)
+	for _, tab := range m.projectTabDescriptors() {
+		label := tab.label
+		if width <= 0 || width >= 34 {
+			label = fmt.Sprintf("%s %d", label, m.projectTabCount(tab))
+		}
+		selected := tab.mode == currentMode
+		if tab.mode == projectArchiveCategory {
+			selected = selected && strings.TrimSpace(tab.categoryID) == strings.TrimSpace(m.selectedCategoryID)
+		}
+		parts = append(parts, renderProjectArchiveTab(label, selected))
+	}
+	line := strings.Join(parts, " ")
 	hint := renderProjectArchiveTabHotkey()
-	if width <= 0 || lipgloss.Width(line)+2+lipgloss.Width(hint) <= width {
+	categoryHint := renderProjectCategoryCommandHint()
+	if width <= 0 || lipgloss.Width(line)+2+lipgloss.Width(hint)+2+lipgloss.Width(categoryHint) <= width {
+		line += "  " + hint + "  " + categoryHint
+	} else if width <= 0 || lipgloss.Width(line)+2+lipgloss.Width(hint) <= width {
 		line += "  " + hint
 	} else if lipgloss.Width(line)+2 <= width {
 		line += " " + projectListTabHotkeyStyle.Render("a")
@@ -725,6 +736,27 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 		return fitStyledWidth(line, width)
 	}
 	return line
+}
+
+func (m Model) projectTabCount(tab projectTabDescriptor) int {
+	if tab.mode == projectArchiveArchived {
+		return len(m.archivedProjects)
+	}
+	count := 0
+	for _, project := range m.allProjects {
+		if strings.TrimSpace(project.CategoryID) == strings.TrimSpace(tab.categoryID) {
+			count++
+		}
+	}
+	for _, task := range m.openAgentTasks {
+		if !agentTaskIsOpen(task) {
+			continue
+		}
+		if strings.TrimSpace(task.CategoryID) == strings.TrimSpace(tab.categoryID) {
+			count++
+		}
+	}
+	return count
 }
 
 func renderProjectArchiveTab(label string, selected bool) string {
@@ -742,6 +774,10 @@ func renderProjectArchiveTabHotkey() string {
 	return projectListTabHotkeyStyle.Render("a") + projectListTabHintStyle.Render(" cycle")
 }
 
+func renderProjectCategoryCommandHint() string {
+	return projectListTabHintStyle.Render("/category")
+}
+
 func (m Model) renderProjectList(width, height int) string {
 	tabs := m.renderProjectArchiveTabs(width)
 	if len(m.projects) == 0 {
@@ -756,10 +792,12 @@ func (m Model) renderProjectList(width, height int) string {
 			}
 		} else if m.archiveMode == projectArchiveArchived {
 			message = "No archived projects\nUse /archive to park a project here"
+		} else if m.archiveMode == projectArchiveCategory {
+			message = fmt.Sprintf("No projects in %s\nUse /category move to place the selected item here", m.currentProjectTabLabel())
 		} else if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
 			message = "No AI-linked folders\nUse /view all to switch folders"
 		} else if len(m.archivedProjects) > 0 {
-			message = "No active projects\nPress a for Archived"
+			message = "No Main projects\nPress a to cycle tabs"
 		} else {
 			message = "No projects detected\nUse /settings to set your project search paths"
 		}
@@ -1098,7 +1136,10 @@ func (m Model) renderDetailContent(width int) string {
 	p, ok := m.selectedProject()
 	if !ok {
 		if m.archiveMode == projectArchiveArchived {
-			return "No archived project selected\nPress a to return to Active"
+			return "No archived project selected\nPress a to cycle tabs"
+		}
+		if m.archiveMode == projectArchiveCategory {
+			return fmt.Sprintf("No project selected in %s\nPress a to cycle tabs", m.currentProjectTabLabel())
 		}
 		if len(m.projectListSourceProjects()) > 0 && m.visibility == visibilityAIFolders {
 			return "No AI-linked folder selected\nUse /view to switch folders"

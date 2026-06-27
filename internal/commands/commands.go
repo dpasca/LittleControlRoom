@@ -25,6 +25,7 @@ const (
 	KindSettings        Kind = "settings"
 	KindSkills          Kind = "skills"
 	KindFilter          Kind = "filter"
+	KindCategory        Kind = "category"
 	KindNewProject      Kind = "new-project"
 	KindNewTask         Kind = "new-task"
 	KindTaskActions     Kind = "task-actions"
@@ -91,9 +92,20 @@ const (
 type ProjectTab string
 
 const (
-	ProjectTabActive   ProjectTab = "active"
+	ProjectTabMain     ProjectTab = "main"
+	ProjectTabActive   ProjectTab = ProjectTabMain
+	ProjectTabCategory ProjectTab = "category"
 	ProjectTabArchived ProjectTab = "archived"
 	ProjectTabToggle   ProjectTab = "toggle"
+)
+
+type CategoryAction string
+
+const (
+	CategoryActionCreate CategoryAction = "create"
+	CategoryActionRemove CategoryAction = "remove"
+	CategoryActionMove   CategoryAction = "move"
+	CategoryActionClear  CategoryAction = "clear"
 )
 
 type ToggleMode string
@@ -117,21 +129,23 @@ type Spec = slashcmd.Spec
 type Suggestion = slashcmd.Suggestion
 
 type Invocation struct {
-	Kind      Kind
-	Sort      SortMode
-	View      ViewMode
-	Tab       ProjectTab
-	Toggle    ToggleMode
-	Focus     FocusTarget
-	Duration  time.Duration
-	Message   string
-	Prompt    string
-	Command   string
-	Filter    string
-	Assistant string
-	All       bool
-	Clear     bool
-	Canonical string
+	Kind           Kind
+	Sort           SortMode
+	View           ViewMode
+	Tab            ProjectTab
+	CategoryAction CategoryAction
+	CategoryName   string
+	Toggle         ToggleMode
+	Focus          FocusTarget
+	Duration       time.Duration
+	Message        string
+	Prompt         string
+	Command        string
+	Filter         string
+	Assistant      string
+	All            bool
+	Clear          bool
+	Canonical      string
 }
 
 var specs = []Spec{
@@ -143,11 +157,12 @@ var specs = []Spec{
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
-	{Name: "tab", Usage: "/tab [active|archived|toggle]", Summary: "Switch the Active/Archived project-list tab"},
+	{Name: "tab", Usage: "/tab [main|archived|toggle|category]", Summary: "Switch the Main, custom category, or Archived project-list tab"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
 	{Name: "skills", Usage: "/skills", Summary: "Review Codex skills and local duplicates that may be stale"},
 	{Name: "setup", Usage: "/setup", Summary: "Open the friendly AI setup concierge"},
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
+	{Name: "category", Usage: "/category create|remove|move|clear [name]", Summary: "Create categories or move the selected item between category tabs"},
 	{Name: "new-project", Usage: "/new-project [--assistant codex|opencode|claude|lcagent]", Summary: "Create a project folder, or paste an existing path to add it"},
 	{Name: "new-task", Usage: "/new-task [--assistant codex|opencode|claude|lcagent] [request]", Summary: "Create a scratch task folder without stopping to name it"},
 	{Name: "task-actions", Usage: "/task-actions", Summary: "Open archive/delete actions for the selected scratch task"},
@@ -188,7 +203,7 @@ var specs = []Spec{
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
 	{Name: "ignored", Usage: "/ignored", Summary: "Review ignored project names and restore them"},
 	{Name: "archive", Usage: "/archive", Summary: "Move the selected project to the Archived tab"},
-	{Name: "unarchive", Usage: "/unarchive", Summary: "Move the selected project back to Active when it is in scope"},
+	{Name: "unarchive", Usage: "/unarchive", Summary: "Move the selected project out of Archived when it is in scope"},
 	{Name: "remove", Usage: "/remove", Summary: "Confirm, then make the selected item go away safely"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
 	{Name: "privacy", Usage: "/privacy on|off|toggle|settings", Summary: "Toggle demo privacy mode or open privacy settings"},
@@ -247,9 +262,20 @@ func Suggestions(input string) []Suggestion {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
 		return slashcmd.EnumSuggestions("/tab ", argPrefix,
-			choice("active", "Show the Active project-list tab"),
+			choice("main", "Show the Main project-list tab"),
 			choice("archived", "Show the Archived project-list tab"),
 			choice("toggle", "Switch to the other project-list tab"),
+		)
+	case "category":
+		argPrefix := ""
+		if len(fields) > 1 {
+			argPrefix = strings.ToLower(fields[len(fields)-1])
+		}
+		return slashcmd.EnumSuggestions("/category ", argPrefix,
+			choice("move", "Move the selected item to a category"),
+			choice("clear", "Move the selected item back to Main"),
+			choice("create", "Create a custom category tab"),
+			choice("remove", "Remove a custom category tab"),
 		)
 	case "filter":
 		argPrefix := ""
@@ -409,6 +435,10 @@ func Parse(input string) (Invocation, error) {
 		if err != nil {
 			return Invocation{}, err
 		}
+		if tab == ProjectTabCategory {
+			categoryName := strings.TrimSpace(rawArgs)
+			return Invocation{Kind: KindTab, Tab: tab, CategoryName: categoryName, Canonical: slashcmd.CanonicalCommand("tab", categoryName)}, nil
+		}
 		return Invocation{Kind: KindTab, Tab: tab, Canonical: "/tab " + string(tab)}, nil
 	case "setup":
 		if rawArgs != "" {
@@ -438,6 +468,8 @@ func Parse(input string) (Invocation, error) {
 				Canonical: slashcmd.CanonicalCommand("filter", rawArgs),
 			}, nil
 		}
+	case "category", "categories":
+		return parseCategoryCommand(rawArgs)
 	case "new-project":
 		assistant, rest, err := parseAssistantArg(rawArgs)
 		if err != nil {
@@ -733,15 +765,50 @@ func parseViewMode(raw string) (ViewMode, error) {
 }
 
 func parseProjectTab(raw string) (ProjectTab, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	trimmed := strings.TrimSpace(raw)
+	switch strings.ToLower(trimmed) {
 	case "", "toggle", "next", "cycle":
 		return ProjectTabToggle, nil
-	case "active":
-		return ProjectTabActive, nil
+	case "main", "general", "active":
+		return ProjectTabMain, nil
 	case "archived", "archive":
 		return ProjectTabArchived, nil
 	default:
-		return "", fmt.Errorf("usage: /tab [active|archived|toggle]")
+		return ProjectTabCategory, nil
+	}
+}
+
+func parseCategoryCommand(raw string) (Invocation, error) {
+	if strings.TrimSpace(raw) == "" {
+		return Invocation{Kind: KindCategory, Canonical: "/category"}, nil
+	}
+	action, rest := slashcmd.SplitCommandBody(strings.TrimSpace(raw))
+	switch strings.ToLower(strings.TrimSpace(action)) {
+	case "create", "new", "add":
+		name := strings.TrimSpace(rest)
+		if name == "" {
+			return Invocation{}, fmt.Errorf("usage: /category create <name>")
+		}
+		return Invocation{Kind: KindCategory, CategoryAction: CategoryActionCreate, CategoryName: name, Canonical: slashcmd.CanonicalCommand("category", "create "+name)}, nil
+	case "remove", "delete", "rm":
+		name := strings.TrimSpace(rest)
+		if name == "" {
+			return Invocation{}, fmt.Errorf("usage: /category remove <name>")
+		}
+		return Invocation{Kind: KindCategory, CategoryAction: CategoryActionRemove, CategoryName: name, Canonical: slashcmd.CanonicalCommand("category", "remove "+name)}, nil
+	case "move", "set":
+		name := strings.TrimSpace(rest)
+		if name == "" {
+			return Invocation{}, fmt.Errorf("usage: /category move <name>")
+		}
+		return Invocation{Kind: KindCategory, CategoryAction: CategoryActionMove, CategoryName: name, Canonical: slashcmd.CanonicalCommand("category", "move "+name)}, nil
+	case "clear", "main":
+		if strings.TrimSpace(rest) != "" {
+			return Invocation{}, fmt.Errorf("usage: /category clear")
+		}
+		return Invocation{Kind: KindCategory, CategoryAction: CategoryActionClear, Canonical: "/category clear"}, nil
+	default:
+		return Invocation{}, fmt.Errorf("usage: /category create|remove|move|clear [name]")
 	}
 }
 

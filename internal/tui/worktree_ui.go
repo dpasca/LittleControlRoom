@@ -654,9 +654,10 @@ func (m Model) existingWorktreeCandidates(projectPath string) []model.ProjectSum
 }
 
 func (m *Model) rebuildProjectList(selectedPath string) {
+	m.ensureSelectedCategoryTab()
 	sorted := append([]model.ProjectSummary(nil), m.projectListSourceProjects()...)
 	if m.archiveMode != projectArchiveArchived {
-		sorted = append(sorted, m.agentTaskProjectSummaries()...)
+		sorted = append(sorted, m.agentTaskProjectSummariesForCurrentTab()...)
 	}
 	m.sortProjects(sorted)
 	filtered := filterProjects(sorted, m.visibility, m.excludeProjectPatterns, m.projectFilter)
@@ -690,7 +691,29 @@ func (m Model) projectListSourceProjects() []model.ProjectSummary {
 	if m.archiveMode == projectArchiveArchived {
 		return m.archivedProjects
 	}
-	return m.allProjects
+	return filterProjectSummariesByCategory(m.allProjects, m.currentCategoryID())
+}
+
+func (m Model) agentTaskProjectSummariesForCurrentTab() []model.ProjectSummary {
+	return filterProjectSummariesByCategory(m.agentTaskProjectSummaries(), m.currentCategoryID())
+}
+
+func (m Model) currentCategoryID() string {
+	if m.archiveMode == projectArchiveCategory {
+		return strings.TrimSpace(m.selectedCategoryID)
+	}
+	return ""
+}
+
+func filterProjectSummariesByCategory(projects []model.ProjectSummary, categoryID string) []model.ProjectSummary {
+	categoryID = strings.TrimSpace(categoryID)
+	out := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if strings.TrimSpace(project.CategoryID) == categoryID {
+			out = append(out, project)
+		}
+	}
+	return out
 }
 
 func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath string) ([]model.ProjectSummary, []projectListRow) {
