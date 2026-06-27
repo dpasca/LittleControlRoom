@@ -14,7 +14,9 @@ import (
 func projectSummaryBaseQuery() string {
 	return fmt.Sprintf(`
 		SELECT
-			p.path, p.name, p.kind, p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.archived, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
+			p.path, p.name, p.kind,
+			COALESCE(pc.id, ''), COALESCE(pc.name, ''),
+			p.last_activity, p.status, p.attention_score, p.present_on_disk, p.worktree_root_path, p.worktree_kind, p.worktree_parent_branch, p.worktree_merge_status, p.worktree_origin_todo_id, p.repo_branch, p.repo_dirty, p.repo_conflict, p.repo_sync_status, p.repo_ahead_count, p.repo_behind_count, p.forgotten, p.manually_added, p.in_scope, p.archived, p.pinned, p.snoozed_until, p.last_session_seen_at, p.created_at,
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path AND pt.done = 0), 0),
 			COALESCE((SELECT COUNT(*) FROM project_todos pt WHERE pt.project_path = p.path), 0),
 			p.run_command,
@@ -40,6 +42,8 @@ func projectSummaryBaseQuery() string {
 			COALESCE(sc_completed.summary, ''),
 			sc_completed.updated_at
 		FROM projects p
+		LEFT JOIN category_assignments ca ON ca.resource_kind = 'project' AND ca.resource_id = p.path
+		LEFT JOIN project_categories pc ON pc.id = ca.category_id
 		LEFT JOIN project_sessions ps ON ps.session_id = (
 			SELECT ps2.session_id
 			FROM project_sessions ps2
@@ -138,30 +142,32 @@ func scanSummaryRow(scanner interface {
 	Scan(dest ...any) error
 }) (model.ProjectSummary, error) {
 	var (
-		path, name, kind, status, runCommand, movedFromPath, repoBranch, worktreeRootPath    string
-		worktreeParentBranch, worktreeMergeStatus                                            string
-		worktreeKind                                                                         string
-		worktreeOriginTodoID                                                                 int64
-		lastActivity, snoozedUntil, lastSessionSeenAt, createdAt, movedAt                    sql.NullInt64
-		preferredSessionSource                                                               string
-		latestSessionLastEventAt, latestTurnStartedAt                                        sql.NullInt64
-		latestSessionID, latestSessionSource, latestRawSessionID                             sql.NullString
-		latestSessionFormat, latestSessionDetectedPath, latestSessionSnapshotHash            sql.NullString
-		latestClassificationStatus                                                           sql.NullString
-		latestClassificationStage, latestClassificationCategory, latestClassificationSummary sql.NullString
-		latestClassificationStageStartedAt, latestClassificationUpdatedAt                    sql.NullInt64
-		latestCompletedClassificationCategory, latestCompletedClassificationSummary          sql.NullString
-		latestCompletedClassificationUpdatedAt                                               sql.NullInt64
-		repoSyncStatus                                                                       string
-		attentionScore, repoAheadCount, repoBehindCount, openTODOCount, totalTODOCount       int
-		latestTurnKnown, latestTurnCompleted                                                 int
-		presentOnDisk, repoDirty, repoConflict, forgotten, manuallyAdded, inScope, archived  int
-		pinned                                                                               int
+		path, name, kind, categoryID, categoryName, status, runCommand, movedFromPath, repoBranch, worktreeRootPath string
+		worktreeParentBranch, worktreeMergeStatus                                                                   string
+		worktreeKind                                                                                                string
+		worktreeOriginTodoID                                                                                        int64
+		lastActivity, snoozedUntil, lastSessionSeenAt, createdAt, movedAt                                           sql.NullInt64
+		preferredSessionSource                                                                                      string
+		latestSessionLastEventAt, latestTurnStartedAt                                                               sql.NullInt64
+		latestSessionID, latestSessionSource, latestRawSessionID                                                    sql.NullString
+		latestSessionFormat, latestSessionDetectedPath, latestSessionSnapshotHash                                   sql.NullString
+		latestClassificationStatus                                                                                  sql.NullString
+		latestClassificationStage, latestClassificationCategory, latestClassificationSummary                        sql.NullString
+		latestClassificationStageStartedAt, latestClassificationUpdatedAt                                           sql.NullInt64
+		latestCompletedClassificationCategory, latestCompletedClassificationSummary                                 sql.NullString
+		latestCompletedClassificationUpdatedAt                                                                      sql.NullInt64
+		repoSyncStatus                                                                                              string
+		attentionScore, repoAheadCount, repoBehindCount, openTODOCount, totalTODOCount                              int
+		latestTurnKnown, latestTurnCompleted                                                                        int
+		presentOnDisk, repoDirty, repoConflict, forgotten, manuallyAdded, inScope, archived                         int
+		pinned                                                                                                      int
 	)
 	if err := scanner.Scan(
 		&path,
 		&name,
 		&kind,
+		&categoryID,
+		&categoryName,
 		&lastActivity,
 		&status,
 		&attentionScore,
@@ -223,6 +229,8 @@ func scanSummaryRow(scanner interface {
 		Path:                                     path,
 		Name:                                     name,
 		Kind:                                     model.NormalizeProjectKind(model.ProjectKind(kind)),
+		CategoryID:                               strings.TrimSpace(categoryID),
+		CategoryName:                             strings.TrimSpace(categoryName),
 		Status:                                   model.ProjectStatus(status),
 		AttentionScore:                           attentionScore,
 		PresentOnDisk:                            presentOnDisk == 1,
@@ -848,6 +856,13 @@ func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, mo
 			return err
 		}
 	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE category_assignments
+		SET resource_id = ?, updated_at = ?
+		WHERE resource_kind = ? AND resource_id = ?
+	`, newPath, movedAt.Unix(), string(model.CategoryResourceProject), oldPath); err != nil {
+		return err
+	}
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM projects WHERE path = ?`, oldPath); err != nil {
 		return err
@@ -982,6 +997,25 @@ func (s *Store) ConsolidateProjectPath(ctx context.Context, oldPath, newPath str
 		if _, err = tx.ExecContext(ctx, stmt, newPath, oldPath); err != nil {
 			return err
 		}
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT INTO category_assignments(resource_kind, resource_id, category_id, created_at, updated_at)
+		SELECT resource_kind, ?, category_id, created_at, ?
+		FROM category_assignments
+		WHERE resource_kind = ? AND resource_id = ?
+			AND NOT EXISTS (
+				SELECT 1
+				FROM category_assignments existing
+				WHERE existing.resource_kind = ? AND existing.resource_id = ?
+			)
+	`, newPath, movedAt.Unix(), string(model.CategoryResourceProject), oldPath, string(model.CategoryResourceProject), newPath); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `
+		DELETE FROM category_assignments
+		WHERE resource_kind = ? AND resource_id = ?
+	`, string(model.CategoryResourceProject), oldPath); err != nil {
+		return err
 	}
 
 	if _, err = tx.ExecContext(ctx, `DELETE FROM project_git_fingerprints WHERE project_path = ?`, oldPath); err != nil {

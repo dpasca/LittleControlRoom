@@ -453,13 +453,22 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
 	case commands.KindTab:
 		switch inv.Tab {
-		case commands.ProjectTabActive:
-			return m, m.setArchiveMode(projectArchiveActive)
+		case commands.ProjectTabMain:
+			return m, m.setArchiveMode(projectArchiveMain)
 		case commands.ProjectTabArchived:
 			return m, m.setArchiveMode(projectArchiveArchived)
+		case commands.ProjectTabCategory:
+			category, ok := m.projectCategoryByName(inv.CategoryName)
+			if !ok {
+				m.status = fmt.Sprintf("Category not found: %s", strings.TrimSpace(inv.CategoryName))
+				return m, nil
+			}
+			return m, m.setCategoryMode(category.ID)
 		default:
 			return m, m.toggleArchiveMode()
 		}
+	case commands.KindCategory:
+		return m.handleCategoryCommand(inv)
 	case commands.KindSetup:
 		return m, m.openQuickSetupSettingsMode(true)
 	case commands.KindSettings:
@@ -848,6 +857,114 @@ func (m Model) clearSnoozeCmd(path string) tea.Cmd {
 	}
 }
 
+func (m Model) handleCategoryCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
+	switch inv.CategoryAction {
+	case commands.CategoryActionCreate:
+		return m, m.createProjectCategoryCmd(inv.CategoryName)
+	case commands.CategoryActionRemove:
+		return m, m.removeProjectCategoryCmd(inv.CategoryName)
+	case commands.CategoryActionMove, commands.CategoryActionClear:
+		project, ok := m.selectedProject()
+		if !ok {
+			m.status = "No project selected"
+			return m, nil
+		}
+		categoryName := strings.TrimSpace(inv.CategoryName)
+		if inv.CategoryAction == commands.CategoryActionClear {
+			categoryName = ""
+		}
+		if task, ok := m.agentTaskForProjectPath(project.Path); ok {
+			return m, m.moveAgentTaskCategoryCmd(task, categoryName)
+		}
+		return m, m.moveProjectCategoryCmd(project, categoryName)
+	default:
+		m.status = "Usage: /category create|remove|move|clear [name]"
+		return m, nil
+	}
+}
+
+func (m Model) createProjectCategoryCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		category, err := m.svc.CreateProjectCategory(ctx, name)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "creating the category")
+		status := fmt.Sprintf("Created category %q", strings.TrimSpace(category.Name))
+		if strings.TrimSpace(category.Name) == "" {
+			status = "Created category"
+		}
+		return actionMsg{
+			status:  status,
+			refresh: invalidateProjectStructure(""),
+			err:     err,
+		}
+	}
+}
+
+func (m Model) removeProjectCategoryCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		category, err := m.svc.DeleteProjectCategory(ctx, name)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "removing the category")
+		status := fmt.Sprintf("Removed category %q", strings.TrimSpace(category.Name))
+		if strings.TrimSpace(category.Name) == "" {
+			status = "Removed category"
+		}
+		return actionMsg{
+			status:  status,
+			refresh: invalidateProjectStructure(""),
+			err:     err,
+		}
+	}
+}
+
+func (m Model) moveProjectCategoryCmd(project model.ProjectSummary, categoryName string) tea.Cmd {
+	path := filepath.Clean(strings.TrimSpace(project.Path))
+	name := projectRemovalName(project)
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		category, err := m.svc.MoveProjectToCategory(ctx, path, categoryName)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "moving the project category")
+		status := fmt.Sprintf("Moved %q to Main", name)
+		if strings.TrimSpace(category.Name) != "" {
+			status = fmt.Sprintf("Moved %q to %s", name, category.Name)
+		}
+		return actionMsg{
+			projectPath: path,
+			status:      status,
+			refresh:     invalidateProjectStructure(path),
+			err:         err,
+		}
+	}
+}
+
+func (m Model) moveAgentTaskCategoryCmd(task model.AgentTask, categoryName string) tea.Cmd {
+	taskID := strings.TrimSpace(task.ID)
+	projectPath := cleanAgentTaskPath(task.WorkspacePath)
+	name := strings.TrimSpace(task.Title)
+	if name == "" {
+		name = taskID
+	}
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		category, err := m.svc.MoveAgentTaskToCategory(ctx, taskID, categoryName)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "moving the agent task category")
+		status := fmt.Sprintf("Moved %q to Main", name)
+		if strings.TrimSpace(category.Name) != "" {
+			status = fmt.Sprintf("Moved %q to %s", name, category.Name)
+		}
+		return actionMsg{
+			projectPath: projectPath,
+			status:      status,
+			refresh:     invalidateProjectStructure(projectPath),
+			err:         err,
+		}
+	}
+}
+
 func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 	project, ok := m.selectedProject()
 	if !ok {
@@ -891,7 +1008,7 @@ func (m Model) setProjectArchivedForSelection(archived bool) (tea.Model, tea.Cmd
 		if !project.InScope {
 			m.status = fmt.Sprintf("%q is outside project scope", projectRemovalName(project))
 		} else {
-			m.status = fmt.Sprintf("%q is already active", projectRemovalName(project))
+			m.status = fmt.Sprintf("%q is not archived", projectRemovalName(project))
 		}
 		return m, nil
 	}

@@ -489,15 +489,15 @@ func (m *Model) setVisibilityMode(mode projectVisibilityMode) tea.Cmd {
 }
 
 func (m *Model) toggleArchiveMode() tea.Cmd {
-	if m.archiveMode == projectArchiveArchived {
-		return m.setArchiveMode(projectArchiveActive)
-	}
-	return m.setArchiveMode(projectArchiveArchived)
+	return m.cycleProjectTab(1)
 }
 
 func (m *Model) setArchiveMode(mode projectArchiveMode) tea.Cmd {
-	if mode != projectArchiveArchived {
-		mode = projectArchiveActive
+	if mode == projectArchiveCategory && strings.TrimSpace(m.selectedCategoryID) == "" {
+		mode = projectArchiveMain
+	}
+	if mode != projectArchiveArchived && mode != projectArchiveCategory {
+		mode = projectArchiveMain
 	}
 	selectedPath := ""
 	if p, ok := m.selectedProject(); ok {
@@ -507,15 +507,135 @@ func (m *Model) setArchiveMode(mode projectArchiveMode) tea.Cmd {
 		selectedPath = ""
 	}
 	m.archiveMode = mode
+	if mode != projectArchiveCategory {
+		m.selectedCategoryID = ""
+	}
 	m.rebuildProjectList(selectedPath)
 	m.syncDetailViewport(false)
-	m.status = fmt.Sprintf("Project tab: %s", projectArchiveLabel(m.archiveMode))
+	m.status = fmt.Sprintf("Project tab: %s", m.currentProjectTabLabel())
 	if p, ok := m.selectedProject(); ok {
 		return m.requestProjectDetailViewCmd(p.Path)
 	}
 	m.detail = model.ProjectDetail{}
 	m.syncDetailViewport(true)
 	return nil
+}
+
+func (m *Model) setCategoryMode(categoryID string) tea.Cmd {
+	categoryID = strings.TrimSpace(categoryID)
+	if categoryID == "" {
+		return m.setArchiveMode(projectArchiveMain)
+	}
+	if _, ok := m.projectCategoryByID(categoryID); !ok {
+		return m.setArchiveMode(projectArchiveMain)
+	}
+	selectedPath := ""
+	if p, ok := m.selectedProject(); ok {
+		selectedPath = p.Path
+	}
+	if m.archiveMode != projectArchiveCategory || strings.TrimSpace(m.selectedCategoryID) != categoryID {
+		selectedPath = ""
+	}
+	m.archiveMode = projectArchiveCategory
+	m.selectedCategoryID = categoryID
+	m.rebuildProjectList(selectedPath)
+	m.syncDetailViewport(false)
+	m.status = fmt.Sprintf("Project tab: %s", m.currentProjectTabLabel())
+	if p, ok := m.selectedProject(); ok {
+		return m.requestProjectDetailViewCmd(p.Path)
+	}
+	m.detail = model.ProjectDetail{}
+	m.syncDetailViewport(true)
+	return nil
+}
+
+func (m *Model) cycleProjectTab(delta int) tea.Cmd {
+	tabs := m.projectTabDescriptors()
+	if len(tabs) == 0 {
+		return nil
+	}
+	current := m.currentProjectTabIndex(tabs)
+	if current < 0 {
+		current = 0
+	}
+	next := (current + delta) % len(tabs)
+	if next < 0 {
+		next += len(tabs)
+	}
+	tab := tabs[next]
+	if tab.mode == projectArchiveCategory {
+		return m.setCategoryMode(tab.categoryID)
+	}
+	return m.setArchiveMode(tab.mode)
+}
+
+type projectTabDescriptor struct {
+	mode       projectArchiveMode
+	categoryID string
+	label      string
+}
+
+func (m Model) projectTabDescriptors() []projectTabDescriptor {
+	tabs := []projectTabDescriptor{{mode: projectArchiveMain, label: "Main"}}
+	for _, category := range m.projectCategories {
+		if strings.TrimSpace(category.ID) == "" || strings.TrimSpace(category.Name) == "" {
+			continue
+		}
+		tabs = append(tabs, projectTabDescriptor{mode: projectArchiveCategory, categoryID: strings.TrimSpace(category.ID), label: strings.TrimSpace(category.Name)})
+	}
+	tabs = append(tabs, projectTabDescriptor{mode: projectArchiveArchived, label: "Archived"})
+	return tabs
+}
+
+func (m Model) currentProjectTabIndex(tabs []projectTabDescriptor) int {
+	for i, tab := range tabs {
+		if tab.mode != m.archiveMode {
+			continue
+		}
+		if tab.mode == projectArchiveCategory && strings.TrimSpace(tab.categoryID) != strings.TrimSpace(m.selectedCategoryID) {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
+func (m *Model) ensureSelectedCategoryTab() {
+	if m.archiveMode != projectArchiveCategory {
+		return
+	}
+	if _, ok := m.projectCategoryByID(m.selectedCategoryID); ok {
+		return
+	}
+	m.archiveMode = projectArchiveMain
+	m.selectedCategoryID = ""
+}
+
+func (m Model) projectCategoryByID(categoryID string) (model.ProjectCategory, bool) {
+	categoryID = strings.TrimSpace(categoryID)
+	if categoryID == "" {
+		return model.ProjectCategory{}, false
+	}
+	for _, category := range m.projectCategories {
+		if strings.TrimSpace(category.ID) == categoryID {
+			return category, true
+		}
+	}
+	return model.ProjectCategory{}, false
+}
+
+func (m Model) projectCategoryByName(name string) (model.ProjectCategory, bool) {
+	name = strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(name)), " "))
+	if name == "" {
+		return model.ProjectCategory{}, false
+	}
+	for _, category := range m.projectCategories {
+		key := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(category.Name)), " "))
+		if key == name {
+			return category, true
+		}
+	}
+	return model.ProjectCategory{}, false
 }
 
 func (m *Model) applySectionToggle(label string, mode commands.ToggleMode, target *bool) {

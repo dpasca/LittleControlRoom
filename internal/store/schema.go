@@ -213,6 +213,25 @@ func (s *Store) initSchema(ctx context.Context) error {
 			path TEXT PRIMARY KEY,
 			created_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS project_categories (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			name_key TEXT NOT NULL UNIQUE,
+			position INTEGER NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_categories_position ON project_categories(position, name COLLATE NOCASE);`,
+		`CREATE TABLE IF NOT EXISTS category_assignments (
+			resource_kind TEXT NOT NULL,
+			resource_id TEXT NOT NULL,
+			category_id TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(resource_kind, resource_id),
+			FOREIGN KEY(category_id) REFERENCES project_categories(id) ON DELETE CASCADE
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_category_assignments_category ON category_assignments(category_id, resource_kind, resource_id);`,
 		`CREATE TABLE IF NOT EXISTS agent_tasks (
 			id TEXT PRIMARY KEY,
 			parent_task_id TEXT NOT NULL DEFAULT '',

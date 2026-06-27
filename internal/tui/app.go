@@ -35,6 +35,7 @@ type Model struct {
 
 	allProjects             []model.ProjectSummary
 	archivedProjects        []model.ProjectSummary
+	projectCategories       []model.ProjectCategory
 	openAgentTasks          []model.AgentTask
 	orphanedWorktreesByRoot map[string][]model.ProjectSummary
 	projects                []model.ProjectSummary
@@ -45,6 +46,7 @@ type Model struct {
 	sortMode                projectSortMode
 	visibility              projectVisibilityMode
 	archiveMode             projectArchiveMode
+	selectedCategoryID      string
 	excludeProjectPatterns  []string
 	privacyMode             bool
 	privacyPatterns         []string
@@ -617,7 +619,9 @@ const (
 	visibilityAIFolders  projectVisibilityMode = "ai_folders"
 	visibilityAllFolders projectVisibilityMode = "all_folders"
 
-	projectArchiveActive   projectArchiveMode = "active"
+	projectArchiveMain     projectArchiveMode = "main"
+	projectArchiveActive   projectArchiveMode = projectArchiveMain
+	projectArchiveCategory projectArchiveMode = "category"
 	projectArchiveArchived projectArchiveMode = "archived"
 
 	focusProjects paneFocus = "projects"
@@ -678,7 +682,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		assessmentFlashUntil:          make(map[string]time.Time),
 		sortMode:                      sortByAttention,
 		visibility:                    visibilityAIFolders,
-		archiveMode:                   projectArchiveActive,
+		archiveMode:                   projectArchiveMain,
 		settingsBaseline:              &settingsBaseline,
 		settingsConfigPath:            strings.TrimSpace(initialConfig.ConfigPath),
 		appDataDirPath:                strings.TrimSpace(initialConfig.DataDir),
@@ -1460,6 +1464,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.excludeProjectPatterns = append([]string(nil), msg.excludeProjectPatterns...)
 		m.allProjects = m.preserveRefreshingAssessmentDisplays(msg.projects)
 		m.archivedProjects = m.preserveRefreshingAssessmentDisplays(msg.archivedProjects)
+		m.projectCategories = append([]model.ProjectCategory(nil), msg.categories...)
+		m.ensureSelectedCategoryTab()
 		m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
 		m.rebuildProjectList(selectedPath)

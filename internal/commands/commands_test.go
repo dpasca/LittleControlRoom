@@ -180,8 +180,41 @@ func TestParse(t *testing.T) {
 				if inv.Tab != ProjectTabActive {
 					t.Fatalf("tab = %s, want %s", inv.Tab, ProjectTabActive)
 				}
-				if inv.Canonical != "/tab active" {
-					t.Fatalf("canonical = %q, want /tab active", inv.Canonical)
+				if inv.Canonical != "/tab main" {
+					t.Fatalf("canonical = %q, want /tab main", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "tab custom category",
+			raw:  "/tab Client Work",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindTab {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindTab)
+				}
+				if inv.Tab != ProjectTabCategory || inv.CategoryName != "Client Work" {
+					t.Fatalf("tab/category = %s/%q, want category/Client Work", inv.Tab, inv.CategoryName)
+				}
+			},
+		},
+		{
+			name: "category move",
+			raw:  "/category move Client Work",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindCategory {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindCategory)
+				}
+				if inv.CategoryAction != CategoryActionMove || inv.CategoryName != "Client Work" {
+					t.Fatalf("category action/name = %s/%q, want move/Client Work", inv.CategoryAction, inv.CategoryName)
+				}
+			},
+		},
+		{
+			name: "category clear",
+			raw:  "/category clear",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindCategory || inv.CategoryAction != CategoryActionClear {
+					t.Fatalf("invocation = %#v, want category clear", inv)
 				}
 			},
 		},
@@ -912,12 +945,12 @@ func TestSuggestionsCommandArguments(t *testing.T) {
 }
 
 func TestSuggestionsTabArguments(t *testing.T) {
-	got := Suggestions("/tab a")
-	if len(got) != 2 {
-		t.Fatalf("Suggestions(/tab a) len = %d, want 2", len(got))
+	got := Suggestions("/tab m")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/tab m) len = %d, want 1", len(got))
 	}
-	if got[0].Insert != "/tab active" || got[1].Insert != "/tab archived" {
-		t.Fatalf("suggestions = %#v, want active and archived tab suggestions", got)
+	if got[0].Insert != "/tab main" {
+		t.Fatalf("suggestions = %#v, want main tab suggestion", got)
 	}
 }
 

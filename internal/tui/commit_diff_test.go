@@ -1387,7 +1387,7 @@ func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
 	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "slash-command palette") {
 		t.Fatalf("View() should show the help overlay content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "[Activ") || !strings.Contains(rendered, "Summary") || !strings.Contains(rendered, "Path:") {
+	if !strings.Contains(rendered, "[Main") || !strings.Contains(rendered, "Summary") || !strings.Contains(rendered, "Path:") {
 		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
 	}
 }

@@ -1238,9 +1238,21 @@ func projectArchiveLabel(mode projectArchiveMode) string {
 	switch mode {
 	case projectArchiveArchived:
 		return "Archived"
+	case projectArchiveCategory:
+		return "Category"
 	default:
-		return "Active"
+		return "Main"
 	}
+}
+
+func (m Model) currentProjectTabLabel() string {
+	if m.archiveMode == projectArchiveCategory {
+		if category, ok := m.projectCategoryByID(m.selectedCategoryID); ok {
+			return category.Name
+		}
+		return "Main"
+	}
+	return projectArchiveLabel(m.archiveMode)
 }
 
 func projectHasAIMetadata(project model.ProjectSummary) bool {

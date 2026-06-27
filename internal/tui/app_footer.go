@@ -1289,7 +1289,7 @@ func helpPanelLines() []string {
 		detailSectionStyle.Render("Quick Actions"),
 		renderHelpPanelActionRow(
 			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("a", "archive tab", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("a", "cycle tab", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("b", "boss", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),

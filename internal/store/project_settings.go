@@ -85,6 +85,7 @@ func deleteProjectOwnedRows(ctx context.Context, tx *sql.Tx, path string) error 
 		args  []any
 	}
 	deleteStatements := []deleteStatement{
+		{query: `DELETE FROM category_assignments WHERE resource_kind = ? AND resource_id = ?`, args: []any{string(model.CategoryResourceProject), path}},
 		{query: `DELETE FROM session_classifications WHERE project_path = ?`, args: []any{path}},
 		{query: `DELETE FROM context_session_text_cache WHERE project_path = ?`, args: []any{path}},
 		{query: `DELETE FROM context_search_fts WHERE project_path = ?`, args: []any{path}},

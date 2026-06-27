@@ -108,3 +108,38 @@ func TestAgentTaskLifecyclePersistsResources(t *testing.T) {
 		t.Fatalf("all tasks = %#v, want archived task", allTasks)
 	}
 }
+
+func TestAgentTaskCategoryAssignmentAppearsInList(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Ops")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	task, err := st.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		ID:            "agt_category",
+		Title:         "Watch deploy",
+		Kind:          model.AgentTaskKindAgent,
+		WorkspacePath: "/tmp/agent-category",
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+	if err := st.SetResourceCategory(ctx, model.CategoryResourceAgentTask, task.ID, category.ID); err != nil {
+		t.Fatalf("SetResourceCategory() error = %v", err)
+	}
+	tasks, err := st.ListAgentTasks(ctx, model.AgentTaskFilter{})
+	if err != nil {
+		t.Fatalf("ListAgentTasks() error = %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].CategoryID != category.ID || tasks[0].CategoryName != "Ops" {
+		t.Fatalf("tasks = %#v, want categorized agent task", tasks)
+	}
+}
