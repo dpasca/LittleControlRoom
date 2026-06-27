@@ -897,6 +897,36 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestSuggestionsWithCategoriesCompleteCategoryMoveNames(t *testing.T) {
+	suggestions := SuggestionsWithCategories("/category move Cli", []string{"Client Work", "Personal"})
+	if len(suggestions) != 1 {
+		t.Fatalf("suggestions = %#v, want one category suggestion", suggestions)
+	}
+	if suggestions[0].Insert != "/category move Client Work" {
+		t.Fatalf("suggestion insert = %q, want category move completion", suggestions[0].Insert)
+	}
+}
+
+func TestSuggestionsWithCategoriesOfferNamesAfterCategoryMoveAction(t *testing.T) {
+	suggestions := SuggestionsWithCategories("/category move", []string{"Client Work", "Personal"})
+	if len(suggestions) != 2 {
+		t.Fatalf("suggestions = %#v, want category name suggestions", suggestions)
+	}
+	if suggestions[0].Insert != "/category move Client Work" {
+		t.Fatalf("first suggestion insert = %q, want first category", suggestions[0].Insert)
+	}
+}
+
+func TestSuggestionsWithCategoriesCompleteCategoryTabs(t *testing.T) {
+	suggestions := SuggestionsWithCategories("/tab Cli", []string{"Client Work"})
+	if len(suggestions) != 1 {
+		t.Fatalf("suggestions = %#v, want one category tab suggestion", suggestions)
+	}
+	if suggestions[0].Insert != "/tab Client Work" {
+		t.Fatalf("suggestion insert = %q, want category tab completion", suggestions[0].Insert)
+	}
+}
+
 func TestParseRejectsUnknownCommand(t *testing.T) {
 	if _, err := Parse("/wat"); err == nil {
 		t.Fatalf("Parse(/wat) expected error")

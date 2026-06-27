@@ -217,6 +217,10 @@ func Specs() []Spec {
 }
 
 func Suggestions(input string) []Suggestion {
+	return SuggestionsWithCategories(input, nil)
+}
+
+func SuggestionsWithCategories(input string, categoryNames []string) []Suggestion {
 	trimmed := strings.TrimLeft(input, " \t\r\n")
 	if trimmed == "" {
 		trimmed = "/"
@@ -259,24 +263,52 @@ func Suggestions(input string) []Suggestion {
 	case "tab", "tabs":
 		argPrefix := ""
 		if len(fields) > 1 {
-			argPrefix = strings.ToLower(fields[len(fields)-1])
+			argPrefix = strings.TrimSpace(body[len(fields[0]):])
+			if !hasTrailingSpace {
+				argPrefix = strings.TrimSpace(argPrefix)
+			}
 		}
-		return slashcmd.EnumSuggestions("/tab ", argPrefix,
+		choices := []slashcmd.Choice{
 			choice("main", "Show the Main project-list tab"),
 			choice("archived", "Show the Archived project-list tab"),
 			choice("toggle", "Switch to the other project-list tab"),
-		)
-	case "category":
-		argPrefix := ""
-		if len(fields) > 1 {
-			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return slashcmd.EnumSuggestions("/category ", argPrefix,
-			choice("move", "Move the selected item to a category"),
-			choice("clear", "Move the selected item back to Main"),
-			choice("create", "Create a custom category tab"),
-			choice("remove", "Remove a custom category tab"),
-		)
+		for _, name := range categoryNames {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			choices = append(choices, choice(name, "Show the "+name+" category tab"))
+		}
+		return slashcmd.EnumSuggestions("/tab ", argPrefix, choices...)
+	case "category":
+		_, rawArgs := slashcmd.SplitCommandBody(body)
+		action, rest := slashcmd.SplitCommandBody(rawArgs)
+		action = strings.TrimSpace(action)
+		if action == "" {
+			return slashcmd.EnumSuggestions("/category ", action,
+				choice("move", "Move the selected item to a category"),
+				choice("clear", "Move the selected item back to Main"),
+				choice("create", "Create a custom category tab"),
+				choice("remove", "Remove a custom category tab"),
+			)
+		}
+		switch strings.ToLower(action) {
+		case "move", "set":
+			return categoryNameSuggestions("/category move ", rest, categoryNames, "Move the selected item to this category")
+		case "remove", "delete", "rm":
+			return categoryNameSuggestions("/category remove ", rest, categoryNames, "Remove this category tab")
+		default:
+			if rest == "" && !hasTrailingSpace {
+				return slashcmd.EnumSuggestions("/category ", action,
+					choice("move", "Move the selected item to a category"),
+					choice("clear", "Move the selected item back to Main"),
+					choice("create", "Create a custom category tab"),
+					choice("remove", "Remove a custom category tab"),
+				)
+			}
+			return nil
+		}
 	case "filter":
 		argPrefix := ""
 		if len(fields) > 1 {
@@ -740,6 +772,18 @@ func Parse(input string) (Invocation, error) {
 
 func choice(value, summary string) slashcmd.Choice {
 	return slashcmd.NewChoice(value, summary)
+}
+
+func categoryNameSuggestions(prefix, argPrefix string, names []string, summary string) []Suggestion {
+	choices := make([]slashcmd.Choice, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		choices = append(choices, choice(name, summary))
+	}
+	return slashcmd.EnumSuggestions(prefix, strings.TrimSpace(argPrefix), choices...)
 }
 
 func parseSortMode(raw string) (SortMode, error) {

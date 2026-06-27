@@ -106,6 +106,7 @@ type Model struct {
 	errorLogEntries                     []errorLogEntry
 	projectFilter                       string
 	projectFilterDialog                 *projectFilterDialogState
+	categoryDialog                      *categoryDialogState
 	ignoredPickerVisible                bool
 	ignoredPickerLoading                bool
 	ignoredPickerSelected               int
@@ -329,6 +330,7 @@ type codexArtifactLinkScanState struct {
 
 type actionMsg struct {
 	projectPath            string
+	selectPath             string
 	status                 string
 	clearPendingGitSummary bool
 	refresh                projectInvalidationIntent
@@ -1405,6 +1407,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.projectFilterDialog != nil {
 			return m.updateProjectFilterMode(msg)
 		}
+		if m.categoryDialog != nil {
+			return m.updateCategoryDialogMode(msg)
+		}
 		if m.codexVisible() {
 			return m.updateCodexMode(msg)
 		}
@@ -1843,6 +1848,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.status = msg.status
+		if strings.TrimSpace(msg.selectPath) != "" {
+			m.preferredSelectPath = strings.TrimSpace(msg.selectPath)
+		}
 		if msg.refresh.kind != projectInvalidationNone {
 			return m, m.requestProjectInvalidationCmd(msg.refresh)
 		}

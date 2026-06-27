@@ -44,8 +44,9 @@ func NameSuggestions(specs []Spec, prefix string) []Suggestion {
 
 func EnumSuggestions(prefix, argPrefix string, choices ...Choice) []Suggestion {
 	out := make([]Suggestion, 0, len(choices))
+	argPrefix = strings.ToLower(strings.TrimSpace(argPrefix))
 	for _, ch := range choices {
-		if argPrefix != "" && !strings.HasPrefix(ch.Value, argPrefix) {
+		if argPrefix != "" && !strings.HasPrefix(strings.ToLower(ch.Value), argPrefix) {
 			continue
 		}
 		insert := prefix + ch.Value

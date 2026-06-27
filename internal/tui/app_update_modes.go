@@ -686,7 +686,19 @@ func (m *Model) syncCommandInputWidth() {
 }
 
 func (m Model) commandSuggestions() []commands.Suggestion {
-	return commands.Suggestions(m.commandInput.Value())
+	return commands.SuggestionsWithCategories(m.commandInput.Value(), m.projectCategoryNames())
+}
+
+func (m Model) projectCategoryNames() []string {
+	names := make([]string, 0, len(m.projectCategories))
+	for _, category := range m.projectCategories {
+		name := strings.TrimSpace(category.Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
 }
 
 func (m *Model) syncCommandSelection() {

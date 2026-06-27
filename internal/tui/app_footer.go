@@ -140,6 +140,15 @@ func (m Model) renderFooter(width int) string {
 		label := "Project filter: type to narrow, Enter keep, Esc close"
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}
+	if m.categoryDialog != nil {
+		label := "Categories: ↑↓ choose, Enter select, Esc close"
+		if m.categoryDialog.Mode == categoryDialogModeCreate {
+			label = "Categories: type name, Enter create, Esc back"
+		} else if m.categoryDialog.Mode == categoryDialogModeMove || m.categoryDialog.Mode == categoryDialogModeRemove {
+			label = "Categories: ↑↓ choose, Enter apply, Esc back"
+		}
+		return m.renderModalFooter(width, label, supplementSegments...)
+	}
 	if m.errorLogVisible {
 		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, t ask engineer, Esc close", supplementSegments...)
 	}

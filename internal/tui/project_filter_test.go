@@ -37,6 +37,29 @@ func TestDispatchFilterCommandOpensDialog(t *testing.T) {
 	}
 }
 
+func TestDispatchCategoryCommandOpensDialog(t *testing.T) {
+	m := Model{
+		width:  100,
+		height: 24,
+		projectCategories: []model.ProjectCategory{{
+			ID:   "cat_client",
+			Name: "Client",
+		}},
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindCategory, Canonical: "/category"})
+	got := updated.(Model)
+	if got.categoryDialog == nil {
+		t.Fatalf("expected category dialog to open")
+	}
+	if got.categoryDialog.Mode != categoryDialogModeActions {
+		t.Fatalf("category dialog mode = %v, want actions", got.categoryDialog.Mode)
+	}
+	if cmd != nil {
+		t.Fatalf("opening the category dialog should not need an async command")
+	}
+}
+
 func TestDispatchFilterCommandAppliesTransientFilter(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{
@@ -423,6 +446,88 @@ func TestDispatchArchiveAndUnarchiveProjectCommands(t *testing.T) {
 	}
 	if len(active) != 1 || active[0].Archived {
 		t.Fatalf("unarchived project should return to active list, got %#v", active)
+	}
+}
+
+func TestCategoryMoveSelectsProjectBelowAfterRefresh(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	above := model.ProjectState{Path: "/tmp/category-above", Name: "above", Status: model.StatusIdle, AttentionScore: 30, PresentOnDisk: true, InScope: true, UpdatedAt: now}
+	moved := model.ProjectState{Path: "/tmp/category-moved", Name: "moved", Status: model.StatusIdle, AttentionScore: 20, PresentOnDisk: true, InScope: true, UpdatedAt: now}
+	below := model.ProjectState{Path: "/tmp/category-below", Name: "below", Status: model.StatusIdle, AttentionScore: 10, PresentOnDisk: true, InScope: true, UpdatedAt: now}
+	for _, state := range []model.ProjectState{above, moved, below} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("seed project %s: %v", state.Path, err)
+		}
+	}
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	m := Model{
+		ctx:               ctx,
+		svc:               svc,
+		allProjects:       active,
+		projectCategories: []model.ProjectCategory{category},
+		sortMode:          sortByAttention,
+		visibility:        visibilityAllFolders,
+	}
+	m.rebuildProjectList(moved.Path)
+	if selected, ok := m.selectedProject(); !ok || selected.Path != moved.Path {
+		t.Fatalf("selected project before move = %#v, want moved", selected)
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{
+		Kind:           commands.KindCategory,
+		CategoryAction: commands.CategoryActionMove,
+		CategoryName:   "Client",
+		Canonical:      "/category move Client",
+	})
+	if cmd == nil {
+		t.Fatalf("category move should return an action command")
+	}
+	action, ok := cmd().(actionMsg)
+	if !ok {
+		t.Fatalf("category move command returned %T, want actionMsg", action)
+	}
+	if action.err != nil {
+		t.Fatalf("category move action error = %v", action.err)
+	}
+	if action.selectPath != below.Path {
+		t.Fatalf("action selectPath = %q, want below project", action.selectPath)
+	}
+
+	afterAction, _ := updated.(Model).Update(action)
+	got := afterAction.(Model)
+	if got.preferredSelectPath != below.Path {
+		t.Fatalf("preferredSelectPath = %q, want below project", got.preferredSelectPath)
+	}
+
+	active, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects after move: %v", err)
+	}
+	afterReload, _ := got.Update(projectsMsg{
+		projects:   active,
+		categories: []model.ProjectCategory{category},
+	})
+	got = afterReload.(Model)
+	if selected, ok := got.selectedProject(); !ok || selected.Path != below.Path {
+		t.Fatalf("selected project after reload = %#v, want below", selected)
+	}
+	if len(got.projects) != 2 {
+		t.Fatalf("visible main projects = %#v, want moved project filtered out", got.projects)
 	}
 }
 

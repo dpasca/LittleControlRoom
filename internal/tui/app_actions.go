@@ -873,13 +873,19 @@ func (m Model) handleCategoryCommand(inv commands.Invocation) (tea.Model, tea.Cm
 		if inv.CategoryAction == commands.CategoryActionClear {
 			categoryName = ""
 		}
-		if task, ok := m.agentTaskForProjectPath(project.Path); ok {
-			return m, m.moveAgentTaskCategoryCmd(task, categoryName)
+		targetCategoryID := ""
+		if categoryName != "" {
+			if category, ok := m.projectCategoryByName(categoryName); ok {
+				targetCategoryID = category.ID
+			}
 		}
-		return m, m.moveProjectCategoryCmd(project, categoryName)
+		selectPath := m.categoryMoveSelectPath(project, targetCategoryID)
+		if task, ok := m.agentTaskForProjectPath(project.Path); ok {
+			return m, m.moveAgentTaskCategoryCmd(task, categoryName, selectPath)
+		}
+		return m, m.moveProjectCategoryCmd(project, categoryName, selectPath)
 	default:
-		m.status = "Usage: /category create|remove|move|clear [name]"
-		return m, nil
+		return m.openCategoryDialog()
 	}
 }
 
@@ -919,9 +925,13 @@ func (m Model) removeProjectCategoryCmd(name string) tea.Cmd {
 	}
 }
 
-func (m Model) moveProjectCategoryCmd(project model.ProjectSummary, categoryName string) tea.Cmd {
+func (m Model) moveProjectCategoryCmd(project model.ProjectSummary, categoryName, selectPath string) tea.Cmd {
 	path := filepath.Clean(strings.TrimSpace(project.Path))
 	name := projectRemovalName(project)
+	detailPath := path
+	if strings.TrimSpace(selectPath) != "" {
+		detailPath = selectPath
+	}
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
@@ -933,19 +943,24 @@ func (m Model) moveProjectCategoryCmd(project model.ProjectSummary, categoryName
 		}
 		return actionMsg{
 			projectPath: path,
+			selectPath:  selectPath,
 			status:      status,
-			refresh:     invalidateProjectStructure(path),
+			refresh:     invalidateProjectStructure(detailPath),
 			err:         err,
 		}
 	}
 }
 
-func (m Model) moveAgentTaskCategoryCmd(task model.AgentTask, categoryName string) tea.Cmd {
+func (m Model) moveAgentTaskCategoryCmd(task model.AgentTask, categoryName, selectPath string) tea.Cmd {
 	taskID := strings.TrimSpace(task.ID)
 	projectPath := cleanAgentTaskPath(task.WorkspacePath)
 	name := strings.TrimSpace(task.Title)
 	if name == "" {
 		name = taskID
+	}
+	detailPath := projectPath
+	if strings.TrimSpace(selectPath) != "" {
+		detailPath = selectPath
 	}
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
@@ -958,8 +973,9 @@ func (m Model) moveAgentTaskCategoryCmd(task model.AgentTask, categoryName strin
 		}
 		return actionMsg{
 			projectPath: projectPath,
+			selectPath:  selectPath,
 			status:      status,
-			refresh:     invalidateProjectStructure(projectPath),
+			refresh:     invalidateProjectStructure(detailPath),
 			err:         err,
 		}
 	}
