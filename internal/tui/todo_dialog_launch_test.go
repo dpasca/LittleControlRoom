@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
@@ -223,6 +224,151 @@ func TestTodoDialogEnterStartsFreshPreferredProviderWithDraft(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatalf("opening the embedded session should return a focus command")
+	}
+}
+
+func TestTodoDialogStartsFreshSessionWithImageDraft(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-todo-image",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	todoText := "Match the UI state shown in the screenshot"
+	imagePath := "/tmp/todo-reference.png"
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          8,
+				ProjectPath: "/tmp/demo",
+				Text:        todoText,
+				Attachments: []model.TodoAttachment{{
+					Kind: model.TodoAttachmentLocalImage,
+					Path: imagePath,
+				}},
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoCopyDialog == nil || got.todoCopyDialog.RunMode != todoCopyModeNewWorktree {
+		t.Fatalf("todo copy dialog = %#v, want dedicated worktree by default", got.todoCopyDialog)
+	}
+	if rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24)); !strings.Contains(rendered, "1 image") {
+		t.Fatalf("copy dialog should show image summary:\n%s", rendered)
+	}
+
+	updated, _ = got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	got = updated.(Model)
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("starting a TODO with an image should return an open command")
+	}
+	draft := got.codexDrafts["/tmp/demo"]
+	if draft.Text != todoText+"\n\n[Image #1] " {
+		t.Fatalf("draft text = %q, want image marker after TODO text", draft.Text)
+	}
+	if len(draft.Attachments) != 1 || draft.Attachments[0].Path != imagePath {
+		t.Fatalf("draft attachments = %#v, want image path", draft.Attachments)
+	}
+
+	msg := cmd()
+	opened, ok := msg.(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexSessionOpenedMsg", msg)
+	}
+	if opened.err != nil {
+		t.Fatalf("todo launch returned error = %v", opened.err)
+	}
+	if len(requests) != 1 || requests[0].Prompt != "" || !requests[0].InitialInput.Empty() {
+		t.Fatalf("launch request = %#v, want draft-only fresh session", requests)
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.codexInput.Value() != todoText+"\n\n[Image #1] " {
+		t.Fatalf("composer text = %q, want TODO draft with image marker", got.codexInput.Value())
+	}
+	if got.currentCodexDraft().Submission().Text != todoText {
+		t.Fatalf("submission text = %q, want TODO text without image marker", got.currentCodexDraft().Submission().Text)
+	}
+	if len(got.currentCodexDraft().Submission().Attachments) != 1 {
+		t.Fatalf("submission attachments = %#v, want one image", got.currentCodexDraft().Submission().Attachments)
+	}
+}
+
+func TestTodoDialogBlocksImageAttachmentsForUnsupportedProvider(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+		}},
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          9,
+				ProjectPath: "/tmp/demo",
+				Text:        "Use the attached screenshot",
+				Attachments: []model.TodoAttachment{{
+					Kind: model.TodoAttachmentLocalImage,
+					Path: "/tmp/reference.png",
+				}},
+			}},
+		},
+		selected:      0,
+		todoDialog:    &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateTodoDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.todoCopyDialog == nil {
+		t.Fatalf("todo copy dialog should open")
+	}
+	got.todoCopyDialog.Provider = codexapp.ProviderClaudeCode
+	got.todoCopyDialog.RunMode = todoCopyModeHere
+	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
+	if !strings.Contains(rendered, "no images") || !strings.Contains(rendered, "does not support TODO image attachments") {
+		t.Fatalf("copy dialog should warn about unsupported image provider:\n%s", rendered)
+	}
+
+	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("unsupported image launch should not return a command")
+	}
+	if got.status != todoAttachmentUnsupportedStatus(codexapp.ProviderClaudeCode) {
+		t.Fatalf("status = %q, want unsupported-provider message", got.status)
 	}
 }
 

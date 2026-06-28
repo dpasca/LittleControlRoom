@@ -447,6 +447,7 @@ type todoWorktreeLaunchMsg struct {
 	projectPath    string
 	todoID         int64
 	todoText       string
+	attachments    []model.TodoAttachment
 	status         string
 	provider       codexapp.Provider
 	openModelFirst bool
@@ -2111,8 +2112,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.todoWorktreeEditor = nil
 		m.todoExistingWorktree = nil
 		m.err = nil
+		codexAttachments := codexAttachmentsFromTodo(msg.attachments)
 		if msg.openModelFirst {
-			m.restoreCodexDraft(msg.projectPath, codexDraft{Text: msg.todoText})
+			m.restoreCodexDraft(msg.projectPath, codexDraftFromTodo(msg.todoText, msg.attachments))
 		} else {
 			m.clearCodexDraft(msg.projectPath)
 		}
@@ -2122,6 +2124,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			provider:       provider,
 			openModelFirst: msg.openModelFirst,
 			autoSubmit:     !msg.openModelFirst,
+			attachments:    codexAttachments,
 		})
 		req := codexapp.LaunchRequest{
 			Provider:                   provider,
@@ -2154,7 +2157,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			LCAgentUtilityModel:        m.lcagentUtilityModel(),
 		}
 		if !msg.openModelFirst {
-			req.Prompt = msg.todoText
+			if len(codexAttachments) > 0 {
+				req.InitialInput = codexapp.Submission{
+					Text:        msg.todoText,
+					Attachments: codexAttachments,
+				}
+			} else {
+				req.Prompt = msg.todoText
+			}
 		}
 		if err := req.Validate(); err != nil {
 			m.clearTodoLaunchDraft(msg.projectPath)

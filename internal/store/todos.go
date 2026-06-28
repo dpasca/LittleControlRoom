@@ -20,6 +20,10 @@ func (s *Store) SetSnooze(ctx context.Context, path string, until *time.Time) er
 }
 
 func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
+	return s.AddTodoWithAttachments(ctx, projectPath, text, nil)
+}
+
+func (s *Store) AddTodoWithAttachments(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment) (model.TodoItem, error) {
 	if projectPath == "" {
 		return model.TodoItem{}, fmt.Errorf("project path is required")
 	}
@@ -53,6 +57,9 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 	if err != nil {
 		return model.TodoItem{}, err
 	}
+	if err := replaceTodoAttachmentsTx(ctx, tx, id, attachments, now); err != nil {
+		return model.TodoItem{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now.Unix(), projectPath); err != nil {
 		return model.TodoItem{}, err
 	}
@@ -63,6 +70,7 @@ func (s *Store) AddTodo(ctx context.Context, projectPath, text string) (model.To
 		ID:          id,
 		ProjectPath: projectPath,
 		Text:        text,
+		Attachments: normalizeTodoAttachmentsForSave(attachments),
 		Position:    0,
 		CreatedAt:   now,
 		UpdatedAt:   now,
@@ -422,6 +430,11 @@ func (s *Store) GetTodo(ctx context.Context, todoID int64) (model.TodoItem, erro
 	if workStateAt.Valid {
 		item.WorkStateAt = time.Unix(workStateAt.Int64, 0)
 	}
+	attachments, err := s.ListTodoAttachments(ctx, item.ID)
+	if err != nil {
+		return model.TodoItem{}, err
+	}
+	item.Attachments = attachments
 	return item, nil
 }
 
@@ -449,6 +462,174 @@ func (s *Store) UpdateTodo(ctx context.Context, id int64, text string) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+func (s *Store) UpdateTodoWithAttachments(ctx context.Context, id int64, text string, attachments []model.TodoAttachment) error {
+	if id <= 0 {
+		return fmt.Errorf("todo id is required")
+	}
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("todo text is required")
+	}
+	now := time.Now()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE project_todos
+		SET text = ?, updated_at = ?
+		WHERE id = ?
+	`, text, now.Unix(), id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	if err := replaceTodoAttachmentsTx(ctx, tx, id, attachments, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func normalizeTodoAttachmentsForSave(in []model.TodoAttachment) []model.TodoAttachment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]model.TodoAttachment, 0, len(in))
+	for _, attachment := range in {
+		path := strings.TrimSpace(attachment.Path)
+		if path == "" {
+			continue
+		}
+		kind := model.TodoAttachmentKind(strings.TrimSpace(string(attachment.Kind)))
+		if kind == "" {
+			kind = model.TodoAttachmentLocalImage
+		}
+		out = append(out, model.TodoAttachment{
+			ID:        attachment.ID,
+			TodoID:    attachment.TodoID,
+			Kind:      kind,
+			Path:      path,
+			Position:  len(out),
+			CreatedAt: attachment.CreatedAt,
+		})
+	}
+	return out
+}
+
+func replaceTodoAttachmentsTx(ctx context.Context, tx *sql.Tx, todoID int64, attachments []model.TodoAttachment, now time.Time) error {
+	if todoID <= 0 {
+		return fmt.Errorf("todo id is required")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM todo_attachments WHERE todo_id = ?`, todoID); err != nil {
+		return err
+	}
+	for i, attachment := range normalizeTodoAttachmentsForSave(attachments) {
+		createdAt := attachment.CreatedAt
+		if createdAt.IsZero() {
+			createdAt = now
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO todo_attachments(todo_id, kind, path, position, created_at)
+			VALUES (?, ?, ?, ?, ?)
+		`, todoID, string(attachment.Kind), attachment.Path, i, createdAt.Unix()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) ListTodoAttachments(ctx context.Context, todoID int64) ([]model.TodoAttachment, error) {
+	if todoID <= 0 {
+		return nil, nil
+	}
+	byTodoID, err := s.listTodoAttachmentsForIDs(ctx, []int64{todoID})
+	if err != nil {
+		return nil, err
+	}
+	return byTodoID[todoID], nil
+}
+
+func (s *Store) listTodoAttachmentsForIDs(ctx context.Context, ids []int64) (map[int64][]model.TodoAttachment, error) {
+	out := make(map[int64][]model.TodoAttachment, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	if len(args) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, todo_id, kind, path, position, created_at
+		FROM todo_attachments
+		WHERE todo_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY todo_id ASC, position ASC, id ASC
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			attachment model.TodoAttachment
+			kind       string
+			createdAt  int64
+		)
+		if err := rows.Scan(&attachment.ID, &attachment.TodoID, &kind, &attachment.Path, &attachment.Position, &createdAt); err != nil {
+			return nil, err
+		}
+		attachment.Kind = model.TodoAttachmentKind(strings.TrimSpace(kind))
+		if attachment.Kind == "" {
+			attachment.Kind = model.TodoAttachmentLocalImage
+		}
+		attachment.Path = strings.TrimSpace(attachment.Path)
+		attachment.CreatedAt = time.Unix(createdAt, 0)
+		if attachment.Path == "" {
+			continue
+		}
+		out[attachment.TodoID] = append(out[attachment.TodoID], attachment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for todoID, attachments := range out {
+		for i := range attachments {
+			attachments[i].Position = i
+		}
+		out[todoID] = attachments
+	}
+	return out, nil
+}
+
+func todoIDs(items []model.TodoItem) []int64 {
+	if len(items) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(items))
+	for _, item := range items {
+		if item.ID > 0 {
+			ids = append(ids, item.ID)
+		}
+	}
+	return ids
 }
 
 func (s *Store) ToggleTodoDone(ctx context.Context, id int64, done bool) error {

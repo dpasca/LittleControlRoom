@@ -658,16 +658,12 @@ func (m *Model) tryAttachClipboardImage() (bool, error) {
 	if projectPath == "" {
 		return false, nil
 	}
-	path, err := clipboardImageExporter()
+	attachment, err := clipboardImageAttachment()
 	if err != nil {
 		if err == errClipboardHasNoImage {
 			return false, nil
 		}
 		return false, err
-	}
-	attachment := codexapp.Attachment{
-		Kind: codexapp.AttachmentLocalImage,
-		Path: path,
 	}
 	m.appendCurrentCodexAttachment(attachment)
 	attachments := m.currentCodexAttachments()

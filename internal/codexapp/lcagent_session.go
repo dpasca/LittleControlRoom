@@ -264,8 +264,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 			session.stagePendingLaunchSelection(launchModel, modelProvider, launchReasoning)
 		}
 	}
-	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
-		if err := session.Submit(prompt); err != nil {
+	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
+		if err := session.SubmitInput(initialInput); err != nil {
 			return nil, err
 		}
 	} else if !session.started {

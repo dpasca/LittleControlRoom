@@ -173,8 +173,8 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	s.updateStatusLocked()
 	s.mu.Unlock()
 
-	if strings.TrimSpace(req.Prompt) != "" {
-		if err := s.Submit(req.Prompt); err != nil {
+	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
+		if err := s.SubmitInput(initialInput); err != nil {
 			return nil, err
 		}
 	}

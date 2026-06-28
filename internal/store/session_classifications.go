@@ -967,7 +967,20 @@ func (s *Store) listTodos(ctx context.Context, path string) ([]model.TodoItem, e
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	attachments, err := s.listTodoAttachmentsForIDs(ctx, todoIDs(out))
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Attachments = attachments[out[i].ID]
+	}
+	return out, nil
 }
 
 func hashTodoText(text string) string {

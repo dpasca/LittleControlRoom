@@ -1003,6 +1003,86 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 	}
 }
 
+func TestTodoWorktreeAutoSubmitUsesInitialInputForImageAttachments(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "ses-worktree-image",
+				Started:  true,
+				Preset:   req.Preset,
+				Status:   req.Provider.Label() + " session ready",
+			},
+		}, nil
+	})
+
+	imagePath := "/tmp/todo-worktree-reference.png"
+	m := Model{
+		codexManager: manager,
+		codexInput:   newCodexTextarea(),
+		codexDrafts:  make(map[string]codexDraft),
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/root",
+			Name:          "root",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		projectPath: "/tmp/root--feat-image",
+		todoID:      12,
+		todoText:    "Use the attached reference screenshot",
+		attachments: []model.TodoAttachment{{
+			Kind: model.TodoAttachmentLocalImage,
+			Path: imagePath,
+		}},
+		provider: codexapp.ProviderCodex,
+	})
+	got := updated.(Model)
+	draft, ok := got.todoLaunchDraftFor("/tmp/root--feat-image")
+	if !ok || !draft.autoSubmit {
+		t.Fatalf("todoLaunchDraftFor(%q) = %#v, want auto-submit launch state", "/tmp/root--feat-image", draft)
+	}
+	if len(draft.attachments) != 1 || draft.attachments[0].Path != imagePath {
+		t.Fatalf("launch draft attachments = %#v, want image path", draft.attachments)
+	}
+	if cmd == nil {
+		t.Fatalf("worktree launch should return an embedded open command")
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	foundOpen := false
+	for _, msg := range msgs {
+		if opened, ok := msg.(codexSessionOpenedMsg); ok {
+			foundOpen = true
+			if opened.err != nil {
+				t.Fatalf("embedded session open returned error = %v", opened.err)
+			}
+		}
+	}
+	if !foundOpen {
+		t.Fatalf("cmd messages did not include codexSessionOpenedMsg: %#v", msgs)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("request count = %d, want 1", len(requests))
+	}
+	if requests[0].Prompt != "" {
+		t.Fatalf("launch prompt = %q, want empty prompt when attachments use InitialInput", requests[0].Prompt)
+	}
+	if requests[0].InitialInput.Text != "Use the attached reference screenshot" {
+		t.Fatalf("initial input text = %q, want TODO text", requests[0].InitialInput.Text)
+	}
+	if len(requests[0].InitialInput.Attachments) != 1 || requests[0].InitialInput.Attachments[0].Path != imagePath {
+		t.Fatalf("initial input attachments = %#v, want image path", requests[0].InitialInput.Attachments)
+	}
+}
+
 func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverlap(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
@@ -1815,6 +1895,69 @@ func TestTodoEditorSaveRestoresDraftOnFailure(t *testing.T) {
 	}
 	if !strings.Contains(got.status, "TODO action failed") {
 		t.Fatalf("status = %q, want todo action failure hint", got.status)
+	}
+}
+
+func TestTodoEditorCtrlVAttachesDurableClipboardImageAndBackspaceRemovesIt(t *testing.T) {
+	dataDir := t.TempDir()
+	sourcePath := filepath.Join(t.TempDir(), "clipboard.png")
+	if err := os.WriteFile(sourcePath, []byte("fake png bytes"), 0o600); err != nil {
+		t.Fatalf("write fake clipboard image: %v", err)
+	}
+
+	previousExporter := clipboardImageExporter
+	clipboardImageExporter = func() (string, error) {
+		return sourcePath, nil
+	}
+	t.Cleanup(func() {
+		clipboardImageExporter = previousExporter
+	})
+
+	m := Model{
+		appDataDirPath: dataDir,
+		todoEditor: &todoEditorState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			Input:       newTodoTextInput(""),
+		},
+	}
+
+	updated, cmd := m.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyCtrlV})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("ctrl+v image attach should not queue a command")
+	}
+	if got.todoEditor == nil || len(got.todoEditor.Attachments) != 1 {
+		t.Fatalf("attachments = %#v, want one image", got.todoEditor)
+	}
+	attachment := got.todoEditor.Attachments[0]
+	if attachment.Kind != model.TodoAttachmentLocalImage {
+		t.Fatalf("attachment kind = %q, want local image", attachment.Kind)
+	}
+	if !strings.HasPrefix(attachment.Path, filepath.Join(dataDir, "todo-attachments")+string(os.PathSeparator)) {
+		t.Fatalf("attachment path = %q, want durable path under app data", attachment.Path)
+	}
+	if data, err := os.ReadFile(attachment.Path); err != nil || string(data) != "fake png bytes" {
+		t.Fatalf("durable image bytes = %q, err=%v", string(data), err)
+	}
+	if got.status != "Attached [Image #1] to TODO" {
+		t.Fatalf("status = %q, want attachment notice", got.status)
+	}
+	rendered := ansi.Strip(got.renderTodoEditorOverlay("", 100, 30))
+	if !strings.Contains(rendered, "Images") || !strings.Contains(rendered, "[Image #1]") {
+		t.Fatalf("editor render should show attachment label:\n%s", rendered)
+	}
+
+	updated, cmd = got.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyBackspace})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("backspace image removal should not queue a command")
+	}
+	if got.todoEditor == nil || len(got.todoEditor.Attachments) != 0 {
+		t.Fatalf("attachments after backspace = %#v, want none", got.todoEditor)
+	}
+	if got.status != "Removed [Image #1] from TODO" {
+		t.Fatalf("status = %q, want removal notice", got.status)
 	}
 }
 

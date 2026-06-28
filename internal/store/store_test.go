@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1527,6 +1528,79 @@ func TestUpdateTodoPreservesBlankLines(t *testing.T) {
 	if todo.Text != todoText {
 		t.Fatalf("updated todo.Text = %q, want %q", todo.Text, todoText)
 	}
+}
+
+func TestTodoAttachmentsRoundTripAndReplace(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "demo",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		InScope:        true,
+		UpdatedAt:      time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	item, err := st.AddTodoWithAttachments(ctx, projectPath, "inspect the attached screenshots", []model.TodoAttachment{
+		{Kind: model.TodoAttachmentLocalImage, Path: "/tmp/first.png"},
+		{Kind: model.TodoAttachmentLocalImage, Path: "/tmp/second.png"},
+	})
+	if err != nil {
+		t.Fatalf("add todo with attachments: %v", err)
+	}
+
+	todo, err := st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get todo: %v", err)
+	}
+	if got := attachmentPaths(todo.Attachments); !reflect.DeepEqual(got, []string{"/tmp/first.png", "/tmp/second.png"}) {
+		t.Fatalf("get todo attachments = %#v", got)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		t.Fatalf("get project detail: %v", err)
+	}
+	if len(detail.Todos) != 1 {
+		t.Fatalf("detail todos = %d, want 1", len(detail.Todos))
+	}
+	if got := attachmentPaths(detail.Todos[0].Attachments); !reflect.DeepEqual(got, []string{"/tmp/first.png", "/tmp/second.png"}) {
+		t.Fatalf("detail attachments = %#v", got)
+	}
+
+	if err := st.UpdateTodoWithAttachments(ctx, item.ID, "inspect the replacement screenshot", []model.TodoAttachment{
+		{Kind: model.TodoAttachmentLocalImage, Path: "/tmp/replacement.png"},
+	}); err != nil {
+		t.Fatalf("update todo with attachments: %v", err)
+	}
+	todo, err = st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get replaced todo: %v", err)
+	}
+	if got := attachmentPaths(todo.Attachments); !reflect.DeepEqual(got, []string{"/tmp/replacement.png"}) {
+		t.Fatalf("replaced attachments = %#v", got)
+	}
+}
+
+func attachmentPaths(attachments []model.TodoAttachment) []string {
+	out := make([]string, 0, len(attachments))
+	for _, attachment := range attachments {
+		out = append(out, attachment.Path)
+	}
+	return out
 }
 
 func TestClaimNextQueuedTodoWorktreeSuggestionRespectsDebounce(t *testing.T) {

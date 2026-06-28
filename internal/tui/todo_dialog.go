@@ -44,6 +44,7 @@ type todoEditorState struct {
 	ProjectName string
 	TodoID      int64
 	Input       textarea.Model
+	Attachments []model.TodoAttachment
 	Submitting  bool
 }
 
@@ -52,6 +53,7 @@ type todoPendingSaveState struct {
 	ProjectName string
 	TodoID      int64
 	Text        string
+	Attachments []model.TodoAttachment
 }
 
 type todoDeleteConfirmState struct {
@@ -69,6 +71,7 @@ type todoLaunchDraftState struct {
 	provider       codexapp.Provider
 	openModelFirst bool
 	autoSubmit     bool
+	attachments    []codexapp.Attachment
 }
 
 func normalizeTodoLaunchDraftProjectPath(projectPath string) string {
@@ -93,6 +96,7 @@ func (m *Model) storeTodoLaunchDraft(draft todoLaunchDraftState) {
 		m.todoLaunchDrafts = make(map[string]todoLaunchDraftState)
 	}
 	draft.projectPath = projectPath
+	draft.attachments = cloneCodexAttachments(draft.attachments)
 	m.todoLaunchDrafts[projectPath] = draft
 }
 
@@ -118,6 +122,7 @@ type todoCopyDialogState struct {
 	ProjectName            string
 	TodoID                 int64
 	TodoText               string
+	Attachments            []model.TodoAttachment
 	RunMode                int
 	Provider               codexapp.Provider
 	OpenModelFirst         bool
@@ -147,6 +152,7 @@ type todoExistingWorktreeDialogState struct {
 	ProjectName    string
 	TodoID         int64
 	TodoText       string
+	Attachments    []model.TodoAttachment
 	Provider       codexapp.Provider
 	OpenModelFirst bool
 	Selected       int
@@ -183,6 +189,121 @@ func newTodoWorktreeTextInput(value string, charLimit int) textinput.Model {
 	input.CharLimit = charLimit
 	input.SetValue(strings.TrimSpace(value))
 	return input
+}
+
+func cloneTodoAttachments(in []model.TodoAttachment) []model.TodoAttachment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]model.TodoAttachment, 0, len(in))
+	for _, attachment := range in {
+		if strings.TrimSpace(attachment.Path) == "" {
+			continue
+		}
+		attachment.Position = len(out)
+		out = append(out, attachment)
+	}
+	return out
+}
+
+func todoAttachmentsFromCodex(in []codexapp.Attachment) []model.TodoAttachment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]model.TodoAttachment, 0, len(in))
+	for _, attachment := range in {
+		if strings.TrimSpace(attachment.Path) == "" {
+			continue
+		}
+		kind := model.TodoAttachmentKind(strings.TrimSpace(string(attachment.Kind)))
+		if kind == "" {
+			kind = model.TodoAttachmentLocalImage
+		}
+		out = append(out, model.TodoAttachment{
+			Kind:     kind,
+			Path:     strings.TrimSpace(attachment.Path),
+			Position: len(out),
+		})
+	}
+	return out
+}
+
+func codexAttachmentsFromTodo(in []model.TodoAttachment) []codexapp.Attachment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]codexapp.Attachment, 0, len(in))
+	for _, attachment := range in {
+		if strings.TrimSpace(attachment.Path) == "" {
+			continue
+		}
+		kind := codexapp.AttachmentKind(strings.TrimSpace(string(attachment.Kind)))
+		if kind == "" {
+			kind = codexapp.AttachmentLocalImage
+		}
+		out = append(out, codexapp.Attachment{
+			Kind: kind,
+			Path: strings.TrimSpace(attachment.Path),
+		})
+	}
+	return out
+}
+
+func codexDraftFromTodo(text string, attachments []model.TodoAttachment) codexDraft {
+	codexAttachments := codexAttachmentsFromTodo(attachments)
+	draftText := text
+	if len(codexAttachments) > 0 {
+		tokens := make([]string, 0, len(codexAttachments))
+		for i, attachment := range codexAttachments {
+			tokens = append(tokens, codexAttachmentComposerToken(i, attachment))
+		}
+		tokenText := strings.Join(tokens, " ") + " "
+		if strings.TrimSpace(draftText) != "" {
+			draftText = strings.TrimRight(draftText, " \t\r\n") + "\n\n" + tokenText
+		} else {
+			draftText = tokenText
+		}
+	}
+	return codexDraft{
+		Text:        draftText,
+		Attachments: codexAttachments,
+	}
+}
+
+func todoAttachmentLabel(index int, attachment model.TodoAttachment) string {
+	kind := codexapp.AttachmentKind(strings.TrimSpace(string(attachment.Kind)))
+	if kind == "" {
+		kind = codexapp.AttachmentLocalImage
+	}
+	return codexAttachmentComposerToken(index, codexapp.Attachment{
+		Kind: kind,
+		Path: attachment.Path,
+	})
+}
+
+func todoAttachmentSummary(attachments []model.TodoAttachment) string {
+	count := len(cloneTodoAttachments(attachments))
+	switch count {
+	case 0:
+		return ""
+	case 1:
+		return "1 image"
+	default:
+		return fmt.Sprintf("%d images", count)
+	}
+}
+
+func providerSupportsTodoAttachments(provider codexapp.Provider) bool {
+	switch provider.Normalized() {
+	case codexapp.ProviderCodex, codexapp.ProviderOpenCode:
+		return true
+	default:
+		return false
+	}
+}
+
+func todoAttachmentUnsupportedStatus(provider codexapp.Provider) string {
+	return provider.Label() + " does not support TODO image attachments yet. Choose Codex or OpenCode, or remove the images."
 }
 
 func (m *Model) openTodoDialogForSelection() tea.Cmd {
@@ -334,7 +455,7 @@ func (m *Model) closeTodoDialog(status string) tea.Cmd {
 	return nil
 }
 
-func (m *Model) openTodoEditor(todoID int64, value string) tea.Cmd {
+func (m *Model) openTodoEditor(todoID int64, value string, attachments []model.TodoAttachment) tea.Cmd {
 	if m.todoDialog == nil {
 		return nil
 	}
@@ -343,6 +464,7 @@ func (m *Model) openTodoEditor(todoID int64, value string) tea.Cmd {
 		ProjectName: m.todoDialog.ProjectName,
 		TodoID:      todoID,
 		Input:       newTodoTextInput(value),
+		Attachments: cloneTodoAttachments(attachments),
 	}
 	m.err = nil
 	if todoID > 0 {
@@ -392,6 +514,7 @@ func (m *Model) startTodoEditorSave(text string) tea.Cmd {
 		ProjectName: dialog.ProjectName,
 		TodoID:      dialog.TodoID,
 		Text:        text,
+		Attachments: cloneTodoAttachments(dialog.Attachments),
 	}
 	if m.todoDialog != nil && filepath.Clean(strings.TrimSpace(m.todoDialog.ProjectPath)) == filepath.Clean(strings.TrimSpace(dialog.ProjectPath)) {
 		m.todoDialog.Busy = true
@@ -399,10 +522,10 @@ func (m *Model) startTodoEditorSave(text string) tea.Cmd {
 	m.closeTodoEditor("")
 	if dialog.TodoID > 0 {
 		m.status = "Saving TODO..."
-		return m.updateTodoCmd(dialog.ProjectPath, dialog.TodoID, text)
+		return m.updateTodoCmd(dialog.ProjectPath, dialog.TodoID, text, dialog.Attachments)
 	}
 	m.status = "Adding TODO..."
-	return m.addTodoCmd(dialog.ProjectPath, text)
+	return m.addTodoCmd(dialog.ProjectPath, text, dialog.Attachments)
 }
 
 func (m *Model) reopenPendingTodoEditor() tea.Cmd {
@@ -416,6 +539,7 @@ func (m *Model) reopenPendingTodoEditor() tea.Cmd {
 		ProjectName: pending.ProjectName,
 		TodoID:      pending.TodoID,
 		Input:       newTodoTextInput(pending.Text),
+		Attachments: cloneTodoAttachments(pending.Attachments),
 	}
 	return m.todoEditor.Input.Focus()
 }
@@ -477,6 +601,7 @@ func (m *Model) openTodoCopyDialog(todo model.TodoItem) tea.Cmd {
 		ProjectName: m.todoDialog.ProjectName,
 		TodoID:      todo.ID,
 		TodoText:    todo.Text,
+		Attachments: cloneTodoAttachments(todo.Attachments),
 		RunMode:     todoCopyModeNewWorktree,
 		Provider:    provider,
 	}
@@ -566,6 +691,7 @@ func (m *Model) openTodoExistingWorktreeDialog(provider codexapp.Provider) {
 		ProjectName:    m.todoCopyDialog.ProjectName,
 		TodoID:         m.todoCopyDialog.TodoID,
 		TodoText:       m.todoCopyDialog.TodoText,
+		Attachments:    cloneTodoAttachments(m.todoCopyDialog.Attachments),
 		Provider:       provider,
 		OpenModelFirst: m.todoCopyDialog.OpenModelFirst,
 		Candidates:     candidates,
@@ -623,14 +749,14 @@ func (m Model) updateTodoDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "a":
-		return m, m.openTodoEditor(0, "")
+		return m, m.openTodoEditor(0, "", nil)
 	case "e":
 		item, ok := m.selectedTodoItem()
 		if !ok {
 			m.status = "No TODO selected"
 			return m, nil
 		}
-		return m, m.openTodoEditor(item.ID, item.Text)
+		return m, m.openTodoEditor(item.ID, item.Text, item.Attachments)
 	case "d":
 		item, ok := m.selectedTodoItem()
 		if !ok {
@@ -889,7 +1015,7 @@ func (m Model) updateTodoExistingWorktreeMode(msg tea.KeyMsg) (tea.Model, tea.Cm
 			return m, nil
 		}
 		target := dialog.Candidates[dialog.Selected]
-		return m.startTodoInProjectPath(target.Path, dialog.TodoID, dialog.TodoText, dialog.Provider, dialog.OpenModelFirst)
+		return m.startTodoInProjectPath(target.Path, dialog.TodoID, dialog.TodoText, dialog.Attachments, dialog.Provider, dialog.OpenModelFirst)
 	}
 	return m, nil
 }
@@ -914,10 +1040,57 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		dialog.Submitting = true
 		return m, m.startTodoEditorSave(text)
+	case "ctrl+v":
+		attached, err := m.tryAttachTodoClipboardImage()
+		if err != nil {
+			m.status = err.Error()
+			return m, nil
+		}
+		if attached {
+			return m, nil
+		}
+		text, err := clipboardTextReader()
+		if err != nil {
+			m.reportError("Clipboard paste failed", err, dialog.ProjectPath)
+			return m, nil
+		}
+		if text != "" {
+			dialog.Input.InsertString(text)
+		}
+		return m, nil
+	case "backspace", "delete":
+		if strings.TrimSpace(dialog.Input.Value()) == "" && len(dialog.Attachments) > 0 {
+			removed := todoAttachmentLabel(len(dialog.Attachments)-1, dialog.Attachments[len(dialog.Attachments)-1])
+			dialog.Attachments = dialog.Attachments[:len(dialog.Attachments)-1]
+			m.status = "Removed " + removed + " from TODO"
+			return m, nil
+		}
 	}
 	var cmd tea.Cmd
 	dialog.Input, cmd = dialog.Input.Update(msg)
 	return m, cmd
+}
+
+func (m *Model) tryAttachTodoClipboardImage() (bool, error) {
+	dialog := m.todoEditor
+	if dialog == nil {
+		return false, nil
+	}
+	attachment, err := durableClipboardImageAttachment(m.appDataDir())
+	if err != nil {
+		if err == errClipboardHasNoImage {
+			return false, nil
+		}
+		return false, err
+	}
+	todoAttachments := todoAttachmentsFromCodex([]codexapp.Attachment{attachment})
+	if len(todoAttachments) == 0 {
+		return false, nil
+	}
+	dialog.Attachments = append(cloneTodoAttachments(dialog.Attachments), todoAttachments[0])
+	index := len(dialog.Attachments) - 1
+	m.status = "Attached " + todoAttachmentLabel(index, dialog.Attachments[index]) + " to TODO"
+	return true, nil
 }
 
 func (m Model) updateTodoDeleteConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -951,16 +1124,17 @@ func (m Model) updateTodoDeleteConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
-func (m Model) addTodoCmd(projectPath, text string) tea.Cmd {
+func (m Model) addTodoCmd(projectPath, text string, attachments []model.TodoAttachment) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return todoActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
 		}
 	}
+	attachments = cloneTodoAttachments(attachments)
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
-		_, err := m.svc.AddTodo(ctx, projectPath, text)
+		_, err := m.svc.AddTodoWithAttachments(ctx, projectPath, text, attachments)
 		err = timeoutActionError(err, tuiQuickActionTimeout, "adding the TODO")
 		return todoActionMsg{
 			projectPath: projectPath,
@@ -970,16 +1144,17 @@ func (m Model) addTodoCmd(projectPath, text string) tea.Cmd {
 	}
 }
 
-func (m Model) updateTodoCmd(projectPath string, todoID int64, text string) tea.Cmd {
+func (m Model) updateTodoCmd(projectPath string, todoID int64, text string, attachments []model.TodoAttachment) tea.Cmd {
 	if m.svc == nil {
 		return func() tea.Msg {
 			return todoActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
 		}
 	}
+	attachments = cloneTodoAttachments(attachments)
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
-		err := m.svc.UpdateTodo(ctx, projectPath, todoID, text)
+		err := m.svc.UpdateTodoWithAttachments(ctx, projectPath, todoID, text, attachments)
 		err = timeoutActionError(err, tuiQuickActionTimeout, "saving the TODO")
 		return todoActionMsg{
 			projectPath: projectPath,
@@ -1082,9 +1257,10 @@ func (m Model) purgeDoneTodosCmd(projectPath string) tea.Cmd {
 	}
 }
 
-func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool, branchOverride, suffixOverride string) tea.Cmd {
+func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64, projectPath string, todoID int64, todoText string, attachments []model.TodoAttachment, provider codexapp.Provider, openModelFirst bool, branchOverride, suffixOverride string) tea.Cmd {
 	branchOverride = strings.TrimSpace(branchOverride)
 	suffixOverride = strings.TrimSpace(suffixOverride)
+	attachments = cloneTodoAttachments(attachments)
 	if m.svc == nil {
 		return func() tea.Msg {
 			return todoWorktreeLaunchMsg{
@@ -1120,6 +1296,7 @@ func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64,
 			projectPath:    result.WorktreePath,
 			todoID:         todoID,
 			todoText:       todoText,
+			attachments:    attachments,
 			status:         "Worktree ready",
 			provider:       provider,
 			openModelFirst: openModelFirst,
@@ -1379,7 +1556,7 @@ func todoWorkSessionIDMatches(provider codexapp.Provider, expected, actual strin
 	return expectedRaw != "" && expectedRaw == actualRaw
 }
 
-func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText string, provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
+func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText string, attachments []model.TodoAttachment, provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.status = "No project selected"
@@ -1393,6 +1570,11 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 		provider = m.preferredEmbeddedProviderForProject(project)
 	} else {
 		provider = provider.Normalized()
+	}
+	codexAttachments := codexAttachmentsFromTodo(attachments)
+	if len(codexAttachments) > 0 && !providerSupportsTodoAttachments(provider) {
+		m.status = todoAttachmentUnsupportedStatus(provider)
+		return m, nil
 	}
 	if message, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, fmt.Sprintf("TODO #%d", todoID)); blocked {
 		m.status = message
@@ -1445,8 +1627,8 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 		return m, nil
 	}
 	m.rememberEmbeddedProvider(provider)
-	m.restoreCodexDraft(project.Path, codexDraft{Text: todoText})
-	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, todoID: todoID, provider: provider, openModelFirst: openModelFirst})
+	m.restoreCodexDraft(project.Path, codexDraftFromTodo(todoText, attachments))
+	m.storeTodoLaunchDraft(todoLaunchDraftState{projectPath: project.Path, todoID: todoID, provider: provider, openModelFirst: openModelFirst, attachments: codexAttachments})
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.todoExistingWorktree = nil
@@ -1470,7 +1652,7 @@ func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider, openMod
 		m.status = "No project selected"
 		return m, nil
 	}
-	return m.startTodoInProjectPath(project.Path, item.ID, item.Text, provider, openModelFirst)
+	return m.startTodoInProjectPath(project.Path, item.ID, item.Text, item.Attachments, provider, openModelFirst)
 }
 
 func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
@@ -1496,6 +1678,10 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	} else {
 		provider = provider.Normalized()
 	}
+	if len(item.Attachments) > 0 && !providerSupportsTodoAttachments(provider) {
+		m.status = todoAttachmentUnsupportedStatus(provider)
+		return m, nil
+	}
 	branchOverride := ""
 	suffixOverride := ""
 	if copyDialog := m.todoCopyDialog; copyDialog != nil {
@@ -1511,7 +1697,7 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	m.todoDialog = nil
 	m.rememberEmbeddedProvider(provider)
 	m.status = "Starting TODO in dedicated worktree..."
-	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, provider, openModelFirst, branchOverride, suffixOverride)
+	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, item.Attachments, provider, openModelFirst, branchOverride, suffixOverride)
 }
 
 func (m *Model) returnToTodoFromModelPicker() {
@@ -1664,9 +1850,11 @@ func (m Model) renderTodoEditorOverlay(body string, bodyW, bodyH int) string {
 		detailSectionStyle.Render(title) + "  " + detailValueStyle.Render(dialog.ProjectName),
 		"",
 		dialog.Input.View(),
-		"",
-		todoEditorLegendLine(),
 	}
+	if attachmentLine := renderTodoEditorAttachments(dialog.Attachments, panelInnerW); attachmentLine != "" {
+		lines = append(lines, "", attachmentLine)
+	}
+	lines = append(lines, "", todoEditorLegendLine())
 	panel := renderDialogPanel(panelW, panelInnerW, strings.Join(lines, "\n"))
 	left := max(0, (bodyW-panelW)/2)
 	top := max(0, (bodyH-lipgloss.Height(panel))/2)
@@ -1692,6 +1880,9 @@ func todoDialogLegendLine() string {
 
 func (m Model) todoDialogItemLine(item model.TodoItem, prefix string, width int) string {
 	base := prefix + " " + todoPreviewText(item.Text)
+	if summary := todoAttachmentSummary(item.Attachments); summary != "" {
+		base += " · " + summary
+	}
 	label, labelStyle := m.todoActivityLabel(item)
 	if label == "" {
 		label, labelStyle = m.todoWorktreeSuggestionLabel(item)
@@ -1865,9 +2056,22 @@ func todoLinkedWorktreeProjectIn(projects []model.ProjectSummary, todoID int64) 
 func todoEditorLegendLine() string {
 	return renderHelpPanelActionRow(
 		renderDialogAction("enter", "newline", navigateActionKeyStyle, navigateActionTextStyle),
+		renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("ctrl+s", "save", commitActionKeyStyle, commitActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	)
+}
+
+func renderTodoEditorAttachments(attachments []model.TodoAttachment, width int) string {
+	attachments = cloneTodoAttachments(attachments)
+	if len(attachments) == 0 {
+		return ""
+	}
+	labels := make([]string, 0, len(attachments))
+	for i, attachment := range attachments {
+		labels = append(labels, todoAttachmentLabel(i, attachment))
+	}
+	return detailField("Images", truncateText(strings.Join(labels, " "), width))
 }
 
 func (m Model) renderTodoDeleteConfirmOverlay(body string, bodyW, bodyH int) string {
@@ -1921,8 +2125,11 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	lines := []string{
 		renderDialogHeader("Start TODO", copyDialog.ProjectName, "", panelInnerW),
 		detailValueStyle.Render(truncateText(strings.TrimSpace(copyDialog.TodoText), panelInnerW)),
-		"",
 	}
+	if summary := todoAttachmentSummary(copyDialog.Attachments); summary != "" {
+		lines = append(lines, detailField("Images", summary))
+	}
+	lines = append(lines, "")
 	projectPath := copyDialog.ProjectPath
 	settings := m.currentSettingsBaseline()
 	runButtons := make([]string, 0, 3)
@@ -2172,6 +2379,13 @@ func (m Model) todoCopyProviderStatusLine(provider codexapp.Provider, settings c
 }
 
 func (m Model) todoCopyProviderReadiness(provider codexapp.Provider, settings config.EditableSettings) todoCopyProviderReadiness {
+	if dialog := m.todoCopyDialog; dialog != nil && len(dialog.Attachments) > 0 && !providerSupportsTodoAttachments(provider) {
+		return todoCopyProviderReadiness{
+			State:  "no images",
+			Detail: todoAttachmentUnsupportedStatus(provider),
+			Style:  detailWarningStyle,
+		}
+	}
 	switch provider.Normalized() {
 	case codexapp.ProviderCodex:
 		return m.todoCopyCLIProviderReadiness(config.AIBackendCodex, settings)
@@ -2272,6 +2486,9 @@ const (
 )
 
 func (m Model) todoWorktreeLaunchReadiness(dialog todoCopyDialogState, item model.TodoItem) (todoWorktreeLaunchState, string) {
+	if len(item.Attachments) > 0 && !providerSupportsTodoAttachments(dialog.Provider) {
+		return todoWorktreeLaunchUnavailable, todoAttachmentUnsupportedStatus(dialog.Provider)
+	}
 	branchOverride := strings.TrimSpace(dialog.BranchOverride)
 	folderOverride := strings.TrimSpace(dialog.WorktreeSuffixOverride)
 	switch {

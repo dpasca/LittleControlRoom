@@ -22,6 +22,14 @@ func normalizeSubmission(input Submission) Submission {
 	return input
 }
 
+func launchRequestInitialInput(req LaunchRequest) Submission {
+	input := normalizeSubmission(req.InitialInput)
+	if input.Empty() {
+		input = Submission{Text: strings.TrimSpace(req.Prompt)}
+	}
+	return normalizeSubmission(input)
+}
+
 func encodeSubmissionInput(input Submission) []userInput {
 	input = normalizeSubmission(input)
 	items := make([]userInput, 0, 1+len(input.Attachments))

@@ -871,12 +871,12 @@ func (s *openCodeSession) initializeSession(parent context.Context, req LaunchRe
 	} else {
 		s.appendSystemNotice("Started a new embedded OpenCode session " + shortID(sessionID) + ".")
 	}
-	if strings.TrimSpace(req.Prompt) != "" {
+	if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
 		if snapshot := s.Snapshot(); snapshot.BusyExternal {
 			s.appendSystemNotice("This OpenCode session is already active in another process. The embedded prompt was not sent; use /opencode-new for a separate session.")
 			return nil
 		}
-		return s.Submit(req.Prompt)
+		return s.SubmitInput(initialInput)
 	}
 	return nil
 }

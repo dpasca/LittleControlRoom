@@ -500,6 +500,7 @@ type TodoItem struct {
 	ID                 int64
 	ProjectPath        string
 	Text               string
+	Attachments        []TodoAttachment
 	Done               bool
 	Position           int
 	CreatedAt          time.Time
@@ -512,6 +513,21 @@ type TodoItem struct {
 	WorkState          TodoWorkState
 	WorkStateAt        time.Time
 	WorktreeSuggestion *TodoWorktreeSuggestion
+}
+
+type TodoAttachmentKind string
+
+const (
+	TodoAttachmentLocalImage TodoAttachmentKind = "local_image"
+)
+
+type TodoAttachment struct {
+	ID        int64
+	TodoID    int64
+	Kind      TodoAttachmentKind
+	Path      string
+	Position  int
+	CreatedAt time.Time
 }
 
 type TodoWorkState string

@@ -3103,7 +3103,11 @@ func (s *Service) finishAsyncProjectRefresh(projectPath string) bool {
 }
 
 func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
-	item, err := s.store.AddTodo(ctx, projectPath, text)
+	return s.AddTodoWithAttachments(ctx, projectPath, text, nil)
+}
+
+func (s *Service) AddTodoWithAttachments(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment) (model.TodoItem, error) {
+	item, err := s.store.AddTodoWithAttachments(ctx, projectPath, text, attachments)
 	if err != nil {
 		return model.TodoItem{}, err
 	}
@@ -3119,6 +3123,17 @@ func (s *Service) UpdateTodo(ctx context.Context, projectPath string, id int64, 
 	if err := s.store.UpdateTodo(ctx, id, text); err != nil {
 		return err
 	}
+	return s.afterTodoUpdated(ctx, projectPath, id)
+}
+
+func (s *Service) UpdateTodoWithAttachments(ctx context.Context, projectPath string, id int64, text string, attachments []model.TodoAttachment) error {
+	if err := s.store.UpdateTodoWithAttachments(ctx, id, text, attachments); err != nil {
+		return err
+	}
+	return s.afterTodoUpdated(ctx, projectPath, id)
+}
+
+func (s *Service) afterTodoUpdated(ctx context.Context, projectPath string, id int64) error {
 	if err := s.store.DeleteTodoWorktreeSuggestion(ctx, id); err != nil {
 		return err
 	}

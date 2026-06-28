@@ -587,6 +587,7 @@ type LaunchRequest struct {
 	ResumeID                   string
 	ForceNew                   bool
 	Prompt                     string
+	InitialInput               Submission
 	Preset                     codexcli.Preset
 	PendingModel               string
 	PendingReasoning           string
@@ -814,8 +815,8 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 				return nil, true, err
 			}
 		}
-		if strings.TrimSpace(req.Prompt) != "" {
-			if err := existing.Submit(req.Prompt); err != nil {
+		if initialInput := launchRequestInitialInput(req); !initialInput.Empty() {
+			if err := existing.SubmitInput(initialInput); err != nil {
 				return nil, true, err
 			}
 		}
