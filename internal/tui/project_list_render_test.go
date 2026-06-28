@@ -1645,6 +1645,67 @@ func TestDispatchTaskActionsCommandOpensScratchTaskActionDialog(t *testing.T) {
 	}
 }
 
+func TestDispatchArchiveCommandArchivesScratchTask(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	result, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{Title: "Archive this task"})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	m := Model{
+		ctx: ctx,
+		svc: svc,
+		projects: []model.ProjectSummary{
+			{
+				Name:          "Archive this task",
+				Path:          result.TaskPath,
+				Kind:          model.ProjectKindScratchTask,
+				PresentOnDisk: true,
+			},
+			{
+				Name:          "neighbor",
+				Path:          "/tmp/neighbor",
+				PresentOnDisk: true,
+			},
+		},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindArchive, Canonical: "/archive"})
+	got := updated.(Model)
+	if got.status != "Archiving task..." {
+		t.Fatalf("status = %q, want archive progress", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("/archive should queue a scratch task archive command")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(scratchTaskActionMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want scratchTaskActionMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("scratchTaskActionMsg.err = %v, want nil", msg.err)
+	}
+	if msg.status != "Scratch task archived" {
+		t.Fatalf("scratchTaskActionMsg.status = %q, want archive status", msg.status)
+	}
+	if msg.selectPath != "/tmp/neighbor" {
+		t.Fatalf("scratchTaskActionMsg.selectPath = %q, want neighbor fallback", msg.selectPath)
+	}
+}
+
 func TestDispatchRemoveCommandOpensScratchTaskActionDialog(t *testing.T) {
 	t.Parallel()
 

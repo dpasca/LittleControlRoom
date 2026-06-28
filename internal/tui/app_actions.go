@@ -1013,8 +1013,16 @@ func (m Model) setProjectArchivedForSelection(archived bool) (tea.Model, tea.Cmd
 		m.status = "Agent tasks use /remove or /task-actions"
 		return m, nil
 	case model.ProjectKindScratchTask:
-		m.status = "Scratch tasks use /task-actions"
-		return m, nil
+		if !archived {
+			m.status = "Scratch tasks cannot be unarchived from the dashboard"
+			return m, nil
+		}
+		if !project.PresentOnDisk {
+			m.status = "Scratch task is missing on disk; use /remove"
+			return m, nil
+		}
+		m.status = "Archiving task..."
+		return m, m.archiveScratchTaskCmd(project.Path, m.nextProjectSelectionPathAfter(project.Path))
 	}
 	if archived && project.Archived {
 		m.status = fmt.Sprintf("%q is already archived", projectRemovalName(project))
