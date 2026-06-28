@@ -470,6 +470,7 @@ func parseLCAgentReplayFile(path string) (*lcagentReplay, error) {
 			replay.startedAt = rawJSONTime(event["started_at"])
 			replay.model = rawJSONString(event["model"])
 			replay.modelProvider = rawJSONString(event["provider"])
+			replay.reasoningEffort = firstNonEmpty(rawJSONString(event["reasoning_effort"]), replay.reasoningEffort)
 			if replay.lastActivityAt.IsZero() {
 				replay.lastActivityAt = replay.startedAt
 			}

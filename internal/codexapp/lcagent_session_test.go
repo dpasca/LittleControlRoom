@@ -1214,12 +1214,13 @@ func TestLCAgentSessionReplayKeepsHistoricalModelAndStagesLaunchPreference(t *te
 	started := time.Date(2026, 5, 9, 9, 45, 0, 0, time.UTC)
 	writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
 		{
-			"type":       "session_meta",
-			"id":         sessionID,
-			"cwd":        root,
-			"started_at": started.Format(time.RFC3339Nano),
-			"provider":   "deepseek",
-			"model":      "deepseek-v4-pro",
+			"type":             "session_meta",
+			"id":               sessionID,
+			"cwd":              root,
+			"started_at":       started.Format(time.RFC3339Nano),
+			"provider":         "deepseek",
+			"model":            "deepseek-v4-pro",
+			"reasoning_effort": "high",
 		},
 		{
 			"type":       "assistant_message",
@@ -1246,11 +1247,59 @@ func TestLCAgentSessionReplayKeepsHistoricalModelAndStagesLaunchPreference(t *te
 	if snapshot.Model != "deepseek-v4-pro" || snapshot.ModelProvider != "deepseek" {
 		t.Fatalf("model = %q/%q, want replayed deepseek model", snapshot.ModelProvider, snapshot.Model)
 	}
-	if snapshot.ReasoningEffort != "" {
-		t.Fatalf("ReasoningEffort = %q, want no replayed reasoning", snapshot.ReasoningEffort)
+	if snapshot.ReasoningEffort != "high" {
+		t.Fatalf("ReasoningEffort = %q, want replayed high reasoning", snapshot.ReasoningEffort)
 	}
 	if snapshot.PendingModel != "mimo-v2.5-pro" || snapshot.PendingReasoning != "high" {
 		t.Fatalf("pending model/reasoning = %q/%q, want mimo-v2.5-pro/high", snapshot.PendingModel, snapshot.PendingReasoning)
+	}
+}
+
+func TestLCAgentSessionReplayClearsMatchingModelAndReasoningPreference(t *testing.T) {
+	root := t.TempDir()
+	dataDir := t.TempDir()
+	sessionID := "lca_replay_xiaomi_reasoning_preference"
+	started := time.Date(2026, 6, 27, 14, 30, 0, 0, time.UTC)
+	writeLCAgentReplayArtifact(t, dataDir, started, sessionID, []map[string]any{
+		{
+			"type":             "session_meta",
+			"id":               sessionID,
+			"cwd":              root,
+			"started_at":       started.Format(time.RFC3339Nano),
+			"provider":         "xiaomi",
+			"model":            "mimo-v2.5-pro",
+			"reasoning_effort": "xhigh",
+		},
+		{
+			"type":       "assistant_message",
+			"session_id": sessionID,
+			"timestamp":  started.Add(time.Second).Format(time.RFC3339Nano),
+			"message":    "Historical MiMo answer",
+		},
+	})
+
+	session, err := newLCAgentSession(LaunchRequest{
+		Provider:         ProviderLCAgent,
+		ProjectPath:      root,
+		AppDataDir:       dataDir,
+		ResumeID:         sessionID,
+		LCAgentProvider:  "xiaomi",
+		PendingModel:     "mimo-v2.5-pro",
+		PendingReasoning: "xhigh",
+	}, nil)
+	if err != nil {
+		t.Fatalf("newLCAgentSession() error = %v", err)
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.Model != "mimo-v2.5-pro" || snapshot.ModelProvider != "xiaomi" {
+		t.Fatalf("model = %q/%q, want replayed Xiaomi MiMo", snapshot.ModelProvider, snapshot.Model)
+	}
+	if snapshot.ReasoningEffort != "xhigh" {
+		t.Fatalf("ReasoningEffort = %q, want replayed xhigh reasoning", snapshot.ReasoningEffort)
+	}
+	if snapshot.PendingModel != "" || snapshot.PendingReasoning != "" {
+		t.Fatalf("pending model/reasoning = %q/%q, want no pending selection for matching replayed reasoning", snapshot.PendingModel, snapshot.PendingReasoning)
 	}
 }
 
