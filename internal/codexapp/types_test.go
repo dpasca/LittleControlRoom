@@ -771,6 +771,40 @@ func TestManagerReapIdleSessionsClosesInactiveSession(t *testing.T) {
 	}
 }
 
+func TestManagerReapIdleSessionsSkipsIdleProtectedSession(t *testing.T) {
+	session := &fakeSession{
+		projectPath: "/tmp/demo",
+		snapshot: Snapshot{
+			Started:        true,
+			Preset:         codexcli.PresetYolo,
+			LastActivityAt: time.Now().Add(-2 * time.Hour),
+		},
+	}
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		return session, nil
+	})
+	manager.idleTimeout = time.Hour
+
+	if _, _, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	manager.SetIdleProtectedProject("/tmp/demo")
+	manager.reapIdleSessions(time.Now())
+	if session.closed {
+		t.Fatalf("idle protected session should not be closed by the reaper")
+	}
+
+	manager.SetIdleProtectedProject("")
+	manager.reapIdleSessions(time.Now())
+	if !session.closed {
+		t.Fatalf("idle session should close once idle protection clears")
+	}
+}
+
 func TestManagerReconcileBusySessionsRechecksStaleBusySession(t *testing.T) {
 	session := &fakeSession{
 		projectPath: "/tmp/demo",

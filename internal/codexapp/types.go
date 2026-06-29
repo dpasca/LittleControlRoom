@@ -689,6 +689,7 @@ type Manager struct {
 	updates         chan string
 	pendingUpdates  map[string]struct{}
 	deferredUpdates map[string]struct{}
+	idleProtected   map[string]struct{}
 	opLocks         keyedmutex.Locker
 	factory         sessionFactory
 
@@ -711,6 +712,7 @@ func NewManagerWithFactory(factory func(req LaunchRequest, notify func()) (Sessi
 		updates:            make(chan string, 256),
 		pendingUpdates:     make(map[string]struct{}),
 		deferredUpdates:    make(map[string]struct{}),
+		idleProtected:      make(map[string]struct{}),
 		factory:            factory,
 		idleTimeout:        idleShutdownAfter,
 		reapInterval:       time.Minute,
@@ -749,6 +751,22 @@ func (m *Manager) Snapshots() []Snapshot {
 		snapshots = append(snapshots, session.Snapshot())
 	}
 	return snapshots
+}
+
+func (m *Manager) SetIdleProtectedProject(projectPath string) {
+	if m == nil {
+		return
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.idleProtected)
+	if projectPath != "" {
+		if m.idleProtected == nil {
+			m.idleProtected = make(map[string]struct{})
+		}
+		m.idleProtected[projectPath] = struct{}{}
+	}
 }
 
 func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
@@ -863,6 +881,7 @@ func (m *Manager) CloseProject(projectPath string) error {
 	session, ok := m.sessions[projectPath]
 	if ok {
 		delete(m.sessions, projectPath)
+		delete(m.idleProtected, projectPath)
 	}
 	m.mu.Unlock()
 	if !ok {
@@ -881,6 +900,7 @@ func (m *Manager) CloseAll() error {
 		sessions = append(sessions, session)
 	}
 	m.sessions = make(map[string]Session)
+	clear(m.idleProtected)
 	m.mu.Unlock()
 
 	var firstErr error
@@ -1010,12 +1030,19 @@ func (m *Manager) reapIdleSessions(now time.Time) {
 
 	m.mu.Lock()
 	sessions := make(map[string]Session, len(m.sessions))
+	idleProtected := make(map[string]struct{}, len(m.idleProtected))
 	for projectPath, session := range m.sessions {
 		sessions[projectPath] = session
 	}
+	for projectPath := range m.idleProtected {
+		idleProtected[projectPath] = struct{}{}
+	}
 	m.mu.Unlock()
 
-	for _, session := range sessions {
+	for projectPath, session := range sessions {
+		if _, ok := idleProtected[projectPath]; ok {
+			continue
+		}
 		snapshot := sessionStateSnapshot(session)
 		if snapshot.Closed || snapshot.Busy || snapshot.PendingApproval != nil {
 			continue

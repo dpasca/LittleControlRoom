@@ -163,6 +163,23 @@ func (m Model) codexVisible() bool {
 	return strings.TrimSpace(m.codexVisibleProject) != "" || m.codexPendingOpenVisible()
 }
 
+func (m Model) idleProtectedEmbeddedProject() string {
+	if m.bossMode || m.diffView != nil {
+		return ""
+	}
+	if m.codexPendingOpenVisible() {
+		return m.codexPendingOpenProject()
+	}
+	return strings.TrimSpace(m.codexVisibleProject)
+}
+
+func (m Model) syncEmbeddedSessionIdleProtection() {
+	if m.codexManager == nil {
+		return
+	}
+	m.codexManager.SetIdleProtectedProject(m.idleProtectedEmbeddedProject())
+}
+
 func (m Model) codexPendingOpenProject() string {
 	if m.codexPendingOpen == nil {
 		return ""

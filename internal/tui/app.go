@@ -1177,6 +1177,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	prevWant := m.bossMode || m.codexVisible() || m.diffView != nil
 	want := mm.bossMode || mm.codexVisible() || mm.diffView != nil
 	mm.mouseEnabled = want
+	mm.syncEmbeddedSessionIdleProtection()
 	if want != prevWant {
 		var mouseCmd tea.Cmd
 		if want {
