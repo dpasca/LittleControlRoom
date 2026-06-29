@@ -340,6 +340,104 @@ func TestVisibleLCAgentBrowserWaitShowsBrowserActionAfterStateHydrates(t *testin
 	}
 }
 
+func TestVisibleLCAgentBrowserWaitCanRevealFromLiveStateBeforeBrowserStateHydrates(t *testing.T) {
+	projectPath := "/tmp/lcagent-browser-live"
+	cached := codexapp.Snapshot{
+		Provider: codexapp.ProviderLCAgent,
+		Started:  true,
+		Busy:     true,
+		Phase:    codexapp.SessionPhaseRunning,
+		Status:   "LCAgent running",
+	}
+	live := cached
+	live.Status = "Browser waiting for user input"
+	live.ManagedBrowserSessionKey = "managed-login"
+	live.CurrentBrowserPageURL = "https://accounts.google.com/"
+	live.BrowserActivity = browserctl.SessionActivity{
+		Policy:     settingsAutomaticPlaywrightPolicy,
+		State:      browserctl.SessionActivityStateWaitingForUser,
+		ServerName: "playwright",
+		ToolName:   "browser_wait_for_user",
+	}
+	session := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot:    live,
+		trySnapshotFn: func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+			return codexapp.Snapshot{}, false
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: projectPath, Provider: codexapp.ProviderLCAgent}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	previousSessionRevealer := managedBrowserSessionRevealer
+	defer func() {
+		managedBrowserSessionRevealer = previousSessionRevealer
+	}()
+
+	revealedSessionKey := ""
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealedSessionKey = sessionKey
+		return browserctl.ManagedPlaywrightState{SessionKey: sessionKey, BrowserPID: 123, RevealSupported: true}, nil
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: cached,
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	snapshot, ok := m.currentCodexSnapshot()
+	if !ok {
+		t.Fatalf("currentCodexSnapshot() unavailable")
+	}
+	if snapshot.ManagedBrowserSessionKey != "managed-login" || snapshot.CurrentBrowserPageURL == "" {
+		t.Fatalf("currentCodexSnapshot() did not include live browser state: %#v", snapshot)
+	}
+	if session.trySnapshotCalls != 0 || session.snapshotCalls != 0 {
+		t.Fatalf("currentCodexSnapshot() should use lightweight state only; TrySnapshot/Snapshot calls = %d/%d", session.trySnapshotCalls, session.snapshotCalls)
+	}
+
+	renderedPanel := ansi.Strip(m.renderCodexBrowserPanel(snapshot, 140))
+	if !strings.Contains(renderedPanel, "Press ctrl+o to reveal the managed browser window") {
+		t.Fatalf("renderCodexBrowserPanel() should offer ctrl+o from live state before browser state hydration: %q", renderedPanel)
+	}
+	renderedFooter := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(renderedFooter, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() should offer ctrl+o from live state before browser state hydration: %q", renderedFooter)
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("ctrl+o should queue browser reveal from live state before browser state hydration")
+	}
+	if got.status != "Showing the managed browser window..." {
+		t.Fatalf("status = %q, want managed browser reveal notice", got.status)
+	}
+	msg := cmd()
+	openMsg, ok := msg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want browserOpenMsg", msg)
+	}
+	if openMsg.err != nil {
+		t.Fatalf("browserOpenMsg.err = %v, want nil", openMsg.err)
+	}
+	if revealedSessionKey != "managed-login" {
+		t.Fatalf("revealed session key = %q, want managed-login", revealedSessionKey)
+	}
+}
+
 func TestVisibleLCAgentBrowserWaitDoesNotOpenUnhydratedOldBrowser(t *testing.T) {
 	projectPath := "/tmp/lcagent-browser-old"
 	snapshot := codexapp.Snapshot{

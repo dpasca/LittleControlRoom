@@ -775,7 +775,10 @@ func (m Model) managedBrowserCanReveal(snapshot codexapp.Snapshot) bool {
 	if _, ok := m.freshManagedBrowserState(snapshot); ok {
 		return true
 	}
-	return managedBrowserActivityCanReveal(embeddedProvider(snapshot), snapshot.BrowserActivity)
+	if managedBrowserActivityCanReveal(embeddedProvider(snapshot), snapshot.BrowserActivity) {
+		return true
+	}
+	return m.liveManagedBrowserActivityCanReveal(snapshot)
 }
 
 func managedBrowserRevealTargetAttached(snapshot codexapp.Snapshot) bool {
@@ -795,6 +798,33 @@ func managedBrowserActivityCanReveal(provider codexapp.Provider, activity browse
 	default:
 		return false
 	}
+}
+
+func (m Model) liveManagedBrowserActivityCanReveal(snapshot codexapp.Snapshot) bool {
+	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
+	if projectPath == "" {
+		return false
+	}
+	if normalizeProjectPath(projectPath) != normalizeProjectPath(m.codexVisibleProject) {
+		return false
+	}
+	session, ok := m.codexSession(projectPath)
+	if !ok {
+		return false
+	}
+	state, ok := stateSnapshotForCodexSession(session)
+	if !ok || !managedBrowserRevealTargetAttached(state) {
+		return false
+	}
+	if strings.TrimSpace(state.ManagedBrowserSessionKey) != strings.TrimSpace(snapshot.ManagedBrowserSessionKey) {
+		return false
+	}
+	snapshotProvider := embeddedProvider(snapshot)
+	stateProvider := embeddedProvider(state)
+	if snapshotProvider.Normalized() != "" && stateProvider.Normalized() != "" && snapshotProvider != stateProvider {
+		return false
+	}
+	return state.BrowserActivity.Normalize().Live()
 }
 
 func (m Model) managedBrowserCachedVisible(snapshot codexapp.Snapshot) bool {

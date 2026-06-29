@@ -447,6 +447,56 @@ func stateSnapshotForCodexSession(session codexapp.Session) (codexapp.Snapshot, 
 	return codexapp.Snapshot{}, false
 }
 
+func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapshot {
+	cached.Closed = state.Closed
+	cached.Started = state.Started
+	cached.Busy = state.Busy
+	cached.BusyExternal = state.BusyExternal
+	cached.BusySince = state.BusySince
+	cached.LastBusyActivityAt = state.LastBusyActivityAt
+	cached.Phase = state.Phase
+	cached.ActiveTurnID = state.ActiveTurnID
+	cached.PendingApproval = state.PendingApproval
+	cached.PendingToolInput = state.PendingToolInput
+	cached.PendingElicitation = state.PendingElicitation
+	cached.BrowserActivity = state.BrowserActivity
+	cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
+	cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
+	cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
+	cached.Status = state.Status
+	cached.LastError = state.LastError
+	cached.LastSystemNotice = state.LastSystemNotice
+	cached.LastActivityAt = state.LastActivityAt
+	cached.Goal = cloneCodexThreadGoal(state.Goal)
+	if strings.TrimSpace(state.ProjectPath) != "" {
+		cached.ProjectPath = state.ProjectPath
+	}
+	if strings.TrimSpace(state.ThreadID) != "" {
+		cached.ThreadID = state.ThreadID
+	}
+	if state.Provider.Normalized() != "" {
+		cached.Provider = state.Provider
+	}
+	return cached
+}
+
+func overlayCodexSnapshotBrowserState(cached, state codexapp.Snapshot) codexapp.Snapshot {
+	cached.BrowserActivity = state.BrowserActivity
+	cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
+	cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
+	cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
+	if strings.TrimSpace(state.ProjectPath) != "" {
+		cached.ProjectPath = state.ProjectPath
+	}
+	if strings.TrimSpace(state.ThreadID) != "" {
+		cached.ThreadID = state.ThreadID
+	}
+	if state.Provider.Normalized() != "" {
+		cached.Provider = state.Provider
+	}
+	return cached
+}
+
 func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -465,32 +515,7 @@ func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, b
 			cached = state
 			hasCached = true
 		}
-		cached.Closed = state.Closed
-		cached.Started = state.Started
-		cached.Busy = state.Busy
-		cached.BusyExternal = state.BusyExternal
-		cached.BusySince = state.BusySince
-		cached.LastBusyActivityAt = state.LastBusyActivityAt
-		cached.Phase = state.Phase
-		cached.ActiveTurnID = state.ActiveTurnID
-		cached.PendingApproval = state.PendingApproval
-		cached.PendingToolInput = state.PendingToolInput
-		cached.PendingElicitation = state.PendingElicitation
-		cached.BrowserActivity = state.BrowserActivity
-		cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
-		cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
-		cached.ManagedBrowserSessionKey = state.ManagedBrowserSessionKey
-		cached.Status = state.Status
-		cached.LastError = state.LastError
-		cached.LastSystemNotice = state.LastSystemNotice
-		cached.LastActivityAt = state.LastActivityAt
-		cached.Goal = cloneCodexThreadGoal(state.Goal)
-		if strings.TrimSpace(state.ThreadID) != "" {
-			cached.ThreadID = state.ThreadID
-		}
-		if state.Provider.Normalized() != "" {
-			cached.Provider = state.Provider
-		}
+		cached = overlayCodexSnapshotState(cached, state)
 	}
 	if !hasCached {
 		return codexapp.Snapshot{}, false
@@ -504,6 +529,11 @@ func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, b
 func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
 	if snapshot, ok := m.currentCachedCodexSnapshot(); ok {
+		if session, sessionOK := m.currentCodexSession(); sessionOK {
+			if state, got := stateSnapshotForCodexSession(session); got {
+				snapshot = overlayCodexSnapshotBrowserState(snapshot, state)
+			}
+		}
 		return snapshot, true
 	}
 	session, sessionOK := m.currentCodexSession()
