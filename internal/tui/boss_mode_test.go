@@ -47,9 +47,6 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 		focusedPane: focusDetail,
 		status:      "Detail focused",
 		privacyMode: true,
-		privacyPatterns: []string{
-			"*private*",
-		},
 	}
 
 	view := m.bossViewContext()
@@ -62,8 +59,8 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 	if view.FocusedPane != "detail" || view.SortMode != "attention" || view.Visibility != "all_folders" {
 		t.Fatalf("view controls = %#v", view)
 	}
-	if !view.PrivacyMode || len(view.PrivacyPatterns) != 1 || view.PrivacyPatterns[0] != "*private*" {
-		t.Fatalf("privacy state = %#v, want privacy mode and patterns", view)
+	if !view.PrivacyMode {
+		t.Fatalf("privacy state = %#v, want privacy mode", view)
 	}
 }
 
@@ -1146,11 +1143,10 @@ func TestBossViewContextIncludesProcessSystemNotice(t *testing.T) {
 func TestBossViewContextProcessSystemNoticeRespectsPrivacy(t *testing.T) {
 	t.Parallel()
 
-	secret := model.ProjectSummary{Path: "/tmp/secret", Name: "SecretClient"}
+	secret := model.ProjectSummary{Path: "/tmp/secret", Name: "SecretClient", CategoryPrivate: true}
 	m := Model{
-		allProjects:     []model.ProjectSummary{secret},
-		privacyMode:     true,
-		privacyPatterns: []string{"*Secret*"},
+		allProjects: []model.ProjectSummary{secret},
+		privacyMode: true,
 		processReports: map[string]procinspect.ProjectReport{
 			secret.Path: {
 				ProjectPath: secret.Path,

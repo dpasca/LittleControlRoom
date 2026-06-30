@@ -1249,6 +1249,9 @@ func projectArchiveLabel(mode projectArchiveMode) string {
 func (m Model) currentProjectTabLabel() string {
 	if m.archiveMode == projectArchiveCategory {
 		if category, ok := m.projectCategoryByID(m.selectedCategoryID); ok {
+			if m.privacyMode && category.Private {
+				return "********"
+			}
 			return category.Name
 		}
 		return "Main"
@@ -1318,13 +1321,13 @@ func expandVisibleWorktreeFamilies(filtered, sorted []model.ProjectSummary) []mo
 	return out
 }
 
-func filterProjectsByPrivacy(projects []model.ProjectSummary, privacyPatterns []string) []model.ProjectSummary {
-	if len(projects) == 0 || len(privacyPatterns) == 0 {
+func filterProjectsByPrivacy(projects []model.ProjectSummary) []model.ProjectSummary {
+	if len(projects) == 0 {
 		return projects
 	}
 	filtered := make([]model.ProjectSummary, 0, len(projects))
 	for _, project := range projects {
-		if !config.MatchesPrivacyPattern(project.Name, privacyPatterns) {
+		if !project.CategoryPrivate {
 			filtered = append(filtered, project)
 		}
 	}

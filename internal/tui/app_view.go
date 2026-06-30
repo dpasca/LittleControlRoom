@@ -715,7 +715,9 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 	}
 	for _, tab := range m.projectTabDescriptors() {
 		label := tab.label
-		if width <= 0 || width >= 34 {
+		if m.privacyMode && tab.private {
+			label = "********"
+		} else if width <= 0 || width >= 34 {
 			label = fmt.Sprintf("%s %d", label, m.projectTabCount(tab))
 		}
 		selected := tab.mode == currentMode

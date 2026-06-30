@@ -110,7 +110,6 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		IncludePaths:              append([]string(nil), cfg.IncludePaths...),
 		ExcludePaths:              append([]string(nil), cfg.ExcludePaths...),
 		ExcludeProjectPatterns:    append([]string(nil), cfg.ExcludeProjectPatterns...),
-		PrivacyPatterns:           append([]string(nil), cfg.PrivacyPatterns...),
 		EmbeddedCodexModel:        cfg.EmbeddedCodexModel,
 		EmbeddedCodexReasoning:    cfg.EmbeddedCodexReasoning,
 		EmbeddedClaudeModel:       cfg.EmbeddedClaudeModel,
@@ -385,7 +384,6 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		return EditableSettings{}, fmt.Errorf("exclude paths: %w", err)
 	}
 	excludeProjectPatterns := normalizeProjectPatterns(strings.Split(excludeProjectPatternsRaw, ","))
-	privacyPatterns := normalizeProjectPatterns(strings.Split(privacyPatternsRaw, ","))
 	codexLaunchPreset, err := codexcli.ParsePreset(codexLaunchPresetRaw)
 	if err != nil {
 		return EditableSettings{}, fmt.Errorf("codex launch preset: %w", err)
@@ -447,7 +445,6 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		IncludePaths:           includePaths,
 		ExcludePaths:           excludePaths,
 		ExcludeProjectPatterns: excludeProjectPatterns,
-		PrivacyPatterns:        privacyPatterns,
 		CodexLaunchPreset:      codexLaunchPreset,
 		PlaywrightPolicy: browserctl.Policy{
 			ManagementMode:     playwrightManagementMode,
@@ -715,12 +712,6 @@ func renderEditableSettings(settings EditableSettings) string {
 	lines = append(lines, "")
 	lines = append(lines, "exclude_project_patterns = [")
 	for _, pattern := range settings.ExcludeProjectPatterns {
-		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(pattern)))
-	}
-	lines = append(lines, "]")
-	lines = append(lines, "")
-	lines = append(lines, "privacy_patterns = [")
-	for _, pattern := range settings.PrivacyPatterns {
 		lines = append(lines, fmt.Sprintf("  %s,", strconv.Quote(pattern)))
 	}
 	lines = append(lines, "]")

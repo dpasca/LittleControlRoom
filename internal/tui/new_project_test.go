@@ -483,57 +483,6 @@ func TestNewProjectPathSuggestionsUseRecentScopeAndProjectParents(t *testing.T) 
 	}
 }
 
-func TestNewProjectPathSuggestionsRespectPrivacyMode(t *testing.T) {
-	t.Parallel()
-
-	parent := t.TempDir()
-	visible := filepath.Join(parent, "visible-client")
-	private := filepath.Join(parent, "secret-client")
-	for _, path := range []string{visible, private} {
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", path, err)
-		}
-	}
-
-	settings := config.EditableSettingsFromAppConfig(config.Default())
-	m := Model{
-		width:                   100,
-		height:                  28,
-		homeDirFn:               func() (string, error) { return parent, nil },
-		settingsBaseline:        &settings,
-		privacyMode:             true,
-		privacyPatterns:         []string{"*secret*"},
-		newProjectRecentParents: []string{private, parent},
-		newProjectDialog: &newProjectDialogState{
-			PathInput:     newNewProjectTextInput(parent, 1024),
-			NameInput:     newNewProjectTextInput("", 256),
-			Selected:      newProjectFieldPath,
-			CreateGitRepo: true,
-		},
-	}
-	configureNewProjectPathInput(&m.newProjectDialog.PathInput)
-
-	if got := m.defaultNewProjectParentPath(); got != parent {
-		t.Fatalf("default parent path = %q, want privacy-visible recent parent %q", got, parent)
-	}
-
-	m = drainCmdMsgs(m, m.refreshNewProjectPathSuggestions())
-	suggestions := m.newProjectDialog.PathInput.MatchedSuggestions()
-	if len(suggestions) != 1 || suggestions[0] != visible+string(os.PathSeparator) {
-		t.Fatalf("privacy-filtered suggestions = %v, want only visible client", suggestions)
-	}
-	if m.newProjectDialog.PathSuggestionHidden == 0 {
-		t.Fatalf("expected hidden private suggestion count")
-	}
-	rendered := m.renderNewProjectContent(100)
-	if strings.Contains(rendered, "secret-client") {
-		t.Fatalf("rendered suggestions leaked private path: %q", rendered)
-	}
-	if !strings.Contains(rendered, "private path suggestions hidden") {
-		t.Fatalf("rendered suggestions missing privacy hidden note: %q", rendered)
-	}
-}
-
 func TestNewProjectPreviewDerivesNameFromQuotedExistingPathWhenNameBlank(t *testing.T) {
 	t.Parallel()
 

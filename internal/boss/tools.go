@@ -147,7 +147,6 @@ type ViewContext struct {
 	Filter                string
 	Status                string
 	PrivacyMode           bool
-	PrivacyPatterns       []string
 	SystemNotices         []ViewSystemNotice
 	EngineerActivities    []ViewEngineerActivity
 	RuntimeContexts       []ViewRuntimeContext
@@ -187,6 +186,7 @@ type ViewRuntimeContext struct {
 	AdditionalURLs []string
 	Ports          []int
 	Running        bool
+	Private        bool
 }
 
 func newQueryExecutor(store bossStoreReader) *QueryExecutor {
@@ -523,7 +523,7 @@ func (e *QueryExecutor) reflectionCoverageLines(ctx context.Context, view ViewCo
 		return lines
 	}
 	if view.PrivacyMode {
-		tasks = filterAgentTasksForBossPrivacy(tasks, view.PrivacyPatterns)
+		tasks = filterAgentTasksForBossPrivacy(tasks)
 	}
 	taskCounts := map[string]int{
 		string(model.AgentTaskStatusActive):    0,
@@ -578,7 +578,7 @@ func filterProjectSummariesForBossPrivacy(projects []model.ProjectSummary, view 
 	if !view.PrivacyMode {
 		return projects
 	}
-	return filterProjectSummariesByPrivacy(projects, view.PrivacyPatterns)
+	return filterProjectSummariesByPrivacy(projects)
 }
 
 func (e *QueryExecutor) projectDetail(ctx context.Context, action bossAction, view ViewContext) (bossToolResult, error) {
@@ -891,7 +891,7 @@ func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, 
 	limit := clampBossLimit(action.Limit, 20, 40)
 	tasks := append([]AgentTaskBrief(nil), snapshot.OpenAgentTasks...)
 	if view.PrivacyMode {
-		tasks = filterAgentTaskBriefsForBossPrivacy(tasks, view.PrivacyPatterns)
+		tasks = filterAgentTaskBriefsForBossPrivacy(tasks)
 	}
 	if taskReader, ok := e.store.(bossAgentTaskReader); ok {
 		filter := model.AgentTaskFilter{
@@ -910,7 +910,7 @@ func (e *QueryExecutor) agentTaskReport(ctx context.Context, action bossAction, 
 			return bossToolResult{}, err
 		}
 		if view.PrivacyMode {
-			loaded = filterAgentTasksForBossPrivacy(loaded, view.PrivacyPatterns)
+			loaded = filterAgentTasksForBossPrivacy(loaded)
 		}
 		tasks = make([]AgentTaskBrief, 0, len(loaded))
 		for _, task := range loaded {
@@ -1636,9 +1636,6 @@ func (e *QueryExecutor) excerptHiddenByPrivacy(ctx context.Context, excerpt mode
 	if !view.PrivacyMode {
 		return false
 	}
-	if config.MatchesPrivacyPattern(excerpt.ProjectName, view.PrivacyPatterns) {
-		return true
-	}
 	privatePaths, err := e.privateProjectPaths(ctx, true, view)
 	if err != nil {
 		return true
@@ -1999,7 +1996,7 @@ func (e *QueryExecutor) resolveProjectPathFromContextSearch(ctx context.Context,
 
 func (e *QueryExecutor) privateProjectPaths(ctx context.Context, includeHistorical bool, view ViewContext) (map[string]struct{}, error) {
 	privatePaths := map[string]struct{}{}
-	if !view.PrivacyMode || len(view.PrivacyPatterns) == 0 {
+	if !view.PrivacyMode {
 		return privatePaths, nil
 	}
 	projects, err := e.store.ListProjects(ctx, includeHistorical)
@@ -2015,7 +2012,7 @@ func (e *QueryExecutor) privateProjectPaths(ctx context.Context, includeHistoric
 }
 
 func bossProjectHiddenByPrivacy(project model.ProjectSummary, view ViewContext) bool {
-	return view.PrivacyMode && config.MatchesPrivacyPattern(project.Name, view.PrivacyPatterns)
+	return view.PrivacyMode && project.CategoryPrivate
 }
 
 func filterSessionClassificationsForBossPrivacy(items []model.SessionClassification, privatePaths map[string]struct{}) []model.SessionClassification {
@@ -2037,10 +2034,6 @@ func filterContextSearchResultsForBossPrivacy(results []model.ContextSearchResul
 	}
 	filtered := make([]model.ContextSearchResult, 0, len(results))
 	for _, result := range results {
-		if config.MatchesPrivacyPattern(result.ProjectName, view.PrivacyPatterns) ||
-			config.MatchesPrivacyPattern(result.Title, view.PrivacyPatterns) {
-			continue
-		}
 		if _, private := privatePaths[filepath.Clean(strings.TrimSpace(result.ProjectPath))]; private {
 			continue
 		}
@@ -2170,7 +2163,7 @@ func viewProjectListLine(view ViewContext) string {
 }
 
 func compactViewRuntimeContextLine(runtime ViewRuntimeContext, view ViewContext) string {
-	if view.PrivacyMode && bossPrivacyMatchesAny(view.PrivacyPatterns, runtime.ProjectPath, runtime.ProjectName, runtime.Command, runtime.PrimaryURL, strings.Join(runtime.AdditionalURLs, " ")) {
+	if view.PrivacyMode && runtime.Private {
 		return ""
 	}
 	label := strings.TrimSpace(firstNonEmpty(runtime.ProjectName, runtime.ProjectPath, "project"))

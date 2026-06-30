@@ -380,7 +380,6 @@ func (m Model) bossViewContext() bossui.ViewContext {
 		Filter:                strings.TrimSpace(m.projectFilter),
 		Status:                strings.TrimSpace(m.status),
 		PrivacyMode:           m.privacyMode,
-		PrivacyPatterns:       append([]string(nil), m.privacyPatterns...),
 		EngineerActivities:    m.bossEngineerActivities(),
 		RuntimeContexts:       m.bossRuntimeContexts(),
 	}
@@ -469,6 +468,7 @@ func bossRuntimeContextFromProject(project model.ProjectSummary, snapshot projec
 		AdditionalURLs: additionalURLs,
 		Ports:          append([]int(nil), snapshot.Ports...),
 		Running:        snapshot.Running,
+		Private:        project.CategoryPrivate,
 	}
 }
 

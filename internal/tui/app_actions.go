@@ -925,6 +925,47 @@ func (m Model) removeProjectCategoryCmd(name string) tea.Cmd {
 	}
 }
 
+func (m Model) setProjectCategoryPrivacyCmd(name string, private bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		category, err := m.svc.SetProjectCategoryPrivate(ctx, name, private)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "updating the category privacy setting")
+		status := fmt.Sprintf("Marked category %q public", strings.TrimSpace(category.Name))
+		if category.Private {
+			status = fmt.Sprintf("Marked category %q private", strings.TrimSpace(category.Name))
+		}
+		if strings.TrimSpace(category.Name) == "" {
+			status = "Updated category privacy"
+		}
+		return actionMsg{
+			status:  status,
+			refresh: invalidateProjectStructure(""),
+			err:     err,
+		}
+	}
+}
+
+func (m Model) moveCategoryResourcesCmd(resources []model.CategoryResourceRef, categoryName, selectPath string) tea.Cmd {
+	detailPath := strings.TrimSpace(selectPath)
+	return func() tea.Msg {
+		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		defer cancel()
+		category, moved, err := m.svc.MoveResourcesToCategory(ctx, resources, categoryName)
+		err = timeoutActionError(err, tuiQuickActionTimeout, "moving category items")
+		status := fmt.Sprintf("Moved %d item(s) to Main", moved)
+		if strings.TrimSpace(category.Name) != "" {
+			status = fmt.Sprintf("Moved %d item(s) to %s", moved, category.Name)
+		}
+		return actionMsg{
+			selectPath: selectPath,
+			status:     status,
+			refresh:    invalidateProjectStructure(detailPath),
+			err:        err,
+		}
+	}
+}
+
 func (m Model) moveProjectCategoryCmd(project model.ProjectSummary, categoryName, selectPath string) tea.Cmd {
 	path := filepath.Clean(strings.TrimSpace(project.Path))
 	name := projectRemovalName(project)

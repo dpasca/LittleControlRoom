@@ -185,35 +185,33 @@ func TestCommandEnterPrivacySettingsOpensPrivacyField(t *testing.T) {
 	input.SetValue("/privacy settings")
 
 	m := Model{
-		commandMode:  true,
-		commandInput: input,
-		width:        100,
-		height:       24,
+		commandMode:       true,
+		commandInput:      input,
+		projectCategories: []model.ProjectCategory{{ID: "cat_private", Name: "Private"}},
+		width:             100,
+		height:            24,
 	}
 	m.syncCommandSelection()
 
 	updated, cmd := m.updateCommandMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if !got.settingsMode {
-		t.Fatalf("settings mode should open after /privacy settings")
+	if got.settingsMode {
+		t.Fatalf("settings mode should not open after /privacy settings")
 	}
 	if got.commandMode {
 		t.Fatalf("command mode should close after /privacy settings")
 	}
-	if got.settingsSectionMenu {
-		t.Fatalf("/privacy settings should open the privacy settings row, not the section menu")
+	if got.categoryDialog == nil {
+		t.Fatalf("/privacy settings should open the category privacy dialog")
 	}
-	if got.settingsSectionSelected != settingsSectionIndexByID(settingsSectionScope) {
-		t.Fatalf("settingsSectionSelected = %d, want Project Scope", got.settingsSectionSelected)
+	if got.categoryDialog.Mode != categoryDialogModePrivacy {
+		t.Fatalf("category dialog mode = %v, want privacy picker", got.categoryDialog.Mode)
 	}
-	if got.settingsSelected != settingsFieldPrivacyPatterns {
-		t.Fatalf("settingsSelected = %d, want privacy patterns", got.settingsSelected)
+	if got.status != "Choose a category to mark private or public" {
+		t.Fatalf("status = %q, want category privacy hint", got.status)
 	}
-	if got.status != "Privacy settings open. Press Enter to edit patterns, or ctrl+s to save." {
-		t.Fatalf("status = %q, want privacy settings hint", got.status)
-	}
-	if cmd == nil {
-		t.Fatalf("/privacy settings should focus the selected privacy field")
+	if cmd != nil {
+		t.Fatalf("/privacy settings should not need an async command")
 	}
 }
 

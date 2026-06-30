@@ -1108,8 +1108,7 @@ func (m Model) loadStateCmd() tea.Cmd {
 func (m Model) stateSnapshotOptions() StateSnapshotOptions {
 	if m.viewContext.Active {
 		return StateSnapshotOptions{
-			PrivacyMode:     m.viewContext.PrivacyMode,
-			PrivacyPatterns: append([]string(nil), m.viewContext.PrivacyPatterns...),
+			PrivacyMode: m.viewContext.PrivacyMode,
 		}
 	}
 	return stateSnapshotOptionsForService(m.svc)

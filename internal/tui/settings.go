@@ -242,13 +242,12 @@ func settingsSections() []settingsSection {
 		{
 			id:      settingsSectionScope,
 			label:   "Project Scope",
-			summary: "Discovery and privacy",
-			hint:    "Choose which folders stay visible and which names should stay hidden or masked in demos.",
+			summary: "Discovery",
+			hint:    "Choose which folders stay visible. Category privacy is managed from /category.",
 			fieldOrder: []int{
 				settingsFieldIncludePaths,
 				settingsFieldExcludePaths,
 				settingsFieldExcludeProjectPatterns,
-				settingsFieldPrivacyPatterns,
 			},
 		},
 		{
@@ -429,12 +428,22 @@ func (m *Model) openEmbeddedLCAgentSettingsMode(projectPath string) tea.Cmd {
 }
 
 func (m *Model) openPrivacySettingsMode() tea.Cmd {
-	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
-	m.settingsSectionMenu = false
-	m.settingsDrilldown = settingsDrilldownNone
-	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionScope)
-	m.status = "Privacy settings open. Press Enter to edit patterns, or ctrl+s to save."
-	return tea.Batch(cmd, m.setSettingsSelection(settingsFieldPrivacyPatterns))
+	m.categoryDialog = &categoryDialogState{
+		Mode:     categoryDialogModePrivacy,
+		Selected: 0,
+		Input:    newCategoryNameInput(),
+		Marked:   map[string]bool{},
+	}
+	m.commandMode = false
+	m.showHelp = false
+	m.err = nil
+	if len(m.projectCategories) == 0 {
+		m.categoryDialog.Mode = categoryDialogModeActions
+		m.status = "Create a category before marking it private"
+		return nil
+	}
+	m.status = "Choose a category to mark private or public"
+	return nil
 }
 
 func (m *Model) openBrowserSettingsMode() tea.Cmd {

@@ -62,7 +62,7 @@ func (s *Store) GetAgentTask(ctx context.Context, id string) (model.AgentTask, e
 	}
 	task, err := scanAgentTask(s.db.QueryRowContext(ctx, `
 		SELECT
-			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
+			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
 			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
 		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
@@ -101,7 +101,7 @@ func (s *Store) ListAgentTasks(ctx context.Context, filter model.AgentTaskFilter
 
 	query := `
 		SELECT
-			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
+			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
 			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
 		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
@@ -151,7 +151,7 @@ func (s *Store) ListExpiredAgentTasks(ctx context.Context, now time.Time) ([]mod
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
-			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
+			at.id, at.parent_task_id, at.title, at.kind, at.status, COALESCE(pc.id, ''), COALESCE(pc.name, ''), COALESCE(pc.private, 0), at.summary, at.capabilities, at.provider, at.session_id, at.workspace_path,
 			at.expires_at, at.created_at, at.last_touched_at, at.completed_at, at.archived_at, at.updated_at
 		FROM agent_tasks at
 		LEFT JOIN category_assignments ca ON ca.resource_kind = 'agent_task' AND ca.resource_id = at.id
@@ -356,17 +356,18 @@ func scanAgentTask(scanner interface {
 	Scan(dest ...any) error
 }) (model.AgentTask, error) {
 	var (
-		task          model.AgentTask
-		kind          string
-		status        string
-		capabilities  string
-		provider      string
-		expiresAt     sql.NullInt64
-		createdAt     int64
-		lastTouchedAt int64
-		completedAt   sql.NullInt64
-		archivedAt    sql.NullInt64
-		updatedAt     int64
+		task            model.AgentTask
+		kind            string
+		status          string
+		capabilities    string
+		provider        string
+		expiresAt       sql.NullInt64
+		createdAt       int64
+		lastTouchedAt   int64
+		completedAt     sql.NullInt64
+		archivedAt      sql.NullInt64
+		updatedAt       int64
+		categoryPrivate int
 	)
 	if err := scanner.Scan(
 		&task.ID,
@@ -376,6 +377,7 @@ func scanAgentTask(scanner interface {
 		&status,
 		&task.CategoryID,
 		&task.CategoryName,
+		&categoryPrivate,
 		&task.Summary,
 		&capabilities,
 		&provider,
@@ -394,6 +396,7 @@ func scanAgentTask(scanner interface {
 	task.Status = model.NormalizeAgentTaskStatus(model.AgentTaskStatus(status))
 	task.CategoryID = strings.TrimSpace(task.CategoryID)
 	task.CategoryName = strings.TrimSpace(task.CategoryName)
+	task.CategoryPrivate = categoryPrivate != 0
 	task.Capabilities = decodeAgentTaskCapabilities(capabilities)
 	task.Provider = model.NormalizeSessionSource(model.SessionSource(provider))
 	if expiresAt.Valid {
