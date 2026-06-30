@@ -86,7 +86,6 @@ func TestNewCachesStableSettingsForUI(t *testing.T) {
 	cfg.ActiveThreshold = 17 * time.Second
 	cfg.StuckThreshold = 43 * time.Second
 	cfg.ExcludeProjectPatterns = []string{"vendor"}
-	cfg.PrivacyPatterns = []string{"secret"}
 
 	m := New(context.Background(), service.New(cfg, nil, events.NewBus(), nil))
 
@@ -107,9 +106,6 @@ func TestNewCachesStableSettingsForUI(t *testing.T) {
 	}
 	if got := strings.Join(m.excludeProjectPatterns, ","); got != "vendor" {
 		t.Fatalf("exclude patterns = %q", got)
-	}
-	if got := strings.Join(m.privacyPatterns, ","); got != "secret" {
-		t.Fatalf("privacy patterns = %q", got)
 	}
 }
 

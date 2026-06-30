@@ -15,7 +15,7 @@ import (
 
 func (s *Store) ListProjectCategories(ctx context.Context) ([]model.ProjectCategory, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, position, created_at, updated_at
+		SELECT id, name, private, position, created_at, updated_at
 		FROM project_categories
 		ORDER BY position ASC, name COLLATE NOCASE ASC
 	`)
@@ -41,7 +41,7 @@ func (s *Store) GetProjectCategoryByName(ctx context.Context, name string) (mode
 		return model.ProjectCategory{}, err
 	}
 	category, err := scanProjectCategory(s.db.QueryRowContext(ctx, `
-		SELECT id, name, position, created_at, updated_at
+		SELECT id, name, private, position, created_at, updated_at
 		FROM project_categories
 		WHERE name_key = ?
 	`, projectCategoryNameKey(name)))
@@ -79,8 +79,8 @@ func (s *Store) CreateProjectCategory(ctx context.Context, name string) (model.P
 		return model.ProjectCategory{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO project_categories(id, name, name_key, position, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO project_categories(id, name, name_key, private, position, created_at, updated_at)
+		VALUES (?, ?, ?, 0, ?, ?, ?)
 	`, id, name, projectCategoryNameKey(name), position, now, now); err != nil {
 		return model.ProjectCategory{}, fmt.Errorf("create project category: %w", err)
 	}
@@ -99,6 +99,26 @@ func (s *Store) DeleteProjectCategory(ctx context.Context, name string) (model.P
 		return model.ProjectCategory{}, fmt.Errorf("delete project category: %w", err)
 	}
 	return category, nil
+}
+
+func (s *Store) SetProjectCategoryPrivate(ctx context.Context, name string, private bool) (model.ProjectCategory, error) {
+	category, err := s.GetProjectCategoryByName(ctx, name)
+	if err != nil {
+		return model.ProjectCategory{}, err
+	}
+	privateInt := 0
+	if private {
+		privateInt = 1
+	}
+	now := time.Now().Unix()
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE project_categories
+		SET private = ?, updated_at = ?
+		WHERE id = ?
+	`, privateInt, now, category.ID); err != nil {
+		return model.ProjectCategory{}, fmt.Errorf("update project category privacy: %w", err)
+	}
+	return s.GetProjectCategoryByName(ctx, category.Name)
 }
 
 func (s *Store) SetResourceCategory(ctx context.Context, kind model.CategoryResourceKind, resourceID, categoryID string) error {
@@ -120,7 +140,7 @@ func (s *Store) SetResourceCategory(ctx context.Context, kind model.CategoryReso
 		return err
 	}
 	if _, err := scanProjectCategory(s.db.QueryRowContext(ctx, `
-		SELECT id, name, position, created_at, updated_at
+		SELECT id, name, private, position, created_at, updated_at
 		FROM project_categories
 		WHERE id = ?
 	`, categoryID)); err != nil {
@@ -144,9 +164,11 @@ func scanProjectCategory(scanner interface {
 }) (model.ProjectCategory, error) {
 	var category model.ProjectCategory
 	var createdAt, updatedAt int64
-	if err := scanner.Scan(&category.ID, &category.Name, &category.Position, &createdAt, &updatedAt); err != nil {
+	var private int
+	if err := scanner.Scan(&category.ID, &category.Name, &private, &category.Position, &createdAt, &updatedAt); err != nil {
 		return model.ProjectCategory{}, err
 	}
+	category.Private = private != 0
 	category.CreatedAt = time.Unix(createdAt, 0)
 	category.UpdatedAt = time.Unix(updatedAt, 0)
 	return category, nil

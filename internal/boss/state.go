@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"lcroom/internal/bossrun"
-	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 )
@@ -70,18 +69,19 @@ type ProjectBrief struct {
 }
 
 type AgentTaskBrief struct {
-	ID            string
-	ParentTaskID  string
-	Title         string
-	EngineerName  string
-	Kind          model.AgentTaskKind
-	Status        model.AgentTaskStatus
-	Summary       string
-	Capabilities  []string
-	Provider      model.SessionSource
-	SessionID     string
-	LastTouchedAt time.Time
-	Resources     []model.AgentTaskResource
+	ID              string
+	ParentTaskID    string
+	Title           string
+	EngineerName    string
+	Kind            model.AgentTaskKind
+	Status          model.AgentTaskStatus
+	Summary         string
+	Capabilities    []string
+	Provider        model.SessionSource
+	SessionID       string
+	CategoryPrivate bool
+	LastTouchedAt   time.Time
+	Resources       []model.AgentTaskResource
 }
 
 type TodoBrief struct {
@@ -109,8 +109,7 @@ type GoalRunBrief struct {
 }
 
 type StateSnapshotOptions struct {
-	PrivacyMode     bool
-	PrivacyPatterns []string
+	PrivacyMode bool
 }
 
 func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time, options ...StateSnapshotOptions) (StateSnapshot, error) {
@@ -129,7 +128,7 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 		opts = options[0]
 	}
 	if opts.PrivacyMode {
-		allProjects = filterProjectSummariesByPrivacy(allProjects, opts.PrivacyPatterns)
+		allProjects = filterProjectSummariesByPrivacy(allProjects)
 	}
 	projects := activeTabProjectSummaries(allProjects)
 	inventory := buildProjectInventory(allProjects)
@@ -159,7 +158,7 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 	}
 	if tasks, err := svc.ListOpenAgentTasks(ctx, openAgentTaskLimit); err == nil {
 		if opts.PrivacyMode {
-			tasks = filterAgentTasksForBossPrivacy(tasks, opts.PrivacyPatterns)
+			tasks = filterAgentTasksForBossPrivacy(tasks)
 		}
 		for _, task := range tasks {
 			snapshot.OpenAgentTasks = append(snapshot.OpenAgentTasks, agentTaskBriefFromTask(task))
@@ -168,9 +167,6 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 	if records, err := svc.Store().ListGoalRuns(ctx, recentGoalRunLimit); err == nil {
 		for _, record := range records {
 			brief := goalRunBriefFromRecord(record)
-			if opts.PrivacyMode && goalRunBriefHiddenByPrivacy(brief, opts.PrivacyPatterns) {
-				continue
-			}
 			snapshot.RecentGoalRuns = append(snapshot.RecentGoalRuns, brief)
 		}
 	}
@@ -353,9 +349,6 @@ func appendSnapshotOpenTodos(ctx context.Context, svc *service.Service, projects
 		projectName := displayProjectName(detail.Summary)
 		for _, item := range openTodosOnly(detail.Todos) {
 			brief := todoBriefFromItem(item, projectName)
-			if opts.PrivacyMode && todoBriefHiddenByPrivacy(brief, opts.PrivacyPatterns) {
-				continue
-			}
 			snapshot.OpenTodos = append(snapshot.OpenTodos, brief)
 			if len(snapshot.OpenTodos) >= openTodoBriefLimit {
 				return
@@ -424,8 +417,7 @@ func stateSnapshotOptionsForService(svc *service.Service) StateSnapshotOptions {
 	}
 	cfg := svc.Config()
 	return StateSnapshotOptions{
-		PrivacyMode:     cfg.PrivacyMode,
-		PrivacyPatterns: append([]string(nil), cfg.PrivacyPatterns...),
+		PrivacyMode: cfg.PrivacyMode,
 	}
 }
 
@@ -465,98 +457,46 @@ func agentTaskBriefFromTask(task model.AgentTask) AgentTaskBrief {
 		resources = resources[:4]
 	}
 	return AgentTaskBrief{
-		ID:            strings.TrimSpace(task.ID),
-		ParentTaskID:  strings.TrimSpace(task.ParentTaskID),
-		Title:         strings.TrimSpace(task.Title),
-		EngineerName:  EngineerNameForKey("agent_task", task.ID),
-		Kind:          model.NormalizeAgentTaskKind(task.Kind),
-		Status:        model.NormalizeAgentTaskStatus(task.Status),
-		Summary:       strings.TrimSpace(task.Summary),
-		Capabilities:  append([]string(nil), task.Capabilities...),
-		Provider:      model.NormalizeSessionSource(task.Provider),
-		SessionID:     strings.TrimSpace(task.SessionID),
-		LastTouchedAt: task.LastTouchedAt,
-		Resources:     resources,
+		ID:              strings.TrimSpace(task.ID),
+		ParentTaskID:    strings.TrimSpace(task.ParentTaskID),
+		Title:           strings.TrimSpace(task.Title),
+		EngineerName:    EngineerNameForKey("agent_task", task.ID),
+		Kind:            model.NormalizeAgentTaskKind(task.Kind),
+		Status:          model.NormalizeAgentTaskStatus(task.Status),
+		Summary:         strings.TrimSpace(task.Summary),
+		Capabilities:    append([]string(nil), task.Capabilities...),
+		Provider:        model.NormalizeSessionSource(task.Provider),
+		SessionID:       strings.TrimSpace(task.SessionID),
+		CategoryPrivate: task.CategoryPrivate,
+		LastTouchedAt:   task.LastTouchedAt,
+		Resources:       resources,
 	}
 }
 
-func filterAgentTasksForBossPrivacy(tasks []model.AgentTask, patterns []string) []model.AgentTask {
-	if len(tasks) == 0 || len(patterns) == 0 {
+func filterAgentTasksForBossPrivacy(tasks []model.AgentTask) []model.AgentTask {
+	if len(tasks) == 0 {
 		return tasks
 	}
 	filtered := make([]model.AgentTask, 0, len(tasks))
 	for _, task := range tasks {
-		if !agentTaskHiddenByPrivacy(task, patterns) {
+		if !task.CategoryPrivate {
 			filtered = append(filtered, task)
 		}
 	}
 	return filtered
 }
 
-func filterAgentTaskBriefsForBossPrivacy(tasks []AgentTaskBrief, patterns []string) []AgentTaskBrief {
-	if len(tasks) == 0 || len(patterns) == 0 {
+func filterAgentTaskBriefsForBossPrivacy(tasks []AgentTaskBrief) []AgentTaskBrief {
+	if len(tasks) == 0 {
 		return tasks
 	}
 	filtered := make([]AgentTaskBrief, 0, len(tasks))
 	for _, task := range tasks {
-		if !agentTaskBriefHiddenByPrivacy(task, patterns) {
+		if !task.CategoryPrivate {
 			filtered = append(filtered, task)
 		}
 	}
 	return filtered
-}
-
-func agentTaskHiddenByPrivacy(task model.AgentTask, patterns []string) bool {
-	if len(patterns) == 0 {
-		return false
-	}
-	if bossPrivacyMatchesAny(patterns, task.Title, task.Summary, task.WorkspacePath) {
-		return true
-	}
-	for _, resource := range task.Resources {
-		if bossPrivacyMatchesAny(patterns, resource.ProjectPath, resource.Path, resource.Label, resource.RefID) {
-			return true
-		}
-	}
-	return false
-}
-
-func agentTaskBriefHiddenByPrivacy(task AgentTaskBrief, patterns []string) bool {
-	if len(patterns) == 0 {
-		return false
-	}
-	if bossPrivacyMatchesAny(patterns, task.Title, task.Summary) {
-		return true
-	}
-	for _, resource := range task.Resources {
-		if bossPrivacyMatchesAny(patterns, resource.ProjectPath, resource.Path, resource.Label, resource.RefID) {
-			return true
-		}
-	}
-	return false
-}
-
-func goalRunBriefHiddenByPrivacy(goal GoalRunBrief, patterns []string) bool {
-	if len(patterns) == 0 {
-		return false
-	}
-	return bossPrivacyMatchesAny(patterns, goal.Title, goal.Summary, goal.Error)
-}
-
-func todoBriefHiddenByPrivacy(todo TodoBrief, patterns []string) bool {
-	if len(patterns) == 0 {
-		return false
-	}
-	return bossPrivacyMatchesAny(patterns, todo.ProjectName, todo.ProjectPath, todo.Label, todo.Text)
-}
-
-func bossPrivacyMatchesAny(patterns []string, values ...string) bool {
-	for _, value := range values {
-		if config.MatchesPrivacyPattern(value, patterns) {
-			return true
-		}
-	}
-	return false
 }
 
 func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
@@ -972,13 +912,13 @@ func projectCurrentlyPresent(project model.ProjectSummary) bool {
 	return err == nil && info.IsDir()
 }
 
-func filterProjectSummariesByPrivacy(projects []model.ProjectSummary, privacyPatterns []string) []model.ProjectSummary {
-	if len(projects) == 0 || len(privacyPatterns) == 0 {
+func filterProjectSummariesByPrivacy(projects []model.ProjectSummary) []model.ProjectSummary {
+	if len(projects) == 0 {
 		return projects
 	}
 	filtered := make([]model.ProjectSummary, 0, len(projects))
 	for _, project := range projects {
-		if !config.MatchesPrivacyPattern(project.Name, privacyPatterns) {
+		if !project.CategoryPrivate {
 			filtered = append(filtered, project)
 		}
 	}

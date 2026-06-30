@@ -235,25 +235,26 @@ type CommitTodoCheck struct {
 }
 
 type AgentTask struct {
-	ID            string
-	ParentTaskID  string
-	Title         string
-	Kind          AgentTaskKind
-	Status        AgentTaskStatus
-	CategoryID    string
-	CategoryName  string
-	Summary       string
-	Capabilities  []string
-	Provider      SessionSource
-	SessionID     string
-	WorkspacePath string
-	ExpiresAt     time.Time
-	CreatedAt     time.Time
-	LastTouchedAt time.Time
-	CompletedAt   time.Time
-	ArchivedAt    time.Time
-	UpdatedAt     time.Time
-	Resources     []AgentTaskResource
+	ID              string
+	ParentTaskID    string
+	Title           string
+	Kind            AgentTaskKind
+	Status          AgentTaskStatus
+	CategoryID      string
+	CategoryName    string
+	CategoryPrivate bool
+	Summary         string
+	Capabilities    []string
+	Provider        SessionSource
+	SessionID       string
+	WorkspacePath   string
+	ExpiresAt       time.Time
+	CreatedAt       time.Time
+	LastTouchedAt   time.Time
+	CompletedAt     time.Time
+	ArchivedAt      time.Time
+	UpdatedAt       time.Time
+	Resources       []AgentTaskResource
 }
 
 type AgentTaskResource struct {
@@ -448,6 +449,7 @@ type ProjectSummary struct {
 	Kind                                          ProjectKind
 	CategoryID                                    string
 	CategoryName                                  string
+	CategoryPrivate                               bool
 	LastActivity                                  time.Time
 	Status                                        ProjectStatus
 	AttentionScore                                int
@@ -752,6 +754,7 @@ type ProjectDetail struct {
 type ProjectCategory struct {
 	ID        string
 	Name      string
+	Private   bool
 	Position  int
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -763,6 +766,11 @@ const (
 	CategoryResourceProject   CategoryResourceKind = "project"
 	CategoryResourceAgentTask CategoryResourceKind = "agent_task"
 )
+
+type CategoryResourceRef struct {
+	Kind CategoryResourceKind
+	ID   string
+}
 
 func NormalizeCategoryResourceKind(kind CategoryResourceKind) CategoryResourceKind {
 	switch kind {

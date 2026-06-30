@@ -579,6 +579,7 @@ type projectTabDescriptor struct {
 	mode       projectArchiveMode
 	categoryID string
 	label      string
+	private    bool
 }
 
 func (m Model) projectTabDescriptors() []projectTabDescriptor {
@@ -587,7 +588,7 @@ func (m Model) projectTabDescriptors() []projectTabDescriptor {
 		if strings.TrimSpace(category.ID) == "" || strings.TrimSpace(category.Name) == "" {
 			continue
 		}
-		tabs = append(tabs, projectTabDescriptor{mode: projectArchiveCategory, categoryID: strings.TrimSpace(category.ID), label: strings.TrimSpace(category.Name)})
+		tabs = append(tabs, projectTabDescriptor{mode: projectArchiveCategory, categoryID: strings.TrimSpace(category.ID), label: strings.TrimSpace(category.Name), private: category.Private})
 	}
 	tabs = append(tabs, projectTabDescriptor{mode: projectArchiveArchived, label: "Archived"})
 	return tabs

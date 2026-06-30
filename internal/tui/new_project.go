@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"lcroom/internal/codexapp"
-	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 
@@ -101,11 +100,9 @@ type newProjectPathSuggestionsResult struct {
 }
 
 type newProjectPathSuggestionContext struct {
-	RecentParents   []string
-	IncludePaths    []string
-	Projects        []model.ProjectSummary
-	PrivacyMode     bool
-	PrivacyPatterns []string
+	RecentParents []string
+	IncludePaths  []string
+	Projects      []model.ProjectSummary
 }
 
 func (m Model) loadRecentProjectParentsCmd() tea.Cmd {
@@ -374,9 +371,6 @@ func (m Model) visibleNewProjectRecentParents() []string {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
-		if m.privacyMode && newProjectPathHiddenByPrivacy(path, nil, m.privacyPatterns) {
-			continue
-		}
 		out = append(out, path)
 	}
 	return out
@@ -466,11 +460,9 @@ func (m *Model) refreshNewProjectPathSuggestions() tea.Cmd {
 func (m Model) loadNewProjectPathSuggestionsCmd(seq int64, rawPath string) tea.Cmd {
 	settings := m.currentSettingsBaseline()
 	ctx := newProjectPathSuggestionContext{
-		RecentParents:   append([]string(nil), m.newProjectRecentParents...),
-		IncludePaths:    append([]string(nil), settings.IncludePaths...),
-		Projects:        append([]model.ProjectSummary(nil), m.allProjects...),
-		PrivacyMode:     m.privacyMode,
-		PrivacyPatterns: append([]string(nil), m.privacyPatterns...),
+		RecentParents: append([]string(nil), m.newProjectRecentParents...),
+		IncludePaths:  append([]string(nil), settings.IncludePaths...),
+		Projects:      append([]model.ProjectSummary(nil), m.allProjects...),
 	}
 	return func() tea.Msg {
 		return newProjectPathSuggestionsMsg{
@@ -643,11 +635,6 @@ func (c *newProjectPathSuggestionCollector) addFilesystemPaths(inspectPath strin
 	if strings.TrimSpace(inspectPath) == "" {
 		return
 	}
-	if c.ctx.PrivacyMode && newProjectPathHiddenByPrivacy(inspectPath, nil, c.ctx.PrivacyPatterns) {
-		c.hidden++
-		return
-	}
-
 	if newProjectPathHasTrailingSeparator(c.displayPath) || newProjectPathIsDir(inspectPath) {
 		displayPrefix := ensureNewProjectTrailingSeparator(c.displayPath)
 		children := newProjectChildDirectorySuggestions(filepath.Clean(inspectPath), displayPrefix, "")
@@ -662,10 +649,6 @@ func (c *newProjectPathSuggestionCollector) addFilesystemPaths(inspectPath strin
 	}
 
 	dirPath := filepath.Dir(filepath.Clean(inspectPath))
-	if c.ctx.PrivacyMode && newProjectPathHiddenByPrivacy(dirPath, nil, c.ctx.PrivacyPatterns) {
-		c.hidden++
-		return
-	}
 	namePrefix := filepath.Base(inspectPath)
 	displayPrefix, displayNamePrefix := splitNewProjectDisplayPath(c.displayPath)
 	if displayNamePrefix != "" {
@@ -686,10 +669,6 @@ func (c *newProjectPathSuggestionCollector) addDisplayPath(displayPath, inspectP
 		return
 	}
 	if skipExactInput && newProjectSamePath(c.homeDirFn, c.displayPath, displayPath) {
-		return
-	}
-	if c.ctx.PrivacyMode && newProjectPathHiddenByPrivacy(inspectPath, privacyValues, c.ctx.PrivacyPatterns) {
-		c.hidden++
 		return
 	}
 	key := filepath.Clean(inspectPath)
@@ -814,24 +793,6 @@ func newProjectSamePath(homeDirFn func() (string, error), left, right string) bo
 	left = newProjectInspectPath(homeDirFn, left)
 	right = newProjectInspectPath(homeDirFn, right)
 	return left != "" && right != "" && filepath.Clean(left) == filepath.Clean(right)
-}
-
-func newProjectPathHiddenByPrivacy(path string, values []string, patterns []string) bool {
-	if len(patterns) == 0 {
-		return false
-	}
-	candidates := []string{
-		strings.TrimSpace(path),
-		filepath.Base(strings.TrimSpace(path)),
-	}
-	candidates = append(candidates, newProjectPathComponents(path)...)
-	candidates = append(candidates, values...)
-	for _, candidate := range candidates {
-		if config.MatchesPrivacyPattern(candidate, patterns) {
-			return true
-		}
-	}
-	return false
 }
 
 func newProjectPathComponents(path string) []string {

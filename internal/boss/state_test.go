@@ -269,11 +269,21 @@ func TestLoadStateSnapshotIncludesOpenAgentTasksWithPrivacyFiltering(t *testing.
 	}); err != nil {
 		t.Fatalf("CreateAgentTask() error = %v", err)
 	}
-	if _, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+	privateTask, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
 		Title: "Private delegated cleanup",
 		Kind:  model.AgentTaskKindAgent,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("CreateAgentTask(private) error = %v", err)
+	}
+	if _, err := svc.CreateProjectCategory(ctx, "Private"); err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	if _, err := svc.MoveAgentTaskToCategory(ctx, privateTask.ID, "Private"); err != nil {
+		t.Fatalf("MoveAgentTaskToCategory() error = %v", err)
+	}
+	if _, err := svc.SetProjectCategoryPrivate(ctx, "Private", true); err != nil {
+		t.Fatalf("SetProjectCategoryPrivate() error = %v", err)
 	}
 
 	snapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0))
@@ -284,10 +294,7 @@ func TestLoadStateSnapshotIncludesOpenAgentTasksWithPrivacyFiltering(t *testing.
 		t.Fatalf("open agent tasks = %#v, want both created tasks", snapshot.OpenAgentTasks)
 	}
 
-	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{
-		PrivacyMode:     true,
-		PrivacyPatterns: []string{"*private*"},
-	})
+	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{PrivacyMode: true})
 	if err != nil {
 		t.Fatalf("LoadStateSnapshot() with privacy error = %v", err)
 	}
@@ -369,6 +376,15 @@ func TestLoadStateSnapshotIncludesOpenTodosWithPrivacyFiltering(t *testing.T) {
 			t.Fatalf("UpsertProjectState() error = %v", err)
 		}
 	}
+	if _, err := svc.CreateProjectCategory(ctx, "Private"); err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	if _, err := svc.MoveProjectToCategory(ctx, privatePath, "Private"); err != nil {
+		t.Fatalf("MoveProjectToCategory() error = %v", err)
+	}
+	if _, err := svc.SetProjectCategoryPrivate(ctx, "Private", true); err != nil {
+		t.Fatalf("SetProjectCategoryPrivate() error = %v", err)
+	}
 	publicTodo, err := svc.AddTodo(ctx, publicPath, "Add public Boss Desk TODO visibility")
 	if err != nil {
 		t.Fatalf("AddTodo(public) error = %v", err)
@@ -410,10 +426,7 @@ func TestLoadStateSnapshotIncludesOpenTodosWithPrivacyFiltering(t *testing.T) {
 		t.Fatalf("public TODO label = %q, want generated short label", publicBrief.Label)
 	}
 
-	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{
-		PrivacyMode:     true,
-		PrivacyPatterns: []string{"*private*"},
-	})
+	privateSnapshot, err := LoadStateSnapshot(ctx, svc, time.Unix(1_800_000_000, 0), StateSnapshotOptions{PrivacyMode: true})
 	if err != nil {
 		t.Fatalf("LoadStateSnapshot() with privacy error = %v", err)
 	}
@@ -638,16 +651,16 @@ func TestSelectRecentAttentionProjectsSkipsCachedPresentPathsMissingOnDisk(t *te
 	}
 }
 
-func TestFilterProjectSummariesByPrivacyHidesMatchingProjectNames(t *testing.T) {
+func TestFilterProjectSummariesByPrivacyHidesPrivateCategories(t *testing.T) {
 	t.Parallel()
 
 	projects := []model.ProjectSummary{
 		{Name: "PublicApp", Path: "/tmp/public"},
-		{Name: "SecretClient", Path: "/tmp/secret"},
+		{Name: "SecretClient", Path: "/tmp/secret", CategoryPrivate: true},
 		{Name: "AnotherPublicApp", Path: "/tmp/public-2"},
 	}
 
-	filtered := filterProjectSummariesByPrivacy(projects, []string{"*secret*"})
+	filtered := filterProjectSummariesByPrivacy(projects)
 	if len(filtered) != 2 {
 		t.Fatalf("filtered len = %d, want 2: %#v", len(filtered), filtered)
 	}

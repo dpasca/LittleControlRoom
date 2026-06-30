@@ -564,7 +564,7 @@ func TestValidateInvocationNormalizesSettingsUpdateArgs(t *testing.T) {
 		Capability: CapabilitySettingsUpdate,
 		Args: json.RawMessage(`{
 			"changes": [
-				{"field": "privacy_filters", "operation": "add", "value": "", "values": [" visa ", "visa"], "bool_value": false}
+				{"field": "exclude_project_patterns", "operation": "add", "value": "", "values": [" tmp-* ", "tmp-*"], "bool_value": false}
 			]
 		}`),
 	})
@@ -582,10 +582,10 @@ func TestValidateInvocationNormalizesSettingsUpdateArgs(t *testing.T) {
 		t.Fatalf("normalized settings input = %#v", input)
 	}
 	change := input.Changes[0]
-	if change.Field != SettingsFieldPrivacyPatterns ||
+	if change.Field != SettingsFieldExcludeProjectPatterns ||
 		change.Operation != SettingsUpdateAppendUnique ||
 		len(change.Values) != 1 ||
-		change.Values[0] != "visa" {
+		change.Values[0] != "tmp-*" {
 		t.Fatalf("normalized settings change = %#v", change)
 	}
 }

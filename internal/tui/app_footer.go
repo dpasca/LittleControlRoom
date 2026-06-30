@@ -146,7 +146,11 @@ func (m Model) renderFooter(width int) string {
 		label := "Categories: ↑↓ choose, Enter select, Esc close"
 		if m.categoryDialog.Mode == categoryDialogModeCreate {
 			label = "Categories: type name, Enter create, Esc back"
-		} else if m.categoryDialog.Mode == categoryDialogModeMove || m.categoryDialog.Mode == categoryDialogModeRemove {
+		} else if m.categoryDialog.Mode == categoryDialogModeMoveItems {
+			label = "Categories: type filter, Space mark, Enter destination, Esc back"
+		} else if m.categoryDialog.Mode == categoryDialogModeMoveDestination ||
+			m.categoryDialog.Mode == categoryDialogModePrivacy ||
+			m.categoryDialog.Mode == categoryDialogModeRemove {
 			label = "Categories: ↑↓ choose, Enter apply, Esc back"
 		}
 		return m.renderModalFooter(width, label, supplementSegments...)

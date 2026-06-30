@@ -281,10 +281,11 @@ func TestQueryExecutorAgentTaskReportRespectsPrivacyMode(t *testing.T) {
 			Kind:   model.AgentTaskKindAgent,
 			Status: model.AgentTaskStatusActive,
 		}, {
-			ID:     "agt_secret",
-			Title:  "Private delegated work",
-			Kind:   model.AgentTaskKindAgent,
-			Status: model.AgentTaskStatusActive,
+			ID:              "agt_secret",
+			Title:           "Private delegated work",
+			Kind:            model.AgentTaskKindAgent,
+			Status:          model.AgentTaskStatusActive,
+			CategoryPrivate: true,
 		}},
 	}
 
@@ -294,9 +295,9 @@ func TestQueryExecutorAgentTaskReportRespectsPrivacyMode(t *testing.T) {
 	}, StateSnapshot{
 		OpenAgentTasks: []AgentTaskBrief{
 			{ID: "agt_public", Title: "Public delegated work"},
-			{ID: "agt_secret", Title: "Private delegated work"},
+			{ID: "agt_secret", Title: "Private delegated work", CategoryPrivate: true},
 		},
-	}, ViewContext{PrivacyMode: true, PrivacyPatterns: []string{"*private*"}})
+	}, ViewContext{PrivacyMode: true})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -1022,7 +1023,7 @@ func TestQueryExecutorPrivacyModeFiltersProjectTools(t *testing.T) {
 	store := &fakeBossStore{
 		projects: []model.ProjectSummary{
 			{Path: "/tmp/public", Name: "PublicApp", InScope: true},
-			{Path: "/tmp/secret", Name: "SecretClient", InScope: true},
+			{Path: "/tmp/secret", Name: "SecretClient", InScope: true, CategoryPrivate: true},
 		},
 		classifications: []model.SessionClassification{
 			{ProjectPath: "/tmp/public", SessionID: "public-session", Summary: "Public summary"},
@@ -1034,7 +1035,7 @@ func TestQueryExecutorPrivacyModeFiltersProjectTools(t *testing.T) {
 		},
 	}
 	executor := newQueryExecutor(store)
-	view := ViewContext{PrivacyMode: true, PrivacyPatterns: []string{"*secret*"}}
+	view := ViewContext{PrivacyMode: true}
 
 	listed, err := executor.Execute(context.Background(), bossAction{Kind: bossActionListProjects}, StateSnapshot{}, view)
 	if err != nil {
@@ -1142,7 +1143,7 @@ func TestQueryExecutorProcessReportRespectsPrivacyMode(t *testing.T) {
 	store := &fakeBossStore{
 		projects: []model.ProjectSummary{
 			{Path: "/tmp/public", Name: "PublicApp", InScope: true},
-			{Path: "/tmp/secret", Name: "SecretClient", InScope: true},
+			{Path: "/tmp/secret", Name: "SecretClient", InScope: true, CategoryPrivate: true},
 		},
 	}
 	executor := newQueryExecutor(store)
@@ -1157,7 +1158,7 @@ func TestQueryExecutorProcessReportRespectsPrivacyMode(t *testing.T) {
 
 	result, err := executor.Execute(context.Background(), bossAction{
 		Kind: bossActionProcessReport,
-	}, StateSnapshot{}, ViewContext{PrivacyMode: true, PrivacyPatterns: []string{"*secret*"}})
+	}, StateSnapshot{}, ViewContext{PrivacyMode: true})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}

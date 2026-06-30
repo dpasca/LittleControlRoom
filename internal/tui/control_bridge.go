@@ -1253,17 +1253,6 @@ var settingsUpdateFieldSpecs = map[control.SettingsField]settingsUpdateFieldSpec
 		},
 		NormalizeValues: normalizeSettingsPatternValues,
 	},
-	control.SettingsFieldPrivacyPatterns: {
-		Label: "privacy patterns",
-		Kind:  settingsUpdateList,
-		GetList: func(settings config.EditableSettings) []string {
-			return append([]string(nil), settings.PrivacyPatterns...)
-		},
-		SetList: func(settings *config.EditableSettings, values []string) {
-			settings.PrivacyPatterns = append([]string(nil), values...)
-		},
-		NormalizeValues: normalizeSettingsPatternValues,
-	},
 	control.SettingsFieldPrivacyMode: {
 		Label: "privacy mode",
 		Kind:  settingsUpdateBool,
@@ -1715,6 +1704,7 @@ func projectSummaryForAgentTask(task model.AgentTask) (model.ProjectSummary, err
 		Kind:                            model.ProjectKindAgentTask,
 		CategoryID:                      strings.TrimSpace(task.CategoryID),
 		CategoryName:                    strings.TrimSpace(task.CategoryName),
+		CategoryPrivate:                 task.CategoryPrivate,
 		LastActivity:                    agentTaskLastActivity(task),
 		Status:                          agentTaskProjectStatus(task),
 		AttentionScore:                  agentTaskAttentionScore(task),

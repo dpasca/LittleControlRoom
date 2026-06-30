@@ -613,7 +613,7 @@ func (m Model) processNoticeProjectPaths() []string {
 		projects = m.projects
 	}
 	if m.privacyMode {
-		projects = filterProjectsByPrivacy(projects, m.privacyPatterns)
+		projects = filterProjectsByPrivacy(projects)
 	}
 	seen := map[string]struct{}{}
 	paths := make([]string, 0, len(projects))

@@ -229,6 +229,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			name_key TEXT NOT NULL UNIQUE,
+			private INTEGER NOT NULL DEFAULT 0,
 			position INTEGER NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
@@ -374,6 +375,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureAgentTaskResourceMetadataColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureProjectCategoriesPrivateColumn(ctx); err != nil {
+		return err
+	}
 	if err := s.repairTerminalSessionClassificationStages(ctx); err != nil {
 		return err
 	}
@@ -385,6 +389,47 @@ func (s *Store) initSchema(ctx context.Context) error {
 	}
 	if err := s.ensureProjectsMissingLinkedWorktreeIndex(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) projectCategoryTableColumns(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(project_categories)`)
+	if err != nil {
+		return nil, fmt.Errorf("check project_categories schema: %w", err)
+	}
+	defer rows.Close()
+
+	columns := map[string]struct{}{}
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			return nil, fmt.Errorf("scan project_categories schema: %w", err)
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read project_categories schema: %w", err)
+	}
+	return columns, nil
+}
+
+func (s *Store) ensureProjectCategoriesPrivateColumn(ctx context.Context) error {
+	columns, err := s.projectCategoryTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	if _, ok := columns["private"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE project_categories ADD COLUMN private INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add project_categories.private column: %w", err)
+		}
 	}
 	return nil
 }

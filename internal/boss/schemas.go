@@ -221,7 +221,7 @@ func bossActionSchema() map[string]any {
 						"values": map[string]any{
 							"type":        "array",
 							"items":       map[string]any{"type": "string"},
-							"description": "List values for list settings such as privacy_patterns.",
+							"description": "List values for list settings such as include_paths.",
 						},
 						"bool_value": map[string]any{
 							"type":        "boolean",

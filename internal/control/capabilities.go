@@ -227,7 +227,6 @@ const (
 	SettingsFieldIncludePaths           SettingsField = "include_paths"
 	SettingsFieldExcludePaths           SettingsField = "exclude_paths"
 	SettingsFieldExcludeProjectPatterns SettingsField = "exclude_project_patterns"
-	SettingsFieldPrivacyPatterns        SettingsField = "privacy_patterns"
 	SettingsFieldPrivacyMode            SettingsField = "privacy_mode"
 	SettingsFieldHideReasoningSections  SettingsField = "hide_reasoning_sections"
 	SettingsFieldCodexLaunchPreset      SettingsField = "codex_launch_preset"
@@ -238,7 +237,6 @@ func SettingsFieldValues() []SettingsField {
 		SettingsFieldIncludePaths,
 		SettingsFieldExcludePaths,
 		SettingsFieldExcludeProjectPatterns,
-		SettingsFieldPrivacyPatterns,
 		SettingsFieldPrivacyMode,
 		SettingsFieldHideReasoningSections,
 		SettingsFieldCodexLaunchPreset,
@@ -259,8 +257,6 @@ func NormalizeSettingsField(value string) SettingsField {
 		return SettingsFieldExcludePaths
 	case string(SettingsFieldExcludeProjectPatterns):
 		return SettingsFieldExcludeProjectPatterns
-	case string(SettingsFieldPrivacyPatterns), "privacy_filters":
-		return SettingsFieldPrivacyPatterns
 	case string(SettingsFieldPrivacyMode):
 		return SettingsFieldPrivacyMode
 	case string(SettingsFieldHideReasoningSections):
@@ -785,7 +781,7 @@ func NormalizeSettingsChange(change SettingsChange) (SettingsChange, error) {
 		}
 	case SettingsUpdateSet:
 		switch change.Field {
-		case SettingsFieldIncludePaths, SettingsFieldExcludePaths, SettingsFieldExcludeProjectPatterns, SettingsFieldPrivacyPatterns:
+		case SettingsFieldIncludePaths, SettingsFieldExcludePaths, SettingsFieldExcludeProjectPatterns:
 			values, err := normalizeSettingsValues(firstNonEmptySettingsValues(change.Values, change.Value))
 			if err != nil {
 				return SettingsChange{}, err
