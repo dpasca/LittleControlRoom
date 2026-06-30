@@ -1743,12 +1743,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.showHelp = false
 		m.gitStatusDialog = nil
 		m.gitStatusApplying = false
+		var backgroundError errorLogAppendResult
 		if errText := strings.TrimSpace(msg.preview.CommitMessageError); errText != "" {
 			previouslyLogged := m.commitPreview != nil &&
 				m.commitPreview.StateHash == msg.preview.StateHash &&
 				strings.TrimSpace(m.commitPreview.CommitMessageError) == errText
 			if !previouslyLogged {
-				m.appendBackgroundErrorLogEntry("Commit message fallback used", errors.New(errText), msg.projectPath)
+				backgroundError = m.appendBackgroundErrorLogEntry("Commit message fallback used", errors.New(errText), msg.projectPath)
 			}
 		}
 		m.commitPreview = &msg.preview
@@ -1756,7 +1757,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.commitApplying = false
 		m.commitTodoCompletions = buildCommitTodoItems(msg.preview.SuggestedTodos)
 		m.commitTodoSelected = 0
-		m.status = commitPreviewReadyStatus(msg.preview)
+		if backgroundError.Escalated {
+			m.status = errorStatusWithHint(backgroundError.Status)
+		} else {
+			m.status = commitPreviewReadyStatus(msg.preview)
+		}
 		return m, nil
 	case diffPreviewMsg:
 		if m.diffView == nil {

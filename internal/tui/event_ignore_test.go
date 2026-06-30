@@ -173,6 +173,63 @@ func TestBusClassificationConnectionFailureUsesSpecificAssessmentStatus(t *testi
 	}
 }
 
+func TestBusInsufficientBalanceBackgroundErrorsAreDeduped(t *testing.T) {
+	now := time.Date(2026, 4, 5, 12, 0, 0, 0, time.UTC)
+	m := Model{
+		nowFn: func() time.Time {
+			return now
+		},
+		allProjects: []model.ProjectSummary{{
+			Name: "demo",
+			Path: "/tmp/demo",
+		}},
+	}
+	errText := "todo worktree suggester failed: insufficient balance"
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ActionApplied,
+		At:          now,
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"action":  "todo_worktree_suggestion_failed",
+			"todo_id": "1",
+			"error":   errText,
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("first event should continue waiting on the bus")
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	if got.errorLogEntries[0].Status != aiBalanceErrorStatus {
+		t.Fatalf("error log status = %q, want %q", got.errorLogEntries[0].Status, aiBalanceErrorStatus)
+	}
+	if got.status != aiBalanceErrorStatus+" (use /errors)" {
+		t.Fatalf("status = %q, want visible balance alert", got.status)
+	}
+
+	now = now.Add(time.Minute)
+	updated, _ = got.Update(busMsg(events.Event{
+		Type:        events.ActionApplied,
+		At:          now,
+		ProjectPath: "/tmp/demo",
+		Payload: map[string]string{
+			"action":  "todo_worktree_suggestion_failed",
+			"todo_id": "2",
+			"error":   errText,
+		},
+	}))
+	got = updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("duplicate balance error should be suppressed, got %#v", got.errorLogEntries)
+	}
+	if got.status != aiBalanceErrorStatus+" (use /errors)" {
+		t.Fatalf("status = %q, want balance alert retained after duplicate", got.status)
+	}
+}
+
 func TestBusClassificationOpenFileLimitUsesSpecificAssessmentStatus(t *testing.T) {
 	m := Model{
 		nowFn: func() time.Time {
