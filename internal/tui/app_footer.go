@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"lcroom/internal/commands"
 	"lcroom/internal/config"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/uistyle"
@@ -554,8 +556,12 @@ func stageModeLabel(mode service.GitStageMode, selectedUntracked int) string {
 
 func commitPreviewReadyStatus(preview service.CommitPreview) string {
 	prefix := "Commit preview ready."
-	if commitPreviewAIStatusText(preview) != "" {
-		prefix = "Commit preview ready with AI fallback (use /errors)."
+	if aiStatus := commitPreviewAIStatusText(preview); aiStatus != "" {
+		if strings.Contains(aiStatus, "balance insufficient") {
+			prefix = "Commit preview ready with AI balance issue (use /errors)."
+		} else {
+			prefix = "Commit preview ready with AI fallback (use /errors)."
+		}
 	}
 	canPush := preview.CanPush
 	if canPush {
@@ -565,8 +571,12 @@ func commitPreviewReadyStatus(preview service.CommitPreview) string {
 }
 
 func commitPreviewAIStatusText(preview service.CommitPreview) string {
-	if strings.TrimSpace(preview.CommitMessageError) == "" {
+	errText := strings.TrimSpace(preview.CommitMessageError)
+	if errText == "" {
 		return ""
+	}
+	if llm.IsInsufficientBalanceError(errors.New(errText)) {
+		return "AI provider balance insufficient; fallback subject used; /errors has details"
 	}
 	return "AI failed; fallback subject used; /errors has details"
 }

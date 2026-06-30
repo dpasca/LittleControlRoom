@@ -1119,15 +1119,16 @@ func classificationFailureText(classification *model.SessionClassification) stri
 	return label + ": " + classification.LastError
 }
 
-func (m *Model) appendBackgroundErrorLogEntry(status string, err error, projectPath string) {
+func (m *Model) appendBackgroundErrorLogEntry(status string, err error, projectPath string) errorLogAppendResult {
 	if err == nil {
-		return
+		return errorLogAppendResult{Status: errorSummaryText(status)}
 	}
-	m.appendErrorLogEntry(status, err, projectPath)
+	result := m.appendErrorLogEntry(status, err, projectPath)
 	if m.errorLogVisible {
-		return
+		return result
 	}
-	m.status = errorStatusWithHint(status)
+	m.status = errorStatusWithHint(result.Status)
+	return result
 }
 
 func classificationUpdateStatus(payload map[string]string) string {

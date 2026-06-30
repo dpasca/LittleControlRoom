@@ -8,13 +8,18 @@ import (
 	"time"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/llm"
 	"lcroom/internal/model"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-const maxErrorLogEntries = 200
+const (
+	maxErrorLogEntries            = 200
+	aiBalanceErrorStatus          = "AI provider balance insufficient"
+	aiBalanceErrorDuplicateWindow = 10 * time.Minute
+)
 
 type errorLogEntry struct {
 	At          time.Time
@@ -24,6 +29,12 @@ type errorLogEntry struct {
 	Context     []string
 	ProjectPath string
 	ProjectName string
+}
+
+type errorLogAppendResult struct {
+	Appended  bool
+	Escalated bool
+	Status    string
 }
 
 func (m Model) openErrorLog() (tea.Model, tea.Cmd) {
@@ -60,15 +71,20 @@ func (m *Model) reportError(status string, err error, projectPath string) {
 		return
 	}
 
-	m.appendErrorLogEntry(status, err, projectPath)
+	result := m.appendErrorLogEntry(status, err, projectPath)
 	m.err = nil
-	m.status = errorStatusWithHint(status)
+	m.status = errorStatusWithHint(result.Status)
 }
 
-func (m *Model) appendErrorLogEntry(status string, err error, projectPath string) {
+func (m *Model) appendErrorLogEntry(status string, err error, projectPath string) errorLogAppendResult {
+	result := errorLogAppendResult{Status: errorSummaryText(status)}
 	if err == nil {
-		return
+		return result
 	}
+
+	status, escalated := errorLogStatusForError(status, err)
+	result.Status = status
+	result.Escalated = escalated
 
 	projectPath = strings.TrimSpace(projectPath)
 	projectName := ""
@@ -76,13 +92,11 @@ func (m *Model) appendErrorLogEntry(status string, err error, projectPath string
 		projectName = projectNameForPicker(m.pickerProjectSummary(projectPath), projectPath)
 	}
 
-	if m.errorLogVisible && m.errorLogSelected >= 0 {
-		m.errorLogSelected++
-	}
+	now := m.currentTime()
 
 	entry := errorLogEntry{
-		At:          m.currentTime(),
-		Status:      errorSummaryText(status),
+		At:          now,
+		Status:      status,
 		Message:     strings.TrimSpace(err.Error()),
 		RootCause:   errorLogRootCause(err),
 		Context:     errorLogContextLines(err),
@@ -90,13 +104,22 @@ func (m *Model) appendErrorLogEntry(status string, err error, projectPath string
 		ProjectName: strings.TrimSpace(projectName),
 	}
 
+	if escalated && m.recentEscalatedErrorLogDuplicate(entry, now) {
+		return result
+	}
+
+	if m.errorLogVisible && m.errorLogSelected >= 0 {
+		m.errorLogSelected++
+	}
+
 	m.errorLogEntries = append([]errorLogEntry{entry}, m.errorLogEntries...)
+	result.Appended = true
 	if len(m.errorLogEntries) > maxErrorLogEntries {
 		m.errorLogEntries = m.errorLogEntries[:maxErrorLogEntries]
 	}
 	if len(m.errorLogEntries) == 0 {
 		m.errorLogSelected = 0
-		return
+		return result
 	}
 	if m.errorLogSelected < 0 {
 		m.errorLogSelected = 0
@@ -104,6 +127,33 @@ func (m *Model) appendErrorLogEntry(status string, err error, projectPath string
 	if m.errorLogSelected >= len(m.errorLogEntries) {
 		m.errorLogSelected = len(m.errorLogEntries) - 1
 	}
+	return result
+}
+
+func errorLogStatusForError(status string, err error) (string, bool) {
+	if llm.IsInsufficientBalanceError(err) {
+		return aiBalanceErrorStatus, true
+	}
+	return errorSummaryText(status), false
+}
+
+func (m Model) recentEscalatedErrorLogDuplicate(entry errorLogEntry, now time.Time) bool {
+	if entry.Status != aiBalanceErrorStatus {
+		return false
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	for _, existing := range m.errorLogEntries {
+		if existing.Status != aiBalanceErrorStatus {
+			continue
+		}
+		if !existing.At.IsZero() && now.Sub(existing.At) > aiBalanceErrorDuplicateWindow {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func errorStatusWithHint(status string) string {
