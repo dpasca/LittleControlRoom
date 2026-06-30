@@ -76,7 +76,8 @@ type Service struct {
 
 	mu sync.Mutex
 
-	projectStateLocks keyedmutex.Locker
+	projectStateLocks   keyedmutex.Locker
+	worktreeCreateLocks keyedmutex.Locker
 
 	refreshMu    sync.Mutex
 	refreshState map[string]asyncProjectRefreshState

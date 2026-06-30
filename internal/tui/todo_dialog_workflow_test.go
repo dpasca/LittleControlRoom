@@ -1325,6 +1325,84 @@ func TestUpdateTodoCopyDialogHandlesPointerModelReturn(t *testing.T) {
 	}
 }
 
+func TestTodoCopyDialogBlocksDedicatedWorktreeWhileLaunchPending(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{Path: "/tmp/demo"},
+			Todos: []model.TodoItem{{
+				ID:          8,
+				ProjectPath: "/tmp/demo",
+				Text:        "Start another TODO while the first worktree is still creating",
+			}},
+		},
+		todoDialog: &todoDialogState{ProjectPath: "/tmp/demo", ProjectName: "demo"},
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      8,
+			TodoText:    "Start another TODO while the first worktree is still creating",
+			RunMode:     todoCopyModeNewWorktree,
+			Provider:    codexapp.ProviderCodex,
+		},
+		todoPendingLaunch: &todoPendingLaunchState{
+			ID:          21,
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			TodoText:    "Launch this TODO in a new worktree",
+			Provider:    codexapp.ProviderCodex,
+		},
+		width:  100,
+		height: 24,
+	}
+
+	updated, cmd := m.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("second dedicated worktree launch should not queue another command")
+	}
+	if got.todoPendingLaunch == nil || got.todoPendingLaunch.ID != 21 {
+		t.Fatalf("pending launch = %#v, want original pending launch still tracked", got.todoPendingLaunch)
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("copy dialog should stay open after blocked duplicate launch")
+	}
+	wantStatus := "TODO #7 worktree is already being created; wait for it to finish."
+	if got.status != wantStatus {
+		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	}
+}
+
+func TestFooterShowsPendingTodoWorktreeLaunch(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		todoPendingLaunch: &todoPendingLaunchState{
+			ID:          21,
+			ProjectPath: "/tmp/demo",
+			ProjectName: "demo",
+			TodoID:      7,
+			Provider:    codexapp.ProviderCodex,
+		},
+		width:        100,
+		height:       24,
+		spinnerFrame: 1,
+	}
+
+	rendered := ansi.Strip(m.renderFooter(100))
+	if !strings.Contains(rendered, "Creating TODO #7 worktree in demo") {
+		t.Fatalf("footer = %q, want pending TODO worktree launch feedback", rendered)
+	}
+
+	m.todoPendingLaunch.Canceled = true
+	rendered = ansi.Strip(m.renderFooter(100))
+	if strings.Contains(rendered, "Creating TODO #7 worktree") {
+		t.Fatalf("footer = %q, should hide canceled pending TODO worktree launch", rendered)
+	}
+}
+
 func TestTodoCopyDialogSubmittingEscCancelsPendingLaunch(t *testing.T) {
 	t.Parallel()
 

@@ -68,6 +68,16 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, fmt.Errorf("todo %d belongs to %s, not %s", req.TodoID, todo.ProjectPath, projectPath)
 	}
 
+	worktreeRootPath, _ := s.readProjectWorktreeInfo(ctx, projectPath)
+	if strings.TrimSpace(worktreeRootPath) == "" {
+		worktreeRootPath = projectPath
+	}
+	unlock, err := s.worktreeCreateLocks.LockContext(ctx, filepath.Clean(worktreeRootPath))
+	if err != nil {
+		return CreateTodoWorktreeResult{}, fmt.Errorf("wait for existing worktree creation in %s: %w", worktreeRootPath, err)
+	}
+	defer unlock()
+
 	suggestionBranch := ""
 	suggestionSuffix := ""
 	suggestion, err := s.store.GetTodoWorktreeSuggestion(ctx, req.TodoID)
@@ -94,10 +104,6 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, fmt.Errorf("could not determine worktree branch or folder name")
 	}
 
-	worktreeRootPath, _ := s.readProjectWorktreeInfo(ctx, projectPath)
-	if strings.TrimSpace(worktreeRootPath) == "" {
-		worktreeRootPath = projectPath
-	}
 	parentBranch := ""
 	if s.gitRepoStatusReader != nil {
 		if status, statusErr := s.gitRepoStatusReader(ctx, worktreeRootPath); statusErr == nil {

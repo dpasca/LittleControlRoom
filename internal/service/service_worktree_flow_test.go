@@ -348,6 +348,48 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeWaitsForRootCreationLock(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Wait for another worktree creation")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+
+	unlock := svc.worktreeCreateLocks.Lock(filepath.Clean(projectPath))
+	defer unlock()
+
+	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	_, err = svc.CreateTodoWorktree(waitCtx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("CreateTodoWorktree() error = %v, want context deadline while waiting for create lock", err)
+	}
+}
+
 func TestCreateTodoWorktreeAppliesConfiguredPrepProfile(t *testing.T) {
 	t.Parallel()
 

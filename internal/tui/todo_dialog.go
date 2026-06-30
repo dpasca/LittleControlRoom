@@ -113,9 +113,14 @@ func (m *Model) clearTodoLaunchDraft(projectPath string) {
 }
 
 type todoPendingLaunchState struct {
-	ID       int64
-	Cancel   context.CancelFunc
-	Canceled bool
+	ID          int64
+	Cancel      context.CancelFunc
+	Canceled    bool
+	ProjectPath string
+	ProjectName string
+	TodoID      int64
+	TodoText    string
+	Provider    codexapp.Provider
 }
 
 type todoCopyDialogState struct {
@@ -618,7 +623,7 @@ func (m *Model) closeTodoCopyDialog(status string) tea.Cmd {
 	return nil
 }
 
-func (m *Model) beginTodoPendingLaunch() (int64, context.Context) {
+func (m *Model) beginTodoPendingLaunch(projectPath, projectName string, todoID int64, todoText string, provider codexapp.Provider) (int64, context.Context) {
 	m.todoLaunchSeq++
 	parent := m.ctx
 	if parent == nil {
@@ -626,8 +631,13 @@ func (m *Model) beginTodoPendingLaunch() (int64, context.Context) {
 	}
 	launchCtx, cancel := context.WithCancel(parent)
 	m.todoPendingLaunch = &todoPendingLaunchState{
-		ID:     m.todoLaunchSeq,
-		Cancel: cancel,
+		ID:          m.todoLaunchSeq,
+		Cancel:      cancel,
+		ProjectPath: strings.TrimSpace(projectPath),
+		ProjectName: strings.TrimSpace(projectName),
+		TodoID:      todoID,
+		TodoText:    strings.TrimSpace(todoText),
+		Provider:    provider.Normalized(),
 	}
 	if m.todoCopyDialog != nil {
 		m.todoCopyDialog.LaunchID = m.todoLaunchSeq
@@ -1659,6 +1669,10 @@ func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider, openMod
 }
 
 func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
+	if pending := m.activeTodoPendingLaunch(); pending != nil {
+		m.status = pending.todoWorktreeLaunchAlreadyRunningStatus()
+		return m, nil
+	}
 	item, ok := m.selectedTodoItem()
 	if !ok {
 		m.status = "No TODO selected"
@@ -1685,13 +1699,17 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 		m.status = todoAttachmentUnsupportedStatus(provider)
 		return m, nil
 	}
+	projectName := ""
+	if m.todoDialog != nil {
+		projectName = strings.TrimSpace(m.todoDialog.ProjectName)
+	}
 	branchOverride := ""
 	suffixOverride := ""
 	if copyDialog := m.todoCopyDialog; copyDialog != nil {
 		branchOverride = strings.TrimSpace(copyDialog.BranchOverride)
 		suffixOverride = strings.TrimSpace(copyDialog.WorktreeSuffixOverride)
 	}
-	launchID, launchCtx := m.beginTodoPendingLaunch()
+	launchID, launchCtx := m.beginTodoPendingLaunch(projectPath, projectName, item.ID, item.Text, provider)
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.todoWorktreeEditor = nil
@@ -1701,6 +1719,20 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	m.rememberEmbeddedProvider(provider)
 	m.status = todoWorktreePreparingStatus
 	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, item.Attachments, provider, openModelFirst, branchOverride, suffixOverride)
+}
+
+func (m Model) activeTodoPendingLaunch() *todoPendingLaunchState {
+	if m.todoPendingLaunch == nil || m.todoPendingLaunch.Canceled {
+		return nil
+	}
+	return m.todoPendingLaunch
+}
+
+func (p todoPendingLaunchState) todoWorktreeLaunchAlreadyRunningStatus() string {
+	if p.TodoID > 0 {
+		return fmt.Sprintf("TODO #%d worktree is already being created; wait for it to finish.", p.TodoID)
+	}
+	return "A TODO worktree is already being created; wait for it to finish."
 }
 
 func todoWorktreePreparedStatus(preparedPathCount int) string {

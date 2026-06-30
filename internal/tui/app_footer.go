@@ -93,14 +93,15 @@ func (m Model) renderFooter(width int) string {
 	browserSegment := m.renderFooterBrowserAttentionSegment()
 	processSegment := m.renderFooterProcessWarningSegment()
 	runtimeSegment := m.renderFooterRuntimeSegment()
+	todoWorktreeSegment := m.renderFooterTodoWorktreeLaunchSegment()
 	assessmentSegment := ""
 	if !m.errorLogVisible {
 		assessmentSegment = m.renderFooterAssessmentSegment()
 	}
 	filterSegment := m.renderFooterProjectFilterSegment()
-	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
+	supplementSegments := footerSupplementSegments(filterSegment, todoWorktreeSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
 	if m.diffView != nil {
-		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, "")...)
+		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, todoWorktreeSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, "")...)
 		return renderFooterLine(width, diffSegments...)
 	}
 	if m.gitStatusDialog != nil {
@@ -226,6 +227,25 @@ func (m Model) renderFooter(width int) string {
 		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel(), m.worktreeFooterActions(width)),
 	}, supplementSegments...)
 	return renderFooterLine(width, baseSegments...)
+}
+
+func (m Model) renderFooterTodoWorktreeLaunchSegment() string {
+	pending := m.activeTodoPendingLaunch()
+	if pending == nil {
+		return ""
+	}
+	frame := ""
+	if len(spinnerFrames) > 0 {
+		frame = spinnerFrames[m.spinnerFrame%len(spinnerFrames)] + " "
+	}
+	label := "Creating TODO worktree"
+	if pending.TodoID > 0 {
+		label = fmt.Sprintf("Creating TODO #%d worktree", pending.TodoID)
+	}
+	if projectName := strings.TrimSpace(pending.ProjectName); projectName != "" {
+		label += " in " + projectName
+	}
+	return renderFooterStatus(frame + label)
 }
 
 func (m Model) renderCommandPalette(bodyW int) string {
