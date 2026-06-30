@@ -22,6 +22,9 @@ var managedBrowserSessionRevealer = browserctl.RevealManagedPlaywrightSession
 var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
 
 const managedBrowserStateFreshWindow = 30 * time.Second
+const managedBrowserStateHydrationRetryAttempts = 20
+
+var managedBrowserStateHydrationRetryDelay = 250 * time.Millisecond
 
 func openProjectDirInBrowser(path string) error {
 	if strings.TrimSpace(path) == "" {
@@ -115,18 +118,42 @@ func (m Model) cachedManagedBrowserState(sessionKey string) (browserctl.ManagedP
 	return state.Normalize(), true
 }
 
-func (m Model) readManagedBrowserStateCmd(sessionKey string) tea.Cmd {
+func (m Model) readManagedBrowserStateCmd(sessionKey string, retryAttemptsRemaining int) tea.Cmd {
 	sessionKey = strings.TrimSpace(sessionKey)
 	if sessionKey == "" {
 		return nil
 	}
 	dataDir := m.appDataDir()
 	return func() tea.Msg {
-		state, err := managedBrowserStateReader(dataDir, sessionKey)
-		if err == nil && !managedBrowserStateFreshForUI(state, time.Now()) {
-			return managedBrowserStateMsg{sessionKey: sessionKey, err: fmt.Errorf("managed browser state is stale")}
+		return readManagedBrowserStateMsg(dataDir, sessionKey, retryAttemptsRemaining)
+	}
+}
+
+func (m Model) delayedReadManagedBrowserStateCmd(sessionKey string, retryAttemptsRemaining int) tea.Cmd {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return nil
+	}
+	dataDir := m.appDataDir()
+	delay := managedBrowserStateHydrationRetryDelay
+	return func() tea.Msg {
+		if delay > 0 {
+			time.Sleep(delay)
 		}
-		return managedBrowserStateMsg{sessionKey: sessionKey, state: state, err: err}
+		return readManagedBrowserStateMsg(dataDir, sessionKey, retryAttemptsRemaining)
+	}
+}
+
+func readManagedBrowserStateMsg(dataDir, sessionKey string, retryAttemptsRemaining int) managedBrowserStateMsg {
+	state, err := managedBrowserStateReader(dataDir, sessionKey)
+	if err == nil && !managedBrowserStateFreshForUI(state, time.Now()) {
+		err = fmt.Errorf("managed browser state is stale")
+	}
+	return managedBrowserStateMsg{
+		sessionKey:             sessionKey,
+		state:                  state,
+		err:                    err,
+		retryAttemptsRemaining: retryAttemptsRemaining,
 	}
 }
 
