@@ -15,7 +15,9 @@ import (
 	"lcroom/internal/store"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func TestDispatchFilterCommandOpensDialog(t *testing.T) {
@@ -57,6 +59,64 @@ func TestDispatchCategoryCommandOpensDialog(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatalf("opening the category dialog should not need an async command")
+	}
+}
+
+func TestCategoryDialogRendersColoredActionHints(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	m := Model{
+		width:  100,
+		height: 24,
+		categoryDialog: &categoryDialogState{
+			Mode:     categoryDialogModeActions,
+			Selected: 0,
+			Input:    newCategoryNameInput(),
+			Marked:   map[string]bool{},
+		},
+	}
+
+	rendered := m.renderCategoryDialogContent(72, 20)
+	if !strings.Contains(rendered, commitActionKeyStyle.Render("Enter")) {
+		t.Fatalf("category dialog should color primary Enter key: %q", rendered)
+	}
+	if !strings.Contains(rendered, cancelActionKeyStyle.Render("Esc")) {
+		t.Fatalf("category dialog should color cancel Esc key: %q", rendered)
+	}
+	stripped := strings.Join(strings.Fields(ansi.Strip(rendered)), " ")
+	if !strings.Contains(stripped, "Enter choose") || !strings.Contains(stripped, "Esc close") {
+		t.Fatalf("category dialog missing action labels: %q", stripped)
+	}
+
+	m.categoryDialog.Mode = categoryDialogModeMoveItems
+	m.categoryDialog.Input = newCategoryFilterInput()
+	m.categoryDialog.MoveItems = []categoryMoveItem{{
+		Key:      "project:/tmp/demo",
+		Label:    "demo",
+		Resource: model.CategoryResourceRef{Kind: model.CategoryResourceProject, ID: "/tmp/demo"},
+	}}
+	m.categoryDialog.Marked = map[string]bool{"project:/tmp/demo": true}
+	rendered = m.renderCategoryDialogContent(72, 20)
+	if !strings.Contains(rendered, pushActionKeyStyle.Render("Space")) {
+		t.Fatalf("category move dialog should color Space key: %q", rendered)
+	}
+	if stripped = strings.Join(strings.Fields(ansi.Strip(rendered)), " "); !strings.Contains(stripped, "Enter destination") {
+		t.Fatalf("category move dialog missing destination hint: %q", stripped)
+	}
+
+	footer := m.categoryDialogFooterLabel()
+	if !strings.Contains(footer, footerPrimaryKeyStyle.Render("Enter")) {
+		t.Fatalf("category footer should color primary Enter key: %q", footer)
+	}
+	if !strings.Contains(footer, footerExitKeyStyle.Render("Esc")) {
+		t.Fatalf("category footer should color Esc key: %q", footer)
 	}
 }
 

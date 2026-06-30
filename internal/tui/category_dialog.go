@@ -671,9 +671,15 @@ func (m Model) renderCategoryDialogContent(width, maxHeight int) string {
 	case categoryDialogModeMoveDestination:
 		return m.renderCategoryMoveDestinationContent(width, maxHeight)
 	case categoryDialogModePrivacy:
-		return m.renderCategoryPickerContent("Category Privacy", "Enter toggle  Esc back", width, maxHeight, true)
+		return m.renderCategoryPickerContent("Category Privacy", renderCategoryDialogActionHints(
+			renderCategoryDialogPrimaryAction("toggle"),
+			renderCategoryDialogCancelAction("back"),
+		), width, maxHeight, true)
 	case categoryDialogModeRemove:
-		return m.renderCategoryPickerContent("Remove Category", "Enter remove  Esc back", width, maxHeight, false)
+		return m.renderCategoryPickerContent("Remove Category", renderCategoryDialogActionHints(
+			renderCategoryDialogPrimaryAction("remove"),
+			renderCategoryDialogCancelAction("back"),
+		), width, maxHeight, false)
 	case categoryDialogModeCreate:
 		return m.renderCategoryCreateContent(width)
 	default:
@@ -684,7 +690,10 @@ func (m Model) renderCategoryDialogContent(width, maxHeight int) string {
 func (m Model) renderCategoryActionContent(width int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Categories"),
-		commandPaletteHintStyle.Render("Enter choose  Esc close"),
+		renderCategoryDialogActionHints(
+			renderCategoryDialogPrimaryAction("choose"),
+			renderCategoryDialogCancelAction("close"),
+		),
 	}
 	if p, ok := m.selectedProject(); ok {
 		lines = append(lines, commandPaletteHintStyle.Render("Selected project: "+truncateText(projectTitle(p.Path, p.Name), width-18)))
@@ -712,7 +721,12 @@ func (m Model) renderCategoryMoveItemsContent(width, maxHeight int) string {
 	marked := m.categoryMarkedMoveCount()
 	lines := []string{
 		commandPaletteTitleStyle.Render("Move To Category"),
-		commandPaletteHintStyle.Render(fmt.Sprintf("Space mark  Enter destination  Esc back  %d marked", marked)),
+		renderCategoryDialogActionHints(
+			renderCategoryDialogSecondaryAction("mark"),
+			renderCategoryDialogPrimaryAction("destination"),
+			renderCategoryDialogCancelAction("back"),
+			commandPaletteHintStyle.Render(fmt.Sprintf("%d marked", marked)),
+		),
 		filter.View(),
 		"",
 	}
@@ -742,7 +756,10 @@ func (m Model) renderCategoryMoveItemsContent(width, maxHeight int) string {
 func (m Model) renderCategoryMoveDestinationContent(width, maxHeight int) string {
 	lines := []string{
 		commandPaletteTitleStyle.Render("Destination"),
-		commandPaletteHintStyle.Render(fmt.Sprintf("Enter move %d marked  Esc back", m.categoryMarkedMoveCount())),
+		renderCategoryDialogActionHints(
+			renderCategoryDialogPrimaryAction(fmt.Sprintf("move %d marked", m.categoryMarkedMoveCount())),
+			renderCategoryDialogCancelAction("back"),
+		),
 		"",
 	}
 	total := 1 + len(m.projectCategories)
@@ -816,11 +833,70 @@ func (m Model) renderCategoryCreateContent(width int) string {
 	input.Width = max(12, width-2)
 	lines := []string{
 		commandPaletteTitleStyle.Render("Create Category"),
-		commandPaletteHintStyle.Render("Enter create  Esc back"),
+		renderCategoryDialogActionHints(
+			renderCategoryDialogPrimaryAction("create"),
+			renderCategoryDialogCancelAction("back"),
+		),
 		"",
 		input.View(),
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderCategoryDialogActionHints(actions ...string) string {
+	filtered := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if strings.TrimSpace(action) == "" {
+			continue
+		}
+		filtered = append(filtered, action)
+	}
+	return strings.Join(filtered, "   ")
+}
+
+func renderCategoryDialogPrimaryAction(label string) string {
+	return renderDialogAction("Enter", label, commitActionKeyStyle, commitActionTextStyle)
+}
+
+func renderCategoryDialogSecondaryAction(label string) string {
+	return renderDialogAction("Space", label, pushActionKeyStyle, pushActionTextStyle)
+}
+
+func renderCategoryDialogCancelAction(label string) string {
+	return renderDialogAction("Esc", label, cancelActionKeyStyle, cancelActionTextStyle)
+}
+
+func (m Model) categoryDialogFooterLabel() string {
+	if m.categoryDialog == nil {
+		return renderFooterStatus("Categories")
+	}
+	actions := []footerAction{
+		footerNavAction("↑↓", "choose"),
+		footerPrimaryAction("Enter", "select"),
+		footerExitAction("Esc", "close"),
+	}
+	switch m.categoryDialog.Mode {
+	case categoryDialogModeCreate:
+		actions = []footerAction{
+			footerNavAction("type", "name"),
+			footerPrimaryAction("Enter", "create"),
+			footerExitAction("Esc", "back"),
+		}
+	case categoryDialogModeMoveItems:
+		actions = []footerAction{
+			footerNavAction("type", "filter"),
+			footerHideAction("Space", "mark"),
+			footerPrimaryAction("Enter", "destination"),
+			footerExitAction("Esc", "back"),
+		}
+	case categoryDialogModeMoveDestination, categoryDialogModePrivacy, categoryDialogModeRemove:
+		actions = []footerAction{
+			footerNavAction("↑↓", "choose"),
+			footerPrimaryAction("Enter", "apply"),
+			footerExitAction("Esc", "back"),
+		}
+	}
+	return joinFooterSegments(renderFooterStatus("Categories:"), renderFooterActionList(actions...))
 }
 
 func clampedCategorySelection(selected, total int) int {
