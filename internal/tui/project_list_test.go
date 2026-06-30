@@ -469,6 +469,101 @@ func TestBrowserAttentionHighlightsProjectListRow(t *testing.T) {
 	}
 }
 
+func TestProjectTabsMarkActionableCategoryAttention(t *testing.T) {
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Path:                             "/tmp/main-done",
+				Name:                             "main-done",
+				PresentOnDisk:                    true,
+				LatestSessionClassification:      model.ClassificationCompleted,
+				LatestSessionClassificationType:  model.SessionCategoryCompleted,
+				LatestSessionSummary:             "Done but unread.",
+				LatestSessionFormat:              "modern",
+				LatestSessionLastEventAt:         time.Date(2026, 4, 3, 10, 0, 0, 0, time.UTC),
+				LatestSessionDetectedProjectPath: "/tmp/main-done",
+				LatestTurnStateKnown:             true,
+				LatestTurnCompleted:              true,
+			},
+			{
+				Path:                             "/tmp/client-followup",
+				Name:                             "client-followup",
+				CategoryID:                       "cat_client",
+				CategoryName:                     "Client",
+				PresentOnDisk:                    true,
+				LatestSessionClassification:      model.ClassificationCompleted,
+				LatestSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
+				LatestSessionSummary:             "A concrete follow-up remains.",
+				LatestSessionFormat:              "modern",
+				LatestSessionDetectedProjectPath: "/tmp/client-followup",
+			},
+		},
+		projectCategories: []model.ProjectCategory{
+			{ID: "cat_client", Name: "Client"},
+			{ID: "cat_ops", Name: "Ops"},
+		},
+		openAgentTasks: []model.AgentTask{{
+			ID:         "task_waiting",
+			Title:      "Needs review",
+			Status:     model.AgentTaskStatusWaiting,
+			CategoryID: "cat_ops",
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderProjectArchiveTabs(120))
+	for _, want := range []string{"[Main 1]", " Client* 1 ", " Ops* 1 ", " Archived 0 "} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderProjectArchiveTabs() missing %q in %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Main*") {
+		t.Fatalf("completed unread project should not mark Main tab: %q", rendered)
+	}
+}
+
+func TestProjectTabsMarkLiveBrowserAttention(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/browser-demo",
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			BrowserActivity: browserctl.SessionActivity{
+				Policy:     settingsAutomaticPlaywrightPolicy,
+				State:      browserctl.SessionActivityStateWaitingForUser,
+				ServerName: "playwright",
+				ToolName:   "browser_navigate",
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/browser-demo",
+		Provider:    codexapp.ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          "/tmp/browser-demo",
+			Name:          "browser-demo",
+			CategoryID:    "cat_client",
+			CategoryName:  "Client",
+			PresentOnDisk: true,
+		}},
+		projectCategories: []model.ProjectCategory{{ID: "cat_client", Name: "Client"}},
+		codexManager:      manager,
+	}
+
+	rendered := ansi.Strip(m.renderProjectArchiveTabs(120))
+	if !strings.Contains(rendered, " Client* 1 ") {
+		t.Fatalf("live browser wait should mark category tab, got %q", rendered)
+	}
+}
+
 func TestProjectDisplayStatusClearsMovedWhenLatestSessionIsInNewPath(t *testing.T) {
 	now := time.Now().UTC()
 	project := model.ProjectSummary{

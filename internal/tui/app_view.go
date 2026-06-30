@@ -718,10 +718,16 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 	}
 	for _, tab := range m.projectTabDescriptors() {
 		label := tab.label
+		marker := ""
+		if !(m.privacyMode && tab.private) && m.projectTabHasActionableAttention(tab) {
+			marker = "*"
+		}
 		if m.privacyMode && tab.private {
 			label = "********"
 		} else if width <= 0 || width >= 34 {
-			label = fmt.Sprintf("%s %d", label, m.projectTabCount(tab))
+			label = fmt.Sprintf("%s%s %d", label, marker, m.projectTabCount(tab))
+		} else {
+			label += marker
 		}
 		selected := tab.mode == currentMode
 		if tab.mode == projectArchiveCategory {
@@ -764,6 +770,65 @@ func (m Model) projectTabCount(tab projectTabDescriptor) int {
 		}
 	}
 	return count
+}
+
+func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
+	switch tab.mode {
+	case projectArchiveArchived:
+		for _, project := range m.archivedProjects {
+			if m.projectSummaryHasTabAttention(project) {
+				return true
+			}
+		}
+	case projectArchiveMain, projectArchiveCategory:
+		categoryID := strings.TrimSpace(tab.categoryID)
+		for _, project := range m.allProjects {
+			if strings.TrimSpace(project.CategoryID) != categoryID {
+				continue
+			}
+			if m.projectSummaryHasTabAttention(project) {
+				return true
+			}
+		}
+		for _, task := range m.openAgentTasks {
+			if !agentTaskIsOpen(task) || strings.TrimSpace(task.CategoryID) != categoryID {
+				continue
+			}
+			if agentTaskHasTabAttention(task) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m Model) projectSummaryHasTabAttention(project model.ProjectSummary) bool {
+	if _, _, ok := m.projectPendingEmbeddedApproval(project.Path); ok {
+		return true
+	}
+	if _, ok := m.projectPendingBrowserAttention(project.Path); ok {
+		return true
+	}
+	if _, _, ok := m.projectPendingEmbeddedQuestion(project.Path); ok {
+		return true
+	}
+	_, category, ok := visibleAssessmentStatusLabelAt(project, m.currentTime(), m.assessmentStallThreshold())
+	return ok && sessionCategoryHasTabAttention(category)
+}
+
+func agentTaskHasTabAttention(task model.AgentTask) bool {
+	return sessionCategoryHasTabAttention(agentTaskClassificationType(task))
+}
+
+func sessionCategoryHasTabAttention(category model.SessionCategory) bool {
+	switch category {
+	case model.SessionCategoryBlocked,
+		model.SessionCategoryWaitingForUser,
+		model.SessionCategoryNeedsFollowUp:
+		return true
+	default:
+		return false
+	}
 }
 
 func renderProjectArchiveTab(label string, selected bool) string {
