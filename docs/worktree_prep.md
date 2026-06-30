@@ -77,3 +77,7 @@ When LCR removes a linked worktree, it also prunes stale nested submodule worktr
 LCR applies the requested profile when one is supplied by the worktree creation request. Otherwise it applies `default_profile` from `.lcroom/worktrees.toml`. If neither is present, it applies `recursive-submodules`.
 
 This gives LCR a generic hook for a later model-based chooser: the model can select among declared profile names, and the same deterministic preparer applies the selected profile.
+
+## Future Work
+
+See [`worktree_submodule_worktrees_plan.md`](worktree_submodule_worktrees_plan.md) for the handoff plan to make large submodule-heavy repos faster by reusing initialized root submodules as nested Git worktrees in new task worktrees.
