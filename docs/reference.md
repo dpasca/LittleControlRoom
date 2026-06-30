@@ -49,6 +49,7 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `openrouter_api_key`
 - `deepseek_api_key`
 - `moonshot_api_key`
+- `project_reasoning_effort`
 - `include_paths`
 - `exclude_paths`
 - `exclude_project_patterns`

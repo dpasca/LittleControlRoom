@@ -534,6 +534,49 @@ func TestOpenAICompatibleProviderModelProfileMapsXiaomiToAPIKeyHeader(t *testing
 	if opts.AuthHeader != OpenAICompatibleAuthHeaderAPIKey {
 		t.Fatalf("Xiaomi auth header = %q, want %q", opts.AuthHeader, OpenAICompatibleAuthHeaderAPIKey)
 	}
+	if opts.ReasoningStyle != "xiaomi" {
+		t.Fatalf("Xiaomi reasoning style = %q, want xiaomi", opts.ReasoningStyle)
+	}
+}
+
+func TestOpenAICompatibleChatCompletionsSendsXiaomiReasoning(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"model":"mimo-v2.5-pro",
+			"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"}}]
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions("test-key", server.URL, time.Second, nil, OpenAICompatibleChatResponseFormatJSONSchema, OpenAICompatibleAuthHeaderAPIKey, "xiaomi")
+	_, err := client.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		Model:           "mimo-v2.5-pro",
+		SystemText:      "system",
+		UserText:        "user",
+		SchemaName:      "xiaomi_reasoning",
+		Schema:          map[string]any{"type": "object"},
+		ReasoningEffort: "high",
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	thinking, ok := gotBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "enabled" || thinking["reasoning_effort"] != "high" {
+		t.Fatalf("thinking = %#v, want enabled high", gotBody["thinking"])
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("xiaomi request should not use OpenAI reasoning field: %#v", gotBody["reasoning"])
+	}
 }
 
 func TestOpenAICompatibleResponsesRunnerUsesConfiguredAPIKeyHeader(t *testing.T) {

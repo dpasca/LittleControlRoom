@@ -20,12 +20,13 @@ import (
 )
 
 type OpenAIClient struct {
-	apiKey     string
-	model      string
-	endpoint   string
-	httpClient *http.Client
-	responses  llm.JSONSchemaRunner
-	localCLI   bool
+	apiKey          string
+	model           string
+	endpoint        string
+	httpClient      *http.Client
+	responses       llm.JSONSchemaRunner
+	reasoningEffort string
+	localCLI        bool
 }
 
 const (
@@ -171,6 +172,14 @@ func NewClaudeClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTr
 	}
 }
 
+func (c *OpenAIClient) WithReasoningEffort(reasoningEffort string) *OpenAIClient {
+	if c == nil {
+		return nil
+	}
+	c.reasoningEffort = strings.TrimSpace(reasoningEffort)
+	return c
+}
+
 func configuredClassifierModel(defaultModel string) string {
 	model := strings.TrimSpace(os.Getenv(brand.SessionClassifierModelEnvVar))
 	if model != "" {
@@ -244,7 +253,7 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 		UserText:        "Classify this latest coding-session snapshot:\n\n" + string(snapshotJSON),
 		SchemaName:      "session_state_classification",
 		Schema:          sessionClassificationSchema(),
-		ReasoningEffort: attempt.ReasoningEffort,
+		ReasoningEffort: firstNonEmptyString(c.reasoningEffort, attempt.ReasoningEffort),
 	})
 	if err != nil {
 		var httpErr *llm.HTTPStatusError
@@ -528,7 +537,7 @@ func (c *OpenAIClient) repairClassifierOutput(ctx context.Context, snapshotJSON 
 		UserText:        buildClassifierRepairPrompt(snapshotJSON, outputText, previousErr),
 		SchemaName:      "session_state_classification",
 		Schema:          sessionClassificationSchema(),
-		ReasoningEffort: classifierRepairReasoningEffort,
+		ReasoningEffort: firstNonEmptyString(c.reasoningEffort, classifierRepairReasoningEffort),
 	})
 	if err != nil {
 		return Result{}, llm.JSONSchemaResponse{}, err

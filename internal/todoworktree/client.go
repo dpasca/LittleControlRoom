@@ -49,11 +49,12 @@ type Suggester interface {
 }
 
 type OpenAIClient struct {
-	apiKey     string
-	model      string
-	endpoint   string
-	httpClient *http.Client
-	responses  llm.JSONSchemaRunner
+	apiKey          string
+	model           string
+	endpoint        string
+	httpClient      *http.Client
+	responses       llm.JSONSchemaRunner
+	reasoningEffort string
 }
 
 func NewOpenAIClient(apiKey string) *OpenAIClient {
@@ -102,6 +103,14 @@ func NewClientWithRunner(preferredModel string, runner llm.JSONSchemaRunner) *Op
 		model:     model,
 		responses: runner,
 	}
+}
+
+func (c *OpenAIClient) WithReasoningEffort(reasoningEffort string) *OpenAIClient {
+	if c == nil {
+		return nil
+	}
+	c.reasoningEffort = strings.TrimSpace(reasoningEffort)
+	return c
 }
 
 func NewCodexClientWithUsageTrackerInDataDir(dataDir string, usage *llm.UsageTracker) *OpenAIClient {
@@ -178,7 +187,7 @@ func (c *OpenAIClient) Suggest(ctx context.Context, req Request) (Result, error)
 		UserText:        "Suggest a branch and worktree naming pair for this TODO:\n\n" + string(payload),
 		SchemaName:      "todo_worktree_suggestion",
 		Schema:          suggestionSchema(),
-		ReasoningEffort: suggestionPrimaryReasoning,
+		ReasoningEffort: firstNonEmptyString(c.reasoningEffort, suggestionPrimaryReasoning),
 	})
 	if err != nil {
 		return Result{}, err
@@ -212,6 +221,15 @@ func compactSiblingTodos(items []string) []string {
 		}
 	}
 	return out
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (c *OpenAIClient) responsesClient() llm.JSONSchemaRunner {

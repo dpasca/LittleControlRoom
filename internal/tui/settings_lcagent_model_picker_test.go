@@ -651,8 +651,8 @@ func TestSettingsLCAgentModelValueLabelIncludesReasoning(t *testing.T) {
 		t.Fatalf("utility label = %q, want same-as-main reasoning", utilityLabel)
 	}
 	projectLabel := settingsLCAgentModelValueLabel(settings, settingsFieldOpenRouterModel)
-	if !strings.Contains(projectLabel, "OpenRouter / deepseek/deepseek-v4-pro") || !strings.Contains(projectLabel, "reasoning: Provider Default") {
-		t.Fatalf("project label = %q, want model and provider-default reasoning", projectLabel)
+	if !strings.Contains(projectLabel, "OpenRouter / deepseek/deepseek-v4-pro") || !strings.Contains(projectLabel, "reasoning: LCR Default") {
+		t.Fatalf("project label = %q, want model and LCR-default reasoning", projectLabel)
 	}
 	bossLabel := settingsLCAgentModelValueLabel(settings, settingsFieldBossChatModel)
 	if !strings.Contains(bossLabel, "OpenRouter / openai/gpt-5.5") || !strings.Contains(bossLabel, "reasoning: Provider Default") {
@@ -715,6 +715,60 @@ func TestSettingsProjectModelPickerSelectionSwitchesBackendAndModelField(t *test
 	}
 	if value := got.settingsFieldValue(settingsFieldMoonshotAPIKey); value != "mk-project" {
 		t.Fatalf("Moonshot API key field = %q, want mk-project", value)
+	}
+}
+
+func TestSettingsProjectModelPickerSelectionStoresReasoning(t *testing.T) {
+	option := codexapp.ModelOption{
+		Model:         "mimo-v2.5-pro",
+		ModelProvider: "xiaomi",
+		SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+			{ReasoningEffort: "low", Description: "Light"},
+			{ReasoningEffort: "high", Description: "Deep"},
+		},
+	}
+	settings := config.EditableSettings{AIBackend: config.AIBackendXiaomi}
+	m := Model{
+		settingsFields: newSettingsFields(settings),
+		settingsLCAgentModelPicker: &settingsLCAgentModelPickerState{
+			FieldIndex:       settingsFieldXiaomiModel,
+			Step:             settingsLCAgentModelPickerStepModel,
+			Provider:         "xiaomi",
+			Models:           []codexapp.ModelOption{option},
+			FilteredModels:   []codexapp.ModelOption{option},
+			Rows:             buildSettingsLCAgentPickerRows([]codexapp.ModelOption{option}, "xiaomi"),
+			FilterInput:      newSettingsLCAgentModelPickerFilterInput(),
+			Selected:         2,
+			CurrentReasoning: "",
+		},
+	}
+
+	updated, _ := m.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	state := got.settingsLCAgentModelPicker
+	if state == nil || state.Step != settingsLCAgentModelPickerStepReasoning {
+		t.Fatalf("picker state after model enter = %#v, want reasoning step", state)
+	}
+	options := settingsLCAgentModelPickerReasoningOptions(state)
+	if len(options) != 3 || options[0].Label != "LCR Default" || options[1].Value != "low" || options[2].Value != "high" {
+		t.Fatalf("project reasoning options = %#v, want LCR default, low, high", options)
+	}
+
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyDown})
+	got = updated.(Model)
+	updated, _ = got.updateSettingsLCAgentModelPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+
+	if value := got.settingsFieldValue(settingsFieldXiaomiModel); value != "mimo-v2.5-pro" {
+		t.Fatalf("Xiaomi project model = %q, want mimo-v2.5-pro", value)
+	}
+	if value := got.settingsFieldValue(settingsFieldProjectReasoning); value != "high" {
+		t.Fatalf("project reasoning = %q, want high", value)
+	}
+	if !strings.Contains(got.status, "with high reasoning") {
+		t.Fatalf("status = %q, want reasoning summary", got.status)
 	}
 }
 

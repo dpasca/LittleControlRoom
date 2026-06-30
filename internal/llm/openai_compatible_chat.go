@@ -23,6 +23,7 @@ type OpenAICompatibleChatCompletionsClient struct {
 	usage              *UsageTracker
 	responseFormatType OpenAICompatibleChatResponseFormat
 	authHeader         OpenAICompatibleAuthHeader
+	reasoningStyle     string
 }
 
 type OpenAICompatibleStructuredOutputRunner struct {
@@ -58,7 +59,7 @@ func NewOpenAICompatibleChatCompletionsClientWithBaseURLAndResponseFormat(apiKey
 	return NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, responseFormat, OpenAICompatibleAuthHeaderBearer)
 }
 
-func NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker, responseFormat OpenAICompatibleChatResponseFormat, authHeader OpenAICompatibleAuthHeader) *OpenAICompatibleChatCompletionsClient {
+func NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL string, timeout time.Duration, usage *UsageTracker, responseFormat OpenAICompatibleChatResponseFormat, authHeader OpenAICompatibleAuthHeader, reasoningStyle ...string) *OpenAICompatibleChatCompletionsClient {
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
@@ -71,6 +72,9 @@ func NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseU
 	)
 	if client != nil {
 		client.responseFormatType = normalizeOpenAICompatibleChatResponseFormat(responseFormat)
+		if len(reasoningStyle) > 0 {
+			client.reasoningStyle = strings.ToLower(strings.TrimSpace(reasoningStyle[0]))
+		}
 	}
 	return client
 }
@@ -132,6 +136,7 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 			},
 		},
 	}
+	addOpenAICompatibleChatReasoning(reqBody, c.reasoningStyle, req.ReasoningEffort)
 	if responseFormatType == OpenAICompatibleChatResponseFormatJSONObject {
 		reqBody["response_format"] = map[string]any{
 			"type": "json_object",
@@ -368,6 +373,25 @@ func (r *OpenAICompatibleStructuredOutputRunner) RunJSONSchema(ctx context.Conte
 		return r.jsonChat.RunJSONSchema(ctx, req)
 	}
 	return JSONSchemaResponse{}, errors.New("openai-compatible structured output runner not configured")
+}
+
+func addOpenAICompatibleChatReasoning(body map[string]any, style, effort string) {
+	if body == nil {
+		return
+	}
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return
+	}
+	switch strings.ToLower(strings.TrimSpace(style)) {
+	case "openai", "openrouter":
+		body["reasoning"] = map[string]any{"effort": effort}
+	case "deepseek":
+		body["thinking"] = map[string]any{"type": "enabled"}
+		body["reasoning_effort"] = effort
+	case "xiaomi":
+		body["thinking"] = map[string]any{"type": "enabled", "reasoning_effort": effort}
+	}
 }
 
 func isMissingEndpointHTTPStatus(err error) bool {

@@ -100,6 +100,7 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"xiaomi_base_url = \"https://token-plan-sgp.xiaomimimo.com/v1\"\n" +
 		"xiaomi_api_key = \"xm-live-example\"\n" +
 		"xiaomi_model = \"mimo-v2.5-pro\"\n" +
+		"project_reasoning_effort = \"high\"\n" +
 		"include_paths = [\"/tmp/a\", \"/tmp/b\"]\n" +
 		"exclude_paths = [\"/tmp/skip\"]\n" +
 		"exclude_project_patterns = [\"quickgame_*\", \"secret-demo\"]\n" +
@@ -165,6 +166,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if got, want := cfg.XiaomiModel, "mimo-v2.5-pro"; got != want {
 		t.Fatalf("xiaomi model = %q, want %q", got, want)
+	}
+	if got, want := cfg.ProjectReasoningEffort, "high"; got != want {
+		t.Fatalf("project reasoning effort = %q, want %q", got, want)
 	}
 	if got, want := cfg.BossChatBackend, AIBackendOpenAIAPI; got != want {
 		t.Fatalf("boss chat backend = %q, want %q", got, want)
@@ -899,6 +903,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		XiaomiBaseURL:             "https://token-plan-sgp.xiaomimimo.com/v1",
 		XiaomiAPIKey:              "xm-test-example",
 		XiaomiModel:               "mimo-v2.5-pro",
+		ProjectReasoningEffort:    "high",
 		MLXBaseURL:                "http://127.0.0.1:8080/v1",
 		MLXAPIKey:                 "mlx",
 		MLXModel:                  "mlx-community/Qwen3.5-9B-MLX-4bit",
@@ -981,6 +986,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		"xiaomi_base_url = \"https://token-plan-sgp.xiaomimimo.com/v1\"",
 		"xiaomi_api_key = \"xm-test-example\"",
 		"xiaomi_model = \"mimo-v2.5-pro\"",
+		"project_reasoning_effort = \"high\"",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("saved config should include %q: %q", want, text)

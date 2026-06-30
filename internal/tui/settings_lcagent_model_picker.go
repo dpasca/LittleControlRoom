@@ -822,6 +822,7 @@ func (m Model) applySettingsLCAgentModelPickerSelection() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applySettingsProjectCloudModelPickerSelection(provider, model string) (tea.Model, tea.Cmd) {
+	state := m.settingsLCAgentModelPicker
 	backend := settingsCloudModelBackendForProvider(provider)
 	if backend == config.AIBackendUnset || backend == config.AIBackendOpenAIAPI {
 		m.closeSettingsLCAgentModelPicker("Project reports do not have a direct model field for " + settingsLCAgentModelPickerProviderLabel(provider) + ".")
@@ -834,6 +835,10 @@ func (m Model) applySettingsProjectCloudModelPickerSelection(provider, model str
 		m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(model))
 		m.settingsFields[fieldIndex].input.CursorEnd()
 	}
+	if state != nil && len(m.settingsFields) > settingsFieldProjectReasoning {
+		m.settingsFields[settingsFieldProjectReasoning].input.SetValue(strings.TrimSpace(state.PendingReasoning))
+		m.settingsFields[settingsFieldProjectReasoning].input.CursorEnd()
+	}
 	hint := "Press ctrl+s to save."
 	if m.setupMode {
 		hint = "Press ctrl+s to continue."
@@ -842,6 +847,10 @@ func (m Model) applySettingsProjectCloudModelPickerSelection(provider, model str
 	providerLabel := backend.Label()
 	if strings.TrimSpace(model) == "" {
 		m.closeSettingsLCAgentModelPicker(label + " reset to " + providerLabel + " default. " + hint)
+		return m, nil
+	}
+	if state != nil && strings.TrimSpace(state.PendingReasoning) != "" {
+		m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + " / " + strings.TrimSpace(model) + " with " + strings.TrimSpace(state.PendingReasoning) + " reasoning. " + hint)
 		return m, nil
 	}
 	m.closeSettingsLCAgentModelPicker(label + " set to " + providerLabel + " / " + strings.TrimSpace(model) + ". " + hint)
@@ -1311,6 +1320,9 @@ func settingsLCAgentModelPickerRawReasoning(settings config.EditableSettings, fi
 	if fieldIndex == settingsFieldLCAgentModel {
 		return strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	}
+	if settingsFieldUsesProjectCloudModelPicker(fieldIndex) {
+		return strings.TrimSpace(settings.ProjectReasoningEffort)
+	}
 	return ""
 }
 
@@ -1352,7 +1364,10 @@ func settingsLCAgentModelPickerReasoningOptions(state *settingsLCAgentModelPicke
 	if state == nil {
 		return options
 	}
-	if state.FieldIndex != settingsFieldLCAgentModel {
+	if settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
+		options[0] = settingsProjectReasoningDefaultChoiceOption()
+	}
+	if state.FieldIndex != settingsFieldLCAgentModel && !settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
 		options[0].Summary = "Use provider default reasoning."
 		if settingsFieldUsesLCAgentModelPicker(state.FieldIndex) {
 			options[0].Description = "This role currently follows provider defaults; role-specific reasoning effort can be wired here when the LCAgent runtime supports it."
@@ -1400,10 +1415,18 @@ func settingsLCAgentModelPickerDefaultOption(models []codexapp.ModelOption) code
 func settingsLCAgentModelPickerReasoningSelection(options []settingsChoiceOption, state *settingsLCAgentModelPickerState) int {
 	desired := ""
 	if state != nil {
-		if state.FieldIndex != settingsFieldLCAgentModel {
+		if state.FieldIndex != settingsFieldLCAgentModel && !settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
 			return 0
 		}
 		desired = strings.TrimSpace(state.CurrentReasoning)
+		if settingsFieldUsesProjectCloudModelPicker(state.FieldIndex) {
+			for i, option := range options {
+				if strings.EqualFold(strings.TrimSpace(option.Value), desired) {
+					return i
+				}
+			}
+			return 0
+		}
 		if desired == "" {
 			if state.PendingModelAuto || strings.TrimSpace(state.PendingModelOption.Model) == "" {
 				desired = strings.TrimSpace(settingsLCAgentModelPickerDefaultOption(state.Models).DefaultReasoningEffort)
@@ -1503,6 +1526,12 @@ func settingsModelPickerAppendReasoning(label, reasoning string) string {
 }
 
 func settingsModelPickerReasoningDisplay(settings config.EditableSettings, fieldIndex int, provider string) string {
+	if settingsFieldUsesProjectCloudModelPicker(fieldIndex) {
+		if effort := strings.TrimSpace(settings.ProjectReasoningEffort); effort != "" {
+			return effort
+		}
+		return "LCR Default"
+	}
 	if fieldIndex == settingsFieldLCAgentModel || strings.EqualFold(strings.TrimSpace(provider), "main") {
 		if effort := strings.TrimSpace(settings.EmbeddedLCAgentReasoning); effort != "" {
 			return effort

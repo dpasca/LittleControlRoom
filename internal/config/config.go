@@ -33,6 +33,7 @@ type AppConfig struct {
 	XiaomiBaseURL             string
 	XiaomiAPIKey              string
 	XiaomiModel               string
+	ProjectReasoningEffort    string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -190,6 +191,7 @@ type fileConfig struct {
 	XiaomiBaseURL             *string   `toml:"xiaomi_base_url"`
 	XiaomiAPIKey              *string   `toml:"xiaomi_api_key"`
 	XiaomiModel               *string   `toml:"xiaomi_model"`
+	ProjectReasoningEffort    *string   `toml:"project_reasoning_effort"`
 	MLXBaseURL                *string   `toml:"mlx_base_url"`
 	MLXAPIKey                 *string   `toml:"mlx_api_key"`
 	MLXModel                  *string   `toml:"mlx_model"`
@@ -583,6 +585,7 @@ func applyConfigFile(cfg *AppConfig) error {
 	applyOptionalTrimmedString(&cfg.XiaomiBaseURL, fc.XiaomiBaseURL)
 	applyOptionalTrimmedString(&cfg.XiaomiAPIKey, fc.XiaomiAPIKey)
 	applyOptionalTrimmedString(&cfg.XiaomiModel, fc.XiaomiModel)
+	applyOptionalTrimmedString(&cfg.ProjectReasoningEffort, fc.ProjectReasoningEffort)
 	applyOptionalTrimmedString(&cfg.MLXBaseURL, fc.MLXBaseURL)
 	applyOptionalTrimmedString(&cfg.MLXAPIKey, fc.MLXAPIKey)
 	applyOptionalTrimmedString(&cfg.MLXModel, fc.MLXModel)

@@ -69,11 +69,12 @@ type CommitMessageSuggester interface {
 }
 
 type OpenAICommitMessageClient struct {
-	apiKey     string
-	model      string
-	endpoint   string
-	httpClient *http.Client
-	responses  llm.JSONSchemaRunner
+	apiKey          string
+	model           string
+	endpoint        string
+	httpClient      *http.Client
+	responses       llm.JSONSchemaRunner
+	reasoningEffort string
 }
 
 const errCommitAssistantNotConfigured = "commit assistant not configured for selected AI backend"
@@ -130,6 +131,14 @@ func NewOpenAICommitMessageClientWithRunner(preferredModel string, runner llm.JS
 		model:     model,
 		responses: runner,
 	}
+}
+
+func (c *OpenAICommitMessageClient) WithReasoningEffort(reasoningEffort string) *OpenAICommitMessageClient {
+	if c == nil {
+		return nil
+	}
+	c.reasoningEffort = strings.TrimSpace(reasoningEffort)
+	return c
 }
 
 func NewCodexCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
@@ -260,7 +269,7 @@ func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, sys
 			UserText:        userText,
 			SchemaName:      schemaName,
 			Schema:          schema,
-			ReasoningEffort: attempt.ReasoningEffort,
+			ReasoningEffort: firstNonEmptyString(c.reasoningEffort, attempt.ReasoningEffort),
 		})
 		if err != nil {
 			if retryable := retryableCommitAssistantErrorForRun(ctx, err); retryable != nil && attemptIndex < len(commitAssistantAttemptPlan)-1 {
