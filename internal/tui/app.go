@@ -348,9 +348,10 @@ type browserOpenMsg struct {
 }
 
 type managedBrowserStateMsg struct {
-	sessionKey string
-	state      browserctl.ManagedPlaywrightState
-	err        error
+	sessionKey             string
+	state                  browserctl.ManagedPlaywrightState
+	err                    error
+	retryAttemptsRemaining int
 }
 
 type codexArtifactPreviewMsg struct {
@@ -1886,6 +1887,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.rememberManagedBrowserState(msg.state)
 		} else {
 			m.forgetManagedBrowserState(msg.sessionKey)
+			if msg.retryAttemptsRemaining > 0 {
+				return m, m.delayedReadManagedBrowserStateCmd(msg.sessionKey, msg.retryAttemptsRemaining-1)
+			}
 		}
 		return m, nil
 	case codexArtifactPreviewMsg:

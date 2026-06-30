@@ -848,7 +848,32 @@ func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.C
 	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) {
 		return nil
 	}
-	return m.readManagedBrowserStateCmd(sessionKey)
+	retryAttempts := 0
+	if managedBrowserStateHydrationShouldRetry(snapshot) {
+		retryAttempts = managedBrowserStateHydrationRetryAttempts
+	}
+	return m.readManagedBrowserStateCmd(sessionKey, retryAttempts)
+}
+
+func managedBrowserStateHydrationShouldRetry(snapshot codexapp.Snapshot) bool {
+	if !managedBrowserRevealTargetAttached(snapshot) {
+		return false
+	}
+	provider := embeddedProvider(snapshot)
+	if !managedBrowserFlowSupported(provider) {
+		return false
+	}
+	if snapshot.BrowserActivity.Normalize().Live() {
+		return true
+	}
+	if request := snapshot.PendingElicitation; request != nil &&
+		managedBrowserLoginURL(provider, snapshot.BrowserActivity.Policy, request.Mode, request.URL) != "" {
+		return true
+	}
+	if provider == codexapp.ProviderLCAgent {
+		return false
+	}
+	return managedBrowserCurrentPageURL(snapshot) != ""
 }
 
 func compactNonEmptyStrings(lines []string) []string {

@@ -366,6 +366,129 @@ func TestVisibleCodexManagedBrowserWithoutCurrentPageURLHydratesState(t *testing
 	}
 }
 
+func TestVisibleCodexManagedBrowserHydrationRetriesEarlyUnrevealableState(t *testing.T) {
+	now := time.Now()
+	previousStateReader := managedBrowserStateReader
+	previousRetryDelay := managedBrowserStateHydrationRetryDelay
+	defer func() {
+		managedBrowserStateReader = previousStateReader
+		managedBrowserStateHydrationRetryDelay = previousRetryDelay
+	}()
+
+	managedBrowserStateHydrationRetryDelay = 0
+	readCount := 0
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		readCount++
+		state := browserctl.ManagedPlaywrightState{
+			SessionKey: sessionKey,
+			Hidden:     true,
+			UpdatedAt:  now,
+		}
+		if readCount >= 2 {
+			state.BrowserPID = 123
+		}
+		return state, nil
+	}
+
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderCodex,
+		Started:                  true,
+		Status:                   "Codex session ready",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://example.test/login",
+	}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		nowFn:               func() time.Time { return now },
+	}
+
+	beforeFooter := ansi.Strip(m.renderCodexFooter(snapshot, 160))
+	if strings.Contains(beforeFooter, "ctrl+o") {
+		t.Fatalf("renderCodexFooter() offered ctrl+o before browser state hydrated: %q", beforeFooter)
+	}
+
+	cmd := m.maybeReadManagedBrowserStateCmd(snapshot)
+	if cmd == nil {
+		t.Fatalf("managed browser state should queue an initial read")
+	}
+	msg, ok := cmd().(managedBrowserStateMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want managedBrowserStateMsg", msg)
+	}
+	if msg.err == nil {
+		t.Fatalf("initial managed browser read should reject unrevealable state")
+	}
+	if msg.retryAttemptsRemaining != managedBrowserStateHydrationRetryAttempts {
+		t.Fatalf("retryAttemptsRemaining = %d, want %d", msg.retryAttemptsRemaining, managedBrowserStateHydrationRetryAttempts)
+	}
+
+	updated, retryCmd := m.Update(msg)
+	got := updated.(Model)
+	if retryCmd == nil {
+		t.Fatalf("unrevealable live browser state should schedule a retry")
+	}
+	retryMsg, ok := retryCmd().(managedBrowserStateMsg)
+	if !ok {
+		t.Fatalf("retry cmd returned %T, want managedBrowserStateMsg", retryMsg)
+	}
+	if retryMsg.err != nil {
+		t.Fatalf("retry managed browser read error = %v, want nil", retryMsg.err)
+	}
+	if retryMsg.retryAttemptsRemaining != managedBrowserStateHydrationRetryAttempts-1 {
+		t.Fatalf("retryAttemptsRemaining after retry = %d, want %d", retryMsg.retryAttemptsRemaining, managedBrowserStateHydrationRetryAttempts-1)
+	}
+
+	updated, followupCmd := got.Update(retryMsg)
+	got = updated.(Model)
+	if followupCmd != nil {
+		t.Fatalf("successful retry should not schedule another command")
+	}
+	afterFooter := ansi.Strip(got.renderCodexFooter(snapshot, 160))
+	if !strings.Contains(afterFooter, "ctrl+o show browser") {
+		t.Fatalf("renderCodexFooter() should offer ctrl+o after browser state hydrates: %q", afterFooter)
+	}
+}
+
+func TestFinishedLCAgentBrowserPageDoesNotRetryHydration(t *testing.T) {
+	now := time.Now()
+	previousStateReader := managedBrowserStateReader
+	defer func() {
+		managedBrowserStateReader = previousStateReader
+	}()
+
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{
+			SessionKey: sessionKey,
+			Hidden:     true,
+			UpdatedAt:  now,
+		}, nil
+	}
+
+	m := Model{nowFn: func() time.Time { return now }}
+	cmd := m.maybeReadManagedBrowserStateCmd(codexapp.Snapshot{
+		Provider:                 codexapp.ProviderLCAgent,
+		Started:                  true,
+		Status:                   "LCAgent run complete",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://play.google.com/console/",
+	})
+	if cmd == nil {
+		t.Fatalf("managed browser state should queue a read")
+	}
+	msg, ok := cmd().(managedBrowserStateMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want managedBrowserStateMsg", msg)
+	}
+	if msg.err == nil {
+		t.Fatalf("initial managed browser read should reject unrevealable state")
+	}
+	if msg.retryAttemptsRemaining != 0 {
+		t.Fatalf("finished LCAgent browser page retryAttemptsRemaining = %d, want 0", msg.retryAttemptsRemaining)
+	}
+}
+
 func TestVisibleCodexBrowserWaitCanRevealWithoutCachedState(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
