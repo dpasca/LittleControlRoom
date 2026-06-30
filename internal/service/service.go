@@ -367,6 +367,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.XiaomiBaseURL = strings.TrimSpace(settings.XiaomiBaseURL)
 	s.cfg.XiaomiAPIKey = strings.TrimSpace(settings.XiaomiAPIKey)
 	s.cfg.XiaomiModel = strings.TrimSpace(settings.XiaomiModel)
+	s.cfg.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
 	s.cfg.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	s.cfg.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
 	s.cfg.MLXModel = strings.TrimSpace(settings.MLXModel)
@@ -450,7 +451,8 @@ func editableSettingsRequireAIClientRefresh(current config.AppConfig, settings c
 		strings.TrimSpace(current.MoonshotModel) != strings.TrimSpace(settings.MoonshotModel) ||
 		strings.TrimSpace(current.XiaomiBaseURL) != strings.TrimSpace(settings.XiaomiBaseURL) ||
 		strings.TrimSpace(current.XiaomiAPIKey) != strings.TrimSpace(settings.XiaomiAPIKey) ||
-		strings.TrimSpace(current.XiaomiModel) != strings.TrimSpace(settings.XiaomiModel) {
+		strings.TrimSpace(current.XiaomiModel) != strings.TrimSpace(settings.XiaomiModel) ||
+		strings.TrimSpace(current.ProjectReasoningEffort) != strings.TrimSpace(settings.ProjectReasoningEffort) {
 		return true
 	}
 	if strings.TrimSpace(current.MLXBaseURL) != strings.TrimSpace(settings.MLXBaseURL) {
@@ -765,9 +767,10 @@ func (s *Service) configureAIClientsLocked() {
 	switch selectedBackend {
 	case config.AIBackendOpenAIAPI:
 		apiKey := strings.TrimSpace(s.cfg.OpenAIAPIKey)
-		commitAssistant = gitops.NewOpenAICommitMessageClientWithUsageTracker(apiKey, s.llmUsageTracker)
-		client = sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
-		todoClient = todoworktree.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker)
+		reasoning := strings.TrimSpace(s.cfg.ProjectReasoningEffort)
+		commitAssistant = gitops.NewOpenAICommitMessageClientWithUsageTracker(apiKey, s.llmUsageTracker).WithReasoningEffort(reasoning)
+		client = sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker).WithReasoningEffort(reasoning)
+		todoClient = todoworktree.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker).WithReasoningEffort(reasoning)
 	case config.AIBackendCodex:
 		if selectedStatus.Ready {
 			commitAssistant = gitops.NewCodexCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
@@ -804,9 +807,10 @@ func (s *Service) configureAIClientsLocked() {
 				todoClient = todoworktree.NewClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, defaultCommitAssistantTimeout, s.llmUsageTracker))
 			} else {
 				opts := openAICompatibleResponsesRunnerOptions(selectedBackend, model, true)
-				commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
-				client = sessionclassify.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
-				todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts)
+				reasoning := strings.TrimSpace(s.cfg.ProjectReasoningEffort)
+				commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts).WithReasoningEffort(reasoning)
+				client = sessionclassify.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts).WithReasoningEffort(reasoning)
+				todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts).WithReasoningEffort(reasoning)
 			}
 		}
 	}

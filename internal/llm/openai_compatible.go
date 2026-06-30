@@ -17,6 +17,7 @@ type OpenAICompatibleResponsesRunnerOptions struct {
 	PreferChatCompletions bool
 	ChatResponseFormat    OpenAICompatibleChatResponseFormat
 	AuthHeader            OpenAICompatibleAuthHeader
+	ReasoningStyle        string
 }
 
 type OpenAICompatibleModelDiscovery struct {
@@ -219,8 +220,8 @@ func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel
 	authHeader := normalizeOpenAICompatibleAuthHeader(opts.AuthHeader)
 	responsesClient := NewResponsesClientWithBaseURLAndAuthHeader(apiKey, baseURL, timeout, usage, authHeader)
 	chatFormat := normalizeOpenAICompatibleChatResponseFormat(opts.ChatResponseFormat)
-	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, chatFormat, authHeader)
-	jsonModeChatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONObject, authHeader)
+	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, chatFormat, authHeader, opts.ReasoningStyle)
+	jsonModeChatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONObject, authHeader, opts.ReasoningStyle)
 	if chatFormat == OpenAICompatibleChatResponseFormatJSONObject {
 		jsonModeChatClient = chatClient
 	}

@@ -32,6 +32,7 @@ const (
 	settingsFieldXiaomiBaseURL
 	settingsFieldXiaomiAPIKey
 	settingsFieldXiaomiModel
+	settingsFieldProjectReasoning
 	settingsFieldBossChatBackend
 	settingsFieldBossChatModel
 	settingsFieldBossUtilityModel
@@ -826,6 +827,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 	settings.MoonshotModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldMoonshotModel))
 	settings.XiaomiBaseURL = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiBaseURL))
 	settings.XiaomiModel = strings.TrimSpace(m.settingsFieldValue(settingsFieldXiaomiModel))
+	settings.ProjectReasoningEffort = strings.TrimSpace(m.settingsFieldValue(settingsFieldProjectReasoning))
 	lcagentRoutePreset := settings.LCAgentRoutePreset
 	lcagentProvider := settings.LCAgentProvider
 	applyEmbeddedModelPreferencesToSettings(&settings, embeddedModelPreferencesFromSettings(baseline))
@@ -1107,6 +1109,8 @@ func (m Model) settingsFieldVisible(index int) bool {
 	case settingsFieldXiaomiModel:
 		return settings.AIBackend == config.AIBackendXiaomi ||
 			strings.TrimSpace(settings.XiaomiModel) != ""
+	case settingsFieldProjectReasoning:
+		return settingsProjectReasoningFieldRelevant(settings)
 	case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
 		return settingsBossModelFieldsRelevant(settings)
 	case settingsFieldBossChatOllamaThinking:
@@ -1356,21 +1360,33 @@ func settingsProviderConnectionFields(backend config.AIBackend) []int {
 func settingsProjectProviderConnectionFields(backend config.AIBackend) []int {
 	switch backend {
 	case config.AIBackendOpenAIAPI:
-		return []int{settingsFieldOpenAIAPIKey}
+		return []int{settingsFieldOpenAIAPIKey, settingsFieldProjectReasoning}
 	case config.AIBackendOpenRouter:
-		return []int{settingsFieldOpenRouterAPIKey, settingsFieldOpenRouterModel}
+		return []int{settingsFieldOpenRouterAPIKey, settingsFieldOpenRouterModel, settingsFieldProjectReasoning}
 	case config.AIBackendDeepSeek:
-		return []int{settingsFieldDeepSeekAPIKey, settingsFieldDeepSeekModel}
+		return []int{settingsFieldDeepSeekAPIKey, settingsFieldDeepSeekModel, settingsFieldProjectReasoning}
 	case config.AIBackendMoonshot:
 		return []int{settingsFieldMoonshotAPIKey, settingsFieldMoonshotModel}
 	case config.AIBackendXiaomi:
-		return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldXiaomiModel}
+		return []int{settingsFieldXiaomiBaseURL, settingsFieldXiaomiAPIKey, settingsFieldXiaomiModel, settingsFieldProjectReasoning}
 	case config.AIBackendMLX:
 		return []int{settingsFieldMLXBaseURL, settingsFieldMLXAPIKey, settingsFieldMLXModel}
 	case config.AIBackendOllama:
 		return []int{settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel}
 	default:
 		return nil
+	}
+}
+
+func settingsProjectReasoningFieldRelevant(settings config.EditableSettings) bool {
+	if strings.TrimSpace(settings.ProjectReasoningEffort) != "" {
+		return true
+	}
+	switch settings.AIBackend {
+	case config.AIBackendOpenAIAPI, config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendXiaomi:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1750,6 +1766,7 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.XiaomiBaseURL = m.settingsFieldValue(settingsFieldXiaomiBaseURL)
 	settings.XiaomiAPIKey = m.settingsFieldValue(settingsFieldXiaomiAPIKey)
 	settings.XiaomiModel = m.settingsFieldValue(settingsFieldXiaomiModel)
+	settings.ProjectReasoningEffort = m.settingsFieldValue(settingsFieldProjectReasoning)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)
 	settings.MLXAPIKey = m.settingsFieldValue(settingsFieldMLXAPIKey)
 	settings.MLXModel = m.settingsFieldValue(settingsFieldMLXModel)
@@ -2257,6 +2274,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 	case settingsDrilldownProjectReports:
 		switch fieldIndex {
 		case settingsFieldAIBackend:
+			return "Report Runner"
+		case settingsFieldProjectReasoning:
 			return "Report Runner"
 		case settingsFieldOpenAIAPIKey:
 			return "Shared OpenAI Connection"
@@ -3473,6 +3492,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAI,
 		),
 		newSettingsField(
+			"Project reasoning",
+			"Press Enter to choose the reasoning effort requested by project reports and background helpers. Blank keeps Little Control Room's current helper defaults.",
+			settings.ProjectReasoningEffort,
+			32,
+			settingsSectionAI,
+		),
+		newSettingsField(
 			"Boss chat",
 			"Press Enter to choose Auto, direct API, local endpoint, or Off. This is separate from project analysis, so summaries can stay on another backend.",
 			string(settings.BossChatBackend),
@@ -3820,6 +3846,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.XiaomiBaseURL = strings.TrimSpace(settings.XiaomiBaseURL)
 	settings.XiaomiAPIKey = strings.TrimSpace(settings.XiaomiAPIKey)
 	settings.XiaomiModel = strings.TrimSpace(settings.XiaomiModel)
+	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
 	settings.MLXBaseURL = strings.TrimSpace(settings.MLXBaseURL)
 	settings.MLXAPIKey = strings.TrimSpace(settings.MLXAPIKey)
 	settings.MLXModel = strings.TrimSpace(settings.MLXModel)
@@ -3962,6 +3989,11 @@ func (m Model) settingsFieldHint(index int) string {
 			return "Project reports and background helpers will request Xiaomi MiMo model " + model + ". Boss chat model fields remain separate."
 		}
 		return "Blank uses " + config.DefaultXiaomiModel + " for project reports and background helpers."
+	case settingsFieldProjectReasoning:
+		if effort := strings.TrimSpace(field.input.Value()); effort != "" {
+			return "Project reports and background helpers will request reasoning effort " + effort + " when the selected provider supports it."
+		}
+		return "Blank keeps Little Control Room's existing project-helper reasoning defaults."
 	case settingsFieldBossChatBackend:
 		switch config.AIBackend(strings.TrimSpace(field.input.Value())) {
 		case config.AIBackendOpenAIAPI:

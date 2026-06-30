@@ -736,6 +736,7 @@ func (m Model) setupDraftSettingsForProviderChoices() config.EditableSettings {
 	settings.XiaomiBaseURL = m.settingsFieldValue(settingsFieldXiaomiBaseURL)
 	settings.XiaomiAPIKey = m.settingsFieldValue(settingsFieldXiaomiAPIKey)
 	settings.XiaomiModel = m.settingsFieldValue(settingsFieldXiaomiModel)
+	settings.ProjectReasoningEffort = m.settingsFieldValue(settingsFieldProjectReasoning)
 	settings.BossHelmModel = m.settingsFieldValue(settingsFieldBossChatModel)
 	settings.BossUtilityModel = m.settingsFieldValue(settingsFieldBossUtilityModel)
 	settings.MLXBaseURL = m.settingsFieldValue(settingsFieldMLXBaseURL)

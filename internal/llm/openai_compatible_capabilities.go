@@ -14,6 +14,7 @@ type OpenAICompatibleProviderModelProfile struct {
 	Model              string
 	ChatResponseFormat OpenAICompatibleChatResponseFormat
 	AuthHeader         OpenAICompatibleAuthHeader
+	ReasoningStyle     string
 }
 
 type openAICompatibleProviderModelRule struct {
@@ -22,16 +23,23 @@ type openAICompatibleProviderModelRule struct {
 	modelPrefix        string
 	chatResponseFormat OpenAICompatibleChatResponseFormat
 	authHeader         OpenAICompatibleAuthHeader
+	reasoningStyle     string
 }
 
 var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
 	{
 		providerID:         "deepseek",
 		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
+		reasoningStyle:     "deepseek",
 	},
 	{
-		providerID: "xiaomi",
-		authHeader: OpenAICompatibleAuthHeaderAPIKey,
+		providerID:     "xiaomi",
+		authHeader:     OpenAICompatibleAuthHeaderAPIKey,
+		reasoningStyle: "xiaomi",
+	},
+	{
+		providerID:     "openrouter",
+		reasoningStyle: "openai",
 	},
 }
 
@@ -55,6 +63,9 @@ func OpenAICompatibleProviderModelProfileForProviderModel(providerID, model stri
 		if rule.authHeader != "" {
 			profile.AuthHeader = rule.authHeader
 		}
+		if rule.reasoningStyle != "" {
+			profile.ReasoningStyle = rule.reasoningStyle
+		}
 	}
 
 	return profile
@@ -67,6 +78,9 @@ func OpenAICompatibleResponsesRunnerOptionsForProviderModel(providerID, model st
 	}
 	if profile.AuthHeader != "" {
 		opts.AuthHeader = profile.AuthHeader
+	}
+	if profile.ReasoningStyle != "" {
+		opts.ReasoningStyle = profile.ReasoningStyle
 	}
 	return opts
 }

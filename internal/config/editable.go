@@ -30,6 +30,7 @@ type EditableSettings struct {
 	XiaomiBaseURL             string
 	XiaomiAPIKey              string
 	XiaomiModel               string
+	ProjectReasoningEffort    string
 	MLXBaseURL                string
 	MLXAPIKey                 string
 	MLXModel                  string
@@ -99,6 +100,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		XiaomiBaseURL:             cfg.XiaomiBaseURL,
 		XiaomiAPIKey:              cfg.XiaomiAPIKey,
 		XiaomiModel:               cfg.XiaomiModel,
+		ProjectReasoningEffort:    cfg.ProjectReasoningEffort,
 		MLXBaseURL:                cfg.MLXBaseURL,
 		MLXAPIKey:                 cfg.MLXAPIKey,
 		MLXModel:                  cfg.MLXModel,
@@ -220,6 +222,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 }
 
 func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
+	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
 	settings.EmbeddedLCAgentModel = normalizeLCAgentModelForProvider(lcagentEffectiveMainProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider), settings.EmbeddedLCAgentModel)
 	settings.LCAgentUtilityModel = normalizeLCAgentModelForProvider(lcagentEffectiveUtilityProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentUtilityProvider), settings.LCAgentUtilityModel)
 	settings.LCAgentVisionModel = normalizeLCAgentModelForProvider(lcagentEffectiveVisionProvider(settings.LCAgentRoutePreset, settings.LCAgentProvider, settings.LCAgentVisionProvider), settings.LCAgentVisionModel)
@@ -545,6 +548,7 @@ func validateEditableSettings(settings EditableSettings) error {
 	cfg.MoonshotModel = strings.TrimSpace(settings.MoonshotModel)
 	cfg.XiaomiBaseURL = strings.TrimSpace(settings.XiaomiBaseURL)
 	cfg.XiaomiModel = strings.TrimSpace(settings.XiaomiModel)
+	cfg.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
 	cfg.EmbeddedCodexModel = strings.TrimSpace(settings.EmbeddedCodexModel)
 	cfg.EmbeddedCodexReasoning = strings.TrimSpace(settings.EmbeddedCodexReasoning)
 	cfg.EmbeddedClaudeModel = strings.TrimSpace(settings.EmbeddedClaudeModel)
@@ -657,6 +661,9 @@ func renderEditableSettings(settings EditableSettings) string {
 	if value := strings.TrimSpace(settings.XiaomiModel); value != "" {
 		lines = append(lines, fmt.Sprintf("xiaomi_model = %s", strconv.Quote(value)))
 	}
+	if value := strings.TrimSpace(settings.ProjectReasoningEffort); value != "" {
+		lines = append(lines, fmt.Sprintf("project_reasoning_effort = %s", strconv.Quote(value)))
+	}
 	if value := strings.TrimSpace(settings.MLXBaseURL); value != "" {
 		lines = append(lines, fmt.Sprintf("mlx_base_url = %s", strconv.Quote(value)))
 	}
@@ -685,6 +692,7 @@ func renderEditableSettings(settings EditableSettings) string {
 		strings.TrimSpace(settings.XiaomiBaseURL) != "" ||
 		strings.TrimSpace(settings.XiaomiAPIKey) != "" ||
 		strings.TrimSpace(settings.XiaomiModel) != "" ||
+		strings.TrimSpace(settings.ProjectReasoningEffort) != "" ||
 		strings.TrimSpace(settings.MLXBaseURL) != "" ||
 		strings.TrimSpace(settings.MLXAPIKey) != "" ||
 		strings.TrimSpace(settings.MLXModel) != "" ||

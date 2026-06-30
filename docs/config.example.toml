@@ -22,6 +22,10 @@ openai_api_key = "sk-your-openai-api-key"
 # xiaomi_api_key = ""
 # xiaomi_model = "mimo-v2.5-pro"
 
+# Optional explicit reasoning effort for project reports/background helpers.
+# Blank keeps Little Control Room's built-in helper defaults.
+# project_reasoning_effort = "high"
+
 include_paths = [
   "~/dev/repos",
 ]

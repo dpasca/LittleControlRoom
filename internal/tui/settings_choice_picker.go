@@ -26,6 +26,7 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 	switch fieldIndex {
 	case settingsFieldLCAgentRoutePreset,
 		settingsFieldLCAgentReasoning,
+		settingsFieldProjectReasoning,
 		settingsFieldLCAgentAuto,
 		settingsFieldLCAgentAdminWrite,
 		settingsFieldBossChatOllamaThinking,
@@ -91,6 +92,8 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 			{Value: "medium", Label: "Medium", Summary: "Use moderate reasoning.", Description: "A middle setting for more involved tasks."},
 			{Value: "high", Label: "High", Summary: "Use deeper reasoning.", Description: "Best for difficult reviews, refactors, or debugging sessions."},
 		}
+	case settingsFieldProjectReasoning:
+		return settingsProjectReasoningChoiceOptions(codexapp.LCAgentReasoningEffortOptionsForProvider(""))
 	case settingsFieldLCAgentAuto:
 		return []settingsChoiceOption{
 			{Value: "off", Label: "Off", Summary: "Deny file edits and non-read commands.", Description: "Use when you want LCAgent to inspect and explain before changing files."},
@@ -127,6 +130,10 @@ func (m Model) settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOpt
 	case settingsFieldLCAgentReasoning:
 		settings := m.settingsDraftForInferenceStatus()
 		return settingsReasoningChoiceOptions(codexapp.LCAgentReasoningEffortOptionsForProvider(settingsLCAgentMainProvider(settings)))
+	case settingsFieldProjectReasoning:
+		settings := m.settingsDraftForInferenceStatus()
+		provider := settingsCloudModelProviderForBackend(settings.AIBackend)
+		return settingsProjectReasoningChoiceOptions(codexapp.LCAgentReasoningEffortOptionsForProvider(provider))
 	default:
 		return settingsChoiceOptionsForField(fieldIndex)
 	}
@@ -149,6 +156,23 @@ func settingsReasoningChoiceOptions(efforts []codexapp.ReasoningEffortOption) []
 		})
 	}
 	return options
+}
+
+func settingsProjectReasoningChoiceOptions(efforts []codexapp.ReasoningEffortOption) []settingsChoiceOption {
+	options := settingsReasoningChoiceOptions(efforts)
+	if len(options) > 0 {
+		options[0] = settingsProjectReasoningDefaultChoiceOption()
+	}
+	return options
+}
+
+func settingsProjectReasoningDefaultChoiceOption() settingsChoiceOption {
+	return settingsChoiceOption{
+		Value:       "",
+		Label:       "LCR Default",
+		Summary:     "Use existing helper defaults.",
+		Description: "Leaves this setting blank so project reports and background helpers keep their built-in reasoning defaults.",
+	}
 }
 
 func (m Model) openSettingsChoicePicker(fieldIndex int) (tea.Model, tea.Cmd) {
@@ -378,6 +402,8 @@ func settingsChoiceTitle(fieldIndex int) string {
 		return "LCAgent Route Preset"
 	case settingsFieldLCAgentReasoning:
 		return "LCAgent Reasoning"
+	case settingsFieldProjectReasoning:
+		return "Project Reasoning"
 	case settingsFieldLCAgentAuto:
 		return "LCAgent Permissions"
 	case settingsFieldLCAgentAdminWrite:
