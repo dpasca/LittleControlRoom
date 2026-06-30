@@ -1844,6 +1844,133 @@ func TestCodexInlineCodePathScanIgnoresFencesAndBareCodeTokens(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactTargetsPreferStandaloneAbsolutePathForImplicitProjectRelativeVideo(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "FractalMech")
+	absolutePath := filepath.Join(root, "Dropbox (NEWTYPE)", "OYK", "PublishKit", "FractalMech", "videos", "fractal-strike-promo-play-youtube-preview-1920x1080-60fps.mp4")
+	relativePath := "PublishKit/FractalMech/videos/fractal-strike-promo-play-youtube-preview-1920x1080-60fps.mp4"
+	text := strings.Join([]string{
+		absolutePath,
+		"",
+		"Synced video: `" + relativePath + "`",
+	}, "\n")
+
+	targets := codexArtifactOpenTargetsFromMarkdownInProject(text, projectPath)
+	if len(targets) != 1 {
+		t.Fatalf("video targets = %#v, want one resolved target", targets)
+	}
+	if targets[0].Kind != "video" || targets[0].Path != absolutePath {
+		t.Fatalf("video target = %#v, want Dropbox path %q", targets[0], absolutePath)
+	}
+	if strings.Contains(targets[0].Path, filepath.Join("FractalMech", "PublishKit")) {
+		t.Fatalf("video target should not keep guessed project-relative path: %#v", targets[0])
+	}
+}
+
+func TestCodexProgressiveLinkScanResolvesImplicitProjectRelativeVideoFromToolOutput(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "FractalMech")
+	absolutePath := filepath.Join(root, "Dropbox (NEWTYPE)", "OYK", "PublishKit", "FractalMech", "videos", "fractal-strike-promo-play-youtube-preview-1920x1080-60fps.mp4")
+	relativePath := "PublishKit/FractalMech/videos/fractal-strike-promo-play-youtube-preview-1920x1080-60fps.mp4"
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptCommand,
+				Text: "$ find \"/Users/davide/Library/CloudStorage/Dropbox/Dropbox (NEWTYPE)/OYK/PublishKit/FractalMech/videos\" -maxdepth 1 -type f -print\n" + absolutePath,
+			},
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Google Play video prepared here: `" + relativePath + "`",
+			},
+		},
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(120, 4),
+	}
+	m.storeCodexSnapshot(projectPath, snapshot)
+	cmd := m.maybeStartCodexArtifactLinkScan(projectPath, snapshot)
+	if cmd == nil {
+		t.Fatalf("progressive link scan should start for transcript entries")
+	}
+
+	got := drainCmdMsgs(m, cmd)
+	targets := got.cachedProgressiveCodexOpenTargets(snapshot)
+	if len(targets) != 1 {
+		t.Fatalf("progressive video targets = %#v, want one resolved target", targets)
+	}
+	if targets[0].Kind != "video" || targets[0].Path != absolutePath {
+		t.Fatalf("progressive video target = %#v, want Dropbox path %q", targets[0], absolutePath)
+	}
+}
+
+func TestCodexLinkPickerReportsMissingGuessedArtifactOnOpen(t *testing.T) {
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "FractalMech")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("create project dir: %v", err)
+	}
+	relativePath := "PublishKit/FractalMech/videos/fractal-strike-promo-play-youtube-preview-1920x1080-60fps.mp4"
+	guessedPath := filepath.Join(projectPath, filepath.FromSlash(relativePath))
+	snapshot := codexapp.Snapshot{
+		ProjectPath: projectPath,
+		Entries: []codexapp.TranscriptEntry{
+			{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Google Play video prepared here: `" + relativePath + "`",
+			},
+		},
+	}
+
+	opened := false
+	oldOpener := externalPathOpener
+	externalPathOpener = func(path string) error {
+		opened = true
+		return nil
+	}
+	t.Cleanup(func() { externalPathOpener = oldOpener })
+
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			projectPath: snapshot,
+		},
+		codexViewport: viewport.New(120, 4),
+	}
+	rendered := m.renderAndCacheCodexTranscript(projectPath, snapshot, 120)
+	m.codexViewport.SetContent(rendered)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd != nil {
+		t.Fatalf("Alt+O should open the link picker without a command, got %T", cmd)
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 1 {
+		t.Fatalf("link picker state = %#v, want one guessed video target", got.codexArtifactPicker)
+	}
+	target := got.codexArtifactPicker.Targets[0]
+	if target.Kind != "video" || target.Path != guessedPath {
+		t.Fatalf("video target = %#v, want guessed missing path %q", target, guessedPath)
+	}
+
+	_, cmd = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("Enter on guessed video should queue open command")
+	}
+	rawMsg := cmd()
+	openMsg, ok := rawMsg.(browserOpenMsg)
+	if !ok {
+		t.Fatalf("video open command returned %T, want browserOpenMsg", rawMsg)
+	}
+	if openMsg.err == nil || !strings.Contains(openMsg.err.Error(), "artifact path does not exist") {
+		t.Fatalf("video open error = %v, want missing artifact path error", openMsg.err)
+	}
+	if opened {
+		t.Fatalf("external opener should not be called for missing guessed artifact")
+	}
+}
+
 func TestCodexLinkPickerOpensPercentEscapedLocalMarkdownLinksAsFiles(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "Family Room", "jun_it_citizenship")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
