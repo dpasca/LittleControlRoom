@@ -1042,35 +1042,53 @@ func codexLocalLinkText(target string) (string, bool) {
 }
 
 func codexLocalLinkTextForProject(target, projectPath string) (string, bool) {
+	localPath, _, ok := codexLocalLinkTextForProjectResolution(target, projectPath)
+	return localPath, ok
+}
+
+type codexLocalLinkResolution struct {
+	implicitProjectRelative bool
+}
+
+func codexLocalLinkTextForProjectResolution(target, projectPath string) (string, codexLocalLinkResolution, bool) {
 	if localPath, ok := codexLocalLinkText(target); ok {
-		return localPath, true
+		return localPath, codexLocalLinkResolution{}, true
 	}
-	return codexRelativeLocalLinkText(target, projectPath)
+	return codexRelativeLocalLinkTextWithResolution(target, projectPath)
 }
 
 func codexRelativeLocalLinkText(target, projectPath string) (string, bool) {
+	localPath, _, ok := codexRelativeLocalLinkTextWithResolution(target, projectPath)
+	return localPath, ok
+}
+
+func codexRelativeLocalLinkTextWithResolution(target, projectPath string) (string, codexLocalLinkResolution, bool) {
 	target = strings.TrimSpace(target)
 	projectPath = strings.TrimSpace(projectPath)
 	if target == "" || projectPath == "" {
-		return "", false
+		return "", codexLocalLinkResolution{}, false
 	}
 	if strings.HasPrefix(target, "#") || strings.HasPrefix(target, "?") || strings.HasPrefix(target, "//") {
-		return "", false
+		return "", codexLocalLinkResolution{}, false
 	}
 	parsed, err := url.Parse(target)
 	if err != nil || parsed.Scheme != "" || parsed.Host != "" {
-		return "", false
+		return "", codexLocalLinkResolution{}, false
 	}
 	pathPart, location := codexLocalOpenPath(target)
 	pathPart = strings.TrimSpace(pathPart)
 	if !codexRelativeLocalLinkPath(pathPart) {
-		return "", false
+		return "", codexLocalLinkResolution{}, false
 	}
 	resolved := filepath.Clean(filepath.Join(projectPath, filepath.FromSlash(pathPart)))
 	if location != "" {
 		resolved += location
 	}
-	return resolved, true
+	slashPath := filepath.ToSlash(pathPart)
+	explicitRelative := strings.HasPrefix(slashPath, "./") || strings.HasPrefix(slashPath, "../")
+	return resolved, codexLocalLinkResolution{
+		implicitProjectRelative: !explicitRelative,
+	}, true
 }
 
 func codexRelativeLocalLinkPath(path string) bool {

@@ -1153,11 +1153,28 @@ func (m Model) openProjectDirInTerminalCmd(path string) tea.Cmd {
 func (m Model) openArtifactCmd(path string) tea.Cmd {
 	projectPath := m.codexVisibleProject
 	return func() tea.Msg {
+		if err := ensureOpenableArtifactPath(path); err != nil {
+			return browserOpenMsg{projectPath: projectPath, err: err}
+		}
 		if err := externalPathOpener(path); err != nil {
 			return browserOpenMsg{projectPath: projectPath, err: err}
 		}
 		return browserOpenMsg{projectPath: projectPath, status: "Opened artifact"}
 	}
+}
+
+func ensureOpenableArtifactPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("artifact path is required")
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("artifact path does not exist: %s", path)
+		}
+		return fmt.Errorf("inspect artifact path: %w", err)
+	}
+	return nil
 }
 
 func (m Model) openCodexLinkTargetCmd(target codexArtifactOpenTarget) tea.Cmd {
