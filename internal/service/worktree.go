@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/events"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
+	"lcroom/internal/worktreeprep"
 )
 
 type CreateTodoWorktreeRequest struct {
@@ -22,6 +23,7 @@ type CreateTodoWorktreeRequest struct {
 	TodoID         int64
 	BranchName     string
 	WorktreeSuffix string
+	PrepProfile    string
 }
 
 type CreateTodoWorktreeResult struct {
@@ -30,6 +32,8 @@ type CreateTodoWorktreeResult struct {
 	ParentBranch    string
 	BranchName      string
 	WorktreeSuffix  string
+	PrepProfile     string
+	PreparedPaths   []string
 }
 
 type MergeWorktreeBackResult struct {
@@ -117,6 +121,14 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if err := gitWorktreeAdd(ctx, worktreeRootPath, worktreePath, branchName); err != nil {
 		return CreateTodoWorktreeResult{}, err
 	}
+	prepResult, err := worktreeprep.Prepare(ctx, worktreeRootPath, worktreePath, req.PrepProfile)
+	if err != nil {
+		return result, fmt.Errorf("created worktree at %s but failed to prepare it: %w", worktreePath, err)
+	}
+	result.PrepProfile = strings.TrimSpace(prepResult.Profile)
+	for _, prepared := range prepResult.Prepared {
+		result.PreparedPaths = append(result.PreparedPaths, prepared.Path)
+	}
 
 	_, attachErr := s.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
 		ParentPath: filepath.Dir(worktreePath),
@@ -144,9 +156,10 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 			At:          now,
 			ProjectPath: worktreePath,
 			Payload: map[string]string{
-				"action":      "create_worktree",
-				"root_path":   worktreeRootPath,
-				"branch_name": branchName,
+				"action":       "create_worktree",
+				"root_path":    worktreeRootPath,
+				"branch_name":  branchName,
+				"prep_profile": result.PrepProfile,
 			},
 		})
 	}
@@ -752,6 +765,9 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 				return err
 			}
 		}
+	}
+	if err := worktreeprep.PruneSubmoduleWorktrees(ctx, rootPath); err != nil {
+		return fmt.Errorf("prune submodule worktrees after removing %s: %w", projectPath, err)
 	}
 	unlockProjectState := s.lockProjectStateMutation(projectPath)
 	if err := s.store.SetForgotten(ctx, projectPath, true); err != nil {

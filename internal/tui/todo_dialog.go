@@ -30,6 +30,7 @@ const (
 )
 
 const todoTextCharLimit = 20000
+const todoWorktreePreparingStatus = "Creating dedicated worktree; hydrating submodules if needed..."
 
 type todoDialogState struct {
 	ProjectPath string
@@ -1297,7 +1298,9 @@ func (m *Model) createTodoWorktreeCmd(launchCtx context.Context, launchID int64,
 			todoID:         todoID,
 			todoText:       todoText,
 			attachments:    attachments,
-			status:         "Worktree ready",
+			status:         todoWorktreePreparedStatus(len(result.PreparedPaths)),
+			prepProfile:    result.PrepProfile,
+			preparedPaths:  append([]string(nil), result.PreparedPaths...),
 			provider:       provider,
 			openModelFirst: openModelFirst,
 			perfOpID:       perfOpID,
@@ -1696,8 +1699,26 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	m.todoCopyDialog = nil
 	m.todoDialog = nil
 	m.rememberEmbeddedProvider(provider)
-	m.status = "Starting TODO in dedicated worktree..."
+	m.status = todoWorktreePreparingStatus
 	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, item.Attachments, provider, openModelFirst, branchOverride, suffixOverride)
+}
+
+func todoWorktreePreparedStatus(preparedPathCount int) string {
+	if preparedPathCount <= 0 {
+		return "Worktree ready"
+	}
+	if preparedPathCount == 1 {
+		return "Worktree ready; hydrated 1 submodule"
+	}
+	return fmt.Sprintf("Worktree ready; hydrated %d submodules", preparedPathCount)
+}
+
+func todoWorktreeSessionStartStatus(provider codexapp.Provider, openModelFirst bool, preparedPathCount int) string {
+	prefix := todoWorktreePreparedStatus(preparedPathCount)
+	if openModelFirst {
+		return prefix + "; starting a new embedded " + provider.Label() + " session..."
+	}
+	return prefix + "; starting TODO session..."
 }
 
 func (m *Model) returnToTodoFromModelPicker() {

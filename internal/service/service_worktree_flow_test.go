@@ -9,6 +9,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 	"lcroom/internal/store"
+	"lcroom/internal/worktreeprep"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,6 +105,30 @@ func queueTodoWorktreeSuggestionForTest(t *testing.T, ctx context.Context, st *s
 	if suggestion.Status != model.TodoWorktreeSuggestionQueued {
 		t.Fatalf("existing todo worktree suggestion status = %q, want %q", suggestion.Status, model.TodoWorktreeSuggestionQueued)
 	}
+}
+
+func writeWorktreePrepConfig(t *testing.T, root, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(worktreeprep.ConfigRelPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir worktree prep config parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+		t.Fatalf("write worktree prep config: %v", err)
+	}
+}
+
+func sameTestPath(t *testing.T, a, b string) bool {
+	t.Helper()
+	resolvedA, err := filepath.EvalSymlinks(a)
+	if err == nil {
+		a = resolvedA
+	}
+	resolvedB, err := filepath.EvalSymlinks(b)
+	if err == nil {
+		b = resolvedB
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func TestPurgeDoneTodosDeletesOnlyCompletedItems(t *testing.T) {
@@ -320,6 +345,140 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	}
 	if strings.TrimSpace(detail.Summary.WorktreeParentBranch) != strings.TrimSpace(rootStatus.Branch) {
 		t.Fatalf("tracked worktree parent branch = %q, want %q", detail.Summary.WorktreeParentBranch, strings.TrimSpace(rootStatus.Branch))
+	}
+}
+
+func TestCreateTodoWorktreeAppliesConfiguredPrepProfile(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleOriginPath := filepath.Join(root, "asset-origin")
+	initGitRepoWithSubmodule(t, projectPath, submoduleOriginPath, "Assets")
+	writeWorktreePrepConfig(t, projectPath, `
+default_profile = "assets"
+
+[profiles.assets]
+submodules = [
+  { path = "Assets", mode = "checkout" },
+]
+`)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Create a worktree with prepared assets")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/prepared-assets"
+	suggestion.WorktreeSuffix = "feat-prepared-assets"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a prepared worktree."
+	suggestion.Confidence = 0.92
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	if result.PrepProfile != "assets" {
+		t.Fatalf("PrepProfile = %q, want assets", result.PrepProfile)
+	}
+	if len(result.PreparedPaths) != 1 || result.PreparedPaths[0] != "Assets" {
+		t.Fatalf("PreparedPaths = %#v, want [Assets]", result.PreparedPaths)
+	}
+	if got := strings.TrimSpace(gitOutput(t, filepath.Join(result.WorktreePath, "Assets"), "git", "rev-parse", "--show-toplevel")); !sameTestPath(t, got, filepath.Join(result.WorktreePath, "Assets")) {
+		t.Fatalf("prepared submodule top-level = %q", got)
+	}
+}
+
+func TestCreateTodoWorktreeHydratesSubmodulesByDefault(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleOriginPath := filepath.Join(root, "asset-origin")
+	initGitRepoWithSubmodule(t, projectPath, submoduleOriginPath, "Assets")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Create a worktree with default hydrated assets")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	queueTodoWorktreeSuggestionForTest(t, ctx, st, item.ID)
+	suggestion, err := st.ClaimNextQueuedTodoWorktreeSuggestion(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("claim todo worktree suggestion: %v", err)
+	}
+	suggestion.BranchName = "feat/default-prepared-assets"
+	suggestion.WorktreeSuffix = "feat-default-prepared-assets"
+	suggestion.Kind = "feature"
+	suggestion.Reason = "Creates a prepared worktree with the default submodule hydration."
+	suggestion.Confidence = 0.92
+	suggestion.Model = "test"
+	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
+		t.Fatalf("complete todo worktree suggestion: %v", err)
+	} else if !completed {
+		t.Fatalf("expected todo worktree suggestion to complete")
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath: projectPath,
+		TodoID:      item.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	if result.PrepProfile != worktreeprep.RecursiveSubmodulesProfile {
+		t.Fatalf("PrepProfile = %q, want %s", result.PrepProfile, worktreeprep.RecursiveSubmodulesProfile)
+	}
+	if len(result.PreparedPaths) != 1 || result.PreparedPaths[0] != "Assets" {
+		t.Fatalf("PreparedPaths = %#v, want [Assets]", result.PreparedPaths)
+	}
+	if got := strings.TrimSpace(gitOutput(t, filepath.Join(result.WorktreePath, "Assets"), "git", "rev-parse", "--show-toplevel")); !sameTestPath(t, got, filepath.Join(result.WorktreePath, "Assets")) {
+		t.Fatalf("prepared submodule top-level = %q", got)
 	}
 }
 

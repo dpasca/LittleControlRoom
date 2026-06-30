@@ -772,7 +772,7 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	if got.todoCopyDialog != nil {
 		t.Fatalf("todo copy dialog should dismiss as soon as the dedicated worktree launch starts")
 	}
-	if got.status != "Starting TODO in dedicated worktree..." {
+	if got.status != todoWorktreePreparingStatus {
 		t.Fatalf("status = %q, want immediate background-start message", got.status)
 	}
 	msg := cmd()
@@ -1000,6 +1000,39 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 	}
 	if cmd == nil {
 		t.Fatalf("session open should return the model picker command")
+	}
+}
+
+func TestTodoWorktreeLaunchHandoffMentionsHydratedSubmodules(t *testing.T) {
+	m := Model{
+		codexManager: codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+			return &fakeCodexSession{}, nil
+		}),
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		projects: []model.ProjectSummary{{
+			Path:          "/tmp/root",
+			Name:          "root",
+			PresentOnDisk: true,
+		}},
+		selected: 0,
+		width:    100,
+		height:   24,
+	}
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		projectPath:   "/tmp/root--feat-assets",
+		todoText:      "Use the hydrated assets",
+		preparedPaths: []string{"Assets", "Shared/Data"},
+		provider:      codexapp.ProviderCodex,
+	})
+	got := updated.(Model)
+	if got.status != "Worktree ready; hydrated 2 submodules; starting TODO session..." {
+		t.Fatalf("status = %q, want hydrated-submodule handoff", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("worktree launch should return an embedded open command")
 	}
 }
 
@@ -1250,7 +1283,7 @@ func TestTodoCopyDialogEnterStartsImmediatelyWhileWorktreeSuggestionIsQueued(t *
 	if got.todoDialog != nil || got.todoCopyDialog != nil {
 		t.Fatalf("dialogs should dismiss immediately, got todo=%#v copy=%#v", got.todoDialog, got.todoCopyDialog)
 	}
-	if got.status != "Starting TODO in dedicated worktree..." {
+	if got.status != todoWorktreePreparingStatus {
 		t.Fatalf("status = %q, want immediate background-start message", got.status)
 	}
 	msg := cmd()

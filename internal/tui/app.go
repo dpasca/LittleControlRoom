@@ -449,6 +449,8 @@ type todoWorktreeLaunchMsg struct {
 	todoText       string
 	attachments    []model.TodoAttachment
 	status         string
+	prepProfile    string
+	preparedPaths  []string
 	provider       codexapp.Provider
 	openModelFirst bool
 	err            error
@@ -2175,11 +2177,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureCodexRuntime()
 		m.rememberEmbeddedProvider(provider)
 		m.beginNewCodexPendingOpenWithVisibilityAndReveal(req.ProjectPath, provider, msg.openModelFirst, msg.openModelFirst)
-		if msg.openModelFirst {
-			m.status = "Starting a new embedded " + provider.Label() + " session in new worktree..."
-		} else {
-			m.status = "Starting TODO in dedicated worktree..."
-		}
+		m.status = todoWorktreeSessionStartStatus(provider, msg.openModelFirst, len(msg.preparedPaths))
 		return m, batchCmds(
 			m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())),
 			m.openCodexSessionCmdWithVisibility(req, msg.openModelFirst),
