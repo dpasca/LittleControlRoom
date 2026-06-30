@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -10,8 +12,9 @@ import (
 )
 
 type resolvedSubmodule struct {
-	Path string
-	Hash string
+	Path       string
+	Hash       string
+	PushedOnly bool
 }
 
 func (s *Service) ResolveSubmodulesAndPrepareCommit(ctx context.Context, projectPath string, intent GitActionIntent, messageOverride string) (CommitPreview, error) {
@@ -23,14 +26,14 @@ func (s *Service) ResolveSubmodulesAndPrepareCommit(ctx context.Context, project
 	if err != nil {
 		return CommitPreview{}, err
 	}
-	blocked := blockedSubmodulePaths(parentStatus.Changes)
-	if len(blocked) == 0 {
+	_, _, attentionPaths := submoduleAttentionPaths(parentStatus)
+	if len(attentionPaths) == 0 {
 		return s.PrepareCommit(ctx, projectPath, intent, messageOverride)
 	}
 
 	hadStagedChanges := len(parentStatus.StagedChanges()) > 0
-	resolved := make([]resolvedSubmodule, 0, len(blocked))
-	for _, relPath := range blocked {
+	resolved := make([]resolvedSubmodule, 0, len(attentionPaths))
+	for _, relPath := range attentionPaths {
 		childPath := filepath.Join(projectPath, relPath)
 		childResolved, resolveErr := s.resolveSubmoduleRepoAndPush(ctx, childPath, relPath, map[string]struct{}{})
 		if resolveErr != nil {
@@ -40,13 +43,22 @@ func (s *Service) ResolveSubmodulesAndPrepareCommit(ctx context.Context, project
 	}
 
 	if hadStagedChanges {
-		if err := gitops.StagePaths(ctx, projectPath, blocked); err != nil {
+		if err := gitops.StagePaths(ctx, projectPath, attentionPaths); err != nil {
 			return CommitPreview{}, err
 		}
 	}
 
 	preview, err := s.PrepareCommit(ctx, projectPath, intent, messageOverride)
 	if err != nil {
+		var noChangesErr NoChangesToCommitError
+		if errors.As(err, &noChangesErr) && len(resolved) > 0 {
+			return CommitPreview{}, SubmoduleResolvedNoParentChangesError{
+				ProjectPath: projectPath,
+				ProjectName: noChangesErr.ProjectName,
+				Branch:      noChangesErr.Branch,
+				Summary:     formatResolvedSubmoduleWarning(resolved),
+			}
+		}
 		return CommitPreview{}, err
 	}
 	if note := formatResolvedSubmoduleWarning(resolved); note != "" {
@@ -94,6 +106,17 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 
 	included := filterParentCommitEligible(status.Changes)
 	if len(included) == 0 {
+		if status.Ahead > 0 {
+			canPush, pushWarning := pushAvailability(status)
+			if !canPush {
+				return nil, fmt.Errorf("submodule %s cannot be auto-pushed: %s", displayPath, strings.TrimSpace(pushWarning))
+			}
+			if err := gitops.Push(ctx, repoPath); err != nil {
+				return nil, fmt.Errorf("push submodule %s: %w", displayPath, err)
+			}
+			hash, _ := gitHeadShort(ctx, repoPath)
+			resolved = append(resolved, resolvedSubmodule{Path: displayPath, Hash: hash, PushedOnly: true})
+		}
 		return resolved, nil
 	}
 
@@ -133,11 +156,34 @@ func formatResolvedSubmoduleWarning(resolved []resolvedSubmodule) string {
 		return ""
 	}
 	if len(resolved) == 1 {
-		return fmt.Sprintf("Resolved submodule %s at %s and pushed it before preparing this parent commit.", resolved[0].Path, resolved[0].Hash)
+		if resolved[0].PushedOnly {
+			return fmt.Sprintf("Pushed existing commits from submodule %s%s; no parent commit was needed for that submodule.", resolved[0].Path, resolvedHashSuffix(resolved[0].Hash))
+		}
+		return fmt.Sprintf("Resolved submodule %s%s and pushed it before preparing this parent commit.", resolved[0].Path, resolvedHashSuffix(resolved[0].Hash))
 	}
 	parts := make([]string, 0, len(resolved))
 	for _, item := range resolved {
-		parts = append(parts, fmt.Sprintf("%s %s", item.Path, item.Hash))
+		action := "committed"
+		if item.PushedOnly {
+			action = "pushed"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s%s", item.Path, action, resolvedHashSuffix(item.Hash)))
 	}
 	return fmt.Sprintf("Resolved and pushed %d submodules before preparing this parent commit: %s.", len(resolved), strings.Join(parts, ", "))
+}
+
+func resolvedHashSuffix(hash string) string {
+	hash = strings.TrimSpace(hash)
+	if hash == "" {
+		return ""
+	}
+	return " at " + hash
+}
+
+func gitHeadShort(ctx context.Context, repoPath string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }

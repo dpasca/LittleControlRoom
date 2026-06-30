@@ -405,6 +405,37 @@ func TestScoreRepoDirtyAddsAttentionReason(t *testing.T) {
 	}
 }
 
+func TestScoreSubmoduleAttentionAddsReason(t *testing.T) {
+	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
+	in := Input{
+		Now:                        now,
+		HasActivity:                true,
+		LastActivity:               now.Add(-30 * time.Minute),
+		ActiveThreshold:            20 * time.Minute,
+		StuckThreshold:             4 * time.Hour,
+		RepoSubmoduleDirtyCount:    1,
+		RepoSubmoduleUnpushedCount: 2,
+	}
+
+	out := Score(in)
+	found := false
+	for _, reason := range out.Reasons {
+		if reason.Code == "repo_submodules" {
+			found = true
+			if reason.Weight != 12 {
+				t.Fatalf("repo_submodules weight = %d, want 12", reason.Weight)
+			}
+			if reason.Text != "Git submodules need attention (1 dirty, 2 unpushed)" {
+				t.Fatalf("repo_submodules text = %q", reason.Text)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected repo_submodules reason, got %#v", out.Reasons)
+	}
+}
+
 func TestScoreOpenTodosAddsAttentionReason(t *testing.T) {
 	now := time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC)
 	in := Input{

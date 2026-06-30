@@ -682,10 +682,11 @@ func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
 
 	updated, cmd := m.Update(commitPreviewMsg{
 		err: service.SubmoduleAttentionError{
-			ProjectPath: "/tmp/fractalmech",
-			ProjectName: "FractalMech",
-			Branch:      "master",
-			Submodules:  []string{"assets_src"},
+			ProjectPath:     "/tmp/fractalmech",
+			ProjectName:     "FractalMech",
+			Branch:          "master",
+			Submodules:      []string{"assets_src"},
+			DirtySubmodules: []string{"assets_src"},
 		},
 		intent:  service.GitActionCommit,
 		message: "Update parent after assets refresh",
@@ -701,7 +702,7 @@ func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("submodule-attention dialog should clear the generic error, got %v", got.err)
 	}
-	if got.status != "Submodule needs attention. Enter resolve & continue, Esc close" {
+	if got.status != "Submodules need attention. Enter resolve & continue, Esc close" {
 		t.Fatalf("status = %q", got.status)
 	}
 
@@ -714,6 +715,35 @@ func TestCommitPreviewSubmoduleAttentionOpensGitStatusDialog(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "assets_src") || !strings.Contains(rendered, "resolve & continue") {
 		t.Fatalf("rendered dialog should explain the submodule follow-up: %q", rendered)
+	}
+}
+
+func TestCommitPreviewSubmoduleResolvedNoParentCommitOpensGitStatusDialog(t *testing.T) {
+	m := Model{}
+
+	updated, cmd := m.Update(commitPreviewMsg{
+		err: service.SubmoduleResolvedNoParentChangesError{
+			ProjectPath: "/tmp/fractalmech",
+			ProjectName: "FractalMech",
+			Branch:      "master",
+			Summary:     "Pushed existing commits from submodule assets_src at abc123; no parent commit was needed for that submodule.",
+		},
+	})
+	got := updated.(Model)
+
+	_ = cmd
+	if got.gitStatusDialog == nil {
+		t.Fatalf("expected resolved submodule result to open the git status dialog")
+	}
+	if got.status != "Submodules resolved. Enter close, Esc close" {
+		t.Fatalf("status = %q", got.status)
+	}
+	rendered := ansi.Strip(got.renderGitStatusDialogContent(72))
+	if !strings.Contains(rendered, "Submodules Resolved - FractalMech (master)") {
+		t.Fatalf("rendered dialog should identify resolved submodules: %q", rendered)
+	}
+	if !strings.Contains(rendered, "Pushed existing commits from submodule assets_src") {
+		t.Fatalf("rendered dialog should include pushed submodule summary: %q", rendered)
 	}
 }
 
@@ -1214,7 +1244,7 @@ func TestGitStatusDialogEnterResolvesSubmodulesWhenAvailable(t *testing.T) {
 			CommitIntent:      service.GitActionCommit,
 			CommitMessage:     "Update parent",
 			DismissStatus:     "Submodule changes still need attention",
-			ReadyStatus:       "Submodule needs attention. Enter resolve & continue, Esc close",
+			ReadyStatus:       "Submodules need attention. Enter resolve & continue, Esc close",
 		},
 	}
 

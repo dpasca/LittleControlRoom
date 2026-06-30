@@ -228,6 +228,23 @@ func TestRepoCombinedDetailValuePrefersPendingGitOperation(t *testing.T) {
 	}
 }
 
+func TestRepoCombinedDetailValueShowsSubmoduleAttention(t *testing.T) {
+	project := model.ProjectSummary{
+		Path:                       "/tmp/demo",
+		RepoBranch:                 "master",
+		RepoSubmoduleDirtyCount:    1,
+		RepoSubmoduleUnpushedCount: 2,
+	}
+
+	rendered := ansi.Strip((Model{}).repoCombinedDetailValue(project))
+	if !strings.Contains(rendered, "clean") {
+		t.Fatalf("repoCombinedDetailValue() = %q, want clean parent repo state", rendered)
+	}
+	if !strings.Contains(rendered, "submodules 1 dirty, 2 unpushed") {
+		t.Fatalf("repoCombinedDetailValue() = %q, want submodule attention summary", rendered)
+	}
+}
+
 func TestProjectAssessmentTextAtUsesDerivedStalledSummary(t *testing.T) {
 	project := model.ProjectSummary{
 		LatestSessionClassification:     model.ClassificationCompleted,

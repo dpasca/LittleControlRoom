@@ -14,6 +14,8 @@ type Input struct {
 	LastActivity               time.Time
 	CreatedAt                  time.Time
 	RepoDirty                  bool
+	RepoSubmoduleDirtyCount    int
+	RepoSubmoduleUnpushedCount int
 	Pinned                     bool
 	Unread                     bool
 	SnoozedUntil               *time.Time
@@ -126,6 +128,16 @@ func Score(in Input) Output {
 		})
 	}
 
+	if count := in.RepoSubmoduleDirtyCount + in.RepoSubmoduleUnpushedCount; count > 0 {
+		w := 12
+		out.Score += w
+		out.Reasons = append(out.Reasons, model.AttentionReason{
+			Code:   "repo_submodules",
+			Text:   submoduleAttentionReasonText(in.RepoSubmoduleDirtyCount, in.RepoSubmoduleUnpushedCount),
+			Weight: w,
+		})
+	}
+
 	if !in.LatestSessionStart.IsZero() && in.Now.Sub(in.LatestSessionStart) > 2*time.Hour && in.StatusHint() == model.StatusActive && !latestSessionCompleted(in) {
 		w := 8
 		out.Score += w
@@ -169,6 +181,17 @@ func Score(in Input) Output {
 	}
 
 	return out
+}
+
+func submoduleAttentionReasonText(dirtyCount, unpushedCount int) string {
+	switch {
+	case dirtyCount > 0 && unpushedCount > 0:
+		return fmt.Sprintf("Git submodules need attention (%d dirty, %d unpushed)", dirtyCount, unpushedCount)
+	case dirtyCount > 0:
+		return fmt.Sprintf("Git submodules have local changes (%d dirty)", dirtyCount)
+	default:
+		return fmt.Sprintf("Git submodules have local commits to push (%d unpushed)", unpushedCount)
+	}
 }
 
 func (in Input) StatusHint() model.ProjectStatus {

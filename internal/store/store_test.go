@@ -1746,6 +1746,9 @@ func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	if projects[0].RepoAheadCount != 0 || projects[0].RepoBehindCount != 0 {
 		t.Fatalf("expected migrated row to default to zero ahead/behind counts")
 	}
+	if projects[0].RepoSubmoduleDirtyCount != 0 || projects[0].RepoSubmoduleUnpushedCount != 0 {
+		t.Fatalf("expected migrated row to default to zero submodule attention counts")
+	}
 	if projects[0].Forgotten {
 		t.Fatalf("expected migrated row to default to forgotten=false")
 	}

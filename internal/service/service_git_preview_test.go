@@ -705,6 +705,108 @@ func TestPrepareCommitReturnsSubmoduleAttentionErrorForDirtySubmoduleOnly(t *tes
 	}
 }
 
+func TestPrepareCommitReturnsSubmoduleAttentionErrorForUnpushedSubmoduleOnly(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	submodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+
+	if err := os.WriteFile(filepath.Join(submodulePath, "README.md"), []byte("hello\nlocal commit\n"), 0o644); err != nil {
+		t.Fatalf("write submodule README: %v", err)
+	}
+	runGit(t, submodulePath, "git", "add", "README.md")
+	runGit(t, submodulePath, "git", "commit", "-m", "local submodule commit")
+	runGit(t, projectPath, "git", "add", "assets_src")
+	runGit(t, projectPath, "git", "commit", "-m", "record local submodule commit")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	_, err = svc.PrepareCommit(ctx, projectPath, GitActionCommit, "")
+	if err == nil {
+		t.Fatalf("prepare commit should fail when a submodule has unpushed commits")
+	}
+
+	var submoduleErr SubmoduleAttentionError
+	if !errors.As(err, &submoduleErr) {
+		t.Fatalf("prepare commit error = %v, want SubmoduleAttentionError", err)
+	}
+	if len(submoduleErr.UnpushedSubmodules) != 1 || submoduleErr.UnpushedSubmodules[0] != "assets_src" {
+		t.Fatalf("unpushed submodules = %#v, want assets_src", submoduleErr.UnpushedSubmodules)
+	}
+	if len(submoduleErr.DirtySubmodules) != 0 {
+		t.Fatalf("dirty submodules = %#v, want none", submoduleErr.DirtySubmodules)
+	}
+}
+
+func TestResolveSubmodulesAndPrepareCommitPushesUnpushedSubmoduleWithoutParentCommit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	submodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+
+	if err := os.WriteFile(filepath.Join(submodulePath, "README.md"), []byte("hello\nlocal commit\n"), 0o644); err != nil {
+		t.Fatalf("write submodule README: %v", err)
+	}
+	runGit(t, submodulePath, "git", "add", "README.md")
+	runGit(t, submodulePath, "git", "commit", "-m", "local submodule commit")
+	runGit(t, projectPath, "git", "add", "assets_src")
+	runGit(t, projectPath, "git", "commit", "-m", "record local submodule commit")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	_, err = svc.ResolveSubmodulesAndPrepareCommit(ctx, projectPath, GitActionCommit, "")
+	if err == nil {
+		t.Fatalf("resolve submodules should report no parent commit after pushing")
+	}
+	var resolvedErr SubmoduleResolvedNoParentChangesError
+	if !errors.As(err, &resolvedErr) {
+		t.Fatalf("resolve submodules error = %v, want SubmoduleResolvedNoParentChangesError", err)
+	}
+	if !strings.Contains(resolvedErr.Summary, "Pushed existing commits from submodule assets_src") {
+		t.Fatalf("resolved summary = %q, want pushed submodule note", resolvedErr.Summary)
+	}
+
+	currentSubmoduleHead := strings.TrimSpace(gitOutput(t, submodulePath, "git", "rev-parse", "HEAD"))
+	remoteHead := strings.TrimSpace(gitOutput(t, filepath.Join(submoduleRootPath, "origin.git"), "git", "rev-parse", "master"))
+	if remoteHead != currentSubmoduleHead {
+		t.Fatalf("expected pushed submodule HEAD %q to match remote %q", currentSubmoduleHead, remoteHead)
+	}
+}
+
 func TestSetRunCommandPublishesActionAndPersistsEvent(t *testing.T) {
 	t.Parallel()
 

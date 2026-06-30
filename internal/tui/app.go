@@ -73,25 +73,26 @@ type Model struct {
 	homeDirFn func() (string, error)
 	homeDir   string
 
-	todoDialog            *todoDialogState
-	todoEditor            *todoEditorState
-	todoDeleteConfirm     *todoDeleteConfirmState
-	scratchTaskAction     *scratchTaskActionConfirmState
-	agentTaskAction       *agentTaskActionConfirmState
-	projectRemoveConfirm  *projectRemoveConfirmState
-	externalStopConfirm   *externalProcessStopConfirmState
-	todoLaunchDrafts      map[string]todoLaunchDraftState
-	todoPendingSave       *todoPendingSaveState
-	todoPendingLaunch     *todoPendingLaunchState
-	todoCopyDialog        *todoCopyDialogState
-	todoWorktreeEditor    *todoWorktreeEditorState
-	todoExistingWorktree  *todoExistingWorktreeDialogState
-	todoModelPickerReturn *todoModelPickerReturnState
-	worktreeMergeConfirm  *worktreeMergeConfirmState
-	worktreePostMerge     *worktreePostMergeState
-	worktreeRemoveConfirm *worktreeRemoveConfirmState
-	attentionDialog       *attentionDialogState
-	suspendedTurnDialog   *suspendedTurnResumeDialogState
+	todoDialog              *todoDialogState
+	todoEditor              *todoEditorState
+	todoDeleteConfirm       *todoDeleteConfirmState
+	scratchTaskAction       *scratchTaskActionConfirmState
+	agentTaskAction         *agentTaskActionConfirmState
+	projectRemoveConfirm    *projectRemoveConfirmState
+	externalStopConfirm     *externalProcessStopConfirmState
+	todoLaunchDrafts        map[string]todoLaunchDraftState
+	todoPendingSave         *todoPendingSaveState
+	todoPendingLaunch       *todoPendingLaunchState
+	todoCopyDialog          *todoCopyDialogState
+	todoWorktreeEditor      *todoWorktreeEditorState
+	todoExistingWorktree    *todoExistingWorktreeDialogState
+	todoPendingLaunchDialog *todoPendingLaunchDialogState
+	todoModelPickerReturn   *todoModelPickerReturnState
+	worktreeMergeConfirm    *worktreeMergeConfirmState
+	worktreePostMerge       *worktreePostMergeState
+	worktreeRemoveConfirm   *worktreeRemoveConfirmState
+	attentionDialog         *attentionDialogState
+	suspendedTurnDialog     *suspendedTurnResumeDialogState
 
 	commandMode                         bool
 	commandInput                        textinput.Model
@@ -1397,6 +1398,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.todoExistingWorktree != nil {
 			return m.updateTodoExistingWorktreeMode(msg)
 		}
+		if m.todoPendingLaunchDialog != nil {
+			return m.updateTodoPendingLaunchDialogMode(msg)
+		}
 		if m.todoCopyDialog != nil {
 			return m.updateTodoCopyDialogMode(msg)
 		}
@@ -1729,7 +1733,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commitPreviewMessageOverride = ""
 				m.commitApplying = false
 				m.status = gitStatusDialogReadyStatus(dialog)
-				return m, nil
+				return m, m.refreshProjectStatusCmd(submoduleErr.ProjectPath)
+			}
+			var submoduleResolvedErr service.SubmoduleResolvedNoParentChangesError
+			if errors.As(msg.err, &submoduleResolvedErr) {
+				dialog := gitStatusDialogFromSubmoduleResolved(submoduleResolvedErr)
+				m.err = nil
+				m.showHelp = false
+				m.gitStatusDialog = &dialog
+				m.gitStatusApplying = false
+				m.commitPreview = nil
+				m.commitTodoCompletions = nil
+				m.commitPreviewMessageOverride = ""
+				m.commitApplying = false
+				m.status = gitStatusDialogReadyStatus(dialog)
+				return m, m.refreshProjectStatusCmd(submoduleResolvedErr.ProjectPath)
 			}
 			m.reportError("Commit preview failed", msg.err, msg.projectPath)
 			m.gitStatusDialog = nil
@@ -2081,13 +2099,24 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case todoWorktreeLaunchMsg:
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		pendingCanceled := false
+		pendingRootPath := ""
+		selectedWasPending := false
+		selectAfterPending := m.currentSelectedProjectPath()
 		if msg.launchID != 0 {
 			pending := m.todoPendingLaunch
 			if pending == nil || pending.ID != msg.launchID {
 				return m, nil
 			}
+			pendingRootPath = pending.ProjectPath
+			_, selectedWasPending = m.todoPendingLaunchForProjectPath(m.currentSelectedProjectPath())
+			if selectedWasPending {
+				selectAfterPending = pendingRootPath
+			}
 			pendingCanceled = pending.Canceled
 			m.todoPendingLaunch = nil
+		}
+		if m.todoPendingLaunchDialog != nil && (msg.launchID == 0 || m.todoPendingLaunchDialog.LaunchID == msg.launchID) {
+			m.todoPendingLaunchDialog = nil
 		}
 		if m.todoCopyDialog != nil && (msg.launchID == 0 || m.todoCopyDialog.LaunchID == 0 || m.todoCopyDialog.LaunchID == msg.launchID) {
 			m.todoCopyDialog.Submitting = false
@@ -2096,6 +2125,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if pendingCanceled {
 			m.err = nil
 			m.clearTodoLaunchDraft(msg.projectPath)
+			if pendingRootPath != "" {
+				m.rebuildProjectList(selectAfterPending)
+			}
 			if msg.err == nil {
 				m.status = "TODO start canceled after worktree creation"
 				if m.svc == nil {
@@ -2112,6 +2144,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.clearTodoLaunchDraft(msg.projectPath)
+			if pendingRootPath != "" {
+				m.rebuildProjectList(selectAfterPending)
+			}
 			m.reportError("TODO launch failed", msg.err, msg.projectPath)
 			return m, nil
 		}
@@ -2187,8 +2222,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rememberEmbeddedProvider(provider)
 		m.beginNewCodexPendingOpenWithVisibilityAndReveal(req.ProjectPath, provider, msg.openModelFirst, msg.openModelFirst)
 		m.status = todoWorktreeSessionStartStatus(provider, msg.openModelFirst, len(msg.preparedPaths))
+		m.preferredSelectPath = msg.projectPath
+		if pendingRootPath != "" {
+			m.rebuildProjectList(selectAfterPending)
+		}
 		return m, batchCmds(
-			m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())),
+			m.requestProjectInvalidationCmd(invalidateProjectStructure(msg.projectPath)),
 			m.openCodexSessionCmdWithVisibility(req, msg.openModelFirst),
 		)
 	case worktreeActionMsg:

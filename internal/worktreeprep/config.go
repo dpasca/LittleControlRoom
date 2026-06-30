@@ -366,9 +366,27 @@ func gitRun(ctx context.Context, repoPath, action string, args ...string) error 
 	cmd := exec.CommandContext(ctx, "git", allArgs...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s in %s: %w: %s", strings.TrimSpace(action), repoPath, err, strings.TrimSpace(string(out)))
+		return formatGitRunError(strings.TrimSpace(action), repoPath, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func formatGitRunError(action, repoPath string, err error, output string) error {
+	base := fmt.Sprintf("%s in %s: %v", action, repoPath, err)
+	if output == "" {
+		return errors.New(base)
+	}
+	if isMissingSubmoduleCommitOutput(output) {
+		return fmt.Errorf("%s: submodule checkout failed because the parent repo records a submodule commit that the submodule remote did not provide. Push the missing submodule commit first, or configure %s with mode = \"worktree\" for locally available submodule commits. Git output: %s", base, ConfigRelPath, output)
+	}
+	return fmt.Errorf("%s: %s", base, output)
+}
+
+func isMissingSubmoduleCommitOutput(output string) bool {
+	text := strings.ToLower(output)
+	return strings.Contains(text, "not our ref") &&
+		strings.Contains(text, "fetched in submodule path") &&
+		strings.Contains(text, "direct fetching of that commit failed")
 }
 
 func gitOutput(ctx context.Context, repoPath string, args ...string) (string, error) {

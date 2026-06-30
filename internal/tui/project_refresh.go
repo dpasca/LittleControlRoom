@@ -573,6 +573,9 @@ func structureActionDetailPath(event events.Event, currentSelectedPath string) s
 }
 
 func (m *Model) requestProjectDetailViewCmd(path string) tea.Cmd {
+	if _, ok := m.todoPendingLaunchForProjectPath(path); ok {
+		return nil
+	}
 	if _, ok := m.agentTaskForProjectPath(path); ok {
 		return nil
 	}

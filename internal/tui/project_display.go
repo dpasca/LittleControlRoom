@@ -90,14 +90,18 @@ func projectHasGitInfo(project model.ProjectSummary) bool {
 	if !projectUsesRepoUI(project) {
 		return false
 	}
-	return project.RepoBranch != "" || project.RepoDirty || project.RepoConflict || project.WorktreeKind != model.WorktreeKindNone
+	return project.RepoBranch != "" || project.RepoDirty || project.RepoConflict || projectHasSubmoduleAttention(project) || project.WorktreeKind != model.WorktreeKindNone
 }
 
 func projectHasRepoWarning(project model.ProjectSummary) bool {
 	if !projectUsesRepoUI(project) {
 		return false
 	}
-	return project.RepoConflict || project.RepoDirty || (projectShowsRemoteSyncStatus(project) && repoSyncWarning(project.RepoSyncStatus))
+	return project.RepoConflict || project.RepoDirty || projectHasSubmoduleAttention(project) || (projectShowsRemoteSyncStatus(project) && repoSyncWarning(project.RepoSyncStatus))
+}
+
+func projectHasSubmoduleAttention(project model.ProjectSummary) bool {
+	return project.RepoSubmoduleDirtyCount > 0 || project.RepoSubmoduleUnpushedCount > 0
 }
 
 func appendDetailFields(lines []string, width int, fields ...string) []string {
@@ -165,6 +169,9 @@ func projectAssessmentRepoFallback(project model.ProjectSummary) string {
 	}
 	if project.RepoDirty {
 		return "dirty worktree"
+	}
+	if projectHasSubmoduleAttention(project) {
+		return repoSubmoduleAttentionPlainText(project)
 	}
 	if worktreeNeedsMergeBack(project) {
 		return worktreeMergeStatusSummary(project)
@@ -832,6 +839,9 @@ func (m Model) repoCombinedDetailValue(project model.ProjectSummary) string {
 	} else {
 		parts = append(parts, detailMutedStyle.Render("clean"))
 	}
+	if projectHasSubmoduleAttention(project) && m.pendingGitSummary(project.Path) == "" {
+		parts = append(parts, detailWarningStyle.Render(repoSubmoduleAttentionPlainText(project)))
+	}
 	if projectShowsRemoteSyncStatus(project) && m.pendingGitSummary(project.Path) == "" {
 		switch project.RepoSyncStatus {
 		case model.RepoSyncNoRemote:
@@ -867,6 +877,23 @@ func repoDirtyDetailValue(project model.ProjectSummary) string {
 		return detailWarningStyle.Render("dirty worktree")
 	}
 	return detailMutedStyle.Render("clean")
+}
+
+func repoSubmoduleAttentionDetailValue(project model.ProjectSummary) string {
+	return detailWarningStyle.Render(repoSubmoduleAttentionPlainText(project) + ". Use /commit to resolve submodule changes or push existing submodule commits.")
+}
+
+func repoSubmoduleAttentionPlainText(project model.ProjectSummary) string {
+	dirtyCount := project.RepoSubmoduleDirtyCount
+	unpushedCount := project.RepoSubmoduleUnpushedCount
+	switch {
+	case dirtyCount > 0 && unpushedCount > 0:
+		return fmt.Sprintf("submodules %d dirty, %d unpushed", dirtyCount, unpushedCount)
+	case dirtyCount > 0:
+		return fmt.Sprintf("submodules %d dirty", dirtyCount)
+	default:
+		return fmt.Sprintf("submodules %d unpushed", unpushedCount)
+	}
 }
 
 func repoConflictDetailValue(project model.ProjectSummary) string {

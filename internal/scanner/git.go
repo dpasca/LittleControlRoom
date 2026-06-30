@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -22,6 +23,17 @@ type GitRepoStatus struct {
 	Behind      int
 	Branch      string
 	Changes     []GitChange
+	Submodules  []GitSubmoduleStatus
+}
+
+type GitSubmoduleStatus struct {
+	Path        string
+	Dirty       bool
+	HasRemote   bool
+	HasUpstream bool
+	Ahead       int
+	Behind      int
+	Branch      string
 }
 
 type GitWorktreeKind string
@@ -122,6 +134,26 @@ func (s GitRepoStatus) UntrackedChanges() []GitChange {
 	return out
 }
 
+func (s GitRepoStatus) SubmoduleDirtyCount() int {
+	count := 0
+	for _, submodule := range s.Submodules {
+		if submodule.Dirty {
+			count++
+		}
+	}
+	return count
+}
+
+func (s GitRepoStatus) SubmoduleUnpushedCount() int {
+	count := 0
+	for _, submodule := range s.Submodules {
+		if submodule.Ahead > 0 {
+			count++
+		}
+	}
+	return count
+}
+
 func ReadGitFingerprint(ctx context.Context, path string) (GitFingerprint, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-list", "--max-count=3", "HEAD")
 	out, err := cmd.Output()
@@ -141,6 +173,15 @@ func ReadGitFingerprint(ctx context.Context, path string) (GitFingerprint, error
 }
 
 func ReadGitRepoStatus(ctx context.Context, path string) (GitRepoStatus, error) {
+	status, err := readGitRepoStatusDirect(ctx, path)
+	if err != nil {
+		return GitRepoStatus{}, err
+	}
+	status.Submodules = readGitSubmoduleStatuses(ctx, path)
+	return status, nil
+}
+
+func readGitRepoStatusDirect(ctx context.Context, path string) (GitRepoStatus, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain=v2", "--branch", "--untracked-files=normal")
 	out, err := cmd.Output()
 	if err != nil {
@@ -158,6 +199,69 @@ func ReadGitRepoStatus(ctx context.Context, path string) (GitRepoStatus, error) 
 	}
 	status.HasRemote = len(strings.Fields(strings.TrimSpace(string(remoteOut)))) > 0
 	return status, nil
+}
+
+func readGitSubmoduleStatuses(ctx context.Context, path string) []GitSubmoduleStatus {
+	paths := readConfiguredSubmodulePaths(ctx, path)
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make([]GitSubmoduleStatus, 0, len(paths))
+	for _, submodulePath := range paths {
+		childPath := filepath.Join(path, filepath.FromSlash(submodulePath))
+		if info, err := os.Stat(childPath); err != nil || !info.IsDir() {
+			continue
+		}
+		status, err := readGitRepoStatusDirect(ctx, childPath)
+		if err != nil {
+			continue
+		}
+		out = append(out, GitSubmoduleStatus{
+			Path:        submodulePath,
+			Dirty:       status.Dirty,
+			HasRemote:   status.HasRemote,
+			HasUpstream: status.HasUpstream,
+			Ahead:       status.Ahead,
+			Behind:      status.Behind,
+			Branch:      status.Branch,
+		})
+	}
+	return out
+}
+
+func readConfiguredSubmodulePaths(ctx context.Context, path string) []string {
+	gitmodulesPath := filepath.Join(path, ".gitmodules")
+	if info, err := os.Stat(gitmodulesPath); err != nil || info.IsDir() {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var paths []string
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		submodulePath := filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(parts[1]))))
+		if submodulePath == "" || submodulePath == "." || strings.HasPrefix(submodulePath, "../") || strings.HasPrefix(submodulePath, "/") {
+			continue
+		}
+		if _, ok := seen[submodulePath]; ok {
+			continue
+		}
+		seen[submodulePath] = struct{}{}
+		paths = append(paths, submodulePath)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func ReadGitDirty(ctx context.Context, path string) (bool, error) {

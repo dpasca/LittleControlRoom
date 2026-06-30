@@ -73,6 +73,9 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.focusedPane == focusProjects {
+			if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowPendingWorktree {
+				return m.openTodoPendingLaunchDialogForSelection(todoPendingLaunchDialogFocusOK)
+			}
 			project, ok := m.selectedProject()
 			if !ok {
 				m.status = "No project selected"
@@ -173,7 +176,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.focusedPane == focusProjects {
 			if row, project, ok := m.selectedProjectRow(); ok {
-				if row.Kind == projectListRowWorktree {
+				if row.Kind == projectListRowWorktree || row.Kind == projectListRowPendingWorktree {
 					if m.worktreeExpanded == nil {
 						m.worktreeExpanded = map[string]bool{}
 					}
@@ -228,6 +231,9 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "M":
 		return m, m.openWorktreeMergeConfirmForSelection()
 	case "x":
+		if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowPendingWorktree {
+			return m.openTodoPendingLaunchDialogForSelection(todoPendingLaunchDialogFocusAbort)
+		}
 		return m.openHideActionForSelection()
 	}
 	return m, nil

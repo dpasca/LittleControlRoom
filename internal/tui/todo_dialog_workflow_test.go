@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testing.T) {
@@ -1370,36 +1371,100 @@ func TestTodoCopyDialogBlocksDedicatedWorktreeWhileLaunchPending(t *testing.T) {
 		t.Fatalf("copy dialog should stay open after blocked duplicate launch")
 	}
 	wantStatus := "TODO #7 worktree is already being created; wait for it to finish."
-	if got.status != wantStatus {
-		t.Fatalf("status = %q, want %q", got.status, wantStatus)
+	if got.todoPendingLaunchDialog == nil {
+		t.Fatalf("blocked duplicate launch should open a modal dialog")
+	}
+	if got.todoPendingLaunchDialog.Message != wantStatus {
+		t.Fatalf("dialog message = %q, want %q", got.todoPendingLaunchDialog.Message, wantStatus)
+	}
+	if got.todoPendingLaunchDialog.AllowAbort {
+		t.Fatalf("duplicate-launch modal should require acknowledgement only")
 	}
 }
 
-func TestFooterShowsPendingTodoWorktreeLaunch(t *testing.T) {
+func TestProjectListShowsPendingTodoWorktreeLaunch(t *testing.T) {
 	t.Parallel()
 
+	canceled := false
 	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Path:          "/tmp/demo",
+			Name:          "demo",
+			PresentOnDisk: true,
+			LastActivity:  time.Date(2026, 6, 30, 8, 0, 0, 0, time.UTC),
+		}},
 		todoPendingLaunch: &todoPendingLaunchState{
 			ID:          21,
 			ProjectPath: "/tmp/demo",
 			ProjectName: "demo",
 			TodoID:      7,
+			TodoText:    "Launch this TODO in a new worktree",
 			Provider:    codexapp.ProviderCodex,
+			StartedAt:   time.Date(2026, 6, 30, 8, 1, 0, 0, time.UTC),
+			Cancel:      func() { canceled = true },
 		},
+		nowFn:        func() time.Time { return time.Date(2026, 6, 30, 8, 3, 0, 0, time.UTC) },
 		width:        100,
 		height:       24,
+		focusedPane:  focusProjects,
 		spinnerFrame: 1,
 	}
 
-	rendered := ansi.Strip(m.renderFooter(100))
-	if !strings.Contains(rendered, "Creating TODO #7 worktree in demo") {
-		t.Fatalf("footer = %q, want pending TODO worktree launch feedback", rendered)
+	pendingProject, ok := m.todoPendingLaunchProjectSummary()
+	if !ok {
+		t.Fatalf("pending launch should synthesize a project row")
+	}
+	m.rebuildProjectList(pendingProject.Path)
+	if _, pending, ok := m.selectedProjectRow(); !ok || pending.Path != pendingProject.Path {
+		t.Fatalf("selected project = %#v ok=%v, want pending row %q", pending, ok, pendingProject.Path)
+	}
+	row, _, _ := m.selectedProjectRow()
+	if row.Kind != projectListRowPendingWorktree {
+		t.Fatalf("selected row kind = %q, want pending worktree", row.Kind)
+	}
+	rendered := ansi.Strip(m.renderProjectList(180, 8))
+	if !strings.Contains(rendered, "TODO #7") || !strings.Contains(rendered, "creating") || !strings.Contains(rendered, "preparing checkout") {
+		t.Fatalf("project list = %q, want pending worktree placeholder", rendered)
+	}
+	footer := ansi.Strip(m.renderFooter(120))
+	if strings.Contains(footer, "Creating TODO #7 worktree") {
+		t.Fatalf("footer = %q, should not duplicate pending worktree launch feedback", footer)
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("opening pending worktree status should not queue a command")
+	}
+	if got.todoPendingLaunchDialog == nil || !got.todoPendingLaunchDialog.AllowAbort {
+		t.Fatalf("enter on pending row should open an abort-capable dialog, got %#v", got.todoPendingLaunchDialog)
+	}
+
+	updated, cmd = got.updateTodoPendingLaunchDialogMode(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("switching pending worktree dialog focus should not queue a command")
+	}
+	updated, cmd = got.updateTodoPendingLaunchDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("aborting pending worktree should not queue a command")
+	}
+	if !canceled {
+		t.Fatalf("abort should call the pending launch cancel function")
+	}
+	if got.todoPendingLaunch == nil || !got.todoPendingLaunch.Canceled {
+		t.Fatalf("pending launch = %#v, want canceled state retained until command completion", got.todoPendingLaunch)
+	}
+	if got.todoPendingLaunchDialog != nil {
+		t.Fatalf("pending launch dialog should close after abort")
 	}
 
 	m.todoPendingLaunch.Canceled = true
-	rendered = ansi.Strip(m.renderFooter(100))
-	if strings.Contains(rendered, "Creating TODO #7 worktree") {
-		t.Fatalf("footer = %q, should hide canceled pending TODO worktree launch", rendered)
+	m.rebuildProjectList("/tmp/demo")
+	rendered = ansi.Strip(m.renderProjectList(180, 8))
+	if strings.Contains(rendered, "TODO #7") {
+		t.Fatalf("project list = %q, should hide canceled pending TODO worktree launch", rendered)
 	}
 }
 

@@ -214,6 +214,8 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	repoSyncStatus := model.RepoSyncStatus("")
 	repoAheadCount := 0
 	repoBehindCount := 0
+	repoSubmoduleDirtyCount := 0
+	repoSubmoduleUnpushedCount := 0
 	if presentOnDisk && s.gitRepoStatusReader != nil {
 		worktreeRootPath, worktreeKind = s.readProjectWorktreeInfo(ctx, projectPath)
 		if repoStatus, err := s.gitRepoStatusReader(ctx, projectPath); err == nil {
@@ -223,22 +225,26 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 			repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 			repoAheadCount = repoStatus.Ahead
 			repoBehindCount = repoStatus.Behind
+			repoSubmoduleDirtyCount = repoStatus.SubmoduleDirtyCount()
+			repoSubmoduleUnpushedCount = repoStatus.SubmoduleUnpushedCount()
 		}
 		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 	}
 
 	score := attention.Score(attention.Input{
-		Path:            projectPath,
-		Now:             now,
-		CreatedAt:       createdAt,
-		RepoDirty:       repoDirty,
-		Pinned:          existing.Pinned,
-		Unread:          attention.AssessmentUnread(existing),
-		SnoozedUntil:    existing.SnoozedUntil,
-		HasActivity:     false,
-		ActiveThreshold: s.cfg.ActiveThreshold,
-		StuckThreshold:  s.cfg.StuckThreshold,
-		OpenTodoCount:   existing.OpenTODOCount,
+		Path:                       projectPath,
+		Now:                        now,
+		CreatedAt:                  createdAt,
+		RepoDirty:                  repoDirty,
+		RepoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
+		RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
+		Pinned:                     existing.Pinned,
+		Unread:                     attention.AssessmentUnread(existing),
+		SnoozedUntil:               existing.SnoozedUntil,
+		HasActivity:                false,
+		ActiveThreshold:            s.cfg.ActiveThreshold,
+		StuckThreshold:             s.cfg.StuckThreshold,
+		OpenTodoCount:              existing.OpenTODOCount,
 	})
 
 	displayName := strings.TrimSpace(name)
@@ -250,33 +256,35 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 	}
 
 	state := model.ProjectState{
-		Path:                   projectPath,
-		Name:                   displayName,
-		Kind:                   kind,
-		Status:                 score.Status,
-		AttentionScore:         score.Score,
-		PresentOnDisk:          presentOnDisk,
-		WorktreeRootPath:       worktreeRootPath,
-		WorktreeKind:           worktreeKind,
-		WorktreeParentBranch:   worktreeParentBranch,
-		WorktreeMergeStatus:    worktreeMergeStatus,
-		WorktreeOriginTodoID:   existing.WorktreeOriginTodoID,
-		RepoBranch:             repoBranch,
-		RepoDirty:              repoDirty,
-		RepoConflict:           repoConflict,
-		RepoSyncStatus:         repoSyncStatus,
-		RepoAheadCount:         repoAheadCount,
-		RepoBehindCount:        repoBehindCount,
-		ManuallyAdded:          true,
-		InScope:                true,
-		Pinned:                 existing.Pinned,
-		SnoozedUntil:           existing.SnoozedUntil,
-		MovedFromPath:          existing.MovedFromPath,
-		MovedAt:                existing.MovedAt,
-		PreferredSessionSource: existing.PreferredSessionSource,
-		AttentionReason:        score.Reasons,
-		CreatedAt:              createdAt,
-		UpdatedAt:              now,
+		Path:                       projectPath,
+		Name:                       displayName,
+		Kind:                       kind,
+		Status:                     score.Status,
+		AttentionScore:             score.Score,
+		PresentOnDisk:              presentOnDisk,
+		WorktreeRootPath:           worktreeRootPath,
+		WorktreeKind:               worktreeKind,
+		WorktreeParentBranch:       worktreeParentBranch,
+		WorktreeMergeStatus:        worktreeMergeStatus,
+		WorktreeOriginTodoID:       existing.WorktreeOriginTodoID,
+		RepoBranch:                 repoBranch,
+		RepoDirty:                  repoDirty,
+		RepoConflict:               repoConflict,
+		RepoSyncStatus:             repoSyncStatus,
+		RepoAheadCount:             repoAheadCount,
+		RepoBehindCount:            repoBehindCount,
+		RepoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
+		RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
+		ManuallyAdded:              true,
+		InScope:                    true,
+		Pinned:                     existing.Pinned,
+		SnoozedUntil:               existing.SnoozedUntil,
+		MovedFromPath:              existing.MovedFromPath,
+		MovedAt:                    existing.MovedAt,
+		PreferredSessionSource:     existing.PreferredSessionSource,
+		AttentionReason:            score.Reasons,
+		CreatedAt:                  createdAt,
+		UpdatedAt:                  now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return fmt.Errorf("persist project state: %w", err)

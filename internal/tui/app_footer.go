@@ -95,15 +95,14 @@ func (m Model) renderFooter(width int) string {
 	browserSegment := m.renderFooterBrowserAttentionSegment()
 	processSegment := m.renderFooterProcessWarningSegment()
 	runtimeSegment := m.renderFooterRuntimeSegment()
-	todoWorktreeSegment := m.renderFooterTodoWorktreeLaunchSegment()
 	assessmentSegment := ""
 	if !m.errorLogVisible {
 		assessmentSegment = m.renderFooterAssessmentSegment()
 	}
 	filterSegment := m.renderFooterProjectFilterSegment()
-	supplementSegments := footerSupplementSegments(filterSegment, todoWorktreeSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
+	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
 	if m.diffView != nil {
-		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, todoWorktreeSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, "")...)
+		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, "")...)
 		return renderFooterLine(width, diffSegments...)
 	}
 	if m.gitStatusDialog != nil {
@@ -191,6 +190,12 @@ func (m Model) renderFooter(width int) string {
 	if m.showAIStats {
 		return m.renderModalFooter(width, "AI stats: Esc close", supplementSegments...)
 	}
+	if m.todoPendingLaunchDialog != nil {
+		if m.todoPendingLaunchDialog.AllowAbort {
+			return m.renderModalFooter(width, "Preparing worktree: Enter choose, Tab switch, Esc close", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Preparing worktree: Enter OK, Esc close", supplementSegments...)
+	}
 	if m.worktreeMergeConfirm != nil {
 		if m.worktreeMergeConfirm.Busy {
 			return m.renderModalFooter(width, "Merge worktree: waiting for actions to finish", supplementSegments...)
@@ -229,25 +234,6 @@ func (m Model) renderFooter(width int) string {
 		compactFooterBase(width, m.focusedPane, m.detailViewport.ScrollPercent(), m.runtimeViewport.ScrollPercent(), m.hasHiddenCodexSession(), m.currentEmbeddedLaunchLabel(), m.worktreeFooterActions(width)),
 	}, supplementSegments...)
 	return renderFooterLine(width, baseSegments...)
-}
-
-func (m Model) renderFooterTodoWorktreeLaunchSegment() string {
-	pending := m.activeTodoPendingLaunch()
-	if pending == nil {
-		return ""
-	}
-	frame := ""
-	if len(spinnerFrames) > 0 {
-		frame = spinnerFrames[m.spinnerFrame%len(spinnerFrames)] + " "
-	}
-	label := "Creating TODO worktree"
-	if pending.TodoID > 0 {
-		label = fmt.Sprintf("Creating TODO #%d worktree", pending.TodoID)
-	}
-	if projectName := strings.TrimSpace(pending.ProjectName); projectName != "" {
-		label += " in " + projectName
-	}
-	return renderFooterStatus(frame + label)
 }
 
 func (m Model) renderCommandPalette(bodyW int) string {
@@ -667,22 +653,78 @@ func gitStatusDialogFromSubmoduleAttention(err service.SubmoduleAttentionError, 
 		ProjectPath:       err.ProjectPath,
 		ProjectName:       projectName,
 		Branch:            branch,
-		Status:            "Only submodule-local changes are pending.",
-		ReadyStatus:       "Submodule needs attention. Enter resolve & continue, Esc close",
-		DismissStatus:     "Submodule changes still need attention",
+		Status:            submoduleAttentionStatusLine(err),
+		ReadyStatus:       "Submodules need attention. Enter resolve & continue, Esc close",
+		DismissStatus:     "Submodules still need attention",
 		ResolveSubmodules: true,
 		CommitIntent:      intent,
 		CommitMessage:     message,
 	}
 
-	if len(err.Submodules) == 1 {
-		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Commit or discard the local changes inside submodule %s before committing the parent repo.", err.Submodules[0]))
-	} else if len(err.Submodules) > 1 {
-		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Commit or discard the local changes inside these submodules before committing the parent repo: %s.", strings.Join(err.Submodules, ", ")))
+	if len(err.DirtySubmodules) == 1 {
+		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Submodule %s has local changes inside it; resolve & continue will commit those changes and push that submodule.", err.DirtySubmodules[0]))
+	} else if len(err.DirtySubmodules) > 1 {
+		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("These submodules have local changes inside them; resolve & continue will commit and push them: %s.", strings.Join(err.DirtySubmodules, ", ")))
 	}
-	dialog.Warnings = append(dialog.Warnings, "Enter resolve & continue will commit all current changes inside those submodules, push them, and then reopen the parent commit preview.")
+	if len(err.UnpushedSubmodules) == 1 {
+		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Submodule %s has local commits that are not pushed to upstream; resolve & continue will push that submodule.", err.UnpushedSubmodules[0]))
+	} else if len(err.UnpushedSubmodules) > 1 {
+		dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("These submodules have local commits that are not pushed to upstream; resolve & continue will push them: %s.", strings.Join(err.UnpushedSubmodules, ", ")))
+	}
+	if len(dialog.Warnings) == 0 {
+		if len(err.Submodules) == 1 {
+			dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("Submodule %s needs attention before committing the parent repo.", err.Submodules[0]))
+		} else if len(err.Submodules) > 1 {
+			dialog.Warnings = append(dialog.Warnings, fmt.Sprintf("These submodules need attention before committing the parent repo: %s.", strings.Join(err.Submodules, ", ")))
+		}
+	}
+	dialog.Warnings = append(dialog.Warnings, "Fresh worktree creation can fail until required submodule commits are available from the submodule remote.")
 	if warning := strings.TrimSpace(err.PushWarning); warning != "" {
 		dialog.Warnings = append(dialog.Warnings, warning)
+	}
+	return dialog
+}
+
+func submoduleAttentionStatusLine(err service.SubmoduleAttentionError) string {
+	dirtyCount := len(err.DirtySubmodules)
+	unpushedCount := len(err.UnpushedSubmodules)
+	switch {
+	case dirtyCount > 0 && unpushedCount > 0:
+		return fmt.Sprintf("%d dirty and %d unpushed submodule(s) need attention.", dirtyCount, unpushedCount)
+	case dirtyCount > 0:
+		return fmt.Sprintf("%d dirty submodule(s) need attention.", dirtyCount)
+	case unpushedCount > 0:
+		return fmt.Sprintf("%d submodule(s) have local commits to push.", unpushedCount)
+	default:
+		return "Submodules need attention before the parent repo can commit."
+	}
+}
+
+func gitStatusDialogFromSubmoduleResolved(err service.SubmoduleResolvedNoParentChangesError) gitStatusDialog {
+	projectName := strings.TrimSpace(err.ProjectName)
+	if projectName == "" && strings.TrimSpace(err.ProjectPath) != "" {
+		projectName = filepath.Base(err.ProjectPath)
+	}
+	if projectName == "" {
+		projectName = "(unknown project)"
+	}
+
+	branch := strings.TrimSpace(err.Branch)
+	if branch == "" {
+		branch = "(detached)"
+	}
+
+	dialog := gitStatusDialog{
+		Title:         "Submodules Resolved",
+		ProjectPath:   err.ProjectPath,
+		ProjectName:   projectName,
+		Branch:        branch,
+		Status:        "Parent repo has no new commit to prepare.",
+		ReadyStatus:   "Submodules resolved. Enter close, Esc close",
+		DismissStatus: "Submodules resolved; no parent commit needed",
+	}
+	if summary := strings.TrimSpace(err.Summary); summary != "" {
+		dialog.Warnings = append(dialog.Warnings, summary)
 	}
 	return dialog
 }

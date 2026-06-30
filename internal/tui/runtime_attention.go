@@ -210,6 +210,9 @@ func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinner
 	if project.RepoDirty {
 		return detailDangerStyle.Render("!")
 	}
+	if projectHasSubmoduleAttention(project) {
+		return detailWarningStyle.Render("!")
+	}
 	if worktreeNeedsMergeBack(project) {
 		return detailWarningStyle.Render("M")
 	}

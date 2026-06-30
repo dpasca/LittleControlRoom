@@ -18,9 +18,10 @@ import (
 type projectListRowKind string
 
 const (
-	projectListRowStandalone projectListRowKind = "standalone"
-	projectListRowRepo       projectListRowKind = "repo"
-	projectListRowWorktree   projectListRowKind = "worktree"
+	projectListRowStandalone      projectListRowKind = "standalone"
+	projectListRowRepo            projectListRowKind = "repo"
+	projectListRowWorktree        projectListRowKind = "worktree"
+	projectListRowPendingWorktree projectListRowKind = "pending_worktree"
 )
 
 const (
@@ -49,6 +50,7 @@ type projectListRow struct {
 	LinkedDirtyCount    int
 	LinkedUnmergedCount int
 	Expanded            bool
+	PendingLaunchID     int64
 }
 
 type worktreeRemoveConfirmState struct {
@@ -656,6 +658,9 @@ func (m Model) existingWorktreeCandidates(projectPath string) []model.ProjectSum
 func (m *Model) rebuildProjectList(selectedPath string) {
 	m.ensureSelectedCategoryTab()
 	sorted := append([]model.ProjectSummary(nil), m.projectListSourceProjects()...)
+	if pendingProject, ok := m.todoPendingLaunchProjectSummary(); ok && m.archiveMode != projectArchiveArchived {
+		sorted = append(sorted, pendingProject)
+	}
 	if m.archiveMode != projectArchiveArchived {
 		sorted = append(sorted, m.agentTaskProjectSummariesForCurrentTab()...)
 	}
@@ -806,11 +811,18 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 			continue
 		}
 		for _, child := range children {
+			rowKind := projectListRowWorktree
+			pendingLaunchID := int64(0)
+			if pending, ok := m.todoPendingLaunchForProjectPath(child.Path); ok {
+				rowKind = projectListRowPendingWorktree
+				pendingLaunchID = pending.ID
+			}
 			rows = append(rows, child)
 			meta = append(meta, projectListRow{
-				Kind:        projectListRowWorktree,
-				ProjectPath: child.Path,
-				RootPath:    rootPath,
+				Kind:            rowKind,
+				ProjectPath:     child.Path,
+				RootPath:        rootPath,
+				PendingLaunchID: pendingLaunchID,
 			})
 		}
 	}
@@ -895,7 +907,7 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 		m.status = "No project selected"
 		return nil
 	}
-	if row.RootPath == "" || row.LinkedCount == 0 && row.Kind != projectListRowWorktree {
+	if row.RootPath == "" || row.LinkedCount == 0 && row.Kind != projectListRowWorktree && row.Kind != projectListRowPendingWorktree {
 		m.status = "No sibling worktrees to show"
 		return nil
 	}
@@ -914,7 +926,7 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 		m.worktreeExpanded = map[string]bool{}
 	}
 	next := !m.isWorktreeGroupExpanded(rootPath, children, project.Path)
-	if row.Kind == projectListRowWorktree && !next {
+	if (row.Kind == projectListRowWorktree || row.Kind == projectListRowPendingWorktree) && !next {
 		m.worktreeExpanded[rootPath] = false
 		m.rebuildProjectList(rootPath)
 		m.status = "Worktrees collapsed"
@@ -1007,6 +1019,10 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	rootPath := row.RootPath
 	if rootPath == "" {
 		rootPath = projectWorktreeRootPath(project)
+	}
+	if row.Kind == projectListRowPendingWorktree {
+		actions = append(actions, footerPrimaryAction("Enter", "status"), footerHideAction("x", "abort"))
+		return actions
 	}
 	family := m.worktreeFamily(rootPath)
 	if len(family) <= 1 && row.Kind != projectListRowWorktree && row.LinkedCount == 0 {

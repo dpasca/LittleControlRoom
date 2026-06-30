@@ -482,6 +482,9 @@ func contextProjectDoc(detail model.ProjectDetail) contextSearchDoc {
 	if summary.RepoDirty {
 		contextAppendLine(&b, "Repo has uncommitted changes")
 	}
+	if summary.RepoSubmoduleDirtyCount > 0 || summary.RepoSubmoduleUnpushedCount > 0 {
+		contextAppendLine(&b, fmt.Sprintf("Repo submodules need attention: %d dirty, %d unpushed", summary.RepoSubmoduleDirtyCount, summary.RepoSubmoduleUnpushedCount))
+	}
 	if summary.RepoConflict {
 		contextAppendLine(&b, "Repo has conflicts")
 	}

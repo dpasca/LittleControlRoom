@@ -3,7 +3,9 @@ package scanner
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -171,5 +173,67 @@ func TestReadGitWorktreeInfoFallsBackToGitFileForStaleLinkedWorktree(t *testing.
 	}
 	if info.Kind != GitWorktreeKindLinked {
 		t.Fatalf("Kind = %q, want %q", info.Kind, GitWorktreeKindLinked)
+	}
+}
+
+func TestReadGitRepoStatusReportsSubmoduleDirtyAndAhead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	originPath := filepath.Join(root, "assets-origin")
+	parentPath := filepath.Join(root, "parent")
+	scannerInitGitRepo(t, originPath)
+	scannerInitGitRepo(t, parentPath)
+	scannerRunGit(t, parentPath, "-c", "protocol.file.allow=always", "submodule", "add", originPath, "assets")
+	scannerRunGit(t, parentPath, "commit", "-m", "add submodule")
+
+	submodulePath := filepath.Join(parentPath, "assets")
+	scannerRunGit(t, submodulePath, "branch", "--set-upstream-to=origin/master", "master")
+	if err := os.WriteFile(filepath.Join(submodulePath, "README.md"), []byte("hello\npushed later\n"), 0o644); err != nil {
+		t.Fatalf("write submodule README: %v", err)
+	}
+	scannerRunGit(t, submodulePath, "add", "README.md")
+	scannerRunGit(t, submodulePath, "commit", "-m", "local submodule commit")
+	if err := os.WriteFile(filepath.Join(submodulePath, "local.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty submodule file: %v", err)
+	}
+
+	status, err := ReadGitRepoStatus(ctx, parentPath)
+	if err != nil {
+		t.Fatalf("ReadGitRepoStatus() error = %v", err)
+	}
+	if status.SubmoduleDirtyCount() != 1 {
+		t.Fatalf("submodule dirty count = %d, want 1; status = %#v", status.SubmoduleDirtyCount(), status.Submodules)
+	}
+	if status.SubmoduleUnpushedCount() != 1 {
+		t.Fatalf("submodule unpushed count = %d, want 1; status = %#v", status.SubmoduleUnpushedCount(), status.Submodules)
+	}
+	if len(status.Submodules) != 1 || status.Submodules[0].Path != "assets" || status.Submodules[0].Ahead != 1 {
+		t.Fatalf("submodules = %#v, want assets ahead by 1", status.Submodules)
+	}
+}
+
+func scannerInitGitRepo(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	scannerRunGit(t, path, "init")
+	scannerRunGit(t, path, "config", "user.email", "test@example.com")
+	scannerRunGit(t, path, "config", "user.name", "Little Control Room Test")
+	if err := os.WriteFile(filepath.Join(path, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	scannerRunGit(t, path, "add", "README.md")
+	scannerRunGit(t, path, "commit", "-m", "initial")
+}
+
+func scannerRunGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git -C %s %s failed: %v\n%s", dir, strings.Join(args, " "), err, string(out))
 	}
 }

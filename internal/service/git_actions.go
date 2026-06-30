@@ -102,11 +102,20 @@ type NoChangesToCommitError struct {
 }
 
 type SubmoduleAttentionError struct {
+	ProjectPath        string
+	ProjectName        string
+	Branch             string
+	Submodules         []string
+	DirtySubmodules    []string
+	UnpushedSubmodules []string
+	PushWarning        string
+}
+
+type SubmoduleResolvedNoParentChangesError struct {
 	ProjectPath string
 	ProjectName string
 	Branch      string
-	Submodules  []string
-	PushWarning string
+	Summary     string
 }
 
 func (e NoChangesToCommitError) Error() string {
@@ -128,7 +137,26 @@ func (e SubmoduleAttentionError) Error() string {
 	if len(e.Submodules) == 0 {
 		return base
 	}
-	return fmt.Sprintf("%s: %s", base, strings.Join(e.Submodules, ", "))
+	dirty := strings.Join(e.DirtySubmodules, ", ")
+	unpushed := strings.Join(e.UnpushedSubmodules, ", ")
+	switch {
+	case dirty != "" && unpushed != "":
+		return fmt.Sprintf("%s: dirty submodules: %s; unpushed submodules: %s", base, dirty, unpushed)
+	case dirty != "":
+		return fmt.Sprintf("%s: dirty submodules: %s", base, dirty)
+	case unpushed != "":
+		return fmt.Sprintf("%s: unpushed submodules: %s", base, unpushed)
+	default:
+		return fmt.Sprintf("%s: %s", base, strings.Join(e.Submodules, ", "))
+	}
+}
+
+func (e SubmoduleResolvedNoParentChangesError) Error() string {
+	summary := strings.TrimSpace(e.Summary)
+	if summary == "" {
+		summary = "resolved submodules; no parent commit is needed"
+	}
+	return summary
 }
 
 func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent GitActionIntent, messageOverride string) (CommitPreview, error) {
@@ -161,14 +189,16 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		includedChanges = filterParentCommitEligible(staged)
 	}
 	if len(includedChanges) == 0 {
-		blockedSubmodules := blockedSubmodulePaths(repoStatus.Changes)
-		if len(blockedSubmodules) > 0 {
+		dirtySubmodules, unpushedSubmodules, attentionSubmodules := submoduleAttentionPaths(repoStatus)
+		if len(attentionSubmodules) > 0 {
 			return CommitPreview{}, SubmoduleAttentionError{
-				ProjectPath: projectPath,
-				ProjectName: projectName,
-				Branch:      branchName,
-				Submodules:  blockedSubmodules,
-				PushWarning: pushWarning,
+				ProjectPath:        projectPath,
+				ProjectName:        projectName,
+				Branch:             branchName,
+				Submodules:         attentionSubmodules,
+				DirtySubmodules:    dirtySubmodules,
+				UnpushedSubmodules: unpushedSubmodules,
+				PushWarning:        pushWarning,
 			}
 		}
 		return CommitPreview{}, NoChangesToCommitError{
@@ -301,6 +331,9 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 		}
 	}
 	preview.Warnings = append(preview.Warnings, submodulePreviewWarnings(includedChanges, excludedChanges)...)
+	if unpushed := unpushedSubmodulePaths(repoStatus); len(unpushed) > 0 {
+		preview.Warnings = append(preview.Warnings, formatUnpushedSubmoduleWarning(unpushed))
+	}
 
 	// Collect open TODOs for the AI to evaluate.
 	openTodos, commitTodos := s.commitTodoRefsForDetail(ctx, detail)
@@ -412,13 +445,15 @@ func (s *Service) ApplyCommit(ctx context.Context, preview CommitPreview, pushAf
 		return CommitResult{}, err
 	}
 	if len(filterParentCommitEligible(repoStatus.StagedChanges())) == 0 {
-		blockedSubmodules := blockedSubmodulePaths(repoStatus.Changes)
-		if len(blockedSubmodules) > 0 {
+		dirtySubmodules, unpushedSubmodules, attentionSubmodules := submoduleAttentionPaths(repoStatus)
+		if len(attentionSubmodules) > 0 {
 			return CommitResult{}, SubmoduleAttentionError{
-				ProjectPath: preview.ProjectPath,
-				ProjectName: preview.ProjectName,
-				Branch:      preview.Branch,
-				Submodules:  blockedSubmodules,
+				ProjectPath:        preview.ProjectPath,
+				ProjectName:        preview.ProjectName,
+				Branch:             preview.Branch,
+				Submodules:         attentionSubmodules,
+				DirtySubmodules:    dirtySubmodules,
+				UnpushedSubmodules: unpushedSubmodules,
 			}
 		}
 		canPush, pushWarning := pushAvailability(repoStatus)
@@ -706,10 +741,58 @@ func blockedSubmodulePaths(changes []scanner.GitChange) []string {
 	})
 }
 
+func submoduleAttentionPaths(status scanner.GitRepoStatus) (dirty []string, unpushed []string, combined []string) {
+	dirty = blockedSubmodulePaths(status.Changes)
+	for _, submodule := range status.Submodules {
+		path := strings.TrimSpace(submodule.Path)
+		if path == "" {
+			continue
+		}
+		if submodule.Dirty {
+			dirty = append(dirty, path)
+		}
+		if submodule.Ahead > 0 {
+			unpushed = append(unpushed, path)
+		}
+	}
+	dirty = uniqueStrings(dirty)
+	unpushed = uniqueStrings(unpushed)
+	combined = uniqueStrings(append(append([]string{}, dirty...), unpushed...))
+	return dirty, unpushed, combined
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func dirtyIncludedSubmodulePaths(changes []scanner.GitChange) []string {
 	return uniqueSubmodulePaths(changes, func(change scanner.GitChange) bool {
 		return change.ParentCommitEligible() && change.SubmoduleWorktreeDirty()
 	})
+}
+
+func unpushedSubmodulePaths(status scanner.GitRepoStatus) []string {
+	var paths []string
+	for _, submodule := range status.Submodules {
+		if submodule.Ahead > 0 {
+			paths = append(paths, submodule.Path)
+		}
+	}
+	return uniqueStrings(paths)
 }
 
 func uniqueSubmodulePaths(changes []scanner.GitChange, keep func(scanner.GitChange) bool) []string {
@@ -751,6 +834,13 @@ func formatDirtyIncludedSubmoduleWarning(paths []string) string {
 		return fmt.Sprintf("Submodule %s still has additional local changes inside it. The parent commit can record the submodule pointer, but those submodule edits will stay in its worktree.", paths[0])
 	}
 	return fmt.Sprintf("Submodules %s still have additional local changes inside them. The parent commit can record their pointers, but those submodule edits will stay in each submodule worktree.", strings.Join(paths, ", "))
+}
+
+func formatUnpushedSubmoduleWarning(paths []string) string {
+	if len(paths) == 1 {
+		return fmt.Sprintf("Submodule %s has local commits that are not pushed to its upstream yet. Push that submodule before sharing the parent commit.", paths[0])
+	}
+	return fmt.Sprintf("Submodules %s have local commits that are not pushed to their upstreams yet. Push those submodules before sharing the parent commit.", strings.Join(paths, ", "))
 }
 
 func pushAvailability(status scanner.GitRepoStatus) (bool, string) {
@@ -892,36 +982,38 @@ func (s *Service) waitForClassification(ctx context.Context, sessionID string) b
 
 func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 	return model.ProjectState{
-		Path:                   detail.Summary.Path,
-		Name:                   detail.Summary.Name,
-		Kind:                   model.NormalizeProjectKind(detail.Summary.Kind),
-		LastActivity:           detail.Summary.LastActivity,
-		Status:                 detail.Summary.Status,
-		AttentionScore:         detail.Summary.AttentionScore,
-		PresentOnDisk:          detail.Summary.PresentOnDisk,
-		WorktreeRootPath:       detail.Summary.WorktreeRootPath,
-		WorktreeKind:           detail.Summary.WorktreeKind,
-		WorktreeParentBranch:   detail.Summary.WorktreeParentBranch,
-		WorktreeMergeStatus:    detail.Summary.WorktreeMergeStatus,
-		WorktreeOriginTodoID:   detail.Summary.WorktreeOriginTodoID,
-		RepoBranch:             detail.Summary.RepoBranch,
-		RepoDirty:              detail.Summary.RepoDirty,
-		RepoConflict:           detail.Summary.RepoConflict,
-		RepoSyncStatus:         detail.Summary.RepoSyncStatus,
-		RepoAheadCount:         detail.Summary.RepoAheadCount,
-		RepoBehindCount:        detail.Summary.RepoBehindCount,
-		Forgotten:              detail.Summary.Forgotten,
-		ManuallyAdded:          detail.Summary.ManuallyAdded,
-		InScope:                detail.Summary.InScope,
-		Archived:               detail.Summary.Archived,
-		Pinned:                 detail.Summary.Pinned,
-		SnoozedUntil:           detail.Summary.SnoozedUntil,
-		RunCommand:             detail.Summary.RunCommand,
-		MovedFromPath:          detail.Summary.MovedFromPath,
-		MovedAt:                detail.Summary.MovedAt,
-		PreferredSessionSource: detail.Summary.PreferredSessionSource,
-		Sessions:               detail.Sessions,
-		Artifacts:              detail.Artifacts,
+		Path:                       detail.Summary.Path,
+		Name:                       detail.Summary.Name,
+		Kind:                       model.NormalizeProjectKind(detail.Summary.Kind),
+		LastActivity:               detail.Summary.LastActivity,
+		Status:                     detail.Summary.Status,
+		AttentionScore:             detail.Summary.AttentionScore,
+		PresentOnDisk:              detail.Summary.PresentOnDisk,
+		WorktreeRootPath:           detail.Summary.WorktreeRootPath,
+		WorktreeKind:               detail.Summary.WorktreeKind,
+		WorktreeParentBranch:       detail.Summary.WorktreeParentBranch,
+		WorktreeMergeStatus:        detail.Summary.WorktreeMergeStatus,
+		WorktreeOriginTodoID:       detail.Summary.WorktreeOriginTodoID,
+		RepoBranch:                 detail.Summary.RepoBranch,
+		RepoDirty:                  detail.Summary.RepoDirty,
+		RepoConflict:               detail.Summary.RepoConflict,
+		RepoSyncStatus:             detail.Summary.RepoSyncStatus,
+		RepoAheadCount:             detail.Summary.RepoAheadCount,
+		RepoBehindCount:            detail.Summary.RepoBehindCount,
+		RepoSubmoduleDirtyCount:    detail.Summary.RepoSubmoduleDirtyCount,
+		RepoSubmoduleUnpushedCount: detail.Summary.RepoSubmoduleUnpushedCount,
+		Forgotten:                  detail.Summary.Forgotten,
+		ManuallyAdded:              detail.Summary.ManuallyAdded,
+		InScope:                    detail.Summary.InScope,
+		Archived:                   detail.Summary.Archived,
+		Pinned:                     detail.Summary.Pinned,
+		SnoozedUntil:               detail.Summary.SnoozedUntil,
+		RunCommand:                 detail.Summary.RunCommand,
+		MovedFromPath:              detail.Summary.MovedFromPath,
+		MovedAt:                    detail.Summary.MovedAt,
+		PreferredSessionSource:     detail.Summary.PreferredSessionSource,
+		Sessions:                   detail.Sessions,
+		Artifacts:                  detail.Artifacts,
 	}
 }
 

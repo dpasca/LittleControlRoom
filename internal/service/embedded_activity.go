@@ -66,19 +66,21 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 		}
 
 		state, err = s.persistProjectStateUpdate(ctx, detail, time.Now(), projectStatusRefreshOverrides{
-			presentOnDisk:        detail.Summary.PresentOnDisk,
-			worktreeRootPath:     detail.Summary.WorktreeRootPath,
-			worktreeKind:         detail.Summary.WorktreeKind,
-			worktreeParentBranch: detail.Summary.WorktreeParentBranch,
-			worktreeMergeStatus:  detail.Summary.WorktreeMergeStatus,
-			repoBranch:           detail.Summary.RepoBranch,
-			repoDirty:            detail.Summary.RepoDirty,
-			repoConflict:         detail.Summary.RepoConflict,
-			repoSyncStatus:       detail.Summary.RepoSyncStatus,
-			repoAheadCount:       detail.Summary.RepoAheadCount,
-			repoBehindCount:      detail.Summary.RepoBehindCount,
-			forgotten:            detail.Summary.Forgotten,
-			archived:             detail.Summary.Archived,
+			presentOnDisk:              detail.Summary.PresentOnDisk,
+			worktreeRootPath:           detail.Summary.WorktreeRootPath,
+			worktreeKind:               detail.Summary.WorktreeKind,
+			worktreeParentBranch:       detail.Summary.WorktreeParentBranch,
+			worktreeMergeStatus:        detail.Summary.WorktreeMergeStatus,
+			repoBranch:                 detail.Summary.RepoBranch,
+			repoDirty:                  detail.Summary.RepoDirty,
+			repoConflict:               detail.Summary.RepoConflict,
+			repoSyncStatus:             detail.Summary.RepoSyncStatus,
+			repoAheadCount:             detail.Summary.RepoAheadCount,
+			repoBehindCount:            detail.Summary.RepoBehindCount,
+			repoSubmoduleDirtyCount:    detail.Summary.RepoSubmoduleDirtyCount,
+			repoSubmoduleUnpushedCount: detail.Summary.RepoSubmoduleUnpushedCount,
+			forgotten:                  detail.Summary.Forgotten,
+			archived:                   detail.Summary.Archived,
 		}, runtime.cfg, nil, ScanOptions{})
 		return err
 	}(); err != nil {

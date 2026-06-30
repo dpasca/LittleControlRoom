@@ -593,6 +593,11 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		t.Fatalf("sync warning should contain '!', got %q", syncIndicator)
 	}
 
+	submoduleIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{RepoSubmoduleUnpushedCount: 1}, 0)
+	if !strings.Contains(submoduleIndicator, "!") {
+		t.Fatalf("submodule warning should contain '!', got %q", submoduleIndicator)
+	}
+
 	linkedSyncIndicator := m.projectRepoWarningIndicator(model.ProjectSummary{
 		WorktreeKind:   model.WorktreeKindLinked,
 		RepoSyncStatus: model.RepoSyncAhead,

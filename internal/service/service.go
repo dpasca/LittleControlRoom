@@ -1198,36 +1198,38 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			worktreeRootPath := filepath.Clean(strings.TrimSpace(worktreeInfo.RootPath))
 			worktreeKind := modelWorktreeKindFromGit(worktreeInfo.Kind)
 			state := model.ProjectState{
-				Path:                   path,
-				Name:                   projectName,
-				Kind:                   projectKind,
-				LastActivity:           old.LastActivity,
-				Status:                 model.StatusIdle,
-				AttentionScore:         0,
-				PresentOnDisk:          true,
-				WorktreeRootPath:       worktreeRootPath,
-				WorktreeKind:           worktreeKind,
-				WorktreeParentBranch:   old.WorktreeParentBranch,
-				WorktreeMergeStatus:    old.WorktreeMergeStatus,
-				WorktreeOriginTodoID:   old.WorktreeOriginTodoID,
-				RepoBranch:             old.RepoBranch,
-				RepoDirty:              old.RepoDirty,
-				RepoConflict:           old.RepoConflict,
-				RepoSyncStatus:         old.RepoSyncStatus,
-				RepoAheadCount:         old.RepoAheadCount,
-				RepoBehindCount:        old.RepoBehindCount,
-				Forgotten:              true,
-				ManuallyAdded:          old.ManuallyAdded,
-				InScope:                false,
-				Archived:               old.Archived,
-				Pinned:                 old.Pinned,
-				SnoozedUntil:           old.SnoozedUntil,
-				RunCommand:             old.RunCommand,
-				MovedFromPath:          old.MovedFromPath,
-				MovedAt:                old.MovedAt,
-				PreferredSessionSource: old.PreferredSessionSource,
-				CreatedAt:              old.CreatedAt,
-				UpdatedAt:              now,
+				Path:                       path,
+				Name:                       projectName,
+				Kind:                       projectKind,
+				LastActivity:               old.LastActivity,
+				Status:                     model.StatusIdle,
+				AttentionScore:             0,
+				PresentOnDisk:              true,
+				WorktreeRootPath:           worktreeRootPath,
+				WorktreeKind:               worktreeKind,
+				WorktreeParentBranch:       old.WorktreeParentBranch,
+				WorktreeMergeStatus:        old.WorktreeMergeStatus,
+				WorktreeOriginTodoID:       old.WorktreeOriginTodoID,
+				RepoBranch:                 old.RepoBranch,
+				RepoDirty:                  old.RepoDirty,
+				RepoConflict:               old.RepoConflict,
+				RepoSyncStatus:             old.RepoSyncStatus,
+				RepoAheadCount:             old.RepoAheadCount,
+				RepoBehindCount:            old.RepoBehindCount,
+				RepoSubmoduleDirtyCount:    old.RepoSubmoduleDirtyCount,
+				RepoSubmoduleUnpushedCount: old.RepoSubmoduleUnpushedCount,
+				Forgotten:                  true,
+				ManuallyAdded:              old.ManuallyAdded,
+				InScope:                    false,
+				Archived:                   old.Archived,
+				Pinned:                     old.Pinned,
+				SnoozedUntil:               old.SnoozedUntil,
+				RunCommand:                 old.RunCommand,
+				MovedFromPath:              old.MovedFromPath,
+				MovedAt:                    old.MovedAt,
+				PreferredSessionSource:     old.PreferredSessionSource,
+				CreatedAt:                  old.CreatedAt,
+				UpdatedAt:                  now,
 			}
 			if err := s.store.UpsertProjectState(ctx, state); err != nil {
 				unlockProjectState()
@@ -1266,6 +1268,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		repoSyncStatus := model.RepoSyncStatus("")
 		repoAheadCount := 0
 		repoBehindCount := 0
+		repoSubmoduleDirtyCount := 0
+		repoSubmoduleUnpushedCount := 0
 		if presentOnDisk {
 			if worktreeInfo, ok := currentWorktreeInfo[path]; ok {
 				worktreeRootPath = filepath.Clean(strings.TrimSpace(worktreeInfo.RootPath))
@@ -1278,6 +1282,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 				repoAheadCount = repoStatus.Ahead
 				repoBehindCount = repoStatus.Behind
+				repoSubmoduleDirtyCount = repoStatus.SubmoduleDirtyCount()
+				repoSubmoduleUnpushedCount = repoStatus.SubmoduleUnpushedCount()
 			} else if isGitRepo {
 				repoBranch = old.RepoBranch
 				repoDirty = old.RepoDirty
@@ -1285,6 +1291,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				repoSyncStatus = old.RepoSyncStatus
 				repoAheadCount = old.RepoAheadCount
 				repoBehindCount = old.RepoBehindCount
+				repoSubmoduleDirtyCount = old.RepoSubmoduleDirtyCount
+				repoSubmoduleUnpushedCount = old.RepoSubmoduleUnpushedCount
 			}
 			worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 		}
@@ -1370,6 +1378,8 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			LastActivity:               lastActivity,
 			CreatedAt:                  old.CreatedAt,
 			RepoDirty:                  repoDirty,
+			RepoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
+			RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
 			Pinned:                     old.Pinned,
 			Unread:                     attention.AssessmentUnread(old),
 			SnoozedUntil:               old.SnoozedUntil,
@@ -1386,38 +1396,40 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		})
 
 		state := model.ProjectState{
-			Path:                   path,
-			Name:                   projectName,
-			Kind:                   projectKind,
-			LastActivity:           lastActivity,
-			Status:                 score.Status,
-			AttentionScore:         score.Score,
-			PresentOnDisk:          presentOnDisk,
-			WorktreeRootPath:       worktreeRootPath,
-			WorktreeKind:           worktreeKind,
-			WorktreeParentBranch:   worktreeParentBranch,
-			WorktreeMergeStatus:    worktreeMergeStatus,
-			WorktreeOriginTodoID:   old.WorktreeOriginTodoID,
-			RepoBranch:             repoBranch,
-			RepoDirty:              repoDirty,
-			RepoConflict:           repoConflict,
-			RepoSyncStatus:         repoSyncStatus,
-			RepoAheadCount:         repoAheadCount,
-			RepoBehindCount:        repoBehindCount,
-			Forgotten:              forgotten,
-			ManuallyAdded:          old.ManuallyAdded,
-			InScope:                scope.Allows(path) || old.ManuallyAdded,
-			Archived:               old.Archived,
-			Pinned:                 old.Pinned,
-			SnoozedUntil:           old.SnoozedUntil,
-			MovedFromPath:          old.MovedFromPath,
-			MovedAt:                old.MovedAt,
-			PreferredSessionSource: old.PreferredSessionSource,
-			AttentionReason:        score.Reasons,
-			Sessions:               sessions,
-			Artifacts:              artifacts,
-			CreatedAt:              old.CreatedAt,
-			UpdatedAt:              now,
+			Path:                       path,
+			Name:                       projectName,
+			Kind:                       projectKind,
+			LastActivity:               lastActivity,
+			Status:                     score.Status,
+			AttentionScore:             score.Score,
+			PresentOnDisk:              presentOnDisk,
+			WorktreeRootPath:           worktreeRootPath,
+			WorktreeKind:               worktreeKind,
+			WorktreeParentBranch:       worktreeParentBranch,
+			WorktreeMergeStatus:        worktreeMergeStatus,
+			WorktreeOriginTodoID:       old.WorktreeOriginTodoID,
+			RepoBranch:                 repoBranch,
+			RepoDirty:                  repoDirty,
+			RepoConflict:               repoConflict,
+			RepoSyncStatus:             repoSyncStatus,
+			RepoAheadCount:             repoAheadCount,
+			RepoBehindCount:            repoBehindCount,
+			RepoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
+			RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
+			Forgotten:                  forgotten,
+			ManuallyAdded:              old.ManuallyAdded,
+			InScope:                    scope.Allows(path) || old.ManuallyAdded,
+			Archived:                   old.Archived,
+			Pinned:                     old.Pinned,
+			SnoozedUntil:               old.SnoozedUntil,
+			MovedFromPath:              old.MovedFromPath,
+			MovedAt:                    old.MovedAt,
+			PreferredSessionSource:     old.PreferredSessionSource,
+			AttentionReason:            score.Reasons,
+			Sessions:                   sessions,
+			Artifacts:                  artifacts,
+			CreatedAt:                  old.CreatedAt,
+			UpdatedAt:                  now,
 		}
 
 		if err := s.store.UpsertProjectState(ctx, state); err != nil {
@@ -2126,6 +2138,8 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.RepoSyncStatus != state.RepoSyncStatus ||
 		old.RepoAheadCount != state.RepoAheadCount ||
 		old.RepoBehindCount != state.RepoBehindCount ||
+		old.RepoSubmoduleDirtyCount != state.RepoSubmoduleDirtyCount ||
+		old.RepoSubmoduleUnpushedCount != state.RepoSubmoduleUnpushedCount ||
 		old.Forgotten != state.Forgotten ||
 		old.ManuallyAdded != state.ManuallyAdded ||
 		old.Archived != state.Archived ||
@@ -2134,19 +2148,21 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 
 func (s *Service) publishProjectChanged(ctx context.Context, now time.Time, state model.ProjectState) {
 	payload := map[string]string{
-		"status":   string(state.Status),
-		"score":    fmt.Sprintf("%d", state.AttentionScore),
-		"dirty":    fmt.Sprintf("%t", state.RepoDirty),
-		"conflict": fmt.Sprintf("%t", state.RepoConflict),
-		"merged":   string(state.WorktreeMergeStatus),
-		"remote":   string(state.RepoSyncStatus),
+		"status":                   string(state.Status),
+		"score":                    fmt.Sprintf("%d", state.AttentionScore),
+		"dirty":                    fmt.Sprintf("%t", state.RepoDirty),
+		"conflict":                 fmt.Sprintf("%t", state.RepoConflict),
+		"merged":                   string(state.WorktreeMergeStatus),
+		"remote":                   string(state.RepoSyncStatus),
+		"submodule_dirty_count":    fmt.Sprintf("%d", state.RepoSubmoduleDirtyCount),
+		"submodule_unpushed_count": fmt.Sprintf("%d", state.RepoSubmoduleUnpushedCount),
 	}
 	s.bus.Publish(events.Event{Type: events.ProjectChanged, At: now, ProjectPath: state.Path, Payload: payload})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{
 		At:          now,
 		ProjectPath: state.Path,
 		Type:        string(events.ProjectChanged),
-		Payload:     fmt.Sprintf("status=%s score=%d dirty=%t conflict=%t merged=%s remote=%s", state.Status, state.AttentionScore, state.RepoDirty, state.RepoConflict, state.WorktreeMergeStatus, state.RepoSyncStatus),
+		Payload:     fmt.Sprintf("status=%s score=%d dirty=%t conflict=%t merged=%s remote=%s submodules_dirty=%d submodules_unpushed=%d", state.Status, state.AttentionScore, state.RepoDirty, state.RepoConflict, state.WorktreeMergeStatus, state.RepoSyncStatus, state.RepoSubmoduleDirtyCount, state.RepoSubmoduleUnpushedCount),
 	})
 }
 
@@ -2549,6 +2565,8 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 		repoSyncStatus := model.RepoSyncStatus("")
 		repoAheadCount := 0
 		repoBehindCount := 0
+		repoSubmoduleDirtyCount := 0
+		repoSubmoduleUnpushedCount := 0
 		if metadata.presentOnDisk && !metadata.isGitRepo {
 			worktreeRootPath = ""
 			worktreeKind = model.WorktreeKindNone
@@ -2564,6 +2582,8 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 			repoSyncStatus = metadata.repoSyncStatus
 			repoAheadCount = metadata.repoAheadCount
 			repoBehindCount = metadata.repoBehindCount
+			repoSubmoduleDirtyCount = metadata.repoSubmoduleDirtyCount
+			repoSubmoduleUnpushedCount = metadata.repoSubmoduleUnpushedCount
 			if !metadata.haveRepoStatus && metadata.isGitRepo {
 				repoBranch = detail.Summary.RepoBranch
 				repoDirty = detail.Summary.RepoDirty
@@ -2571,6 +2591,8 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 				repoSyncStatus = detail.Summary.RepoSyncStatus
 				repoAheadCount = detail.Summary.RepoAheadCount
 				repoBehindCount = detail.Summary.RepoBehindCount
+				repoSubmoduleDirtyCount = detail.Summary.RepoSubmoduleDirtyCount
+				repoSubmoduleUnpushedCount = detail.Summary.RepoSubmoduleUnpushedCount
 			}
 		}
 
@@ -2597,19 +2619,21 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 			ensureSessionSnapshotHash(ctx, projectPath, &detail.Sessions[0], sessionclassify.NewGitStatusSnapshot(repoDirty, repoSyncStatus, repoAheadCount, repoBehindCount))
 		}
 		if _, err := s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
-			presentOnDisk:        metadata.presentOnDisk,
-			worktreeRootPath:     worktreeRootPath,
-			worktreeKind:         worktreeKind,
-			worktreeParentBranch: worktreeParentBranch,
-			worktreeMergeStatus:  worktreeMergeStatus,
-			repoBranch:           repoBranch,
-			repoDirty:            repoDirty,
-			repoConflict:         repoConflict,
-			repoSyncStatus:       repoSyncStatus,
-			repoAheadCount:       repoAheadCount,
-			repoBehindCount:      repoBehindCount,
-			forgotten:            forgotten,
-			archived:             detail.Summary.Archived,
+			presentOnDisk:              metadata.presentOnDisk,
+			worktreeRootPath:           worktreeRootPath,
+			worktreeKind:               worktreeKind,
+			worktreeParentBranch:       worktreeParentBranch,
+			worktreeMergeStatus:        worktreeMergeStatus,
+			repoBranch:                 repoBranch,
+			repoDirty:                  repoDirty,
+			repoConflict:               repoConflict,
+			repoSyncStatus:             repoSyncStatus,
+			repoAheadCount:             repoAheadCount,
+			repoBehindCount:            repoBehindCount,
+			repoSubmoduleDirtyCount:    repoSubmoduleDirtyCount,
+			repoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
+			forgotten:                  forgotten,
+			archived:                   detail.Summary.Archived,
 		}, runtime.cfg, runtime.classifier, opts); err != nil {
 			return err
 		}
@@ -2628,19 +2652,21 @@ func (s *Service) RefreshProjectStatusWithOptions(ctx context.Context, projectPa
 }
 
 type projectStatusRefreshMetadata struct {
-	presentOnDisk       bool
-	isGitRepo           bool
-	worktreeRootPath    string
-	worktreeKind        model.WorktreeKind
-	worktreeMergeStatus model.WorktreeMergeStatus
-	repoBranch          string
-	repoDirty           bool
-	repoConflict        bool
-	repoSyncStatus      model.RepoSyncStatus
-	repoAheadCount      int
-	repoBehindCount     int
-	haveRepoStatus      bool
-	staleLinkedWorktree bool
+	presentOnDisk              bool
+	isGitRepo                  bool
+	worktreeRootPath           string
+	worktreeKind               model.WorktreeKind
+	worktreeMergeStatus        model.WorktreeMergeStatus
+	repoBranch                 string
+	repoDirty                  bool
+	repoConflict               bool
+	repoSyncStatus             model.RepoSyncStatus
+	repoAheadCount             int
+	repoBehindCount            int
+	repoSubmoduleDirtyCount    int
+	repoSubmoduleUnpushedCount int
+	haveRepoStatus             bool
+	staleLinkedWorktree        bool
 }
 
 func (s *Service) readProjectStatusRefreshMetadata(
@@ -2651,15 +2677,17 @@ func (s *Service) readProjectStatusRefreshMetadata(
 	gitWorktreeListReader func(context.Context, string) ([]scanner.GitWorktree, error),
 ) projectStatusRefreshMetadata {
 	meta := projectStatusRefreshMetadata{
-		worktreeRootPath:    summary.WorktreeRootPath,
-		worktreeKind:        summary.WorktreeKind,
-		worktreeMergeStatus: summary.WorktreeMergeStatus,
-		repoBranch:          summary.RepoBranch,
-		repoDirty:           summary.RepoDirty,
-		repoConflict:        summary.RepoConflict,
-		repoSyncStatus:      summary.RepoSyncStatus,
-		repoAheadCount:      summary.RepoAheadCount,
-		repoBehindCount:     summary.RepoBehindCount,
+		worktreeRootPath:           summary.WorktreeRootPath,
+		worktreeKind:               summary.WorktreeKind,
+		worktreeMergeStatus:        summary.WorktreeMergeStatus,
+		repoBranch:                 summary.RepoBranch,
+		repoDirty:                  summary.RepoDirty,
+		repoConflict:               summary.RepoConflict,
+		repoSyncStatus:             summary.RepoSyncStatus,
+		repoAheadCount:             summary.RepoAheadCount,
+		repoBehindCount:            summary.RepoBehindCount,
+		repoSubmoduleDirtyCount:    summary.RepoSubmoduleDirtyCount,
+		repoSubmoduleUnpushedCount: summary.RepoSubmoduleUnpushedCount,
 	}
 	projectPath := filepath.Clean(strings.TrimSpace(summary.Path))
 	meta.presentOnDisk = projectPathExists(projectPath)
@@ -2678,6 +2706,8 @@ func (s *Service) readProjectStatusRefreshMetadata(
 		meta.repoSyncStatus = model.RepoSyncStatus("")
 		meta.repoAheadCount = 0
 		meta.repoBehindCount = 0
+		meta.repoSubmoduleDirtyCount = 0
+		meta.repoSubmoduleUnpushedCount = 0
 		return meta
 	}
 	if nextRootPath, nextKind := s.readProjectWorktreeInfoWithReader(ctx, projectPath, gitWorktreeInfoReader); nextRootPath != "" || nextKind != model.WorktreeKindNone {
@@ -2692,6 +2722,8 @@ func (s *Service) readProjectStatusRefreshMetadata(
 			meta.repoSyncStatus = repoSyncStatusFromGit(repoStatus)
 			meta.repoAheadCount = repoStatus.Ahead
 			meta.repoBehindCount = repoStatus.Behind
+			meta.repoSubmoduleDirtyCount = repoStatus.SubmoduleDirtyCount()
+			meta.repoSubmoduleUnpushedCount = repoStatus.SubmoduleUnpushedCount()
 			meta.haveRepoStatus = true
 		}
 	}
@@ -2742,19 +2774,21 @@ func (s *Service) refreshLinkedWorktreeStatusesForRoot(ctx context.Context, root
 }
 
 type projectStatusRefreshOverrides struct {
-	presentOnDisk        bool
-	worktreeRootPath     string
-	worktreeKind         model.WorktreeKind
-	worktreeParentBranch string
-	worktreeMergeStatus  model.WorktreeMergeStatus
-	repoBranch           string
-	repoDirty            bool
-	repoConflict         bool
-	repoSyncStatus       model.RepoSyncStatus
-	repoAheadCount       int
-	repoBehindCount      int
-	forgotten            bool
-	archived             bool
+	presentOnDisk              bool
+	worktreeRootPath           string
+	worktreeKind               model.WorktreeKind
+	worktreeParentBranch       string
+	worktreeMergeStatus        model.WorktreeMergeStatus
+	repoBranch                 string
+	repoDirty                  bool
+	repoConflict               bool
+	repoSyncStatus             model.RepoSyncStatus
+	repoAheadCount             int
+	repoBehindCount            int
+	repoSubmoduleDirtyCount    int
+	repoSubmoduleUnpushedCount int
+	forgotten                  bool
+	archived                   bool
 }
 
 func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.ProjectDetail, now time.Time, overrides projectStatusRefreshOverrides, cfg config.AppConfig, classifier SessionClassifier, opts ScanOptions) (model.ProjectState, error) {
@@ -2779,6 +2813,8 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		LastActivity:               detail.Summary.LastActivity,
 		CreatedAt:                  detail.Summary.CreatedAt,
 		RepoDirty:                  overrides.repoDirty,
+		RepoSubmoduleDirtyCount:    overrides.repoSubmoduleDirtyCount,
+		RepoSubmoduleUnpushedCount: overrides.repoSubmoduleUnpushedCount,
 		Pinned:                     detail.Summary.Pinned,
 		Unread:                     attention.AssessmentUnread(detail.Summary),
 		SnoozedUntil:               detail.Summary.SnoozedUntil,
@@ -2795,39 +2831,41 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 	})
 
 	state := model.ProjectState{
-		Path:                   detail.Summary.Path,
-		Name:                   detail.Summary.Name,
-		Kind:                   model.NormalizeProjectKind(detail.Summary.Kind),
-		LastActivity:           detail.Summary.LastActivity,
-		Status:                 score.Status,
-		AttentionScore:         score.Score,
-		PresentOnDisk:          overrides.presentOnDisk,
-		WorktreeRootPath:       overrides.worktreeRootPath,
-		WorktreeKind:           overrides.worktreeKind,
-		WorktreeParentBranch:   overrides.worktreeParentBranch,
-		WorktreeMergeStatus:    overrides.worktreeMergeStatus,
-		WorktreeOriginTodoID:   detail.Summary.WorktreeOriginTodoID,
-		RepoBranch:             overrides.repoBranch,
-		RepoDirty:              overrides.repoDirty,
-		RepoConflict:           overrides.repoConflict,
-		RepoSyncStatus:         overrides.repoSyncStatus,
-		RepoAheadCount:         overrides.repoAheadCount,
-		RepoBehindCount:        overrides.repoBehindCount,
-		Forgotten:              overrides.forgotten,
-		ManuallyAdded:          detail.Summary.ManuallyAdded,
-		InScope:                detail.Summary.InScope,
-		Archived:               overrides.archived,
-		Pinned:                 detail.Summary.Pinned,
-		SnoozedUntil:           detail.Summary.SnoozedUntil,
-		RunCommand:             detail.Summary.RunCommand,
-		MovedFromPath:          detail.Summary.MovedFromPath,
-		MovedAt:                detail.Summary.MovedAt,
-		PreferredSessionSource: detail.Summary.PreferredSessionSource,
-		AttentionReason:        score.Reasons,
-		Sessions:               detail.Sessions,
-		Artifacts:              detail.Artifacts,
-		CreatedAt:              detail.Summary.CreatedAt,
-		UpdatedAt:              now,
+		Path:                       detail.Summary.Path,
+		Name:                       detail.Summary.Name,
+		Kind:                       model.NormalizeProjectKind(detail.Summary.Kind),
+		LastActivity:               detail.Summary.LastActivity,
+		Status:                     score.Status,
+		AttentionScore:             score.Score,
+		PresentOnDisk:              overrides.presentOnDisk,
+		WorktreeRootPath:           overrides.worktreeRootPath,
+		WorktreeKind:               overrides.worktreeKind,
+		WorktreeParentBranch:       overrides.worktreeParentBranch,
+		WorktreeMergeStatus:        overrides.worktreeMergeStatus,
+		WorktreeOriginTodoID:       detail.Summary.WorktreeOriginTodoID,
+		RepoBranch:                 overrides.repoBranch,
+		RepoDirty:                  overrides.repoDirty,
+		RepoConflict:               overrides.repoConflict,
+		RepoSyncStatus:             overrides.repoSyncStatus,
+		RepoAheadCount:             overrides.repoAheadCount,
+		RepoBehindCount:            overrides.repoBehindCount,
+		RepoSubmoduleDirtyCount:    overrides.repoSubmoduleDirtyCount,
+		RepoSubmoduleUnpushedCount: overrides.repoSubmoduleUnpushedCount,
+		Forgotten:                  overrides.forgotten,
+		ManuallyAdded:              detail.Summary.ManuallyAdded,
+		InScope:                    detail.Summary.InScope,
+		Archived:                   overrides.archived,
+		Pinned:                     detail.Summary.Pinned,
+		SnoozedUntil:               detail.Summary.SnoozedUntil,
+		RunCommand:                 detail.Summary.RunCommand,
+		MovedFromPath:              detail.Summary.MovedFromPath,
+		MovedAt:                    detail.Summary.MovedAt,
+		PreferredSessionSource:     detail.Summary.PreferredSessionSource,
+		AttentionReason:            score.Reasons,
+		Sessions:                   detail.Sessions,
+		Artifacts:                  detail.Artifacts,
+		CreatedAt:                  detail.Summary.CreatedAt,
+		UpdatedAt:                  now,
 	}
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return model.ProjectState{}, fmt.Errorf("persist refreshed project state: %w", err)
@@ -2862,19 +2900,21 @@ func (s *Service) refreshProjectAttentionLocked(ctx context.Context, projectPath
 		return err
 	}
 	_, err = s.persistProjectStateUpdate(ctx, detail, now, projectStatusRefreshOverrides{
-		presentOnDisk:        detail.Summary.PresentOnDisk,
-		worktreeRootPath:     detail.Summary.WorktreeRootPath,
-		worktreeKind:         detail.Summary.WorktreeKind,
-		worktreeParentBranch: detail.Summary.WorktreeParentBranch,
-		worktreeMergeStatus:  detail.Summary.WorktreeMergeStatus,
-		repoBranch:           detail.Summary.RepoBranch,
-		repoDirty:            detail.Summary.RepoDirty,
-		repoConflict:         detail.Summary.RepoConflict,
-		repoSyncStatus:       detail.Summary.RepoSyncStatus,
-		repoAheadCount:       detail.Summary.RepoAheadCount,
-		repoBehindCount:      detail.Summary.RepoBehindCount,
-		forgotten:            detail.Summary.Forgotten,
-		archived:             detail.Summary.Archived,
+		presentOnDisk:              detail.Summary.PresentOnDisk,
+		worktreeRootPath:           detail.Summary.WorktreeRootPath,
+		worktreeKind:               detail.Summary.WorktreeKind,
+		worktreeParentBranch:       detail.Summary.WorktreeParentBranch,
+		worktreeMergeStatus:        detail.Summary.WorktreeMergeStatus,
+		repoBranch:                 detail.Summary.RepoBranch,
+		repoDirty:                  detail.Summary.RepoDirty,
+		repoConflict:               detail.Summary.RepoConflict,
+		repoSyncStatus:             detail.Summary.RepoSyncStatus,
+		repoAheadCount:             detail.Summary.RepoAheadCount,
+		repoBehindCount:            detail.Summary.RepoBehindCount,
+		repoSubmoduleDirtyCount:    detail.Summary.RepoSubmoduleDirtyCount,
+		repoSubmoduleUnpushedCount: detail.Summary.RepoSubmoduleUnpushedCount,
+		forgotten:                  detail.Summary.Forgotten,
+		archived:                   detail.Summary.Archived,
 	}, cfg, nil, ScanOptions{})
 	return err
 }

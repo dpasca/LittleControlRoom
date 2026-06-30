@@ -121,6 +121,19 @@ type todoPendingLaunchState struct {
 	TodoID      int64
 	TodoText    string
 	Provider    codexapp.Provider
+	StartedAt   time.Time
+}
+
+const (
+	todoPendingLaunchDialogFocusOK = iota
+	todoPendingLaunchDialogFocusAbort
+)
+
+type todoPendingLaunchDialogState struct {
+	LaunchID   int64
+	Message    string
+	AllowAbort bool
+	Selected   int
 }
 
 type todoCopyDialogState struct {
@@ -638,6 +651,7 @@ func (m *Model) beginTodoPendingLaunch(projectPath, projectName string, todoID i
 		TodoID:      todoID,
 		TodoText:    strings.TrimSpace(todoText),
 		Provider:    provider.Normalized(),
+		StartedAt:   m.currentTime(),
 	}
 	if m.todoCopyDialog != nil {
 		m.todoCopyDialog.LaunchID = m.todoLaunchSeq
@@ -647,13 +661,21 @@ func (m *Model) beginTodoPendingLaunch(projectPath, projectName string, todoID i
 }
 
 func (m *Model) cancelTodoPendingLaunch(status string) tea.Cmd {
+	selectedPath := m.currentSelectedProjectPath()
+	selectedPending := false
 	if pending := m.todoPendingLaunch; pending != nil {
+		_, selectedPending = m.todoPendingLaunchForProjectPath(selectedPath)
 		pending.Canceled = true
 		if pending.Cancel != nil {
 			pending.Cancel()
 			pending.Cancel = nil
 		}
+		if selectedPending {
+			selectedPath = pending.ProjectPath
+		}
 	}
+	m.todoPendingLaunchDialog = nil
+	m.rebuildProjectList(selectedPath)
 	return m.closeTodoCopyDialog(status)
 }
 
@@ -1670,7 +1692,7 @@ func (m Model) startSelectedTodoWithProvider(provider codexapp.Provider, openMod
 
 func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
 	if pending := m.activeTodoPendingLaunch(); pending != nil {
-		m.status = pending.todoWorktreeLaunchAlreadyRunningStatus()
+		m.openTodoPendingLaunchDialog(*pending, pending.todoWorktreeLaunchAlreadyRunningStatus(), false, todoPendingLaunchDialogFocusOK)
 		return m, nil
 	}
 	item, ok := m.selectedTodoItem()
@@ -1718,6 +1740,11 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	m.todoDialog = nil
 	m.rememberEmbeddedProvider(provider)
 	m.status = todoWorktreePreparingStatus
+	selectPath := projectPath
+	if pendingProject, ok := m.todoPendingLaunchProjectSummary(); ok {
+		selectPath = pendingProject.Path
+	}
+	m.rebuildProjectList(selectPath)
 	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, item.Attachments, provider, openModelFirst, branchOverride, suffixOverride)
 }
 
@@ -1726,6 +1753,99 @@ func (m Model) activeTodoPendingLaunch() *todoPendingLaunchState {
 		return nil
 	}
 	return m.todoPendingLaunch
+}
+
+func (m Model) todoPendingLaunchProjectSummary() (model.ProjectSummary, bool) {
+	pending := m.activeTodoPendingLaunch()
+	if pending == nil {
+		return model.ProjectSummary{}, false
+	}
+	rootPath := normalizeProjectPath(pending.ProjectPath)
+	if rootPath == "" {
+		return model.ProjectSummary{}, false
+	}
+	rootProject, _ := m.projectSummaryByPathAllProjects(rootPath)
+	if strings.TrimSpace(rootProject.Path) == "" {
+		rootProject, _ = m.projectSummaryByPath(rootPath)
+	}
+	startedAt := pending.StartedAt
+	if startedAt.IsZero() {
+		startedAt = m.currentTime()
+	}
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	name := "TODO worktree"
+	if pending.TodoID > 0 {
+		name = fmt.Sprintf("TODO #%d worktree", pending.TodoID)
+	}
+	project := model.ProjectSummary{
+		Path:                            todoPendingLaunchProjectPath(rootPath, pending.ID),
+		Name:                            name,
+		Kind:                            model.ProjectKindProject,
+		CategoryID:                      rootProject.CategoryID,
+		CategoryName:                    rootProject.CategoryName,
+		LastActivity:                    startedAt,
+		Status:                          model.StatusActive,
+		AttentionScore:                  rootProject.AttentionScore,
+		PresentOnDisk:                   true,
+		WorktreeRootPath:                rootPath,
+		WorktreeKind:                    model.WorktreeKindLinked,
+		WorktreeParentBranch:            strings.TrimSpace(rootProject.RepoBranch),
+		WorktreeOriginTodoID:            pending.TodoID,
+		LatestSessionClassification:     model.ClassificationRunning,
+		LatestSessionClassificationType: model.SessionCategoryInProgress,
+		LatestSessionSummary:            todoPendingLaunchListSummary(*pending, m.currentTime()),
+	}
+	return project, true
+}
+
+func todoPendingLaunchProjectPath(rootPath string, launchID int64) string {
+	rootPath = normalizeProjectPath(rootPath)
+	if rootPath == "" {
+		return ""
+	}
+	if launchID <= 0 {
+		launchID = 1
+	}
+	return filepath.Clean(rootPath + fmt.Sprintf("--pending-todo-worktree-%d", launchID))
+}
+
+func (m Model) todoPendingLaunchForProjectPath(projectPath string) (*todoPendingLaunchState, bool) {
+	pending := m.activeTodoPendingLaunch()
+	if pending == nil {
+		return nil, false
+	}
+	if normalizeProjectPath(projectPath) != todoPendingLaunchProjectPath(pending.ProjectPath, pending.ID) {
+		return nil, false
+	}
+	return pending, true
+}
+
+func todoPendingLaunchListSummary(pending todoPendingLaunchState, now time.Time) string {
+	parts := []string{"preparing checkout"}
+	if !pending.StartedAt.IsZero() {
+		if now.IsZero() {
+			now = time.Now()
+		}
+		if elapsed := now.Sub(pending.StartedAt); elapsed > 0 {
+			parts = append(parts, "elapsed "+formatRunningDuration(elapsed))
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+func todoPendingLaunchDetailSummary(pending todoPendingLaunchState, now time.Time) string {
+	summary := "Creating the dedicated worktree and hydrating submodules if this repo needs them."
+	if !pending.StartedAt.IsZero() {
+		if now.IsZero() {
+			now = time.Now()
+		}
+		if elapsed := now.Sub(pending.StartedAt); elapsed > 0 {
+			summary += " Elapsed: " + formatRunningDuration(elapsed) + "."
+		}
+	}
+	return summary
 }
 
 func (p todoPendingLaunchState) todoWorktreeLaunchAlreadyRunningStatus() string {

@@ -335,6 +335,9 @@ func (m Model) View() string {
 	if m.todoCopyDialog != nil {
 		body = m.renderTodoCopyDialogOverlay(body, layout.width, layout.height)
 	}
+	if m.todoPendingLaunchDialog != nil {
+		body = m.renderTodoPendingLaunchDialogOverlay(body, layout.width, layout.height)
+	}
 	if m.todoWorktreeEditor != nil {
 		body = m.renderTodoWorktreeEditorOverlay(body, layout.width, layout.height)
 	}
@@ -957,6 +960,7 @@ func (m Model) renderProjectList(width, height int) string {
 			statusStyle = detailWarningStyle
 			summaryStyle = detailWarningStyle
 		}
+		pendingLaunch, pendingLaunchRow := m.todoPendingLaunchForProjectPath(p.Path)
 		switch rowMeta.Kind {
 		case projectListRowRepo:
 			if rowMeta.LinkedCount > 0 {
@@ -983,6 +987,21 @@ func (m Model) renderProjectList(width, height int) string {
 				nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 				summaryStyle = detailWarningStyle
 			}
+		case projectListRowPendingWorktree:
+			frame := ""
+			if len(spinnerFrames) > 0 {
+				frame = spinnerFrames[m.spinnerFrame%len(spinnerFrames)] + " "
+			}
+			name = "  ↳ " + frame + p.Name
+			statusText = "creating"
+			if pendingLaunch != nil {
+				assessmentText = todoPendingLaunchListSummary(*pendingLaunch, now)
+			} else {
+				assessmentText = "preparing checkout"
+			}
+			statusStyle = detailWarningStyle
+			summaryStyle = detailWarningStyle
+			nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 		default:
 			switch model.NormalizeProjectKind(p.Kind) {
 			case model.ProjectKindScratchTask:
@@ -1007,7 +1026,12 @@ func (m Model) renderProjectList(width, height int) string {
 		assessment := truncateText(assessmentText, assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)
-		if liveSummary, ok := m.projectLiveEngineerAssessmentSummary(p, now); ok && !agentTaskRow && !browserAttentionRow {
+		if pendingLaunchRow && pendingLaunch != nil {
+			agentLabel = pendingLaunch.Provider.SourceTag()
+			agentTag = pendingLaunch.Provider.SourceTag()
+			agentLive = true
+		}
+		if liveSummary, ok := m.projectLiveEngineerAssessmentSummary(p, now); ok && !agentTaskRow && !browserAttentionRow && !pendingLaunchRow {
 			statusText = "working"
 			assessmentText = liveSummary
 			statusStyle = classificationCategoryStyle(model.SessionCategoryInProgress)
@@ -1151,6 +1175,9 @@ func (m Model) renderDetailContent(width int) string {
 	if task, ok := m.agentTaskForProjectPath(p.Path); ok {
 		return m.renderAgentTaskDetailContent(task, width)
 	}
+	if row, project, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowPendingWorktree {
+		return m.renderTodoPendingLaunchDetailContent(project, width)
+	}
 	d := m.detail
 	if d.Summary.Path != "" && d.Summary.Path != p.Path {
 		d = model.ProjectDetail{}
@@ -1219,6 +1246,9 @@ func (m Model) renderDetailContent(width int) string {
 		lines = append(lines, detailField("Repo", m.repoCombinedDetailValue(p)))
 		if p.RepoConflict {
 			lines = append(lines, detailField("Conflict", repoConflictDetailValue(p)))
+		}
+		if projectHasSubmoduleAttention(p) {
+			lines = append(lines, detailField("Submodules", repoSubmoduleAttentionDetailValue(p)))
 		}
 	}
 	if projectUsesRepoUI(p) && p.WorktreeKind == model.WorktreeKindLinked {

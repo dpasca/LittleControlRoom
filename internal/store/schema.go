@@ -32,6 +32,8 @@ func (s *Store) initSchema(ctx context.Context) error {
 			repo_sync_status TEXT NOT NULL DEFAULT '',
 			repo_ahead_count INTEGER NOT NULL DEFAULT 0,
 			repo_behind_count INTEGER NOT NULL DEFAULT 0,
+			repo_submodule_dirty_count INTEGER NOT NULL DEFAULT 0,
+			repo_submodule_unpushed_count INTEGER NOT NULL DEFAULT 0,
 			forgotten INTEGER NOT NULL DEFAULT 0,
 			manually_added INTEGER NOT NULL DEFAULT 0,
 			in_scope INTEGER NOT NULL DEFAULT 1,
@@ -636,6 +638,16 @@ func (s *Store) ensureProjectsVisibilityColumns(ctx context.Context) error {
 	if _, ok := columns["repo_behind_count"]; !ok {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN repo_behind_count INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add projects.repo_behind_count column: %w", err)
+		}
+	}
+	if _, ok := columns["repo_submodule_dirty_count"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN repo_submodule_dirty_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add projects.repo_submodule_dirty_count column: %w", err)
+		}
+	}
+	if _, ok := columns["repo_submodule_unpushed_count"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN repo_submodule_unpushed_count INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add projects.repo_submodule_unpushed_count column: %w", err)
 		}
 	}
 	if _, ok := columns["forgotten"]; ok {
