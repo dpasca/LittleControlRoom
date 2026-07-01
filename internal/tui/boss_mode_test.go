@@ -64,6 +64,27 @@ func TestBossViewContextCapturesClassicTUIStateWithoutSelection(t *testing.T) {
 	}
 }
 
+func TestBossViewContextCountsHidePrivateArchivedProjectsInPrivacyMode(t *testing.T) {
+	t.Parallel()
+
+	publicActive := model.ProjectSummary{Path: "/tmp/public-active", Name: "PublicActive"}
+	privateActive := model.ProjectSummary{Path: "/tmp/private-active", Name: "PrivateActive", CategoryPrivate: true}
+	publicArchived := model.ProjectSummary{Path: "/tmp/public-archived", Name: "PublicArchived", Archived: true}
+	privateArchived := model.ProjectSummary{Path: "/tmp/private-archived", Name: "PrivateArchived", Archived: true, CategoryPrivate: true}
+	m := Model{
+		allProjects:      []model.ProjectSummary{publicActive, privateActive},
+		archivedProjects: []model.ProjectSummary{publicArchived, privateArchived},
+		projects:         []model.ProjectSummary{publicActive},
+		privacyMode:      true,
+	}
+
+	view := m.bossViewContext()
+
+	if view.ActiveTabProjectCount != 1 || view.ArchivedProjectCount != 1 || view.AllProjectCount != 2 {
+		t.Fatalf("project counts = active %d archived %d all %d, want privacy-filtered counts", view.ActiveTabProjectCount, view.ArchivedProjectCount, view.AllProjectCount)
+	}
+}
+
 func TestBossViewContextIncludesActiveAgentTaskEngineerActivity(t *testing.T) {
 	t.Parallel()
 

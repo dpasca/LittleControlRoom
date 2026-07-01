@@ -455,7 +455,9 @@ func (m Model) categoryMoveItems() ([]categoryMoveItem, string) {
 		items = append(items, item)
 	}
 
-	for _, project := range append(append([]model.ProjectSummary(nil), m.allProjects...), m.archivedProjects...) {
+	categoryProjects := append(append([]model.ProjectSummary(nil), m.allProjects...), m.archivedProjects...)
+	categoryProjects = m.projectsVisibleForPrivacy(categoryProjects)
+	for _, project := range categoryProjects {
 		path := filepath.Clean(strings.TrimSpace(project.Path))
 		if path == "" || path == "." {
 			continue
@@ -472,6 +474,9 @@ func (m Model) categoryMoveItems() ([]categoryMoveItem, string) {
 	}
 	for _, task := range m.openAgentTasks {
 		if !agentTaskIsOpen(task) {
+			continue
+		}
+		if m.privacyMode && task.CategoryPrivate {
 			continue
 		}
 		taskID := strings.TrimSpace(task.ID)

@@ -753,7 +753,7 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 
 func (m Model) projectTabCount(tab projectTabDescriptor) int {
 	if tab.mode == projectArchiveArchived {
-		return len(m.archivedProjects)
+		return len(m.projectsVisibleForPrivacy(m.archivedProjects))
 	}
 	count := 0
 	for _, project := range m.allProjects {
@@ -775,7 +775,7 @@ func (m Model) projectTabCount(tab projectTabDescriptor) int {
 func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
 	switch tab.mode {
 	case projectArchiveArchived:
-		for _, project := range m.archivedProjects {
+		for _, project := range m.projectsVisibleForPrivacy(m.archivedProjects) {
 			if m.projectSummaryHasTabAttention(project) {
 				return true
 			}
@@ -866,9 +866,9 @@ func (m Model) renderProjectList(width, height int) string {
 			message = "No archived projects\nUse /archive to park a project here"
 		} else if m.archiveMode == projectArchiveCategory {
 			message = fmt.Sprintf("No projects in %s\nUse /category move to place the selected item here", m.currentProjectTabLabel())
-		} else if len(m.allProjects) > 0 && m.visibility == visibilityAIFolders {
+		} else if len(m.projectsVisibleForPrivacy(m.allProjects)) > 0 && m.visibility == visibilityAIFolders {
 			message = "No AI-linked folders\nUse /view all to switch folders"
-		} else if len(m.archivedProjects) > 0 {
+		} else if len(m.projectsVisibleForPrivacy(m.archivedProjects)) > 0 {
 			message = "No Main projects\nPress a to cycle tabs"
 		} else {
 			message = "No projects detected\nUse /settings to set your project search paths"
