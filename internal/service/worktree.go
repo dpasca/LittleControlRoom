@@ -371,6 +371,36 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		mergeErr = gitMergeBranch(ctx, rootPath, sourceBranch, true)
 	}
 	if mergeErr != nil {
+		resolvedGitlinks, resolveErr := s.ResolveGitlinkConflicts(ctx, rootPath)
+		if resolveErr != nil {
+			refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+			if refreshErr != nil {
+				return result, fmt.Errorf("merge %s back into %s at %s failed and gitlink conflict auto-resolution failed: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, resolveErr, refreshErr)
+			}
+			return result, fmt.Errorf("merge %s back into %s at %s failed and gitlink conflict auto-resolution failed: %w", sourceBranch, targetBranch, rootPath, resolveErr)
+		}
+		if len(resolvedGitlinks) > 0 {
+			statusAfterGitlinkResolution, statusErr := s.gitRepoStatusReader(ctx, rootPath)
+			if statusErr != nil {
+				refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+				if refreshErr != nil {
+					return result, fmt.Errorf("merge %s back into %s at %s resolved gitlink conflicts but failed to read remaining conflict status: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, statusErr, refreshErr)
+				}
+				return result, fmt.Errorf("merge %s back into %s at %s resolved gitlink conflicts but failed to read remaining conflict status: %w", sourceBranch, targetBranch, rootPath, statusErr)
+			}
+			if len(conflictedPaths(statusAfterGitlinkResolution)) == 0 {
+				if err := gitCommitMergeNoEdit(ctx, rootPath); err != nil {
+					refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+					if refreshErr != nil {
+						return result, fmt.Errorf("merge %s back into %s at %s resolved gitlink conflicts but failed to commit the merge: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, err, refreshErr)
+					}
+					return result, fmt.Errorf("merge %s back into %s at %s resolved gitlink conflicts but failed to commit the merge: %w", sourceBranch, targetBranch, rootPath, err)
+				}
+				mergeErr = nil
+			}
+		}
+	}
+	if mergeErr != nil {
 		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
 		if s.gitRepoStatusReader != nil {
 			if failedRootStatus, statusErr := s.gitRepoStatusReader(ctx, rootPath); statusErr == nil {

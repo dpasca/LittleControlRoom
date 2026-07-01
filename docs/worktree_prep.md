@@ -75,6 +75,14 @@ Submodule paths must be relative paths that stay inside the repo. LCR fails clos
 
 Nested submodule worktrees start detached at the parent repo's pinned gitlink commit. If LCR later resolves dirty changes inside one of those detached submodules during commit-and-merge, it creates an LCR-owned branch such as `lcroom/<parent-branch>/<submodule>-<base-sha>` and pushes that branch with upstream tracking before preparing the parent gitlink commit.
 
+## Merge-Back Gitlink Conflicts
+
+When two parent worktrees update the same submodule pointer differently, Git can leave a gitlink conflict in the root checkout during merge-back. LCR now auto-resolves deterministic cases:
+
+- If one side is an ancestor of the other, LCR stages the newer submodule commit.
+- If both sides diverged but merge cleanly inside the submodule, LCR creates and pushes an LCR-owned submodule merge branch, then stages the parent gitlink to that merge commit.
+- If the submodule content merge conflicts, LCR leaves a temporary submodule merge worktree in place and reports its path, branch, and ours/theirs SHAs for manual resolution.
+
 ## Cleanup
 
 When LCR removes a linked worktree, it also prunes stale nested submodule worktree registrations from initialized root submodules. This keeps Git metadata tidy after parent worktrees containing `worktree`-mode submodules are removed.

@@ -9,7 +9,9 @@ Current implementation status:
 - Auto preparation falls back to ordinary checkout hydration when the root submodule repo is not initialized or cannot provide the commit.
 - Explicit `recursive-submodules` still forces the previous full recursive checkout behavior.
 - Dirty detached nested submodule worktrees are branched lazily when LCR needs to auto-commit and push submodule changes.
-- Merge-back validation and gitlink conflict resolution remain future phases.
+- Merge-back root submodule sync is implemented.
+- Gitlink conflict auto-resolution is implemented for fast-forward cases and clean divergent submodule merges.
+- `/resolve` handoff for submodule content conflicts remains a future phase; for now LCR leaves a temporary submodule merge worktree and reports its path and branch.
 
 ## Current Baseline
 
@@ -213,7 +215,7 @@ ours  = O  # root/target side
 theirs = T # task/source side
 ```
 
-Automatic resolver plan:
+Implemented automatic resolver:
 
 1. Detect unmerged submodule paths:
 
@@ -250,16 +252,16 @@ Automatic resolver plan:
 
 6. If the submodule merge has content conflicts:
 
-   - Launch or offer `/resolve` against the submodule merge worktree.
-   - Prompt the engineer session with:
-     - parent repo path,
+   - Leave the temporary submodule merge worktree in place.
+   - Return an error that includes:
      - submodule path,
-     - base/ours/theirs SHAs,
-     - instruction that this is a submodule-content merge,
-     - instruction to produce a valid submodule commit.
-   - After resolution, LCR commits/pushes the submodule merge commit.
-   - LCR stages the parent gitlink to the new submodule merge commit.
-   - LCR continues or instructs the user to continue the parent merge.
+     - merge worktree path,
+     - LCR merge branch,
+     - ours/theirs SHAs,
+     - Git merge output.
+   - The parent merge remains in progress with the gitlink still conflicted.
+
+Future `/resolve` integration should launch or offer a resolver session against that submodule merge worktree, then let LCR own the mechanical commit/push/stage-parent steps.
 
 Do not automatically "take ours" or "take theirs" for divergent gitlink conflicts. That silently discards one side's asset/data update.
 
@@ -289,7 +291,7 @@ Future cleanup should:
 
 - Keep the existing prune on parent worktree removal.
 - Recurse into initialized submodules when nested submodules are supported.
-- Prune temporary submodule merge worktrees created for gitlink conflict resolution.
+- Continue pruning temporary submodule merge worktrees after clean automatic gitlink conflict resolution.
 - Optionally remove empty temp directories under an LCR-owned temp root.
 - Never remove a submodule worktree that is dirty or not LCR-owned without explicit confirmation.
 
@@ -370,19 +372,23 @@ Tests:
 - parent root repo is clean after merge,
 - removed task worktree leaves no stale nested worktree registration after prune.
 
-### Phase 5: Gitlink Conflict Resolver
+### Phase 5: Gitlink Conflict Resolver (implemented except `/resolve` handoff)
 
-- Add service-level detection for unmerged gitlink paths.
-- Implement ancestry resolver.
-- Implement clean submodule merge resolver.
-- Add `/resolve` integration for conflicted submodule merge worktrees.
+- Add service-level detection for unmerged gitlink paths. (implemented)
+- Implement ancestry resolver. (implemented)
+- Implement clean submodule merge resolver. (implemented)
+- Surface conflicted submodule merge worktrees with actionable path/branch/SHA details. (implemented)
+- Add `/resolve` integration for conflicted submodule merge worktrees. (pending)
 
-Tests:
+Tests now cover:
 
-- ours ancestor of theirs resolves to theirs,
+- ours ancestor of theirs resolves to theirs through merge-back when a fetch is needed,
 - theirs ancestor of ours resolves to ours,
-- divergent clean submodule merge creates/pushes merge commit and stages parent gitlink,
-- divergent conflicted merge surfaces a resolve workflow,
+- divergent clean submodule merge creates/pushes merge commit and stages parent gitlink through merge-back,
+- divergent conflicted merge surfaces a retained submodule merge worktree and branch.
+
+Still useful:
+
 - missing/unfetchable commits produce clear errors.
 
 ## Files To Start From
