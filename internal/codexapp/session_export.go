@@ -145,7 +145,7 @@ func threadGoalSetResponseStale(goal *ThreadGoal, objective string, tokenBudget 
 		return true
 	}
 	switch strings.TrimSpace(string(goal.Status)) {
-	case string(ThreadGoalStatusComplete), string(ThreadGoalStatusBudgetLimited), string(ThreadGoalStatusBlocked), "budget_limited", "usage_limited":
+	case string(ThreadGoalStatusPaused), string(ThreadGoalStatusComplete), string(ThreadGoalStatusBudgetLimited), string(ThreadGoalStatusBlocked), "budget_limited", "usage_limited":
 		return true
 	default:
 		return false

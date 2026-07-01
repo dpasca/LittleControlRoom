@@ -2612,6 +2612,9 @@ func TestSetGoalCallsThreadGoalSetAndStoresGoal(t *testing.T) {
 			if request.Objective != "ship the goal command" {
 				t.Fatalf("objective = %q, want ship the goal command", request.Objective)
 			}
+			if request.Status != ThreadGoalStatusActive {
+				t.Fatalf("status = %q, want active", request.Status)
+			}
 			if request.TokenBudget == nil || *request.TokenBudget != 5000 {
 				t.Fatalf("token budget = %v, want 5000", request.TokenBudget)
 			}
@@ -2698,6 +2701,71 @@ func TestResumeGoalCallsThreadGoalSetWithActiveStatus(t *testing.T) {
 	}
 }
 
+func TestSetGoalActivatesPausedGoalAndRetriesStaleResponse(t *testing.T) {
+	calls := []string{}
+
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_456",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			calls = append(calls, method)
+			switch len(calls) {
+			case 1:
+				if method != "thread/goal/set" {
+					t.Fatalf("first method = %q, want thread/goal/set", method)
+				}
+				request, ok := params.(threadGoalSetParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalSetParams", params)
+				}
+				if request.Objective != "ship the next goal" {
+					t.Fatalf("objective = %q, want ship the next goal", request.Objective)
+				}
+				if request.Status != ThreadGoalStatusActive {
+					t.Fatalf("status = %q, want active", request.Status)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"ship the next goal","status":"paused","tokensUsed":100,"timeUsedSeconds":12,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
+			case 2:
+				if method != "thread/goal/clear" {
+					t.Fatalf("second method = %q, want thread/goal/clear", method)
+				}
+				return json.RawMessage(`{"cleared":true}`), nil
+			case 3:
+				if method != "thread/goal/set" {
+					t.Fatalf("third method = %q, want thread/goal/set", method)
+				}
+				request, ok := params.(threadGoalSetParams)
+				if !ok {
+					t.Fatalf("params = %#v, want threadGoalSetParams", params)
+				}
+				if request.Objective != "ship the next goal" {
+					t.Fatalf("retry objective = %q, want ship the next goal", request.Objective)
+				}
+				if request.Status != ThreadGoalStatusActive {
+					t.Fatalf("retry status = %q, want active", request.Status)
+				}
+				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"ship the next goal","status":"active","tokensUsed":0,"timeUsedSeconds":0,"createdAt":1773027020,"updatedAt":1773027020}}`), nil
+			default:
+				t.Fatalf("unexpected RPC call %d: %s", len(calls), method)
+				return nil, nil
+			}
+		},
+	}
+
+	if err := s.SetGoal("ship the next goal", nil); err != nil {
+		t.Fatalf("SetGoal() error = %v", err)
+	}
+	if strings.Join(calls, ",") != "thread/goal/set,thread/goal/clear,thread/goal/set" {
+		t.Fatalf("calls = %#v, want set, clear, set", calls)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Goal == nil || snapshot.Goal.Status != ThreadGoalStatusActive {
+		t.Fatalf("snapshot goal = %#v, want active goal", snapshot.Goal)
+	}
+}
+
 func TestSetGoalClearsCompletedGoalAndRetriesWhenCodexReturnsStaleGoal(t *testing.T) {
 	calls := []string{}
 
@@ -2719,6 +2787,9 @@ func TestSetGoalClearsCompletedGoalAndRetriesWhenCodexReturnsStaleGoal(t *testin
 				}
 				if request.Objective != "ship the next goal" {
 					t.Fatalf("objective = %q, want ship the next goal", request.Objective)
+				}
+				if request.Status != ThreadGoalStatusActive {
+					t.Fatalf("status = %q, want active", request.Status)
 				}
 				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"old goal","status":"complete","tokensUsed":324582,"timeUsedSeconds":733,"createdAt":1773027000,"updatedAt":1773027010}}`), nil
 			case 2:
@@ -2743,6 +2814,9 @@ func TestSetGoalClearsCompletedGoalAndRetriesWhenCodexReturnsStaleGoal(t *testin
 				}
 				if request.Objective != "ship the next goal" {
 					t.Fatalf("retry objective = %q, want ship the next goal", request.Objective)
+				}
+				if request.Status != ThreadGoalStatusActive {
+					t.Fatalf("retry status = %q, want active", request.Status)
 				}
 				return json.RawMessage(`{"goal":{"threadId":"thread_456","objective":"ship the next goal","status":"active","tokensUsed":0,"timeUsedSeconds":0,"createdAt":1773027020,"updatedAt":1773027020}}`), nil
 			default:

@@ -461,6 +461,9 @@ func parseGoalInvocation(rawArgs string) (Invocation, error) {
 			Canonical:  "/goal resume",
 		}, nil
 	}
+	if ambiguous, suggestion := ambiguousGoalActionPrefix(trimmed); ambiguous {
+		return Invocation{}, fmt.Errorf("unknown goal action %q; did you mean %s?", trimmed, suggestion)
+	}
 
 	objective, tokenBudget, err := parseGoalSetArgs(trimmed)
 	if err != nil {
@@ -477,6 +480,38 @@ func parseGoalInvocation(rawArgs string) (Invocation, error) {
 		GoalTokenBudget: tokenBudget,
 		Canonical:       canonical,
 	}, nil
+}
+
+func ambiguousGoalActionPrefix(rawArgs string) (bool, string) {
+	fields := strings.Fields(strings.TrimSpace(rawArgs))
+	if len(fields) != 1 {
+		return false, ""
+	}
+	prefix := strings.ToLower(fields[0])
+	if prefix == "" {
+		return false, ""
+	}
+	actions := []struct {
+		value      string
+		suggestion string
+	}{
+		{"status", "/goal status"},
+		{"show", "/goal status"},
+		{"clear", "/goal clear"},
+		{"reset", "/goal clear"},
+		{"stop", "/goal stop"},
+		{"cancel", "/goal clear"},
+		{"pause", "/goal pause"},
+		{"suspend", "/goal pause"},
+		{"resume", "/goal resume"},
+		{"continue", "/goal resume"},
+	}
+	for _, action := range actions {
+		if prefix != action.value && strings.HasPrefix(action.value, prefix) {
+			return true, action.suggestion
+		}
+	}
+	return false, ""
 }
 
 func parseGoalSetArgs(rawArgs string) (string, *int64, error) {

@@ -406,6 +406,7 @@ func (s *appServerSession) setThreadGoal(ctx context.Context, threadID, objectiv
 	result, err := s.call(ctx, "thread/goal/set", threadGoalSetParams{
 		ThreadID:    threadID,
 		Objective:   objective,
+		Status:      ThreadGoalStatusActive,
 		TokenBudget: cloneInt64Ptr(tokenBudget),
 	})
 	if err != nil {

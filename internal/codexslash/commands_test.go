@@ -1,6 +1,9 @@
 package codexslash
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSuggestionsIncludeModelCommand(t *testing.T) {
 	suggestions := Suggestions("/")
@@ -345,6 +348,16 @@ func TestParseGoalStopCommandClearsGoal(t *testing.T) {
 	}
 	if inv.Canonical != "/goal clear" {
 		t.Fatalf("Parse(/goal stop) canonical = %q, want /goal clear", inv.Canonical)
+	}
+}
+
+func TestParsePartialGoalActionDoesNotBecomeObjective(t *testing.T) {
+	_, err := Parse("/goal cle")
+	if err == nil {
+		t.Fatalf("Parse(/goal cle) error = nil, want partial action error")
+	}
+	if !strings.Contains(err.Error(), "did you mean /goal clear") {
+		t.Fatalf("Parse(/goal cle) error = %v, want clear suggestion", err)
 	}
 }
 
