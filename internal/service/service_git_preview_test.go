@@ -13,6 +13,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 	"lcroom/internal/store"
+	"lcroom/internal/worktreeprep"
 	"os"
 	"path/filepath"
 	"strings"
@@ -993,6 +994,86 @@ func TestResolveSubmodulesAndPrepareCommitCommitsPushesSubmoduleAndReturnsParent
 	submoduleStatus := strings.TrimSpace(gitOutput(t, submodulePath, "git", "status", "--short"))
 	if submoduleStatus != "" {
 		t.Fatalf("expected clean submodule after assisted commit/push, got %q", submoduleStatus)
+	}
+}
+
+func TestResolveSubmodulesAndPrepareCommitBranchesDetachedNestedSubmoduleWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+	worktreePath := filepath.Join(root, "repo--feat-detached-assets")
+	runGit(t, projectPath, "git", "worktree", "add", "-b", "feat/detached-assets", worktreePath, "HEAD")
+
+	prep, err := worktreeprep.Prepare(ctx, projectPath, worktreePath, "")
+	if err != nil {
+		t.Fatalf("prepare worktree: %v", err)
+	}
+	if len(prep.Prepared) != 1 || prep.Prepared[0].Mode != "worktree" {
+		t.Fatalf("prepared submodules = %#v, want nested worktree", prep.Prepared)
+	}
+
+	submodulePath := filepath.Join(worktreePath, "assets_src")
+	if branch := strings.TrimSpace(gitOutput(t, submodulePath, "git", "rev-parse", "--abbrev-ref", "HEAD")); branch != "HEAD" {
+		t.Fatalf("prepared submodule branch = %q, want detached HEAD", branch)
+	}
+	if err := os.WriteFile(filepath.Join(submodulePath, "README.md"), []byte("hello\nnested submodule edit\n"), 0o644); err != nil {
+		t.Fatalf("write submodule README: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          worktreePath,
+		Name:          filepath.Base(worktreePath),
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.commitMessageSuggester = nil
+
+	preview, err := svc.ResolveSubmodulesAndPrepareCommit(ctx, worktreePath, GitActionCommit, "Record nested asset update")
+	if err != nil {
+		t.Fatalf("resolve submodules and prepare commit: %v", err)
+	}
+	if len(preview.Included) != 1 || preview.Included[0].Path != "assets_src" {
+		t.Fatalf("included files = %#v, want staged submodule hash only", preview.Included)
+	}
+	warnings := strings.Join(preview.Warnings, "\n")
+	if !strings.Contains(warnings, "Resolved submodule assets_src") || !strings.Contains(warnings, "on branch lcroom/feat-detached-assets/assets_src-") {
+		t.Fatalf("warnings = %#v, want resolved submodule branch note", preview.Warnings)
+	}
+
+	resolutionBranch := strings.TrimSpace(gitOutput(t, submodulePath, "git", "rev-parse", "--abbrev-ref", "HEAD"))
+	if !strings.HasPrefix(resolutionBranch, "lcroom/feat-detached-assets/assets_src-") {
+		t.Fatalf("resolution branch = %q, want LCR submodule branch", resolutionBranch)
+	}
+	submoduleHead := strings.TrimSpace(gitOutput(t, submodulePath, "git", "rev-parse", "HEAD"))
+	remoteHead := strings.TrimSpace(gitOutput(t, filepath.Join(submoduleRootPath, "origin.git"), "git", "rev-parse", resolutionBranch))
+	if remoteHead != submoduleHead {
+		t.Fatalf("expected pushed submodule HEAD %q to match remote %q", submoduleHead, remoteHead)
+	}
+
+	result, err := svc.ApplyCommit(ctx, preview, false, nil)
+	if err != nil {
+		t.Fatalf("apply parent commit: %v", err)
+	}
+	if result.Pushed {
+		t.Fatalf("parent commit should not push in commit-only flow, got %#v", result)
+	}
+	recordedSubmoduleHead := strings.TrimSpace(gitOutput(t, worktreePath, "git", "rev-parse", "HEAD:assets_src"))
+	if recordedSubmoduleHead != submoduleHead {
+		t.Fatalf("parent gitlink = %q, want resolved submodule HEAD %q", recordedSubmoduleHead, submoduleHead)
 	}
 }
 

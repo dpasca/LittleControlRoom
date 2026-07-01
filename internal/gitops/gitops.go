@@ -193,6 +193,24 @@ func Push(ctx context.Context, path string) error {
 	return nil
 }
 
+func PushSetUpstream(ctx context.Context, path, remote string) error {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		remote = "origin"
+	}
+	pushCtx, cancel, appliedTimeout := withDefaultTimeout(ctx, defaultPushTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(pushCtx, "git", "-C", path, "push", "-u", remote, "HEAD")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if timeoutErr := commandTimeoutError("push", path, pushCtx, appliedTimeout, out); timeoutErr != nil {
+			return timeoutErr
+		}
+		return fmt.Errorf("push %s: %w: %s", path, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func IsPushRejectedNeedsPull(err error) bool {
 	if err == nil {
 		return false

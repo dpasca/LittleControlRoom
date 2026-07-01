@@ -73,6 +73,8 @@ Use `checkout` for read-only or ordinary dependency submodules. Use `worktree` w
 
 Submodule paths must be relative paths that stay inside the repo. LCR fails closed if a configured submodule worktree target already contains files.
 
+Nested submodule worktrees start detached at the parent repo's pinned gitlink commit. If LCR later resolves dirty changes inside one of those detached submodules during commit-and-merge, it creates an LCR-owned branch such as `lcroom/<parent-branch>/<submodule>-<base-sha>` and pushes that branch with upstream tracking before preparing the parent gitlink commit.
+
 ## Cleanup
 
 When LCR removes a linked worktree, it also prunes stale nested submodule worktree registrations from initialized root submodules. This keeps Git metadata tidy after parent worktrees containing `worktree`-mode submodules are removed.

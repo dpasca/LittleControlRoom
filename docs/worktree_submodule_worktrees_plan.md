@@ -8,7 +8,8 @@ Current implementation status:
 - Auto preparation creates nested submodule worktrees when the root checkout has, or can fetch, the pinned submodule commit.
 - Auto preparation falls back to ordinary checkout hydration when the root submodule repo is not initialized or cannot provide the commit.
 - Explicit `recursive-submodules` still forces the previous full recursive checkout behavior.
-- Branch/push policy for dirty detached nested submodule worktrees, merge-back validation, and gitlink conflict resolution remain future phases.
+- Dirty detached nested submodule worktrees are branched lazily when LCR needs to auto-commit and push submodule changes.
+- Merge-back validation and gitlink conflict resolution remain future phases.
 
 ## Current Baseline
 
@@ -344,7 +345,7 @@ Tests:
 - submodule gitdir points to a nested worktree under the root submodule repo,
 - root submodule branch is not disturbed.
 
-### Phase 3: Dirty Submodule Commit/Push Branch Policy
+### Phase 3: Dirty Submodule Commit/Push Branch Policy (implemented for dirty detached nested worktrees)
 
 - Decide branch policy for dirty detached nested submodule worktrees.
 - Enhance `resolveSubmoduleRepoAndPush` and/or `gitops.Push` to support the chosen policy.
