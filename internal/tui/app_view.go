@@ -775,11 +775,7 @@ func (m Model) projectTabCount(tab projectTabDescriptor) int {
 func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
 	switch tab.mode {
 	case projectArchiveArchived:
-		for _, project := range m.projectsVisibleForPrivacy(m.archivedProjects) {
-			if m.projectSummaryHasTabAttention(project) {
-				return true
-			}
-		}
+		return false
 	case projectArchiveMain, projectArchiveCategory:
 		categoryID := strings.TrimSpace(tab.categoryID)
 		for _, project := range m.allProjects {
