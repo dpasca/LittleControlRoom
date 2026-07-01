@@ -30,7 +30,7 @@ const (
 )
 
 const todoTextCharLimit = 20000
-const todoWorktreePreparingStatus = "Creating dedicated worktree; hydrating submodules if needed..."
+const todoWorktreePreparingStatus = "Creating dedicated worktree; preparing submodules if needed..."
 
 type todoDialogState struct {
 	ProjectPath string
@@ -1836,7 +1836,7 @@ func todoPendingLaunchListSummary(pending todoPendingLaunchState, now time.Time)
 }
 
 func todoPendingLaunchDetailSummary(pending todoPendingLaunchState, now time.Time) string {
-	summary := "Creating the dedicated worktree and hydrating submodules if this repo needs them."
+	summary := "Creating the dedicated worktree and preparing submodules if this repo needs them."
 	if !pending.StartedAt.IsZero() {
 		if now.IsZero() {
 			now = time.Now()
@@ -1860,9 +1860,9 @@ func todoWorktreePreparedStatus(preparedPathCount int) string {
 		return "Worktree ready"
 	}
 	if preparedPathCount == 1 {
-		return "Worktree ready; hydrated 1 submodule"
+		return "Worktree ready; prepared 1 submodule"
 	}
-	return fmt.Sprintf("Worktree ready; hydrated %d submodules", preparedPathCount)
+	return fmt.Sprintf("Worktree ready; prepared %d submodules", preparedPathCount)
 }
 
 func todoWorktreeSessionStartStatus(provider codexapp.Provider, openModelFirst bool, preparedPathCount int) string {

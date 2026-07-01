@@ -14,6 +14,7 @@ import (
 )
 
 const ConfigRelPath = ".lcroom/worktrees.toml"
+const AutoSubmodulesProfile = "submodules-auto"
 const RecursiveSubmodulesProfile = "recursive-submodules"
 
 type Config struct {
@@ -66,12 +67,15 @@ func Prepare(ctx context.Context, rootPath, worktreePath, requestedProfile strin
 		selectedProfile = strings.TrimSpace(cfg.DefaultProfile)
 	}
 	if selectedProfile == "" {
-		selectedProfile = RecursiveSubmodulesProfile
+		selectedProfile = AutoSubmodulesProfile
 	}
 	if isSkipProfile(selectedProfile) {
 		result.Skipped = true
 		result.SkipReason = "worktree prep disabled"
 		return result, nil
+	}
+	if isAutoSubmodulesProfile(selectedProfile) {
+		return prepareAutoSubmodules(ctx, rootPath, worktreePath, result)
 	}
 	if isRecursiveSubmodulesProfile(selectedProfile) {
 		return prepareRecursiveSubmodules(ctx, worktreePath, result)
@@ -93,6 +97,22 @@ func Prepare(ctx context.Context, rootPath, worktreePath, requestedProfile strin
 
 	for _, submodule := range profile.Submodules {
 		prepared, err := prepareSubmodule(ctx, rootPath, worktreePath, submodule)
+		if err != nil {
+			return result, err
+		}
+		result.Prepared = append(result.Prepared, prepared)
+	}
+	return result, nil
+}
+
+func prepareAutoSubmodules(ctx context.Context, rootPath, worktreePath string, result Result) (Result, error) {
+	result.Profile = AutoSubmodulesProfile
+	paths, err := listConfiguredSubmodulePaths(ctx, worktreePath)
+	if err != nil {
+		return result, err
+	}
+	for _, path := range paths {
+		prepared, err := prepareSubmoduleAuto(ctx, rootPath, worktreePath, path)
 		if err != nil {
 			return result, err
 		}
@@ -205,6 +225,15 @@ func isRecursiveSubmodulesProfile(name string) bool {
 	}
 }
 
+func isAutoSubmodulesProfile(name string) bool {
+	switch normalizeBuiltInProfileName(name) {
+	case AutoSubmodulesProfile, "auto-submodules", "auto":
+		return true
+	default:
+		return false
+	}
+}
+
 func isSkipProfile(name string) bool {
 	switch normalizeBuiltInProfileName(name) {
 	case "none", "off", "skip", "disabled", "false":
@@ -225,11 +254,7 @@ func prepareSubmodule(ctx context.Context, rootPath, worktreePath string, submod
 	}
 	switch mode {
 	case "checkout":
-		if err := gitSubmoduleUpdate(ctx, worktreePath, path); err != nil {
-			return PreparedSubmodule{}, err
-		}
-		commit, _ := gitOutput(ctx, worktreePath, "rev-parse", "HEAD:"+path)
-		return PreparedSubmodule{Path: path, Mode: mode, Commit: strings.TrimSpace(commit)}, nil
+		return prepareSubmoduleCheckout(ctx, worktreePath, path)
 	case "worktree":
 		return prepareSubmoduleWorktree(ctx, rootPath, worktreePath, path)
 	default:
@@ -237,19 +262,58 @@ func prepareSubmodule(ctx context.Context, rootPath, worktreePath string, submod
 	}
 }
 
-func prepareSubmoduleWorktree(ctx context.Context, rootPath, worktreePath, submodulePath string) (PreparedSubmodule, error) {
-	commit, err := gitOutput(ctx, worktreePath, "rev-parse", "HEAD:"+submodulePath)
+func prepareSubmoduleAuto(ctx context.Context, rootPath, worktreePath, submodulePath string) (PreparedSubmodule, error) {
+	path, err := cleanSubmodulePath(submodulePath)
 	if err != nil {
-		return PreparedSubmodule{}, fmt.Errorf("resolve submodule %s commit in %s: %w", submodulePath, worktreePath, err)
+		return PreparedSubmodule{}, err
 	}
-	commit = strings.TrimSpace(commit)
-	if commit == "" {
-		return PreparedSubmodule{}, fmt.Errorf("resolve submodule %s commit in %s: empty commit", submodulePath, worktreePath)
+	commit, err := resolveSubmoduleCommit(ctx, worktreePath, path)
+	if err != nil {
+		return PreparedSubmodule{}, err
+	}
+	canReuse, reuseErr := rootSubmoduleHasOrCanFetchCommit(ctx, rootPath, path, commit)
+	if canReuse {
+		return createSubmoduleWorktreeAtCommit(ctx, rootPath, worktreePath, path, commit)
+	}
+	prepared, checkoutErr := prepareSubmoduleCheckout(ctx, worktreePath, path)
+	if checkoutErr != nil && reuseErr != nil {
+		return PreparedSubmodule{}, fmt.Errorf("prepare submodule %s by checkout after linked worktree reuse failed: %w (reuse check also failed: %v)", path, checkoutErr, reuseErr)
+	}
+	return prepared, checkoutErr
+}
+
+func prepareSubmoduleCheckout(ctx context.Context, worktreePath, submodulePath string) (PreparedSubmodule, error) {
+	if err := gitSubmoduleUpdate(ctx, worktreePath, submodulePath); err != nil {
+		return PreparedSubmodule{}, err
+	}
+	commit, _ := gitOutput(ctx, worktreePath, "rev-parse", "HEAD:"+submodulePath)
+	return PreparedSubmodule{Path: submodulePath, Mode: "checkout", Commit: strings.TrimSpace(commit)}, nil
+}
+
+func prepareSubmoduleWorktree(ctx context.Context, rootPath, worktreePath, submodulePath string) (PreparedSubmodule, error) {
+	commit, err := resolveSubmoduleCommit(ctx, worktreePath, submodulePath)
+	if err != nil {
+		return PreparedSubmodule{}, err
 	}
 	if err := ensureRootSubmoduleHasCommit(ctx, rootPath, submodulePath, commit); err != nil {
 		return PreparedSubmodule{}, err
 	}
+	return createSubmoduleWorktreeAtCommit(ctx, rootPath, worktreePath, submodulePath, commit)
+}
 
+func resolveSubmoduleCommit(ctx context.Context, worktreePath, submodulePath string) (string, error) {
+	commit, err := gitOutput(ctx, worktreePath, "rev-parse", "HEAD:"+submodulePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve submodule %s commit in %s: %w", submodulePath, worktreePath, err)
+	}
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return "", fmt.Errorf("resolve submodule %s commit in %s: empty commit", submodulePath, worktreePath)
+	}
+	return commit, nil
+}
+
+func createSubmoduleWorktreeAtCommit(ctx context.Context, rootPath, worktreePath, submodulePath, commit string) (PreparedSubmodule, error) {
 	rootSubmodulePath := filepath.Join(rootPath, filepath.FromSlash(submodulePath))
 	targetPath := filepath.Join(worktreePath, filepath.FromSlash(submodulePath))
 	if err := ensureContained(worktreePath, targetPath); err != nil {
@@ -352,6 +416,23 @@ func ensureRootSubmoduleHasCommit(ctx context.Context, rootPath, submodulePath, 
 	return nil
 }
 
+func rootSubmoduleHasOrCanFetchCommit(ctx context.Context, rootPath, submodulePath, commit string) (bool, error) {
+	rootSubmodulePath := filepath.Join(rootPath, filepath.FromSlash(submodulePath))
+	if !isGitRepo(ctx, rootSubmodulePath) {
+		return false, nil
+	}
+	if gitCommitExists(ctx, rootSubmodulePath, commit) {
+		return true, nil
+	}
+	if err := gitRun(ctx, rootSubmodulePath, "fetch submodule commit "+submodulePath, "fetch", "--all", "--tags"); err != nil {
+		return false, err
+	}
+	if !gitCommitExists(ctx, rootSubmodulePath, commit) {
+		return false, nil
+	}
+	return true, nil
+}
+
 func gitCommitExists(ctx context.Context, repoPath, commit string) bool {
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "cat-file", "-e", strings.TrimSpace(commit)+"^{commit}")
 	return cmd.Run() == nil
@@ -404,11 +485,28 @@ func gitOutput(ctx context.Context, repoPath string, args ...string) (string, er
 }
 
 func isGitRepo(ctx context.Context, path string) bool {
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--is-inside-work-tree")
-	if err := cmd.Run(); err != nil {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." {
 		return false
 	}
-	return true
+	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return sameCleanPath(strings.TrimSpace(string(out)), path)
+}
+
+func sameCleanPath(a, b string) bool {
+	a = filepath.Clean(strings.TrimSpace(a))
+	b = filepath.Clean(strings.TrimSpace(b))
+	if resolved, err := filepath.EvalSymlinks(a); err == nil {
+		a = filepath.Clean(resolved)
+	}
+	if resolved, err := filepath.EvalSymlinks(b); err == nil {
+		b = filepath.Clean(resolved)
+	}
+	return a == b
 }
 
 func removeEmptySubmodulePlaceholder(path string) error {

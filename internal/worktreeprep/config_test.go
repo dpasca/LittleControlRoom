@@ -76,7 +76,7 @@ submodules = [
 	}
 }
 
-func TestPrepareBuiltInRecursiveSubmodulesWithoutConfig(t *testing.T) {
+func TestPrepareBuiltInAutoSubmodulesWithoutConfigUsesNestedWorktree(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -91,14 +91,88 @@ func TestPrepareBuiltInRecursiveSubmodulesWithoutConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
-	if result.Profile != RecursiveSubmodulesProfile || len(result.Prepared) != 1 {
-		t.Fatalf("Prepare() result = %#v, want recursive submodules with one prepared path", result)
+	if result.Profile != AutoSubmodulesProfile || len(result.Prepared) != 1 {
+		t.Fatalf("Prepare() result = %#v, want auto submodules with one prepared path", result)
 	}
-	if result.Prepared[0].Path != "Assets" || result.Prepared[0].Mode != "checkout" {
-		t.Fatalf("prepared submodule = %#v, want Assets checkout", result.Prepared[0])
+	if result.Prepared[0].Path != "Assets" || result.Prepared[0].Mode != "worktree" {
+		t.Fatalf("prepared submodule = %#v, want Assets worktree", result.Prepared[0])
 	}
 	if got := gitOutputTest(t, filepath.Join(worktreePath, "Assets"), "rev-parse", "--show-toplevel"); !samePath(t, got, filepath.Join(worktreePath, "Assets")) {
 		t.Fatalf("submodule top-level = %q", got)
+	}
+	submoduleGitDir := gitOutputTest(t, filepath.Join(worktreePath, "Assets"), "rev-parse", "--absolute-git-dir")
+	if !strings.Contains(filepath.ToSlash(submoduleGitDir), "/.git/modules/Assets/worktrees/") {
+		t.Fatalf("submodule git dir = %q, want nested worktree git dir", submoduleGitDir)
+	}
+	parentStatus := gitOutputTest(t, worktreePath, "status", "--porcelain=v2")
+	if strings.TrimSpace(parentStatus) != "" {
+		t.Fatalf("parent worktree status after prep = %q, want clean", parentStatus)
+	}
+}
+
+func TestPrepareBuiltInAutoSubmodulesFallsBackWhenRootSubmoduleCold(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	originPath := filepath.Join(root, "asset-origin")
+	initRepoWithSubmodule(t, mainPath, originPath, "Assets")
+	runGit(t, mainPath, "submodule", "deinit", "-f", "Assets")
+	worktreePath := filepath.Join(root, "main--task")
+	runGit(t, mainPath, "worktree", "add", "-b", "task", worktreePath, "HEAD")
+
+	result, err := Prepare(ctx, mainPath, worktreePath, "")
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if result.Profile != AutoSubmodulesProfile || len(result.Prepared) != 1 {
+		t.Fatalf("Prepare() result = %#v, want auto submodules with one prepared path", result)
+	}
+	if result.Prepared[0].Path != "Assets" || result.Prepared[0].Mode != "checkout" {
+		t.Fatalf("prepared submodule = %#v, want Assets checkout fallback", result.Prepared[0])
+	}
+	if got := gitOutputTest(t, filepath.Join(worktreePath, "Assets"), "rev-parse", "--show-toplevel"); !samePath(t, got, filepath.Join(worktreePath, "Assets")) {
+		t.Fatalf("submodule top-level = %q", got)
+	}
+	submoduleGitDir := gitOutputTest(t, filepath.Join(worktreePath, "Assets"), "rev-parse", "--absolute-git-dir")
+	if strings.Contains(filepath.ToSlash(submoduleGitDir), "/.git/modules/Assets/worktrees/") {
+		t.Fatalf("submodule git dir = %q, want checkout fallback git dir", submoduleGitDir)
+	}
+}
+
+func TestPrepareBuiltInAutoSubmodulesFetchesMissingRootCommit(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	originPath := filepath.Join(root, "asset-origin")
+	initRepoWithSubmodule(t, mainPath, originPath, "Assets")
+	newAssetCommit := commitFile(t, originPath, "asset.txt", "new asset content\n", "update asset")
+	runGit(t, mainPath, "update-index", "--cacheinfo", "160000,"+newAssetCommit+",Assets")
+	runGit(t, mainPath, "commit", "-m", "point asset submodule at remote commit")
+	if gitCommitExistsTest(filepath.Join(mainPath, "Assets"), newAssetCommit) {
+		t.Fatalf("root submodule unexpectedly already has commit %s", newAssetCommit)
+	}
+	worktreePath := filepath.Join(root, "main--task")
+	runGit(t, mainPath, "worktree", "add", "-b", "task", worktreePath, "HEAD")
+
+	result, err := Prepare(ctx, mainPath, worktreePath, "")
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if result.Profile != AutoSubmodulesProfile || len(result.Prepared) != 1 {
+		t.Fatalf("Prepare() result = %#v, want auto submodules with one prepared path", result)
+	}
+	if result.Prepared[0].Path != "Assets" || result.Prepared[0].Mode != "worktree" || result.Prepared[0].Commit != newAssetCommit {
+		t.Fatalf("prepared submodule = %#v, want fetched Assets worktree at %s", result.Prepared[0], newAssetCommit)
+	}
+	if !gitCommitExistsTest(filepath.Join(mainPath, "Assets"), newAssetCommit) {
+		t.Fatalf("root submodule still does not have fetched commit %s", newAssetCommit)
+	}
+	if got := gitOutputTest(t, filepath.Join(worktreePath, "Assets"), "rev-parse", "HEAD"); got != newAssetCommit {
+		t.Fatalf("prepared submodule HEAD = %q, want %q", got, newAssetCommit)
 	}
 }
 
@@ -255,6 +329,20 @@ func writePrepConfig(t *testing.T, root, content string) {
 	}
 }
 
+func commitFile(t *testing.T, repoPath, relPath, content, message string) string {
+	t.Helper()
+	path := filepath.Join(repoPath, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir file parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runGit(t, repoPath, "add", relPath)
+	runGit(t, repoPath, "commit", "-m", message)
+	return gitOutputTest(t, repoPath, "rev-parse", "HEAD")
+}
+
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -267,6 +355,11 @@ func runGit(t *testing.T, dir string, args ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git -C %s %v failed: %v\n%s", dir, args, err, string(out))
 	}
+}
+
+func gitCommitExistsTest(repoPath, commit string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "cat-file", "-e", strings.TrimSpace(commit)+"^{commit}")
+	return cmd.Run() == nil
 }
 
 func gitOutputTest(t *testing.T, dir string, args ...string) string {

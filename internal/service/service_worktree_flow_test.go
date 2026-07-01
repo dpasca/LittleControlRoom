@@ -461,7 +461,7 @@ submodules = [
 	}
 }
 
-func TestCreateTodoWorktreeHydratesSubmodulesByDefault(t *testing.T) {
+func TestCreateTodoWorktreePreparesSubmodulesByDefault(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -485,7 +485,7 @@ func TestCreateTodoWorktreeHydratesSubmodulesByDefault(t *testing.T) {
 		t.Fatalf("track root project: %v", err)
 	}
 
-	item, err := svc.AddTodo(ctx, projectPath, "Create a worktree with default hydrated assets")
+	item, err := svc.AddTodo(ctx, projectPath, "Create a worktree with default prepared assets")
 	if err != nil {
 		t.Fatalf("add todo: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestCreateTodoWorktreeHydratesSubmodulesByDefault(t *testing.T) {
 	suggestion.BranchName = "feat/default-prepared-assets"
 	suggestion.WorktreeSuffix = "feat-default-prepared-assets"
 	suggestion.Kind = "feature"
-	suggestion.Reason = "Creates a prepared worktree with the default submodule hydration."
+	suggestion.Reason = "Creates a prepared worktree with the default submodule preparation."
 	suggestion.Confidence = 0.92
 	suggestion.Model = "test"
 	if completed, err := st.CompleteTodoWorktreeSuggestion(ctx, suggestion); err != nil {
@@ -513,8 +513,8 @@ func TestCreateTodoWorktreeHydratesSubmodulesByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTodoWorktree() error = %v", err)
 	}
-	if result.PrepProfile != worktreeprep.RecursiveSubmodulesProfile {
-		t.Fatalf("PrepProfile = %q, want %s", result.PrepProfile, worktreeprep.RecursiveSubmodulesProfile)
+	if result.PrepProfile != worktreeprep.AutoSubmodulesProfile {
+		t.Fatalf("PrepProfile = %q, want %s", result.PrepProfile, worktreeprep.AutoSubmodulesProfile)
 	}
 	if len(result.PreparedPaths) != 1 || result.PreparedPaths[0] != "Assets" {
 		t.Fatalf("PreparedPaths = %#v, want [Assets]", result.PreparedPaths)
@@ -1576,6 +1576,7 @@ func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
 		ProjectPath: projectPath,
 		TodoID:      item.ID,
+		PrepProfile: worktreeprep.RecursiveSubmodulesProfile,
 	})
 	if err != nil {
 		t.Fatalf("CreateTodoWorktree() error = %v", err)

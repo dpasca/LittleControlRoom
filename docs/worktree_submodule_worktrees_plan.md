@@ -1,24 +1,33 @@
 # Nested Submodule Worktrees Plan
 
-This is a handoff plan for a future LCR change. It captures the design discussion around making TODO worktree creation faster for large repos, especially repos like okmain where game source assets live in Git submodules.
+This is a planning and implementation note for making TODO worktree creation faster for large repos, especially repos like okmain where game source assets live in Git submodules.
+
+Current implementation status:
+
+- `submodules-auto` is the no-config default.
+- Auto preparation creates nested submodule worktrees when the root checkout has, or can fetch, the pinned submodule commit.
+- Auto preparation falls back to ordinary checkout hydration when the root submodule repo is not initialized or cannot provide the commit.
+- Explicit `recursive-submodules` still forces the previous full recursive checkout behavior.
+- Branch/push policy for dirty detached nested submodule worktrees, merge-back validation, and gitlink conflict resolution remain future phases.
 
 ## Current Baseline
 
-As of commit `47d49e9`, LCR has generic worktree preparation:
+LCR has generic worktree preparation:
 
 - `Service.CreateTodoWorktree` creates a parent linked worktree, then calls `worktreeprep.Prepare`.
-- With no repo config, the default profile is `recursive-submodules`.
-- The current default runs:
+- With no repo config, the default profile is `submodules-auto`.
+- The auto profile tries nested submodule worktrees first and falls back per path to:
 
   ```bash
-  git -c protocol.file.allow=always submodule update --init --recursive
+  git -c protocol.file.allow=always submodule update --init --recursive -- "$submodule_path"
   ```
 
   inside the new parent worktree.
+- The explicit `recursive-submodules` profile still runs full recursive checkout hydration for the new parent worktree.
 - The TUI shows an active preparation status while this happens:
 
   ```text
-  Creating dedicated worktree; hydrating submodules if needed...
+  Creating dedicated worktree; preparing submodules if needed...
   ```
 
 - `Service.RemoveWorktree` calls `worktreeprep.PruneSubmoduleWorktrees` so nested submodule worktree registrations can be cleaned up.
@@ -305,7 +314,7 @@ Do not silently repurpose normal user task worktrees as cache entries.
 
 ## Implementation Phases
 
-### Phase 1: Auto Strategy Skeleton
+### Phase 1: Auto Strategy Skeleton (implemented)
 
 - Add a built-in profile for `submodules-auto`.
 - Make no-config default use `submodules-auto`.
@@ -321,7 +330,7 @@ Tests:
 - missing commit fetches then creates nested worktree or falls back cleanly,
 - explicit `recursive-submodules` still runs checkout hydration.
 
-### Phase 2: Nested Worktree Preparation
+### Phase 2: Nested Worktree Preparation (implemented for top-level prep)
 
 - Generalize `prepareSubmoduleWorktree` for automatic top-level submodules.
 - Ensure target paths are empty or absent before nested worktree creation.
@@ -406,4 +415,3 @@ Tests:
 - Do not auto-resolve divergent gitlink conflicts by always taking one side.
 - Do not silently reuse arbitrary user task worktrees as cache entries.
 - Do not require okmain-specific config for the generic path.
-

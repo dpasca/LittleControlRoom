@@ -1004,7 +1004,7 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 	}
 }
 
-func TestTodoWorktreeLaunchHandoffMentionsHydratedSubmodules(t *testing.T) {
+func TestTodoWorktreeLaunchHandoffMentionsPreparedSubmodules(t *testing.T) {
 	m := Model{
 		codexManager: codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 			return &fakeCodexSession{}, nil
@@ -1024,13 +1024,13 @@ func TestTodoWorktreeLaunchHandoffMentionsHydratedSubmodules(t *testing.T) {
 
 	updated, cmd := m.Update(todoWorktreeLaunchMsg{
 		projectPath:   "/tmp/root--feat-assets",
-		todoText:      "Use the hydrated assets",
+		todoText:      "Use the prepared assets",
 		preparedPaths: []string{"Assets", "Shared/Data"},
 		provider:      codexapp.ProviderCodex,
 	})
 	got := updated.(Model)
-	if got.status != "Worktree ready; hydrated 2 submodules; starting TODO session..." {
-		t.Fatalf("status = %q, want hydrated-submodule handoff", got.status)
+	if got.status != "Worktree ready; prepared 2 submodules; starting TODO session..." {
+		t.Fatalf("status = %q, want prepared-submodule handoff", got.status)
 	}
 	if cmd == nil {
 		t.Fatalf("worktree launch should return an embedded open command")
