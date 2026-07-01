@@ -521,6 +521,30 @@ func TestProjectTabsMarkActionableCategoryAttention(t *testing.T) {
 	}
 }
 
+func TestProjectTabsDoNotMarkArchivedAttention(t *testing.T) {
+	m := Model{
+		archivedProjects: []model.ProjectSummary{{
+			Path:                             "/tmp/archived-followup",
+			Name:                             "archived-followup",
+			Archived:                         true,
+			PresentOnDisk:                    true,
+			LatestSessionClassification:      model.ClassificationCompleted,
+			LatestSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
+			LatestSessionSummary:             "A concrete follow-up remains.",
+			LatestSessionFormat:              "modern",
+			LatestSessionDetectedProjectPath: "/tmp/archived-followup",
+		}},
+	}
+
+	rendered := ansi.Strip(m.renderProjectArchiveTabs(120))
+	if !strings.Contains(rendered, " Archived 1 ") {
+		t.Fatalf("renderProjectArchiveTabs() should count archived projects, got %q", rendered)
+	}
+	if strings.Contains(rendered, "Archived*") {
+		t.Fatalf("archived tab should not show attention marker: %q", rendered)
+	}
+}
+
 func TestProjectTabsMarkLiveBrowserAttention(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/browser-demo",
