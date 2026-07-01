@@ -521,6 +521,47 @@ func TestProjectTabsMarkActionableCategoryAttention(t *testing.T) {
 	}
 }
 
+func TestProjectTabsHidePrivateArchivedCountsAndAttentionInPrivacyMode(t *testing.T) {
+	m := Model{
+		archivedProjects: []model.ProjectSummary{
+			{
+				Path:                             "/tmp/public-old",
+				Name:                             "public-old",
+				Archived:                         true,
+				PresentOnDisk:                    true,
+				LatestSessionClassification:      model.ClassificationCompleted,
+				LatestSessionClassificationType:  model.SessionCategoryCompleted,
+				LatestSessionDetectedProjectPath: "/tmp/public-old",
+			},
+			{
+				Path:                             "/tmp/private-old",
+				Name:                             "private-old",
+				Archived:                         true,
+				PresentOnDisk:                    true,
+				CategoryID:                       "cat_private",
+				CategoryName:                     "Private",
+				CategoryPrivate:                  true,
+				LatestSessionClassification:      model.ClassificationCompleted,
+				LatestSessionClassificationType:  model.SessionCategoryNeedsFollowUp,
+				LatestSessionDetectedProjectPath: "/tmp/private-old",
+			},
+		},
+		projectCategories: []model.ProjectCategory{{ID: "cat_private", Name: "Private", Private: true}},
+		privacyMode:       true,
+	}
+
+	rendered := ansi.Strip(m.renderProjectArchiveTabs(120))
+	if !strings.Contains(rendered, "Archived 1") {
+		t.Fatalf("renderProjectArchiveTabs() = %q, want one visible archived project", rendered)
+	}
+	if strings.Contains(rendered, "Archived*") {
+		t.Fatalf("private archived attention should not mark Archived tab in privacy mode: %q", rendered)
+	}
+	if strings.Contains(rendered, "Private") {
+		t.Fatalf("private category name should be hidden in privacy mode: %q", rendered)
+	}
+}
+
 func TestProjectTabsMarkLiveBrowserAttention(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/browser-demo",

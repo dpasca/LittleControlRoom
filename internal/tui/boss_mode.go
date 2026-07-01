@@ -364,14 +364,14 @@ func bossModeBodyHeight(shellBodyHeight int) int {
 }
 
 func (m Model) bossViewContext() bossui.ViewContext {
-	activeTabCount := len(m.allProjects)
-	archivedCount := len(m.archivedProjects)
+	activeTabCount := len(m.projectsVisibleForPrivacy(m.allProjects))
+	archivedCount := len(m.projectsVisibleForPrivacy(m.archivedProjects))
 	view := bossui.ViewContext{
 		Active:                true,
 		Embedded:              true,
 		Loading:               m.loading,
 		AllProjectCount:       activeTabCount + archivedCount,
-		VisibleProjectCount:   len(m.projects),
+		VisibleProjectCount:   len(m.projectsVisibleForPrivacy(m.projects)),
 		ActiveTabProjectCount: activeTabCount,
 		ArchivedProjectCount:  archivedCount,
 		FocusedPane:           string(m.focusedPane),
@@ -426,6 +426,9 @@ func (m Model) bossRuntimeContexts() []bossui.ViewRuntimeContext {
 		if len(contexts) >= limit {
 			return
 		}
+		if m.privacyMode && project.CategoryPrivate {
+			return
+		}
 		projectPath := filepath.Clean(strings.TrimSpace(project.Path))
 		if projectPath == "" || projectPath == "." || seen[projectPath] {
 			return
@@ -443,7 +446,7 @@ func (m Model) bossRuntimeContexts() []bossui.ViewRuntimeContext {
 	for _, project := range m.projects {
 		add(project)
 	}
-	for _, project := range m.allProjects {
+	for _, project := range m.projectsVisibleForPrivacy(m.allProjects) {
 		add(project)
 	}
 	return contexts

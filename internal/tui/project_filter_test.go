@@ -120,6 +120,63 @@ func TestCategoryDialogRendersColoredActionHints(t *testing.T) {
 	}
 }
 
+func TestCategoryMoveItemsHidePrivateArchivedProjectsInPrivacyMode(t *testing.T) {
+	m := Model{
+		privacyMode: true,
+		allProjects: []model.ProjectSummary{{
+			Name:          "public-active",
+			Path:          "/tmp/public-active",
+			PresentOnDisk: true,
+		}},
+		archivedProjects: []model.ProjectSummary{
+			{
+				Name:          "public-archived",
+				Path:          "/tmp/public-archived",
+				Archived:      true,
+				PresentOnDisk: true,
+			},
+			{
+				Name:            "secret-archived",
+				Path:            "/tmp/secret-archived",
+				Archived:        true,
+				PresentOnDisk:   true,
+				CategoryID:      "cat_private",
+				CategoryName:    "Private",
+				CategoryPrivate: true,
+			},
+		},
+		openAgentTasks: []model.AgentTask{
+			{
+				ID:              "agt_public",
+				Title:           "Public task",
+				Status:          model.AgentTaskStatusActive,
+				WorkspacePath:   "/tmp/task-public",
+				CategoryPrivate: false,
+			},
+			{
+				ID:              "agt_private",
+				Title:           "Secret task",
+				Status:          model.AgentTaskStatusActive,
+				WorkspacePath:   "/tmp/task-secret",
+				CategoryPrivate: true,
+			},
+		},
+	}
+
+	items, _ := m.categoryMoveItems()
+	labels := []string{}
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	joined := strings.Join(labels, "\n")
+	if !strings.Contains(joined, "public-active") || !strings.Contains(joined, "public-archived") || !strings.Contains(joined, "Public task") {
+		t.Fatalf("categoryMoveItems() labels = %q, want public project/task choices", joined)
+	}
+	if strings.Contains(joined, "secret-archived") || strings.Contains(joined, "Secret task") {
+		t.Fatalf("categoryMoveItems() leaked private choices in privacy mode: %q", joined)
+	}
+}
+
 func TestDispatchFilterCommandAppliesTransientFilter(t *testing.T) {
 	m := Model{
 		allProjects: []model.ProjectSummary{
@@ -267,6 +324,41 @@ func TestProjectArchiveTabSwitchesVisibleProjects(t *testing.T) {
 	}
 	if !strings.Contains(got.status, "Archived") {
 		t.Fatalf("status = %q, want archived tab status", got.status)
+	}
+}
+
+func TestProjectArchiveTabHidesPrivateArchivedProjectsInPrivacyMode(t *testing.T) {
+	publicArchived := model.ProjectSummary{
+		Name:          "public-archived",
+		Path:          "/tmp/public-archived",
+		InScope:       true,
+		Archived:      true,
+		PresentOnDisk: true,
+	}
+	privateArchived := model.ProjectSummary{
+		Name:            "private-archived",
+		Path:            "/tmp/private-archived",
+		InScope:         true,
+		Archived:        true,
+		PresentOnDisk:   true,
+		CategoryID:      "cat_private",
+		CategoryName:    "Private",
+		CategoryPrivate: true,
+	}
+	m := Model{
+		archiveMode:      projectArchiveArchived,
+		archivedProjects: []model.ProjectSummary{publicArchived, privateArchived},
+		sortMode:         sortByAttention,
+		visibility:       visibilityAllFolders,
+		privacyMode:      true,
+		width:            100,
+		height:           24,
+	}
+
+	m.rebuildProjectList("")
+
+	if len(m.projects) != 1 || m.projects[0].Path != publicArchived.Path {
+		t.Fatalf("archived projects = %#v, want only public archived project", m.projects)
 	}
 }
 

@@ -1361,6 +1361,13 @@ func filterProjectsByPrivacy(projects []model.ProjectSummary) []model.ProjectSum
 	return filtered
 }
 
+func (m Model) projectsVisibleForPrivacy(projects []model.ProjectSummary) []model.ProjectSummary {
+	if !m.privacyMode {
+		return projects
+	}
+	return filterProjectsByPrivacy(projects)
+}
+
 func filterProjectsByName(projects []model.ProjectSummary, excludeProjectPatterns []string) []model.ProjectSummary {
 	if len(projects) == 0 {
 		return nil
