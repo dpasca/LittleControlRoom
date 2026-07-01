@@ -535,6 +535,98 @@ func TestDispatchResolveStartsFreshEngineerForMergeConflict(t *testing.T) {
 	}
 }
 
+func TestResolveGitlinkConflictTargetStartsFreshEngineerInSubmoduleWorktree(t *testing.T) {
+	parentPath := "/tmp/resolve-parent"
+	worktreePath := "/tmp/lcroom-submodule-merge/assets_src"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:    req.Provider.Normalized(),
+				ProjectPath: req.ProjectPath,
+				ThreadID:    "gitlink-resolve-thread",
+				Started:     true,
+				Status:      "Codex session ready",
+			},
+		}, nil
+	})
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          parentPath,
+			Name:          "resolve-parent",
+			PresentOnDisk: true,
+			RepoConflict:  true,
+			RepoDirty:     true,
+			RepoBranch:    "master",
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.Update(mergeConflictResolveTargetMsg{
+		project: m.projects[0],
+		target: service.GitlinkConflictResolveTarget{
+			ParentRepoPath: parentPath,
+			ParentBranch:   "master",
+			SubmodulePath:  "assets_src",
+			WorktreePath:   worktreePath,
+			Branch:         "lcroom/master/assets_src-merge-aaaa-bbbb",
+			Base:           "base-sha",
+			Ours:           "ours-sha",
+			Theirs:         "theirs-sha",
+		},
+		hasGitlink: true,
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("gitlink resolve target cmd = nil, want fresh engineer launch")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != worktreePath || !got.codexPendingOpen.newSession {
+		t.Fatalf("codexPendingOpen = %#v, want fresh pending open for submodule worktree", got.codexPendingOpen)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	var opened codexSessionOpenedMsg
+	for _, msg := range msgs {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			break
+		}
+	}
+	if opened.projectPath != worktreePath {
+		t.Fatalf("opened project path = %q, want %q (msgs %#v)", opened.projectPath, worktreePath, msgs)
+	}
+	if opened.err != nil {
+		t.Fatalf("codexSessionOpenedMsg.err = %v", opened.err)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want 1", len(requests))
+	}
+	if requests[0].ProjectPath != worktreePath {
+		t.Fatalf("request project path = %q, want submodule worktree %q", requests[0].ProjectPath, worktreePath)
+	}
+	if !requests[0].ForceNew {
+		t.Fatalf("request ForceNew = false, want true")
+	}
+	for _, want := range []string{
+		"Resolve the submodule content conflicts",
+		"Parent repo: " + parentPath,
+		"Submodule path: assets_src",
+		"Submodule merge worktree: " + worktreePath,
+		"Submodule merge branch: lcroom/master/assets_src-merge-aaaa-bbbb",
+		"commit the submodule merge on its current branch and push that branch upstream",
+		"Stage the parent repo gitlink",
+		"Do not commit the parent repo merge",
+		"remaining `git status --short` state",
+	} {
+		if !strings.Contains(requests[0].Prompt, want) {
+			t.Fatalf("/resolve gitlink prompt missing %q:\n%s", want, requests[0].Prompt)
+		}
+	}
+}
+
 func TestDispatchResolveBlocksWhileSameEngineerTurnActive(t *testing.T) {
 	projectPath := "/tmp/resolve-active"
 	liveSession := &fakeCodexSession{

@@ -1453,6 +1453,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateQuestionNotifyMode(msg)
 		}
 		return m.updateNormalMode(msg)
+	case mergeConflictResolveTargetMsg:
+		return m.applyMergeConflictResolveTargetMsg(msg)
 	case projectsMsg:
 		m.flushExpiredPendingGitSummaries()
 		reloadCmd := m.finishProjectsReloadCmd()

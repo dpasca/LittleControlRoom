@@ -81,7 +81,7 @@ When two parent worktrees update the same submodule pointer differently, Git can
 
 - If one side is an ancestor of the other, LCR stages the newer submodule commit.
 - If both sides diverged but merge cleanly inside the submodule, LCR creates and pushes an LCR-owned submodule merge branch, then stages the parent gitlink to that merge commit.
-- If the submodule content merge conflicts, LCR leaves a temporary submodule merge worktree in place and reports its path, branch, and ours/theirs SHAs for manual resolution.
+- If the submodule content merge conflicts, LCR leaves a temporary submodule merge worktree in place and reports its path, branch, and ours/theirs SHAs. Running `/resolve` on the parent repo launches a fresh engineer session in that submodule merge worktree with instructions to resolve, commit and push the submodule merge branch, and stage the parent gitlink.
 
 ## Cleanup
 

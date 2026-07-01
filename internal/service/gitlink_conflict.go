@@ -24,6 +24,18 @@ type GitlinkConflictResolution struct {
 	Branch   string
 }
 
+type GitlinkConflictResolveTarget struct {
+	ParentRepoPath    string
+	ParentBranch      string
+	SubmodulePath     string
+	SubmoduleRepoPath string
+	WorktreePath      string
+	Branch            string
+	Base              string
+	Ours              string
+	Theirs            string
+}
+
 type gitlinkConflict struct {
 	Path   string
 	Base   string
@@ -91,6 +103,57 @@ func (s *Service) ResolveGitlinkConflicts(ctx context.Context, parentRepoPath st
 		resolved = append(resolved, item)
 	}
 	return resolved, nil
+}
+
+func (s *Service) GitlinkConflictResolveTarget(ctx context.Context, parentRepoPath string) (GitlinkConflictResolveTarget, bool, error) {
+	parentRepoPath = filepath.Clean(strings.TrimSpace(parentRepoPath))
+	if parentRepoPath == "" || parentRepoPath == "." {
+		return GitlinkConflictResolveTarget{}, false, fmt.Errorf("parent repo path is required")
+	}
+	conflicts, err := readUnmergedGitlinkConflicts(ctx, parentRepoPath)
+	if err != nil {
+		return GitlinkConflictResolveTarget{}, false, err
+	}
+	if len(conflicts) == 0 {
+		return GitlinkConflictResolveTarget{}, false, nil
+	}
+
+	parentBranch := ""
+	if s != nil && s.gitRepoStatusReader != nil {
+		if status, statusErr := s.gitRepoStatusReader(ctx, parentRepoPath); statusErr == nil {
+			parentBranch = status.Branch
+		}
+	}
+	if strings.TrimSpace(parentBranch) == "" {
+		parentBranch, _ = gitCurrentBranch(ctx, parentRepoPath)
+	}
+
+	for _, conflict := range conflicts {
+		submoduleRepoPath, err := initializedSubmoduleRepoPath(ctx, parentRepoPath, conflict.Path)
+		if err != nil {
+			return GitlinkConflictResolveTarget{}, false, err
+		}
+		branchBase := gitlinkMergeBranchName(parentBranch, conflict.Path, conflict.Ours, conflict.Theirs)
+		worktree, branch, ok, err := gitSubmoduleMergeWorktreeForBranchBase(ctx, submoduleRepoPath, branchBase)
+		if err != nil {
+			return GitlinkConflictResolveTarget{}, false, err
+		}
+		if !ok {
+			continue
+		}
+		return GitlinkConflictResolveTarget{
+			ParentRepoPath:    parentRepoPath,
+			ParentBranch:      strings.TrimSpace(parentBranch),
+			SubmodulePath:     conflict.Path,
+			SubmoduleRepoPath: submoduleRepoPath,
+			WorktreePath:      worktree,
+			Branch:            branch,
+			Base:              conflict.Base,
+			Ours:              conflict.Ours,
+			Theirs:            conflict.Theirs,
+		}, true, nil
+	}
+	return GitlinkConflictResolveTarget{}, false, nil
 }
 
 func readUnmergedGitlinkConflicts(ctx context.Context, parentRepoPath string) ([]gitlinkConflict, error) {
@@ -394,6 +457,74 @@ func removeSubmoduleMergeWorktree(ctx context.Context, submoduleRepoPath, worktr
 		return fmt.Errorf("prune submodule merge worktrees: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func gitSubmoduleMergeWorktreeForBranchBase(ctx context.Context, submoduleRepoPath, branchBase string) (string, string, bool, error) {
+	branchBase = strings.TrimSpace(branchBase)
+	if branchBase == "" {
+		return "", "", false, nil
+	}
+	worktrees, err := gitWorktreeList(ctx, submoduleRepoPath)
+	if err != nil {
+		return "", "", false, err
+	}
+	for _, worktree := range worktrees {
+		branch := strings.TrimSpace(worktree.Branch)
+		if branch == "" {
+			continue
+		}
+		if branch != branchBase && !strings.HasPrefix(branch, branchBase+"-") {
+			continue
+		}
+		path := filepath.Clean(strings.TrimSpace(worktree.Path))
+		if path == "" || path == "." || !projectPathExists(path) {
+			continue
+		}
+		return path, branch, true, nil
+	}
+	return "", "", false, nil
+}
+
+type gitWorktreeListItem struct {
+	Path   string
+	Branch string
+}
+
+func gitWorktreeList(ctx context.Context, repoPath string) ([]gitWorktreeListItem, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "list", "--porcelain", "-z")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("list git worktrees for %s: %w: %s", repoPath, err, strings.TrimSpace(string(out)))
+	}
+	var items []gitWorktreeListItem
+	var current gitWorktreeListItem
+	flush := func() {
+		if strings.TrimSpace(current.Path) != "" {
+			items = append(items, current)
+		}
+		current = gitWorktreeListItem{}
+	}
+	for _, token := range strings.Split(string(out), "\x00") {
+		if token == "" {
+			flush()
+			continue
+		}
+		key, value, ok := strings.Cut(token, " ")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "worktree":
+			if strings.TrimSpace(current.Path) != "" {
+				flush()
+			}
+			current.Path = filepath.Clean(value)
+		case "branch":
+			current.Branch = strings.TrimPrefix(strings.TrimSpace(value), "refs/heads/")
+		}
+	}
+	flush()
+	return items, nil
 }
 
 func gitCurrentBranch(ctx context.Context, repoPath string) (string, error) {

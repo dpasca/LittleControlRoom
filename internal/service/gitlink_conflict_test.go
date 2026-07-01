@@ -94,6 +94,31 @@ func TestResolveGitlinkConflictKeepsOursWhenTheirsAncestor(t *testing.T) {
 	}
 }
 
+func TestResolveGitlinkConflictReportsMissingCommitAfterFetch(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	submodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+	base := strings.TrimSpace(gitOutput(t, submodulePath, "git", "rev-parse", "HEAD"))
+	missing := strings.Repeat("0", 40)
+
+	_, err := resolveGitlinkConflict(ctx, projectPath, "master", gitlinkConflict{
+		Path:   "assets_src",
+		Base:   base,
+		Ours:   base,
+		Theirs: missing,
+	})
+	if err == nil {
+		t.Fatalf("resolveGitlinkConflict() expected missing commit error")
+	}
+	if !strings.Contains(err.Error(), "submodule assets_src does not have required commit "+missing+" after fetch") {
+		t.Fatalf("resolveGitlinkConflict() error = %q, want missing commit guidance", err)
+	}
+}
+
 func TestMergeWorktreeBackAutoResolvesDivergentGitlinkWithSubmoduleMerge(t *testing.T) {
 	t.Parallel()
 
@@ -195,6 +220,23 @@ func TestMergeWorktreeBackSurfacesSubmoduleContentConflictWorktree(t *testing.T)
 	})
 	if !strings.Contains(err.Error(), "submodule assets_src content merge needs manual resolution") {
 		t.Fatalf("MergeWorktreeBack() error = %q, want manual submodule resolution guidance", err)
+	}
+
+	target, ok, targetErr := svc.GitlinkConflictResolveTarget(ctx, projectPath)
+	if targetErr != nil {
+		t.Fatalf("GitlinkConflictResolveTarget() error = %v", targetErr)
+	}
+	if !ok {
+		t.Fatalf("GitlinkConflictResolveTarget() ok = false, want retained submodule merge worktree")
+	}
+	if !sameTestPath(t, target.WorktreePath, conflictErr.WorktreePath) || target.Branch != conflictErr.Branch || target.SubmodulePath != "assets_src" {
+		t.Fatalf("GitlinkConflictResolveTarget() = %#v, want retained conflict worktree %#v", target, conflictErr)
+	}
+	if target.ParentRepoPath != filepath.Clean(projectPath) || target.SubmoduleRepoPath != filepath.Clean(submodulePath) {
+		t.Fatalf("GitlinkConflictResolveTarget() repo paths = %#v, want parent %q submodule %q", target, projectPath, submodulePath)
+	}
+	if target.Ours != ours || target.Theirs != theirs {
+		t.Fatalf("GitlinkConflictResolveTarget() ours/theirs = %s/%s, want %s/%s", target.Ours, target.Theirs, ours, theirs)
 	}
 
 	rootStatus, statusErr := scanner.ReadGitRepoStatus(ctx, projectPath)

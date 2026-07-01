@@ -11,7 +11,7 @@ Current implementation status:
 - Dirty detached nested submodule worktrees are branched lazily when LCR needs to auto-commit and push submodule changes.
 - Merge-back root submodule sync is implemented.
 - Gitlink conflict auto-resolution is implemented for fast-forward cases and clean divergent submodule merges.
-- `/resolve` handoff for submodule content conflicts remains a future phase; for now LCR leaves a temporary submodule merge worktree and reports its path and branch.
+- `/resolve` can launch a fresh engineer session directly in a retained submodule merge worktree when divergent submodule content conflicts remain.
 
 ## Current Baseline
 
@@ -261,7 +261,7 @@ Implemented automatic resolver:
      - Git merge output.
    - The parent merge remains in progress with the gitlink still conflicted.
 
-Future `/resolve` integration should launch or offer a resolver session against that submodule merge worktree, then let LCR own the mechanical commit/push/stage-parent steps.
+When `/resolve` is run on the parent repo after this failure, LCR discovers the retained submodule merge worktree and launches the resolver session there. The prompt tells the engineer to resolve the submodule content conflict, commit and push the submodule merge branch, stage the parent gitlink to the resulting merge commit, and leave the parent merge commit itself for the user/LCR.
 
 Do not automatically "take ours" or "take theirs" for divergent gitlink conflicts. That silently discards one side's asset/data update.
 
@@ -269,13 +269,15 @@ Do not automatically "take ours" or "take theirs" for divergent gitlink conflict
 
 LCR already has `/resolve` for selected repo merge conflicts and a submodule "resolve and continue" path for dirty submodules during commit preview.
 
-Future integration should reuse that mental model:
+Current integration reuses that mental model:
 
 - If the selected repo has normal file conflicts, keep current `/resolve` behavior.
-- If the selected repo has gitlink conflicts, run deterministic gitlink resolver first.
-- If deterministic resolution needs a submodule content merge and that merge conflicts, start a fresh engineer session in the temporary submodule merge worktree.
-- Show the parent/submodule relationship in the prompt and UI status.
-- After the engineer session resolves files, LCR should own the mechanical commit/push/stage-parent steps.
+- If the selected repo has a gitlink conflict with a retained submodule content-conflict worktree, start a fresh engineer session in that temporary submodule merge worktree.
+- Show the parent repo path, submodule path, merge branch, and base/ours/theirs SHAs in the prompt.
+- Ask the engineer to commit and push the resolved submodule merge branch and stage the parent gitlink.
+- Keep the parent merge commit itself out of the resolver session.
+
+Future polish can add a first-class "continue gitlink resolution" action that verifies the submodule merge worktree, pushes/stages mechanically from LCR, and commits the parent merge when no other conflicts remain.
 
 The AI should resolve semantic file conflicts inside the submodule, not decide parent gitlink policy from scratch.
 
@@ -372,23 +374,21 @@ Tests:
 - parent root repo is clean after merge,
 - removed task worktree leaves no stale nested worktree registration after prune.
 
-### Phase 5: Gitlink Conflict Resolver (implemented except `/resolve` handoff)
+### Phase 5: Gitlink Conflict Resolver (implemented)
 
 - Add service-level detection for unmerged gitlink paths. (implemented)
 - Implement ancestry resolver. (implemented)
 - Implement clean submodule merge resolver. (implemented)
 - Surface conflicted submodule merge worktrees with actionable path/branch/SHA details. (implemented)
-- Add `/resolve` integration for conflicted submodule merge worktrees. (pending)
+- Add `/resolve` integration for conflicted submodule merge worktrees. (implemented)
 
 Tests now cover:
 
 - ours ancestor of theirs resolves to theirs through merge-back when a fetch is needed,
 - theirs ancestor of ours resolves to ours,
 - divergent clean submodule merge creates/pushes merge commit and stages parent gitlink through merge-back,
-- divergent conflicted merge surfaces a retained submodule merge worktree and branch.
-
-Still useful:
-
+- divergent conflicted merge surfaces a retained submodule merge worktree and branch,
+- `/resolve` launches a fresh engineer session in the retained submodule merge worktree,
 - missing/unfetchable commits produce clear errors.
 
 ## Files To Start From
