@@ -250,15 +250,18 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "run_command",
-				Description: "Run a bounded workspace command, max 60000 ms. Prefer argv; shell only for shell syntax. Do not edit files here; use start_process for long-running/managed operational work.",
+				Description: "Run a bounded workspace command, max 60000 ms. Choose exactly one form: argv for simple commands, or command for shell syntax. Do not edit files here; use start_process for long-running/managed operational work.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,
+					"oneOf": []any{
+						map[string]any{"required": []string{"argv"}},
+						map[string]any{"required": []string{"command"}},
+					},
 					"properties": map[string]any{
-						"argv":               map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Command argv, e.g. [\"go\",\"test\",\"./...\"]."},
-						"command":            map[string]any{"type": "string", "description": "Shell command string when shell syntax is needed."},
+						"argv":               map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "Complete command argv, e.g. [\"go\",\"test\",\"./...\"]. Omit command when using argv."},
+						"command":            map[string]any{"type": "string", "minLength": 1, "description": "Shell command string for shell syntax. Omit argv when using command."},
 						"cwd":                map[string]any{"type": "string", "description": "Optional workspace-relative working directory."},
-						"shell":              map[string]any{"type": "boolean", "description": "True when command is a shell string."},
 						"timeout_ms":         map[string]any{"type": "integer", "minimum": 1, "maximum": 60000},
 						"purpose":            map[string]any{"type": "string", "enum": []string{"inspect", "verify"}, "description": "verify for tests/builds/checks; inspect for exploration."},
 						"admin_scope":        map[string]any{"type": "string", "enum": []string{"system"}, "description": "system only for explicit persistent user/system mutations; requires admin write."},

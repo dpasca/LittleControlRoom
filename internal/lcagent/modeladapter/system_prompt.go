@@ -100,7 +100,7 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	lines = append(lines,
 		"Use workspace-relative paths for project files; read-only file inspection tools may use absolute paths when the user asks for system/admin inspection outside the workspace.",
 		writePathLine,
-		"When using run_command, prefer argv over command strings; shell commands are for shell syntax only.",
+		"When using run_command, choose exactly one form: argv for simple commands such as [\"git\",\"status\"], or command for shell syntax only. Do not provide both argv and command.",
 		"Do not use run_command to write files through shell redirects, heredocs, tee, in-place rewrites, or mutating file commands. Use create_file, replace_file with expected_sha256, apply_patch, replace_lines, or replace_text.",
 		"Persistent user/system configuration mutations through run_command, such as macOS defaults, global package-manager state, or file associations, require admin_scope=system and LCAgent admin-write enabled.",
 		"For package/subproject commands, set run_command cwd to a workspace-relative directory such as \"frontend\" instead of shell cd.",

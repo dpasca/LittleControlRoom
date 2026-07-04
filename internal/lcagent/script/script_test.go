@@ -1697,6 +1697,67 @@ func TestRunnerApprovedCommandRunsOnceAtMediumAutonomy(t *testing.T) {
 	}
 }
 
+func TestRunnerRunCommandRejectsMixedCommandFormsBeforeExec(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "run_command",
+		Args: raw(`{"command":"git init","argv":["init"],"timeout_ms":1000}`),
+	})
+	if err == nil {
+		t.Fatalf("RunTool succeeded, want invalid mixed command forms; result=%#v", result)
+	}
+	for _, want := range []string{"invalid run_command arguments", "provide either argv or command, not both", `["git","init"]`} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("error %q missing %q", result.Error, want)
+		}
+	}
+	if strings.Contains(result.Error, `exec: "init"`) || strings.Contains(result.Output, `exec: "init"`) {
+		t.Fatalf("mixed command should be rejected before exec, result=%#v", result)
+	}
+	if !strings.Contains(stream.String(), `"type":"tool_result"`) {
+		t.Fatalf("stream missing tool_result:\n%s", stream.String())
+	}
+}
+
+func TestCommandSpecFromArgsRequiresSingleCommandForm(t *testing.T) {
+	cases := []struct {
+		name string
+		args commandArgs
+		want string
+	}{
+		{name: "missing both", args: commandArgs{}, want: "provide exactly one of argv or command"},
+		{name: "mixed", args: commandArgs{Command: "git init", Argv: []string{"init"}}, want: "provide either argv or command, not both"},
+		{name: "shell with argv", args: commandArgs{Argv: []string{"git", "status"}, Shell: true}, want: "shell is only valid with command"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, result, ok := commandSpecFromArgs(tc.args)
+			if ok {
+				t.Fatalf("commandSpecFromArgs(%#v) ok, want invalid", tc.args)
+			}
+			if !strings.Contains(result.Error, tc.want) {
+				t.Fatalf("error %q missing %q", result.Error, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunnerRunCommandDeniesWorkspaceWriteAtMedium(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)

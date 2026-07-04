@@ -1161,6 +1161,33 @@ func (r *Runner) Run(ctx context.Context, actions []Action) error {
 	return err
 }
 
+func commandSpecFromArgs(args commandArgs) (tools.CommandSpec, tools.ToolResult, bool) {
+	argv := cleanCommandArgv(args.Argv)
+	command := strings.TrimSpace(args.Command)
+	switch {
+	case len(argv) == 0 && command == "":
+		return tools.CommandSpec{}, invalidRunCommandArguments("provide exactly one of argv or command"), false
+	case len(argv) > 0 && command != "":
+		return tools.CommandSpec{}, invalidRunCommandArguments("provide either argv or command, not both; use argv for simple commands such as [\"git\",\"init\"], or command only for shell syntax"), false
+	case len(argv) > 0 && args.Shell:
+		return tools.CommandSpec{}, invalidRunCommandArguments("shell is only valid with command; omit shell when using argv"), false
+	}
+	return tools.CommandSpec{
+		Command:          command,
+		Argv:             argv,
+		CWD:              args.CWD,
+		Shell:            command != "" || args.Shell,
+		TimeoutMS:        args.TimeoutMS,
+		Purpose:          args.Purpose,
+		AdminScope:       args.AdminScope,
+		AllowedExitCodes: args.AllowedExitCodes,
+	}, tools.ToolResult{}, true
+}
+
+func invalidRunCommandArguments(message string) tools.ToolResult {
+	return tools.ToolResult{Success: false, Error: "invalid run_command arguments: " + strings.TrimSpace(message)}
+}
+
 func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, error) {
 	if err := r.Session.Write(session.Event{
 		"type":       "tool_call",
@@ -1351,15 +1378,10 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 			result = invalid
 			break
 		}
-		spec := tools.CommandSpec{
-			Command:          args.Command,
-			Argv:             args.Argv,
-			CWD:              args.CWD,
-			Shell:            args.Shell || args.Command != "",
-			TimeoutMS:        args.TimeoutMS,
-			Purpose:          args.Purpose,
-			AdminScope:       args.AdminScope,
-			AllowedExitCodes: args.AllowedExitCodes,
+		spec, invalid, ok := commandSpecFromArgs(args)
+		if !ok {
+			result = invalid
+			break
 		}
 		result = r.runCommandWithApproval(ctx, spec)
 		if strings.EqualFold(result.Purpose, tools.CommandPurposeVerify) {

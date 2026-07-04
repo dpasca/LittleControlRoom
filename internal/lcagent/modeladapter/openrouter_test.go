@@ -86,12 +86,23 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["scout_files"], "utility/scout model") || !strings.Contains(descriptions["scout_files"], "read-only") {
 		t.Fatalf("scout_files description should explain utility model routing: %q", descriptions["scout_files"])
 	}
+	var runCommandParameters map[string]any
 	var runCommandProperties map[string]any
 	for _, tool := range Tools() {
 		if tool.Function.Name == "run_command" {
-			runCommandProperties, _ = tool.Function.Parameters["properties"].(map[string]any)
+			runCommandParameters = tool.Function.Parameters
+			runCommandProperties, _ = runCommandParameters["properties"].(map[string]any)
 			break
 		}
+	}
+	if !strings.Contains(descriptions["run_command"], "Choose exactly one form") {
+		t.Fatalf("run_command description should explain mutually exclusive command forms: %q", descriptions["run_command"])
+	}
+	if oneOf, _ := runCommandParameters["oneOf"].([]any); len(oneOf) != 2 {
+		t.Fatalf("run_command schema should require exactly one command form: %#v", runCommandParameters["oneOf"])
+	}
+	if _, ok := runCommandProperties["shell"]; ok {
+		t.Fatalf("run_command public schema should not expose shell flag: %#v", runCommandProperties)
 	}
 	if _, ok := runCommandProperties["allowed_exit_codes"]; !ok {
 		t.Fatalf("run_command schema missing allowed_exit_codes: %#v", runCommandProperties)
