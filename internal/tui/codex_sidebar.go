@@ -816,14 +816,14 @@ func (m Model) renderEmbeddedSidebarSessionSection(snapshot codexapp.Snapshot, w
 }
 
 func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int) []string {
-	return embeddedSidebarSessionRows(snapshot, width, false)
+	return embeddedSidebarSessionRows(snapshot, width, false, m.currentTime())
 }
 
 func embeddedSidebarSessionDetailRows(snapshot codexapp.Snapshot, width int) []string {
-	return embeddedSidebarSessionRows(snapshot, width, true)
+	return embeddedSidebarSessionRows(snapshot, width, true, time.Now())
 }
 
-func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bool) []string {
+func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bool, now time.Time) []string {
 	rows := []string{}
 	modelLineLimit := 2
 	if detail {
@@ -835,6 +835,11 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 	}
 	if tokens := codexSnapshotTokenUsageLabel(snapshot); tokens != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Tokens", tokens, detailValueStyle, width))
+	}
+	if detail {
+		rows = append(rows, embeddedSidebarUsageWindowDetailRows(snapshot, width)...)
+	} else if usage := embeddedSidebarUsageWindowSummary(snapshot, now); usage != "" {
+		rows = append(rows, embeddedSidebarFieldRow("Limits", usage, embeddedSidebarUsageWindowStyle(snapshot), width))
 	}
 	if commands := embeddedSidebarModelCommands(snapshot); commands != "" {
 		rows = append(rows, embeddedSidebarFieldRow("Commands", commands, embeddedSidebarMutedStyle, width))
@@ -854,6 +859,171 @@ func embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int, detail bo
 		}
 	}
 	return rows
+}
+
+func embeddedSidebarUsageWindowSummary(snapshot codexapp.Snapshot, now time.Time) string {
+	windows := embeddedSidebarCodexUsageWindows(snapshot)
+	if len(windows) == 0 {
+		return ""
+	}
+	window := windows[0]
+	parts := []string{fmt.Sprintf("%d%%", window.LeftPercent)}
+	if label := strings.TrimSpace(window.Window); label != "" {
+		parts = append(parts, label)
+	}
+	if !window.ResetsAt.IsZero() {
+		parts = append(parts, "reset "+formatEmbeddedSidebarResetTimeCompact(window.ResetsAt, now))
+	}
+	if credit := embeddedSidebarUsageWindowCreditCompact(window); credit != "" {
+		parts = append(parts, credit)
+	}
+	return strings.Join(parts, " ")
+}
+
+func embeddedSidebarUsageWindowStyle(snapshot codexapp.Snapshot) lipgloss.Style {
+	windows := embeddedSidebarCodexUsageWindows(snapshot)
+	if len(windows) == 0 {
+		return detailValueStyle
+	}
+	switch left := windows[0].LeftPercent; {
+	case left <= 10:
+		return detailDangerStyle
+	case left <= 25:
+		return detailWarningStyle
+	default:
+		return detailValueStyle
+	}
+}
+
+func embeddedSidebarUsageWindowDetailRows(snapshot codexapp.Snapshot, width int) []string {
+	windows := embeddedSidebarCodexUsageWindows(snapshot)
+	if len(windows) == 0 {
+		return nil
+	}
+	now := time.Now()
+	rows := make([]string, 0, len(windows))
+	for _, window := range windows {
+		label := strings.TrimSpace(window.Window)
+		if label == "" {
+			label = "window"
+		}
+		valueParts := []string{fmt.Sprintf("%d%% left", window.LeftPercent)}
+		if !window.ResetsAt.IsZero() {
+			valueParts = append(valueParts, "reset "+formatEmbeddedSidebarResetTime(window.ResetsAt, now))
+		}
+		if credit := embeddedSidebarUsageWindowCredit(window); credit != "" {
+			valueParts = append(valueParts, credit)
+		}
+		style := detailValueStyle
+		if window.LeftPercent <= 10 {
+			style = detailDangerStyle
+		} else if window.LeftPercent <= 25 {
+			style = detailWarningStyle
+		}
+		rows = append(rows, embeddedSidebarWrappedFieldRows(label+" limit", strings.Join(valueParts, " | "), style, width, 0)...)
+	}
+	return rows
+}
+
+func embeddedSidebarCodexUsageWindows(snapshot codexapp.Snapshot) []codexapp.UsageWindowSnapshot {
+	if snapshot.Provider != "" && snapshot.Provider != codexapp.ProviderCodex {
+		return nil
+	}
+	if len(snapshot.UsageWindows) == 0 {
+		return nil
+	}
+	windows := make([]codexapp.UsageWindowSnapshot, 0, len(snapshot.UsageWindows))
+	for _, window := range snapshot.UsageWindows {
+		if strings.TrimSpace(window.Limit) != "" && !strings.EqualFold(strings.TrimSpace(window.Limit), "Codex") {
+			continue
+		}
+		windows = append(windows, window)
+	}
+	if len(windows) == 0 {
+		windows = append(windows, snapshot.UsageWindows...)
+	}
+	return windows
+}
+
+func embeddedSidebarUsageWindowCredit(window codexapp.UsageWindowSnapshot) string {
+	switch {
+	case window.CreditsUnlimited:
+		return "credits unlimited"
+	case window.HasCredits && strings.TrimSpace(window.CreditBalance) != "":
+		return "credits " + strings.TrimSpace(window.CreditBalance)
+	default:
+		return ""
+	}
+}
+
+func embeddedSidebarUsageWindowCreditCompact(window codexapp.UsageWindowSnapshot) string {
+	switch {
+	case window.CreditsUnlimited:
+		return "credits unlimited"
+	case window.HasCredits && strings.TrimSpace(window.CreditBalance) != "":
+		return "credit " + strings.TrimSpace(window.CreditBalance)
+	default:
+		return ""
+	}
+}
+
+func formatEmbeddedSidebarResetTimeCompact(resetAt, now time.Time) string {
+	if resetAt.IsZero() {
+		return ""
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if resetAt.After(now) {
+		until := resetAt.Sub(now).Round(time.Minute)
+		if until < time.Minute {
+			return "soon"
+		}
+		if until < 24*time.Hour {
+			return formatEmbeddedSidebarResetDuration(until)
+		}
+	}
+	return resetAt.Format("Jan2")
+}
+
+func formatEmbeddedSidebarResetTime(resetAt, now time.Time) string {
+	if resetAt.IsZero() {
+		return ""
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if resetAt.After(now) {
+		until := resetAt.Sub(now).Round(time.Minute)
+		if until < time.Minute {
+			return "soon"
+		}
+		if until < 24*time.Hour {
+			return "in " + formatEmbeddedSidebarResetDuration(until)
+		}
+		days := int(until.Hours() / 24)
+		if days <= 1 {
+			return "tomorrow " + resetAt.Format("15:04")
+		}
+		return resetAt.Format("Jan 2 15:04")
+	}
+	return resetAt.Format("Jan 2 15:04")
+}
+
+func formatEmbeddedSidebarResetDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	totalMinutes := int64(d / time.Minute)
+	hours := totalMinutes / 60
+	minutes := totalMinutes % 60
+	if hours <= 0 {
+		return fmt.Sprintf("%dm", minutes)
+	}
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh%02dm", hours, minutes)
 }
 
 func embeddedSidebarModelCommands(snapshot codexapp.Snapshot) string {

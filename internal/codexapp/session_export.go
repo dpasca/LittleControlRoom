@@ -88,10 +88,13 @@ func exportedUsageWindowsSnapshot(primary *rateLimitSnapshot, byID map[string]ra
 	out := make([]UsageWindowSnapshot, 0, len(embedded))
 	for _, window := range embedded {
 		snapshot := UsageWindowSnapshot{
-			Limit:       window.Limit,
-			Plan:        window.Plan,
-			Window:      window.Window,
-			LeftPercent: window.LeftPercent,
+			Limit:            window.Limit,
+			Plan:             window.Plan,
+			Window:           window.Window,
+			LeftPercent:      window.LeftPercent,
+			CreditBalance:    window.CreditBalance,
+			HasCredits:       window.HasCredits,
+			CreditsUnlimited: window.CreditsUnlimited,
 		}
 		if window.ResetsAt > 0 {
 			snapshot.ResetsAt = time.Unix(window.ResetsAt, 0).Local()

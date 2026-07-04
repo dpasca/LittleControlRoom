@@ -429,11 +429,14 @@ func (u *TokenUsageSnapshot) ContextLeftPercent() int {
 }
 
 type UsageWindowSnapshot struct {
-	Limit       string
-	Plan        string
-	Window      string
-	LeftPercent int
-	ResetsAt    time.Time
+	Limit            string
+	Plan             string
+	Window           string
+	LeftPercent      int
+	ResetsAt         time.Time
+	CreditBalance    string
+	HasCredits       bool
+	CreditsUnlimited bool
 }
 
 type ThreadGoalStatus string

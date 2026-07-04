@@ -638,17 +638,25 @@ func buildEmbeddedStatusText(threadID, projectPath, currentCWD, model, modelProv
 		if window.ResetsAt > 0 {
 			parts = append(parts, fmt.Sprintf("resetsAt=%d", window.ResetsAt))
 		}
+		if window.CreditsUnlimited {
+			parts = append(parts, "credits=unlimited")
+		} else if window.HasCredits && strings.TrimSpace(window.CreditBalance) != "" {
+			parts = append(parts, "credits="+strings.TrimSpace(window.CreditBalance))
+		}
 		lines = append(lines, "usage window: "+strings.Join(parts, "; "))
 	}
 	return strings.Join(lines, "\n")
 }
 
 type embeddedStatusUsageWindow struct {
-	Limit       string
-	Plan        string
-	Window      string
-	LeftPercent int
-	ResetsAt    int64
+	Limit            string
+	Plan             string
+	Window           string
+	LeftPercent      int
+	ResetsAt         int64
+	CreditBalance    string
+	HasCredits       bool
+	CreditsUnlimited bool
 }
 
 func collectEmbeddedStatusUsageWindows(primary *rateLimitSnapshot, byID map[string]rateLimitSnapshot) []embeddedStatusUsageWindow {
@@ -690,11 +698,19 @@ func appendEmbeddedStatusUsageWindows(windows *[]embeddedStatusUsageWindow, seen
 		limitLabel = "usage"
 	}
 	plan := strings.TrimSpace(stringValue(snapshot.PlanType))
-	appendEmbeddedStatusUsageWindow(windows, seen, limitLabel, plan, "primary", snapshot.Primary)
-	appendEmbeddedStatusUsageWindow(windows, seen, limitLabel, plan, "secondary", snapshot.Secondary)
+	creditBalance := ""
+	hasCredits := false
+	creditsUnlimited := false
+	if snapshot.Credits != nil {
+		creditBalance = strings.TrimSpace(stringValue(snapshot.Credits.Balance))
+		hasCredits = snapshot.Credits.HasCredits
+		creditsUnlimited = snapshot.Credits.Unlimited
+	}
+	appendEmbeddedStatusUsageWindow(windows, seen, limitLabel, plan, creditBalance, hasCredits, creditsUnlimited, "primary", snapshot.Primary)
+	appendEmbeddedStatusUsageWindow(windows, seen, limitLabel, plan, creditBalance, hasCredits, creditsUnlimited, "secondary", snapshot.Secondary)
 }
 
-func appendEmbeddedStatusUsageWindow(windows *[]embeddedStatusUsageWindow, seen map[string]struct{}, limitLabel, plan, fallbackWindow string, window *rateLimitWindow) {
+func appendEmbeddedStatusUsageWindow(windows *[]embeddedStatusUsageWindow, seen map[string]struct{}, limitLabel, plan, creditBalance string, hasCredits, creditsUnlimited bool, fallbackWindow string, window *rateLimitWindow) {
 	if window == nil {
 		return
 	}
@@ -709,11 +725,14 @@ func appendEmbeddedStatusUsageWindow(windows *[]embeddedStatusUsageWindow, seen 
 		resetsAt = *window.ResetsAt
 	}
 	*windows = append(*windows, embeddedStatusUsageWindow{
-		Limit:       limitLabel,
-		Plan:        plan,
-		Window:      windowLabel,
-		LeftPercent: clampPercent(100 - window.UsedPercent),
-		ResetsAt:    resetsAt,
+		Limit:            limitLabel,
+		Plan:             plan,
+		Window:           windowLabel,
+		LeftPercent:      clampPercent(100 - window.UsedPercent),
+		ResetsAt:         resetsAt,
+		CreditBalance:    strings.TrimSpace(creditBalance),
+		HasCredits:       hasCredits,
+		CreditsUnlimited: creditsUnlimited,
 	})
 }
 

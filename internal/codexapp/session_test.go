@@ -518,6 +518,10 @@ func TestSnapshotIncludesStructuredMetadata(t *testing.T) {
 					ResetsAt:           &resetAt,
 					WindowDurationMins: &windowMins,
 				},
+				Credits: &rateLimitCredits{
+					Balance:    stringPtr("$4.25"),
+					HasCredits: true,
+				},
 			},
 		},
 		entryIndex: make(map[string]int),
@@ -542,6 +546,9 @@ func TestSnapshotIncludesStructuredMetadata(t *testing.T) {
 	}
 	if snapshot.UsageWindows[0].Limit != "Codex" || snapshot.UsageWindows[0].LeftPercent != 85 {
 		t.Fatalf("snapshot.UsageWindows[0] = %#v, want Codex 85%% left", snapshot.UsageWindows[0])
+	}
+	if !snapshot.UsageWindows[0].HasCredits || snapshot.UsageWindows[0].CreditBalance != "$4.25" {
+		t.Fatalf("snapshot.UsageWindows[0] credits = %#v, want $4.25", snapshot.UsageWindows[0])
 	}
 }
 

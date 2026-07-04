@@ -271,6 +271,15 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 		},
 		ModelContextWindow: 200000,
 	}
+	snapshot.UsageWindows = []codexapp.UsageWindowSnapshot{{
+		Limit:         "Codex",
+		Plan:          "Pro",
+		Window:        "5h",
+		LeftPercent:   85,
+		ResetsAt:      time.Date(2026, 6, 1, 17, 0, 0, 0, time.UTC),
+		CreditBalance: "$4.25",
+		HasCredits:    true,
+	}}
 	snapshot.Goal = &codexapp.ThreadGoal{
 		Objective:   "ship conditional sidebar sections",
 		Status:      codexapp.ThreadGoalStatusActive,
@@ -299,6 +308,7 @@ func TestEmbeddedSidebarShowsConditionalSessionBrowserAndSummary(t *testing.T) {
 		"Next gpt-5 / medium",
 		"Context 6% of 200k",
 		"Tokens i10k c0% o2.0k",
+		"Limits 85% 5h reset 5h credit $4.25",
 		"Goal active 1,200/5,000 tok",
 		"ship conditional sidebar sections",
 		"Browser",
