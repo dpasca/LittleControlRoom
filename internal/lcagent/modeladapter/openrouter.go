@@ -613,6 +613,7 @@ func (c *Client) CompleteWithOptions(ctx context.Context, messages []Message, to
 		if effort := strings.TrimSpace(opts.ReasoningEffort); effort != "" {
 			return Completion{}, fmt.Errorf("%s does not support lcagent reasoning effort option", c.providerLabel())
 		}
+		body["reasoning_effort"] = "none"
 	default:
 		reasoning := map[string]any{}
 		if opts.ReasoningMaxTokens > 0 {

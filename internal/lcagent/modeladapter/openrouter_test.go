@@ -755,6 +755,61 @@ func TestOllamaClientListModelsAllowsBlankAPIKey(t *testing.T) {
 	}
 }
 
+func TestOllamaClientDisablesThinkingForChatCompletions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %s, want /chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want blank", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if got := body["reasoning_effort"]; got != "none" {
+			t.Fatalf("ollama reasoning_effort = %#v, want none", got)
+		}
+		if _, ok := body["think"]; ok {
+			t.Fatalf("ollama request should omit unsupported think field: %#v", body["think"])
+		}
+		if _, ok := body["temperature"]; ok {
+			t.Fatalf("ollama request should omit temperature: %#v", body["temperature"])
+		}
+		if _, ok := body["reasoning"]; ok {
+			t.Fatalf("ollama request should omit reasoning: %#v", body["reasoning"])
+		}
+		if _, ok := body["thinking"]; ok {
+			t.Fatalf("ollama request should omit thinking object: %#v", body["thinking"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":"ollama_resp",
+			"model":"gemma4:12b-mlx",
+			"choices":[{
+				"finish_reason":"stop",
+				"message":{"role":"assistant","content":"done"}
+			}]
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOllamaClient(OpenRouterConfig{
+		BaseURL: server.URL,
+		Model:   "gemma4:12b-mlx",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Tools())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completion.Message.Content != "done" {
+		t.Fatalf("content = %q, want done", completion.Message.Content)
+	}
+}
+
 func TestOpenRouterClientSendsCompletionOptions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
