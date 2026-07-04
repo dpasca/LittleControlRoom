@@ -546,9 +546,25 @@ func TestDispatchArchiveAndUnarchiveProjectCommands(t *testing.T) {
 		sortMode:    sortByAttention,
 		visibility:  visibilityAllFolders,
 	}
-	_, archiveCmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindArchive, Canonical: "/archive"})
+	updated, archiveCmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindArchive, Canonical: "/archive"})
+	got := updated.(Model)
+	if got.archiveDialog == nil {
+		t.Fatalf("/archive should open the archive picker")
+	}
 	if archiveCmd == nil {
-		t.Fatalf("/archive should return an action command")
+		t.Fatalf("/archive should return a focus command for the archive picker")
+	}
+	if got.archiveMarkedProjectCount() != 1 {
+		t.Fatalf("archive picker marked count = %d, want selected project pre-marked", got.archiveMarkedProjectCount())
+	}
+
+	updated, archiveCmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if archiveCmd == nil {
+		t.Fatalf("entering the archive picker should return an action command")
+	}
+	got = updated.(Model)
+	if got.archiveDialog != nil {
+		t.Fatalf("archive picker should close after submit")
 	}
 	archiveMsg, ok := archiveCmd().(actionMsg)
 	if !ok {
@@ -598,6 +614,110 @@ func TestDispatchArchiveAndUnarchiveProjectCommands(t *testing.T) {
 	}
 	if len(active) != 1 || active[0].Archived {
 		t.Fatalf("unarchived project should return to active list, got %#v", active)
+	}
+}
+
+func TestArchiveDialogArchivesMarkedProjects(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	keep := model.ProjectState{Path: "/tmp/archive-keep", Name: "keep", Status: model.StatusIdle, AttentionScore: 30, PresentOnDisk: true, InScope: true, UpdatedAt: now}
+	first := model.ProjectState{Path: "/tmp/archive-first", Name: "first", Status: model.StatusIdle, AttentionScore: 20, PresentOnDisk: true, InScope: true, UpdatedAt: now}
+	second := model.ProjectState{Path: "/tmp/archive-second", Name: "second", Status: model.StatusIdle, AttentionScore: 10, PresentOnDisk: true, InScope: true, UpdatedAt: now}
+	for _, state := range []model.ProjectState{keep, first, second} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("seed project %s: %v", state.Path, err)
+		}
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: active,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+	m.rebuildProjectList(first.Path)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindArchive, Canonical: "/archive"})
+	got := updated.(Model)
+	if got.archiveDialog == nil {
+		t.Fatalf("archive dialog was not opened")
+	}
+	if cmd == nil {
+		t.Fatalf("/archive should return a focus command for the archive picker")
+	}
+	for _, item := range got.archiveDialog.Projects {
+		if item.Project.Path == second.Path {
+			got.archiveDialog.Marked[item.Key] = true
+		}
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("archive picker submit should queue an action")
+	}
+	action, ok := cmd().(actionMsg)
+	if !ok {
+		t.Fatalf("archive picker command returned %T, want actionMsg", action)
+	}
+	if action.err != nil {
+		t.Fatalf("archive action error = %v", action.err)
+	}
+	if action.status != "Archived 2 projects" {
+		t.Fatalf("archive status = %q, want batch confirmation", action.status)
+	}
+	if action.selectPath != keep.Path {
+		t.Fatalf("selectPath = %q, want remaining visible project", action.selectPath)
+	}
+	got = updated.(Model)
+	if got.archiveDialog != nil {
+		t.Fatalf("archive dialog should close after submit")
+	}
+
+	active, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active after archive: %v", err)
+	}
+	if len(active) != 1 || active[0].Path != keep.Path {
+		t.Fatalf("active projects = %#v, want only keep", active)
+	}
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("list all after archive: %v", err)
+	}
+	archived := map[string]bool{}
+	for _, project := range all {
+		if project.Archived {
+			archived[project.Path] = true
+		}
+	}
+	if !archived[first.Path] || !archived[second.Path] || archived[keep.Path] {
+		t.Fatalf("archived map = %#v, want first and second only", archived)
+	}
+}
+
+func TestDialogListWindowCentersSelection(t *testing.T) {
+	start, end := dialogListWindow(10, 30, 7)
+	if start != 7 || end != 14 {
+		t.Fatalf("dialogListWindow middle = %d,%d; want 7,14", start, end)
+	}
+	start, end = dialogListWindow(1, 30, 7)
+	if start != 0 || end != 7 {
+		t.Fatalf("dialogListWindow top = %d,%d; want 0,7", start, end)
+	}
+	start, end = dialogListWindow(29, 30, 7)
+	if start != 23 || end != 30 {
+		t.Fatalf("dialogListWindow bottom = %d,%d; want 23,30", start, end)
 	}
 }
 

@@ -739,12 +739,8 @@ func (m Model) renderCategoryMoveItemsContent(width, maxHeight int) string {
 		lines = append(lines, detailMutedStyle.Render("No items match."))
 		return strings.Join(lines, "\n")
 	}
-	limit := max(3, min(len(indexes), maxHeight-7))
-	start := 0
-	if selected >= limit {
-		start = selected - limit + 1
-	}
-	end := min(len(indexes), start+limit)
+	limit := max(3, maxHeight-7)
+	start, end := dialogListWindow(selected, len(indexes), limit)
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("up %d above", start)))
 	}
@@ -769,12 +765,8 @@ func (m Model) renderCategoryMoveDestinationContent(width, maxHeight int) string
 	}
 	total := 1 + len(m.projectCategories)
 	selected := clampedCategorySelection(m.categoryDialog.Selected, total)
-	limit := max(3, min(total, maxHeight-5))
-	start := 0
-	if selected >= limit {
-		start = selected - limit + 1
-	}
-	end := min(total, start+limit)
+	limit := max(3, maxHeight-5)
+	start, end := dialogListWindow(selected, total, limit)
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("up %d above", start)))
 	}
@@ -803,12 +795,8 @@ func (m Model) renderCategoryPickerContent(title, hint string, width, maxHeight 
 		return strings.Join(lines, "\n")
 	}
 	selected := clampedCategorySelection(m.categoryDialog.Selected, len(m.projectCategories))
-	limit := max(3, min(len(m.projectCategories), maxHeight-5))
-	start := 0
-	if selected >= limit {
-		start = selected - limit + 1
-	}
-	end := min(len(m.projectCategories), start+limit)
+	limit := max(3, maxHeight-5)
+	start, end := dialogListWindow(selected, len(m.projectCategories), limit)
 	if start > 0 {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("up %d above", start)))
 	}

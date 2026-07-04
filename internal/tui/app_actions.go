@@ -1045,6 +1045,27 @@ func (m Model) openRemoveActionForSelection() (tea.Model, tea.Cmd) {
 
 func (m Model) setProjectArchivedForSelection(archived bool) (tea.Model, tea.Cmd) {
 	project, ok := m.selectedProject()
+	if archived {
+		if ok {
+			switch model.NormalizeProjectKind(project.Kind) {
+			case model.ProjectKindAgentTask:
+				m.status = "Agent tasks use /remove or /task-actions"
+				return m, nil
+			case model.ProjectKindScratchTask:
+				if !project.PresentOnDisk {
+					m.status = "Scratch task is missing on disk; use /remove"
+					return m, nil
+				}
+				m.status = "Archiving task..."
+				return m, m.archiveScratchTaskCmd(project.Path, m.nextProjectSelectionPathAfter(project.Path))
+			}
+			if project.Archived {
+				m.status = fmt.Sprintf("%q is already archived", projectRemovalName(project))
+				return m, nil
+			}
+		}
+		return m.openArchiveDialog()
+	}
 	if !ok {
 		m.status = "No project selected"
 		return m, nil
@@ -1054,22 +1075,10 @@ func (m Model) setProjectArchivedForSelection(archived bool) (tea.Model, tea.Cmd
 		m.status = "Agent tasks use /remove or /task-actions"
 		return m, nil
 	case model.ProjectKindScratchTask:
-		if !archived {
-			m.status = "Scratch tasks cannot be unarchived from the dashboard"
-			return m, nil
-		}
-		if !project.PresentOnDisk {
-			m.status = "Scratch task is missing on disk; use /remove"
-			return m, nil
-		}
-		m.status = "Archiving task..."
-		return m, m.archiveScratchTaskCmd(project.Path, m.nextProjectSelectionPathAfter(project.Path))
-	}
-	if archived && project.Archived {
-		m.status = fmt.Sprintf("%q is already archived", projectRemovalName(project))
+		m.status = "Scratch tasks cannot be unarchived from the dashboard"
 		return m, nil
 	}
-	if !archived && !project.Archived {
+	if !project.Archived {
 		if !project.InScope {
 			m.status = fmt.Sprintf("%q is outside project scope", projectRemovalName(project))
 		} else {

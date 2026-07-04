@@ -145,6 +145,9 @@ func (m Model) renderFooter(width int) string {
 	if m.categoryDialog != nil {
 		return m.renderModalFooter(width, m.categoryDialogFooterLabel(), supplementSegments...)
 	}
+	if m.archiveDialog != nil {
+		return m.renderModalFooter(width, m.archiveDialogFooterLabel(), supplementSegments...)
+	}
 	if m.errorLogVisible {
 		return m.renderModalFooter(width, "Error log: ↑↓ select, Enter/c copy, t ask engineer, Esc close", supplementSegments...)
 	}

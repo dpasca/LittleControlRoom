@@ -108,6 +108,7 @@ type Model struct {
 	projectFilter                       string
 	projectFilterDialog                 *projectFilterDialogState
 	categoryDialog                      *categoryDialogState
+	archiveDialog                       *archiveDialogState
 	ignoredPickerVisible                bool
 	ignoredPickerLoading                bool
 	ignoredPickerSelected               int
@@ -1418,6 +1419,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.categoryDialog != nil {
 			return m.updateCategoryDialogMode(msg)
+		}
+		if m.archiveDialog != nil {
+			return m.updateArchiveDialogMode(msg)
 		}
 		if m.codexVisible() {
 			return m.updateCodexMode(msg)

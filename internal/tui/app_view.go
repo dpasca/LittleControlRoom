@@ -284,6 +284,8 @@ func (m Model) View() string {
 		body = m.renderProjectFilterOverlay(body, layout.width, layout.height)
 	} else if m.categoryDialog != nil {
 		body = m.renderCategoryDialogOverlay(body, layout.width, layout.height)
+	} else if m.archiveDialog != nil {
+		body = m.renderArchiveDialogOverlay(body, layout.width, layout.height)
 	} else if m.commandMode {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.errorLogVisible {

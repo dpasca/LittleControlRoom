@@ -202,7 +202,7 @@ var specs = []Spec{
 	{Name: "events", Usage: "/events on|off|toggle", Summary: "Show or hide Recent events"},
 	{Name: "ignore", Usage: "/ignore", Summary: "Hide the selected project's exact name"},
 	{Name: "ignored", Usage: "/ignored", Summary: "Review ignored project names and restore them"},
-	{Name: "archive", Usage: "/archive", Summary: "Archive the selected project or scratch task"},
+	{Name: "archive", Usage: "/archive", Summary: "Archive one or more projects or the selected scratch task"},
 	{Name: "unarchive", Usage: "/unarchive", Summary: "Move the selected project out of Archived when it is in scope"},
 	{Name: "remove", Usage: "/remove", Summary: "Confirm, then make the selected item go away safely"},
 	{Name: "focus", Usage: "/focus list|detail|runtime", Summary: "Move focus between panes"},
