@@ -41,11 +41,14 @@ type codexStatusBlockData struct {
 }
 
 type codexStatusUsageWindow struct {
-	Limit       string
-	Plan        string
-	Window      string
-	LeftPercent int
-	ResetsAt    time.Time
+	Limit            string
+	Plan             string
+	Window           string
+	LeftPercent      int
+	ResetsAt         time.Time
+	CreditBalance    string
+	HasCredits       bool
+	CreditsUnlimited bool
 }
 
 type codexStatusUsageGroup struct {
@@ -235,6 +238,13 @@ func parseCodexStatusUsageWindow(spec string) (codexStatusUsageWindow, bool) {
 			if parsed, err := strconv.ParseInt(value, 10, 64); err == nil && parsed > 0 {
 				window.ResetsAt = time.Unix(parsed, 0).Local()
 			}
+		case "credits":
+			if strings.EqualFold(value, "unlimited") {
+				window.CreditsUnlimited = true
+			} else if value != "" {
+				window.CreditBalance = value
+				window.HasCredits = true
+			}
 		}
 	}
 	if !hasLimit || !hasWindow || !hasLeft {
@@ -379,6 +389,19 @@ func renderCodexStatusUsageRow(window codexStatusUsageWindow, width int) string 
 	leftText := percentStyle.Render(fmt.Sprintf("%3d%% left", window.LeftPercent))
 	base := labelStyle.Render(label) + " " + bar + " " + leftText
 	resetText := formatCodexStatusReset(window.ResetsAt)
+	if window.CreditsUnlimited {
+		if resetText == "" {
+			resetText = "credits unlimited"
+		} else {
+			resetText += " | credits unlimited"
+		}
+	} else if window.HasCredits && strings.TrimSpace(window.CreditBalance) != "" {
+		if resetText == "" {
+			resetText = "credits " + strings.TrimSpace(window.CreditBalance)
+		} else {
+			resetText += " | credits " + strings.TrimSpace(window.CreditBalance)
+		}
+	}
 	if resetText == "" {
 		return base
 	}
