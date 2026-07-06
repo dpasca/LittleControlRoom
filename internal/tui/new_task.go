@@ -129,6 +129,8 @@ func (m Model) createScratchTaskCmd(request string, provider codexapp.Provider) 
 		result, err := m.svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{
 			Request:                request,
 			PreferredSessionSource: preferredSource,
+			CategoryID:             m.categoryIDForNewItem(),
+			CategoryExplicit:       true,
 		})
 		err = timeoutActionError(err, newTaskCreateTimeout, "creating the scratch task")
 		return newTaskResultMsg{result: result, provider: provider, err: err}

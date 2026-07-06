@@ -66,6 +66,42 @@ func TestCreateOrAttachProjectCreatesDirectoryAndGitRepo(t *testing.T) {
 	}
 }
 
+func TestCreateOrAttachProjectAssignsExplicitCategory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	parent := t.TempDir()
+
+	result, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:       parent,
+		Name:             "alpha",
+		CategoryID:       category.ID,
+		CategoryExplicit: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrAttachProject() error = %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, result.ProjectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.CategoryID != category.ID || summary.CategoryName != "Client" {
+		t.Fatalf("category = %q/%q, want %q/Client", summary.CategoryID, summary.CategoryName, category.ID)
+	}
+}
+
 func TestCreateOrAttachProjectAddsExistingDirectoryWithoutInitializingGit(t *testing.T) {
 	t.Parallel()
 
@@ -99,6 +135,58 @@ func TestCreateOrAttachProjectAddsExistingDirectoryWithoutInitializingGit(t *tes
 	}
 	if _, err := os.Stat(filepath.Join(projectPath, ".git")); !os.IsNotExist(err) {
 		t.Fatalf("expected no .git directory, stat err = %v", err)
+	}
+}
+
+func TestCreateOrAttachProjectExplicitMainClearsExistingCategory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "existing")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir existing project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "existing",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		ManuallyAdded: true,
+		InScope:       true,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	if err := st.SetResourceCategory(ctx, model.CategoryResourceProject, projectPath, category.ID); err != nil {
+		t.Fatalf("SetResourceCategory() error = %v", err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:       parent,
+		Name:             "existing",
+		CategoryExplicit: true,
+	}); err != nil {
+		t.Fatalf("CreateOrAttachProject() error = %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, projectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.CategoryID != "" || summary.CategoryName != "" {
+		t.Fatalf("category = %q/%q, want Main", summary.CategoryID, summary.CategoryName)
 	}
 }
 
@@ -378,6 +466,42 @@ func TestCreateScratchTaskCreatesMetadataAndPersistsKind(t *testing.T) {
 	}
 	if !detail.Summary.ManuallyAdded || !detail.Summary.InScope || !detail.Summary.PresentOnDisk {
 		t.Fatalf("unexpected scratch task summary: %#v", detail.Summary)
+	}
+}
+
+func TestCreateScratchTaskAssignsExplicitCategory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{
+		Title:            "Answer Sarah about API docs",
+		CategoryID:       category.ID,
+		CategoryExplicit: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, result.TaskPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.CategoryID != category.ID || summary.CategoryName != "Client" {
+		t.Fatalf("category = %q/%q, want %q/Client", summary.CategoryID, summary.CategoryName, category.ID)
 	}
 }
 

@@ -95,6 +95,109 @@ func TestDispatchNewTaskCommandOpensProviderDialogBeforeCreate(t *testing.T) {
 	}
 }
 
+func TestNewTaskDialogAssignsSelectedCategory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	m := New(ctx, svc)
+	m.projectCategories = []model.ProjectCategory{category}
+	m.archiveMode = projectArchiveCategory
+	m.selectedCategoryID = category.ID
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{
+		Kind:   commands.KindNewTask,
+		Prompt: "answer Sarah about API docs",
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("/new-task should wait for provider confirmation")
+	}
+	updated, cmd = got.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("Enter should start scratch task creation")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(newTaskResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want newTaskResultMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("create scratch task error: %v", msg.err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, msg.result.TaskPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.CategoryID != category.ID || summary.CategoryName != "Client" {
+		t.Fatalf("category = %q/%q, want %q/Client", summary.CategoryID, summary.CategoryName, category.ID)
+	}
+}
+
+func TestNewTaskDialogUsesMainCategoryFromArchivedTab(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	m := New(ctx, svc)
+	m.projectCategories = []model.ProjectCategory{category}
+	m.archiveMode = projectArchiveArchived
+	m.selectedCategoryID = category.ID
+
+	updated, _ := m.dispatchCommand(commands.Invocation{
+		Kind:   commands.KindNewTask,
+		Prompt: "answer Sarah about API docs",
+	})
+	got := updated.(Model)
+	updated, cmd := got.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("Enter should start scratch task creation")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(newTaskResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want newTaskResultMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("create scratch task error: %v", msg.err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, msg.result.TaskPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.CategoryID != "" || summary.CategoryName != "" {
+		t.Fatalf("category = %q/%q, want Main from archived tab", summary.CategoryID, summary.CategoryName)
+	}
+}
+
 func TestDispatchNewTaskCommandCanPreselectAssistant(t *testing.T) {
 	t.Parallel()
 

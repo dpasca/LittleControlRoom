@@ -212,6 +212,8 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Name:                   preview.Name,
 			CreateGitRepo:          dialog.CreateGitRepo,
 			PreferredSessionSource: modelSessionSourceFromCodexProvider(provider),
+			CategoryID:             m.categoryIDForNewItem(),
+			CategoryExplicit:       true,
 		}
 		m.closeNewProjectDialog("")
 		if preview.Exists && preview.ExistingDir {

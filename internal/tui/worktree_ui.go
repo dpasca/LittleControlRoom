@@ -708,6 +708,17 @@ func (m Model) currentCategoryID() string {
 	return ""
 }
 
+func (m Model) categoryIDForNewItem() string {
+	if m.archiveMode != projectArchiveCategory {
+		return ""
+	}
+	categoryID := strings.TrimSpace(m.selectedCategoryID)
+	if _, ok := m.projectCategoryByID(categoryID); !ok {
+		return ""
+	}
+	return categoryID
+}
+
 func filterProjectSummariesByCategory(projects []model.ProjectSummary, categoryID string) []model.ProjectSummary {
 	categoryID = strings.TrimSpace(categoryID)
 	out := make([]model.ProjectSummary, 0, len(projects))

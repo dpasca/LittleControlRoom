@@ -229,6 +229,61 @@ func TestNewProjectDialogCreatesProjectAndSelectsIt(t *testing.T) {
 	}
 }
 
+func TestNewProjectDialogAssignsSelectedCategory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	parent := t.TempDir()
+
+	m := New(ctx, svc)
+	m.width = 100
+	m.height = 28
+	m.homeDirFn = func() (string, error) { return parent, nil }
+	m.projectCategories = []model.ProjectCategory{category}
+	m.archiveMode = projectArchiveCategory
+	m.selectedCategoryID = category.ID
+
+	updated, _ := m.dispatchCommand(commands.Invocation{Kind: commands.KindNewProject})
+	got := updated.(Model)
+	got.newProjectDialog.PathInput.SetValue(parent)
+	got.newProjectDialog.NameInput.SetValue("demo")
+	got.newProjectDialog.CreateGitRepo = false
+	got = applyNewProjectPreviewRefresh(t, got)
+
+	updated, cmd := got.updateNewProjectMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("enter should submit the new project dialog")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(newProjectResultMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want newProjectResultMsg", rawMsg)
+	}
+	if msg.err != nil {
+		t.Fatalf("create project error: %v", msg.err)
+	}
+
+	summary, err := st.GetProjectSummary(ctx, msg.result.ProjectPath, false)
+	if err != nil {
+		t.Fatalf("GetProjectSummary() error = %v", err)
+	}
+	if summary.CategoryID != category.ID || summary.CategoryName != "Client" {
+		t.Fatalf("category = %q/%q, want %q/Client", summary.CategoryID, summary.CategoryName, category.ID)
+	}
+}
+
 func TestNewProjectDialogAddsExistingDiscoveredRepoToAIFolders(t *testing.T) {
 	t.Parallel()
 

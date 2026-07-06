@@ -22,6 +22,9 @@ type CreateOrAttachProjectRequest struct {
 	Name                   string
 	CreateGitRepo          bool
 	PreferredSessionSource model.SessionSource
+	CategoryID             string
+	// CategoryExplicit assigns to CategoryID, or to Main when CategoryID is empty.
+	CategoryExplicit bool
 }
 
 type CreateOrAttachProjectAction string
@@ -109,6 +112,9 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 	if err := s.trackProjectPath(ctx, existing, projectPath, projectName, model.ProjectKindProject); err != nil {
 		return CreateOrAttachProjectResult{}, err
 	}
+	if err := s.assignProjectCategoryIfRequested(ctx, projectPath, req.CategoryID, req.CategoryExplicit); err != nil {
+		return CreateOrAttachProjectResult{}, err
+	}
 	if err := s.persistProjectPreferredSessionSource(ctx, projectPath, req.PreferredSessionSource); err != nil {
 		return CreateOrAttachProjectResult{}, fmt.Errorf("persist preferred engineer provider: %w", err)
 	}
@@ -171,6 +177,20 @@ func (s *Service) persistProjectPreferredSessionSource(ctx context.Context, proj
 		return nil
 	}
 	return s.store.SetProjectPreferredSessionSource(ctx, projectPath, source)
+}
+
+func (s *Service) assignProjectCategoryIfRequested(ctx context.Context, projectPath, categoryID string, explicit bool) error {
+	if !explicit || s == nil || s.store == nil {
+		return nil
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return fmt.Errorf("project path is required")
+	}
+	if err := s.store.SetResourceCategory(ctx, model.CategoryResourceProject, projectPath, strings.TrimSpace(categoryID)); err != nil {
+		return fmt.Errorf("assign project category: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) ensureProjectManuallyTracked(ctx context.Context, existing model.ProjectSummary, projectPath string) error {

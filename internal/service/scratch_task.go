@@ -24,6 +24,9 @@ type CreateScratchTaskRequest struct {
 	Title                  string
 	Request                string
 	PreferredSessionSource model.SessionSource
+	CategoryID             string
+	// CategoryExplicit assigns to CategoryID, or to Main when CategoryID is empty.
+	CategoryExplicit bool
 }
 
 type CreateScratchTaskResult struct {
@@ -95,6 +98,9 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 	}
 
 	if err := s.upsertManualProjectState(ctx, model.ProjectSummary{}, taskPath, title, model.ProjectKindScratchTask); err != nil {
+		return cleanupOnError(err)
+	}
+	if err := s.assignProjectCategoryIfRequested(ctx, taskPath, req.CategoryID, req.CategoryExplicit); err != nil {
 		return cleanupOnError(err)
 	}
 	if err := s.persistProjectPreferredSessionSource(ctx, taskPath, req.PreferredSessionSource); err != nil {
