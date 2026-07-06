@@ -55,6 +55,7 @@ type Service struct {
 	detectors     []detectors.Detector
 	classifier    SessionClassifier
 	todoSuggester *todoworktree.Manager
+	titleAssessor ScratchTaskTitleAssessor
 
 	backendDetector func(context.Context, config.AppConfig, config.AIBackend) aibackend.Status
 
@@ -169,6 +170,24 @@ func (s *Service) currentTodoSuggester() *todoworktree.Manager {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.todoSuggester
+}
+
+func (s *Service) SetScratchTaskTitleAssessor(assessor ScratchTaskTitleAssessor) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.titleAssessor = assessor
+}
+
+func (s *Service) currentScratchTaskTitleAssessor() ScratchTaskTitleAssessor {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.titleAssessor
 }
 
 func (s *Service) currentCommitMessageSuggester() gitops.CommitMessageSuggester {
@@ -757,6 +776,7 @@ func (s *Service) configureAIClientsLocked() {
 		client          sessionclassify.Classifier
 		commitAssistant *gitops.OpenAICommitMessageClient
 		todoClient      todoworktree.Suggester
+		titleAssessor   ScratchTaskTitleAssessor
 		selectedBackend = s.cfg.EffectiveAIBackend()
 		detector        = s.backendDetector
 		selectedStatus  aibackend.Status
@@ -772,11 +792,13 @@ func (s *Service) configureAIClientsLocked() {
 		commitAssistant = gitops.NewOpenAICommitMessageClientWithUsageTracker(apiKey, s.llmUsageTracker).WithReasoningEffort(reasoning)
 		client = sessionclassify.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker).WithReasoningEffort(reasoning)
 		todoClient = todoworktree.NewOpenAIClientWithUsageTracker(apiKey, s.llmUsageTracker).WithReasoningEffort(reasoning)
+		titleAssessor = newScratchTaskTitleLLMAssessor(sessionclassify.DefaultModel, llm.NewResponsesClient(apiKey, 60*time.Second, s.llmUsageTracker), reasoning)
 	case config.AIBackendCodex:
 		if selectedStatus.Ready {
 			commitAssistant = gitops.NewCodexCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			client = sessionclassify.NewCodexClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			todoClient = todoworktree.NewCodexClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			titleAssessor = newScratchTaskTitleLLMAssessor(scratchTaskTitleLocalRunnerModel, llm.NewCodexCapacityFallbackRunner(llm.NewPersistentCodexRunnerInDataDir(s.cfg.DataDir, 60*time.Second, s.llmUsageTracker)), "")
 		}
 	case config.AIBackendOpenCode:
 		if selectedStatus.Ready {
@@ -785,10 +807,14 @@ func (s *Service) configureAIClientsLocked() {
 				commitAssistant = gitops.NewOpenCodeCommitMessageClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
 				client = sessionclassify.NewOpenCodeClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
 				todoClient = todoworktree.NewOpenCodeClientWithFallback(s.opencodeDiscovery, tier, s.llmUsageTracker)
+				titleCfg := llm.DefaultModelSelectionConfig()
+				titleCfg.Tier = llm.ModelTier(tier)
+				titleAssessor = newScratchTaskTitleLLMAssessor("", llm.NewFallbackRunner(s.opencodeDiscovery, llm.NewOpenCodeRunRunner(60*time.Second, s.llmUsageTracker), titleCfg, s.llmUsageTracker), "")
 			} else {
 				commitAssistant = gitops.NewOpenCodeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 				client = sessionclassify.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 				todoClient = todoworktree.NewOpenCodeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+				titleAssessor = newScratchTaskTitleLLMAssessor(scratchTaskTitleLocalRunnerModel, llm.NewOpenCodeRunRunnerInDataDir(s.cfg.DataDir, 60*time.Second, s.llmUsageTracker), "")
 			}
 		}
 	case config.AIBackendClaude:
@@ -796,6 +822,7 @@ func (s *Service) configureAIClientsLocked() {
 			commitAssistant = gitops.NewClaudeCommitMessageClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			client = sessionclassify.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
 			todoClient = todoworktree.NewClaudeClientWithUsageTrackerInDataDir(s.cfg.DataDir, s.llmUsageTracker)
+			titleAssessor = newScratchTaskTitleLLMAssessor(scratchTaskTitleClaudeLocalRunnerModel, llm.NewClaudePrintRunnerInDataDir(s.cfg.DataDir, 60*time.Second, s.llmUsageTracker), "")
 		}
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
 		if selectedStatus.Ready {
@@ -806,15 +833,18 @@ func (s *Service) configureAIClientsLocked() {
 				commitAssistant = gitops.NewOpenAICommitMessageClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, defaultCommitAssistantTimeout, s.llmUsageTracker))
 				client = sessionclassify.NewClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, 60*time.Second, s.llmUsageTracker))
 				todoClient = todoworktree.NewClientWithRunner(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, defaultCommitAssistantTimeout, s.llmUsageTracker))
+				titleAssessor = newScratchTaskTitleLLMAssessor(model, llm.NewOllamaJSONSchemaRunner(baseURL, model, 60*time.Second, s.llmUsageTracker), "")
 			} else {
 				opts := openAICompatibleResponsesRunnerOptions(selectedBackend, model, true)
 				reasoning := strings.TrimSpace(s.cfg.ProjectReasoningEffort)
 				commitAssistant = gitops.NewOpenAICompatibleCommitMessageClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts).WithReasoningEffort(reasoning)
 				client = sessionclassify.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts).WithReasoningEffort(reasoning)
 				todoClient = todoworktree.NewOpenAICompatibleClientWithUsageTrackerAndOptions(baseURL, apiKey, model, s.llmUsageTracker, opts).WithReasoningEffort(reasoning)
+				titleAssessor = newScratchTaskTitleLLMAssessor(model, llm.NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, model, 60*time.Second, s.llmUsageTracker, opts), reasoning)
 			}
 		}
 	}
+	s.titleAssessor = titleAssessor
 	unavailableReason := ""
 	if client == nil {
 		unavailableReason = sessionClassifierUnavailableReason(selectedBackend, selectedStatus)

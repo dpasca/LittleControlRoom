@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,6 +38,20 @@ type RenameScratchTaskResult struct {
 	TaskName string
 }
 
+type scratchTaskMetadata struct {
+	Path            string
+	Title           string
+	Kind            model.ProjectKind
+	Status          string
+	CreatedAt       time.Time
+	ArchivedAt      time.Time
+	TitleState      string
+	TitleQuality    string
+	TitleConfidence float64
+	TitleModel      string
+	TitleReason     string
+}
+
 func BuildScratchTaskFolderName(title string, at time.Time) string {
 	if at.IsZero() {
 		at = time.Now()
@@ -50,7 +65,7 @@ func BuildScratchTaskFolderName(title string, at time.Time) string {
 
 func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRequest) (CreateScratchTaskResult, error) {
 	now := time.Now()
-	title := initialScratchTaskTitle(req, now)
+	title, titleMetadata := initialScratchTaskTitle(req, now)
 	rootPath := strings.TrimSpace(s.cfg.ScratchRoot)
 	if rootPath == "" {
 		rootPath = config.Default().ScratchRoot
@@ -75,7 +90,7 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 		return CreateScratchTaskResult{}, fmt.Errorf("create task directory: %w", err)
 	}
 	cleanupTaskPath = true
-	if err := os.WriteFile(filepath.Join(taskPath, scratchTaskMetadataFileName), []byte(renderScratchTaskMetadata(title, now)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(taskPath, scratchTaskMetadataFileName), []byte(renderScratchTaskMetadataWithTitleMetadata(title, now, titleMetadata)), 0o644); err != nil {
 		return cleanupOnError(fmt.Errorf("write task metadata: %w", err))
 	}
 
@@ -115,8 +130,8 @@ func (s *Service) MaybeRenameScratchTaskFromPrompt(ctx context.Context, projectP
 	if projectPath == "" || projectPath == "." {
 		return RenameScratchTaskResult{}, nil
 	}
-	nextTitle := scratchTaskTitleFromRequest(prompt)
-	if nextTitle == "" {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
 		return RenameScratchTaskResult{}, nil
 	}
 
@@ -132,57 +147,103 @@ func (s *Service) MaybeRenameScratchTaskFromPrompt(ctx context.Context, projectP
 		return RenameScratchTaskResult{}, nil
 	}
 	oldTitle := strings.TrimSpace(project.Name)
-	if !isTemporaryScratchTaskTitle(oldTitle) || oldTitle == nextTitle {
+	metadata, err := readScratchTaskMetadata(project.Path)
+	if err != nil {
+		return RenameScratchTaskResult{}, err
+	}
+	titleState := scratchTaskTitleStateForProject(project, metadata)
+	if !scratchTaskTitleCanAutoUpdate(titleState) {
+		return RenameScratchTaskResult{}, nil
+	}
+	assessor := s.currentScratchTaskTitleAssessor()
+	if assessor == nil {
+		return RenameScratchTaskResult{}, nil
+	}
+	assessment, err := assessor.AssessScratchTaskTitle(ctx, ScratchTaskTitleAssessmentInput{
+		ProjectPath:       project.Path,
+		CurrentTitle:      oldTitle,
+		CurrentTitleState: titleState,
+		LatestUserPrompt:  prompt,
+	})
+	if err != nil {
+		return RenameScratchTaskResult{}, err
+	}
+	createdAt := firstNonZeroTime(project.CreatedAt, metadata.CreatedAt, time.Now())
+	nextTitle, nextState, updateTitle := scratchTaskTitleUpdateDecision(oldTitle, titleState, createdAt, assessment)
+	nextMetadata := scratchTaskTitleMetadataFromAssessment(nextState, assessment)
+	if nextMetadata.TitleState == "" {
+		nextMetadata.TitleState = titleState
+	}
+	if !updateTitle && !scratchTaskTitleMetadataChanged(metadata, nextMetadata) {
 		return RenameScratchTaskResult{}, nil
 	}
 
 	unlockProjectState := s.lockProjectStateMutation(project.Path)
 	defer unlockProjectState()
-	if err := s.store.SetProjectName(ctx, project.Path, nextTitle); err != nil {
-		return RenameScratchTaskResult{}, err
+	renamed := updateTitle && oldTitle != nextTitle
+	if renamed {
+		if err := s.store.SetProjectName(ctx, project.Path, nextTitle); err != nil {
+			return RenameScratchTaskResult{}, err
+		}
 	}
-	createdAt := firstNonZeroTime(project.CreatedAt, time.Now())
-	if err := os.WriteFile(filepath.Join(project.Path, scratchTaskMetadataFileName), []byte(renderScratchTaskMetadata(nextTitle, createdAt)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(project.Path, scratchTaskMetadataFileName), []byte(renderScratchTaskMetadataWithTitleMetadata(nextTitle, createdAt, nextMetadata)), 0o644); err != nil {
 		return RenameScratchTaskResult{}, fmt.Errorf("write task metadata: %w", err)
 	}
 
-	now := time.Now()
-	if s.bus != nil {
-		s.bus.Publish(events.Event{
-			Type:        events.ActionApplied,
+	if renamed {
+		now := time.Now()
+		if s.bus != nil {
+			s.bus.Publish(events.Event{
+				Type:        events.ActionApplied,
+				At:          now,
+				ProjectPath: project.Path,
+				Payload: map[string]string{
+					"action": "scratch_task_renamed",
+				},
+			})
+		}
+		_ = s.store.AddEvent(ctx, model.StoredEvent{
 			At:          now,
 			ProjectPath: project.Path,
-			Payload: map[string]string{
-				"action": "scratch_task_renamed",
-			},
+			Type:        string(events.ActionApplied),
+			Payload:     "scratch_task_renamed",
 		})
 	}
-	_ = s.store.AddEvent(ctx, model.StoredEvent{
-		At:          now,
-		ProjectPath: project.Path,
-		Type:        string(events.ActionApplied),
-		Payload:     "scratch_task_renamed",
-	})
 
 	return RenameScratchTaskResult{
-		Renamed:  true,
+		Renamed:  renamed,
 		TaskPath: project.Path,
 		OldName:  oldTitle,
 		TaskName: nextTitle,
 	}, nil
 }
 
-func initialScratchTaskTitle(req CreateScratchTaskRequest, now time.Time) string {
+func initialScratchTaskTitle(req CreateScratchTaskRequest, now time.Time) (string, scratchTaskMetadata) {
 	if title := strings.TrimSpace(req.Title); title != "" {
-		return title
+		return title, scratchTaskMetadata{
+			TitleState:      scratchTaskTitleStateManual,
+			TitleQuality:    scratchTaskTitleQualityHigh,
+			TitleConfidence: 1,
+		}
 	}
 	if title := scratchTaskTitleFromRequest(req.Request); title != "" {
-		return title
+		return title, scratchTaskMetadata{
+			TitleState: scratchTaskTitleStateProvisional,
+		}
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return fmt.Sprintf("%s %s", defaultScratchTaskTitlePrefix, now.Format("15:04:05"))
+	return temporaryScratchTaskTitle(now), scratchTaskMetadata{
+		TitleState: scratchTaskTitleStateTemporary,
+	}
+}
+
+func temporaryScratchTaskTitle(at time.Time) string {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return fmt.Sprintf("%s %s", defaultScratchTaskTitlePrefix, at.Format("15:04:05"))
 }
 
 func isTemporaryScratchTaskTitle(title string) bool {
@@ -284,9 +345,38 @@ func normalizedScratchRootPath(rootPath string) string {
 }
 
 func parseScratchTaskMetadata(taskPath, content string) (discoveredScratchTask, bool) {
-	task := discoveredScratchTask{Path: filepath.Clean(taskPath)}
-	kind := model.ProjectKind("")
-	status := "active"
+	metadata, ok := parseScratchTaskMetadataFull(taskPath, content)
+	if !ok {
+		return discoveredScratchTask{}, false
+	}
+	return discoveredScratchTask{
+		Path:      metadata.Path,
+		Title:     metadata.Title,
+		CreatedAt: metadata.CreatedAt,
+	}, true
+}
+
+func readScratchTaskMetadata(taskPath string) (scratchTaskMetadata, error) {
+	taskPath = filepath.Clean(strings.TrimSpace(taskPath))
+	if taskPath == "" || taskPath == "." {
+		return scratchTaskMetadata{}, fmt.Errorf("scratch task path is required")
+	}
+	content, err := os.ReadFile(filepath.Join(taskPath, scratchTaskMetadataFileName))
+	if err != nil {
+		return scratchTaskMetadata{}, fmt.Errorf("read scratch task metadata: %w", err)
+	}
+	metadata, ok := parseScratchTaskMetadataFull(taskPath, string(content))
+	if !ok {
+		return scratchTaskMetadata{}, fmt.Errorf("scratch task metadata is not active: %s", taskPath)
+	}
+	return metadata, nil
+}
+
+func parseScratchTaskMetadataFull(taskPath, content string) (scratchTaskMetadata, bool) {
+	task := scratchTaskMetadata{
+		Path:   filepath.Clean(taskPath),
+		Status: "active",
+	}
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		lower := strings.ToLower(line)
@@ -294,22 +384,96 @@ func parseScratchTaskMetadata(taskPath, content string) (discoveredScratchTask, 
 		case strings.HasPrefix(line, "# "):
 			task.Title = strings.TrimSpace(strings.TrimPrefix(line, "# "))
 		case strings.HasPrefix(lower, "kind:"):
-			kind = model.ProjectKind(strings.TrimSpace(line[len("Kind:"):]))
+			task.Kind = model.ProjectKind(strings.TrimSpace(line[len("Kind:"):]))
 		case strings.HasPrefix(lower, "status:"):
-			status = strings.ToLower(strings.TrimSpace(line[len("Status:"):]))
+			task.Status = strings.ToLower(strings.TrimSpace(line[len("Status:"):]))
 		case strings.HasPrefix(lower, "created:"):
 			if createdAt, err := time.Parse("2006-01-02", strings.TrimSpace(line[len("Created:"):])); err == nil {
 				task.CreatedAt = createdAt
 			}
+		case strings.HasPrefix(lower, "archived:"):
+			if archivedAt, err := time.Parse("2006-01-02", strings.TrimSpace(line[len("Archived:"):])); err == nil {
+				task.ArchivedAt = archivedAt
+			}
+		case strings.HasPrefix(lower, "title-state:"):
+			task.TitleState = normalizeScratchTaskTitleState(line[len("Title-State:"):])
+		case strings.HasPrefix(lower, "title-quality:"):
+			task.TitleQuality = normalizeScratchTaskTitleQuality(line[len("Title-Quality:"):])
+		case strings.HasPrefix(lower, "title-confidence:"):
+			if confidence, err := strconv.ParseFloat(strings.TrimSpace(line[len("Title-Confidence:"):]), 64); err == nil {
+				task.TitleConfidence = confidence
+			}
+		case strings.HasPrefix(lower, "title-model:"):
+			task.TitleModel = strings.TrimSpace(line[len("Title-Model:"):])
+		case strings.HasPrefix(lower, "title-reason:"):
+			task.TitleReason = strings.TrimSpace(line[len("Title-Reason:"):])
 		}
 	}
-	if model.NormalizeProjectKind(kind) != model.ProjectKindScratchTask || status != "active" {
-		return discoveredScratchTask{}, false
+	if model.NormalizeProjectKind(task.Kind) != model.ProjectKindScratchTask || task.Status != "active" {
+		return scratchTaskMetadata{}, false
 	}
 	if strings.TrimSpace(task.Title) == "" {
 		task.Title = filepath.Base(task.Path)
 	}
 	return task, true
+}
+
+func scratchTaskTitleStateForProject(project model.ProjectSummary, metadata scratchTaskMetadata) string {
+	if state := normalizeScratchTaskTitleState(metadata.TitleState); state != "" {
+		return state
+	}
+	if isTemporaryScratchTaskTitle(project.Name) {
+		return scratchTaskTitleStateTemporary
+	}
+	return scratchTaskTitleStateAccepted
+}
+
+func scratchTaskTitleCanAutoUpdate(state string) bool {
+	switch normalizeScratchTaskTitleState(state) {
+	case scratchTaskTitleStateTemporary, scratchTaskTitleStateProvisional:
+		return true
+	default:
+		return false
+	}
+}
+
+func scratchTaskTitleUpdateDecision(oldTitle, currentState string, createdAt time.Time, assessment ScratchTaskTitleAssessment) (string, string, bool) {
+	oldTitle = strings.TrimSpace(oldTitle)
+	currentState = normalizeScratchTaskTitleState(currentState)
+	if currentState == "" {
+		currentState = scratchTaskTitleStateTemporary
+	}
+	candidate := sanitizeScratchTaskCandidateTitle(assessment.CandidateTitle)
+	quality := normalizeScratchTaskTitleQuality(assessment.Quality)
+	switch {
+	case assessment.Adopt && quality == scratchTaskTitleQualityHigh && assessment.Confidence >= scratchTaskAcceptedConfidence && candidate != "":
+		return candidate, scratchTaskTitleStateAccepted, candidate != oldTitle || currentState != scratchTaskTitleStateAccepted
+	case assessment.Adopt && quality == scratchTaskTitleQualityMedium && assessment.Confidence >= scratchTaskProvisionalConfidence && candidate != "":
+		return candidate, scratchTaskTitleStateProvisional, candidate != oldTitle || currentState != scratchTaskTitleStateProvisional
+	case currentState == scratchTaskTitleStateProvisional && (quality == scratchTaskTitleQualityNone || quality == scratchTaskTitleQualityLow):
+		temporaryTitle := temporaryScratchTaskTitle(createdAt)
+		return temporaryTitle, scratchTaskTitleStateTemporary, temporaryTitle != oldTitle || currentState != scratchTaskTitleStateTemporary
+	default:
+		return oldTitle, currentState, false
+	}
+}
+
+func scratchTaskTitleMetadataFromAssessment(state string, assessment ScratchTaskTitleAssessment) scratchTaskMetadata {
+	return scratchTaskMetadata{
+		TitleState:      normalizeScratchTaskTitleState(state),
+		TitleQuality:    normalizeScratchTaskTitleQuality(assessment.Quality),
+		TitleConfidence: assessment.Confidence,
+		TitleModel:      strings.TrimSpace(assessment.Model),
+		TitleReason:     strings.TrimSpace(assessment.Reason),
+	}
+}
+
+func scratchTaskTitleMetadataChanged(old, next scratchTaskMetadata) bool {
+	return normalizeScratchTaskTitleState(old.TitleState) != normalizeScratchTaskTitleState(next.TitleState) ||
+		normalizeScratchTaskTitleQuality(old.TitleQuality) != normalizeScratchTaskTitleQuality(next.TitleQuality) ||
+		old.TitleConfidence != next.TitleConfidence ||
+		strings.TrimSpace(old.TitleModel) != strings.TrimSpace(next.TitleModel) ||
+		strings.TrimSpace(old.TitleReason) != strings.TrimSpace(next.TitleReason)
 }
 
 func (s *Service) ArchiveScratchTask(ctx context.Context, projectPath string) (string, error) {
@@ -443,7 +607,15 @@ func renderScratchTaskMetadata(title string, createdAt time.Time) string {
 	return renderScratchTaskMetadataWithStatus(title, createdAt, "active", time.Time{})
 }
 
+func renderScratchTaskMetadataWithTitleMetadata(title string, createdAt time.Time, metadata scratchTaskMetadata) string {
+	return renderScratchTaskMetadataWithStatusAndTitleMetadata(title, createdAt, "active", time.Time{}, metadata)
+}
+
 func renderScratchTaskMetadataWithStatus(title string, createdAt time.Time, status string, archivedAt time.Time) string {
+	return renderScratchTaskMetadataWithStatusAndTitleMetadata(title, createdAt, status, archivedAt, scratchTaskMetadata{})
+}
+
+func renderScratchTaskMetadataWithStatusAndTitleMetadata(title string, createdAt time.Time, status string, archivedAt time.Time, metadata scratchTaskMetadata) string {
 	lines := []string{
 		fmt.Sprintf("# %s", title),
 		"",
@@ -453,6 +625,21 @@ func renderScratchTaskMetadataWithStatus(title string, createdAt time.Time, stat
 	}
 	if !archivedAt.IsZero() {
 		lines = append(lines, fmt.Sprintf("Archived: %s", archivedAt.Format("2006-01-02")))
+	}
+	if state := normalizeScratchTaskTitleState(metadata.TitleState); state != "" {
+		lines = append(lines, "Title-State: "+state)
+	}
+	if quality := normalizeScratchTaskTitleQuality(metadata.TitleQuality); quality != "" {
+		lines = append(lines, "Title-Quality: "+quality)
+	}
+	if metadata.TitleConfidence > 0 {
+		lines = append(lines, "Title-Confidence: "+strconv.FormatFloat(metadata.TitleConfidence, 'f', 2, 64))
+	}
+	if modelName := strings.TrimSpace(metadata.TitleModel); modelName != "" {
+		lines = append(lines, "Title-Model: "+modelName)
+	}
+	if reason := strings.Join(strings.Fields(metadata.TitleReason), " "); reason != "" {
+		lines = append(lines, "Title-Reason: "+reason)
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

@@ -19,6 +19,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+type tuiScratchTaskTitleAssessorFunc func(context.Context, service.ScratchTaskTitleAssessmentInput) (service.ScratchTaskTitleAssessment, error)
+
+func (f tuiScratchTaskTitleAssessorFunc) AssessScratchTaskTitle(ctx context.Context, input service.ScratchTaskTitleAssessmentInput) (service.ScratchTaskTitleAssessment, error) {
+	return f(ctx, input)
+}
+
 func TestDispatchNewTaskCommandOpensProviderDialogBeforeCreate(t *testing.T) {
 	t.Parallel()
 
@@ -277,6 +283,20 @@ func TestVisibleScratchTaskPromptAutoRenamesTemporaryTask(t *testing.T) {
 	cfg := config.Default()
 	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
 	svc := service.New(cfg, st, events.NewBus(), nil)
+	svc.SetScratchTaskTitleAssessor(tuiScratchTaskTitleAssessorFunc(func(_ context.Context, input service.ScratchTaskTitleAssessmentInput) (service.ScratchTaskTitleAssessment, error) {
+		if input.LatestUserPrompt != "Fix API docs login" {
+			t.Fatalf("latest prompt = %q, want submitted prompt", input.LatestUserPrompt)
+		}
+		return service.ScratchTaskTitleAssessment{
+			CandidateTitle: "Fix API docs login",
+			Quality:        "high",
+			Confidence:     0.9,
+			Adopt:          true,
+			KeepWatching:   false,
+			Reason:         "specific implementation task",
+			Model:          "unit-title-model",
+		}, nil
+	}))
 	created, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{})
 	if err != nil {
 		t.Fatalf("CreateScratchTask() error = %v", err)
@@ -344,6 +364,20 @@ func TestVisibleScratchTaskPromptAutoRenameUsesTextAroundCollapsedPaste(t *testi
 	cfg := config.Default()
 	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
 	svc := service.New(cfg, st, events.NewBus(), nil)
+	svc.SetScratchTaskTitleAssessor(tuiScratchTaskTitleAssessorFunc(func(_ context.Context, input service.ScratchTaskTitleAssessmentInput) (service.ScratchTaskTitleAssessment, error) {
+		if input.LatestUserPrompt != "summarize the failing config" {
+			t.Fatalf("latest prompt = %q, want prompt text around collapsed paste", input.LatestUserPrompt)
+		}
+		return service.ScratchTaskTitleAssessment{
+			CandidateTitle: "summarize the failing config",
+			Quality:        "high",
+			Confidence:     0.9,
+			Adopt:          true,
+			KeepWatching:   false,
+			Reason:         "specific summary task",
+			Model:          "unit-title-model",
+		}, nil
+	}))
 	created, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{})
 	if err != nil {
 		t.Fatalf("CreateScratchTask() error = %v", err)

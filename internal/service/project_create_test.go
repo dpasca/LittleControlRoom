@@ -14,6 +14,12 @@ import (
 	"lcroom/internal/store"
 )
 
+type scratchTaskTitleAssessorFunc func(context.Context, ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error)
+
+func (f scratchTaskTitleAssessorFunc) AssessScratchTaskTitle(ctx context.Context, input ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error) {
+	return f(ctx, input)
+}
+
 func TestCreateOrAttachProjectCreatesDirectoryAndGitRepo(t *testing.T) {
 	t.Parallel()
 
@@ -401,6 +407,13 @@ func TestCreateScratchTaskUsesRequestAsInitialName(t *testing.T) {
 	if got := filepath.Base(result.TaskPath); !strings.Contains(got, "answer-sarah-about-api-docs") {
 		t.Fatalf("task folder = %q, want request slug", got)
 	}
+	content, err := os.ReadFile(filepath.Join(result.TaskPath, scratchTaskMetadataFileName))
+	if err != nil {
+		t.Fatalf("read task metadata: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "Title-State: provisional") {
+		t.Fatalf("TASK.md = %q, want provisional request-derived title state", got)
+	}
 }
 
 func TestCreateScratchTaskIgnoresCollapsedPasteOnlyRequest(t *testing.T) {
@@ -503,6 +516,20 @@ func TestMaybeRenameScratchTaskFromPromptRenamesTemporaryName(t *testing.T) {
 	cfg := config.Default()
 	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
 	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetScratchTaskTitleAssessor(scratchTaskTitleAssessorFunc(func(_ context.Context, input ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error) {
+		if input.LatestUserPrompt != "Fix API docs login" {
+			t.Fatalf("latest prompt = %q, want submitted prompt", input.LatestUserPrompt)
+		}
+		return ScratchTaskTitleAssessment{
+			CandidateTitle: "Fix API docs login",
+			Quality:        scratchTaskTitleQualityHigh,
+			Confidence:     0.92,
+			Adopt:          true,
+			KeepWatching:   false,
+			Reason:         "specific implementation task",
+			Model:          "unit-title-model",
+		}, nil
+	}))
 
 	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{})
 	if err != nil {
@@ -528,6 +555,97 @@ func TestMaybeRenameScratchTaskFromPromptRenamesTemporaryName(t *testing.T) {
 	}
 	if got := string(content); !strings.Contains(got, "# Fix API docs login") {
 		t.Fatalf("TASK.md = %q, want renamed heading", got)
+	}
+	if got := string(content); !strings.Contains(got, "Title-State: accepted") || !strings.Contains(got, "Title-Quality: high") {
+		t.Fatalf("TASK.md = %q, want accepted high-quality title metadata", got)
+	}
+}
+
+func TestMaybeRenameScratchTaskFromPromptKeepsWatchingAfterLowQualityPrompt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+
+	assessments := []ScratchTaskTitleAssessment{
+		{
+			Quality:      scratchTaskTitleQualityLow,
+			Confidence:   0.24,
+			Adopt:        false,
+			KeepWatching: true,
+			Reason:       "social opener without task intent",
+			Model:        "unit-title-model",
+		},
+		{
+			CandidateTitle: "Three.js Armored Core Prototype",
+			Quality:        scratchTaskTitleQualityHigh,
+			Confidence:     0.93,
+			Adopt:          true,
+			KeepWatching:   false,
+			Reason:         "specific requested game prototype",
+			Model:          "unit-title-model",
+		},
+	}
+	call := 0
+	svc.SetScratchTaskTitleAssessor(scratchTaskTitleAssessorFunc(func(_ context.Context, input ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error) {
+		if call >= len(assessments) {
+			t.Fatalf("unexpected title assessment call %d for prompt %q", call+1, input.LatestUserPrompt)
+		}
+		result := assessments[call]
+		call++
+		return result, nil
+	}))
+
+	result, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	first, err := svc.MaybeRenameScratchTaskFromPrompt(ctx, result.TaskPath, "hi there !")
+	if err != nil {
+		t.Fatalf("MaybeRenameScratchTaskFromPrompt() greeting error = %v", err)
+	}
+	if first.Renamed {
+		t.Fatalf("greeting rename result = %#v, want keep temporary title", first)
+	}
+	detail, err := st.GetProjectDetail(ctx, result.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after greeting error = %v", err)
+	}
+	if detail.Summary.Name != result.TaskName {
+		t.Fatalf("stored name after greeting = %q, want temporary %q", detail.Summary.Name, result.TaskName)
+	}
+	content, err := os.ReadFile(filepath.Join(result.TaskPath, scratchTaskMetadataFileName))
+	if err != nil {
+		t.Fatalf("read task metadata after greeting: %v", err)
+	}
+	if got := string(content); !strings.Contains(got, "Title-State: temporary") || !strings.Contains(got, "Title-Quality: low") {
+		t.Fatalf("TASK.md after greeting = %q, want low-quality temporary title metadata", got)
+	}
+
+	second, err := svc.MaybeRenameScratchTaskFromPrompt(ctx, result.TaskPath, "can you make a very simple threejs game with the mechanics of the first armored core")
+	if err != nil {
+		t.Fatalf("MaybeRenameScratchTaskFromPrompt() task error = %v", err)
+	}
+	if !second.Renamed || second.TaskName != "Three.js Armored Core Prototype" {
+		t.Fatalf("task rename result = %#v, want high-quality title", second)
+	}
+	detail, err = st.GetProjectDetail(ctx, result.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() after task prompt error = %v", err)
+	}
+	if detail.Summary.Name != "Three.js Armored Core Prototype" {
+		t.Fatalf("stored name after task prompt = %q, want generated title", detail.Summary.Name)
+	}
+	if call != 2 {
+		t.Fatalf("assessment calls = %d, want 2", call)
 	}
 }
 
