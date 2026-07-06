@@ -241,18 +241,22 @@ func TestEmbeddedSessionActivityAckDoesNotRefreshProjectData(t *testing.T) {
 func TestRunCommandSavedMsgRefreshesOnlyProjectData(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{
-			Path: "/tmp/demo",
-			Name: "demo",
+			Path:       "/tmp/demo",
+			Name:       "demo",
+			RunCommand: "npm run dev",
 		}},
 		allProjects: []model.ProjectSummary{{
-			Path: "/tmp/demo",
-			Name: "demo",
+			Path:       "/tmp/demo",
+			Name:       "demo",
+			RunCommand: "npm run dev",
 		}},
-		selected: 0,
+		selected:   0,
+		visibility: visibilityAllFolders,
 		detail: model.ProjectDetail{
 			Summary: model.ProjectSummary{
-				Path: "/tmp/demo",
-				Name: "demo",
+				Path:       "/tmp/demo",
+				Name:       "demo",
+				RunCommand: "npm run dev",
 			},
 		},
 		runCommandDialog: &runCommandDialogState{
@@ -263,6 +267,7 @@ func TestRunCommandSavedMsgRefreshesOnlyProjectData(t *testing.T) {
 
 	updated, cmd := m.Update(runCommandSavedMsg{
 		projectPath: "/tmp/demo",
+		command:     "pnpm dev",
 	})
 	got := updated.(Model)
 
@@ -280,6 +285,15 @@ func TestRunCommandSavedMsgRefreshesOnlyProjectData(t *testing.T) {
 	}
 	if got.runCommandDialog != nil {
 		t.Fatal("run command dialog should close after a successful save")
+	}
+	if got.projects[0].RunCommand != "pnpm dev" {
+		t.Fatalf("visible project run command = %q, want pnpm dev", got.projects[0].RunCommand)
+	}
+	if got.allProjects[0].RunCommand != "pnpm dev" {
+		t.Fatalf("all project run command = %q, want pnpm dev", got.allProjects[0].RunCommand)
+	}
+	if got.detail.Summary.RunCommand != "pnpm dev" {
+		t.Fatalf("detail run command = %q, want pnpm dev", got.detail.Summary.RunCommand)
 	}
 	if got.status != "Saved run command" {
 		t.Fatalf("status = %q, want saved message", got.status)

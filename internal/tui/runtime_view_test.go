@@ -39,8 +39,31 @@ func TestRuntimeRelativeCWDShowsSubdirectory(t *testing.T) {
 }
 
 func TestEffectiveRuntimeCommandPrefersManagedSnapshotCommand(t *testing.T) {
-	got := effectiveRuntimeCommand("pnpm dev", projectrun.Snapshot{Command: "pnpm preview"})
+	got := effectiveRuntimeCommand("pnpm dev", projectrun.Snapshot{Command: "pnpm preview", Running: true})
 	if got != "pnpm preview" {
 		t.Fatalf("effectiveRuntimeCommand() = %q, want snapshot command", got)
+	}
+}
+
+func TestEffectiveRuntimeCommandPrefersSavedCommandForStoppedSnapshot(t *testing.T) {
+	got := effectiveRuntimeCommand("pnpm dev", projectrun.Snapshot{
+		Command:       "npm run dev",
+		ExitCodeKnown: true,
+		ExitCode:      1,
+		LastError:     "exit status 1",
+	})
+	if got != "pnpm dev" {
+		t.Fatalf("effectiveRuntimeCommand() = %q, want saved command", got)
+	}
+}
+
+func TestEffectiveRuntimeCommandUsesStoppedSnapshotWhenUnset(t *testing.T) {
+	got := effectiveRuntimeCommand("", projectrun.Snapshot{
+		Command:       "npm run dev",
+		ExitCodeKnown: true,
+		ExitCode:      1,
+	})
+	if got != "npm run dev" {
+		t.Fatalf("effectiveRuntimeCommand() = %q, want stopped snapshot command", got)
 	}
 }

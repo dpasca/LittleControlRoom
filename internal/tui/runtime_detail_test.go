@@ -240,6 +240,42 @@ func TestRuntimePaneListsMultipleLocalListeners(t *testing.T) {
 	}
 }
 
+func TestRuntimePaneUsesSavedCommandForStoppedManagedSnapshot(t *testing.T) {
+	projectPath := "/tmp/demo"
+	project := model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+	m := Model{
+		projects:    []model.ProjectSummary{project},
+		allProjects: []model.ProjectSummary{project},
+		selected:    0,
+		visibility:  visibilityAllFolders,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			projectPath: {
+				ProjectPath:   projectPath,
+				Command:       "npm run dev",
+				ExitCode:      1,
+				ExitCodeKnown: true,
+				LastError:     "exit status 1",
+			},
+		},
+	}
+
+	rendered := ansi.Strip(m.renderRuntimePanel(80, 14))
+	if !strings.Contains(rendered, "Run cmd: pnpm dev") {
+		t.Fatalf("renderRuntimePanel() should show the saved command after edit:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Run cmd: npm run dev") {
+		t.Fatalf("renderRuntimePanel() should not keep showing the stopped snapshot command:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Runtime err: exit status 1") {
+		t.Fatalf("renderRuntimePanel() should keep the stopped runtime error:\n%s", rendered)
+	}
+}
+
 func TestRuntimePaneWrapsProcessWarningSummary(t *testing.T) {
 	projectPath := "/tmp/demo"
 	project := model.ProjectSummary{

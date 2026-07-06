@@ -89,6 +89,29 @@ func (m *Model) closeRunCommandDialog(status string) {
 	}
 }
 
+func (m *Model) applyRunCommandSavedLocal(projectPath, command string) {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return
+	}
+	command = strings.TrimSpace(command)
+	updateRunCommandInSummaries(m.allProjects, projectPath, command)
+	updateRunCommandInSummaries(m.archivedProjects, projectPath, command)
+	updateRunCommandInSummaries(m.projects, projectPath, command)
+	if normalizeProjectPath(m.detail.Summary.Path) == projectPath {
+		m.detail.Summary.RunCommand = command
+	}
+	m.rebuildProjectList(m.currentSelectedProjectPath())
+}
+
+func updateRunCommandInSummaries(projects []model.ProjectSummary, projectPath, command string) {
+	for i := range projects {
+		if normalizeProjectPath(projects[i].Path) == projectPath {
+			projects[i].RunCommand = command
+		}
+	}
+}
+
 func (m Model) updateRunCommandDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	dialog := m.runCommandDialog
 	if dialog == nil {

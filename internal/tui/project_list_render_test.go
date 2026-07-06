@@ -904,6 +904,21 @@ func TestProjectRunSummaryUsesSavedCommandWhenIdle(t *testing.T) {
 	}
 }
 
+func TestProjectRunSummaryUsesSavedCommandForStoppedManagedSnapshot(t *testing.T) {
+	got, state := projectRunSummary(projectrun.Snapshot{
+		Command:       "npm run dev",
+		ExitCodeKnown: true,
+		ExitCode:      1,
+		LastError:     "exit status 1",
+	}, "pnpm dev")
+	if state != projectRunError {
+		t.Fatalf("projectRunSummary() state = %v, want %v", state, projectRunError)
+	}
+	if got != "pnpm err" {
+		t.Fatalf("projectRunSummary() = %q, want %q", got, "pnpm err")
+	}
+}
+
 func TestRenderProjectListMarksAndHighlightsSelectedRow(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()

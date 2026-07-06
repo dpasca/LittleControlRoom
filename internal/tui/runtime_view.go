@@ -313,10 +313,20 @@ func runtimeDetailAvailable(savedCommand string, snapshot projectrun.Snapshot) b
 }
 
 func effectiveRuntimeCommand(savedCommand string, snapshot projectrun.Snapshot) string {
+	savedCommand = strings.TrimSpace(savedCommand)
+	if snapshot.Running {
+		if command := strings.TrimSpace(snapshot.Command); command != "" {
+			return command
+		}
+		return savedCommand
+	}
+	if savedCommand != "" {
+		return savedCommand
+	}
 	if command := strings.TrimSpace(snapshot.Command); command != "" {
 		return command
 	}
-	return strings.TrimSpace(savedCommand)
+	return ""
 }
 
 func runtimeRelativeCWD(projectPath, cwd string) string {

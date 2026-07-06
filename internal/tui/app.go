@@ -1996,6 +1996,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.closeRunCommandDialog("")
+		m.applyRunCommandSavedLocal(msg.projectPath, msg.command)
 		refreshCmd := m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath))
 		if strings.TrimSpace(msg.command) != "" && msg.startAfter {
 			return m, batchCmds(refreshCmd, m.startProjectRuntimeCmd(msg.projectPath, msg.command))

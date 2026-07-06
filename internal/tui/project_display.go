@@ -478,10 +478,7 @@ func embeddedSnapshotActiveStartedAt(snapshot codexapp.Snapshot, project model.P
 }
 
 func projectRunSummary(snapshot projectrun.Snapshot, savedCommand string) (string, projectRunState) {
-	command := strings.TrimSpace(snapshot.Command)
-	if command == "" {
-		command = strings.TrimSpace(savedCommand)
-	}
+	command := effectiveRuntimeCommand(savedCommand, snapshot)
 	label := projectRunCommandLabel(command)
 	port := projectRunPortSummary(snapshot)
 	if snapshot.Running {
