@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"lcroom/internal/gitlock"
+
 	toml "github.com/pelletier/go-toml/v2"
 )
 
@@ -316,6 +318,9 @@ func resolveSubmoduleCommit(ctx context.Context, worktreePath, submodulePath str
 func createSubmoduleWorktreeAtCommit(ctx context.Context, rootPath, worktreePath, submodulePath, commit string) (PreparedSubmodule, error) {
 	rootSubmodulePath := filepath.Join(rootPath, filepath.FromSlash(submodulePath))
 	targetPath := filepath.Join(worktreePath, filepath.FromSlash(submodulePath))
+	if err := gitlock.CheckIndexLock(ctx, rootSubmodulePath); err != nil {
+		return PreparedSubmodule{}, fmt.Errorf("preflight submodule worktree %s: %w", submodulePath, err)
+	}
 	if err := ensureContained(worktreePath, targetPath); err != nil {
 		return PreparedSubmodule{}, err
 	}
@@ -390,10 +395,16 @@ func listConfiguredSubmodulePaths(ctx context.Context, rootPath string) ([]strin
 }
 
 func gitSubmoduleUpdate(ctx context.Context, repoPath, submodulePath string) error {
+	if err := gitlock.CheckIndexLock(ctx, repoPath); err != nil {
+		return err
+	}
 	return gitRun(ctx, repoPath, "update submodule "+submodulePath, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive", "--", submodulePath)
 }
 
 func gitSubmoduleUpdateAll(ctx context.Context, repoPath string) error {
+	if err := gitlock.CheckIndexLock(ctx, repoPath); err != nil {
+		return err
+	}
 	return gitRun(ctx, repoPath, "update submodules", "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
 }
 
@@ -454,6 +465,9 @@ func gitRun(ctx context.Context, repoPath, action string, args ...string) error 
 
 func formatGitRunError(action, repoPath string, err error, output string) error {
 	base := fmt.Sprintf("%s in %s: %v", action, repoPath, err)
+	if lockPath, ok := gitlock.LockPathFromOutput(output); ok {
+		return fmt.Errorf("%s: %w", base, gitlock.IndexLockError{LockPath: lockPath})
+	}
 	if output == "" {
 		return errors.New(base)
 	}

@@ -176,6 +176,55 @@ func TestPrepareBuiltInAutoSubmodulesFetchesMissingRootCommit(t *testing.T) {
 	}
 }
 
+func TestPrepareBuiltInAutoSubmodulesBlocksRootSubmoduleIndexLock(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	originPath := filepath.Join(root, "asset-origin")
+	initRepoWithSubmodule(t, mainPath, originPath, "Assets")
+	worktreePath := filepath.Join(root, "main--task")
+	runGit(t, mainPath, "worktree", "add", "-b", "task", worktreePath, "HEAD")
+	lockPath := gitPathTest(t, filepath.Join(mainPath, "Assets"), "index.lock")
+	if err := os.WriteFile(lockPath, []byte("locked\n"), 0o644); err != nil {
+		t.Fatalf("write submodule index.lock: %v", err)
+	}
+
+	_, err := Prepare(ctx, mainPath, worktreePath, "")
+	if err == nil {
+		t.Fatal("Prepare() error = nil, want index.lock error")
+	}
+	if !strings.Contains(err.Error(), lockPath) || !strings.Contains(err.Error(), "preflight submodule worktree Assets") {
+		t.Fatalf("Prepare() error = %q, want root submodule lock guidance", err)
+	}
+}
+
+func TestPrepareBuiltInAutoSubmodulesBlocksCheckoutIndexLock(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	originPath := filepath.Join(root, "asset-origin")
+	initRepoWithSubmodule(t, mainPath, originPath, "Assets")
+	runGit(t, mainPath, "submodule", "deinit", "-f", "Assets")
+	worktreePath := filepath.Join(root, "main--task")
+	runGit(t, mainPath, "worktree", "add", "-b", "task", worktreePath, "HEAD")
+	lockPath := gitPathTest(t, worktreePath, "index.lock")
+	if err := os.WriteFile(lockPath, []byte("locked\n"), 0o644); err != nil {
+		t.Fatalf("write worktree index.lock: %v", err)
+	}
+
+	_, err := Prepare(ctx, mainPath, worktreePath, "")
+	if err == nil {
+		t.Fatal("Prepare() error = nil, want index.lock error")
+	}
+	if !strings.Contains(err.Error(), lockPath) || !strings.Contains(err.Error(), "remove the stale lock") {
+		t.Fatalf("Prepare() error = %q, want checkout lock guidance", err)
+	}
+}
+
 func TestPrepareBuiltInRecursiveSubmodulesCanBeRequestedWithoutConfig(t *testing.T) {
 	t.Parallel()
 
@@ -370,6 +419,15 @@ func gitOutputTest(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git -C %s %v failed: %v\n%s", dir, args, err, string(out))
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func gitPathTest(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := gitOutputTest(t, dir, "rev-parse", "--git-path", name)
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(filepath.Join(dir, path))
 }
 
 func samePath(t *testing.T, a, b string) bool {

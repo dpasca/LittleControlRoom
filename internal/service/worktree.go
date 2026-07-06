@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"lcroom/internal/events"
+	"lcroom/internal/gitlock"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
 	"lcroom/internal/worktreeprep"
@@ -78,6 +79,11 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, fmt.Errorf("wait for existing worktree creation in %s: %w", worktreeRootPath, err)
 	}
 	defer unlock()
+	unlockGitWrite, err := s.lockGitWrite(ctx, worktreeRootPath)
+	if err != nil {
+		return CreateTodoWorktreeResult{}, err
+	}
+	defer unlockGitWrite()
 
 	suggestionBranch := ""
 	suggestionSuffix := ""
@@ -324,6 +330,11 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 	if rootPath == "" || rootPath == "." {
 		return MergeWorktreeBackResult{}, fmt.Errorf("worktree root is unavailable for %s", projectPath)
 	}
+	unlockGitWrite, err := s.lockGitWrite(ctx, rootPath)
+	if err != nil {
+		return MergeWorktreeBackResult{}, err
+	}
+	defer unlockGitWrite()
 
 	targetBranch := strings.TrimSpace(detail.Summary.WorktreeParentBranch)
 	if targetBranch == "" {
@@ -378,6 +389,9 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 	if alreadyMerged {
 		result.AlreadyMerged = true
 		return result, nil
+	}
+	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
+		return result, fmt.Errorf("preflight merge-back for %s: %w", rootPath, err)
 	}
 	mergeErr := gitMergeBranch(ctx, rootPath, sourceBranch, false)
 	var unrelatedErr gitUnrelatedHistoriesError
@@ -527,6 +541,18 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 
 	if !sourceStatus.Dirty {
 		return s.MergeWorktreeBack(ctx, projectPath)
+	}
+	result := MergeWorktreeBackResult{
+		WorktreePath:    projectPath,
+		RootProjectPath: rootPath,
+		SourceBranch:    sourceBranch,
+		TargetBranch:    targetBranch,
+	}
+	if err := gitlock.CheckIndexLock(ctx, projectPath); err != nil {
+		return result, fmt.Errorf("preflight worktree commit before merge-back for %s: %w", projectPath, err)
+	}
+	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
+		return result, fmt.Errorf("preflight merge-back for %s: %w", rootPath, err)
 	}
 
 	preview, err := s.ResolveSubmodulesAndPrepareCommit(ctx, projectPath, GitActionCommit, "")
@@ -794,6 +820,11 @@ func (s *Service) RemoveWorktree(ctx context.Context, projectPath string, force 
 	if strings.TrimSpace(rootPath) == "" {
 		return fmt.Errorf("worktree root is unavailable for %s", projectPath)
 	}
+	unlockGitWrite, err := s.lockGitWrite(ctx, rootPath)
+	if err != nil {
+		return err
+	}
+	defer unlockGitWrite()
 	allowSubmoduleForceFallback := false
 	if presentOnDisk && !force && s.gitRepoStatusReader != nil {
 		status, err := s.gitRepoStatusReader(ctx, projectPath)
@@ -886,6 +917,11 @@ func (s *Service) PruneWorktrees(ctx context.Context, projectPath string) error 
 	if strings.TrimSpace(rootPath) == "" {
 		rootPath = projectPath
 	}
+	unlockGitWrite, err := s.lockGitWrite(ctx, rootPath)
+	if err != nil {
+		return err
+	}
+	defer unlockGitWrite()
 	if err := gitWorktreePrune(ctx, rootPath); err != nil {
 		return err
 	}
@@ -1148,6 +1184,9 @@ func gitWorktreeAdd(ctx context.Context, repoPath, worktreePath, branchName stri
 	if repoPath == "" || worktreePath == "" || branchName == "" {
 		return fmt.Errorf("repo path, worktree path, and branch name are required")
 	}
+	if err := gitlock.CheckIndexLock(ctx, repoPath); err != nil {
+		return err
+	}
 
 	args := []string{"-C", repoPath, "worktree", "add"}
 	exists, err := gitLocalBranchExists(ctx, repoPath, branchName)
@@ -1176,6 +1215,9 @@ func gitWorktreeAdd(ctx context.Context, repoPath, worktreePath, branchName stri
 }
 
 func gitWorktreeRemove(ctx context.Context, repoPath, worktreePath string, force bool) error {
+	if err := gitlock.CheckIndexLock(ctx, repoPath); err != nil {
+		return err
+	}
 	args := []string{"-C", repoPath, "worktree", "remove"}
 	if force {
 		args = append(args, "--force")
@@ -1227,6 +1269,9 @@ func gitMergeBranch(ctx context.Context, repoPath, branchName string, allowUnrel
 	if repoPath == "" || branchName == "" {
 		return fmt.Errorf("repo path and branch name are required")
 	}
+	if err := gitlock.CheckIndexLock(ctx, repoPath); err != nil {
+		return err
+	}
 	args := []string{"-C", repoPath, "merge", "--no-edit"}
 	if allowUnrelatedHistories {
 		args = append(args, "--allow-unrelated-histories")
@@ -1257,6 +1302,9 @@ func gitSubmoduleUpdateInitRecursive(ctx context.Context, repoPath string) error
 	if repoPath == "" {
 		return fmt.Errorf("repo path is required")
 	}
+	if err := gitlock.CheckIndexAndModuleLocks(ctx, repoPath); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, "git", "-c", "protocol.file.allow=always", "-C", repoPath, "submodule", "update", "--init", "--recursive")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1274,56 +1322,19 @@ func gitWorktreePrune(ctx context.Context, repoPath string) error {
 	return nil
 }
 
-type gitIndexLockError struct {
-	LockPath string
-}
-
-func (e gitIndexLockError) Error() string {
-	lockPath := filepath.Clean(strings.TrimSpace(e.LockPath))
-	if lockPath == "" || lockPath == "." {
-		return "git index.lock already exists; close any other Git process or remove the stale lock if the repo is idle"
-	}
-	return fmt.Sprintf("git index.lock already exists at %s; close any other Git process or remove the stale lock if the repo is idle", lockPath)
-}
-
 func gitCommandError(action string, err error, out []byte) error {
 	action = strings.TrimSpace(action)
 	if err == nil {
 		return nil
 	}
 	output := strings.TrimSpace(string(out))
-	if lockPath, ok := gitIndexLockPath(output); ok {
-		return fmt.Errorf("%s: %w", action, gitIndexLockError{LockPath: lockPath})
+	if lockPath, ok := gitlock.LockPathFromOutput(output); ok {
+		return fmt.Errorf("%s: %w", action, gitlock.IndexLockError{LockPath: lockPath})
 	}
 	if output == "" {
 		return fmt.Errorf("%s: %w", action, err)
 	}
 	return fmt.Errorf("%s: %w (%s)", action, err, output)
-}
-
-func gitIndexLockPath(output string) (string, bool) {
-	output = strings.ReplaceAll(output, "\r\n", "\n")
-	for _, rawLine := range strings.Split(output, "\n") {
-		line := strings.TrimSpace(rawLine)
-		if line == "" || !strings.Contains(line, "index.lock") {
-			continue
-		}
-		for _, marker := range []string{"Unable to create '", "Unable to create \""} {
-			if _, remainder, ok := strings.Cut(line, marker); ok {
-				quote := "'"
-				if strings.HasSuffix(marker, "\"") {
-					quote = "\""
-				}
-				if lockPath, _, ok := strings.Cut(remainder, quote); ok {
-					lockPath = filepath.Clean(strings.TrimSpace(lockPath))
-					if lockPath != "" && lockPath != "." {
-						return lockPath, true
-					}
-				}
-			}
-		}
-	}
-	return "", false
 }
 
 func gitLocalBranchExists(ctx context.Context, repoPath, branchName string) (bool, error) {

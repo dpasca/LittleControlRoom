@@ -79,6 +79,7 @@ type Service struct {
 
 	projectStateLocks   keyedmutex.Locker
 	worktreeCreateLocks keyedmutex.Locker
+	gitWriteLocks       keyedmutex.Locker
 
 	refreshMu    sync.Mutex
 	refreshState map[string]asyncProjectRefreshState
@@ -330,6 +331,21 @@ func (s *Service) lockProjectStateMutationContext(ctx context.Context, projectPa
 	unlock, err := s.projectStateLocks.LockContext(ctx, projectPath)
 	if err != nil {
 		return nil, fmt.Errorf("wait for project state mutation lock for %s: %w", projectPath, err)
+	}
+	return unlock, nil
+}
+
+func (s *Service) lockGitWrite(ctx context.Context, repoPath string) (func(), error) {
+	if s == nil {
+		return func() {}, nil
+	}
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	if repoPath == "" || repoPath == "." {
+		return func() {}, nil
+	}
+	unlock, err := s.gitWriteLocks.LockContext(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("wait for git write lock for %s: %w", repoPath, err)
 	}
 	return unlock, nil
 }

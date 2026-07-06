@@ -87,6 +87,10 @@ When two parent worktrees update the same submodule pointer differently, Git can
 
 When LCR removes a linked worktree, it also prunes stale nested submodule worktree registrations from initialized root submodules. This keeps Git metadata tidy after parent worktrees containing `worktree`-mode submodules are removed.
 
+## Git Lock Handling
+
+Before write-side worktree operations, LCR checks for existing `index.lock` files in the root checkout and relevant submodule repositories. A detected lock blocks the action before Git starts mutating the checkout and reports the exact lock path. LCR does not remove lock files automatically; remove them only after confirming the repo is idle.
+
 ## Profile Selection
 
 LCR applies the requested profile when one is supplied by the worktree creation request. Otherwise it applies `default_profile` from `.lcroom/worktrees.toml`. If neither is present, it applies `submodules-auto`.

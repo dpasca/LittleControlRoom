@@ -1960,3 +1960,57 @@ func TestMergeWorktreeBackReportsGitIndexLockActionably(t *testing.T) {
 		t.Fatalf("merge-back error = %q, want stale-lock recovery guidance", err)
 	}
 }
+
+func TestMergeWorktreeBackPreflightsSubmoduleIndexLockBeforeMerge(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleOriginPath := filepath.Join(root, "assets-origin")
+	initGitRepoWithSubmodule(t, projectPath, submoduleOriginPath, "assets_src")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Merge with submodule lock preflight", "feat/submodule-lock-preflight", "feat-submodule-lock-preflight")
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("blocked by submodule lock\n"), 0o644); err != nil {
+		t.Fatalf("write FEATURE.txt in worktree: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "prepare merge blocked by submodule lock")
+
+	lockPath := filepath.Join(projectPath, ".git", "modules", "assets_src", "index.lock")
+	if err := os.WriteFile(lockPath, []byte("locked\n"), 0o644); err != nil {
+		t.Fatalf("write submodule index.lock: %v", err)
+	}
+
+	_, err = svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err == nil {
+		t.Fatal("MergeWorktreeBack() error = nil, want submodule index.lock error")
+	}
+	if !strings.Contains(err.Error(), lockPath) || !strings.Contains(err.Error(), "preflight merge-back") {
+		t.Fatalf("merge-back error = %q, want submodule lock preflight guidance", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, "FEATURE.txt")); !os.IsNotExist(err) {
+		t.Fatalf("root FEATURE.txt stat error = %v, want file absent before merge starts", err)
+	}
+	integrated, err := gitBranchIntegratedIntoHEAD(ctx, projectPath, result.BranchName)
+	if err != nil {
+		t.Fatalf("gitBranchIntegratedIntoHEAD() error = %v", err)
+	}
+	if integrated {
+		t.Fatal("worktree branch was merged despite submodule lock preflight")
+	}
+}
