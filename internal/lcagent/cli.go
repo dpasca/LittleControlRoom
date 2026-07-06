@@ -2120,7 +2120,7 @@ func finalResponseToolFeedbackMessage() string {
 func invalidToolArgumentsResult(toolName string, err error) tools.ToolResult {
 	return tools.ToolResult{
 		Success: false,
-		Error:   fmt.Sprintf("invalid %s arguments: %v", firstNonEmptyString(strings.TrimSpace(toolName), "tool"), err),
+		Error:   script.FormatInvalidToolArgumentsError(toolName, err),
 	}
 }
 

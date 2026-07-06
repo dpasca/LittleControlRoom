@@ -4287,6 +4287,13 @@ func TestRunExecOpenRouterMalformedFinalResponseArgumentsReturnToolResult(t *tes
 			if !strings.Contains(toolResultContent, "cannot unmarshal number") {
 				t.Fatalf("tool result content missing decode detail: %s", toolResultContent)
 			}
+			var decodedToolResult tools.ToolResult
+			if err := json.Unmarshal([]byte(toolResultContent), &decodedToolResult); err != nil {
+				t.Fatalf("decode tool result content: %v\n%s", err, toolResultContent)
+			}
+			if !strings.Contains(decodedToolResult.Error, `expected {"summary":"complete user-facing answer"`) || !strings.Contains(decodedToolResult.Error, `"verification":["check or not-run reason"]`) {
+				t.Fatalf("tool result content missing expected final_response shape: %s", decodedToolResult.Error)
+			}
 			_, _ = w.Write([]byte(`{
 				"id":"resp_valid_final",
 				"model":"deepseek/test-model",
