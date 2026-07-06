@@ -118,6 +118,17 @@ func (m *Model) rememberEmbeddedModelPreference(provider codexapp.Provider, mode
 	}
 }
 
+func (m *Model) clearEmbeddedModelPreference(provider codexapp.Provider) {
+	provider = provider.Normalized()
+	if provider == "" || m.embeddedModelPrefs == nil {
+		return
+	}
+	delete(m.embeddedModelPrefs, provider)
+	if len(m.embeddedModelPrefs) == 0 {
+		m.embeddedModelPrefs = nil
+	}
+}
+
 func (m Model) applyEmbeddedModelPreference(req codexapp.LaunchRequest) codexapp.LaunchRequest {
 	if pref, ok := m.embeddedModelPreference(req.Provider); ok {
 		req.PendingModel = pref.Model

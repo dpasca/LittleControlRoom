@@ -74,6 +74,8 @@ type codexActionMsg struct {
 
 type codexModelListMsg struct {
 	projectPath  string
+	target       codexModelPickerTarget
+	provider     codexapp.Provider
 	models       []codexapp.ModelOption
 	perfOpID     int64
 	perfDuration time.Duration
@@ -281,6 +283,27 @@ func (m *Model) scratchTaskRenameRefreshCmd(projectPath string, renamed bool, er
 
 func (m Model) applyCodexModelListMsg(msg codexModelListMsg) (tea.Model, tea.Cmd) {
 	result := msg.statusSummary()
+	if msg.target == codexModelPickerTargetNewTask {
+		stale := m.codexModelPicker == nil ||
+			m.codexModelPicker.Target != codexModelPickerTargetNewTask ||
+			m.codexModelPicker.Provider.Normalized() != msg.provider.Normalized()
+		if stale {
+			if result == "" {
+				result = "stale"
+			}
+			m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, result)
+			return m, nil
+		}
+		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, result)
+		if msg.err != nil {
+			m.codexModelPicker = nil
+			m.reportError("Embedded model picker failed", msg.err, "")
+			return m, nil
+		}
+		m.err = nil
+		m.openLoadedCodexModelPicker(msg.models)
+		return m, nil
+	}
 	if strings.TrimSpace(msg.projectPath) != strings.TrimSpace(m.codexVisibleProject) {
 		if result == "" {
 			result = "stale"

@@ -241,6 +241,105 @@ func TestNewTaskDialogUsesVerticalProviderSelection(t *testing.T) {
 	if strings.Contains(rendered, "a/A") {
 		t.Fatalf("rendered dialog = %q, should not advertise a/A agent cycling", rendered)
 	}
+	if !strings.Contains(rendered, "m") || !strings.Contains(rendered, "model") {
+		t.Fatalf("rendered dialog = %q, want model picker hint", rendered)
+	}
+}
+
+func TestNewTaskDialogModelPickerSavesProviderPreference(t *testing.T) {
+	t.Parallel()
+
+	models := []codexapp.ModelOption{
+		{
+			ID:                     "gpt-5",
+			Model:                  "gpt-5",
+			DisplayName:            "GPT-5",
+			DefaultReasoningEffort: "medium",
+			SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+				{ReasoningEffort: "medium", Description: "Balanced"},
+				{ReasoningEffort: "high", Description: "More deliberate"},
+			},
+			IsDefault: true,
+		},
+		{
+			ID:                     "gpt-5-codex",
+			Model:                  "gpt-5-codex",
+			DisplayName:            "GPT-5 Codex",
+			DefaultReasoningEffort: "medium",
+			SupportedReasoningEfforts: []codexapp.ReasoningEffortOption{
+				{ReasoningEffort: "medium", Description: "Balanced"},
+				{ReasoningEffort: "high", Description: "More deliberate"},
+			},
+		},
+	}
+	session := &fakeCodexSession{
+		projectPath: "/tmp/live-codex",
+		snapshot: codexapp.Snapshot{
+			Provider:        codexapp.ProviderCodex,
+			Started:         true,
+			Model:           "gpt-5",
+			ReasoningEffort: "medium",
+		},
+		models: models,
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{Provider: codexapp.ProviderCodex, ProjectPath: session.projectPath}); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		newTaskDialog: &newTaskDialogState{
+			Request:  "answer Sarah about API docs",
+			Provider: codexapp.ProviderCodex,
+		},
+	}
+
+	updated, cmd := m.updateNewTaskDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("m should load model choices")
+	}
+	if got.codexModelPicker == nil || !got.codexModelPicker.Loading || got.codexModelPicker.Target != codexModelPickerTargetNewTask {
+		t.Fatalf("picker after m = %#v, want loading New Task picker", got.codexModelPicker)
+	}
+	rawMsg := cmd()
+	listMsg, ok := rawMsg.(codexModelListMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want codexModelListMsg", rawMsg)
+	}
+	if listMsg.target != codexModelPickerTargetNewTask || listMsg.provider != codexapp.ProviderCodex {
+		t.Fatalf("model list scope = (%q, %q), want New Task Codex", listMsg.target, listMsg.provider)
+	}
+
+	updated, _ = got.applyCodexModelListMsg(listMsg)
+	got = updated.(Model)
+	if got.codexModelPicker == nil || got.codexModelPicker.Loading {
+		t.Fatalf("picker should be loaded, got %#v", got.codexModelPicker)
+	}
+	got.codexModelPicker.Focus = codexModelPickerFocusModels
+	got.setCodexModelPickerModel(models[1], "high")
+	updated, cmd = got.applyCodexModelPickerSelection()
+	got = updated.(Model)
+	if got.codexModelPicker != nil {
+		t.Fatalf("picker should close after applying")
+	}
+	if got.newTaskDialog == nil {
+		t.Fatalf("new task dialog should remain open")
+	}
+	pref, ok := got.embeddedModelPreference(codexapp.ProviderCodex)
+	if !ok || pref.Model != "gpt-5-codex" || pref.Reasoning != "high" {
+		t.Fatalf("embedded preference = %#v (ok=%v), want gpt-5-codex/high", pref, ok)
+	}
+	rendered := ansi.Strip(got.renderNewTaskContent(88))
+	if !strings.Contains(rendered, "gpt-5-codex, high") {
+		t.Fatalf("rendered dialog = %q, want selected model label", rendered)
+	}
+	if cmd == nil {
+		t.Fatalf("applying a new preference should return a save command")
+	}
 }
 
 func TestNewTaskDialogLCAgentReadinessUsesSavedXiaomiKey(t *testing.T) {

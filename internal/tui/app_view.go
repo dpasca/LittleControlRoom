@@ -220,6 +220,14 @@ func (m Model) View() string {
 		body = m.renderGitStatusDialogOverlay(body, layout.width, layout.height)
 	} else if m.commitPreview != nil {
 		body = m.renderCommitPreviewOverlay(body, layout.width, layout.height)
+	} else if m.codexModelPickerVisible() {
+		if m.newTaskDialog != nil {
+			body = m.renderNewTaskOverlay(body, layout.width, layout.height)
+		}
+		body = m.renderCodexModelPickerOverlay(body, layout.width, layout.height)
+		if m.codexLCAgentProviderSetup != nil {
+			body = m.renderCodexLCAgentProviderSetupOverlay(body, layout.width, layout.height)
+		}
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.newTaskDialog != nil {

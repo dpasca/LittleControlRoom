@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,7 +26,8 @@ const (
 type codexModelPickerTarget string
 
 const (
-	codexModelPickerTargetLeader codexModelPickerTarget = ""
+	codexModelPickerTargetLeader  codexModelPickerTarget = ""
+	codexModelPickerTargetNewTask codexModelPickerTarget = "new_task"
 )
 
 type codexModelPickerState struct {
@@ -39,6 +41,7 @@ type codexModelPickerState struct {
 	EffortIndex    int
 	Focus          codexModelPickerFocus
 	Target         codexModelPickerTarget
+	Provider       codexapp.Provider
 	Loading        bool
 }
 
@@ -53,12 +56,20 @@ func (m *Model) openCodexModelPickerCmd() tea.Cmd {
 	}
 	perfOpID := m.beginAILatencyOp("Model list", projectPath, m.currentEmbeddedSessionLabel())
 	manager := m.codexManager
+	target := codexModelPickerTargetLeader
+	provider := m.currentEmbeddedSessionProvider()
+	if state := m.codexModelPicker; state != nil {
+		target = state.Target
+		provider = m.codexModelPickerProvider()
+	}
 	return func() tea.Msg {
 		startedAt := time.Now()
 		session, ok := manager.Session(projectPath)
 		if !ok {
 			return codexModelListMsg{
 				projectPath:  projectPath,
+				target:       target,
+				provider:     provider,
 				perfOpID:     perfOpID,
 				perfDuration: time.Since(startedAt),
 				err:          errors.New("embedded session unavailable"),
@@ -67,12 +78,238 @@ func (m *Model) openCodexModelPickerCmd() tea.Cmd {
 		models, err := session.ListModels()
 		return codexModelListMsg{
 			projectPath:  projectPath,
+			target:       target,
+			provider:     provider,
 			models:       models,
 			perfOpID:     perfOpID,
 			perfDuration: time.Since(startedAt),
 			err:          err,
 		}
 	}
+}
+
+func (m *Model) openPrelaunchCodexModelPickerCmd(provider codexapp.Provider, target codexModelPickerTarget) tea.Cmd {
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	perfOpID := m.beginAILatencyOp("Model list", "", provider.Label())
+	return func() tea.Msg {
+		startedAt := time.Now()
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		models, err := m.prelaunchEmbeddedModelOptions(ctx, provider)
+		return codexModelListMsg{
+			target:       target,
+			provider:     provider,
+			models:       models,
+			perfOpID:     perfOpID,
+			perfDuration: time.Since(startedAt),
+			err:          err,
+		}
+	}
+}
+
+func (m Model) prelaunchEmbeddedModelOptions(ctx context.Context, provider codexapp.Provider) ([]codexapp.ModelOption, error) {
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	if session, _, ok := m.liveEmbeddedSessionForProvider(provider); ok {
+		models, err := session.ListModels()
+		if len(models) > 0 {
+			return models, nil
+		}
+		if err == nil {
+			return models, nil
+		}
+		if fallback := m.fallbackPrelaunchEmbeddedModelOptions(ctx, provider); len(fallback) > 0 {
+			return fallback, nil
+		}
+		return nil, err
+	}
+	return m.fallbackPrelaunchEmbeddedModelOptions(ctx, provider), nil
+}
+
+func (m Model) liveEmbeddedSessionForProvider(provider codexapp.Provider) (codexapp.Session, codexapp.Snapshot, bool) {
+	if m.codexManager == nil {
+		return nil, codexapp.Snapshot{}, false
+	}
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	for _, snapshot := range m.codexManager.Snapshots() {
+		if snapshot.Closed || embeddedProvider(snapshot) != provider || strings.TrimSpace(snapshot.ProjectPath) == "" {
+			continue
+		}
+		if session, ok := m.codexManager.Session(snapshot.ProjectPath); ok {
+			return session, snapshot, true
+		}
+	}
+	return nil, codexapp.Snapshot{}, false
+}
+
+func (m Model) fallbackPrelaunchEmbeddedModelOptions(ctx context.Context, provider codexapp.Provider) []codexapp.ModelOption {
+	switch provider.Normalized() {
+	case codexapp.ProviderClaudeCode:
+		return mergePrelaunchModelOptions(
+			[]codexapp.ModelOption{providerDefaultModelOption(provider)},
+			codexapp.ClaudeCodeModelOptions(),
+			m.recentPrelaunchModelOptions(provider),
+		)
+	case codexapp.ProviderLCAgent:
+		settings := m.currentSettingsBaseline()
+		cfg := codexapp.LCAgentModelListConfig{
+			Provider:         settingsLCAgentMainProvider(settings),
+			Model:            settingsLCAgentMainModel(settings),
+			IncludeAvailable: true,
+			EnvFile:          strings.TrimSpace(settings.LCAgentEnvFile),
+			OpenAIAPIKey:     strings.TrimSpace(settings.OpenAIAPIKey),
+			OpenRouterAPIKey: strings.TrimSpace(settings.OpenRouterAPIKey),
+			DeepSeekAPIKey:   strings.TrimSpace(settings.DeepSeekAPIKey),
+			MoonshotAPIKey:   strings.TrimSpace(settings.MoonshotAPIKey),
+			XiaomiAPIKey:     strings.TrimSpace(settings.XiaomiAPIKey),
+			XiaomiBaseURL:    strings.TrimSpace(settings.XiaomiBaseURL),
+			OllamaAPIKey:     strings.TrimSpace(settings.OllamaAPIKey),
+			OllamaBaseURL:    strings.TrimSpace(settings.OllamaBaseURL),
+			OllamaModel:      strings.TrimSpace(settings.OllamaModel),
+			RequestTimeout:   settings.LCAgentRequestTimeout,
+		}
+		models, err := codexapp.LCAgentModelOptions(ctx, cfg)
+		if len(models) > 0 {
+			return mergePrelaunchModelOptions([]codexapp.ModelOption{providerDefaultModelOption(provider)}, models)
+		}
+		if err == nil {
+			return mergePrelaunchModelOptions([]codexapp.ModelOption{providerDefaultModelOption(provider)}, m.recentPrelaunchModelOptions(provider))
+		}
+		return mergePrelaunchModelOptions([]codexapp.ModelOption{providerDefaultModelOption(provider)}, m.recentPrelaunchModelOptions(provider))
+	case codexapp.ProviderOpenCode:
+		return mergePrelaunchModelOptions(
+			[]codexapp.ModelOption{providerDefaultModelOption(provider)},
+			m.recentPrelaunchModelOptions(provider),
+		)
+	default:
+		return mergePrelaunchModelOptions(
+			[]codexapp.ModelOption{providerDefaultModelOption(provider)},
+			codexFallbackModelOptions(),
+			m.recentPrelaunchModelOptions(provider),
+		)
+	}
+}
+
+func (m Model) recentPrelaunchModelOptions(provider codexapp.Provider) []codexapp.ModelOption {
+	provider = provider.Normalized()
+	seen := map[string]struct{}{}
+	var ids []string
+	if pref, ok := m.embeddedModelPreference(provider); ok && strings.TrimSpace(pref.Model) != "" {
+		ids = append(ids, strings.TrimSpace(pref.Model))
+	}
+	switch provider {
+	case codexapp.ProviderClaudeCode:
+		ids = append(ids, m.recentClaudeModels...)
+	case codexapp.ProviderOpenCode:
+		ids = append(ids, m.recentOpenCodeModels...)
+	case codexapp.ProviderLCAgent:
+		ids = append(ids, m.recentLCAgentModels...)
+	default:
+		ids = append(ids, m.recentCodexModels...)
+	}
+	options := make([]codexapp.ModelOption, 0, len(ids))
+	for _, id := range ids {
+		modelProvider := ""
+		modelID := strings.TrimSpace(id)
+		if provider == codexapp.ProviderLCAgent {
+			modelProvider, modelID = parseLCAgentRecentModelID(id)
+		}
+		if modelID == "" {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(modelProvider) + "\x00" + modelID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		option := codexapp.ModelOption{
+			ID:            modelID,
+			Model:         modelID,
+			ModelProvider: strings.TrimSpace(modelProvider),
+			DisplayName:   modelID,
+			Description:   "Recently used " + provider.Label() + " model.",
+		}
+		if provider == codexapp.ProviderCodex {
+			option.SupportedReasoningEfforts = genericEmbeddedReasoningOptions()
+			option.DefaultReasoningEffort = "medium"
+		}
+		options = append(options, option)
+	}
+	return options
+}
+
+func providerDefaultModelOption(provider codexapp.Provider) codexapp.ModelOption {
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	return codexapp.ModelOption{
+		ID:          "provider-default",
+		DisplayName: provider.Label() + " default",
+		Description: "Use the provider's configured default model for future launches.",
+		IsDefault:   true,
+	}
+}
+
+func codexFallbackModelOptions() []codexapp.ModelOption {
+	return []codexapp.ModelOption{
+		{
+			ID:                        "gpt-5",
+			Model:                     "gpt-5",
+			DisplayName:               "GPT-5",
+			Description:               "General Codex coding model.",
+			SupportedReasoningEfforts: genericEmbeddedReasoningOptions(),
+			DefaultReasoningEffort:    "medium",
+		},
+		{
+			ID:                        "gpt-5-codex",
+			Model:                     "gpt-5-codex",
+			DisplayName:               "GPT-5 Codex",
+			Description:               "Codex-optimized coding model.",
+			SupportedReasoningEfforts: genericEmbeddedReasoningOptions(),
+			DefaultReasoningEffort:    "medium",
+		},
+	}
+}
+
+func genericEmbeddedReasoningOptions() []codexapp.ReasoningEffortOption {
+	return []codexapp.ReasoningEffortOption{
+		{ReasoningEffort: "low", Description: "Fastest response"},
+		{ReasoningEffort: "medium", Description: "Balanced"},
+		{ReasoningEffort: "high", Description: "More deliberate"},
+	}
+}
+
+func mergePrelaunchModelOptions(groups ...[]codexapp.ModelOption) []codexapp.ModelOption {
+	var out []codexapp.ModelOption
+	seen := map[string]struct{}{}
+	for _, group := range groups {
+		for _, option := range group {
+			key := strings.ToLower(strings.TrimSpace(option.ModelProvider) + "\x00" + codexModelOptionKey(option))
+			if key == "\x00" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, option)
+		}
+	}
+	return out
 }
 
 func (m Model) currentEmbeddedSessionLabel() string {
@@ -89,6 +326,23 @@ func (m Model) currentEmbeddedSessionProvider() codexapp.Provider {
 	return codexapp.ProviderCodex
 }
 
+func (m Model) codexModelPickerProvider() codexapp.Provider {
+	if state := m.codexModelPicker; state != nil {
+		if provider := state.Provider.Normalized(); provider != "" {
+			return provider
+		}
+	}
+	return m.currentEmbeddedSessionProvider()
+}
+
+func (m Model) codexModelPickerTitleLabel() string {
+	provider := m.codexModelPickerProvider()
+	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetNewTask {
+		return "New Task / " + provider.Label()
+	}
+	return provider.Label()
+}
+
 func (m Model) codexModelPickerTargetLabel() string {
 	return "model"
 }
@@ -98,15 +352,24 @@ func (m *Model) openCodexModelPickerLoading() {
 }
 
 func (m *Model) openCodexModelPickerLoadingFor(target codexModelPickerTarget) {
+	provider := codexapp.Provider("")
+	if target == codexModelPickerTargetNewTask && m.newTaskDialog != nil {
+		provider = m.newTaskDialog.Provider.Normalized()
+	}
+	m.openCodexModelPickerLoadingForProvider(target, provider)
+}
+
+func (m *Model) openCodexModelPickerLoadingForProvider(target codexModelPickerTarget, provider codexapp.Provider) {
 	m.codexModelPicker = &codexModelPickerState{
-		Loading: true,
-		Focus:   codexModelPickerFocusFilter,
-		Target:  target,
+		Loading:  true,
+		Focus:    codexModelPickerFocusFilter,
+		Target:   target,
+		Provider: provider.Normalized(),
 	}
 }
 
 func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
-	label := m.currentEmbeddedSessionLabel()
+	label := m.codexModelPickerProvider().Label()
 	if len(models) == 0 {
 		m.codexModelPicker = nil
 		m.status = "No embedded " + label + " models are available"
@@ -119,10 +382,11 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	}
 	if existing := m.codexModelPicker; existing != nil {
 		state.Target = existing.Target
+		state.Provider = existing.Provider.Normalized()
 	}
 
 	recentModelIDs := m.recentCodexModels
-	switch m.currentEmbeddedSessionProvider() {
+	switch m.codexModelPickerProvider() {
 	case codexapp.ProviderClaudeCode:
 		recentModelIDs = m.recentClaudeModels
 	case codexapp.ProviderOpenCode:
@@ -135,7 +399,13 @@ func (m *Model) openLoadedCodexModelPicker(models []codexapp.ModelOption) {
 	desiredModel := ""
 	desiredModelProvider := ""
 	desiredReasoning := ""
-	if snapshot, ok := m.currentCodexSnapshot(); ok {
+	if state.Target == codexModelPickerTargetNewTask {
+		if pref, ok := m.embeddedModelPreference(m.codexModelPickerProvider()); ok {
+			desiredModel = pref.Model
+			desiredModelProvider = pref.ModelProvider
+			desiredReasoning = pref.Reasoning
+		}
+	} else if snapshot, ok := m.currentCodexSnapshot(); ok {
 		desiredModel = firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 		desiredModelProvider = strings.TrimSpace(snapshot.ModelProvider)
 		desiredReasoning = firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
@@ -727,6 +997,9 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 			effort = strings.TrimSpace(selectedEffort.ReasoningEffort)
 		}
 	}
+	if state := m.codexModelPicker; state != nil && state.Target == codexModelPickerTargetNewTask {
+		return m.applyNewTaskModelPickerSelection(modelOption, effort)
+	}
 	modelName := strings.TrimSpace(modelOption.Model)
 	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
 	projectPath := strings.TrimSpace(m.codexVisibleProject)
@@ -828,6 +1101,32 @@ func (m Model) applyCodexModelPickerSelection() (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m Model) applyNewTaskModelPickerSelection(modelOption codexapp.ModelOption, effort string) (tea.Model, tea.Cmd) {
+	provider := m.codexModelPickerProvider()
+	modelName := strings.TrimSpace(modelOption.Model)
+	modelProvider := strings.TrimSpace(modelOption.ModelProvider)
+	if provider == codexapp.ProviderLCAgent && modelName != "" && modelProvider != "" && !m.lcagentModelProviderReady(modelProvider) {
+		return m.openCodexLCAgentProviderSetup(modelOption, effort)
+	}
+	if dialog := m.newTaskDialog; dialog != nil {
+		dialog.Provider = provider
+		dialog.ProviderDefaultLabel = ""
+	}
+	m.closeCodexModelPicker("")
+	if modelName == "" {
+		m.clearEmbeddedModelPreference(provider)
+		m.status = "New Task will use the " + provider.Label() + " default model"
+		return m, m.saveEmbeddedModelPreferencesCmd()
+	}
+	m.rememberEmbeddedModelPreference(provider, modelName, effort, modelProvider)
+	m.recordRecentModel(provider, modelName, modelProvider)
+	m.status = "New Task " + provider.Label() + " model set to " + modelName
+	if effort != "" {
+		m.status += " with " + effort + " reasoning"
+	}
+	return m, m.saveEmbeddedModelPreferencesCmd()
+}
+
 func (m Model) renderCodexModelPickerOverlay(body string, bodyW, bodyH int) string {
 	panel := m.renderCodexModelPicker(bodyW, bodyH)
 	panelWidth := lipgloss.Width(panel)
@@ -850,9 +1149,8 @@ func (m Model) renderCodexModelPicker(bodyW, bodyH int) string {
 
 func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 	state := m.codexModelPicker
-	label := m.currentEmbeddedSessionLabel()
 	targetLabel := m.codexModelPickerTargetLabel()
-	titleLabel := label
+	titleLabel := m.codexModelPickerTitleLabel()
 	header := []string{
 		commandPaletteTitleStyle.Render("Embedded Model Picker (" + titleLabel + ")"),
 		renderDialogAction("Enter", "apply", commitActionKeyStyle, commitActionTextStyle) + "   " +
@@ -871,7 +1169,13 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		return strings.Join(header, "\n")
 	}
 
-	if snapshot, ok := m.currentCodexSnapshot(); ok {
+	if state != nil && state.Target == codexModelPickerTargetNewTask {
+		current := m.embeddedModelLabelForProject("", m.codexModelPickerProvider())
+		if current != "" {
+			header = append(header, detailValueStyle.Render("Current preference: "+current))
+			header = append(header, "")
+		}
+	} else if snapshot, ok := m.currentCodexSnapshot(); ok {
 		current := firstNonEmptyTrimmed(snapshot.PendingModel, snapshot.Model)
 		currentReasoning := firstNonEmptyTrimmed(snapshot.PendingReasoning, snapshot.ReasoningEffort)
 		currentLabel := "Current"
@@ -968,7 +1272,7 @@ func (m Model) renderCodexModelPickerContent(width, maxHeight int) string {
 		rightLines = append(rightLines, commandPaletteTitleStyle.Render("About"))
 		rightLines = append(rightLines, commandPaletteHintStyle.Render(description))
 	}
-	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent {
+	if m.codexModelPickerProvider() == codexapp.ProviderLCAgent {
 		if provider := strings.TrimSpace(selectedModel.ModelProvider); provider != "" {
 			state, style, detail := lcagentCredentialSmokeCheckForProvider(m.currentSettingsBaseline(), provider)
 			if detail != "" {
@@ -1016,7 +1320,7 @@ func (m Model) renderCodexModelPickerRow(option codexapp.ModelOption, selected b
 	if option.IsDefault {
 		parts = append(parts, "default")
 	}
-	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent {
+	if m.codexModelPickerProvider() == codexapp.ProviderLCAgent {
 		if provider := strings.TrimSpace(option.ModelProvider); provider != "" {
 			parts = append(parts, settingsLCAgentProviderOptionLabel(provider))
 			if !m.lcagentModelProviderReady(provider) {
@@ -1116,8 +1420,7 @@ func codexReasoningOptionsFor(option codexapp.ModelOption) []codexapp.ReasoningE
 }
 
 func (m Model) codexReasoningOptionsForModel(option codexapp.ModelOption) []codexapp.ReasoningEffortOption {
-	if m.currentEmbeddedSessionProvider() == codexapp.ProviderLCAgent &&
-		len(option.SupportedReasoningEfforts) == 0 &&
+	if len(option.SupportedReasoningEfforts) == 0 &&
 		strings.TrimSpace(option.DefaultReasoningEffort) != "" {
 		if efforts := codexapp.LCAgentReasoningEffortOptionsForProvider(option.ModelProvider); len(efforts) > 0 {
 			return efforts

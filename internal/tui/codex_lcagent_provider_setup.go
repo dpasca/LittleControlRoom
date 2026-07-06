@@ -292,10 +292,12 @@ func (m Model) applyCodexLCAgentProviderSetupSavedMsg(msg codexLCAgentProviderSe
 	if modelLabel == "" {
 		modelLabel = settingsLCAgentMainModel(saved)
 	}
-	m.status = fmt.Sprintf("Saved %s. Restarting LCAgent with %s.", msg.path, modelLabel)
 	cmds := []tea.Cmd{m.applyEditableSettingsCmd(saved)}
 	if projectPath != "" {
+		m.status = fmt.Sprintf("Saved %s. Restarting LCAgent with %s.", msg.path, modelLabel)
 		cmds = append(cmds, m.reloadEmbeddedLCAgentAfterSettingsCmd(projectPath, saved))
+	} else {
+		m.status = fmt.Sprintf("Saved %s. Future LCAgent launches will use %s.", msg.path, modelLabel)
 	}
 	return m, tea.Batch(cmds...)
 }

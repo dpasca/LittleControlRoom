@@ -589,6 +589,10 @@ func claudeEmbeddedModelOptions() []ModelOption {
 	}
 }
 
+func ClaudeCodeModelOptions() []ModelOption {
+	return append([]ModelOption(nil), claudeEmbeddedModelOptions()...)
+}
+
 func claudeReasoningEffortOptions() []ReasoningEffortOption {
 	return []ReasoningEffortOption{
 		{ReasoningEffort: "low", Description: "Fastest response"},

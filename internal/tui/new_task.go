@@ -37,7 +37,7 @@ func (m *Model) openNewTaskDialog(request string, provider codexapp.Provider) te
 	}
 	m.showHelp = false
 	m.err = nil
-	m.status = "New task dialog open. Enter create, j/k choose agent, Esc cancel"
+	m.status = "New task dialog open. Enter create, m model, j/k choose agent, Esc cancel"
 	return nil
 }
 
@@ -60,6 +60,8 @@ func (m Model) updateNewTaskDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.cycleNewTaskProvider(-1)
 		return m, nil
+	case "m":
+		return m, m.openNewTaskModelPickerCmd()
 	case "enter":
 		request := dialog.Request
 		provider := dialog.Provider
@@ -93,6 +95,19 @@ func (m *Model) cycleNewTaskProvider(delta int) {
 	}
 	dialog.Provider = options[index]
 	dialog.ProviderDefaultLabel = ""
+}
+
+func (m *Model) openNewTaskModelPickerCmd() tea.Cmd {
+	dialog := m.newTaskDialog
+	if dialog == nil {
+		return nil
+	}
+	provider := explicitEmbeddedProvider(dialog.Provider)
+	dialog.Provider = provider
+	dialog.ProviderDefaultLabel = ""
+	m.openCodexModelPickerLoadingForProvider(codexModelPickerTargetNewTask, provider)
+	m.status = "Loading " + provider.Label() + " models for New Task..."
+	return m.openPrelaunchCodexModelPickerCmd(provider, codexModelPickerTargetNewTask)
 }
 
 func (m Model) createScratchTaskCmd(request string, provider codexapp.Provider) tea.Cmd {
@@ -180,11 +195,13 @@ func (m Model) renderNewTaskContent(width int) string {
 	if dialog.ProviderDefaultLabel != "" {
 		lines = append(lines, commandPaletteHintStyle.Render("Default: "+dialog.ProviderDefaultLabel+"."))
 	}
+	lines = append(lines, detailField("Model", detailValueStyle.Render(m.embeddedModelLabelForProject("", dialog.Provider))))
 	if statusLine := m.todoCopyProviderStatusLine(dialog.Provider, settings); statusLine != "" {
 		lines = append(lines, detailField("Agent status", statusLine))
 	}
 	lines = append(lines, "", renderHelpPanelActionRow(
 		renderDialogAction("Enter", "create", commitActionKeyStyle, commitActionTextStyle),
+		renderDialogAction("m", "model", pushActionKeyStyle, pushActionTextStyle),
 		renderDialogAction("↑↓/j/k", "agent", navigateActionKeyStyle, navigateActionTextStyle),
 		renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle),
 	))
