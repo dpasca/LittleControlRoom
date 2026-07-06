@@ -67,6 +67,7 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if filepath.Clean(strings.TrimSpace(todo.ProjectPath)) != projectPath {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("todo %d belongs to %s, not %s", req.TodoID, todo.ProjectPath, projectPath)
 	}
+	sourceCategoryID, sourceCategoryKnown := s.projectCategoryForWorktreeSource(ctx, projectPath)
 
 	worktreeRootPath, _ := s.readProjectWorktreeInfo(ctx, projectPath)
 	if strings.TrimSpace(worktreeRootPath) == "" {
@@ -137,8 +138,10 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	}
 
 	_, attachErr := s.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
-		ParentPath: filepath.Dir(worktreePath),
-		Name:       filepath.Base(worktreePath),
+		ParentPath:       filepath.Dir(worktreePath),
+		Name:             filepath.Base(worktreePath),
+		CategoryID:       sourceCategoryID,
+		CategoryExplicit: sourceCategoryKnown,
 	})
 	if attachErr != nil {
 		return result, fmt.Errorf("created worktree at %s but failed to track it in Little Control Room: %w", worktreePath, attachErr)
@@ -176,6 +179,17 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		Payload:     fmt.Sprintf("create_worktree root=%s branch=%s", worktreeRootPath, branchName),
 	})
 	return result, nil
+}
+
+func (s *Service) projectCategoryForWorktreeSource(ctx context.Context, projectPath string) (string, bool) {
+	if s == nil || s.store == nil {
+		return "", false
+	}
+	summary, err := s.store.GetProjectSummary(ctx, filepath.Clean(strings.TrimSpace(projectPath)), true)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(summary.CategoryID), true
 }
 
 func (s *Service) RegenerateTodoWorktreeSuggestion(ctx context.Context, projectPath string, todoID int64) error {

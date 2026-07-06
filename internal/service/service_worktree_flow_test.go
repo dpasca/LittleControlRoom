@@ -348,6 +348,58 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeInheritsProjectCategory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	category, err := st.CreateProjectCategory(ctx, "Client")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	cfg := config.Default()
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:       root,
+		Name:             "repo",
+		CategoryID:       category.ID,
+		CategoryExplicit: true,
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Keep worktrees in the same category")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath:    projectPath,
+		TodoID:         item.ID,
+		BranchName:     "fix/worktree-category",
+		WorktreeSuffix: "fix-worktree-category",
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree error = %v", err)
+	}
+	if detail.Summary.CategoryID != category.ID || detail.Summary.CategoryName != "Client" {
+		t.Fatalf("category = %q/%q, want %q/Client", detail.Summary.CategoryID, detail.Summary.CategoryName, category.ID)
+	}
+}
+
 func TestCreateTodoWorktreeWaitsForRootCreationLock(t *testing.T) {
 	t.Parallel()
 
