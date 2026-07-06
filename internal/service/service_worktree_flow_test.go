@@ -131,6 +131,11 @@ func sameTestPath(t *testing.T, a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
+func gitCommitExistsInRepo(repoPath, commit string) bool {
+	cmd := exec.Command("git", "-C", repoPath, "cat-file", "-e", strings.TrimSpace(commit)+"^{commit}")
+	return cmd.Run() == nil
+}
+
 func TestPurgeDoneTodosDeletesOnlyCompletedItems(t *testing.T) {
 	t.Parallel()
 
@@ -1671,6 +1676,73 @@ func TestMergeWorktreeBackSyncsRootSubmoduleAfterMerge(t *testing.T) {
 	}
 	if rootStatus.Dirty {
 		t.Fatalf("root repo should be clean after merge-back with submodule sync, got %#v", rootStatus)
+	}
+}
+
+func TestMergeWorktreeBackPublishesDetachedNestedSubmoduleCommitBeforeMerge(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	rootSubmodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Merge detached nested submodule commit", "feat/detached-submodule-merge", "feat-detached-submodule-merge")
+	worktreeSubmodulePath := filepath.Join(result.WorktreePath, "assets_src")
+	if branch := strings.TrimSpace(gitOutput(t, worktreeSubmodulePath, "git", "rev-parse", "--abbrev-ref", "HEAD")); branch != "HEAD" {
+		t.Fatalf("prepared nested submodule branch = %q, want detached HEAD", branch)
+	}
+
+	if err := os.WriteFile(filepath.Join(worktreeSubmodulePath, "README.md"), []byte("hello\ndetached nested update\n"), 0o644); err != nil {
+		t.Fatalf("write nested submodule README: %v", err)
+	}
+	runGit(t, worktreeSubmodulePath, "git", "add", "README.md")
+	runGit(t, worktreeSubmodulePath, "git", "commit", "-m", "update detached nested submodule")
+	updatedSubmoduleHead := strings.TrimSpace(gitOutput(t, worktreeSubmodulePath, "git", "rev-parse", "HEAD"))
+	if gitCommitExistsInRepo(filepath.Join(submoduleRootPath, "origin.git"), updatedSubmoduleHead) {
+		t.Fatalf("remote unexpectedly already has detached submodule commit %s", updatedSubmoduleHead)
+	}
+
+	runGit(t, result.WorktreePath, "git", "add", "assets_src")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "record detached submodule pointer")
+
+	mergeResult, err := svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("MergeWorktreeBack() error = %v", err)
+	}
+	if mergeResult.RootProjectPath != projectPath {
+		t.Fatalf("merge root path = %q, want %q", mergeResult.RootProjectPath, projectPath)
+	}
+
+	rootSubmoduleHead := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "rev-parse", "HEAD"))
+	if rootSubmoduleHead != updatedSubmoduleHead {
+		t.Fatalf("root submodule head after merge-back = %q, want %q", rootSubmoduleHead, updatedSubmoduleHead)
+	}
+	remoteBranches := gitOutput(t, filepath.Join(submoduleRootPath, "origin.git"), "git", "branch", "--contains", updatedSubmoduleHead)
+	if !strings.Contains(remoteBranches, "lcroom/master/assets_src-") {
+		t.Fatalf("remote branches containing %s = %q, want LCR submodule branch", updatedSubmoduleHead, remoteBranches)
+	}
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read root git status after merge-back: %v", err)
+	}
+	if rootStatus.Dirty {
+		t.Fatalf("root repo should be clean after merge-back with detached submodule sync, got %#v", rootStatus)
 	}
 }
 

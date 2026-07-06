@@ -74,6 +74,24 @@ type submodulePushPlan struct {
 	Branch      string
 }
 
+func (s *Service) ensureMergeBackSubmodulesPublished(ctx context.Context, projectPath, parentBranch string, status scanner.GitRepoStatus) ([]resolvedSubmodule, error) {
+	resolved := []resolvedSubmodule{}
+	seen := map[string]struct{}{}
+	for _, submodule := range status.Submodules {
+		relPath := strings.TrimSpace(submodule.Path)
+		if relPath == "" {
+			continue
+		}
+		childPath := filepath.Join(projectPath, filepath.FromSlash(relPath))
+		childResolved, err := s.resolveSubmoduleRepoAndPush(ctx, childPath, relPath, parentBranch, seen)
+		if err != nil {
+			return resolved, fmt.Errorf("publish merge-back submodule %s: %w", relPath, err)
+		}
+		resolved = append(resolved, childResolved...)
+	}
+	return resolved, nil
+}
+
 func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, displayPath, parentBranch string, seen map[string]struct{}) ([]resolvedSubmodule, error) {
 	cleanPath := filepath.Clean(repoPath)
 	if _, ok := seen[cleanPath]; ok {
@@ -113,7 +131,11 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 
 	included := filterParentCommitEligible(status.Changes)
 	if len(included) == 0 {
-		if status.Ahead > 0 || needsSubmoduleUpstream(status) {
+		needsDetachedPublish, publishErr := detachedSubmoduleHeadNeedsPublish(ctx, repoPath, status)
+		if publishErr != nil {
+			return nil, fmt.Errorf("check whether detached submodule %s needs publishing: %w", displayPath, publishErr)
+		}
+		if status.Ahead > 0 || needsSubmoduleUpstream(status) || needsDetachedPublish {
 			pushPlan, pushErr := s.ensureSubmodulePushPlan(ctx, repoPath, displayPath, parentBranch, status)
 			if pushErr != nil {
 				return nil, fmt.Errorf("submodule %s cannot be auto-pushed: %w", displayPath, pushErr)
@@ -240,6 +262,18 @@ func pushSubmodule(ctx context.Context, repoPath string, plan submodulePushPlan)
 
 func needsSubmoduleUpstream(status scanner.GitRepoStatus) bool {
 	return status.HasRemote && !status.HasUpstream && cleanResolvedBranchName(status.Branch) != ""
+}
+
+func detachedSubmoduleHeadNeedsPublish(ctx context.Context, repoPath string, status scanner.GitRepoStatus) (bool, error) {
+	if !status.HasRemote || status.HasUpstream || cleanResolvedBranchName(status.Branch) != "" {
+		return false, nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "for-each-ref", "--contains", "HEAD", "--format=%(refname)", "refs/remotes", "refs/tags")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("list refs containing detached HEAD in %s: %w: %s", repoPath, err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)) == "", nil
 }
 
 func cleanResolvedBranchName(branch string) string {

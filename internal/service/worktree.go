@@ -393,6 +393,9 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
 		return result, fmt.Errorf("preflight merge-back for %s: %w", rootPath, err)
 	}
+	if _, err := s.ensureMergeBackSubmodulesPublished(ctx, projectPath, targetBranch, sourceStatus); err != nil {
+		return result, err
+	}
 	mergeErr := gitMergeBranch(ctx, rootPath, sourceBranch, false)
 	var unrelatedErr gitUnrelatedHistoriesError
 	if mergeErr != nil && errors.As(mergeErr, &unrelatedErr) {
