@@ -1041,10 +1041,17 @@ func decodeToolArgs(tool string, raw json.RawMessage, dst any) (tools.ToolResult
 	if err := decodeStrictJSON(raw, dst); err != nil {
 		return tools.ToolResult{
 			Success: false,
-			Error:   fmt.Sprintf("invalid %s arguments: %v", firstNonEmpty(tool, "tool"), toolArgumentErrorHint(tool, err)),
+			Error:   FormatInvalidToolArgumentsError(tool, err),
 		}, false
 	}
 	return tools.ToolResult{}, true
+}
+
+// FormatInvalidToolArgumentsError returns a model-facing decode error with any
+// tool-specific recovery hint appended.
+func FormatInvalidToolArgumentsError(tool string, err error) string {
+	tool = strings.TrimSpace(tool)
+	return fmt.Sprintf("invalid %s arguments: %v", firstNonEmpty(tool, "tool"), toolArgumentErrorHint(tool, err))
 }
 
 func toolArgumentErrorHint(tool string, err error) string {
@@ -1056,6 +1063,14 @@ func toolArgumentErrorHint(tool string, err error) string {
 	case "update_plan":
 		if strings.Contains(msg, "unknown field") || strings.Contains(msg, "missing plan items") {
 			return msg + `; expected {"items":[{"step":"Inspect","status":"pending|in_progress|completed"}]}; legacy aliases "todos" and "plan" are also accepted`
+		}
+	case "update_quality_plan":
+		if strings.Contains(msg, "unknown field") || strings.Contains(msg, "cannot unmarshal") {
+			return msg + `; expected {"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"Scene setup","status":"in_progress","acceptance":["ground visible"],"evidence":[]}]}; phase fields are name, status, acceptance, evidence, and notes`
+		}
+	case "final_response":
+		if strings.Contains(msg, "unknown field") || strings.Contains(msg, "cannot unmarshal") {
+			return msg + `; expected {"summary":"complete user-facing answer","outcome":"completed|blocked|failed|partial","files_changed":[],"verification":["check or not-run reason"]}`
 		}
 	}
 	return msg

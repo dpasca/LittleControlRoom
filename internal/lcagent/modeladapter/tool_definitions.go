@@ -436,7 +436,7 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			Type: "function",
 			Function: FunctionSpec{
 				Name:        "update_quality_plan",
-				Description: "Publish/refresh a phased quality plan for nontrivial artifact work. Phases are sequential gates: one active phase, planned tail, advance only after evidence. Do not mark visual/user-facing phases verified from code alone; evidence must show behavior/visible result. A completed final_response is audited against verified/skipped phases plus required runtime, analyze_image, and comparison_path evidence. One focused visual check is usually enough.",
+				Description: "Publish/refresh a phased quality plan for nontrivial artifact work. Phases are sequential gates: one active phase, planned tail, advance only after evidence. Use phases[].acceptance for concrete checks. Do not mark visual/user-facing phases verified from code alone; evidence must show behavior/visible result. A completed final_response is audited against verified/skipped phases plus required runtime, analyze_image, and comparison_path evidence. One focused visual check is usually enough.",
 				Parameters: map[string]any{
 					"type":                 "object",
 					"additionalProperties": false,

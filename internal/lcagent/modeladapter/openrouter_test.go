@@ -116,7 +116,7 @@ func TestToolsExposeReadOnlyInspectionTools(t *testing.T) {
 	if !strings.Contains(descriptions["update_plan"], `{"items":[{"step":"Inspect files","status":"completed"}`) {
 		t.Fatalf("update_plan description should include a concrete args example: %q", descriptions["update_plan"])
 	}
-	if !strings.Contains(descriptions["update_quality_plan"], "phased quality plan") || !strings.Contains(descriptions["update_quality_plan"], "completed final_response is audited") || !strings.Contains(descriptions["update_quality_plan"], "comparison_path") || !strings.Contains(descriptions["update_quality_plan"], "Do not mark visual") {
+	if !strings.Contains(descriptions["update_quality_plan"], "phased quality plan") || !strings.Contains(descriptions["update_quality_plan"], "Use phases[].acceptance") || !strings.Contains(descriptions["update_quality_plan"], "completed final_response is audited") || !strings.Contains(descriptions["update_quality_plan"], "comparison_path") || !strings.Contains(descriptions["update_quality_plan"], "Do not mark visual") {
 		t.Fatalf("update_quality_plan description should explain phased audit behavior: %q", descriptions["update_quality_plan"])
 	}
 	qualityPlanSpec := toolSpec(t, Tools(), "update_quality_plan")

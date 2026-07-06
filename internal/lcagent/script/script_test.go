@@ -688,6 +688,44 @@ func TestRunnerUpdatesQualityPlan(t *testing.T) {
 	}
 }
 
+func TestRunnerUpdateQualityPlanInvalidArgsIncludeExpectedShape(t *testing.T) {
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Prompt:    "make a mech game",
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "update_quality_plan",
+		Args: raw(`{"artifact_type":"game","requires_runtime_verification":true,"requires_visual_verification":true,"phases":[{"name":"scene setup","status":"in_progress","accepance":["ground visible"],"evidence":[]}]}`),
+	})
+	if err == nil {
+		t.Fatal("RunTool() error = nil, want invalid arguments error")
+	}
+	if result.Success {
+		t.Fatalf("quality plan result success = true, want false: %#v", result)
+	}
+	for _, want := range []string{
+		`unknown field "accepance"`,
+		`expected {"artifact_type":"game"`,
+		`"acceptance":["ground visible"]`,
+		`phase fields are name, status, acceptance, evidence, and notes`,
+	} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("quality plan error missing %q:\n%s", want, result.Error)
+		}
+	}
+	if runner.qualityPlan != nil {
+		t.Fatalf("runner quality plan = %#v, want nil after invalid args", runner.qualityPlan)
+	}
+}
+
 func TestRunnerCountsInspectionEvidenceTools(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Demo\n\nold behavior\n"), 0o644); err != nil {
