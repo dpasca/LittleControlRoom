@@ -214,6 +214,31 @@ func TestReadGitRepoStatusReportsSubmoduleDirtyAndAhead(t *testing.T) {
 	}
 }
 
+func TestReadGitRepoStatusAllowsExistingIndexLock(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	repoPath := filepath.Join(root, "repo")
+	scannerInitGitRepo(t, repoPath)
+
+	lockPath := filepath.Join(repoPath, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, nil, 0o644); err != nil {
+		t.Fatalf("write stale index lock: %v", err)
+	}
+
+	status, err := ReadGitRepoStatus(ctx, repoPath)
+	if err != nil {
+		t.Fatalf("ReadGitRepoStatus() error = %v", err)
+	}
+	if status.Dirty {
+		t.Fatalf("status dirty = true, want clean status: %#v", status)
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("stale lock should remain for write-side preflight: %v", err)
+	}
+}
+
 func scannerInitGitRepo(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {

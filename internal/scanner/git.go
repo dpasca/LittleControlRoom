@@ -155,7 +155,7 @@ func (s GitRepoStatus) SubmoduleUnpushedCount() int {
 }
 
 func ReadGitFingerprint(ctx context.Context, path string) (GitFingerprint, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "rev-list", "--max-count=3", "HEAD")
+	cmd := gitReadOnlyCommand(ctx, "-C", path, "rev-list", "--max-count=3", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return GitFingerprint{}, fmt.Errorf("read git fingerprint for %s: %w", path, err)
@@ -182,7 +182,7 @@ func ReadGitRepoStatus(ctx context.Context, path string) (GitRepoStatus, error) 
 }
 
 func readGitRepoStatusDirect(ctx context.Context, path string) (GitRepoStatus, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "status", "--porcelain=v2", "--branch", "--untracked-files=normal")
+	cmd := gitReadOnlyCommand(ctx, "-C", path, "status", "--porcelain=v2", "--branch", "--untracked-files=normal")
 	out, err := cmd.Output()
 	if err != nil {
 		return GitRepoStatus{}, fmt.Errorf("read git repo status for %s: %w", path, err)
@@ -192,7 +192,7 @@ func readGitRepoStatusDirect(ctx context.Context, path string) (GitRepoStatus, e
 		return status, nil
 	}
 
-	remoteCmd := exec.CommandContext(ctx, "git", "-C", path, "remote")
+	remoteCmd := gitReadOnlyCommand(ctx, "-C", path, "remote")
 	remoteOut, err := remoteCmd.Output()
 	if err != nil {
 		return GitRepoStatus{}, fmt.Errorf("read git remotes for %s: %w", path, err)
@@ -234,7 +234,7 @@ func readConfiguredSubmodulePaths(ctx context.Context, path string) []string {
 	if info, err := os.Stat(gitmodulesPath); err != nil || info.IsDir() {
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	cmd := gitReadOnlyCommand(ctx, "-C", path, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -353,7 +353,7 @@ func readGitWorktreeInfoFromGitFile(path string) (GitWorktreeInfo, error) {
 }
 
 func ListGitWorktrees(ctx context.Context, path string) ([]GitWorktree, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", path, "worktree", "list", "--porcelain")
+	cmd := gitReadOnlyCommand(ctx, "-C", path, "worktree", "list", "--porcelain")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("list git worktrees for %s: %w", path, err)
@@ -380,7 +380,7 @@ func readGitSingleLine(ctx context.Context, path string, args ...string) (string
 
 func readGitLines(ctx context.Context, path string, args ...string) ([]string, error) {
 	fullArgs := append([]string{"-C", path}, args...)
-	cmd := exec.CommandContext(ctx, "git", fullArgs...)
+	cmd := gitReadOnlyCommand(ctx, fullArgs...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -394,6 +394,31 @@ func readGitLines(ctx context.Context, path string, args ...string) ([]string, e
 		lines[i] = strings.TrimSpace(lines[i])
 	}
 	return lines, nil
+}
+
+func gitReadOnlyCommand(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = gitReadOnlyEnv(os.Environ())
+	return cmd
+}
+
+func gitReadOnlyEnv(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "GIT_OPTIONAL_LOCKS=") {
+			if !replaced {
+				out = append(out, "GIT_OPTIONAL_LOCKS=0")
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, entry)
+	}
+	if !replaced {
+		out = append(out, "GIT_OPTIONAL_LOCKS=0")
+	}
+	return out
 }
 
 func parseGitWorktreeListOutput(out string) []GitWorktree {
