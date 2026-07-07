@@ -1025,6 +1025,104 @@ func TestRenderProjectListScrollsSelectedProjectName(t *testing.T) {
 	}
 }
 
+func TestRenderProjectListKeepsWorktreePrefixFixedWhileScrollingName(t *testing.T) {
+	const width = 120
+	projectW, _ := projectListColumnWidths(width - projectListSelectionGutterWidth)
+	rootPath := "/tmp/repo"
+	longBranch := "feature/alpha-bravo-charlie-delta-echo-worktree-lane"
+	prefix := "  ↳ "
+	m := Model{
+		projects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+			},
+			{
+				Name:             "repo--alpha-bravo-charlie-delta-echo-worktree-lane",
+				Path:             "/tmp/repo--alpha-bravo-charlie-delta-echo-worktree-lane",
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindLinked,
+				RepoBranch:       longBranch,
+			},
+		},
+		projectRows: []projectListRow{
+			{Kind: projectListRowRepo, ProjectPath: rootPath, RootPath: rootPath, LinkedCount: 1, Expanded: true},
+			{Kind: projectListRowWorktree, ProjectPath: "/tmp/repo--alpha-bravo-charlie-delta-echo-worktree-lane", RootPath: rootPath},
+		},
+		selected:      1,
+		marqueeOffset: projectW + 6,
+		sortMode:      sortByAttention,
+		visibility:    visibilityAllFolders,
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(width, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 4 {
+		t.Fatalf("renderProjectList() expected tabs, header, root, and child rows, got %q", rendered)
+	}
+	row := lines[3]
+	expected := prefix + marqueeScrollText(longBranch, projectW-ansi.StringWidth(prefix), m.marqueeOffset)
+	if !strings.Contains(row, expected) {
+		t.Fatalf("renderProjectList() should keep the worktree prefix fixed and scroll only the branch label %q in row %q", expected, row)
+	}
+	legacy := marqueeScrollText(prefix+longBranch, projectW, m.marqueeOffset)
+	if strings.Contains(row, legacy) {
+		t.Fatalf("renderProjectList() should not scroll the worktree prefix with the branch label, got legacy window %q in row %q", legacy, row)
+	}
+	if got := ansi.StringWidth(row); got > width {
+		t.Fatalf("renderProjectList() row width = %d, want <= %d: %q", got, width, row)
+	}
+}
+
+func TestRenderProjectListKeepsRepoDisclosureFixedWhileScrollingName(t *testing.T) {
+	const width = 120
+	projectW, _ := projectListColumnWidths(width - projectListSelectionGutterWidth)
+	longName := "repo-alpha-bravo-charlie-delta-echo-worktree-family"
+	prefix := "▾ "
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Name:             longName,
+			Path:             "/tmp/repo-alpha-bravo-charlie-delta-echo-worktree-family",
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			WorktreeRootPath: "/tmp/repo-alpha-bravo-charlie-delta-echo-worktree-family",
+			WorktreeKind:     model.WorktreeKindMain,
+		}},
+		projectRows: []projectListRow{{
+			Kind:        projectListRowRepo,
+			ProjectPath: "/tmp/repo-alpha-bravo-charlie-delta-echo-worktree-family",
+			RootPath:    "/tmp/repo-alpha-bravo-charlie-delta-echo-worktree-family",
+			LinkedCount: 1,
+			Expanded:    true,
+		}},
+		selected:      0,
+		marqueeOffset: projectW + 6,
+		sortMode:      sortByAttention,
+		visibility:    visibilityAllFolders,
+	}
+
+	rendered := ansi.Strip(m.renderProjectList(width, 6))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 3 {
+		t.Fatalf("renderProjectList() expected tabs, header, and one row, got %q", rendered)
+	}
+	row := lines[2]
+	expected := prefix + marqueeScrollText(longName, projectW-ansi.StringWidth(prefix), m.marqueeOffset)
+	if !strings.Contains(row, expected) {
+		t.Fatalf("renderProjectList() should keep the disclosure marker fixed and scroll only the repo label %q in row %q", expected, row)
+	}
+	legacy := marqueeScrollText(prefix+longName, projectW, m.marqueeOffset)
+	if strings.Contains(row, legacy) {
+		t.Fatalf("renderProjectList() should not scroll the disclosure marker with the repo label, got legacy window %q in row %q", legacy, row)
+	}
+}
+
 func TestMoveSelectionFlashesSelectedRowBriefly(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()

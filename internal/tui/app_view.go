@@ -1008,7 +1008,8 @@ func (m Model) renderProjectList(width, height int) string {
 		last := formatListActivityTime(now, p.LastActivity)
 		flagIndicators := m.projectRepoWarningIndicator(p, m.spinnerFrame) + projectUnreadIndicator(p, now, m.assessmentStallThreshold())
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
-		name := p.Name
+		namePrefix := ""
+		nameLabel := p.Name
 		statusText := projectListStatusAt(p, now, m.assessmentStallThreshold())
 		assessmentText := m.projectAssessmentDisplayTextAt(p, now, m.assessmentStallThreshold())
 		statusStyle := m.projectListAssessmentStatusStyle(p)
@@ -1041,7 +1042,7 @@ func (m Model) renderProjectList(width, height int) string {
 				if rowMeta.Expanded {
 					disclosure = "▾ "
 				}
-				name = disclosure + name
+				namePrefix = disclosure
 				if rowMeta.LinkedUnmergedCount > 0 {
 					nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 					summaryStyle = detailWarningStyle
@@ -1055,7 +1056,8 @@ func (m Model) renderProjectList(width, height int) string {
 				}
 			}
 		case projectListRowWorktree:
-			name = "  ↳ " + projectWorktreeLabel(p)
+			namePrefix = "  ↳ "
+			nameLabel = projectWorktreeLabel(p)
 			if worktreeNeedsMergeBack(p) {
 				nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 				summaryStyle = detailWarningStyle
@@ -1065,7 +1067,8 @@ func (m Model) renderProjectList(width, height int) string {
 			if len(spinnerFrames) > 0 {
 				frame = spinnerFrames[m.spinnerFrame%len(spinnerFrames)] + " "
 			}
-			name = "  ↳ " + frame + p.Name
+			namePrefix = "  ↳ " + frame
+			nameLabel = p.Name
 			statusText = "creating"
 			if pendingLaunch != nil {
 				assessmentText = todoPendingLaunchListSummary(*pendingLaunch, now)
@@ -1078,9 +1081,9 @@ func (m Model) renderProjectList(width, height int) string {
 		default:
 			switch model.NormalizeProjectKind(p.Kind) {
 			case model.ProjectKindScratchTask:
-				name = "[T] " + name
+				nameLabel = "[T] " + nameLabel
 			case model.ProjectKindAgentTask:
-				name = "[A] " + name
+				nameLabel = "[A] " + nameLabel
 			}
 			if projectIsWorktreeRoot(p) {
 				if badge := worktreeLinkedBadgeSummary(0, 0, 0, 0, orphanedCount); badge != "" {
@@ -1092,10 +1095,7 @@ func (m Model) renderProjectList(width, height int) string {
 				}
 			}
 		}
-		nameRender := truncateText(name, projectW)
-		if selectedRow && len([]rune(name)) > projectW {
-			nameRender = marqueeScrollText(name, projectW, m.marqueeOffset)
-		}
+		nameRender := projectListNameCellText(namePrefix, nameLabel, projectW, selectedRow, m.marqueeOffset)
 		assessment := truncateText(assessmentText, assessmentW)
 		runtimeSnapshot := m.projectRuntimeSnapshot(p.Path)
 		agentLabel, agentTag, agentLive := m.projectAgentDisplay(p, now)

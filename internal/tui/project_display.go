@@ -652,6 +652,23 @@ func truncateText(text string, width int) string {
 	return string(runes[:width-3]) + "..."
 }
 
+// projectListNameCellText keeps hierarchy/disclosure markers fixed while the
+// selected project's label scrolls inside the remaining cell width.
+func projectListNameCellText(prefix, label string, width int, selected bool, offset int) string {
+	if width <= 0 {
+		return ""
+	}
+	prefixWidth := ansi.StringWidth(prefix)
+	if prefixWidth >= width {
+		return truncateText(prefix, width)
+	}
+	text := prefix + label
+	if !selected || ansi.StringWidth(text) <= width {
+		return truncateText(text, width)
+	}
+	return prefix + marqueeScrollText(label, width-prefixWidth, offset)
+}
+
 // marqueeScrollText returns a width-wide window into text that scrolls
 // right-to-left, wrapping around.  When text fits in width it is returned
 // as-is.  The caller passes an ever-increasing offset; the helper normalises
