@@ -667,6 +667,9 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 	}
 	var action bossAction
 	if err := llm.DecodeJSONObjectOutput(response.OutputText, &action); err != nil {
+		if fallback, ok := bossPlainTextActionFallback(response.OutputText); ok {
+			return response, fallback, nil
+		}
 		return response, bossAction{}, fmt.Errorf("decode boss chat action: %w", err)
 	}
 	normalizeBossAction(&action)
@@ -699,6 +702,18 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		}
 	}
 	return response, action, nil
+}
+
+func bossPlainTextActionFallback(outputText string) (bossAction, bool) {
+	answer := strings.TrimSpace(llm.StripThinkingBlocks(outputText))
+	if answer == "" || strings.Contains(answer, "{") {
+		return bossAction{}, false
+	}
+	return bossAction{
+		Kind:   bossActionAnswer,
+		Answer: answer,
+		Reason: "planner returned plain text instead of a structured action",
+	}, true
 }
 
 func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantRequest, action bossAction) (bossAction, bool, llm.JSONSchemaResponse, error) {

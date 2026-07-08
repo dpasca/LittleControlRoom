@@ -697,6 +697,76 @@ func TestAssistantReplyReadOnlyRoutePassFallsBackToPlanner(t *testing.T) {
 	}
 }
 
+func TestAssistantReplyUsesPlainTextPlannerOutputAsFinalAnswer(t *testing.T) {
+	t.Parallel()
+
+	const answer = "Here's where things stand: Already in flight (two engineers working): Evelyn is on the airplane view zoom and Marco is checking the release branch."
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass, Reason: "Needs helm judgment."}),
+			Usage:      model.LLMUsage{TotalTokens: 5},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: answer,
+			Usage:      model.LLMUsage{TotalTokens: 13},
+		}},
+	}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 3.",
+		Messages:   []ChatMessage{{Role: "user", Content: "Which projects require my attention right now? which one would you work on?"}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != answer {
+		t.Fatalf("Content = %q, want plain planner answer", resp.Content)
+	}
+	if resp.Usage.TotalTokens != 18 {
+		t.Fatalf("usage total = %d, want router plus planner usage", resp.Usage.TotalTokens)
+	}
+}
+
+func TestAssistantReplyStillErrorsForMalformedPlannerJSON(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass}),
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			OutputText: `{"kind":"answer","answer":`,
+		}},
+	}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+
+	_, err := assistant.Reply(context.Background(), AssistantRequest{
+		StateBrief: "Visible projects: 1.",
+		Messages:   []ChatMessage{{Role: "user", Content: "What is up?"}},
+	})
+	if err == nil {
+		t.Fatalf("Reply() error = nil, want malformed JSON error")
+	}
+	if !strings.Contains(err.Error(), "decode boss chat action") {
+		t.Fatalf("Reply() error = %q, want decode boss chat action", err.Error())
+	}
+}
+
 func TestAssistantReadOnlyRouteUsesUtilityModel(t *testing.T) {
 	t.Parallel()
 
