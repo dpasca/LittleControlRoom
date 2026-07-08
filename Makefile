@@ -34,7 +34,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot release-macos-pkgs screenshots mockups boss tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -61,6 +61,7 @@ help:
 	@echo "  make doctor          - print cached detected artifacts/reasons"
 	@echo "  make doctor-scan     - refresh state, then print detected artifacts/reasons"
 	@echo "  make release-snapshot - build local GoReleaser archives under dist/"
+	@echo "  make release-macos-pkgs - sign, notarize, and staple macOS pkg installers under dist/"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make mockups         - render static high-level UI mockups"
 	@echo "  make boss            - run chat-first boss mode"
@@ -155,6 +156,9 @@ doctor-scan:
 
 release-snapshot:
 	goreleaser release --snapshot --clean
+
+release-macos-pkgs:
+	./scripts/macos_package_dist.sh
 
 screenshots:
 	$(GO) run ./cmd/$(APP) screenshots $(COMMON_FLAGS) --screenshot-config "$(SCREENSHOT_CONFIG)" $(SCREENSHOT_OUTPUT_FLAG)

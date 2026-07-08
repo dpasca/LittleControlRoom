@@ -63,6 +63,28 @@ tar -xzf lcroom.tar.gz
 
 Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider. Move both binaries to a directory on your `PATH` if you want to run `lcroom` from anywhere.
 
+macOS release binaries are signed and notarized when the release workflow has the Apple Developer credentials configured. Required GitHub secrets:
+
+- `MACOS_SIGN_P12`: base64 contents of a Developer ID Application `.p12` certificate, or a path when running GoReleaser locally
+- `MACOS_SIGN_PASSWORD`: password for the `.p12`
+- `MACOS_NOTARY_KEY`: base64 contents of the App Store Connect API `.p8` key, or a path when running locally
+- `MACOS_NOTARY_KEY_ID`: App Store Connect API key ID
+- `MACOS_NOTARY_ISSUER_ID`: App Store Connect issuer UUID
+
+For local macOS releases from a machine that already has the Developer ID certificates and Apple notary credentials in `pass`, run:
+
+```bash
+make release-snapshot
+make release-macos-pkgs
+```
+
+That creates stapled macOS installer packages alongside the archives:
+
+| Platform | Installer asset |
+| --- | --- |
+| macOS Apple Silicon | `lcroom_Darwin_arm64.pkg` |
+| macOS Intel | `lcroom_Darwin_x86_64.pkg` |
+
 ### Build from source
 
 ```bash

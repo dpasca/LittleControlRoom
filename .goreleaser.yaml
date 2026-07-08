@@ -48,6 +48,22 @@ archives:
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
 
+notarize:
+  macos:
+    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (ne .Env.MACOS_SIGN_P12 "") (isEnvSet "MACOS_SIGN_PASSWORD") (ne .Env.MACOS_SIGN_PASSWORD "") (isEnvSet "MACOS_NOTARY_KEY") (ne .Env.MACOS_NOTARY_KEY "") (isEnvSet "MACOS_NOTARY_KEY_ID") (ne .Env.MACOS_NOTARY_KEY_ID "") (isEnvSet "MACOS_NOTARY_ISSUER_ID") (ne .Env.MACOS_NOTARY_ISSUER_ID "") }}'
+      ids:
+        - lcroom
+        - lcagent
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+        timeout: 20m
+
 checksum:
   name_template: "checksums.txt"
 
