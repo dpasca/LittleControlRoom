@@ -335,6 +335,43 @@ func (s *Service) lockProjectStateMutationContext(ctx context.Context, projectPa
 	return unlock, nil
 }
 
+func (s *Service) lockProjectStateMutationsContext(ctx context.Context, projectPaths []string) (func(), error) {
+	if s == nil {
+		return func() {}, nil
+	}
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(projectPaths))
+	for _, projectPath := range projectPaths {
+		projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+		if projectPath == "" || projectPath == "." {
+			continue
+		}
+		if _, ok := seen[projectPath]; ok {
+			continue
+		}
+		seen[projectPath] = struct{}{}
+		paths = append(paths, projectPath)
+	}
+	sort.Strings(paths)
+
+	unlocks := make([]func(), 0, len(paths))
+	for _, projectPath := range paths {
+		unlock, err := s.lockProjectStateMutationContext(ctx, projectPath)
+		if err != nil {
+			for i := len(unlocks) - 1; i >= 0; i-- {
+				unlocks[i]()
+			}
+			return nil, err
+		}
+		unlocks = append(unlocks, unlock)
+	}
+	return func() {
+		for i := len(unlocks) - 1; i >= 0; i-- {
+			unlocks[i]()
+		}
+	}, nil
+}
+
 func (s *Service) lockGitWrite(ctx context.Context, repoPath string) (func(), error) {
 	if s == nil {
 		return func() {}, nil
@@ -2993,38 +3030,87 @@ func (s *Service) TogglePin(ctx context.Context, projectPath string) error {
 }
 
 func (s *Service) ArchiveProject(ctx context.Context, projectPath string) error {
-	return s.setProjectArchived(ctx, projectPath, true, "archive_project")
+	return s.setProjectArchived(ctx, projectPath, true)
 }
 
 func (s *Service) UnarchiveProject(ctx context.Context, projectPath string) error {
-	return s.setProjectArchived(ctx, projectPath, false, "unarchive_project")
+	return s.setProjectArchived(ctx, projectPath, false)
 }
 
-func (s *Service) setProjectArchived(ctx context.Context, projectPath string, archived bool, action string) error {
-	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+func (s *Service) ArchiveProjects(ctx context.Context, projectPaths []string) error {
+	return s.setProjectsArchived(ctx, projectPaths, true)
+}
+
+func (s *Service) UnarchiveProjects(ctx context.Context, projectPaths []string) error {
+	return s.setProjectsArchived(ctx, projectPaths, false)
+}
+
+func (s *Service) setProjectArchived(ctx context.Context, projectPath string, archived bool) error {
+	return s.setProjectsArchived(ctx, []string{projectPath}, archived)
+}
+
+func (s *Service) setProjectsArchived(ctx context.Context, projectPaths []string, archived bool) error {
+	paths := cleanProjectPathList(projectPaths)
+	if len(paths) == 0 {
+		return fmt.Errorf("project path is required")
+	}
+
+	unlockProjectState, err := s.lockProjectStateMutationsContext(ctx, paths)
 	if err != nil {
 		return err
 	}
 	defer unlockProjectState()
 
-	m, err := s.store.GetProjectSummaryMap(ctx)
+	projects, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
 		return err
 	}
-	project := m[projectPath]
-	if project.Path == "" {
-		return fmt.Errorf("project not found: %s", projectPath)
+
+	changedPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		project := projects[path]
+		if project.Path == "" {
+			return fmt.Errorf("project not found: %s", path)
+		}
+		if project.Archived == archived {
+			continue
+		}
+		changedPaths = append(changedPaths, path)
 	}
-	if project.Archived == archived {
+	if len(changedPaths) == 0 {
 		return nil
 	}
-	if err := s.store.SetProjectArchived(ctx, projectPath, archived); err != nil {
+
+	if err := s.store.SetProjectsArchived(ctx, changedPaths, archived); err != nil {
 		return err
 	}
 	now := time.Now()
-	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": action}})
-	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: action})
+	action := "archive_project"
+	if !archived {
+		action = "unarchive_project"
+	}
+	for _, path := range changedPaths {
+		s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: path, Payload: map[string]string{"action": action}})
+		_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: path, Type: string(events.ActionApplied), Payload: action})
+	}
 	return nil
+}
+
+func cleanProjectPathList(projectPaths []string) []string {
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(projectPaths))
+	for _, projectPath := range projectPaths {
+		projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+		if projectPath == "" || projectPath == "." {
+			continue
+		}
+		if _, ok := seen[projectPath]; ok {
+			continue
+		}
+		seen[projectPath] = struct{}{}
+		paths = append(paths, projectPath)
+	}
+	return paths
 }
 
 func (s *Service) Snooze(ctx context.Context, projectPath string, duration time.Duration) error {

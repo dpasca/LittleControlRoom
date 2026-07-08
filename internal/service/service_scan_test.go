@@ -1789,6 +1789,67 @@ func TestArchiveProjectMovesProjectOutOfCurrentList(t *testing.T) {
 	}
 }
 
+func TestArchiveProjectsMovesBatchOutOfCurrentList(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	root := t.TempDir()
+	projectOne := filepath.Join(root, "quickgame_01")
+	projectTwo := filepath.Join(root, "quickgame_02")
+	keep := filepath.Join(root, "keep")
+	now := time.Now().UTC()
+	for _, state := range []model.ProjectState{
+		{Path: projectOne, Name: "quickgame_01", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: now},
+		{Path: projectTwo, Name: "quickgame_02", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: now},
+		{Path: keep, Name: "keep", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: now},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("seed project %s: %v", state.Path, err)
+		}
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.ArchiveProjects(ctx, []string{projectTwo, projectOne, projectTwo}); err != nil {
+		t.Fatalf("ArchiveProjects() error = %v", err)
+	}
+
+	current, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(current) error = %v", err)
+	}
+	if len(current) != 1 || current[0].Path != keep {
+		t.Fatalf("active projects = %#v, want only keep project", current)
+	}
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("ListProjects(all) error = %v", err)
+	}
+	archived := map[string]bool{}
+	for _, project := range all {
+		archived[project.Path] = project.Archived
+	}
+	if !archived[projectOne] || !archived[projectTwo] || archived[keep] {
+		t.Fatalf("archived flags = %#v", archived)
+	}
+
+	if err := svc.UnarchiveProjects(ctx, []string{projectOne, projectTwo}); err != nil {
+		t.Fatalf("UnarchiveProjects() error = %v", err)
+	}
+	current, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(current after unarchive) error = %v", err)
+	}
+	if len(current) != 3 {
+		t.Fatalf("current projects after unarchive = %#v, want 3 projects", current)
+	}
+}
+
 func TestUnarchiveProjectLeavesOutOfScopeProjectHidden(t *testing.T) {
 	t.Parallel()
 

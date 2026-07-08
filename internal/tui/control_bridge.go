@@ -1009,20 +1009,29 @@ func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.Projec
 
 	changed := 0
 	already := 0
+	paths := make([]string, 0, len(targets))
 	for _, project := range targets {
 		if project.Archived == archive {
 			already++
 			continue
 		}
+		paths = append(paths, project.Path)
+	}
+	if len(paths) > 0 {
 		var err error
 		if archive {
-			err = m.svc.ArchiveProject(m.ctx, project.Path)
+			err = m.svc.ArchiveProjects(m.ctx, paths)
 		} else {
-			err = m.svc.UnarchiveProject(m.ctx, project.Path)
+			err = m.svc.UnarchiveProjects(m.ctx, paths)
 		}
 		if err != nil {
 			m.status = "Control request failed: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
+		}
+	}
+	for _, project := range targets {
+		if project.Archived == archive {
+			continue
 		}
 		project.Archived = archive
 		m.upsertProjectSummary(project)
