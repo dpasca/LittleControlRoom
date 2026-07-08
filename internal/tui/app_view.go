@@ -873,7 +873,7 @@ func (m Model) renderProjectList(width, height int) string {
 		} else if m.archiveMode == projectArchiveCategory {
 			message = fmt.Sprintf("No projects in %s\nUse /category move to place the selected item here", m.currentProjectTabLabel())
 		} else if len(m.projectsVisibleForPrivacy(m.allProjects)) > 0 && m.visibility == visibilityAIFolders {
-			message = "No AI-linked folders\nUse /view all to switch folders"
+			message = "No AI-linked folders\nUse /non-ai-folders on to include folders without AI activity"
 		} else if len(m.projectsVisibleForPrivacy(m.archivedProjects)) > 0 {
 			message = "No Main projects\nPress a to cycle tabs"
 		} else {
@@ -1241,7 +1241,7 @@ func (m Model) renderDetailContent(width int) string {
 			return fmt.Sprintf("No project selected in %s\nPress a to cycle tabs", m.currentProjectTabLabel())
 		}
 		if len(m.projectListSourceProjects()) > 0 && m.visibility == visibilityAIFolders {
-			return "No AI-linked folder selected\nUse /view to switch folders"
+			return "No AI-linked folder selected\nUse /non-ai-folders on to include folders without AI activity"
 		}
 		return "Select a project"
 	}

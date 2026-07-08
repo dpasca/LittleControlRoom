@@ -1358,7 +1358,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "interrupt busy session") {
 		t.Fatalf("helpPanelLines() should keep the session interrupt hint: %q", joined)
 	}
-	if !strings.Contains(joined, "b  boss") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o/v  sort/view") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "ctrl+v  image") {
+	if !strings.Contains(joined, "b  boss") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o  sort") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "ctrl+v  image") {
 		t.Fatalf("helpPanelLines() should show the reordered quick actions: %q", joined)
 	}
 	if !strings.Contains(joined, "AGENT") || !strings.Contains(joined, "RUN") {

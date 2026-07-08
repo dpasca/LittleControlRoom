@@ -19,7 +19,7 @@ const (
 	KindBoss            Kind = "boss"
 	KindRefresh         Kind = "refresh"
 	KindSort            Kind = "sort"
-	KindView            Kind = "view"
+	KindNonAIFolders    Kind = "non-ai-folders"
 	KindTab             Kind = "tab"
 	KindSetup           Kind = "setup"
 	KindSettings        Kind = "settings"
@@ -82,13 +82,6 @@ const (
 	SortRecent    SortMode = "recent"
 )
 
-type ViewMode string
-
-const (
-	ViewAI  ViewMode = "ai"
-	ViewAll ViewMode = "all"
-)
-
 type ProjectTab string
 
 const (
@@ -131,7 +124,6 @@ type Suggestion = slashcmd.Suggestion
 type Invocation struct {
 	Kind           Kind
 	Sort           SortMode
-	View           ViewMode
 	Tab            ProjectTab
 	CategoryAction CategoryAction
 	CategoryName   string
@@ -156,7 +148,7 @@ var specs = []Spec{
 	{Name: "boss", Usage: "/boss [on|off|toggle]", Summary: "Open boss chat, or prompt for setup if needed"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
-	{Name: "view", Usage: "/view ai|all", Summary: "Choose AI-linked or all folders"},
+	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
 	{Name: "tab", Usage: "/tab [main|archived|toggle|category]", Summary: "Switch the Main, custom category, or Archived project-list tab"},
 	{Name: "settings", Usage: "/settings", Summary: "Edit onboarding, AI, scope, browser, and advanced settings"},
 	{Name: "skills", Usage: "/skills", Summary: "Review Codex skills and local duplicates that may be stale"},
@@ -251,14 +243,14 @@ func SuggestionsWithCategories(input string, categoryNames []string) []Suggestio
 			choice("attention", "Sort by attention score"),
 			choice("recent", "Sort by recent activity"),
 		)
-	case "view":
+	case "non-ai-folders":
 		argPrefix := ""
 		if len(fields) > 1 {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
-		return slashcmd.EnumSuggestions("/view ", argPrefix,
-			choice("ai", "Show AI-linked folders only"),
-			choice("all", "Show all discovered folders"),
+		return slashcmd.EnumSuggestions("/non-ai-folders ", argPrefix,
+			choice("on", "Include folders without AI activity"),
+			choice("off", "Hide folders without AI activity"),
 		)
 	case "tab", "tabs":
 		argPrefix := ""
@@ -456,12 +448,12 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, err
 		}
 		return Invocation{Kind: KindSort, Sort: mode, Canonical: "/sort " + string(mode)}, nil
-	case "view":
-		mode, err := parseViewMode(rawArgs)
+	case "non-ai-folders":
+		mode, err := parseNonAIFoldersMode(rawArgs)
 		if err != nil {
 			return Invocation{}, err
 		}
-		return Invocation{Kind: KindView, View: mode, Canonical: "/view " + string(mode)}, nil
+		return Invocation{Kind: KindNonAIFolders, Toggle: mode, Canonical: "/non-ai-folders " + string(mode)}, nil
 	case "tab", "tabs":
 		tab, err := parseProjectTab(rawArgs)
 		if err != nil {
@@ -797,14 +789,14 @@ func parseSortMode(raw string) (SortMode, error) {
 	}
 }
 
-func parseViewMode(raw string) (ViewMode, error) {
+func parseNonAIFoldersMode(raw string) (ToggleMode, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "ai":
-		return ViewAI, nil
-	case "all":
-		return ViewAll, nil
+	case "on":
+		return ToggleOn, nil
+	case "off":
+		return ToggleOff, nil
 	default:
-		return "", fmt.Errorf("usage: /view ai|all")
+		return "", fmt.Errorf("usage: /non-ai-folders on|off")
 	}
 }
 
