@@ -283,6 +283,32 @@ func (s *Store) SetProjectArchived(ctx context.Context, path string, archived bo
 	return err
 }
 
+func (s *Store) SetProjectsArchived(ctx context.Context, paths []string, archived bool) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	now := time.Now().Unix()
+	for _, path := range paths {
+		if _, err = tx.ExecContext(ctx, `UPDATE projects SET archived = ?, updated_at = ? WHERE path = ?`, boolToInt(archived), now, path); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *Store) MarkProjectManuallyAdded(ctx context.Context, path string, presentOnDisk bool) error {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "" || path == "." {

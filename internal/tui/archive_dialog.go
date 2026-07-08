@@ -411,17 +411,16 @@ func (m Model) archiveProjectsCmd(projects []model.ProjectSummary, selectPath st
 		if len(paths) == 0 {
 			return actionMsg{status: "No projects archived", err: fmt.Errorf("no projects selected")}
 		}
-		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		ctx, cancel := m.actionContext(tuiProjectActionTimeout)
 		defer cancel()
-		for _, path := range paths {
-			if err := m.svc.ArchiveProject(ctx, path); err != nil {
-				err = timeoutActionError(err, tuiQuickActionTimeout, "archiving projects")
-				return actionMsg{
-					projectPath: path,
-					status:      "Archive failed",
-					refresh:     invalidateProjectStructure(""),
-					err:         err,
-				}
+		if err := m.svc.ArchiveProjects(ctx, paths); err != nil {
+			err = timeoutActionError(err, tuiProjectActionTimeout, "archiving projects")
+			projectPath := paths[0]
+			return actionMsg{
+				projectPath: projectPath,
+				status:      "Archive failed",
+				refresh:     invalidateProjectStructure(""),
+				err:         err,
 			}
 		}
 		status := fmt.Sprintf("Archived %d projects", len(paths))
