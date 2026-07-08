@@ -262,17 +262,25 @@ func (s *Store) DeleteTodoWorktreeSuggestion(ctx context.Context, todoID int64) 
 }
 
 func (s *Store) ClaimNextQueuedTodoWorktreeSuggestion(ctx context.Context, debounce, staleAfter time.Duration) (model.TodoWorktreeSuggestion, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return model.TodoWorktreeSuggestion{}, err
 	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return model.TodoWorktreeSuggestion{}, err
+	}
+	committed := false
 	defer func() {
-		_ = tx.Rollback()
+		if !committed {
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
 	}()
 
 	now := time.Now()
 	if staleAfter > 0 {
-		_, err = tx.ExecContext(ctx, `
+		_, err = conn.ExecContext(ctx, `
 			UPDATE todo_worktree_suggestions
 			SET status = ?, updated_at = ?
 			WHERE status = ? AND updated_at < ?
@@ -282,7 +290,7 @@ func (s *Store) ClaimNextQueuedTodoWorktreeSuggestion(ctx context.Context, debou
 		}
 	}
 
-	row := tx.QueryRowContext(ctx, `
+	row := conn.QueryRowContext(ctx, `
 		SELECT
 			tws.todo_id, pt.project_path, pt.text, tws.status, tws.todo_text_hash, tws.branch_name,
 			tws.worktree_suffix, tws.kind, tws.reason, tws.confidence, tws.model, tws.last_error, tws.updated_at
@@ -303,7 +311,7 @@ func (s *Store) ClaimNextQueuedTodoWorktreeSuggestion(ctx context.Context, debou
 		return model.TodoWorktreeSuggestion{}, err
 	}
 
-	result, err := tx.ExecContext(ctx, `
+	result, err := conn.ExecContext(ctx, `
 		UPDATE todo_worktree_suggestions
 		SET status = ?, updated_at = ?, last_error = ''
 		WHERE todo_id = ? AND status = ? AND updated_at = ?
@@ -318,9 +326,10 @@ func (s *Store) ClaimNextQueuedTodoWorktreeSuggestion(ctx context.Context, debou
 	if rowsAffected != 1 {
 		return model.TodoWorktreeSuggestion{}, sql.ErrNoRows
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
 		return model.TodoWorktreeSuggestion{}, err
 	}
+	committed = true
 	suggestion.Status = model.TodoWorktreeSuggestionRunning
 	suggestion.UpdatedAt = now
 	return suggestion, nil
