@@ -293,11 +293,18 @@ func (s *PlaywrightMCPBrowserSession) ensureStarted(ctx context.Context) error {
 	}
 	s.mu.Unlock()
 
+	browserPath := s.browserExecutablePath()
+	preflight, err := PrepareManagedPlaywrightProfileForLaunch(s.paths, s.browserExecutablePathForCompatibilityCheck(browserPath))
+	if err != nil {
+		return err
+	}
+	s.markProfilePreflight(preflight)
+
 	args := []string{"--output-dir", s.paths.OutputDir, "--user-data-dir", s.paths.ProfileDir}
 	if s.paths.LaunchMode == ManagedLaunchModeHeadless {
 		args = append([]string{"--headless"}, args...)
 	}
-	if browserPath := s.browserExecutablePath(); browserPath != "" {
+	if browserPath != "" {
 		args = append(args, "--executable-path", browserPath)
 	} else if browser := strings.TrimSpace(s.cfg.BrowserChannel); browser != "" {
 		args = append(args, "--browser", browser)
@@ -421,6 +428,29 @@ func (s *PlaywrightMCPBrowserSession) browserExecutablePath() string {
 	return managedBrowserExecutablePathForConfig(s.cfg, s.paths.LaunchMode)
 }
 
+func (s *PlaywrightMCPBrowserSession) browserExecutablePathForCompatibilityCheck(browserPath string) string {
+	if browserPath = strings.TrimSpace(browserPath); browserPath != "" {
+		return browserPath
+	}
+	return managedBrowserExecutablePathForConfigCompatibilityCheck(s.cfg, s.paths.LaunchMode)
+}
+
+func (s *PlaywrightMCPBrowserSession) markProfilePreflight(preflight ManagedPlaywrightProfilePreflight) {
+	if preflight.ProfileBackupPath == "" && preflight.RecoveryReason() == "" {
+		return
+	}
+	_ = WithManagedPlaywrightStateLock(s.paths.DataDir, s.paths.SessionKey, func() error {
+		state, err := ReadManagedPlaywrightState(s.paths.DataDir, s.paths.SessionKey)
+		if err != nil {
+			state = ManagedPlaywrightState{SessionKey: s.paths.SessionKey, ProfileKey: s.paths.ProfileKey, Provider: s.paths.Provider, ProjectPath: s.paths.ProjectPath, LaunchMode: s.paths.LaunchMode, Policy: s.cfg.Policy}
+		}
+		state.ProfileBackupPath = preflight.ProfileBackupPath
+		state.ProfileRecoveryReason = preflight.RecoveryReason()
+		state.UpdatedAt = time.Now().UTC()
+		return WriteManagedPlaywrightState(s.paths, state)
+	})
+}
+
 func (s *PlaywrightMCPBrowserSession) markMCPStarted(pid int) {
 	_ = WithManagedPlaywrightStateLock(s.paths.DataDir, s.paths.SessionKey, func() error {
 		state, err := ReadManagedPlaywrightState(s.paths.DataDir, s.paths.SessionKey)
@@ -469,6 +499,7 @@ func (s *PlaywrightMCPBrowserSession) monitorMCP(rootPID int) {
 			if readErr != nil {
 				state = ManagedPlaywrightState{SessionKey: s.paths.SessionKey, ProfileKey: s.paths.ProfileKey, Provider: s.paths.Provider, ProjectPath: s.paths.ProjectPath, LaunchMode: s.paths.LaunchMode, Policy: s.cfg.Policy}
 			}
+			state.MCPPID = rootPID
 			state.BrowserPID = detected.PID
 			state.BrowserAppPath = detected.AppPath
 			state.BrowserAppName = detected.AppName

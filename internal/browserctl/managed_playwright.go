@@ -43,20 +43,22 @@ type ManagedPlaywrightPaths struct {
 }
 
 type ManagedPlaywrightState struct {
-	SessionKey        string            `json:"session_key"`
-	ProfileKey        string            `json:"profile_key"`
-	Provider          string            `json:"provider"`
-	ProjectPath       string            `json:"project_path"`
-	LaunchMode        ManagedLaunchMode `json:"launch_mode"`
-	Policy            Policy            `json:"policy"`
-	MCPPID            int               `json:"mcp_pid"`
-	BrowserPID        int               `json:"browser_pid"`
-	BrowserAppPath    string            `json:"browser_app_path"`
-	BrowserAppName    string            `json:"browser_app_name"`
-	BrowserExecutable string            `json:"browser_executable"`
-	Hidden            bool              `json:"hidden"`
-	RevealSupported   bool              `json:"reveal_supported"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	SessionKey            string            `json:"session_key"`
+	ProfileKey            string            `json:"profile_key"`
+	Provider              string            `json:"provider"`
+	ProjectPath           string            `json:"project_path"`
+	LaunchMode            ManagedLaunchMode `json:"launch_mode"`
+	Policy                Policy            `json:"policy"`
+	MCPPID                int               `json:"mcp_pid"`
+	BrowserPID            int               `json:"browser_pid"`
+	BrowserAppPath        string            `json:"browser_app_path"`
+	BrowserAppName        string            `json:"browser_app_name"`
+	BrowserExecutable     string            `json:"browser_executable"`
+	ProfileBackupPath     string            `json:"profile_backup_path,omitempty"`
+	ProfileRecoveryReason string            `json:"profile_recovery_reason,omitempty"`
+	Hidden                bool              `json:"hidden"`
+	RevealSupported       bool              `json:"reveal_supported"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 type ManagedBrowserProcess struct {
@@ -339,6 +341,8 @@ func (s ManagedPlaywrightState) Normalize() ManagedPlaywrightState {
 	normalized.BrowserAppPath = strings.TrimSpace(normalized.BrowserAppPath)
 	normalized.BrowserAppName = strings.TrimSpace(normalized.BrowserAppName)
 	normalized.BrowserExecutable = strings.TrimSpace(normalized.BrowserExecutable)
+	normalized.ProfileBackupPath = strings.TrimSpace(normalized.ProfileBackupPath)
+	normalized.ProfileRecoveryReason = strings.TrimSpace(normalized.ProfileRecoveryReason)
 	normalized.LaunchMode = normalized.LaunchMode.Normalize()
 	normalized.Policy = normalized.Policy.Normalize()
 	normalized.RevealSupported = normalized.BrowserPID > 0 || normalized.BrowserAppPath != "" || normalized.BrowserAppName != ""
@@ -671,7 +675,7 @@ func managedBrowserCandidate(process osProcessSnapshot) (ManagedBrowserProcess, 
 		Args:           args,
 		AppPath:        appPath,
 		AppName:        macAppName(appPath, processName),
-		ExecutablePath: strings.TrimSpace(process.Command),
+		ExecutablePath: managedBrowserExecutablePath(process, appPath),
 	}, true
 }
 
@@ -706,6 +710,61 @@ func extractMacAppPath(args string) string {
 		return ""
 	}
 	return prefix[firstSlash:]
+}
+
+func managedBrowserExecutablePath(process osProcessSnapshot, appPath string) string {
+	args := strings.TrimSpace(process.Args)
+	if executable := executablePathFromMacAppArgs(args, appPath); executable != "" {
+		return executable
+	}
+	if executable := firstProcessArg(args); executable != "" {
+		return executable
+	}
+	return strings.TrimSpace(process.Command)
+}
+
+func executablePathFromMacAppArgs(args, appPath string) string {
+	appPath = strings.TrimSpace(appPath)
+	if args == "" || appPath == "" {
+		return ""
+	}
+	contentsPrefix := appPath + "/Contents/MacOS/"
+	if !strings.HasPrefix(args, contentsPrefix) {
+		return ""
+	}
+	appExecutable := filepath.Join(appPath, "Contents", "MacOS", macAppName(appPath, ""))
+	if strings.HasPrefix(args, appExecutable) {
+		if len(args) == len(appExecutable) || args[len(appExecutable)] == ' ' {
+			return appExecutable
+		}
+	}
+	rest := strings.TrimPrefix(args, contentsPrefix)
+	if end := strings.Index(rest, " --"); end >= 0 {
+		rest = rest[:end]
+	}
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return ""
+	}
+	return contentsPrefix + rest
+}
+
+func firstProcessArg(args string) string {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return ""
+	}
+	if strings.HasPrefix(args, `"`) {
+		rest := strings.TrimPrefix(args, `"`)
+		if end := strings.Index(rest, `"`); end >= 0 {
+			return strings.TrimSpace(rest[:end])
+		}
+	}
+	fields := strings.Fields(args)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
 }
 
 func macAppName(appPath, fallback string) string {

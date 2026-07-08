@@ -35,6 +35,16 @@ func ManagedBrowserExecutablePathForLaunchMode(launchMode ManagedLaunchMode) str
 	return ""
 }
 
+func ManagedBrowserExecutablePathForCompatibilityCheck(launchMode ManagedLaunchMode) string {
+	if path := strings.TrimSpace(os.Getenv(playwrightBrowserExecutableEnv)); path != "" {
+		return path
+	}
+	if launchMode.Normalize() == ManagedLaunchModeHeadless {
+		return installedPlaywrightChromiumExecutable()
+	}
+	return ManagedBrowserExecutablePathForLaunchMode(launchMode)
+}
+
 func managedBrowserExecutablePathForConfig(cfg BrowserSessionConfig, launchMode ManagedLaunchMode) string {
 	if path := strings.TrimSpace(os.Getenv(playwrightBrowserExecutableEnv)); path != "" {
 		return path
@@ -54,6 +64,22 @@ func managedBrowserExecutablePathForConfig(cfg BrowserSessionConfig, launchMode 
 		}
 	}
 	return ""
+}
+
+func managedBrowserExecutablePathForConfigCompatibilityCheck(cfg BrowserSessionConfig, launchMode ManagedLaunchMode) string {
+	if path := strings.TrimSpace(os.Getenv(playwrightBrowserExecutableEnv)); path != "" {
+		return path
+	}
+	if path := strings.TrimSpace(cfg.BrowserPath); path != "" {
+		return path
+	}
+	if strings.TrimSpace(cfg.BrowserChannel) != "" {
+		return ""
+	}
+	if launchMode.Normalize() == ManagedLaunchModeHeadless {
+		return installedPlaywrightChromiumExecutable()
+	}
+	return managedBrowserExecutablePathForConfig(cfg, launchMode)
 }
 
 func installedPlaywrightChromiumExecutable() string {

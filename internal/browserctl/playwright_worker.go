@@ -188,11 +188,18 @@ func (s *PlaywrightBrowserSession) ensureStarted(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	browserChannel := s.browserChannel()
+	preflight, err := PrepareManagedPlaywrightProfileForLaunch(s.paths, s.browserExecutablePathForCompatibilityCheck(browserChannel))
+	if err != nil {
+		return err
+	}
+	s.markProfilePreflight(preflight)
+
 	config := map[string]any{
 		"profileDir":     s.paths.ProfileDir,
 		"outputDir":      s.paths.OutputDir,
 		"launchMode":     string(s.paths.LaunchMode),
-		"browserChannel": s.browserChannel(),
+		"browserChannel": browserChannel,
 	}
 	configRaw, err := json.Marshal(config)
 	if err != nil {
@@ -248,6 +255,16 @@ func (s *PlaywrightBrowserSession) browserChannel() string {
 	default:
 		return ""
 	}
+}
+
+func (s *PlaywrightBrowserSession) browserExecutablePathForCompatibilityCheck(browserChannel string) string {
+	if strings.TrimSpace(browserChannel) != "" {
+		return ""
+	}
+	if s.paths.LaunchMode.Normalize() == ManagedLaunchModeHeadless {
+		return installedPlaywrightChromiumExecutable()
+	}
+	return ""
 }
 
 func appendBrowserWorkerEnv(base []string, configRaw, projectPath string) []string {
@@ -346,6 +363,22 @@ func (s *PlaywrightBrowserSession) markWorkerStarted(pid int) {
 			state = ManagedPlaywrightState{SessionKey: s.paths.SessionKey, ProfileKey: s.paths.ProfileKey, Provider: s.paths.Provider, ProjectPath: s.paths.ProjectPath, LaunchMode: s.paths.LaunchMode, Policy: s.cfg.Policy}
 		}
 		state.MCPPID = pid
+		state.UpdatedAt = time.Now().UTC()
+		return WriteManagedPlaywrightState(s.paths, state)
+	})
+}
+
+func (s *PlaywrightBrowserSession) markProfilePreflight(preflight ManagedPlaywrightProfilePreflight) {
+	if preflight.ProfileBackupPath == "" && preflight.RecoveryReason() == "" {
+		return
+	}
+	_ = WithManagedPlaywrightStateLock(s.paths.DataDir, s.paths.SessionKey, func() error {
+		state, err := ReadManagedPlaywrightState(s.paths.DataDir, s.paths.SessionKey)
+		if err != nil {
+			state = ManagedPlaywrightState{SessionKey: s.paths.SessionKey, ProfileKey: s.paths.ProfileKey, Provider: s.paths.Provider, ProjectPath: s.paths.ProjectPath, LaunchMode: s.paths.LaunchMode, Policy: s.cfg.Policy}
+		}
+		state.ProfileBackupPath = preflight.ProfileBackupPath
+		state.ProfileRecoveryReason = preflight.RecoveryReason()
 		state.UpdatedAt = time.Now().UTC()
 		return WriteManagedPlaywrightState(s.paths, state)
 	})

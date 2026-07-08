@@ -64,6 +64,26 @@ func TestManagedBrowserCandidateRecognizesChromeAppProcess(t *testing.T) {
 	if !strings.Contains(candidate.AppPath, "Google Chrome.app") {
 		t.Fatalf("candidate AppPath = %q, want Google Chrome.app", candidate.AppPath)
 	}
+	if candidate.ExecutablePath != "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" {
+		t.Fatalf("candidate ExecutablePath = %q, want full Chrome executable", candidate.ExecutablePath)
+	}
+}
+
+func TestManagedBrowserCandidateUsesFullExecutableFromArgsWhenCommandIsTruncated(t *testing.T) {
+	process := osProcessSnapshot{
+		PID:     123,
+		PPID:    45,
+		Command: "/Users/davide/Li",
+		Args:    "/Users/davide/Library/Caches/ms-playwright/chromium-1194/chrome-mac/Chromium.app/Contents/MacOS/Chromium --remote-debugging-port=52942 about:blank",
+	}
+	candidate, ok := managedBrowserCandidate(process)
+	if !ok {
+		t.Fatalf("managedBrowserCandidate() = not ok, want ok")
+	}
+	want := "/Users/davide/Library/Caches/ms-playwright/chromium-1194/chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+	if candidate.ExecutablePath != want {
+		t.Fatalf("candidate ExecutablePath = %q, want %q", candidate.ExecutablePath, want)
+	}
 }
 
 func TestRevealManagedPlaywrightSessionMarksRevealedBeforeOSReveal(t *testing.T) {

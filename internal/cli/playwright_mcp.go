@@ -55,21 +55,36 @@ func runPlaywrightMCP(args []string) int {
 		return 1
 	}
 
+	browserExecutable := browserctl.ManagedBrowserExecutablePathForLaunchMode(opts.launchMode)
+	preflight, err := browserctl.PrepareManagedPlaywrightProfileForLaunch(
+		paths,
+		browserctl.ManagedBrowserExecutablePathForCompatibilityCheck(opts.launchMode),
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "playwright-mcp profile preflight failed: %v\n", err)
+		return 1
+	}
+	if preflight.ProfileBackupPath != "" {
+		fmt.Fprintf(os.Stderr, "playwright-mcp %s; backup=%s\n", preflight.RecoveryReason(), preflight.ProfileBackupPath)
+	}
+
 	state := browserctl.ManagedPlaywrightState{
-		SessionKey:  opts.sessionKey,
-		ProfileKey:  opts.profileKey,
-		Provider:    opts.provider,
-		ProjectPath: opts.projectPath,
-		LaunchMode:  opts.launchMode,
-		Policy:      browserctl.PolicyFromEnv(),
-		UpdatedAt:   time.Now().UTC(),
+		SessionKey:            paths.SessionKey,
+		ProfileKey:            paths.ProfileKey,
+		Provider:              paths.Provider,
+		ProjectPath:           paths.ProjectPath,
+		LaunchMode:            paths.LaunchMode,
+		Policy:                browserctl.PolicyFromEnv(),
+		ProfileBackupPath:     preflight.ProfileBackupPath,
+		ProfileRecoveryReason: preflight.RecoveryReason(),
+		UpdatedAt:             time.Now().UTC(),
 	}
 	if err := writeManagedPlaywrightState(paths, state); err != nil {
 		fmt.Fprintf(os.Stderr, "playwright-mcp state init failed: %v\n", err)
 		return 1
 	}
 
-	childArgs := playwrightMCPChildArgs(paths, opts.launchMode)
+	childArgs := playwrightMCPChildArgsWithExecutable(paths, opts.launchMode, browserExecutable)
 
 	cmd := exec.Command("mcp-server-playwright", childArgs...)
 	cmd.Stdin = os.Stdin
@@ -111,6 +126,10 @@ func runPlaywrightMCP(args []string) int {
 }
 
 func playwrightMCPChildArgs(paths browserctl.ManagedPlaywrightPaths, launchMode browserctl.ManagedLaunchMode) []string {
+	return playwrightMCPChildArgsWithExecutable(paths, launchMode, browserctl.ManagedBrowserExecutablePathForLaunchMode(launchMode))
+}
+
+func playwrightMCPChildArgsWithExecutable(paths browserctl.ManagedPlaywrightPaths, launchMode browserctl.ManagedLaunchMode, browserPath string) []string {
 	args := []string{
 		"--output-dir", paths.OutputDir,
 		"--user-data-dir", paths.ProfileDir,
@@ -118,7 +137,7 @@ func playwrightMCPChildArgs(paths browserctl.ManagedPlaywrightPaths, launchMode 
 	if launchMode.Normalize() == browserctl.ManagedLaunchModeHeadless {
 		args = append([]string{"--headless"}, args...)
 	}
-	if browserPath := browserctl.ManagedBrowserExecutablePathForLaunchMode(launchMode); browserPath != "" {
+	if browserPath = strings.TrimSpace(browserPath); browserPath != "" {
 		args = append(args, "--executable-path", browserPath)
 	}
 	return args
@@ -218,6 +237,7 @@ func reconcileManagedPlaywrightBrowser(paths browserctl.ManagedPlaywrightPaths, 
 				state.Hidden = true
 			}
 		}
+		state.MCPPID = rootPID
 		state.BrowserPID = detected.PID
 		state.BrowserAppPath = detected.AppPath
 		state.BrowserAppName = detected.AppName
