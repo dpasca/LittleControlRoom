@@ -926,9 +926,9 @@ func (m Model) renderCommandSuggestionRow(s commands.Suggestion, selected bool, 
 	return commandPaletteRowStyle.Width(width).Render(row)
 }
 
-func commandVisibilityMode(mode commands.ViewMode) projectVisibilityMode {
+func commandNonAIFoldersVisibilityMode(mode commands.ToggleMode) projectVisibilityMode {
 	switch mode {
-	case commands.ViewAll:
+	case commands.ToggleOn:
 		return visibilityAllFolders
 	default:
 		return visibilityAIFolders
@@ -1370,7 +1370,7 @@ func helpPanelLines() []string {
 			renderDialogAction("a", "cycle tab", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("b", "boss", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("o/v", "sort/view", navigateActionKeyStyle, navigateActionTextStyle),
+			renderDialogAction("o", "sort", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
 			renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
 		),

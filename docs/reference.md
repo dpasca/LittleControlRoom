@@ -278,8 +278,8 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/refresh`
 - `/sort attention`
 - `/sort recent`
-- `/view ai`
-- `/view all`
+- `/non-ai-folders on`
+- `/non-ai-folders off`
 - `/tab`
 - `/tab active`
 - `/tab archived`

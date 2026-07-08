@@ -125,9 +125,9 @@ func TestCommandEnterUsesHighlightedSuggestionOverValidPrefix(t *testing.T) {
 	}
 }
 
-func TestCommandEnterViewAllChangesVisibility(t *testing.T) {
+func TestCommandEnterNonAIFoldersOnChangesVisibility(t *testing.T) {
 	input := textinput.New()
-	input.SetValue("/view all")
+	input.SetValue("/non-ai-folders on")
 
 	m := Model{
 		allProjects: []model.ProjectSummary{

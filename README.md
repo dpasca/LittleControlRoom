@@ -131,18 +131,25 @@ The check covers plain summary text, LCR session-assessment JSON, advice-follow-
 
 The main TUI command palette opens with `/`.
 
-- `/help`: Open the help panel.
-- `/refresh`: Rescan projects and retry failed assessments.
-- `/sort <attention|recent>`: Change the project ordering.
-- `/view <ai|all>`: Switch between AI-linked and all tracked folders.
-- `/tab [active|archived|toggle]`: Switch the project list between Active and Archived tabs.
-- `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
-- `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Browser, and Advanced.
-- `/filter [text|clear]`: Temporarily narrow the whole dashboard to matching project names.
+Main workflow:
+
+- `/help` (`?`): Open the help panel.
+- `/filter [text|clear]` (`f`): Temporarily narrow the whole dashboard to matching project names.
+- `/todo` (`t`): Open the TODO list for the selected project. Add items, toggle done, and start a fresh embedded session from any item.
+- `/open`: Open the selected project's folder in the system browser.
 - `/new-project [--assistant codex|opencode|claude|lcagent]`: Create a project folder, or use path suggestions/paste an existing project path to add it directly. The dialog also lets you choose which assistant `Enter` should open first for the new item, defaulting to the last embedded provider you used when available.
 - `/new-task [--assistant codex|opencode|claude|lcagent] [request]`: Create a scratch task folder under the default task root. Optional request text seeds the temporary task name, and the assistant flag preselects the first embedded provider for `Enter`; without a flag, the task picker defaults to the last embedded provider you used when available.
-- `/task-actions`: Open archive/delete actions for the selected scratch task.
-- `/open`: Open the selected project's folder in the system browser.
+- `/codex [prompt]`, `/opencode [prompt]`, `/claude [prompt]`, `/lcagent [prompt]`: Resume the latest session for that provider, or start one.
+- `/codex-new [prompt]`, `/opencode-new [prompt]`, `/claude-new [prompt]`, `/lcagent-new [prompt]`: Start a fresh embedded session.
+- `/refresh`: Rescan projects and retry failed assessments.
+
+Repo and runtime actions:
+
+- `/diff`: Open the full-screen git diff.
+- `/commit [message]`: Preview a commit for the selected project.
+- `/push`: Push the selected project's branch.
+- `/pull`: Pull the selected project's branch.
+- `/resolve`: Start a fresh engineer session to resolve selected repo merge conflicts.
 - `/run [command]`: Start the selected project's managed runtime.
 - `/start [command]`: Alias for `/run`.
 - `/restart`: Restart the selected project's managed runtime.
@@ -150,32 +157,27 @@ The main TUI command palette opens with `/`.
 - `/runtime`: Focus the runtime pane.
 - `/ports`: Inspect project-local TCP listeners and confirm-stop external ones.
 - `/stop`: Stop the selected project's managed runtime.
-- `/todo`: Open the TODO list for the selected project. Add items, toggle done, and start a fresh embedded session from any item.
-- `/diff`: Open the full-screen git diff.
-- `/commit [message]`: Preview a commit for the selected project.
-- `/push`: Push the selected project's branch.
-- `/pull`: Pull the selected project's branch.
-- `/resolve`: Start a fresh engineer session to resolve selected repo merge conflicts.
-- `/codex [prompt]`: Resume the latest Codex session or start one.
-- `/codex-new [prompt]`: Start a fresh Codex session.
-- `/claude [prompt]`: Resume the latest Claude Code session or start one.
-- `/claude-new [prompt]`: Start a fresh Claude Code session.
-- `/opencode [prompt]`: Resume the latest OpenCode session or start one.
-- `/opencode-new [prompt]`: Start a fresh OpenCode session.
-- `/lcagent [prompt]`: Resume the latest experimental LCAgent session or start one.
-- `/lcagent-new [prompt]`: Start a fresh experimental LCAgent session.
-- `/pin`: Toggle pin on the selected project.
+
+Organization, display, and cleanup:
+
+- `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
+- `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Browser, and Advanced.
+- `/sort <attention|recent>` (`o`): Change the project ordering.
+- `/tab [active|archived|toggle]` (`a`): Switch the project list between Active and Archived tabs.
+- `/non-ai-folders <on|off>`: Show or hide folders that have no AI activity yet.
+- `/focus <list|detail|runtime>`: Move focus between panes.
+- `/pin` (`p`): Toggle pin on the selected project.
 - `/read [all]`: Mark the selected project, or all visible projects, as read.
 - `/unread`: Mark the selected project's latest completed assessment as unread.
 - `/snooze [duration|off]`: Snooze the selected project, or clear snooze with `off`.
 - `/unsnooze` (alias: `/clear-snooze`): Clear the selected project's snooze.
 - `/sessions <on|off|toggle>`: Show or hide the Sessions section.
 - `/events <on|off|toggle>`: Show or hide Recent events.
-- `/focus <list|detail|runtime>`: Move focus between panes.
-- `/ignore`: Hide the selected project's exact name.
-- `/ignored`: Review ignored names and paths, then restore them.
+- `/task-actions`: Open archive/delete actions for the selected scratch task.
 - `/archive`: Move the selected regular project to the Archived tab, or archive the selected scratch task out of the active task list.
 - `/unarchive`: Move the selected archived project back to Active when it is in scope.
+- `/ignore`: Hide the selected project's exact name.
+- `/ignored`: Review ignored names and paths, then restore them.
 - `/remove`: Confirm, then make the selected item go away safely. For regular projects, hides only the selected path. Aliases: `/delete`, `/forget`.
 - `/quit`: Quit the TUI.
 

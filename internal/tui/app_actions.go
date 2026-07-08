@@ -449,8 +449,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		)
 	case commands.KindSort:
 		return m, m.setSortMode(projectSortMode(inv.Sort))
-	case commands.KindView:
-		return m, m.setVisibilityMode(commandVisibilityMode(inv.View))
+	case commands.KindNonAIFolders:
+		return m, m.setVisibilityMode(commandNonAIFoldersVisibilityMode(inv.Toggle))
 	case commands.KindTab:
 		switch inv.Tab {
 		case commands.ProjectTabMain:

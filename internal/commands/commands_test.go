@@ -132,11 +132,17 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name: "view all",
-			raw:  "/view all",
+			name: "non ai folders on",
+			raw:  "/non-ai-folders on",
 			check: func(t *testing.T, inv Invocation) {
-				if inv.View != ViewAll {
-					t.Fatalf("view = %s, want %s", inv.View, ViewAll)
+				if inv.Kind != KindNonAIFolders {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindNonAIFolders)
+				}
+				if inv.Toggle != ToggleOn {
+					t.Fatalf("toggle = %s, want %s", inv.Toggle, ToggleOn)
+				}
+				if inv.Canonical != "/non-ai-folders on" {
+					t.Fatalf("canonical = %q, want /non-ai-folders on", inv.Canonical)
 				}
 			},
 		},
@@ -945,6 +951,12 @@ func TestParseRejectsRemovedPIDCommand(t *testing.T) {
 		if _, err := Parse(raw); err == nil {
 			t.Fatalf("Parse(%q) expected error after replacing process aliases with /cpu", raw)
 		}
+	}
+}
+
+func TestParseRejectsRemovedViewCommand(t *testing.T) {
+	if _, err := Parse("/view all"); err == nil {
+		t.Fatalf("Parse(/view all) expected error after replacing it with /non-ai-folders")
 	}
 }
 
