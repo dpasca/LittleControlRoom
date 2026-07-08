@@ -53,7 +53,7 @@ To install the latest release from GitHub Releases:
 curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | bash
 ```
 
-The install script verifies the release SHA256 checksum before installing. On macOS, it also requires the downloaded `lcroom` and `lcagent` binaries to pass Apple code-signing and Gatekeeper assessment.
+The install script verifies the release SHA256 checksum before installing. On macOS, it also requires the downloaded `lcroom` and `lcagent` binaries to have strict Developer ID signatures from the expected Apple Developer Team.
 
 | Platform | Release asset |
 | --- | --- |
@@ -71,7 +71,7 @@ tar -xzf lcroom.tar.gz
 
 Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider. Move both binaries to a directory on your `PATH` if you want to run `lcroom` from anywhere.
 
-macOS release binaries are signed and notarized by the release workflow. A tagged release must have the Apple Developer credentials configured; otherwise the release fails instead of publishing unsigned macOS artifacts. Required GitHub secrets:
+macOS release binaries are signed and notarized by the release workflow. A tagged release must have the Apple Developer credentials configured; otherwise the release fails instead of publishing unsigned macOS artifacts. The installer verifies the published signatures locally; notarization acceptance is enforced during the GitHub release job. Required GitHub secrets:
 
 - `MACOS_SIGN_P12`: base64 contents of a Developer ID Application `.p12` certificate, or a path when running GoReleaser locally
 - `MACOS_SIGN_PASSWORD`: password for the `.p12`

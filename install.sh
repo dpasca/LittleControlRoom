@@ -30,20 +30,16 @@ verify_macos_binary() {
   local bin="$1"
   local name
   local details
-  local assessment
 
   name="$(basename "$bin")"
   codesign --verify --strict --verbose=2 "$bin" >/dev/null 2>&1 ||
     fail "${name} is not a valid strict macOS code-signed binary"
 
-  details="$(codesign -dv "$bin" 2>&1)"
+  details="$(codesign -dv --verbose=4 "$bin" 2>&1)"
   printf '%s\n' "$details" | grep -Fq "TeamIdentifier=${EXPECTED_MACOS_TEAM_ID}" ||
     fail "${name} is not signed by the expected Apple Developer Team ID ${EXPECTED_MACOS_TEAM_ID}"
   printf '%s\n' "$details" | grep -Fq "Authority=${EXPECTED_MACOS_AUTHORITY}" ||
     fail "${name} is not signed by ${EXPECTED_MACOS_AUTHORITY}"
-
-  assessment="$(spctl --assess --type execute --verbose=4 "$bin" 2>&1)" ||
-    fail "${name} failed macOS Gatekeeper assessment: ${assessment}"
 }
 
 need_cmd curl
@@ -60,7 +56,6 @@ case "$os" in
     need_cmd unzip
     need_cmd shasum
     need_cmd codesign
-    need_cmd spctl
     ;;
   Linux)
     os_name="Linux"
@@ -139,7 +134,7 @@ done
 if [[ "$os_name" == "Darwin" ]]; then
   verify_macos_binary "${unpack_dir}/lcroom"
   verify_macos_binary "${unpack_dir}/lcagent"
-  say "Verified macOS code signatures and Gatekeeper assessment"
+  say "Verified macOS Developer ID code signatures"
 fi
 
 mkdir -p "$INSTALL_DIR" || fail "could not create install directory: ${INSTALL_DIR}"
