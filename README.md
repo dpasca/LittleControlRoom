@@ -47,10 +47,18 @@ Prebuilt release archives are currently the intended install path for macOS and 
 
 Download the archive for your platform from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases), or use the source build below if no release asset is available yet.
 
+To install the latest release from GitHub Releases:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | bash
+```
+
+The install script verifies the release SHA256 checksum before installing. On macOS, it also requires the downloaded `lcroom` and `lcagent` binaries to pass Apple code-signing and Gatekeeper assessment.
+
 | Platform | Release asset |
 | --- | --- |
-| macOS Apple Silicon | `lcroom_Darwin_arm64.tar.gz` |
-| macOS Intel | `lcroom_Darwin_x86_64.tar.gz` |
+| macOS Apple Silicon | `lcroom_Darwin_arm64.zip` |
+| macOS Intel | `lcroom_Darwin_x86_64.zip` |
 | Linux ARM64 | `lcroom_Linux_arm64.tar.gz` |
 | Linux x86_64 | `lcroom_Linux_x86_64.tar.gz` |
 
@@ -63,7 +71,7 @@ tar -xzf lcroom.tar.gz
 
 Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider. Move both binaries to a directory on your `PATH` if you want to run `lcroom` from anywhere.
 
-macOS release binaries are signed and notarized when the release workflow has the Apple Developer credentials configured. Required GitHub secrets:
+macOS release binaries are signed and notarized by the release workflow. A tagged release must have the Apple Developer credentials configured; otherwise the release fails instead of publishing unsigned macOS artifacts. Required GitHub secrets:
 
 - `MACOS_SIGN_P12`: base64 contents of a Developer ID Application `.p12` certificate, or a path when running GoReleaser locally
 - `MACOS_SIGN_PASSWORD`: password for the `.p12`
@@ -71,19 +79,13 @@ macOS release binaries are signed and notarized when the release workflow has th
 - `MACOS_NOTARY_KEY_ID`: App Store Connect API key ID
 - `MACOS_NOTARY_ISSUER_ID`: App Store Connect issuer UUID
 
-For local macOS releases from a machine that already has the Developer ID certificates and Apple notary credentials in `pass`, run:
+For local archive smoke checks, run:
 
 ```bash
 make release-snapshot
-make release-macos-pkgs
 ```
 
-That creates stapled macOS installer packages alongside the archives:
-
-| Platform | Installer asset |
-| --- | --- |
-| macOS Apple Silicon | `lcroom_Darwin_arm64.pkg` |
-| macOS Intel | `lcroom_Darwin_x86_64.pkg` |
+Snapshot archives under `dist/` are for local verification only, not public distribution.
 
 ### Build from source
 

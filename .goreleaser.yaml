@@ -40,6 +40,10 @@ archives:
     ids:
       - lcroom
       - lcagent
+    format_overrides:
+      - goos: darwin
+        formats:
+          - zip
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -50,7 +54,7 @@ archives:
 
 notarize:
   macos:
-    - enabled: '{{ and (isEnvSet "MACOS_SIGN_P12") (ne .Env.MACOS_SIGN_P12 "") (isEnvSet "MACOS_SIGN_PASSWORD") (ne .Env.MACOS_SIGN_PASSWORD "") (isEnvSet "MACOS_NOTARY_KEY") (ne .Env.MACOS_NOTARY_KEY "") (isEnvSet "MACOS_NOTARY_KEY_ID") (ne .Env.MACOS_NOTARY_KEY_ID "") (isEnvSet "MACOS_NOTARY_ISSUER_ID") (ne .Env.MACOS_NOTARY_ISSUER_ID "") }}'
+    - enabled: true
       ids:
         - lcroom
         - lcagent
