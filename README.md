@@ -28,40 +28,17 @@ It is also used internally, but this is not a commercial product. It is an opini
 
 ## Quick Start
 
-Requirements:
-
-- Codex installed locally, capable of running in the terminal.
-- OpenCode installed locally if you want embedded OpenCode sessions.
-- Claude Code installed locally if you want embedded Claude Code sessions.
-- At least one AI backend configured: Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
-- Go 1.25+ only if building from source.
-
-### Install on macOS or Linux
-
-The recommended install path is the GitHub release archive:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | bash
 lcroom tui
 ```
 
-The script installs `lcroom` and `lcagent` to `~/.local/bin` by default. It verifies the release SHA256 checksum before installing, and on macOS it also verifies strict Developer ID signatures from the expected Apple Developer Team.
+On first run, LCR opens `/setup` so you can pick a backend: Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key.
 
-To choose a different writable install directory:
+The installer puts `lcroom` and `lcagent` in `~/.local/bin` and prints a PATH hint when needed.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | LCR_INSTALL_DIR="$HOME/bin" bash
-```
-
-To pin a specific version:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | LCR_VERSION=v0.2.14 bash
-```
-
-Little Control Room is not published through Homebrew, apt, Snap, Flatpak, Nix, or other package managers yet.
-
-### Manual Archive Install
+<details>
+<summary>Manual download</summary>
 
 You can also download an archive directly from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases):
 
@@ -81,7 +58,14 @@ tar -xzf lcroom.tar.gz
 
 Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider. Move both binaries to a directory on your `PATH` if you want to run `lcroom` from anywhere.
 
-### Build from source
+Little Control Room is not published through Homebrew, apt, Snap, Flatpak, Nix, or other package managers yet.
+
+</details>
+
+<details>
+<summary>Build from source</summary>
+
+Requires Go 1.25+.
 
 ```bash
 make build
@@ -102,7 +86,7 @@ make install
 lcroom tui
 ```
 
-On the first run, LCR opens `/setup` if no AI backend is configured. `/setup` is the Getting Started view inside `/settings`: choose the backend for project reports, choose whether boss chat should use a separate realtime backend, then press Enter on a row to drill into only the fields that path needs. Shared connection fields, such as OpenAI API, MLX, or Ollama, appear inside those focused setup panels when selected. `/settings` keeps Providers & Models minimal as a connection/status inventory plus global model-display defaults. Claude-backed background inference currently defaults to Haiku to keep usage lighter. MLX and Ollama use their OpenAI-compatible local endpoints, with defaults of `http://127.0.0.1:8080/v1` for MLX and `http://127.0.0.1:11434/v1` for Ollama.
+</details>
 
 <p align="center">
   <a href="docs/screenshots/setup.png">
