@@ -26,34 +26,44 @@ It is also used internally, but this is not a commercial product. It is an opini
 - Reopening Claude Code sessions that are already running in another terminal
 - Keeping common actions close at hand: refresh, pin, snooze, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
 
-## What It Does Not Do Yet
-
-- Many Codex slash-commands are missing.
-- Embedded Claude Code support is now available through Claude's headless CLI flow, but it is still an MVP: it now has a usable model picker with saved preferences, while approval parity, compact, and attachments are not fully wired yet.
-
 ## Quick Start
 
 Requirements:
 
-- Go 1.25+ (only if building from source)
 - Codex installed locally, capable of running in the terminal.
 - OpenCode installed locally if you want embedded OpenCode sessions.
 - Claude Code installed locally if you want embedded Claude Code sessions.
 - At least one AI backend configured: Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
+- Go 1.25+ only if building from source.
 
-### Prebuilt binaries
+### Install on macOS or Linux
 
-Prebuilt release archives are currently the intended install path for macOS and Linux. Little Control Room is not published through Homebrew, apt, Snap, Flatpak, Nix, or other package managers yet.
-
-Download the archive for your platform from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases), or use the source build below if no release asset is available yet.
-
-To install the latest release from GitHub Releases:
+The recommended install path is the GitHub release archive:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | bash
+lcroom tui
 ```
 
-The install script verifies the release SHA256 checksum before installing. On macOS, it also requires the downloaded `lcroom` and `lcagent` binaries to have strict Developer ID signatures from the expected Apple Developer Team.
+The script installs `lcroom` and `lcagent` to `~/.local/bin` by default. It verifies the release SHA256 checksum before installing, and on macOS it also verifies strict Developer ID signatures from the expected Apple Developer Team.
+
+To choose a different writable install directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | LCR_INSTALL_DIR="$HOME/bin" bash
+```
+
+To pin a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dpasca/LittleControlRoom/master/install.sh | LCR_VERSION=v0.2.14 bash
+```
+
+Little Control Room is not published through Homebrew, apt, Snap, Flatpak, Nix, or other package managers yet.
+
+### Manual Archive Install
+
+You can also download an archive directly from the [Releases page](https://github.com/dpasca/LittleControlRoom/releases):
 
 | Platform | Release asset |
 | --- | --- |
@@ -70,22 +80,6 @@ tar -xzf lcroom.tar.gz
 ```
 
 Release archives include `lcroom` and the sibling `lcagent` helper binary used by the experimental embedded LCAgent provider. Move both binaries to a directory on your `PATH` if you want to run `lcroom` from anywhere.
-
-macOS release binaries are signed and notarized by the release workflow. A tagged release must have the Apple Developer credentials configured; otherwise the release fails instead of publishing unsigned macOS artifacts. The installer verifies the published signatures locally; notarization acceptance is enforced during the GitHub release job. Required GitHub secrets:
-
-- `MACOS_SIGN_P12`: base64 contents of a Developer ID Application `.p12` certificate, or a path when running GoReleaser locally
-- `MACOS_SIGN_PASSWORD`: password for the `.p12`
-- `MACOS_NOTARY_KEY`: base64 contents of the App Store Connect API `.p8` key, or a path when running locally
-- `MACOS_NOTARY_KEY_ID`: App Store Connect API key ID
-- `MACOS_NOTARY_ISSUER_ID`: App Store Connect issuer UUID
-
-For local archive smoke checks, run:
-
-```bash
-make release-snapshot
-```
-
-Snapshot archives under `dist/` are for local verification only, not public distribution.
 
 ### Build from source
 
@@ -123,6 +117,7 @@ LCR separates embedded session providers from the backend used for background wo
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
 - Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
 - Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
+- Claude Code usage follows the local `claude` CLI authentication mode. Current Anthropic docs say Pro/Max plan terminal usage counts against plan limits when Claude Code is authenticated with Claude credentials, while `ANTHROPIC_API_KEY` or explicit usage-credit continuation can bill separately at API rates.
 - MLX uses its OpenAI-compatible local endpoint. Ollama discovery still uses its OpenAI-compatible model list, while background generation uses Ollama's native generate endpoint so thinking models can return usable JSON/text with thinking disabled.
 - Ollama thinking stays off by default for background automation and structured helper calls. When Boss chat uses Ollama, native `think: true` is on by default for Boss answer text only; its setup panel includes a Boss Ollama thinking toggle if you want final-content-only responses.
 
@@ -207,6 +202,8 @@ Organization, display, and cleanup:
 
 Inside the embedded Codex, Claude Code, or OpenCode pane:
 
+Embedded providers expose LCR's local command subset, not every slash command from the native Codex, Claude Code, or OpenCode CLIs. Use the standalone provider CLI when you need a provider-native command that LCR has not wired into the pane yet.
+
 - `/new`: Start a fresh session for the current provider.
 - `/sessions [session-id]`: Open this project's session-history picker or jump to a saved session.
 - `/resume [session-id]` and `/session [session-id]`: Aliases for `/sessions`.
@@ -242,7 +239,7 @@ Most day-to-day use falls into a few buckets:
 
   [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
 
-- **Resume agent work** — Use `/codex`, `/claude`, `/opencode`, or experimental `/lcagent` to pick up where you left off, and `/codex-new`, `/claude-new`, `/opencode-new`, or `/lcagent-new` when you want a fresh session. Inside the embedded pane, `/sessions`, `/resume`, `/session`, and `/reconnect` handle project-local session history or reattaching the helper. LCAgent also supports `/permissions` to explain Off/Low/Medium and `/permissions medium` or `/permissions low` to change the current session's next-turn autonomy. Claude Code support currently uses a headless CLI MVP, so approvals and attachments are still less complete than Codex/OpenCode, even though `/model` now offers saved Claude aliases and reasoning levels. LCAgent is a one-shot LCR-native worker with provider-backed tool calls and structured local JSONL artifacts.
+- **Resume agent work** — Use `/codex`, `/claude`, `/opencode`, or experimental `/lcagent` to pick up where you left off, and `/codex-new`, `/claude-new`, `/opencode-new`, or `/lcagent-new` when you want a fresh session. Inside the embedded pane, `/sessions`, `/resume`, `/session`, and `/reconnect` handle project-local session history or reattaching the helper. LCAgent also supports `/permissions` to explain Off/Low/Medium and `/permissions medium` or `/permissions low` to change the current session's next-turn autonomy. Embedded providers do not mirror every native provider slash command; the pane exposes the LCR commands above plus each provider's wired capabilities. LCAgent is a one-shot LCR-native worker with provider-backed tool calls and structured local JSONL artifacts.
 
   [![Embedded Codex conversation](docs/screenshots/codex-embedded.png)](docs/screenshots/codex-embedded.png)
 
@@ -265,13 +262,35 @@ For the full command list and detailed behavior, see [`docs/reference.md`](docs/
 
 ## Costs
 
-If Codex, OpenCode, Claude Code, MLX, or Ollama is available, LCR can use that local provider path for summaries, classification, commit help, and other background inference. On a flat-rate plan, or when you are running local inference, that usually means no extra LCR API cost from LCR itself. Claude-backed background inference currently defaults to Haiku to keep usage lighter.
+If Codex, OpenCode, Claude Code, MLX, or Ollama is available, LCR can use that local provider path for summaries, classification, commit help, and other background inference. MLX and Ollama run locally, so they do not create external API charges. Codex, OpenCode, and Claude Code follow whatever plan, key, or provider billing mode their own CLIs are using.
+
+Claude Code is the subtle one. LCR invokes the local `claude` CLI for both embedded Claude sessions and Claude-backed background inference. Anthropic currently says Claude Pro/Max include Claude Code terminal usage when authenticated with Claude credentials, but `ANTHROPIC_API_KEY` makes Claude Code use API billing instead, and usage-credit continuation after plan limits is billed separately at standard API rates. See Anthropic's [Claude Code plan billing](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan) and [Claude Code cost](https://code.claude.com/docs/en/costs) docs for the current rules. Claude-backed background inference defaults to Haiku to keep usage lighter.
 
 If you use an OpenAI API key for background analysis, LCR mainly spends tokens on summaries/classification and commit help. Boss chat can also use direct API inference through its separate `boss_chat_backend`; keep that in mind when reading cost estimates, since the project-analysis footer is not meant to be the full billing ledger for interactive chat.
 
 With a few active projects, a full day is often around `$1` to `$2`, but treat that as a rough guide. The OpenAI dashboard is the billing source of truth.
 
 Type `/setup` from the TUI or edit `~/.little-control-room/config.toml` to change the provider.
+
+## Release Engineering
+
+macOS release binaries are signed and notarized by the release workflow. A tagged release must have the Apple Developer credentials configured; otherwise the release fails instead of publishing unsigned macOS artifacts. The installer verifies published signatures locally; notarization acceptance is enforced during the GitHub release job.
+
+Required GitHub secrets:
+
+- `MACOS_SIGN_P12`: base64 contents of a Developer ID Application `.p12` certificate, or a path when running GoReleaser locally
+- `MACOS_SIGN_PASSWORD`: password for the `.p12`
+- `MACOS_NOTARY_KEY`: base64 contents of the App Store Connect API `.p8` key, or a path when running locally
+- `MACOS_NOTARY_KEY_ID`: App Store Connect API key ID
+- `MACOS_NOTARY_ISSUER_ID`: App Store Connect issuer UUID
+
+For local archive smoke checks, run:
+
+```bash
+make release-snapshot
+```
+
+Snapshot archives under `dist/` are for local verification only, not public distribution.
 
 ## Notes
 
