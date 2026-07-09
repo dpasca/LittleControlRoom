@@ -1457,11 +1457,13 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 	if got := len(strings.Split(rendered, "\n")); got != m.height {
 		t.Fatalf("View() with help chat line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
 	}
-	if !strings.Contains(rendered, "Help Chat") || !strings.Contains(rendered, "Boss Chat") {
-		t.Fatalf("help chat overlay should render the embedded Boss chat surface: %q", rendered)
+	if !strings.Contains(rendered, "Help Chat") {
+		t.Fatalf("help chat overlay should render the Help Chat modal: %q", rendered)
 	}
-	if strings.Contains(rendered, "Boss Desk") || strings.Contains(rendered, "Boss Log") {
-		t.Fatalf("help chat overlay should render only the core chat, not the full Boss layout: %q", rendered)
+	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("help chat overlay should render a frameless core chat, not %q: %q", unwanted, rendered)
+		}
 	}
 
 	updated, cmd = got.updateHelpChatModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'`'}})

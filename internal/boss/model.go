@@ -915,11 +915,11 @@ func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	layout := m.layout()
-	chat := m.renderChat(layout)
 	if m.chatOnly {
-		body := m.renderOverlays(chat, layout.width, layout.height)
+		body := m.renderOverlays(m.renderCoreChat(layout), layout.width, layout.height)
 		return fitRenderedBlock(body, layout.width, layout.height)
 	}
+	chat := m.renderChat(layout)
 	top := chat
 	if layout.sidebarWidth >= 12 {
 		sidebar := m.renderBossSidebar(layout.sidebarWidth, layout.topHeight)
@@ -1187,10 +1187,10 @@ func (m Model) layout() bossLayout {
 		}
 	}
 	if m.chatOnly {
-		chatInnerWidth := bossPanelInnerWidth(width)
+		chatInnerWidth := width
 		inputEditorHeight := m.bossInputEditorHeight(chatInnerWidth, height, false)
 		inputHeight := bossInputBlockHeight(inputEditorHeight)
-		transcriptHeight, slashHeight := m.chatAuxiliaryHeights(height, inputHeight, false)
+		transcriptHeight, slashHeight := m.coreChatAuxiliaryHeights(height, inputHeight)
 		return bossLayout{
 			width:             width,
 			height:            height,
@@ -1302,6 +1302,17 @@ func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint boo
 	return transcriptHeight, slashHeight
 }
 
+func (m Model) coreChatAuxiliaryHeights(height, inputHeight int) (int, int) {
+	available := maxInt(1, height-inputHeight)
+	rawSlashHeight := m.bossSlashBlockHeight()
+	slashHeight := 0
+	if rawSlashHeight > 0 {
+		slashHeight = minInt(rawSlashHeight, maxInt(0, available-1))
+	}
+	transcriptHeight := maxInt(1, available-slashHeight)
+	return transcriptHeight, slashHeight
+}
+
 const (
 	bossInputPromptWidth     = 2
 	bossInputChromeHeight    = 0
@@ -1369,6 +1380,20 @@ func (m Model) renderChat(layout bossLayout) string {
 	parts = append(parts, input)
 	content := strings.Join(parts, "\n")
 	return m.renderRawPanelStyledTitle(m.renderTranscriptPanelTitle(), content, layout.chatWidth, layout.topHeight)
+}
+
+func (m Model) renderCoreChat(layout bossLayout) string {
+	input := fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
+	transcript := m.chatViewport.View()
+	if m.chatSelection.dragging && m.chatSelection.hasRange() {
+		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
+	}
+	parts := []string{transcript}
+	if slashBlock := m.renderBossSlashBlock(layout.chatInnerWidth, layout.slashHeight); slashBlock != "" {
+		parts = append(parts, slashBlock)
+	}
+	parts = append(parts, input)
+	return fitRenderedBlock(strings.Join(parts, "\n"), layout.width, layout.height)
 }
 
 func (m Model) renderTranscriptPanelTitle() string {

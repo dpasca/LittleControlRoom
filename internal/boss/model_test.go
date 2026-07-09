@@ -490,10 +490,10 @@ func TestModelChatOnlyViewOmitsDeskAndLog(t *testing.T) {
 	m.syncLayout(true)
 
 	rendered := ansi.Strip(m.View())
-	if !strings.Contains(rendered, "Boss Chat") {
-		t.Fatalf("chat-only view should render the chat panel:\n%s", rendered)
+	if strings.TrimSpace(rendered) == "" {
+		t.Fatalf("chat-only view should render the core chat surface")
 	}
-	for _, unwanted := range []string{"Boss Desk", "Boss Log", "Watching", "Next"} {
+	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Watching", "Next"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("chat-only view should omit %q:\n%s", unwanted, rendered)
 		}
