@@ -27,6 +27,7 @@ const tuiProjectsReloadTimeout = 12 * time.Second
 const tuiProjectScanTimeout = 90 * time.Second
 const tuiOpenAgentTaskLimit = 50
 const embeddedSessionActivityRecordMinInterval = 5 * time.Second
+const embeddedSessionActivityRecordTimeout = 30 * time.Second
 
 type projectsMsg struct {
 	projects                []model.ProjectSummary
@@ -353,10 +354,10 @@ func (m *Model) rememberEmbeddedActivityRecordWatermark(key string, at time.Time
 
 func (m Model) recordEmbeddedSessionActivityRecordCmd(key string, req embeddedSessionActivityRecordRequest) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		ctx, cancel := m.actionContext(embeddedSessionActivityRecordTimeout)
 		defer cancel()
 		err := m.svc.RecordEmbeddedSessionActivity(ctx, req.activity)
-		err = timeoutActionError(err, tuiQuickActionTimeout, "recording embedded session activity")
+		err = timeoutActionError(err, embeddedSessionActivityRecordTimeout, "recording embedded session activity")
 		return embeddedSessionActivityRecordedMsg{
 			key:          key,
 			projectPath:  req.activity.ProjectPath,
@@ -387,10 +388,10 @@ func (m Model) recordEmbeddedSessionStateCmd(activity service.EmbeddedSessionAct
 		return nil
 	}
 	return func() tea.Msg {
-		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		ctx, cancel := m.actionContext(embeddedSessionActivityRecordTimeout)
 		defer cancel()
 		err := m.svc.RecordEmbeddedSessionActivity(ctx, activity)
-		err = timeoutActionError(err, tuiQuickActionTimeout, "recording embedded session activity")
+		err = timeoutActionError(err, embeddedSessionActivityRecordTimeout, "recording embedded session activity")
 		return projectStatusRefreshedMsg{projectPath: activity.ProjectPath, err: err}
 	}
 }
@@ -413,9 +414,9 @@ func (m Model) recordEmbeddedSessionSettledAndRefreshCmd(projectPath string, sna
 	}
 	return func() tea.Msg {
 		var errs []error
-		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
+		ctx, cancel := m.actionContext(embeddedSessionActivityRecordTimeout)
 		if err := m.svc.RecordEmbeddedSessionActivity(ctx, activity); err != nil {
-			err = timeoutActionError(err, tuiQuickActionTimeout, "recording embedded session activity")
+			err = timeoutActionError(err, embeddedSessionActivityRecordTimeout, "recording embedded session activity")
 			errs = append(errs, err)
 		}
 		cancel()
