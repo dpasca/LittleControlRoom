@@ -20,6 +20,30 @@ import (
 	"time"
 )
 
+type deadlineDetector struct {
+	name string
+}
+
+func (d deadlineDetector) Name() string {
+	if d.name != "" {
+		return d.name
+	}
+	return "deadline"
+}
+
+func (d deadlineDetector) Detect(context.Context, scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
+	return nil, context.DeadlineExceeded
+}
+
+type deadlineClassifier struct{}
+
+func (deadlineClassifier) QueueProject(context.Context, model.ProjectState) (bool, error) {
+	return false, context.DeadlineExceeded
+}
+
+func (deadlineClassifier) Notify()               {}
+func (deadlineClassifier) Start(context.Context) {}
+
 func TestScanWithOptionsTimesOutHungWorktreeReadersAndRepairsCodexSessionFile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -173,6 +197,85 @@ func TestScanWithOptionsTimesOutHungWorktreeReadersAndRepairsCodexSessionFile(t 
 	}
 	if strings.TrimSpace(detail.Sessions[0].SnapshotHash) == "" {
 		t.Fatalf("expected stored session snapshot hash after scan")
+	}
+}
+
+func TestScanWithOptionsIncludesDetectorTimeoutProgress(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	detector := deadlineDetector{name: "codex"}
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), []detectors.Detector{detector})
+	svc.SetSessionClassifier(nil)
+
+	_, err = svc.ScanWithOptions(ctx, ScanOptions{})
+	if err == nil {
+		t.Fatal("ScanWithOptions() error = nil, want timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ScanWithOptions() error = %v, want deadline exceeded", err)
+	}
+	detail, ok := ScanTimeoutDetail(err)
+	if !ok {
+		t.Fatalf("ScanWithOptions() error = %T %[1]v, want scan timeout detail", err)
+	}
+	if !strings.Contains(detail, "detecting project activity with codex") {
+		t.Fatalf("timeout detail = %q, want detector phase", detail)
+	}
+}
+
+func TestScanWithOptionsIncludesProjectTimeoutProgress(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "project")
+	now := time.Date(2026, 7, 8, 13, 28, 34, 0, time.UTC)
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:           projectPath,
+		Name:           "project",
+		LastActivity:   now,
+		Status:         model.StatusIdle,
+		AttentionScore: 1,
+		InScope:        true,
+		CreatedAt:      now.Add(-time.Hour),
+		UpdatedAt:      now,
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(deadlineClassifier{})
+
+	_, err = svc.ScanWithOptions(ctx, ScanOptions{})
+	if err == nil {
+		t.Fatal("ScanWithOptions() error = nil, want timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ScanWithOptions() error = %v, want deadline exceeded", err)
+	}
+	detail, ok := ScanTimeoutDetail(err)
+	if !ok {
+		t.Fatalf("ScanWithOptions() error = %T %[1]v, want scan timeout detail", err)
+	}
+	for _, want := range []string{"updating project state", "1/1 projects", projectPath} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("timeout detail = %q, want %q", detail, want)
+		}
+	}
+	if !strings.Contains(err.Error(), "queue session classification") {
+		t.Fatalf("timeout error = %q, want wrapped operation", err.Error())
 	}
 }
 

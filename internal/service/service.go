@@ -991,6 +991,8 @@ func (s *Service) ScanOnce(ctx context.Context) (ScanReport, error) {
 }
 
 func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanReport, error) {
+	progress := &scanProgressTracker{}
+	progress.setPhase("starting project scan")
 	runtime := s.runtimeSnapshot()
 	cfg := runtime.cfg
 	classifier := runtime.classifier
@@ -1001,32 +1003,36 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	gitWorktreeListReader := withScanGitMetadataTimeout(runtime.gitWorktreeListReader, timedOutGitPaths)
 	bus := runtime.bus
 	now := time.Now()
+	progress.setPhase("purging expired missing linked worktrees")
 	if _, err := s.store.DeleteExpiredMissingLinkedWorktrees(ctx, now, missingLinkedWorktreeRetention); err != nil {
-		return ScanReport{}, fmt.Errorf("purge expired missing linked worktrees: %w", err)
+		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("purge expired missing linked worktrees: %w", err))
 	}
 	internalWorkspaceRoot := appfs.InternalWorkspaceRoot(cfg.DataDir)
 	scope := scanner.NewPathScope(cfg.IncludePaths, cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot)
 	discovered := []string{}
 	var err error
 	if len(cfg.IncludePaths) > 0 {
+		progress.setPhase("discovering git projects")
 		discovered, err = scanner.DiscoverGitProjects(scanner.Discovery{
 			Roots:     cfg.IncludePaths,
 			MaxDepth:  4,
 			SkipPaths: []string{internalWorkspaceRoot},
 		})
 		if err != nil {
-			return ScanReport{}, fmt.Errorf("discover git projects: %w", err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("discover git projects: %w", err))
 		}
 	}
 
+	progress.setPhase("loading previous project state")
 	oldMap, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
-		return ScanReport{}, fmt.Errorf("load previous project state: %w", err)
+		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("load previous project state: %w", err))
 	}
 	if shouldDiscoverScratchTaskFolders(cfg, oldMap) {
+		progress.setPhase("discovering scratch tasks")
 		scratchTasks, err := discoverScratchTaskFolders(cfg.ScratchRoot)
 		if err != nil {
-			return ScanReport{}, fmt.Errorf("discover scratch tasks: %w", err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("discover scratch tasks: %w", err))
 		}
 		for _, task := range scratchTasks {
 			if _, ok := oldMap[task.Path]; ok {
@@ -1043,14 +1049,19 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			}
 		}
 	}
+	progress.setPhase("expanding linked worktree paths")
 	discovered, liveWorktreePathsByRoot := s.expandDiscoveredWorktreePaths(ctx, discovered, oldMap, scope, gitWorktreeInfoReader, gitWorktreeListReader)
+	if err := progress.contextErr(ctx); err != nil {
+		return ScanReport{}, err
+	}
+	progress.setPhase("updating project scope")
 	for path, old := range oldMap {
 		inScopeNow := scope.Allows(path) || old.ManuallyAdded
 		if old.InScope == inScopeNow {
 			continue
 		}
 		if err := s.store.SetProjectScope(ctx, path, inScopeNow); err != nil {
-			return ScanReport{}, fmt.Errorf("set project scope: %w", err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("set project scope: %w", err))
 		}
 		old.InScope = inScopeNow
 		oldMap[path] = old
@@ -1061,24 +1072,27 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	if filterRecentOutOfScopeActivities {
 		activityScope = scanner.NewPathScope(nil, cfg.ExcludePaths).WithAlwaysExcluded(internalWorkspaceRoot)
 	}
-	rawActivities, err := s.detectProjectActivities(ctx, activityScope, internalWorkspaceRoot)
+	rawActivities, err := s.detectProjectActivities(ctx, activityScope, internalWorkspaceRoot, progress)
 	if err != nil {
-		return ScanReport{}, err
+		return ScanReport{}, progress.wrapTimeout(err)
 	}
+	progress.setPhase("filtering detected activity")
 	if filterRecentOutOfScopeActivities {
 		filterIncludedOrRecentActivities(rawActivities, scope, now, recentActivityDiscoveryWindow, manuallyTrackedActivityPaths(oldMap))
 	}
 	finalizeDetectorActivities(rawActivities)
 
+	progress.setPhase("loading cached git fingerprints")
 	cachedFingerprints, err := s.store.GetProjectGitFingerprints(ctx)
 	if err != nil {
-		return ScanReport{}, fmt.Errorf("load cached git fingerprints: %w", err)
+		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("load cached git fingerprints: %w", err))
 	}
 
 	currentFingerprints := map[string]scanner.GitFingerprint{}
 	discoveredSet := map[string]struct{}{}
-	for _, path := range discovered {
+	for index, path := range discovered {
 		cleanPath := filepath.Clean(path)
+		progress.setProject("reading discovered project fingerprints", index+1, len(discovered), cleanPath)
 		discoveredSet[cleanPath] = struct{}{}
 		if gitFingerprintReader == nil || !projectPathExists(cleanPath) {
 			continue
@@ -1088,11 +1102,16 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			currentFingerprints[cleanPath] = fingerprint
 		}
 	}
+	if err := progress.contextErr(ctx); err != nil {
+		return ScanReport{}, err
+	}
 
+	progress.setPhase("detecting project moves")
 	moves := s.detectProjectMoves(oldMap, discoveredSet, cachedFingerprints, currentFingerprints)
-	for _, move := range moves {
+	for index, move := range moves {
+		progress.setProject("persisting detected project moves", index+1, len(moves), move.NewPath)
 		if err := s.store.MoveProjectPath(ctx, move.OldPath, move.NewPath, now); err != nil {
-			return ScanReport{}, fmt.Errorf("move project path %s -> %s: %w", move.OldPath, move.NewPath, err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("move project path %s -> %s: %w", move.OldPath, move.NewPath, err))
 		}
 		if err := s.store.UpsertPathAlias(ctx, model.PathAlias{
 			OldPath:   move.OldPath,
@@ -1100,32 +1119,37 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			Reason:    "git_recent_hash_match",
 			UpdatedAt: now,
 		}); err != nil {
-			return ScanReport{}, fmt.Errorf("persist path alias %s -> %s: %w", move.OldPath, move.NewPath, err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist path alias %s -> %s: %w", move.OldPath, move.NewPath, err))
 		}
 		s.publishProjectMoved(ctx, now, move)
 	}
 	if len(moves) > 0 {
+		progress.setPhase("reloading project state after moves")
 		oldMap, err = s.store.GetProjectSummaryMap(ctx)
 		if err != nil {
-			return ScanReport{}, fmt.Errorf("reload project state after moves: %w", err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("reload project state after moves: %w", err))
 		}
 	}
+	progress.setPhase("consolidating moved project duplicates")
 	consolidatedMovedDuplicates, err := s.consolidateMovedFromProjectDuplicates(ctx, oldMap, now)
 	if err != nil {
-		return ScanReport{}, err
+		return ScanReport{}, progress.wrapTimeout(err)
 	}
 	if consolidatedMovedDuplicates > 0 {
+		progress.setPhase("reloading project state after duplicate consolidation")
 		oldMap, err = s.store.GetProjectSummaryMap(ctx)
 		if err != nil {
-			return ScanReport{}, fmt.Errorf("reload project state after moved duplicate consolidation: %w", err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("reload project state after moved duplicate consolidation: %w", err))
 		}
 	}
 
+	progress.setPhase("loading path aliases")
 	aliases, err := s.store.GetPathAliases(ctx)
 	if err != nil {
-		return ScanReport{}, fmt.Errorf("load path aliases: %w", err)
+		return ScanReport{}, progress.wrapTimeout(fmt.Errorf("load path aliases: %w", err))
 	}
 
+	progress.setPhase("normalizing detected activity")
 	knownPathVariants := append([]string(nil), discovered...)
 	knownPathVariants = append(knownPathVariants, mapKeys(oldMap)...)
 	for path := range rawActivities {
@@ -1219,7 +1243,11 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 
 	currentRepoStatus := map[string]scanner.GitRepoStatus{}
 	currentWorktreeInfo := map[string]scanner.GitWorktreeInfo{}
+	progress.setProject("reading git metadata", 0, len(paths), "")
 	gitMetadata := readScanGitMetadata(ctx, paths, gitFingerprintReader, gitRepoStatusReader, readWorktreeInfo)
+	if err := progress.contextErr(ctx); err != nil {
+		return ScanReport{}, err
+	}
 	for _, metadata := range gitMetadata {
 		path := metadata.path
 		if !metadata.presentOnDisk {
@@ -1235,7 +1263,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				RecentHashes: append([]string(nil), metadata.fingerprint.RecentHashes...),
 				UpdatedAt:    now,
 			}); err != nil {
-				return ScanReport{}, fmt.Errorf("persist git fingerprint: %w", err)
+				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist git fingerprint: %w", err))
 			}
 		}
 		if metadata.haveRepoStatus {
@@ -1250,14 +1278,18 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	queuedClassifications := 0
 	states := make([]model.ProjectState, 0, len(paths))
 
-	for _, path := range paths {
-		unlockProjectState := s.lockProjectStateMutation(path)
+	for index, path := range paths {
+		progress.setProject("updating project state", index+1, len(paths), path)
+		unlockProjectState, err := s.lockProjectStateMutationContext(ctx, path)
+		if err != nil {
+			return ScanReport{}, progress.wrapTimeout(err)
+		}
 		activity := activities[path]
 		old := oldMap[path]
 		currentDetail, haveCurrentDetail, err := s.currentProjectDetailForScan(ctx, path)
 		if err != nil {
 			unlockProjectState()
-			return ScanReport{}, err
+			return ScanReport{}, progress.wrapTimeout(err)
 		}
 		if haveCurrentDetail {
 			old = currentDetail.Summary
@@ -1265,7 +1297,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		if old.SnoozedUntil != nil && now.After(*old.SnoozedUntil) {
 			if err := s.store.SetSnooze(ctx, path, nil); err != nil {
 				unlockProjectState()
-				return ScanReport{}, fmt.Errorf("clear expired snooze: %w", err)
+				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("clear expired snooze: %w", err))
 			}
 			old.SnoozedUntil = nil
 		}
@@ -1316,7 +1348,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			}
 			if err := s.store.UpsertProjectState(ctx, state); err != nil {
 				unlockProjectState()
-				return ScanReport{}, fmt.Errorf("persist derived subdirectory project state: %w", err)
+				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist derived subdirectory project state: %w", err))
 			}
 			if projectStateChanged(old, state) {
 				updated = append(updated, path)
@@ -1395,21 +1427,21 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			if inferredMissingLinkedWorktree {
 				if err := s.store.SetProjectWorktreeInfo(ctx, path, worktreeRootPath, worktreeKind); err != nil {
 					unlockProjectState()
-					return ScanReport{}, fmt.Errorf("record inferred missing worktree info: %w", err)
+					return ScanReport{}, progress.wrapTimeout(fmt.Errorf("record inferred missing worktree info: %w", err))
 				}
 			}
 			if err := s.store.SetForgotten(ctx, path, true); err != nil {
 				unlockProjectState()
-				return ScanReport{}, fmt.Errorf("mark forgotten worktree: %w", err)
+				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("mark forgotten worktree: %w", err))
 			}
 			if err := s.store.SetProjectPresence(ctx, path, false); err != nil {
 				unlockProjectState()
-				return ScanReport{}, fmt.Errorf("mark missing worktree: %w", err)
+				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("mark missing worktree: %w", err))
 			}
 			if worktreeKind == model.WorktreeKindLinked {
 				if _, err := s.store.ClearTodoWorkForProjectPath(ctx, path); err != nil {
 					unlockProjectState()
-					return ScanReport{}, fmt.Errorf("clear TODO work session for missing worktree: %w", err)
+					return ScanReport{}, progress.wrapTimeout(fmt.Errorf("clear TODO work session for missing worktree: %w", err))
 				}
 			}
 			unlockProjectState()
@@ -1517,13 +1549,13 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 
 		if err := s.store.UpsertProjectState(ctx, state); err != nil {
 			unlockProjectState()
-			return ScanReport{}, fmt.Errorf("persist project state: %w", err)
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist project state: %w", err))
 		}
 		if classifier != nil {
 			queued, err := queueProjectClassification(ctx, classifier, state, opts)
 			if err != nil {
 				unlockProjectState()
-				return ScanReport{}, fmt.Errorf("queue session classification: %w", err)
+				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("queue session classification: %w", err))
 			}
 			if queued {
 				queuedClassifications++
@@ -1548,10 +1580,12 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		States:                states,
 	}
 	if queuedClassifications > 0 && classifier != nil {
+		progress.setPhase("notifying queued classifications")
 		classifier.Notify()
 	}
 
 	if bus != nil {
+		progress.setPhase("publishing scan completion")
 		bus.Publish(events.Event{
 			Type: events.ScanCompleted,
 			At:   now,
@@ -1718,12 +1752,13 @@ func (s *Service) consolidateMovedFromProjectDuplicates(ctx context.Context, pro
 	return consolidated, nil
 }
 
-func (s *Service) detectProjectActivities(ctx context.Context, scope scanner.PathScope, internalWorkspaceRoot string) (map[string]*model.DetectorProjectActivity, error) {
+func (s *Service) detectProjectActivities(ctx context.Context, scope scanner.PathScope, internalWorkspaceRoot string, progress *scanProgressTracker) (map[string]*model.DetectorProjectActivity, error) {
 	out := map[string]*model.DetectorProjectActivity{}
 	for _, detector := range s.detectors {
 		if detector == nil {
 			continue
 		}
+		progress.setDetector("detecting project activity", detector.Name())
 		activityByPath, err := detector.Detect(ctx, scope)
 		if err != nil {
 			return nil, fmt.Errorf("detect project activity (%s): %w", detector.Name(), err)
