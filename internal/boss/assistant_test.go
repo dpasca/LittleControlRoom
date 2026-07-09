@@ -1240,10 +1240,16 @@ func TestHelpChatPromptsAvoidUnrequestedStatusReports(t *testing.T) {
 		`choose kind="answer" immediately`,
 		"Never answer a casual turn with a snapshot",
 		"Do not turn casual input into a project, task, queue, process, or attention report.",
+		"current Help Chat transcript",
+		"Do not claim to have searched files, the web, or all previous conversations",
 	} {
 		if !strings.Contains(plannerPrompt, want) {
 			t.Fatalf("planner help prompt missing casual answer guard %q:\n%s", want, plannerPrompt)
 		}
+	}
+	directPrompt := bossAssistantSystemPromptForRequest(req)
+	if !strings.Contains(directPrompt, "When asked how you know a personal detail") {
+		t.Fatalf("direct help prompt missing personal context boundary:\n%s", directPrompt)
 	}
 }
 

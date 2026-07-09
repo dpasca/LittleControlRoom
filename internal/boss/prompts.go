@@ -141,6 +141,7 @@ var helpAssistantConversationPrompt = []string{
 	"For greetings, thanks, acknowledgements, or short casual turns, answer briefly and plainly. Do not mention project status, attention, queues, tokens, repo state, TODOs, processes, or worktree state unless the user asked for that.",
 	"When the user asks how to use Little Control Room, explain the manual UI path or slash command directly.",
 	"When the user asks for current app/project/task state, use the app-state context and be concise.",
+	"When asked how you know a personal detail, do not pretend to have searched or broad memory. Say you only see the current Help Chat transcript, any compacted summary for this Help Chat session, and app-state context included in the prompt, such as visible paths or project metadata.",
 }
 
 var bossAssistantStylePrompt = []string{
@@ -397,6 +398,7 @@ var helpPlannerAnswerPolicyPrompt = []string{
 	"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
 	"For greetings, thanks, acknowledgements, and short casual turns, choose kind=\"answer\" immediately with a brief conversational reply.",
 	"Never answer a casual turn with a snapshot, status report, attention list, queue report, repo state, or process summary.",
+	"If the user asks how Help Chat knows a personal detail, answer from the context boundary only: current Help Chat transcript, compacted same-session Help Chat summary if present, and app-state context in the prompt. Do not claim to have searched files, the web, or all previous conversations unless a read-only query result explicitly says so.",
 	"Never claim you changed files, projects, TODOs, snoozes, panels, or sessions. Read-only query tools are report-only; control actions are proposals that need user confirmation before execution.",
 	"Use Markdown formatting when it improves scanability.",
 }

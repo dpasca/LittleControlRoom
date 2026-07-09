@@ -2343,7 +2343,11 @@ func renderAssistantMessageWithPrefix(content string, width int, projectHighligh
 }
 
 func renderAssistantMessageWithStyles(content string, width int, projectHighlights []bossProjectTextHighlight, prefix string, prefixStyle, continuationStyle, lineStyle lipgloss.Style) string {
-	return renderPrefixedMessageWithProjectHighlights(content, prefix, bossPanelText, prefixStyle, continuationStyle, lineStyle, width, false, nil, projectHighlights)
+	return renderAssistantMessageWithStylesOptions(content, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle, "", false)
+}
+
+func renderAssistantMessageWithStylesOptions(content string, width int, projectHighlights []bossProjectTextHighlight, prefix string, prefixStyle, continuationStyle, lineStyle lipgloss.Style, bodyBackground lipgloss.Color, indentContinuation bool) string {
+	return renderPrefixedMessageWithProjectHighlightsBackground(content, prefix, bossPanelText, bodyBackground, prefixStyle, continuationStyle, lineStyle, width, indentContinuation, nil, projectHighlights)
 }
 
 func renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
@@ -2352,7 +2356,7 @@ func renderAssistantChatMessage(message ChatMessage, width int, projectHighlight
 
 func (m Model) renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
 	if m.helpChat {
-		return renderAssistantChatMessageWithStyles(message, width, projectHighlights, m.assistantMessagePrefix(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle)
+		return renderAssistantChatMessageWithStylesOptions(message, width, projectHighlights, m.assistantMessagePrefix(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle, helpChatSurfaceBackground, true)
 	}
 	return renderAssistantChatMessageWithPrefix(message, width, projectHighlights, m.assistantMessagePrefix())
 }
@@ -2362,11 +2366,15 @@ func renderAssistantChatMessageWithPrefix(message ChatMessage, width int, projec
 }
 
 func renderAssistantChatMessageWithStyles(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight, prefix string, prefixStyle, continuationStyle, lineStyle lipgloss.Style) string {
+	return renderAssistantChatMessageWithStylesOptions(message, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle, "", false)
+}
+
+func renderAssistantChatMessageWithStylesOptions(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight, prefix string, prefixStyle, continuationStyle, lineStyle lipgloss.Style, bodyBackground lipgloss.Color, indentContinuation bool) string {
 	highlights := handoffMessageHighlights(message.Content, message.Handoff)
 	if len(highlights) == 0 {
-		return renderAssistantMessageWithStyles(message.Content, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle)
+		return renderAssistantMessageWithStylesOptions(message.Content, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle, bodyBackground, indentContinuation)
 	}
-	return renderPrefixedMessageWithProjectHighlights(message.Content, prefix, bossPanelText, prefixStyle, continuationStyle, lineStyle, width, false, highlights, projectHighlights)
+	return renderPrefixedMessageWithProjectHighlightsBackground(message.Content, prefix, bossPanelText, bodyBackground, prefixStyle, continuationStyle, lineStyle, width, indentContinuation, highlights, projectHighlights)
 }
 
 func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
@@ -2384,7 +2392,7 @@ func renderStreamingAssistantMessage(content string, toolCalls []string, width, 
 
 func (m Model) renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
 	if m.helpChat {
-		return renderStreamingAssistantMessageWithStyles(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle, helpChatMutedStyle, helpChatToolCallStyle)
+		return renderStreamingAssistantMessageWithStylesOptions(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle, helpChatMutedStyle, helpChatToolCallStyle, helpChatSurfaceBackground, true)
 	}
 	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel())
 }
@@ -2394,12 +2402,16 @@ func renderStreamingAssistantMessageWithPrefix(content string, toolCalls []strin
 }
 
 func renderStreamingAssistantMessageWithStyles(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string, prefixStyle, continuationStyle, lineStyle, mutedStyle, toolCallStyle lipgloss.Style) string {
+	return renderStreamingAssistantMessageWithStylesOptions(content, toolCalls, width, spinnerFrame, projectHighlights, prefix, label, prefixStyle, continuationStyle, lineStyle, mutedStyle, toolCallStyle, "", false)
+}
+
+func renderStreamingAssistantMessageWithStylesOptions(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string, prefixStyle, continuationStyle, lineStyle, mutedStyle, toolCallStyle lipgloss.Style, bodyBackground lipgloss.Color, indentContinuation bool) string {
 	var blocks []string
 	if toolBlock := renderTemporaryToolCallsWithStyle(toolCalls, width, toolCallStyle); toolBlock != "" {
 		blocks = append(blocks, toolBlock)
 	}
 	if strings.TrimSpace(content) != "" {
-		blocks = append(blocks, renderAssistantMessageWithStyles(content, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle))
+		blocks = append(blocks, renderAssistantMessageWithStylesOptions(content, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle, bodyBackground, indentContinuation))
 	}
 	if len(blocks) == 0 {
 		label = strings.TrimSpace(label)
@@ -2469,7 +2481,7 @@ func renderUserMessage(content string, width int, projectHighlights []bossProjec
 
 func (m Model) renderUserMessage(content string, width int, projectHighlights []bossProjectTextHighlight) string {
 	if m.helpChat {
-		return renderPrefixedMessageWithProjectHighlights(content, "You> ", bossPanelText, helpChatUserPrefixStyle, helpChatUserContStyle, helpChatUserMessageStyle, width, true, nil, projectHighlights)
+		return renderPrefixedMessageWithProjectHighlightsBackground(content, "You> ", bossPanelText, helpChatSurfaceBackground, helpChatUserPrefixStyle, helpChatUserContStyle, helpChatUserMessageStyle, width, true, nil, projectHighlights)
 	}
 	return renderUserMessage(content, width, projectHighlights)
 }
@@ -2493,8 +2505,17 @@ func renderPrefixedMessageWithHighlights(content, prefix string, bodyColor lipgl
 }
 
 func renderPrefixedMessageWithProjectHighlights(content, prefix string, bodyColor lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int, indentContinuation bool, highlights []prefixedMessageHighlight, projectHighlights []bossProjectTextHighlight) string {
+	return renderPrefixedMessageWithProjectHighlightsBackground(content, prefix, bodyColor, "", prefixStyle, continuationStyle, lineStyle, width, indentContinuation, highlights, projectHighlights)
+}
+
+func renderPrefixedMessageWithProjectHighlightsBackground(content, prefix string, bodyColor, bodyBackground lipgloss.Color, prefixStyle, continuationStyle, lineStyle lipgloss.Style, width int, indentContinuation bool, highlights []prefixedMessageHighlight, projectHighlights []bossProjectTextHighlight) string {
 	contentWidth := maxInt(8, width-len(prefix))
-	rendered := terminalmd.RenderBody(content, bodyColor, contentWidth)
+	var rendered string
+	if bodyBackground != "" {
+		rendered = terminalmd.RenderBodyWithBackground(content, bodyColor, bodyBackground, contentWidth)
+	} else {
+		rendered = terminalmd.RenderBody(content, bodyColor, contentWidth)
+	}
 	lines := strings.Split(rendered, "\n")
 	if len(lines) == 0 {
 		lines = []string{""}

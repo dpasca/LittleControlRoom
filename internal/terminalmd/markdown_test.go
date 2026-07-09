@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func TestRenderBodyKeepsLocalMarkdownLinksCompact(t *testing.T) {
@@ -29,6 +30,22 @@ func TestRenderBodyKeepsLocalMarkdownLinksCompact(t *testing.T) {
 	}
 	if !strings.Contains(stripped, "Changed manager.go.") {
 		t.Fatalf("rendered text should keep the compact link label: %q", stripped)
+	}
+}
+
+func TestRenderBodyWithBackgroundKeepsInlineMarkdownOnSurface(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	defer func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	}()
+
+	rendered := RenderBodyWithBackground("plain **bold** `code` [link](https://example.com)", lipgloss.Color("252"), lipgloss.Color("234"), 100)
+	if got := strings.Count(rendered, "48;5;234"); got < 4 {
+		t.Fatalf("rendered Markdown should preserve the requested background through inline spans, got %d background spans:\n%q", got, rendered)
 	}
 }
 

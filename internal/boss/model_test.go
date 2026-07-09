@@ -23,6 +23,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func TestModelViewRendersBossPanels(t *testing.T) {
@@ -592,6 +593,45 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 		if got, want := fmt.Sprint(style.GetBackground()), fmt.Sprint(helpChatSurfaceBackground); got != want {
 			t.Fatalf("help chat %s text background = %s, want help surface %s", label, got, want)
 		}
+	}
+}
+
+func TestEmbeddedHelpAssistantResponseWrapsUnderBodyAndKeepsBackground(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	defer func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	}()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	width := 38
+	rendered := m.renderAssistantChatMessage(ChatMessage{
+		Role:    "assistant",
+		Content: "This is a long **wrapped** help response that should continue under the message body instead of snapping back to the left edge.",
+	}, width, nil)
+	lines := strings.Split(rendered, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped help response, got:\n%s", ansi.Strip(rendered))
+	}
+	for i, line := range lines {
+		if got := ansi.StringWidth(ansi.Strip(line)); got > width {
+			t.Fatalf("help chat response line %d width = %d, want <= %d: %q", i, got, width, ansi.Strip(line))
+		}
+	}
+	for i, line := range lines[1:] {
+		stripped := ansi.Strip(line)
+		if !strings.HasPrefix(stripped, "      ") {
+			t.Fatalf("continuation line %d should align under Help body:\n%s", i+1, ansi.Strip(rendered))
+		}
+		if strings.HasPrefix(strings.TrimLeft(stripped, " "), "Help>") {
+			t.Fatalf("continuation line %d should not repeat the speaker label:\n%s", i+1, ansi.Strip(rendered))
+		}
+	}
+	if got := strings.Count(rendered, "48;5;234"); got == 0 {
+		t.Fatalf("help chat Markdown response should keep the surface background:\n%q", rendered)
 	}
 }
 
