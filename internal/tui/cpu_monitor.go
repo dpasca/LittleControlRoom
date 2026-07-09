@@ -300,7 +300,10 @@ func (m *Model) applyCPUSnapshotMsg(msg cpuSnapshotMsg) tea.Cmd {
 			m.status = cpuDialogReadyStatus(msg.snapshot)
 		}
 		if m.bossMode {
-			m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+			m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
+		}
+		if m.helpChatMode {
+			m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 		}
 		return reloadCmd
 	}

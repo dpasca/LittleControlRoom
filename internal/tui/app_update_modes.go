@@ -40,6 +40,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.openCommandMode()
 		return m, textinput.Blink
+	case "`":
+		return m.openHelpChatModeOrSetupPrompt()
 	case "tab":
 		m.cyclePaneFocus(1)
 		return m, nil
@@ -49,9 +51,9 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.showHelp = !m.showHelp
 		if m.showHelp {
-			m.status = "Help open. Press ? or Esc to close"
+			m.status = "Quick help open. Press ? or Esc to close"
 		} else {
-			m.status = "Help closed"
+			m.status = "Quick help closed"
 		}
 		return m, nil
 	case "f":
@@ -65,7 +67,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.showHelp {
 			m.showHelp = false
-			m.status = "Help closed"
+			m.status = "Quick help closed"
 			return m, nil
 		}
 		if m.focusProjectsPane() {

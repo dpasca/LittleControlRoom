@@ -86,6 +86,7 @@ func normalizeBossReadOnlyRoute(route *bossReadOnlyRoute) {
 		return
 	}
 	route.Kind = normalizeBossActionKind(route.Kind)
+	route.Answer = strings.TrimSpace(route.Answer)
 	route.Target = strings.TrimSpace(strings.ToLower(route.Target))
 	route.Query = strings.TrimSpace(route.Query)
 	route.Command = strings.TrimSpace(route.Command)
@@ -131,6 +132,7 @@ func bossActionIsReadOnlyQuery(kind string) bool {
 		bossActionSearchBossSessions,
 		bossActionContextCommand,
 		bossActionSkillsInventory,
+		bossActionHelpReference,
 		bossActionGoalRunReport:
 		return true
 	default:
@@ -260,7 +262,7 @@ func validateBossAction(action bossAction) error {
 	switch action.Kind {
 	case bossActionAnswer:
 		return nil
-	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionAgentTaskReport, bossActionReflectionReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory, bossActionGoalRunReport:
+	case bossActionListProjects, bossActionProjectDetail, bossActionSessionClassifications, bossActionTodoReport, bossActionAgentTaskReport, bossActionReflectionReport, bossActionCurrentTUI, bossActionAssessmentQueue, bossActionProcessReport, bossActionSearchContext, bossActionSearchBossSessions, bossActionContextCommand, bossActionSkillsInventory, bossActionHelpReference, bossActionGoalRunReport:
 		return nil
 	case bossActionProposeControl:
 		_, _, err := controlProposalFromBossAction(action)

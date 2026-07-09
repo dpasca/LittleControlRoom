@@ -45,6 +45,7 @@ type AssistantRequest struct {
 	View       ViewContext
 	Messages   []ChatMessage
 	SessionID  string
+	HelpChat   bool
 
 	PromptContext BossPromptContext
 }
@@ -204,7 +205,7 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 
 	resp, err := a.runner.RunText(ctx, llm.TextRequest{
 		Model:           modelName,
-		SystemText:      bossAssistantSystemPrompt(),
+		SystemText:      bossAssistantSystemPromptForRequest(req),
 		Messages:        bossDirectMessages(req),
 		ReasoningEffort: bossAssistantReasoningEffort,
 	})
@@ -235,7 +236,7 @@ func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest,
 
 	resp, err := runBossText(ctx, a.runner, llm.TextRequest{
 		Model:           modelName,
-		SystemText:      bossAssistantSystemPrompt(),
+		SystemText:      bossAssistantSystemPromptForRequest(req),
 		Messages:        bossDirectMessages(req),
 		ReasoningEffort: bossAssistantReasoningEffort,
 	}, emit)
@@ -270,6 +271,39 @@ func (a *Assistant) replyStructuredHandle(ctx context.Context, req AssistantRequ
 	}, true, nil
 }
 
+func (a *Assistant) tryHelpChatFastAnswer(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, bool, error) {
+	if a == nil || !req.HelpChat || a.queryRouter == nil {
+		return AssistantResponse{}, false, nil
+	}
+	req, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
+	if err != nil {
+		return AssistantResponse{}, false, err
+	}
+	routeResponse, route, err := a.planReadOnlyQueryRoute(ctx, req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return AssistantResponse{}, false, err
+		}
+		return AssistantResponse{}, false, nil
+	}
+	usage := routeResponse.Usage
+	addLLMUsage(&usage, contextUsage)
+	if normalizeBossActionKind(route.Kind) != bossActionAnswer {
+		return AssistantResponse{}, false, nil
+	}
+	answer := strings.TrimSpace(route.Answer)
+	if answer == "" {
+		return AssistantResponse{}, false, nil
+	}
+	emitAssistantDelta(emit, answer)
+	return AssistantResponse{
+		Content:       answer,
+		Model:         firstNonEmpty(strings.TrimSpace(routeResponse.Model), contextModel),
+		Usage:         usage,
+		PromptContext: req.PromptContext,
+	}, true, nil
+}
+
 func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
@@ -297,7 +331,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 	if strings.TrimSpace(contextModel) != "" {
 		usedModel = strings.TrimSpace(contextModel)
 	}
-	routeResponse, routeResult, routed, err := a.tryReadOnlyQueryRoute(ctx, req, nil)
+	routeResponse, routeResult, routed, directAnswer, err := a.tryReadOnlyQueryRoute(ctx, req, nil)
 	if err != nil {
 		return AssistantResponse{}, err
 	}
@@ -306,6 +340,14 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		if modelName := strings.TrimSpace(routeResponse.Model); modelName != "" {
 			usedModel = modelName
 		}
+	}
+	if directAnswer != "" {
+		return AssistantResponse{
+			Content:       directAnswer,
+			Model:         firstNonEmpty(usedModel, modelName),
+			Usage:         totalUsage,
+			PromptContext: req.PromptContext,
+		}, nil
 	}
 	if routed {
 		if routeResult != nil && routeResult.Name == bossActionGoalRunReport {
@@ -422,7 +464,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 	if strings.TrimSpace(contextModel) != "" {
 		usedModel = strings.TrimSpace(contextModel)
 	}
-	routeResponse, routeResult, routed, err := a.tryReadOnlyQueryRoute(ctx, req, emit)
+	routeResponse, routeResult, routed, directAnswer, err := a.tryReadOnlyQueryRoute(ctx, req, emit)
 	if err != nil {
 		return AssistantResponse{}, err
 	}
@@ -431,6 +473,15 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		if modelName := strings.TrimSpace(routeResponse.Model); modelName != "" {
 			usedModel = modelName
 		}
+	}
+	if directAnswer != "" {
+		emitAssistantDelta(emit, directAnswer)
+		return AssistantResponse{
+			Content:       directAnswer,
+			Model:         firstNonEmpty(usedModel, modelName),
+			Usage:         totalUsage,
+			PromptContext: req.PromptContext,
+		}, nil
 	}
 	if routed {
 		if routeResult != nil && routeResult.Name == bossActionGoalRunReport {
@@ -539,7 +590,7 @@ func (a *Assistant) streamFinalAnswer(ctx context.Context, req AssistantRequest,
 	}
 	resp, err := runBossText(ctx, a.runner, llm.TextRequest{
 		Model:           strings.TrimSpace(a.model),
-		SystemText:      bossAssistantSystemPrompt(),
+		SystemText:      bossAssistantSystemPromptForRequest(req),
 		Messages:        bossFinalAnswerMessages(req, toolResults, plannerAnswer),
 		ReasoningEffort: bossAssistantReasoningEffort,
 	}, emit)
@@ -555,6 +606,7 @@ func (a *Assistant) streamFinalAnswer(ctx context.Context, req AssistantRequest,
 
 type bossReadOnlyRoute struct {
 	Kind              string `json:"kind"`
+	Answer            string `json:"answer"`
 	Target            string `json:"target"`
 	Query             string `json:"query"`
 	Command           string `json:"command"`
@@ -592,23 +644,28 @@ func (a *Assistant) tryStructuredHandleQueryRoute(ctx context.Context, req Assis
 	return &result, true, nil
 }
 
-func (a *Assistant) tryReadOnlyQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (llm.JSONSchemaResponse, *bossToolResult, bool, error) {
+func (a *Assistant) tryReadOnlyQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (llm.JSONSchemaResponse, *bossToolResult, bool, string, error) {
 	if a == nil || a.queryRouter == nil || a.query == nil {
-		return llm.JSONSchemaResponse{}, nil, false, nil
+		return llm.JSONSchemaResponse{}, nil, false, "", nil
 	}
 	response, route, err := a.planReadOnlyQueryRoute(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return response, nil, false, err
+			return response, nil, false, "", err
 		}
-		return response, nil, false, nil
+		return response, nil, false, "", nil
+	}
+	if req.HelpChat && normalizeBossActionKind(route.Kind) == bossActionAnswer {
+		if answer := strings.TrimSpace(route.Answer); answer != "" {
+			return response, nil, false, answer, nil
+		}
 	}
 	action, ok := bossActionFromReadOnlyRoute(route)
 	if !ok {
-		return response, nil, false, nil
+		return response, nil, false, "", nil
 	}
 	result := a.executeReadOnlyQueryAction(ctx, action, req, emit)
-	return response, &result, true, nil
+	return response, &result, true, "", nil
 }
 
 func (a *Assistant) executeReadOnlyQueryAction(ctx context.Context, action bossAction, req AssistantRequest, emit func(AssistantStreamEvent)) bossToolResult {
@@ -630,7 +687,7 @@ func (a *Assistant) executeReadOnlyQueryAction(ctx context.Context, action bossA
 func (a *Assistant) planReadOnlyQueryRoute(ctx context.Context, req AssistantRequest) (llm.JSONSchemaResponse, bossReadOnlyRoute, error) {
 	response, err := a.queryRouter.RunJSONSchema(ctx, llm.JSONSchemaRequest{
 		Model:           firstNonEmpty(strings.TrimSpace(a.utilityModel), strings.TrimSpace(a.model)),
-		SystemText:      bossReadOnlyRouterSystemPrompt(),
+		SystemText:      bossReadOnlyRouterSystemPromptForRequest(req),
 		UserText:        bossReadOnlyRouterUserText(req),
 		SchemaName:      "boss_read_only_query_route",
 		Schema:          bossReadOnlyRouteSchema(),
@@ -653,7 +710,7 @@ func (a *Assistant) planReadOnlyQueryRoute(ctx context.Context, req AssistantReq
 func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolResults []bossToolResult, forceAnswer bool) (llm.JSONSchemaResponse, bossAction, error) {
 	response, err := a.planner.RunJSONSchema(ctx, llm.JSONSchemaRequest{
 		Model:           strings.TrimSpace(a.model),
-		SystemText:      bossActionPlannerSystemPrompt(),
+		SystemText:      bossActionPlannerSystemPromptForRequest(req),
 		UserText:        bossActionPlannerUserText(req, toolResults, forceAnswer),
 		SchemaName:      "boss_next_action",
 		Schema:          bossActionSchema(),
@@ -848,6 +905,11 @@ func describeBossAction(action bossAction) string {
 			return kind + " " + goalKind
 		}
 	case bossActionSkillsInventory:
+		return kind
+	case bossActionHelpReference:
+		if query := strings.TrimSpace(action.Query); query != "" {
+			return kind + " " + quoteForStatus(clipText(query, 80))
+		}
 		return kind
 	case bossActionGoalRunReport:
 		if query := strings.TrimSpace(action.Query); query != "" {

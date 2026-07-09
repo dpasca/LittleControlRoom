@@ -366,6 +366,9 @@ func (m Model) View() string {
 	if m.suspendedTurnDialog != nil {
 		body = m.renderSuspendedTurnResumeDialogOverlay(body, layout.width, layout.height)
 	}
+	if m.helpChatMode {
+		body = m.renderHelpChatOverlay(body, layout.width, layout.height)
+	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
 }

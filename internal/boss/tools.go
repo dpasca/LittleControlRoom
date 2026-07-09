@@ -16,6 +16,7 @@ import (
 	"lcroom/internal/codexstate"
 	"lcroom/internal/config"
 	"lcroom/internal/control"
+	"lcroom/internal/helpmeta"
 	"lcroom/internal/model"
 )
 
@@ -34,6 +35,7 @@ const (
 	bossActionSearchBossSessions     = "search_boss_sessions"
 	bossActionContextCommand         = "context_command"
 	bossActionSkillsInventory        = "skills_inventory"
+	bossActionHelpReference          = "help_reference"
 	bossActionGoalRunReport          = "goal_run_report"
 	bossActionProposeControl         = "propose_control"
 	bossActionProposeGoal            = "propose_goal"
@@ -219,6 +221,9 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 	if kind == bossActionSkillsInventory {
 		return e.skillsInventory(ctx, action)
 	}
+	if kind == bossActionHelpReference {
+		return e.helpReference(action), nil
+	}
 	if kind == bossActionGoalRunReport {
 		return e.goalRunReport(ctx, action)
 	}
@@ -259,6 +264,159 @@ func (e *QueryExecutor) skillsInventory(ctx context.Context, action bossAction) 
 		return bossToolResult{}, err
 	}
 	return clippedToolResult(bossActionSkillsInventory, codexskills.FormatInventoryReport(inv, clampBossLimit(action.Limit, 20, 40))), nil
+}
+
+func (e *QueryExecutor) helpReference(action bossAction) bossToolResult {
+	query := strings.TrimSpace(action.Query)
+	if query == "" {
+		query = strings.TrimSpace(action.Target)
+	}
+	limit := clampBossLimit(action.Limit, 8, 20)
+	topics := helpReferenceTopics(query, limit)
+	lines := []string{fmt.Sprintf("Little Control Room help reference: showing %d topics.", len(topics))}
+	if query != "" {
+		lines[0] = fmt.Sprintf("Little Control Room help reference for %q: showing %d topics.", query, len(topics))
+	}
+	if len(topics) == 0 {
+		lines = append(lines, "No matching help topics found in the generated command/capability corpus.")
+		return clippedToolResult(bossActionHelpReference, strings.Join(lines, "\n"))
+	}
+	for _, topic := range topics {
+		lines = append(lines, "- "+formatHelpReferenceTopic(topic))
+	}
+	return clippedToolResult(bossActionHelpReference, strings.Join(lines, "\n"))
+}
+
+func helpReferenceTopics(query string, limit int) []helpmeta.Topic {
+	topics := helpmeta.Topics()
+	query = strings.TrimSpace(query)
+	if query == "" {
+		if limit > len(topics) {
+			limit = len(topics)
+		}
+		return topics[:limit]
+	}
+	type scoredTopic struct {
+		topic helpmeta.Topic
+		score int
+	}
+	terms := helpReferenceTerms(query)
+	scored := make([]scoredTopic, 0, len(topics))
+	for _, topic := range topics {
+		score := helpReferenceScore(topic, terms)
+		if score <= 0 {
+			continue
+		}
+		scored = append(scored, scoredTopic{topic: topic, score: score})
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].topic.ID < scored[j].topic.ID
+	})
+	if limit > len(scored) {
+		limit = len(scored)
+	}
+	out := make([]helpmeta.Topic, 0, limit)
+	for i := 0; i < limit; i++ {
+		out = append(out, scored[i].topic)
+	}
+	return out
+}
+
+func helpReferenceTerms(query string) []string {
+	fields := strings.Fields(strings.ToLower(query))
+	out := make([]string, 0, len(fields))
+	seen := map[string]struct{}{}
+	for _, field := range fields {
+		field = strings.Trim(field, " \t\r\n.,:;!?()[]{}\"'`")
+		if field == "" {
+			continue
+		}
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		seen[field] = struct{}{}
+		out = append(out, field)
+	}
+	return out
+}
+
+func helpReferenceScore(topic helpmeta.Topic, terms []string) int {
+	if len(terms) == 0 {
+		return 1
+	}
+	haystack := strings.ToLower(strings.Join(helpReferenceTopicText(topic), "\n"))
+	score := 0
+	for _, term := range terms {
+		if term == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(topic.ID), term) {
+			score += 8
+		}
+		if strings.Contains(strings.ToLower(topic.Title), term) {
+			score += 6
+		}
+		if strings.Contains(haystack, term) {
+			score += 3
+		}
+	}
+	return score
+}
+
+func helpReferenceTopicText(topic helpmeta.Topic) []string {
+	values := []string{
+		topic.ID,
+		string(topic.Kind),
+		string(topic.Surface),
+		topic.Title,
+		topic.Summary,
+	}
+	values = append(values, topic.Usage...)
+	values = append(values, topic.ManualSteps...)
+	for _, capability := range topic.CanDoVia {
+		values = append(values, string(capability))
+	}
+	values = append(values, topic.Related...)
+	return values
+}
+
+func formatHelpReferenceTopic(topic helpmeta.Topic) string {
+	parts := []string{
+		fmt.Sprintf("%s [%s/%s]", topic.ID, topic.Surface, topic.Kind),
+	}
+	if title := strings.TrimSpace(topic.Title); title != "" {
+		parts = append(parts, title)
+	}
+	if summary := strings.TrimSpace(topic.Summary); summary != "" {
+		parts = append(parts, clipText(summary, 260))
+	}
+	if len(topic.Usage) > 0 {
+		parts = append(parts, "usage: "+strings.Join(topic.Usage, ", "))
+	}
+	if len(topic.ManualSteps) > 0 {
+		steps := append([]string(nil), topic.ManualSteps...)
+		if len(steps) > 3 {
+			steps = steps[:3]
+		}
+		for i := range steps {
+			steps[i] = clipText(strings.TrimSpace(steps[i]), 180)
+		}
+		parts = append(parts, "manual_steps: "+strings.Join(steps, " -> "))
+	}
+	if len(topic.CanDoVia) > 0 {
+		capabilities := make([]string, 0, len(topic.CanDoVia))
+		for _, capability := range topic.CanDoVia {
+			capabilities = append(capabilities, string(capability))
+		}
+		parts = append(parts, "can_do_via: "+strings.Join(capabilities, ", "))
+	}
+	if len(topic.Related) > 0 {
+		parts = append(parts, "related: "+strings.Join(topic.Related, ", "))
+	}
+	return strings.Join(parts, " | ")
 }
 
 func (e *QueryExecutor) goalRunReport(ctx context.Context, action bossAction) (bossToolResult, error) {

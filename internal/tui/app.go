@@ -99,8 +99,11 @@ type Model struct {
 	commandInput                        textinput.Model
 	commandSelected                     int
 	bossMode                            bool
+	helpChatMode                        bool
 	bossModelActive                     bool
 	bossModel                           bossui.Model
+	helpChatModelActive                 bool
+	helpChatModel                       bossui.Model
 	returnToBossModeAfterCodexHide      bool
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
@@ -1184,8 +1187,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer done()
 	mdl, cmd := m.update(msg)
 	mm := normalizeUpdateModel(mdl)
-	prevWant := m.bossMode || m.codexVisible() || m.diffView != nil
-	want := mm.bossMode || mm.codexVisible() || mm.diffView != nil
+	prevWant := m.bossMode || m.helpChatMode || m.codexVisible() || m.diffView != nil
+	want := mm.bossMode || mm.helpChatMode || mm.codexVisible() || mm.diffView != nil
 	mm.mouseEnabled = want
 	mm.syncEmbeddedSessionIdleProtection()
 	if want != prevWant {
@@ -1202,6 +1205,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(bossui.ExitMsg); ok {
+		if m.helpChatMode {
+			m.closeHelpChatMode("Help chat hidden")
+			return m, nil
+		}
 		m.closeBossMode("Boss mode hidden")
 		return m, nil
 	}
@@ -1223,10 +1230,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.helpChatMode && bossui.IsMessage(msg) {
+		return m.updateHelpChatModeMessage(msg)
+	}
 	if m.bossMode && bossui.IsMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}
-	if !m.bossMode && m.bossModelActive && bossui.IsBackgroundMessage(msg) {
+	if !m.bossMode && !m.helpChatMode && m.bossModelActive && bossui.IsBackgroundMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}
 
@@ -1249,6 +1259,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updated, bossCmd := m.updateBossModeWindowSize()
 			return updated, batchCmds(codexTranscriptCmd, bossCmd)
 		}
+		if m.helpChatMode {
+			updated, bossCmd := m.updateHelpChatModeWindowSize()
+			return updated, batchCmds(codexTranscriptCmd, bossCmd)
+		}
 		return m, codexTranscriptCmd
 	case cursor.BlinkMsg:
 		if m.codexVisible() && m.codexInput.Focused() {
@@ -1261,6 +1275,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.bossMode {
 			msg.Y--
 			return m.updateBossModeMessage(msg)
+		}
+		if m.helpChatMode {
+			return m.updateHelpChatModeMouse(msg)
 		}
 		if m.todoDialog != nil && (msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown) {
 			return m.updateTodoDialogMouseScroll(msg)
@@ -1308,6 +1325,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.bossMode {
 			return m.updateBossModeKey(msg)
+		}
+		if m.helpChatMode {
+			return m.updateHelpChatModeKey(msg)
 		}
 		if m.bossSetupPrompt != nil {
 			return m.updateBossSetupPromptMode(msg)
@@ -1540,6 +1560,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, cmd = m.recordBossHostNotice(bossHostNotice{Content: msg.notice, AnnounceInChat: true, Handoff: msg.handoff})
 		if m.bossMode {
 			cmd = batchCmds(cmd, m.bossModel.RefreshCmd())
+		}
+		if m.helpChatMode {
+			cmd = batchCmds(cmd, m.helpChatModel.RefreshCmd())
 		}
 		return m, cmd
 	case bossEngineerReturnedMsg:
@@ -2476,8 +2499,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
 		if m.bossMode {
-			m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+			m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
 			cmds = append(cmds, m.bossModel.RefreshCmd())
+		}
+		if m.helpChatMode {
+			m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
+			cmds = append(cmds, m.helpChatModel.RefreshCmd())
 		}
 		switch msg.Type {
 		case events.ClassificationUpdated:

@@ -1161,6 +1161,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"search_boss_sessions",
 		"process_report",
 		"skills_inventory",
+		"help_reference",
+		"Use help_reference when the user asks how to use Little Control Room",
 		"suspicious PIDs",
 		"XML-like boss_session and turn snippets",
 		"after it finds one project path, inspect project_detail before answering",
@@ -1202,6 +1204,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Choose pass for requests to change state",
 		"fresh/current external or web research",
 		"Cached engineer snippets are not fresh evidence",
+		"Use help_reference for questions about how to use Little Control Room",
 		"Use goal_run_report when the user asks what Boss goal runs happened",
 		"put only that id in query",
 		"Do not answer the user",
@@ -1209,6 +1212,125 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		if !strings.Contains(routerPrompt, want) {
 			t.Fatalf("read-only router prompt missing %q:\n%s", want, routerPrompt)
 		}
+	}
+}
+
+func TestHelpChatPromptsAvoidUnrequestedStatusReports(t *testing.T) {
+	t.Parallel()
+
+	req := AssistantRequest{HelpChat: true}
+	for label, prompt := range map[string]string{
+		"direct":  bossAssistantSystemPromptForRequest(req),
+		"planner": bossActionPlannerSystemPromptForRequest(req),
+		"router":  bossReadOnlyRouterSystemPromptForRequest(req),
+	} {
+		for _, want := range []string{
+			"greetings",
+			"casual",
+			"status report",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("%s help prompt missing %q:\n%s", label, want, prompt)
+			}
+		}
+	}
+
+	plannerPrompt := bossActionPlannerSystemPromptForRequest(req)
+	for _, want := range []string{
+		`choose kind="answer" immediately`,
+		"Never answer a casual turn with a snapshot",
+		"Do not turn casual input into a project, task, queue, process, or attention report.",
+	} {
+		if !strings.Contains(plannerPrompt, want) {
+			t.Fatalf("planner help prompt missing casual answer guard %q:\n%s", want, plannerPrompt)
+		}
+	}
+}
+
+func TestHelpChatCasualRouterAnswerSkipsPlanner(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "utility-test",
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossActionAnswer, Answer: "Hey! What can I help with?"}),
+			Usage:      model.LLMUsage{TotalTokens: 3},
+		}},
+	}
+	planner := &fakeJSONSchemaRunner{}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{{
+			Role:    "user",
+			Content: "hey",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != "Hey! What can I help with?" {
+		t.Fatalf("content = %q, want casual router answer", resp.Content)
+	}
+	if resp.Model != "utility-test" {
+		t.Fatalf("model = %q, want utility router model", resp.Model)
+	}
+	if got := len(router.reqs); got != 1 {
+		t.Fatalf("router calls = %d, want 1", got)
+	}
+	if got := len(planner.reqs); got != 0 {
+		t.Fatalf("planner calls = %d, want none", got)
+	}
+	if got, want := resp.Usage.TotalTokens, int64(3); got != want {
+		t.Fatalf("usage total = %d, want %d", got, want)
+	}
+}
+
+func TestHelpChatFastAnswerUsesRouterBeforePlanner(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model:      "utility-test",
+			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossActionAnswer, Answer: "Hey."}),
+			Usage:      model.LLMUsage{InputTokens: 7, OutputTokens: 2, TotalTokens: 9},
+		}},
+	}
+	assistant := &Assistant{
+		queryRouter: router,
+		model:       "gpt-test",
+	}
+
+	resp, handled, err := assistant.tryHelpChatFastAnswer(context.Background(), AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{{
+			Role:    "user",
+			Content: "hey",
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("tryHelpChatFastAnswer() error = %v", err)
+	}
+	if !handled {
+		t.Fatalf("tryHelpChatFastAnswer() handled = false, want true")
+	}
+	if resp.Content != "Hey." {
+		t.Fatalf("content = %q, want router answer", resp.Content)
+	}
+	if resp.Model != "utility-test" {
+		t.Fatalf("model = %q, want utility model", resp.Model)
+	}
+	if got := len(router.reqs); got != 1 {
+		t.Fatalf("router calls = %d, want 1", got)
+	}
+	if got, want := resp.Usage.TotalTokens, int64(9); got != want {
+		t.Fatalf("usage total = %d, want %d", got, want)
 	}
 }
 

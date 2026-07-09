@@ -16,6 +16,9 @@ func (m Model) SlashActive() bool {
 }
 
 func (m Model) bossSlashActive() bool {
+	if !m.slashEnabled {
+		return false
+	}
 	return strings.HasPrefix(m.bossSlashInput(), "/")
 }
 

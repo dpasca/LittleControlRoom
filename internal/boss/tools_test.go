@@ -116,6 +116,83 @@ func TestQueryExecutorReportsReflectionInventoryFacets(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorHelpReferenceFindsCommandAndCapabilityTopics(t *testing.T) {
+	t.Parallel()
+
+	executor := &QueryExecutor{}
+	commandResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "new project",
+		Limit: 5,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference command) error = %v", err)
+	}
+	for _, want := range []string{
+		"Little Control Room help reference",
+		"main_tui.command.new-project",
+		"/new-project [--assistant codex|opencode|claude|lcagent]",
+	} {
+		if !strings.Contains(commandResult.Text, want) {
+			t.Fatalf("help reference command result missing %q:\n%s", want, commandResult.Text)
+		}
+	}
+
+	capabilityResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "send prompt engineer",
+		Limit: 5,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference capability) error = %v", err)
+	}
+	for _, want := range []string{
+		"control.capability.engineer.send-prompt",
+		"Send a prompt to an embedded engineer session for a project.",
+		"can_do_via: engineer.send_prompt",
+	} {
+		if !strings.Contains(capabilityResult.Text, want) {
+			t.Fatalf("help reference capability result missing %q:\n%s", want, capabilityResult.Text)
+		}
+	}
+
+	workflowResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "I just had a merge conflict what do I do",
+		Limit: 8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference workflow) error = %v", err)
+	}
+	for _, want := range []string{
+		"main_tui.workflow.merge-conflict-recovery",
+		"/resolve",
+		"Run /refresh after resolving the Git state",
+	} {
+		if !strings.Contains(workflowResult.Text, want) {
+			t.Fatalf("help reference workflow result missing %q:\n%s", want, workflowResult.Text)
+		}
+	}
+
+	keybindingResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "how do I open todos manually press t",
+		Limit: 8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference keybinding) error = %v", err)
+	}
+	for _, want := range []string{
+		"main_tui.keybinding.project-todos",
+		"Press t on the selected project",
+		"manual_steps:",
+	} {
+		if !strings.Contains(keybindingResult.Text, want) {
+			t.Fatalf("help reference keybinding result missing %q:\n%s", want, keybindingResult.Text)
+		}
+	}
+}
+
 func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {
 	t.Parallel()
 

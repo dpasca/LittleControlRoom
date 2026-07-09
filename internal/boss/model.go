@@ -48,6 +48,12 @@ type Model struct {
 	svc       *service.Service
 	assistant *Assistant
 	embedded  bool
+	chatOnly  bool
+	helpChat  bool
+
+	slashEnabled          bool
+	transcriptTabsEnabled bool
+	simpleCoreInput       bool
 
 	width  int
 	height int
@@ -88,10 +94,13 @@ type Model struct {
 	status              string
 	spinnerFrame        int
 	nowFn               func() time.Time
+	assistantStartedAt  time.Time
 
 	assistantStreamID      int
 	streamingAssistantText string
 	streamingToolCalls     []string
+	haveLastAssistantTime  bool
+	lastAssistantTime      time.Duration
 	haveLastAssistantUsage bool
 	lastAssistantUsage     model.LLMUsage
 	lastAssistantModel     string
@@ -204,7 +213,33 @@ func NewEmbeddedWithViewContext(ctx context.Context, svc *service.Service, view 
 	return m
 }
 
+func NewEmbeddedHelp(ctx context.Context, svc *service.Service) Model {
+	return NewEmbeddedHelpWithViewContext(ctx, svc, ViewContext{})
+}
+
+func NewEmbeddedHelpWithViewContext(ctx context.Context, svc *service.Service, view ViewContext) Model {
+	m := newModelWithSessionDir(ctx, svc, true, helpChatSessionsDirName)
+	m.chatOnly = true
+	m.helpChat = true
+	m.slashEnabled = false
+	m.transcriptTabsEnabled = false
+	m.simpleCoreInput = true
+	m.input.SetPromptFunc(2, func(line int) string {
+		if line == 0 {
+			return "> "
+		}
+		return "  "
+	})
+	m = m.WithViewContext(view)
+	m.syncLayout(true)
+	return m
+}
+
 func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
+	return newModelWithSessionDir(ctx, svc, embedded, bossSessionsDirName)
+}
+
+func newModelWithSessionDir(ctx context.Context, svc *service.Service, embedded bool, sessionDirName string) Model {
 	input := textarea.New()
 	input.Prompt = "> "
 	input.SetPromptFunc(2, func(line int) string {
@@ -222,18 +257,20 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 	input.Focus()
 
 	assistant := NewAssistant(svc)
-	sessionStore := newBossSessionStoreForService(svc)
+	sessionStore := newBossSessionStoreForServiceNamed(svc, sessionDirName)
 	m := Model{
-		ctx:           ctx,
-		svc:           svc,
-		assistant:     assistant,
-		embedded:      embedded,
-		input:         input,
-		chatViewport:  viewport.New(0, 0),
-		status:        assistant.Label(),
-		sessionStore:  sessionStore,
-		sessionLoaded: sessionStore == nil,
-		nowFn:         time.Now,
+		ctx:                   ctx,
+		svc:                   svc,
+		assistant:             assistant,
+		embedded:              embedded,
+		slashEnabled:          true,
+		transcriptTabsEnabled: true,
+		input:                 input,
+		chatViewport:          viewport.New(0, 0),
+		status:                assistant.Label(),
+		sessionStore:          sessionStore,
+		sessionLoaded:         sessionStore == nil,
+		nowFn:                 time.Now,
 	}
 	m.syncLayout(true)
 	return m
@@ -275,6 +312,11 @@ func (m Model) RefreshCmd() tea.Cmd {
 
 func (m Model) WithViewContext(view ViewContext) Model {
 	m.viewContext = view
+	return m
+}
+
+func (m Model) WithChatOnly(chatOnly bool) Model {
+	m.chatOnly = chatOnly
 	return m
 }
 
@@ -445,6 +487,23 @@ func (m Model) UsageText() string {
 	return strings.Join(parts, " | ")
 }
 
+func (m Model) ProfileText() string {
+	parts := make([]string, 0, 3)
+	if m.sending && !m.assistantStartedAt.IsZero() {
+		parts = append(parts, "run "+formatBossChatLatency(m.now().Sub(m.assistantStartedAt)))
+	} else if m.haveLastAssistantTime {
+		parts = append(parts, "last "+formatBossChatLatency(m.lastAssistantTime))
+	}
+	if m.haveLastAssistantUsage {
+		if tokens := formatBossLLMUsageTokens(m.lastAssistantUsage); tokens != "" {
+			parts = append(parts, "tok "+tokens)
+		}
+	} else if usage := m.bossChatUsage(); usage.Running > 0 {
+		parts = append(parts, "tok measuring")
+	}
+	return strings.Join(parts, " | ")
+}
+
 func (m Model) ContextText() string {
 	report := m.contextReport()
 	if report.MessageCount == 0 && report.FlowEventCount == 0 {
@@ -602,6 +661,73 @@ func formatBossEstimatedCostUSD(costUSD float64) string {
 	}
 }
 
+func formatBossChatLatency(elapsed time.Duration) string {
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	switch {
+	case elapsed < time.Second:
+		return fmt.Sprintf("%dms", elapsed.Milliseconds())
+	case elapsed < 10*time.Second:
+		return fmt.Sprintf("%.1fs", elapsed.Seconds())
+	case elapsed < time.Minute:
+		return fmt.Sprintf("%.0fs", elapsed.Seconds())
+	default:
+		totalSeconds := int(elapsed.Round(time.Second).Seconds())
+		return fmt.Sprintf("%dm%02ds", totalSeconds/60, totalSeconds%60)
+	}
+}
+
+func (m Model) clearHelpChat(prompt string) (tea.Model, tea.Cmd) {
+	if !m.helpChat {
+		return m, nil
+	}
+	m.input.Reset()
+	m.bossSlashSelected = 0
+	m.messages = nil
+	m.sessionTitle = ""
+	m.pendingControl = nil
+	m.pendingGoal = nil
+	m.sending = false
+	m.assistantStreamID++
+	m.streamingAssistantText = ""
+	m.streamingToolCalls = nil
+	m.assistantStartedAt = time.Time{}
+	m.haveLastAssistantTime = false
+	m.lastAssistantTime = 0
+	m.haveLastAssistantUsage = false
+	m.lastAssistantUsage = model.LLMUsage{}
+	m.lastAssistantModel = ""
+	m.haveLastContextReport = false
+	m.lastContextReport = bossContextReport{}
+	m.status = "Started a fresh help chat"
+	m.syncLayout(true)
+	if strings.TrimSpace(prompt) != "" && !m.hasPersistentSessions() {
+		return m.submitChatMessage(prompt)
+	}
+	if !m.hasPersistentSessions() {
+		return m, nil
+	}
+	m.sessionLoaded = false
+	m.status = "Starting a fresh help chat..."
+	return m, m.newBossSessionCmd(prompt)
+}
+
+func helpChatNewCommandPrompt(text string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", false
+	}
+	name, rawArgs, _ := strings.Cut(strings.TrimPrefix(trimmed, "/"), " ")
+	if trimmed == "/new" {
+		return "", true
+	}
+	if strings.HasPrefix(trimmed, "/") && strings.EqualFold(name, "new") {
+		return strings.TrimSpace(rawArgs), true
+	}
+	return "", false
+}
+
 func (m Model) HotProjectPath(index int) string {
 	item := m.HotAttentionItem(index)
 	if item.Kind != AttentionItemProject {
@@ -663,15 +789,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sessionLoaded = true
 		m.sessionErr = msg.err
 		if msg.err != nil {
-			m.status = "Boss chat session storage failed: " + msg.err.Error()
+			m.status = m.chatSurfaceLabel() + " session storage failed: " + msg.err.Error()
 		} else {
 			m.sessionID = strings.TrimSpace(msg.session.SessionID)
 			m.sessionTitle = strings.TrimSpace(msg.session.Title)
 			m.messages = chatMessagesFromBossMessages(msg.messages)
 			if msg.created {
-				m.status = "Boss chat session ready"
+				m.status = m.chatSurfaceLabel() + " session ready"
 			} else if len(m.messages) > 0 {
-				m.status = "Resumed boss chat session"
+				m.status = "Resumed " + strings.ToLower(m.chatSurfaceLabel()) + " session"
 			}
 		}
 		m.syncLayout(true)
@@ -743,18 +869,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc", "alt+up":
 			return m, m.exitCmd()
 		case "alt+c":
+			if m.helpChat {
+				return m, nil
+			}
 			m.openInputCopyDialog()
 			return m, nil
 		case "alt+o":
+			if m.helpChat {
+				return m, nil
+			}
 			return m.openBossOpenTargetPicker()
 		case "alt+s":
+			if m.helpChat {
+				return m, nil
+			}
 			m.status = "Use Alt+C to copy input or output"
 			return m, nil
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
+		case "ctrl+l":
+			if m.helpChat {
+				return m.clearHelpChat("")
+			}
 		case "tab":
-			if !m.bossSlashActive() {
+			if m.transcriptTabsEnabled && !m.bossSlashActive() {
 				m = m.toggleTranscriptTab()
 				m.syncLayout(true)
 				return m, nil
@@ -791,6 +930,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) applyAssistantReply(response AssistantResponse, err error, snapshot StateSnapshot, stateErr error, stateRefreshed bool) (tea.Model, tea.Cmd) {
+	if !m.assistantStartedAt.IsZero() {
+		elapsed := m.now().Sub(m.assistantStartedAt)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		m.haveLastAssistantTime = true
+		m.lastAssistantTime = elapsed
+		m.assistantStartedAt = time.Time{}
+	}
 	m.sending = false
 	m.streamingAssistantText = ""
 	m.streamingToolCalls = nil
@@ -878,7 +1026,7 @@ func (m *Model) applyAssistantStreamEvent(event AssistantStreamEvent) {
 	case AssistantStreamTextDelta:
 		m.streamingAssistantText += event.Delta
 		if strings.TrimSpace(m.streamingAssistantText) != "" {
-			m.status = "Boss chat is answering..."
+			m.status = m.chatSurfaceLabel() + " is answering..."
 		}
 	case AssistantStreamToolCall:
 		line := formatAssistantToolCallStatus(event)
@@ -909,6 +1057,10 @@ func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
 
 func (m Model) View() string {
 	layout := m.layout()
+	if m.chatOnly {
+		body := m.renderOverlays(m.renderCoreChat(layout), layout.width, layout.height)
+		return fitRenderedBlock(body, layout.width, layout.height)
+	}
 	chat := m.renderChat(layout)
 	top := chat
 	if layout.sidebarWidth >= 12 {
@@ -929,28 +1081,36 @@ func (m Model) View() string {
 			body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 		}
 	}
-	if m.sessionPickerVisible {
-		body = m.renderBossSessionPickerOverlay(body, layout.width, layout.height)
-	}
-	if m.openTargetPicker != nil {
-		body = m.renderBossOpenTargetPickerOverlay(body, layout.width, layout.height)
-	}
-	if m.inputCopyDialog != nil {
-		body = m.renderInputCopyDialogOverlay(body, layout.width, layout.height)
-	}
-	if m.pendingControl != nil {
-		body = m.renderControlConfirmationOverlay(body, layout.width, layout.height)
-	}
-	if m.pendingGoal != nil {
-		body = m.renderGoalConfirmationOverlay(body, layout.width, layout.height)
-	}
+	body = m.renderOverlays(body, layout.width, layout.height)
 	if m.embedded {
 		return fitRenderedBlock(body, layout.width, layout.height)
 	}
 	return fitRenderedBlock(lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(layout.width), body), layout.width, layout.height+1)
 }
 
+func (m Model) renderOverlays(body string, width, height int) string {
+	if m.sessionPickerVisible {
+		body = m.renderBossSessionPickerOverlay(body, width, height)
+	}
+	if m.openTargetPicker != nil {
+		body = m.renderBossOpenTargetPickerOverlay(body, width, height)
+	}
+	if m.inputCopyDialog != nil {
+		body = m.renderInputCopyDialogOverlay(body, width, height)
+	}
+	if m.pendingControl != nil {
+		body = m.renderControlConfirmationOverlay(body, width, height)
+	}
+	if m.pendingGoal != nil {
+		body = m.renderGoalConfirmationOverlay(body, width, height)
+	}
+	return body
+}
+
 func (m Model) normalizedTranscriptTab() bossTranscriptTab {
+	if !m.transcriptTabsEnabled {
+		return bossTranscriptTabChat
+	}
 	switch m.transcriptTab {
 	case bossTranscriptTabFlow:
 		return bossTranscriptTabFlow
@@ -979,7 +1139,12 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
-	if strings.HasPrefix(text, "/") {
+	if m.helpChat {
+		if prompt, ok := helpChatNewCommandPrompt(text); ok {
+			return m.clearHelpChat(prompt)
+		}
+	}
+	if m.slashEnabled && strings.HasPrefix(text, "/") {
 		return m.runBossSlashCommand(text)
 	}
 	return m.submitChatMessage(text)
@@ -998,6 +1163,17 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 			View:      view,
 			Messages:  messages,
 			SessionID: m.sessionID,
+			HelpChat:  m.helpChat,
+		}, nil); handled || err != nil {
+			return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot}
+		}
+		if resp, handled, err := assistant.tryHelpChatFastAnswer(ctx, AssistantRequest{
+			StateBrief: BuildStateBrief(snapshot, time.Now()),
+			Snapshot:   snapshot,
+			View:       view,
+			Messages:   messages,
+			SessionID:  m.sessionID,
+			HelpChat:   m.helpChat,
 		}, nil); handled || err != nil {
 			return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot}
 		}
@@ -1018,6 +1194,7 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 			View:       view,
 			Messages:   messages,
 			SessionID:  m.sessionID,
+			HelpChat:   m.helpChat,
 		})
 		return AssistantReplyMsg{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed}
 	}
@@ -1045,6 +1222,21 @@ func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snaps
 				View:      view,
 				Messages:  messages,
 				SessionID: m.sessionID,
+				HelpChat:  m.helpChat,
+			}, emit); handled || err != nil {
+				select {
+				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			if resp, handled, err := assistant.tryHelpChatFastAnswer(ctx, AssistantRequest{
+				StateBrief: BuildStateBrief(snapshot, time.Now()),
+				Snapshot:   snapshot,
+				View:       view,
+				Messages:   messages,
+				SessionID:  m.sessionID,
+				HelpChat:   m.helpChat,
 			}, emit); handled || err != nil {
 				select {
 				case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, done: true}:
@@ -1069,6 +1261,7 @@ func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snaps
 				View:       view,
 				Messages:   messages,
 				SessionID:  m.sessionID,
+				HelpChat:   m.helpChat,
 			}, emit)
 			select {
 			case events <- assistantStreamEnvelope{response: resp, err: err, snapshot: snapshot, stateErr: stateErr, stateRefreshed: stateRefreshed, done: true}:
@@ -1139,7 +1332,11 @@ func bossTickCmd() tea.Cmd {
 
 func (m *Model) syncLayout(gotoBottom bool) {
 	layout := m.layout()
-	m.input.SetWidth(maxInt(20, layout.chatInnerWidth))
+	inputWidth := layout.chatInnerWidth
+	if m.simpleCoreInput {
+		inputWidth = maxInt(1, layout.chatInnerWidth-4)
+	}
+	m.input.SetWidth(maxInt(20, inputWidth))
 	m.input.SetHeight(layout.inputEditorHeight)
 	m.chatViewport.Width = maxInt(1, layout.chatInnerWidth)
 	m.chatViewport.Height = maxInt(1, layout.transcriptHeight)
@@ -1169,6 +1366,23 @@ func (m Model) layout() bossLayout {
 			// Standalone boss mode owns its header bar and keeps one row of
 			// slack so exact-height renders do not scroll frames out of view.
 			height -= 2
+		}
+	}
+	if m.chatOnly {
+		chatInnerWidth := width
+		inputEditorHeight := m.bossInputEditorHeight(chatInnerWidth, height, false)
+		inputHeight := bossInputBlockHeight(inputEditorHeight)
+		transcriptHeight, slashHeight := m.coreChatAuxiliaryHeights(height, inputHeight)
+		return bossLayout{
+			width:             width,
+			height:            height,
+			topHeight:         height,
+			chatWidth:         width,
+			chatInnerWidth:    chatInnerWidth,
+			transcriptHeight:  transcriptHeight,
+			inputHeight:       inputHeight,
+			inputEditorHeight: inputEditorHeight,
+			slashHeight:       slashHeight,
 		}
 	}
 	bottomHeight := 0
@@ -1270,6 +1484,17 @@ func (m Model) chatAuxiliaryHeights(topHeight, inputHeight int, includesHint boo
 	return transcriptHeight, slashHeight
 }
 
+func (m Model) coreChatAuxiliaryHeights(height, inputHeight int) (int, int) {
+	available := maxInt(1, height-inputHeight)
+	rawSlashHeight := m.bossSlashBlockHeight()
+	slashHeight := 0
+	if rawSlashHeight > 0 {
+		slashHeight = minInt(rawSlashHeight, maxInt(0, available-1))
+	}
+	transcriptHeight := maxInt(1, available-slashHeight)
+	return transcriptHeight, slashHeight
+}
+
 const (
 	bossInputPromptWidth     = 2
 	bossInputChromeHeight    = 0
@@ -1337,6 +1562,27 @@ func (m Model) renderChat(layout bossLayout) string {
 	parts = append(parts, input)
 	content := strings.Join(parts, "\n")
 	return m.renderRawPanelStyledTitle(m.renderTranscriptPanelTitle(), content, layout.chatWidth, layout.topHeight)
+}
+
+func (m Model) renderCoreChat(layout bossLayout) string {
+	input := m.renderCoreInput(layout)
+	transcript := m.chatViewport.View()
+	if m.chatSelection.dragging && m.chatSelection.hasRange() {
+		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
+	}
+	parts := []string{transcript}
+	if slashBlock := m.renderBossSlashBlock(layout.chatInnerWidth, layout.slashHeight); slashBlock != "" {
+		parts = append(parts, slashBlock)
+	}
+	parts = append(parts, input)
+	return fitRenderedBlock(strings.Join(parts, "\n"), layout.width, layout.height)
+}
+
+func (m Model) renderCoreInput(layout bossLayout) string {
+	if m.simpleCoreInput {
+		return renderHelpChatInput(m.input, layout.chatInnerWidth, layout.inputHeight)
+	}
+	return fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 }
 
 func (m Model) renderTranscriptPanelTitle() string {
@@ -1784,6 +2030,9 @@ func (m Model) renderTranscript(width int) string {
 	width = maxInt(12, width)
 	var blocks []string
 	projectHighlights := m.chatProjectHighlights()
+	if m.helpChat {
+		projectHighlights = nil
+	}
 	activeTab := m.normalizedTranscriptTab()
 	var lastFlowDate time.Time
 	for _, message := range m.messages {
@@ -1805,13 +2054,13 @@ func (m Model) renderTranscript(width int) string {
 			continue
 		}
 		if normalizeChatRole(message.Role) == "assistant" {
-			blocks = append(blocks, renderAssistantChatMessage(message, width, projectHighlights))
+			blocks = append(blocks, m.renderAssistantChatMessage(message, width, projectHighlights))
 			continue
 		}
-		blocks = append(blocks, renderUserMessage(message.Content, width, projectHighlights))
+		blocks = append(blocks, m.renderUserMessage(message.Content, width, projectHighlights))
 	}
 	if m.sending && activeTab == bossTranscriptTabChat {
-		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame, projectHighlights); pending != "" {
+		if pending := m.renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame, projectHighlights); pending != "" {
 			blocks = append(blocks, pending)
 		}
 	}
@@ -1953,6 +2202,7 @@ func bossSummaryFingerprint(project ProjectBrief) string {
 var (
 	clipboardTextWriter           = clipboard.WriteAll
 	bossPanelBackground           = lipgloss.Color("#000000")
+	helpChatSurfaceBackground     = lipgloss.Color("234")
 	bossInputBackground           = lipgloss.Color("236")
 	bossInputCursorLineBackground = lipgloss.Color("237")
 	bossPanelAccent               = lipgloss.Color("81")
@@ -2008,6 +2258,15 @@ var (
 	bossUserPrefixStyle             = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossUserMessageBackground).Bold(true)
 	bossUserContinuationPrefixStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossUserMessageBackground)
 	bossInputShellStyle             = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText)
+	helpChatAssistantMessageStyle   = lipgloss.NewStyle().Background(helpChatSurfaceBackground)
+	helpChatAssistantPrefixStyle    = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(helpChatSurfaceBackground).Bold(true)
+	helpChatAssistantContStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(helpChatSurfaceBackground)
+	helpChatUserMessageStyle        = lipgloss.NewStyle().Background(helpChatSurfaceBackground)
+	helpChatUserPrefixStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(helpChatSurfaceBackground).Bold(true)
+	helpChatUserContStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(helpChatSurfaceBackground)
+	helpChatMutedStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(helpChatSurfaceBackground)
+	helpChatToolCallStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(helpChatSurfaceBackground)
+	helpChatInputShellStyle         = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText)
 )
 
 func bossPanelInnerWidth(width int) int {
@@ -2047,6 +2306,14 @@ func renderBossInputBlock(_ textarea.Model, editorView string, width int) string
 	return bossInputShellStyle.Width(width).Render(editorView)
 }
 
+func renderHelpChatInput(input textarea.Model, width, height int) string {
+	width = maxInt(1, width)
+	innerWidth := maxInt(1, width-2)
+	body := fitRenderedBlock(input.View(), innerWidth, height)
+	rendered := helpChatInputShellStyle.Width(innerWidth).Padding(0, 1).Render(body)
+	return fitRenderedBlock(rendered, width, height)
+}
+
 func panelHeightForRawLines(contentLines int) int {
 	return maxInt(4, contentLines+4)
 }
@@ -2068,15 +2335,38 @@ func renderAssistantMessage(content string, width int) string {
 }
 
 func renderAssistantMessageWithProjectHighlights(content string, width int, projectHighlights []bossProjectTextHighlight) string {
-	return renderPrefixedMessageWithProjectHighlights(content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, nil, projectHighlights)
+	return renderAssistantMessageWithPrefix(content, width, projectHighlights, "Boss> ")
+}
+
+func renderAssistantMessageWithPrefix(content string, width int, projectHighlights []bossProjectTextHighlight, prefix string) string {
+	return renderAssistantMessageWithStyles(content, width, projectHighlights, prefix, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle)
+}
+
+func renderAssistantMessageWithStyles(content string, width int, projectHighlights []bossProjectTextHighlight, prefix string, prefixStyle, continuationStyle, lineStyle lipgloss.Style) string {
+	return renderPrefixedMessageWithProjectHighlights(content, prefix, bossPanelText, prefixStyle, continuationStyle, lineStyle, width, false, nil, projectHighlights)
 }
 
 func renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
+	return renderAssistantChatMessageWithPrefix(message, width, projectHighlights, "Boss> ")
+}
+
+func (m Model) renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
+	if m.helpChat {
+		return renderAssistantChatMessageWithStyles(message, width, projectHighlights, m.assistantMessagePrefix(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle)
+	}
+	return renderAssistantChatMessageWithPrefix(message, width, projectHighlights, m.assistantMessagePrefix())
+}
+
+func renderAssistantChatMessageWithPrefix(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight, prefix string) string {
+	return renderAssistantChatMessageWithStyles(message, width, projectHighlights, prefix, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle)
+}
+
+func renderAssistantChatMessageWithStyles(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight, prefix string, prefixStyle, continuationStyle, lineStyle lipgloss.Style) string {
 	highlights := handoffMessageHighlights(message.Content, message.Handoff)
 	if len(highlights) == 0 {
-		return renderAssistantMessageWithProjectHighlights(message.Content, width, projectHighlights)
+		return renderAssistantMessageWithStyles(message.Content, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle)
 	}
-	return renderPrefixedMessageWithProjectHighlights(message.Content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
+	return renderPrefixedMessageWithProjectHighlights(message.Content, prefix, bossPanelText, prefixStyle, continuationStyle, lineStyle, width, false, highlights, projectHighlights)
 }
 
 func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
@@ -2089,20 +2379,57 @@ func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights [
 }
 
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
+	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, "Boss> ", "Boss chat")
+}
+
+func (m Model) renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
+	if m.helpChat {
+		return renderStreamingAssistantMessageWithStyles(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle, helpChatMutedStyle, helpChatToolCallStyle)
+	}
+	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel())
+}
+
+func renderStreamingAssistantMessageWithPrefix(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string) string {
+	return renderStreamingAssistantMessageWithStyles(content, toolCalls, width, spinnerFrame, projectHighlights, prefix, label, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, bossMutedStyle, bossToolCallStyle)
+}
+
+func renderStreamingAssistantMessageWithStyles(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string, prefixStyle, continuationStyle, lineStyle, mutedStyle, toolCallStyle lipgloss.Style) string {
 	var blocks []string
-	if toolBlock := renderTemporaryToolCalls(toolCalls, width); toolBlock != "" {
+	if toolBlock := renderTemporaryToolCallsWithStyle(toolCalls, width, toolCallStyle); toolBlock != "" {
 		blocks = append(blocks, toolBlock)
 	}
 	if strings.TrimSpace(content) != "" {
-		blocks = append(blocks, renderAssistantMessageWithProjectHighlights(content, width, projectHighlights))
+		blocks = append(blocks, renderAssistantMessageWithStyles(content, width, projectHighlights, prefix, prefixStyle, continuationStyle, lineStyle))
 	}
 	if len(blocks) == 0 {
-		blocks = append(blocks, bossMutedStyle.Render(fitLine("Boss chat is thinking "+spinnerDots(spinnerFrame), width)))
+		label = strings.TrimSpace(label)
+		if label == "" {
+			label = "Boss chat"
+		}
+		blocks = append(blocks, mutedStyle.Render(fitLine(label+" is thinking "+spinnerDots(spinnerFrame), width)))
 	}
 	return strings.Join(blocks, "\n")
 }
 
+func (m Model) assistantMessagePrefix() string {
+	if m.helpChat {
+		return "Help> "
+	}
+	return "Boss> "
+}
+
+func (m Model) chatSurfaceLabel() string {
+	if m.helpChat {
+		return "Help chat"
+	}
+	return "Boss chat"
+}
+
 func renderTemporaryToolCalls(toolCalls []string, width int) string {
+	return renderTemporaryToolCallsWithStyle(toolCalls, width, bossToolCallStyle)
+}
+
+func renderTemporaryToolCallsWithStyle(toolCalls []string, width int, style lipgloss.Style) string {
 	if len(toolCalls) == 0 {
 		return ""
 	}
@@ -2114,7 +2441,7 @@ func renderTemporaryToolCalls(toolCalls []string, width int) string {
 		}
 	}
 	for i, line := range lines {
-		lines[i] = bossToolCallStyle.Render(fitLine(line, width))
+		lines[i] = style.Render(fitLine(line, width))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -2138,6 +2465,13 @@ func formatAssistantToolCallStatus(event AssistantStreamEvent) string {
 
 func renderUserMessage(content string, width int, projectHighlights []bossProjectTextHighlight) string {
 	return renderPrefixedMessageWithProjectHighlights(content, "You> ", bossPanelText, bossUserPrefixStyle, bossUserContinuationPrefixStyle, bossUserMessageStyle, width, true, nil, projectHighlights)
+}
+
+func (m Model) renderUserMessage(content string, width int, projectHighlights []bossProjectTextHighlight) string {
+	if m.helpChat {
+		return renderPrefixedMessageWithProjectHighlights(content, "You> ", bossPanelText, helpChatUserPrefixStyle, helpChatUserContStyle, helpChatUserMessageStyle, width, true, nil, projectHighlights)
+	}
+	return renderUserMessage(content, width, projectHighlights)
 }
 
 func renderBossHandoffMessage(content string, width int) string {

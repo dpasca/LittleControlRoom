@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,12 +11,48 @@ import (
 	"time"
 
 	"lcroom/internal/config"
+	"lcroom/internal/helpmeta"
 	"lcroom/internal/model"
 	"lcroom/internal/runtimeguard"
 	"lcroom/internal/store"
 )
 
 func TestRunVersion(t *testing.T) {
+	code, output := captureRunStdout(t, []string{"version"})
+	if code != 0 {
+		t.Fatalf("code = %d", code)
+	}
+	if got, want := strings.TrimSpace(output), "lcroom dev"; got != want {
+		t.Fatalf("version output = %q, want %q", got, want)
+	}
+}
+
+func TestRunHelpMetaWritesJSONCorpus(t *testing.T) {
+	code, output := captureRunStdout(t, []string{"help-meta"})
+	if code != 0 {
+		t.Fatalf("code = %d, output = %s", code, output)
+	}
+	var topics []helpmeta.Topic
+	if err := json.Unmarshal([]byte(output), &topics); err != nil {
+		t.Fatalf("help-meta output is not JSON: %v\n%s", err, output)
+	}
+	seen := map[string]helpmeta.Topic{}
+	for _, topic := range topics {
+		seen[topic.ID] = topic
+	}
+	for _, id := range []string{
+		helpmeta.CommandTopicID(helpmeta.SurfaceMainTUI, "help"),
+		helpmeta.TopicID(helpmeta.SurfaceMainTUI, helpmeta.TopicKindWorkflow, "merge-conflict-recovery"),
+		helpmeta.TopicID(helpmeta.SurfaceMainTUI, helpmeta.TopicKindKeybinding, "project-todos"),
+	} {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("help-meta output missing topic %q", id)
+		}
+	}
+}
+
+func captureRunStdout(t *testing.T, args []string) (int, string) {
+	t.Helper()
 	oldStdout := os.Stdout
 	reader, writer, err := os.Pipe()
 	if err != nil {
@@ -27,7 +64,7 @@ func TestRunVersion(t *testing.T) {
 		_ = reader.Close()
 	}()
 
-	code := Run("lcroom", []string{"version"})
+	code := Run("lcroom", args)
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
 	}
@@ -35,12 +72,7 @@ func TestRunVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read output: %v", err)
 	}
-	if code != 0 {
-		t.Fatalf("code = %d", code)
-	}
-	if got, want := strings.TrimSpace(string(output)), "lcroom dev"; got != want {
-		t.Fatalf("version output = %q, want %q", got, want)
-	}
+	return code, string(output)
 }
 
 func TestFormatRuntimeConflictMessageIncludesRecovery(t *testing.T) {

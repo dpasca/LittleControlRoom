@@ -141,7 +141,7 @@ type Invocation struct {
 }
 
 var specs = []Spec{
-	{Name: "help", Usage: "/help", Summary: "Open the help panel"},
+	{Name: "help", Usage: "/help", Summary: "Open Help Chat"},
 	{Name: "ai", Usage: "/ai", Summary: "Open the internal AI stats dialog"},
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},

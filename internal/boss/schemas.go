@@ -43,6 +43,7 @@ func bossResourceRefSchema() map[string]any {
 func bossReadOnlyRouteKindStrings() []string {
 	return []string{
 		bossReadOnlyRoutePass,
+		bossActionAnswer,
 		bossActionListProjects,
 		bossActionProjectDetail,
 		bossActionSessionClassifications,
@@ -56,12 +57,19 @@ func bossReadOnlyRouteKindStrings() []string {
 		bossActionSearchBossSessions,
 		bossActionContextCommand,
 		bossActionSkillsInventory,
+		bossActionHelpReference,
 		bossActionGoalRunReport,
 	}
 }
 
 func bossActionKindStrings() []string {
-	kinds := append([]string{bossActionAnswer}, bossReadOnlyRouteKindStrings()[1:]...)
+	kinds := []string{bossActionAnswer}
+	for _, kind := range bossReadOnlyRouteKindStrings() {
+		if kind == bossReadOnlyRoutePass || kind == bossActionAnswer {
+			continue
+		}
+		kinds = append(kinds, kind)
+	}
 	return append(kinds, bossActionProposeControl, bossActionProposeGoal)
 }
 
@@ -83,11 +91,15 @@ func bossPlanStepKindStrings() []string {
 func bossReadOnlyRouteSchema() map[string]any {
 	return bossObjectSchema(map[string]any{
 		"kind": bossEnumStringSchema(bossReadOnlyRouteKindStrings(), ""),
+		"answer": map[string]any{
+			"type":        "string",
+			"description": "Short user-facing answer when kind is answer; otherwise empty.",
+		},
 		"target": bossEnumStringSchema(
 			[]string{"", "selected"},
 			"Use selected only when the user explicitly asks about the selected classic TUI project.",
 		),
-		"query":              bossStringSchema("Search text for search_context/search_boss_sessions; exact goal run id for goal_run_report when known; otherwise empty."),
+		"query":              bossStringSchema("Search text for search_context/search_boss_sessions/help_reference; exact goal run id for goal_run_report when known; otherwise empty."),
 		"command":            bossStringSchema("For context_command, one exact ctx command; otherwise empty."),
 		"project_path":       bossStringSchema("Exact project path for project-specific queries, or empty."),
 		"project_name":       bossStringSchema("Exact project name for project-specific queries, or empty."),
@@ -97,6 +109,7 @@ func bossReadOnlyRouteSchema() map[string]any {
 		"reason":             bossStringSchema("Short private reason for the route, or empty."),
 	}, []string{
 		"kind",
+		"answer",
 		"target",
 		"query",
 		"command",
@@ -124,7 +137,7 @@ func bossActionSchema() map[string]any {
 			},
 			"query": map[string]any{
 				"type":        "string",
-				"description": "Search text when kind is search_context or search_boss_sessions; exact goal run id when kind is goal_run_report and a specific run is known; optional fallback command text when kind is context_command; otherwise empty.",
+				"description": "Search text when kind is search_context, search_boss_sessions, or help_reference; exact goal run id when kind is goal_run_report and a specific run is known; optional fallback command text when kind is context_command; otherwise empty.",
 			},
 			"command": map[string]any{
 				"type":        "string",

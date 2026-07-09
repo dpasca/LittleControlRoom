@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/store"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -468,6 +469,265 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 	transcript := ansi.Strip(m.renderTranscript(90))
 	if strings.Contains(transcript, "Ada is working on Revoke Cursor GitHub access") || strings.Contains(transcript, "Supervisor") {
 		t.Fatalf("active agent status should stay out of transcript:\n%s", transcript)
+	}
+}
+
+func TestModelChatOnlyViewOmitsDeskAndLog(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil).WithChatOnly(true)
+	m.width = 112
+	m.height = 24
+	m.stateLoaded = true
+	m.snapshot = StateSnapshot{
+		TotalProjects:  1,
+		ActiveProjects: 1,
+		HotProjects: []ProjectBrief{{
+			Name:           "Alpha",
+			Status:         model.StatusActive,
+			AttentionScore: 12,
+		}},
+	}
+	m.syncLayout(true)
+
+	rendered := ansi.Strip(m.View())
+	if strings.TrimSpace(rendered) == "" {
+		t.Fatalf("chat-only view should render the core chat surface")
+	}
+	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Watching", "Next"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("chat-only view should omit %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
+func TestEmbeddedHelpUsesSeparateSessionStore(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+
+	bossModel := NewEmbedded(context.Background(), svc)
+	helpModel := NewEmbeddedHelp(context.Background(), svc)
+	if bossModel.sessionStore == nil || helpModel.sessionStore == nil {
+		t.Fatalf("session stores should be configured")
+	}
+	if filepath.Base(bossModel.sessionStore.dir) != bossSessionsDirName {
+		t.Fatalf("boss session dir = %q, want %q", bossModel.sessionStore.dir, bossSessionsDirName)
+	}
+	if filepath.Base(helpModel.sessionStore.dir) != helpChatSessionsDirName {
+		t.Fatalf("help session dir = %q, want %q", helpModel.sessionStore.dir, helpChatSessionsDirName)
+	}
+	if bossModel.sessionStore.dir == helpModel.sessionStore.dir {
+		t.Fatalf("help chat should not share Boss chat session history: %q", helpModel.sessionStore.dir)
+	}
+}
+
+func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 112
+	m.height = 24
+	m.input.SetValue("/sessions")
+	m.syncLayout(true)
+
+	if m.SlashActive() {
+		t.Fatalf("help chat should treat slash text as normal chat input")
+	}
+	updated, cmd := m.submit()
+	got := updated.(Model)
+	if got.sessionPickerVisible {
+		t.Fatalf("help chat slash-looking input should not open the Boss session picker")
+	}
+	if len(got.messages) != 1 || got.messages[0].Role != "user" || got.messages[0].Content != "/sessions" {
+		t.Fatalf("help chat should submit slash-looking text as a user question, got %#v", got.messages)
+	}
+	if cmd == nil {
+		t.Fatalf("help chat slash-looking input should still submit to the assistant")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.normalizedTranscriptTab() != bossTranscriptTabChat {
+		t.Fatalf("help chat Tab should not switch to Flow, got %q", got.normalizedTranscriptTab())
+	}
+}
+
+func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 112
+	m.height = 24
+	m.stateLoaded = true
+	m.messages = []ChatMessage{{Role: "assistant", Content: "Ask me about Little Control Room."}}
+	m.syncLayout(true)
+
+	rendered := ansi.Strip(m.View())
+	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Flow", "Tab switch"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("help chat view should omit Boss transcript control %q:\n%s", unwanted, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "Help> Ask me about Little Control Room.") {
+		t.Fatalf("help chat should use a Help speaker label:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Boss>") {
+		t.Fatalf("help chat should not use Boss speaker labels:\n%s", rendered)
+	}
+
+	rawTranscript := m.renderTranscript(112)
+	for _, unwanted := range []string{"\x1b[48;2;0;0;0m", "\x1b[48;5;0m"} {
+		if strings.Contains(rawTranscript, unwanted) {
+			t.Fatalf("help chat transcript should not paint old black Boss backgrounds %q:\n%s", unwanted, rendered)
+		}
+	}
+	for label, style := range map[string]lipgloss.Style{
+		"assistant": helpChatAssistantMessageStyle,
+		"user":      helpChatUserMessageStyle,
+	} {
+		if got, want := fmt.Sprint(style.GetBackground()), fmt.Sprint(helpChatSurfaceBackground); got != want {
+			t.Fatalf("help chat %s text background = %s, want help surface %s", label, got, want)
+		}
+	}
+}
+
+func TestEmbeddedHelpInputUsesSimpleCodexStyle(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 60
+	m.height = 18
+	m.stateLoaded = true
+	m.input.SetValue("first line\nsecond line")
+	m.syncLayout(true)
+
+	layout := m.layout()
+	rendered := m.renderCoreInput(layout)
+	stripped := ansi.Strip(rendered)
+	if !strings.Contains(stripped, "> first line") {
+		t.Fatalf("help chat input should render the first prompt:\n%s", stripped)
+	}
+	if strings.Contains(stripped, "| second line") {
+		t.Fatalf("help chat input should not use the old Boss continuation bar:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "  second line") {
+		t.Fatalf("help chat input should render a plain continuation indent:\n%s", stripped)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if got := ansi.StringWidth(ansi.Strip(line)); got > layout.chatInnerWidth {
+			t.Fatalf("help chat input line width = %d, want <= %d: %q", got, layout.chatInnerWidth, ansi.Strip(line))
+		}
+	}
+}
+
+func TestEmbeddedHelpSlashNewClearsCurrentChat(t *testing.T) {
+	t.Parallel()
+
+	svc := newBossSessionTestService(t)
+	m := NewEmbeddedHelp(context.Background(), svc)
+	loadedMsg := m.loadLatestBossSessionCmd()().(bossSessionLoadedMsg)
+	updated, _ := m.Update(loadedMsg)
+	m = updated.(Model)
+	firstSessionID := m.sessionID
+	m.messages = []ChatMessage{
+		{Role: "user", Content: "old chat", At: time.Now()},
+		{Role: "assistant", Content: "old answer", At: time.Now()},
+	}
+	m.haveLastAssistantUsage = true
+	m.lastAssistantUsage = model.LLMUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13}
+	m.haveLastAssistantTime = true
+	m.lastAssistantTime = 2 * time.Second
+	m.input.SetValue("/new")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("/new should create a fresh help chat session")
+	}
+	msg := cmd()
+	loaded, ok := msg.(bossSessionLoadedMsg)
+	if !ok {
+		t.Fatalf("cmd() returned %T, want bossSessionLoadedMsg", msg)
+	}
+	updated, _ = got.Update(loaded)
+	got = updated.(Model)
+	if got.sessionID == "" || got.sessionID == firstSessionID {
+		t.Fatalf("session id = %q, want fresh help session different from %q", got.sessionID, firstSessionID)
+	}
+	if len(got.messages) != 0 {
+		t.Fatalf("messages len = %d, want fresh transcript", len(got.messages))
+	}
+	if got.input.Value() != "" {
+		t.Fatalf("input = %q, want cleared", got.input.Value())
+	}
+	if got.haveLastAssistantUsage || got.haveLastAssistantTime {
+		t.Fatalf("profile state should reset on /new")
+	}
+	if !strings.Contains(got.status, "Help chat") {
+		t.Fatalf("status = %q, want help chat status", got.status)
+	}
+}
+
+func TestEmbeddedHelpCtrlLClearsCurrentChat(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.messages = []ChatMessage{{Role: "user", Content: "old chat", At: time.Now()}}
+	m.input.SetValue("draft")
+	m.sending = true
+	m.assistantStartedAt = time.Now().Add(-time.Second)
+	m.haveLastAssistantUsage = true
+	m.lastAssistantUsage = model.LLMUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13}
+	streamID := m.assistantStreamID
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("Ctrl+L without a session store should not need a command")
+	}
+	if len(got.messages) != 0 || got.input.Value() != "" {
+		t.Fatalf("Ctrl+L should clear messages and input, messages=%#v input=%q", got.messages, got.input.Value())
+	}
+	if got.sending || !got.assistantStartedAt.IsZero() || got.haveLastAssistantUsage {
+		t.Fatalf("Ctrl+L should clear active/profile state")
+	}
+	if got.assistantStreamID <= streamID {
+		t.Fatalf("Ctrl+L should invalidate active stream id")
+	}
+}
+
+func TestEmbeddedHelpProfileTextShowsTimingAndTokens(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 7, 9, 13, 0, 0, 0, time.UTC)
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.nowFn = func() time.Time { return start.Add(1500 * time.Millisecond) }
+	m.sending = true
+	m.assistantStartedAt = start
+	if got := m.ProfileText(); !strings.Contains(got, "run 1.5s") {
+		t.Fatalf("running profile = %q, want elapsed run time", got)
+	}
+
+	m.sending = false
+	m.assistantStartedAt = time.Time{}
+	m.haveLastAssistantTime = true
+	m.lastAssistantTime = 2340 * time.Millisecond
+	m.haveLastAssistantUsage = true
+	m.lastAssistantUsage = model.LLMUsage{
+		InputTokens:       4321,
+		OutputTokens:      210,
+		TotalTokens:       4531,
+		CachedInputTokens: 800,
+	}
+	got := m.ProfileText()
+	for _, want := range []string{"last 2.3s", "tok i4.3k o210 c800"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("profile = %q, want %q", got, want)
+		}
 	}
 }
 
