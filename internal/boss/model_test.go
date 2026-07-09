@@ -500,6 +500,85 @@ func TestModelChatOnlyViewOmitsDeskAndLog(t *testing.T) {
 	}
 }
 
+func TestEmbeddedHelpUsesSeparateSessionStore(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+
+	bossModel := NewEmbedded(context.Background(), svc)
+	helpModel := NewEmbeddedHelp(context.Background(), svc)
+	if bossModel.sessionStore == nil || helpModel.sessionStore == nil {
+		t.Fatalf("session stores should be configured")
+	}
+	if filepath.Base(bossModel.sessionStore.dir) != bossSessionsDirName {
+		t.Fatalf("boss session dir = %q, want %q", bossModel.sessionStore.dir, bossSessionsDirName)
+	}
+	if filepath.Base(helpModel.sessionStore.dir) != helpChatSessionsDirName {
+		t.Fatalf("help session dir = %q, want %q", helpModel.sessionStore.dir, helpChatSessionsDirName)
+	}
+	if bossModel.sessionStore.dir == helpModel.sessionStore.dir {
+		t.Fatalf("help chat should not share Boss chat session history: %q", helpModel.sessionStore.dir)
+	}
+}
+
+func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 112
+	m.height = 24
+	m.input.SetValue("/sessions")
+	m.syncLayout(true)
+
+	if m.SlashActive() {
+		t.Fatalf("help chat should treat slash text as normal chat input")
+	}
+	updated, cmd := m.submit()
+	got := updated.(Model)
+	if got.sessionPickerVisible {
+		t.Fatalf("help chat slash-looking input should not open the Boss session picker")
+	}
+	if len(got.messages) != 1 || got.messages[0].Role != "user" || got.messages[0].Content != "/sessions" {
+		t.Fatalf("help chat should submit slash-looking text as a user question, got %#v", got.messages)
+	}
+	if cmd == nil {
+		t.Fatalf("help chat slash-looking input should still submit to the assistant")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	if got.normalizedTranscriptTab() != bossTranscriptTabChat {
+		t.Fatalf("help chat Tab should not switch to Flow, got %q", got.normalizedTranscriptTab())
+	}
+}
+
+func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 112
+	m.height = 24
+	m.stateLoaded = true
+	m.messages = []ChatMessage{{Role: "assistant", Content: "Ask me about Little Control Room."}}
+	m.syncLayout(true)
+
+	rendered := ansi.Strip(m.View())
+	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Flow", "Tab switch"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("help chat view should omit Boss transcript control %q:\n%s", unwanted, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "Help> Ask me about Little Control Room.") {
+		t.Fatalf("help chat should use a Help speaker label:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Boss>") {
+		t.Fatalf("help chat should not use Boss speaker labels:\n%s", rendered)
+	}
+}
+
 func TestBossTickRefreshesDeskTimer(t *testing.T) {
 	t.Parallel()
 

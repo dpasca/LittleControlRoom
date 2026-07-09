@@ -334,8 +334,11 @@ func (m *Model) applyProcessScanMsg(msg processScanMsg) tea.Cmd {
 	if msg.err == nil && m.sortMode == sortByAttention {
 		m.rebuildProjectList(m.currentSelectedProjectPath())
 	}
-	if m.bossMode || m.helpChatMode {
-		m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
+	if m.bossMode {
+		m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
+	}
+	if m.helpChatMode {
+		m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 	}
 	m.processWarningLastCount = stats.Total
 	return reloadCmd

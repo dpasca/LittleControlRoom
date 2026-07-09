@@ -299,8 +299,11 @@ func (m *Model) applyCPUSnapshotMsg(msg cpuSnapshotMsg) tea.Cmd {
 			cpuDialogSelectPID(m.cpuDialog, selectedPID)
 			m.status = cpuDialogReadyStatus(msg.snapshot)
 		}
-		if m.bossMode || m.helpChatMode {
-			m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
+		if m.bossMode {
+			m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
+		}
+		if m.helpChatMode {
+			m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 		}
 		return reloadCmd
 	}

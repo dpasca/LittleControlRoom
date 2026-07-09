@@ -49,6 +49,11 @@ type Model struct {
 	assistant *Assistant
 	embedded  bool
 	chatOnly  bool
+	helpChat  bool
+
+	slashEnabled          bool
+	transcriptTabsEnabled bool
+	simpleCoreInput       bool
 
 	width  int
 	height int
@@ -205,7 +210,27 @@ func NewEmbeddedWithViewContext(ctx context.Context, svc *service.Service, view 
 	return m
 }
 
+func NewEmbeddedHelp(ctx context.Context, svc *service.Service) Model {
+	return NewEmbeddedHelpWithViewContext(ctx, svc, ViewContext{})
+}
+
+func NewEmbeddedHelpWithViewContext(ctx context.Context, svc *service.Service, view ViewContext) Model {
+	m := newModelWithSessionDir(ctx, svc, true, helpChatSessionsDirName)
+	m.chatOnly = true
+	m.helpChat = true
+	m.slashEnabled = false
+	m.transcriptTabsEnabled = false
+	m.simpleCoreInput = true
+	m = m.WithViewContext(view)
+	m.syncLayout(true)
+	return m
+}
+
 func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
+	return newModelWithSessionDir(ctx, svc, embedded, bossSessionsDirName)
+}
+
+func newModelWithSessionDir(ctx context.Context, svc *service.Service, embedded bool, sessionDirName string) Model {
 	input := textarea.New()
 	input.Prompt = "> "
 	input.SetPromptFunc(2, func(line int) string {
@@ -223,18 +248,20 @@ func newModel(ctx context.Context, svc *service.Service, embedded bool) Model {
 	input.Focus()
 
 	assistant := NewAssistant(svc)
-	sessionStore := newBossSessionStoreForService(svc)
+	sessionStore := newBossSessionStoreForServiceNamed(svc, sessionDirName)
 	m := Model{
-		ctx:           ctx,
-		svc:           svc,
-		assistant:     assistant,
-		embedded:      embedded,
-		input:         input,
-		chatViewport:  viewport.New(0, 0),
-		status:        assistant.Label(),
-		sessionStore:  sessionStore,
-		sessionLoaded: sessionStore == nil,
-		nowFn:         time.Now,
+		ctx:                   ctx,
+		svc:                   svc,
+		assistant:             assistant,
+		embedded:              embedded,
+		slashEnabled:          true,
+		transcriptTabsEnabled: true,
+		input:                 input,
+		chatViewport:          viewport.New(0, 0),
+		status:                assistant.Label(),
+		sessionStore:          sessionStore,
+		sessionLoaded:         sessionStore == nil,
+		nowFn:                 time.Now,
 	}
 	m.syncLayout(true)
 	return m
@@ -749,18 +776,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "esc", "alt+up":
 			return m, m.exitCmd()
 		case "alt+c":
+			if m.helpChat {
+				return m, nil
+			}
 			m.openInputCopyDialog()
 			return m, nil
 		case "alt+o":
+			if m.helpChat {
+				return m, nil
+			}
 			return m.openBossOpenTargetPicker()
 		case "alt+s":
+			if m.helpChat {
+				return m, nil
+			}
 			m.status = "Use Alt+C to copy input or output"
 			return m, nil
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
 		case "tab":
-			if !m.bossSlashActive() {
+			if m.transcriptTabsEnabled && !m.bossSlashActive() {
 				m = m.toggleTranscriptTab()
 				m.syncLayout(true)
 				return m, nil
@@ -966,6 +1002,9 @@ func (m Model) renderOverlays(body string, width, height int) string {
 }
 
 func (m Model) normalizedTranscriptTab() bossTranscriptTab {
+	if !m.transcriptTabsEnabled {
+		return bossTranscriptTabChat
+	}
 	switch m.transcriptTab {
 	case bossTranscriptTabFlow:
 		return bossTranscriptTabFlow
@@ -994,7 +1033,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
-	if strings.HasPrefix(text, "/") {
+	if m.slashEnabled && strings.HasPrefix(text, "/") {
 		return m.runBossSlashCommand(text)
 	}
 	return m.submitChatMessage(text)
@@ -1383,7 +1422,7 @@ func (m Model) renderChat(layout bossLayout) string {
 }
 
 func (m Model) renderCoreChat(layout bossLayout) string {
-	input := fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
+	input := m.renderCoreInput(layout)
 	transcript := m.chatViewport.View()
 	if m.chatSelection.dragging && m.chatSelection.hasRange() {
 		transcript = overlayBossSelectionHighlight(transcript, m.chatSelection, m.chatViewport.YOffset)
@@ -1394,6 +1433,13 @@ func (m Model) renderCoreChat(layout bossLayout) string {
 	}
 	parts = append(parts, input)
 	return fitRenderedBlock(strings.Join(parts, "\n"), layout.width, layout.height)
+}
+
+func (m Model) renderCoreInput(layout bossLayout) string {
+	if m.simpleCoreInput {
+		return fitRenderedBlock(m.input.View(), layout.chatInnerWidth, layout.inputHeight)
+	}
+	return fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 }
 
 func (m Model) renderTranscriptPanelTitle() string {
@@ -1862,13 +1908,13 @@ func (m Model) renderTranscript(width int) string {
 			continue
 		}
 		if normalizeChatRole(message.Role) == "assistant" {
-			blocks = append(blocks, renderAssistantChatMessage(message, width, projectHighlights))
+			blocks = append(blocks, m.renderAssistantChatMessage(message, width, projectHighlights))
 			continue
 		}
 		blocks = append(blocks, renderUserMessage(message.Content, width, projectHighlights))
 	}
 	if m.sending && activeTab == bossTranscriptTabChat {
-		if pending := renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame, projectHighlights); pending != "" {
+		if pending := m.renderStreamingAssistantMessage(m.streamingAssistantText, m.streamingToolCalls, width, m.spinnerFrame, projectHighlights); pending != "" {
 			blocks = append(blocks, pending)
 		}
 	}
@@ -2125,15 +2171,27 @@ func renderAssistantMessage(content string, width int) string {
 }
 
 func renderAssistantMessageWithProjectHighlights(content string, width int, projectHighlights []bossProjectTextHighlight) string {
-	return renderPrefixedMessageWithProjectHighlights(content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, nil, projectHighlights)
+	return renderAssistantMessageWithPrefix(content, width, projectHighlights, "Boss> ")
+}
+
+func renderAssistantMessageWithPrefix(content string, width int, projectHighlights []bossProjectTextHighlight, prefix string) string {
+	return renderPrefixedMessageWithProjectHighlights(content, prefix, bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, nil, projectHighlights)
 }
 
 func renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
+	return renderAssistantChatMessageWithPrefix(message, width, projectHighlights, "Boss> ")
+}
+
+func (m Model) renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
+	return renderAssistantChatMessageWithPrefix(message, width, projectHighlights, m.assistantMessagePrefix())
+}
+
+func renderAssistantChatMessageWithPrefix(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight, prefix string) string {
 	highlights := handoffMessageHighlights(message.Content, message.Handoff)
 	if len(highlights) == 0 {
-		return renderAssistantMessageWithProjectHighlights(message.Content, width, projectHighlights)
+		return renderAssistantMessageWithPrefix(message.Content, width, projectHighlights, prefix)
 	}
-	return renderPrefixedMessageWithProjectHighlights(message.Content, "Boss> ", bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
+	return renderPrefixedMessageWithProjectHighlights(message.Content, prefix, bossPanelText, bossAssistantPrefixStyle, bossAssistantContinuationStyle, bossAssistantMessageStyle, width, false, highlights, projectHighlights)
 }
 
 func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
@@ -2146,17 +2204,43 @@ func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights [
 }
 
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
+	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, "Boss> ", "Boss chat")
+}
+
+func (m Model) renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
+	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel())
+}
+
+func renderStreamingAssistantMessageWithPrefix(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string) string {
 	var blocks []string
 	if toolBlock := renderTemporaryToolCalls(toolCalls, width); toolBlock != "" {
 		blocks = append(blocks, toolBlock)
 	}
 	if strings.TrimSpace(content) != "" {
-		blocks = append(blocks, renderAssistantMessageWithProjectHighlights(content, width, projectHighlights))
+		blocks = append(blocks, renderAssistantMessageWithPrefix(content, width, projectHighlights, prefix))
 	}
 	if len(blocks) == 0 {
-		blocks = append(blocks, bossMutedStyle.Render(fitLine("Boss chat is thinking "+spinnerDots(spinnerFrame), width)))
+		label = strings.TrimSpace(label)
+		if label == "" {
+			label = "Boss chat"
+		}
+		blocks = append(blocks, bossMutedStyle.Render(fitLine(label+" is thinking "+spinnerDots(spinnerFrame), width)))
 	}
 	return strings.Join(blocks, "\n")
+}
+
+func (m Model) assistantMessagePrefix() string {
+	if m.helpChat {
+		return "Help> "
+	}
+	return "Boss> "
+}
+
+func (m Model) chatSurfaceLabel() string {
+	if m.helpChat {
+		return "Help chat"
+	}
+	return "Boss chat"
 }
 
 func renderTemporaryToolCalls(toolCalls []string, width int) string {

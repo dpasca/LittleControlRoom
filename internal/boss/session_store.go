@@ -20,6 +20,7 @@ import (
 
 const (
 	bossSessionsDirName       = "boss-sessions"
+	helpChatSessionsDirName   = "help-chat-sessions"
 	bossSessionFileExt        = ".md"
 	bossSessionHeadingPrefix  = "## "
 	bossSessionHeadingDivider = " @ "
@@ -39,18 +40,30 @@ type bossSessionStore struct {
 }
 
 func newBossSessionStore(dataDir string) *bossSessionStore {
+	return newBossSessionStoreNamed(dataDir, bossSessionsDirName)
+}
+
+func newBossSessionStoreNamed(dataDir, dirName string) *bossSessionStore {
 	dataDir = strings.TrimSpace(dataDir)
 	if dataDir == "" {
 		dataDir = appfs.DefaultDataDir()
 	}
-	return &bossSessionStore{dir: filepath.Join(filepath.Clean(dataDir), bossSessionsDirName)}
+	dirName = strings.TrimSpace(dirName)
+	if dirName == "" {
+		dirName = bossSessionsDirName
+	}
+	return &bossSessionStore{dir: filepath.Join(filepath.Clean(dataDir), dirName)}
 }
 
 func newBossSessionStoreForService(svc *service.Service) *bossSessionStore {
+	return newBossSessionStoreForServiceNamed(svc, bossSessionsDirName)
+}
+
+func newBossSessionStoreForServiceNamed(svc *service.Service, dirName string) *bossSessionStore {
 	if svc == nil {
 		return nil
 	}
-	return newBossSessionStore(svc.Config().DataDir)
+	return newBossSessionStoreNamed(svc.Config().DataDir, dirName)
 }
 
 func AppendAssistantNoticeToLatestSession(ctx context.Context, svc *service.Service, content string, at time.Time) error {

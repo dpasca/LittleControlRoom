@@ -1444,8 +1444,11 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 	if got.bossMode {
 		t.Fatalf("backtick should open the help overlay, not full Boss mode")
 	}
-	if !got.bossModelActive {
-		t.Fatalf("backtick should initialize the embedded Boss model")
+	if got.bossModelActive {
+		t.Fatalf("backtick should not initialize the full Boss model")
+	}
+	if !got.helpChatModelActive {
+		t.Fatalf("backtick should initialize the help chat model")
 	}
 	if got.showHelp {
 		t.Fatalf("backtick should not open the static quick help panel")
@@ -1463,6 +1466,11 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("help chat overlay should render a frameless core chat, not %q: %q", unwanted, rendered)
+		}
+	}
+	for _, unwanted := range []string{"Tab chat/flow", "Flow"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("help chat overlay should not expose Boss transcript controls %q: %q", unwanted, rendered)
 		}
 	}
 

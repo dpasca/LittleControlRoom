@@ -101,6 +101,8 @@ type Model struct {
 	helpChatMode                        bool
 	bossModelActive                     bool
 	bossModel                           bossui.Model
+	helpChatModelActive                 bool
+	helpChatModel                       bossui.Model
 	returnToBossModeAfterCodexHide      bool
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
@@ -1223,7 +1225,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if (m.bossMode || m.helpChatMode) && bossui.IsMessage(msg) {
+	if m.helpChatMode && bossui.IsMessage(msg) {
+		return m.updateHelpChatModeMessage(msg)
+	}
+	if m.bossMode && bossui.IsMessage(msg) {
 		return m.updateBossModeMessage(msg)
 	}
 	if !m.bossMode && !m.helpChatMode && m.bossModelActive && bossui.IsBackgroundMessage(msg) {
@@ -1541,8 +1546,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Agent task " + label + " needs your call"
 		var cmd tea.Cmd
 		m, cmd = m.recordBossHostNotice(bossHostNotice{Content: msg.notice, AnnounceInChat: true, Handoff: msg.handoff})
-		if m.bossMode || m.helpChatMode {
+		if m.bossMode {
 			cmd = batchCmds(cmd, m.bossModel.RefreshCmd())
+		}
+		if m.helpChatMode {
+			cmd = batchCmds(cmd, m.helpChatModel.RefreshCmd())
 		}
 		return m, cmd
 	case bossEngineerReturnedMsg:
@@ -1920,7 +1928,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.status = msg.status
-		if (m.bossMode || m.helpChatMode) && strings.TrimSpace(msg.status) != "" {
+		if m.bossMode && strings.TrimSpace(msg.status) != "" {
 			var hostCmd tea.Cmd
 			m, hostCmd = m.updateBossHostNotice("Browser handoff: " + strings.TrimSpace(msg.status))
 			return m, hostCmd
@@ -2472,9 +2480,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexResumeChoices(msg)
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
-		if m.bossMode || m.helpChatMode {
-			m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
+		if m.bossMode {
+			m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
 			cmds = append(cmds, m.bossModel.RefreshCmd())
+		}
+		if m.helpChatMode {
+			m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
+			cmds = append(cmds, m.helpChatModel.RefreshCmd())
 		}
 		switch msg.Type {
 		case events.ClassificationUpdated:

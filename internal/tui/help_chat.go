@@ -34,21 +34,20 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 	m.showPerf = false
 	m.showAIStats = false
 	var initCmd tea.Cmd
-	if !m.bossModelActive {
-		m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext()).WithChatOnly(true)
-		m.bossModelActive = true
-		initCmd = m.bossModel.Init()
+	if !m.helpChatModelActive {
+		m.helpChatModel = bossui.NewEmbeddedHelpWithViewContext(m.ctx, m.svc, m.bossViewContext())
+		m.helpChatModelActive = true
+		initCmd = m.helpChatModel.Init()
 	} else {
-		m.bossModel = m.bossModel.WithChatOnly(true).WithViewContext(m.bossViewContext())
-		initCmd = m.bossModel.ActivateCmd()
+		m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
+		initCmd = m.helpChatModel.ActivateCmd()
 	}
 	m.status = "Help chat open. Ask a question, or press Esc/backtick to hide."
 	if m.width > 0 && m.height > 0 {
-		updated, _ := m.bossModel.Update(m.helpChatWindowSizeMsg())
-		m.bossModel = normalizeBossModel(updated)
+		updated, _ := m.helpChatModel.Update(m.helpChatWindowSizeMsg())
+		m.helpChatModel = normalizeBossModel(updated)
 	}
-	m, noticeCmd := m.drainPendingBossHostNotices()
-	return m, tea.Batch(initCmd, noticeCmd)
+	return m, initCmd
 }
 
 func (m *Model) closeHelpChatMode(status string) {
@@ -60,9 +59,16 @@ func (m *Model) closeHelpChatMode(status string) {
 }
 
 func (m Model) updateHelpChatModeWindowSize() (tea.Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithChatOnly(true).WithViewContext(m.bossViewContext())
-	updated, cmd := m.bossModel.Update(m.helpChatWindowSizeMsg())
-	m.bossModel = normalizeBossModel(updated)
+	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
+	updated, cmd := m.helpChatModel.Update(m.helpChatWindowSizeMsg())
+	m.helpChatModel = normalizeBossModel(updated)
+	return m, cmd
+}
+
+func (m Model) updateHelpChatModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
+	updated, cmd := m.helpChatModel.Update(msg)
+	m.helpChatModel = normalizeBossModel(updated)
 	return m, cmd
 }
 
@@ -71,7 +77,7 @@ func (m Model) updateHelpChatModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.closeHelpChatMode("Help chat hidden")
 		return m, nil
 	}
-	return m.updateBossModeMessage(msg)
+	return m.updateHelpChatModeMessage(msg)
 }
 
 func (m Model) updateHelpChatModeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -83,7 +89,7 @@ func (m Model) updateHelpChatModeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	msg.X -= chatLeft
 	msg.Y -= chatTop
-	return m.updateBossModeMessage(msg)
+	return m.updateHelpChatModeMessage(msg)
 }
 
 func (m Model) helpChatWindowSizeMsg() tea.WindowSizeMsg {
@@ -138,7 +144,7 @@ func helpChatOverlayGeometryForSize(bodyW, bodyH int) helpChatOverlayGeometry {
 func (m Model) renderHelpChatOverlay(body string, bodyW, bodyH int) string {
 	geom := helpChatOverlayGeometryForSize(bodyW, bodyH)
 	header := m.renderHelpChatHeader(geom.chatWidth)
-	chat := fitPaneContent(m.bossModel.WithChatOnly(true).View(), geom.chatWidth, geom.chatHeight)
+	chat := fitPaneContent(m.helpChatModel.View(), geom.chatWidth, geom.chatHeight)
 	footer := m.renderHelpChatFooter(geom.chatWidth)
 	content := strings.Join([]string{header, chat, footer}, "\n")
 	panel := helpChatPanelStyle.
@@ -150,12 +156,12 @@ func (m Model) renderHelpChatOverlay(body string, bodyW, bodyH int) string {
 func (m Model) renderHelpChatHeader(width int) string {
 	parts := []string{
 		bossModeTitleStyle.Render("Help Chat"),
-		renderFooterStatus(m.bossModel.StatusText()),
+		renderFooterStatus(m.helpChatModel.StatusText()),
 	}
-	if usageText := strings.TrimSpace(m.bossModel.UsageText()); usageText != "" {
+	if usageText := strings.TrimSpace(m.helpChatModel.UsageText()); usageText != "" {
 		parts = append(parts, renderFooterUsage(usageText))
 	}
-	return renderLineWithRightSegment(strings.Join(parts, "  "), renderFooterMeta("Boss-powered"), width)
+	return renderLineWithRightSegment(strings.Join(parts, "  "), renderFooterMeta("LLM help"), width)
 }
 
 func (m Model) renderHelpChatFooter(width int) string {
@@ -163,32 +169,15 @@ func (m Model) renderHelpChatFooter(width int) string {
 		footerPrimaryAction("Enter", "send"),
 		footerHideAction("Esc", "hide"),
 		footerHideAction("`", "hide"),
-		footerNavAction("Tab", "chat/flow"),
 		footerNavAction("Alt+Enter", "newline"),
 	}
-	if m.bossModel.SlashActive() {
-		actions = []footerAction{
-			footerPrimaryAction("Enter", "run"),
-			footerHideAction("Esc", "hide"),
-			footerNavAction("Tab", "complete"),
-			footerNavAction("Shift+Tab", "previous"),
-			footerNavAction("Alt+Enter", "newline"),
-		}
-	}
-	if m.bossModel.ControlConfirmationActive() {
+	if m.helpChatModel.ControlConfirmationActive() {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "confirm"),
 			footerExitAction("Esc", "cancel"),
 		}
 	}
-	if m.bossModel.SessionPickerActive() {
-		actions = []footerAction{
-			footerPrimaryAction("Enter", "open"),
-			footerNavAction("Up/Down", "select"),
-			footerExitAction("Esc", "close"),
-		}
-	}
-	if m.bossModel.OpenTargetPickerActive() {
+	if m.helpChatModel.OpenTargetPickerActive() {
 		actions = []footerAction{
 			footerPrimaryAction("Enter/Alt+O", "open"),
 			footerNavAction("f", "folder"),

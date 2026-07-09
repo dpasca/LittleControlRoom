@@ -57,7 +57,7 @@ func (m *Model) closeBossMode(status string) {
 }
 
 func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
+	m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(msg)
 	m.bossModel = normalizeBossModel(updated)
 	m, noticeCmd := m.drainPendingBossHostNotices()
@@ -104,7 +104,7 @@ func normalizeBossHostNotice(notice bossHostNotice) (bossHostNotice, bool) {
 }
 
 func (m Model) canDeliverBossHostNotice() bool {
-	return m.bossMode || m.helpChatMode || (m.bossModelActive && m.bossModel.HostNoticesReady())
+	return m.bossMode || (m.bossModelActive && m.bossModel.HostNoticesReady())
 }
 
 func (m Model) queueBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
@@ -137,14 +137,14 @@ func (m Model) persistBossHostChatNoticeCmd(notice bossHostNotice) tea.Cmd {
 }
 
 func (m Model) deliverBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
+	m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat, Handoff: notice.Handoff})
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
 }
 
 func (m Model) drainPendingBossHostNotices() (Model, tea.Cmd) {
-	if (!m.bossMode && !m.helpChatMode) || len(m.pendingBossHostNotices) == 0 || !m.bossModel.HostNoticesReady() {
+	if !m.bossMode || len(m.pendingBossHostNotices) == 0 || !m.bossModel.HostNoticesReady() {
 		return m, nil
 	}
 	notices := append([]bossHostNotice(nil), m.pendingBossHostNotices...)
