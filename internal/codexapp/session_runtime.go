@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/codexcli"
 	"lcroom/internal/codexstate"
 	"log"
 	"os/exec"
@@ -36,6 +37,7 @@ func (s *appServerSession) start(req LaunchRequest) error {
 		s.codexHomeOverlay = codexHomeOverlay
 		cmd.Env = withEnvOverride(cmd.Env, "CODEX_HOME", codexHomeOverlay)
 	}
+	compatibility := codexcli.ApplyCodeModeHostCompatibility(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -106,6 +108,9 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	s.status = ""
 	s.mu.Unlock()
 	s.notify()
+	if compatibility.CodeModeHostDisabled {
+		s.appendSystemNotice(codexCodeModeHostFallback)
+	}
 
 	if err := s.refreshGoalState(ctx, threadID); err != nil {
 		s.appendSystemNotice("Embedded Codex goal status could not refresh: " + err.Error())
@@ -435,6 +440,7 @@ func (s *appServerSession) readStderr(r io.Reader) {
 			return
 		}
 		s.appendSystemNotice("codex stderr: " + line)
+		s.maybeAppendCodeModeHostDiagnosis(line)
 		s.maybeAppendAuth403Diagnosis(line)
 	})
 	if err != nil {

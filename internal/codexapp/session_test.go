@@ -1625,6 +1625,34 @@ func TestReadStderrUsesGenericCompactStatusForUnknownStderr(t *testing.T) {
 	}
 }
 
+func TestReadStderrDiagnosesMissingCodeModeHostOnce(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+	line := "2026-07-09T20:25:13Z ERROR codex_core::tools::router: error=failed to spawn code-mode host /opt/homebrew/bin/codex-code-mode-host: No such file or directory (os error 2)\n"
+
+	s.readStderr(strings.NewReader(line + line))
+
+	snapshot := s.Snapshot()
+	if snapshot.Status != codexCodeModeHostStatusLabel() {
+		t.Fatalf("status = %q, want %q", snapshot.Status, codexCodeModeHostStatusLabel())
+	}
+	if len(snapshot.Entries) != 3 {
+		t.Fatalf("entries = %d, want 2 raw stderr entries and one diagnosis", len(snapshot.Entries))
+	}
+	diagnoses := 0
+	for _, entry := range snapshot.Entries {
+		if strings.Contains(entry.Text, "LCR can disable the unavailable helper automatically") {
+			diagnoses++
+		}
+	}
+	if diagnoses != 1 {
+		t.Fatalf("diagnosis entries = %d, want 1", diagnoses)
+	}
+}
+
 func TestAppendSystemErrorCompactsRateLimitedStatus(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
@@ -1689,6 +1717,11 @@ func TestCompactCodexStatusLabel(t *testing.T) {
 			name:    "stderr stream",
 			message: "codex stderr stream error: read |0: file already closed",
 			want:    "Codex stderr stream failed",
+		},
+		{
+			name:    "missing code mode host",
+			message: "codex stderr: failed to spawn code-mode host /opt/homebrew/bin/codex-code-mode-host: No such file or directory",
+			want:    codexCodeModeHostStatusLabel(),
 		},
 	}
 

@@ -122,3 +122,15 @@ Optional secondary accelerator:
 - Session data volume can be large; avoid full-file deep parsing every poll.
 - A compatibility parser should support both modern and legacy session JSONL layouts.
 - Codex runs launched from repository subdirectories should not create separate LCR projects when Git identifies the same worktree top-level.
+
+## 7. Runtime companion compatibility
+
+On 2026-07-10, Codex CLI `0.144.0` was observed exposing the stable `code_mode_host` feature as enabled while the Homebrew cask installed only the main `codex` binary. The upstream release publishes `codex-code-mode-host` separately, and the mismatch causes tool calls to fail with `failed to spawn code-mode host` even though `codex app-server` itself starts normally.
+
+For embedded Codex sessions, LCR performs a bounded startup preflight outside the TUI update/render path:
+
+1. Check whether `codex-code-mode-host` is executable on `PATH` or beside the resolved Codex binary.
+2. If it is absent, read `codex features list` and confirm that `code_mode_host` is both available and enabled.
+3. Add `--disable code_mode_host` only to that LCR-managed app-server process and show a compatibility notice.
+
+This fallback does not edit `~/.codex/config.toml`. Healthy installs keep the feature enabled, older CLIs without the feature are left unchanged, and raw host-spawn failures receive an actionable diagnosis instead of only opaque stderr.

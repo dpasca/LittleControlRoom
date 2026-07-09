@@ -25,6 +25,7 @@ const (
 	busyStateHardStallAfter   = busyStateUnresponsiveFor + time.Duration(busyStateStallAfter)*busyStateReconcileAfter
 	codexReconnectSuggestion  = "Embedded Codex session seems stuck or disconnected. Use /reconnect."
 	codexHomeCleanupWarning   = "Codex home cleanup warning: could not repair stale rollout paths in state_5.sqlite before startup. Saved-session discovery may still show stale paths until a later cleanup succeeds."
+	codexCodeModeHostFallback = "Codex compatibility fallback active: the code-mode helper is missing, so LCR disabled it for this embedded session. Tools will continue to work; no action is required."
 	playwrightMCPReadyTimeout = 12 * time.Second
 	runtimeMCPReadyTimeout    = 8 * time.Second
 )
@@ -94,6 +95,7 @@ type appServerSession struct {
 	contextCompactionActive bool
 	reconciling             bool
 	reportedAuth403         bool
+	reportedCodeModeHostErr bool
 	busySince               time.Time
 	closed                  bool
 	stalled                 bool

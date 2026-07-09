@@ -559,6 +559,14 @@ func codexConnectionFailedStatusLabel() string {
 	return "Codex connection failed"
 }
 
+func codexCodeModeHostStatusLabel() string {
+	return "Codex helper unavailable"
+}
+
+func isCodexCodeModeHostFailure(message string) bool {
+	return strings.Contains(normalizeCodexStatusMessage(message), "failed to spawn code-mode host")
+}
+
 func codexGenericStderrStatusLabel(message string) string {
 	normalized := normalizeCodexStatusMessage(message)
 	switch {
@@ -594,11 +602,33 @@ func compactCodexStatusLabel(message string) string {
 		return codexTimeoutStatusLabel()
 	case isCodexConnectionFailureMessage(normalized):
 		return codexConnectionFailedStatusLabel()
+	case isCodexCodeModeHostFailure(message):
+		return codexCodeModeHostStatusLabel()
 	case codexGenericStderrStatusLabel(message) != "":
 		return codexGenericStderrStatusLabel(message)
 	default:
 		return ""
 	}
+}
+
+func (s *appServerSession) maybeAppendCodeModeHostDiagnosis(message string) {
+	if !isCodexCodeModeHostFailure(message) {
+		return
+	}
+	const diagnosis = "Codex's code-mode helper could not start. Reopen or /reconnect this embedded session so LCR can disable the unavailable helper automatically. If the problem returns, update or reinstall Codex."
+
+	s.mu.Lock()
+	if s.reportedCodeModeHostErr {
+		s.mu.Unlock()
+		return
+	}
+	s.touchLocked()
+	s.reportedCodeModeHostErr = true
+	s.appendEntryLocked("", TranscriptSystem, diagnosis)
+	s.lastSystemNotice = diagnosis
+	s.status = codexCodeModeHostStatusLabel()
+	s.mu.Unlock()
+	s.notify()
 }
 
 func (s *appServerSession) maybeAppendAuth403Diagnosis(message string) {
