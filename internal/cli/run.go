@@ -26,6 +26,7 @@ import (
 	lcagentdetector "lcroom/internal/detectors/lcagent"
 	"lcroom/internal/detectors/opencode"
 	"lcroom/internal/events"
+	"lcroom/internal/helpmeta"
 	"lcroom/internal/model"
 	"lcroom/internal/modeleval"
 	"lcroom/internal/runtimeguard"
@@ -65,6 +66,9 @@ func Run(programName string, args []string) int {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		return runMockups(ctx, args[1:])
+	}
+	if subcmd == "help-meta" {
+		return runHelpMeta(args[1:])
 	}
 	commonArgs := append([]string(nil), args[1:]...)
 	if subcmd == "model-eval" {
@@ -205,6 +209,20 @@ func runScope(cfg config.AppConfig) {
 	for i, pattern := range cfg.ExcludeProjectPatterns {
 		fmt.Printf("  %d. %s\n", i+1, pattern)
 	}
+}
+
+func runHelpMeta(args []string) int {
+	if len(args) > 0 {
+		fmt.Fprintf(os.Stderr, "help-meta does not accept arguments: %s\n", strings.Join(args, " "))
+		return 2
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(helpmeta.Topics()); err != nil {
+		fmt.Fprintf(os.Stderr, "help-meta failed: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runScan(ctx context.Context, svc *service.Service) int {
@@ -1123,7 +1141,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|boss|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|help-meta|boss|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -1163,6 +1181,8 @@ func printUsage(programName string) {
 	fmt.Println("  --output-dir <path>")
 	fmt.Println("Browser flags:")
 	fmt.Println("  browser <status|reveal> --session-key <id> [--data-dir <path>]")
+	fmt.Println("Help metadata:")
+	fmt.Println("  help-meta writes the generated command, capability, workflow, and keybinding corpus as JSON")
 }
 
 func min(a, b int) int {
