@@ -48,6 +48,7 @@ type Model struct {
 	svc       *service.Service
 	assistant *Assistant
 	embedded  bool
+	chatOnly  bool
 
 	width  int
 	height int
@@ -275,6 +276,11 @@ func (m Model) RefreshCmd() tea.Cmd {
 
 func (m Model) WithViewContext(view ViewContext) Model {
 	m.viewContext = view
+	return m
+}
+
+func (m Model) WithChatOnly(chatOnly bool) Model {
+	m.chatOnly = chatOnly
 	return m
 }
 
@@ -910,6 +916,10 @@ func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
 func (m Model) View() string {
 	layout := m.layout()
 	chat := m.renderChat(layout)
+	if m.chatOnly {
+		body := m.renderOverlays(chat, layout.width, layout.height)
+		return fitRenderedBlock(body, layout.width, layout.height)
+	}
 	top := chat
 	if layout.sidebarWidth >= 12 {
 		sidebar := m.renderBossSidebar(layout.sidebarWidth, layout.topHeight)
@@ -929,25 +939,30 @@ func (m Model) View() string {
 			body = lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 		}
 	}
-	if m.sessionPickerVisible {
-		body = m.renderBossSessionPickerOverlay(body, layout.width, layout.height)
-	}
-	if m.openTargetPicker != nil {
-		body = m.renderBossOpenTargetPickerOverlay(body, layout.width, layout.height)
-	}
-	if m.inputCopyDialog != nil {
-		body = m.renderInputCopyDialogOverlay(body, layout.width, layout.height)
-	}
-	if m.pendingControl != nil {
-		body = m.renderControlConfirmationOverlay(body, layout.width, layout.height)
-	}
-	if m.pendingGoal != nil {
-		body = m.renderGoalConfirmationOverlay(body, layout.width, layout.height)
-	}
+	body = m.renderOverlays(body, layout.width, layout.height)
 	if m.embedded {
 		return fitRenderedBlock(body, layout.width, layout.height)
 	}
 	return fitRenderedBlock(lipgloss.JoinVertical(lipgloss.Left, m.renderHeader(layout.width), body), layout.width, layout.height+1)
+}
+
+func (m Model) renderOverlays(body string, width, height int) string {
+	if m.sessionPickerVisible {
+		body = m.renderBossSessionPickerOverlay(body, width, height)
+	}
+	if m.openTargetPicker != nil {
+		body = m.renderBossOpenTargetPickerOverlay(body, width, height)
+	}
+	if m.inputCopyDialog != nil {
+		body = m.renderInputCopyDialogOverlay(body, width, height)
+	}
+	if m.pendingControl != nil {
+		body = m.renderControlConfirmationOverlay(body, width, height)
+	}
+	if m.pendingGoal != nil {
+		body = m.renderGoalConfirmationOverlay(body, width, height)
+	}
+	return body
 }
 
 func (m Model) normalizedTranscriptTab() bossTranscriptTab {
@@ -1169,6 +1184,23 @@ func (m Model) layout() bossLayout {
 			// Standalone boss mode owns its header bar and keeps one row of
 			// slack so exact-height renders do not scroll frames out of view.
 			height -= 2
+		}
+	}
+	if m.chatOnly {
+		chatInnerWidth := bossPanelInnerWidth(width)
+		inputEditorHeight := m.bossInputEditorHeight(chatInnerWidth, height, false)
+		inputHeight := bossInputBlockHeight(inputEditorHeight)
+		transcriptHeight, slashHeight := m.chatAuxiliaryHeights(height, inputHeight, false)
+		return bossLayout{
+			width:             width,
+			height:            height,
+			topHeight:         height,
+			chatWidth:         width,
+			chatInnerWidth:    chatInnerWidth,
+			transcriptHeight:  transcriptHeight,
+			inputHeight:       inputHeight,
+			inputEditorHeight: inputEditorHeight,
+			slashHeight:       slashHeight,
 		}
 	}
 	bottomHeight := 0

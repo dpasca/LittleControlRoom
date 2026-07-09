@@ -471,6 +471,35 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 	}
 }
 
+func TestModelChatOnlyViewOmitsDeskAndLog(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbedded(context.Background(), nil).WithChatOnly(true)
+	m.width = 112
+	m.height = 24
+	m.stateLoaded = true
+	m.snapshot = StateSnapshot{
+		TotalProjects:  1,
+		ActiveProjects: 1,
+		HotProjects: []ProjectBrief{{
+			Name:           "Alpha",
+			Status:         model.StatusActive,
+			AttentionScore: 12,
+		}},
+	}
+	m.syncLayout(true)
+
+	rendered := ansi.Strip(m.View())
+	if !strings.Contains(rendered, "Boss Chat") {
+		t.Fatalf("chat-only view should render the chat panel:\n%s", rendered)
+	}
+	for _, unwanted := range []string{"Boss Desk", "Boss Log", "Watching", "Next"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("chat-only view should omit %q:\n%s", unwanted, rendered)
+		}
+	}
+}
+
 func TestBossTickRefreshesDeskTimer(t *testing.T) {
 	t.Parallel()
 

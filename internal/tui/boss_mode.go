@@ -29,13 +29,14 @@ const (
 
 func (m Model) openBossMode() (tea.Model, tea.Cmd) {
 	m.bossMode = true
+	m.helpChatMode = false
 	var initCmd tea.Cmd
 	if !m.bossModelActive {
 		m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext())
 		m.bossModelActive = true
 		initCmd = m.bossModel.Init()
 	} else {
-		m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+		m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
 		initCmd = m.bossModel.ActivateCmd()
 	}
 	m.status = "Boss mode open. Alt+Up hides it and keeps replies running."
@@ -56,7 +57,7 @@ func (m *Model) closeBossMode(status string) {
 }
 
 func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(msg)
 	m.bossModel = normalizeBossModel(updated)
 	m, noticeCmd := m.drainPendingBossHostNotices()
@@ -136,7 +137,7 @@ func (m Model) persistBossHostChatNoticeCmd(notice bossHostNotice) tea.Cmd {
 }
 
 func (m Model) deliverBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat, Handoff: notice.Handoff})
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
@@ -173,7 +174,7 @@ func appendPendingBossHostNotice(notices []bossHostNotice, notice bossHostNotice
 }
 
 func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(m.bossModeWindowSizeMsg())
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd

@@ -35,11 +35,11 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 	m.showAIStats = false
 	var initCmd tea.Cmd
 	if !m.bossModelActive {
-		m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext())
+		m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext()).WithChatOnly(true)
 		m.bossModelActive = true
 		initCmd = m.bossModel.Init()
 	} else {
-		m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+		m.bossModel = m.bossModel.WithChatOnly(true).WithViewContext(m.bossViewContext())
 		initCmd = m.bossModel.ActivateCmd()
 	}
 	m.status = "Help chat open. Ask a question, or press Esc/backtick to hide."
@@ -60,7 +60,7 @@ func (m *Model) closeHelpChatMode(status string) {
 }
 
 func (m Model) updateHelpChatModeWindowSize() (tea.Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.bossModel = m.bossModel.WithChatOnly(true).WithViewContext(m.bossViewContext())
 	updated, cmd := m.bossModel.Update(m.helpChatWindowSizeMsg())
 	m.bossModel = normalizeBossModel(updated)
 	return m, cmd
@@ -71,7 +71,7 @@ func (m Model) updateHelpChatModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.closeHelpChatMode("Help chat hidden")
 		return m, nil
 	}
-	return m.updateBossModeKey(msg)
+	return m.updateBossModeMessage(msg)
 }
 
 func (m Model) updateHelpChatModeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
@@ -138,7 +138,7 @@ func helpChatOverlayGeometryForSize(bodyW, bodyH int) helpChatOverlayGeometry {
 func (m Model) renderHelpChatOverlay(body string, bodyW, bodyH int) string {
 	geom := helpChatOverlayGeometryForSize(bodyW, bodyH)
 	header := m.renderHelpChatHeader(geom.chatWidth)
-	chat := fitPaneContent(m.bossModel.View(), geom.chatWidth, geom.chatHeight)
+	chat := fitPaneContent(m.bossModel.WithChatOnly(true).View(), geom.chatWidth, geom.chatHeight)
 	footer := m.renderHelpChatFooter(geom.chatWidth)
 	content := strings.Join([]string{header, chat, footer}, "\n")
 	panel := helpChatPanelStyle.

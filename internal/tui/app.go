@@ -2473,7 +2473,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
 		if m.bossMode || m.helpChatMode {
-			m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+			m.bossModel = m.bossModel.WithChatOnly(m.helpChatMode && !m.bossMode).WithViewContext(m.bossViewContext())
 			cmds = append(cmds, m.bossModel.RefreshCmd())
 		}
 		switch msg.Type {
