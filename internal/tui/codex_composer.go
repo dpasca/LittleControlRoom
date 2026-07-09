@@ -87,6 +87,7 @@ type codexToolAnswerState struct {
 var (
 	codexComposerShellColor      = lipgloss.Color("236")
 	codexComposerCursorLineColor = lipgloss.Color("237")
+	codexComposerCursorColor     = lipgloss.Color("220")
 )
 
 func newCodexTextarea() textarea.Model {
@@ -108,6 +109,10 @@ func newCodexTextarea() textarea.Model {
 	input.SetHeight(3)
 	input.ShowLineNumbers = false
 	input.KeyMap.InsertNewline.SetEnabled(false)
+	input.Cursor.Style = lipgloss.NewStyle().
+		Foreground(codexComposerCursorColor).
+		Background(lipgloss.Color("16")).
+		Bold(true)
 	styleCodexTextarea(&input)
 	return input
 }
@@ -251,6 +256,16 @@ func (m *Model) currentCodexDraftFor(projectPath string) codexDraft {
 		draft.Text = m.codexInput.Value()
 	}
 	return draft.normalized()
+}
+
+func (m *Model) noteCodexComposerKey(changed bool) {
+	now := m.currentTime()
+	m.codexComposerLastKeyAt = now
+	m.codexComposerKeyCount++
+	if changed {
+		m.codexComposerLastChangeAt = now
+		m.codexComposerChangeCount++
+	}
 }
 
 func (m *Model) markCodexSessionLive(projectPath string) {

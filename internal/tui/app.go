@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -270,6 +271,10 @@ type Model struct {
 	codexViewportContent          codexViewportContentState
 	codexTranscriptFullHistory    map[string]struct{}
 	codexUpdateAckSeq             map[string]uint64
+	codexComposerLastKeyAt        time.Time
+	codexComposerLastChangeAt     time.Time
+	codexComposerKeyCount         int64
+	codexComposerChangeCount      int64
 	uiDiagnostics                 *uiStallDiagnostics
 	aiLatencyNextID               int64
 	aiLatencyInFlight             map[int64]aiLatencyOp
@@ -1245,6 +1250,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, batchCmds(codexTranscriptCmd, bossCmd)
 		}
 		return m, codexTranscriptCmd
+	case cursor.BlinkMsg:
+		if m.codexVisible() && m.codexInput.Focused() {
+			var cmd tea.Cmd
+			m.codexInput, cmd = m.codexInput.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case tea.MouseMsg:
 		if m.bossMode {
 			msg.Y--

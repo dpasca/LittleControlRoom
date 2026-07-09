@@ -737,11 +737,24 @@ func (m Model) renderCodexFooter(snapshot codexapp.Snapshot, width int) string {
 		actions = append([]footerAction{footerExitAction("/goal clear", "stop goal")}, actions...)
 	}
 	segments := []string{}
+	if composerStatus := m.renderCodexComposerFocusStatus(); composerStatus != "" {
+		segments = append(segments, composerStatus)
+	}
 	if status != "" {
 		segments = append(segments, status)
 	}
 	segments = append(segments, renderFooterActionList(actions...))
 	return renderFooterLine(width, segments...)
+}
+
+func (m Model) renderCodexComposerFocusStatus() string {
+	if strings.TrimSpace(m.codexVisibleProject) == "" {
+		return ""
+	}
+	if m.codexPanelFocus != embeddedCodexFocusMain || !m.codexInput.Focused() {
+		return renderFooterMeta("Input off")
+	}
+	return ""
 }
 
 func (m Model) managedBrowserCurrentPageLabel(snapshot codexapp.Snapshot) string {

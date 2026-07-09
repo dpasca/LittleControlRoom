@@ -3866,6 +3866,69 @@ func TestRenderCodexFooterPrioritizesSendCloseHideAndDefersDenseBlocks(t *testin
 	}
 }
 
+func TestRenderCodexFooterShowsComposerFocusStatusOnlyWhenUnfocused(t *testing.T) {
+	input := newCodexTextarea()
+	input.Focus()
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexInput:          input,
+		codexPanelFocus:     embeddedCodexFocusMain,
+		spinnerFrame:        1,
+	}
+	rendered := ansi.Strip(m.renderCodexFooter(codexapp.Snapshot{
+		Started: true,
+		Status:  "Codex session ready",
+	}, 160))
+	if strings.Contains(rendered, "Input") {
+		t.Fatalf("renderCodexFooter() should not show focused input heartbeat/status: %q", rendered)
+	}
+
+	m.codexInput.Blur()
+	rendered = ansi.Strip(m.renderCodexFooter(codexapp.Snapshot{
+		Started: true,
+		Status:  "Codex session ready",
+	}, 160))
+	if !strings.Contains(rendered, "Input off") {
+		t.Fatalf("renderCodexFooter() missing unfocused input state: %q", rendered)
+	}
+}
+
+func TestNewCodexTextareaUsesHighVisibilityYellowCursor(t *testing.T) {
+	input := newCodexTextarea()
+	if got := input.Cursor.Style.GetForeground(); got != codexComposerCursorColor {
+		t.Fatalf("cursor foreground = %v, want %v", got, codexComposerCursorColor)
+	}
+	if got := input.Cursor.Style.GetBackground(); got != lipgloss.Color("16") {
+		t.Fatalf("cursor background = %v, want black base for reversed yellow cursor", got)
+	}
+}
+
+func TestFocusedVisibleCodexRoutesCursorBlinkMessages(t *testing.T) {
+	input := newCodexTextarea()
+	input.Cursor.BlinkSpeed = time.Nanosecond
+	blinkCmd := input.Focus()
+	if blinkCmd == nil {
+		t.Fatal("Focus() returned nil blink command")
+	}
+	msg := blinkCmd()
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexInput:          input,
+		codexPanelFocus:     embeddedCodexFocusMain,
+	}
+
+	before := m.codexInput.Cursor.Blink
+	updated, nextCmd := m.Update(msg)
+	got := updated.(Model)
+
+	if got.codexInput.Cursor.Blink == before {
+		t.Fatalf("cursor blink state did not change after blink message; still %v", got.codexInput.Cursor.Blink)
+	}
+	if nextCmd == nil {
+		t.Fatal("blink update did not schedule the next blink")
+	}
+}
+
 func TestRenderCodexFooterShowsGoalClearForActiveGoal(t *testing.T) {
 	rendered := ansi.Strip((Model{}).renderCodexFooter(codexapp.Snapshot{
 		Started: true,

@@ -9,6 +9,7 @@ import (
 	"lcroom/internal/codexcli"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVisibleCodexAltEnterInsertsNewline(t *testing.T) {
@@ -50,6 +51,48 @@ func TestVisibleCodexAltEnterInsertsNewline(t *testing.T) {
 	}
 	if got.codexInput.Value() != "line 1\n" {
 		t.Fatalf("codex input = %q, want trailing newline", got.codexInput.Value())
+	}
+}
+
+func TestVisibleCodexRecordsComposerInputTelemetry(t *testing.T) {
+	input := newCodexTextarea()
+	input.Focus()
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": {
+				Started: true,
+				Status:  "Codex session ready",
+			},
+		},
+		codexInput:    input,
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		nowFn:         func() time.Time { return now },
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	got := updated.(Model)
+
+	if got.codexInput.Value() != "h" {
+		t.Fatalf("composer value = %q, want typed rune", got.codexInput.Value())
+	}
+	if got.codexComposerKeyCount != 1 || !got.codexComposerLastKeyAt.Equal(now) {
+		t.Fatalf("key telemetry = (%d, %v), want one key at %v", got.codexComposerKeyCount, got.codexComposerLastKeyAt, now)
+	}
+	if got.codexComposerChangeCount != 1 || !got.codexComposerLastChangeAt.Equal(now) {
+		t.Fatalf("change telemetry = (%d, %v), want one change at %v", got.codexComposerChangeCount, got.codexComposerLastChangeAt, now)
+	}
+	rendered := ansi.Strip(got.renderPerfContent(80))
+	for _, want := range []string{"Composer", "Input", "focused", "1 routed", "1 changed"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderPerfContent() missing %q for composer telemetry: %q", want, rendered)
+		}
 	}
 }
 

@@ -411,6 +411,7 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, batchCmds(refreshCmd, m.submitVisibleCodexCmd(draft))
 	case "alt+enter", "ctrl+j":
 		m.codexInput.InsertString("\n")
+		m.noteCodexComposerKey(true)
 		m.persistVisibleCodexDraft()
 		m.syncCodexComposerSize()
 		return m, focusCmd
@@ -418,16 +419,19 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, focusCmd
 	case "backspace", "delete":
 		if m.removeCodexPastedTextMarkerBeforeCursor() {
+			m.noteCodexComposerKey(true)
 			m.persistVisibleCodexDraft()
 			m.syncCodexComposerSize()
 			return m, focusCmd
 		}
 		if m.removeCodexAttachmentMarkerBeforeCursor() {
+			m.noteCodexComposerKey(true)
 			m.persistVisibleCodexDraft()
 			m.syncCodexComposerSize()
 			return m, focusCmd
 		}
 		if strings.TrimSpace(m.codexInput.Value()) == "" && m.removeLastCurrentCodexAttachment() {
+			m.noteCodexComposerKey(true)
 			m.status = "Removed the last image attachment"
 			return m, focusCmd
 		}
@@ -441,7 +445,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
+	before := m.codexInput.Value()
 	m.codexInput, cmd = m.codexInput.Update(msg)
+	m.noteCodexComposerKey(m.codexInput.Value() != before)
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	m.syncCodexSlashSelection()
@@ -509,7 +515,9 @@ func (m Model) updateCodexToolInputMode(snapshot codexapp.Snapshot, msg tea.KeyM
 	}
 
 	var cmd tea.Cmd
+	before := m.codexInput.Value()
 	m.codexInput, cmd = m.codexInput.Update(msg)
+	m.noteCodexComposerKey(m.codexInput.Value() != before)
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	return m, cmd
@@ -578,6 +586,7 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	case "alt+enter", "ctrl+j":
 		if request.Mode == codexapp.ElicitationModeForm {
 			m.codexInput.InsertString("\n")
+			m.noteCodexComposerKey(true)
 			m.persistVisibleCodexDraft()
 			m.syncCodexComposerSize()
 			return m, nil
@@ -597,7 +606,9 @@ func (m Model) updateCodexElicitationMode(snapshot codexapp.Snapshot, msg tea.Ke
 	}
 
 	var cmd tea.Cmd
+	before := m.codexInput.Value()
 	m.codexInput, cmd = m.codexInput.Update(msg)
+	m.noteCodexComposerKey(m.codexInput.Value() != before)
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	return m, cmd
@@ -611,6 +622,7 @@ func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.
 			return false, nil
 		}
 		m.insertCodexPastedText(text)
+		m.noteCodexComposerKey(true)
 		return true, nil
 	case msg.Type != tea.KeyCtrlV:
 		return false, nil
@@ -620,9 +632,11 @@ func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.
 		attached, err := m.tryAttachClipboardImage()
 		if err != nil {
 			m.status = err.Error()
+			m.noteCodexComposerKey(false)
 			return true, nil
 		}
 		if attached {
+			m.noteCodexComposerKey(true)
 			return true, nil
 		}
 	}
@@ -630,16 +644,20 @@ func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.
 	text, err := clipboardTextReader()
 	if err != nil {
 		m.reportError("Clipboard paste failed", err, m.codexVisibleProject)
+		m.noteCodexComposerKey(false)
 		return true, nil
 	}
 	if text == "" {
+		m.noteCodexComposerKey(false)
 		return true, nil
 	}
 	if shouldCollapseCodexPaste(text) {
 		m.insertCodexPastedText(text)
+		m.noteCodexComposerKey(true)
 		return true, nil
 	}
 	m.codexInput.InsertString(text)
+	m.noteCodexComposerKey(true)
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	m.syncCodexSlashSelection()

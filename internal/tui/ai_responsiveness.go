@@ -339,6 +339,36 @@ func (m Model) uiStallCaptureSection(width int) []string {
 	return lines
 }
 
+func (m Model) composerInputSection(width int) []string {
+	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	if projectPath == "" && m.codexComposerKeyCount == 0 && m.codexComposerChangeCount == 0 {
+		return nil
+	}
+	now := m.currentTime()
+	lines := []string{
+		"",
+		detailSectionStyle.Render("Composer"),
+	}
+	state := "not open"
+	if projectPath != "" {
+		switch {
+		case m.codexPanelFocus == embeddedCodexFocusMain && m.codexInput.Focused():
+			state = "focused"
+		case m.codexPanelFocus == embeddedCodexFocusSidebar:
+			state = "sidebar focus"
+		default:
+			state = "not focused"
+		}
+	}
+	lines = append(lines, detailField("Input", detailValueStyle.Render(state)))
+	if projectPath != "" {
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, max(12, width-2), "Project: "+m.displayPathWithHomeTilde(projectPath))...)
+	}
+	lines = append(lines, detailField("Last key", detailMutedStyle.Render(fmt.Sprintf("%s (%d routed)", formatPerfEventAge(now, m.codexComposerLastKeyAt), m.codexComposerKeyCount))))
+	lines = append(lines, detailField("Last change", detailMutedStyle.Render(fmt.Sprintf("%s (%d changed)", formatPerfEventAge(now, m.codexComposerLastChangeAt), m.codexComposerChangeCount))))
+	return lines
+}
+
 func aiLatencyLabel(name, projectPath, detail string) string {
 	parts := []string{strings.TrimSpace(name)}
 	if project := aiLatencyProjectLabel(projectPath); project != "" {
@@ -383,6 +413,17 @@ func formatAILatencyDuration(d time.Duration) string {
 		return d.Round(time.Millisecond).String()
 	}
 	return d.Round(10 * time.Millisecond).String()
+}
+
+func formatPerfEventAge(now, at time.Time) string {
+	if at.IsZero() {
+		return "never"
+	}
+	elapsed := now.Sub(at)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return formatAILatencyDuration(elapsed) + " ago"
 }
 
 func (m *Model) openPerfDialog() tea.Cmd {
@@ -441,6 +482,7 @@ func (m Model) renderPerfContent(width int) string {
 		renderDialogHeader("Performance", "Latency", "", width),
 	}
 	lines = append(lines, m.aiStatsLatencySection(width)...)
+	lines = append(lines, m.composerInputSection(width)...)
 	lines = append(lines, m.uiStallCaptureSection(width)...)
 	lines = append(lines, "")
 	lines = append(lines, commandPaletteHintStyle.Render("Open /perf after a freeze to see recent waits and any captured stall artifacts for this run."))
