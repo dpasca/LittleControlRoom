@@ -18,7 +18,7 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.hasPersistentSessions() && !m.sessionLoaded {
-		m.status = "Boss chat session is still loading..."
+		m.status = m.chatSurfaceLabel() + " session is still loading..."
 		return m, nil
 	}
 	userMessage := ChatMessage{
@@ -34,8 +34,11 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	streamID := m.assistantStreamID
 	m.streamingAssistantText = ""
 	m.streamingToolCalls = nil
+	m.assistantStartedAt = m.now()
+	m.haveLastAssistantTime = false
+	m.lastAssistantTime = 0
 	m.haveLastContextReport = false
-	m.status = "Boss chat is thinking..."
+	m.status = m.chatSurfaceLabel() + " is thinking..."
 	m.syncLayout(true)
 	return m, tea.Batch(
 		m.saveBossChatMessageCmd(userMessage),

@@ -1473,6 +1473,16 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 			t.Fatalf("help chat overlay should not expose Boss transcript controls %q: %q", unwanted, rendered)
 		}
 	}
+	for _, unwanted := range []string{"LLM help", "LLM"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("help chat overlay should not render the old right-side LLM label %q: %q", unwanted, rendered)
+		}
+	}
+	for _, want := range []string{"/new clear", "Ctrl+L clear"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("help chat overlay should advertise %q: %q", want, rendered)
+		}
+	}
 
 	updated, cmd = got.updateHelpChatModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'`'}})
 	got = updated.(Model)

@@ -43,6 +43,7 @@ func bossResourceRefSchema() map[string]any {
 func bossReadOnlyRouteKindStrings() []string {
 	return []string{
 		bossReadOnlyRoutePass,
+		bossActionAnswer,
 		bossActionListProjects,
 		bossActionProjectDetail,
 		bossActionSessionClassifications,
@@ -62,7 +63,13 @@ func bossReadOnlyRouteKindStrings() []string {
 }
 
 func bossActionKindStrings() []string {
-	kinds := append([]string{bossActionAnswer}, bossReadOnlyRouteKindStrings()[1:]...)
+	kinds := []string{bossActionAnswer}
+	for _, kind := range bossReadOnlyRouteKindStrings() {
+		if kind == bossReadOnlyRoutePass || kind == bossActionAnswer {
+			continue
+		}
+		kinds = append(kinds, kind)
+	}
 	return append(kinds, bossActionProposeControl, bossActionProposeGoal)
 }
 
@@ -84,6 +91,10 @@ func bossPlanStepKindStrings() []string {
 func bossReadOnlyRouteSchema() map[string]any {
 	return bossObjectSchema(map[string]any{
 		"kind": bossEnumStringSchema(bossReadOnlyRouteKindStrings(), ""),
+		"answer": map[string]any{
+			"type":        "string",
+			"description": "Short user-facing answer when kind is answer; otherwise empty.",
+		},
 		"target": bossEnumStringSchema(
 			[]string{"", "selected"},
 			"Use selected only when the user explicitly asks about the selected classic TUI project.",
@@ -98,6 +109,7 @@ func bossReadOnlyRouteSchema() map[string]any {
 		"reason":             bossStringSchema("Short private reason for the route, or empty."),
 	}, []string{
 		"kind",
+		"answer",
 		"target",
 		"query",
 		"command",

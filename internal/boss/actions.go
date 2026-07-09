@@ -86,6 +86,7 @@ func normalizeBossReadOnlyRoute(route *bossReadOnlyRoute) {
 		return
 	}
 	route.Kind = normalizeBossActionKind(route.Kind)
+	route.Answer = strings.TrimSpace(route.Answer)
 	route.Target = strings.TrimSpace(strings.ToLower(route.Target))
 	route.Query = strings.TrimSpace(route.Query)
 	route.Command = strings.TrimSpace(route.Command)

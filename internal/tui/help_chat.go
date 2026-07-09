@@ -161,7 +161,7 @@ func (m Model) renderHelpChatHeader(width int) string {
 	if usageText := strings.TrimSpace(m.helpChatModel.UsageText()); usageText != "" {
 		parts = append(parts, renderFooterUsage(usageText))
 	}
-	return renderLineWithRightSegment(strings.Join(parts, "  "), renderFooterMeta("LLM help"), width)
+	return fitStyledWidth(strings.Join(parts, "  "), width)
 }
 
 func (m Model) renderHelpChatFooter(width int) string {
@@ -169,6 +169,8 @@ func (m Model) renderHelpChatFooter(width int) string {
 		footerPrimaryAction("Enter", "send"),
 		footerHideAction("Esc", "hide"),
 		footerHideAction("`", "hide"),
+		footerLowAction("/new", "clear"),
+		footerLowAction("Ctrl+L", "clear"),
 		footerNavAction("Alt+Enter", "newline"),
 	}
 	if m.helpChatModel.ControlConfirmationActive() {
@@ -185,7 +187,11 @@ func (m Model) renderHelpChatFooter(width int) string {
 			footerExitAction("Esc", "close"),
 		}
 	}
-	return fitStyledWidth(renderFooterLine(width, renderFooterActionList(actions...)), width)
+	segments := []string{renderFooterActionList(actions...)}
+	if profileText := strings.TrimSpace(m.helpChatModel.ProfileText()); profileText != "" {
+		segments = append(segments, renderFooterUsage(profileText))
+	}
+	return fitStyledWidth(renderFooterLine(width, segments...), width)
 }
 
 var helpChatPanelStyle = lipgloss.NewStyle().
