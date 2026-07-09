@@ -103,7 +103,7 @@ func normalizeBossHostNotice(notice bossHostNotice) (bossHostNotice, bool) {
 }
 
 func (m Model) canDeliverBossHostNotice() bool {
-	return m.bossMode || (m.bossModelActive && m.bossModel.HostNoticesReady())
+	return m.bossMode || m.helpChatMode || (m.bossModelActive && m.bossModel.HostNoticesReady())
 }
 
 func (m Model) queueBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
@@ -143,7 +143,7 @@ func (m Model) deliverBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
 }
 
 func (m Model) drainPendingBossHostNotices() (Model, tea.Cmd) {
-	if !m.bossMode || len(m.pendingBossHostNotices) == 0 || !m.bossModel.HostNoticesReady() {
+	if (!m.bossMode && !m.helpChatMode) || len(m.pendingBossHostNotices) == 0 || !m.bossModel.HostNoticesReady() {
 		return m, nil
 	}
 	notices := append([]bossHostNotice(nil), m.pendingBossHostNotices...)

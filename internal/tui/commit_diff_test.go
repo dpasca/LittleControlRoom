@@ -1349,6 +1349,9 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "slash-command palette") {
 		t.Fatalf("helpPanelLines() should explain the slash-command palette: %q", joined)
 	}
+	if !strings.Contains(joined, "Help Chat") {
+		t.Fatalf("helpPanelLines() should advertise the active Help Chat shortcut: %q", joined)
+	}
 	if !strings.Contains(joined, "/wt merge|remove|prune") {
 		t.Fatalf("helpPanelLines() should include concrete worktree slash-command examples: %q", joined)
 	}
@@ -1419,6 +1422,68 @@ func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "[Main") || !strings.Contains(rendered, "Summary") || !strings.Contains(rendered, "Path:") {
 		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
+	}
+}
+
+func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+	m := Model{
+		ctx:              context.Background(),
+		settingsBaseline: &settings,
+		width:            100,
+		height:           24,
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'`'}})
+	got := updated.(Model)
+	if !got.helpChatMode {
+		t.Fatalf("backtick should open help chat")
+	}
+	if got.bossMode {
+		t.Fatalf("backtick should open the help overlay, not full Boss mode")
+	}
+	if !got.bossModelActive {
+		t.Fatalf("backtick should initialize the embedded Boss model")
+	}
+	if got.showHelp {
+		t.Fatalf("backtick should not open the static quick help panel")
+	}
+	if cmd == nil {
+		t.Fatalf("opening help chat should return the embedded boss init command")
+	}
+	rendered := ansi.Strip(got.View())
+	if got := len(strings.Split(rendered, "\n")); got != m.height {
+		t.Fatalf("View() with help chat line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
+	}
+	if !strings.Contains(rendered, "Help Chat") || !strings.Contains(rendered, "Boss Chat") {
+		t.Fatalf("help chat overlay should render the embedded Boss chat surface: %q", rendered)
+	}
+
+	updated, cmd = got.updateHelpChatModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'`'}})
+	got = updated.(Model)
+	if got.helpChatMode {
+		t.Fatalf("backtick should hide help chat when it is active")
+	}
+	if cmd != nil {
+		t.Fatalf("hiding help chat with backtick should not return a command")
+	}
+}
+
+func TestQuestionMarkStillOpensQuickHelpPanel(t *testing.T) {
+	m := Model{}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	got := updated.(Model)
+	if !got.showHelp {
+		t.Fatalf("question mark should open the static quick help panel")
+	}
+	if got.helpChatMode {
+		t.Fatalf("question mark should not open active Help Chat")
+	}
+	if cmd != nil {
+		t.Fatalf("question mark help toggle should not return a command")
 	}
 }
 
@@ -3072,10 +3137,17 @@ func TestSlashCommandModeTakesPriorityOverDiffView(t *testing.T) {
 	}
 
 	got.commandInput.SetValue("/help")
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.BossChatBackend = config.AIBackendOpenAIAPI
+	settings.OpenAIAPIKey = "sk-test-example"
+	got.settingsBaseline = &settings
 	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
-	if !got.showHelp {
-		t.Fatalf("command mode should take priority over diff key handling once opened")
+	if !got.helpChatMode {
+		t.Fatalf("command mode should open Help Chat once /help is submitted")
+	}
+	if got.showHelp {
+		t.Fatalf("/help should not open the static quick help panel")
 	}
 }
 

@@ -1,0 +1,207 @@
+package tui
+
+import (
+	"strings"
+
+	bossui "lcroom/internal/boss"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+type helpChatOverlayGeometry struct {
+	left        int
+	top         int
+	panelWidth  int
+	panelHeight int
+	chatWidth   int
+	chatHeight  int
+}
+
+func (m Model) openHelpChatModeOrSetupPrompt() (tea.Model, tea.Cmd) {
+	if m.bossChatConfigured() {
+		return m.openHelpChatMode()
+	}
+	m.openBossSetupPrompt()
+	m.status = "Help chat needs Boss chat setup before it can open."
+	return m, nil
+}
+
+func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
+	m.helpChatMode = true
+	m.bossMode = false
+	m.showHelp = false
+	m.showPerf = false
+	m.showAIStats = false
+	var initCmd tea.Cmd
+	if !m.bossModelActive {
+		m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext())
+		m.bossModelActive = true
+		initCmd = m.bossModel.Init()
+	} else {
+		m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+		initCmd = m.bossModel.ActivateCmd()
+	}
+	m.status = "Help chat open. Ask a question, or press Esc/backtick to hide."
+	if m.width > 0 && m.height > 0 {
+		updated, _ := m.bossModel.Update(m.helpChatWindowSizeMsg())
+		m.bossModel = normalizeBossModel(updated)
+	}
+	m, noticeCmd := m.drainPendingBossHostNotices()
+	return m, tea.Batch(initCmd, noticeCmd)
+}
+
+func (m *Model) closeHelpChatMode(status string) {
+	m.helpChatMode = false
+	if status != "" {
+		m.status = status
+	}
+	m.syncDetailViewport(false)
+}
+
+func (m Model) updateHelpChatModeWindowSize() (tea.Model, tea.Cmd) {
+	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	updated, cmd := m.bossModel.Update(m.helpChatWindowSizeMsg())
+	m.bossModel = normalizeBossModel(updated)
+	return m, cmd
+}
+
+func (m Model) updateHelpChatModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "`" {
+		m.closeHelpChatMode("Help chat hidden")
+		return m, nil
+	}
+	return m.updateBossModeKey(msg)
+}
+
+func (m Model) updateHelpChatModeMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	geom := m.helpChatOverlayGeometry()
+	chatLeft := geom.left + 2
+	chatTop := geom.top + 2
+	if msg.X < chatLeft || msg.X >= chatLeft+geom.chatWidth || msg.Y < chatTop || msg.Y >= chatTop+geom.chatHeight {
+		return m, nil
+	}
+	msg.X -= chatLeft
+	msg.Y -= chatTop
+	return m.updateBossModeMessage(msg)
+}
+
+func (m Model) helpChatWindowSizeMsg() tea.WindowSizeMsg {
+	geom := m.helpChatOverlayGeometry()
+	return tea.WindowSizeMsg{Width: geom.chatWidth, Height: geom.chatHeight}
+}
+
+func (m Model) helpChatOverlayGeometry() helpChatOverlayGeometry {
+	layout := m.bodyLayout()
+	return helpChatOverlayGeometryForSize(layout.width, layout.height)
+}
+
+func helpChatOverlayGeometryForSize(bodyW, bodyH int) helpChatOverlayGeometry {
+	bodyW = max(1, bodyW)
+	bodyH = max(1, bodyH)
+
+	panelWidth := bodyW
+	switch {
+	case bodyW >= 126:
+		panelWidth = 118
+	case bodyW >= 76:
+		panelWidth = bodyW - 8
+	case bodyW >= 52:
+		panelWidth = bodyW - 4
+	}
+	panelWidth = clampInt(panelWidth, 1, bodyW)
+	chatWidth := max(1, panelWidth-4)
+
+	panelHeight := bodyH
+	switch {
+	case bodyH >= 40:
+		panelHeight = 36
+	case bodyH >= 22:
+		panelHeight = bodyH - 4
+	case bodyH >= 14:
+		panelHeight = bodyH - 2
+	}
+	panelHeight = clampInt(panelHeight, 1, bodyH)
+	chatHeight := max(1, panelHeight-4)
+	panelHeight = min(bodyH, chatHeight+4)
+
+	return helpChatOverlayGeometry{
+		left:        max(0, (bodyW-panelWidth)/2),
+		top:         max(0, (bodyH-panelHeight)/3),
+		panelWidth:  panelWidth,
+		panelHeight: panelHeight,
+		chatWidth:   chatWidth,
+		chatHeight:  chatHeight,
+	}
+}
+
+func (m Model) renderHelpChatOverlay(body string, bodyW, bodyH int) string {
+	geom := helpChatOverlayGeometryForSize(bodyW, bodyH)
+	header := m.renderHelpChatHeader(geom.chatWidth)
+	chat := fitPaneContent(m.bossModel.View(), geom.chatWidth, geom.chatHeight)
+	footer := m.renderHelpChatFooter(geom.chatWidth)
+	content := strings.Join([]string{header, chat, footer}, "\n")
+	panel := helpChatPanelStyle.
+		Width(geom.chatWidth).
+		Render(fitPaneContent(content, geom.chatWidth, geom.chatHeight+2))
+	return overlayBlock(body, panel, bodyW, bodyH, geom.left, geom.top)
+}
+
+func (m Model) renderHelpChatHeader(width int) string {
+	parts := []string{
+		bossModeTitleStyle.Render("Help Chat"),
+		renderFooterStatus(m.bossModel.StatusText()),
+	}
+	if usageText := strings.TrimSpace(m.bossModel.UsageText()); usageText != "" {
+		parts = append(parts, renderFooterUsage(usageText))
+	}
+	return renderLineWithRightSegment(strings.Join(parts, "  "), renderFooterMeta("Boss-powered"), width)
+}
+
+func (m Model) renderHelpChatFooter(width int) string {
+	actions := []footerAction{
+		footerPrimaryAction("Enter", "send"),
+		footerHideAction("Esc", "hide"),
+		footerHideAction("`", "hide"),
+		footerNavAction("Tab", "chat/flow"),
+		footerNavAction("Alt+Enter", "newline"),
+	}
+	if m.bossModel.SlashActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "run"),
+			footerHideAction("Esc", "hide"),
+			footerNavAction("Tab", "complete"),
+			footerNavAction("Shift+Tab", "previous"),
+			footerNavAction("Alt+Enter", "newline"),
+		}
+	}
+	if m.bossModel.ControlConfirmationActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "confirm"),
+			footerExitAction("Esc", "cancel"),
+		}
+	}
+	if m.bossModel.SessionPickerActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "open"),
+			footerNavAction("Up/Down", "select"),
+			footerExitAction("Esc", "close"),
+		}
+	}
+	if m.bossModel.OpenTargetPickerActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter/Alt+O", "open"),
+			footerNavAction("f", "folder"),
+			footerNavAction("Up/Down", "select"),
+			footerExitAction("Esc", "close"),
+		}
+	}
+	return fitStyledWidth(renderFooterLine(width, renderFooterActionList(actions...)), width)
+}
+
+var helpChatPanelStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(lipgloss.Color("81")).
+	Padding(0, 1).
+	Background(lipgloss.Color("234")).
+	Foreground(lipgloss.Color("252"))

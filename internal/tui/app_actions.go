@@ -408,11 +408,7 @@ func (m *Model) clearProjectSessionSeenLocal(projectPath string) {
 func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	switch inv.Kind {
 	case commands.KindHelp:
-		m.showPerf = false
-		m.showAIStats = false
-		m.showHelp = true
-		m.status = "Help open. Press ? or Esc to close"
-		return m, nil
+		return m.openHelpChatModeOrSetupPrompt()
 	case commands.KindAIStats:
 		return m, m.openAIStatsDialog()
 	case commands.KindPerf:
