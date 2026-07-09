@@ -849,6 +849,11 @@ func describeBossAction(action bossAction) string {
 		}
 	case bossActionSkillsInventory:
 		return kind
+	case bossActionHelpReference:
+		if query := strings.TrimSpace(action.Query); query != "" {
+			return kind + " " + quoteForStatus(clipText(query, 80))
+		}
+		return kind
 	case bossActionGoalRunReport:
 		if query := strings.TrimSpace(action.Query); query != "" {
 			return kind + " " + clipText(query, 80)

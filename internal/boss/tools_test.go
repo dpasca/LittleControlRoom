@@ -116,6 +116,47 @@ func TestQueryExecutorReportsReflectionInventoryFacets(t *testing.T) {
 	}
 }
 
+func TestQueryExecutorHelpReferenceFindsCommandAndCapabilityTopics(t *testing.T) {
+	t.Parallel()
+
+	executor := &QueryExecutor{}
+	commandResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "new project",
+		Limit: 5,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference command) error = %v", err)
+	}
+	for _, want := range []string{
+		"Little Control Room help reference",
+		"main_tui.command.new-project",
+		"/new-project [--assistant codex|opencode|claude|lcagent]",
+	} {
+		if !strings.Contains(commandResult.Text, want) {
+			t.Fatalf("help reference command result missing %q:\n%s", want, commandResult.Text)
+		}
+	}
+
+	capabilityResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "send prompt engineer",
+		Limit: 5,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference capability) error = %v", err)
+	}
+	for _, want := range []string{
+		"control.capability.engineer.send-prompt",
+		"Send a prompt to an embedded engineer session for a project.",
+		"can_do_via: engineer.send_prompt",
+	} {
+		if !strings.Contains(capabilityResult.Text, want) {
+			t.Fatalf("help reference capability result missing %q:\n%s", want, capabilityResult.Text)
+		}
+	}
+}
+
 func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {
 	t.Parallel()
 
