@@ -75,12 +75,19 @@ func runMockups(ctx context.Context, rawArgs []string) int {
 			fmt.Fprintf(os.Stderr, "write %s: %v\n", htmlPath, err)
 			return 1
 		}
-		if err := os.WriteFile(ansiPath, []byte(asset.ANSI), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "write %s: %v\n", ansiPath, err)
+		ansiName := ""
+		if asset.ANSI != "" {
+			if err := os.WriteFile(ansiPath, []byte(asset.ANSI), 0o644); err != nil {
+				fmt.Fprintf(os.Stderr, "write %s: %v\n", ansiPath, err)
+				return 1
+			}
+			ansiName = filepath.Base(ansiPath)
+			fmt.Printf("  - %s\n", ansiPath)
+		} else if err := os.Remove(ansiPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "remove stale %s: %v\n", ansiPath, err)
 			return 1
 		}
 		fmt.Printf("  - %s\n", htmlPath)
-		fmt.Printf("  - %s\n", ansiPath)
 		if browserErr != nil {
 			continue
 		}
@@ -100,7 +107,7 @@ func runMockups(ctx context.Context, rawArgs []string) int {
 			Title: asset.Title,
 			PNG:   filepath.Base(pngPath),
 			HTML:  filepath.Base(htmlPath),
-			ANSI:  filepath.Base(ansiPath),
+			ANSI:  ansiName,
 		})
 	}
 

@@ -1260,7 +1260,6 @@ func (m Model) renderDetailContent(width int) string {
 	}
 	assessmentValue := assessmentDisplayStyle(p, m.currentTime(), m.assessmentStallThreshold()).Render(projectAssessmentLabelWithThreshold(p, m.currentTime(), m.assessmentStallThreshold()))
 	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
-	attentionValue := detailAttentionValueStyle.Render(fmt.Sprintf("%d", m.projectAttentionScore(p)))
 	summaryText := m.projectAssessmentDisplayTextAt(p, m.currentTime(), m.assessmentStallThreshold())
 	summaryStyle := detailValueStyle
 	if projectAssessmentRefreshing(p) {
@@ -1341,7 +1340,6 @@ func (m Model) renderDetailContent(width int) string {
 		lines = append(lines, detailField("Merge back", mergeBackValue))
 		lines = append(lines, detailField("Merge status", worktreeMergeStatusDetailValue(p)))
 	}
-	lines = append(lines, detailField("Attention", attentionValue))
 	rootPath := projectWorktreeRootPath(p)
 	family := m.worktreeFamily(rootPath)
 	orphanedFamily := m.orphanedWorktreeFamily(rootPath)
@@ -1442,29 +1440,15 @@ func (m Model) renderDetailContent(width int) string {
 			todoProject = rootProject
 		}
 	}
-	lines = append(lines, detailSectionStyle.Render("TODO"))
+	todoValue := detailMutedStyle.Render("none · press t or /todo")
 	if todoProject.TotalTODOCount == 0 {
-		lines = append(lines, detailMutedStyle.Render("No TODOs yet. Press t or run /todo."))
+		lines = append(lines, detailField("TODOs", todoValue))
 	} else {
-		lines = append(lines, detailField("Counts", detailValueStyle.Render(fmt.Sprintf("%d open, %d total", todoProject.OpenTODOCount, todoProject.TotalTODOCount))))
+		todoValue = detailValueStyle.Render(fmt.Sprintf("%d open, %d total", todoProject.OpenTODOCount, todoProject.TotalTODOCount)) + detailMutedStyle.Render(" · press t or /todo")
 		if filepath.Clean(todoProject.Path) != filepath.Clean(p.Path) {
-			lines = append(lines, detailMutedStyle.Render("TODOs are repo-scoped. Press t to open the root repo list."))
-		} else {
-			openShown := 0
-			for _, item := range d.Todos {
-				if item.Done {
-					continue
-				}
-				lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, "[ ] "+strings.TrimSpace(item.Text)))
-				openShown++
-				if openShown >= 5 {
-					break
-				}
-			}
-			if openShown == 0 {
-				lines = append(lines, detailMutedStyle.Render("All TODOs are done. Press t or run /todo."))
-			}
+			todoValue += detailMutedStyle.Render(" · repo-scoped")
 		}
+		lines = append(lines, detailField("TODOs", todoValue))
 	}
 
 	lines = append(lines, detailSectionStyle.Render("Attention reasons"))

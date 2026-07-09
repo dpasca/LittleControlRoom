@@ -71,7 +71,7 @@ func GenerateMockups(cfg config.ScreenshotConfig) ScreenshotReport {
 		{name: "tiny-office-alert", title: "Tiny Office - Attention State", width: 112, height: 31, mode: "tiny-office-alert", phase: 13},
 	}
 
-	assets := make([]ScreenshotAsset, 0, len(variants))
+	assets := make([]ScreenshotAsset, 0, len(variants)+4)
 	for _, variant := range variants {
 		localCfg := cfg
 		localCfg.TerminalWidth = variant.width
@@ -79,6 +79,7 @@ func GenerateMockups(cfg config.ScreenshotConfig) ScreenshotReport {
 		rendered := renderOfficeCabinMockup(variant)
 		assets = append(assets, screenshotAsset(variant.name, variant.title, rendered, localCfg))
 	}
+	assets = append(assets, generateMobileMockupAssets(cfg)...)
 	return ScreenshotReport{Assets: assets}
 }
 

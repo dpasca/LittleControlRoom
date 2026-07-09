@@ -1262,8 +1262,8 @@ func TestRenderDetailContentShowsRuntimeAttentionReason(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "Attention: 14") {
-		t.Fatalf("renderDetailContent() missing boosted attention score: %q", rendered)
+	if strings.Contains(rendered, "Attention:") {
+		t.Fatalf("renderDetailContent() should not show raw attention score: %q", rendered)
 	}
 	if !strings.Contains(rendered, "[+10] Managed runtime running for 05:00 on 3000") {
 		t.Fatalf("renderDetailContent() missing runtime attention reason: %q", rendered)
@@ -1325,8 +1325,8 @@ func TestRenderDetailContentShowsBrowserAttention(t *testing.T) {
 	if !strings.Contains(rendered, "Browser: playwright/browser_navigate is waiting for user input.") {
 		t.Fatalf("renderDetailContent() missing browser attention field: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Attention: 119") {
-		t.Fatalf("renderDetailContent() missing browser attention score: %q", rendered)
+	if strings.Contains(rendered, "Attention:") {
+		t.Fatalf("renderDetailContent() should not show raw attention score: %q", rendered)
 	}
 	if !strings.Contains(rendered, "[+115] OpenCode browser needs attention") {
 		t.Fatalf("renderDetailContent() missing browser attention reason: %q", rendered)

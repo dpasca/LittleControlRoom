@@ -646,11 +646,11 @@ func TestRenderDetailContentShowsTODOSection(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderDetailContent(60))
-	if !strings.Contains(rendered, "TODO") {
-		t.Fatalf("renderDetailContent() should include a TODO section: %q", rendered)
+	if !strings.Contains(rendered, "TODOs: 2 open, 2 total") {
+		t.Fatalf("renderDetailContent() should summarize TODO counts: %q", rendered)
 	}
-	if !strings.Contains(rendered, "[ ] Line one") || !strings.Contains(rendered, "[ ] Line two") {
-		t.Fatalf("renderDetailContent() should render open TODO items: %q", rendered)
+	if strings.Contains(rendered, "[ ] Line one") || strings.Contains(rendered, "[ ] Line two") {
+		t.Fatalf("renderDetailContent() should keep TODO item text in the TODO dialog: %q", rendered)
 	}
 }
 
@@ -780,8 +780,8 @@ func TestRenderDetailSimplifiesStateAndAttention(t *testing.T) {
 	if strings.Contains(rendered, "Attention status:") {
 		t.Fatalf("renderDetailContent() still shows separate attention status line: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Attention:") {
-		t.Fatalf("renderDetailContent() missing attention score field: %q", rendered)
+	if strings.Contains(rendered, "Attention:") {
+		t.Fatalf("renderDetailContent() should not show raw attention score field: %q", rendered)
 	}
 }
 

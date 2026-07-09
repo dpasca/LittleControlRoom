@@ -1645,7 +1645,7 @@ func TestRenderPerfOverlayPreservesBackground(t *testing.T) {
 	if !strings.Contains(rendered, "Performance") || !strings.Contains(rendered, "Latency") || !strings.Contains(rendered, "Model apply") {
 		t.Fatalf("View() should show the performance overlay content: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "Repo: clean") || !strings.Contains(rendered, "Attention: 0") {
+	if !strings.Contains(rendered, "Little Control Room") || !strings.Contains(rendered, "Repo: clean") || !strings.Contains(rendered, "TODOs: none") {
 		t.Fatalf("View() should keep the dashboard visible around the performance overlay: %q", rendered)
 	}
 }
