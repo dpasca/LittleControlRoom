@@ -7,6 +7,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -86,6 +87,7 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	})
 	m := Model{
 		codexManager: manager,
+		codexInput:   newCodexTextarea(),
 		width:        100,
 		height:       24,
 	}
@@ -122,6 +124,75 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	}
 	if got.codexVisibleProject != "" {
 		t.Fatalf("confirmed startup resumes should stay hidden, visible project = %q", got.codexVisibleProject)
+	}
+	for _, msg := range msgs {
+		updated, _ = got.Update(msg)
+		got = updated.(Model)
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("completed startup resumes should stay hidden, visible project = %q", got.codexVisibleProject)
+	}
+	if got.codexInput.Focused() {
+		t.Fatalf("completed startup resumes should not focus the embedded composer")
+	}
+}
+
+func TestSuspendedTurnHiddenPendingQuestionUpdateStaysHidden(t *testing.T) {
+	session := &fakeCodexSession{
+		projectPath: "/tmp/a",
+		snapshot: codexapp.Snapshot{
+			Provider:    codexapp.ProviderCodex,
+			ProjectPath: "/tmp/a",
+			ThreadID:    "cx-a",
+			Started:     true,
+			Status:      "Waiting for input",
+			PendingToolInput: &codexapp.ToolInputRequest{
+				ID: "tool-1",
+				Questions: []codexapp.ToolInputQuestion{{
+					ID:       "continue",
+					Question: "Continue?",
+				}},
+			},
+			LastActivityAt: time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/a",
+		Provider:    codexapp.ProviderCodex,
+		ResumeID:    "cx-a",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		codexPendingOpen: &codexPendingOpenState{
+			projectPath: "/tmp/a",
+			provider:    codexapp.ProviderCodex,
+			hideOnOpen:  true,
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: "/tmp/a"})
+	got := updated.(Model)
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want cleared once hidden startup resume settles", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject != "" {
+		t.Fatalf("hidden startup resume should not reveal on pending input, visible project = %q", got.codexVisibleProject)
+	}
+	if got.codexInput.Focused() {
+		t.Fatalf("hidden startup resume should not focus the embedded composer")
+	}
+	if got.questionNotify == nil || got.questionNotify.ProjectPath != "/tmp/a" {
+		t.Fatalf("question notification = %#v, want hidden pending input notification", got.questionNotify)
 	}
 }
 

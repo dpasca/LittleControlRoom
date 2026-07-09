@@ -27,6 +27,7 @@ type codexSessionOpenedMsg struct {
 	status           string
 	visibleStatus    string
 	backgroundStatus string
+	hideOnOpen       bool
 	renamedTask      bool
 	renameErr        error
 	agentTaskID      string
@@ -159,8 +160,8 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.openAgentTasks = upsertAgentTask(m.openAgentTasks, task)
 		m.rebuildProjectList(selectedPath)
 	}
-	revealOnOpen := m.revealPendingEmbeddedOpenOnSuccess(msg.projectPath)
-	focusInput := true
+	revealOnOpen := m.revealEmbeddedOpenOnSessionOpened(msg)
+	focusInput := revealOnOpen
 	draft, hasTodoLaunchDraft := m.todoLaunchDraftFor(msg.projectPath)
 	if hasTodoLaunchDraft {
 		if draft.openModelFirst {
@@ -363,7 +364,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		providerLabel = embeddedProvider(snapshot).Label()
 		transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
 		if normalizeProjectPath(m.codexPendingOpenProject()) == normalizeProjectPath(msg.projectPath) && codexSnapshotCanSettlePendingOpen(snapshot) {
-			reveal := m.revealPendingEmbeddedOpenOnSuccess(msg.projectPath) || codexSnapshotHasPendingUserResponse(snapshot)
+			reveal := m.revealPendingEmbeddedOpenForSnapshot(msg.projectPath, snapshot)
 			cmds = append(cmds, m.finishCodexPendingOpen(msg.projectPath, snapshot, true, reveal))
 		}
 		m.observeManagedBrowserLease(msg.projectPath, snapshot)
