@@ -36,6 +36,16 @@ type OpenLink struct {
 
 // RenderBody renders lightweight Markdown for terminal transcripts.
 func RenderBody(body string, color lipgloss.Color, width int) string {
+	return renderBody(body, color, "", width)
+}
+
+// RenderBodyWithBackground renders lightweight Markdown while preserving a
+// caller-owned background through nested inline ANSI styles.
+func RenderBodyWithBackground(body string, color, background lipgloss.Color, width int) string {
+	return renderBody(body, color, background, width)
+}
+
+func renderBody(body string, color, background lipgloss.Color, width int) string {
 	lines := strings.Split(body, "\n")
 	out := make([]string, 0, len(lines))
 	inFence := false
@@ -48,7 +58,8 @@ func RenderBody(body string, color lipgloss.Color, width int) string {
 			return
 		}
 		highlighted := syntaxHighlightBlock(strings.Join(fenceLines, "\n"), fenceLanguage, "", syntaxHighlightOptions{
-			DefaultColor: lipgloss.Color("180"),
+			DefaultColor:    lipgloss.Color("180"),
+			BackgroundColor: background,
 		})
 		out = append(out, strings.Split(highlighted, "\n")...)
 		fenceLines = nil
@@ -57,7 +68,7 @@ func RenderBody(body string, color lipgloss.Color, width int) string {
 		if len(tableRows) == 0 {
 			return
 		}
-		out = append(out, renderMarkdownTable(tableRows, color, width)...)
+		out = append(out, renderMarkdownTable(tableRows, color, background, width)...)
 		tableRows = nil
 	}
 	for _, line := range lines {
@@ -73,7 +84,7 @@ func RenderBody(body string, color lipgloss.Color, width int) string {
 				inFence = true
 				fenceLanguage = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
 			}
-			out = append(out, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Faint(true).Render(line))
+			out = append(out, markdownStyle(lipgloss.Color("244"), background).Faint(true).Render(line))
 		case inFence:
 			fenceLines = append(fenceLines, line)
 		case isMarkdownTableRow(trimmed):
@@ -82,26 +93,26 @@ func RenderBody(body string, color lipgloss.Color, width int) string {
 			flushTable()
 			switch {
 			case strings.HasPrefix(trimmed, "[attached image]"):
-				out = append(out, renderInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)))
+				out = append(out, renderInlineMarkdown(line, markdownStyle(lipgloss.Color("179"), background).Bold(true)))
 			case strings.HasPrefix(trimmed, "### "):
-				out = append(out, renderInlineMarkdown(strings.TrimPrefix(trimmed, "### "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+				out = append(out, renderInlineMarkdown(strings.TrimPrefix(trimmed, "### "), markdownStyle(lipgloss.Color("117"), background).Bold(true)))
 			case strings.HasPrefix(trimmed, "## "):
-				out = append(out, renderInlineMarkdown(strings.TrimPrefix(trimmed, "## "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+				out = append(out, renderInlineMarkdown(strings.TrimPrefix(trimmed, "## "), markdownStyle(lipgloss.Color("117"), background).Bold(true)))
 			case strings.HasPrefix(trimmed, "# "):
-				out = append(out, renderInlineMarkdown(strings.TrimPrefix(trimmed, "# "), lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)))
+				out = append(out, renderInlineMarkdown(strings.TrimPrefix(trimmed, "# "), markdownStyle(lipgloss.Color("117"), background).Bold(true)))
 			case strings.HasPrefix(trimmed, "> "):
-				out = append(out, renderInlineMarkdown(line, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true)))
+				out = append(out, renderInlineMarkdown(line, markdownStyle(lipgloss.Color("245"), background).Italic(true)))
 			case isMarkdownHorizontalRule(trimmed):
-				rule := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Faint(true).Render(strings.Repeat("─", min(width, 40)))
+				rule := markdownStyle(lipgloss.Color("240"), background).Faint(true).Render(strings.Repeat("─", min(width, 40)))
 				out = append(out, rule)
 			case strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* "):
-				out = append(out, renderInlineMarkdown("• "+strings.TrimSpace(trimmed[2:]), lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
+				out = append(out, renderInlineMarkdown("• "+strings.TrimSpace(trimmed[2:]), markdownStyle(lipgloss.Color("151"), background)))
 			case isMarkdownNumberedListItem(trimmed):
 				num, content := parseMarkdownNumberedListItem(trimmed)
-				numStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-				out = append(out, numStyle.Render(num+".")+renderInlineMarkdown(" "+content, lipgloss.NewStyle().Foreground(lipgloss.Color("151"))))
+				numStyle := markdownStyle(lipgloss.Color("244"), background)
+				out = append(out, numStyle.Render(num+".")+renderInlineMarkdown(" "+content, markdownStyle(lipgloss.Color("151"), background)))
 			default:
-				out = append(out, renderInlineMarkdown(line, lipgloss.NewStyle().Foreground(color)))
+				out = append(out, renderInlineMarkdown(line, markdownStyle(color, background)))
 			}
 		}
 	}
@@ -109,7 +120,19 @@ func RenderBody(body string, color lipgloss.Color, width int) string {
 		flushFence()
 	}
 	flushTable()
-	return lipgloss.NewStyle().Width(width).Render(strings.Join(out, "\n"))
+	style := lipgloss.NewStyle().Width(width)
+	if background != "" {
+		style = style.Background(background)
+	}
+	return style.Render(strings.Join(out, "\n"))
+}
+
+func markdownStyle(color, background lipgloss.Color) lipgloss.Style {
+	style := lipgloss.NewStyle().Foreground(color)
+	if background != "" {
+		style = style.Background(background)
+	}
+	return style
 }
 
 func isMarkdownTableRow(line string) bool {
@@ -131,7 +154,7 @@ func isMarkdownTableSeparator(line string) bool {
 	return true
 }
 
-func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []string {
+func renderMarkdownTable(rows []string, color, background lipgloss.Color, maxWidth int) []string {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -183,9 +206,9 @@ func renderMarkdownTable(rows []string, color lipgloss.Color, maxWidth int) []st
 		}
 	}
 
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Bold(true)
-	cellStyle := lipgloss.NewStyle().Foreground(color)
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	headerStyle := markdownStyle(lipgloss.Color("117"), background).Bold(true)
+	cellStyle := markdownStyle(color, background)
+	borderStyle := markdownStyle(lipgloss.Color("240"), background)
 
 	out := make([]string, 0, len(rows))
 	for i, cells := range parsed {
