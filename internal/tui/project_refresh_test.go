@@ -1,18 +1,36 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/commands"
+	"lcroom/internal/config"
+	"lcroom/internal/detectors"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/scanner"
+	"lcroom/internal/service"
+	"lcroom/internal/store"
 
 	"github.com/charmbracelet/x/ansi"
 )
+
+type tuiDeadlineDetector struct{}
+
+func (tuiDeadlineDetector) Name() string {
+	return "codex"
+}
+
+func (tuiDeadlineDetector) Detect(context.Context, scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
+	return nil, context.DeadlineExceeded
+}
 
 func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
 	m := Model{}
@@ -31,6 +49,39 @@ func TestProjectRefreshRequestsCoalesceWhileInFlight(t *testing.T) {
 	}
 	if !m.scanQueued || !m.projectsReloadQueued {
 		t.Fatalf("duplicate refresh request should queue a rerun")
+	}
+}
+
+func TestScanCmdPreservesTimeoutDetails(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := service.New(cfg, st, events.NewBus(), []detectors.Detector{tuiDeadlineDetector{}})
+	svc.SetSessionClassifier(nil)
+
+	cmd := Model{svc: svc}.scanCmd(false)
+	msg, ok := cmd().(scanMsg)
+	if !ok {
+		t.Fatalf("scanCmd() message = %T, want scanMsg", msg)
+	}
+	if msg.err == nil {
+		t.Fatal("scanCmd() error = nil, want timeout")
+	}
+	for _, want := range []string{"timed out after 1m30s", "scan timed out while detecting project activity with codex"} {
+		if !strings.Contains(msg.err.Error(), want) {
+			t.Fatalf("scanCmd() error = %q, want %q", msg.err.Error(), want)
+		}
+	}
+	if !errors.Is(msg.err, context.DeadlineExceeded) {
+		t.Fatalf("scanCmd() error = %v, want deadline exceeded", msg.err)
+	}
+	if detail, ok := service.ScanTimeoutDetail(msg.err); !ok || !strings.Contains(detail, "detecting project activity with codex") {
+		t.Fatalf("scanCmd() timeout detail = %q, %t", detail, ok)
 	}
 }
 

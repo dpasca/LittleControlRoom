@@ -184,7 +184,7 @@ func (m Model) scanCmd(forceRetryFailedClassifications bool) tea.Cmd {
 			ForceRetryFailedClassifications: forceRetryFailedClassifications,
 		})
 		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("timed out after %s", tuiProjectScanTimeout.Round(time.Millisecond))
+			err = fmt.Errorf("timed out after %s: %w", tuiProjectScanTimeout.Round(time.Millisecond), err)
 		}
 		return scanMsg{report: report, err: err}
 	}
