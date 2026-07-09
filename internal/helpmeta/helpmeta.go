@@ -45,11 +45,12 @@ type Topic struct {
 }
 
 func Topics() []Topic {
-	topics := make([]Topic, 0, len(commands.Specs())+len(codexslash.Specs())+len(bossslash.Specs())+len(control.Capabilities()))
+	topics := make([]Topic, 0, len(commands.Specs())+len(codexslash.Specs())+len(bossslash.Specs())+len(control.Capabilities())+len(CuratedTopics()))
 	topics = append(topics, MainCommandTopics()...)
 	topics = append(topics, EmbeddedCommandTopics()...)
 	topics = append(topics, BossCommandTopics()...)
 	topics = append(topics, ControlCapabilityTopics()...)
+	topics = append(topics, CuratedTopics()...)
 	sortTopics(topics)
 	return cloneTopics(topics)
 }
@@ -119,12 +120,163 @@ func ControlCapabilityTopics() []Topic {
 	return cloneTopics(topics)
 }
 
+func CuratedTopics() []Topic {
+	return cloneTopics([]Topic{
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindKeybinding, "help-chat"),
+			Kind:    TopicKindKeybinding,
+			Surface: SurfaceMainTUI,
+			Title:   "Open Help Chat",
+			Summary: "Use /help or the backtick key to open an active Boss-powered Help Chat overlay. Use ? for the compact static quick-help panel.",
+			Usage:   []string{"/help", "`", "?"},
+			ManualSteps: []string{
+				"Press ` from the main project list to open or hide Help Chat.",
+				"Run /help from the slash-command palette to open Help Chat.",
+				"Press Esc or ` to hide Help Chat; press ? when you only want the compact quick-reference panel.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "help"),
+				CommandTopicID(SurfaceMainTUI, "boss"),
+			},
+			SourceRefs: []string{"tui.updateNormalMode", "tui.dispatchCommand", "tui.renderHelpChatOverlay"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindKeybinding, "project-todos"),
+			Kind:    TopicKindKeybinding,
+			Surface: SurfaceMainTUI,
+			Title:   "Open a project's TODO list",
+			Summary: "Press t on the selected project, or run /todo, to open that project's TODO dialog.",
+			Usage:   []string{"t", "/todo"},
+			ManualSteps: []string{
+				"Select a project in the main list.",
+				"Press t, or open the slash-command palette and run /todo.",
+				"In the TODO dialog, use a to add, e to edit, space to mark done, c to start work, and Esc to close.",
+			},
+			CanDoVia: []control.CapabilityName{control.CapabilityTodoAdd, control.CapabilityTodoComplete},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "todo"),
+				CapabilityTopicID(control.CapabilityTodoAdd),
+				CapabilityTopicID(control.CapabilityTodoComplete),
+			},
+			SourceRefs: []string{"tui.updateNormalMode", "tui.todoDialogLegendLine", "commands.Specs"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "start-todo-work"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Start an engineer session from a TODO",
+			Summary: "From the TODO dialog, start work on a TODO in the current project or in a dedicated TODO worktree, choosing Codex, OpenCode, Claude Code, or LCAgent.",
+			Usage:   []string{"TODO dialog: c", "Start TODO dialog: Enter", "Start TODO dialog: w"},
+			ManualSteps: []string{
+				"Open the selected project's TODO list with t or /todo.",
+				"Select a TODO and press c to open Start TODO.",
+				"Choose the agent, optionally toggle a dedicated worktree with w, then press Enter to start the engineer session.",
+				"If a pending TODO worktree row appears, press Enter to inspect its status or x to abort it.",
+			},
+			CanDoVia: []control.CapabilityName{control.CapabilityEngineerSendPrompt},
+			Related: []string{
+				TopicID(SurfaceMainTUI, TopicKindKeybinding, "project-todos"),
+				CommandTopicID(SurfaceMainTUI, "todo"),
+				CommandTopicID(SurfaceMainTUI, "codex"),
+				CommandTopicID(SurfaceMainTUI, "opencode"),
+				CommandTopicID(SurfaceMainTUI, "claude"),
+				CommandTopicID(SurfaceMainTUI, "lcagent"),
+				CapabilityTopicID(control.CapabilityEngineerSendPrompt),
+			},
+			SourceRefs: []string{"tui.todoDialogLegendLine", "tui.renderTodoCopyDialogOverlay", "tui.startTodoInProjectPath"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Show or hide linked worktree lanes",
+			Summary: "Use w or /wt lanes to expand and collapse sibling worktrees grouped under their repo root.",
+			Usage:   []string{"w", "/wt lanes"},
+			ManualSteps: []string{
+				"Select a repo root, linked worktree, or worktree family row.",
+				"Press w, or run /wt lanes, to expand or collapse the worktree family.",
+				"Use the linked worktree row actions when you need merge, remove, or status operations.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "wt"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"),
+			},
+			SourceRefs: []string{"tui.updateNormalMode", "tui.worktreeFooterActions", "commands.Specs"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Merge a linked worktree back",
+			Summary: "Select a linked worktree and use M or /wt merge to merge it back to its parent branch, with checks for dirty state, runtime activity, linked TODOs, and optional cleanup.",
+			Usage:   []string{"M", "/wt merge"},
+			ManualSteps: []string{
+				"Select the linked worktree row under its repo family.",
+				"Press M, or run /wt merge.",
+				"Review the confirmation dialog; Little Control Room can stop the runtime, commit dirty worktree changes first, mark a linked TODO done, and remove the merged worktree after merge.",
+				"If the merge is blocked by conflicts or dirty root state, resolve that Git state first, then refresh and retry.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "wt"),
+				CommandTopicID(SurfaceMainTUI, "commit"),
+				CommandTopicID(SurfaceMainTUI, "diff"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "merge-conflict-recovery"),
+			},
+			SourceRefs: []string{"tui.worktreeFooterActions", "tui.openWorktreeMergeConfirmForSelection", "tui.mergeBackRulesSummary", "commands.Specs"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-remove-prune"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Remove or prune linked worktrees",
+			Summary: "Use x or /wt remove on a linked worktree to remove it, and /wt prune on a root family to clean stale Git worktree registrations.",
+			Usage:   []string{"x", "/wt remove", "/wt prune"},
+			ManualSteps: []string{
+				"Select a linked worktree and press x, or run /wt remove, to open the remove confirmation.",
+				"If the selected row is a pending TODO worktree launch, x aborts the pending launch.",
+				"Select a repo root or family and run /wt prune to clean stale Git worktree registrations.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "wt"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"),
+			},
+			SourceRefs: []string{"tui.updateNormalMode", "tui.worktreeFooterActions", "commands.Specs"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "merge-conflict-recovery"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Recover from merge conflicts",
+			Summary: "When Little Control Room reports unresolved conflicts, use /resolve when available or resolve/abort the Git operation manually, then refresh before retrying commits or worktree merges.",
+			Usage:   []string{"/resolve", "/diff", "/commit", "/refresh"},
+			ManualSteps: []string{
+				"Open /diff to inspect changed files and conflict markers when the project is dirty or conflicted.",
+				"Use /resolve if the project exposes the resolve action; otherwise resolve or abort the Git merge/rebase/cherry-pick in the repository.",
+				"Run /refresh after resolving the Git state so Little Control Room reloads repo status.",
+				"Retry /commit or /wt merge only after the project no longer shows unresolved conflicts.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "resolve"),
+				CommandTopicID(SurfaceMainTUI, "diff"),
+				CommandTopicID(SurfaceMainTUI, "commit"),
+				CommandTopicID(SurfaceMainTUI, "refresh"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"),
+			},
+			SourceRefs: []string{"tui.worktreeMergeReadiness", "tui.worktreeFooterActions", "commands.Specs"},
+		},
+	})
+}
+
 func CommandTopicID(surface Surface, name string) string {
 	return strings.TrimSpace(string(surface)) + ".command." + normalizeTopicIDPart(name)
 }
 
 func CapabilityTopicID(name control.CapabilityName) string {
 	return string(SurfaceControl) + ".capability." + normalizeTopicIDPart(string(name))
+}
+
+func TopicID(surface Surface, kind TopicKind, name string) string {
+	return strings.TrimSpace(string(surface)) + "." + strings.TrimSpace(string(kind)) + "." + normalizeTopicIDPart(name)
 }
 
 func commandTopics(surface Surface, sourceRef string, specs []slashcmd.Spec) []Topic {

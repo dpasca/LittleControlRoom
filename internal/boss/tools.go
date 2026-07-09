@@ -396,6 +396,16 @@ func formatHelpReferenceTopic(topic helpmeta.Topic) string {
 	if len(topic.Usage) > 0 {
 		parts = append(parts, "usage: "+strings.Join(topic.Usage, ", "))
 	}
+	if len(topic.ManualSteps) > 0 {
+		steps := append([]string(nil), topic.ManualSteps...)
+		if len(steps) > 3 {
+			steps = steps[:3]
+		}
+		for i := range steps {
+			steps[i] = clipText(strings.TrimSpace(steps[i]), 180)
+		}
+		parts = append(parts, "manual_steps: "+strings.Join(steps, " -> "))
+	}
 	if len(topic.CanDoVia) > 0 {
 		capabilities := make([]string, 0, len(topic.CanDoVia))
 		for _, capability := range topic.CanDoVia {

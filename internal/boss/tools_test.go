@@ -155,6 +155,42 @@ func TestQueryExecutorHelpReferenceFindsCommandAndCapabilityTopics(t *testing.T)
 			t.Fatalf("help reference capability result missing %q:\n%s", want, capabilityResult.Text)
 		}
 	}
+
+	workflowResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "I just had a merge conflict what do I do",
+		Limit: 8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference workflow) error = %v", err)
+	}
+	for _, want := range []string{
+		"main_tui.workflow.merge-conflict-recovery",
+		"/resolve",
+		"Run /refresh after resolving the Git state",
+	} {
+		if !strings.Contains(workflowResult.Text, want) {
+			t.Fatalf("help reference workflow result missing %q:\n%s", want, workflowResult.Text)
+		}
+	}
+
+	keybindingResult, err := executor.Execute(context.Background(), bossAction{
+		Kind:  bossActionHelpReference,
+		Query: "how do I open todos manually press t",
+		Limit: 8,
+	}, StateSnapshot{}, ViewContext{})
+	if err != nil {
+		t.Fatalf("Execute(help_reference keybinding) error = %v", err)
+	}
+	for _, want := range []string{
+		"main_tui.keybinding.project-todos",
+		"Press t on the selected project",
+		"manual_steps:",
+	} {
+		if !strings.Contains(keybindingResult.Text, want) {
+			t.Fatalf("help reference keybinding result missing %q:\n%s", want, keybindingResult.Text)
+		}
+	}
 }
 
 func TestQueryExecutorReportsOpenAgentTasks(t *testing.T) {

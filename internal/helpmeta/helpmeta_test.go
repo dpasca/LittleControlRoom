@@ -42,6 +42,39 @@ func TestTopicsIncludeControlCapabilities(t *testing.T) {
 	}
 }
 
+func TestTopicsIncludeCuratedWorkflowsAndKeybindings(t *testing.T) {
+	topics := topicsByID(Topics())
+	for _, tc := range []struct {
+		id      string
+		kind    TopicKind
+		surface Surface
+	}{
+		{TopicID(SurfaceMainTUI, TopicKindKeybinding, "help-chat"), TopicKindKeybinding, SurfaceMainTUI},
+		{TopicID(SurfaceMainTUI, TopicKindKeybinding, "project-todos"), TopicKindKeybinding, SurfaceMainTUI},
+		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "start-todo-work"), TopicKindWorkflow, SurfaceMainTUI},
+		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"), TopicKindWorkflow, SurfaceMainTUI},
+		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"), TopicKindWorkflow, SurfaceMainTUI},
+		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "merge-conflict-recovery"), TopicKindWorkflow, SurfaceMainTUI},
+	} {
+		topic, ok := topics[tc.id]
+		if !ok {
+			t.Fatalf("missing curated help topic %q", tc.id)
+		}
+		if topic.Kind != tc.kind || topic.Surface != tc.surface {
+			t.Fatalf("topic %q kind/surface = %q/%q, want %q/%q", tc.id, topic.Kind, topic.Surface, tc.kind, tc.surface)
+		}
+		if strings.TrimSpace(topic.Summary) == "" {
+			t.Fatalf("topic %q has empty summary", tc.id)
+		}
+		if len(topic.ManualSteps) == 0 {
+			t.Fatalf("topic %q should include manual steps", tc.id)
+		}
+		if len(topic.SourceRefs) == 0 {
+			t.Fatalf("topic %q has no source refs", tc.id)
+		}
+	}
+}
+
 func TestTopicsHaveUniqueIDs(t *testing.T) {
 	seen := map[string]struct{}{}
 	for _, topic := range Topics() {
