@@ -14,7 +14,7 @@ import (
 func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
 		if snapshot, ok := m.nonBlockingCodexSnapshot(projectPath); ok && codexSnapshotCanSettlePendingOpen(snapshot) {
-			reveal := m.revealPendingEmbeddedOpenOnSuccess(projectPath) || codexSnapshotHasPendingUserResponse(snapshot)
+			reveal := m.revealPendingEmbeddedOpenForSnapshot(projectPath, snapshot)
 			openCmd := m.finishCodexPendingOpen(projectPath, snapshot, true, reveal)
 			updated, cmd := m.updateCodexMode(msg)
 			return updated, batchCmds(openCmd, cmd)

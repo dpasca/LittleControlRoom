@@ -298,6 +298,28 @@ func (m Model) revealPendingEmbeddedOpenOnSuccess(projectPath string) bool {
 	return !m.codexPendingOpen.hideOnOpen
 }
 
+func (m Model) revealEmbeddedOpenOnSessionOpened(msg codexSessionOpenedMsg) bool {
+	projectPath := normalizeProjectPath(msg.projectPath)
+	if projectPath != "" && m.codexPendingOpen != nil && normalizeProjectPath(m.codexPendingOpen.projectPath) == projectPath {
+		return !m.codexPendingOpen.hideOnOpen
+	}
+	return !msg.hideOnOpen
+}
+
+func (m Model) revealPendingEmbeddedOpenForSnapshot(projectPath string, snapshot codexapp.Snapshot) bool {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" || m.codexPendingOpen == nil {
+		return true
+	}
+	if normalizeProjectPath(m.codexPendingOpen.projectPath) != projectPath {
+		return true
+	}
+	if !m.codexPendingOpen.hideOnOpen {
+		return true
+	}
+	return m.codexPendingOpen.showWhilePending && codexSnapshotHasPendingUserResponse(snapshot)
+}
+
 func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Snapshot, opened bool, reveal bool) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	if pending := m.codexPendingOpenProject(); pending != "" && pending == projectPath {
@@ -1343,6 +1365,7 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 			status:           status,
 			visibleStatus:    visibleStatus,
 			backgroundStatus: backgroundStatus,
+			hideOnOpen:       !revealOnOpen,
 			renamedTask:      renamedTask,
 			renameErr:        renameErr,
 			perfOpID:         perfOpID,
