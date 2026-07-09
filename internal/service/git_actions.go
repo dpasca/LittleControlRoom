@@ -111,6 +111,18 @@ type SubmoduleAttentionError struct {
 	PushWarning        string
 }
 
+type SubmodulePublishBlockedError struct {
+	WorktreePath    string
+	RootProjectPath string
+	SourceBranch    string
+	TargetBranch    string
+	SubmodulePath   string
+	SubmoduleBranch string
+	Remote          string
+	RemoteURL       string
+	Cause           error
+}
+
 type SubmoduleResolvedNoParentChangesError struct {
 	ProjectPath string
 	ProjectName string
@@ -148,6 +160,45 @@ func (e SubmoduleAttentionError) Error() string {
 		return fmt.Sprintf("%s: unpushed submodules: %s", base, unpushed)
 	default:
 		return fmt.Sprintf("%s: %s", base, strings.Join(e.Submodules, ", "))
+	}
+}
+
+func (e SubmodulePublishBlockedError) Error() string {
+	submodulePath := strings.TrimSpace(e.SubmodulePath)
+	if submodulePath == "" {
+		submodulePath = "the submodule"
+	} else {
+		submodulePath = "submodule " + submodulePath
+	}
+
+	parts := []string{fmt.Sprintf("Could not publish %s automatically.", submodulePath)}
+	if branch := strings.TrimSpace(e.SubmoduleBranch); branch != "" {
+		parts = append(parts, "Local branch: "+branch+".")
+	}
+	if remote := submoduleRemoteSummary(e.Remote, e.RemoteURL); remote != "" {
+		parts = append(parts, "Remote: "+remote+".")
+	}
+	parts = append(parts,
+		"Merge-back stopped before changing the root checkout so the parent repo does not record a submodule commit that other checkouts cannot fetch.",
+		"Push that submodule commit to a writable remote branch, point the parent worktree at a commit already available from the submodule remote, or configure a writable submodule remote and retry merge-back.",
+	)
+	return strings.Join(parts, " ")
+}
+
+func (e SubmodulePublishBlockedError) Unwrap() error {
+	return e.Cause
+}
+
+func submoduleRemoteSummary(remote, remoteURL string) string {
+	remote = strings.TrimSpace(remote)
+	remoteURL = strings.TrimSpace(remoteURL)
+	switch {
+	case remote != "" && remoteURL != "":
+		return remote + " (" + remoteURL + ")"
+	case remote != "":
+		return remote
+	default:
+		return remoteURL
 	}
 }
 

@@ -2161,6 +2161,80 @@ func TestWorktreeActionMsgErrorLogsAsyncMergeFailure(t *testing.T) {
 	}
 }
 
+func TestWorktreeActionMsgSubmodulePublishBlockedReopensMergeDialog(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-submodule"
+	err := service.SubmodulePublishBlockedError{
+		WorktreePath:    childPath,
+		RootProjectPath: rootPath,
+		SourceBranch:    "feat/submodule",
+		TargetBranch:    "master",
+		SubmodulePath:   "assets_src",
+		SubmoduleBranch: "lcroom/master/assets_src-abc123",
+		Remote:          "origin",
+		RemoteURL:       "https://github.com/litehtml/litehtml.git",
+		Cause:           errors.New("push /tmp/repo--feat-submodule/assets_src: exit status 128: remote: Permission to litehtml/litehtml.git denied to dpasca.\nfatal: unable to access 'https://github.com/litehtml/litehtml.git/': The requested URL returned error: 403"),
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{{
+			Name:                 "repo--feat-submodule",
+			Path:                 childPath,
+			PresentOnDisk:        true,
+			WorktreeRootPath:     rootPath,
+			WorktreeKind:         model.WorktreeKindLinked,
+			WorktreeParentBranch: "master",
+			RepoBranch:           "feat/submodule",
+		}},
+		pendingGitSummaries: map[string]string{
+			childPath: worktreeMergePendingSummary,
+		},
+	}
+
+	updated, _ := m.Update(worktreeActionMsg{
+		projectPath:            childPath,
+		selectPath:             rootPath,
+		clearPendingGitSummary: true,
+		err:                    err,
+	})
+	got := updated.(Model)
+	if got.pendingGitSummary(childPath) != "" {
+		t.Fatalf("pending git summary = %q, want cleared", got.pendingGitSummary(childPath))
+	}
+	if got.status != "Submodule publish blocked. Review the merge dialog." {
+		t.Fatalf("status = %q, want handled submodule publish status", got.status)
+	}
+	if got.worktreeMergeConfirm == nil {
+		t.Fatalf("submodule publish blocker should reopen the merge dialog")
+	}
+	if got.worktreeMergeConfirm.Selected != worktreeMergeConfirmKeepIndex(got.worktreeMergeConfirm) {
+		t.Fatalf("merge dialog should focus Keep after a publish blocker, got selected %d", got.worktreeMergeConfirm.Selected)
+	}
+	rendered := ansi.Strip(got.renderWorktreeMergeConfirmOverlay("", 100, 28))
+	for _, want := range []string{
+		"Could not publish submodule assets_src automatically.",
+		"Remote: origin",
+		"https://github.com/litehtml/litehtml.git",
+		"Merge-back stopped before",
+		"changing the root checkout",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("merge dialog missing %q in %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "exit status") || strings.Contains(rendered, "fatal:") || strings.Contains(rendered, "Permission to litehtml") {
+		t.Fatalf("merge dialog should keep raw git rejection out of the main guidance, got %q", rendered)
+	}
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log count = %d, want 1", len(got.errorLogEntries))
+	}
+	if got.errorLogEntries[0].Status != "Submodule publish blocked" {
+		t.Fatalf("error log status = %q, want Submodule publish blocked", got.errorLogEntries[0].Status)
+	}
+	if !strings.Contains(got.errorLogEntries[0].RootCause, "Permission to litehtml") {
+		t.Fatalf("error log root cause = %q, want raw remote rejection retained", got.errorLogEntries[0].RootCause)
+	}
+}
+
 func TestWorktreePostMergeEnterRemoveQueuesRemoval(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"

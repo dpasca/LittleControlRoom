@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -325,6 +326,15 @@ func worktreeMergeConfirmStatus(confirm *worktreeMergeConfirmState) string {
 	if reason := strings.TrimSpace(worktreeMergeConfirmBlockReason(confirm)); reason != "" {
 		return reason
 	}
+	if message := strings.TrimSpace(confirm.ErrorMessage); message != "" {
+		if strings.Contains(message, "Could not publish") && strings.Contains(message, "submodule") {
+			return "Submodule publish blocked. Review the merge dialog."
+		}
+		if worktreeMergeConflictMessage(message) {
+			return "Worktree merge conflict. Review the merge dialog."
+		}
+		return "Worktree merge-back needs attention. Review the merge dialog."
+	}
 	return "Confirm worktree merge-back"
 }
 
@@ -426,9 +436,67 @@ func shouldRefreshWorktreeMergeFamilyAfterError(err error) bool {
 	if err == nil {
 		return false
 	}
+	var publishErr service.SubmodulePublishBlockedError
+	if errors.As(err, &publishErr) {
+		return true
+	}
 	text := strings.TrimSpace(err.Error())
 	return strings.Contains(text, "worktree is dirty; commit or discard changes before merging back") ||
 		strings.Contains(text, "root worktree is dirty; commit or discard changes before merging back")
+}
+
+func (m *Model) showSubmodulePublishBlockedMergeDialog(msg worktreeActionMsg, publishErr service.SubmodulePublishBlockedError) {
+	projectPath := firstNonEmptyTrimmed(msg.projectPath, publishErr.WorktreePath)
+	rootPath := firstNonEmptyTrimmed(publishErr.RootProjectPath, msg.selectPath)
+	projectName := ""
+	sourceBranch := strings.TrimSpace(publishErr.SourceBranch)
+	targetBranch := strings.TrimSpace(publishErr.TargetBranch)
+	hasLinkedTodo := false
+	sourceDirty := false
+	runtimeRunning := false
+
+	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
+		projectName = strings.TrimSpace(project.Name)
+		if rootPath == "" {
+			rootPath = projectWorktreeRootPath(project)
+		}
+		if sourceBranch == "" {
+			sourceBranch = projectWorktreeLabel(project)
+		}
+		if targetBranch == "" {
+			targetBranch = strings.TrimSpace(project.WorktreeParentBranch)
+		}
+		hasLinkedTodo = project.WorktreeOriginTodoID > 0
+		sourceDirty = project.RepoDirty
+		runtimeRunning = m.projectRuntimeSnapshot(project.Path).Running
+	}
+	if projectName == "" && projectPath != "" {
+		projectName = filepath.Base(projectPath)
+	}
+	if sourceBranch == "" {
+		sourceBranch = "worktree"
+	}
+
+	confirm := &worktreeMergeConfirmState{
+		ProjectPath:       projectPath,
+		RootPath:          rootPath,
+		ProjectName:       projectName,
+		BranchName:        sourceBranch,
+		TargetBranch:      targetBranch,
+		SourceDirty:       sourceDirty,
+		RuntimeRunning:    runtimeRunning,
+		StopRuntime:       runtimeRunning,
+		CommitBeforeMerge: sourceDirty,
+		HasLinkedTodo:     hasLinkedTodo,
+		MarkTodoDone:      hasLinkedTodo,
+		RemoveNow:         true,
+		ErrorMessage:      publishErr.Error(),
+	}
+	confirm.Selected = worktreeMergeConfirmKeepIndex(confirm)
+	m.worktreeMergeConfirm = confirm
+	m.worktreePostMerge = nil
+	m.worktreeRemoveConfirm = nil
+	m.status = "Submodule publish blocked. Review the merge dialog."
 }
 
 func worktreeMergeStatusText(result service.MergeWorktreeBackResult) string {

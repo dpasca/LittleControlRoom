@@ -19,6 +19,13 @@ type resolvedSubmodule struct {
 	Branch     string
 }
 
+type submodulePublishContext struct {
+	WorktreePath    string
+	RootProjectPath string
+	SourceBranch    string
+	TargetBranch    string
+}
+
 func (s *Service) ResolveSubmodulesAndPrepareCommit(ctx context.Context, projectPath string, intent GitActionIntent, messageOverride string) (CommitPreview, error) {
 	if !projectPathExists(projectPath) {
 		return CommitPreview{}, fmt.Errorf("project not found on disk: %s", projectPath)
@@ -35,9 +42,14 @@ func (s *Service) ResolveSubmodulesAndPrepareCommit(ctx context.Context, project
 
 	hadStagedChanges := len(parentStatus.StagedChanges()) > 0
 	resolved := make([]resolvedSubmodule, 0, len(attentionPaths))
+	publishCtx := submodulePublishContext{
+		WorktreePath: projectPath,
+		SourceBranch: parentStatus.Branch,
+		TargetBranch: parentStatus.Branch,
+	}
 	for _, relPath := range attentionPaths {
 		childPath := filepath.Join(projectPath, relPath)
-		childResolved, resolveErr := s.resolveSubmoduleRepoAndPush(ctx, childPath, relPath, parentStatus.Branch, map[string]struct{}{})
+		childResolved, resolveErr := s.resolveSubmoduleRepoAndPush(ctx, childPath, relPath, parentStatus.Branch, map[string]struct{}{}, publishCtx)
 		if resolveErr != nil {
 			return CommitPreview{}, fmt.Errorf("resolve submodule %s: %w", relPath, resolveErr)
 		}
@@ -72,19 +84,30 @@ func (s *Service) ResolveSubmodulesAndPrepareCommit(ctx context.Context, project
 type submodulePushPlan struct {
 	SetUpstream bool
 	Branch      string
+	Remote      string
 }
 
-func (s *Service) ensureMergeBackSubmodulesPublished(ctx context.Context, projectPath, parentBranch string, status scanner.GitRepoStatus) ([]resolvedSubmodule, error) {
+func (s *Service) ensureMergeBackSubmodulesPublished(ctx context.Context, projectPath, rootPath, parentBranch string, status scanner.GitRepoStatus) ([]resolvedSubmodule, error) {
 	resolved := []resolvedSubmodule{}
 	seen := map[string]struct{}{}
+	publishCtx := submodulePublishContext{
+		WorktreePath:    projectPath,
+		RootProjectPath: rootPath,
+		SourceBranch:    status.Branch,
+		TargetBranch:    parentBranch,
+	}
 	for _, submodule := range status.Submodules {
 		relPath := strings.TrimSpace(submodule.Path)
 		if relPath == "" {
 			continue
 		}
 		childPath := filepath.Join(projectPath, filepath.FromSlash(relPath))
-		childResolved, err := s.resolveSubmoduleRepoAndPush(ctx, childPath, relPath, parentBranch, seen)
+		childResolved, err := s.resolveSubmoduleRepoAndPush(ctx, childPath, relPath, parentBranch, seen, publishCtx)
 		if err != nil {
+			var publishErr SubmodulePublishBlockedError
+			if errors.As(err, &publishErr) {
+				return resolved, err
+			}
 			return resolved, fmt.Errorf("publish merge-back submodule %s: %w", relPath, err)
 		}
 		resolved = append(resolved, childResolved...)
@@ -92,7 +115,7 @@ func (s *Service) ensureMergeBackSubmodulesPublished(ctx context.Context, projec
 	return resolved, nil
 }
 
-func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, displayPath, parentBranch string, seen map[string]struct{}) ([]resolvedSubmodule, error) {
+func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, displayPath, parentBranch string, seen map[string]struct{}, publishCtx submodulePublishContext) ([]resolvedSubmodule, error) {
 	cleanPath := filepath.Clean(repoPath)
 	if _, ok := seen[cleanPath]; ok {
 		return nil, fmt.Errorf("submodule recursion cycle detected at %s", displayPath)
@@ -109,7 +132,7 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 	for _, relPath := range blockedSubmodulePaths(status.Changes) {
 		childPath := filepath.Join(repoPath, relPath)
 		childDisplay := filepath.ToSlash(filepath.Join(displayPath, relPath))
-		childResolved, resolveErr := s.resolveSubmoduleRepoAndPush(ctx, childPath, childDisplay, parentBranch, seen)
+		childResolved, resolveErr := s.resolveSubmoduleRepoAndPush(ctx, childPath, childDisplay, parentBranch, seen, publishCtx)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -138,10 +161,10 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 		if status.Ahead > 0 || needsSubmoduleUpstream(status) || needsDetachedPublish {
 			pushPlan, pushErr := s.ensureSubmodulePushPlan(ctx, repoPath, displayPath, parentBranch, status)
 			if pushErr != nil {
-				return nil, fmt.Errorf("submodule %s cannot be auto-pushed: %w", displayPath, pushErr)
+				return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, pushErr)
 			}
 			if err := pushSubmodule(ctx, repoPath, pushPlan); err != nil {
-				return nil, fmt.Errorf("push submodule %s: %w", displayPath, err)
+				return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, err)
 			}
 			hash, _ := gitHeadShort(ctx, repoPath)
 			resolved = append(resolved, resolvedSubmodule{Path: displayPath, Hash: hash, PushedOnly: true, Branch: pushPlan.Branch})
@@ -151,7 +174,7 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 
 	pushPlan, pushErr := s.ensureSubmodulePushPlan(ctx, repoPath, displayPath, parentBranch, status)
 	if pushErr != nil {
-		return nil, fmt.Errorf("submodule %s cannot be auto-pushed: %w", displayPath, pushErr)
+		return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, pushErr)
 	}
 
 	if err := gitops.StageAll(ctx, repoPath); err != nil {
@@ -173,7 +196,7 @@ func (s *Service) resolveSubmoduleRepoAndPush(ctx context.Context, repoPath, dis
 		return nil, err
 	}
 	if err := pushSubmodule(ctx, repoPath, pushPlan); err != nil {
-		return nil, fmt.Errorf("push submodule %s: %w", displayPath, err)
+		return nil, s.submodulePublishBlockedError(ctx, repoPath, displayPath, status, pushPlan, publishCtx, err)
 	}
 
 	resolved = append(resolved, resolvedSubmodule{Path: displayPath, Hash: hash, Branch: pushPlan.Branch})
@@ -231,7 +254,8 @@ func (s *Service) ensureSubmodulePushPlan(ctx context.Context, repoPath, display
 		if !canPush {
 			return submodulePushPlan{}, errors.New(strings.TrimSpace(pushWarning))
 		}
-		return submodulePushPlan{Branch: cleanResolvedBranchName(status.Branch)}, nil
+		remote, _ := gitBranchUpstreamRemote(ctx, repoPath, status.Branch)
+		return submodulePushPlan{Branch: cleanResolvedBranchName(status.Branch), Remote: remote}, nil
 	}
 	if !status.HasRemote {
 		return submodulePushPlan{}, errors.New("Commit & push unavailable: no remote is configured.")
@@ -250,14 +274,82 @@ func (s *Service) ensureSubmodulePushPlan(ctx context.Context, repoPath, display
 		}
 		branch = selected
 	}
-	return submodulePushPlan{SetUpstream: true, Branch: branch}, nil
+	return submodulePushPlan{SetUpstream: true, Branch: branch, Remote: "origin"}, nil
 }
 
 func pushSubmodule(ctx context.Context, repoPath string, plan submodulePushPlan) error {
 	if plan.SetUpstream {
-		return gitops.PushSetUpstream(ctx, repoPath, "origin")
+		remote := strings.TrimSpace(plan.Remote)
+		if remote == "" {
+			remote = "origin"
+		}
+		return gitops.PushSetUpstream(ctx, repoPath, remote)
 	}
 	return gitops.Push(ctx, repoPath)
+}
+
+func (s *Service) submodulePublishBlockedError(ctx context.Context, repoPath, displayPath string, status scanner.GitRepoStatus, plan submodulePushPlan, publishCtx submodulePublishContext, cause error) SubmodulePublishBlockedError {
+	remote := strings.TrimSpace(plan.Remote)
+	if remote == "" {
+		remote, _ = gitBranchUpstreamRemote(ctx, repoPath, status.Branch)
+	}
+	if remote == "" && plan.SetUpstream {
+		remote = "origin"
+	}
+	remoteURL := ""
+	if remote != "" {
+		remoteURL, _ = gitRemotePushURL(ctx, repoPath, remote)
+	}
+	return SubmodulePublishBlockedError{
+		WorktreePath:    publishCtx.WorktreePath,
+		RootProjectPath: publishCtx.RootProjectPath,
+		SourceBranch:    firstNonEmptyTrimmed(publishCtx.SourceBranch, status.Branch),
+		TargetBranch:    publishCtx.TargetBranch,
+		SubmodulePath:   displayPath,
+		SubmoduleBranch: firstNonEmptyTrimmed(plan.Branch, cleanResolvedBranchName(status.Branch)),
+		Remote:          remote,
+		RemoteURL:       remoteURL,
+		Cause:           cause,
+	}
+}
+
+func gitBranchUpstreamRemote(ctx context.Context, repoPath, branch string) (string, error) {
+	branch = cleanResolvedBranchName(branch)
+	if branch == "" {
+		return "", nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "config", "--get", "branch."+branch+".remote")
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", nil
+		}
+		return "", fmt.Errorf("read upstream remote for %s in %s: %w", branch, repoPath, err)
+	}
+	remote := strings.TrimSpace(string(out))
+	if remote == "." {
+		return "", nil
+	}
+	return remote, nil
+}
+
+func gitRemotePushURL(ctx context.Context, repoPath, remote string) (string, error) {
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return "", nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "remote", "get-url", "--push", remote)
+	out, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	fallback := exec.CommandContext(ctx, "git", "-C", repoPath, "remote", "get-url", remote)
+	fallbackOut, fallbackErr := fallback.Output()
+	if fallbackErr != nil {
+		return "", fmt.Errorf("read push URL for remote %s in %s: %w", remote, repoPath, fallbackErr)
+	}
+	return strings.TrimSpace(string(fallbackOut)), nil
 }
 
 func needsSubmoduleUpstream(status scanner.GitRepoStatus) bool {

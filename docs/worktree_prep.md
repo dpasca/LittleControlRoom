@@ -77,6 +77,8 @@ Nested submodule worktrees start detached at the parent repo's pinned gitlink co
 
 If a clean linked worktree already records a detached nested submodule commit that is not reachable from a remote branch or tag, merge-back publishes that commit on an LCR-owned submodule branch before merging the parent worktree. This keeps the root checkout's post-merge submodule sync from failing on a locally-created gitlink commit.
 
+If the submodule remote rejects that publication, merge-back stops before changing the root checkout and reports a submodule publish blocker. Push the submodule commit to a writable remote branch, point the parent worktree at a commit already available from the submodule remote, or configure a writable submodule remote before retrying merge-back.
+
 ## Merge-Back Gitlink Conflicts
 
 When two parent worktrees update the same submodule pointer differently, Git can leave a gitlink conflict in the root checkout during merge-back. LCR now auto-resolves deterministic cases:

@@ -2262,6 +2262,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if shouldRefreshWorktreeMergeFamilyAfterError(msg.err) {
 				refreshCmd = m.refreshProjectStatusPathsCmd(msg.projectPath, msg.selectPath)
 			}
+			var submodulePublishErr service.SubmodulePublishBlockedError
+			if errors.As(msg.err, &submodulePublishErr) {
+				m.appendErrorLogEntry("Submodule publish blocked", msg.err, msg.projectPath)
+				m.showSubmodulePublishBlockedMergeDialog(msg, submodulePublishErr)
+				return m, refreshCmd
+			}
 			m.reportError("Worktree action failed", msg.err, msg.projectPath)
 			if m.worktreeMergeConfirm != nil && filepath.Clean(strings.TrimSpace(m.worktreeMergeConfirm.ProjectPath)) == filepath.Clean(strings.TrimSpace(msg.projectPath)) {
 				m.worktreeMergeConfirm.Busy = false

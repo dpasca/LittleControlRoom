@@ -1746,6 +1746,85 @@ func TestMergeWorktreeBackPublishesDetachedNestedSubmoduleCommitBeforeMerge(t *t
 	}
 }
 
+func TestMergeWorktreeBackReportsBlockedSubmodulePublishBeforeRootMerge(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleRootPath := filepath.Join(root, "assets")
+	rootSubmodulePath := initGitRepoWithPushableSubmodule(t, projectPath, submoduleRootPath, "assets_src")
+	initialRootSubmoduleHead := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "rev-parse", "HEAD"))
+
+	hookPath := filepath.Join(submoduleRootPath, "origin.git", "hooks", "pre-receive")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\necho 'Permission to litehtml/litehtml.git denied to dpasca.' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatalf("write rejecting submodule remote hook: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Merge detached nested submodule with rejecting remote", "feat/rejected-submodule-merge", "feat-rejected-submodule-merge")
+	worktreeSubmodulePath := filepath.Join(result.WorktreePath, "assets_src")
+	if err := os.WriteFile(filepath.Join(worktreeSubmodulePath, "README.md"), []byte("hello\nrejected nested update\n"), 0o644); err != nil {
+		t.Fatalf("write nested submodule README: %v", err)
+	}
+	runGit(t, worktreeSubmodulePath, "git", "add", "README.md")
+	runGit(t, worktreeSubmodulePath, "git", "commit", "-m", "update rejected nested submodule")
+	updatedSubmoduleHead := strings.TrimSpace(gitOutput(t, worktreeSubmodulePath, "git", "rev-parse", "HEAD"))
+
+	runGit(t, result.WorktreePath, "git", "add", "assets_src")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "record rejected submodule pointer")
+	rootHeadBefore := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	_, err = svc.MergeWorktreeBack(ctx, result.WorktreePath)
+	if err == nil {
+		t.Fatalf("MergeWorktreeBack() expected rejected submodule publish error")
+	}
+	var publishErr SubmodulePublishBlockedError
+	if !errors.As(err, &publishErr) {
+		t.Fatalf("MergeWorktreeBack() error = %v, want SubmodulePublishBlockedError", err)
+	}
+	if publishErr.SubmodulePath != "assets_src" {
+		t.Fatalf("blocked submodule path = %q, want assets_src", publishErr.SubmodulePath)
+	}
+	if publishErr.WorktreePath != result.WorktreePath || publishErr.RootProjectPath != projectPath {
+		t.Fatalf("publish error paths = (%q, %q), want (%q, %q)", publishErr.WorktreePath, publishErr.RootProjectPath, result.WorktreePath, projectPath)
+	}
+	if !strings.Contains(err.Error(), "Could not publish submodule assets_src automatically") {
+		t.Fatalf("MergeWorktreeBack() error = %q, want handled publish guidance", err)
+	}
+	if strings.Contains(err.Error(), "exit status") || strings.Contains(err.Error(), "fatal:") || strings.Contains(err.Error(), "Permission to litehtml") {
+		t.Fatalf("handled publish error should not expose raw git output in the headline: %q", err)
+	}
+	if publishErr.Cause == nil || !strings.Contains(publishErr.Cause.Error(), "Permission to litehtml") {
+		t.Fatalf("publish error cause = %v, want original remote rejection retained", publishErr.Cause)
+	}
+
+	rootHeadAfter := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+	if rootHeadAfter != rootHeadBefore {
+		t.Fatalf("root HEAD changed despite blocked submodule publish: %s -> %s", rootHeadBefore, rootHeadAfter)
+	}
+	rootSubmoduleHead := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD:assets_src"))
+	if rootSubmoduleHead != initialRootSubmoduleHead {
+		t.Fatalf("root gitlink changed despite blocked submodule publish: %s -> %s", initialRootSubmoduleHead, rootSubmoduleHead)
+	}
+	if rootSubmoduleHead == updatedSubmoduleHead {
+		t.Fatalf("root gitlink should not point at unpublished submodule commit %s", updatedSubmoduleHead)
+	}
+}
+
 func TestCommitAndMergeWorktreeBackCommitsDirtyWorktreeBeforeMerge(t *testing.T) {
 	t.Parallel()
 
