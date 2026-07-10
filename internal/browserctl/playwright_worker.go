@@ -415,6 +415,8 @@ func (s *PlaywrightBrowserSession) monitorWorker(rootPID int) {
 		if err != nil || !ok {
 			continue
 		}
+		shouldHide := false
+		revealed := false
 		_ = WithManagedPlaywrightStateLock(s.paths.DataDir, s.paths.SessionKey, func() error {
 			state, readErr := ReadManagedPlaywrightState(s.paths.DataDir, s.paths.SessionKey)
 			if readErr != nil {
@@ -425,18 +427,19 @@ func (s *PlaywrightBrowserSession) monitorWorker(rootPID int) {
 			state.BrowserAppName = detected.AppName
 			state.BrowserExecutable = detected.ExecutablePath
 			state.RevealSupported = detected.PID > 0 || detected.AppPath != "" || detected.AppName != ""
-			if keepHidden && !hiddenByLCR && !state.Hidden {
-				if err := HideManagedBrowserProcess(detected.PID); err == nil {
-					state.Hidden = true
-					hiddenByLCR = true
-				}
-			}
-			if keepHidden && hiddenByLCR && !state.Hidden {
-				keepHidden = false
-			}
+			shouldHide = keepHidden && !hiddenByLCR && !state.Hidden
+			revealed = keepHidden && hiddenByLCR && !state.Hidden
 			state.UpdatedAt = time.Now().UTC()
 			return WriteManagedPlaywrightState(s.paths, state)
 		})
+		if revealed {
+			keepHidden = false
+		}
+		if shouldHide {
+			if hidden, err := HideManagedPlaywrightSession(s.paths.DataDir, s.paths.SessionKey, detected); err == nil && hidden {
+				hiddenByLCR = true
+			}
+		}
 	}
 }
 
