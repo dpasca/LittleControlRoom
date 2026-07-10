@@ -201,6 +201,12 @@ func reconnectTranscriptContentKey(entry transcriptEntry) string {
 
 func mergeReconnectTranscriptEntry(current, preserved transcriptEntry) transcriptEntry {
 	out := cloneInternalTranscriptEntry(current)
+	if reconnectTranscriptToolEntry(preserved.Kind) && reconnectTranscriptToolEntry(current.Kind) &&
+		reconnectTranscriptToolDetailScore(preserved) > reconnectTranscriptToolDetailScore(current) {
+		out.Kind = preserved.Kind
+		out.Text = preserved.Text
+		out.DisplayText = preserved.DisplayText
+	}
 	if out.Kind == "" || out.Kind == TranscriptOther {
 		out.Kind = preserved.Kind
 	}
@@ -218,6 +224,27 @@ func mergeReconnectTranscriptEntry(current, preserved transcriptEntry) transcrip
 		out.GeneratedImage = cloneGeneratedImageArtifact(preserved.GeneratedImage)
 	}
 	return out
+}
+
+func reconnectTranscriptToolEntry(kind TranscriptKind) bool {
+	switch kind {
+	case TranscriptCommand, TranscriptFileChange, TranscriptTool:
+		return true
+	default:
+		return false
+	}
+}
+
+func reconnectTranscriptToolDetailScore(entry transcriptEntry) int {
+	score := len(strings.TrimSpace(entry.Text)) + len(strings.TrimSpace(entry.DisplayText))
+	switch entry.Kind {
+	case TranscriptCommand, TranscriptFileChange:
+		score += maxExportedTranscriptEntryBytes
+	}
+	if entry.GeneratedImage != nil {
+		score += maxExportedGeneratedImagePreviewBytes + len(entry.GeneratedImage.PreviewData)
+	}
+	return score
 }
 
 func generatedImagePreviewLen(entry transcriptEntry) int {

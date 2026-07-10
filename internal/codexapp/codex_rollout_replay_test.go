@@ -29,7 +29,10 @@ func TestColdResumeRecoversInterruptedTurnToolCallsFromRollout(t *testing.T) {
 		map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "internal injected context"}}}},
 		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "make this bulletproof"}},
 		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "agent_message", "message": "I’ll inspect the files first."}},
-		map[string]any{"type": "response_item", "payload": map[string]any{"type": "custom_tool_call", "id": "ctc_exec", "call_id": "call_exec", "name": "exec", "status": "completed", "input": "structured tool input"}},
+		map[string]any{"type": "response_item", "payload": map[string]any{
+			"type": "custom_tool_call", "id": "ctc_exec", "call_id": "call_exec", "name": "exec", "status": "completed",
+			"input": "const r = await tools.exec_command({\n  cmd: \"sed -n '1,80p' checklist.md\",\n  workdir: \"" + projectPath + "\",\n  yield_time_ms: 10000\n});\ntext(r.output);\n",
+		}},
 		map[string]any{"type": "response_item", "payload": map[string]any{"type": "custom_tool_call_output", "call_id": "call_exec", "output": "large output intentionally not replayed"}},
 		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "agent_message", "message": "The first check passed; I’m checking the render."}},
 		map[string]any{"type": "response_item", "payload": map[string]any{"type": "function_call", "id": "fc_wait", "call_id": "call_wait", "name": "wait", "arguments": `{"cell_id":"17"}`}},
@@ -47,9 +50,9 @@ func TestColdResumeRecoversInterruptedTurnToolCallsFromRollout(t *testing.T) {
 	wantRecovered := []TranscriptEntry{
 		{Kind: TranscriptUser, Text: "make this bulletproof"},
 		{Kind: TranscriptAgent, Text: "I’ll inspect the files first."},
-		{ItemID: "ctc_exec", Kind: TranscriptTool, Text: "Tool exec [completed]"},
+		{ItemID: "ctc_exec", Kind: TranscriptCommand, Text: "$ sed -n '1,80p' checklist.md\n# cwd: " + projectPath + "\n[command completed]"},
 		{Kind: TranscriptAgent, Text: "The first check passed; I’m checking the render."},
-		{ItemID: "fc_wait", Kind: TranscriptTool, Text: "Tool wait [completed]"},
+		{ItemID: "fc_wait", Kind: TranscriptTool, Text: "Tool wait completed: cell 17"},
 	}
 	requireTranscriptEntriesEqual(t, recovered, wantRecovered)
 
@@ -80,9 +83,9 @@ func TestColdResumeRecoversInterruptedTurnToolCallsFromRollout(t *testing.T) {
 	wantHydrated := []TranscriptEntry{
 		{ItemID: "user", Kind: TranscriptUser, Text: "make this bulletproof"},
 		{ItemID: "agent-one", Kind: TranscriptAgent, Text: "I’ll inspect the files first."},
-		{ItemID: "ctc_exec", Kind: TranscriptTool, Text: "Tool exec [completed]"},
+		{ItemID: "ctc_exec", Kind: TranscriptCommand, Text: "$ sed -n '1,80p' checklist.md\n# cwd: " + projectPath + "\n[command completed]"},
 		{ItemID: "agent-two", Kind: TranscriptAgent, Text: "The first check passed; I’m checking the render."},
-		{ItemID: "fc_wait", Kind: TranscriptTool, Text: "Tool wait [completed]"},
+		{ItemID: "fc_wait", Kind: TranscriptTool, Text: "Tool wait completed: cell 17"},
 	}
 	requireTranscriptEntriesEqual(t, snapshot.Entries, wantHydrated)
 	if strings.Contains(snapshot.Transcript, "internal injected context") || strings.Contains(snapshot.Transcript, "large output intentionally not replayed") {
@@ -115,7 +118,7 @@ func TestCodexRolloutReplayMarksPendingAbortedToolInterrupted(t *testing.T) {
 		map[string]any{"type": "session_meta", "payload": map[string]any{"id": "thread-aborted", "cwd": "/tmp/demo"}},
 		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": "turn-aborted"}},
 		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "aborted request"}},
-		map[string]any{"type": "response_item", "payload": map[string]any{"type": "function_call", "id": "fc_wait", "call_id": "call_wait", "name": "wait"}},
+		map[string]any{"type": "response_item", "payload": map[string]any{"type": "function_call", "id": "fc_wait", "call_id": "call_wait", "name": "wait", "arguments": `{"cell_id":"17"}`}},
 		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "turn_aborted", "turn_id": "turn-aborted"}},
 	})
 
@@ -125,7 +128,7 @@ func TestCodexRolloutReplayMarksPendingAbortedToolInterrupted(t *testing.T) {
 	}
 	want := []TranscriptEntry{
 		{Kind: TranscriptUser, Text: "aborted request"},
-		{ItemID: "fc_wait", Kind: TranscriptTool, Text: "Tool wait [interrupted]"},
+		{ItemID: "fc_wait", Kind: TranscriptTool, Text: "Tool wait interrupted: cell 17"},
 	}
 	requireTranscriptEntriesEqual(t, entries, want)
 }
@@ -165,6 +168,24 @@ func TestReconnectTranscriptSnapshotKeepsRicherLiveToolWithoutDuplicate(t *testi
 
 	got := mergeReconnectTranscriptSnapshots(live, recovered)
 	requireTranscriptEntriesEqual(t, got, live)
+}
+
+func TestReconnectTranscriptSnapshotUpgradesGenericToolWithRecoveredCommand(t *testing.T) {
+	live := []TranscriptEntry{
+		{ItemID: "user", Kind: TranscriptUser, Text: "check it"},
+		{ItemID: "ctc_exec", Kind: TranscriptTool, Text: "Tool exec [completed]"},
+	}
+	recovered := []TranscriptEntry{
+		{Kind: TranscriptUser, Text: "check it"},
+		{ItemID: "ctc_exec", Kind: TranscriptCommand, Text: "$ make test\n# cwd: /tmp/demo\n[command completed]"},
+	}
+
+	got := mergeReconnectTranscriptSnapshots(live, recovered)
+	want := []TranscriptEntry{
+		{ItemID: "user", Kind: TranscriptUser, Text: "check it"},
+		{ItemID: "ctc_exec", Kind: TranscriptCommand, Text: "$ make test\n# cwd: /tmp/demo\n[command completed]"},
+	}
+	requireTranscriptEntriesEqual(t, got, want)
 }
 
 func TestCodexRolloutReplayRejectsDifferentProject(t *testing.T) {

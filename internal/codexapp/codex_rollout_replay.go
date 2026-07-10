@@ -98,7 +98,8 @@ type codexInterruptedTurnReplay struct {
 	recoverable bool
 	entries     []TranscriptEntry
 	callIndex   map[string]int
-	callNames   map[string]string
+	callDetails map[string]codexReplayToolCall
+	callPending map[string]bool
 }
 
 func (r *codexInterruptedTurnReplay) consume(line []byte, expectedThreadID, expectedProjectPath string) error {
@@ -163,14 +164,16 @@ func (r *codexInterruptedTurnReplay) consumeEvent(raw json.RawMessage) error {
 		r.recoverable = true
 		r.entries = nil
 		r.callIndex = make(map[string]int)
-		r.callNames = make(map[string]string)
+		r.callDetails = make(map[string]codexReplayToolCall)
+		r.callPending = make(map[string]bool)
 	case "task_complete":
 		if r.matchesTurn(event.TurnID) {
 			r.active = false
 			r.recoverable = false
 			r.entries = nil
 			r.callIndex = nil
-			r.callNames = nil
+			r.callDetails = nil
+			r.callPending = nil
 		}
 	case "turn_aborted":
 		if r.matchesTurn(event.TurnID) {
@@ -208,11 +211,13 @@ func (r *codexInterruptedTurnReplay) consumeResponseItem(raw json.RawMessage) {
 		return
 	}
 	var item struct {
-		Type   string `json:"type"`
-		ID     string `json:"id"`
-		CallID string `json:"call_id"`
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		Type      string `json:"type"`
+		ID        string `json:"id"`
+		CallID    string `json:"call_id"`
+		Name      string `json:"name"`
+		Status    string `json:"status"`
+		Input     string `json:"input"`
+		Arguments string `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &item); err != nil {
 		return
@@ -228,15 +233,13 @@ func (r *codexInterruptedTurnReplay) consumeResponseItem(raw json.RawMessage) {
 		if status == "" {
 			status = "in progress"
 		}
-		entry := TranscriptEntry{
-			ItemID: firstNonEmpty(strings.TrimSpace(item.ID), callID),
-			Kind:   TranscriptTool,
-			Text:   replayToolText(name, status),
-		}
+		detail := newCodexReplayToolCall(name, item.Input, item.Arguments)
+		entry := detail.transcriptEntry(firstNonEmpty(strings.TrimSpace(item.ID), callID), status)
 		r.entries = append(r.entries, entry)
 		if callID != "" {
 			r.callIndex[callID] = len(r.entries) - 1
-			r.callNames[callID] = name
+			r.callDetails[callID] = detail
+			r.callPending[callID] = status == "in progress"
 		}
 	case "custom_tool_call_output", "function_call_output":
 		callID := strings.TrimSpace(item.CallID)
@@ -244,10 +247,12 @@ func (r *codexInterruptedTurnReplay) consumeResponseItem(raw json.RawMessage) {
 		if !ok || index < 0 || index >= len(r.entries) {
 			return
 		}
-		name := strings.TrimSpace(r.callNames[callID])
-		if name != "" {
-			r.entries[index].Text = replayToolText(name, "completed")
+		detail, ok := r.callDetails[callID]
+		if !ok {
+			return
 		}
+		r.entries[index] = detail.transcriptEntry(r.entries[index].ItemID, "completed")
+		r.callPending[callID] = false
 	}
 }
 
@@ -261,24 +266,17 @@ func normalizedReplayToolStatus(status string) string {
 	}
 }
 
-func replayToolText(name, status string) string {
-	text := "Tool " + strings.TrimSpace(name)
-	if status := strings.TrimSpace(status); status != "" {
-		text += " [" + status + "]"
-	}
-	return text
-}
-
 func (r *codexInterruptedTurnReplay) markPendingCalls(status string) {
 	for callID, index := range r.callIndex {
 		if index < 0 || index >= len(r.entries) {
 			continue
 		}
-		if !strings.Contains(r.entries[index].Text, "[in progress]") {
+		if !r.callPending[callID] {
 			continue
 		}
-		if name := strings.TrimSpace(r.callNames[callID]); name != "" {
-			r.entries[index].Text = replayToolText(name, status)
+		if detail, ok := r.callDetails[callID]; ok {
+			r.entries[index] = detail.transcriptEntry(r.entries[index].ItemID, status)
+			r.callPending[callID] = false
 		}
 	}
 }
