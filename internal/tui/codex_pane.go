@@ -215,9 +215,11 @@ func embeddedProvider(snapshot codexapp.Snapshot) codexapp.Provider {
 }
 
 func (m Model) currentEmbeddedProvider() codexapp.Provider {
-	// A pending open represents the user's explicit intent to switch providers,
-	// so it takes priority over a stale closed snapshot from the previous session.
-	if m.codexPendingOpen != nil {
+	// A visible pending open represents the user's explicit intent to switch
+	// providers, so it takes priority over a stale closed snapshot from the
+	// previous session. Hidden background opens must not change the identity of
+	// the engineer session the user is still viewing.
+	if m.codexPendingOpenVisible() {
 		if provider := m.codexPendingOpen.provider.Normalized(); provider != "" {
 			return provider
 		}

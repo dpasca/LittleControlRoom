@@ -19,7 +19,7 @@ import (
 func (m Model) renderCodexView() string {
 	done := m.beginUIPhase("renderCodexView", strings.TrimSpace(m.codexVisibleProject), "")
 	defer done()
-	if projectPath := m.codexPendingOpenProject(); projectPath != "" {
+	if projectPath := m.codexPendingOpenProject(); m.codexPendingOpenVisible() && projectPath != "" {
 		return m.renderCodexOpeningView(projectPath)
 	}
 	snapshot, ok := m.currentCodexSnapshot()
