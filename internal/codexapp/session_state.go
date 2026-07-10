@@ -2,14 +2,25 @@ package codexapp
 
 import (
 	"fmt"
-	"lcroom/internal/browserctl"
+	"log"
 	"strings"
 	"time"
+
+	"lcroom/internal/browserctl"
 )
 
 func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 	policy := req.PlaywrightPolicy.Normalize()
 	ensureManagedPlaywrightSessionKey(&req)
+	reconnectTranscript := cloneTranscriptEntries(req.ReconnectTranscript)
+	if strings.TrimSpace(req.ResumeID) != "" {
+		recoveredTranscript, err := loadCodexInterruptedTurnTranscript(req)
+		if err != nil {
+			log.Printf("WARN codexapp: recover interrupted rollout transcript thread_id=%q err=%v", strings.TrimSpace(req.ResumeID), err)
+		} else if len(recoveredTranscript) > 0 {
+			reconnectTranscript = mergeReconnectTranscriptSnapshots(reconnectTranscript, recoveredTranscript)
+		}
+	}
 	s := &appServerSession{
 		projectPath:              req.ProjectPath,
 		preset:                   req.Preset,
@@ -29,7 +40,7 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		status:                   "Starting Codex app-server...",
 		lastActivityAt:           time.Now(),
 		reconnectThreadID:        strings.TrimSpace(req.ResumeID),
-		reconnectTranscript:      cloneTranscriptEntries(req.ReconnectTranscript),
+		reconnectTranscript:      reconnectTranscript,
 	}
 	if err := s.start(req); err != nil {
 		_ = s.Close()

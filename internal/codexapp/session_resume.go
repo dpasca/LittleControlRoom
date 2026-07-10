@@ -105,6 +105,30 @@ func reconnectTranscriptEntries(entries []TranscriptEntry) []transcriptEntry {
 	return out
 }
 
+func mergeReconnectTranscriptSnapshots(current, recovered []TranscriptEntry) []TranscriptEntry {
+	if len(current) == 0 {
+		return cloneTranscriptEntries(recovered)
+	}
+	if len(recovered) == 0 {
+		return cloneTranscriptEntries(current)
+	}
+	merged := mergeReconnectTranscriptEntries(reconnectTranscriptEntries(current), reconnectTranscriptEntries(recovered))
+	out := make([]TranscriptEntry, 0, len(merged))
+	for _, entry := range merged {
+		if strings.TrimSpace(entry.Text) == "" && entry.GeneratedImage == nil {
+			continue
+		}
+		out = append(out, TranscriptEntry{
+			ItemID:         entry.ItemID,
+			Kind:           entry.Kind,
+			Text:           entry.Text,
+			DisplayText:    entry.DisplayText,
+			GeneratedImage: cloneGeneratedImageArtifact(entry.GeneratedImage),
+		})
+	}
+	return out
+}
+
 func reconnectTranscriptOmissionMarker(entry TranscriptEntry) bool {
 	return entry.Kind == TranscriptSystem &&
 		strings.Contains(strings.TrimSpace(entry.Text), "older transcript entries omitted from the embedded view")
