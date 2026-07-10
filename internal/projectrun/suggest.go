@@ -95,6 +95,9 @@ func candidatesAtPath(projectPath string) ([]Suggestion, error) {
 	} else if ok {
 		candidates = append(candidates, suggestion)
 	}
+	if suggestion, ok := suggestJekyll(projectPath); ok {
+		candidates = append(candidates, suggestion)
+	}
 	if suggestion, ok := suggestGoEntrypoint(projectPath); ok {
 		candidates = append(candidates, suggestion)
 	}
@@ -401,6 +404,25 @@ func preferredTarget(raw []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func suggestJekyll(projectPath string) (Suggestion, bool) {
+	configPath := filepath.Join(projectPath, "_config.yml")
+	info, err := os.Stat(configPath)
+	if err != nil || info.IsDir() {
+		return Suggestion{}, false
+	}
+
+	command := "jekyll serve"
+	reason := "Found Jekyll _config.yml."
+	if info, err := os.Stat(filepath.Join(projectPath, "Gemfile")); err == nil && !info.IsDir() {
+		command = "bundle exec jekyll serve"
+		reason = "Found Jekyll _config.yml and Gemfile."
+	}
+	return Suggestion{
+		Command: command,
+		Reason:  reason,
+	}, true
 }
 
 func suggestGoEntrypoint(projectPath string) (Suggestion, bool) {

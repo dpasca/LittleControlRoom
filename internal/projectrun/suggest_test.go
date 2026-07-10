@@ -116,6 +116,97 @@ func TestSuggestUsesSingleNestedPackageScript(t *testing.T) {
 	}
 }
 
+func TestSuggestUsesJekyllServe(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "_config.yml"), []byte("theme: minima\n"), 0o644); err != nil {
+		t.Fatalf("write _config.yml: %v", err)
+	}
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != "jekyll serve" {
+		t.Fatalf("suggested command = %q, want jekyll serve", suggestion.Command)
+	}
+	if suggestion.Reason != "Found Jekyll _config.yml." {
+		t.Fatalf("suggested reason = %q", suggestion.Reason)
+	}
+}
+
+func TestSuggestUsesBundlerForJekyllGemfile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for name, contents := range map[string]string{
+		"_config.yml": "theme: minima\n",
+		"Gemfile":     "gem \"jekyll\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != "bundle exec jekyll serve" {
+		t.Fatalf("suggested command = %q, want bundle exec jekyll serve", suggestion.Command)
+	}
+	if suggestion.Reason != "Found Jekyll _config.yml and Gemfile." {
+		t.Fatalf("suggested reason = %q", suggestion.Reason)
+	}
+}
+
+func TestSuggestUsesSingleNestedJekyllSite(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	docsPath := filepath.Join(root, "docs")
+	if err := os.MkdirAll(docsPath, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(docsPath, "_config.yml"), []byte("theme: minima\n"), 0o644); err != nil {
+		t.Fatalf("write _config.yml: %v", err)
+	}
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != "cd docs && jekyll serve" {
+		t.Fatalf("suggested command = %q, want %q", suggestion.Command, "cd docs && jekyll serve")
+	}
+	if suggestion.Reason != "Found Jekyll _config.yml under docs." {
+		t.Fatalf("suggested reason = %q", suggestion.Reason)
+	}
+}
+
+func TestSuggestPrefersPackageScriptOverJekyll(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for name, contents := range map[string]string{
+		"_config.yml":  "theme: minima\n",
+		"package.json": `{"scripts":{"dev":"vite"}}`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	suggestion, err := Suggest(root)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if suggestion.Command != "npm run dev" {
+		t.Fatalf("suggested command = %q, want npm run dev", suggestion.Command)
+	}
+}
+
 func TestSuggestUsesUnityProjectAtRoot(t *testing.T) {
 	t.Parallel()
 
