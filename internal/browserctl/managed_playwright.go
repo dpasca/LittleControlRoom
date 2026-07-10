@@ -72,8 +72,10 @@ type ManagedBrowserProcess struct {
 }
 
 var (
-	managedPlaywrightStateRevealer = RevealManagedPlaywrightState
-	managedPlaywrightStateLocks    keyedmutex.Locker
+	managedPlaywrightStateRevealer   = RevealManagedPlaywrightState
+	managedPlaywrightStateLocks      keyedmutex.Locker
+	managedPlaywrightVisibilityLocks keyedmutex.Locker
+	managedPlaywrightProcessHider    = HideManagedBrowserProcess
 )
 
 type osProcessSnapshot struct {
@@ -196,10 +198,22 @@ func ReadManagedPlaywrightState(dataDir, sessionKey string) (ManagedPlaywrightSt
 
 func MarkManagedPlaywrightStateRevealed(dataDir, sessionKey string) (ManagedPlaywrightState, error) {
 	var updated ManagedPlaywrightState
-	err := WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
-		var err error
-		updated, err = markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey)
-		return err
+	err := withManagedPlaywrightVisibilityLock(dataDir, func() error {
+		return WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
+			previous, err := ReadManagedPlaywrightState(dataDir, sessionKey)
+			if err != nil {
+				return err
+			}
+			updated, err = markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey)
+			if err != nil {
+				return err
+			}
+			if err := writeManagedPlaywrightForegroundState(dataDir, updated); err != nil {
+				_ = writeManagedPlaywrightStateFor(dataDir, sessionKey, previous)
+				return err
+			}
+			return nil
+		})
 	})
 	return updated, err
 }
@@ -226,28 +240,88 @@ func RevealManagedPlaywrightSession(dataDir, sessionKey string) (ManagedPlaywrig
 	}
 
 	var revealed ManagedPlaywrightState
-	err := WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
-		previous, err := ReadManagedPlaywrightState(dataDir, sessionKey)
+	err := withManagedPlaywrightVisibilityLock(dataDir, func() error {
+		previousForeground, hadPreviousForeground, err := readManagedPlaywrightForegroundState(dataDir)
 		if err != nil {
 			return err
 		}
-		updated, err := markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey)
-		if err != nil {
-			return err
-		}
-		revealed = updated
-		if err := managedPlaywrightStateRevealer(updated); err != nil {
-			restored := previous.Normalize()
-			restored.UpdatedAt = time.Now().UTC()
-			if restoreErr := writeManagedPlaywrightStateFor(dataDir, sessionKey, restored); restoreErr != nil {
-				return fmt.Errorf("%w; restore managed browser state: %v", err, restoreErr)
+		return WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
+			previous, err := ReadManagedPlaywrightState(dataDir, sessionKey)
+			if err != nil {
+				return err
 			}
-			revealed = restored.Normalize()
-			return err
-		}
-		return nil
+			updated, err := markManagedPlaywrightStateRevealedLocked(dataDir, sessionKey)
+			if err != nil {
+				return err
+			}
+			revealed = updated
+			if err := writeManagedPlaywrightForegroundState(dataDir, updated); err != nil {
+				_ = writeManagedPlaywrightStateFor(dataDir, sessionKey, previous)
+				return err
+			}
+			if err := managedPlaywrightStateRevealer(updated); err != nil {
+				restored := previous.Normalize()
+				restored.UpdatedAt = time.Now().UTC()
+				if restoreErr := writeManagedPlaywrightStateFor(dataDir, sessionKey, restored); restoreErr != nil {
+					return fmt.Errorf("%w; restore managed browser state: %v", err, restoreErr)
+				}
+				if restoreErr := restoreManagedPlaywrightForegroundState(dataDir, previousForeground, hadPreviousForeground); restoreErr != nil {
+					return fmt.Errorf("%w; restore managed browser foreground state: %v", err, restoreErr)
+				}
+				revealed = restored.Normalize()
+				return err
+			}
+			return nil
+		})
 	})
 	return revealed.Normalize(), err
+}
+
+// HideManagedPlaywrightSession hides one managed browser only when no live
+// foreground handoff uses the same browser application. Multiple Playwright
+// sessions launch separate Chromium processes from the same macOS app bundle;
+// hiding one of those processes can otherwise hide a different session that a
+// user just revealed.
+func HideManagedPlaywrightSession(dataDir, sessionKey string, browser ManagedBrowserProcess) (bool, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return false, fmt.Errorf("managed browser session key required")
+	}
+	if browser.PID <= 0 {
+		return false, fmt.Errorf("managed browser pid required")
+	}
+
+	hidden := false
+	err := withManagedPlaywrightVisibilityLock(dataDir, func() error {
+		foreground, active := activeManagedPlaywrightForegroundStateLocked(dataDir)
+		if active && managedBrowserApplicationsOverlap(foreground, browser) {
+			return nil
+		}
+		return WithManagedPlaywrightStateLock(dataDir, sessionKey, func() error {
+			state, err := ReadManagedPlaywrightState(dataDir, sessionKey)
+			if err != nil {
+				return err
+			}
+			if state.BrowserPID > 0 && state.BrowserPID != browser.PID {
+				return nil
+			}
+			if err := managedPlaywrightProcessHider(browser.PID); err != nil {
+				return err
+			}
+			state.BrowserPID = browser.PID
+			state.BrowserAppPath = managedPlaywrightFirstNonEmpty(browser.AppPath, state.BrowserAppPath)
+			state.BrowserAppName = managedPlaywrightFirstNonEmpty(browser.AppName, state.BrowserAppName)
+			state.BrowserExecutable = managedPlaywrightFirstNonEmpty(browser.ExecutablePath, state.BrowserExecutable)
+			state.Hidden = true
+			state.UpdatedAt = time.Now().UTC()
+			if err := writeManagedPlaywrightStateFor(dataDir, sessionKey, state); err != nil {
+				return err
+			}
+			hidden = true
+			return nil
+		})
+	})
+	return hidden, err
 }
 
 func managedPlaywrightFirstNonEmpty(values ...string) string {
@@ -277,8 +351,149 @@ func WithManagedPlaywrightStateLock(dataDir, sessionKey string, fn func() error)
 	return fn()
 }
 
+// withManagedPlaywrightVisibilityLock serializes cross-session browser
+// visibility transitions. State locks remain per session; this lock only wraps
+// OS-level hide/reveal handoffs and their shared foreground marker.
+func withManagedPlaywrightVisibilityLock(dataDir string, fn func() error) error {
+	if fn == nil {
+		return nil
+	}
+	lockPath := managedPlaywrightVisibilityLockPath(dataDir)
+	unlockLocal := managedPlaywrightVisibilityLocks.Lock(lockPath)
+	defer unlockLocal()
+
+	lockFile, err := lockManagedPlaywrightState(lockPath)
+	if err != nil {
+		return err
+	}
+	defer unlockManagedPlaywrightState(lockFile)
+	return fn()
+}
+
 func managedPlaywrightStateLockPath(dataDir, sessionKey string) string {
 	return filepath.Join(EffectiveDataDir(dataDir), "browser", "playwright", "sessions", strings.TrimSpace(sessionKey), "state.lock")
+}
+
+func managedPlaywrightVisibilityLockPath(dataDir string) string {
+	return filepath.Join(EffectiveDataDir(dataDir), "browser", "playwright", "visibility.lock")
+}
+
+func managedPlaywrightForegroundStatePath(dataDir string) string {
+	return filepath.Join(EffectiveDataDir(dataDir), "browser", "playwright", "foreground.json")
+}
+
+func readManagedPlaywrightForegroundState(dataDir string) (ManagedPlaywrightState, bool, error) {
+	raw, err := os.ReadFile(managedPlaywrightForegroundStatePath(dataDir))
+	if os.IsNotExist(err) {
+		return ManagedPlaywrightState{}, false, nil
+	}
+	if err != nil {
+		return ManagedPlaywrightState{}, false, err
+	}
+	var state ManagedPlaywrightState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return ManagedPlaywrightState{}, false, err
+	}
+	return state.Normalize(), true, nil
+}
+
+func writeManagedPlaywrightForegroundState(dataDir string, state ManagedPlaywrightState) error {
+	state = state.Normalize()
+	if state.SessionKey == "" {
+		return fmt.Errorf("managed browser foreground session key required")
+	}
+	path := managedPlaywrightForegroundStatePath(dataDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	tempFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	defer func() {
+		_ = tempFile.Close()
+		_ = os.Remove(tempPath)
+	}()
+	if _, err := tempFile.Write(raw); err != nil {
+		return err
+	}
+	if err := tempFile.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
+}
+
+func restoreManagedPlaywrightForegroundState(dataDir string, previous ManagedPlaywrightState, existed bool) error {
+	if existed {
+		return writeManagedPlaywrightForegroundState(dataDir, previous)
+	}
+	err := os.Remove(managedPlaywrightForegroundStatePath(dataDir))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+func activeManagedPlaywrightForegroundStateLocked(dataDir string) (ManagedPlaywrightState, bool) {
+	marked, ok, err := readManagedPlaywrightForegroundState(dataDir)
+	if err != nil || !ok || marked.SessionKey == "" {
+		return ManagedPlaywrightState{}, false
+	}
+
+	var current ManagedPlaywrightState
+	err = WithManagedPlaywrightStateLock(dataDir, marked.SessionKey, func() error {
+		var readErr error
+		current, readErr = ReadManagedPlaywrightState(dataDir, marked.SessionKey)
+		return readErr
+	})
+	if err != nil {
+		return ManagedPlaywrightState{}, false
+	}
+	current = current.Normalize()
+	if current.Hidden || current.SessionKey != marked.SessionKey {
+		return ManagedPlaywrightState{}, false
+	}
+	if marked.BrowserPID > 0 && current.BrowserPID != marked.BrowserPID {
+		return ManagedPlaywrightState{}, false
+	}
+	pid := current.BrowserPID
+	if pid <= 0 {
+		pid = current.MCPPID
+	}
+	if !processIsAlive(pid) {
+		return ManagedPlaywrightState{}, false
+	}
+	return current, true
+}
+
+func managedBrowserApplicationsOverlap(foreground ManagedPlaywrightState, candidate ManagedBrowserProcess) bool {
+	compared := false
+	for _, pair := range [][2]string{
+		{foreground.BrowserAppPath, candidate.AppPath},
+		{foreground.BrowserExecutable, candidate.ExecutablePath},
+		{foreground.BrowserAppName, candidate.AppName},
+	} {
+		left := strings.TrimSpace(pair[0])
+		right := strings.TrimSpace(pair[1])
+		if left == "" || right == "" {
+			continue
+		}
+		compared = true
+		if strings.EqualFold(filepath.Clean(left), filepath.Clean(right)) {
+			return true
+		}
+	}
+	// If either process lacks app identity metadata, suppressing the hide is
+	// safer than collapsing an active handoff.
+	return !compared
 }
 
 func lockManagedPlaywrightState(lockPath string) (*os.File, error) {

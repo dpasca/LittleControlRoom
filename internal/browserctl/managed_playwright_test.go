@@ -2,6 +2,7 @@ package browserctl
 
 import (
 	"errors"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
@@ -127,6 +128,13 @@ func TestRevealManagedPlaywrightSessionMarksRevealedBeforeOSReveal(t *testing.T)
 		if stored.Hidden {
 			t.Fatalf("stored.Hidden during reveal = true, want false")
 		}
+		foreground, ok, err := readManagedPlaywrightForegroundState(paths.DataDir)
+		if err != nil {
+			t.Fatalf("read foreground state during reveal: %v", err)
+		}
+		if !ok || foreground.SessionKey != paths.SessionKey || foreground.Hidden {
+			t.Fatalf("foreground state during reveal = %#v, ok=%v", foreground, ok)
+		}
 		return nil
 	}
 
@@ -187,6 +195,167 @@ func TestRevealManagedPlaywrightSessionRestoresHiddenStateOnRevealFailure(t *tes
 	}
 	if !stored.Hidden {
 		t.Fatalf("stored.Hidden after failed reveal = false, want true")
+	}
+	if foreground, ok, foregroundErr := readManagedPlaywrightForegroundState(paths.DataDir); foregroundErr != nil || ok {
+		t.Fatalf("foreground state after failed reveal = %#v, ok=%v, err=%v; want absent", foreground, ok, foregroundErr)
+	}
+}
+
+func TestHideManagedPlaywrightSessionDoesNotCollapseForegroundSibling(t *testing.T) {
+	dataDir := t.TempDir()
+	foregroundPaths, err := ManagedPlaywrightPathsFor(
+		dataDir,
+		"codex",
+		"/tmp/foreground",
+		"session-foreground",
+		"profile-foreground",
+		ManagedLaunchModeBackground,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetPaths, err := ManagedPlaywrightPathsFor(
+		dataDir,
+		"codex",
+		"/tmp/background",
+		"session-background",
+		"profile-background",
+		ManagedLaunchModeBackground,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	foreground := ManagedPlaywrightState{
+		SessionKey:        foregroundPaths.SessionKey,
+		ProfileKey:        foregroundPaths.ProfileKey,
+		Provider:          foregroundPaths.Provider,
+		ProjectPath:       foregroundPaths.ProjectPath,
+		LaunchMode:        foregroundPaths.LaunchMode,
+		Policy:            DefaultPolicy(),
+		MCPPID:            os.Getpid(),
+		BrowserPID:        os.Getpid(),
+		BrowserAppPath:    "/Applications/Chromium.app",
+		BrowserAppName:    "Chromium",
+		BrowserExecutable: "/Applications/Chromium.app/Contents/MacOS/Chromium",
+		Hidden:            false,
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := WriteManagedPlaywrightState(foregroundPaths, foreground); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedPlaywrightForegroundState(dataDir, foreground); err != nil {
+		t.Fatal(err)
+	}
+	target := ManagedPlaywrightState{
+		SessionKey:        targetPaths.SessionKey,
+		ProfileKey:        targetPaths.ProfileKey,
+		Provider:          targetPaths.Provider,
+		ProjectPath:       targetPaths.ProjectPath,
+		LaunchMode:        targetPaths.LaunchMode,
+		Policy:            DefaultPolicy(),
+		BrowserPID:        222,
+		BrowserAppPath:    foreground.BrowserAppPath,
+		BrowserAppName:    foreground.BrowserAppName,
+		BrowserExecutable: foreground.BrowserExecutable,
+		Hidden:            true,
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := WriteManagedPlaywrightState(targetPaths, target); err != nil {
+		t.Fatal(err)
+	}
+
+	previousHider := managedPlaywrightProcessHider
+	t.Cleanup(func() { managedPlaywrightProcessHider = previousHider })
+	hideCount := 0
+	managedPlaywrightProcessHider = func(pid int) error {
+		hideCount++
+		return nil
+	}
+
+	hidden, err := HideManagedPlaywrightSession(dataDir, target.SessionKey, ManagedBrowserProcess{
+		PID:            target.BrowserPID,
+		AppPath:        target.BrowserAppPath,
+		AppName:        target.BrowserAppName,
+		ExecutablePath: target.BrowserExecutable,
+	})
+	if err != nil {
+		t.Fatalf("HideManagedPlaywrightSession() error = %v", err)
+	}
+	if hidden || hideCount != 0 {
+		t.Fatalf("HideManagedPlaywrightSession() hidden=%v hideCount=%d, want suppressed", hidden, hideCount)
+	}
+}
+
+func TestHideManagedPlaywrightSessionAllowsDifferentBrowserApplication(t *testing.T) {
+	dataDir := t.TempDir()
+	foregroundPaths, err := ManagedPlaywrightPathsFor(dataDir, "codex", "/tmp/foreground", "session-foreground", "profile-foreground", ManagedLaunchModeBackground)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetPaths, err := ManagedPlaywrightPathsFor(dataDir, "codex", "/tmp/background", "session-background", "profile-background", ManagedLaunchModeBackground)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreground := ManagedPlaywrightState{
+		SessionKey:        foregroundPaths.SessionKey,
+		ProfileKey:        foregroundPaths.ProfileKey,
+		Provider:          foregroundPaths.Provider,
+		ProjectPath:       foregroundPaths.ProjectPath,
+		LaunchMode:        foregroundPaths.LaunchMode,
+		Policy:            DefaultPolicy(),
+		MCPPID:            os.Getpid(),
+		BrowserPID:        os.Getpid(),
+		BrowserAppPath:    "/Applications/Chromium.app",
+		BrowserAppName:    "Chromium",
+		BrowserExecutable: "/Applications/Chromium.app/Contents/MacOS/Chromium",
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := WriteManagedPlaywrightState(foregroundPaths, foreground); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedPlaywrightForegroundState(dataDir, foreground); err != nil {
+		t.Fatal(err)
+	}
+	target := ManagedPlaywrightState{
+		SessionKey:        targetPaths.SessionKey,
+		ProfileKey:        targetPaths.ProfileKey,
+		Provider:          targetPaths.Provider,
+		ProjectPath:       targetPaths.ProjectPath,
+		LaunchMode:        targetPaths.LaunchMode,
+		Policy:            DefaultPolicy(),
+		BrowserPID:        333,
+		BrowserAppPath:    "/Applications/Firefox.app",
+		BrowserAppName:    "Firefox",
+		BrowserExecutable: "/Applications/Firefox.app/Contents/MacOS/firefox",
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := WriteManagedPlaywrightState(targetPaths, target); err != nil {
+		t.Fatal(err)
+	}
+
+	previousHider := managedPlaywrightProcessHider
+	t.Cleanup(func() { managedPlaywrightProcessHider = previousHider })
+	hideCount := 0
+	managedPlaywrightProcessHider = func(pid int) error {
+		if pid != target.BrowserPID {
+			t.Fatalf("hide pid = %d, want %d", pid, target.BrowserPID)
+		}
+		hideCount++
+		return nil
+	}
+
+	hidden, err := HideManagedPlaywrightSession(dataDir, target.SessionKey, ManagedBrowserProcess{
+		PID:            target.BrowserPID,
+		AppPath:        target.BrowserAppPath,
+		AppName:        target.BrowserAppName,
+		ExecutablePath: target.BrowserExecutable,
+	})
+	if err != nil {
+		t.Fatalf("HideManagedPlaywrightSession() error = %v", err)
+	}
+	if !hidden || hideCount != 1 {
+		t.Fatalf("HideManagedPlaywrightSession() hidden=%v hideCount=%d, want one hide", hidden, hideCount)
 	}
 }
 

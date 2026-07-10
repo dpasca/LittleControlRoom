@@ -67,10 +67,10 @@ func TestReconcileManagedPlaywrightBrowserKeepsBackgroundBrowserHiddenUntilRevea
 	}
 
 	origDetector := detectManagedBrowserProcess
-	origHider := hideManagedBrowserProcess
+	origHider := hideManagedBrowserSession
 	t.Cleanup(func() {
 		detectManagedBrowserProcess = origDetector
-		hideManagedBrowserProcess = origHider
+		hideManagedBrowserSession = origHider
 	})
 
 	detectManagedBrowserProcess = func(rootPID int) (browserctl.ManagedBrowserProcess, bool, error) {
@@ -85,12 +85,23 @@ func TestReconcileManagedPlaywrightBrowserKeepsBackgroundBrowserHiddenUntilRevea
 		}, true, nil
 	}
 	hideCount := 0
-	hideManagedBrowserProcess = func(pid int) error {
-		if pid != 123 {
-			t.Fatalf("hide pid = %d, want 123", pid)
+	hideManagedBrowserSession = func(dataDir, sessionKey string, browser browserctl.ManagedBrowserProcess) (bool, error) {
+		if dataDir != paths.DataDir || sessionKey != paths.SessionKey {
+			t.Fatalf("hide session = dataDir %q sessionKey %q, want %q %q", dataDir, sessionKey, paths.DataDir, paths.SessionKey)
+		}
+		if browser.PID != 123 {
+			t.Fatalf("hide pid = %d, want 123", browser.PID)
 		}
 		hideCount++
-		return nil
+		state, err := browserctl.ReadManagedPlaywrightState(dataDir, sessionKey)
+		if err != nil {
+			return false, err
+		}
+		state.Hidden = true
+		if err := browserctl.WriteManagedPlaywrightState(paths, state); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	monitorState := managedBrowserMonitorState{}
@@ -161,10 +172,10 @@ func TestReconcileManagedPlaywrightBrowserDoesNotHideDuringRevealTransition(t *t
 	}
 
 	origDetector := detectManagedBrowserProcess
-	origHider := hideManagedBrowserProcess
+	origHider := hideManagedBrowserSession
 	t.Cleanup(func() {
 		detectManagedBrowserProcess = origDetector
-		hideManagedBrowserProcess = origHider
+		hideManagedBrowserSession = origHider
 	})
 
 	detectManagedBrowserProcess = func(rootPID int) (browserctl.ManagedBrowserProcess, bool, error) {
@@ -176,9 +187,9 @@ func TestReconcileManagedPlaywrightBrowserDoesNotHideDuringRevealTransition(t *t
 		}, true, nil
 	}
 	hideCount := 0
-	hideManagedBrowserProcess = func(pid int) error {
+	hideManagedBrowserSession = func(string, string, browserctl.ManagedBrowserProcess) (bool, error) {
 		hideCount++
-		return nil
+		return true, nil
 	}
 
 	lockHeld := make(chan struct{})

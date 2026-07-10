@@ -16,7 +16,7 @@ import (
 
 var (
 	detectManagedBrowserProcess = browserctl.DetectManagedBrowserProcess
-	hideManagedBrowserProcess   = browserctl.HideManagedBrowserProcess
+	hideManagedBrowserSession   = browserctl.HideManagedPlaywrightSession
 	readManagedPlaywrightState  = browserctl.ReadManagedPlaywrightState
 	writeManagedPlaywrightState = browserctl.WriteManagedPlaywrightState
 )
@@ -222,7 +222,8 @@ func reconcileManagedPlaywrightBrowser(paths browserctl.ManagedPlaywrightPaths, 
 	if err != nil || !ok {
 		return err
 	}
-	return browserctl.WithManagedPlaywrightStateLock(paths.DataDir, paths.SessionKey, func() error {
+	shouldHide := false
+	err = browserctl.WithManagedPlaywrightStateLock(paths.DataDir, paths.SessionKey, func() error {
 		state, readErr := readManagedPlaywrightState(paths.DataDir, paths.SessionKey)
 		if readErr != nil {
 			state = browserctl.ManagedPlaywrightState{
@@ -244,19 +245,23 @@ func reconcileManagedPlaywrightBrowser(paths browserctl.ManagedPlaywrightPaths, 
 		state.BrowserExecutable = detected.ExecutablePath
 		state.RevealSupported = detected.PID > 0 || detected.AppPath != "" || detected.AppName != ""
 		state.UpdatedAt = now
-		if shouldHideManagedBrowser(keepHidden, state, monitorState, now) {
-			if monitorState != nil {
-				monitorState.lastHideAttempt = now
-			}
-			if err := hideManagedBrowserProcess(detected.PID); err == nil {
-				state.Hidden = true
-				if monitorState != nil {
-					monitorState.hiddenByLCR = true
-				}
-			}
-		}
+		shouldHide = shouldHideManagedBrowser(keepHidden, state, monitorState, now)
 		return writeManagedPlaywrightState(paths, state)
 	})
+	if err != nil || !shouldHide {
+		return err
+	}
+	if monitorState != nil {
+		monitorState.lastHideAttempt = now
+	}
+	hidden, hideErr := hideManagedBrowserSession(paths.DataDir, paths.SessionKey, detected)
+	if hideErr == nil && hidden && monitorState != nil {
+		monitorState.hiddenByLCR = true
+	}
+	// Browser hiding is best-effort. Metadata refresh should continue even if
+	// macOS rejects a visibility transition or a foreground handoff suppresses
+	// this session's hide attempt.
+	return nil
 }
 
 func shouldHideManagedBrowser(keepHidden bool, state browserctl.ManagedPlaywrightState, monitorState *managedBrowserMonitorState, now time.Time) bool {
