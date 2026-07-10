@@ -98,6 +98,42 @@ func TestListProjectsScopeFiltering(t *testing.T) {
 	}
 }
 
+func TestListLinkedWorktreePathsForRoot(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	rootPath := "/tmp/repo"
+	states := []model.ProjectState{
+		{Path: rootPath, Name: "repo", Status: model.StatusIdle, PresentOnDisk: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindMain, UpdatedAt: now},
+		{Path: "/tmp/repo--active", Name: "active", Status: model.StatusIdle, PresentOnDisk: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, UpdatedAt: now},
+		{Path: "/tmp/repo--legacy-root", Name: "legacy-root", Status: model.StatusIdle, PresentOnDisk: true, WorktreeRootPath: rootPath + "/./", WorktreeKind: model.WorktreeKindLinked, UpdatedAt: now},
+		{Path: "/tmp/repo--forgotten-present", Name: "forgotten-present", Status: model.StatusIdle, PresentOnDisk: true, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, Forgotten: true, UpdatedAt: now},
+		{Path: "/tmp/repo--forgotten-missing", Name: "forgotten-missing", Status: model.StatusIdle, PresentOnDisk: false, WorktreeRootPath: rootPath, WorktreeKind: model.WorktreeKindLinked, Forgotten: true, UpdatedAt: now},
+		{Path: "/tmp/other--linked", Name: "other", Status: model.StatusIdle, PresentOnDisk: true, WorktreeRootPath: "/tmp/other", WorktreeKind: model.WorktreeKindLinked, UpdatedAt: now},
+	}
+	for _, state := range states {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("upsert %s: %v", state.Path, err)
+		}
+	}
+
+	got, err := st.ListLinkedWorktreePathsForRoot(ctx, rootPath)
+	if err != nil {
+		t.Fatalf("ListLinkedWorktreePathsForRoot() error = %v", err)
+	}
+	want := []string{"/tmp/repo--active", "/tmp/repo--forgotten-present", "/tmp/repo--legacy-root"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ListLinkedWorktreePathsForRoot() = %#v, want %#v", got, want)
+	}
+}
+
 func TestProjectCategoryAssignmentAndDelete(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

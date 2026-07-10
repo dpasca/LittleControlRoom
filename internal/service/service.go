@@ -32,6 +32,7 @@ import (
 
 const recentActivityDiscoveryWindow = 24 * time.Hour
 const asyncProjectRefreshTimeout = 30 * time.Second
+const asyncProjectRefreshConcurrency = 1
 const bossAssistantHTTPTimeout = 90 * time.Second
 const missingLinkedWorktreeRetention = 7 * 24 * time.Hour
 
@@ -68,12 +69,13 @@ type Service struct {
 	opencodeDiscovery        *llm.OpenCodeDiscovery
 	sessionUsageCache        atomic.Value
 
-	gitFingerprintReader   func(context.Context, string) (scanner.GitFingerprint, error)
-	gitRepoStatusReader    func(context.Context, string) (scanner.GitRepoStatus, error)
-	gitWorktreeInfoReader  func(context.Context, string) (scanner.GitWorktreeInfo, error)
-	gitWorktreeListReader  func(context.Context, string) ([]scanner.GitWorktree, error)
-	gitRepoInitializer     func(context.Context, string) error
-	refreshProjectStatusFn func(context.Context, string) error
+	gitFingerprintReader      func(context.Context, string) (scanner.GitFingerprint, error)
+	gitRepoStatusReader       func(context.Context, string) (scanner.GitRepoStatus, error)
+	gitWorktreeInfoReader     func(context.Context, string) (scanner.GitWorktreeInfo, error)
+	gitWorktreeListReader     func(context.Context, string) ([]scanner.GitWorktree, error)
+	gitRepoInitializer        func(context.Context, string) error
+	refreshProjectAttentionFn func(context.Context, string) error
+	refreshProjectStatusFn    func(context.Context, string) error
 
 	mu sync.Mutex
 
@@ -81,16 +83,23 @@ type Service struct {
 	worktreeCreateLocks keyedmutex.Locker
 	gitWriteLocks       keyedmutex.Locker
 
-	refreshMu    sync.Mutex
-	refreshState map[string]asyncProjectRefreshState
+	backgroundRefreshMu    sync.Mutex
+	backgroundRefreshState map[string]asyncProjectRefreshState
+	backgroundRefreshSlots chan struct{}
 
 	commitTodoNotifyCh  chan struct{}
 	commitTodoStartOnce sync.Once
 }
 
+type asyncProjectRefreshKind uint8
+
+const (
+	asyncProjectRefreshAttention asyncProjectRefreshKind = iota + 1
+	asyncProjectRefreshStatus
+)
+
 type asyncProjectRefreshState struct {
-	running bool
-	queued  bool
+	requestedKind asyncProjectRefreshKind
 }
 
 type serviceRuntimeSnapshot struct {
@@ -2862,22 +2871,13 @@ func (s *Service) refreshLinkedWorktreeStatusesForRoot(ctx context.Context, root
 	if rootPath == "" || rootPath == "." {
 		return nil
 	}
-	projects, err := s.store.GetProjectSummaryMap(ctx)
+	projectPaths, err := s.store.ListLinkedWorktreePathsForRoot(ctx, rootPath)
 	if err != nil {
 		return fmt.Errorf("list linked worktrees for root refresh: %w", err)
 	}
 	var errs []string
-	for _, project := range projects {
-		if project.WorktreeKind != model.WorktreeKindLinked {
-			continue
-		}
-		if project.Forgotten && !project.PresentOnDisk {
-			continue
-		}
-		if filepath.Clean(strings.TrimSpace(project.WorktreeRootPath)) != rootPath {
-			continue
-		}
-		projectPath := filepath.Clean(strings.TrimSpace(project.Path))
+	for _, path := range projectPaths {
+		projectPath := filepath.Clean(strings.TrimSpace(path))
 		if projectPath == "" || projectPath == "." || projectPath == rootPath {
 			continue
 		}
@@ -3004,7 +3004,10 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 }
 
 func (s *Service) refreshProjectAttention(ctx context.Context, projectPath string) error {
-	unlockProjectState := s.lockProjectStateMutation(projectPath)
+	unlockProjectState, err := s.lockProjectStateMutationContext(ctx, projectPath)
+	if err != nil {
+		return err
+	}
 	defer unlockProjectState()
 
 	return s.refreshProjectAttentionLocked(ctx, projectPath)
@@ -3250,7 +3253,20 @@ func (s *Service) MarkProjectSessionUnread(ctx context.Context, projectPath stri
 	return nil
 }
 
+// refreshProjectAttentionAsync keeps heartbeat-derived attention state current
+// without launching git reads or linked-worktree cascades.
+func (s *Service) refreshProjectAttentionAsync(projectPath string) {
+	s.requestProjectRefreshAsync(projectPath, asyncProjectRefreshAttention)
+}
+
+// refreshProjectStatusAsync keeps TODO mutations asynchronous while limiting
+// them to the affected project. Background refreshes are serialized so SQLite
+// capacity and CPU time remain available for interactive TUI reads.
 func (s *Service) refreshProjectStatusAsync(projectPath string) {
+	s.requestProjectRefreshAsync(projectPath, asyncProjectRefreshStatus)
+}
+
+func (s *Service) requestProjectRefreshAsync(projectPath string, kind asyncProjectRefreshKind) {
 	if s == nil {
 		return
 	}
@@ -3258,14 +3274,21 @@ func (s *Service) refreshProjectStatusAsync(projectPath string) {
 	if projectPath == "" {
 		return
 	}
-	if !s.beginAsyncProjectRefresh(projectPath) {
+	if !s.beginAsyncProjectRefresh(projectPath, kind) {
 		return
 	}
 	go func(path string) {
 		for {
+			release := s.acquireAsyncProjectRefreshSlot()
+			nextKind, ok := s.takeAsyncProjectRefreshRequest(path)
+			if !ok {
+				release()
+				return
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), asyncProjectRefreshTimeout)
-			_ = s.projectStatusRefreshRunner()(ctx, path)
+			_ = s.projectRefreshRunner(nextKind)(ctx, path)
 			cancel()
+			release()
 			if !s.finishAsyncProjectRefresh(path) {
 				return
 			}
@@ -3273,44 +3296,81 @@ func (s *Service) refreshProjectStatusAsync(projectPath string) {
 	}(projectPath)
 }
 
-func (s *Service) projectStatusRefreshRunner() func(context.Context, string) error {
+func (s *Service) projectRefreshRunner(kind asyncProjectRefreshKind) func(context.Context, string) error {
+	if kind == asyncProjectRefreshAttention {
+		if s.refreshProjectAttentionFn != nil {
+			return s.refreshProjectAttentionFn
+		}
+		return s.refreshProjectAttention
+	}
 	if s.refreshProjectStatusFn != nil {
 		return s.refreshProjectStatusFn
 	}
-	return s.RefreshProjectStatus
+	return func(ctx context.Context, projectPath string) error {
+		return s.RefreshProjectStatusWithOptions(ctx, projectPath, ScanOptions{
+			SkipLinkedWorktreeStatusRefresh: true,
+		})
+	}
 }
 
-func (s *Service) beginAsyncProjectRefresh(projectPath string) bool {
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
+func (s *Service) beginAsyncProjectRefresh(projectPath string, kind asyncProjectRefreshKind) bool {
+	s.backgroundRefreshMu.Lock()
+	defer s.backgroundRefreshMu.Unlock()
 
-	if s.refreshState == nil {
-		s.refreshState = map[string]asyncProjectRefreshState{}
+	if s.backgroundRefreshState == nil {
+		s.backgroundRefreshState = map[string]asyncProjectRefreshState{}
 	}
-	state := s.refreshState[projectPath]
-	if state.running {
-		state.queued = true
-		s.refreshState[projectPath] = state
+	state, exists := s.backgroundRefreshState[projectPath]
+	if exists {
+		if kind > state.requestedKind {
+			state.requestedKind = kind
+		}
+		s.backgroundRefreshState[projectPath] = state
 		return false
 	}
-	s.refreshState[projectPath] = asyncProjectRefreshState{running: true}
+	s.backgroundRefreshState[projectPath] = asyncProjectRefreshState{requestedKind: kind}
 	return true
 }
 
-func (s *Service) finishAsyncProjectRefresh(projectPath string) bool {
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
+func (s *Service) takeAsyncProjectRefreshRequest(projectPath string) (asyncProjectRefreshKind, bool) {
+	s.backgroundRefreshMu.Lock()
+	defer s.backgroundRefreshMu.Unlock()
 
-	state, ok := s.refreshState[projectPath]
+	state, ok := s.backgroundRefreshState[projectPath]
+	if !ok || state.requestedKind == 0 {
+		return 0, false
+	}
+	kind := state.requestedKind
+	state.requestedKind = 0
+	s.backgroundRefreshState[projectPath] = state
+	return kind, true
+}
+
+func (s *Service) acquireAsyncProjectRefreshSlot() func() {
+	s.backgroundRefreshMu.Lock()
+	if s.backgroundRefreshSlots == nil {
+		s.backgroundRefreshSlots = make(chan struct{}, asyncProjectRefreshConcurrency)
+	}
+	slots := s.backgroundRefreshSlots
+	s.backgroundRefreshMu.Unlock()
+
+	slots <- struct{}{}
+	return func() { <-slots }
+}
+
+func (s *Service) finishAsyncProjectRefresh(projectPath string) bool {
+	s.backgroundRefreshMu.Lock()
+	defer s.backgroundRefreshMu.Unlock()
+
+	state, ok := s.backgroundRefreshState[projectPath]
 	if !ok {
 		return false
 	}
-	if state.queued {
-		state.queued = false
-		s.refreshState[projectPath] = state
+	if state.requestedKind != 0 {
+		s.backgroundRefreshState[projectPath] = state
 		return true
 	}
-	delete(s.refreshState, projectPath)
+	delete(s.backgroundRefreshState, projectPath)
 	return false
 }
 

@@ -103,6 +103,37 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 	return out, rows.Err()
 }
 
+func (s *Store) ListLinkedWorktreePathsForRoot(ctx context.Context, rootPath string) ([]string, error) {
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if rootPath == "" || rootPath == "." {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT path, worktree_root_path
+		FROM projects
+		WHERE worktree_kind = ?
+		  AND NOT (forgotten = 1 AND present_on_disk = 0)
+		ORDER BY path ASC
+	`, string(model.WorktreeKindLinked))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	paths := []string{}
+	for rows.Next() {
+		var path, storedRootPath string
+		if err := rows.Scan(&path, &storedRootPath); err != nil {
+			return nil, err
+		}
+		if filepath.Clean(strings.TrimSpace(storedRootPath)) != rootPath {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths, rows.Err()
+}
+
 func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]model.ProjectSummary, error) {
 	query := projectSummaryBaseQuery()
 	query += projectSummaryVisibilityFilter(includeHistorical)

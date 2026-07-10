@@ -390,6 +390,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureProjectsMissingLinkedWorktreeIndex(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureProjectsLinkedWorktreeRootIndex(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -732,6 +735,17 @@ func (s *Store) ensureProjectsMissingLinkedWorktreeIndex(ctx context.Context) er
 	`)
 	if err != nil {
 		return fmt.Errorf("create missing linked worktree index: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureProjectsLinkedWorktreeRootIndex(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_projects_linked_worktree_root
+		ON projects(worktree_kind, worktree_root_path, forgotten, present_on_disk, path)
+	`)
+	if err != nil {
+		return fmt.Errorf("create linked worktree root index: %w", err)
 	}
 	return nil
 }

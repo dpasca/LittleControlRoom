@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
+func TestRefreshProjectAttentionAsyncCoalescesConcurrentRequests(t *testing.T) {
 	t.Parallel()
 
 	started := make(chan int, 4)
@@ -28,7 +28,7 @@ func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	var callsMu sync.Mutex
 
 	svc := &Service{
-		refreshProjectStatusFn: func(context.Context, string) error {
+		refreshProjectAttentionFn: func(context.Context, string) error {
 			callsMu.Lock()
 			callCount++
 			callID := callCount
@@ -42,7 +42,7 @@ func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 	}
 
 	const projectPath = "/tmp/demo"
-	svc.refreshProjectStatusAsync(projectPath)
+	svc.refreshProjectAttentionAsync(projectPath)
 
 	select {
 	case got := <-started:
@@ -53,8 +53,8 @@ func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 		t.Fatal("first refresh did not start")
 	}
 
-	svc.refreshProjectStatusAsync(projectPath)
-	svc.refreshProjectStatusAsync(projectPath)
+	svc.refreshProjectAttentionAsync(projectPath)
+	svc.refreshProjectAttentionAsync(projectPath)
 
 	select {
 	case got := <-started:
@@ -107,10 +107,168 @@ func TestRefreshProjectStatusAsyncCoalescesConcurrentRequests(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 
-	svc.refreshMu.Lock()
-	defer svc.refreshMu.Unlock()
-	if len(svc.refreshState) != 0 {
-		t.Fatalf("refreshState = %#v, want empty after coalesced refresh finishes", svc.refreshState)
+	svc.backgroundRefreshMu.Lock()
+	defer svc.backgroundRefreshMu.Unlock()
+	if len(svc.backgroundRefreshState) != 0 {
+		t.Fatalf("backgroundRefreshState = %#v, want empty after coalesced refresh finishes", svc.backgroundRefreshState)
+	}
+}
+
+func TestProjectRefreshAsyncSerializesDifferentProjects(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan string, 3)
+	completed := make(chan string, 3)
+	release := make(chan struct{})
+	runner := func(_ context.Context, projectPath string) error {
+		started <- projectPath
+		<-release
+		completed <- projectPath
+		return nil
+	}
+	svc := &Service{
+		refreshProjectAttentionFn: runner,
+		refreshProjectStatusFn:    runner,
+	}
+
+	paths := []string{"/tmp/one", "/tmp/two", "/tmp/three"}
+	svc.refreshProjectAttentionAsync(paths[0])
+	svc.refreshProjectStatusAsync(paths[1])
+	svc.refreshProjectAttentionAsync(paths[2])
+
+	first := waitForProjectRefreshTestEvent(t, started, "first refresh to start")
+	select {
+	case path := <-started:
+		t.Fatalf("refresh %q started while %q was still running", path, first)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	release <- struct{}{}
+	if got := waitForProjectRefreshTestEvent(t, completed, "first refresh to complete"); got != first {
+		t.Fatalf("first completed refresh = %q, want %q", got, first)
+	}
+	second := waitForProjectRefreshTestEvent(t, started, "second refresh to start")
+	if second == first {
+		t.Fatalf("second refresh = %q, want a different project", second)
+	}
+	select {
+	case path := <-started:
+		t.Fatalf("refresh %q started while %q was still running", path, second)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	release <- struct{}{}
+	if got := waitForProjectRefreshTestEvent(t, completed, "second refresh to complete"); got != second {
+		t.Fatalf("second completed refresh = %q, want %q", got, second)
+	}
+	third := waitForProjectRefreshTestEvent(t, started, "third refresh to start")
+	if third == first || third == second {
+		t.Fatalf("third refresh = %q, want the remaining project", third)
+	}
+	release <- struct{}{}
+	if got := waitForProjectRefreshTestEvent(t, completed, "third refresh to complete"); got != third {
+		t.Fatalf("third completed refresh = %q, want %q", got, third)
+	}
+}
+
+func TestProjectRefreshAsyncPromotesQueuedStatusRefresh(t *testing.T) {
+	t.Parallel()
+
+	attentionStarted := make(chan struct{}, 1)
+	releaseAttention := make(chan struct{})
+	statusStarted := make(chan struct{}, 1)
+	svc := &Service{
+		refreshProjectAttentionFn: func(context.Context, string) error {
+			attentionStarted <- struct{}{}
+			<-releaseAttention
+			return nil
+		},
+		refreshProjectStatusFn: func(context.Context, string) error {
+			statusStarted <- struct{}{}
+			return nil
+		},
+	}
+
+	const projectPath = "/tmp/demo"
+	svc.refreshProjectAttentionAsync(projectPath)
+	select {
+	case <-attentionStarted:
+	case <-time.After(time.Second):
+		t.Fatal("attention refresh did not start")
+	}
+	svc.refreshProjectStatusAsync(projectPath)
+	select {
+	case <-statusStarted:
+		t.Fatal("status refresh started before the in-flight attention refresh completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(releaseAttention)
+	select {
+	case <-statusStarted:
+	case <-time.After(time.Second):
+		t.Fatal("queued status refresh did not run after attention refresh")
+	}
+}
+
+func TestProjectRefreshAsyncCoalescesRequestsWhileWaitingForSlot(t *testing.T) {
+	t.Parallel()
+
+	blockerStarted := make(chan struct{}, 1)
+	releaseBlocker := make(chan struct{})
+	targetRuns := make(chan string, 2)
+	svc := &Service{
+		refreshProjectAttentionFn: func(_ context.Context, projectPath string) error {
+			if projectPath == "/tmp/blocker" {
+				blockerStarted <- struct{}{}
+				<-releaseBlocker
+				return nil
+			}
+			targetRuns <- "attention"
+			return nil
+		},
+		refreshProjectStatusFn: func(context.Context, string) error {
+			targetRuns <- "status"
+			return nil
+		},
+	}
+
+	svc.refreshProjectAttentionAsync("/tmp/blocker")
+	select {
+	case <-blockerStarted:
+	case <-time.After(time.Second):
+		t.Fatal("blocking refresh did not start")
+	}
+
+	const targetPath = "/tmp/target"
+	svc.refreshProjectAttentionAsync(targetPath)
+	svc.refreshProjectStatusAsync(targetPath)
+	svc.refreshProjectAttentionAsync(targetPath)
+	close(releaseBlocker)
+
+	select {
+	case got := <-targetRuns:
+		if got != "status" {
+			t.Fatalf("coalesced target refresh = %q, want status", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("coalesced target refresh did not start")
+	}
+	select {
+	case got := <-targetRuns:
+		t.Fatalf("unexpected redundant target refresh %q", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func waitForProjectRefreshTestEvent(t *testing.T, ch <-chan string, description string) string {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for %s", description)
+		return ""
 	}
 }
 

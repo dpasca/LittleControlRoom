@@ -151,7 +151,7 @@ func (s *Service) updateTodoWorkStateForEmbeddedActivity(ctx context.Context, pr
 	}
 	for _, path := range paths {
 		if strings.TrimSpace(path) != "" && strings.TrimSpace(path) != projectPath {
-			s.refreshProjectStatusAsync(path)
+			s.refreshProjectAttentionAsync(path)
 		}
 	}
 	return nil
