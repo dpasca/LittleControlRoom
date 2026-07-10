@@ -477,6 +477,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "mobile",
+			raw:  "/mobile",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindMobile {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindMobile)
+				}
+				if inv.Canonical != "/mobile" {
+					t.Fatalf("canonical = %q, want /mobile", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "run edit",
 			raw:  "/run-edit",
 			check: func(t *testing.T, inv Invocation) {

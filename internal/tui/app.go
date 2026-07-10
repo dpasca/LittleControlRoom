@@ -56,6 +56,8 @@ type Model struct {
 	status  string
 	err     error
 
+	mobileServerStatus MobileServerStatus
+
 	topStatusAttentionPulseStatus string
 	topStatusAttentionPulseUntil  time.Time
 

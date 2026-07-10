@@ -551,6 +551,9 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openRunCommandDialog(p, false)
 	case commands.KindRuntime:
 		return m, m.openRuntimeInspectorForSelection()
+	case commands.KindMobile:
+		m.status = m.mobileServerStatusMessage()
+		return m, nil
 	case commands.KindCPU:
 		return m, m.openCPUDialog()
 	case commands.KindPorts:

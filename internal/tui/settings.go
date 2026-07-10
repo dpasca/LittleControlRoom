@@ -1689,6 +1689,9 @@ func (m Model) savePrivacyModeCmd(privacyMode bool) tea.Cmd {
 	path := m.currentWritableConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
+		if m.svc != nil {
+			m.svc.ApplyEditableSettings(settings)
+		}
 		return privacyModeSavedMsg{privacyMode: privacyMode, path: path, err: err}
 	}
 }

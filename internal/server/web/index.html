@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f6f8">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Little Control Room</title>
+  <link rel="icon" href="data:,">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/app.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">L</div>
+        <div>
+          <h1>Little Control Room</h1>
+          <div class="connection-line">
+            <span id="connection-dot" class="connection-dot connecting" aria-hidden="true"></span>
+            <span id="connection-label">Connecting</span>
+            <span class="read-only-label">Read only</span>
+          </div>
+        </div>
+      </div>
+      <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh projects" title="Refresh projects">
+        <span aria-hidden="true">&#x21bb;</span>
+      </button>
+    </header>
+
+    <main class="workspace">
+      <section id="dashboard-view" class="dashboard-view" aria-labelledby="work-title">
+        <div class="dashboard-heading">
+          <div>
+            <p class="eyebrow">Project overview</p>
+            <h2 id="work-title">Work</h2>
+          </div>
+          <p id="updated-label" class="updated-label">Loading</p>
+        </div>
+
+        <div id="category-tabs" class="category-tabs" role="tablist" aria-label="Project categories"></div>
+
+        <div class="dashboard-controls">
+          <div id="bucket-filter" class="segmented-control" role="group" aria-label="Project state">
+            <button type="button" data-bucket="attention" class="selected">Need</button>
+            <button type="button" data-bucket="active">Active</button>
+            <button type="button" data-bucket="all">All</button>
+          </div>
+          <label class="search-control">
+            <span aria-hidden="true">&#x2315;</span>
+            <span class="visually-hidden">Search projects</span>
+            <input id="project-search" type="search" placeholder="Search projects" autocomplete="off" spellcheck="false">
+          </label>
+        </div>
+
+        <div class="queue-summary">
+          <p id="queue-title">Projects</p>
+          <p id="queue-count">0</p>
+        </div>
+
+        <div id="dashboard-state" class="dashboard-state" aria-live="polite">
+          <div class="loading-lines" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <p>Loading projects</p>
+        </div>
+        <ul id="project-list" class="project-list" aria-label="Projects"></ul>
+      </section>
+
+      <section id="detail-view" class="detail-view" aria-labelledby="detail-title" hidden>
+        <div class="detail-toolbar">
+          <button id="back-button" class="icon-button" type="button" aria-label="Back to projects" title="Back to projects">
+            <span aria-hidden="true">&larr;</span>
+          </button>
+          <p>Project detail</p>
+        </div>
+        <div id="detail-state" class="detail-state" aria-live="polite"></div>
+        <article id="detail-content" class="detail-content" hidden>
+          <header class="detail-header">
+            <p id="detail-category" class="eyebrow"></p>
+            <h2 id="detail-title"></h2>
+            <p id="detail-summary" class="detail-summary"></p>
+            <div id="detail-badges" class="badge-row"></div>
+          </header>
+          <div id="detail-blocks" class="detail-blocks"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

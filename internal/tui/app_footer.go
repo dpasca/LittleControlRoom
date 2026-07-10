@@ -1354,7 +1354,7 @@ func helpPanelLines() []string {
 			renderDialogAction("?", "toggle quick help", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("`", "Help Chat", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /cpu, /ports, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /mobile, /cpu, /ports, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
