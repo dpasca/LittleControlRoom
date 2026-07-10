@@ -36,6 +36,7 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.activeItems = nil
 	s.pendingCompletion = nil
 	currentBrowserPageURL := s.mergeResumedThreadItemsLocked(thread)
+	s.mergeReconnectTranscriptLocked(thread.ID)
 
 	busySince := time.Time{}
 	lastBusyActivityAt := time.Time{}
@@ -54,6 +55,168 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.activeTurnID = activeTurnID
 	s.currentBrowserPageURL = strings.TrimSpace(currentBrowserPageURL)
 	s.currentBrowserPageStale = s.currentBrowserPageURL != ""
+}
+
+func (s *appServerSession) mergeReconnectTranscriptLocked(threadID string) {
+	prior := s.reconnectTranscript
+	expectedThreadID := strings.TrimSpace(s.reconnectThreadID)
+	s.reconnectTranscript = nil
+	s.reconnectThreadID = ""
+
+	if len(prior) == 0 || expectedThreadID == "" || strings.TrimSpace(threadID) != expectedThreadID {
+		return
+	}
+
+	preserved := reconnectTranscriptEntries(prior)
+	if len(preserved) == 0 {
+		return
+	}
+
+	s.entries = mergeReconnectTranscriptEntries(s.entries, preserved)
+	s.entryIndex = make(map[string]int, len(s.entries))
+	for i := range s.entries {
+		if itemID := strings.TrimSpace(s.entries[i].ItemID); itemID != "" {
+			s.entryIndex[itemID] = i
+		}
+	}
+	s.invalidateTranscriptCacheLocked()
+}
+
+func reconnectTranscriptEntries(entries []TranscriptEntry) []transcriptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]transcriptEntry, 0, len(entries))
+	for _, entry := range entries {
+		if reconnectTranscriptOmissionMarker(entry) {
+			continue
+		}
+		if strings.TrimSpace(entry.Text) == "" && entry.GeneratedImage == nil {
+			continue
+		}
+		out = append(out, transcriptEntry{
+			ItemID:         strings.TrimSpace(entry.ItemID),
+			Kind:           entry.Kind,
+			Text:           entry.Text,
+			DisplayText:    entry.DisplayText,
+			GeneratedImage: cloneGeneratedImageArtifact(entry.GeneratedImage),
+		})
+	}
+	return out
+}
+
+func reconnectTranscriptOmissionMarker(entry TranscriptEntry) bool {
+	return entry.Kind == TranscriptSystem &&
+		strings.Contains(strings.TrimSpace(entry.Text), "older transcript entries omitted from the embedded view")
+}
+
+func mergeReconnectTranscriptEntries(current, preserved []transcriptEntry) []transcriptEntry {
+	if len(current) == 0 {
+		return cloneInternalTranscriptEntries(preserved)
+	}
+	if len(preserved) == 0 {
+		return current
+	}
+
+	byItemID := make(map[string][]int, len(current))
+	byContent := make(map[string][]int, len(current))
+	for i := range current {
+		if itemID := strings.TrimSpace(current[i].ItemID); itemID != "" {
+			byItemID[itemID] = append(byItemID[itemID], i)
+		}
+		if key := reconnectTranscriptContentKey(current[i]); key != "" {
+			byContent[key] = append(byContent[key], i)
+		}
+	}
+
+	out := make([]transcriptEntry, 0, len(current)+len(preserved))
+	pending := make([]transcriptEntry, 0, 8)
+	currentStart := 0
+	lastMatch := -1
+	for _, entry := range preserved {
+		match := -1
+		if itemID := strings.TrimSpace(entry.ItemID); itemID != "" {
+			match = nextReconnectTranscriptMatch(byItemID[itemID], lastMatch)
+		}
+		if match < 0 {
+			match = nextReconnectTranscriptMatch(byContent[reconnectTranscriptContentKey(entry)], lastMatch)
+		}
+		if match < 0 {
+			pending = append(pending, cloneInternalTranscriptEntry(entry))
+			continue
+		}
+
+		out = append(out, cloneInternalTranscriptEntries(current[currentStart:match])...)
+		out = append(out, pending...)
+		pending = pending[:0]
+		out = append(out, mergeReconnectTranscriptEntry(current[match], entry))
+		currentStart = match + 1
+		lastMatch = match
+	}
+	out = append(out, cloneInternalTranscriptEntries(current[currentStart:])...)
+	out = append(out, pending...)
+	return out
+}
+
+func nextReconnectTranscriptMatch(indices []int, after int) int {
+	for _, index := range indices {
+		if index > after {
+			return index
+		}
+	}
+	return -1
+}
+
+func reconnectTranscriptContentKey(entry transcriptEntry) string {
+	text := strings.TrimSpace(entry.Text)
+	if text == "" {
+		return ""
+	}
+	return string(entry.Kind) + "\x00" + text
+}
+
+func mergeReconnectTranscriptEntry(current, preserved transcriptEntry) transcriptEntry {
+	out := cloneInternalTranscriptEntry(current)
+	if out.Kind == "" || out.Kind == TranscriptOther {
+		out.Kind = preserved.Kind
+	}
+	currentText := strings.TrimSpace(out.Text)
+	preservedText := strings.TrimSpace(preserved.Text)
+	if currentText == "" || (preservedText != "" && strings.HasPrefix(preservedText, currentText)) {
+		out.Text = preserved.Text
+		if strings.TrimSpace(preserved.DisplayText) != "" {
+			out.DisplayText = preserved.DisplayText
+		}
+	} else if strings.TrimSpace(out.DisplayText) == "" {
+		out.DisplayText = preserved.DisplayText
+	}
+	if out.GeneratedImage == nil || len(out.GeneratedImage.PreviewData) < generatedImagePreviewLen(preserved) {
+		out.GeneratedImage = cloneGeneratedImageArtifact(preserved.GeneratedImage)
+	}
+	return out
+}
+
+func generatedImagePreviewLen(entry transcriptEntry) int {
+	if entry.GeneratedImage == nil {
+		return 0
+	}
+	return len(entry.GeneratedImage.PreviewData)
+}
+
+func cloneInternalTranscriptEntries(entries []transcriptEntry) []transcriptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]transcriptEntry, len(entries))
+	for i := range entries {
+		out[i] = cloneInternalTranscriptEntry(entries[i])
+	}
+	return out
+}
+
+func cloneInternalTranscriptEntry(entry transcriptEntry) transcriptEntry {
+	entry.GeneratedImage = cloneGeneratedImageArtifact(entry.GeneratedImage)
+	return entry
 }
 
 func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) string {

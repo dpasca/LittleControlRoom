@@ -84,6 +84,71 @@ func TestHydrateResumedThreadBuildsTranscript(t *testing.T) {
 	}
 }
 
+func TestHydrateResumedThreadPreservesToolProgressAcrossReconnect(t *testing.T) {
+	s := &appServerSession{
+		projectPath:       "/tmp/demo",
+		entryIndex:        make(map[string]int),
+		notify:            func() {},
+		reconnectThreadID: "thread_123",
+		reconnectTranscript: []TranscriptEntry{
+			{ItemID: "live_user", Kind: TranscriptUser, Text: "finish the checklist"},
+			{ItemID: "live_agent_1", Kind: TranscriptAgent, Text: "I’ll inspect the current files first."},
+			{ItemID: "call_exec_1", Kind: TranscriptTool, Text: "Tool exec [completed]"},
+			{ItemID: "live_agent_2", Kind: TranscriptAgent, Text: "The dashboard is updated; I’m checking the result."},
+			{ItemID: "call_exec_2", Kind: TranscriptTool, Text: "Tool exec [completed]"},
+		},
+	}
+
+	s.hydrateResumedThread(resumedThread{
+		ID:     "thread_123",
+		Status: resumedThreadStatus{Type: "idle"},
+		Turns: []resumedTurn{{
+			ID:     "turn_interrupted",
+			Status: "interrupted",
+			Items: []map[string]json.RawMessage{
+				{
+					"id":      json.RawMessage(`"item_user"`),
+					"type":    json.RawMessage(`"userMessage"`),
+					"content": json.RawMessage(`[{"type":"text","text":"finish the checklist"}]`),
+				},
+				{
+					"id":   json.RawMessage(`"item_agent_1"`),
+					"type": json.RawMessage(`"agentMessage"`),
+					"text": json.RawMessage(`"I’ll inspect the current files first."`),
+				},
+				{
+					"id":   json.RawMessage(`"item_agent_2"`),
+					"type": json.RawMessage(`"agentMessage"`),
+					"text": json.RawMessage(`"The dashboard is updated; I’m checking the result."`),
+				},
+			},
+		}},
+	})
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 5 {
+		t.Fatalf("entries = %#v, want three provider messages plus two preserved tool calls", snapshot.Entries)
+	}
+	want := []struct {
+		kind TranscriptKind
+		text string
+	}{
+		{TranscriptUser, "finish the checklist"},
+		{TranscriptAgent, "I’ll inspect the current files first."},
+		{TranscriptTool, "Tool exec [completed]"},
+		{TranscriptAgent, "The dashboard is updated; I’m checking the result."},
+		{TranscriptTool, "Tool exec [completed]"},
+	}
+	for i := range want {
+		if snapshot.Entries[i].Kind != want[i].kind || snapshot.Entries[i].Text != want[i].text {
+			t.Fatalf("entry %d = %#v, want kind=%q text=%q", i, snapshot.Entries[i], want[i].kind, want[i].text)
+		}
+	}
+	if snapshot.Entries[1].ItemID != "item_agent_1" || snapshot.Entries[3].ItemID != "item_agent_2" {
+		t.Fatalf("provider message ids were not retained: %#v", snapshot.Entries)
+	}
+}
+
 func TestCloseExitChKeepsCodexHomeOverlayForResumedSkillPaths(t *testing.T) {
 	overlay := filepath.Join(t.TempDir(), "lcroom-codex-home-test")
 	if err := os.MkdirAll(filepath.Join(overlay, "skills", "playwright"), 0o700); err != nil {

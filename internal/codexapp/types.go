@@ -585,9 +585,15 @@ type Session interface {
 }
 
 type LaunchRequest struct {
-	Provider                   Provider
-	ProjectPath                string
-	ResumeID                   string
+	Provider    Provider
+	ProjectPath string
+	ResumeID    string
+
+	// ReconnectTranscript carries the richer live transcript across an explicit
+	// helper restart. Codex resume responses can omit tool activity from an
+	// interrupted turn, so the replacement helper merges this history back in.
+	ReconnectTranscript []TranscriptEntry
+
 	ForceNew                   bool
 	Prompt                     string
 	InitialInput               Submission
