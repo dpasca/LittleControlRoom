@@ -134,6 +134,8 @@ type appServerSession struct {
 	entryIndex              map[string]int
 	transcriptRevision      uint64
 	transcriptCache         transcriptExportCache
+	reconnectThreadID       string
+	reconnectTranscript     []TranscriptEntry
 }
 
 type transcriptEntry struct {

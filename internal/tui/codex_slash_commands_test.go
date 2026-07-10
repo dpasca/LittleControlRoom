@@ -467,6 +467,14 @@ func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
+		entries := []codexapp.TranscriptEntry(nil)
+		if len(requests) == 1 {
+			entries = []codexapp.TranscriptEntry{{
+				ItemID: "call_live_tool",
+				Kind:   codexapp.TranscriptTool,
+				Text:   "Tool exec [completed]",
+			}}
+		}
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
 			snapshot: codexapp.Snapshot{
@@ -474,6 +482,7 @@ func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 				Started:  true,
 				Status:   "OpenCode session ready",
 				ThreadID: "ses-old1",
+				Entries:  entries,
 			},
 		}, nil
 	})
@@ -535,6 +544,9 @@ func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 	}
 	if requests[1].ForceNew {
 		t.Fatalf("second launch request should not force a fresh session")
+	}
+	if len(requests[1].ReconnectTranscript) != 1 || requests[1].ReconnectTranscript[0].ItemID != "call_live_tool" {
+		t.Fatalf("second launch reconnect transcript = %#v, want live transcript carried across helper restart", requests[1].ReconnectTranscript)
 	}
 }
 

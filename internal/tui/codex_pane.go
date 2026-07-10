@@ -1760,6 +1760,8 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 	manager := m.codexManager
 	return func() tea.Msg {
 		if existing, ok := manager.Session(projectPath); ok {
+			previous := existing.Snapshot()
+			req.ReconnectTranscript = previous.Entries
 			_ = manager.CloseProject(projectPath)
 			if waiter, ok := existing.(codexCloseWaiter); ok {
 				waiter.WaitClosed(5 * time.Second)

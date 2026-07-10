@@ -28,6 +28,8 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		mcpServerStartup:         make(map[string]mcpServerStartupState),
 		status:                   "Starting Codex app-server...",
 		lastActivityAt:           time.Now(),
+		reconnectThreadID:        strings.TrimSpace(req.ResumeID),
+		reconnectTranscript:      cloneTranscriptEntries(req.ReconnectTranscript),
 	}
 	if err := s.start(req); err != nil {
 		_ = s.Close()
