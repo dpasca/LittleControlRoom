@@ -865,6 +865,113 @@ func TestTodoDialogCanStartSelectedTodoInNewWorktree(t *testing.T) {
 	_ = cmd
 }
 
+func TestBackgroundTodoWorktreeLaunchDoesNotInterruptVisibleEngineerSession(t *testing.T) {
+	const (
+		visibleProjectPath = "/tmp/current-engineer"
+		todoProjectPath    = "/tmp/root--background-todo"
+	)
+
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		snapshot := codexapp.Snapshot{
+			Provider:    req.Provider.Normalized(),
+			ProjectPath: req.ProjectPath,
+			ThreadID:    "ses-background-todo",
+			Started:     true,
+			Status:      req.Provider.Label() + " session ready",
+		}
+		if req.ProjectPath == visibleProjectPath {
+			snapshot.ThreadID = "ses-current-engineer"
+			snapshot.Entries = []codexapp.TranscriptEntry{{
+				Kind: codexapp.TranscriptAgent,
+				Text: "Current engineer session stays visible",
+			}}
+		}
+		return &fakeCodexSession{projectPath: req.ProjectPath, snapshot: snapshot}, nil
+	})
+	visibleSession, _, err := manager.Open(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderOpenCode,
+		ProjectPath: visibleProjectPath,
+	})
+	if err != nil {
+		t.Fatalf("open visible engineer session: %v", err)
+	}
+	visibleSnapshot := visibleSession.Snapshot()
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: visibleProjectPath,
+		codexHiddenProject:  visibleProjectPath,
+		codexInput:          newCodexTextarea(),
+		codexDrafts:         make(map[string]codexDraft),
+		codexViewport:       viewport.New(0, 0),
+		width:               100,
+		height:              24,
+	}
+	m.storeCodexSnapshot(visibleProjectPath, visibleSnapshot)
+	m.syncCodexViewport(true)
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		projectPath: todoProjectPath,
+		todoID:      42,
+		todoText:    "Handle this TODO without stealing focus",
+		provider:    codexapp.ProviderCodex,
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("background TODO launch should return an embedded open command")
+	}
+	if got.codexPendingOpen == nil || got.codexPendingOpen.showWhilePending {
+		t.Fatalf("codexPendingOpen = %#v, want a hidden background open", got.codexPendingOpen)
+	}
+	if got.codexVisibleProject != visibleProjectPath {
+		t.Fatalf("codexVisibleProject = %q, want current session %q", got.codexVisibleProject, visibleProjectPath)
+	}
+	if got.currentEmbeddedProvider() != codexapp.ProviderOpenCode {
+		t.Fatalf("current provider = %q, want visible OpenCode session", got.currentEmbeddedProvider())
+	}
+	rendered := ansi.Strip(got.renderCodexView())
+	if !strings.Contains(rendered, "Current engineer session stays visible") {
+		t.Fatalf("hidden TODO launch replaced the visible transcript: %q", rendered)
+	}
+	if strings.Contains(rendered, "Starting a new embedded Codex session") {
+		t.Fatalf("hidden TODO launch flashed its opening screen over the current session: %q", rendered)
+	}
+
+	updated, _ = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
+	got = updated.(Model)
+	if got.codexDenseBlockMode != codexDenseBlockPreview {
+		t.Fatalf("visible session input was captured by hidden TODO launch; block mode = %v", got.codexDenseBlockMode)
+	}
+
+	var opened codexSessionOpenedMsg
+	foundOpen := false
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+			opened = candidate
+			foundOpen = true
+			break
+		}
+	}
+	if !foundOpen {
+		t.Fatalf("background TODO command did not return codexSessionOpenedMsg")
+	}
+	if opened.err != nil {
+		t.Fatalf("background TODO open error = %v", opened.err)
+	}
+
+	updated, _ = got.Update(opened)
+	got = updated.(Model)
+	if got.codexVisibleProject != visibleProjectPath {
+		t.Fatalf("codexVisibleProject = %q after open, want current session %q", got.codexVisibleProject, visibleProjectPath)
+	}
+	if got.codexHiddenProject != todoProjectPath {
+		t.Fatalf("codexHiddenProject = %q, want completed TODO session %q", got.codexHiddenProject, todoProjectPath)
+	}
+	if rendered = ansi.Strip(got.renderCodexView()); !strings.Contains(rendered, "Current engineer session stays visible") {
+		t.Fatalf("completed background TODO launch replaced the visible transcript: %q", rendered)
+	}
+}
+
 func TestNormalModeEnterRevealsPendingTodoWorktreeLaunch(t *testing.T) {
 	projectPath := "/tmp/root--feat-background-todo"
 	m := Model{
