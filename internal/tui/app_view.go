@@ -2,13 +2,12 @@ package tui
 
 import (
 	"fmt"
-	"github.com/charmbracelet/lipgloss"
+	"strings"
+
 	"lcroom/internal/brand"
 	"lcroom/internal/model"
-	"path/filepath"
-	"sort"
-	"strings"
-	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func (m *Model) syncDetailViewport(reset bool) {
@@ -482,7 +481,12 @@ func (m Model) renderTopStatusLine(width int) string {
 		}
 	}
 
-	statusParts := make([]string, 0, 4)
+	mobileNotice := m.renderMobileServerStatusNotice()
+	prioritizeMobileStatus := mobileNotice != "" || strings.HasPrefix(rawStatus, "Mobile client ")
+	statusParts := make([]string, 0, 5)
+	if mobileNotice != "" {
+		statusParts = append(statusParts, mobileNotice)
+	}
 	if strings.TrimSpace(status) != "" {
 		statusParts = append(statusParts, m.renderTopStatusMessage(rawStatus, status))
 	}
@@ -495,13 +499,19 @@ func (m Model) renderTopStatusLine(width int) string {
 	}
 
 	segments := []string{title}
-	if actions := m.renderTopStatusActions(width); actions != "" {
-		segments = append(segments, actions)
+	if !prioritizeMobileStatus {
+		if actions := m.renderTopStatusActions(width); actions != "" {
+			segments = append(segments, actions)
+		}
 	}
 	if len(statusParts) > 0 {
 		segments = append(segments, joinFooterSegments(statusParts...))
 	}
-	return renderLineWithRightSegment(strings.Join(segments, "  "), m.renderTopCPUUsageSegment(), width)
+	rightSegment := m.renderTopCPUUsageSegment()
+	if prioritizeMobileStatus {
+		rightSegment = ""
+	}
+	return renderLineWithRightSegment(strings.Join(segments, "  "), rightSegment, width)
 }
 
 type topStatusSeverity int
@@ -1258,235 +1268,5 @@ func (m Model) renderDetailContent(width int) string {
 	if d.Summary.Path != "" && d.Summary.Path != p.Path {
 		d = model.ProjectDetail{}
 	}
-	assessmentValue := assessmentDisplayStyle(p, m.currentTime(), m.assessmentStallThreshold()).Render(projectAssessmentLabelWithThreshold(p, m.currentTime(), m.assessmentStallThreshold()))
-	statusValue := activityDisplayStyle(p).Render(projectActivityStatus(p))
-	summaryText := m.projectAssessmentDisplayTextAt(p, m.currentTime(), m.assessmentStallThreshold())
-	summaryStyle := detailValueStyle
-	if projectAssessmentRefreshing(p) {
-		summaryStyle = detailMutedStyle
-	}
-	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
-		summaryText = "not assessed yet"
-		summaryStyle = detailMutedStyle
-	}
-
-	lines := []string{renderWrappedDetailField("Summary", summaryStyle, width, summaryText)}
-	lines = append(lines, detailField("Path", detailValueStyle.Render(p.Path)))
-	if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
-		lines = append(lines, detailField("Kind", detailValueStyle.Render("scratch task")))
-		lines = append(lines, detailMutedStyle.Render("Press d or use /remove to archive or delete this task."))
-	}
-	statusFields := []string{detailField("Assessment", assessmentValue)}
-	if shouldShowProjectActivity(p) {
-		statusFields = append(statusFields, detailField("Activity", statusValue))
-	}
-	lines = appendDetailFields(lines, width, statusFields...)
-	if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
-		lines = append(lines, renderWrappedDetailField("Browser", detailWarningStyle, width, browserAttentionDetailSummary(browserAttention)))
-	}
-	if summary := m.projectProcessWarningSummary(p.Path); summary != "" {
-		lines = append(lines, renderWrappedDetailField("Processes", detailWarningStyle, width, summary))
-	}
-	if summary := m.projectLocalInstanceSummary(p.Path); summary != "" {
-		lines = append(lines, renderWrappedDetailField("Local instance", detailValueStyle, width, summary))
-	}
-	if projectMissing(p) {
-		lines = append(lines, detailWarningStyle.Render("Folder: missing on disk"))
-		if p.WorktreeKind == model.WorktreeKindLinked {
-			lines = append(lines, detailMutedStyle.Render("Use /remove to clean up this missing linked worktree. x and /wt remove still work too."))
-		} else {
-			lines = append(lines, detailMutedStyle.Render("Use /remove to take this missing folder off the dashboard."))
-		}
-	}
-	lastActivityValue := detailMutedStyle.Render("never")
-	if !p.LastActivity.IsZero() {
-		lastActivityValue = detailValueStyle.Render(p.LastActivity.Format(time.RFC3339))
-	}
-	if p.LatestSessionFormat != "" || !p.LastActivity.IsZero() {
-		lastSourceValue := detailMutedStyle.Render("None")
-		if p.LatestSessionFormat != "" {
-			lastSourceValue = sourceStyle(p.LatestSessionFormat, m.projectHasLiveCodexSession(p.Path)).Render(sourceLabel(p.LatestSessionFormat))
-		}
-		lastActivityValue += "  " + lastSourceValue
-	}
-	lines = append(lines, detailField("Last activity", lastActivityValue))
-	if p.MovedFromPath != "" && moveStatusActive(p.MovedAt, p.Path, p.LatestSessionDetectedProjectPath) {
-		movedFields := []string{detailField("Moved from", detailValueStyle.Render(p.MovedFromPath))}
-		if !p.MovedAt.IsZero() {
-			movedFields = append(movedFields, detailField("Moved at", detailValueStyle.Render(p.MovedAt.Format(time.RFC3339))))
-		}
-		lines = appendDetailFields(lines, width, movedFields...)
-	}
-	if projectHasGitInfo(p) {
-		lines = append(lines, detailField("Repo", m.repoCombinedDetailValue(p)))
-		if p.RepoConflict {
-			lines = append(lines, detailField("Conflict", repoConflictDetailValue(p)))
-		}
-		if projectHasSubmoduleAttention(p) {
-			lines = append(lines, detailField("Submodules", repoSubmoduleAttentionDetailValue(p)))
-		}
-	}
-	if projectUsesRepoUI(p) && p.WorktreeKind == model.WorktreeKindLinked {
-		mergeBackValue := detailMutedStyle.Render("parent branch unavailable")
-		targetBranch := strings.TrimSpace(p.WorktreeParentBranch)
-		sourceBranch := strings.TrimSpace(p.RepoBranch)
-		switch {
-		case targetBranch == "":
-		case sourceBranch != "" && sourceBranch != targetBranch:
-			mergeBackValue = detailValueStyle.Render(sourceBranch + " -> " + targetBranch)
-		default:
-			mergeBackValue = detailValueStyle.Render(targetBranch)
-		}
-		lines = append(lines, detailField("Merge back", mergeBackValue))
-		lines = append(lines, detailField("Merge status", worktreeMergeStatusDetailValue(p)))
-	}
-	rootPath := projectWorktreeRootPath(p)
-	family := m.worktreeFamily(rootPath)
-	orphanedFamily := m.orphanedWorktreeFamily(rootPath)
-	orphanedCount := len(orphanedFamily)
-	if projectUsesRepoUI(p) && (len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked || orphanedCount > 0) {
-		activeCount, dirtyCount := m.worktreeActivityCounts(family)
-		unmergedCount := worktreeUnmergedCount(family)
-		lines = append(lines, detailField("Worktrees", detailValueStyle.Render(worktreeGroupSummary(family, activeCount, dirtyCount, unmergedCount, orphanedCount))))
-		if projectIsWorktreeRoot(p) {
-			lines = append(lines, detailSectionStyle.Render("Worktree lanes"))
-			family = append([]model.ProjectSummary(nil), family...)
-			sort.SliceStable(family, func(i, j int) bool {
-				leftRoot := projectIsWorktreeRoot(family[i])
-				rightRoot := projectIsWorktreeRoot(family[j])
-				if leftRoot != rightRoot {
-					return leftRoot
-				}
-				if !family[i].LastActivity.Equal(family[j].LastActivity) {
-					return family[i].LastActivity.After(family[j].LastActivity)
-				}
-				return strings.ToLower(family[i].Path) < strings.ToLower(family[j].Path)
-			})
-			for _, member := range family {
-				label := projectWorktreeLabel(member)
-				if projectIsWorktreeRoot(member) {
-					label = "root: " + label
-				}
-				statusParts := []string{}
-				lineStyle := detailValueStyle
-				if op, ok := m.pendingGitOperation(member.Path); ok {
-					statusParts = append(statusParts, op.shortLabel())
-					lineStyle = detailValueStyle
-				} else if member.RepoConflict {
-					statusParts = append(statusParts, "conflict")
-					lineStyle = detailConflictStyle
-				} else if member.RepoDirty {
-					statusParts = append(statusParts, "dirty")
-				} else {
-					statusParts = append(statusParts, "clean")
-				}
-				if member.Status != model.StatusIdle {
-					statusParts = append(statusParts, string(member.Status))
-				}
-				if m.projectHasLiveCodexSession(member.Path) {
-					statusParts = append(statusParts, "agent")
-				}
-				if snapshot := m.projectRuntimeSnapshot(member.Path); snapshot.Running {
-					statusParts = append(statusParts, "runtime")
-				}
-				if member.WorktreeKind == model.WorktreeKindLinked {
-					switch member.WorktreeMergeStatus {
-					case model.WorktreeMergeStatusMerged:
-						statusParts = append(statusParts, worktreeNothingToMergeText())
-					case model.WorktreeMergeStatusMergeInProgress:
-						statusParts = append(statusParts, "merging")
-					case model.WorktreeMergeStatusNotMerged:
-						statusParts = append(statusParts, "needs merge")
-					}
-				}
-				if filepath.Clean(member.Path) == filepath.Clean(p.Path) {
-					statusParts = append(statusParts, "current")
-				}
-				lines = append(lines, renderWrappedDetailBullet(lineStyle, width, label+" · "+strings.Join(statusParts, ", ")))
-			}
-		}
-		if orphanedCount > 0 {
-			lines = append(lines, detailSectionStyle.Render("Worktree warnings"))
-			summary := fmt.Sprintf("%d orphaned checkout(s) still exist on disk. Git no longer tracks them as live worktrees. Remove the leftover folder when you no longer need its files.", orphanedCount)
-			lines = append(lines, renderWrappedDetailBullet(detailWarningStyle, width, summary))
-			for _, orphan := range orphanedFamily {
-				statusParts := []string{"orphaned"}
-				switch orphan.WorktreeMergeStatus {
-				case model.WorktreeMergeStatusMerged:
-					statusParts = append(statusParts, worktreeNothingToMergeText())
-				case model.WorktreeMergeStatusMergeInProgress:
-					statusParts = append(statusParts, "merging")
-				case model.WorktreeMergeStatusNotMerged:
-					statusParts = append(statusParts, "needs merge")
-				}
-				lines = append(lines, renderWrappedDetailBullet(detailWarningStyle, width, projectWorktreeLabel(orphan)+" · "+strings.Join(statusParts, ", ")))
-				lines = append(lines, renderWrappedDetailBullet(detailMutedStyle, width, m.displayPathWithHomeTilde(orphan.Path)))
-			}
-		}
-		if hints := m.worktreeActionHints(p, family); len(hints) > 0 {
-			lines = append(lines, detailSectionStyle.Render("Worktree actions"))
-			for _, hint := range hints {
-				lines = append(lines, renderWrappedDetailBullet(detailValueStyle, width, hint))
-			}
-		}
-	}
-
-	if p.SnoozedUntil != nil {
-		lines = append(lines, detailField("Snoozed until", detailValueStyle.Render(p.SnoozedUntil.Format(time.RFC3339))))
-	}
-	todoProject := p
-	if rootPath := projectWorktreeRootPath(p); rootPath != "" && filepath.Clean(rootPath) != filepath.Clean(p.Path) {
-		if rootProject, ok := m.projectSummaryByPath(rootPath); ok {
-			todoProject = rootProject
-		}
-	}
-	todoValue := detailMutedStyle.Render("none · press t or /todo")
-	if todoProject.TotalTODOCount == 0 {
-		lines = append(lines, detailField("TODOs", todoValue))
-	} else {
-		todoValue = detailValueStyle.Render(fmt.Sprintf("%d open, %d total", todoProject.OpenTODOCount, todoProject.TotalTODOCount)) + detailMutedStyle.Render(" · press t or /todo")
-		if filepath.Clean(todoProject.Path) != filepath.Clean(p.Path) {
-			todoValue += detailMutedStyle.Render(" · repo-scoped")
-		}
-		lines = append(lines, detailField("TODOs", todoValue))
-	}
-
-	lines = append(lines, detailSectionStyle.Render("Attention reasons"))
-	reasons := m.projectAttentionReasons(p, d.Reasons)
-	if len(reasons) == 0 {
-		lines = append(lines, detailMutedStyle.Render("- none"))
-	} else {
-		for _, r := range reasons {
-			lines = append(lines, detailReasonLine(r))
-		}
-	}
-
-	if m.showSessions {
-		lines = append(lines, detailSectionStyle.Render("Sessions"))
-		if len(d.Sessions) == 0 {
-			lines = append(lines, detailMutedStyle.Render("- none"))
-		} else {
-			limit := min(6, len(d.Sessions))
-			for i := 0; i < limit; i++ {
-				s := d.Sessions[i]
-				lines = append(lines, detailValueStyle.Render(fmt.Sprintf("- %s | %s | errors=%d", shortID(s.SessionID), s.LastEventAt.Format("01-02 15:04"), s.ErrorCount)))
-			}
-		}
-	}
-
-	if m.showEvents {
-		lines = append(lines, detailSectionStyle.Render("Recent events"))
-		if len(d.RecentEvents) == 0 {
-			lines = append(lines, detailMutedStyle.Render("- none"))
-		} else {
-			limit := min(8, len(d.RecentEvents))
-			for i := 0; i < limit; i++ {
-				e := d.RecentEvents[i]
-				lines = append(lines, detailValueStyle.Render(fmt.Sprintf("- %s %s", e.At.Format("01-02 15:04"), e.Payload)))
-			}
-		}
-	}
-
-	content := strings.Join(lines, "\n")
-	return fitPaneContent(content, width, len(strings.Split(content, "\n")))
+	return renderProjectDetailSurface(m.buildProjectDetailSurface(p, d), width)
 }

@@ -92,6 +92,23 @@ func Run(programName string, args []string) int {
 			return 2
 		}
 	}
+	serveAddr := server.DefaultListenAddress
+	if subcmd == "serve" {
+		var listenAddr string
+		var err error
+		commonArgs, listenAddr, err = stripPathFlagArg(commonArgs, "--listen")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "serve flag error: %v\n", err)
+			return 2
+		}
+		if strings.TrimSpace(listenAddr) != "" {
+			serveAddr = strings.TrimSpace(listenAddr)
+		}
+		if err := server.ValidateListenAddress(serveAddr); err != nil {
+			fmt.Fprintf(os.Stderr, "serve flag error: %v\n", err)
+			return 2
+		}
+	}
 
 	cfg, err := config.Parse(subcmd, commonArgs)
 	if err != nil {
@@ -182,7 +199,7 @@ func Run(programName string, args []string) int {
 	case "tui":
 		return runTUI(ctx, svc)
 	case "serve":
-		return runServe(ctx, svc)
+		return runServe(ctx, svc, serveAddr)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", subcmd)
 		printUsage(programName)
@@ -927,13 +944,23 @@ func formatRepoSyncLine(status model.RepoSyncStatus, ahead, behind int) string {
 }
 
 func runTUI(ctx context.Context, svc *service.Service) int {
-	go svc.StartScheduler(ctx)
-	go svc.StartSessionClassifier(ctx)
-	go svc.StartTodoWorktreeSuggester(ctx)
-	go svc.StartCommitTodoChecker(ctx)
-	svc.StartBackgroundDiscovery(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	mobileServer, mobileStatus := startTUIMobileServer(runCtx, svc)
+	defer func() {
+		cancel()
+		if err := stopRunningServer(mobileServer); err != nil {
+			fmt.Fprintf(os.Stderr, "mobile server shutdown failed: %v\n", err)
+		}
+	}()
 
-	m := tui.New(ctx, svc)
+	go svc.StartScheduler(runCtx)
+	go svc.StartSessionClassifier(runCtx)
+	go svc.StartTodoWorktreeSuggester(runCtx)
+	go svc.StartCommitTodoChecker(runCtx)
+	svc.StartBackgroundDiscovery(runCtx)
+
+	m := tui.New(runCtx, svc)
+	m.SetMobileServerStatus(mobileStatus)
 	m.EnableUIStallWatchdog()
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -941,6 +968,36 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 		return 1
 	}
 	return 0
+}
+
+func startTUIMobileServer(ctx context.Context, svc *service.Service) (*server.RunningServer, tui.MobileServerStatus) {
+	status := tui.MobileServerStatus{ListenAddress: server.DefaultListenAddress}
+	running, err := server.New(svc).Start(ctx, server.DefaultListenAddress)
+	if err != nil {
+		status.Error = err.Error()
+		return nil, status
+	}
+	status.URL = running.URL()
+	return running, status
+}
+
+func stopRunningServer(running *server.RunningServer) error {
+	if running == nil {
+		return nil
+	}
+	select {
+	case <-running.Done():
+		return running.Wait()
+	default:
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	shutdownErr := running.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		_ = running.Close()
+	}
+	return errors.Join(shutdownErr, running.Wait())
 }
 
 func runBoss(ctx context.Context, svc *service.Service) int {
@@ -1018,8 +1075,12 @@ func allGoroutineStack() []byte {
 	}
 }
 
-func runServe(ctx context.Context, svc *service.Service) int {
-	_, _ = svc.ScanOnce(ctx)
+func runServe(ctx context.Context, svc *service.Service, addr string) int {
+	go func() {
+		if _, err := svc.ScanOnce(ctx); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "initial serve scan failed: %v\n", err)
+		}
+	}()
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
 	go svc.StartTodoWorktreeSuggester(ctx)
@@ -1027,8 +1088,16 @@ func runServe(ctx context.Context, svc *service.Service) int {
 	svc.StartBackgroundDiscovery(ctx)
 
 	s := server.New(svc)
-	fmt.Printf("serving %s on :7777\n", brand.Name)
-	if err := s.Run(ctx, ":7777"); err != nil {
+	running, err := s.Start(ctx, addr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
+		return 1
+	}
+	fmt.Printf("serving %s at %s\n", brand.Name, running.URL())
+	if !server.ListenAddressIsLoopback(addr) {
+		fmt.Println("warning: this read-only preview has no authentication; use a trusted network only")
+	}
+	if err := running.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
 		return 1
 	}
@@ -1179,6 +1248,8 @@ func printUsage(programName string) {
 	fmt.Println("Mockups flags:")
 	fmt.Println("  --screenshot-config <path>")
 	fmt.Println("  --output-dir <path>")
+	fmt.Println("Serve flags:")
+	fmt.Printf("  --listen <host:port> (default %s)\n", server.DefaultListenAddress)
 	fmt.Println("Browser flags:")
 	fmt.Println("  browser <status|reveal> --session-key <id> [--data-dir <path>]")
 	fmt.Println("Help metadata:")

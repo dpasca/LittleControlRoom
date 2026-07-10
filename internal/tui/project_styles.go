@@ -6,6 +6,7 @@ import (
 	"lcroom/internal/attention"
 	"lcroom/internal/model"
 	"lcroom/internal/sessionclassify"
+	"lcroom/internal/uisurface"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -132,16 +133,7 @@ func (m Model) projectListAssessmentSummaryStyle(project model.ProjectSummary) l
 }
 
 func effectiveAssessmentForProject(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) sessionclassify.EffectiveAssessment {
-	return sessionclassify.DeriveEffectiveAssessment(sessionclassify.EffectiveAssessmentInput{
-		Status:               project.LatestSessionClassification,
-		Category:             project.LatestSessionClassificationType,
-		Summary:              project.LatestSessionSummary,
-		LastEventAt:          project.LatestSessionLastEventAt,
-		LatestTurnStateKnown: project.LatestTurnStateKnown,
-		LatestTurnCompleted:  project.LatestTurnCompleted,
-		Now:                  now,
-		StuckThreshold:       stuckThreshold,
-	})
+	return uisurface.EffectiveAssessmentForProject(project, now, stuckThreshold)
 }
 
 func projectAssessmentUnread(project model.ProjectSummary, now time.Time, stuckThreshold time.Duration) bool {
@@ -169,20 +161,11 @@ func assessmentStatusLabelAt(project model.ProjectSummary, compact bool, now tim
 
 func assessmentStatusLabelForCategory(category model.SessionCategory, compact bool) (string, model.SessionCategory, bool) {
 	_ = compact
-	switch category {
-	case model.SessionCategoryCompleted:
-		return "done", model.SessionCategoryCompleted, true
-	case model.SessionCategoryBlocked:
-		return "blocked", model.SessionCategoryBlocked, true
-	case model.SessionCategoryWaitingForUser:
-		return "waiting", model.SessionCategoryWaitingForUser, true
-	case model.SessionCategoryNeedsFollowUp:
-		return "followup", model.SessionCategoryNeedsFollowUp, true
-	case model.SessionCategoryInProgress:
-		return "working", model.SessionCategoryInProgress, true
-	default:
+	label, ok := uisurface.AssessmentCompactLabel(category)
+	if !ok {
 		return "", model.SessionCategoryUnknown, false
 	}
+	return label, category, true
 }
 
 func assessmentCategoryHasLabel(category model.SessionCategory) bool {
@@ -394,18 +377,10 @@ func sourceTag(format string) string {
 }
 
 func sourceLabel(format string) string {
-	switch sourceTag(format) {
-	case "CX":
-		return "Codex"
-	case "OC":
-		return "OpenCode"
-	case "CC":
-		return "Claude Code"
-	case "LA":
-		return "LCAgent"
-	default:
-		return "None"
+	if label := uisurface.SourceLabel(format); label != "" {
+		return label
 	}
+	return "None"
 }
 
 func (m *Model) sortProjects(projects []model.ProjectSummary) {

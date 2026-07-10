@@ -1,0 +1,8 @@
+{
+  "name": "Little Control Room",
+  "short_name": "LCR",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#f4f6f8"
+}

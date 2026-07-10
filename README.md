@@ -88,6 +88,18 @@ lcroom tui
 
 </details>
 
+## Local Mobile Preview
+
+The first read-only mobile slice starts with the main TUI and shares its live store, service configuration, and update events:
+
+```bash
+lcroom tui
+```
+
+Open `http://127.0.0.1:7777` to use the project/category dashboard and simplified project detail. Use `/mobile` in the TUI to check the URL. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line.
+
+`lcroom serve` remains available for a standalone preview. It binds to loopback by default; `--listen 0.0.0.0:7777` enables a LAN experiment, but there is no authentication yet, so only expose it on a trusted network. A standalone preview still needs its own database runtime lease, while the TUI-hosted client does not.
+
 <p align="center">
   <a href="docs/screenshots/setup.png">
     <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Getting Started settings for project reports, boss chat, and optional LCAgent details" width="850">

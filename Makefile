@@ -16,6 +16,7 @@ DB ?= $(DB_DEFAULT)
 INTERVAL ?= 60s
 ACTIVE_THRESHOLD ?= 20m
 STUCK_THRESHOLD ?= 4h
+SERVE_LISTEN ?= 127.0.0.1:7777
 SCREENSHOT_CONFIG ?= screenshots.local.toml
 SCREENSHOT_OUTPUT_DIR ?=
 MOCKUP_OUTPUT_DIR ?= /tmp/lcroom-mockups
@@ -67,7 +68,7 @@ help:
 	@echo "  make tui             - run TUI dashboard"
 	@echo "  make tui-parallel    - run a second TUI using isolated config/DB under /tmp"
 	@echo "  make tui-parallel-clean - remove stale /tmp TUI sandboxes not used by active runtimes"
-	@echo "  make serve           - run REST/WS server skeleton"
+	@echo "  make serve           - run the read-only local web/mobile client"
 	@echo ""
 	@echo "Config vars (override like: make scan INCLUDE_PATHS=... DB=...):"
 	@echo "  DATA_DIR=$(DATA_DIR)"
@@ -80,6 +81,7 @@ help:
 	@echo "  INTERVAL=$(INTERVAL)"
 	@echo "  ACTIVE_THRESHOLD=$(ACTIVE_THRESHOLD)"
 	@echo "  STUCK_THRESHOLD=$(STUCK_THRESHOLD)"
+	@echo "  SERVE_LISTEN=$(SERVE_LISTEN)"
 	@echo "  SCREENSHOT_CONFIG=$(SCREENSHOT_CONFIG)"
 	@echo "  SCREENSHOT_OUTPUT_DIR=$(SCREENSHOT_OUTPUT_DIR)"
 	@echo "  MOCKUP_OUTPUT_DIR=$(MOCKUP_OUTPUT_DIR)"
@@ -210,4 +212,4 @@ tui-parallel:
 	exit $$rc
 
 serve:
-	$(GO) run ./cmd/$(APP) serve $(COMMON_FLAGS) $(INTERVAL_FLAG)
+	$(GO) run ./cmd/$(APP) serve $(COMMON_FLAGS) $(INTERVAL_FLAG) --listen "$(SERVE_LISTEN)"

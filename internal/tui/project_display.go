@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/fuzzyfilter"
 	"lcroom/internal/model"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/uisurface"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -826,12 +827,7 @@ func dialogOverflowHintLine(width int, text string) string {
 }
 
 func repoSyncWarning(status model.RepoSyncStatus) bool {
-	switch status {
-	case model.RepoSyncAhead, model.RepoSyncBehind, model.RepoSyncDiverged, model.RepoSyncNoUpstream:
-		return true
-	default:
-		return false
-	}
+	return uisurface.RepoSyncWarning(status)
 }
 
 func repoSyncDetailLine(project model.ProjectSummary) string {
@@ -1305,7 +1301,7 @@ func projectHasAIMetadata(project model.ProjectSummary) bool {
 }
 
 func projectMissing(project model.ProjectSummary) bool {
-	return !project.PresentOnDisk
+	return uisurface.ProjectMissing(project)
 }
 
 func filterProjects(projects []model.ProjectSummary, mode projectVisibilityMode, excludeProjectPatterns []string, projectFilter string) []model.ProjectSummary {
