@@ -28,6 +28,7 @@ import (
 type Server struct {
 	svc          *service.Service
 	liveSessions LiveSessionSource
+	mobileAuth   *MobileAuth
 }
 
 type RunningServer struct {
@@ -47,6 +48,13 @@ var mobileWebFiles embed.FS
 
 func New(svc *service.Service) *Server {
 	return &Server{svc: svc}
+}
+
+func (s *Server) WithMobileAuth(auth *MobileAuth) *Server {
+	if s != nil {
+		s.mobileAuth = auth
+	}
+	return s
 }
 
 func ValidateListenAddress(addr string) error {
@@ -185,14 +193,17 @@ func (s *RunningServer) Close() error {
 func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/projects", s.handleProjects)
-	mux.HandleFunc("/projects/detail", s.handleProjectDetail)
-	mux.HandleFunc("/api/mobile/dashboard", s.handleMobileDashboard)
-	mux.HandleFunc("/api/mobile/projects/detail", s.handleMobileProjectDetail)
-	mux.HandleFunc("/api/mobile/projects/sessions", s.handleMobileProjectSessions)
-	mux.HandleFunc("/api/mobile/sessions/detail", s.handleMobileSessionDetail)
+	mux.HandleFunc("/api/mobile/auth/status", s.handleMobileAuthStatus)
+	mux.HandleFunc("/api/mobile/auth/pair", s.handleMobileAuthPair)
+	mux.HandleFunc("/api/mobile/auth/logout", s.handleMobileAuthLogout)
+	mux.Handle("/projects", s.protectMobile(http.HandlerFunc(s.handleProjects)))
+	mux.Handle("/projects/detail", s.protectMobile(http.HandlerFunc(s.handleProjectDetail)))
+	mux.Handle("/api/mobile/dashboard", s.protectMobile(http.HandlerFunc(s.handleMobileDashboard)))
+	mux.Handle("/api/mobile/projects/detail", s.protectMobile(http.HandlerFunc(s.handleMobileProjectDetail)))
+	mux.Handle("/api/mobile/projects/sessions", s.protectMobile(http.HandlerFunc(s.handleMobileProjectSessions)))
+	mux.Handle("/api/mobile/sessions/detail", s.protectMobile(http.HandlerFunc(s.handleMobileSessionDetail)))
 	mux.HandleFunc("/assets/operator-station.png", handleOperatorStationAsset)
-	mux.HandleFunc("/events/ws", s.handleEventsWS(ctx))
+	mux.Handle("/events/ws", s.protectMobile(s.handleEventsWS(ctx)))
 
 	webRoot, err := fs.Sub(mobileWebFiles, "web")
 	if err != nil {
@@ -204,6 +215,28 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 		webHandler.ServeHTTP(w, r)
 	}))
 	return securityHeaders(mux)
+}
+
+func (s *Server) protectMobile(next http.Handler) http.Handler {
+	if s == nil || s.mobileAuth == nil {
+		return next
+	}
+	return s.mobileAuth.Protect(next)
+}
+
+func (s *Server) handleMobileAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if !requireGET(w, r) {
+		return
+	}
+	writeJSON(w, s.mobileAuth.status(r))
+}
+
+func (s *Server) handleMobileAuthPair(w http.ResponseWriter, r *http.Request) {
+	s.mobileAuth.pair(w, r)
+}
+
+func (s *Server) handleMobileAuthLogout(w http.ResponseWriter, r *http.Request) {
+	s.mobileAuth.logout(w, r)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

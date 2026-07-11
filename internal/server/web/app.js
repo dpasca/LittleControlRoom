@@ -17,6 +17,8 @@
     reconnectTimer: 0,
     refreshTimer: 0,
     connection: "connecting",
+    authRequired: false,
+    authenticated: false,
   };
 
   const elements = {
@@ -25,6 +27,16 @@
     refreshButton: document.getElementById("refresh-button"),
     connectionDot: document.getElementById("connection-dot"),
     connectionLabel: document.getElementById("connection-label"),
+    authStateLabel: document.getElementById("auth-state-label"),
+    authView: document.getElementById("auth-view"),
+    authLockState: document.getElementById("auth-lock-state"),
+    authChecking: document.getElementById("auth-checking"),
+    authCheckingLabel: document.getElementById("auth-checking-label"),
+    authForm: document.getElementById("auth-form"),
+    authCode: document.getElementById("auth-code"),
+    authError: document.getElementById("auth-error"),
+    authSubmit: document.getElementById("auth-submit"),
+    authRetry: document.getElementById("auth-retry"),
     operatorBay: document.getElementById("operator-bay"),
     operatorCount: document.getElementById("operator-count"),
     operatorLabel: document.getElementById("operator-label"),
@@ -67,12 +79,21 @@
     sessionStatus: document.getElementById("session-status"),
     sessionID: document.getElementById("session-id"),
     sessionInstruments: document.getElementById("session-instruments"),
+    sessionInstrumentToggle: document.getElementById("session-instrument-toggle"),
     sessionInstrumentSummary: document.getElementById("session-instrument-summary"),
     sessionInstrumentList: document.getElementById("session-instrument-list"),
     sessionUpdatedLabel: document.getElementById("session-updated-label"),
     sessionTruncated: document.getElementById("session-truncated"),
     sessionTranscript: document.getElementById("session-transcript"),
+    protectedViews: document.querySelectorAll(".dashboard-view, .detail-view, .detail-placeholder, .session-view"),
   };
+
+  class AuthRequiredError extends Error {
+    constructor() {
+      super("Mobile pairing required");
+      this.name = "AuthRequiredError";
+    }
+  }
 
   function createElement(tag, className, text) {
     const node = document.createElement(tag);
@@ -91,11 +112,114 @@
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
+    if (response.status === 401) {
+      showAuthGate();
+      throw new AuthRequiredError();
+    }
     if (!response.ok) {
       const message = (await response.text()).trim();
       throw new Error(message || `Request failed (${response.status})`);
     }
     return response.json();
+  }
+
+  function isAuthRequiredError(error) {
+    return error instanceof AuthRequiredError;
+  }
+
+  function showAuthGate(message = "") {
+    state.authRequired = true;
+    state.authenticated = false;
+    window.clearTimeout(state.reconnectTimer);
+    if (state.socket) {
+      const socket = state.socket;
+      state.socket = null;
+      socket.close();
+    }
+    elements.body.classList.remove("auth-pending");
+    elements.body.classList.add("auth-locked");
+    for (const view of elements.protectedViews) view.inert = true;
+    elements.authView.hidden = false;
+    elements.authChecking.hidden = true;
+    elements.authForm.hidden = false;
+    elements.authRetry.hidden = true;
+    elements.authLockState.textContent = "Locked";
+    elements.authLockState.className = "metal-status tone-warning";
+    elements.authStateLabel.textContent = "Locked";
+    elements.authError.textContent = message;
+    setConnection("offline", "Locked");
+  }
+
+  function showAuthLinkFailure(message) {
+    state.authenticated = false;
+    elements.body.classList.remove("auth-pending");
+    elements.body.classList.add("auth-locked");
+    for (const view of elements.protectedViews) view.inert = true;
+    elements.authView.hidden = false;
+    elements.authChecking.hidden = false;
+    elements.authForm.hidden = true;
+    elements.authRetry.hidden = false;
+    elements.authCheckingLabel.textContent = message;
+    elements.authLockState.textContent = "Offline";
+    elements.authLockState.className = "metal-status tone-danger";
+    elements.authStateLabel.textContent = "Offline";
+    setConnection("offline", "Offline");
+  }
+
+  function releaseAuthGate(status) {
+    state.authRequired = Boolean(status.required);
+    state.authenticated = true;
+    elements.body.classList.remove("auth-pending", "auth-locked");
+    for (const view of elements.protectedViews) view.inert = false;
+    elements.authView.hidden = true;
+    elements.authForm.hidden = true;
+    elements.authChecking.hidden = true;
+    elements.authRetry.hidden = true;
+    elements.authError.textContent = "";
+    elements.authCode.value = "";
+    elements.authLockState.textContent = "Paired";
+    elements.authLockState.className = "metal-status tone-positive";
+    elements.authStateLabel.textContent = status.required ? "Paired" : "Local";
+  }
+
+  async function readAuthStatus() {
+    const response = await window.fetch("/api/mobile/auth/status", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`Link check failed (${response.status})`);
+    return response.json();
+  }
+
+  async function bootstrap() {
+    elements.body.classList.add("auth-pending");
+    elements.authView.hidden = false;
+    elements.authChecking.hidden = false;
+    elements.authForm.hidden = true;
+    elements.authRetry.hidden = true;
+    elements.authCheckingLabel.textContent = "Checking control-room link";
+    elements.authStateLabel.textContent = "Checking";
+    try {
+      const status = await readAuthStatus();
+      if (status.required && !status.authenticated) {
+        showAuthGate();
+        return;
+      }
+      releaseAuthGate(status);
+      await startAuthenticatedApp();
+    } catch (error) {
+      showAuthLinkFailure(error.message || "Control room unavailable");
+    }
+  }
+
+  async function startAuthenticatedApp() {
+    if (!state.authenticated) return;
+    connectEvents();
+    await loadDashboard(true);
+    if (state.authenticated) {
+      closeProject(false);
+      await openRouteFromLocation();
+    }
   }
 
   async function loadDashboard(showSpinner = true) {
@@ -105,6 +229,7 @@
       ensureSelectedCategory();
       renderDashboard();
     } catch (error) {
+      if (isAuthRequiredError(error)) return;
       renderDashboardError(error);
       setConnection("offline", "Offline");
     } finally {
@@ -273,6 +398,7 @@
       state.projectSessionSignature = signature;
       renderProjectSessions(sessions);
     } catch (error) {
+      if (isAuthRequiredError(error)) return;
       if (state.selectedPath !== path) return;
       elements.projectSessionCount.textContent = "Unavailable";
       elements.projectSessionsState.hidden = false;
@@ -350,6 +476,7 @@
       if (state.selectedPath !== path) return;
       renderProjectDetail(detail);
     } catch (error) {
+      if (isAuthRequiredError(error)) return;
       if (state.selectedPath !== path) return;
       renderDetailError(error);
     }
@@ -452,6 +579,7 @@
       state.sessionDetailSignature = signature;
       renderSessionDetail(detail, initial);
     } catch (error) {
+      if (isAuthRequiredError(error)) return;
       if (requestID !== state.sessionRequestID || state.selectedSessionID !== sessionID) return;
       if (!elements.sessionContent.hidden) {
         elements.sessionUpdatedLabel.textContent = "Link error";
@@ -687,6 +815,7 @@
   }
 
   function connectEvents() {
+    if (!state.authenticated) return;
     if (state.socket) state.socket.close();
     window.clearTimeout(state.reconnectTimer);
     const scheme = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -707,12 +836,24 @@
     socket.addEventListener("close", () => {
       if (state.socket !== socket) return;
       setConnection("offline", "Reconnecting");
-      state.reconnectTimer = window.setTimeout(connectEvents, 2500);
+      state.reconnectTimer = window.setTimeout(async () => {
+        try {
+          const status = await readAuthStatus();
+          if (status.required && !status.authenticated) {
+            showAuthGate();
+            return;
+          }
+          connectEvents();
+        } catch (_error) {
+          connectEvents();
+        }
+      }, 2500);
     });
     socket.addEventListener("error", () => socket.close());
   }
 
   async function openRouteFromLocation() {
+    if (!state.authenticated) return;
     const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
     const params = new URLSearchParams(hash);
     const projectPath = params.get("project") || "";
@@ -741,7 +882,67 @@
     elements.systemTime.textContent = formatClockTime(now);
   }
 
+  async function submitPairingCode() {
+    const code = elements.authCode.value.trim();
+    if (!code) {
+      elements.authError.textContent = "Enter the pairing code";
+      return;
+    }
+    elements.authError.textContent = "";
+    elements.authSubmit.disabled = true;
+    const submitLabel = elements.authSubmit.querySelector("span:last-child");
+    submitLabel.textContent = "Pairing";
+    try {
+      const response = await window.fetch("/api/mobile/auth/pair", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify({ code }),
+      });
+      if (!response.ok) {
+        if (response.status === 429) {
+          const retryAfter = Number.parseInt(response.headers.get("Retry-After") || "60", 10);
+          throw new Error(`Receiver locked. Try again in ${Number.isFinite(retryAfter) ? retryAfter : 60}s`);
+        }
+        if (response.status === 401) throw new Error("Pairing code not accepted");
+        throw new Error((await response.text()).trim() || `Pairing failed (${response.status})`);
+      }
+      const status = await response.json();
+      if (!status.authenticated) throw new Error("Pairing did not establish a session");
+      releaseAuthGate(status);
+      await startAuthenticatedApp();
+    } catch (error) {
+      elements.authError.textContent = error.message || "Could not pair this phone";
+      elements.authCode.select();
+    } finally {
+      elements.authSubmit.disabled = false;
+      submitLabel.textContent = "Pair this phone";
+    }
+  }
+
+  elements.authForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitPairingCode();
+  });
+
+  elements.authCode.addEventListener("input", () => {
+    const digits = [...elements.authCode.value].filter((char) => char >= "0" && char <= "9").slice(0, 6);
+    elements.authCode.value = digits.length > 3
+      ? `${digits.slice(0, 3).join("")} ${digits.slice(3).join("")}`
+      : digits.join("");
+    elements.authError.textContent = "";
+  });
+
+  elements.authRetry.addEventListener("click", () => void bootstrap());
+
   elements.refreshButton.addEventListener("click", async () => {
+    if (!state.authenticated) {
+      await bootstrap();
+      return;
+    }
     const sessionID = state.selectedSessionID;
     await loadDashboard(true);
     if (state.selectedPath) await openProject(state.selectedPath, false);
@@ -763,6 +964,9 @@
 
   elements.backButton.addEventListener("click", () => closeProject(true));
   elements.sessionBackButton.addEventListener("click", () => closeSession(true));
+  elements.sessionInstruments.addEventListener("toggle", () => {
+    elements.sessionInstrumentToggle.textContent = elements.sessionInstruments.open ? "-" : "+";
+  });
   elements.sessionTranscript.addEventListener("scroll", () => {
     state.sessionStickToBottom = elements.sessionTranscript.scrollHeight
       - elements.sessionTranscript.scrollTop
@@ -776,6 +980,7 @@
     });
   });
   window.addEventListener("keydown", (event) => {
+    if (!state.authenticated) return;
     if (event.key !== "Escape") return;
     if (state.selectedSessionID) {
       closeSession(true);
@@ -787,12 +992,12 @@
   updateSystemTime();
   window.setInterval(updateSystemTime, 30000);
   window.setInterval(() => {
+    if (!state.authenticated) return;
     if (state.selectedSessionID) {
       void loadSessionDetail(state.selectedSessionID, false);
     } else if (state.selectedPath) {
       void loadProjectSessions(state.selectedPath, false);
     }
   }, 2500);
-  loadDashboard(true).then(openRouteFromLocation);
-  connectEvents();
+  void bootstrap();
 })();

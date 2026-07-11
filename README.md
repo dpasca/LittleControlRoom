@@ -98,9 +98,11 @@ lcroom tui
 
 Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and read-only active/recent engineer transcripts. Use `/mobile` in the TUI to check the URL. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line.
 
-Pass an explicit LAN address to keep the live session manager and mobile client in the same process, for example `lcroom tui --listen 192.168.0.6:7777`. There is no authentication yet, so only expose it on a trusted network.
+Pass an explicit LAN address to keep the live session manager and mobile client in the same process, for example `lcroom tui --listen 192.168.0.6:7777`. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the current six-digit code, then enter it on the phone. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
 
-`lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
+`lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It prints the LAN pairing code at startup. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
+
+Pairing authenticates the browser but does not encrypt plain HTTP traffic. Keep direct LAN exposure on a trusted network; transport encryption or a private overlay network is still required against local traffic interception.
 
 <p align="center">
   <a href="docs/screenshots/setup.png">

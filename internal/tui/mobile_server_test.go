@@ -30,6 +30,27 @@ func TestMobileCommandReportsRunningURL(t *testing.T) {
 	}
 }
 
+func TestMobileCommandReportsLANPairingCode(t *testing.T) {
+	m := Model{}
+	m.SetMobileServerStatus(MobileServerStatus{
+		URL:           "http://192.168.1.20:7777",
+		ListenAddress: "192.168.1.20:7777",
+		PairingCode:   "123 456",
+		AuthRequired:  true,
+	})
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindMobile})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("/mobile should not queue background work")
+	}
+	for _, want := range []string{"http://192.168.1.20:7777", "pairing code 123 456"} {
+		if !strings.Contains(got.status, want) {
+			t.Fatalf("status = %q, want %q", got.status, want)
+		}
+	}
+}
+
 func TestMobileBindFailureRemainsVisibleInTopStatus(t *testing.T) {
 	m := Model{status: "Projects loaded"}
 	m.SetMobileServerStatus(MobileServerStatus{

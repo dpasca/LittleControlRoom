@@ -10,10 +10,10 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=2">
-  <script defer src="/app.js?v=2"></script>
+  <link rel="stylesheet" href="/app.css?v=3">
+  <script defer src="/app.js?v=3"></script>
 </head>
-<body>
+<body class="auth-pending">
   <div class="app-shell">
     <span class="case-screw screw-a" aria-hidden="true"></span>
     <span class="case-screw screw-b" aria-hidden="true"></span>
@@ -29,7 +29,7 @@
         </div>
         <div class="host-readout">
           <span>Host</span>
-          <span class="read-only-label">Read only</span>
+          <span id="auth-state-label" class="read-only-label">Checking</span>
         </div>
       </div>
       <div class="console-header">
@@ -44,7 +44,53 @@
     </header>
 
     <main class="workspace">
-      <section id="dashboard-view" class="dashboard-view" aria-labelledby="work-title">
+      <section id="auth-view" class="auth-view" aria-labelledby="auth-title">
+        <div class="auth-console">
+          <div class="auth-console-top">
+            <div class="auth-keyhole" aria-hidden="true"><span></span></div>
+            <div>
+              <p class="instrument-label">Portable access receiver</p>
+              <h2 id="auth-title">Secure line</h2>
+            </div>
+            <span id="auth-lock-state" class="metal-status tone-warning">Locked</span>
+          </div>
+
+          <div class="auth-signal-bank" aria-hidden="true">
+            <span class="auth-signal-line active"></span>
+            <span class="auth-signal-line active"></span>
+            <span class="auth-signal-line"></span>
+            <span class="auth-signal-line"></span>
+          </div>
+
+          <div id="auth-checking" class="auth-checking" aria-live="polite">
+            <span class="lamp amber connecting" aria-hidden="true"></span>
+            <span id="auth-checking-label">Checking control-room link</span>
+          </div>
+
+          <form id="auth-form" class="auth-form" hidden>
+            <label for="auth-code">
+              <span class="instrument-label">Pairing code</span>
+              <span class="auth-code-frame">
+                <input id="auth-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="000 000" aria-describedby="auth-code-note auth-error" required>
+              </span>
+            </label>
+            <p id="auth-code-note" class="auth-code-note">Code from the desktop control room</p>
+            <div id="auth-error" class="auth-error" role="alert" aria-live="polite"></div>
+            <button id="auth-submit" class="auth-submit" type="submit">
+              <span class="lamp green" aria-hidden="true"></span>
+              <span>Pair this phone</span>
+            </button>
+          </form>
+
+          <button id="auth-retry" class="error-action auth-retry" type="button" hidden>Try link again</button>
+          <div class="auth-console-foot">
+            <span>HTTP LAN circuit</span>
+            <span>30-day device pass</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="dashboard-view" class="dashboard-view" aria-labelledby="work-title" inert>
         <h2 id="work-title" class="visually-hidden">Project switchboard</h2>
 
         <section id="operator-bay" class="operator-bay" data-state="connecting" aria-label="Control room briefing">
@@ -109,7 +155,7 @@
         <ul id="project-list" class="project-list rack-list" aria-label="Projects"></ul>
       </section>
 
-      <section id="detail-view" class="detail-view" aria-labelledby="detail-title" aria-hidden="true" hidden>
+      <section id="detail-view" class="detail-view" aria-labelledby="detail-title" aria-hidden="true" hidden inert>
         <div class="detail-toolbar">
           <button id="back-button" class="hardware-button back-button" type="button" aria-label="Back to projects" title="Back to projects">
             <span aria-hidden="true">&larr;</span>
@@ -145,11 +191,11 @@
           <div id="detail-blocks" class="detail-blocks drawer-stack"></div>
         </article>
       </section>
-      <section class="detail-placeholder" aria-hidden="true">
+      <section class="detail-placeholder" aria-hidden="true" inert>
         <span>Project channel standby</span>
       </section>
 
-      <section id="session-view" class="session-view" aria-labelledby="session-title" aria-hidden="true" hidden>
+      <section id="session-view" class="session-view" aria-labelledby="session-title" aria-hidden="true" hidden inert>
         <div class="session-toolbar">
           <button id="session-back-button" class="hardware-button back-button" type="button" aria-label="Back to project" title="Back to project">
             <span aria-hidden="true">&larr;</span>
@@ -181,6 +227,7 @@
             <summary>
               <span>Instruments</span>
               <span id="session-instrument-summary">Session readout</span>
+              <span id="session-instrument-toggle" class="session-instrument-toggle" aria-hidden="true">+</span>
             </summary>
             <div id="session-instrument-list" class="session-instrument-list"></div>
           </details>

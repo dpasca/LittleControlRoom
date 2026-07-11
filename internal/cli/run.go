@@ -978,13 +978,35 @@ func startTUIMobileServer(ctx context.Context, svc *service.Service, liveSession
 		listenAddress = server.DefaultListenAddress
 	}
 	status := tui.MobileServerStatus{ListenAddress: listenAddress}
-	running, err := server.New(svc).WithLiveSessions(liveSessions).Start(ctx, listenAddress)
+	mobileServer := server.New(svc).WithLiveSessions(liveSessions)
+	auth, err := configureMobileServerAuth(mobileServer, svc, listenAddress)
+	if err != nil {
+		status.Error = err.Error()
+		return nil, status
+	}
+	if auth != nil {
+		status.AuthRequired = true
+		status.PairingCode = auth.PairingCode()
+	}
+	running, err := mobileServer.Start(ctx, listenAddress)
 	if err != nil {
 		status.Error = err.Error()
 		return nil, status
 	}
 	status.URL = running.URL()
 	return running, status
+}
+
+func configureMobileServerAuth(mobileServer *server.Server, svc *service.Service, listenAddress string) (*server.MobileAuth, error) {
+	if server.ListenAddressIsLoopback(listenAddress) {
+		return nil, nil
+	}
+	auth, err := server.NewMobileAuth(svc.Config().DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("initialize LAN mobile authentication: %w", err)
+	}
+	mobileServer.WithMobileAuth(auth)
+	return auth, nil
 }
 
 func stopRunningServer(running *server.RunningServer) error {
@@ -1094,14 +1116,20 @@ func runServe(ctx context.Context, svc *service.Service, addr string) int {
 	svc.StartBackgroundDiscovery(ctx)
 
 	s := server.New(svc)
+	auth, err := configureMobileServerAuth(s, svc, addr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
+		return 1
+	}
 	running, err := s.Start(ctx, addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
 		return 1
 	}
 	fmt.Printf("serving %s at %s\n", brand.Name, running.URL())
-	if !server.ListenAddressIsLoopback(addr) {
-		fmt.Println("warning: this read-only preview has no authentication; use a trusted network only")
+	if auth != nil {
+		fmt.Printf("mobile pairing code: %s\n", auth.PairingCode())
+		fmt.Println("warning: LAN authentication does not encrypt HTTP traffic; use a trusted network")
 	}
 	if err := running.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)

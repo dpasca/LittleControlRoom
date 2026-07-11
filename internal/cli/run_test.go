@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/helpmeta"
 	"lcroom/internal/model"
 	"lcroom/internal/runtimeguard"
+	"lcroom/internal/server"
+	"lcroom/internal/service"
 	"lcroom/internal/store"
 )
 
@@ -24,6 +27,38 @@ func TestRunVersion(t *testing.T) {
 	}
 	if got, want := strings.TrimSpace(output), "lcroom dev"; got != want {
 		t.Fatalf("version output = %q, want %q", got, want)
+	}
+}
+
+func TestConfigureMobileServerAuthOnlyProtectsLANListeners(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	cfg := config.Default()
+	cfg.DataDir = dataDir
+	cfg.DBPath = filepath.Join(dataDir, "little-control-room.sqlite")
+	svc := service.New(cfg, nil, events.NewBus(), nil)
+
+	loopbackAuth, err := configureMobileServerAuth(server.New(svc), svc, "127.0.0.1:7777")
+	if err != nil {
+		t.Fatalf("configure loopback mobile auth: %v", err)
+	}
+	if loopbackAuth != nil {
+		t.Fatal("loopback listener should not require mobile auth")
+	}
+
+	lanAuth, err := configureMobileServerAuth(server.New(svc), svc, "192.168.1.20:7777")
+	if err != nil {
+		t.Fatalf("configure LAN mobile auth: %v", err)
+	}
+	if lanAuth == nil || len(lanAuth.PairingCode()) != 7 {
+		t.Fatalf("LAN mobile auth pairing code = %q", lanAuth.PairingCode())
+	}
+	keyInfo, err := os.Stat(filepath.Join(dataDir, "mobile-auth.key"))
+	if err != nil {
+		t.Fatalf("stat LAN mobile auth key: %v", err)
+	}
+	if got, want := keyInfo.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("LAN mobile auth key permissions = %o, want %o", got, want)
 	}
 }
 
