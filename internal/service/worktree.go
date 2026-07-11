@@ -49,6 +49,19 @@ type MergeWorktreeBackResult struct {
 	LinkedTodoPath  string
 }
 
+type FinalizeMergedWorktreeOptions struct {
+	MarkLinkedTodoDone bool
+	RemoveWorktree     bool
+	ForceRemove        bool
+}
+
+type FinalizeMergedWorktreeResult struct {
+	LinkedTodoID          int64
+	LinkedTodoAlreadyDone bool
+	LinkedTodoMarkedDone  bool
+	WorktreeRemoved       bool
+}
+
 func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktreeRequest) (CreateTodoWorktreeResult, error) {
 	if s == nil || s.store == nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("service unavailable")
@@ -573,6 +586,67 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 		return mergeResult, err
 	}
 	return mergeResult, nil
+}
+
+// FinalizeMergedWorktree applies the user-selected cleanup after a successful
+// merge (or for a worktree that was already merged). When both actions are
+// requested, the linked TODO is completed first and the worktree is only
+// removed if that update succeeds. Keeping the checkout on failure preserves a
+// durable path for retrying the TODO completion instead of silently orphaning
+// it in the root project's open list.
+func (s *Service) FinalizeMergedWorktree(ctx context.Context, projectPath string, options FinalizeMergedWorktreeOptions) (FinalizeMergedWorktreeResult, error) {
+	if s == nil || s.store == nil {
+		return FinalizeMergedWorktreeResult{}, fmt.Errorf("service unavailable")
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return FinalizeMergedWorktreeResult{}, fmt.Errorf("worktree path is required")
+	}
+	if options.ForceRemove && !options.RemoveWorktree {
+		return FinalizeMergedWorktreeResult{}, fmt.Errorf("force remove requires worktree removal")
+	}
+
+	result := FinalizeMergedWorktreeResult{}
+	if options.MarkLinkedTodoDone {
+		detail, err := s.store.GetProjectDetail(ctx, projectPath, 0)
+		if err != nil {
+			return result, fmt.Errorf("load merged worktree TODO link: %w", err)
+		}
+		if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+			return result, fmt.Errorf("only linked worktrees can complete an originating TODO")
+		}
+		if detail.Summary.WorktreeMergeStatus != model.WorktreeMergeStatusMerged {
+			return result, fmt.Errorf("linked TODO cannot be completed until the worktree is recorded as merged")
+		}
+		result.LinkedTodoID = detail.Summary.WorktreeOriginTodoID
+		if result.LinkedTodoID <= 0 {
+			return result, fmt.Errorf("merged worktree has no linked TODO to complete")
+		}
+
+		todo, err := s.store.GetTodo(ctx, result.LinkedTodoID)
+		if err != nil {
+			return result, fmt.Errorf("load linked TODO %d: %w", result.LinkedTodoID, err)
+		}
+		if todo.Done {
+			result.LinkedTodoAlreadyDone = true
+		} else {
+			if err := s.ToggleTodoDone(ctx, todo.ProjectPath, todo.ID, true); err != nil {
+				return result, fmt.Errorf("mark linked TODO %d done: %w", todo.ID, err)
+			}
+			result.LinkedTodoMarkedDone = true
+		}
+	}
+
+	if options.RemoveWorktree {
+		if err := s.RemoveWorktree(ctx, projectPath, options.ForceRemove); err != nil {
+			if result.LinkedTodoMarkedDone || result.LinkedTodoAlreadyDone {
+				return result, fmt.Errorf("linked TODO was completed, but removing the worktree failed: %w", err)
+			}
+			return result, err
+		}
+		result.WorktreeRemoved = true
+	}
+	return result, nil
 }
 
 func gitBranchIntegratedIntoHEAD(ctx context.Context, repoPath, branch string) (bool, error) {

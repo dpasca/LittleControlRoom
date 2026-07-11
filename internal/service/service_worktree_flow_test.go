@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
@@ -1206,6 +1207,44 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 	if !alreadyMergedResult.AlreadyMerged {
 		t.Fatalf("second MergeWorktreeBack() should report already merged, got %#v", alreadyMergedResult)
+	}
+
+	missingTodoID := item.ID + 1_000_000
+	if err := st.SetWorktreeOriginTodoID(ctx, result.WorktreePath, missingTodoID); err != nil {
+		t.Fatalf("replace worktree origin TODO with missing id: %v", err)
+	}
+	if _, err := svc.FinalizeMergedWorktree(ctx, result.WorktreePath, FinalizeMergedWorktreeOptions{
+		MarkLinkedTodoDone: true,
+		RemoveWorktree:     true,
+	}); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("load linked TODO %d", missingTodoID)) {
+		t.Fatalf("FinalizeMergedWorktree() missing TODO error = %v", err)
+	}
+	if _, err := os.Stat(result.WorktreePath); err != nil {
+		t.Fatalf("failed TODO completion should keep merged worktree for retry: %v", err)
+	}
+	if err := st.SetWorktreeOriginTodoID(ctx, result.WorktreePath, item.ID); err != nil {
+		t.Fatalf("restore worktree origin TODO: %v", err)
+	}
+
+	finalized, err := svc.FinalizeMergedWorktree(ctx, result.WorktreePath, FinalizeMergedWorktreeOptions{
+		MarkLinkedTodoDone: true,
+		RemoveWorktree:     true,
+	})
+	if err != nil {
+		t.Fatalf("FinalizeMergedWorktree() error = %v", err)
+	}
+	if finalized.LinkedTodoID != item.ID || !finalized.LinkedTodoMarkedDone || finalized.LinkedTodoAlreadyDone || !finalized.WorktreeRemoved {
+		t.Fatalf("FinalizeMergedWorktree() result = %#v", finalized)
+	}
+	completedTodo, err := st.GetTodo(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get finalized linked TODO: %v", err)
+	}
+	if !completedTodo.Done {
+		t.Fatalf("finalized linked TODO remained open: %#v", completedTodo)
+	}
+	if _, err := os.Stat(result.WorktreePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("finalized worktree still exists: %v", err)
 	}
 }
 
