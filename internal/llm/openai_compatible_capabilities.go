@@ -33,9 +33,12 @@ var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
 		reasoningStyle:     "deepseek",
 	},
 	{
-		providerID:     "xiaomi",
-		authHeader:     OpenAICompatibleAuthHeaderAPIKey,
-		reasoningStyle: "xiaomi",
+		// MiMo's structured-output transport is JSON mode; the schema is
+		// supplied in the prompt instead of response_format.json_schema.
+		providerID:         "xiaomi",
+		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
+		authHeader:         OpenAICompatibleAuthHeaderAPIKey,
+		reasoningStyle:     "xiaomi",
 	},
 	{
 		providerID:     "openrouter",
