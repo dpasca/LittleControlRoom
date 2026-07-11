@@ -93,19 +93,11 @@ func Run(programName string, args []string) int {
 			return 2
 		}
 	}
-	serveAddr := server.DefaultListenAddress
+	listenOverride := ""
 	if subcmd == "serve" || subcmd == "tui" {
-		var listenAddr string
 		var err error
-		commonArgs, listenAddr, err = stripPathFlagArg(commonArgs, "--listen")
+		commonArgs, listenOverride, err = stripPathFlagArg(commonArgs, "--listen")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
-			return 2
-		}
-		if strings.TrimSpace(listenAddr) != "" {
-			serveAddr = strings.TrimSpace(listenAddr)
-		}
-		if err := server.ValidateListenAddress(serveAddr); err != nil {
 			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
 			return 2
 		}
@@ -115,6 +107,15 @@ func Run(programName string, args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config error: %v\n", err)
 		return 2
+	}
+	serveAddr := server.DefaultListenAddress
+	mobileEnabled := cfg.MobileEnabled
+	if subcmd == "serve" || subcmd == "tui" {
+		serveAddr, mobileEnabled, err = resolveMobileRuntimeOptions(cfg, listenOverride)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
+			return 2
+		}
 	}
 	if subcmd == "scope" {
 		runScope(cfg)
@@ -198,7 +199,7 @@ func Run(programName string, args []string) int {
 	case "boss":
 		return runBoss(ctx, svc)
 	case "tui":
-		return runTUI(ctx, svc, serveAddr)
+		return runTUI(ctx, svc, serveAddr, mobileEnabled)
 	case "serve":
 		return runServe(ctx, svc, serveAddr)
 	default:
@@ -944,10 +945,30 @@ func formatRepoSyncLine(status model.RepoSyncStatus, ahead, behind int) string {
 	}
 }
 
-func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string) int {
+func resolveMobileRuntimeOptions(cfg config.AppConfig, listenOverride string) (string, bool, error) {
+	listenAddress := strings.TrimSpace(cfg.MobileListenAddress)
+	if listenAddress == "" {
+		listenAddress = server.DefaultListenAddress
+	}
+	enabled := cfg.MobileEnabled
+	if override := strings.TrimSpace(listenOverride); override != "" {
+		listenAddress = override
+		enabled = true
+	}
+	if err := server.ValidateListenAddress(listenAddress); err != nil {
+		return "", false, err
+	}
+	return listenAddress, enabled, nil
+}
+
+func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool) int {
 	runCtx, cancel := context.WithCancel(ctx)
 	codexManager := codexapp.NewManager()
-	mobileServer, mobileStatus := startTUIMobileServer(runCtx, svc, codexManager, mobileListenAddress)
+	var mobileServer *server.RunningServer
+	mobileStatus := tui.MobileServerStatus{ListenAddress: mobileListenAddress, Disabled: !mobileEnabled}
+	if mobileEnabled {
+		mobileServer, mobileStatus = startTUIMobileServer(runCtx, svc, codexManager, mobileListenAddress)
+	}
 	defer func() {
 		cancel()
 		if err := stopRunningServer(mobileServer); err != nil {
@@ -1283,7 +1304,7 @@ func printUsage(programName string) {
 	fmt.Println("  --screenshot-config <path>")
 	fmt.Println("  --output-dir <path>")
 	fmt.Println("TUI and serve flags:")
-	fmt.Printf("  --listen <host:port> (default %s)\n", server.DefaultListenAddress)
+	fmt.Printf("  --listen <host:port> (override saved mobile address; default %s)\n", server.DefaultListenAddress)
 	fmt.Println("Browser flags:")
 	fmt.Println("  browser <status|reveal> --session-key <id> [--data-dir <path>]")
 	fmt.Println("Help metadata:")

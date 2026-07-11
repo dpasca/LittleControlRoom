@@ -72,6 +72,8 @@ const (
 	settingsFieldActiveThreshold
 	settingsFieldStuckThreshold
 	settingsFieldInterval
+	settingsFieldMobileEnabled
+	settingsFieldMobileListenAddress
 	settingsFieldAIBackend
 )
 
@@ -82,6 +84,7 @@ const (
 	settingsSectionAI             settingsSectionID = "ai"
 	settingsSectionLCAgent        settingsSectionID = "lcagent"
 	settingsSectionScope          settingsSectionID = "scope"
+	settingsSectionMobile         settingsSectionID = "mobile"
 	settingsSectionBrowser        settingsSectionID = "browser"
 	settingsSectionAdvanced       settingsSectionID = "advanced"
 )
@@ -94,6 +97,7 @@ const (
 	settingsDrilldownBossChat       settingsDrilldownID = "boss-chat"
 	settingsDrilldownLCAgent        settingsDrilldownID = "lcagent"
 	settingsDrilldownProjectScope   settingsDrilldownID = "project-scope"
+	settingsDrilldownMobile         settingsDrilldownID = "mobile"
 )
 
 const settingsConfigIssueStatus = "LCAgent env file warning"
@@ -190,11 +194,12 @@ func settingsSections() []settingsSection {
 			id:      settingsSectionGettingStarted,
 			label:   "Getting Started",
 			summary: "Quick setup",
-			hint:    "Start with project-report AI. Boss chat and LCAgent can wait, and project discovery lives in Project Scope.",
+			hint:    "Start with project-report AI, then choose whether the bundled mobile client should be reachable from this computer or your LAN.",
 			fieldOrder: []int{
 				settingsFieldAIBackend,
 				settingsFieldBossChatBackend,
 				settingsFieldLCAgentRoutePreset,
+				settingsFieldMobileEnabled,
 			},
 		},
 		{
@@ -248,6 +253,16 @@ func settingsSections() []settingsSection {
 				settingsFieldIncludePaths,
 				settingsFieldExcludePaths,
 				settingsFieldExcludeProjectPatterns,
+			},
+		},
+		{
+			id:      settingsSectionMobile,
+			label:   "Mobile",
+			summary: "Phone access",
+			hint:    "Control whether the bundled web client starts with the TUI and which local or LAN address it uses. Changes take effect after restart.",
+			fieldOrder: []int{
+				settingsFieldMobileEnabled,
+				settingsFieldMobileListenAddress,
 			},
 		},
 		{
@@ -661,6 +676,8 @@ func settingsDrilldownForField(fieldIndex int) settingsDrilldownID {
 		return settingsDrilldownLCAgent
 	case settingsFieldIncludePaths:
 		return settingsDrilldownProjectScope
+	case settingsFieldMobileEnabled:
+		return settingsDrilldownMobile
 	default:
 		return settingsDrilldownNone
 	}
@@ -822,6 +839,8 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldActiveThreshold),
 		m.settingsFieldValue(settingsFieldStuckThreshold),
 		m.settingsFieldValue(settingsFieldInterval),
+		m.settingsFieldValue(settingsFieldMobileEnabled),
+		m.settingsFieldValue(settingsFieldMobileListenAddress),
 	)
 	if err != nil {
 		m.err = nil
@@ -877,6 +896,13 @@ func settingsLocalFileIssue(settings config.EditableSettings) error {
 func projectScopeSettingsChanged(previous, next config.EditableSettings) bool {
 	return !stringSlicesEqual(previous.IncludePaths, next.IncludePaths) ||
 		!stringSlicesEqual(previous.ExcludePaths, next.ExcludePaths)
+}
+
+func mobileServerSettingsChanged(previous, next config.EditableSettings) bool {
+	previous = config.NormalizeEditableSettings(previous)
+	next = config.NormalizeEditableSettings(next)
+	return previous.MobileEnabled != next.MobileEnabled ||
+		previous.MobileListenAddress != next.MobileListenAddress
 }
 
 func (m *Model) appendSettingsConfigIssue(err error) {
@@ -1145,6 +1171,8 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "google"
 	case settingsFieldLCAgentWebSearchURL:
 		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "searxng"
+	case settingsFieldMobileListenAddress:
+		return settings.MobileEnabled
 	default:
 		return true
 	}
@@ -1357,6 +1385,11 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 			settingsFieldExcludeProjectPatterns,
 			settingsFieldPrivacyPatterns,
 		}
+	case settingsDrilldownMobile:
+		return []int{
+			settingsFieldMobileEnabled,
+			settingsFieldMobileListenAddress,
+		}
 	default:
 		return nil
 	}
@@ -1513,6 +1546,8 @@ func settingsDrilldownTopField(drilldown settingsDrilldownID) int {
 		return settingsFieldLCAgentRoutePreset
 	case settingsDrilldownProjectScope:
 		return settingsFieldIncludePaths
+	case settingsDrilldownMobile:
+		return settingsFieldMobileEnabled
 	default:
 		return -1
 	}
@@ -1528,6 +1563,8 @@ func settingsDrilldownTitle(drilldown settingsDrilldownID) string {
 		return "LCAgent"
 	case settingsDrilldownProjectScope:
 		return "Project Roots"
+	case settingsDrilldownMobile:
+		return "Mobile Access"
 	default:
 		return "Setup"
 	}
@@ -1803,6 +1840,11 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentWebSearchAPIKey = m.settingsFieldValue(settingsFieldLCAgentWebSearchAPIKey)
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
 	settings.LCAgentWebSearchURL = m.settingsFieldValue(settingsFieldLCAgentWebSearchURL)
+	settings.MobileEnabled = strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldMobileEnabled, m.settingsFieldValue(settingsFieldMobileEnabled)), "true")
+	settings.MobileListenAddress = m.settingsFieldValue(settingsFieldMobileListenAddress)
+	if settings.MobileListenAddress == "" {
+		settings.MobileListenAddress = config.DefaultMobileListenAddress
+	}
 	if timeout, err := time.ParseDuration(m.settingsFieldValue(settingsFieldLCAgentRequestTimeout)); err == nil {
 		settings.LCAgentRequestTimeout = timeout
 	}
@@ -2163,6 +2205,8 @@ func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
 		return "Configure the LCR-native worker essentials: Main Model, Utility Model, credentials, and web search. Use the LCAgent section for runtime policy and advanced launch fields."
 	case settingsDrilldownProjectScope:
 		return "Choose where projects are discovered and which folders or names stay hidden."
+	case settingsDrilldownMobile:
+		return "Choose whether the mobile web client starts with the TUI and where it listens. Loopback stays on this computer; LAN addresses require pairing."
 	default:
 		return "Configure this setup area."
 	}
@@ -2276,6 +2320,10 @@ func (m Model) renderSettingsDrilldownStatus(width int) []string {
 		_, state, style, detail := m.settingsProjectRootsStepState()
 		lines = append(lines, detailField("Project roots", style.Render(state)+detailMutedStyle.Render(" - "+detail)))
 		return lines
+	case settingsDrilldownMobile:
+		_, state, style, detail := settingsMobileStepState(settings)
+		lines = append(lines, detailField("Mobile access", style.Render(state)+detailMutedStyle.Render(" - "+detail)))
+		return lines
 	default:
 		return lines
 	}
@@ -2355,6 +2403,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 		case settingsFieldPrivacyPatterns:
 			return "Privacy"
 		}
+	case settingsDrilldownMobile:
+		return "Bundled Web Client"
 	}
 	return ""
 }
@@ -2513,6 +2563,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 	projectValue := settingsProjectReportsOverviewValue(settings, projectChoice)
 	bossValue := settingsBossChatOverviewValue(settings, bossChoice)
 	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := m.settingsLCAgentStepState(settings)
+	mobileValue, mobileState, mobileStyle, mobileDetail := settingsMobileStepState(settings)
 	return []settingsGettingStartedStep{
 		{
 			Number:     "1",
@@ -2541,7 +2592,30 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 			Detail:     lcagentDetail,
 			FieldIndex: settingsFieldLCAgentRoutePreset,
 		},
+		{
+			Number:     "4",
+			Title:      "Mobile access",
+			Value:      mobileValue,
+			State:      mobileState,
+			StateStyle: mobileStyle,
+			Detail:     mobileDetail,
+			FieldIndex: settingsFieldMobileEnabled,
+		},
 	}
+}
+
+func settingsMobileStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
+	address := strings.TrimSpace(settings.MobileListenAddress)
+	if address == "" {
+		address = config.DefaultMobileListenAddress
+	}
+	if !settings.MobileEnabled {
+		return "Disabled", "off", detailMutedStyle, "The TUI will not start the mobile client; lcroom serve remains available."
+	}
+	if config.MobileListenAddressIsLoopback(address) {
+		return address, "local only", detailWarningStyle, "Only this computer can connect. Choose a LAN address for phone access; LAN listeners require pairing."
+	}
+	return address, "LAN ready", footerPrimaryLabelStyle, "Phones on the same trusted network can connect after pairing."
 }
 
 func settingsProjectReportsOverviewValue(settings config.EditableSettings, choice providerChoice) string {
@@ -3792,6 +3866,21 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAdvanced,
 		),
 		newSettingsField(
+			"Mobile interface",
+			"Press Enter to choose whether the bundled mobile client starts with the TUI. Restart Little Control Room after changing this setting.",
+			strconv.FormatBool(settings.MobileEnabled),
+			8,
+			settingsSectionMobile,
+		),
+		newSettingsFieldWithPlaceholder(
+			"Mobile address",
+			"Listen address in host:port form. Loopback is local only; a LAN address such as 0.0.0.0:7777 enables phone access and requires pairing. Restart after changing it.",
+			settings.MobileListenAddress,
+			128,
+			config.DefaultMobileListenAddress,
+			settingsSectionMobile,
+		),
+		newSettingsField(
 			"Project reports",
 			"Press Enter to choose the helper for summaries, classification, TODO help, and commit help.",
 			string(settings.AIBackend),
@@ -3900,6 +3989,23 @@ func (m Model) settingsFieldHint(index int) string {
 	}
 	field := m.settingsFields[index]
 	switch index {
+	case settingsFieldMobileEnabled:
+		if strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldMobileEnabled, field.input.Value()), "true") {
+			return "The mobile client will start with the TUI at the saved address after Little Control Room restarts."
+		}
+		return "The TUI will stop auto-starting the mobile client after restart. lcroom serve remains available for explicit runs."
+	case settingsFieldMobileListenAddress:
+		address := strings.TrimSpace(field.input.Value())
+		if address == "" {
+			address = config.DefaultMobileListenAddress
+		}
+		if err := config.ValidateMobileListenAddress(address); err != nil {
+			return err.Error() + ". Use host:port, for example 127.0.0.1:7777 or 0.0.0.0:7777."
+		}
+		if config.MobileListenAddressIsLoopback(address) {
+			return "Only this computer can connect at " + address + ". Use a LAN address such as 0.0.0.0:7777 for phone access, then restart."
+		}
+		return "Phones on the same trusted network can connect at " + address + " after pairing. Restart Little Control Room to apply this address."
 	case settingsFieldAIBackend:
 		backend := config.AIBackend(strings.TrimSpace(field.input.Value()))
 		switch backend {

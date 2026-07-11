@@ -772,6 +772,58 @@ func TestProjectScopeKeepsPathFieldsPaired(t *testing.T) {
 	}
 }
 
+func TestMobileSettingsAppearInSetupAndDedicatedSection(t *testing.T) {
+	var mobileFields []int
+	var gettingStartedFields []int
+	for _, section := range settingsSections() {
+		switch section.id {
+		case settingsSectionMobile:
+			mobileFields = append([]int(nil), section.fieldOrder...)
+		case settingsSectionGettingStarted:
+			gettingStartedFields = append([]int(nil), section.fieldOrder...)
+		}
+	}
+	for _, field := range []int{settingsFieldMobileEnabled, settingsFieldMobileListenAddress} {
+		if !slices.Contains(mobileFields, field) {
+			t.Fatalf("Mobile section missing field %d: %#v", field, mobileFields)
+		}
+	}
+	if !slices.Contains(gettingStartedFields, settingsFieldMobileEnabled) {
+		t.Fatalf("Getting Started missing mobile entry: %#v", gettingStartedFields)
+	}
+
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{settingsFields: newSettingsFields(settings), settingsBaseline: &settings}
+	if got := m.settingsDrilldownFieldOrder(settingsDrilldownMobile); !slices.Equal(got, []int{settingsFieldMobileEnabled, settingsFieldMobileListenAddress}) {
+		t.Fatalf("mobile drilldown fields = %#v", got)
+	}
+	if !m.settingsFieldVisible(settingsFieldMobileListenAddress) {
+		t.Fatal("mobile address should be visible while enabled")
+	}
+	m.settingsFields[settingsFieldMobileEnabled].input.SetValue("false")
+	if m.settingsFieldVisible(settingsFieldMobileListenAddress) {
+		t.Fatal("mobile address should be hidden while disabled")
+	}
+}
+
+func TestGettingStartedShowsMobileReachability(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{settingsFields: newSettingsFields(settings), settingsBaseline: &settings}
+	steps := m.settingsGettingStartedSteps()
+	if len(steps) != 4 {
+		t.Fatalf("getting started steps = %d, want 4", len(steps))
+	}
+	mobile := steps[3]
+	if mobile.Title != "Mobile access" || mobile.State != "local only" || mobile.Value != config.DefaultMobileListenAddress {
+		t.Fatalf("default mobile step = %#v", mobile)
+	}
+	m.settingsFields[settingsFieldMobileListenAddress].input.SetValue("0.0.0.0:8787")
+	mobile = m.settingsGettingStartedSteps()[3]
+	if mobile.State != "LAN ready" || mobile.Value != "0.0.0.0:8787" {
+		t.Fatalf("LAN mobile step = %#v", mobile)
+	}
+}
+
 func TestSettingsModalShowsEscCancel(t *testing.T) {
 	m := Model{
 		settingsMode:        true,

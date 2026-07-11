@@ -166,6 +166,31 @@ func TestApplyEditableSettingsUpdatesPrivacyMode(t *testing.T) {
 	}
 }
 
+func TestApplyEditableSettingsUpdatesMobilePreferences(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	svc := &Service{
+		cfg:               cfg,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+	}
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.MobileEnabled = false
+	settings.MobileListenAddress = "0.0.0.0:8787"
+
+	svc.ApplyEditableSettings(settings)
+
+	got := svc.Config()
+	if got.MobileEnabled {
+		t.Fatal("mobile enabled = true, want false")
+	}
+	if got.MobileListenAddress != "0.0.0.0:8787" {
+		t.Fatalf("mobile listen address = %q, want 0.0.0.0:8787", got.MobileListenAddress)
+	}
+}
+
 func TestApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges(t *testing.T) {
 	t.Parallel()
 

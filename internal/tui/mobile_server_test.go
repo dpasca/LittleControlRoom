@@ -51,6 +51,25 @@ func TestMobileCommandReportsLANPairingCode(t *testing.T) {
 	}
 }
 
+func TestMobileCommandReportsDisabledSetting(t *testing.T) {
+	m := Model{}
+	m.SetMobileServerStatus(MobileServerStatus{
+		ListenAddress: "127.0.0.1:7777",
+		Disabled:      true,
+	})
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindMobile})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("/mobile should not queue background work")
+	}
+	for _, want := range []string{"disabled in Settings", "lcroom serve"} {
+		if !strings.Contains(got.status, want) {
+			t.Fatalf("status = %q, want %q", got.status, want)
+		}
+	}
+}
+
 func TestMobileBindFailureRemainsVisibleInTopStatus(t *testing.T) {
 	m := Model{status: "Projects loaded"}
 	m.SetMobileServerStatus(MobileServerStatus{

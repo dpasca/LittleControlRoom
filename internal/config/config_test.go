@@ -80,6 +80,37 @@ func TestDefaultEnablesBossChatOllamaThinking(t *testing.T) {
 	}
 }
 
+func TestDefaultEnablesLoopbackMobileClient(t *testing.T) {
+	cfg := Default()
+	if !cfg.MobileEnabled {
+		t.Fatal("default mobile client should be enabled")
+	}
+	if got, want := cfg.MobileListenAddress, DefaultMobileListenAddress; got != want {
+		t.Fatalf("default mobile listen address = %q, want %q", got, want)
+	}
+	if !MobileListenAddressIsLoopback(cfg.MobileListenAddress) {
+		t.Fatalf("default mobile listen address should be loopback: %q", cfg.MobileListenAddress)
+	}
+}
+
+func TestParseRejectsInvalidMobileListenAddress(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	content := "mobile_enabled = false\nmobile_listen_address = \"7777\"\n"
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+	if _, err := Parse("scan", []string{"--config", configPath}); err == nil {
+		t.Fatal("expected invalid mobile listen address to be rejected")
+	}
+}
+
+func TestValidateMobileListenAddressRejectsInvalidPort(t *testing.T) {
+	if err := ValidateMobileListenAddress("127.0.0.1:not-a-port"); err == nil {
+		t.Fatal("expected non-numeric mobile port to be rejected")
+	}
+}
+
 func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	useTempHome(t)
 	dir := t.TempDir()
@@ -125,6 +156,8 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"interval = \"45s\"\n" +
 		"active-threshold = \"15m\"\n" +
 		"stuck-threshold = \"3h\"\n"
+	content += "mobile_enabled = false\n" +
+		"mobile_listen_address = \"0.0.0.0:8787\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config file: %v", err)
 	}
@@ -136,6 +169,12 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 
 	if got, want := cfg.ScanInterval, 45*time.Second; got != want {
 		t.Fatalf("interval = %s, want %s", got, want)
+	}
+	if cfg.MobileEnabled {
+		t.Fatal("mobile client should be disabled by loaded config")
+	}
+	if got, want := cfg.MobileListenAddress, "0.0.0.0:8787"; got != want {
+		t.Fatalf("mobile listen address = %q, want %q", got, want)
 	}
 	if got, want := cfg.OpenAIAPIKey, "sk-live-example"; got != want {
 		t.Fatalf("openai api key = %q, want %q", got, want)
@@ -529,7 +568,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s", "false", "0.0.0.0:8787")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -574,6 +613,12 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 	if got, want := settings.BossUtilityModel, "gpt-5.4-mini"; got != want {
 		t.Fatalf("boss utility model = %q, want %q", got, want)
+	}
+	if settings.MobileEnabled {
+		t.Fatal("mobile client should parse as disabled")
+	}
+	if got, want := settings.MobileListenAddress, "0.0.0.0:8787"; got != want {
+		t.Fatalf("mobile listen address = %q, want %q", got, want)
 	}
 	if got, want := settings.LCAgentPath, filepath.Join(home, "bin", "lcagent"); got != want {
 		t.Fatalf("lcagent path = %q, want %q", got, want)
@@ -820,7 +865,7 @@ func TestSaveEditableSettingsPersistsLCAgentMainVisionStamp(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "10m", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "10m", "60s", "true", DefaultMobileListenAddress); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -828,7 +873,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s"); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", DefaultMobileListenAddress); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -836,7 +881,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s")
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", DefaultMobileListenAddress)
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -945,9 +990,11 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 			LoginMode:          browserctl.LoginModePromote,
 			IsolationScope:     browserctl.IsolationScopeProject,
 		},
-		ScanInterval:    45 * time.Second,
-		ActiveThreshold: 15 * time.Minute,
-		StuckThreshold:  3 * time.Hour,
+		ScanInterval:        45 * time.Second,
+		ActiveThreshold:     15 * time.Minute,
+		StuckThreshold:      3 * time.Hour,
+		MobileEnabled:       false,
+		MobileListenAddress: "0.0.0.0:8787",
 	})
 	if err != nil {
 		t.Fatalf("SaveEditableSettings() error = %v", err)
@@ -1076,6 +1123,14 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	if !strings.Contains(text, "stuck-threshold = \"3h\"") {
 		t.Fatalf("saved config should include stuck threshold: %q", text)
+	}
+	for _, want := range []string{
+		"mobile_enabled = false",
+		"mobile_listen_address = \"0.0.0.0:8787\"",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("saved config should include %q: %q", want, text)
+		}
 	}
 	info, err := os.Stat(configPath)
 	if err != nil {

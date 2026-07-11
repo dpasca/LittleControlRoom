@@ -4,8 +4,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,6 +95,8 @@ type AppConfig struct {
 	ScanInterval              time.Duration
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
+	MobileEnabled             bool
+	MobileListenAddress       string
 	AllowMultipleInstances    bool
 	SanitizeApply             bool
 	SanitizeDryRun            bool
@@ -103,14 +107,15 @@ type AppConfig struct {
 }
 
 const (
-	DefaultBossHelmModel    = "gpt-5.5"
-	DefaultBossUtilityModel = "gpt-5.4-mini"
-	DefaultOpenRouterModel  = "deepseek/deepseek-v4-pro"
-	DefaultDeepSeekModel    = "deepseek-v4-flash"
-	DefaultDeepSeekProModel = "deepseek-v4-pro"
-	DefaultMoonshotModel    = "kimi-k2.7-code"
-	DefaultXiaomiModel      = "mimo-v2.5-pro"
-	DefaultXiaomiProModel   = "mimo-v2.5-pro"
+	DefaultBossHelmModel       = "gpt-5.5"
+	DefaultBossUtilityModel    = "gpt-5.4-mini"
+	DefaultOpenRouterModel     = "deepseek/deepseek-v4-pro"
+	DefaultDeepSeekModel       = "deepseek-v4-flash"
+	DefaultDeepSeekProModel    = "deepseek-v4-pro"
+	DefaultMoonshotModel       = "kimi-k2.7-code"
+	DefaultXiaomiModel         = "mimo-v2.5-pro"
+	DefaultXiaomiProModel      = "mimo-v2.5-pro"
+	DefaultMobileListenAddress = "127.0.0.1:7777"
 )
 
 func (c AppConfig) EffectiveAIBackend() AIBackend {
@@ -242,6 +247,8 @@ type fileConfig struct {
 	ScanInterval              string    `toml:"interval"`
 	ActiveThreshold           string    `toml:"active-threshold"`
 	StuckThreshold            string    `toml:"stuck-threshold"`
+	MobileEnabled             *bool     `toml:"mobile_enabled"`
+	MobileListenAddress       *string   `toml:"mobile_listen_address"`
 	HideReasoningSections     *bool     `toml:"hide_reasoning_sections"`
 	PrivacyMode               *bool     `toml:"privacy_mode"`
 }
@@ -273,6 +280,8 @@ func Default() AppConfig {
 		ScanInterval:            60 * time.Second,
 		ActiveThreshold:         20 * time.Minute,
 		StuckThreshold:          4 * time.Hour,
+		MobileEnabled:           true,
+		MobileListenAddress:     DefaultMobileListenAddress,
 		HideReasoningSections:   true,
 		PrivacyMode:             false,
 	}
@@ -760,6 +769,14 @@ func applyConfigFile(cfg *AppConfig) error {
 	if err := applyOptionalConfigDuration(&cfg.StuckThreshold, fc.StuckThreshold, "stuck-threshold"); err != nil {
 		return err
 	}
+	if fc.MobileEnabled != nil {
+		cfg.MobileEnabled = *fc.MobileEnabled
+	}
+	if fc.MobileListenAddress != nil {
+		if value := strings.TrimSpace(*fc.MobileListenAddress); value != "" {
+			cfg.MobileListenAddress = value
+		}
+	}
 	if fc.HideReasoningSections != nil {
 		cfg.HideReasoningSections = *fc.HideReasoningSections
 	}
@@ -779,6 +796,9 @@ func validate(cfg AppConfig) error {
 	}
 	if cfg.SnapshotLimit <= 0 {
 		return errors.New("snapshot limit must be > 0")
+	}
+	if err := ValidateMobileListenAddress(cfg.MobileListenAddress); err != nil {
+		return err
 	}
 	if _, err := codexcli.ParsePreset(string(cfg.CodexLaunchPreset)); err != nil {
 		return err
@@ -820,6 +840,38 @@ func validate(cfg AppConfig) error {
 		return err
 	}
 	return nil
+}
+
+func ValidateMobileListenAddress(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return fmt.Errorf("mobile listen address is required")
+	}
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("mobile listen address must use host:port form: %w", err)
+	}
+	if strings.TrimSpace(port) == "" {
+		return fmt.Errorf("mobile listen address must include a port")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 0 || portNumber > 65535 {
+		return fmt.Errorf("mobile listen address port must be a number from 0 to 65535")
+	}
+	return nil
+}
+
+func MobileListenAddressIsLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	host = strings.TrimSpace(host)
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func parseLCAgentRoutePreset(raw string) (string, error) {
