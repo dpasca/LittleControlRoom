@@ -596,7 +596,7 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 	}
 }
 
-func TestEmbeddedHelpAssistantResponseWrapsUnderBodyAndKeepsBackground(t *testing.T) {
+func TestEmbeddedHelpAssistantResponseWordWrapsAtFullWidthAndKeepsBackground(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()
 	lipgloss.SetColorProfile(termenv.ANSI256)
@@ -622,16 +622,54 @@ func TestEmbeddedHelpAssistantResponseWrapsUnderBodyAndKeepsBackground(t *testin
 		}
 	}
 	for i, line := range lines[1:] {
-		stripped := ansi.Strip(line)
-		if !strings.HasPrefix(stripped, "      ") {
-			t.Fatalf("continuation line %d should align under Help body:\n%s", i+1, ansi.Strip(rendered))
+		stripped := strings.TrimRight(ansi.Strip(line), " ")
+		if strings.HasPrefix(stripped, " ") {
+			t.Fatalf("continuation line %d should start at the left edge:\n%s", i+1, ansi.Strip(rendered))
 		}
 		if strings.HasPrefix(strings.TrimLeft(stripped, " "), "Help>") {
 			t.Fatalf("continuation line %d should not repeat the speaker label:\n%s", i+1, ansi.Strip(rendered))
 		}
 	}
+	plain := strings.Join(strings.Fields(ansi.Strip(rendered)), " ")
+	wantPlain := "Help> This is a long wrapped help response that should continue under the message body instead of snapping back to the left edge."
+	if plain != wantPlain {
+		t.Fatalf("wrapped response changed word boundaries:\n got: %q\nwant: %q", plain, wantPlain)
+	}
+	usedFullWidth := false
+	for _, line := range lines[1:] {
+		if ansi.StringWidth(strings.TrimRight(ansi.Strip(line), " ")) > width-len("Help> ") {
+			usedFullWidth = true
+			break
+		}
+	}
+	if !usedFullWidth {
+		t.Fatalf("continuation lines should use more than the old prefix-reduced width:\n%s", ansi.Strip(rendered))
+	}
 	if got := strings.Count(rendered, "48;5;234"); got == 0 {
 		t.Fatalf("help chat Markdown response should keep the surface background:\n%q", rendered)
+	}
+}
+
+func TestEmbeddedHelpUsesBossControlConfirmationFlow(t *testing.T) {
+	t.Parallel()
+
+	inv := bossControlInvocationForTest(t)
+	m := NewEmbeddedHelp(context.Background(), nil)
+	updated, cmd := m.Update(AssistantReplyMsg{response: AssistantResponse{
+		Content:           "Send this to the engineer?",
+		ControlInvocation: &inv,
+	}})
+	got := updated.(Model)
+	if cmd != nil || got.pendingControl == nil || !got.ControlConfirmationActive() {
+		t.Fatalf("Help Chat should enter the shared confirmation flow, cmd=%v pending=%#v", cmd, got.pendingControl)
+	}
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.pendingControl != nil || cmd == nil {
+		t.Fatalf("Help Chat confirmation should emit the host control, cmd=%v pending=%#v", cmd, got.pendingControl)
+	}
+	if _, ok := cmd().(ControlInvocationConfirmedMsg); !ok {
+		t.Fatalf("confirmation command returned the wrong message type")
 	}
 }
 

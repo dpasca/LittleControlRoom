@@ -697,7 +697,7 @@ func TestAssistantReplyReadOnlyRoutePassFallsBackToPlanner(t *testing.T) {
 	}
 }
 
-func TestAssistantReplyUsesPlainTextPlannerOutputAsFinalAnswer(t *testing.T) {
+func TestAssistantReplyRepairsPlainTextPlannerOutputAsFinalAnswer(t *testing.T) {
 	t.Parallel()
 
 	const answer = "Here's where things stand: Already in flight (two engineers working): Evelyn is on the airplane view zoom and Marco is checking the release branch."
@@ -708,10 +708,16 @@ func TestAssistantReplyUsesPlainTextPlannerOutputAsFinalAnswer(t *testing.T) {
 		}},
 	}
 	planner := &fakeJSONSchemaRunner{
-		resp: []llm.JSONSchemaResponse{{
-			OutputText: answer,
-			Usage:      model.LLMUsage{TotalTokens: 13},
-		}},
+		resp: []llm.JSONSchemaResponse{
+			{
+				OutputText: answer,
+				Usage:      model.LLMUsage{TotalTokens: 13},
+			},
+			{
+				OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: answer}),
+				Usage:      model.LLMUsage{TotalTokens: 7},
+			},
+		},
 	}
 	assistant := &Assistant{
 		planner:     planner,
@@ -730,8 +736,76 @@ func TestAssistantReplyUsesPlainTextPlannerOutputAsFinalAnswer(t *testing.T) {
 	if resp.Content != answer {
 		t.Fatalf("Content = %q, want plain planner answer", resp.Content)
 	}
-	if resp.Usage.TotalTokens != 18 {
-		t.Fatalf("usage total = %d, want router plus planner usage", resp.Usage.TotalTokens)
+	if resp.Usage.TotalTokens != 25 {
+		t.Fatalf("usage total = %d, want router plus planner and repair usage", resp.Usage.TotalTokens)
+	}
+	if len(planner.reqs) != 2 || planner.reqs[1].SchemaName != "boss_next_action" {
+		t.Fatalf("planner requests = %#v, want original action plus structured repair", planner.reqs)
+	}
+	if !strings.Contains(planner.reqs[1].UserText, answer) || !strings.Contains(planner.reqs[1].SystemText, "Repair one invalid") {
+		t.Fatalf("repair request should include the malformed output and repair instructions: %+v", planner.reqs[1])
+	}
+}
+
+func TestAssistantReplyRepairsToolProtocolIntoHelpChatControlProposal(t *testing.T) {
+	t.Parallel()
+
+	const toolProtocol = `<tool_call>
+<function=propose_control>
+<parameter=control_capability>engineer.send_prompt</parameter>
+<parameter=project_name>ChatNext3</parameter>
+<parameter=session_mode>new</parameter>
+<parameter=provider>auto</parameter>
+<parameter=prompt>Fix Help Chat wrapping and use the full response width.</parameter>
+</function>
+</tool_call>`
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: toolProtocol, Usage: model.LLMUsage{TotalTokens: 17}},
+			{
+				OutputText: encodedBossAction(t, bossAction{
+					Kind:              bossActionProposeControl,
+					ControlCapability: string(control.CapabilityEngineerSendPrompt),
+					ProjectName:       "ChatNext3",
+					EngineerProvider:  string(control.ProviderAuto),
+					SessionMode:       string(control.SessionModeNew),
+					Prompt:            "Fix Help Chat wrapping and use the full response width.",
+				}),
+				Usage: model.LLMUsage{TotalTokens: 9},
+			},
+		},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "mimo-v2.5-pro",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		HelpChat:   true,
+		StateBrief: "Visible projects: ChatNext3.",
+		Messages:   []ChatMessage{{Role: "user", Content: "Please fix Help Chat wrapping and response width."}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil {
+		t.Fatalf("ControlInvocation = nil, want a confirmable engineer handoff")
+	}
+	if resp.ControlInvocation.Capability != control.CapabilityEngineerSendPrompt {
+		t.Fatalf("capability = %q, want %q", resp.ControlInvocation.Capability, control.CapabilityEngineerSendPrompt)
+	}
+	if strings.Contains(resp.Content, "<tool_call>") || !strings.Contains(resp.Content, "Enter sends") {
+		t.Fatalf("proposal content = %q, want a confirmation preview without leaked protocol", resp.Content)
+	}
+	if len(planner.reqs) != 2 ||
+		!strings.Contains(planner.reqs[1].UserText, "<tool_call>") ||
+		!strings.Contains(planner.reqs[1].UserText, "engineer.send_prompt") ||
+		!strings.Contains(planner.reqs[1].UserText, "Fix Help Chat wrapping") {
+		t.Fatalf("planner requests = %#v, want one structured repair containing the malformed protocol", planner.reqs)
+	}
+	if resp.Usage.TotalTokens != 26 {
+		t.Fatalf("usage total = %d, want original plus repair usage", resp.Usage.TotalTokens)
 	}
 }
 
@@ -744,9 +818,10 @@ func TestAssistantReplyStillErrorsForMalformedPlannerJSON(t *testing.T) {
 		}},
 	}
 	planner := &fakeJSONSchemaRunner{
-		resp: []llm.JSONSchemaResponse{{
-			OutputText: `{"kind":"answer","answer":`,
-		}},
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: `{"kind":"answer","answer":`},
+			{OutputText: `still not JSON`},
+		},
 	}
 	assistant := &Assistant{
 		planner:     planner,
@@ -762,8 +837,8 @@ func TestAssistantReplyStillErrorsForMalformedPlannerJSON(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Reply() error = nil, want malformed JSON error")
 	}
-	if !strings.Contains(err.Error(), "decode boss chat action") {
-		t.Fatalf("Reply() error = %q, want decode boss chat action", err.Error())
+	if !strings.Contains(err.Error(), "decode boss chat action") || !strings.Contains(err.Error(), "repair") {
+		t.Fatalf("Reply() error = %q, want structured repair failure", err.Error())
 	}
 }
 

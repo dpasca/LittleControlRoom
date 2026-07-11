@@ -45,7 +45,18 @@ func RenderBodyWithBackground(body string, color, background lipgloss.Color, wid
 	return renderBody(body, color, background, width)
 }
 
+// RenderBodyUnwrappedWithBackground renders Markdown spans without imposing a
+// uniform line width. Callers that own a prefix or another variable-width
+// layout can wrap the styled result after composing that surrounding content.
+func RenderBodyUnwrappedWithBackground(body string, color, background lipgloss.Color, tableWidth int) string {
+	return renderBodyWithWidth(body, color, background, tableWidth, false)
+}
+
 func renderBody(body string, color, background lipgloss.Color, width int) string {
+	return renderBodyWithWidth(body, color, background, width, true)
+}
+
+func renderBodyWithWidth(body string, color, background lipgloss.Color, width int, fitWidth bool) string {
 	lines := strings.Split(body, "\n")
 	out := make([]string, 0, len(lines))
 	inFence := false
@@ -120,11 +131,19 @@ func renderBody(body string, color, background lipgloss.Color, width int) string
 		flushFence()
 	}
 	flushTable()
+	rendered := strings.Join(out, "\n")
+	if !fitWidth {
+		return rendered
+	}
+	// Lip Gloss's width constraint is a final overflow guard and may split at
+	// any cell. Word-wrap first so ordinary words move intact to the next line;
+	// genuinely overlong tokens still fall through to the hard width guard.
+	rendered = ansi.Wordwrap(rendered, width, "")
 	style := lipgloss.NewStyle().Width(width)
 	if background != "" {
 		style = style.Background(background)
 	}
-	return style.Render(strings.Join(out, "\n"))
+	return style.Render(rendered)
 }
 
 func markdownStyle(color, background lipgloss.Color) lipgloss.Style {

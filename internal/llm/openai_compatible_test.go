@@ -525,7 +525,7 @@ func TestOpenAICompatibleProviderModelProfileMapsDeepSeekToJSONMode(t *testing.T
 	}
 }
 
-func TestOpenAICompatibleProviderModelProfileMapsXiaomiToAPIKeyHeader(t *testing.T) {
+func TestOpenAICompatibleProviderModelProfileMapsXiaomiToJSONModeAndAPIKeyHeader(t *testing.T) {
 	t.Parallel()
 
 	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("xiaomi", "mimo-v2.5-pro", OpenAICompatibleResponsesRunnerOptions{
@@ -533,6 +533,9 @@ func TestOpenAICompatibleProviderModelProfileMapsXiaomiToAPIKeyHeader(t *testing
 	})
 	if opts.AuthHeader != OpenAICompatibleAuthHeaderAPIKey {
 		t.Fatalf("Xiaomi auth header = %q, want %q", opts.AuthHeader, OpenAICompatibleAuthHeaderAPIKey)
+	}
+	if opts.ChatResponseFormat != OpenAICompatibleChatResponseFormatJSONObject {
+		t.Fatalf("Xiaomi chat response format = %q, want %q", opts.ChatResponseFormat, OpenAICompatibleChatResponseFormatJSONObject)
 	}
 	if opts.ReasoningStyle != "xiaomi" {
 		t.Fatalf("Xiaomi reasoning style = %q, want xiaomi", opts.ReasoningStyle)
@@ -579,7 +582,7 @@ func TestOpenAICompatibleChatCompletionsSendsXiaomiReasoning(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleResponsesRunnerUsesConfiguredAPIKeyHeader(t *testing.T) {
+func TestOpenAICompatibleResponsesRunnerUsesXiaomiJSONModeAndAPIKeyHeader(t *testing.T) {
 	t.Parallel()
 
 	var chatCalls int
@@ -594,6 +597,23 @@ func TestOpenAICompatibleResponsesRunnerUsesConfiguredAPIKeyHeader(t *testing.T)
 		switch r.URL.Path {
 		case "/v1/chat/completions":
 			chatCalls++
+			var body struct {
+				Messages []struct {
+					Content string `json:"content"`
+				} `json:"messages"`
+				ResponseFormat struct {
+					Type string `json:"type"`
+				} `json:"response_format"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode Xiaomi request: %v", err)
+			}
+			if body.ResponseFormat.Type != "json_object" {
+				t.Fatalf("Xiaomi response_format.type = %q, want json_object", body.ResponseFormat.Type)
+			}
+			if len(body.Messages) != 2 || !strings.Contains(body.Messages[1].Content, `"type": "object"`) {
+				t.Fatalf("Xiaomi JSON-mode prompt should contain the requested schema: %#v", body.Messages)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"model":"mimo-v2.5-pro",

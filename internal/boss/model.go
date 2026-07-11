@@ -2260,7 +2260,6 @@ var (
 	bossInputShellStyle             = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText)
 	helpChatAssistantMessageStyle   = lipgloss.NewStyle().Background(helpChatSurfaceBackground)
 	helpChatAssistantPrefixStyle    = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(helpChatSurfaceBackground).Bold(true)
-	helpChatAssistantContStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(helpChatSurfaceBackground)
 	helpChatUserMessageStyle        = lipgloss.NewStyle().Background(helpChatSurfaceBackground)
 	helpChatUserPrefixStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(helpChatSurfaceBackground).Bold(true)
 	helpChatUserContStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(helpChatSurfaceBackground)
@@ -2357,9 +2356,35 @@ func renderAssistantChatMessage(message ChatMessage, width int, projectHighlight
 
 func (m Model) renderAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight) string {
 	if m.helpChat {
-		return renderAssistantChatMessageWithStylesOptions(message, width, projectHighlights, m.assistantMessagePrefix(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle, helpChatSurfaceBackground, true)
+		return renderHelpAssistantChatMessage(message, width, projectHighlights, m.assistantMessagePrefix())
 	}
 	return renderAssistantChatMessageWithPrefix(message, width, projectHighlights, m.assistantMessagePrefix())
+}
+
+func renderHelpAssistantChatMessage(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight, prefix string) string {
+	return renderHelpAssistantMessage(message.Content, width, projectHighlights, prefix, handoffMessageHighlights(message.Content, message.Handoff))
+}
+
+func renderHelpAssistantMessage(content string, width int, projectHighlights []bossProjectTextHighlight, prefix string, highlights []prefixedMessageHighlight) string {
+	width = maxInt(1, width)
+	rendered := terminalmd.RenderBodyUnwrappedWithBackground(content, bossPanelText, helpChatSurfaceBackground, width)
+	lines := strings.Split(rendered, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	if len(highlights) > 0 {
+		lines[0] = applyPrefixedMessageHighlights(lines[0], highlights)
+	}
+	lines[0] = helpChatAssistantPrefixStyle.Render(prefix) + lines[0]
+	rendered = ansi.Wordwrap(strings.Join(lines, "\n"), width, "")
+	rendered = ansi.Hardwrap(rendered, width, false)
+	lines = strings.Split(rendered, "\n")
+	if len(projectHighlights) > 0 {
+		for i, line := range lines {
+			lines[i] = applyProjectTextHighlights(line, projectHighlights)
+		}
+	}
+	return renderMessageLines(strings.Join(lines, "\n"), helpChatAssistantMessageStyle, width)
 }
 
 func renderAssistantChatMessageWithPrefix(message ChatMessage, width int, projectHighlights []bossProjectTextHighlight, prefix string) string {
@@ -2393,9 +2418,27 @@ func renderStreamingAssistantMessage(content string, toolCalls []string, width, 
 
 func (m Model) renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
 	if m.helpChat {
-		return renderStreamingAssistantMessageWithStylesOptions(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel(), helpChatAssistantPrefixStyle, helpChatAssistantContStyle, helpChatAssistantMessageStyle, helpChatMutedStyle, helpChatToolCallStyle, helpChatSurfaceBackground, true)
+		return renderHelpStreamingAssistantMessage(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel())
 	}
 	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, m.assistantMessagePrefix(), m.chatSurfaceLabel())
+}
+
+func renderHelpStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string) string {
+	var blocks []string
+	if toolBlock := renderTemporaryToolCallsWithStyle(toolCalls, width, helpChatToolCallStyle); toolBlock != "" {
+		blocks = append(blocks, toolBlock)
+	}
+	if strings.TrimSpace(content) != "" {
+		blocks = append(blocks, renderHelpAssistantMessage(content, width, projectHighlights, prefix, nil))
+	}
+	if len(blocks) == 0 {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			label = "Help chat"
+		}
+		blocks = append(blocks, helpChatMutedStyle.Render(fitLine(label+" is thinking "+spinnerDots(spinnerFrame), width)))
+	}
+	return strings.Join(blocks, "\n")
 }
 
 func renderStreamingAssistantMessageWithPrefix(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight, prefix, label string) string {

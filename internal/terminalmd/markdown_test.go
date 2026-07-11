@@ -49,6 +49,18 @@ func TestRenderBodyWithBackgroundKeepsInlineMarkdownOnSurface(t *testing.T) {
 	}
 }
 
+func TestRenderBodyWrapsNormalWordsWithoutSplittingThem(t *testing.T) {
+	t.Parallel()
+
+	rendered := ansi.Strip(RenderBody("one elephant zebra", lipgloss.Color("252"), 10))
+	if got, want := strings.Join(strings.Fields(rendered), " "), "one elephant zebra"; got != want {
+		t.Fatalf("word-wrapped text = %q, want %q; rendered=%q", got, want, rendered)
+	}
+	if strings.Contains(rendered, "elepha\n") || strings.Contains(rendered, "elepha \n") {
+		t.Fatalf("normal word was split across lines: %q", rendered)
+	}
+}
+
 func TestRenderBodyUnwrapsAngleBracketLocalMarkdownLinks(t *testing.T) {
 	t.Parallel()
 
