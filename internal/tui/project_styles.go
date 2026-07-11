@@ -397,8 +397,8 @@ func (m *Model) sortProjects(projects []model.ProjectSummary) {
 	switch m.sortMode {
 	case sortByRecent:
 		sort.SliceStable(projects, func(i, j int) bool {
-			li := projects[i].LastActivity
-			lj := projects[j].LastActivity
+			li := projectVisibilityRecency(projects[i])
+			lj := projectVisibilityRecency(projects[j])
 			if li.IsZero() != lj.IsZero() {
 				return !li.IsZero()
 			}
@@ -419,8 +419,8 @@ func (m *Model) sortProjects(projects []model.ProjectSummary) {
 			if scoreI != scoreJ {
 				return scoreI > scoreJ
 			}
-			li := projects[i].LastActivity
-			lj := projects[j].LastActivity
+			li := projectVisibilityRecency(projects[i])
+			lj := projectVisibilityRecency(projects[j])
 			if li.IsZero() != lj.IsZero() {
 				return !li.IsZero()
 			}
@@ -430,6 +430,18 @@ func (m *Model) sortProjects(projects []model.ProjectSummary) {
 			return projects[i].Name < projects[j].Name
 		})
 	}
+}
+
+// projectVisibilityRecency treats an explicitly added project as recent even
+// before it has engineer activity. LastActivity remains artifact-derived, so
+// callers that display or classify agent activity do not receive a synthetic
+// timestamp.
+func projectVisibilityRecency(project model.ProjectSummary) time.Time {
+	recent := project.LastActivity
+	if project.ManuallyAdded && project.CreatedAt.After(recent) {
+		recent = project.CreatedAt
+	}
+	return recent
 }
 
 func (m *Model) indexByPath(path string) int {

@@ -324,9 +324,10 @@ func (s *Store) MarkProjectManuallyAdded(ctx context.Context, path string, prese
 				forgotten = 0,
 				present_on_disk = 1,
 				missing_since = NULL,
+				created_at = ?,
 				updated_at = ?
 			WHERE path = ?
-		`, now, path)
+		`, now, now, path)
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `
@@ -335,9 +336,10 @@ func (s *Store) MarkProjectManuallyAdded(ctx context.Context, path string, prese
 			in_scope = 1,
 			archived = 0,
 			forgotten = 0,
+			created_at = ?,
 			updated_at = ?
 		WHERE path = ?
-	`, now, path)
+	`, now, now, path)
 	return err
 }
 

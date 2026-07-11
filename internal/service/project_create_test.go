@@ -61,6 +61,12 @@ func TestCreateOrAttachProjectCreatesDirectoryAndGitRepo(t *testing.T) {
 	if detail.Summary.Path != result.ProjectPath || detail.Summary.Name != "alpha" {
 		t.Fatalf("unexpected stored project detail: %#v", detail.Summary)
 	}
+	if detail.Summary.AttentionScore != 80 {
+		t.Fatalf("attention score = %d, want 80 for a newly created project", detail.Summary.AttentionScore)
+	}
+	if len(detail.Reasons) == 0 || detail.Reasons[0].Code != "new_project" || !strings.Contains(detail.Reasons[0].Text, "Recently added project") {
+		t.Fatalf("attention reasons = %#v, want an explicit recently-added project reason", detail.Reasons)
+	}
 	if len(result.RecentParentPaths) == 0 || result.RecentParentPaths[0] != parent {
 		t.Fatalf("recent parent paths = %v, want %q first", result.RecentParentPaths, parent)
 	}
@@ -202,16 +208,19 @@ func TestCreateOrAttachProjectPromotesExistingDiscoveredProjectWithoutSessions(t
 
 	parent := t.TempDir()
 	projectPath := filepath.Join(parent, "portfolio")
+	discoveredAt := time.Now().UTC().Add(-7 * 24 * time.Hour)
 	if err := os.MkdirAll(filepath.Join(projectPath, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir existing git project: %v", err)
 	}
 	if err := st.UpsertProjectState(ctx, model.ProjectState{
-		Path:          projectPath,
-		Name:          "portfolio",
-		Status:        model.StatusIdle,
-		PresentOnDisk: true,
-		InScope:       true,
-		UpdatedAt:     time.Now().UTC(),
+		Path:           projectPath,
+		Name:           "portfolio",
+		Status:         model.StatusIdle,
+		AttentionScore: 10,
+		PresentOnDisk:  true,
+		InScope:        true,
+		CreatedAt:      discoveredAt,
+		UpdatedAt:      discoveredAt,
 	}); err != nil {
 		t.Fatalf("upsert discovered project: %v", err)
 	}
@@ -234,6 +243,15 @@ func TestCreateOrAttachProjectPromotesExistingDiscoveredProjectWithoutSessions(t
 	}
 	if !detail.Summary.ManuallyAdded || !detail.Summary.InScope || detail.Summary.Archived || detail.Summary.Forgotten {
 		t.Fatalf("expected existing discovered project to be promoted into the active manual list, got %#v", detail.Summary)
+	}
+	if !detail.Summary.CreatedAt.After(discoveredAt) {
+		t.Fatalf("created at = %v, want promotion time after discovery time %v", detail.Summary.CreatedAt, discoveredAt)
+	}
+	if detail.Summary.AttentionScore <= 50 {
+		t.Fatalf("attention score = %d, want promoted project above ordinary active work", detail.Summary.AttentionScore)
+	}
+	if len(detail.Reasons) == 0 || detail.Reasons[0].Code != "new_project" {
+		t.Fatalf("attention reasons = %#v, want new_project after promotion", detail.Reasons)
 	}
 }
 
