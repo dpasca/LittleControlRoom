@@ -21,6 +21,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 
+	"lcroom/internal/commandguard"
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/session"
 	skillcatalog "lcroom/internal/lcagent/skills"
@@ -2108,6 +2109,18 @@ func (r *Runner) runCommandAtMedium(ctx context.Context, spec tools.CommandSpec)
 func (r *Runner) runProcessWithApproval(ctx context.Context, request ProcessRequest, spec tools.CommandSpec, tool string) tools.ToolResult {
 	if r == nil {
 		return tools.ToolResult{Success: false, Error: "runner unavailable"}
+	}
+	if commandguard.ContainsDirectRM(spec.Command) {
+		result := tools.ToolResult{
+			Success:      false,
+			Denied:       true,
+			DenialReason: commandguard.DirectRMDenialReason,
+			Error:        commandguard.DirectRMDenialReason,
+			Command:      commandLabelForApproval(spec),
+			CWD:          commandCWDForApproval(r.Command.Workspace.Root, spec),
+		}
+		_ = r.writeOperationalAction(request, result)
+		return result
 	}
 	if r.Command.Workspace.Auto == policy.AutonomyLow {
 		if !r.processApprovalGranted(ctx, spec, tool) {

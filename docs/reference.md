@@ -106,6 +106,24 @@ playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
 ```
 
+Embedded Codex keeps the filesystem reach and approval behavior selected by
+`codex_launch_preset`; the default remains `yolo`. Little Control Room adds a
+narrow destructive-command seatbelt to every LCR-managed embedded Codex
+session: Codex exec-policy rules forbid direct `rm` invocations, and an LCR
+`rm` shim rejects recursive forced deletion when wrappers or child processes
+resolve `rm` through that session's `PATH`. This does not confine reads or
+ordinary writes to the current project.
+
+The guard is deliberately narrower than a security sandbox. Other deletion
+mechanisms, an absolute executable hidden inside a script, or deliberate PATH
+replacement can bypass it. Keep normal backups and filesystem protections in
+place; use targeted file/patch tools for agent edits and run intentional bulk
+cleanup manually outside the embedded agent session.
+
+The architecture, threat model, maintenance invariants, and provider-extension
+plan are recorded in
+[`destructive_command_safety.md`](destructive_command_safety.md).
+
 LCAgent session JSONL artifacts are replayable in the embedded pane. Opening a previous
 LCAgent session loads read-only transcript history; sending a new prompt starts a fresh
 one-shot run that continues from a saved model-context snapshot when the prior artifact
@@ -137,6 +155,10 @@ the default: it allows workspace file edits, read-only command inspection, and
 recognized verifier commands, while broader commands ask in the embedded pane.
 `medium` allows workspace-contained commands without repeated approvals; write
 tools still stay inside the workspace unless `lcagent_admin_write` is enabled.
+Direct `rm` commands are denied structurally in both `run_command` and
+`start_process` at every LCAgent permission level; a Low approval or switch to
+Medium cannot override that denial. Targeted LCAgent file and patch tools remain
+available.
 Persistent user/system configuration mutations through `run_command`, such as
 file-association/defaults changes or global package-manager state changes, also
 require explicit `admin_scope=system` plus `lcagent_admin_write`.

@@ -6,14 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"lcroom/internal/browserctl"
-	"lcroom/internal/codexcli"
-	"lcroom/internal/codexstate"
 	"log"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
+
+	"lcroom/internal/browserctl"
+	"lcroom/internal/codexcli"
+	"lcroom/internal/codexstate"
 )
 
 func (s *appServerSession) start(req LaunchRequest) error {
@@ -22,21 +23,20 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	applyCodexMCPOverrides(cmd, req)
 	configureAppServerCommand(cmd)
 	applyPlaywrightPolicyEnvironment(cmd, ProviderCodex, req.PlaywrightPolicy)
-	if shouldPrepareEmbeddedSkillOverlay(req) {
-		sourceHome, err := effectiveCodexHome(req.CodexHome)
-		if err != nil {
-			return err
-		}
-		if _, err := codexstate.SanitizeStateRolloutPaths(sourceHome); err != nil {
-			s.appendCodexHomeCleanupWarning(sourceHome, err)
-		}
-		codexHomeOverlay, err := prepareCodexHomeOverlay(req.AppDataDir, sourceHome)
-		if err != nil {
-			return err
-		}
-		s.codexHomeOverlay = codexHomeOverlay
-		cmd.Env = withEnvOverride(cmd.Env, "CODEX_HOME", codexHomeOverlay)
+	sourceHome, err := effectiveCodexHome(req.CodexHome)
+	if err != nil {
+		return err
 	}
+	if _, err := codexstate.SanitizeStateRolloutPaths(sourceHome); err != nil {
+		s.appendCodexHomeCleanupWarning(sourceHome, err)
+	}
+	codexHomeOverlay, err := prepareCodexHomeOverlayWithOptions(req.AppDataDir, sourceHome, shouldPrepareEmbeddedSkillOverlay(req))
+	if err != nil {
+		return err
+	}
+	s.codexHomeOverlay = codexHomeOverlay
+	cmd.Env = withEnvOverride(cmd.Env, "CODEX_HOME", codexHomeOverlay)
+	applyCodexDirectRMGuardEnvironment(cmd, codexHomeOverlay)
 	compatibility := codexcli.ApplyCodeModeHostCompatibility(cmd)
 
 	stdin, err := cmd.StdinPipe()
