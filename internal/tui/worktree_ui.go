@@ -38,8 +38,10 @@ const (
 	worktreeMergePendingSummary       = "Merging worktree back..."
 	worktreeCommitMergePendingSummary = "Committing and merging worktree back..."
 	worktreeRemovePendingSummary      = "Removing worktree..."
+	worktreeFinalizeRemoveSummary     = "Completing linked TODO and removing worktree..."
 	worktreePostMergeRemoveSummary    = "Removing merged worktree..."
 	tuiWorktreeRemoveTimeout          = 20 * time.Second
+	tuiWorktreeFinalizeTimeout        = tuiQuickActionTimeout + tuiWorktreeRemoveTimeout
 )
 
 type projectListRow struct {
@@ -61,18 +63,27 @@ type worktreeRemoveConfirmState struct {
 	BranchName   string
 	TargetBranch string
 	MergeStatus  model.WorktreeMergeStatus
+	LinkedTodoID int64
 	Dirty        bool
 	ForceRemove  bool
+	MarkTodoDone bool
 	Busy         bool
 	BusyMessage  string
 	Selected     int
 }
 
 func worktreeRemoveConfirmOptionCount(confirm *worktreeRemoveConfirmState) int {
-	if confirm != nil && confirm.Dirty {
-		return 1 // "Force remove" checkbox
+	if confirm == nil {
+		return 0
 	}
-	return 0
+	count := 0
+	if confirm.Dirty {
+		count++ // "Force remove" checkbox
+	}
+	if confirm.LinkedTodoID > 0 {
+		count++ // "Mark linked TODO done" checkbox
+	}
+	return count
 }
 
 func worktreeRemoveConfirmRemoveIndex(confirm *worktreeRemoveConfirmState) int {
@@ -81,6 +92,13 @@ func worktreeRemoveConfirmRemoveIndex(confirm *worktreeRemoveConfirmState) int {
 
 func worktreeRemoveConfirmKeepIndex(confirm *worktreeRemoveConfirmState) int {
 	return worktreeRemoveConfirmOptionCount(confirm) + 1
+}
+
+func worktreeRemoveConfirmTodoIndex(confirm *worktreeRemoveConfirmState) int {
+	if confirm != nil && confirm.Dirty {
+		return 1
+	}
+	return 0
 }
 
 func worktreeRemoveConfirmFocusCount(confirm *worktreeRemoveConfirmState) int {
@@ -92,6 +110,25 @@ func worktreeRemoveConfirmReady(confirm *worktreeRemoveConfirmState) bool {
 		return false
 	}
 	return !confirm.Dirty || confirm.ForceRemove
+}
+
+func toggleWorktreeRemoveConfirmSelection(confirm *worktreeRemoveConfirmState) bool {
+	if confirm == nil || confirm.Selected < 0 {
+		return false
+	}
+	index := confirm.Selected
+	if confirm.Dirty {
+		if index == 0 {
+			confirm.ForceRemove = !confirm.ForceRemove
+			return true
+		}
+		index--
+	}
+	if confirm.LinkedTodoID > 0 && index == 0 {
+		confirm.MarkTodoDone = !confirm.MarkTodoDone
+		return true
+	}
+	return false
 }
 
 type worktreeMergeConfirmState struct {
@@ -1538,35 +1575,50 @@ func (m Model) applyWorktreeMergePlanCmd(confirm worktreeMergeConfirmState) tea.
 			msg.selectPath = rootPath
 		}
 		status := worktreeMergeStatusText(result)
-		if confirm.MarkTodoDone && confirm.HasLinkedTodo {
-			switch {
-			case result.LinkedTodoID <= 0:
-				status = appendWorktreeStatusClause(status, "Linked TODO was already closed.")
-			case strings.TrimSpace(result.LinkedTodoPath) == "":
-				status = appendWorktreeStatusClause(status, "Could not mark the linked TODO done because its project path is unavailable.")
-			default:
-				todoCtx, todoCancel := m.actionContext(tuiQuickActionTimeout)
-				err := m.svc.ToggleTodoDone(todoCtx, result.LinkedTodoPath, result.LinkedTodoID, true)
-				todoCancel()
-				err = timeoutActionError(err, tuiQuickActionTimeout, "marking the linked TODO done")
-				if err != nil {
-					status = appendWorktreeStatusClause(status, "Could not mark the linked TODO done: "+err.Error())
-				} else {
-					status = appendWorktreeStatusClause(status, "Linked TODO marked done.")
-				}
+		if (confirm.MarkTodoDone && confirm.HasLinkedTodo) || confirm.RemoveNow {
+			finalized, err := m.finalizeMergedWorktreeWithTimeout(projectPath, service.FinalizeMergedWorktreeOptions{
+				MarkLinkedTodoDone: confirm.MarkTodoDone && confirm.HasLinkedTodo,
+				RemoveWorktree:     confirm.RemoveNow,
+			})
+			if err != nil {
+				msg.err = fmt.Errorf("%s; cleanup stopped and the worktree was kept when possible: %w", status, err)
+				return msg
 			}
-		}
-		if confirm.RemoveNow {
-			if err := m.removeWorktreeWithTimeout(projectPath, false); err != nil {
-				status = appendWorktreeStatusClause(status, "Could not remove the merged worktree: "+err.Error())
-			} else {
-				status = appendWorktreeStatusClause(status, "Worktree removed.")
+			status = worktreeFinalizeStatus(status, finalized)
+			if finalized.WorktreeRemoved {
 				msg.removedProjectPath = projectPath
 			}
 		}
 		msg.status = status
 		return msg
 	}
+}
+
+func (m Model) finalizeMergedWorktreeWithTimeout(projectPath string, options service.FinalizeMergedWorktreeOptions) (service.FinalizeMergedWorktreeResult, error) {
+	timeout := tuiQuickActionTimeout
+	action := "completing the linked TODO"
+	if options.RemoveWorktree {
+		timeout = tuiWorktreeFinalizeTimeout
+		action = "finalizing the merged worktree"
+	}
+	ctx, cancel := m.actionContext(timeout)
+	defer cancel()
+	result, err := m.svc.FinalizeMergedWorktree(ctx, projectPath, options)
+	return result, timeoutActionError(err, timeout, action)
+}
+
+func worktreeFinalizeStatus(base string, result service.FinalizeMergedWorktreeResult) string {
+	status := strings.TrimSpace(base)
+	switch {
+	case result.LinkedTodoMarkedDone:
+		status = appendWorktreeStatusClause(status, "Linked TODO marked done.")
+	case result.LinkedTodoAlreadyDone:
+		status = appendWorktreeStatusClause(status, "Linked TODO was already done.")
+	}
+	if result.WorktreeRemoved {
+		status = appendWorktreeStatusClause(status, "Worktree removed.")
+	}
+	return status
 }
 
 func (m Model) updateWorktreePostMergeMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1758,6 +1810,10 @@ func (m *Model) openWorktreeRemoveConfirmForSelection() tea.Cmd {
 		MergeStatus:  project.WorktreeMergeStatus,
 		Dirty:        project.RepoDirty,
 	}
+	if !state.Dirty && state.MergeStatus == model.WorktreeMergeStatusMerged && project.WorktreeOriginTodoID > 0 {
+		state.LinkedTodoID = project.WorktreeOriginTodoID
+		state.MarkTodoDone = true
+	}
 	state.Selected = worktreeRemoveConfirmKeepIndex(state)
 	m.worktreeRemoveConfirm = state
 	m.status = "Confirm worktree removal"
@@ -1785,14 +1841,12 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 		confirm.Selected = (confirm.Selected + 1) % focusCount
 		return m, nil
 	case " ":
-		if confirm.Dirty && confirm.Selected == 0 {
-			confirm.ForceRemove = !confirm.ForceRemove
-		}
+		toggleWorktreeRemoveConfirmSelection(confirm)
 		return m, nil
 	case "enter":
 		// Toggle checkbox on enter when focused on it.
-		if confirm.Dirty && confirm.Selected < worktreeRemoveConfirmOptionCount(confirm) {
-			confirm.ForceRemove = !confirm.ForceRemove
+		if confirm.Selected < worktreeRemoveConfirmOptionCount(confirm) {
+			toggleWorktreeRemoveConfirmSelection(confirm)
 			return m, nil
 		}
 		if confirm.Selected == worktreeRemoveConfirmKeepIndex(confirm) {
@@ -1804,10 +1858,37 @@ func (m Model) updateWorktreeRemoveConfirmMode(msg tea.KeyMsg) (tea.Model, tea.C
 			m.status = "Check \"Force remove\" to discard uncommitted changes"
 			return m, nil
 		}
+		if confirm.MarkTodoDone && confirm.LinkedTodoID > 0 {
+			m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeFinalizeRemoveSummary, worktreeFinalizeRemoveSummary)
+			return m, m.finalizeMergedWorktreeCmd(confirm.ProjectPath, confirm.RootPath, confirm.ForceRemove)
+		}
 		m.beginAsyncWorktreeAction(confirm.ProjectPath, worktreeRemovePendingSummary, worktreeRemovePendingSummary)
 		return m, m.removeWorktreeCmd(confirm.ProjectPath, confirm.RootPath, confirm.ForceRemove)
 	}
 	return m, nil
+}
+
+func (m Model) finalizeMergedWorktreeCmd(projectPath, rootPath string, force bool) tea.Cmd {
+	if m.svc == nil {
+		return func() tea.Msg {
+			return worktreeActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
+		}
+	}
+	return func() tea.Msg {
+		result, err := m.finalizeMergedWorktreeWithTimeout(projectPath, service.FinalizeMergedWorktreeOptions{
+			MarkLinkedTodoDone: true,
+			RemoveWorktree:     true,
+			ForceRemove:        force,
+		})
+		return worktreeActionMsg{
+			projectPath:            projectPath,
+			removedProjectPath:     removedWorktreePath(result.WorktreeRemoved, projectPath),
+			selectPath:             rootPath,
+			status:                 worktreeFinalizeStatus("", result),
+			clearPendingGitSummary: true,
+			err:                    err,
+		}
+	}
 }
 
 func (m Model) removeWorktreeCmd(projectPath, rootPath string, force bool) tea.Cmd {
@@ -1927,6 +2008,24 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 			lines = append(lines, style.Render(line))
 		}
 	}
+	if confirm.LinkedTodoID > 0 && !confirm.Busy {
+		lines = append(lines, "")
+		lines = append(lines, detailValueStyle.Render("Linked TODO"))
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "This checkout is already merged. Complete its originating TODO when removing it.")...)
+		lines = append(lines, "")
+		prefix := "[ ] "
+		style := detailMutedStyle
+		if confirm.MarkTodoDone {
+			prefix = "[x] "
+			style = detailValueStyle
+		}
+		line := truncateText(prefix+"Mark linked TODO done", panelInnerW)
+		if confirm.Selected == worktreeRemoveConfirmTodoIndex(confirm) {
+			lines = append(lines, dialogButtonSelectedStyle.UnsetPadding().Width(panelInnerW).Render(line))
+		} else {
+			lines = append(lines, style.Render(line))
+		}
+	}
 	lines = append(lines, "")
 	lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, "Removing a linked worktree deletes the checkout only. The branch ref stays in the repo.")...)
 	if confirm.Busy {
@@ -1934,7 +2033,7 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		lines = append(lines, detailValueStyle.Render("Removal in progress"))
 		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, panelInnerW, confirm.BusyMessage)...)
 	}
-	if confirm.Dirty && !confirm.Busy {
+	if worktreeRemoveConfirmOptionCount(confirm) > 0 && !confirm.Busy {
 		lines = append(lines, "")
 		lines = append(lines, renderHelpPanelActionRow(
 			renderDialogAction("Space", "toggle", pushActionKeyStyle, pushActionTextStyle),

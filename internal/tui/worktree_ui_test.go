@@ -1914,6 +1914,73 @@ func TestRenderWorktreeRemoveConfirmShowsMergeSafetyCopy(t *testing.T) {
 	}
 }
 
+func TestMergedWorktreeRemoveDefaultsToCompletingLinkedTodo(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--answer-only"
+	root := model.ProjectSummary{
+		Name:             "repo",
+		Path:             rootPath,
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+		RepoBranch:       "master",
+	}
+	child := model.ProjectSummary{
+		Name:                 "repo--answer-only",
+		Path:                 childPath,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		WorktreeMergeStatus:  model.WorktreeMergeStatusMerged,
+		WorktreeOriginTodoID: 42,
+		RepoBranch:           "todo/answer-only",
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{root, child},
+		visibility:  visibilityAllFolders,
+		sortMode:    sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	if cmd := m.openWorktreeRemoveConfirmForSelection(); cmd != nil {
+		t.Fatalf("opening remove confirmation should not queue work")
+	}
+	confirm := m.worktreeRemoveConfirm
+	if confirm == nil {
+		t.Fatal("merged linked worktree should open remove confirmation")
+	}
+	if confirm.LinkedTodoID != 42 || !confirm.MarkTodoDone {
+		t.Fatalf("merged worktree TODO cleanup defaults = %#v", confirm)
+	}
+	if confirm.Selected != worktreeRemoveConfirmKeepIndex(confirm) {
+		t.Fatalf("remove confirmation selected = %d, want Keep", confirm.Selected)
+	}
+	rendered := ansi.Strip(m.renderWorktreeRemoveConfirmOverlay("body", 90, 28))
+	for _, want := range []string{
+		"Linked TODO",
+		"This checkout is already merged.",
+		"[x] Mark linked TODO done",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("merged remove confirmation missing %q in %q", want, rendered)
+		}
+	}
+
+	confirm.Selected = worktreeRemoveConfirmRemoveIndex(confirm)
+	updated, cmd := m.updateWorktreeRemoveConfirmMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("removing a merged TODO worktree should queue finalization")
+	}
+	if got.worktreeRemoveConfirm != nil {
+		t.Fatal("finalization should dismiss the remove confirmation")
+	}
+	if got.status != worktreeFinalizeRemoveSummary {
+		t.Fatalf("status = %q, want %q", got.status, worktreeFinalizeRemoveSummary)
+	}
+}
+
 func TestWorktreeRemoveEnterDismissesDialogWhileRunning(t *testing.T) {
 	m := Model{
 		worktreeRemoveConfirm: &worktreeRemoveConfirmState{

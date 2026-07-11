@@ -233,6 +233,7 @@ func CuratedTopics() []Topic {
 			Usage:   []string{"x", "/wt remove", "/wt prune"},
 			ManualSteps: []string{
 				"Select a linked worktree and press x, or run /wt remove, to open the remove confirmation.",
+				"For a clean merged worktree linked to an open TODO, leave Mark linked TODO done enabled to complete the item before removing the checkout.",
 				"If the selected row is a pending TODO worktree launch, x aborts the pending launch.",
 				"Select a repo root or family and run /wt prune to clean stale Git worktree registrations.",
 			},
@@ -240,7 +241,7 @@ func CuratedTopics() []Topic {
 				CommandTopicID(SurfaceMainTUI, "wt"),
 				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"),
 			},
-			SourceRefs: []string{"tui.updateNormalMode", "tui.worktreeFooterActions", "commands.Specs"},
+			SourceRefs: []string{"tui.updateNormalMode", "tui.worktreeFooterActions", "tui.openWorktreeRemoveConfirmForSelection", "commands.Specs"},
 		},
 		{
 			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "merge-conflict-recovery"),
