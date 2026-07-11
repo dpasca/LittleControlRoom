@@ -147,8 +147,12 @@ func (m Model) renderHelpChatOverlay(body string, bodyW, bodyH int) string {
 	chat := fitPaneContent(m.helpChatModel.View(), geom.chatWidth, geom.chatHeight)
 	footer := m.renderHelpChatFooter(geom.chatWidth)
 	content := strings.Join([]string{header, chat, footer}, "\n")
+	// Lip Gloss Width includes padding in its wrapping budget but excludes the
+	// border. Give the shell room for its padding so chatWidth remains the one
+	// and only content-wrapping width owned by the embedded chat viewport.
+	panelBoxWidth := geom.chatWidth + helpChatPanelStyle.GetHorizontalPadding()
 	panel := helpChatPanelStyle.
-		Width(geom.chatWidth).
+		Width(panelBoxWidth).
 		Render(fitPaneContent(content, geom.chatWidth, geom.chatHeight+2))
 	return overlayBlock(body, panel, bodyW, bodyH, geom.left, geom.top)
 }

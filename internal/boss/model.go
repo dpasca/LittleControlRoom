@@ -2308,9 +2308,10 @@ func renderBossInputBlock(_ textarea.Model, editorView string, width int) string
 
 func renderHelpChatInput(input textarea.Model, width, height int) string {
 	width = maxInt(1, width)
-	innerWidth := maxInt(1, width-2)
+	shell := helpChatInputShellStyle.Width(width).Padding(0, 1)
+	innerWidth := maxInt(1, width-shell.GetHorizontalPadding())
 	body := fitRenderedBlock(input.View(), innerWidth, height)
-	rendered := helpChatInputShellStyle.Width(innerWidth).Padding(0, 1).Render(body)
+	rendered := shell.Render(body)
 	return fitRenderedBlock(rendered, width, height)
 }
 
