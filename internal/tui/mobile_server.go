@@ -8,6 +8,8 @@ import (
 type MobileServerStatus struct {
 	URL           string
 	ListenAddress string
+	PairingCode   string
+	AuthRequired  bool
 	Error         string
 }
 
@@ -17,6 +19,7 @@ func (m *Model) SetMobileServerStatus(status MobileServerStatus) {
 	}
 	status.URL = strings.TrimSpace(status.URL)
 	status.ListenAddress = strings.TrimSpace(status.ListenAddress)
+	status.PairingCode = strings.TrimSpace(status.PairingCode)
 	status.Error = strings.TrimSpace(status.Error)
 	m.mobileServerStatus = status
 }
@@ -34,6 +37,9 @@ func (m Model) mobileServerStatusMessage() string {
 		return "Mobile client unavailable: " + status.Error
 	}
 	if status.URL != "" {
+		if status.AuthRequired && status.PairingCode != "" {
+			return fmt.Sprintf("Mobile client available at %s; pairing code %s", status.URL, status.PairingCode)
+		}
 		return "Mobile client available at " + status.URL
 	}
 	return "Mobile client is not running in this mode"

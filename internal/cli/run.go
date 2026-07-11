@@ -19,6 +19,7 @@ import (
 	"lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/buildinfo"
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/detectors/claudecode"
@@ -93,19 +94,19 @@ func Run(programName string, args []string) int {
 		}
 	}
 	serveAddr := server.DefaultListenAddress
-	if subcmd == "serve" {
+	if subcmd == "serve" || subcmd == "tui" {
 		var listenAddr string
 		var err error
 		commonArgs, listenAddr, err = stripPathFlagArg(commonArgs, "--listen")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "serve flag error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
 			return 2
 		}
 		if strings.TrimSpace(listenAddr) != "" {
 			serveAddr = strings.TrimSpace(listenAddr)
 		}
 		if err := server.ValidateListenAddress(serveAddr); err != nil {
-			fmt.Fprintf(os.Stderr, "serve flag error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
 			return 2
 		}
 	}
@@ -197,7 +198,7 @@ func Run(programName string, args []string) int {
 	case "boss":
 		return runBoss(ctx, svc)
 	case "tui":
-		return runTUI(ctx, svc)
+		return runTUI(ctx, svc, serveAddr)
 	case "serve":
 		return runServe(ctx, svc, serveAddr)
 	default:
@@ -943,9 +944,10 @@ func formatRepoSyncLine(status model.RepoSyncStatus, ahead, behind int) string {
 	}
 }
 
-func runTUI(ctx context.Context, svc *service.Service) int {
+func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string) int {
 	runCtx, cancel := context.WithCancel(ctx)
-	mobileServer, mobileStatus := startTUIMobileServer(runCtx, svc)
+	codexManager := codexapp.NewManager()
+	mobileServer, mobileStatus := startTUIMobileServer(runCtx, svc, codexManager, mobileListenAddress)
 	defer func() {
 		cancel()
 		if err := stopRunningServer(mobileServer); err != nil {
@@ -959,7 +961,7 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	go svc.StartCommitTodoChecker(runCtx)
 	svc.StartBackgroundDiscovery(runCtx)
 
-	m := tui.New(runCtx, svc)
+	m := tui.NewWithCodexManager(runCtx, svc, codexManager)
 	m.SetMobileServerStatus(mobileStatus)
 	m.EnableUIStallWatchdog()
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -970,15 +972,41 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	return 0
 }
 
-func startTUIMobileServer(ctx context.Context, svc *service.Service) (*server.RunningServer, tui.MobileServerStatus) {
-	status := tui.MobileServerStatus{ListenAddress: server.DefaultListenAddress}
-	running, err := server.New(svc).Start(ctx, server.DefaultListenAddress)
+func startTUIMobileServer(ctx context.Context, svc *service.Service, liveSessions server.LiveSessionSource, listenAddress string) (*server.RunningServer, tui.MobileServerStatus) {
+	listenAddress = strings.TrimSpace(listenAddress)
+	if listenAddress == "" {
+		listenAddress = server.DefaultListenAddress
+	}
+	status := tui.MobileServerStatus{ListenAddress: listenAddress}
+	mobileServer := server.New(svc).WithLiveSessions(liveSessions)
+	auth, err := configureMobileServerAuth(mobileServer, svc, listenAddress)
+	if err != nil {
+		status.Error = err.Error()
+		return nil, status
+	}
+	if auth != nil {
+		status.AuthRequired = true
+		status.PairingCode = auth.PairingCode()
+	}
+	running, err := mobileServer.Start(ctx, listenAddress)
 	if err != nil {
 		status.Error = err.Error()
 		return nil, status
 	}
 	status.URL = running.URL()
 	return running, status
+}
+
+func configureMobileServerAuth(mobileServer *server.Server, svc *service.Service, listenAddress string) (*server.MobileAuth, error) {
+	if server.ListenAddressIsLoopback(listenAddress) {
+		return nil, nil
+	}
+	auth, err := server.NewMobileAuth(svc.Config().DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("initialize LAN mobile authentication: %w", err)
+	}
+	mobileServer.WithMobileAuth(auth)
+	return auth, nil
 }
 
 func stopRunningServer(running *server.RunningServer) error {
@@ -1088,14 +1116,20 @@ func runServe(ctx context.Context, svc *service.Service, addr string) int {
 	svc.StartBackgroundDiscovery(ctx)
 
 	s := server.New(svc)
+	auth, err := configureMobileServerAuth(s, svc, addr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
+		return 1
+	}
 	running, err := s.Start(ctx, addr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
 		return 1
 	}
 	fmt.Printf("serving %s at %s\n", brand.Name, running.URL())
-	if !server.ListenAddressIsLoopback(addr) {
-		fmt.Println("warning: this read-only preview has no authentication; use a trusted network only")
+	if auth != nil {
+		fmt.Printf("mobile pairing code: %s\n", auth.PairingCode())
+		fmt.Println("warning: LAN authentication does not encrypt HTTP traffic; use a trusted network")
 	}
 	if err := running.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
@@ -1248,7 +1282,7 @@ func printUsage(programName string) {
 	fmt.Println("Mockups flags:")
 	fmt.Println("  --screenshot-config <path>")
 	fmt.Println("  --output-dir <path>")
-	fmt.Println("Serve flags:")
+	fmt.Println("TUI and serve flags:")
 	fmt.Printf("  --listen <host:port> (default %s)\n", server.DefaultListenAddress)
 	fmt.Println("Browser flags:")
 	fmt.Println("  browser <status|reveal> --session-key <id> [--data-dir <path>]")

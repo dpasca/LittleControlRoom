@@ -749,6 +749,16 @@ func (m *Manager) Session(projectPath string) (Session, bool) {
 	return session, ok
 }
 
+// TrySessionSnapshot returns a live project snapshot without waiting on a
+// contended session lock. Read-only observers can use recorded state instead.
+func (m *Manager) TrySessionSnapshot(projectPath string) (Snapshot, bool) {
+	session, ok := m.Session(projectPath)
+	if !ok || session == nil {
+		return Snapshot{}, false
+	}
+	return session.TrySnapshot()
+}
+
 func (m *Manager) Snapshots() []Snapshot {
 	if m == nil {
 		return nil

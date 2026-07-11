@@ -44,6 +44,7 @@ func generateMobileMockupAssets(config.ScreenshotConfig) []ScreenshotAsset {
 			Height: height,
 		})
 	}
+	assets = append(assets, generatePocketControlRoomMockupAssets()...)
 	return assets
 }
 

@@ -3,6 +3,6 @@
   "short_name": "LCR",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f4f6f8",
-  "theme_color": "#f4f6f8"
+  "background_color": "#090b0d",
+  "theme_color": "#252c33"
 }

@@ -650,6 +650,13 @@ const (
 )
 
 func New(ctx context.Context, svc *service.Service) Model {
+	return NewWithCodexManager(ctx, svc, nil)
+}
+
+func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager *codexapp.Manager) Model {
+	if codexManager == nil {
+		codexManager = codexapp.NewManager()
+	}
 	busCh, unsub := svc.Bus().Subscribe(128)
 	commandInput := textinput.New()
 	commandInput.Placeholder = "/help"
@@ -708,7 +715,7 @@ func New(ctx context.Context, svc *service.Service) Model {
 		excludeProjectPatterns:        append([]string(nil), initialSettings.ExcludeProjectPatterns...),
 		privacyMode:                   initialSettings.PrivacyMode,
 		privacyPatterns:               append([]string(nil), initialSettings.PrivacyPatterns...),
-		codexManager:                  codexapp.NewManager(),
+		codexManager:                  codexManager,
 		runtimeManager:                projectrun.NewManager(),
 		runtimeSnapshots:              make(map[string]projectrun.Snapshot),
 		runtimeProcessSnapshots:       nil,
