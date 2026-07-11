@@ -1,6 +1,7 @@
 package attention
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -526,11 +527,14 @@ func TestScoreNewProjectBoost(t *testing.T) {
 	if out.Status != model.StatusIdle {
 		t.Fatalf("status = %s, want idle", out.Status)
 	}
-	if out.Score < 40 {
-		t.Fatalf("score = %d, want >= 40 for a 1-hour-old project", out.Score)
+	if out.Score <= activeAttentionWeight {
+		t.Fatalf("score = %d, want > %d so a fresh project outranks ordinary active work", out.Score, activeAttentionWeight)
 	}
 	if len(out.Reasons) != 1 || out.Reasons[0].Code != "new_project" {
 		t.Fatalf("expected new_project reason, got %#v", out.Reasons)
+	}
+	if !strings.Contains(out.Reasons[0].Text, "Recently added project") {
+		t.Fatalf("reason text = %q, want an explicit recently-added label", out.Reasons[0].Text)
 	}
 }
 

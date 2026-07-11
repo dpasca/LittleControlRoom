@@ -1113,6 +1113,57 @@ func TestSortProjectsUsesRunningRuntimeAttentionBoost(t *testing.T) {
 	}
 }
 
+func TestSortProjectsPutsNewProjectAboveOrdinaryActiveWork(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	newProject := model.ProjectSummary{
+		Name:           "new-project",
+		Path:           "/tmp/new-project",
+		AttentionScore: 80,
+		ManuallyAdded:  true,
+		CreatedAt:      now,
+	}
+	active := model.ProjectSummary{
+		Name:           "active",
+		Path:           "/tmp/active",
+		AttentionScore: 50,
+		LastActivity:   now.Add(-time.Minute),
+	}
+	projects := []model.ProjectSummary{active, newProject}
+	m := Model{sortMode: sortByAttention}
+
+	m.sortProjects(projects)
+	if projects[0].Path != newProject.Path {
+		t.Fatalf("first project path = %q, want newly added project %q", projects[0].Path, newProject.Path)
+	}
+}
+
+func TestSortProjectsTreatsManualCreationAsRecentBeforeFirstSession(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	newProject := model.ProjectSummary{
+		Name:           "new-project",
+		Path:           "/tmp/new-project",
+		AttentionScore: 80,
+		ManuallyAdded:  true,
+		CreatedAt:      now,
+	}
+	olderActivity := model.ProjectSummary{
+		Name:           "older-activity",
+		Path:           "/tmp/older-activity",
+		AttentionScore: 50,
+		LastActivity:   now.Add(-time.Hour),
+	}
+	projects := []model.ProjectSummary{olderActivity, newProject}
+	m := Model{sortMode: sortByRecent}
+
+	m.sortProjects(projects)
+	if projects[0].Path != newProject.Path {
+		t.Fatalf("first project path = %q, want newly added project %q in recent sort", projects[0].Path, newProject.Path)
+	}
+	if !newProject.LastActivity.IsZero() {
+		t.Fatalf("new project LastActivity = %v, want artifact-derived activity to remain unset", newProject.LastActivity)
+	}
+}
+
 func TestProjectRuntimeSnapshotUsesAsyncCacheOnly(t *testing.T) {
 	projectPath := t.TempDir()
 	manager := projectrun.NewManager()

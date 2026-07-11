@@ -158,10 +158,11 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 
 func (s *Service) trackProjectPath(ctx context.Context, existing model.ProjectSummary, projectPath, name string, kind model.ProjectKind) error {
 	if existing.Path != "" {
-		if err := s.ensureProjectManuallyTracked(ctx, existing, projectPath); err != nil {
+		promoted, err := s.ensureProjectManuallyTracked(ctx, existing, projectPath)
+		if err != nil {
 			return err
 		}
-		if existing.Forgotten {
+		if promoted {
 			if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
 				return err
 			}
@@ -193,15 +194,15 @@ func (s *Service) assignProjectCategoryIfRequested(ctx context.Context, projectP
 	return nil
 }
 
-func (s *Service) ensureProjectManuallyTracked(ctx context.Context, existing model.ProjectSummary, projectPath string) error {
+func (s *Service) ensureProjectManuallyTracked(ctx context.Context, existing model.ProjectSummary, projectPath string) (bool, error) {
 	presentOnDisk := projectPathExists(projectPath)
 	if existing.ManuallyAdded && existing.InScope && !existing.Archived && !existing.Forgotten && (!presentOnDisk || existing.PresentOnDisk) {
-		return nil
+		return false, nil
 	}
 	if err := s.store.MarkProjectManuallyAdded(ctx, projectPath, presentOnDisk); err != nil {
-		return fmt.Errorf("mark project as manually added: %w", err)
+		return false, fmt.Errorf("mark project as manually added: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 func existingProjectVisibleInDefaultList(project model.ProjectSummary) bool {

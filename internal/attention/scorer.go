@@ -39,7 +39,11 @@ type Output struct {
 
 const recentAttentionWindow = 72 * time.Hour
 const newProjectAttentionWindow = 48 * time.Hour
-const newProjectAttentionWeight = 45
+
+// A newly added project should sit above ordinary active work long enough for
+// the user to notice it and start its first engineer session. More urgent live
+// attention signals can still outrank it.
+const newProjectAttentionWeight = 80
 const noActivityBaseWeight = 10
 const activeAttentionWeight = 50
 const blockedAttentionWeight = 40
@@ -69,7 +73,7 @@ func Score(in Input) Output {
 			out.Score += w
 			out.Reasons = append(out.Reasons, model.AttentionReason{
 				Code:   "new_project",
-				Text:   fmt.Sprintf("New project awaiting first agent session (added %s ago)", formatAttentionDuration(in.Now.Sub(in.CreatedAt))),
+				Text:   fmt.Sprintf("Recently added project awaiting first engineer session (added %s ago)", formatAttentionDuration(in.Now.Sub(in.CreatedAt))),
 				Weight: w,
 			})
 		} else {
