@@ -188,6 +188,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/projects/detail", s.handleProjectDetail)
 	mux.HandleFunc("/api/mobile/dashboard", s.handleMobileDashboard)
 	mux.HandleFunc("/api/mobile/projects/detail", s.handleMobileProjectDetail)
+	mux.HandleFunc("/assets/operator-station.png", handleOperatorStationAsset)
 	mux.HandleFunc("/events/ws", s.handleEventsWS(ctx))
 
 	webRoot, err := fs.Sub(mobileWebFiles, "web")

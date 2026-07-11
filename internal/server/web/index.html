@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f4f6f8">
+  <meta name="theme-color" content="#252c33">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -15,79 +15,132 @@
 </head>
 <body>
   <div class="app-shell">
-    <header class="app-header">
-      <div class="brand-lockup">
-        <div class="brand-mark" aria-hidden="true">L</div>
-        <div>
-          <h1>Little Control Room</h1>
-          <div class="connection-line">
-            <span id="connection-dot" class="connection-dot connecting" aria-hidden="true"></span>
-            <span id="connection-label">Connecting</span>
-            <span class="read-only-label">Read only</span>
-          </div>
+    <span class="case-screw screw-a" aria-hidden="true"></span>
+    <span class="case-screw screw-b" aria-hidden="true"></span>
+    <span class="case-screw screw-c" aria-hidden="true"></span>
+    <span class="case-screw screw-d" aria-hidden="true"></span>
+
+    <header class="top-chassis">
+      <div class="system-strip">
+        <time id="system-time" datetime="">--:--</time>
+        <div class="link-readout">
+          <span id="connection-dot" class="lamp connection-dot amber connecting" aria-hidden="true"></span>
+          <span id="connection-label">Connecting</span>
+        </div>
+        <div class="host-readout">
+          <span>Host</span>
+          <span class="read-only-label">Read only</span>
         </div>
       </div>
-      <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh projects" title="Refresh projects">
-        <span aria-hidden="true">&#x21bb;</span>
-      </button>
+      <div class="console-header">
+        <div class="brand-plate">
+          <p>Portable command system</p>
+          <h1>Little Control Room</h1>
+        </div>
+        <button id="refresh-button" class="hardware-button" type="button" aria-label="Refresh projects" title="Refresh projects">
+          <span aria-hidden="true">&#x21bb;</span>
+        </button>
+      </div>
     </header>
 
     <main class="workspace">
       <section id="dashboard-view" class="dashboard-view" aria-labelledby="work-title">
-        <div class="dashboard-heading">
-          <div>
-            <p class="eyebrow">Project overview</p>
-            <h2 id="work-title">Work</h2>
+        <h2 id="work-title" class="visually-hidden">Project switchboard</h2>
+
+        <section id="operator-bay" class="operator-bay" data-state="connecting" aria-label="Control room briefing">
+          <div class="briefing-readout">
+            <p class="instrument-label">Operator briefing</p>
+            <div class="briefing-count">
+              <strong id="operator-count">--</strong>
+              <span id="operator-label">Establishing link</span>
+            </div>
+            <p id="operator-copy">Calling the local control room.</p>
           </div>
-          <p id="updated-label" class="updated-label">Loading</p>
+          <div class="station-wrap">
+            <img id="operator-sprite" class="operator-sprite" src="/assets/operator-station.png?state=connecting" alt="Switchboard operator at the control station">
+            <div class="station-caption">
+              <i id="operator-lamp" class="lamp amber" aria-hidden="true"></i>
+              <span id="operator-caption">Link pending</span>
+            </div>
+          </div>
+        </section>
+
+        <div id="bucket-filter" class="selector-bank" role="group" aria-label="Project state">
+          <button type="button" data-bucket="attention" class="selector-key selected">
+            <strong id="attention-count">0</strong>
+            <span>Need</span>
+          </button>
+          <button type="button" data-bucket="active" class="selector-key">
+            <strong id="active-count">0</strong>
+            <span>Active</span>
+          </button>
+          <button type="button" data-bucket="all" class="selector-key">
+            <strong id="all-count">0</strong>
+            <span>All</span>
+          </button>
         </div>
 
-        <div id="category-tabs" class="category-tabs" role="tablist" aria-label="Project categories"></div>
+        <div id="category-tabs" class="category-rail" role="tablist" aria-label="Project categories"></div>
 
-        <div class="dashboard-controls">
-          <div id="bucket-filter" class="segmented-control" role="group" aria-label="Project state">
-            <button type="button" data-bucket="attention" class="selected">Need</button>
-            <button type="button" data-bucket="active">Active</button>
-            <button type="button" data-bucket="all">All</button>
-          </div>
-          <label class="search-control">
-            <span aria-hidden="true">&#x2315;</span>
+        <label class="search-console">
+          <span class="instrument-label">Project finder</span>
+          <span class="search-field">
+            <span class="search-glyph" aria-hidden="true">&#x2315;</span>
             <span class="visually-hidden">Search projects</span>
-            <input id="project-search" type="search" placeholder="Search projects" autocomplete="off" spellcheck="false">
-          </label>
-        </div>
+            <input id="project-search" type="search" placeholder="Name, path, or status" autocomplete="off" spellcheck="false">
+          </span>
+        </label>
 
-        <div class="queue-summary">
-          <p id="queue-title">Projects</p>
-          <p id="queue-count">0</p>
+        <div class="rack-heading">
+          <p id="queue-title">Attention switchboard</p>
+          <div>
+            <span id="updated-label">Loading</span>
+            <span class="rack-divider" aria-hidden="true"></span>
+            <span id="queue-count">0</span>
+          </div>
         </div>
 
         <div id="dashboard-state" class="dashboard-state" aria-live="polite">
           <div class="loading-lines" aria-hidden="true">
             <span></span><span></span><span></span>
           </div>
-          <p>Loading projects</p>
+          <p>Loading switchboard</p>
         </div>
-        <ul id="project-list" class="project-list" aria-label="Projects"></ul>
+        <ul id="project-list" class="project-list rack-list" aria-label="Projects"></ul>
       </section>
 
-      <section id="detail-view" class="detail-view" aria-labelledby="detail-title" hidden>
+      <section id="detail-view" class="detail-view" aria-labelledby="detail-title" aria-hidden="true" hidden>
         <div class="detail-toolbar">
-          <button id="back-button" class="icon-button" type="button" aria-label="Back to projects" title="Back to projects">
+          <button id="back-button" class="hardware-button back-button" type="button" aria-label="Back to projects" title="Back to projects">
             <span aria-hidden="true">&larr;</span>
           </button>
-          <p>Project detail</p>
+          <div>
+            <p class="instrument-label">Inspection channel</p>
+            <p>Project detail</p>
+          </div>
         </div>
         <div id="detail-state" class="detail-state" aria-live="polite"></div>
         <article id="detail-content" class="detail-content" hidden>
-          <header class="detail-header">
-            <p id="detail-category" class="eyebrow"></p>
-            <h2 id="detail-title"></h2>
+          <header class="detail-header project-plate">
+            <div class="project-plate-top">
+              <div>
+                <p id="detail-category" class="instrument-label"></p>
+                <h2 id="detail-title"></h2>
+              </div>
+              <span class="plate-index" aria-hidden="true">P</span>
+            </div>
             <p id="detail-summary" class="detail-summary"></p>
-            <div id="detail-badges" class="badge-row"></div>
+            <div id="detail-badges" class="badge-row status-lamps"></div>
           </header>
-          <div id="detail-blocks" class="detail-blocks"></div>
+          <div class="section-plate">
+            <span>Project instruments</span>
+            <span>Live readout</span>
+          </div>
+          <div id="detail-blocks" class="detail-blocks drawer-stack"></div>
         </article>
+      </section>
+      <section class="detail-placeholder" aria-hidden="true">
+        <span>Project channel standby</span>
       </section>
     </main>
   </div>
