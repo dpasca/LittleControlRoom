@@ -116,6 +116,29 @@ func TestCommandRunnerDeniesShellWorkspaceWriteAtMedium(t *testing.T) {
 	}
 }
 
+func TestCommandRunnerDeniesDirectRMStructurally(t *testing.T) {
+	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := CommandRunner{Workspace: w, ArtifactDir: t.TempDir()}
+	for _, tt := range []struct {
+		name string
+		spec CommandSpec
+	}{
+		{name: "argv", spec: CommandSpec{Argv: []string{"/bin/rm", "-rf", "unused"}, TimeoutMS: 1000}},
+		{name: "shell wrapper options", spec: CommandSpec{Command: `sudo -n -u root rm -rf "$TARGET"`, Shell: true, TimeoutMS: 1000}},
+		{name: "shell executable", spec: CommandSpec{Argv: []string{"zsh", "-lc", `rm -fr "$TARGET"`}, TimeoutMS: 1000}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			result := runner.RunSpec(context.Background(), tt.spec)
+			if result.Success || !result.Denied || !strings.Contains(result.DenialReason, "direct rm commands are disabled") {
+				t.Fatalf("result = %#v, want direct rm denial", result)
+			}
+		})
+	}
+}
+
 func TestCommandRunnerAllowsStderrDiscardAtMedium(t *testing.T) {
 	w, err := policy.NewWorkspace(t.TempDir(), policy.AutonomyMedium)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"lcroom/internal/commandguard"
 	"lcroom/internal/lcagent/policy"
 	"lcroom/internal/lcagent/present"
 )
@@ -71,6 +72,20 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 			Error:            reason,
 			Denied:           true,
 			DenialReason:     reason,
+			Command:          commandLabelFromSpec(spec),
+			Argv:             cleanArgv(spec.Argv),
+			CWD:              cwd,
+			Purpose:          normalizeCommandPurpose(spec.Purpose),
+			AdminScope:       normalizeCommandAdminScope(spec.AdminScope),
+			AllowedExitCodes: cleanAllowedExitCodes(spec.AllowedExitCodes),
+		}
+	}
+	if commandContainsDirectRM(spec) {
+		return ToolResult{
+			Success:          false,
+			Error:            commandguard.DirectRMDenialReason,
+			Denied:           true,
+			DenialReason:     commandguard.DirectRMDenialReason,
 			Command:          commandLabelFromSpec(spec),
 			Argv:             cleanArgv(spec.Argv),
 			CWD:              cwd,
@@ -183,6 +198,14 @@ func (r CommandRunner) RunSpec(ctx context.Context, spec CommandSpec) ToolResult
 		Binary:           p.Binary,
 		ArtifactPath:     p.ArtifactPath,
 	}
+}
+
+func commandContainsDirectRM(spec CommandSpec) bool {
+	argv := cleanArgv(spec.Argv)
+	if len(argv) > 0 {
+		return commandguard.ArgvContainsDirectRM(argv)
+	}
+	return commandguard.ContainsDirectRM(spec.Command)
 }
 
 func IsWorkspaceWriteCommandDenied(result ToolResult) bool {

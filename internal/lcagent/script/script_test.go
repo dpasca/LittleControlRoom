@@ -1940,6 +1940,83 @@ func TestRunnerStartProcessRequiresApprovalAndUsesProcessBroker(t *testing.T) {
 	}
 }
 
+func TestRunnerStartProcessDeniesDirectRMBeforeApprovalOrLaunch(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	approvals := &fakeApprovalBroker{decisions: []ApprovalDecision{DecisionAccept}}
+	processes := &fakeProcessBroker{}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Approvals: approvals,
+		Processes: processes,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "start_process",
+		Args: raw(`{"command":"rm -rf \"$TARGET\"","project_path":"../SiblingProject"}`),
+	})
+	if err == nil {
+		t.Fatalf("RunTool() error = nil, want direct rm denial; result=%#v", result)
+	}
+	if !result.Denied || !strings.Contains(result.DenialReason, "direct rm commands are disabled") {
+		t.Fatalf("result = %#v", result)
+	}
+	if approvals.calls != 0 {
+		t.Fatalf("approval calls = %d, want 0", approvals.calls)
+	}
+	if len(processes.requests) != 0 {
+		t.Fatalf("process requests = %#v, want none", processes.requests)
+	}
+	for _, want := range []string{`"type":"permission_denied"`, `"type":"operational_action"`, `"denied":true`} {
+		if !strings.Contains(stream.String(), want) {
+			t.Fatalf("stream missing %q:\n%s", want, stream.String())
+		}
+	}
+}
+
+func TestRunnerStartProcessDoesNotMistakeQuotedRMExampleForCommand(t *testing.T) {
+	root := t.TempDir()
+	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream bytes.Buffer
+	writer, sessionID, err := session.NewWriter(t.TempDir(), time.Now(), &stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	processes := &fakeProcessBroker{}
+	runner := Runner{
+		Session:   writer,
+		SessionID: sessionID,
+		Command:   tools.CommandRunner{Workspace: w, ArtifactDir: t.TempDir()},
+		Processes: processes,
+	}
+	result, err := runner.RunTool(context.Background(), Action{
+		Type: "tool_call",
+		Tool: "start_process",
+		Args: raw(`{"command":"printf '%s\\n' 'rm -rf /'"}`),
+	})
+	if err != nil {
+		t.Fatalf("RunTool() error = %v; result=%#v", err, result)
+	}
+	if !result.Success || len(processes.requests) != 1 {
+		t.Fatalf("result = %#v process requests=%#v", result, processes.requests)
+	}
+}
+
 func TestRunnerStartProcessPassesProjectPathToProcessBroker(t *testing.T) {
 	root := t.TempDir()
 	w, err := policy.NewWorkspace(root, policy.AutonomyMedium)

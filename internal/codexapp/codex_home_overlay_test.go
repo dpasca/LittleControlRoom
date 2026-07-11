@@ -1,9 +1,12 @@
 package codexapp
 
 import (
+	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -12,6 +15,23 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	sourceHome := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sourceHome, "config.toml"), []byte("model = \"gpt-5\""), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
+	}
+	sourceRulesDir := filepath.Join(sourceHome, "rules")
+	if err := os.MkdirAll(sourceRulesDir, 0o755); err != nil {
+		t.Fatalf("mkdir source rules: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRulesDir, "default.rules"), []byte(`prefix_rule(pattern=["git"], decision="allow")`), 0o644); err != nil {
+		t.Fatalf("write source rule: %v", err)
+	}
+	sourceBinDir := filepath.Join(sourceHome, "bin")
+	if err := os.MkdirAll(sourceBinDir, 0o755); err != nil {
+		t.Fatalf("mkdir source bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceBinDir, "helper"), []byte("original helper"), 0o755); err != nil {
+		t.Fatalf("write source helper: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceBinDir, "rm"), []byte("original rm"), 0o755); err != nil {
+		t.Fatalf("write source rm: %v", err)
 	}
 	sourceSkillsDir := filepath.Join(sourceHome, "skills")
 	if err := os.MkdirAll(filepath.Join(sourceSkillsDir, "screenshot"), 0o755); err != nil {
@@ -37,6 +57,61 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 
 	assertSymlinkTo(t, filepath.Join(overlay, "config.toml"), filepath.Join(sourceHome, "config.toml"))
 	assertSymlinkTo(t, filepath.Join(overlay, "skills", "screenshot"), filepath.Join(sourceSkillsDir, "screenshot"))
+	assertSymlinkTo(t, filepath.Join(overlay, "rules", "default.rules"), filepath.Join(sourceRulesDir, "default.rules"))
+	assertSymlinkTo(t, filepath.Join(overlay, "bin", "helper"), filepath.Join(sourceBinDir, "helper"))
+
+	directRMRulePath := filepath.Join(overlay, "rules", codexDirectRMRuleFilename)
+	directRMRuleInfo, err := os.Lstat(directRMRulePath)
+	if err != nil {
+		t.Fatalf("lstat direct rm rule: %v", err)
+	}
+	if directRMRuleInfo.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("direct rm rule should be owned by the overlay, got symlink mode %v", directRMRuleInfo.Mode())
+	}
+	directRMRule, err := os.ReadFile(directRMRulePath)
+	if err != nil {
+		t.Fatalf("read direct rm rule: %v", err)
+	}
+	if !strings.Contains(string(directRMRule), `decision = "forbidden"`) || !strings.Contains(string(directRMRule), `"/bin/rm"`) {
+		t.Fatalf("direct rm rule = %q", string(directRMRule))
+	}
+
+	shimPath := filepath.Join(overlay, "bin", "rm")
+	shimInfo, err := os.Stat(shimPath)
+	if err != nil {
+		t.Fatalf("stat direct rm shim: %v", err)
+	}
+	if shimInfo.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("direct rm shim permissions = %v, want executable bit", shimInfo.Mode().Perm())
+	}
+	shimData, err := os.ReadFile(shimPath)
+	if err != nil {
+		t.Fatalf("read direct rm shim: %v", err)
+	}
+	if strings.Contains(string(shimData), "original rm") || !strings.Contains(string(shimData), "Blocked by Little Control Room") {
+		t.Fatalf("direct rm shim = %q", string(shimData))
+	}
+	sourceRMData, err := os.ReadFile(filepath.Join(sourceBinDir, "rm"))
+	if err != nil {
+		t.Fatalf("read source rm: %v", err)
+	}
+	if string(sourceRMData) != "original rm" {
+		t.Fatalf("source rm was modified: %q", string(sourceRMData))
+	}
+
+	blocked := exec.Command(shimPath, "-rf")
+	blockedOutput, blockedErr := blocked.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(blockedErr, &exitErr) || exitErr.ExitCode() != 126 {
+		t.Fatalf("recursive forced shim call error = %v output=%q, want exit 126", blockedErr, string(blockedOutput))
+	}
+	if !strings.Contains(string(blockedOutput), "recursive forced rm is disabled") {
+		t.Fatalf("recursive forced shim output = %q", string(blockedOutput))
+	}
+	allowed := exec.Command(shimPath, "-f")
+	if output, err := allowed.CombinedOutput(); err != nil {
+		t.Fatalf("non-recursive shim call error = %v output=%q", err, string(output))
+	}
 
 	skillPath := filepath.Join(overlay, "skills", "playwright", "SKILL.md")
 	data, err := os.ReadFile(skillPath)
@@ -71,6 +146,113 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	}
 	if strings.Contains(runtimeText, "original runtime skill") {
 		t.Fatalf("overlay runtime skill should not mirror original contents: %q", runtimeText)
+	}
+}
+
+func TestPrepareCodexHomeOverlayWithoutSkillShadowPreservesSourceSkills(t *testing.T) {
+	sourceHome := t.TempDir()
+	sourceSkillsDir := filepath.Join(sourceHome, "skills")
+	if err := os.MkdirAll(sourceSkillsDir, 0o755); err != nil {
+		t.Fatalf("mkdir source skills: %v", err)
+	}
+	overlay, err := prepareCodexHomeOverlayWithOptions(t.TempDir(), sourceHome, false)
+	if err != nil {
+		t.Fatalf("prepareCodexHomeOverlayWithOptions() error = %v", err)
+	}
+
+	assertSymlinkTo(t, filepath.Join(overlay, "skills"), sourceSkillsDir)
+	if _, err := os.Stat(filepath.Join(overlay, "rules", codexDirectRMRuleFilename)); err != nil {
+		t.Fatalf("stat direct rm rule: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(overlay, "bin", "rm")); err != nil {
+		t.Fatalf("stat direct rm shim: %v", err)
+	}
+}
+
+func TestCodexDirectRMExecPolicyIsValidAndForbidden(t *testing.T) {
+	if _, err := exec.LookPath("codex"); err != nil {
+		t.Skip("codex binary not available")
+	}
+	overlay, err := prepareCodexHomeOverlayWithOptions(t.TempDir(), t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("prepareCodexHomeOverlayWithOptions() error = %v", err)
+	}
+	rulePath := filepath.Join(overlay, "rules", codexDirectRMRuleFilename)
+
+	for _, tt := range []struct {
+		name    string
+		command []string
+		want    string
+	}{
+		{name: "direct", command: []string{"rm", "-rf", "/Users/example"}, want: "forbidden"},
+		{name: "absolute", command: []string{"/bin/rm", "-fr", "build"}, want: "forbidden"},
+		{name: "wrapped", command: []string{"sudo", "/bin/rm", "-rf", "build"}, want: "forbidden"},
+		{name: "unrelated", command: []string{"rmdir", "empty-dir"}, want: ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := []string{"execpolicy", "check", "--rules", rulePath, "--"}
+			args = append(args, tt.command...)
+			output, err := exec.Command("codex", args...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("codex execpolicy check error = %v\n%s", err, string(output))
+			}
+			var result struct {
+				Decision string `json:"decision"`
+			}
+			if err := json.Unmarshal(output, &result); err != nil {
+				t.Fatalf("decode execpolicy output: %v\n%s", err, string(output))
+			}
+			if result.Decision != tt.want {
+				t.Fatalf("decision = %q, want %q\n%s", result.Decision, tt.want, string(output))
+			}
+		})
+	}
+}
+
+func TestWithPathPrefixPreservesExistingPath(t *testing.T) {
+	env := withPathPrefix([]string{"HOME=/tmp/example", "PATH=/usr/local/bin:/usr/bin"}, "/guard/bin")
+	var pathValue string
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "PATH=") {
+			pathValue = strings.TrimPrefix(entry, "PATH=")
+		}
+	}
+	want := "/guard/bin" + string(os.PathListSeparator) + "/usr/local/bin:/usr/bin"
+	if pathValue != want {
+		t.Fatalf("PATH = %q, want %q", pathValue, want)
+	}
+}
+
+func TestCodexDirectRMShimIsFirstOnGuardedPath(t *testing.T) {
+	overlay, err := prepareCodexHomeOverlayWithOptions(t.TempDir(), t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("prepareCodexHomeOverlayWithOptions() error = %v", err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", "command -v rm")
+	cmd.Env = withPathPrefix(os.Environ(), filepath.Join(overlay, "bin"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("resolve guarded rm path: %v\n%s", err, string(output))
+	}
+	want := filepath.Join(overlay, "bin", "rm")
+	if got := strings.TrimSpace(string(output)); got != want {
+		t.Fatalf("command -v rm = %q, want %q", got, want)
+	}
+}
+
+func TestApplyCodexDirectRMGuardEnvironmentPinsShellPolicyPath(t *testing.T) {
+	overlay := t.TempDir()
+	cmd := exec.Command("codex", "app-server")
+	cmd.Env = []string{"HOME=/tmp/example", "PATH=/usr/local/bin:/usr/bin"}
+	applyCodexDirectRMGuardEnvironment(cmd, overlay)
+
+	guardedPath := filepath.Join(overlay, "bin") + string(os.PathListSeparator) + "/usr/local/bin:/usr/bin"
+	if got := envValue(cmd.Env, "PATH"); got != guardedPath {
+		t.Fatalf("guarded PATH = %q, want %q", got, guardedPath)
+	}
+	wantOverride := "shell_environment_policy.set.PATH=" + strconv.Quote(guardedPath)
+	if len(cmd.Args) < 2 || cmd.Args[len(cmd.Args)-2] != "-c" || cmd.Args[len(cmd.Args)-1] != wantOverride {
+		t.Fatalf("cmd.Args = %#v, want trailing -c %q", cmd.Args, wantOverride)
 	}
 }
 
