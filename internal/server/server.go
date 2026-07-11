@@ -26,7 +26,8 @@ import (
 )
 
 type Server struct {
-	svc *service.Service
+	svc          *service.Service
+	liveSessions LiveSessionSource
 }
 
 type RunningServer struct {
@@ -188,6 +189,8 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.HandleFunc("/projects/detail", s.handleProjectDetail)
 	mux.HandleFunc("/api/mobile/dashboard", s.handleMobileDashboard)
 	mux.HandleFunc("/api/mobile/projects/detail", s.handleMobileProjectDetail)
+	mux.HandleFunc("/api/mobile/projects/sessions", s.handleMobileProjectSessions)
+	mux.HandleFunc("/api/mobile/sessions/detail", s.handleMobileSessionDetail)
 	mux.HandleFunc("/assets/operator-station.png", handleOperatorStationAsset)
 	mux.HandleFunc("/events/ws", s.handleEventsWS(ctx))
 
@@ -195,7 +198,11 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	if err != nil {
 		panic(fmt.Sprintf("mobile web assets: %v", err))
 	}
-	mux.Handle("/", http.FileServer(http.FS(webRoot)))
+	webHandler := http.FileServer(http.FS(webRoot))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		webHandler.ServeHTTP(w, r)
+	}))
 	return securityHeaders(mux)
 }
 

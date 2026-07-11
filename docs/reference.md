@@ -12,7 +12,7 @@ Provider artifact and detector-footprint notes live in:
 
 ## CLI Commands
 
-- `lcroom tui` opens the interactive dashboard
+- `lcroom tui` opens the interactive dashboard; `--listen <host:port>` selects the bundled mobile server address
 - `lcroom scan` rescans artifacts and refreshes the local store
 - `lcroom classify` scans and drains the latest-session AI classification queue
 - `lcroom doctor` prints a diagnostic report from the current cached store
@@ -21,7 +21,7 @@ Provider artifact and detector-footprint notes live in:
 - `lcroom mockups` renders static high-level UI mockups without scanning projects or launching the TUI
 - `lcroom boss` opens the chat-first high-level assistant UI directly, mostly useful for development and smoke checks
 - `lcroom scope` shows the effective include and exclude scope for this run
-- `lcroom serve` starts the optional read-only REST and WebSocket server
+- `lcroom serve` starts the optional standalone read-only REST and WebSocket server; `--listen <host:port>` can expose it to a trusted LAN
 
 `lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
 

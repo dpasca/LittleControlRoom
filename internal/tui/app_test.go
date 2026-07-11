@@ -109,6 +109,19 @@ func TestNewCachesStableSettingsForUI(t *testing.T) {
 	}
 }
 
+func TestNewWithCodexManagerUsesSharedLiveSessionManager(t *testing.T) {
+	manager := codexapp.NewManager()
+	m := NewWithCodexManager(
+		context.Background(),
+		service.New(config.Default(), nil, events.NewBus(), nil),
+		manager,
+	)
+
+	if m.codexManager != manager {
+		t.Fatal("TUI should use the live session manager shared with the mobile server")
+	}
+}
+
 func TestBareModelConfigSaveDoesNotWriteDefaultUserConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

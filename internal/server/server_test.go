@@ -73,6 +73,19 @@ func TestHandlerServesMobileAppAndSemanticDashboard(t *testing.T) {
 	if appResponse.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("GET / should set a content security policy")
 	}
+	if got, want := appResponse.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("GET / cache control = %q, want %q", got, want)
+	}
+
+	cssRequest := httptest.NewRequest(http.MethodGet, "/app.css", nil)
+	cssResponse := httptest.NewRecorder()
+	handler.ServeHTTP(cssResponse, cssRequest)
+	if cssResponse.Code != http.StatusOK {
+		t.Fatalf("GET /app.css status = %d, want 200", cssResponse.Code)
+	}
+	if got, want := cssResponse.Header().Get("Cache-Control"), "no-store"; got != want {
+		t.Fatalf("GET /app.css cache control = %q, want %q", got, want)
+	}
 
 	dashboardRequest := httptest.NewRequest(http.MethodGet, "/api/mobile/dashboard", nil)
 	dashboardResponse := httptest.NewRecorder()

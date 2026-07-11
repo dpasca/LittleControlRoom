@@ -96,9 +96,11 @@ The first read-only mobile slice starts with the main TUI and shares its live st
 lcroom tui
 ```
 
-Open `http://127.0.0.1:7777` to use the project/category dashboard and simplified project detail. Use `/mobile` in the TUI to check the URL. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line.
+Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and read-only active/recent engineer transcripts. Use `/mobile` in the TUI to check the URL. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line.
 
-`lcroom serve` remains available for a standalone preview. It binds to loopback by default; `--listen 0.0.0.0:7777` enables a LAN experiment, but there is no authentication yet, so only expose it on a trusted network. A standalone preview still needs its own database runtime lease, while the TUI-hosted client does not.
+Pass an explicit LAN address to keep the live session manager and mobile client in the same process, for example `lcroom tui --listen 192.168.0.6:7777`. There is no authentication yet, so only expose it on a trusted network.
+
+`lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
 
 <p align="center">
   <a href="docs/screenshots/setup.png">

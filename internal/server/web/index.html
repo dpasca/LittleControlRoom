@@ -10,8 +10,8 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css">
-  <script defer src="/app.js"></script>
+  <link rel="stylesheet" href="/app.css?v=2">
+  <script defer src="/app.js?v=2"></script>
 </head>
 <body>
   <div class="app-shell">
@@ -132,6 +132,12 @@
             <p id="detail-summary" class="detail-summary"></p>
             <div id="detail-badges" class="badge-row status-lamps"></div>
           </header>
+          <div class="section-plate session-section-plate">
+            <span>AI engineer channels</span>
+            <span id="project-session-count">Scanning</span>
+          </div>
+          <div id="project-sessions-state" class="inline-instrument-state" aria-live="polite">Reading session rack</div>
+          <div id="project-session-list" class="project-session-list"></div>
           <div class="section-plate">
             <span>Project instruments</span>
             <span>Live readout</span>
@@ -141,6 +147,55 @@
       </section>
       <section class="detail-placeholder" aria-hidden="true">
         <span>Project channel standby</span>
+      </section>
+
+      <section id="session-view" class="session-view" aria-labelledby="session-title" aria-hidden="true" hidden>
+        <div class="session-toolbar">
+          <button id="session-back-button" class="hardware-button back-button" type="button" aria-label="Back to project" title="Back to project">
+            <span aria-hidden="true">&larr;</span>
+          </button>
+          <div>
+            <p class="instrument-label">Engineer channel</p>
+            <p id="session-project-name">Project</p>
+          </div>
+        </div>
+
+        <div id="session-state" class="detail-state session-state" aria-live="polite"></div>
+        <article id="session-content" class="session-content" hidden>
+          <header class="session-strip">
+            <div class="session-strip-main">
+              <div class="session-title-line">
+                <span id="session-live-lamp" class="lamp cyan" aria-hidden="true"></span>
+                <p id="session-provider" class="instrument-label">Engineer</p>
+              </div>
+              <h2 id="session-title">AI Engineer</h2>
+              <p id="session-summary"></p>
+            </div>
+            <div class="session-strip-meta">
+              <span id="session-status" class="metal-status">Standby</span>
+              <span id="session-id" class="session-id">Pending</span>
+            </div>
+          </header>
+
+          <details id="session-instruments" class="session-instruments">
+            <summary>
+              <span>Instruments</span>
+              <span id="session-instrument-summary">Session readout</span>
+            </summary>
+            <div id="session-instrument-list" class="session-instrument-list"></div>
+          </details>
+
+          <div class="section-plate transcript-heading">
+            <span>Transcript circuit</span>
+            <span id="session-updated-label">Read only</span>
+          </div>
+          <div id="session-truncated" class="transcript-notice" hidden>Showing recent activity</div>
+          <div id="session-transcript" class="session-transcript" aria-label="Engineer transcript"></div>
+          <div class="session-readonly-strip">
+            <span><i class="lamp green" aria-hidden="true"></i>Read only channel</span>
+            <span>LAN link</span>
+          </div>
+        </article>
       </section>
     </main>
   </div>

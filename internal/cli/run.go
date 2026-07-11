@@ -19,6 +19,7 @@ import (
 	"lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/buildinfo"
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/detectors"
 	"lcroom/internal/detectors/claudecode"
@@ -93,19 +94,19 @@ func Run(programName string, args []string) int {
 		}
 	}
 	serveAddr := server.DefaultListenAddress
-	if subcmd == "serve" {
+	if subcmd == "serve" || subcmd == "tui" {
 		var listenAddr string
 		var err error
 		commonArgs, listenAddr, err = stripPathFlagArg(commonArgs, "--listen")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "serve flag error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
 			return 2
 		}
 		if strings.TrimSpace(listenAddr) != "" {
 			serveAddr = strings.TrimSpace(listenAddr)
 		}
 		if err := server.ValidateListenAddress(serveAddr); err != nil {
-			fmt.Fprintf(os.Stderr, "serve flag error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
 			return 2
 		}
 	}
@@ -197,7 +198,7 @@ func Run(programName string, args []string) int {
 	case "boss":
 		return runBoss(ctx, svc)
 	case "tui":
-		return runTUI(ctx, svc)
+		return runTUI(ctx, svc, serveAddr)
 	case "serve":
 		return runServe(ctx, svc, serveAddr)
 	default:
@@ -943,9 +944,10 @@ func formatRepoSyncLine(status model.RepoSyncStatus, ahead, behind int) string {
 	}
 }
 
-func runTUI(ctx context.Context, svc *service.Service) int {
+func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string) int {
 	runCtx, cancel := context.WithCancel(ctx)
-	mobileServer, mobileStatus := startTUIMobileServer(runCtx, svc)
+	codexManager := codexapp.NewManager()
+	mobileServer, mobileStatus := startTUIMobileServer(runCtx, svc, codexManager, mobileListenAddress)
 	defer func() {
 		cancel()
 		if err := stopRunningServer(mobileServer); err != nil {
@@ -959,7 +961,7 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	go svc.StartCommitTodoChecker(runCtx)
 	svc.StartBackgroundDiscovery(runCtx)
 
-	m := tui.New(runCtx, svc)
+	m := tui.NewWithCodexManager(runCtx, svc, codexManager)
 	m.SetMobileServerStatus(mobileStatus)
 	m.EnableUIStallWatchdog()
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -970,9 +972,13 @@ func runTUI(ctx context.Context, svc *service.Service) int {
 	return 0
 }
 
-func startTUIMobileServer(ctx context.Context, svc *service.Service) (*server.RunningServer, tui.MobileServerStatus) {
-	status := tui.MobileServerStatus{ListenAddress: server.DefaultListenAddress}
-	running, err := server.New(svc).Start(ctx, server.DefaultListenAddress)
+func startTUIMobileServer(ctx context.Context, svc *service.Service, liveSessions server.LiveSessionSource, listenAddress string) (*server.RunningServer, tui.MobileServerStatus) {
+	listenAddress = strings.TrimSpace(listenAddress)
+	if listenAddress == "" {
+		listenAddress = server.DefaultListenAddress
+	}
+	status := tui.MobileServerStatus{ListenAddress: listenAddress}
+	running, err := server.New(svc).WithLiveSessions(liveSessions).Start(ctx, listenAddress)
 	if err != nil {
 		status.Error = err.Error()
 		return nil, status
@@ -1248,7 +1254,7 @@ func printUsage(programName string) {
 	fmt.Println("Mockups flags:")
 	fmt.Println("  --screenshot-config <path>")
 	fmt.Println("  --output-dir <path>")
-	fmt.Println("Serve flags:")
+	fmt.Println("TUI and serve flags:")
 	fmt.Printf("  --listen <host:port> (default %s)\n", server.DefaultListenAddress)
 	fmt.Println("Browser flags:")
 	fmt.Println("  browser <status|reveal> --session-key <id> [--data-dir <path>]")
