@@ -10,6 +10,7 @@ type MobileServerStatus struct {
 	ListenAddress string
 	PairingCode   string
 	AuthRequired  bool
+	Disabled      bool
 	Error         string
 }
 
@@ -26,6 +27,9 @@ func (m *Model) SetMobileServerStatus(status MobileServerStatus) {
 
 func (m Model) mobileServerStatusMessage() string {
 	status := m.mobileServerStatus
+	if status.Disabled {
+		return "Mobile client is disabled in Settings; lcroom serve can still start it explicitly"
+	}
 	if status.Error != "" {
 		location := status.URL
 		if location == "" && status.ListenAddress != "" {

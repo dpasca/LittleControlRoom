@@ -90,7 +90,7 @@ lcroom tui
 
 ## Local Mobile Preview
 
-The first read-only mobile slice starts with the main TUI and shares its live store, service configuration, and update events:
+The read-only mobile client starts with the main TUI by default and shares its live store, service configuration, and update events:
 
 ```bash
 lcroom tui
@@ -98,7 +98,9 @@ lcroom tui
 
 Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and read-only active/recent engineer transcripts. Use `/mobile` in the TUI to check the URL. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line.
 
-Pass an explicit LAN address to keep the live session manager and mobile client in the same process, for example `lcroom tui --listen 192.168.0.6:7777`. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the current six-digit code, then enter it on the phone. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
+Use the Mobile card in `/setup` or the Mobile section in `/settings` to disable TUI auto-start or save another `host:port`. Mobile server changes apply on the next LCR launch. The default loopback address is intentionally visible only on this computer; set a LAN address such as `0.0.0.0:7777` or the computer's LAN IP to reach it from a phone.
+
+Pass an explicit LAN address for a one-run override, for example `lcroom tui --listen 192.168.0.6:7777`. An explicit `--listen` also starts the mobile client for that run when saved auto-start is disabled. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the current six-digit code, then enter it on the phone. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
 
 `lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It prints the LAN pairing code at startup. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
 
@@ -180,7 +182,7 @@ Repo and runtime actions:
 Organization, display, and cleanup:
 
 - `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
-- `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Browser, and Advanced.
+- `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Mobile, Browser, and Advanced.
 - `/sort <attention|recent>` (`o`): Change the project ordering.
 - `/tab [active|archived|toggle]` (`a`): Switch the project list between Active and Archived tabs.
 - `/non-ai-folders <on|off>`: Show or hide folders that have no AI activity yet.
@@ -256,7 +258,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `a` or `/tab` to switch between Active and Archived project tabs, `/archive` and `/unarchive` to move regular projects between them, `f` or `/filter <text>` to narrow the project list, and `/pin` or `/snooze` to control attention. On scratch tasks, `/archive` moves the task into the scratch archive folder and out of the active task list. Use `/remove` when an item should go away by its safest matching action, `/ignore` for an exact-name hide rule, and `/ignored` to restore hidden names or paths.
-- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, and LCAgent through focused setup panels. Shared provider connection fields are reused inside those panels, so the same OpenAI/MLX/Ollama settings and LCAgent provider keys are edited from whichever feature needs them. Providers & Models stays compact: connection status plus global launch/display defaults. Project Scope controls include/exclude paths; category privacy is managed from `/category`. Browser sets the Playwright window policy. Advanced holds refresh thresholds and low-level tuning knobs. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
+- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, LCAgent, and mobile access through focused setup panels. Shared provider connection fields are reused inside those panels, so the same OpenAI/MLX/Ollama settings and LCAgent provider keys are edited from whichever feature needs them. Providers & Models stays compact: connection status plus global launch/display defaults. Project Scope controls include/exclude paths; category privacy is managed from `/category`. Mobile controls TUI auto-start and the saved listen address. Browser sets the Playwright window policy. Advanced holds refresh thresholds and low-level tuning knobs. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 

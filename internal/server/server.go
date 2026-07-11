@@ -41,7 +41,7 @@ type RunningServer struct {
 	err error
 }
 
-const DefaultListenAddress = "127.0.0.1:7777"
+const DefaultListenAddress = config.DefaultMobileListenAddress
 
 //go:embed web
 var mobileWebFiles embed.FS
@@ -58,27 +58,11 @@ func (s *Server) WithMobileAuth(auth *MobileAuth) *Server {
 }
 
 func ValidateListenAddress(addr string) error {
-	addr = strings.TrimSpace(addr)
-	if addr == "" {
-		return fmt.Errorf("listen address is required")
-	}
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		return fmt.Errorf("listen address must use host:port form: %w", err)
-	}
-	return nil
+	return config.ValidateMobileListenAddress(addr)
 }
 
 func ListenAddressIsLoopback(addr string) bool {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
-	if err != nil {
-		return false
-	}
-	host = strings.TrimSpace(host)
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return config.MobileListenAddressIsLoopback(addr)
 }
 
 func (s *Server) Start(ctx context.Context, addr string) (*RunningServer, error) {

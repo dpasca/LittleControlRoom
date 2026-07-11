@@ -12,7 +12,7 @@ Provider artifact and detector-footprint notes live in:
 
 ## CLI Commands
 
-- `lcroom tui` opens the interactive dashboard; `--listen <host:port>` selects the bundled mobile server address, with pairing required for non-loopback listeners
+- `lcroom tui` opens the interactive dashboard and normally follows the saved mobile settings; `--listen <host:port>` is a one-run address and enablement override, with pairing required for non-loopback listeners
 - `lcroom scan` rescans artifacts and refreshes the local store
 - `lcroom classify` scans and drains the latest-session AI classification queue
 - `lcroom doctor` prints a diagnostic report from the current cached store
@@ -21,9 +21,9 @@ Provider artifact and detector-footprint notes live in:
 - `lcroom mockups` renders static high-level UI mockups without scanning projects or launching the TUI
 - `lcroom boss` opens the chat-first high-level assistant UI directly, mostly useful for development and smoke checks
 - `lcroom scope` shows the effective include and exclude scope for this run
-- `lcroom serve` starts the optional standalone read-only REST and WebSocket server; `--listen <host:port>` can expose it with a startup pairing code
+- `lcroom serve` explicitly starts the standalone read-only REST and WebSocket server even when TUI mobile auto-start is disabled; it uses the saved address unless `--listen <host:port>` overrides it
 
-For LAN mobile access, run `/mobile` in the TUI to display the current six-digit pairing code. A successful pairing stores a 30-day HTTP-only browser cookie signed by `mobile-auth.key` beside the active database. Loopback listeners do not require pairing. Pairing does not add TLS, so direct HTTP exposure should remain on a trusted LAN.
+For LAN mobile access, use the Mobile card in `/setup` or the Mobile section in `/settings` to save a non-loopback address such as `0.0.0.0:7777`, then restart LCR. Run `/mobile` in the TUI to display the current six-digit pairing code. A successful pairing stores a 30-day HTTP-only browser cookie signed by `mobile-auth.key` beside the active database. Loopback listeners do not require pairing. Pairing does not add TLS, so direct HTTP exposure should remain on a trusted LAN.
 
 `lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
 
@@ -36,7 +36,7 @@ The usual way to reach boss mode is from the classic TUI with `/boss`. It opens 
 - Example file: [`config.example.toml`](config.example.toml)
 - Supported format: TOML
 
-Use `/setup` for the Getting Started settings: project-report AI, boss chat, LCAgent, and the shared provider keys or local endpoint fields those choices need. The full `/settings` modal keeps that first-run section and adds AI/model details, MLX/Ollama endpoint/model overrides, project scope, experimental LCAgent launch settings, browser behavior, refresh timing, and advanced toggles. Project discovery paths live in Project Scope rather than quick setup. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
+Use `/setup` for the Getting Started settings: project-report AI, boss chat, LCAgent, mobile access, and the shared provider keys or local endpoint fields those choices need. The full `/settings` modal keeps that first-run section and adds AI/model details, MLX/Ollama endpoint/model overrides, project scope, experimental LCAgent launch settings, mobile startup/address controls, browser behavior, refresh timing, and advanced toggles. Project discovery paths live in Project Scope rather than quick setup. Mobile changes apply after restart. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
 
 In `Only when needed`, newly launched embedded Codex and OpenCode sessions now route Playwright through an LCR-managed wrapper with a persistent browser profile. Codex gets a session-local `CODEX_HOME` overlay and OpenCode gets a session-local `XDG_CONFIG_HOME` overlay, both shadowing only the `playwright` skill so embedded sessions are guided toward the managed MCP path without changing the user's real global installs. On macOS, LCR backgrounds that managed browser and later reveals the same browser window for login or other human steps, so auth stays in the Playwright session the embedded assistant is actually driving. Existing embedded sessions still need to be reopened or reconnected before they pick up the new launch path, and Codex currently has the more complete browser-attention UX.
 
@@ -70,6 +70,8 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `playwright_default_browser_mode`
 - `playwright_login_mode`
 - `playwright_isolation_scope`
+- `mobile_enabled`
+- `mobile_listen_address`
 - `interval`
 - `active-threshold`
 - `stuck-threshold`

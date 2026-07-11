@@ -1940,6 +1940,22 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	}
 }
 
+func TestSettingsSavedMsgExplainsMobileRestart(t *testing.T) {
+	baseline := config.EditableSettingsFromAppConfig(config.Default())
+	next := baseline
+	next.MobileListenAddress = "0.0.0.0:8787"
+	m := Model{
+		settingsMode:     true,
+		settingsBaseline: &baseline,
+	}
+
+	updated, _ := m.Update(settingsSavedMsg{path: "/tmp/config.toml", settings: next})
+	got := updated.(Model)
+	if !strings.Contains(got.status, "Restart lcroom to apply the mobile interface change") {
+		t.Fatalf("status = %q, want mobile restart notice", got.status)
+	}
+}
+
 func TestApplyEditableSettingsCmdReturnsCompletionMsg(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {

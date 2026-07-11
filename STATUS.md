@@ -23,7 +23,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 - Boss mode provides a chat-first high-level layer over the classic TUI, with read-only project-state queries, project-inventory reflection, bounded context-command lookup, confirmable control proposals, generic agent-task delegation, file-backed chat sessions, and separate boss-chat helm/utility inference configuration. In Boss Chat, Codex/OpenCode/Claude Code work sessions are called engineer sessions to distinguish them from Boss Chat transcripts.
 - Linked worktrees are first-class: grouped under repo roots, merge-aware, and surfaced with explicit conflict and status feedback.
 - Managed runtime commands can launch, stop, inspect, and follow project-local processes from the TUI.
-- The TUI hosts a read-only mobile web surface in-process, using loopback by default with an explicit LAN listen option. Non-loopback clients pair through a short startup code and receive a persistent signed device cookie; the surface shares service, store, privacy, and UI-neutral semantic models, overlays nonblocking live engineer snapshots, and falls back to recorded artifact transcripts.
+- The TUI hosts a read-only mobile web surface in-process, with persisted auto-start and listen-address settings, a loopback default, and a one-run CLI override. Non-loopback clients pair through a short startup code and receive a persistent signed device cookie; the surface shares service, store, privacy, and UI-neutral semantic models, overlays nonblocking live engineer snapshots, and falls back to recorded artifact transcripts.
 - Screenshot and export tooling exists for deterministic UI captures.
 
 ## Current Priorities

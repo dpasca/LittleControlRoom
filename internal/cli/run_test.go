@@ -62,6 +62,34 @@ func TestConfigureMobileServerAuthOnlyProtectsLANListeners(t *testing.T) {
 	}
 }
 
+func TestResolveMobileRuntimeOptionsUsesSavedSettings(t *testing.T) {
+	cfg := config.Default()
+	cfg.MobileEnabled = false
+	cfg.MobileListenAddress = "0.0.0.0:8787"
+
+	address, enabled, err := resolveMobileRuntimeOptions(cfg, "")
+	if err != nil {
+		t.Fatalf("resolve mobile runtime options: %v", err)
+	}
+	if address != "0.0.0.0:8787" || enabled {
+		t.Fatalf("resolved address/enabled = %q/%v, want 0.0.0.0:8787/false", address, enabled)
+	}
+}
+
+func TestResolveMobileRuntimeOptionsListenOverrideForcesOneRunStart(t *testing.T) {
+	cfg := config.Default()
+	cfg.MobileEnabled = false
+	cfg.MobileListenAddress = "127.0.0.1:7777"
+
+	address, enabled, err := resolveMobileRuntimeOptions(cfg, " 0.0.0.0:9999 ")
+	if err != nil {
+		t.Fatalf("resolve mobile runtime options: %v", err)
+	}
+	if address != "0.0.0.0:9999" || !enabled {
+		t.Fatalf("resolved address/enabled = %q/%v, want 0.0.0.0:9999/true", address, enabled)
+	}
+}
+
 func TestRunHelpMetaWritesJSONCorpus(t *testing.T) {
 	code, output := captureRunStdout(t, []string{"help-meta"})
 	if code != 0 {

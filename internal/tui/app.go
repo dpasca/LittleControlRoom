@@ -2358,6 +2358,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		previousSettings := m.currentSettingsBaseline()
 		scopeSettingsChanged := projectScopeSettingsChanged(previousSettings, msg.settings)
+		mobileSettingsChanged := mobileServerSettingsChanged(previousSettings, msg.settings)
 		reloadLCAgentProject, shouldReloadLCAgent := m.shouldReloadEmbeddedLCAgentAfterSettingsSave(previousSettings, msg.settings)
 		settingsEmbeddedProject := m.settingsEmbeddedProject
 		settingsEmbeddedProvider := m.settingsEmbeddedProvider
@@ -2387,6 +2388,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Settings saved to %s. Restarting LCAgent so the next run uses the new configuration.", msg.path)
 		} else if lcagentSettingsChanged {
 			m.status = fmt.Sprintf("Settings saved to %s. New LCAgent sessions will use the saved configuration.", msg.path)
+		}
+		if mobileSettingsChanged {
+			m.status += fmt.Sprintf(" Restart %s to apply the mobile interface change.", brand.CLIName)
 		}
 		if issue := settingsLocalFileIssue(msg.settings); issue != nil {
 			m.appendSettingsConfigIssue(issue)

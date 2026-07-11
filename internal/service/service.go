@@ -489,6 +489,8 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.ScanInterval = settings.ScanInterval
 	s.cfg.ActiveThreshold = settings.ActiveThreshold
 	s.cfg.StuckThreshold = settings.StuckThreshold
+	s.cfg.MobileEnabled = settings.MobileEnabled
+	s.cfg.MobileListenAddress = strings.TrimSpace(settings.MobileListenAddress)
 	s.cfg.HideReasoningSections = settings.HideReasoningSections
 	s.cfg.PrivacyMode = settings.PrivacyMode
 	if reconfigureAIClients {
