@@ -21,6 +21,10 @@ closes the TUI, LCR:
 3. asks each captured provider to mark its current turn interrupted; and
 4. closes provider helpers and managed runtimes.
 
+Marking the turn interrupted settles provider state; it does not add an
+"aborted" message to the conversation. The helper's in-flight computation
+would stop when its process closes either way.
+
 The restart-intent file is written atomically with user-only permissions. It
 contains provider, project path, session ID, active turn ID, and capture time;
 the provider's own artifact remains the source of truth for conversation
@@ -43,6 +47,16 @@ with artifact-based unfinished-turn detection:
 Choosing **Skip** defers the saved continuation; the restart intent remains so
 LCR can offer it again on a later launch. An intent is removed after its saved
 session restores successfully.
+
+LCR starts restored provider helpers one at a time in the background. Codex
+thread resume can initialize credentials and configured MCP services before it
+answers, so ordered startup avoids a concurrent startup burst while keeping the
+TUI responsive. While this is happening, the top bar shows `RESTART x/y` and
+each queued project's Agent column shows `<provider> warmup`. LCR asks the user
+to wait and prevents a second manual open of that project until its scheduled
+restore attempt settles. A final status reports whether every session restored
+or some still need attention; failed saved continuations remain journaled for a
+later retry.
 
 The continuation prompt tells the engineer to re-check repository and external
 tool state before acting and not to repeat side effects that may already have

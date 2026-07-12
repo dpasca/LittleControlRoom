@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,7 +11,28 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
+
+type suspendedTurnCommandProbe struct {
+	cmd       tea.Cmd
+	remaining int
+}
+
+func (p *suspendedTurnCommandProbe) Init() tea.Cmd { return p.cmd }
+
+func (p *suspendedTurnCommandProbe) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(codexSessionOpenedMsg); !ok {
+		return p, nil
+	}
+	p.remaining--
+	if p.remaining <= 0 {
+		return p, tea.Quit
+	}
+	return p, nil
+}
+
+func (p *suspendedTurnCommandProbe) View() string { return "" }
 
 func TestMergeSuspendedTurnChoicesKeepsAllCapturedIntentsAheadOfFallbackLimit(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
@@ -175,11 +197,32 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	if got.suspendedTurnDialog == nil {
 		t.Fatalf("suspended turn dialog not shown")
 	}
+	dialogText := strings.Join(strings.Fields(ansi.Strip(got.renderSuspendedTurnResumeDialogContent(80))), " ")
+	if !strings.Contains(dialogText, "top bar and Agent column show warmup progress") || !strings.Contains(dialogText, "wait for recovery to finish") {
+		t.Fatalf("restore dialog should set warmup expectations, got %q", dialogText)
+	}
 
 	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if got.suspendedTurnDialog != nil {
 		t.Fatalf("dialog should close after confirm")
+	}
+	if got.restartWarmup == nil || got.restartWarmup.Total != 2 || len(got.restartWarmup.PendingByPath) != 2 {
+		t.Fatalf("restart warmup = %#v, want two pending sessions", got.restartWarmup)
+	}
+	if !strings.Contains(got.status, "warming up 2 engineer sessions one at a time") || !strings.Contains(got.status, "wait before opening them manually") {
+		t.Fatalf("warmup status = %q", got.status)
+	}
+	topStatus := ansi.Strip(got.renderTopStatusLine(220))
+	if !strings.Contains(topStatus, "RESTART 0/2") || !strings.Contains(topStatus, "warming up engineer sessions one at a time") {
+		t.Fatalf("top status should persist restart warmup progress, got %q", topStatus)
+	}
+	if compactTopStatus := ansi.Strip(got.renderTopStatusLine(80)); !strings.Contains(compactTopStatus, "RESTART 0/2") {
+		t.Fatalf("compact top status should prioritize restart warmup over navigation hints, got %q", compactTopStatus)
+	}
+	project := model.ProjectSummary{Path: "/tmp/a", LatestSessionFormat: "modern"}
+	if label, tag, live := got.projectAgentDisplay(project, time.Now()); label != "CX warmup" || tag != "CX" || !live {
+		t.Fatalf("warming project agent display = (%q, %q, %v), want (CX warmup, CX, true)", label, tag, live)
 	}
 	msgs := collectCmdMsgs(cmd)
 	if len(msgs) != 2 {
@@ -200,18 +243,159 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	if requests[1].ContinueInterruptedTurn || requests[1].Prompt != "" {
 		t.Fatalf("artifact-only second request should reopen without injecting a prompt: %#v", requests[1])
 	}
+	for i, msg := range msgs {
+		opened, ok := msg.(codexSessionOpenedMsg)
+		if !ok || !opened.restartWarmup {
+			t.Fatalf("restore message %d = %#v, want warmup-tagged open", i, msg)
+		}
+	}
 	if got.codexVisibleProject != "" {
 		t.Fatalf("confirmed startup resumes should stay hidden, visible project = %q", got.codexVisibleProject)
 	}
-	for _, msg := range msgs {
-		updated, _ = got.Update(msg)
-		got = updated.(Model)
+	updated, _ = got.Update(msgs[0])
+	got = updated.(Model)
+	if got.restartWarmup == nil || got.restartWarmup.Succeeded != 1 || len(got.restartWarmup.PendingByPath) != 1 {
+		t.Fatalf("restart warmup after first open = %#v", got.restartWarmup)
+	}
+	if topStatus = ansi.Strip(got.renderTopStatusLine(220)); !strings.Contains(topStatus, "RESTART 1/2") {
+		t.Fatalf("top status after first open = %q, want RESTART 1/2", topStatus)
+	}
+	updated, _ = got.Update(msgs[1])
+	got = updated.(Model)
+	if got.restartWarmup != nil {
+		t.Fatalf("restart warmup should clear after all opens, got %#v", got.restartWarmup)
+	}
+	if got.status != "Restart recovery complete: restored 2 engineer sessions." {
+		t.Fatalf("completed warmup status = %q", got.status)
 	}
 	if got.codexVisibleProject != "" {
 		t.Fatalf("completed startup resumes should stay hidden, visible project = %q", got.codexVisibleProject)
 	}
 	if got.codexInput.Focused() {
 		t.Fatalf("completed startup resumes should not focus the embedded composer")
+	}
+}
+
+func TestRestartWarmupBlocksDuplicateManualOpen(t *testing.T) {
+	m := Model{}
+	m.beginRestartWarmup([]restartWarmupEntry{{
+		ProjectPath: "/tmp/demo",
+		ProjectName: "demo",
+		Provider:    codexapp.ProviderCodex,
+	}})
+
+	updated, cmd := m.launchEmbeddedForProjectWithOptions(model.ProjectSummary{
+		Path:          "/tmp/demo",
+		Name:          "demo",
+		PresentOnDisk: true,
+	}, codexapp.ProviderCodex, embeddedLaunchOptions{reveal: true})
+	got := normalizeUpdateModel(updated)
+	if cmd != nil {
+		t.Fatal("manual open during restart warmup should not launch another helper")
+	}
+	if !strings.Contains(got.status, "still warming up") || !strings.Contains(got.status, "wait before opening it manually") {
+		t.Fatalf("manual-open warmup hint = %q", got.status)
+	}
+	if got.codexPendingOpen != nil {
+		t.Fatalf("manual-open block should not create pending open: %#v", got.codexPendingOpen)
+	}
+}
+
+func TestRestartWarmupFailureKeepsSavedRetryHint(t *testing.T) {
+	m := Model{}
+	m.beginRestartWarmup([]restartWarmupEntry{{
+		ProjectPath:    "/tmp/demo",
+		ProjectName:    "demo",
+		Provider:       codexapp.ProviderCodex,
+		CapturedOnQuit: true,
+	}})
+	m.settleRestartWarmup("/tmp/demo", false)
+
+	if m.restartWarmup != nil {
+		t.Fatalf("failed warmup should settle the progress state: %#v", m.restartWarmup)
+	}
+	if !strings.Contains(m.status, "0 restored; attention needed for 1") || !strings.Contains(m.status, "Saved continuations remain available for retry") {
+		t.Fatalf("failed warmup status = %q", m.status)
+	}
+}
+
+func TestSuspendedTurnRestoreStartsProviderHelpersInOrder(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		entered <- req.ProjectPath
+		<-release
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:    req.Provider.Normalized(),
+				ProjectPath: req.ProjectPath,
+				ThreadID:    req.ResumeID,
+				Started:     true,
+			},
+		}, nil
+	})
+	t.Cleanup(func() { _ = manager.CloseAll() })
+
+	m := Model{
+		codexManager: manager,
+		codexInput:   newCodexTextarea(),
+		width:        100,
+		height:       24,
+	}
+	_, cmd := m.resumeSuspendedTurnChoices([]suspendedTurnResumeChoice{
+		{ProjectPath: "/tmp/first", Provider: codexapp.ProviderCodex, SessionID: "thread-first", ActiveTurnID: "turn-first", CapturedOnQuit: true},
+		{ProjectPath: "/tmp/second", Provider: codexapp.ProviderCodex, SessionID: "thread-second", ActiveTurnID: "turn-second", CapturedOnQuit: true},
+	})
+	if cmd == nil {
+		t.Fatal("restore command = nil")
+	}
+
+	program := tea.NewProgram(
+		&suspendedTurnCommandProbe{cmd: cmd, remaining: 2},
+		tea.WithInput(nil),
+		tea.WithoutRenderer(),
+	)
+	done := make(chan error, 1)
+	go func() {
+		_, err := program.Run()
+		done <- err
+	}()
+	t.Cleanup(program.Kill)
+
+	select {
+	case projectPath := <-entered:
+		if projectPath != "/tmp/first" {
+			t.Fatalf("first provider startup = %q, want /tmp/first", projectPath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first provider startup did not begin")
+	}
+
+	select {
+	case projectPath := <-entered:
+		t.Fatalf("provider startups overlapped; %q began before the first settled", projectPath)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	release <- struct{}{}
+	select {
+	case projectPath := <-entered:
+		if projectPath != "/tmp/second" {
+			t.Fatalf("second provider startup = %q, want /tmp/second", projectPath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second provider startup did not begin after the first settled")
+	}
+	release <- struct{}{}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Bubble Tea command probe failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("restore command sequence did not finish")
 	}
 }
 

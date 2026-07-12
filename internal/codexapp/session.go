@@ -16,6 +16,7 @@ import (
 
 const (
 	rpcTimeout                = 15 * time.Second
+	appServerStartupTimeout   = 45 * time.Second
 	compactionWaitTimeout     = 5 * time.Minute
 	idleShutdownAfter         = time.Hour
 	idleShutdownNotice        = "Closed embedded Codex session after 1 hour of inactivity."

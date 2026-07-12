@@ -36,6 +36,7 @@ type codexSessionOpenedMsg struct {
 	perfOpID         int64
 	perfDuration     time.Duration
 	restartIntentKey string
+	restartWarmup    bool
 	err              error
 }
 
@@ -151,6 +152,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			}
 		}
 		m.reportError("Embedded session open failed", msg.err, msg.projectPath)
+		if msg.restartWarmup {
+			m.settleRestartWarmup(msg.projectPath, false)
+		}
 		return m, nil
 	}
 	if task, ok := m.agentTaskForProjectPath(msg.projectPath); ok {
@@ -198,6 +202,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		}
 	} else {
 		m.status = status
+	}
+	if msg.restartWarmup {
+		m.settleRestartWarmup(msg.projectPath, !msg.snapshot.BusyExternal)
 	}
 	if focusInput {
 		return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot), m.codexInput.Focus())
@@ -868,10 +875,17 @@ type embeddedLaunchOptions struct {
 	resumeID                string
 	continueInterruptedTurn bool
 	interruptedTurnID       string
+	restartWarmup           bool
 }
 
 func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) (tea.Model, tea.Cmd) {
 	provider = provider.Normalized()
+	if !options.restartWarmup {
+		if entry, ok := m.restartWarmupForProject(p.Path); ok {
+			m.status = fmt.Sprintf("Restart recovery is still warming up the saved %s session for %s. Please wait before opening it manually.", entry.Provider.Label(), firstNonEmptyTrimmed(entry.ProjectName, entry.ProjectPath))
+			return m, nil
+		}
+	}
 	if !options.forceNew && strings.TrimSpace(options.prompt) == "" {
 		if updated, ok := m.revealPendingEmbeddedOpen(p.Path); ok {
 			return updated, nil
@@ -979,7 +993,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 	} else {
 		m.status = "Opening embedded " + provider.Label() + " session..."
 	}
-	return m, m.openCodexSessionCmdWithVisibility(req, options.reveal)
+	return m, m.openCodexSessionCmdWithVisibilityAndWarmup(req, options.reveal, options.restartWarmup)
 }
 
 func (m Model) hasRestorableEmbeddedSession(projectPath string, provider codexapp.Provider) bool {

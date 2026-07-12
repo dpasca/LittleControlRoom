@@ -52,6 +52,97 @@ type suspendedTurnResumeChoice struct {
 	CapturedOnQuit bool
 }
 
+type restartWarmupEntry struct {
+	ProjectPath    string
+	ProjectName    string
+	Provider       codexapp.Provider
+	CapturedOnQuit bool
+}
+
+type restartWarmupState struct {
+	Total         int
+	Succeeded     int
+	Failed        int
+	FailedSaved   int
+	PendingByPath map[string]restartWarmupEntry
+}
+
+func (m *Model) beginRestartWarmup(entries []restartWarmupEntry) {
+	pending := make(map[string]restartWarmupEntry, len(entries))
+	for _, entry := range entries {
+		path := normalizeProjectPath(entry.ProjectPath)
+		provider := entry.Provider.Normalized()
+		if path == "" || provider == "" {
+			continue
+		}
+		entry.ProjectPath = strings.TrimSpace(entry.ProjectPath)
+		entry.Provider = provider
+		pending[path] = entry
+	}
+	if len(pending) == 0 {
+		m.restartWarmup = nil
+		return
+	}
+	m.restartWarmup = &restartWarmupState{
+		Total:         len(pending),
+		PendingByPath: pending,
+	}
+}
+
+func (m Model) restartWarmupForProject(projectPath string) (restartWarmupEntry, bool) {
+	if m.restartWarmup == nil {
+		return restartWarmupEntry{}, false
+	}
+	entry, ok := m.restartWarmup.PendingByPath[normalizeProjectPath(projectPath)]
+	return entry, ok
+}
+
+func (m *Model) settleRestartWarmup(projectPath string, succeeded bool) {
+	if m.restartWarmup == nil {
+		return
+	}
+	path := normalizeProjectPath(projectPath)
+	entry, ok := m.restartWarmup.PendingByPath[path]
+	if !ok {
+		return
+	}
+	delete(m.restartWarmup.PendingByPath, path)
+	if succeeded {
+		m.restartWarmup.Succeeded++
+	} else {
+		m.restartWarmup.Failed++
+		if entry.CapturedOnQuit {
+			m.restartWarmup.FailedSaved++
+		}
+	}
+	if len(m.restartWarmup.PendingByPath) > 0 {
+		return
+	}
+
+	succeededCount := m.restartWarmup.Succeeded
+	failedCount := m.restartWarmup.Failed
+	failedSaved := m.restartWarmup.FailedSaved
+	m.restartWarmup = nil
+	if failedCount == 0 {
+		m.status = fmt.Sprintf("Restart recovery complete: restored %d engineer %s.", succeededCount, pluralize("session", succeededCount))
+		return
+	}
+	m.status = fmt.Sprintf("Restart recovery finished: %d restored; attention needed for %d. Review the error log before opening them manually.", succeededCount, failedCount)
+	if failedSaved > 0 {
+		m.status += " Saved continuations remain available for retry."
+	}
+}
+
+func (m Model) renderRestartWarmupNotice() string {
+	if m.restartWarmup == nil || m.restartWarmup.Total <= 0 {
+		return ""
+	}
+	settled := m.restartWarmup.Total - len(m.restartWarmup.PendingByPath)
+	badge := topStatusWarningBadgeStyle.Render(fmt.Sprintf("RESTART %d/%d", settled, m.restartWarmup.Total))
+	detail := detailWarningStyle.Render("warming up engineer sessions one at a time; wait before opening manually")
+	return joinFooterSegments(badge, detail)
+}
+
 func (m Model) loadSuspendedTurnResumeChoicesCmd() tea.Cmd {
 	ctx := m.ctx
 	svc := m.svc
@@ -258,6 +349,7 @@ func (m Model) updateSuspendedTurnResumeDialogMode(msg tea.KeyMsg) (tea.Model, t
 
 func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (tea.Model, tea.Cmd) {
 	cmds := make([]tea.Cmd, 0, len(choices))
+	warmupEntries := make([]restartWarmupEntry, 0, len(choices))
 	resumed := 0
 	for _, choice := range choices {
 		if strings.TrimSpace(choice.ProjectPath) == "" || strings.TrimSpace(choice.SessionID) == "" || choice.Provider.Normalized() == "" {
@@ -274,20 +366,32 @@ func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (
 			prompt:                  suspendedTurnContinuationPromptForChoice(choice),
 			continueInterruptedTurn: choice.CapturedOnQuit,
 			interruptedTurnID:       choice.ActiveTurnID,
+			restartWarmup:           true,
 		})
 		m = normalizeUpdateModel(updated)
 		if cmd == nil {
 			continue
 		}
 		cmds = append(cmds, cmd)
+		warmupEntries = append(warmupEntries, restartWarmupEntry{
+			ProjectPath:    choice.ProjectPath,
+			ProjectName:    choice.ProjectName,
+			Provider:       choice.Provider,
+			CapturedOnQuit: choice.CapturedOnQuit,
+		})
 		resumed++
 	}
 	if resumed == 0 {
 		m.status = "No interrupted turns were resumable"
 		return m, nil
 	}
-	m.status = fmt.Sprintf("Resuming %d interrupted %s in the background...", resumed, pluralize("turn", resumed))
-	return m, tea.Batch(cmds...)
+	m.beginRestartWarmup(warmupEntries)
+	m.status = fmt.Sprintf("Restart recovery is warming up %d engineer %s one at a time. Please wait before opening them manually.", resumed, pluralize("session", resumed))
+	// Each provider helper can initialize shared credentials, state databases,
+	// and MCP services while reopening a session. Starting every saved helper at
+	// once creates a thundering herd and can exhaust the app-server startup RPC
+	// window. Keep the work off the UI thread, but open the sessions in order.
+	return m, tea.Sequence(cmds...)
 }
 
 func suspendedTurnContinuationPromptForChoice(choice suspendedTurnResumeChoice) string {
@@ -405,7 +509,7 @@ func (m Model) renderSuspendedTurnResumeDialogContent(width int) string {
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, intro)...)
 	lines = append(lines, "")
-	note := "Saved turns reopen their exact conversation and start a new continuation turn. Other unfinished artifacts are reopened for inspection only; LCR will not assume it owns their running process."
+	note := "Saved turns reopen their exact conversation and start a new continuation turn. Other unfinished artifacts are reopened for inspection only; LCR will not assume it owns their running process. After confirmation, the top bar and Agent column show warmup progress. Helpers open one at a time; wait for recovery to finish before opening a saved session manually."
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, note)...)
 	lines = append(lines, "")
 	visibleChoices := dialog.Choices

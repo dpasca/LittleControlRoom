@@ -14,6 +14,7 @@ import (
 	"lcroom/internal/sessionclassify"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -413,6 +414,19 @@ func collectCmdMsgs(cmd tea.Cmd) []tea.Msg {
 		}
 		return out
 	default:
+		// tea.Sequence returns an unexported named []tea.Cmd message. Reflect
+		// over that shape so tests exercise its children in the same order as
+		// Bubble Tea without depending on the private type name.
+		value := reflect.ValueOf(msg)
+		cmdType := reflect.TypeOf((tea.Cmd)(nil))
+		if value.IsValid() && value.Kind() == reflect.Slice && value.Type().Elem() == cmdType {
+			var out []tea.Msg
+			for i := 0; i < value.Len(); i++ {
+				child, _ := value.Index(i).Interface().(tea.Cmd)
+				out = append(out, collectCmdMsgs(child)...)
+			}
+			return out
+		}
 		return []tea.Msg{msg}
 	}
 }
