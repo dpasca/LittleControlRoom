@@ -58,6 +58,7 @@ type FinalizeMergedWorktreeOptions struct {
 type FinalizeMergedWorktreeResult struct {
 	LinkedTodoID          int64
 	LinkedTodoAlreadyDone bool
+	LinkedTodoMissing     bool
 	LinkedTodoMarkedDone  bool
 	WorktreeRemoved       bool
 }
@@ -590,10 +591,10 @@ func (s *Service) CommitAndMergeWorktreeBack(ctx context.Context, projectPath st
 
 // FinalizeMergedWorktree applies the user-selected cleanup after a successful
 // merge (or for a worktree that was already merged). When both actions are
-// requested, the linked TODO is completed first and the worktree is only
-// removed if that update succeeds. Keeping the checkout on failure preserves a
-// durable path for retrying the TODO completion instead of silently orphaning
-// it in the root project's open list.
+// requested, the linked TODO is resolved first and the worktree is only removed
+// if completion succeeds or the TODO is confirmed absent. Keeping the checkout
+// on other failures preserves a durable path for retrying TODO completion
+// instead of silently orphaning it in the root project's open list.
 func (s *Service) FinalizeMergedWorktree(ctx context.Context, projectPath string, options FinalizeMergedWorktreeOptions) (FinalizeMergedWorktreeResult, error) {
 	if s == nil || s.store == nil {
 		return FinalizeMergedWorktreeResult{}, fmt.Errorf("service unavailable")
@@ -620,20 +621,25 @@ func (s *Service) FinalizeMergedWorktree(ctx context.Context, projectPath string
 		}
 		result.LinkedTodoID = detail.Summary.WorktreeOriginTodoID
 		if result.LinkedTodoID <= 0 {
-			return result, fmt.Errorf("merged worktree has no linked TODO to complete")
-		}
-
-		todo, err := s.store.GetTodo(ctx, result.LinkedTodoID)
-		if err != nil {
-			return result, fmt.Errorf("load linked TODO %d: %w", result.LinkedTodoID, err)
-		}
-		if todo.Done {
-			result.LinkedTodoAlreadyDone = true
+			result.LinkedTodoMissing = true
 		} else {
-			if err := s.ToggleTodoDone(ctx, todo.ProjectPath, todo.ID, true); err != nil {
-				return result, fmt.Errorf("mark linked TODO %d done: %w", todo.ID, err)
+			todo, err := s.store.GetTodo(ctx, result.LinkedTodoID)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				result.LinkedTodoMissing = true
+				if err := s.store.SetWorktreeOriginTodoID(ctx, projectPath, 0); err != nil {
+					return result, fmt.Errorf("clear missing linked TODO %d: %w", result.LinkedTodoID, err)
+				}
+			case err != nil:
+				return result, fmt.Errorf("load linked TODO %d: %w", result.LinkedTodoID, err)
+			case todo.Done:
+				result.LinkedTodoAlreadyDone = true
+			default:
+				if err := s.ToggleTodoDone(ctx, todo.ProjectPath, todo.ID, true); err != nil {
+					return result, fmt.Errorf("mark linked TODO %d done: %w", todo.ID, err)
+				}
+				result.LinkedTodoMarkedDone = true
 			}
-			result.LinkedTodoMarkedDone = true
 		}
 	}
 
@@ -641,6 +647,9 @@ func (s *Service) FinalizeMergedWorktree(ctx context.Context, projectPath string
 		if err := s.RemoveWorktree(ctx, projectPath, options.ForceRemove); err != nil {
 			if result.LinkedTodoMarkedDone || result.LinkedTodoAlreadyDone {
 				return result, fmt.Errorf("linked TODO was completed, but removing the worktree failed: %w", err)
+			}
+			if result.LinkedTodoMissing {
+				return result, fmt.Errorf("linked TODO no longer exists, but removing the worktree failed: %w", err)
 			}
 			return result, err
 		}

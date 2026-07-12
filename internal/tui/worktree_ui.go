@@ -1633,6 +1633,8 @@ func worktreeFinalizeStatus(base string, result service.FinalizeMergedWorktreeRe
 		status = appendWorktreeStatusClause(status, "Linked TODO marked done.")
 	case result.LinkedTodoAlreadyDone:
 		status = appendWorktreeStatusClause(status, "Linked TODO was already done.")
+	case result.LinkedTodoMissing:
+		status = appendWorktreeStatusClause(status, "Linked TODO no longer exists.")
 	}
 	if result.WorktreeRemoved {
 		status = appendWorktreeStatusClause(status, "Worktree removed.")

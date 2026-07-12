@@ -2071,6 +2071,18 @@ func TestMergedWorktreeRemoveDefaultsToCompletingLinkedTodo(t *testing.T) {
 	}
 }
 
+func TestWorktreeFinalizeStatusReportsMissingLinkedTodo(t *testing.T) {
+	got := worktreeFinalizeStatus("Merged mobile-interface into master", service.FinalizeMergedWorktreeResult{
+		LinkedTodoID:      578,
+		LinkedTodoMissing: true,
+		WorktreeRemoved:   true,
+	})
+	want := "Merged mobile-interface into master. Linked TODO no longer exists. Worktree removed."
+	if got != want {
+		t.Fatalf("worktree finalize status = %q, want %q", got, want)
+	}
+}
+
 func TestWorktreeRemoveEnterDismissesDialogWhileRunning(t *testing.T) {
 	m := Model{
 		worktreeRemoveConfirm: &worktreeRemoveConfirmState{

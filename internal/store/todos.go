@@ -850,7 +850,13 @@ func (s *Store) DeleteTodo(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return fmt.Errorf("todo id is required")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM project_todos WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `DELETE FROM project_todos WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -861,7 +867,14 @@ func (s *Store) DeleteTodo(ctx context.Context, id int64) error {
 	if rowsAffected == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE projects
+		SET worktree_origin_todo_id = 0, updated_at = ?
+		WHERE worktree_origin_todo_id = ?
+	`, time.Now().Unix(), id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) DeleteDoneTodos(ctx context.Context, projectPath string) (int, error) {
@@ -875,6 +888,19 @@ func (s *Store) DeleteDoneTodos(ctx context.Context, projectPath string) (int, e
 	}
 	defer tx.Rollback()
 
+	now := time.Now().Unix()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE projects
+		SET worktree_origin_todo_id = 0, updated_at = ?
+		WHERE worktree_origin_todo_id IN (
+			SELECT id
+			FROM project_todos
+			WHERE project_path = ? AND done = 1
+		)
+	`, now, projectPath); err != nil {
+		return 0, err
+	}
+
 	result, err := tx.ExecContext(ctx, `DELETE FROM project_todos WHERE project_path = ? AND done = 1`, projectPath)
 	if err != nil {
 		return 0, err
@@ -884,7 +910,7 @@ func (s *Store) DeleteDoneTodos(ctx context.Context, projectPath string) (int, e
 		return 0, err
 	}
 	if rowsAffected > 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, time.Now().Unix(), projectPath); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now, projectPath); err != nil {
 			return 0, err
 		}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
@@ -1213,14 +1212,33 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	if err := st.SetWorktreeOriginTodoID(ctx, result.WorktreePath, missingTodoID); err != nil {
 		t.Fatalf("replace worktree origin TODO with missing id: %v", err)
 	}
-	if _, err := svc.FinalizeMergedWorktree(ctx, result.WorktreePath, FinalizeMergedWorktreeOptions{
+	missingFinalized, err := svc.FinalizeMergedWorktree(ctx, result.WorktreePath, FinalizeMergedWorktreeOptions{
 		MarkLinkedTodoDone: true,
-		RemoveWorktree:     true,
-	}); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("load linked TODO %d", missingTodoID)) {
+	})
+	if err != nil {
 		t.Fatalf("FinalizeMergedWorktree() missing TODO error = %v", err)
 	}
+	if missingFinalized.LinkedTodoID != missingTodoID || !missingFinalized.LinkedTodoMissing || missingFinalized.LinkedTodoAlreadyDone || missingFinalized.LinkedTodoMarkedDone || missingFinalized.WorktreeRemoved {
+		t.Fatalf("FinalizeMergedWorktree() missing TODO result = %#v", missingFinalized)
+	}
 	if _, err := os.Stat(result.WorktreePath); err != nil {
-		t.Fatalf("failed TODO completion should keep merged worktree for retry: %v", err)
+		t.Fatalf("TODO-only finalization should keep merged worktree: %v", err)
+	}
+	worktreeDetail, err = st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("get worktree after missing TODO repair: %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeOriginTodoID != 0 {
+		t.Fatalf("missing TODO link was not cleared: %#v", worktreeDetail.Summary)
+	}
+	missingFinalized, err = svc.FinalizeMergedWorktree(ctx, result.WorktreePath, FinalizeMergedWorktreeOptions{
+		MarkLinkedTodoDone: true,
+	})
+	if err != nil {
+		t.Fatalf("FinalizeMergedWorktree() cleared TODO link error = %v", err)
+	}
+	if missingFinalized.LinkedTodoID != 0 || !missingFinalized.LinkedTodoMissing {
+		t.Fatalf("FinalizeMergedWorktree() cleared TODO link result = %#v", missingFinalized)
 	}
 	if err := st.SetWorktreeOriginTodoID(ctx, result.WorktreePath, item.ID); err != nil {
 		t.Fatalf("restore worktree origin TODO: %v", err)
@@ -1245,6 +1263,86 @@ func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	}
 	if _, err := os.Stat(result.WorktreePath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("finalized worktree still exists: %v", err)
+	}
+}
+
+func TestFinalizeMergedWorktreeRemovesCheckoutWhenOriginTodoIsMissing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(
+		t,
+		ctx,
+		svc,
+		st,
+		projectPath,
+		"Remove a merged worktree whose linked TODO was purged",
+		"fix/missing-origin-todo",
+		"fix-missing-origin-todo",
+	)
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 0)
+	if err != nil {
+		t.Fatalf("get linked worktree: %v", err)
+	}
+	originTodoID := detail.Summary.WorktreeOriginTodoID
+	if originTodoID <= 0 {
+		t.Fatalf("linked worktree origin TODO = %d, want positive id", originTodoID)
+	}
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FIX.txt"), []byte("recover missing linked todo\n"), 0o644); err != nil {
+		t.Fatalf("write worktree file: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FIX.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "add missing todo recovery fixture")
+	if _, err := svc.MergeWorktreeBack(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("MergeWorktreeBack() error = %v", err)
+	}
+
+	if err := st.DeleteTodo(ctx, originTodoID); err != nil {
+		t.Fatalf("delete origin TODO: %v", err)
+	}
+	// Recreate the legacy dangling reference that older delete/purge paths left.
+	if err := st.SetWorktreeOriginTodoID(ctx, result.WorktreePath, originTodoID); err != nil {
+		t.Fatalf("restore dangling origin TODO reference: %v", err)
+	}
+
+	finalized, err := svc.FinalizeMergedWorktree(ctx, result.WorktreePath, FinalizeMergedWorktreeOptions{
+		MarkLinkedTodoDone: true,
+		RemoveWorktree:     true,
+	})
+	if err != nil {
+		t.Fatalf("FinalizeMergedWorktree() error = %v", err)
+	}
+	if finalized.LinkedTodoID != originTodoID || !finalized.LinkedTodoMissing || finalized.LinkedTodoAlreadyDone || finalized.LinkedTodoMarkedDone || !finalized.WorktreeRemoved {
+		t.Fatalf("FinalizeMergedWorktree() result = %#v", finalized)
+	}
+	if _, err := os.Stat(result.WorktreePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("finalized worktree still exists: %v", err)
+	}
+	detail, err = st.GetProjectDetail(ctx, result.WorktreePath, 0)
+	if err != nil {
+		t.Fatalf("get removed worktree detail: %v", err)
+	}
+	if detail.Summary.WorktreeOriginTodoID != 0 {
+		t.Fatalf("removed worktree kept dangling TODO link: %#v", detail.Summary)
 	}
 }
 

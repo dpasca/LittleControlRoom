@@ -1296,6 +1296,20 @@ func TestDeleteDoneTodosRemovesOnlyCompletedItems(t *testing.T) {
 	if err := st.ToggleTodoDone(ctx, doneItem.ID, true); err != nil {
 		t.Fatalf("toggle done todo: %v", err)
 	}
+	worktreePath := "/tmp/demo--purged-todo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:                 worktreePath,
+		Name:                 "demo--purged-todo",
+		Status:               model.StatusIdle,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     "/tmp/demo",
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeOriginTodoID: doneItem.ID,
+		InScope:              true,
+		UpdatedAt:            now,
+	}); err != nil {
+		t.Fatalf("upsert linked worktree: %v", err)
+	}
 
 	count, err := st.DeleteDoneTodos(ctx, "/tmp/demo")
 	if err != nil {
@@ -1317,6 +1331,69 @@ func TestDeleteDoneTodosRemovesOnlyCompletedItems(t *testing.T) {
 	}
 	if _, err := st.GetTodoWorktreeSuggestion(ctx, doneItem.ID); err != sql.ErrNoRows {
 		t.Fatalf("GetTodoWorktreeSuggestion() after purge = %v, want sql.ErrNoRows", err)
+	}
+	worktreeDetail, err := st.GetProjectDetail(ctx, worktreePath, 0)
+	if err != nil {
+		t.Fatalf("get linked worktree after purge: %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeOriginTodoID != 0 {
+		t.Fatalf("purged TODO left a dangling worktree link: %#v", worktreeDetail.Summary)
+	}
+}
+
+func TestDeleteTodoClearsWorktreeOriginLink(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now()
+	rootPath := "/tmp/demo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          rootPath,
+		Name:          "demo",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("upsert root project: %v", err)
+	}
+	item, err := st.AddTodo(ctx, rootPath, "Delete this linked TODO")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	worktreePath := "/tmp/demo--deleted-todo"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:                 worktreePath,
+		Name:                 "demo--deleted-todo",
+		Status:               model.StatusIdle,
+		PresentOnDisk:        true,
+		WorktreeRootPath:     rootPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeOriginTodoID: item.ID,
+		InScope:              true,
+		UpdatedAt:            now,
+	}); err != nil {
+		t.Fatalf("upsert linked worktree: %v", err)
+	}
+
+	if err := st.DeleteTodo(ctx, item.ID); err != nil {
+		t.Fatalf("DeleteTodo() error = %v", err)
+	}
+	if _, err := st.GetTodo(ctx, item.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetTodo() after delete = %v, want sql.ErrNoRows", err)
+	}
+	worktreeDetail, err := st.GetProjectDetail(ctx, worktreePath, 0)
+	if err != nil {
+		t.Fatalf("get linked worktree after delete: %v", err)
+	}
+	if worktreeDetail.Summary.WorktreeOriginTodoID != 0 {
+		t.Fatalf("deleted TODO left a dangling worktree link: %#v", worktreeDetail.Summary)
 	}
 }
 
