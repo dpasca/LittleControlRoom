@@ -1188,6 +1188,10 @@ func (m *Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 }
 
 func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, revealOnOpen bool) tea.Cmd {
+	return m.openCodexSessionCmdWithVisibilityAndWarmup(req, revealOnOpen, false)
+}
+
+func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRequest, revealOnOpen, restartWarmup bool) tea.Cmd {
 	req = m.applyEmbeddedModelPreference(req)
 	restartIntentKey := ""
 	if req.ContinueInterruptedTurn {
@@ -1308,18 +1312,21 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		label := provider.Label()
 		if manager == nil {
 			return codexSessionOpenedMsg{
-				perfOpID:     perfOpID,
-				perfDuration: time.Since(startedAt),
-				err:          fmt.Errorf("%s manager unavailable", label),
+				projectPath:   req.ProjectPath,
+				perfOpID:      perfOpID,
+				perfDuration:  time.Since(startedAt),
+				restartWarmup: restartWarmup,
+				err:           fmt.Errorf("%s manager unavailable", label),
 			}
 		}
 		if provider == codexapp.ProviderLCAgent && strings.TrimSpace(req.Prompt) != "" {
 			if err := codexapp.CheckLCAgentProviderAccess(context.Background(), req); err != nil {
 				return codexSessionOpenedMsg{
-					projectPath:  req.ProjectPath,
-					perfOpID:     perfOpID,
-					perfDuration: time.Since(startedAt),
-					err:          err,
+					projectPath:   req.ProjectPath,
+					perfOpID:      perfOpID,
+					perfDuration:  time.Since(startedAt),
+					restartWarmup: restartWarmup,
+					err:           err,
 				}
 			}
 		}
@@ -1343,10 +1350,11 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 					continue
 				}
 				return codexSessionOpenedMsg{
-					projectPath:  req.ProjectPath,
-					perfOpID:     perfOpID,
-					perfDuration: time.Since(startedAt),
-					err:          err,
+					projectPath:   req.ProjectPath,
+					perfOpID:      perfOpID,
+					perfDuration:  time.Since(startedAt),
+					restartWarmup: restartWarmup,
+					err:           err,
 				}
 			}
 			snapshot = session.Snapshot()
@@ -1385,6 +1393,7 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 			perfOpID:         perfOpID,
 			perfDuration:     time.Since(startedAt),
 			restartIntentKey: restartIntentKey,
+			restartWarmup:    restartWarmup,
 		}
 	}
 }

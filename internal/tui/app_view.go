@@ -483,9 +483,14 @@ func (m Model) renderTopStatusLine(width int) string {
 
 	mobileNotice := m.renderMobileServerStatusNotice()
 	prioritizeMobileStatus := mobileNotice != "" || strings.HasPrefix(rawStatus, "Mobile client ")
+	restartWarmupNotice := m.renderRestartWarmupNotice()
+	prioritizeTopStatus := prioritizeMobileStatus || restartWarmupNotice != ""
 	statusParts := make([]string, 0, 5)
 	if mobileNotice != "" {
 		statusParts = append(statusParts, mobileNotice)
+	}
+	if restartWarmupNotice != "" {
+		statusParts = append(statusParts, restartWarmupNotice)
 	}
 	if strings.TrimSpace(status) != "" {
 		statusParts = append(statusParts, m.renderTopStatusMessage(rawStatus, status))
@@ -499,7 +504,7 @@ func (m Model) renderTopStatusLine(width int) string {
 	}
 
 	segments := []string{title}
-	if !prioritizeMobileStatus {
+	if !prioritizeTopStatus {
 		if actions := m.renderTopStatusActions(width); actions != "" {
 			segments = append(segments, actions)
 		}
@@ -508,7 +513,7 @@ func (m Model) renderTopStatusLine(width int) string {
 		segments = append(segments, joinFooterSegments(statusParts...))
 	}
 	rightSegment := m.renderTopCPUUsageSegment()
-	if prioritizeMobileStatus {
+	if prioritizeTopStatus {
 		rightSegment = ""
 	}
 	return renderLineWithRightSegment(strings.Join(segments, "  "), rightSegment, width)

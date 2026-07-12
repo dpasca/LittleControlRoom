@@ -63,7 +63,11 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	go s.readStderr(stderr)
 	go s.waitForExit()
 
-	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	// Resuming a thread initializes its configured MCP services before the
+	// app-server answers. That startup path is materially slower than an
+	// ordinary RPC, especially when several sessions are restored after an LCR
+	// restart, so it gets its own timeout budget.
+	ctx, cancel := context.WithTimeout(context.Background(), appServerStartupTimeout)
 	defer cancel()
 
 	if _, err := s.call(ctx, "initialize", map[string]any{

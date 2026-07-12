@@ -65,6 +65,7 @@ type Model struct {
 	startupScanCompleted    bool
 	suspendedTurnChecked    bool
 	dismissedSuspendedTurns map[string]struct{}
+	restartWarmup           *restartWarmupState
 	projectsReloadInFlight  bool
 	projectsReloadQueued    bool
 	scanInFlight            bool

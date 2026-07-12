@@ -292,6 +292,10 @@ func (m Model) projectUnfinishedTurnLooksLive(project model.ProjectSummary, now 
 }
 
 func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) (string, string, bool) {
+	if entry, ok := m.restartWarmupForProject(project.Path); ok {
+		tag := entry.Provider.SourceTag()
+		return tag + " warmup", tag, true
+	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		tag := embeddedProvider(snapshot).SourceTag()
 		label := tag
