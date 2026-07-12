@@ -24,15 +24,18 @@ type OpenAICompatibleChatCompletionsClient struct {
 	responseFormatType OpenAICompatibleChatResponseFormat
 	authHeader         OpenAICompatibleAuthHeader
 	reasoningStyle     string
+	requireParameters  bool
 }
 
 type OpenAICompatibleStructuredOutputRunner struct {
 	mu             sync.Mutex
 	preferChat     bool
 	preferJSONMode bool
+	preferPrompt   bool
 	responses      JSONSchemaRunner
-	chat           JSONSchemaRunner
+	schemaChat     JSONSchemaRunner
 	jsonChat       JSONSchemaRunner
+	promptChat     JSONSchemaRunner
 }
 
 type OpenAICompatibleStructuredOutputOptions struct {
@@ -118,7 +121,7 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 	systemText := req.SystemText
 	userText := req.UserText
 	responseFormatType := normalizeOpenAICompatibleChatResponseFormat(c.responseFormatType)
-	if responseFormatType == OpenAICompatibleChatResponseFormatJSONObject {
+	if responseFormatType != OpenAICompatibleChatResponseFormatJSONSchema {
 		systemText = strings.TrimSpace(req.SystemText + "\n\nReturn only valid JSON. Do not wrap the JSON in markdown.")
 		userText = buildSchemaPrompt(req, false)
 	}
@@ -137,11 +140,16 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 		},
 	}
 	addOpenAICompatibleChatReasoning(reqBody, c.reasoningStyle, req.ReasoningEffort)
+	if c.requireParameters {
+		reqBody["provider"] = map[string]any{
+			"require_parameters": true,
+		}
+	}
 	if responseFormatType == OpenAICompatibleChatResponseFormatJSONObject {
 		reqBody["response_format"] = map[string]any{
 			"type": "json_object",
 		}
-	} else {
+	} else if responseFormatType == OpenAICompatibleChatResponseFormatJSONSchema {
 		reqBody["response_format"] = map[string]any{
 			"type": "json_schema",
 			"json_schema": map[string]any{
@@ -265,20 +273,91 @@ func NewOpenAICompatibleStructuredOutputRunnerWithOptions(responses, chat JSONSc
 	return &OpenAICompatibleStructuredOutputRunner{
 		preferChat: opts.PreferChatCompletions,
 		responses:  responses,
-		chat:       chat,
+		schemaChat: chat,
 	}
 }
 
 func NewOpenAICompatibleStructuredOutputRunnerWithJSONModeFallback(responses, chat, jsonChat JSONSchemaRunner, opts OpenAICompatibleStructuredOutputOptions) JSONSchemaRunner {
-	if responses == nil && chat == nil && jsonChat == nil {
+	return NewOpenAICompatibleStructuredOutputRunnerWithFallbacks(responses, chat, jsonChat, nil, opts)
+}
+
+func NewOpenAICompatibleStructuredOutputRunnerWithFallbacks(responses, schemaChat, jsonChat, promptChat JSONSchemaRunner, opts OpenAICompatibleStructuredOutputOptions) JSONSchemaRunner {
+	if responses == nil && schemaChat == nil && jsonChat == nil && promptChat == nil {
 		return nil
 	}
 	return &OpenAICompatibleStructuredOutputRunner{
 		preferChat: opts.PreferChatCompletions,
 		responses:  responses,
-		chat:       chat,
+		schemaChat: schemaChat,
 		jsonChat:   jsonChat,
+		promptChat: promptChat,
 	}
+}
+
+func (r *OpenAICompatibleStructuredOutputRunner) hasChat() bool {
+	return r != nil && (r.schemaChat != nil || r.jsonChat != nil || r.promptChat != nil)
+}
+
+func (r *OpenAICompatibleStructuredOutputRunner) runChat(ctx context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
+	if r == nil {
+		return JSONSchemaResponse{}, errors.New("openai-compatible structured output runner not configured")
+	}
+	r.mu.Lock()
+	preferJSONMode := r.preferJSONMode
+	preferPrompt := r.preferPrompt
+	r.mu.Unlock()
+
+	if preferPrompt && r.promptChat != nil {
+		return r.promptChat.RunJSONSchema(ctx, req)
+	}
+	if !preferJSONMode && r.schemaChat != nil {
+		resp, err := r.schemaChat.RunJSONSchema(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		if !shouldFallbackJSONSchemaToJSONMode(err) || r.jsonChat == nil {
+			return JSONSchemaResponse{}, err
+		}
+		jsonResp, jsonErr := r.jsonChat.RunJSONSchema(ctx, req)
+		if jsonErr == nil {
+			r.mu.Lock()
+			r.preferJSONMode = true
+			r.mu.Unlock()
+			return jsonResp, nil
+		}
+		if !shouldFallbackResponseFormatToPrompt(jsonErr) || r.promptChat == nil {
+			return JSONSchemaResponse{}, errors.Join(err, jsonErr)
+		}
+		promptResp, promptErr := r.promptChat.RunJSONSchema(ctx, req)
+		if promptErr != nil {
+			return JSONSchemaResponse{}, errors.Join(err, jsonErr, promptErr)
+		}
+		r.mu.Lock()
+		r.preferPrompt = true
+		r.mu.Unlock()
+		return promptResp, nil
+	}
+	if r.jsonChat != nil {
+		resp, err := r.jsonChat.RunJSONSchema(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		if !shouldFallbackResponseFormatToPrompt(err) || r.promptChat == nil {
+			return JSONSchemaResponse{}, err
+		}
+		promptResp, promptErr := r.promptChat.RunJSONSchema(ctx, req)
+		if promptErr != nil {
+			return JSONSchemaResponse{}, errors.Join(err, promptErr)
+		}
+		r.mu.Lock()
+		r.preferPrompt = true
+		r.mu.Unlock()
+		return promptResp, nil
+	}
+	if r.promptChat != nil {
+		return r.promptChat.RunJSONSchema(ctx, req)
+	}
+	return JSONSchemaResponse{}, errors.New("openai-compatible chat structured output runner not configured")
 }
 
 func (r *OpenAICompatibleStructuredOutputRunner) RunJSONSchema(ctx context.Context, req JSONSchemaRequest) (JSONSchemaResponse, error) {
@@ -288,29 +367,13 @@ func (r *OpenAICompatibleStructuredOutputRunner) RunJSONSchema(ctx context.Conte
 
 	r.mu.Lock()
 	preferChat := r.preferChat
-	preferJSONMode := r.preferJSONMode
 	r.mu.Unlock()
 	chatMissingEndpoint := false
 
-	if preferJSONMode && r.jsonChat != nil {
-		return r.jsonChat.RunJSONSchema(ctx, req)
-	}
-
-	if preferChat && r.chat != nil {
-		resp, err := r.chat.RunJSONSchema(ctx, req)
+	if preferChat && r.hasChat() {
+		resp, err := r.runChat(ctx, req)
 		if err == nil {
 			return resp, nil
-		}
-		if shouldFallbackJSONSchemaToJSONMode(err) && r.jsonChat != nil {
-			jsonResp, jsonErr := r.jsonChat.RunJSONSchema(ctx, req)
-			if jsonErr != nil {
-				return JSONSchemaResponse{}, errors.Join(err, jsonErr)
-			}
-			r.mu.Lock()
-			r.preferChat = true
-			r.preferJSONMode = true
-			r.mu.Unlock()
-			return jsonResp, nil
 		}
 		if !isMissingEndpointHTTPStatus(err) || r.responses == nil {
 			return JSONSchemaResponse{}, err
@@ -328,19 +391,8 @@ func (r *OpenAICompatibleStructuredOutputRunner) RunJSONSchema(ctx context.Conte
 			}
 			return resp, nil
 		}
-		if shouldFallbackResponsesToChat(err) && r.chat != nil {
-			chatResp, chatErr := r.chat.RunJSONSchema(ctx, req)
-			if chatErr != nil && shouldFallbackJSONSchemaToJSONMode(chatErr) && r.jsonChat != nil {
-				jsonResp, jsonErr := r.jsonChat.RunJSONSchema(ctx, req)
-				if jsonErr == nil {
-					r.mu.Lock()
-					r.preferChat = true
-					r.preferJSONMode = true
-					r.mu.Unlock()
-					return jsonResp, nil
-				}
-				return JSONSchemaResponse{}, errors.Join(err, chatErr, jsonErr)
-			}
+		if shouldFallbackResponsesToChat(err) && r.hasChat() {
+			chatResp, chatErr := r.runChat(ctx, req)
 			if chatErr != nil {
 				return JSONSchemaResponse{}, errors.Join(err, chatErr)
 			}
@@ -352,25 +404,8 @@ func (r *OpenAICompatibleStructuredOutputRunner) RunJSONSchema(ctx context.Conte
 		return JSONSchemaResponse{}, err
 	}
 
-	if r.chat != nil {
-		resp, err := r.chat.RunJSONSchema(ctx, req)
-		if err == nil {
-			return resp, nil
-		}
-		if shouldFallbackJSONSchemaToJSONMode(err) && r.jsonChat != nil {
-			jsonResp, jsonErr := r.jsonChat.RunJSONSchema(ctx, req)
-			if jsonErr != nil {
-				return JSONSchemaResponse{}, errors.Join(err, jsonErr)
-			}
-			r.mu.Lock()
-			r.preferJSONMode = true
-			r.mu.Unlock()
-			return jsonResp, nil
-		}
-		return JSONSchemaResponse{}, err
-	}
-	if r.jsonChat != nil {
-		return r.jsonChat.RunJSONSchema(ctx, req)
+	if r.hasChat() {
+		return r.runChat(ctx, req)
 	}
 	return JSONSchemaResponse{}, errors.New("openai-compatible structured output runner not configured")
 }
@@ -407,14 +442,29 @@ func shouldFallbackResponsesToChat(err error) bool {
 }
 
 func shouldFallbackJSONSchemaToJSONMode(err error) bool {
+	return isRejectedOutputFormat(err, "json_schema")
+}
+
+func shouldFallbackResponseFormatToPrompt(err error) bool {
+	return isRejectedOutputFormat(err, "json_object")
+}
+
+func isRejectedOutputFormat(err error, format string) bool {
 	var httpErr *HTTPStatusError
 	if !errors.As(err, &httpErr) {
 		return false
 	}
+	switch httpErr.StatusCode {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity:
+	default:
+		return false
+	}
 	body := strings.ToLower(strings.TrimSpace(httpErr.Body))
-	return httpErr.StatusCode == http.StatusBadRequest &&
-		strings.Contains(body, "response_format") &&
-		(strings.Contains(body, "json_schema") || strings.Contains(body, "unavailable"))
+	format = strings.ToLower(strings.TrimSpace(format))
+	return strings.Contains(body, format) ||
+		strings.Contains(body, "response_format") ||
+		strings.Contains(body, "structured output") ||
+		strings.Contains(body, "structured_output")
 }
 
 func isUnsupportedResponsesTransportError(err error) bool {

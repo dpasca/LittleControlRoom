@@ -7,14 +7,17 @@ type OpenAICompatibleChatResponseFormat string
 const (
 	OpenAICompatibleChatResponseFormatJSONSchema OpenAICompatibleChatResponseFormat = "json_schema"
 	OpenAICompatibleChatResponseFormatJSONObject OpenAICompatibleChatResponseFormat = "json_object"
+	OpenAICompatibleChatResponseFormatPromptOnly OpenAICompatibleChatResponseFormat = "prompt_only"
 )
 
 type OpenAICompatibleProviderModelProfile struct {
-	ProviderID         string
-	Model              string
-	ChatResponseFormat OpenAICompatibleChatResponseFormat
-	AuthHeader         OpenAICompatibleAuthHeader
-	ReasoningStyle     string
+	ProviderID            string
+	Model                 string
+	ChatResponseFormat    OpenAICompatibleChatResponseFormat
+	AuthHeader            OpenAICompatibleAuthHeader
+	ReasoningStyle        string
+	RequireParameters     bool
+	PreferChatCompletions bool
 }
 
 type openAICompatibleProviderModelRule struct {
@@ -24,6 +27,8 @@ type openAICompatibleProviderModelRule struct {
 	chatResponseFormat OpenAICompatibleChatResponseFormat
 	authHeader         OpenAICompatibleAuthHeader
 	reasoningStyle     string
+	requireParameters  bool
+	preferChat         bool
 }
 
 var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
@@ -31,6 +36,12 @@ var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
 		providerID:         "deepseek",
 		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
 		reasoningStyle:     "deepseek",
+	},
+	{
+		// Kimi's stable API guarantees parseable JSON objects, but does not
+		// document response_format.json_schema support.
+		providerID:         "moonshot",
+		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
 	},
 	{
 		// MiMo's structured-output transport is JSON mode; the schema is
@@ -41,8 +52,17 @@ var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
 		reasoningStyle:     "xiaomi",
 	},
 	{
-		providerID:     "openrouter",
-		reasoningStyle: "openai",
+		providerID:        "openrouter",
+		reasoningStyle:    "openai",
+		requireParameters: true,
+	},
+	{
+		// mlx-lm's documented server accepts prompt/sampling fields but does
+		// not expose response_format. Keep the schema in the prompt and omit
+		// an unsupported transport hint.
+		providerID:         "mlx",
+		chatResponseFormat: OpenAICompatibleChatResponseFormatPromptOnly,
+		preferChat:         true,
 	},
 }
 
@@ -69,6 +89,12 @@ func OpenAICompatibleProviderModelProfileForProviderModel(providerID, model stri
 		if rule.reasoningStyle != "" {
 			profile.ReasoningStyle = rule.reasoningStyle
 		}
+		if rule.requireParameters {
+			profile.RequireParameters = true
+		}
+		if rule.preferChat {
+			profile.PreferChatCompletions = true
+		}
 	}
 
 	return profile
@@ -84,6 +110,12 @@ func OpenAICompatibleResponsesRunnerOptionsForProviderModel(providerID, model st
 	}
 	if profile.ReasoningStyle != "" {
 		opts.ReasoningStyle = profile.ReasoningStyle
+	}
+	if profile.RequireParameters {
+		opts.RequireParameters = true
+	}
+	if profile.PreferChatCompletions {
+		opts.PreferChatCompletions = true
 	}
 	return opts
 }
@@ -105,6 +137,8 @@ func normalizeOpenAICompatibleChatResponseFormat(format OpenAICompatibleChatResp
 	switch format {
 	case OpenAICompatibleChatResponseFormatJSONObject:
 		return OpenAICompatibleChatResponseFormatJSONObject
+	case OpenAICompatibleChatResponseFormatPromptOnly:
+		return OpenAICompatibleChatResponseFormatPromptOnly
 	default:
 		return OpenAICompatibleChatResponseFormatJSONSchema
 	}

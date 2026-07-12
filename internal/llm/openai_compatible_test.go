@@ -523,6 +523,127 @@ func TestOpenAICompatibleProviderModelProfileMapsDeepSeekToJSONMode(t *testing.T
 	if openRouter.ChatResponseFormat != OpenAICompatibleChatResponseFormatJSONSchema {
 		t.Fatalf("OpenRouter chat response format = %q, want %q", openRouter.ChatResponseFormat, OpenAICompatibleChatResponseFormatJSONSchema)
 	}
+	if !openRouter.RequireParameters {
+		t.Fatal("OpenRouter should require routed providers to support all structured-output parameters")
+	}
+
+	moonshot := OpenAICompatibleResponsesRunnerOptionsForProviderModel("moonshot", "kimi-k2.7-code", OpenAICompatibleResponsesRunnerOptions{})
+	if moonshot.ChatResponseFormat != OpenAICompatibleChatResponseFormatJSONObject {
+		t.Fatalf("Moonshot chat response format = %q, want %q", moonshot.ChatResponseFormat, OpenAICompatibleChatResponseFormatJSONObject)
+	}
+
+	mlx := OpenAICompatibleResponsesRunnerOptionsForProviderModel("mlx", "mlx-community/Qwen3.5-9B-MLX-4bit", OpenAICompatibleResponsesRunnerOptions{})
+	if mlx.ChatResponseFormat != OpenAICompatibleChatResponseFormatPromptOnly {
+		t.Fatalf("MLX chat response format = %q, want %q", mlx.ChatResponseFormat, OpenAICompatibleChatResponseFormatPromptOnly)
+	}
+	if !mlx.PreferChatCompletions {
+		t.Fatal("MLX should use its documented chat completions endpoint directly")
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerRequiresOpenRouterStructuredOutputParameters(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode OpenRouter request: %v", err)
+		}
+		responseFormat, _ := body["response_format"].(map[string]any)
+		if responseFormat["type"] != "json_schema" {
+			t.Fatalf("response_format = %#v, want json_schema", responseFormat)
+		}
+		jsonSchema, _ := responseFormat["json_schema"].(map[string]any)
+		if jsonSchema["strict"] != true {
+			t.Fatalf("json_schema.strict = %#v, want true", jsonSchema["strict"])
+		}
+		provider, _ := body["provider"].(map[string]any)
+		if provider["require_parameters"] != true {
+			t.Fatalf("provider = %#v, want require_parameters=true", provider)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"model":"deepseek/deepseek-v4-pro",
+			"choices":[{"message":{"role":"assistant","content":"{\"message\":\"strict route\"}"}}]
+		}`))
+	}))
+	defer server.Close()
+
+	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("openrouter", "deepseek/deepseek-v4-pro", OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "local-key", "deepseek/deepseek-v4-pro", time.Second, nil, opts)
+	response, err := runner.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		Model:      "deepseek/deepseek-v4-pro",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema:     map[string]any{"type": "object"},
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	if response.OutputText != `{"message":"strict route"}` {
+		t.Fatalf("OutputText = %q, want strict route payload", response.OutputText)
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerUsesPromptSchemaForMLX(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/responses" {
+			t.Fatal("MLX profile should not probe the undocumented Responses endpoint")
+		}
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode MLX request: %v", err)
+		}
+		if _, ok := body["response_format"]; ok {
+			t.Fatalf("MLX request should omit undocumented response_format: %#v", body["response_format"])
+		}
+		messages, _ := body["messages"].([]any)
+		if len(messages) != 2 {
+			t.Fatalf("messages = %#v, want system and user", messages)
+		}
+		user, _ := messages[1].(map[string]any)
+		prompt := fmt.Sprint(user["content"])
+		if !strings.Contains(prompt, `"message"`) || !strings.Contains(prompt, `"type": "object"`) {
+			t.Fatalf("MLX prompt should include the requested schema: %q", prompt)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"model":"mlx-community/Qwen3.5-9B-MLX-4bit",
+			"choices":[{"message":{"role":"assistant","content":"{\"message\":\"prompt constrained\"}"}}]
+		}`))
+	}))
+	defer server.Close()
+
+	opts := OpenAICompatibleResponsesRunnerOptionsForProviderModel("mlx", "mlx-community/Qwen3.5-9B-MLX-4bit", OpenAICompatibleResponsesRunnerOptions{})
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "mlx", "mlx-community/Qwen3.5-9B-MLX-4bit", time.Second, nil, opts)
+	response, err := runner.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		Model:      "mlx-community/Qwen3.5-9B-MLX-4bit",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"message": map[string]any{"type": "string"}},
+			"required":   []string{"message"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	if response.OutputText != `{"message":"prompt constrained"}` {
+		t.Fatalf("OutputText = %q, want prompt-constrained payload", response.OutputText)
+	}
 }
 
 func TestOpenAICompatibleProviderModelProfileMapsXiaomiToJSONModeAndAPIKeyHeader(t *testing.T) {
@@ -839,6 +960,77 @@ func TestOpenAICompatibleResponsesRunnerFallsBackToJSONModeWhenJSONSchemaUnsuppo
 	}
 	if responsesCalls != 0 {
 		t.Fatalf("responses endpoint calls = %d, want 0", responsesCalls)
+	}
+}
+
+func TestOpenAICompatibleResponsesRunnerFallsBackToPromptWhenResponseFormatsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	var schemaCalls int
+	var jsonModeCalls int
+	var promptCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		responseFormat, hasResponseFormat := body["response_format"].(map[string]any)
+		if !hasResponseFormat {
+			promptCalls++
+			messages, _ := body["messages"].([]any)
+			user, _ := messages[1].(map[string]any)
+			if !strings.Contains(fmt.Sprint(user["content"]), `"message"`) {
+				t.Fatalf("prompt fallback should carry schema: %#v", user["content"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{
+				"model":"basic-local",
+				"choices":[{"message":{"role":"assistant","content":"{\"message\":\"prompt fallback\"}"}}]
+			}`))
+			return
+		}
+		switch responseFormat["type"] {
+		case "json_schema":
+			schemaCalls++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"response_format json_schema is unsupported"}}`))
+		case "json_object":
+			jsonModeCalls++
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"error":{"message":"response_format json_object is unsupported"}}`))
+		default:
+			t.Fatalf("unexpected response_format %#v", responseFormat)
+		}
+	}))
+	defer server.Close()
+
+	runner := NewOpenAICompatibleResponsesRunnerWithOptions(server.URL+"/v1", "local-key", "basic-local", time.Second, nil, OpenAICompatibleResponsesRunnerOptions{
+		PreferChatCompletions: true,
+	})
+	req := JSONSchemaRequest{
+		Model:      "basic-local",
+		SystemText: "system",
+		UserText:   "user",
+		SchemaName: "commit_message",
+		Schema: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"message": map[string]any{"type": "string"}},
+		},
+	}
+	for i := 0; i < 2; i++ {
+		response, err := runner.RunJSONSchema(context.Background(), req)
+		if err != nil {
+			t.Fatalf("RunJSONSchema() attempt %d error = %v", i+1, err)
+		}
+		if response.OutputText != `{"message":"prompt fallback"}` {
+			t.Fatalf("OutputText = %q, want prompt fallback payload", response.OutputText)
+		}
+	}
+	if schemaCalls != 1 || jsonModeCalls != 1 || promptCalls != 2 {
+		t.Fatalf("calls schema/json/prompt = %d/%d/%d, want 1/1/2", schemaCalls, jsonModeCalls, promptCalls)
 	}
 }
 
