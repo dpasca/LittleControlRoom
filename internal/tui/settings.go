@@ -496,6 +496,15 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	return m.setSettingsSelection(settingsFieldBrowserAutomation)
 }
 
+func (m *Model) openMobileSettingsMode() tea.Cmd {
+	cmd := m.openSettingsModeWithBaseline(m.currentSettingsBaseline())
+	m.settingsSectionMenu = false
+	m.settingsSectionSelected = settingsSectionIndexByID(settingsSectionGettingStarted)
+	m.settingsDrilldown = settingsDrilldownMobile
+	m.status = "Mobile setup open. Press Enter to choose availability, Tab to reach the address, or ctrl+s to save."
+	return tea.Batch(cmd, m.setSettingsSelection(settingsFieldMobileEnabled))
+}
+
 func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) tea.Cmd {
 	m.settingsFields = newSettingsFields(settings)
 	saved := cloneEditableSettings(settings)

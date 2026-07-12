@@ -297,6 +297,8 @@ func (m Model) View() string {
 		body = m.renderCommandPaletteOverlay(body, layout.width, layout.height)
 	} else if m.errorLogVisible {
 		body = m.renderErrorLogOverlay(body, layout.width, layout.height)
+	} else if m.mobileDialogOpen {
+		body = m.renderMobileDialogOverlay(body, layout.width, layout.height)
 	} else if m.cpuDialog != nil {
 		body = m.renderCPUDialogOverlay(body, layout.width, layout.height)
 	} else if m.portsDialog != nil {
@@ -507,7 +509,7 @@ func (m Model) renderTopStatusLine(width int) string {
 	if len(statusParts) > 0 {
 		segments = append(segments, joinFooterSegments(statusParts...))
 	}
-	rightSegment := m.renderTopCPUUsageSegment()
+	rightSegment := joinFooterSegments(m.renderMobileTopStatusIndicator(width), m.renderTopCPUUsageSegment())
 	if prioritizeMobileStatus {
 		rightSegment = ""
 	}

@@ -96,11 +96,11 @@ The read-only mobile client starts with the main TUI by default and shares its l
 lcroom tui
 ```
 
-Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and read-only active/recent engineer transcripts. Use `/mobile` in the TUI to check the URL. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line.
+Open `http://127.0.0.1:7777` to use the project/category dashboard, project detail, and read-only active/recent engineer transcripts. The compact top-right indicator shows `M:LOCAL`, `M:LAN`, `M:OFF`, or `M:ERR`. Run `/mobile` for the full read-only access panel: current listener, detected private LAN address, usable phone URL, pairing code, and any saved setup waiting for restart. Press Enter there to jump to the authoritative Mobile setup fields. If the port is already occupied, the TUI keeps running and reports the mobile server failure in its top status line and the Mobile panel.
 
 Use the Mobile card in `/setup` or the Mobile section in `/settings` to disable TUI auto-start or save another `host:port`. Mobile server changes apply on the next LCR launch. The default loopback address is intentionally visible only on this computer; set a LAN address such as `0.0.0.0:7777` or the computer's LAN IP to reach it from a phone.
 
-Pass an explicit LAN address for a one-run override, for example `lcroom tui --listen 192.168.0.6:7777`. An explicit `--listen` also starts the mobile client for that run when saved auto-start is disabled. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the current six-digit code, then enter it on the phone. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
+Pass an explicit LAN address for a one-run override, for example `lcroom tui --listen 192.168.0.6:7777`. An explicit `--listen` also starts the mobile client for that run when saved auto-start is disabled. Non-loopback listeners require mobile pairing: run `/mobile` in the TUI to see the phone-ready URL and current six-digit code, then enter it on the phone. Press `c` in that panel to copy the phone URL. Pairing grants that browser a 30-day HTTP-only device pass which remains valid across LCR restarts; the signing key is stored as `mobile-auth.key` beside the active database with owner-only permissions.
 
 `lcroom serve` remains available for a standalone preview and accepts the same `--listen` flag. It prints the LAN pairing code at startup. It can read recorded engineer transcripts from detected artifacts, but only the TUI-hosted client can overlay the richer in-memory live transcript. A standalone preview also needs its own database runtime lease.
 
@@ -183,6 +183,7 @@ Organization, display, and cleanup:
 
 - `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
 - `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Mobile, Browser, and Advanced.
+- `/mobile`: Open the mobile access panel with the current listener, detected LAN phone URL, pairing code, and a direct jump to Mobile setup.
 - `/sort <attention|recent>` (`o`): Change the project ordering.
 - `/tab [active|archived|toggle]` (`a`): Switch the project list between Active and Archived tabs.
 - `/non-ai-folders <on|off>`: Show or hide folders that have no AI activity yet.

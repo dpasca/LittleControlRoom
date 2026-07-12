@@ -57,6 +57,7 @@ type Model struct {
 	err     error
 
 	mobileServerStatus MobileServerStatus
+	mobileDialogOpen   bool
 
 	topStatusAttentionPulseStatus string
 	topStatusAttentionPulseUntil  time.Time
@@ -1382,6 +1383,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.errorLogVisible {
 			return m.updateErrorLogMode(msg)
+		}
+		if m.mobileDialogOpen {
+			return m.updateMobileDialogMode(msg)
 		}
 		if m.cpuRemediationEditor != nil {
 			return m.updateCPURemediationEditorMode(msg)
