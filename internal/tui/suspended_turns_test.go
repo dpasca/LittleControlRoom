@@ -34,7 +34,7 @@ func (p *suspendedTurnCommandProbe) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (p *suspendedTurnCommandProbe) View() string { return "" }
 
-func TestMergeSuspendedTurnChoicesKeepsAllCapturedIntentsAheadOfFallbackLimit(t *testing.T) {
+func TestBuildRestartIntentResumeChoicesKeepsAllCapturedIntentsAndIgnoresArtifacts(t *testing.T) {
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	intents := make([]codexapp.RestartIntent, 0, 10)
 	for i := 0; i < 10; i++ {
@@ -58,7 +58,7 @@ func TestMergeSuspendedTurnChoicesKeepsAllCapturedIntentsAheadOfFallbackLimit(t 
 		LatestTurnCompleted:      false,
 	}}
 
-	choices := mergeSuspendedTurnResumeChoices(projects, intents, suspendedTurnResumeChoiceLimit)
+	choices := buildRestartIntentResumeChoices(projects, intents)
 	if len(choices) != len(intents) {
 		t.Fatalf("choices len = %d, want all %d captured intents even above display limit", len(choices), len(intents))
 	}
@@ -66,6 +66,9 @@ func TestMergeSuspendedTurnChoicesKeepsAllCapturedIntentsAheadOfFallbackLimit(t 
 		if !choice.CapturedOnQuit || choice.ActiveTurnID == "" {
 			t.Fatalf("captured choice lost restart metadata: %#v", choice)
 		}
+	}
+	if choices := buildRestartIntentResumeChoices(projects, nil); len(choices) != 0 {
+		t.Fatalf("artifact-only unfinished project produced restart choices: %#v", choices)
 	}
 }
 
@@ -105,62 +108,39 @@ func TestSuspendedTurnSkipKeepsCapturedRestartIntentForLater(t *testing.T) {
 	}
 }
 
-func TestBuildSuspendedTurnResumeChoicesFiltersAndSorts(t *testing.T) {
+func TestBuildRestartIntentResumeChoicesUsesProjectMetadataWithoutPromotingArtifacts(t *testing.T) {
 	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
-	projects := []model.ProjectSummary{
-		{
-			Path:                     "/tmp/completed",
-			Name:                     "completed",
-			PresentOnDisk:            true,
-			InScope:                  true,
-			LatestSessionID:          "codex:done",
-			LatestSessionFormat:      "modern",
-			LatestSessionLastEventAt: now.Add(-time.Minute),
-			LatestTurnStateKnown:     true,
-			LatestTurnCompleted:      true,
-		},
-		{
-			Path:                     "/tmp/missing",
-			Name:                     "missing",
-			InScope:                  true,
-			LatestSessionID:          "codex:missing",
-			LatestSessionFormat:      "modern",
-			LatestSessionLastEventAt: now,
-			LatestTurnStateKnown:     true,
-		},
-		{
-			Path:                     "/tmp/old",
-			Name:                     "old",
-			PresentOnDisk:            true,
-			InScope:                  true,
-			LatestSessionID:          "codex:old",
-			LatestSessionFormat:      "modern",
-			LatestSessionLastEventAt: now.Add(-2 * time.Hour),
-			LatestTurnStateKnown:     true,
-			LatestTurnCompleted:      false,
-		},
-		{
-			Path:                     "/tmp/new",
-			Name:                     "new",
-			PresentOnDisk:            true,
-			InScope:                  true,
-			LatestSessionID:          "opencode:new",
-			LatestSessionFormat:      "opencode_db",
-			LatestSessionLastEventAt: now.Add(-5 * time.Minute),
-			LatestTurnStateKnown:     true,
-			LatestTurnCompleted:      false,
-		},
-	}
+	projects := []model.ProjectSummary{{
+		Path:                     "/tmp/saved",
+		Name:                     "saved display name",
+		LatestSessionSummary:     "saved summary",
+		LatestSessionLastEventAt: now,
+	}, {
+		Path:                     "/tmp/artifact-only",
+		Name:                     "artifact only",
+		PresentOnDisk:            true,
+		InScope:                  true,
+		LatestSessionID:          "codex:false-positive",
+		LatestSessionFormat:      "modern",
+		LatestSessionLastEventAt: now.Add(time.Minute),
+		LatestTurnStateKnown:     true,
+		LatestTurnCompleted:      false,
+	}}
+	intents := []codexapp.RestartIntent{{
+		Provider:     codexapp.ProviderCodex,
+		ProjectPath:  "/tmp/saved",
+		SessionID:    "saved-thread",
+		ActiveTurnID: "saved-turn",
+		CapturedAt:   now.Add(-time.Minute),
+	}}
 
-	choices := buildSuspendedTurnResumeChoices(projects, 10)
-	if len(choices) != 2 {
-		t.Fatalf("choices len = %d, want 2: %#v", len(choices), choices)
+	choices := buildRestartIntentResumeChoices(projects, intents)
+	if len(choices) != 1 {
+		t.Fatalf("choices len = %d, want only the journaled session: %#v", len(choices), choices)
 	}
-	if choices[0].ProjectPath != "/tmp/new" || choices[0].Provider != codexapp.ProviderOpenCode || choices[0].SessionID != "new" {
-		t.Fatalf("first choice = %#v, want newest OpenCode raw session", choices[0])
-	}
-	if choices[1].ProjectPath != "/tmp/old" || choices[1].Provider != codexapp.ProviderCodex || choices[1].SessionID != "old" {
-		t.Fatalf("second choice = %#v, want older Codex raw session", choices[1])
+	choice := choices[0]
+	if choice.ProjectPath != "/tmp/saved" || choice.ProjectName != "saved display name" || choice.Summary != "saved summary" || choice.SessionID != "saved-thread" || !choice.CapturedOnQuit {
+		t.Fatalf("journaled choice = %#v", choice)
 	}
 }
 
@@ -188,7 +168,7 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 
 	updated, cmd := m.Update(suspendedTurnResumeChoicesMsg{choices: []suspendedTurnResumeChoice{
 		{ProjectPath: "/tmp/a", ProjectName: "a", Provider: codexapp.ProviderCodex, SessionID: "cx-a", ActiveTurnID: "turn-a", CapturedOnQuit: true},
-		{ProjectPath: "/tmp/b", ProjectName: "b", Provider: codexapp.ProviderClaudeCode, SessionID: "cc-b"},
+		{ProjectPath: "/tmp/b", ProjectName: "b", Provider: codexapp.ProviderClaudeCode, SessionID: "cc-b", ActiveTurnID: "turn-b", CapturedOnQuit: true},
 	}})
 	if cmd != nil {
 		t.Fatalf("choices msg should not launch until the user confirms")
@@ -198,7 +178,7 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 		t.Fatalf("suspended turn dialog not shown")
 	}
 	dialogText := strings.Join(strings.Fields(ansi.Strip(got.renderSuspendedTurnResumeDialogContent(80))), " ")
-	if !strings.Contains(dialogText, "top bar and Agent column show warmup progress") || !strings.Contains(dialogText, "wait for recovery to finish") {
+	if !strings.Contains(dialogText, "only shows sessions recorded in its graceful-shutdown journal") || !strings.Contains(dialogText, "top bar and Agent column show warmup progress") || !strings.Contains(dialogText, "wait for recovery to finish") {
 		t.Fatalf("restore dialog should set warmup expectations, got %q", dialogText)
 	}
 
@@ -240,8 +220,8 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	if requests[1].ProjectPath != "/tmp/b" || requests[1].Provider != codexapp.ProviderClaudeCode || requests[1].ResumeID != "cc-b" {
 		t.Fatalf("second request = %#v", requests[1])
 	}
-	if requests[1].ContinueInterruptedTurn || requests[1].Prompt != "" {
-		t.Fatalf("artifact-only second request should reopen without injecting a prompt: %#v", requests[1])
+	if !requests[1].ContinueInterruptedTurn || requests[1].InterruptedTurnID != "turn-b" || requests[1].Prompt != suspendedTurnContinuationPrompt {
+		t.Fatalf("captured second request did not start an explicit continuation: %#v", requests[1])
 	}
 	for i, msg := range msgs {
 		opened, ok := msg.(codexSessionOpenedMsg)
@@ -458,7 +438,7 @@ func TestSuspendedTurnHiddenPendingQuestionUpdateStaysHidden(t *testing.T) {
 	}
 }
 
-func TestProjectsMsgWaitsForProviderNeutralSuspendedTurnLoad(t *testing.T) {
+func TestProjectsMsgDoesNotPromoteArtifactOnlyTurnIntoRestartDialog(t *testing.T) {
 	now := time.Date(2026, 5, 21, 12, 5, 0, 0, time.UTC)
 	project := model.ProjectSummary{
 		Path:                     "/tmp/roman",
@@ -487,11 +467,14 @@ func TestProjectsMsgWaitsForProviderNeutralSuspendedTurnLoad(t *testing.T) {
 		t.Fatalf("projects cache should not open the dialog before restart intents load")
 	}
 
-	choices := buildSuspendedTurnResumeChoices([]model.ProjectSummary{project}, suspendedTurnResumeChoiceLimit)
+	choices := buildRestartIntentResumeChoices([]model.ProjectSummary{project}, nil)
 	updated, _ = got.Update(suspendedTurnResumeChoicesMsg{choices: choices})
 	got = updated.(Model)
-	if got.suspendedTurnDialog == nil || len(got.suspendedTurnDialog.Choices) != 1 || got.suspendedTurnDialog.Choices[0].SessionID != "lca_roman" {
-		t.Fatalf("loaded suspended turn dialog = %#v, want lca_roman", got.suspendedTurnDialog)
+	if !got.suspendedTurnChecked {
+		t.Fatal("restart intent check should settle even when the journal is empty")
+	}
+	if got.suspendedTurnDialog != nil {
+		t.Fatalf("artifact-only unfinished turn produced restart dialog: %#v", got.suspendedTurnDialog)
 	}
 }
 

@@ -35,14 +35,16 @@ captured or interrupted by this flow.
 
 ## Startup restore
 
-At the next launch, the Interrupted Turns dialog merges the restart journal
-with artifact-based unfinished-turn detection:
+At the next launch, the Interrupted Turns dialog reads only the restart
+journal. Every row was owned and captured by LCR before graceful shutdown.
+**Continue All** reopens each exact provider session and starts a new
+continuation turn in the background.
 
-- A `saved` row was owned and captured by LCR. **Continue All** reopens the
-  exact provider session and starts a new continuation turn in the background.
-- An untagged row comes only from provider artifacts. LCR reopens it for
-  inspection but does not inject a continuation prompt or assume ownership of
-  a possibly live external process.
+A generic provider artifact whose latest turn merely looks unfinished is not
+enough to enter restart recovery. It may belong to another live process, or its
+completion marker may be delayed or absent. Such sessions remain visible in
+the normal project/session UI for deliberate manual inspection, but they do
+not trigger the startup dialog.
 
 Choosing **Skip** defers the saved continuation; the restart intent remains so
 LCR can offer it again on a later launch. An intent is removed after its saved
@@ -77,6 +79,6 @@ computation. A continuation may need to reconstruct a pending approval, rerun a
 read-only check, or verify whether an external write completed before shutdown.
 
 After a crash, `SIGKILL`, or power loss, LCR may not have written the latest
-restart journal. Artifact detection can still offer the session for reopening,
-but automatic continuation is intentionally withheld because LCR cannot prove
-that it owned the old process.
+restart journal. Artifact detection can still surface the session in the
+normal project UI, but LCR does not offer it as restart recovery or continue it
+automatically because ownership of the old process cannot be proven.
