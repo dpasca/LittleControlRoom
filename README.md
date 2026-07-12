@@ -108,7 +108,7 @@ Pairing authenticates the browser but does not encrypt plain HTTP traffic. Keep 
 
 <p align="center">
   <a href="docs/screenshots/setup.png">
-    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Getting Started settings for project reports, boss chat, and optional LCAgent details" width="850">
+    <img src="docs/screenshots/setup.png" alt="Little Control Room setup screen showing Getting Started settings for project reports, Help Chat, and optional LCAgent details" width="850">
   </a>
 </p>
 
@@ -118,10 +118,10 @@ LCR separates embedded session providers from the backend used for background wo
 
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
 - Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
-- Boss chat has its own `boss_chat_backend`, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/boss` offers to jump straight to the Boss chat setup card.
+- Help Chat has its own `boss_chat_backend` compatibility setting, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/help` offers to jump straight to the Help Chat setup card.
 - Claude Code usage follows the local `claude` CLI authentication mode. Current Anthropic docs say Pro/Max plan terminal usage counts against plan limits when Claude Code is authenticated with Claude credentials, while `ANTHROPIC_API_KEY` or explicit usage-credit continuation can bill separately at API rates.
 - MLX uses its OpenAI-compatible local endpoint. Ollama discovery still uses its OpenAI-compatible model list, while background generation uses Ollama's native generate endpoint so thinking models can return usable JSON/text with thinking disabled.
-- Ollama thinking stays off by default for background automation and structured helper calls. When Boss chat uses Ollama, native `think: true` is on by default for Boss answer text only; its setup panel includes a Boss Ollama thinking toggle if you want final-content-only responses.
+- Ollama thinking stays off by default for background automation and structured helper calls. When Help Chat uses Ollama, native `think: true` is on by default for answer text only; its setup panel includes a Help Chat Ollama thinking toggle if you want final-content-only responses.
 
 For local inference, the practical setup is:
 
@@ -215,18 +215,17 @@ Embedded providers expose LCR's local command subset, not every slash command fr
 - `/status`: Show the current provider/session status.
 - `/compact`: Compact the embedded Codex conversation history when supported.
 - `/review`: Ask embedded Codex to review uncommitted changes.
+- `/help`: Hide the embedded pane and open Help Chat over the main dashboard.
 
-Inside boss chat:
+Inside Help Chat:
 
-- `Alt+1` through `Alt+8`: Open the matching marked Boss Desk task or project in an embedded engineer session.
-- `Alt+Up`: Hide Boss Chat and return to the classic TUI; in-flight replies keep running.
-- `/new [prompt]`: Start a fresh boss chat session, optionally with the first prompt.
-- `/sessions [session-id]`: Open the saved-session picker, or switch directly by ID.
-- `/session [session-id]` and `/resume [session-id]`: Aliases for `/sessions`.
-- `/help`: Show boss chat slash commands.
-- `/boss off`: Hide Boss Chat and return to the classic TUI; in-flight replies keep running.
+- `Enter`: Send a message or confirm a proposed action.
+- `Esc` or backtick: Hide Help Chat and return to the dashboard; in-flight replies keep running.
+- `/new [prompt]`: Start a fresh Help Chat session, optionally with the first prompt.
+- `Ctrl+L`: Start a fresh empty Help Chat session.
+- `Alt+Enter`: Add a newline without sending.
 
-Boss chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/boss-sessions/`. The `/sessions` picker uses those files for human session switching, and Boss Chat recall searches the same transcripts. Codex, OpenCode, and Claude Code transcripts are called engineer sessions in Boss Chat so they stay distinct from Boss Chat's own transcript.
+Help Chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/help-chat-sessions/`. Recall searches those transcripts and continues to include legacy `boss-sessions/` history. Help Chat can inspect the current dashboard and project/task context, propose confirmable actions, delegate work, and report completions without assigning human names to AI work sessions.
 
 ## Core Workflows
 
@@ -234,7 +233,7 @@ Boss chat sessions are saved as grep-friendly Markdown transcripts under the app
 2. Move through projects with the arrow keys.
 3. Press `Enter` to open or resume the selected project's latest embedded provider. Fresh projects and scratch tasks use the assistant chosen in their create dialog, which defaults to the last embedded provider you used when available.
 4. Press `Esc` to hide the embedded session pane while it keeps working, then press `Enter` on that project to reopen it from the list.
-5. Press `/` for commands, `f` to filter the project list instantly, `a` to switch Active/Archived project tabs, or `b` for Boss Chat.
+5. Press `/` for commands, backtick or `/help` for Help Chat, `f` to filter the project list instantly, or `a` to switch Active/Archived project tabs.
 
 Most day-to-day use falls into a few buckets:
 
@@ -261,7 +260,7 @@ Most day-to-day use falls into a few buckets:
   | [![Diff window](docs/screenshots/diff-view.png)](docs/screenshots/diff-view.png) | [![Commit preview dialog](docs/screenshots/commit-preview.png)](docs/screenshots/commit-preview.png) | [![Image diff with before/after previews](docs/screenshots/diff-view-image.png)](docs/screenshots/diff-view-image.png) |
 
 - **Keep the list clean** — Use `a` or `/tab` to switch between Active and Archived project tabs, `/archive` and `/unarchive` to move regular projects between them, `f` or `/filter <text>` to narrow the project list, and `/pin` or `/snooze` to control attention. On scratch tasks, `/archive` moves the task into the scratch archive folder and out of the active task list. Use `/remove` when an item should go away by its safest matching action, `/ignore` for an exact-name hide rule, and `/ignored` to restore hidden names or paths.
-- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, boss chat, LCAgent, and mobile access through focused setup panels. Shared provider connection fields are reused inside those panels, so the same OpenAI/MLX/Ollama settings and LCAgent provider keys are edited from whichever feature needs them. Providers & Models stays compact: connection status plus global launch/display defaults. Project Scope controls include/exclude paths; category privacy is managed from `/category`. Mobile controls TUI auto-start, local or LAN reachability, port, and an optional advanced custom address. Browser sets the Playwright window policy. Advanced holds refresh thresholds and low-level tuning knobs. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
+- **Adjust setup** — `/setup` jumps to the Getting Started settings; `/settings` is the full preferences panel. Getting Started covers project-report AI, Help Chat, LCAgent, and mobile access through focused setup panels. Shared provider connection fields are reused inside those panels, so the same OpenAI/MLX/Ollama settings and LCAgent provider keys are edited from whichever feature needs them. Providers & Models stays compact: connection status plus global launch/display defaults. Project Scope controls include/exclude paths; category privacy is managed from `/category`. Mobile controls TUI auto-start, local or LAN reachability, port, and an optional advanced custom address. Browser sets the Playwright window policy. Advanced holds refresh thresholds and low-level tuning knobs. For embedded Codex and OpenCode sessions, LCR can isolate Playwright per session so browser-heavy work multitasks more cleanly in parallel, then surface the right managed browser window only when a human step is actually needed. Switch to `Classic browser behavior` if you want the original provider-owned flow, then use `/new-project` for repo-backed work and `/new-task` for quick scratch work.
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 
@@ -271,7 +270,7 @@ If Codex, OpenCode, Claude Code, MLX, or Ollama is available, LCR can use that l
 
 Claude Code is the subtle one. LCR invokes the local `claude` CLI for both embedded Claude sessions and Claude-backed background inference. Anthropic currently says Claude Pro/Max include Claude Code terminal usage when authenticated with Claude credentials, but `ANTHROPIC_API_KEY` makes Claude Code use API billing instead, and usage-credit continuation after plan limits is billed separately at standard API rates. See Anthropic's [Claude Code plan billing](https://support.claude.com/en/articles/11145838-use-claude-code-with-your-pro-or-max-plan) and [Claude Code cost](https://code.claude.com/docs/en/costs) docs for the current rules. Claude-backed background inference defaults to Haiku to keep usage lighter.
 
-If you use an OpenAI API key for background analysis, LCR mainly spends tokens on summaries/classification and commit help. Boss chat can also use direct API inference through its separate `boss_chat_backend`; keep that in mind when reading cost estimates, since the project-analysis footer is not meant to be the full billing ledger for interactive chat.
+If you use an OpenAI API key for background analysis, LCR mainly spends tokens on summaries/classification and commit help. Help Chat can also use direct API inference through its separate `boss_chat_backend` compatibility setting; keep that in mind when reading cost estimates, since the project-analysis footer is not meant to be the full billing ledger for interactive chat.
 
 With a few active projects, a full day is often around `$1` to `$2`, but treat that as a rough guide. The OpenAI dashboard is the billing source of truth.
 

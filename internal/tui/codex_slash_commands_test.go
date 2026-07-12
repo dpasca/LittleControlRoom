@@ -434,7 +434,7 @@ func TestVisibleCodexSlashBossOpensBossMode(t *testing.T) {
 	settings.OpenAIAPIKey = "sk-test-example"
 
 	input := newCodexTextarea()
-	input.SetValue("/boss")
+	input.SetValue("/help")
 
 	m := Model{
 		codexManager:        manager,
@@ -449,17 +449,23 @@ func TestVisibleCodexSlashBossOpensBossMode(t *testing.T) {
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
-	if !got.bossMode {
-		t.Fatalf("embedded /boss should open boss mode")
+	if !got.helpChatMode {
+		t.Fatalf("embedded /help should open Help Chat")
+	}
+	if got.codexVisibleProject != "" || got.codexHiddenProject != "/tmp/demo" {
+		t.Fatalf("embedded /help should return to the dashboard, visible=%q hidden=%q", got.codexVisibleProject, got.codexHiddenProject)
 	}
 	if got.bossSetupPrompt != nil {
-		t.Fatalf("configured embedded /boss should not show setup prompt")
+		t.Fatalf("configured embedded /help should not show setup prompt")
 	}
 	if got.codexInput.Value() != "" {
-		t.Fatalf("codex input should clear after /boss, got %q", got.codexInput.Value())
+		t.Fatalf("codex input should clear after /help, got %q", got.codexInput.Value())
 	}
 	if cmd == nil {
-		t.Fatalf("embedded /boss should return the boss init command")
+		t.Fatalf("embedded /help should return the Help Chat init command")
+	}
+	if rendered := ansi.Strip(got.View()); !strings.Contains(rendered, "Help Chat") {
+		t.Fatalf("embedded /help should render Help Chat over the dashboard: %q", rendered)
 	}
 }
 

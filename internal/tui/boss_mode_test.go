@@ -125,9 +125,6 @@ func TestBossViewContextIncludesActiveAgentTaskEngineerActivity(t *testing.T) {
 	if !activity.Active || activity.Status != "working" || !activity.StartedAt.Equal(now.Add(-37*time.Second)) {
 		t.Fatalf("activity state = %#v, want active working with started time", activity)
 	}
-	if activity.EngineerName != bossui.EngineerNameForKey("agent_task", task.ID) {
-		t.Fatalf("activity engineer name = %q, want deterministic task name", activity.EngineerName)
-	}
 }
 
 func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
@@ -163,9 +160,6 @@ func TestBossViewContextIncludesActiveProjectEngineerActivity(t *testing.T) {
 	}
 	if !activity.Active || activity.Status != "working" || !activity.StartedAt.Equal(now.Add(-2*time.Minute)) {
 		t.Fatalf("activity state = %#v, want active working with started time", activity)
-	}
-	if activity.EngineerName != bossui.EngineerNameForKey("project", project.Path, "thread-project-1") {
-		t.Fatalf("activity engineer name = %q, want deterministic project session name", activity.EngineerName)
 	}
 }
 
@@ -299,34 +293,6 @@ func TestBossViewContextIncludesRuntimeTestingContext(t *testing.T) {
 	}
 }
 
-func TestBossModeTabSwitchesEmbeddedTranscript(t *testing.T) {
-	t.Parallel()
-
-	m := Model{
-		ctx:             context.Background(),
-		width:           100,
-		height:          30,
-		bossMode:        true,
-		bossModelActive: true,
-		bossModel:       bossui.NewEmbedded(context.Background(), nil),
-	}
-	updatedBoss, _ := m.bossModel.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	m.bossModel = normalizeBossModel(updatedBoss)
-
-	updated, cmd := m.update(tea.KeyMsg{Type: tea.KeyTab})
-	if cmd != nil {
-		t.Fatalf("boss tab switch should not return a command")
-	}
-	got := updated.(Model)
-	view := ansi.Strip(got.renderBossModeView())
-	if !strings.Contains(view, "Switched to Boss Flow tab") {
-		t.Fatalf("boss mode header should announce tab switch:\n%s", view)
-	}
-	if !strings.Contains(view, "[Flow]") {
-		t.Fatalf("boss mode transcript title should show active Flow tab:\n%s", view)
-	}
-}
-
 func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	t.Parallel()
 
@@ -358,33 +324,33 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	prevSnapshot.ActiveTurnID = "turn-live"
 	prevSnapshot.Phase = codexapp.SessionPhaseRunning
 	m := Model{
-		ctx:          ctx,
-		bossMode:     true,
-		bossModel:    bossui.NewEmbedded(ctx, nil),
-		codexManager: manager,
+		ctx:                 ctx,
+		helpChatMode:        true,
+		helpChatModelActive: true,
+		helpChatModel:       bossui.NewEmbeddedHelp(ctx, nil),
+		codexManager:        manager,
 		codexSnapshots: map[string]codexapp.Snapshot{
 			projectPath: prevSnapshot,
 		},
 		allProjects: []model.ProjectSummary{{Path: projectPath, Name: "Project Task"}},
 		projects:    []model.ProjectSummary{{Path: projectPath, Name: "Project Task"}},
 	}
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 
 	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
-	view := bossFlowOnlyText(got.bossModel)
-	noticeText := bossOperationalNoticeText(got.bossModel)
-	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
+	view := bossChatOnlyText(got.helpChatModel)
+	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
-		engineerName + " is back from Project Task:",
+		"Work on Project Task is ready for review:",
 		"Killed the stale dev server on port 5173",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("boss flow transcript missing engineer outcome %q:\n%s", want, view)
+			t.Fatalf("Help Chat transcript missing work outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
-		engineerName + " is back from Project Task: Killed the stale dev server on port 5173",
+		"Work on Project Task is ready for review: Killed the stale dev server on port 5173",
 	} {
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
@@ -433,17 +399,18 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 	prevSnapshot.ActiveTurnID = "turn-live"
 	prevSnapshot.Phase = codexapp.SessionPhaseRunning
 	m := Model{
-		ctx:          ctx,
-		bossMode:     true,
-		bossModel:    bossui.NewEmbedded(ctx, nil),
-		codexManager: manager,
+		ctx:                 ctx,
+		helpChatMode:        true,
+		helpChatModelActive: true,
+		helpChatModel:       bossui.NewEmbeddedHelp(ctx, nil),
+		codexManager:        manager,
 		codexSnapshots: map[string]codexapp.Snapshot{
 			projectPath: prevSnapshot,
 		},
 		allProjects: []model.ProjectSummary{{Path: projectPath, Name: "ChatNext3"}},
 		projects:    []model.ProjectSummary{{Path: projectPath, Name: "ChatNext3"}},
 	}
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 
 	updated, cmd := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
@@ -452,19 +419,18 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 		got = updated.(Model)
 	}
 
-	view := bossFlowOnlyText(got.bossModel)
-	noticeText := bossOperationalNoticeText(got.bossModel)
-	engineerName := bossui.EngineerNameForKey("project", projectPath, staleIdleSnapshot.ThreadID)
+	view := bossChatOnlyText(got.helpChatModel)
+	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
-		engineerName + " is back from ChatNext3:",
+		"Work on ChatNext3 is ready for review:",
 		"The broken preview is caused by the SVG",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("boss flow transcript missing engineer outcome %q:\n%s", want, view)
+			t.Fatalf("Help Chat transcript missing work outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
-		engineerName + " is back from ChatNext3: The broken preview is caused by the SVG",
+		"Work on ChatNext3 is ready for review: The broken preview is caused by the SVG",
 	} {
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("fresh operational notice missing %q:\n%s", want, noticeText)
@@ -746,17 +712,18 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	prevSnapshot.ActiveTurnID = "turn-live"
 	prevSnapshot.Phase = codexapp.SessionPhaseRunning
 	m := Model{
-		ctx:          ctx,
-		svc:          svc,
-		bossMode:     true,
-		bossModel:    bossui.NewEmbedded(ctx, nil),
-		codexManager: manager,
+		ctx:                 ctx,
+		svc:                 svc,
+		helpChatMode:        true,
+		helpChatModelActive: true,
+		helpChatModel:       bossui.NewEmbeddedHelp(ctx, nil),
+		codexManager:        manager,
 		codexSnapshots: map[string]codexapp.Snapshot{
 			task.WorkspacePath: prevSnapshot,
 		},
 		openAgentTasks: []model.AgentTask{task},
 	}
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 
 	updated, cmd := m.update(codexUpdateMsg{projectPath: task.WorkspacePath})
 	got := updated.(Model)
@@ -775,32 +742,31 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	if _, ok := got.agentTaskForProjectPath(task.WorkspacePath); !ok {
 		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)
 	}
-	view := bossFlowOnlyText(got.bossModel)
-	noticeText := bossOperationalNoticeText(got.bossModel)
-	engineerName := bossui.EngineerNameForKey("agent_task", task.ID)
+	view := bossChatOnlyText(got.helpChatModel)
+	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
-		engineerName + " is back from Kill stale roguellm dev server:",
+		"Work on Kill stale roguellm dev server is ready for review:",
 		"No stale roguellm dev server is running now.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("boss flow transcript missing engineer outcome %q:\n%s", want, view)
+			t.Fatalf("Help Chat transcript missing work outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
-		engineerName + " is back from Kill stale roguellm dev server: No stale roguellm dev server is running now.",
+		"Work on Kill stale roguellm dev server is ready for review: No stale roguellm dev server is running now.",
 	} {
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("operational notice missing %q:\n%s", want, noticeText)
 		}
 	}
 	if strings.Contains(noticeText, "Should I close it") {
-		t.Fatalf("boss review notice should not append a repeated close-or-continue question:\n%s", noticeText)
+		t.Fatalf("Help Chat review notice should not append a repeated close-or-continue question:\n%s", noticeText)
 	}
 	if strings.Contains(noticeText, "port 8127") || strings.Contains(noticeText, "```") {
-		t.Fatalf("boss operational notice leaked raw output:\n%s", noticeText)
+		t.Fatalf("Help Chat operational notice leaked raw output:\n%s", noticeText)
 	}
 	if strings.Contains(view, "port 8127") || strings.Contains(view, "```") {
-		t.Fatalf("boss transcript leaked raw output:\n%s", view)
+		t.Fatalf("Help Chat transcript leaked raw output:\n%s", view)
 	}
 }
 
@@ -867,7 +833,7 @@ func TestLatestEngineerTranscriptOutputSkipsLowInformationIntroAndKeepsArtifactL
 	}
 }
 
-func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
+func TestHelpChatHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	t.Parallel()
 
 	m := Model{
@@ -875,28 +841,28 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 		width:  100,
 		height: 30,
 	}
-	updated, cmd := m.updateBossHostNotice("Ada is back from Cursor cleanup.\n\nCursor access still needs user-side confirmation.")
+	updated, cmd := m.updateBossHostNotice("Work on Cursor cleanup is ready for review.\n\nCursor access still needs user-side confirmation.")
 	if cmd != nil {
-		t.Fatalf("updateBossHostNotice() cmd = %T, want nil while Boss Chat is closed", cmd)
+		t.Fatalf("updateBossHostNotice() cmd = %T, want nil while Help Chat is closed", cmd)
 	}
 	m = updated
 	if len(m.pendingBossHostNotices) != 1 {
 		t.Fatalf("pending notices = %#v, want one queued notice", m.pendingBossHostNotices)
 	}
 
-	reopened, _ := m.openBossMode()
+	reopened, _ := m.openHelpChatMode()
 	got := reopened.(Model)
 	if len(got.pendingBossHostNotices) != 0 {
 		t.Fatalf("pending notices after open = %#v, want drained", got.pendingBossHostNotices)
 	}
-	view := bossFlowOnlyText(got.bossModel)
-	noticeText := bossOperationalNoticeText(got.bossModel)
+	view := bossChatOnlyText(got.helpChatModel)
+	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
-		"Ada is back from Cursor cleanup.",
+		"Work on Cursor cleanup is ready for review.",
 		"Cursor access still needs user-side confirmation.",
 	} {
 		if bossTextContains(view, want) {
-			t.Fatalf("reopened Boss Chat transcript should not contain queued notice %q:\n%s", want, view)
+			t.Fatalf("reopened Help Chat transcript should not contain operational-only notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
@@ -904,7 +870,7 @@ func TestBossHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	}
 }
 
-func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing.T) {
+func TestHelpChatHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing.T) {
 	t.Parallel()
 
 	m := Model{
@@ -912,25 +878,25 @@ func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing
 		width:  100,
 		height: 30,
 	}
-	updated, cmd := m.updateBossHostChatNotice("Ken is back from ChatNext3.\n\nNo migration needed; DB/schema stayed untouched.")
+	updated, cmd := m.updateBossHostChatNotice("Work on ChatNext3 is ready for review.\n\nNo migration needed; DB/schema stayed untouched.")
 	if cmd != nil {
-		t.Fatalf("updateBossHostChatNotice() cmd = %T, want nil while Boss Chat is closed", cmd)
+		t.Fatalf("updateBossHostChatNotice() cmd = %T, want nil while Help Chat is closed", cmd)
 	}
 	m = updated
 	if len(m.pendingBossHostNotices) != 1 {
 		t.Fatalf("pending notices = %#v, want one queued notice", m.pendingBossHostNotices)
 	}
 
-	reopened, _ := m.openBossMode()
+	reopened, _ := m.openHelpChatMode()
 	got := reopened.(Model)
-	view := bossFlowOnlyText(got.bossModel)
-	noticeText := bossOperationalNoticeText(got.bossModel)
+	view := bossChatOnlyText(got.helpChatModel)
+	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
-		"Ken is back from ChatNext3.",
+		"Work on ChatNext3 is ready for review.",
 		"No migration needed; DB/schema stayed untouched.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Boss Flow transcript missing queued chat notice %q:\n%s", want, view)
+			t.Fatalf("reopened Help Chat transcript missing queued chat notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
@@ -938,7 +904,7 @@ func TestBossHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing
 	}
 }
 
-func TestBossHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testing.T) {
+func TestHelpChatHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testing.T) {
 	t.Parallel()
 
 	m := Model{
@@ -946,11 +912,11 @@ func TestBossHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testing.T)
 		width:  100,
 		height: 30,
 	}
-	opened, _ := m.openBossMode()
+	opened, _ := m.openHelpChatMode()
 	got := opened.(Model)
-	got.closeBossMode("Boss hidden")
+	got.closeHelpChatMode("Help Chat hidden")
 
-	updated, cmd := got.updateBossHostChatNotice("Ada is back from hidden work.\n\nEverything is ready to review.")
+	updated, cmd := got.updateBossHostChatNotice("Work completed while Help Chat was hidden.\n\nEverything is ready to review.")
 	got = updated
 	if cmd != nil {
 		for _, msg := range collectCmdMsgs(cmd) {
@@ -961,18 +927,18 @@ func TestBossHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testing.T)
 	if len(got.pendingBossHostNotices) != 0 {
 		t.Fatalf("pending notices = %#v, want hidden active model to receive notice directly", got.pendingBossHostNotices)
 	}
-	view := bossFlowOnlyText(got.bossModel)
+	view := bossChatOnlyText(got.helpChatModel)
 	for _, want := range []string{
-		"Ada is back from hidden work.",
+		"Work completed while Help Chat was hidden.",
 		"Everything is ready to review.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("hidden active Boss flow transcript missing notice %q:\n%s", want, view)
+			t.Fatalf("hidden active Help Chat transcript missing notice %q:\n%s", want, view)
 		}
 	}
 }
 
-func TestBossEngineerCompletionWhileClosedPersistsToBossTranscript(t *testing.T) {
+func TestWorkCompletionWhileClosedPersistsToHelpChatTranscript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1013,7 +979,7 @@ func TestBossEngineerCompletionWhileClosedPersistsToBossTranscript(t *testing.T)
 	}
 	persisted := false
 	for _, msg := range collectCmdMsgs(cmd) {
-		if _, ok := msg.(bossHostNoticePersistedMsg); !ok {
+		if _, ok := msg.(helpChatHostNoticePersistedMsg); !ok {
 			continue
 		}
 		persisted = true
@@ -1021,7 +987,7 @@ func TestBossEngineerCompletionWhileClosedPersistsToBossTranscript(t *testing.T)
 		got = updated.(Model)
 	}
 	if !persisted {
-		t.Fatalf("hidden engineer completion should persist a boss chat notice")
+		t.Fatalf("hidden work completion should persist a Help Chat notice")
 	}
 	if len(got.errorLogEntries) != 0 {
 		t.Fatalf("unexpected error log entries after persisting hidden notice: %#v", got.errorLogEntries)
@@ -1034,7 +1000,7 @@ func TestBossEngineerCompletionWhileClosedPersistsToBossTranscript(t *testing.T)
 		height:      30,
 		allProjects: []model.ProjectSummary{project},
 		projects:    []model.ProjectSummary{project},
-	}).openBossMode()
+	}).openHelpChatMode()
 	got = reopened.(Model)
 	for _, msg := range collectCmdMsgs(initCmd) {
 		if _, ok := msg.(bossui.TickMsg); ok {
@@ -1044,19 +1010,18 @@ func TestBossEngineerCompletionWhileClosedPersistsToBossTranscript(t *testing.T)
 		got = updated.(Model)
 	}
 
-	view := bossFlowOnlyText(got.bossModel)
-	engineerName := bossui.EngineerNameForKey("project", projectPath, idleSnapshot.ThreadID)
+	view := bossChatOnlyText(got.helpChatModel)
 	for _, want := range []string{
-		engineerName + " is back from Project Task:",
+		"Work on Project Task is ready for review:",
 		"Killed the stale dev server on port 5173",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Boss Flow transcript missing persisted hidden completion %q:\n%s", want, view)
+			t.Fatalf("reopened Help Chat transcript missing persisted hidden completion %q:\n%s", want, view)
 		}
 	}
 }
 
-func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
+func TestHelpChatReplyContinuesAfterOverlayHidden(t *testing.T) {
 	t.Parallel()
 
 	svc := newControlTestService(t)
@@ -1066,7 +1031,7 @@ func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
 		width:  100,
 		height: 30,
 	}
-	opened, initCmd := m.openBossMode()
+	opened, initCmd := m.openHelpChatMode()
 	got := opened.(Model)
 	for _, msg := range collectCmdMsgs(initCmd) {
 		if _, ok := msg.(bossui.TickMsg); ok {
@@ -1075,8 +1040,8 @@ func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
 		updated, _ := got.Update(msg)
 		got = updated.(Model)
 	}
-	if !got.bossModelActive {
-		t.Fatalf("boss model should be active after opening")
+	if !got.helpChatModelActive {
+		t.Fatalf("Help Chat model should be active after opening")
 	}
 
 	updated, _ := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("answer this while hidden")})
@@ -1084,33 +1049,33 @@ func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
 	updated, chatCmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if chatCmd == nil {
-		t.Fatalf("submitting boss chat should start async work")
+		t.Fatalf("submitting Help Chat should start async work")
 	}
 
 	updated, exitCmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	got = updated.(Model)
 	if exitCmd == nil {
-		t.Fatalf("Esc should hide boss mode through an exit message")
+		t.Fatalf("Esc should hide Help Chat through an exit message")
 	}
 	for _, msg := range collectCmdMsgs(exitCmd) {
 		updated, _ = got.Update(msg)
 		got = updated.(Model)
 	}
-	if got.bossMode {
-		t.Fatalf("boss mode should be hidden")
+	if got.helpChatMode {
+		t.Fatalf("Help Chat should be hidden")
 	}
-	if !got.bossModelActive {
-		t.Fatalf("hiding boss mode should keep the boss model alive")
+	if !got.helpChatModelActive {
+		t.Fatalf("hiding Help Chat should keep its model alive")
 	}
 
 	got = drainCmdMsgs(got, chatCmd)
-	if got.bossMode {
-		t.Fatalf("background boss reply should not reopen boss mode")
+	if got.helpChatMode {
+		t.Fatalf("background Help Chat reply should not reopen the overlay")
 	}
 
-	got.bossModel = bossui.Model{}
-	got.bossModelActive = false
-	reopened, initCmd := got.openBossMode()
+	got.helpChatModel = bossui.Model{}
+	got.helpChatModelActive = false
+	reopened, initCmd := got.openHelpChatMode()
 	got = reopened.(Model)
 	for _, msg := range collectCmdMsgs(initCmd) {
 		if _, ok := msg.(bossui.TickMsg); ok {
@@ -1119,13 +1084,13 @@ func TestBossChatReplyContinuesAfterBossModeHidden(t *testing.T) {
 		updated, _ := got.Update(msg)
 		got = updated.(Model)
 	}
-	view := bossChatOnlyText(got.bossModel)
+	view := bossChatOnlyText(got.helpChatModel)
 	for _, want := range []string{
 		"answer this while hidden",
 		"I could not reach my chat backend yet",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("hidden boss reply did not finish with %q:\n%s", want, view)
+			t.Fatalf("hidden Help Chat reply did not finish with %q:\n%s", want, view)
 		}
 	}
 }
@@ -1246,16 +1211,17 @@ func TestBossViewContextIncludesBrowserAndQuestionNotices(t *testing.T) {
 	}
 }
 
-func TestBossBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
+func TestHelpChatBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	m := Model{
-		ctx:       ctx,
-		bossMode:  true,
-		bossModel: bossui.NewEmbedded(ctx, nil),
+		ctx:                 ctx,
+		helpChatMode:        true,
+		helpChatModelActive: true,
+		helpChatModel:       bossui.NewEmbeddedHelp(ctx, nil),
 	}
-	m.bossModel = m.bossModel.WithViewContext(m.bossViewContext())
+	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.update(browserOpenMsg{status: "Managed browser window is ready. Finish the browser flow there."})
 	if cmd != nil {
 		for _, msg := range collectCmdMsgs(cmd) {
@@ -1263,10 +1229,10 @@ func TestBossBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 		}
 	}
 	got := updated.(Model)
-	view := bossChatOnlyText(got.bossModel)
-	noticeText := bossOperationalNoticeText(got.bossModel)
+	view := bossChatOnlyText(got.helpChatModel)
+	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	if strings.Contains(view, "Browser handoff") || strings.Contains(view, "Finish the browser flow there.") {
-		t.Fatalf("boss chat transcript should not echo browser handoff:\n%s", view)
+		t.Fatalf("Help Chat transcript should not echo browser handoff:\n%s", view)
 	}
 	if !strings.Contains(noticeText, "Browser handoff") || !strings.Contains(noticeText, "Finish the browser flow there.") {
 		t.Fatalf("operational notice did not capture browser handoff:\n%s", noticeText)
@@ -1291,12 +1257,6 @@ func bossChatOnlyText(model bossui.Model) string {
 	return bossChatPanelText(normalizeBossModel(updated).View())
 }
 
-func bossFlowOnlyText(model bossui.Model) string {
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 70, Height: 28})
-	updated, _ = normalizeBossModel(updated).Update(tea.KeyMsg{Type: tea.KeyTab})
-	return bossChatPanelText(normalizeBossModel(updated).View())
-}
-
 func bossOperationalNoticeText(model bossui.Model) string {
 	notices := model.OperationalNotices()
 	parts := make([]string, 0, len(notices))
@@ -1315,64 +1275,4 @@ func bossTextContains(haystack, needle string) bool {
 	normalizedHaystack := normalize(haystack)
 	normalizedNeedle := normalize(needle)
 	return strings.Contains(normalizedHaystack, normalizedNeedle)
-}
-
-func TestBossAttentionAgentTaskJumpOpensTrackedSession(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	svc := newControlTestService(t)
-	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
-		Title: "Revoke Cursor GitHub access",
-		Kind:  model.AgentTaskKindAgent,
-	})
-	if err != nil {
-		t.Fatalf("CreateAgentTask() error = %v", err)
-	}
-	if _, err := svc.AttachAgentTaskEngineerSession(ctx, task.ID, model.SessionSourceCodex, "thread-agent-1"); err != nil {
-		t.Fatalf("AttachAgentTaskEngineerSession() error = %v", err)
-	}
-	task, err = svc.GetAgentTask(ctx, task.ID)
-	if err != nil {
-		t.Fatalf("GetAgentTask() error = %v", err)
-	}
-	var requests []codexapp.LaunchRequest
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		requests = append(requests, req)
-		return &fakeCodexSession{
-			projectPath: req.ProjectPath,
-			snapshot: codexapp.Snapshot{
-				Provider:       req.Provider,
-				ThreadID:       "thread-agent-1",
-				Started:        true,
-				LastActivityAt: time.Now(),
-			},
-		}, nil
-	})
-	m := Model{
-		ctx:          ctx,
-		svc:          svc,
-		bossMode:     true,
-		bossModel:    bossui.NewEmbedded(ctx, svc),
-		codexManager: manager,
-	}
-
-	updated, cmd := m.openBossAttentionAgentTask(0, task.ID)
-	got := updated.(Model)
-	if got.bossMode {
-		t.Fatalf("bossMode should close when jumping to an agent task")
-	}
-	if cmd == nil {
-		t.Fatalf("openBossAttentionAgentTask() cmd = nil, want launch command")
-	}
-	_ = collectCmdMsgs(cmd)
-	if len(requests) != 1 {
-		t.Fatalf("launch requests = %d, want 1", len(requests))
-	}
-	if requests[0].ProjectPath != task.WorkspacePath {
-		t.Fatalf("request ProjectPath = %q, want %q", requests[0].ProjectPath, task.WorkspacePath)
-	}
-	if requests[0].ResumeID != "thread-agent-1" {
-		t.Fatalf("request ResumeID = %q, want tracked session", requests[0].ResumeID)
-	}
 }

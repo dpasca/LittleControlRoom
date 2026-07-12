@@ -49,7 +49,7 @@ func (m Model) renderCompactInferenceSetupSummary(width int) string {
 	settings := m.currentSettingsBaseline()
 	projectCard := m.projectReportsStatusCard(settings)
 	bossCard := m.bossChatStatusCard(settings)
-	summary := "AI setup: Project reports use " + projectCard.Value + " (" + strings.ToLower(projectCard.State) + "); Boss chat uses " + bossCard.Value + " (" + strings.ToLower(bossCard.State) + ")."
+	summary := "AI setup: Project reports use " + projectCard.Value + " (" + strings.ToLower(projectCard.State) + "); Help chat uses " + bossCard.Value + " (" + strings.ToLower(bossCard.State) + ")."
 	if relationship := bossChatRelationshipSummary(settings); relationship != "" {
 		summary += " " + relationship
 	}
@@ -62,19 +62,19 @@ func bossChatRelationshipSummary(settings config.EditableSettings) string {
 		if settings.AIBackend == config.AIBackendOpenAIAPI {
 			return "Both use the shared OpenAI API connection."
 		}
-		return "Boss chat uses the shared OpenAI API connection; project reports stay separate."
+		return "Help chat uses the shared OpenAI API connection; project reports stay separate."
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
 		if settings.AIBackend == settings.BossChatBackend {
 			return "Both use " + settings.BossChatBackend.Label() + "."
 		}
-		return "Boss chat uses " + settings.BossChatBackend.Label() + "; project reports stay separate."
+		return "Help chat uses " + settings.BossChatBackend.Label() + "; project reports stay separate."
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if settings.AIBackend == settings.BossChatBackend {
 			return "Both use " + settings.BossChatBackend.Label() + "."
 		}
-		return "Boss chat uses " + settings.BossChatBackend.Label() + "; project reports stay separate."
+		return "Help chat uses " + settings.BossChatBackend.Label() + "; project reports stay separate."
 	case config.AIBackendDisabled:
-		return "Boss chat is off; project reports can still run."
+		return "Help chat is off; project reports can still run."
 	default:
 		return ""
 	}
@@ -125,7 +125,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 		} else {
 			state = "needs setup"
 			stateStyle = detailWarningStyle
-			detail = "Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, Xiaomi, MLX, Ollama, or Off when you want /boss configured."
+			detail = "Choose OpenAI API, OpenRouter, DeepSeek, Moonshot, Xiaomi, MLX, Ollama, or Off when you want /help configured."
 		}
 	}
 	if backend == config.AIBackendDisabled {
@@ -161,7 +161,7 @@ func (m Model) bossChatStatusCard(settings config.EditableSettings) inferenceSta
 		}
 	}
 	return inferenceStatusCard{
-		Title:       "Boss chat",
+		Title:       "Help chat",
 		Value:       value,
 		State:       state,
 		StateStyle:  stateStyle,

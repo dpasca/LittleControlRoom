@@ -20,17 +20,37 @@ type helpChatOverlayGeometry struct {
 }
 
 func (m Model) openHelpChatModeOrSetupPrompt() (tea.Model, tea.Cmd) {
+	m, surfaceCmd := m.prepareHelpChatHostSurface()
 	if m.bossChatConfigured() {
-		return m.openHelpChatMode()
+		updated, openCmd := m.openHelpChatMode()
+		return updated, batchCmds(surfaceCmd, openCmd)
 	}
 	m.openBossSetupPrompt()
-	m.status = "Help chat needs Boss chat setup before it can open."
-	return m, nil
+	m.status = "Help chat needs setup before it can open."
+	return m, surfaceCmd
+}
+
+func (m Model) prepareHelpChatHostSurface() (Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	if projectPath := m.codexPendingOpenProject(); m.codexPendingOpenVisible() && projectPath != "" {
+		updated, cmd := m.hidePendingCodexOpen(projectPath)
+		m = normalizeUpdateModel(updated)
+		cmds = append(cmds, cmd)
+	} else if m.codexVisible() {
+		updated, cmd := m.hideCodexSession()
+		m = normalizeUpdateModel(updated)
+		cmds = append(cmds, cmd)
+	}
+	if m.diffView != nil {
+		m.clearPendingGitSummary(m.diffView.ProjectPath)
+		m.diffView = nil
+		m.syncDetailViewport(false)
+	}
+	return m, batchCmds(cmds...)
 }
 
 func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 	m.helpChatMode = true
-	m.bossMode = false
 	m.showHelp = false
 	m.showPerf = false
 	m.showAIStats = false
@@ -48,7 +68,8 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 		updated, _ := m.helpChatModel.Update(m.helpChatWindowSizeMsg())
 		m.helpChatModel = normalizeBossModel(updated)
 	}
-	return m, initCmd
+	m, noticeCmd := m.drainPendingBossHostNotices()
+	return m, tea.Batch(initCmd, noticeCmd)
 }
 
 func (m *Model) closeHelpChatMode(status string) {
@@ -70,7 +91,8 @@ func (m Model) updateHelpChatModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 	updated, cmd := m.helpChatModel.Update(msg)
 	m.helpChatModel = normalizeBossModel(updated)
-	return m, cmd
+	m, noticeCmd := m.drainPendingBossHostNotices()
+	return m, tea.Batch(cmd, noticeCmd)
 }
 
 func (m Model) updateHelpChatModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -213,7 +235,7 @@ func fitHelpChatSurfaceLine(text string, width int) string {
 var (
 	helpChatSurfaceBackground = lipgloss.Color("234")
 	helpChatSurfaceFillStyle  = lipgloss.NewStyle().Background(helpChatSurfaceBackground)
-	helpChatTitleStyle        = bossModeTitleStyle.Background(helpChatSurfaceBackground)
+	helpChatTitleStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Background(helpChatSurfaceBackground)
 	helpChatStatusStyle       = footerStatusStyle.Background(helpChatSurfaceBackground)
 	helpChatUsageStyle        = footerUsageStyle.Background(helpChatSurfaceBackground)
 	helpChatPanelStyle        = lipgloss.NewStyle().

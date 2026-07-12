@@ -32,7 +32,6 @@ type codexSessionOpenedMsg struct {
 	renameErr        error
 	agentTaskID      string
 	agentTaskTitle   string
-	agentTaskName    string
 	perfOpID         int64
 	perfDuration     time.Duration
 	restartIntentKey string
@@ -138,7 +137,6 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	if msg.err != nil {
 		provider := m.codexPendingOpenProvider()
 		m.finishCodexPendingOpen(msg.projectPath, codexapp.Snapshot{}, false, false)
-		m.returnToBossModeAfterCodexHide = false
 		m.clearTodoLaunchDraft(msg.projectPath)
 		if projectPath := strings.TrimSpace(msg.projectPath); projectPath != "" {
 			shouldShowFailure := true
@@ -388,7 +386,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 			statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(msg.projectPath, snapshot)
 			sidebarDiffRefreshCmd = m.requestVisibleEmbeddedSidebarDiffRefreshCmd(msg.projectPath, true)
 		}
-		if m.bossMode {
+		if m.helpChatModelActive {
 			if notice := bossBrowserAttentionHostNoticeForSnapshot(msg.projectPath, hadPrevSnapshot, prevSnapshot, snapshot); notice != "" {
 				var cmd tea.Cmd
 				m, cmd = m.updateBossHostNotice(notice)
@@ -580,7 +578,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 		statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(projectPath, snapshot)
 		sidebarDiffRefreshCmd = m.requestVisibleEmbeddedSidebarDiffRefreshCmd(projectPath, true)
 	}
-	if m.bossMode {
+	if m.helpChatModelActive {
 		if notice := bossBrowserAttentionHostNoticeForSnapshot(projectPath, hadPrev, prevSnapshot, snapshot); notice != "" {
 			var cmd tea.Cmd
 			m, cmd = m.updateBossHostNotice(notice)

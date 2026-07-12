@@ -1,5 +1,7 @@
 # Boss Control Surface Plan
 
+> Historical design note: the standalone Boss Chat UI has been retired. Its control capabilities now live in the centered Help Chat overlay; the sidebar, bottom log, and Flow UI described here are not current product surfaces.
+
 This document defines the first planning pass for a generalized control surface that Boss Chat can use to act on Little Control Room without becoming tightly coupled to every TUI feature.
 
 The goal is to let Boss Chat coordinate project work, especially embedded engineer sessions, through typed capabilities instead of hard-coded UI behavior.

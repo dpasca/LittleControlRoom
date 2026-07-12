@@ -415,25 +415,6 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openPerfDialog()
 	case commands.KindErrors:
 		return m.openErrorLog()
-	case commands.KindBoss:
-		switch inv.Toggle {
-		case commands.ToggleOff:
-			m.bossSetupPrompt = nil
-			m.closeBossMode("Boss mode hidden")
-			return m, nil
-		case commands.ToggleOn:
-			if m.bossMode {
-				m.status = "Boss mode already open"
-				return m, nil
-			}
-			return m.openBossModeOrSetupPrompt()
-		default:
-			if m.bossMode {
-				m.closeBossMode("Boss mode hidden")
-				return m, nil
-			}
-			return m.openBossModeOrSetupPrompt()
-		}
 	case commands.KindRefresh:
 		m.loading = true
 		m.status = "Scanning and retrying failed assessments..."

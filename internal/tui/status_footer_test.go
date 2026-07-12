@@ -396,7 +396,7 @@ func TestRenderTopStatusLineShowsNavigationHintsInsteadOfAICounts(t *testing.T) 
 	m := Model{status: "Ready"}
 
 	rendered := ansi.Strip(m.renderTopStatusLine(160))
-	if !strings.Contains(rendered, "f filter") || !strings.Contains(rendered, "/ command") || !strings.Contains(rendered, "b boss") {
+	if !strings.Contains(rendered, "f filter") || !strings.Contains(rendered, "/ command") || !strings.Contains(rendered, "` help") {
 		t.Fatalf("top status line should surface navigation hints, got %q", rendered)
 	}
 	if strings.Contains(rendered, "Tab switch") {

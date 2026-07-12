@@ -293,8 +293,8 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				m.status = "Setting embedded " + label + " permissions..."
 				return m, m.setVisibleCodexPermissionCmd(inv.PermissionLevel)
-			case codexslash.KindBoss:
-				return m.openBossModeOrSetupPrompt()
+			case codexslash.KindHelp:
+				return m.openHelpChatModeOrSetupPrompt()
 			case codexslash.KindSkills:
 				return m, m.openSkillsDialog()
 			case codexslash.KindSettings:

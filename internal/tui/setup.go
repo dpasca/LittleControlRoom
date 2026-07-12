@@ -50,9 +50,9 @@ func setupSectionMenuRows() []setupSectionMenuRow {
 		},
 		{
 			step:    setupStepBossProvider,
-			label:   "Boss chat",
+			label:   "Help chat",
 			summary: "Realtime chat",
-			detail:  "Choose the backend for /boss. This is separate from background project reports so chat can use a faster or higher-grade model.",
+			detail:  "Choose the backend for /help. This is separate from background project reports so chat can use a faster or higher-grade model.",
 		},
 		{
 			step:    setupStepLCAgentConfig,
@@ -373,11 +373,11 @@ func (m Model) setupAdvance() (tea.Model, tea.Cmd) {
 	case setupStepProjectProvider:
 		return m.enterSetupStep(m.nextSetupStepAfterProjectProvider(), "Project reports selected. Press Enter to continue.")
 	case setupStepProjectConfig:
-		return m.enterSetupStep(setupStepBossProvider, "Project reports details accepted. Choose the boss chat helper.")
+		return m.enterSetupStep(setupStepBossProvider, "Project reports details accepted. Choose the Help chat helper.")
 	case setupStepBossProvider:
-		return m.enterSetupStep(m.nextSetupStepAfterBossProvider(), "Boss chat selected. Press Enter to continue.")
+		return m.enterSetupStep(m.nextSetupStepAfterBossProvider(), "Help chat selected. Press Enter to continue.")
 	case setupStepBossConfig:
-		return m.enterSetupStep(setupStepLCAgentConfig, "Boss chat details accepted. Configure LCAgent or keep the defaults.")
+		return m.enterSetupStep(setupStepLCAgentConfig, "Help chat details accepted. Configure LCAgent or keep the defaults.")
 	case setupStepLCAgentConfig:
 		return m.enterSetupStep(setupStepSave, "LCAgent details accepted. Press Enter to save setup.")
 	case setupStepSave:
@@ -400,9 +400,9 @@ func (m Model) setupGoBack() (tea.Model, tea.Cmd) {
 	case setupStepBossProvider:
 		return m.enterSetupStep(m.previousSetupStepBeforeBossProvider(), "Back to project reports. Press Enter to continue.")
 	case setupStepBossConfig:
-		return m.enterSetupStep(setupStepBossProvider, "Back to boss chat. Press Enter to accept the selected provider.")
+		return m.enterSetupStep(setupStepBossProvider, "Back to Help chat. Press Enter to accept the selected provider.")
 	case setupStepLCAgentConfig:
-		return m.enterSetupStep(m.previousSetupStepBeforeLCAgent(), "Back to boss chat. Press Enter to continue.")
+		return m.enterSetupStep(m.previousSetupStepBeforeLCAgent(), "Back to Help chat. Press Enter to continue.")
 	case setupStepSave:
 		return m.enterSetupStep(m.previousSetupStepBeforeSave(), "Back to the previous setup page.")
 	default:
@@ -422,11 +422,11 @@ func (m Model) setupAdvanceSectionDialog() (tea.Model, tea.Cmd) {
 		return m.closeSetupSectionDialog("Project reports setup updated in this draft. Open Save to write config.")
 	case setupStepBossProvider:
 		if m.setupStepNeedsConfig(setupStepBossConfig) {
-			return m.enterSetupStep(setupStepBossConfig, "Boss chat details. Press Enter to return to setup sections.")
+			return m.enterSetupStep(setupStepBossConfig, "Help chat details. Press Enter to return to setup sections.")
 		}
-		return m.closeSetupSectionDialog("Boss chat setup updated in this draft. Open Save to write config.")
+		return m.closeSetupSectionDialog("Help chat setup updated in this draft. Open Save to write config.")
 	case setupStepBossConfig:
-		return m.closeSetupSectionDialog("Boss chat setup updated in this draft. Open Save to write config.")
+		return m.closeSetupSectionDialog("Help chat setup updated in this draft. Open Save to write config.")
 	case setupStepLCAgentConfig:
 		return m.closeSetupSectionDialog("LCAgent setup updated in this draft. Open Save to write config.")
 	case setupStepSave:
@@ -443,7 +443,7 @@ func (m Model) openSetupSectionDialog() (tea.Model, tea.Cmd) {
 	case setupStepProjectProvider:
 		return m.enterSetupStep(setupStepProjectProvider, "Project reports setup. Choose a runner, then press Enter.")
 	case setupStepBossProvider:
-		return m.enterSetupStep(setupStepBossProvider, "Boss chat setup. Choose a realtime backend, then press Enter.")
+		return m.enterSetupStep(setupStepBossProvider, "Help chat setup. Choose a realtime backend, then press Enter.")
 	case setupStepLCAgentConfig:
 		return m.enterSetupStep(setupStepLCAgentConfig, "LCAgent setup. Press Enter to return to setup sections.")
 	case setupStepSave:
@@ -469,7 +469,7 @@ func (m Model) setupEnterConfigStep() (tea.Model, tea.Cmd) {
 	switch m.setupFocusedRole {
 	case setupRoleBossChat:
 		if m.setupStep == setupStepBossProvider || m.setupStep == setupStepBossConfig {
-			return m.enterSetupStep(setupStepBossConfig, "Boss chat details. Press Enter to continue.")
+			return m.enterSetupStep(setupStepBossConfig, "Help chat details. Press Enter to continue.")
 		}
 	case setupRoleLCAgent:
 		if m.setupStep == setupStepLCAgentConfig {
@@ -558,13 +558,13 @@ func (m Model) enterSetupStep(step setupStep, status string) (tea.Model, tea.Cmd
 	case setupStepBossProvider:
 		m.setupFocusedRole = setupRoleBossChat
 		if status == "" {
-			status = "Choose the boss chat helper. Enter accepts the selected provider."
+			status = "Choose the Help chat helper. Enter accepts the selected provider."
 		}
 	case setupStepBossConfig:
 		m.setupFocusedRole = setupRoleBossChat
 		m.setupConfigMode = true
 		if status == "" {
-			status = "Boss chat details. Enter accepts these fields."
+			status = "Help chat details. Enter accepts these fields."
 		}
 		cmd := m.focusSetupConfigField()
 		m.status = status
@@ -998,8 +998,8 @@ func (m Model) renderSetupWizardProgress(width int) string {
 	}{
 		{setupStepProjectProvider, "Project reports"},
 		{setupStepProjectConfig, "Project details"},
-		{setupStepBossProvider, "Boss chat"},
-		{setupStepBossConfig, "Boss details"},
+		{setupStepBossProvider, "Help chat"},
+		{setupStepBossConfig, "Help Chat details"},
 		{setupStepLCAgentConfig, "LCAgent"},
 		{setupStepSave, "Save"},
 	}
@@ -1041,9 +1041,9 @@ func (m Model) setupStepTitle() string {
 	case setupStepProjectConfig:
 		return "Project details"
 	case setupStepBossProvider:
-		return "Boss chat"
+		return "Help chat"
 	case setupStepBossConfig:
-		return "Boss details"
+		return "Help Chat details"
 	case setupStepLCAgentConfig:
 		return "LCAgent"
 	case setupStepSave:
@@ -1060,7 +1060,7 @@ func (m Model) renderSetupReview(width int) string {
 	lines := []string{
 		detailSectionStyle.Render("Save Setup"),
 		renderWrappedDetailField("Project reports", detailValueStyle, width, m.setupReviewChoiceSummary(projectChoice)),
-		renderWrappedDetailField("Boss chat", detailValueStyle, width, m.setupReviewChoiceSummary(bossChoice)),
+		renderWrappedDetailField("Help chat", detailValueStyle, width, m.setupReviewChoiceSummary(bossChoice)),
 		renderWrappedDetailField("LCAgent", detailValueStyle, width, m.setupReviewLCAgentSummary(settings)),
 	}
 	if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
@@ -1335,37 +1335,37 @@ func (m Model) renderBossChatSetupHint(width int) string {
 	choice := m.setupSelectedBossProviderChoice()
 	hint := strings.TrimSpace(choice.NextStep)
 	if hint == "" {
-		hint = "Boss chat is the direct high-level conversation in /boss."
+		hint = "Help chat is the direct high-level conversation in /help."
 	}
 	switch selected {
 	case config.AIBackendUnset:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			hint = "Auto leaves boss chat unconfigured for now. Choose a listed API backend, a local endpoint, or Off when you want a specific path."
+			hint = "Auto leaves Help chat unconfigured for now. Choose a listed API backend, a local endpoint, or Off when you want a specific path."
 		} else {
-			hint = "Auto will use the shared OpenAI API connection for boss chat."
+			hint = "Auto will use the shared OpenAI API connection for Help chat."
 		}
 	case config.AIBackendDisabled:
-		hint = "Turn boss chat off. Project reports and embedded sessions can still use their own backends."
+		hint = "Turn Help chat off. Project reports and embedded sessions can still use their own backends."
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
-			hint = "Boss chat uses direct OpenAI API inference. Press Enter to add the API key here."
+			hint = "Help chat uses direct OpenAI API inference. Press Enter to add the API key here."
 		} else if settings.AIBackend == config.AIBackendOpenAIAPI {
-			hint = "Boss chat will use the shared OpenAI API connection. Project reports are also using OpenAI API."
+			hint = "Help chat will use the shared OpenAI API connection. Project reports are also using OpenAI API."
 		} else {
-			hint = "Boss chat will use the shared OpenAI API connection. Project reports stay on " + settings.AIBackend.Label() + "."
+			hint = "Help chat will use the shared OpenAI API connection. Project reports stay on " + settings.AIBackend.Label() + "."
 		}
 	case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
 		if !cloudBackendAPIKeySaved(settings, selected) {
-			hint = "Boss chat uses direct " + selected.Label() + " API inference. Press Enter to add the API key here."
+			hint = "Help chat uses direct " + selected.Label() + " API inference. Press Enter to add the API key here."
 		} else if settings.AIBackend == selected {
-			hint = "Boss chat will use the shared " + selected.Label() + " API connection. Project reports are also using " + selected.Label() + "."
+			hint = "Help chat will use the shared " + selected.Label() + " API connection. Project reports are also using " + selected.Label() + "."
 		} else {
-			hint = "Boss chat will use the shared " + selected.Label() + " API connection. Project reports stay on " + settings.AIBackend.Label() + "."
+			hint = "Help chat will use the shared " + selected.Label() + " API connection. Project reports stay on " + settings.AIBackend.Label() + "."
 		}
 	case config.AIBackendMLX:
-		hint = "Boss chat will use your MLX OpenAI-compatible endpoint. Press Enter to select and configure it, or m to pick a discovered model."
+		hint = "Help chat will use your MLX OpenAI-compatible endpoint. Press Enter to select and configure it, or m to pick a discovered model."
 	case config.AIBackendOllama:
-		hint = "Boss chat will use your Ollama OpenAI-compatible endpoint. Press Enter to select and configure it, or m to pick a discovered model."
+		hint = "Help chat will use your Ollama OpenAI-compatible endpoint. Press Enter to select and configure it, or m to pick a discovered model."
 	}
 	return m.renderSetupChoiceHint(choice, hint, width)
 }

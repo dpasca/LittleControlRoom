@@ -66,9 +66,6 @@ func (m Model) View() string {
 	m.noteUIProgress("View")
 	done := m.beginUIPhase("View", m.currentLatencyProjectPath(), "")
 	defer done()
-	if m.bossMode {
-		return m.renderBossModeView()
-	}
 	if m.codexVisible() {
 		body := m.renderCodexView()
 		if m.skillsDialog != nil {
@@ -691,7 +688,7 @@ func (m Model) renderTopStatusActions(width int) string {
 	actions := []footerAction{
 		footerNavAction("f", "filter"),
 		footerNavAction("/", "command"),
-		footerNavAction("b", "boss"),
+		footerNavAction("`", "help"),
 	}
 	if len(m.errorLogEntries) > 0 && width >= 112 {
 		actions = append(actions, footerNavAction("/errors", "log"))

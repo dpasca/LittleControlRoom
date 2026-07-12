@@ -196,8 +196,8 @@ func cloneChatMessages(messages []ChatMessage) []ChatMessage {
 
 func bossContextCompactionSystemPrompt() string {
 	return strings.Join([]string{
-		"You compact older Boss Chat turns for Little Control Room.",
-		"Return a concise durable summary for future Boss Chat context.",
+		"You compact older Help Chat turns for Little Control Room.",
+		"Return a concise durable summary for future Help Chat context.",
 		"Preserve user decisions, preferences, constraints, project/task names, unresolved questions, and promises or follow-ups.",
 		"Omit raw system/flow notices, filler, and implementation telemetry unless it changes a decision.",
 		"Do not invent facts. Return only the structured summary.",
@@ -213,7 +213,7 @@ func bossContextCompactionUserText(existingSummary string, existingCount int, me
 		b.WriteString(existingSummary)
 		b.WriteString("\n\n")
 	}
-	b.WriteString("New older Boss Chat turns to merge into the summary:\n")
+	b.WriteString("New older Help Chat turns to merge into the summary:\n")
 	for _, message := range messages {
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
@@ -235,7 +235,7 @@ func bossContextCompactionSchema() map[string]any {
 		"properties": map[string]any{
 			"summary": map[string]any{
 				"type":        "string",
-				"description": "Concise durable Boss Chat summary preserving decisions, constraints, open questions, project/task references, and follow-ups.",
+				"description": "Concise durable Help Chat summary preserving decisions, constraints, open questions, project/task references, and follow-ups.",
 			},
 		},
 	}

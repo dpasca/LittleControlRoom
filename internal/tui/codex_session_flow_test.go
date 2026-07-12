@@ -46,30 +46,6 @@ func TestFKeyOpensProjectFilterDialog(t *testing.T) {
 	}
 }
 
-func TestLowercaseBKeyOpensBossMode(t *testing.T) {
-	settings := config.EditableSettingsFromAppConfig(config.Default())
-	settings.BossChatBackend = config.AIBackendOpenAIAPI
-	settings.OpenAIAPIKey = "sk-test-example"
-
-	m := Model{
-		settingsBaseline: &settings,
-		width:            100,
-		height:           24,
-	}
-
-	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	got := updated.(Model)
-	if !got.bossMode {
-		t.Fatalf("lowercase b key should open boss mode")
-	}
-	if got.bossSetupPrompt != nil {
-		t.Fatalf("configured lowercase b key should not show setup prompt")
-	}
-	if cmd == nil {
-		t.Fatalf("lowercase b key should return the boss init command")
-	}
-}
-
 func TestSKeyNoLongerSnoozesProject(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

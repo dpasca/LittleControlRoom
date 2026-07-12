@@ -51,8 +51,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openProjectFilterDialog()
 	case "a":
 		return m, m.toggleArchiveMode()
-	case "b":
-		return m.openBossModeOrSetupPrompt()
 	case "f3":
 		return m.cycleCodexSession(1)
 	case "esc":

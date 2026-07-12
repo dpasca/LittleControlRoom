@@ -234,7 +234,7 @@ func TestBuildStateBriefIncludesRecentGoalRuns(t *testing.T) {
 
 	brief := BuildStateBrief(snapshot, now)
 	for _, want := range []string{
-		"Recent Boss goal runs:",
+		"Recent LCR goal runs:",
 		"Clear stale delegated agents",
 		"goal_demo",
 		"agent_task_cleanup/completed",
@@ -566,7 +566,6 @@ func TestAttentionTextShowsWaitingAgentTaskDecisionWhenSummaryMissing(t *testing
 		OpenAgentTasks: []AgentTaskBrief{{
 			ID:            "agt_diff",
 			Title:         "Diff duplicate Codex skills",
-			EngineerName:  "Dennis",
 			Status:        model.AgentTaskStatusWaiting,
 			Provider:      model.SessionSourceCodex,
 			SessionID:     "thread-agent-1",
@@ -575,7 +574,7 @@ func TestAttentionTextShowsWaitingAgentTaskDecisionWhenSummaryMissing(t *testing
 	}
 
 	attention := AttentionText(snapshot, now)
-	for _, want := range []string{"review | Diff duplicate Codex skills", "Dennis", "ready to close or continue", "touched 1h ago"} {
+	for _, want := range []string{"review | Diff duplicate Codex skills", "ready to close or continue", "touched 1h ago"} {
 		if !strings.Contains(attention, want) {
 			t.Fatalf("waiting agent task should show the needed decision %q:\n%s", want, attention)
 		}
@@ -587,11 +586,10 @@ func TestAttentionTextCleansWaitingAgentTaskSummaryPunctuation(t *testing.T) {
 
 	snapshot := StateSnapshot{
 		OpenAgentTasks: []AgentTaskBrief{{
-			ID:           "agt_diff",
-			Title:        "Diff duplicate Codex skills",
-			EngineerName: "Dennis",
-			Status:       model.AgentTaskStatusWaiting,
-			Summary:      "Confirmed: the removed imagegen copy was the user-local directory:",
+			ID:      "agt_diff",
+			Title:   "Diff duplicate Codex skills",
+			Status:  model.AgentTaskStatusWaiting,
+			Summary: "Confirmed: the removed imagegen copy was the user-local directory:",
 		}},
 	}
 

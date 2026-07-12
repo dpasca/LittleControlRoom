@@ -35,7 +35,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups boss tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy fmt test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -64,7 +64,6 @@ help:
 	@echo "  make release-snapshot - build local GoReleaser archives under dist/"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make mockups         - render static high-level UI mockups"
-	@echo "  make boss            - run chat-first boss mode"
 	@echo "  make tui             - run TUI dashboard"
 	@echo "  make tui-parallel    - run a second TUI using isolated config/DB under /tmp"
 	@echo "  make tui-parallel-clean - remove stale /tmp TUI sandboxes not used by active runtimes"
@@ -163,15 +162,6 @@ screenshots:
 
 mockups:
 	$(GO) run ./cmd/$(APP) mockups --output-dir "$(MOCKUP_OUTPUT_DIR)"
-
-boss:
-	@mkdir -p "$(CRASH_LOG_DIR)"
-	@log="$(CRASH_LOG_DIR)/$$(date +%Y%m%d-%H%M%S)-boss.stderr.log"; \
-	$(GO) run ./cmd/$(APP) boss $(COMMON_FLAGS) $(INTERVAL_FLAG) 2> >(tee "$$log" >&2); \
-	rc=$$?; \
-	if [ $$rc -eq 0 ] && [ ! -s "$$log" ]; then rm -f "$$log"; fi; \
-	if [ $$rc -ne 0 ]; then echo "stderr log: $$log" >&2; fi; \
-	exit $$rc
 
 tui:
 	@mkdir -p "$(CRASH_LOG_DIR)"

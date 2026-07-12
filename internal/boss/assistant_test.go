@@ -268,7 +268,7 @@ func TestQueryExecutorGoalRunReport(t *testing.T) {
 	if result.Name != bossActionGoalRunReport {
 		t.Fatalf("result name = %q, want goal_run_report", result.Name)
 	}
-	for _, want := range []string{"Recent Boss goal runs", "goal_demo", "Archived 2 delegated agent task records", "trace entries: 1"} {
+	for _, want := range []string{"Recent LCR goal runs", "goal_demo", "Archived 2 delegated agent task records", "trace entries: 1"} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("goal run report missing %q:\n%s", want, result.Text)
 		}
@@ -305,7 +305,7 @@ func TestQueryExecutorGoalRunReportSpecificRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute(goal_run_report specific) error = %v", err)
 	}
-	for _, want := range []string{"Boss goal run", "goal_demo", "success criteria", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
+	for _, want := range []string{"LCR goal run", "goal_demo", "success criteria", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
 		if !strings.Contains(result.Text, want) {
 			t.Fatalf("specific goal report missing %q:\n%s", want, result.Text)
 		}
@@ -346,7 +346,7 @@ func TestAssistantReplyStructuredGoalRunHandleBypassesModels(t *testing.T) {
 	}
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
-		StateBrief: "Recent Boss goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		StateBrief: "Recent LCR goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
 		Snapshot: StateSnapshot{RecentGoalRuns: []GoalRunBrief{{
 			ID:         "goal_demo",
 			Kind:       bossrun.GoalKindAgentTaskCleanup,
@@ -362,7 +362,7 @@ func TestAssistantReplyStructuredGoalRunHandleBypassesModels(t *testing.T) {
 	if len(router.reqs) != 0 || len(planner.reqs) != 0 {
 		t.Fatalf("model requests router/planner = %d/%d, want none", len(router.reqs), len(planner.reqs))
 	}
-	for _, want := range []string{"Boss goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
+	for _, want := range []string{"LCR goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
 		if !strings.Contains(resp.Content, want) {
 			t.Fatalf("structured handle report missing %q:\n%s", want, resp.Content)
 		}
@@ -435,7 +435,7 @@ func TestAssistantReplyStructuredGoalRunHandleUsesBoundaries(t *testing.T) {
 	}
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
-		StateBrief: "Recent Boss goal runs:\n- Goal demo (goal_demo/completed)",
+		StateBrief: "Recent LCR goal runs:\n- Goal demo (goal_demo/completed)",
 		Snapshot: StateSnapshot{RecentGoalRuns: []GoalRunBrief{{
 			ID:     "goal_demo",
 			Kind:   bossrun.GoalKindAgentTaskCleanup,
@@ -478,7 +478,7 @@ func TestAssistantReplyStreamStructuredGoalRunHandleEmitsToolEvents(t *testing.T
 
 	var events []AssistantStreamEvent
 	resp, err := assistant.ReplyStream(context.Background(), AssistantRequest{
-		StateBrief: "Recent Boss goal runs:\n- Goal demo (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		StateBrief: "Recent LCR goal runs:\n- Goal demo (goal_demo/completed); inspect: goal_run_report query=goal_demo",
 		Snapshot: StateSnapshot{RecentGoalRuns: []GoalRunBrief{{
 			ID:         "goal_demo",
 			Kind:       bossrun.GoalKindAgentTaskCleanup,
@@ -555,7 +555,7 @@ func TestAssistantReplyFastRoutesGoalRunReport(t *testing.T) {
 	}
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
-		StateBrief: "Recent Boss goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		StateBrief: "Recent LCR goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
 		Messages:   []ChatMessage{{Role: "user", Content: "inspect the latest goal-run trace"}},
 	})
 	if err != nil {
@@ -567,7 +567,7 @@ func TestAssistantReplyFastRoutesGoalRunReport(t *testing.T) {
 	if resp.Usage.TotalTokens != 11 {
 		t.Fatalf("usage total = %d, want router-only usage", resp.Usage.TotalTokens)
 	}
-	for _, want := range []string{"Boss goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
+	for _, want := range []string{"LCR goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"} {
 		if !strings.Contains(resp.Content, want) {
 			t.Fatalf("fast goal report missing %q:\n%s", want, resp.Content)
 		}
@@ -621,7 +621,7 @@ func TestAssistantReplyStreamFastRoutesGoalRunReport(t *testing.T) {
 
 	var events []AssistantStreamEvent
 	resp, err := assistant.ReplyStream(context.Background(), AssistantRequest{
-		StateBrief: "Recent Boss goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+		StateBrief: "Recent LCR goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
 		Messages:   []ChatMessage{{Role: "user", Content: "inspect the latest goal-run trace"}},
 	}, func(event AssistantStreamEvent) {
 		events = append(events, event)
@@ -700,7 +700,7 @@ func TestAssistantReplyReadOnlyRoutePassFallsBackToPlanner(t *testing.T) {
 func TestAssistantReplyRepairsPlainTextPlannerOutputAsFinalAnswer(t *testing.T) {
 	t.Parallel()
 
-	const answer = "Here's where things stand: Already in flight (two engineers working): Evelyn is on the airplane view zoom and Marco is checking the release branch."
+	const answer = "Here's where things stand: the airplane view zoom and release branch checks are already in flight."
 	router := &fakeJSONSchemaRunner{
 		resp: []llm.JSONSchemaResponse{{
 			OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass, Reason: "Needs helm judgment."}),
@@ -837,7 +837,7 @@ func TestAssistantReplyStillErrorsForMalformedPlannerJSON(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Reply() error = nil, want malformed JSON error")
 	}
-	if !strings.Contains(err.Error(), "decode boss chat action") || !strings.Contains(err.Error(), "repair") {
+	if !strings.Contains(err.Error(), "decode Help chat action") || !strings.Contains(err.Error(), "repair") {
 		t.Fatalf("Reply() error = %q, want structured repair failure", err.Error())
 	}
 }
@@ -1011,7 +1011,7 @@ func TestBossPromptHistorySkipsFlowMessages(t *testing.T) {
 			Content: "Keep the Alpha release topic.",
 		}, {
 			Role:    "assistant",
-			Content: "Ada is back from noisy flow.",
+			Content: "Work on the noisy flow is ready for review.",
 			Kind:    ChatMessageKindFlow,
 		}, {
 			Role:    "assistant",
@@ -1050,7 +1050,7 @@ func TestBossPromptContextCompactsLongHistory(t *testing.T) {
 		Usage:      model.LLMUsage{TotalTokens: 7},
 	}}
 	router := &fakeJSONSchemaRunner{resp: []llm.JSONSchemaResponse{{
-		OutputText: `{"summary":"The user wants Boss Chat context to stay compact while preserving the commit-routing discussion."}`,
+		OutputText: `{"summary":"The user wants Help Chat context to stay compact while preserving the commit-routing discussion."}`,
 		Model:      "gpt-utility",
 		Usage:      model.LLMUsage{TotalTokens: 5},
 	}}}
@@ -1087,7 +1087,7 @@ func TestBossPromptContextCompactsLongHistory(t *testing.T) {
 		t.Fatalf("router requests = %#v, want one compaction request", router.reqs)
 	}
 	joined := bossTextMessagesContent(runner.req.Messages)
-	if !strings.Contains(joined, "Compacted prior Boss Chat summary") ||
+	if !strings.Contains(joined, "Compacted prior Help Chat summary") ||
 		!strings.Contains(joined, "commit-routing discussion") {
 		t.Fatalf("direct prompt missing compacted summary:\n%s", joined)
 	}
@@ -1111,11 +1111,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 
 	directPrompt := bossAssistantSystemPrompt()
 	for _, want := range []string{
-		"unnamed Boss Chat helper",
-		"the user is the boss",
+		"top-level Help Chat helper",
 		"engineer threads",
 		"ordinary coworker coordination",
-		"Boss Chat is the top-level conversation",
+		"Help Chat is the top-level conversation",
 		"linked task/thread records",
 		"Open agent tasks are delegated engineer work items",
 		"one tracked task with its linked engineer thread",
@@ -1126,12 +1125,13 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"separate from both project TODOs and delegated agent tasks",
 		"the AI assistant",
 		"high-level coordinator",
+		"Do not assign human names or personas to AI work sessions",
 		"Do not explain a missing task detail as the engineer having no persistent memory",
 		"Be proactive about finding facts",
 		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone",
 		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff",
-		"Cached engineer transcripts and Boss Chat recall are for context, not fresh evidence",
-		"propose sending the same named engineer back with that specific question",
+		"Cached engineer transcripts and Help Chat recall are for context, not fresh evidence",
+		"propose continuing that same task with the specific question",
 		"ongoing coworker chat",
 		"skip onboarding",
 		"highest-level read first",
@@ -1156,7 +1156,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"structured control action",
 		"user must confirm",
 		"Do not say agent work will be done",
-		"Boss Chat can propose opening the normal TUI commit preview through git.prepare_commit",
+		"Help Chat can propose opening the normal TUI commit preview through git.prepare_commit",
 		"operator must still confirm in that dialog",
 		"recommend one next move",
 	} {
@@ -1217,7 +1217,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"treat that as a request to manage those agent tasks",
 		"propose exactly one agent_task.continue",
 		"remove multiple delegated agent tasks",
-		"assents to a prior Boss Chat plan",
+		"assents to a prior Help Chat plan",
 		"Do not answer with only a priority order",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue",
 		"leave answer empty unless a short scope note is needed",
@@ -1280,7 +1280,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"fresh/current external or web research",
 		"Cached engineer snippets are not fresh evidence",
 		"Use help_reference for questions about how to use Little Control Room",
-		"Use goal_run_report when the user asks what Boss goal runs happened",
+		"Use goal_run_report when the user asks what LCR goal runs happened",
 		"put only that id in query",
 		"Do not answer the user",
 	} {
@@ -1325,6 +1325,26 @@ func TestHelpChatPromptsAvoidUnrequestedStatusReports(t *testing.T) {
 	directPrompt := bossAssistantSystemPromptForRequest(req)
 	if !strings.Contains(directPrompt, "When asked how you know a personal detail") {
 		t.Fatalf("direct help prompt missing personal context boundary:\n%s", directPrompt)
+	}
+}
+
+func TestHelpChatPromptsCoordinateWorkWithoutAgentNames(t *testing.T) {
+	t.Parallel()
+
+	prompt := bossAssistantSystemPromptForRequest(AssistantRequest{HelpChat: true})
+	for _, want := range []string{
+		"decide what deserves attention across coding projects",
+		"Do not assign human names or personas to AI work sessions",
+		"Work on X is underway",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("Help Chat prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, unwanted := range []string{"Use those names", "Ada or Grace", "visible named engineer"} {
+		if strings.Contains(prompt, unwanted) {
+			t.Fatalf("Help Chat prompt retained agent-name guidance %q:\n%s", unwanted, prompt)
+		}
 	}
 }
 
@@ -1546,7 +1566,7 @@ func TestAssistantPlannerUserTextSteersMultiProjectHandoffScope(t *testing.T) {
 	} {
 		for _, want := range []string{
 			"do not silently collapse the request to one target",
-			"Boss can prepare one handoff at a time",
+			"Help Chat can prepare one handoff at a time",
 			"scope note naming the remaining targets",
 		} {
 			if !strings.Contains(got, want) {
@@ -1790,6 +1810,7 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
 		StateBrief: "Visible projects: 1.",
+		HelpChat:   true,
 		Messages:   []ChatMessage{{Role: "user", Content: "Tell OpenCode to fix Alpha's tests"}},
 	})
 	if err != nil {
@@ -1812,7 +1833,7 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 	if input.Provider != control.ProviderOpenCode ||
 		input.SessionMode != control.SessionModeNew ||
-		!strings.Contains(input.Prompt, "Boss Chat lossless task packet:") ||
+		!strings.Contains(input.Prompt, "Help Chat lossless task packet:") ||
 		!strings.Contains(input.Prompt, "Tell OpenCode to fix Alpha's tests") ||
 		!strings.Contains(input.Prompt, "Please fix the failing tests and report what changed.") {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
@@ -1993,7 +2014,7 @@ func TestAssistantTodoAddPolicyConvertsImplicitBacklogToFreshEngineerHandoff(t *
 				ControlCapability: "todo.add",
 				ProjectPath:       "/tmp/lcr",
 				ProjectName:       "Little Control Room",
-				TodoText:          "Change Boss Chat so project change requests start a fresh engineer handoff instead of becoming TODOs.",
+				TodoText:          "Change Help Chat so project change requests start a fresh engineer handoff instead of becoming TODOs.",
 				Reason:            "The project has an open engineer session.",
 			}),
 			Usage: model.LLMUsage{TotalTokens: 17},
@@ -2009,7 +2030,7 @@ func TestAssistantTodoAddPolicyConvertsImplicitBacklogToFreshEngineerHandoff(t *
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
 		StateBrief: "Visible projects: 1.\nCurrent TUI view:\n- classic TUI status: Embedded Codex session is already open in the background.",
-		Messages:   []ChatMessage{{Role: "user", Content: "change Little Control Room so boss chat does not turn project change requests into TODOs just because a session is open"}},
+		Messages:   []ChatMessage{{Role: "user", Content: "change Little Control Room so Help chat does not turn project change requests into TODOs just because a session is open"}},
 	})
 	if err != nil {
 		t.Fatalf("Reply() error = %v", err)
@@ -2188,10 +2209,10 @@ func TestAssistantReplyBuildsLosslessEngineerTaskPacket(t *testing.T) {
 		t.Fatalf("decode invocation args: %v", err)
 	}
 	for _, want := range []string{
-		"Boss Chat lossless task packet:",
+		"Help Chat lossless task packet:",
 		"Original user wording to preserve:",
 		"ranking in appfigures, not the order in terms of sales among our games",
-		"Boss-reframed executable task:",
+		"Reframed executable task:",
 		"Check Fractal Strike's current Appfigures ranking",
 		"Preserved meaning:",
 		"Source must be Appfigures",
@@ -2306,7 +2327,7 @@ func TestAssistantReplyCanProposeAgentTaskContinueControl(t *testing.T) {
 		t.Fatalf("decode invocation args: %v", err)
 	}
 	if input.TaskID != "agt_roguellm" ||
-		!strings.Contains(input.Prompt, "Boss Chat lossless task packet:") ||
+		!strings.Contains(input.Prompt, "Help Chat lossless task packet:") ||
 		!strings.Contains(input.Prompt, "cool") ||
 		!strings.Contains(input.Prompt, "Continue the stale roguellm dev-server cleanup.") {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
@@ -2805,7 +2826,7 @@ func TestAssistantReplyCanUseContextCommandForEngineerTranscripts(t *testing.T) 
 			})},
 			{OutputText: encodedBossAction(t, bossAction{
 				Kind:   bossActionAnswer,
-				Answer: "That was from the engineer session, not Boss Chat: the flash was the attention-row update cue.",
+				Answer: "That was from the engineer session, not Help Chat: the flash was the attention-row update cue.",
 			})},
 		},
 	}

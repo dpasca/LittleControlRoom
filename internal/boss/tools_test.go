@@ -417,7 +417,7 @@ func TestQueryExecutorProjectDetailIncludesLinkedWorktreeActivity(t *testing.T) 
 				PresentOnDisk:        true,
 				WorktreeRootPath:     root,
 				WorktreeKind:         model.WorktreeKindLinked,
-				LatestSessionSummary: "Added Boss Chat streaming and verified the checks.",
+				LatestSessionSummary: "Added Help Chat streaming and verified the checks.",
 			},
 		},
 		details: map[string]model.ProjectDetail{
@@ -446,7 +446,7 @@ func TestQueryExecutorProjectDetailIncludesLinkedWorktreeActivity(t *testing.T) 
 	for _, want := range []string{
 		"Worktree family activity:",
 		"linked: LittleControlRoom--streaming",
-		"Added Boss Chat streaming",
+		"Added Help Chat streaming",
 		"worktree=linked",
 		"worktree_root=/tmp/lcr",
 	} {
@@ -773,7 +773,7 @@ func TestQueryExecutorContextCommandShowsEngineerExchange(t *testing.T) {
 		}
 	}
 	if strings.Contains(result.Text, `role="assistant"`) || strings.Contains(result.Text, `role="user"`) {
-		t.Fatalf("engineer excerpt should use Boss Chat vocabulary for roles:\n%s", result.Text)
+		t.Fatalf("engineer excerpt should use Help Chat vocabulary for roles:\n%s", result.Text)
 	}
 }
 
@@ -985,6 +985,43 @@ func TestQueryExecutorSearchesBossSessionsAsXMLSnippets(t *testing.T) {
 	}
 	if !strings.Contains(result.Text, "with <xml> and \"quotes\".\nKeep this raw") {
 		t.Fatalf("turn content should stay raw inside CDATA:\n%s", result.Text)
+	}
+}
+
+func TestQueryExecutorSearchesCurrentHelpAndLegacyBossSessions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	helpStore := newBossSessionStoreNamed(dataDir, helpChatSessionsDirName)
+	legacyStore := newBossSessionStoreNamed(dataDir, bossSessionsDirName)
+	now := time.Unix(1_800_000_000, 0)
+	for _, item := range []struct {
+		store *bossSessionStore
+		text  string
+	}{
+		{helpStore, "Current launch checklist"},
+		{legacyStore, "Legacy launch decision"},
+	} {
+		session, err := item.store.createSession(ctx, now)
+		if err != nil {
+			t.Fatalf("createSession() error = %v", err)
+		}
+		if err := item.store.appendMessage(ctx, session.SessionID, ChatMessage{Role: "user", Content: item.text, At: now}); err != nil {
+			t.Fatalf("appendMessage() error = %v", err)
+		}
+	}
+
+	executor := newQueryExecutorWithBossSessions(nil, helpStore, legacyStore)
+	matches, err := executor.searchChatSessions(ctx, "launch", 4)
+	if err != nil {
+		t.Fatalf("searchChatSessions() error = %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("searchChatSessions() matches = %#v, want current and legacy sessions", matches)
+	}
+	if matches[0].Turn.Content != "Current launch checklist" || matches[1].Turn.Content != "Legacy launch decision" {
+		t.Fatalf("search order = %q then %q, want current Help Chat before legacy", matches[0].Turn.Content, matches[1].Turn.Content)
 	}
 }
 

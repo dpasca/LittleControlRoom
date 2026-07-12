@@ -808,7 +808,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bossSessionSavedMsg:
 		if msg.err != nil {
 			m.sessionErr = msg.err
-			m.status = "Boss chat session save failed: " + msg.err.Error()
+			m.status = "Help chat session save failed: " + msg.err.Error()
 		}
 		return m, nil
 	case bossSessionsListedMsg:
@@ -960,7 +960,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		m.pendingControl = nil
 		m.pendingGoal = nil
 		content := "I could not reach my chat backend yet: " + err.Error()
-		status := "Boss chat could not answer"
+		status := "Help chat could not answer"
 		var proposalErr controlProposalError
 		if errors.As(err, &proposalErr) {
 			content = "I could not prepare that control action: " + proposalErr.Unwrap().Error()
@@ -1044,14 +1044,14 @@ func (m *Model) applyAssistantStreamEvent(event AssistantStreamEvent) {
 func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
 	text := m.input.Value()
 	if text == "" {
-		m.status = "Boss chat input is empty"
+		m.status = "Help chat input is empty"
 		return m, nil
 	}
 	if err := clipboardTextWriter(text); err != nil {
-		m.status = "Boss chat input copy failed: " + err.Error()
+		m.status = "Help chat input copy failed: " + err.Error()
 		return m, nil
 	}
-	m.status = "Copied full boss chat input to clipboard"
+	m.status = "Copied full Help chat input to clipboard"
 	return m, nil
 }
 
@@ -1123,7 +1123,7 @@ func (m Model) toggleTranscriptTab() Model {
 	switch m.normalizedTranscriptTab() {
 	case bossTranscriptTabFlow:
 		m.transcriptTab = bossTranscriptTabChat
-		m.status = "Switched to Boss Chat tab"
+		m.status = "Switched to Help Chat tab"
 	default:
 		m.transcriptTab = bossTranscriptTabFlow
 		m.status = "Switched to Boss Flow tab"
@@ -1280,7 +1280,7 @@ func waitAssistantStreamCmd(streamID int, events <-chan assistantStreamEnvelope)
 	return func() tea.Msg {
 		envelope, ok := <-events
 		if !ok {
-			return assistantStreamMsg{streamID: streamID, events: events, envelope: assistantStreamEnvelope{err: fmt.Errorf("boss chat stream closed before the final response"), done: true}}
+			return assistantStreamMsg{streamID: streamID, events: events, envelope: assistantStreamEnvelope{err: fmt.Errorf("Help chat stream closed before the final response"), done: true}}
 		}
 		return assistantStreamMsg{streamID: streamID, events: events, envelope: envelope}
 	}
@@ -1363,7 +1363,7 @@ func (m Model) layout() bossLayout {
 	height = maxInt(minHeight, height)
 	if height > 18 {
 		if !m.embedded {
-			// Standalone boss mode owns its header bar and keeps one row of
+			// Standalone Help Chat owns its header bar and keeps one row of
 			// slack so exact-height renders do not scroll frames out of view.
 			height -= 2
 		}
@@ -1560,7 +1560,7 @@ func (m Model) renderChat(layout bossLayout) string {
 			hint = "Enter runs approved goal | Esc cancels"
 		}
 		if m.sending {
-			hint = "Boss chat is thinking " + spinnerDots(m.spinnerFrame)
+			hint = "Help chat is thinking " + spinnerDots(m.spinnerFrame)
 		}
 		parts = append(parts, bossMutedStyle.Render(fitLine(hint, layout.chatInnerWidth)))
 	}
@@ -1593,7 +1593,7 @@ func (m Model) renderCoreInput(layout bossLayout) string {
 func (m Model) renderTranscriptPanelTitle() string {
 	active := m.normalizedTranscriptTab()
 	return strings.Join([]string{
-		panelTitleStyle.Render("Boss Chat"),
+		panelTitleStyle.Render("Help Chat"),
 		renderBossTranscriptTab("Chat", active == bossTranscriptTabChat),
 		renderBossTranscriptTab("Flow", active == bossTranscriptTabFlow),
 		bossTranscriptTabHotkeyStyle.Render("Tab") + bossTranscriptTabHintStyle.Render(" switch"),
@@ -1928,9 +1928,6 @@ func bossEngineerActivitySummaryText(base string, activity ViewEngineerActivity,
 	if elapsed := bossEngineerActivityElapsedText(activity, now); elapsed != "" {
 		status += " " + elapsed
 	}
-	if name := strings.TrimSpace(activity.EngineerName); name != "" {
-		status = name + " " + status
-	}
 	if summary := strings.TrimSpace(activity.Summary); summary != "" {
 		base = summary
 	}
@@ -1952,9 +1949,6 @@ func bossAgentTaskSummaryText(task AgentTaskBrief, now time.Time) string {
 		return summary
 	}
 	parts := make([]string, 0, 4)
-	if name := strings.TrimSpace(task.EngineerName); name != "" {
-		parts = append(parts, name)
-	}
 	if taskID := strings.TrimSpace(task.ID); taskID != "" {
 		parts = append(parts, taskID)
 	}
@@ -2256,7 +2250,6 @@ var (
 	bossHandoffPrefixStyle          = lipgloss.NewStyle().Foreground(bossPanelAccent).Background(bossPanelBackground).Bold(true)
 	bossHandoffContinuationStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(bossPanelBackground)
 	bossHandoffText                 = lipgloss.Color("229")
-	bossHandoffEngineerNameStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Background(bossPanelBackground).Bold(true)
 	bossHandoffProjectLabelStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Background(bossPanelBackground).Bold(true)
 	bossToolCallStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(bossPanelBackground)
 	bossUserMessageStyle            = lipgloss.NewStyle().Background(bossUserMessageBackground)
@@ -2421,7 +2414,7 @@ func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights [
 }
 
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
-	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, "Boss> ", "Boss chat")
+	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, "Boss> ", "Help chat")
 }
 
 func (m Model) renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
@@ -2468,7 +2461,7 @@ func renderStreamingAssistantMessageWithStylesOptions(content string, toolCalls 
 	if len(blocks) == 0 {
 		label = strings.TrimSpace(label)
 		if label == "" {
-			label = "Boss chat"
+			label = "Help chat"
 		}
 		blocks = append(blocks, mutedStyle.Render(fitLine(label+" is thinking "+spinnerDots(spinnerFrame), width)))
 	}
@@ -2486,7 +2479,7 @@ func (m Model) chatSurfaceLabel() string {
 	if m.helpChat {
 		return "Help chat"
 	}
-	return "Boss chat"
+	return "Help chat"
 }
 
 func renderTemporaryToolCalls(toolCalls []string, width int) string {
@@ -2688,7 +2681,7 @@ func handoffMessageHighlights(content string, handoff *HandoffHighlight) []prefi
 			return nil
 		}
 	}
-	lead := handoffValue.EngineerName + " is back from " + handoffValue.ProjectLabel
+	lead := "Work on " + handoffValue.ProjectLabel + " is ready for review"
 	content = strings.TrimSpace(content)
 	if !strings.HasPrefix(content, lead) {
 		return nil
@@ -2697,43 +2690,25 @@ func handoffMessageHighlights(content string, handoff *HandoffHighlight) []prefi
 	if !(strings.HasPrefix(trailer, ":") || strings.HasPrefix(trailer, ".")) {
 		return nil
 	}
-	nameWidth := ansi.StringWidth(handoffValue.EngineerName)
-	labelStart := ansi.StringWidth(handoffValue.EngineerName + " is back from ")
+	labelStart := ansi.StringWidth("Work on ")
 	labelEnd := labelStart + ansi.StringWidth(handoffValue.ProjectLabel)
 	return []prefixedMessageHighlight{
-		{Start: 0, End: nameWidth, Style: bossHandoffEngineerNameStyle},
 		{Start: labelStart, End: labelEnd, Style: bossProjectIdentityStyle(handoffValue.ProjectLabel, bossHandoffProjectLabelStyle)},
 	}
 }
 
 func inferHandoffHighlight(content string) (HandoffHighlight, bool) {
 	content = strings.TrimSpace(content)
-	engineerName, rest, ok := strings.Cut(content, " is back from ")
-	if !ok || !knownHandoffEngineerName(engineerName) {
-		return HandoffHighlight{}, false
-	}
-	projectLabel, _, ok := strings.Cut(rest, ":")
+	rest, ok := strings.CutPrefix(content, "Work on ")
 	if !ok {
-		projectLabel, _, ok = strings.Cut(rest, ".")
-	}
-	projectLabel = strings.TrimSpace(projectLabel)
-	if !ok || projectLabel == "" {
 		return HandoffHighlight{}, false
 	}
-	return HandoffHighlight{EngineerName: strings.TrimSpace(engineerName), ProjectLabel: projectLabel}, true
-}
-
-func knownHandoffEngineerName(name string) bool {
-	name = strings.TrimSpace(name)
-	if name == "Engineer" {
-		return true
+	projectLabel, trailer, ok := strings.Cut(rest, " is ready for review")
+	projectLabel = strings.TrimSpace(projectLabel)
+	if !ok || projectLabel == "" || !(strings.HasPrefix(trailer, ":") || strings.HasPrefix(trailer, ".")) {
+		return HandoffHighlight{}, false
 	}
-	for _, candidate := range engineerNamePool {
-		if name == candidate {
-			return true
-		}
-	}
-	return false
+	return HandoffHighlight{ProjectLabel: projectLabel}, true
 }
 
 func normalizedHandoffHighlight(handoff *HandoffHighlight) (HandoffHighlight, bool) {
@@ -2741,11 +2716,7 @@ func normalizedHandoffHighlight(handoff *HandoffHighlight) (HandoffHighlight, bo
 		return HandoffHighlight{}, false
 	}
 	out := HandoffHighlight{
-		EngineerName: strings.TrimSpace(handoff.EngineerName),
 		ProjectLabel: strings.TrimSpace(handoff.ProjectLabel),
-	}
-	if out.EngineerName == "" {
-		out.EngineerName = "Engineer"
 	}
 	if out.ProjectLabel == "" {
 		out.ProjectLabel = "engineer session"

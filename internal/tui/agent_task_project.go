@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	bossui "lcroom/internal/boss"
 	"lcroom/internal/model"
 
 	"github.com/charmbracelet/lipgloss"
@@ -189,9 +188,6 @@ func agentTaskListSummary(task model.AgentTask) string {
 		}
 	}
 	parts := []string{fmt.Sprintf("%s task", agentTaskListStatus(task))}
-	if name := bossui.EngineerNameForKey("agent_task", task.ID); name != "" {
-		parts = append(parts, name)
-	}
 	if source := agentTaskDisplaySource(task); source != model.SessionSourceUnknown {
 		if provider := codexProviderFromSessionSource(source); provider != "" {
 			parts = append(parts, provider.Label())

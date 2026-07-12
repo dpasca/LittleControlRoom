@@ -164,7 +164,7 @@ func (m Model) codexVisible() bool {
 }
 
 func (m Model) idleProtectedEmbeddedProject() string {
-	if m.bossMode || m.diffView != nil {
+	if m.helpChatMode || m.diffView != nil {
 		return ""
 	}
 	if m.codexPendingOpenVisible() {
@@ -1932,17 +1932,7 @@ func (m Model) hidePendingCodexOpen(projectPath string) (tea.Model, tea.Cmd) {
 	m.codexHiddenProject = projectPath
 	m.syncDetailViewport(false)
 	m.status = "Embedded " + label + " session hidden."
-	return m.returnToBossModeAfterCodexHidden(m.focusProjectPath(projectPath))
-}
-
-func (m Model) returnToBossModeAfterCodexHidden(cmd tea.Cmd) (tea.Model, tea.Cmd) {
-	if !m.returnToBossModeAfterCodexHide {
-		return m, cmd
-	}
-	m.returnToBossModeAfterCodexHide = false
-	updated, bossCmd := m.openBossMode()
-	m = normalizeUpdateModel(updated)
-	return m, batchCmds(cmd, bossCmd)
+	return m, m.focusProjectPath(projectPath)
 }
 
 func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
@@ -1972,11 +1962,11 @@ func (m Model) hideCodexSession() (tea.Model, tea.Cmd) {
 	m.codexInput.Blur()
 	m.syncDetailViewport(false)
 	m.status = label + " hidden."
-	return m.returnToBossModeAfterCodexHidden(batchCmds(
+	return m, batchCmds(
 		m.focusProjectPath(projectPath),
 		m.markProjectSessionSeen(projectPath),
 		refreshCmd,
-	))
+	)
 }
 
 func (m Model) cycleCodexSession(direction int) (tea.Model, tea.Cmd) {

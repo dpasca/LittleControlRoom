@@ -16,7 +16,6 @@ import (
 	"lcroom/internal/projectrun"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 const (
@@ -27,50 +26,13 @@ const (
 	engineerNoticeReviewSummaryCharLimit = 1600
 )
 
-func (m Model) openBossMode() (tea.Model, tea.Cmd) {
-	m.bossMode = true
-	m.helpChatMode = false
-	var initCmd tea.Cmd
-	if !m.bossModelActive {
-		m.bossModel = bossui.NewEmbeddedWithViewContext(m.ctx, m.svc, m.bossViewContext())
-		m.bossModelActive = true
-		initCmd = m.bossModel.Init()
-	} else {
-		m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
-		initCmd = m.bossModel.ActivateCmd()
-	}
-	m.status = "Boss mode open. Alt+Up hides it and keeps replies running."
-	if m.width > 0 && m.height > 0 {
-		updated, _ := m.bossModel.Update(m.bossModeWindowSizeMsg())
-		m.bossModel = normalizeBossModel(updated)
-	}
-	m, noticeCmd := m.drainPendingBossHostNotices()
-	return m, tea.Batch(initCmd, noticeCmd)
-}
-
-func (m *Model) closeBossMode(status string) {
-	m.bossMode = false
-	if status != "" {
-		m.status = status
-	}
-	m.syncDetailViewport(false)
-}
-
-func (m Model) updateBossModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
-	updated, cmd := m.bossModel.Update(msg)
-	m.bossModel = normalizeBossModel(updated)
-	m, noticeCmd := m.drainPendingBossHostNotices()
-	return m, tea.Batch(cmd, noticeCmd)
-}
-
 type bossHostNotice struct {
 	Content        string
 	AnnounceInChat bool
 	Handoff        *bossui.HandoffHighlight
 }
 
-type bossHostNoticePersistedMsg struct {
+type helpChatHostNoticePersistedMsg struct {
 	err error
 }
 
@@ -104,7 +66,7 @@ func normalizeBossHostNotice(notice bossHostNotice) (bossHostNotice, bool) {
 }
 
 func (m Model) canDeliverBossHostNotice() bool {
-	return m.bossMode || (m.bossModelActive && m.bossModel.HostNoticesReady())
+	return m.helpChatModelActive && m.helpChatModel.HostNoticesReady()
 }
 
 func (m Model) queueBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
@@ -130,21 +92,21 @@ func (m Model) persistBossHostChatNoticeCmd(notice bossHostNotice) tea.Cmd {
 		}
 		saveCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		defer cancel()
-		return bossHostNoticePersistedMsg{
-			err: bossui.AppendAssistantNoticeToLatestSession(saveCtx, svc, content, at),
+		return helpChatHostNoticePersistedMsg{
+			err: bossui.AppendAssistantNoticeToLatestHelpSession(saveCtx, svc, content, at),
 		}
 	}
 }
 
 func (m Model) deliverBossHostNotice(notice bossHostNotice) (Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
-	updated, cmd := m.bossModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat, Handoff: notice.Handoff})
-	m.bossModel = normalizeBossModel(updated)
+	m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
+	updated, cmd := m.helpChatModel.Update(bossui.HostNoticeMsg{Content: notice.Content, AnnounceInChat: notice.AnnounceInChat, Handoff: notice.Handoff})
+	m.helpChatModel = normalizeBossModel(updated)
 	return m, cmd
 }
 
 func (m Model) drainPendingBossHostNotices() (Model, tea.Cmd) {
-	if !m.bossMode || len(m.pendingBossHostNotices) == 0 || !m.bossModel.HostNoticesReady() {
+	if !m.helpChatModelActive || len(m.pendingBossHostNotices) == 0 || !m.helpChatModel.HostNoticesReady() {
 		return m, nil
 	}
 	notices := append([]bossHostNotice(nil), m.pendingBossHostNotices...)
@@ -173,195 +135,25 @@ func appendPendingBossHostNotice(notices []bossHostNotice, notice bossHostNotice
 	return notices
 }
 
-func (m Model) updateBossModeWindowSize() (tea.Model, tea.Cmd) {
-	m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
-	updated, cmd := m.bossModel.Update(m.bossModeWindowSizeMsg())
-	m.bossModel = normalizeBossModel(updated)
-	return m, cmd
-}
-
 type agentTaskEngineerReturnedMsg struct {
-	projectPath  string
-	taskID       string
-	label        string
-	engineerName string
-	summary      string
-	notice       string
-	handoff      *bossui.HandoffHighlight
-	snapshot     codexapp.Snapshot
-	task         model.AgentTask
-	err          error
+	projectPath string
+	taskID      string
+	label       string
+	summary     string
+	notice      string
+	handoff     *bossui.HandoffHighlight
+	snapshot    codexapp.Snapshot
+	task        model.AgentTask
+	err         error
 }
 
 type bossEngineerReturnedMsg struct {
-	projectPath  string
-	label        string
-	engineerName string
-	summary      string
-	notice       string
-	handoff      *bossui.HandoffHighlight
-	snapshot     codexapp.Snapshot
-}
-
-func (m Model) updateBossModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if !m.bossModel.SessionPickerActive() {
-		if index, ok := bossModeAttentionJumpIndex(msg); ok {
-			return m.openBossAttentionProject(index)
-		}
-	}
-	return m.updateBossModeMessage(msg)
-}
-
-func (m Model) openBossAttentionProject(index int) (tea.Model, tea.Cmd) {
-	item := m.bossModel.HotAttentionItem(index)
-	switch item.Kind {
-	case bossui.AttentionItemAgentTask:
-		return m.openBossAttentionAgentTask(index, item.TaskID)
-	case bossui.AttentionItemProject:
-		return m.openBossAttentionProjectItem(index, item.ProjectPath)
-	default:
-		m.status = fmt.Sprintf("No attention item is mapped to Alt+%d", index+1)
-		return m, nil
-	}
-}
-
-func (m Model) openBossAttentionProjectItem(index int, projectPath string) (tea.Model, tea.Cmd) {
-	projectPath = strings.TrimSpace(projectPath)
-	if projectPath == "" {
-		m.status = fmt.Sprintf("No attention project is mapped to Alt+%d", index+1)
-		return m, nil
-	}
-	project, ok := m.projectSummaryByPathAllProjects(projectPath)
-	if !ok {
-		m.status = fmt.Sprintf("Project for Alt+%d is no longer in the list", index+1)
-		return m, nil
-	}
-	m.closeBossMode(fmt.Sprintf("Opening engineer session for %s", projectNameForPicker(project, project.Path)))
-	focusCmd := m.focusProjectPath(project.Path)
-	updated, launchCmd := m.launchEmbeddedForProject(project, m.preferredEmbeddedProviderForProject(project), false, "")
-	m = normalizeUpdateModel(updated)
-	if launchCmd != nil || m.codexVisible() || m.codexPendingOpenProject() != "" {
-		m.returnToBossModeAfterCodexHide = true
-	}
-	return m, tea.Batch(focusCmd, launchCmd)
-}
-
-func (m Model) openBossAttentionAgentTask(index int, taskID string) (tea.Model, tea.Cmd) {
-	taskID = strings.TrimSpace(taskID)
-	if taskID == "" || m.svc == nil {
-		m.status = fmt.Sprintf("Agent task for Alt+%d is no longer available", index+1)
-		return m, nil
-	}
-	task, err := m.svc.GetAgentTask(m.ctx, taskID)
-	if err != nil {
-		m.status = fmt.Sprintf("Agent task for Alt+%d is no longer available: %v", index+1, err)
-		return m, nil
-	}
-	project, err := projectSummaryForAgentTask(task)
-	if err != nil {
-		m.status = err.Error()
-		return m, nil
-	}
-	provider := codexProviderFromSessionSource(task.Provider)
-	if provider == "" {
-		provider = codexapp.ProviderCodex
-	}
-	title := strings.TrimSpace(task.Title)
-	if title == "" {
-		title = task.ID
-	}
-	m.closeBossMode(fmt.Sprintf("Opening engineer session for task %s", title))
-	updated, launchCmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
-		reveal:   true,
-		resumeID: taskSessionIDForProvider(task, provider),
-	})
-	m = normalizeUpdateModel(updated)
-	if launchCmd != nil || m.codexVisible() || m.codexPendingOpenProject() != "" {
-		m.returnToBossModeAfterCodexHide = true
-	}
-	return m, launchCmd
-}
-
-func (m Model) bossModeWindowSizeMsg() tea.WindowSizeMsg {
-	layout := m.bodyLayout()
-	return tea.WindowSizeMsg{Width: layout.width, Height: bossModeBodyHeight(layout.height)}
-}
-
-func (m Model) renderBossModeView() string {
-	layout := m.bodyLayout()
-	header := m.renderBossModeHeader(layout.width)
-	bodyHeight := bossModeBodyHeight(layout.height)
-	body := fitPaneContent(m.bossModel.View(), layout.width, bodyHeight)
-	return strings.Join([]string{header, body, m.renderBossModeFooter(layout.width)}, "\n")
-}
-
-func (m Model) renderBossModeHeader(width int) string {
-	parts := []string{
-		bossModeTitleStyle.Render("Boss Mode"),
-		renderFooterStatus(m.bossModel.StatusText()),
-	}
-	if usageText := strings.TrimSpace(m.bossModel.UsageText()); usageText != "" {
-		parts = append(parts, renderFooterUsage(usageText))
-	}
-	if notice := processWarningFooterLabel(m.totalProcessWarningStats()); notice != "" {
-		parts = append(parts, renderFooterAlert(notice))
-	}
-	line := strings.Join(parts, "  ")
-	return renderLineWithRightSegment(line, m.renderTopCPUUsageSegment(), width)
-}
-
-func (m Model) renderBossModeFooter(width int) string {
-	actions := []footerAction{
-		footerPrimaryAction("Enter", "send"),
-		footerHideAction("Alt+Up", "hide"),
-		footerNavAction("Tab", "chat/flow"),
-		footerNavAction("Alt+Enter", "newline"),
-		footerNavAction("Alt+O", "files"),
-		footerNavAction("Alt+1..8", "open"),
-		footerLowAction("Alt+C", "copy menu"),
-		footerNavAction("ctrl+r", "refresh"),
-	}
-	if m.bossModel.SlashActive() {
-		actions = []footerAction{
-			footerPrimaryAction("Enter", "run"),
-			footerHideAction("Alt+Up", "hide"),
-			footerNavAction("Tab", "complete"),
-			footerNavAction("Shift+Tab", "previous"),
-			footerNavAction("Alt+Enter", "newline"),
-			footerLowAction("Alt+C", "copy menu"),
-		}
-	}
-	if m.bossModel.ControlConfirmationActive() {
-		actions = []footerAction{
-			footerPrimaryAction("Enter", "confirm"),
-			footerExitAction("Esc", "cancel"),
-		}
-	}
-	if m.bossModel.SessionPickerActive() {
-		actions = []footerAction{
-			footerPrimaryAction("Enter", "open"),
-			footerNavAction("Up/Down", "select"),
-			footerExitAction("Esc", "close"),
-		}
-	}
-	if m.bossModel.OpenTargetPickerActive() {
-		actions = []footerAction{
-			footerPrimaryAction("Enter/Alt+O", "open"),
-			footerNavAction("f", "folder"),
-			footerNavAction("Up/Down", "select"),
-			footerExitAction("Esc", "close"),
-		}
-	}
-	return fitStyledWidth(renderFooterLine(
-		width,
-		renderFooterActionList(actions...),
-	), width)
-}
-
-var bossModeTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81"))
-
-func bossModeBodyHeight(shellBodyHeight int) int {
-	return max(1, shellBodyHeight)
+	projectPath string
+	label       string
+	summary     string
+	notice      string
+	handoff     *bossui.HandoffHighlight
+	snapshot    codexapp.Snapshot
 }
 
 func (m Model) bossViewContext() bossui.ViewContext {
@@ -549,18 +341,17 @@ func bossAgentTaskActivityFromSnapshot(task model.AgentTask, snapshot codexapp.S
 		return bossui.ViewEngineerActivity{}, false
 	}
 	return bossui.ViewEngineerActivity{
-		Kind:         "agent_task",
-		TaskID:       strings.TrimSpace(task.ID),
-		ProjectPath:  strings.TrimSpace(task.WorkspacePath),
-		Title:        strings.TrimSpace(task.Title),
-		EngineerName: bossEngineerNameForAgentTask(task),
-		Provider:     modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
-		SessionID:    strings.TrimSpace(snapshot.ThreadID),
-		Status:       bossEngineerActivityStatus(snapshot),
-		Summary:      liveEngineerActiveSummaryDetail(snapshot, model.ProjectSummary{Path: strings.TrimSpace(task.WorkspacePath)}),
-		Active:       true,
-		StartedAt:    bossEngineerActivityStartedAt(snapshot),
-		LastEventAt:  embeddedSnapshotActivityAt(snapshot),
+		Kind:        "agent_task",
+		TaskID:      strings.TrimSpace(task.ID),
+		ProjectPath: strings.TrimSpace(task.WorkspacePath),
+		Title:       strings.TrimSpace(task.Title),
+		Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
+		SessionID:   strings.TrimSpace(snapshot.ThreadID),
+		Status:      bossEngineerActivityStatus(snapshot),
+		Summary:     liveEngineerActiveSummaryDetail(snapshot, model.ProjectSummary{Path: strings.TrimSpace(task.WorkspacePath)}),
+		Active:      true,
+		StartedAt:   bossEngineerActivityStartedAt(snapshot),
+		LastEventAt: embeddedSnapshotActivityAt(snapshot),
 	}, true
 }
 
@@ -584,20 +375,19 @@ func (m Model) bossProjectEngineerActivityFromSnapshot(snapshot codexapp.Snapsho
 		title = bossTrackedTodoTargetLabel(title, tracked.ID, tracked.Label, tracked.Text)
 	}
 	return bossui.ViewEngineerActivity{
-		Kind:         "project",
-		ProjectPath:  projectPath,
-		Title:        strings.TrimSpace(title),
-		TodoID:       todo.ID,
-		TodoLabel:    strings.TrimSpace(todo.Label),
-		TodoText:     strings.TrimSpace(todo.Text),
-		EngineerName: bossui.EngineerNameForKey("project", projectPath, snapshot.ThreadID),
-		Provider:     modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
-		SessionID:    strings.TrimSpace(snapshot.ThreadID),
-		Status:       bossEngineerActivityStatus(snapshot),
-		Summary:      liveEngineerActiveSummaryDetail(snapshot, project),
-		Active:       true,
-		StartedAt:    bossEngineerActivityStartedAt(snapshot),
-		LastEventAt:  embeddedSnapshotActivityAt(snapshot),
+		Kind:        "project",
+		ProjectPath: projectPath,
+		Title:       strings.TrimSpace(title),
+		TodoID:      todo.ID,
+		TodoLabel:   strings.TrimSpace(todo.Label),
+		TodoText:    strings.TrimSpace(todo.Text),
+		Provider:    modelSessionSourceFromCodexProvider(embeddedProvider(snapshot)),
+		SessionID:   strings.TrimSpace(snapshot.ThreadID),
+		Status:      bossEngineerActivityStatus(snapshot),
+		Summary:     liveEngineerActiveSummaryDetail(snapshot, project),
+		Active:      true,
+		StartedAt:   bossEngineerActivityStartedAt(snapshot),
+		LastEventAt: embeddedSnapshotActivityAt(snapshot),
 	}, true
 }
 
@@ -607,10 +397,6 @@ func bossEngineerActivityKey(activity bossui.ViewEngineerActivity) string {
 		strings.TrimSpace(string(model.NormalizeSessionSource(activity.Provider))),
 		strings.TrimSpace(activity.SessionID),
 	}, "\x00")
-}
-
-func bossEngineerNameForAgentTask(task model.AgentTask) string {
-	return bossui.EngineerNameForKey("agent_task", task.ID)
 }
 
 func bossEngineerActivityStartedAt(snapshot codexapp.Snapshot) time.Time {
@@ -677,12 +463,11 @@ func (m Model) bossEngineerTurnCompletionHostNotice(projectPath string, hadPrev 
 		return bossHostNotice{}
 	}
 	label := m.bossEngineerCompletionLabel(projectPath, snapshot)
-	engineerName := m.bossEngineerCompletionName(projectPath, snapshot)
 	output := latestEngineerTranscriptOutput(snapshot)
 	if output != "" {
-		return bossEngineerCompletionHostNotice(label, output, engineerName)
+		return bossEngineerCompletionHostNotice(label, output)
 	}
-	return bossEngineerCompletionHostNotice(label, "", engineerName)
+	return bossEngineerCompletionHostNotice(label, "")
 }
 
 func (m Model) handleBossEngineerTurnCompletion(projectPath string, hadPrev bool, prevSnapshot, snapshot codexapp.Snapshot) (Model, tea.Cmd) {
@@ -710,13 +495,12 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 		return nil
 	}
 	label := bossAgentTaskCompletionLabel(task)
-	engineerName := bossEngineerNameForAgentTask(task)
 	svc := m.svc
 	parent := m.ctx
 	return func() tea.Msg {
 		snapshot = freshEngineerCompletionSnapshot(projectPath, snapshot, session)
 		summary := latestEngineerTranscriptReviewOutput(snapshot)
-		notice := bossAgentTaskReviewNotice(label, summary, engineerName)
+		notice := bossAgentTaskReviewNotice(label, summary)
 		ctx := parent
 		if ctx == nil {
 			ctx = context.Background()
@@ -731,16 +515,15 @@ func (m Model) markAgentTaskReadyForReviewCmd(projectPath string, task model.Age
 			Touch:   true,
 		})
 		return agentTaskEngineerReturnedMsg{
-			projectPath:  strings.TrimSpace(projectPath),
-			taskID:       taskID,
-			label:        label,
-			engineerName: engineerName,
-			summary:      summary,
-			notice:       notice,
-			handoff:      bossEngineerCompletionHandoff(label, engineerName),
-			snapshot:     snapshot,
-			task:         updated,
-			err:          err,
+			projectPath: strings.TrimSpace(projectPath),
+			taskID:      taskID,
+			label:       label,
+			summary:     summary,
+			notice:      notice,
+			handoff:     bossEngineerCompletionHandoff(label),
+			snapshot:    snapshot,
+			task:        updated,
+			err:         err,
 		}
 	}
 }
@@ -751,18 +534,16 @@ func (m Model) bossEngineerCompletionNoticeCmd(projectPath string, snapshot code
 		return nil
 	}
 	label := m.bossEngineerCompletionLabel(projectPath, snapshot)
-	engineerName := m.bossEngineerCompletionName(projectPath, snapshot)
 	return func() tea.Msg {
 		snapshot = freshEngineerCompletionSnapshot(projectPath, snapshot, session)
 		summary := latestEngineerTranscriptOutput(snapshot)
 		return bossEngineerReturnedMsg{
-			projectPath:  projectPath,
-			label:        label,
-			engineerName: engineerName,
-			summary:      summary,
-			notice:       bossEngineerCompletionNotice(label, summary, engineerName),
-			handoff:      bossEngineerCompletionHandoff(label, engineerName),
-			snapshot:     snapshot,
+			projectPath: projectPath,
+			label:       label,
+			summary:     summary,
+			notice:      bossEngineerCompletionNotice(label, summary),
+			handoff:     bossEngineerCompletionHandoff(label),
+			snapshot:    snapshot,
 		}
 	}
 }
@@ -790,11 +571,11 @@ func snapshotWithCompletionProjectPath(projectPath string, snapshot codexapp.Sna
 	return snapshot
 }
 
-func bossAgentTaskReviewNotice(label, output, engineerName string) string {
+func bossAgentTaskReviewNotice(label, output string) string {
 	if strings.TrimSpace(output) == "" {
-		return bossEngineerCompletionNotice(label, "I don't have a useful summary yet.", engineerName)
+		return bossEngineerCompletionNotice(label, "I don't have a useful summary yet.")
 	}
-	return bossEngineerCompletionNotice(label, output, engineerName)
+	return bossEngineerCompletionNotice(label, output)
 }
 
 func bossAgentTaskCompletionLabel(task model.AgentTask) string {
@@ -807,40 +588,32 @@ func bossAgentTaskCompletionLabel(task model.AgentTask) string {
 	return "agent task"
 }
 
-func bossEngineerCompletionNotice(label, output, engineerName string) string {
+func bossEngineerCompletionNotice(label, output string) string {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		label = "engineer session"
-	}
-	engineerName = strings.TrimSpace(engineerName)
-	if engineerName == "" {
-		engineerName = "Engineer"
 	}
 	output = strings.TrimSpace(output)
 	if output != "" {
-		return engineerName + " is back from " + label + ": " + output
+		return "Work on " + label + " is ready for review: " + output
 	}
-	return engineerName + " is back from " + label + "."
+	return "Work on " + label + " is ready for review."
 }
 
-func bossEngineerCompletionHostNotice(label, output, engineerName string) bossHostNotice {
+func bossEngineerCompletionHostNotice(label, output string) bossHostNotice {
 	return bossHostNotice{
-		Content:        bossEngineerCompletionNotice(label, output, engineerName),
+		Content:        bossEngineerCompletionNotice(label, output),
 		AnnounceInChat: true,
-		Handoff:        bossEngineerCompletionHandoff(label, engineerName),
+		Handoff:        bossEngineerCompletionHandoff(label),
 	}
 }
 
-func bossEngineerCompletionHandoff(label, engineerName string) *bossui.HandoffHighlight {
+func bossEngineerCompletionHandoff(label string) *bossui.HandoffHighlight {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		label = "engineer session"
 	}
-	engineerName = strings.TrimSpace(engineerName)
-	if engineerName == "" {
-		engineerName = "Engineer"
-	}
-	return &bossui.HandoffHighlight{EngineerName: engineerName, ProjectLabel: label}
+	return &bossui.HandoffHighlight{ProjectLabel: label}
 }
 
 func (m Model) bossEngineerCompletionLabel(projectPath string, snapshot codexapp.Snapshot) string {
@@ -875,14 +648,6 @@ func (m Model) bossEngineerCompletionLabel(projectPath string, snapshot codexapp
 		return projectPath
 	}
 	return "engineer session"
-}
-
-func (m Model) bossEngineerCompletionName(projectPath string, snapshot codexapp.Snapshot) string {
-	projectPath = strings.TrimSpace(projectPath)
-	if task, ok := m.agentTaskForProjectPath(projectPath); ok {
-		return bossEngineerNameForAgentTask(task)
-	}
-	return bossui.EngineerNameForKey("project", projectPath, snapshot.ThreadID)
 }
 
 func latestEngineerTranscriptOutput(snapshot codexapp.Snapshot) string {
@@ -1339,24 +1104,10 @@ func normalizeBossModel(model tea.Model) bossui.Model {
 		return typed
 	case *bossui.Model:
 		if typed == nil {
-			panic("boss mode update returned nil *boss.Model")
+			panic("Help Chat update returned nil *boss.Model")
 		}
 		return *typed
 	default:
-		panic(fmt.Sprintf("boss mode update returned unsupported model type %T", model))
+		panic(fmt.Sprintf("Help Chat update returned unsupported model type %T", model))
 	}
-}
-
-func bossModeAttentionJumpIndex(msg tea.KeyMsg) (int, bool) {
-	if !msg.Alt {
-		return 0, false
-	}
-	key := strings.TrimPrefix(msg.String(), "alt+")
-	if len(key) == 1 && key[0] >= '1' && key[0] <= '8' {
-		return int(key[0] - '1'), true
-	}
-	if len(msg.Runes) == 1 && msg.Runes[0] >= '1' && msg.Runes[0] <= '8' {
-		return int(msg.Runes[0] - '1'), true
-	}
-	return 0, false
 }

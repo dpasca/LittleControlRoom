@@ -149,7 +149,7 @@ func TestBossSessionStoreAppendCreatesReadableMarkdownFile(t *testing.T) {
 		t.Fatalf("ReadFile(session) error = %v", err)
 	}
 	text := string(data)
-	for _, want := range []string{"# Boss Chat Session", "Session: boss_manual_session", "## User @ ", "Find the old launch notes"} {
+	for _, want := range []string{"# Help Chat Session", "Session: boss_manual_session", "## User @ ", "Find the old launch notes"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("session markdown missing %q:\n%s", want, text)
 		}
@@ -161,7 +161,7 @@ func TestAppendAssistantNoticeToLatestSessionPersistsAndDedupes(t *testing.T) {
 
 	svc := newBossSessionTestService(t)
 	now := time.Date(2026, 4, 27, 10, 0, 0, 0, time.UTC)
-	content := "Ada is back from Cursor cleanup.\n\nCursor access still needs user-side confirmation."
+	content := "Work on Cursor cleanup is ready for review.\n\nCursor access still needs user-side confirmation."
 	if err := AppendAssistantNoticeToLatestSession(context.Background(), svc, content, now); err != nil {
 		t.Fatalf("AppendAssistantNoticeToLatestSession() error = %v", err)
 	}

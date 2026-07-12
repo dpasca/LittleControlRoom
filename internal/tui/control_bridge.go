@@ -361,19 +361,18 @@ func bossControlOpenedSessionActivity(inv control.Invocation, msg tea.Msg) *boss
 		}
 		title = bossTrackedTodoTargetLabel(title, input.TodoID, input.TodoLabel, input.TodoText)
 		return &bossui.ViewEngineerActivity{
-			Kind:         "project",
-			ProjectPath:  strings.TrimSpace(opened.projectPath),
-			Title:        title,
-			TodoID:       input.TodoID,
-			TodoLabel:    strings.TrimSpace(input.TodoLabel),
-			TodoText:     strings.TrimSpace(input.TodoText),
-			EngineerName: bossui.EngineerNameForKey("project", opened.projectPath, sessionID),
-			Provider:     provider,
-			SessionID:    sessionID,
-			Status:       "working",
-			Active:       true,
-			StartedAt:    startedAt,
-			LastEventAt:  startedAt,
+			Kind:        "project",
+			ProjectPath: strings.TrimSpace(opened.projectPath),
+			Title:       title,
+			TodoID:      input.TodoID,
+			TodoLabel:   strings.TrimSpace(input.TodoLabel),
+			TodoText:    strings.TrimSpace(input.TodoText),
+			Provider:    provider,
+			SessionID:   sessionID,
+			Status:      "working",
+			Active:      true,
+			StartedAt:   startedAt,
+			LastEventAt: startedAt,
 		}
 	case control.CapabilityAgentTaskCreate:
 		var input control.AgentTaskCreateInput
@@ -382,19 +381,17 @@ func bossControlOpenedSessionActivity(inv control.Invocation, msg tea.Msg) *boss
 		}
 		taskID := strings.TrimSpace(opened.agentTaskID)
 		title := firstNonEmptyTrimmed(opened.agentTaskTitle, input.Title, taskID, "agent task")
-		name := firstNonEmptyTrimmed(opened.agentTaskName, bossui.EngineerNameForKey("agent_task", taskID), "Engineer")
 		return &bossui.ViewEngineerActivity{
-			Kind:         "agent_task",
-			TaskID:       taskID,
-			ProjectPath:  strings.TrimSpace(opened.projectPath),
-			Title:        title,
-			EngineerName: name,
-			Provider:     provider,
-			SessionID:    sessionID,
-			Status:       "working",
-			Active:       true,
-			StartedAt:    startedAt,
-			LastEventAt:  startedAt,
+			Kind:        "agent_task",
+			TaskID:      taskID,
+			ProjectPath: strings.TrimSpace(opened.projectPath),
+			Title:       title,
+			Provider:    provider,
+			SessionID:   sessionID,
+			Status:      "working",
+			Active:      true,
+			StartedAt:   startedAt,
+			LastEventAt: startedAt,
 		}
 	case control.CapabilityAgentTaskContinue:
 		var input control.AgentTaskContinueInput
@@ -403,19 +400,17 @@ func bossControlOpenedSessionActivity(inv control.Invocation, msg tea.Msg) *boss
 		}
 		taskID := firstNonEmptyTrimmed(opened.agentTaskID, input.TaskID)
 		title := firstNonEmptyTrimmed(opened.agentTaskTitle, taskID, "agent task")
-		name := firstNonEmptyTrimmed(opened.agentTaskName, bossui.EngineerNameForKey("agent_task", taskID), "Engineer")
 		return &bossui.ViewEngineerActivity{
-			Kind:         "agent_task",
-			TaskID:       taskID,
-			ProjectPath:  strings.TrimSpace(opened.projectPath),
-			Title:        title,
-			EngineerName: name,
-			Provider:     provider,
-			SessionID:    sessionID,
-			Status:       "working",
-			Active:       true,
-			StartedAt:    startedAt,
-			LastEventAt:  startedAt,
+			Kind:        "agent_task",
+			TaskID:      taskID,
+			ProjectPath: strings.TrimSpace(opened.projectPath),
+			Title:       title,
+			Provider:    provider,
+			SessionID:   sessionID,
+			Status:      "working",
+			Active:      true,
+			StartedAt:   startedAt,
+			LastEventAt: startedAt,
 		}
 	default:
 		return nil
@@ -468,7 +463,6 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 		sessionLabel = providerLabel + " engineer session"
 	}
 	target := bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath, opened.projectPath)
-	name := bossui.EngineerNameForKey("project", opened.projectPath, opened.snapshot.ThreadID)
 	targetPhrase := ""
 	if target != "" {
 		targetPhrase = " for " + target
@@ -477,9 +471,9 @@ func bossEngineerPromptSentStatus(input control.EngineerSendPromptInput, opened 
 		return "Opened the " + sessionLabel + targetPhrase + "."
 	}
 	if target != "" {
-		return "Ok, " + name + " is working on " + bossTrackedTodoTargetLabel(target, input.TodoID, input.TodoLabel, input.TodoText) + "."
+		return "Work on " + bossTrackedTodoTargetLabel(target, input.TodoID, input.TodoLabel, input.TodoText) + " is underway."
 	}
-	return "Ok, " + name + " is working on it now."
+	return "The requested work is underway."
 }
 
 func bossTrackedTodoTargetLabel(target string, todoID int64, todoLabel, todoText string) string {
@@ -506,18 +500,16 @@ func bossAgentTaskLaunchOpenedStatus(taskID, fallback string) string {
 	status := strings.TrimSpace(fallback)
 	if status == "" {
 		taskID = strings.TrimSpace(taskID)
-		name := bossui.EngineerNameForKey("agent_task", taskID)
 		if taskID != "" {
-			status = "Ok, " + name + " is working on " + taskID
+			status = "Work on " + taskID + " is underway"
 		} else {
-			status = "Ok, the engineer is working on the task"
+			status = "The requested task is underway"
 		}
 	}
 	return strings.TrimRight(status, ".") + "."
 }
 
 func bossAgentTaskHandoffStatus(task model.AgentTask) string {
-	name := bossEngineerNameForAgentTask(task)
 	label := strings.TrimSpace(task.Title)
 	if label == "" {
 		label = strings.TrimSpace(task.ID)
@@ -525,7 +517,7 @@ func bossAgentTaskHandoffStatus(task model.AgentTask) string {
 	if label == "" {
 		label = "the task"
 	}
-	return "Ok, " + name + " is working on " + label
+	return "Work on " + label + " is underway"
 }
 
 func bossControlOpenedProviderLabel(requested control.Provider, snapshot codexapp.Snapshot) string {
@@ -1178,7 +1170,7 @@ func (m Model) executeGitPrepareCommitControlWithOutcome(input control.GitPrepar
 		intent = service.GitActionFinish
 	}
 	target := projectNameForPicker(project, project.Path)
-	m.closeBossMode("Opening commit preview for " + target)
+	m.closeHelpChatMode("Opening commit preview for " + target)
 	cmd := m.startCommitPreview(project, intent, input.Message)
 	if cmd == nil {
 		err := errors.New("commit preview did not start")
@@ -1613,7 +1605,6 @@ func (m Model) agentTaskLaunchTrackingCmd(task model.AgentTask, cmd tea.Cmd, suc
 		taskID := strings.TrimSpace(task.ID)
 		opened.agentTaskID = taskID
 		opened.agentTaskTitle = strings.TrimSpace(task.Title)
-		opened.agentTaskName = bossEngineerNameForAgentTask(task)
 		provider := modelSessionSourceFromCodexProvider(embeddedProvider(opened.snapshot))
 		sessionID := strings.TrimSpace(opened.snapshot.ThreadID)
 		if _, err := m.svc.AttachAgentTaskEngineerSession(m.ctx, taskID, provider, sessionID); err != nil {
@@ -1627,7 +1618,7 @@ func (m Model) agentTaskLaunchTrackingCmd(task model.AgentTask, cmd tea.Cmd, suc
 		}
 		status := strings.TrimSpace(successStatus)
 		if status == "" {
-			status = "Ok, the engineer is working on the task"
+			status = "The requested task is underway"
 		}
 		opened.status = status
 		return opened
@@ -1834,7 +1825,7 @@ func engineerReportContractPromptLines() []string {
 	return []string{
 		"",
 		"Report contract:",
-		"- Answer the user's exact request directly, with enough concrete detail for Boss Chat to summarize without guessing.",
+		"- Answer the user's exact request directly, with enough concrete detail for Help Chat to summarize without guessing.",
 		"- Preserve source, metric, timeframe, scope, negations, and explicit exclusions from the user request; if evidence answers a different question, report that mismatch instead of substituting it.",
 		"- For comparison, diff, cleanup, or review work, name what was compared, what was kept, what was discarded, and the substantive differences.",
 		"- For retry, sync, export, file, or document work, say whether content changed and summarize the meaningful changes; if nothing changed, name the file or document and say there were no content changes.",

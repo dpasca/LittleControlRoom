@@ -21,7 +21,7 @@ const (
 	KindReview      Kind = "review"
 	KindDevLCReview Kind = "dev-lcreview"
 	KindPermissions Kind = "permissions"
-	KindBoss        Kind = "boss"
+	KindHelp        Kind = "help"
 	KindSkills      Kind = "skills"
 	KindGoal        Kind = "goal"
 	KindSettings    Kind = "settings"
@@ -67,7 +67,7 @@ var specs = []Spec{
 	{Name: "review", Usage: "/review", Summary: "Ask embedded Codex to review uncommitted changes"},
 	{Name: "dev-lcreview", Usage: "/dev-lcreview", Summary: "Add an LCAgent trace-quality review TODO to the Little Control Room project", Hidden: true},
 	{Name: "permissions", Usage: "/permissions [off|low|medium]", Summary: "Show or change LCAgent permission level for this session"},
-	{Name: "boss", Usage: "/boss", Summary: "Open the high-level boss chat layer"},
+	{Name: "help", Usage: "/help", Summary: "Open Help Chat over the main dashboard"},
 	{Name: "skills", Usage: "/skills", Summary: "Open the local Codex skills inventory"},
 	{Name: "goal", Usage: "/goal [status|pause|resume|clear|stop|objective] [--budget N]", Summary: "Show, set, pause, resume, or clear the embedded Codex goal"},
 	{Name: "settings", Usage: "/settings", Summary: "Open app settings for this embedded provider"},
@@ -160,11 +160,11 @@ func Suggestions(input string) []Suggestion {
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
 		return permissionSuggestions(argPrefix)
-	case "boss":
+	case "help":
 		return []Suggestion{{
-			Insert:  "/boss",
-			Display: "/boss",
-			Summary: "Open the high-level boss chat layer",
+			Insert:  "/help",
+			Display: "/help",
+			Summary: "Open Help Chat over the main dashboard",
 		}}
 	case "skills":
 		return []Suggestion{{
@@ -392,13 +392,13 @@ func Parse(input string) (Invocation, error) {
 			PermissionLevel: level,
 			Canonical:       canonical,
 		}, nil
-	case "boss":
+	case "help":
 		if strings.TrimSpace(rawArgs) != "" {
-			return Invocation{}, fmt.Errorf("usage: /boss")
+			return Invocation{}, fmt.Errorf("usage: /help")
 		}
 		return Invocation{
-			Kind:      KindBoss,
-			Canonical: "/boss",
+			Kind:      KindHelp,
+			Canonical: "/help",
 		}, nil
 	case "skills":
 		if strings.TrimSpace(rawArgs) != "" {

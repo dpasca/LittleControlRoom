@@ -235,7 +235,7 @@ func TestScreenshotSetupRendersGettingStartedGuide(t *testing.T) {
 		"Getting Started",
 		"Setup Guide",
 		"Project reports",
-		"Boss chat",
+		"Help chat",
 		"LCAgent",
 		"Enter",
 		"setup",

@@ -55,32 +55,31 @@ func (m Model) supervisorItems(now time.Time) []bossSupervisorItem {
 
 func supervisorActivityLine(activity ViewEngineerActivity, now time.Time) string {
 	title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer session"))
-	name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 	status := strings.TrimSpace(activity.Status)
 	if status == "" {
 		status = "working"
 	}
 	if quietFor := supervisorActivityQuietFor(activity, now); quietFor >= bossSupervisorQuietAfter {
-		return name + " has gone quiet on " + title + " for " + bossRunningDuration(quietFor)
+		return "Work on " + title + " has been quiet for " + bossRunningDuration(quietFor)
 	}
 	elapsed := bossEngineerActivityElapsedText(activity, now)
 	switch status {
 	case "stalled":
-		return supervisorActivitySentence(name, "is stalled on", title, elapsed)
+		return supervisorActivitySentence("Work on", title+" is stalled", elapsed)
 	case "waiting":
-		return supervisorActivitySentence(name, "is waiting on", title, elapsed)
+		return supervisorActivitySentence("Work on", title+" is waiting", elapsed)
 	case "working elsewhere":
-		return supervisorActivitySentence(name, "is working elsewhere from", title, elapsed)
+		return supervisorActivitySentence("Work on", title+" is continuing elsewhere", elapsed)
 	default:
 		if status != "working" {
-			return supervisorActivitySentence(name, "is "+status+" on", title, elapsed)
+			return supervisorActivitySentence("Work on", title+" is "+status, elapsed)
 		}
-		return supervisorActivitySentence(name, "is working on", title, elapsed)
+		return supervisorActivitySentence("Work on", title+" is underway", elapsed)
 	}
 }
 
-func supervisorActivitySentence(name, action, title, elapsed string) string {
-	line := strings.TrimSpace(name + " " + action + " " + title)
+func supervisorActivitySentence(prefix, detail, elapsed string) string {
+	line := strings.TrimSpace(prefix + " " + detail)
 	if elapsed != "" {
 		line += " for " + elapsed
 	}
@@ -105,12 +104,8 @@ func supervisorActivityQuietFor(activity ViewEngineerActivity, now time.Time) ti
 	return d
 }
 
-func agentTaskDecisionQuestion(engineerName string) string {
-	engineerName = strings.TrimSpace(engineerName)
-	if engineerName == "" || strings.EqualFold(engineerName, "Engineer") {
-		return "ready to close or continue"
-	}
-	return engineerName + " is ready to close or continue"
+func agentTaskDecisionQuestion() string {
+	return "ready to close or continue"
 }
 
 func (m Model) shouldRefreshSupervisorState() bool {

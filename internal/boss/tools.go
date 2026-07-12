@@ -127,7 +127,7 @@ type bossGoalRunReader interface {
 
 type QueryExecutor struct {
 	store              bossStoreReader
-	bossSessions       *bossSessionStore
+	bossSessions       []*bossSessionStore
 	processReporter    processReportFunc
 	nowFn              func() time.Time
 	codexHome          string
@@ -162,21 +162,20 @@ type ViewSystemNotice struct {
 }
 
 type ViewEngineerActivity struct {
-	Kind         string
-	TaskID       string
-	ProjectPath  string
-	Title        string
-	TodoID       int64
-	TodoLabel    string
-	TodoText     string
-	EngineerName string
-	Provider     model.SessionSource
-	SessionID    string
-	Status       string
-	Summary      string
-	Active       bool
-	StartedAt    time.Time
-	LastEventAt  time.Time
+	Kind        string
+	TaskID      string
+	ProjectPath string
+	Title       string
+	TodoID      int64
+	TodoLabel   string
+	TodoText    string
+	Provider    model.SessionSource
+	SessionID   string
+	Status      string
+	Summary     string
+	Active      bool
+	StartedAt   time.Time
+	LastEventAt time.Time
 }
 
 type ViewRuntimeContext struct {
@@ -195,13 +194,19 @@ func newQueryExecutor(store bossStoreReader) *QueryExecutor {
 	return newQueryExecutorWithBossSessions(store, nil)
 }
 
-func newQueryExecutorWithBossSessions(store bossStoreReader, bossSessions *bossSessionStore) *QueryExecutor {
-	if store == nil && bossSessions == nil {
+func newQueryExecutorWithBossSessions(store bossStoreReader, bossSessions ...*bossSessionStore) *QueryExecutor {
+	filteredSessions := make([]*bossSessionStore, 0, len(bossSessions))
+	for _, sessions := range bossSessions {
+		if sessions != nil {
+			filteredSessions = append(filteredSessions, sessions)
+		}
+	}
+	if store == nil && len(filteredSessions) == 0 {
 		return nil
 	}
 	return &QueryExecutor{
 		store:           store,
-		bossSessions:    bossSessions,
+		bossSessions:    filteredSessions,
 		processReporter: defaultProcessReporter,
 		nowFn:           time.Now,
 	}
@@ -427,7 +432,7 @@ func (e *QueryExecutor) goalRunReport(ctx context.Context, action bossAction) (b
 	if id := strings.TrimSpace(action.Query); id != "" {
 		record, err := reader.GetGoalRun(ctx, id)
 		if errors.Is(err, sql.ErrNoRows) {
-			return clippedToolResult(bossActionGoalRunReport, "No Boss goal run found for id: "+id), nil
+			return clippedToolResult(bossActionGoalRunReport, "No LCR goal run found for id: "+id), nil
 		}
 		if err != nil {
 			return bossToolResult{}, err
@@ -439,9 +444,9 @@ func (e *QueryExecutor) goalRunReport(ctx context.Context, action bossAction) (b
 		return bossToolResult{}, err
 	}
 	if len(records) == 0 {
-		return clippedToolResult(bossActionGoalRunReport, "No Boss goal runs have been recorded yet."), nil
+		return clippedToolResult(bossActionGoalRunReport, "No LCR goal runs have been recorded yet."), nil
 	}
-	lines := []string{fmt.Sprintf("Recent Boss goal runs: %d", len(records))}
+	lines := []string{fmt.Sprintf("Recent LCR goal runs: %d", len(records))}
 	for i, record := range records {
 		run := record.Proposal.Run
 		updated := ""
@@ -468,7 +473,7 @@ func (e *QueryExecutor) goalRunReport(ctx context.Context, action bossAction) (b
 func formatGoalRunDetail(record bossrun.GoalRecord) string {
 	run := record.Proposal.Run
 	lines := []string{
-		fmt.Sprintf("Boss goal run: %s", firstNonEmpty(run.Title, run.ID)),
+		fmt.Sprintf("LCR goal run: %s", firstNonEmpty(run.Title, run.ID)),
 		fmt.Sprintf("id: %s", run.ID),
 		fmt.Sprintf("kind/status: %s/%s", run.Kind, run.Status),
 	}
@@ -568,17 +573,17 @@ func appendGoalRunLCAgentDetail(lines []string, result bossrun.GoalResult) []str
 }
 
 func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossAction) (bossToolResult, error) {
-	if e == nil || e.bossSessions == nil {
-		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Boss chat session search is not connected.</note></boss_session_search>`), nil
+	if e == nil || len(e.bossSessions) == 0 {
+		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Help chat session search is not connected.</note></boss_session_search>`), nil
 	}
 	query := strings.TrimSpace(action.Query)
 	if query == "" {
 		query = strings.TrimSpace(action.Target)
 	}
 	if query == "" {
-		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Boss chat session search needs a non-empty query.</note></boss_session_search>`), nil
+		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Help chat session search needs a non-empty query.</note></boss_session_search>`), nil
 	}
-	results, err := e.bossSessions.searchSessions(ctx, query, clampBossLimit(action.Limit, 6, 16))
+	results, err := e.searchChatSessions(ctx, query, clampBossLimit(action.Limit, 6, 16))
 	if err != nil {
 		return bossToolResult{}, err
 	}
@@ -1346,14 +1351,14 @@ func (e *QueryExecutor) contextCommand(ctx context.Context, action bossAction, v
 }
 
 func (e *QueryExecutor) contextCommandSearchBoss(ctx context.Context, parsed parsedContextCommand) (bossToolResult, error) {
-	if e == nil || e.bossSessions == nil {
-		return clippedToolResult(bossActionContextCommand, "Boss Chat transcript search is not connected."), nil
+	if e == nil || len(e.bossSessions) == 0 {
+		return clippedToolResult(bossActionContextCommand, "Help Chat transcript search is not connected."), nil
 	}
 	query := strings.TrimSpace(parsed.Query)
 	if query == "" {
 		return clippedToolResult(bossActionContextCommand, "Context command error: ctx search boss needs a query."), nil
 	}
-	results, err := e.bossSessions.searchSessions(ctx, query, clampBossLimit(parsed.Limit, 5, 12))
+	results, err := e.searchChatSessions(ctx, query, clampBossLimit(parsed.Limit, 5, 12))
 	if err != nil {
 		return bossToolResult{}, err
 	}
@@ -1402,7 +1407,7 @@ func (e *QueryExecutor) contextCommandSearchEngineer(ctx context.Context, parsed
 	now := e.now()
 	lines := []string{
 		fmt.Sprintf("ctx search engineer %q: %d matches.", query, len(sessionResults)),
-		"Engineer search covers Codex, OpenCode, or Claude Code task/project work logs. Use ctx search boss for Boss Chat transcripts.",
+		"Engineer search covers Codex, OpenCode, or Claude Code task/project work logs. Use ctx search boss for Help Chat transcripts.",
 		"Use the handle with ctx show to fetch a bounded nearby exchange before quoting or correcting details.",
 	}
 	if projectPath != "" {
@@ -2067,21 +2072,21 @@ func clampContextCommandCount(value, defaultValue, maxValue int) int {
 
 func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossAction, view ViewContext) (string, string, error) {
 	if strings.EqualFold(strings.TrimSpace(action.Target), "selected") {
-		return "", "", errors.New("boss chat cannot use the hidden classic TUI selection; ask for a project name or path")
+		return "", "", errors.New("Help chat cannot use the hidden classic TUI selection; ask for a project name or path")
 	}
 	if path := strings.TrimSpace(action.ProjectPath); path != "" {
 		path = filepath.Clean(path)
 		project, err := e.store.GetProjectSummary(ctx, path, true)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return path, "exact path supplied by boss chat, but no project summary matched", nil
+				return path, "exact path supplied by Help chat, but no project summary matched", nil
 			}
 			return "", "", err
 		}
 		if bossProjectHiddenByPrivacy(project, view) {
 			return "", "", fmt.Errorf("project is hidden while privacy mode is enabled")
 		}
-		return path, "exact project path supplied by boss chat", nil
+		return path, "exact project path supplied by Help chat", nil
 	}
 	if name := strings.TrimSpace(action.ProjectName); name != "" {
 		projects, err := e.store.ListProjects(ctx, true)
@@ -2207,7 +2212,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 && len(view.SystemNotices) == 0 && len(view.EngineerActivities) == 0 && len(view.RuntimeContexts) == 0 {
 		return "Current TUI view: no embedded classic TUI context was supplied."
 	}
-	mode := "standalone boss mode"
+	mode := "standalone Help Chat"
 	if view.Embedded {
 		mode = "embedded over classic TUI"
 	}
@@ -2223,10 +2228,10 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 		lines = append(lines, "- privacy mode: enabled")
 	}
 	if view.FocusedPane != "" {
-		lines = append(lines, "- focused pane before boss mode: "+view.FocusedPane)
+		lines = append(lines, "- focused pane before Help Chat: "+view.FocusedPane)
 	}
 	if view.Loading {
-		lines = append(lines, "- classic TUI was loading when boss mode opened")
+		lines = append(lines, "- classic TUI was loading when Help Chat opened")
 	}
 	if status := strings.TrimSpace(view.Status); status != "" {
 		lines = append(lines, "- classic TUI status: "+clipText(status, 220))
@@ -2237,7 +2242,6 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 		for i := 0; i < limit; i++ {
 			activity := view.EngineerActivities[i]
 			label := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
-			name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 			status := strings.TrimSpace(firstNonEmpty(activity.Status, "working"))
 			timer := ""
 			if !activity.StartedAt.IsZero() {
@@ -2247,7 +2251,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 			if provider == "" {
 				provider = "engineer"
 			}
-			lines = append(lines, fmt.Sprintf("  - %s on %s: %s%s via %s", name, clipText(label, 120), status, timer, provider))
+			lines = append(lines, fmt.Sprintf("  - %s: %s%s via %s", clipText(label, 120), status, timer, provider))
 		}
 		if len(view.EngineerActivities) > limit {
 			lines = append(lines, fmt.Sprintf("  - ... %d more", len(view.EngineerActivities)-limit))

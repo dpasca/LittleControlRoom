@@ -41,7 +41,7 @@ func (m Model) OpenTargetPickerActive() bool {
 func (m Model) openBossOpenTargetPicker() (tea.Model, tea.Cmd) {
 	targets := m.bossOpenTargetsForPicker()
 	if len(targets) == 0 {
-		m.status = "No files or links in this boss chat"
+		m.status = "No files or links in this Help chat"
 		return m, nil
 	}
 	m.openTargetPicker = &bossOpenTargetPickerState{
@@ -65,7 +65,7 @@ func (m Model) updateBossOpenTargetPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if len(picker.Targets) == 0 {
-		m.closeBossOpenTargetPicker("No files or links in this boss chat")
+		m.closeBossOpenTargetPicker("No files or links in this Help chat")
 		return m, nil
 	}
 	m.clampBossOpenTargetPickerSelection(len(picker.Targets))
@@ -249,7 +249,7 @@ func (m Model) renderBossOpenTargetPickerContent(width, bodyH int) string {
 		return ""
 	}
 	lines := []string{
-		bossMutedStyle.Render(fitLine("Files and links found in this boss chat. Enter opens with the system app or browser.", width)),
+		bossMutedStyle.Render(fitLine("Files and links found in this Help chat. Enter opens with the system app or browser.", width)),
 		renderBossOpenTargetPickerAction("Enter/Alt+O", "open", uistyle.DialogActionPrimary) + "   " +
 			renderBossOpenTargetPickerAction("f", "folder", uistyle.DialogActionNavigate) + "   " +
 			renderBossOpenTargetPickerAction("Up/Down", "select", uistyle.DialogActionNavigate) + "   " +

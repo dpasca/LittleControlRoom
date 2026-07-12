@@ -96,7 +96,7 @@ func (m Model) copyVisibleOutputToClipboard() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if err := clipboardTextWriter(text); err != nil {
-		m.status = "Boss chat output copy failed: " + err.Error()
+		m.status = "Help chat output copy failed: " + err.Error()
 		return m, nil
 	}
 	m.status = "Copied visible output to clipboard"
@@ -188,7 +188,7 @@ func (m Model) toggleInputSelectionMark() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if err := clipboardTextWriter(text); err != nil {
-		m.status = "Boss chat selection copy failed: " + err.Error()
+		m.status = "Help chat selection copy failed: " + err.Error()
 		return m, nil
 	}
 	m.stopInputSelection()

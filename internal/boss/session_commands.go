@@ -52,7 +52,7 @@ func (m Model) loadLatestBossSessionCmd() tea.Cmd {
 	now := m.now()
 	return func() tea.Msg {
 		if store == nil {
-			return bossSessionLoadedMsg{err: fmt.Errorf("boss chat session store is not available")}
+			return bossSessionLoadedMsg{err: fmt.Errorf("Help chat session store is not available")}
 		}
 		ctx, cancel := childContext(parent, 20*time.Second)
 		defer cancel()
@@ -67,7 +67,7 @@ func (m Model) newBossSessionCmd(prompt string) tea.Cmd {
 	now := m.now()
 	return func() tea.Msg {
 		if store == nil {
-			return bossSessionLoadedMsg{err: fmt.Errorf("boss chat session store is not available")}
+			return bossSessionLoadedMsg{err: fmt.Errorf("Help chat session store is not available")}
 		}
 		ctx, cancel := childContext(parent, 20*time.Second)
 		defer cancel()
@@ -81,7 +81,7 @@ func (m Model) loadBossSessionCmd(sessionID string) tea.Cmd {
 	parent := m.ctx
 	return func() tea.Msg {
 		if store == nil {
-			return bossSessionLoadedMsg{err: fmt.Errorf("boss chat session store is not available")}
+			return bossSessionLoadedMsg{err: fmt.Errorf("Help chat session store is not available")}
 		}
 		ctx, cancel := childContext(parent, 20*time.Second)
 		defer cancel()
@@ -95,7 +95,7 @@ func (m Model) listBossSessionsCmd() tea.Cmd {
 	parent := m.ctx
 	return func() tea.Msg {
 		if store == nil {
-			return bossSessionsListedMsg{err: fmt.Errorf("boss chat session store is not available")}
+			return bossSessionsListedMsg{err: fmt.Errorf("Help chat session store is not available")}
 		}
 		ctx, cancel := childContext(parent, 20*time.Second)
 		defer cancel()
@@ -123,6 +123,9 @@ func (m *Model) appendAssistantChatMessage(content string, handoffs ...*HandoffH
 }
 
 func (m *Model) appendAssistantNoticeMessage(content string, handoffs ...*HandoffHighlight) (ChatMessage, bool) {
+	if m.helpChat {
+		return m.appendAssistantMessage(content, ChatMessageKindChat, handoffs...)
+	}
 	return m.appendAssistantMessage(content, ChatMessageKindFlow, handoffs...)
 }
 

@@ -436,7 +436,7 @@ func lcagentGoalTaskCapabilities(proposal bossrun.GoalProposal) []string {
 
 func lcagentGoalTaskPrompt(proposal bossrun.GoalProposal) string {
 	lines := []string{
-		"Boss goal run:",
+		"LCR goal run:",
 		"ID: " + strings.TrimSpace(proposal.Run.ID),
 		"Kind: " + strings.TrimSpace(proposal.Run.Kind),
 		"Title: " + strings.TrimSpace(proposal.Run.Title),

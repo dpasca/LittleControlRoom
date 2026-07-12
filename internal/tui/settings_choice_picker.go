@@ -135,8 +135,8 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 		}
 	case settingsFieldBossChatOllamaThinking:
 		return []settingsChoiceOption{
-			{Value: "true", Label: "On", Summary: "Allow native Ollama thinking for Boss Chat answers.", Description: "Default for deeper local Boss Chat reasoning. Returned thinking is not included in the final answer."},
-			{Value: "false", Label: "Off", Summary: "Ask Ollama Boss Chat for final content only.", Description: "Use when you want lower latency or a simpler local model response."},
+			{Value: "true", Label: "On", Summary: "Allow native Ollama thinking for Help Chat answers.", Description: "Default for deeper local Help Chat reasoning. Returned thinking is not included in the final answer."},
+			{Value: "false", Label: "Off", Summary: "Ask Ollama Help Chat for final content only.", Description: "Use when you want lower latency or a simpler local model response."},
 		}
 	case settingsFieldLCAgentToolProfile:
 		return []settingsChoiceOption{
@@ -443,7 +443,7 @@ func settingsChoiceTitle(fieldIndex int) string {
 	case settingsFieldMobileAccessMode:
 		return "Mobile Access"
 	case settingsFieldBossChatOllamaThinking:
-		return "Boss Ollama Thinking"
+		return "Help Chat Ollama Thinking"
 	case settingsFieldLCAgentToolProfile:
 		return "LCAgent Tool Profile"
 	case settingsFieldLCAgentContextProfile:

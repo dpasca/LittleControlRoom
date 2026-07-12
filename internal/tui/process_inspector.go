@@ -334,9 +334,6 @@ func (m *Model) applyProcessScanMsg(msg processScanMsg) tea.Cmd {
 	if msg.err == nil && m.sortMode == sortByAttention {
 		m.rebuildProjectList(m.currentSelectedProjectPath())
 	}
-	if m.bossMode {
-		m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
-	}
 	if m.helpChatMode {
 		m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 	}

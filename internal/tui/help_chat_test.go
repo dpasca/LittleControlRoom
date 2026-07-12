@@ -13,6 +13,53 @@ import (
 	"github.com/muesli/termenv"
 )
 
+func TestUnconfiguredHelpChatOpensSetupPrompt(t *testing.T) {
+	t.Parallel()
+
+	m := Model{width: 100, height: 24}
+	updated, cmd := m.openHelpChatModeOrSetupPrompt()
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("unconfigured Help Chat should not start async work")
+	}
+	if got.helpChatMode {
+		t.Fatalf("unconfigured Help Chat should stay closed")
+	}
+	if got.bossSetupPrompt == nil {
+		t.Fatalf("unconfigured Help Chat should open its setup prompt")
+	}
+	if !strings.Contains(got.bossSetupPrompt.Reason, "chat backend") {
+		t.Fatalf("setup prompt reason = %q, want provider-neutral chat guidance", got.bossSetupPrompt.Reason)
+	}
+	rendered := ansi.Strip(got.View())
+	for _, want := range []string{"Help Chat Setup", "Open setup", "Cancel"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("Help Chat setup prompt missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestHelpChatSetupPromptOpensFocusedSetup(t *testing.T) {
+	t.Parallel()
+
+	m := Model{
+		bossSetupPrompt: &bossSetupPromptState{Selected: bossSetupPromptOpenSetup},
+		width:           100,
+		height:          24,
+	}
+	updated, cmd := m.updateBossSetupPromptMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("opening setup from the Help Chat prompt should return a focus command")
+	}
+	if got.bossSetupPrompt != nil || !got.settingsMode {
+		t.Fatalf("Help Chat setup prompt should close into settings")
+	}
+	if got.settingsSelected != settingsFieldBossChatBackend {
+		t.Fatalf("settings selected = %d, want Help Chat backend field", got.settingsSelected)
+	}
+}
+
 func TestHelpChatLongTranscriptStaysInsideScrollableOverlay(t *testing.T) {
 	t.Parallel()
 

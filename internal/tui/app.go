@@ -103,13 +103,9 @@ type Model struct {
 	commandMode                         bool
 	commandInput                        textinput.Model
 	commandSelected                     int
-	bossMode                            bool
 	helpChatMode                        bool
-	bossModelActive                     bool
-	bossModel                           bossui.Model
 	helpChatModelActive                 bool
 	helpChatModel                       bossui.Model
-	returnToBossModeAfterCodexHide      bool
 	bossSetupPrompt                     *bossSetupPromptState
 	errorLogVisible                     bool
 	errorLogSelected                    int
@@ -1200,8 +1196,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer done()
 	mdl, cmd := m.update(msg)
 	mm := normalizeUpdateModel(mdl)
-	prevWant := m.bossMode || m.helpChatMode || m.codexVisible() || m.diffView != nil
-	want := mm.bossMode || mm.helpChatMode || mm.codexVisible() || mm.diffView != nil
+	prevWant := m.helpChatMode || m.codexVisible() || m.diffView != nil
+	want := mm.helpChatMode || mm.codexVisible() || mm.diffView != nil
 	mm.mouseEnabled = want
 	mm.syncEmbeddedSessionIdleProtection()
 	if want != prevWant {
@@ -1218,11 +1214,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(bossui.ExitMsg); ok {
-		if m.helpChatMode {
-			m.closeHelpChatMode("Help chat hidden")
-			return m, nil
-		}
-		m.closeBossMode("Boss mode hidden")
+		m.closeHelpChatMode("Help chat hidden")
 		return m, nil
 	}
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
@@ -1237,20 +1229,17 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossui.ControlInvocationResultMsg); ok {
 		m = m.recordBossTrackedTodoFromControlResult(msg)
 	}
-	if msg, ok := msg.(bossHostNoticePersistedMsg); ok {
+	if msg, ok := msg.(helpChatHostNoticePersistedMsg); ok {
 		if msg.err != nil {
-			m.appendBackgroundErrorLogEntry("Boss chat notice save failed", msg.err, "")
+			m.appendBackgroundErrorLogEntry("Help chat notice save failed", msg.err, "")
 		}
 		return m, nil
 	}
 	if m.helpChatMode && bossui.IsMessage(msg) {
 		return m.updateHelpChatModeMessage(msg)
 	}
-	if m.bossMode && bossui.IsMessage(msg) {
-		return m.updateBossModeMessage(msg)
-	}
-	if !m.bossMode && !m.helpChatMode && m.bossModelActive && bossui.IsBackgroundMessage(msg) {
-		return m.updateBossModeMessage(msg)
+	if !m.helpChatMode && m.helpChatModelActive && bossui.IsBackgroundMessage(msg) {
+		return m.updateHelpChatModeMessage(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -1270,10 +1259,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCodexViewport(false)
 		m.syncRuntimeViewport(false)
 		codexTranscriptCmd := m.requestVisibleCodexTranscriptRenderCmd()
-		if m.bossMode {
-			updated, bossCmd := m.updateBossModeWindowSize()
-			return updated, batchCmds(codexTranscriptCmd, bossCmd)
-		}
 		if m.helpChatMode {
 			updated, bossCmd := m.updateHelpChatModeWindowSize()
 			return updated, batchCmds(codexTranscriptCmd, bossCmd)
@@ -1287,10 +1272,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMsg:
-		if m.bossMode {
-			msg.Y--
-			return m.updateBossModeMessage(msg)
-		}
 		if m.helpChatMode {
 			return m.updateHelpChatModeMouse(msg)
 		}
@@ -1338,9 +1319,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	case tea.KeyMsg:
-		if m.bossMode {
-			return m.updateBossModeKey(msg)
-		}
 		if m.helpChatMode {
 			return m.updateHelpChatModeKey(msg)
 		}
@@ -1555,9 +1533,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.status = fmt.Sprintf("Agent task %s handoff failed: %v", msg.taskID, msg.err)
-			notice := bossEngineerCompletionNotice(msg.label, msg.summary, msg.engineerName) + "\n\nI couldn't save that review handoff: " + msg.err.Error()
+			notice := bossEngineerCompletionNotice(msg.label, msg.summary) + "\n\nI couldn't save that review handoff: " + msg.err.Error()
 			var cmd tea.Cmd
-			m, cmd = m.recordBossHostNotice(bossHostNotice{Content: notice, AnnounceInChat: true, Handoff: bossEngineerCompletionHandoff(msg.label, msg.engineerName)})
+			m, cmd = m.recordBossHostNotice(bossHostNotice{Content: notice, AnnounceInChat: true})
 			return m, cmd
 		}
 		m.upsertOpenAgentTask(msg.task)
@@ -1571,9 +1549,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Agent task " + label + " needs your call"
 		var cmd tea.Cmd
 		m, cmd = m.recordBossHostNotice(bossHostNotice{Content: msg.notice, AnnounceInChat: true, Handoff: msg.handoff})
-		if m.bossMode {
-			cmd = batchCmds(cmd, m.bossModel.RefreshCmd())
-		}
 		if m.helpChatMode {
 			cmd = batchCmds(cmd, m.helpChatModel.RefreshCmd())
 		}
@@ -1958,7 +1933,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.status = msg.status
-		if m.bossMode && strings.TrimSpace(msg.status) != "" {
+		if m.helpChatMode && strings.TrimSpace(msg.status) != "" {
 			var hostCmd tea.Cmd
 			m, hostCmd = m.updateBossHostNotice("Browser handoff: " + strings.TrimSpace(msg.status))
 			return m, hostCmd
@@ -2520,10 +2495,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexResumeChoices(msg)
 	case busMsg:
 		cmds := []tea.Cmd{m.waitBusCmd()}
-		if m.bossMode {
-			m.bossModel = m.bossModel.WithChatOnly(false).WithViewContext(m.bossViewContext())
-			cmds = append(cmds, m.bossModel.RefreshCmd())
-		}
 		if m.helpChatMode {
 			m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 			cmds = append(cmds, m.helpChatModel.RefreshCmd())

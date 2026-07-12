@@ -1,5 +1,7 @@
 # Boss 2.0 Design Brief
 
+> Historical design note: the standalone Boss Chat UI has been retired. Its coordination capabilities now live in the centered Help Chat overlay, without the Boss sidebar, bottom log, Flow tab, or human-style AI worker names.
+
 Boss 2.0 is the next architecture direction for Little Control Room's high-level assistant.
 
 The current Boss Chat control path proved that a model can gather project state, propose typed actions, ask for confirmation, and execute through the TUI host. It also exposed a ceiling: a single structured action per turn makes Boss feel like a command palette with prose instead of an autonomous work coordinator.

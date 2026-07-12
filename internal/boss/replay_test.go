@@ -36,7 +36,7 @@ func TestBossReplayRoutingScenarios(t *testing.T) {
 			store:             &fakeBossStore{goalRuns: []bossrun.GoalRecord{completedGoalReplayRecord("goal_demo")}},
 			stateBrief:        "Visible projects: 1.",
 			userPrompt:        "inspect the goal-run trace for goal_demo",
-			wantContent:       []string{"Boss goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"},
+			wantContent:       []string{"LCR goal run", "goal_demo", "archive-agent-tasks agt_one [completed]", "verify-active-set [completed]"},
 			wantNoGoal:        true,
 			wantNoControl:     true,
 			wantNoModelRouted: true,
@@ -44,7 +44,7 @@ func TestBossReplayRoutingScenarios(t *testing.T) {
 		{
 			name:       "goal followup can route through read only model",
 			store:      &fakeBossStore{goalRuns: []bossrun.GoalRecord{completedGoalReplayRecord("goal_demo")}},
-			stateBrief: "Recent Boss goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
+			stateBrief: "Recent LCR goal runs:\n- Clear stale delegated agents (goal_demo/completed); inspect: goal_run_report query=goal_demo",
 			userPrompt: "what happened with that goal run?",
 			routerResponses: []bossReadOnlyRoute{{
 				Kind:  bossActionGoalRunReport,
@@ -75,7 +75,7 @@ func TestBossReplayRoutingScenarios(t *testing.T) {
 				Query: "goal_missing",
 			}},
 			wantRouterCalls: 1,
-			wantContent:     []string{"No Boss goal run found for id: goal_missing"},
+			wantContent:     []string{"No LCR goal run found for id: goal_missing"},
 			wantNoGoal:      true,
 			wantNoControl:   true,
 		},

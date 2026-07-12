@@ -1361,7 +1361,7 @@ func TestHelpPanelLinesStayMinimal(t *testing.T) {
 	if !strings.Contains(joined, "interrupt busy session") {
 		t.Fatalf("helpPanelLines() should keep the session interrupt hint: %q", joined)
 	}
-	if !strings.Contains(joined, "b  boss") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o  sort") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "ctrl+v  image") {
+	if !strings.Contains(joined, "`  Help Chat") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o  sort") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "ctrl+v  image") {
 		t.Fatalf("helpPanelLines() should show the reordered quick actions: %q", joined)
 	}
 	if !strings.Contains(joined, "AGENT") || !strings.Contains(joined, "RUN") {
@@ -1441,12 +1441,6 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 	if !got.helpChatMode {
 		t.Fatalf("backtick should open help chat")
 	}
-	if got.bossMode {
-		t.Fatalf("backtick should open the help overlay, not full Boss mode")
-	}
-	if got.bossModelActive {
-		t.Fatalf("backtick should not initialize the full Boss model")
-	}
 	if !got.helpChatModelActive {
 		t.Fatalf("backtick should initialize the help chat model")
 	}
@@ -1454,7 +1448,7 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 		t.Fatalf("backtick should not open the static quick help panel")
 	}
 	if cmd == nil {
-		t.Fatalf("opening help chat should return the embedded boss init command")
+		t.Fatalf("opening help chat should return the chat init command")
 	}
 	rendered := ansi.Strip(got.View())
 	if got := len(strings.Split(rendered, "\n")); got != m.height {
@@ -1463,7 +1457,7 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 	if !strings.Contains(rendered, "Help Chat") {
 		t.Fatalf("help chat overlay should render the Help Chat modal: %q", rendered)
 	}
-	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log"} {
+	for _, unwanted := range []string{"Boss Desk", "Boss Log"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("help chat overlay should render a frameless core chat, not %q: %q", unwanted, rendered)
 		}
@@ -3169,8 +3163,14 @@ func TestSlashCommandModeTakesPriorityOverDiffView(t *testing.T) {
 	if !got.helpChatMode {
 		t.Fatalf("command mode should open Help Chat once /help is submitted")
 	}
+	if got.diffView != nil {
+		t.Fatalf("/help should return from the diff to the dashboard before opening Help Chat")
+	}
 	if got.showHelp {
 		t.Fatalf("/help should not open the static quick help panel")
+	}
+	if rendered := ansi.Strip(got.View()); !strings.Contains(rendered, "Help Chat") {
+		t.Fatalf("/help should render Help Chat over the dashboard: %q", rendered)
 	}
 }
 

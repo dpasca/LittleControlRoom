@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"lcroom/internal/bossslash"
 	"lcroom/internal/codexslash"
 	"lcroom/internal/commands"
 	"lcroom/internal/control"
@@ -15,7 +14,6 @@ func TestTopicsIncludePublicSlashCommands(t *testing.T) {
 	topics := topicsByID(Topics())
 	assertPublicCommandTopics(t, topics, SurfaceMainTUI, commands.Specs())
 	assertPublicCommandTopics(t, topics, SurfaceEmbeddedEngineer, codexslash.Specs())
-	assertPublicCommandTopics(t, topics, SurfaceBossChat, bossslash.Specs())
 }
 
 func TestTopicsIncludeControlCapabilities(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"sort"
 	"strings"
 
-	"lcroom/internal/bossslash"
 	"lcroom/internal/codexslash"
 	"lcroom/internal/commands"
 	"lcroom/internal/control"
@@ -27,7 +26,7 @@ type Surface string
 const (
 	SurfaceMainTUI          Surface = "main_tui"
 	SurfaceEmbeddedEngineer Surface = "embedded_engineer"
-	SurfaceBossChat         Surface = "boss_chat"
+	SurfaceHelpChat         Surface = "help_chat"
 	SurfaceControl          Surface = "control"
 )
 
@@ -45,10 +44,9 @@ type Topic struct {
 }
 
 func Topics() []Topic {
-	topics := make([]Topic, 0, len(commands.Specs())+len(codexslash.Specs())+len(bossslash.Specs())+len(control.Capabilities())+len(CuratedTopics()))
+	topics := make([]Topic, 0, len(commands.Specs())+len(codexslash.Specs())+len(control.Capabilities())+len(CuratedTopics()))
 	topics = append(topics, MainCommandTopics()...)
 	topics = append(topics, EmbeddedCommandTopics()...)
-	topics = append(topics, BossCommandTopics()...)
 	topics = append(topics, ControlCapabilityTopics()...)
 	topics = append(topics, CuratedTopics()...)
 	sortTopics(topics)
@@ -90,10 +88,6 @@ func EmbeddedCommandTopics() []Topic {
 	return commandTopics(SurfaceEmbeddedEngineer, "codexslash.Specs", codexslash.Specs())
 }
 
-func BossCommandTopics() []Topic {
-	return commandTopics(SurfaceBossChat, "bossslash.Specs", bossslash.Specs())
-}
-
 func ControlCapabilityTopics() []Topic {
 	capabilities := control.Capabilities()
 	topics := make([]Topic, 0, len(capabilities))
@@ -127,17 +121,14 @@ func CuratedTopics() []Topic {
 			Kind:    TopicKindKeybinding,
 			Surface: SurfaceMainTUI,
 			Title:   "Open Help Chat",
-			Summary: "Use /help or the backtick key to open an active Boss-powered Help Chat overlay. Use ? for the compact static quick-help panel.",
+			Summary: "Use /help or the backtick key to open the active Help Chat overlay. Use ? for the compact static quick-help panel.",
 			Usage:   []string{"/help", "`", "?"},
 			ManualSteps: []string{
 				"Press ` from the main project list to open or hide Help Chat.",
 				"Run /help from the slash-command palette to open Help Chat.",
 				"Press Esc or ` to hide Help Chat; press ? when you only want the compact quick-reference panel.",
 			},
-			Related: []string{
-				CommandTopicID(SurfaceMainTUI, "help"),
-				CommandTopicID(SurfaceMainTUI, "boss"),
-			},
+			Related:    []string{CommandTopicID(SurfaceMainTUI, "help")},
 			SourceRefs: []string{"tui.updateNormalMode", "tui.dispatchCommand", "tui.renderHelpChatOverlay"},
 		},
 		{
@@ -311,15 +302,13 @@ func commandRelatedTopics(surface Surface, name string) []string {
 	switch surface {
 	case SurfaceMainTUI:
 		switch strings.TrimSpace(name) {
-		case "boss":
-			return []string{CommandTopicID(SurfaceBossChat, "help")}
 		case "codex", "codex-new", "opencode", "opencode-new", "claude", "claude-new", "lcagent", "lcagent-new":
 			return []string{CommandTopicID(SurfaceEmbeddedEngineer, "new"), CommandTopicID(SurfaceEmbeddedEngineer, "sessions")}
 		}
 	case SurfaceEmbeddedEngineer:
 		switch strings.TrimSpace(name) {
-		case "boss":
-			return []string{CommandTopicID(SurfaceMainTUI, "boss")}
+		case "help":
+			return []string{CommandTopicID(SurfaceMainTUI, "help")}
 		}
 	}
 	return nil

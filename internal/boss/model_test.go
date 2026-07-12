@@ -46,7 +46,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	m.syncLayout(true)
 
 	view := m.View()
-	for _, want := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Watching", "Next", "Alpha"} {
+	for _, want := range []string{"Help Chat", "Boss Desk", "Boss Log", "Watching", "Next", "Alpha"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -107,7 +107,7 @@ func TestModelHeaderShowsLastUsage(t *testing.T) {
 		t.Fatalf("view missing token usage stats:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "t4.5k") {
-		t.Fatalf("boss chat usage should not show total token count:\n%s", rendered)
+		t.Fatalf("Help chat usage should not show total token count:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "last $0.012") {
 		t.Fatalf("view missing last cost estimate:\n%s", rendered)
@@ -139,7 +139,7 @@ func TestBossSidebarShowsReadableChatStats(t *testing.T) {
 
 	rendered := ansi.Strip(strings.Join(m.bossSidebarLines(54, 20), "\n"))
 	for _, want := range []string{
-		"Boss Chat",
+		"Help Chat",
 		"Model",
 		"gpt-5.5",
 		"Reasoning",
@@ -172,7 +172,7 @@ func TestModelContextTextReportsClippedChatAndFlow(t *testing.T) {
 	}
 	m.messages = append(m.messages, ChatMessage{
 		Role:    "assistant",
-		Content: "Ada is back from Alpha.",
+		Content: "Work on Alpha is ready for review.",
 		Kind:    ChatMessageKindFlow,
 	})
 
@@ -433,16 +433,15 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.viewContext = ViewContext{
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:         "agent_task",
-			TaskID:       "agt_demo",
-			ProjectPath:  "/tmp/agent-task",
-			Title:        "Revoke Cursor GitHub access",
-			EngineerName: "Ada",
-			Provider:     model.SessionSourceCodex,
-			SessionID:    "thread-agent-1",
-			Status:       "working",
-			Active:       true,
-			StartedAt:    now.Add(-37 * time.Second),
+			Kind:        "agent_task",
+			TaskID:      "agt_demo",
+			ProjectPath: "/tmp/agent-task",
+			Title:       "Revoke Cursor GitHub access",
+			Provider:    model.SessionSourceCodex,
+			SessionID:   "thread-agent-1",
+			Status:      "working",
+			Active:      true,
+			StartedAt:   now.Add(-37 * time.Second),
 		}},
 	}
 	m.snapshot = StateSnapshot{
@@ -457,13 +456,13 @@ func TestModelAttentionRowsShowActiveAgentTaskTimer(t *testing.T) {
 
 	rendered := m.renderAttentionRows(90, 1)
 	stripped := ansi.Strip(rendered)
-	for _, want := range []string{"Alt+1", "00:37", "working 00:37", "Ada working 00:37", "Revoke Cursor GitHub"} {
+	for _, want := range []string{"Alt+1", "00:37", "working 00:37", "Revoke Cursor GitHub"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("active agent attention row missing %q:\n%s", want, stripped)
 		}
 	}
 	desk := ansi.Strip(m.deskContent(90, 12))
-	for _, want := range []string{"Now", "00:37", "Ada on Revoke Cursor GitHub access"} {
+	for _, want := range []string{"Now", "00:37", "Working on Revoke Cursor GitHub access"} {
 		if !strings.Contains(desk, want) {
 			t.Fatalf("active agent desk status missing %q:\n%s", want, desk)
 		}
@@ -496,7 +495,7 @@ func TestModelChatOnlyViewOmitsDeskAndLog(t *testing.T) {
 	if strings.TrimSpace(rendered) == "" {
 		t.Fatalf("chat-only view should render the core chat surface")
 	}
-	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Watching", "Next"} {
+	for _, unwanted := range []string{"Help Chat", "Boss Desk", "Boss Log", "Watching", "Next"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("chat-only view should omit %q:\n%s", unwanted, rendered)
 		}
@@ -523,7 +522,7 @@ func TestEmbeddedHelpUsesSeparateSessionStore(t *testing.T) {
 		t.Fatalf("help session dir = %q, want %q", helpModel.sessionStore.dir, helpChatSessionsDirName)
 	}
 	if bossModel.sessionStore.dir == helpModel.sessionStore.dir {
-		t.Fatalf("help chat should not share Boss chat session history: %q", helpModel.sessionStore.dir)
+		t.Fatalf("help chat should not share legacy Boss chat session history: %q", helpModel.sessionStore.dir)
 	}
 }
 
@@ -569,7 +568,7 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 	m.syncLayout(true)
 
 	rendered := ansi.Strip(m.View())
-	for _, unwanted := range []string{"Boss Chat", "Boss Desk", "Boss Log", "Flow", "Tab switch"} {
+	for _, unwanted := range []string{"Help Chat", "Boss Desk", "Boss Log", "Flow", "Tab switch"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("help chat view should omit Boss transcript control %q:\n%s", unwanted, rendered)
 		}
@@ -594,6 +593,31 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 		if got, want := fmt.Sprint(style.GetBackground()), fmt.Sprint(helpChatSurfaceBackground); got != want {
 			t.Fatalf("help chat %s text background = %s, want help surface %s", label, got, want)
 		}
+	}
+}
+
+func TestEmbeddedHelpRendersHostNoticesInChatWithoutFlow(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 100
+	m.height = 20
+	updated, _ := m.Update(HostNoticeMsg{
+		Content:        "Work on Project Task is ready for review.",
+		AnnounceInChat: true,
+		Handoff:        &HandoffHighlight{ProjectLabel: "Project Task"},
+	})
+	got := updated.(Model)
+	if len(got.messages) != 1 || got.messages[0].Kind != ChatMessageKindChat {
+		t.Fatalf("help host notice messages = %#v, want one visible chat message", got.messages)
+	}
+	got.syncLayout(true)
+	rendered := ansi.Strip(got.View())
+	if !strings.Contains(rendered, "Help> Work on Project Task is ready for review.") {
+		t.Fatalf("help host notice missing from chat:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Flow") {
+		t.Fatalf("help host notice exposed retired Flow UI:\n%s", rendered)
 	}
 }
 
@@ -915,13 +939,12 @@ func TestBossTickRefreshesDeskTimer(t *testing.T) {
 	m := NewEmbeddedWithViewContext(context.Background(), nil, ViewContext{
 		Active: true,
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:         "agent_task",
-			TaskID:       "agt_demo",
-			Title:        "Cursor cleanup",
-			EngineerName: "Grace",
-			Status:       "working",
-			Active:       true,
-			StartedAt:    now.Add(-3 * time.Second),
+			Kind:      "agent_task",
+			TaskID:    "agt_demo",
+			Title:     "Cursor cleanup",
+			Status:    "working",
+			Active:    true,
+			StartedAt: now.Add(-3 * time.Second),
 		}},
 	})
 	m.width = 96
@@ -949,14 +972,13 @@ func TestModelSupervisorDoesNotAppendReviewAgentTasksAfterTranscript(t *testing.
 	m := New(context.Background(), nil)
 	m.nowFn = func() time.Time { return now }
 	m.messages = []ChatMessage{
-		{Role: "assistant", Content: "Dennis is back from Diff duplicate Codex skills.\n\nCurrent state: there are no longer two live imagegen copies.", At: now.Add(-time.Minute)},
+		{Role: "assistant", Content: "Work on Diff duplicate Codex skills is ready for review.\n\nCurrent state: there are no longer two live imagegen copies.", At: now.Add(-time.Minute)},
 		{Role: "user", Content: "the engineer has no memory?", At: now},
 	}
 	m.snapshot = StateSnapshot{
 		OpenAgentTasks: []AgentTaskBrief{{
 			ID:            "agt_diff",
 			Title:         "Diff duplicate Codex skills",
-			EngineerName:  "Dennis",
 			Status:        model.AgentTaskStatusWaiting,
 			Summary:       "Current state: there are no longer two live imagegen copies.",
 			LastTouchedAt: now.Add(-time.Minute),
@@ -964,7 +986,7 @@ func TestModelSupervisorDoesNotAppendReviewAgentTasksAfterTranscript(t *testing.
 	}
 
 	rendered := ansi.Strip(m.renderTranscript(180))
-	for _, want := range []string{"Boss> Dennis is back from Diff duplicate Codex skills.", "You> the engineer has no memory?"} {
+	for _, want := range []string{"Boss> Work on Diff duplicate Codex skills is ready for review.", "You> the engineer has no memory?"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("transcript missing saved chat turn %q:\n%s", want, rendered)
 		}
@@ -985,20 +1007,19 @@ func TestModelSupervisorMarksQuietEngineerActivity(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.viewContext = ViewContext{
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:         "project",
-			ProjectPath:  "/alpha",
-			Title:        "Alpha",
-			EngineerName: "Tem",
-			Provider:     model.SessionSourceCodex,
-			Status:       "working",
-			Active:       true,
-			StartedAt:    now.Add(-30 * time.Minute),
-			LastEventAt:  now.Add(-11 * time.Minute),
+			Kind:        "project",
+			ProjectPath: "/alpha",
+			Title:       "Alpha",
+			Provider:    model.SessionSourceCodex,
+			Status:      "working",
+			Active:      true,
+			StartedAt:   now.Add(-30 * time.Minute),
+			LastEventAt: now.Add(-11 * time.Minute),
 		}},
 	}
 
 	rendered := ansi.Strip(m.deskContent(90, 12))
-	for _, want := range []string{"Now", "quiet", "Tem has gone quiet on Alpha for 11:00"} {
+	for _, want := range []string{"Now", "quiet", "Work on Alpha has been quiet for 11:00"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("boss desk quiet block missing %q:\n%s", want, rendered)
 		}
@@ -1042,15 +1063,14 @@ func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.viewContext = ViewContext{
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:         "project",
-			ProjectPath:  "/alpha",
-			Title:        "Alpha",
-			EngineerName: "Hedy",
-			Provider:     model.SessionSourceCodex,
-			SessionID:    "thread-project-1",
-			Status:       "working",
-			Active:       true,
-			StartedAt:    now.Add(-2 * time.Minute),
+			Kind:        "project",
+			ProjectPath: "/alpha",
+			Title:       "Alpha",
+			Provider:    model.SessionSourceCodex,
+			SessionID:   "thread-project-1",
+			Status:      "working",
+			Active:      true,
+			StartedAt:   now.Add(-2 * time.Minute),
 		}},
 	}
 	m.snapshot = StateSnapshot{
@@ -1064,7 +1084,7 @@ func TestModelAttentionRowsShowActiveProjectEngineerTimer(t *testing.T) {
 
 	rendered := m.renderAttentionRows(90, 1)
 	stripped := ansi.Strip(rendered)
-	for _, want := range []string{"Alt+1", "02:00", "working 02:00", "Hedy working 02:00", "Alpha"} {
+	for _, want := range []string{"Alt+1", "02:00", "working 02:00", "Alpha"} {
 		if !strings.Contains(stripped, want) {
 			t.Fatalf("active project attention row missing %q:\n%s", want, stripped)
 		}
@@ -1079,16 +1099,15 @@ func TestModelAttentionRowsPreferActiveEngineerSummary(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.viewContext = ViewContext{
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:         "project",
-			ProjectPath:  "/alpha",
-			Title:        "Alpha",
-			EngineerName: "Hedy",
-			Provider:     model.SessionSourceCodex,
-			SessionID:    "thread-project-1",
-			Status:       "working",
-			Summary:      "Generated the helper for review.",
-			Active:       true,
-			StartedAt:    now.Add(-2 * time.Minute),
+			Kind:        "project",
+			ProjectPath: "/alpha",
+			Title:       "Alpha",
+			Provider:    model.SessionSourceCodex,
+			SessionID:   "thread-project-1",
+			Status:      "working",
+			Summary:     "Generated the helper for review.",
+			Active:      true,
+			StartedAt:   now.Add(-2 * time.Minute),
 		}},
 	}
 	m.snapshot = StateSnapshot{
@@ -1159,7 +1178,7 @@ func TestControlResultIsContextNotBossChatTurn(t *testing.T) {
 		t.Fatalf("control result without service should not emit a command, got %T", cmd)
 	}
 	if len(got.messages) != 1 {
-		t.Fatalf("control result should not append a boss chat turn, got %#v", got.messages)
+		t.Fatalf("control result should not append a Help chat turn, got %#v", got.messages)
 	}
 	if strings.Contains(got.renderTranscript(120), "Agent task agt_20260502T230818_4c3c890b46") {
 		t.Fatalf("control result leaked into transcript:\n%s", got.renderTranscript(120))
@@ -1178,25 +1197,24 @@ func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.messages = []ChatMessage{{Role: "user", Content: "just nuke that skill", At: now}}
 	activity := ViewEngineerActivity{
-		Kind:         "agent_task",
-		TaskID:       "agt_skill_cleanup",
-		Title:        "Retire projects-control-center skill",
-		EngineerName: "Niklaus",
-		Provider:     model.SessionSourceCodex,
-		SessionID:    "thread-skill-cleanup",
-		Status:       "working",
-		Active:       true,
-		StartedAt:    now.Add(-3 * time.Second),
-		LastEventAt:  now.Add(-3 * time.Second),
+		Kind:        "agent_task",
+		TaskID:      "agt_skill_cleanup",
+		Title:       "Retire projects-control-center skill",
+		Provider:    model.SessionSourceCodex,
+		SessionID:   "thread-skill-cleanup",
+		Status:      "working",
+		Active:      true,
+		StartedAt:   now.Add(-3 * time.Second),
+		LastEventAt: now.Add(-3 * time.Second),
 	}
 
 	updated, _ := m.Update(ControlInvocationResultMsg{
-		Status:   "Ok, Niklaus is working on Retire projects-control-center skill.",
+		Status:   "Work on Retire projects-control-center skill is underway.",
 		Activity: &activity,
 	})
 	got := updated.(Model)
 	if len(got.messages) != 1 {
-		t.Fatalf("control result should not append a boss chat turn, got %#v", got.messages)
+		t.Fatalf("control result should not append a Help chat turn, got %#v", got.messages)
 	}
 	rendered := ansi.Strip(got.renderTranscript(120))
 	for _, want := range []string{"You> just nuke that skill"} {
@@ -1204,17 +1222,17 @@ func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
 			t.Fatalf("transcript missing saved turn %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Niklaus is working on Retire projects-control-center skill") {
+	if strings.Contains(rendered, "Work on Retire projects-control-center skill is underway") {
 		t.Fatalf("transient engineer feedback should stay out of transcript:\n%s", rendered)
 	}
 	desk := ansi.Strip(got.bossSidebarContent(90, 12))
-	for _, want := range []string{"Now", "00:03", "Niklaus on Retire projects-control-center skill"} {
+	for _, want := range []string{"Now", "00:03", "Working on Retire projects-control-center skill"} {
 		if !strings.Contains(desk, want) {
 			t.Fatalf("transient engineer feedback missing from desk %q:\n%s", want, desk)
 		}
 	}
 	log := ansi.Strip(got.bossLogContent(90, 8))
-	for _, want := range []string{"Niklaus started Retire projects-control-center skill"} {
+	for _, want := range []string{"Work started on Retire projects-control-center skill"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("transient engineer event missing from log %q:\n%s", want, log)
 		}
@@ -1229,33 +1247,32 @@ func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
 	m.nowFn = func() time.Time { return now }
 	m.messages = []ChatMessage{{Role: "user", Content: "just nuke that skill", At: now}}
 	activity := ViewEngineerActivity{
-		Kind:         "agent_task",
-		TaskID:       "agt_skill_cleanup",
-		Title:        "Retire projects-control-center skill",
-		EngineerName: "Niklaus",
-		Provider:     model.SessionSourceCodex,
-		SessionID:    "thread-skill-cleanup",
-		Status:       "working",
-		Active:       true,
-		StartedAt:    now.Add(-3 * time.Second),
-		LastEventAt:  now.Add(-3 * time.Second),
+		Kind:        "agent_task",
+		TaskID:      "agt_skill_cleanup",
+		Title:       "Retire projects-control-center skill",
+		Provider:    model.SessionSourceCodex,
+		SessionID:   "thread-skill-cleanup",
+		Status:      "working",
+		Active:      true,
+		StartedAt:   now.Add(-3 * time.Second),
+		LastEventAt: now.Add(-3 * time.Second),
 	}
 
 	updated, _ := m.Update(ControlInvocationResultMsg{
-		Status:         "Ok, Niklaus is working on Retire projects-control-center skill.",
+		Status:         "Work on Retire projects-control-center skill is underway.",
 		Activity:       &activity,
 		AnnounceInChat: true,
 	})
 	got := updated.(Model)
 	if len(got.messages) != 2 {
-		t.Fatalf("control result should append a boss chat turn, got %#v", got.messages)
+		t.Fatalf("control result should append a Help chat turn, got %#v", got.messages)
 	}
 	if got.messages[1].Kind != ChatMessageKindChat {
 		t.Fatalf("control result message kind = %q, want chat", got.messages[1].Kind)
 	}
 	rendered := ansi.Strip(got.renderTranscript(120))
 	for _, want := range []string{
-		"Boss> Ok, Niklaus is working on Retire projects-control-center skill.",
+		"Boss> Work on Retire projects-control-center skill is underway.",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("transcript missing %q:\n%s", want, rendered)
@@ -1263,7 +1280,7 @@ func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
 	}
 	got.transcriptTab = bossTranscriptTabFlow
 	flowRendered := ansi.Strip(got.renderTranscript(120))
-	if strings.Contains(flowRendered, "Niklaus is working on Retire projects-control-center skill") {
+	if strings.Contains(flowRendered, "Work on Retire projects-control-center skill is underway") {
 		t.Fatalf("flow tab should not include control acknowledgements:\n%s", flowRendered)
 	}
 }
@@ -1299,20 +1316,19 @@ func TestAssistantViewContextIncludesTransientEngineerActivity(t *testing.T) {
 	m := NewEmbedded(context.Background(), nil)
 	m.nowFn = func() time.Time { return now }
 	m = m.recordTransientEngineerActivity(ViewEngineerActivity{
-		Kind:         "project",
-		ProjectPath:  "/tmp/oyk-aso",
-		Title:        "oyk-aso",
-		EngineerName: "Niklaus",
-		Provider:     model.SessionSourceCodex,
-		SessionID:    "thread-oyk",
-		Status:       "working",
-		Active:       true,
-		StartedAt:    now.Add(-15 * time.Second),
-		LastEventAt:  now.Add(-15 * time.Second),
+		Kind:        "project",
+		ProjectPath: "/tmp/oyk-aso",
+		Title:       "oyk-aso",
+		Provider:    model.SessionSourceCodex,
+		SessionID:   "thread-oyk",
+		Status:      "working",
+		Active:      true,
+		StartedAt:   now.Add(-15 * time.Second),
+		LastEventAt: now.Add(-15 * time.Second),
 	})
 
 	brief := BuildViewContextBrief(m.assistantViewContext(), now)
-	for _, want := range []string{"active engineer work", "Niklaus on oyk-aso", "via codex"} {
+	for _, want := range []string{"active engineer work", "oyk-aso: working", "via codex"} {
 		if !strings.Contains(brief, want) {
 			t.Fatalf("assistant view context missing %q:\n%s", want, brief)
 		}
@@ -1571,7 +1587,7 @@ func TestModelAltCOpensDialogAndCopiesFullMultilineInput(t *testing.T) {
 	if got.input.Value() != m.input.Value() {
 		t.Fatalf("input changed to %q, want %q", got.input.Value(), m.input.Value())
 	}
-	if got.status != "Copied full boss chat input to clipboard" {
+	if got.status != "Copied full Help chat input to clipboard" {
 		t.Fatalf("status = %q, want copy confirmation", got.status)
 	}
 }
@@ -1795,7 +1811,7 @@ func TestModelAltOWithoutLinksLeavesPickerClosed(t *testing.T) {
 	if got.openTargetPicker != nil {
 		t.Fatalf("file picker should stay closed")
 	}
-	if got.status != "No files or links in this boss chat" {
+	if got.status != "No files or links in this Help chat" {
 		t.Fatalf("status = %q, want no-links notice", got.status)
 	}
 }
@@ -1921,7 +1937,7 @@ func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
 		t.Fatalf("status = %q", got.status)
 	}
 	if len(got.messages) != 0 {
-		t.Fatalf("cancel should not append a boss chat turn, got %#v", got.messages)
+		t.Fatalf("cancel should not append a Help chat turn, got %#v", got.messages)
 	}
 	if len(got.operationalNotices) != 1 || got.operationalNotices[0].Code != "control_canceled" {
 		t.Fatalf("cancel notice = %#v, want one operational cancellation notice", got.operationalNotices)
@@ -2027,7 +2043,7 @@ func TestEmbeddedModelCanCancelGoalRun(t *testing.T) {
 		t.Fatalf("status = %q", got.status)
 	}
 	if len(got.messages) != 0 {
-		t.Fatalf("cancel should not append a boss chat turn, got %#v", got.messages)
+		t.Fatalf("cancel should not append a Help chat turn, got %#v", got.messages)
 	}
 	if len(got.operationalNotices) != 1 || got.operationalNotices[0].Code != "goal_canceled" {
 		t.Fatalf("cancel notice = %#v, want one goal cancellation notice", got.operationalNotices)
@@ -2170,7 +2186,7 @@ func TestEmbeddedModelGivesSpareHeightToChatOnTallHosts(t *testing.T) {
 			DirtyProjects:          33,
 			PendingClassifications: 2,
 		}
-		m.status = "Boss chat via gpt-5.4-mini"
+		m.status = "Help chat via gpt-5.4-mini"
 
 		layout := m.layout()
 		renderedHeight := layout.topHeight + layout.middleGapHeight + layout.bottomHeight
@@ -2303,7 +2319,7 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 			{Name: "release_notes", Status: model.StatusIdle, AttentionScore: 31, RepoBranch: "master"},
 		},
 	}
-	m.status = "Boss chat via gpt-5.4-mini"
+	m.status = "Help chat via gpt-5.4-mini"
 	m.syncLayout(true)
 
 	layout := m.layout()
@@ -2728,7 +2744,7 @@ func TestModelTranscriptSeparatesChatAndFlowMessages(t *testing.T) {
 		Content: "Keep this focused on Alpha.",
 	}, {
 		Role:    "assistant",
-		Content: "Ada is back from noisy flow.",
+		Content: "Work on the noisy flow is ready for review.",
 		Kind:    ChatMessageKindFlow,
 	}, {
 		Role:    "assistant",
@@ -2747,7 +2763,7 @@ func TestModelTranscriptSeparatesChatAndFlowMessages(t *testing.T) {
 
 	m.transcriptTab = bossTranscriptTabFlow
 	flow := ansi.Strip(m.renderTranscript(120))
-	if !strings.Contains(flow, "Flow> Ada is back from noisy flow.") {
+	if !strings.Contains(flow, "Flow> Work on the noisy flow is ready for review.") {
 		t.Fatalf("flow tab missing flow notice:\n%s", flow)
 	}
 	for _, unwanted := range []string{"Keep this focused on Alpha.", "Alpha is ready for review."} {
@@ -2856,23 +2872,23 @@ func TestProjectTextHighlightsDoNotColorPartialWords(t *testing.T) {
 	}
 }
 
-func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
+func TestModelTranscriptHighlightsWorkReturnNotice(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbedded(context.Background(), nil)
 	fixed := time.Date(2024, 6, 15, 14, 30, 0, 0, time.UTC)
 	m.nowFn = func() time.Time { return fixed }
 	updated, _ := m.Update(HostNoticeMsg{
-		Content:        "Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation.",
+		Content:        "Work on Cursor cleanup is ready for review: Cursor access still needs user-side confirmation.",
 		AnnounceInChat: true,
-		Handoff:        &HandoffHighlight{EngineerName: "Ada", ProjectLabel: "Cursor cleanup"},
+		Handoff:        &HandoffHighlight{ProjectLabel: "Cursor cleanup"},
 	})
 	got := updated.(Model)
 	got.transcriptTab = bossTranscriptTabFlow
 
 	rendered := got.renderTranscript(120)
 	stripped := ansi.Strip(rendered)
-	want := "14:30:00 Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation."
+	want := "14:30:00 Work on Cursor cleanup is ready for review: Cursor access still needs user-side confirmation."
 	if !strings.Contains(stripped, want) {
 		t.Fatalf("rendered transcript missing compact handoff %q:\n%s", want, stripped)
 	}
@@ -2880,8 +2896,7 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 		t.Fatalf("engineer return notice should keep output on the first line:\n%s", stripped)
 	}
 	for label, want := range map[string]string{
-		"engineer": bossHandoffEngineerNameStyle.Render("Ada"),
-		"project":  bossProjectIdentityStyle("Cursor cleanup", bossHandoffProjectLabelStyle).Render("Cursor cleanup"),
+		"project": bossProjectIdentityStyle("Cursor cleanup", bossHandoffProjectLabelStyle).Render("Cursor cleanup"),
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered transcript missing %s highlight:\n%s", label, stripped)
@@ -2892,13 +2907,12 @@ func TestModelTranscriptHighlightsEngineerReturnNotice(t *testing.T) {
 	loaded.transcriptTab = bossTranscriptTabFlow
 	loaded.messages = []ChatMessage{{
 		Role:    "assistant",
-		Content: "Ada is back from Cursor cleanup: Cursor access still needs user-side confirmation.",
+		Content: "Work on Cursor cleanup is ready for review: Cursor access still needs user-side confirmation.",
 		Kind:    ChatMessageKindFlow,
 	}}
 	loadedRendered := loaded.renderTranscript(120)
 	for label, want := range map[string]string{
-		"loaded engineer": bossHandoffEngineerNameStyle.Render("Ada"),
-		"loaded project":  bossProjectIdentityStyle("Cursor cleanup", bossHandoffProjectLabelStyle).Render("Cursor cleanup"),
+		"loaded project": bossProjectIdentityStyle("Cursor cleanup", bossHandoffProjectLabelStyle).Render("Cursor cleanup"),
 	} {
 		if !strings.Contains(loadedRendered, want) {
 			t.Fatalf("loaded transcript missing %s highlight:\n%s", label, ansi.Strip(loadedRendered))
@@ -3024,14 +3038,13 @@ func TestModelKeepsEngineerActivityOutOfTranscriptWhileBossIsThinking(t *testing
 	m.streamingToolCalls = []string{"tool: agent_task_report"}
 	m.viewContext = ViewContext{
 		EngineerActivities: []ViewEngineerActivity{{
-			Kind:         "agent_task",
-			TaskID:       "agt_demo",
-			Title:        "Diff duplicate Codex skills",
-			EngineerName: "Ada",
-			Provider:     model.SessionSourceCodex,
-			Status:       "working",
-			Active:       true,
-			StartedAt:    now.Add(-9 * time.Second),
+			Kind:      "agent_task",
+			TaskID:    "agt_demo",
+			Title:     "Diff duplicate Codex skills",
+			Provider:  model.SessionSourceCodex,
+			Status:    "working",
+			Active:    true,
+			StartedAt: now.Add(-9 * time.Second),
 		}},
 	}
 
@@ -3041,11 +3054,11 @@ func TestModelKeepsEngineerActivityOutOfTranscriptWhileBossIsThinking(t *testing
 			t.Fatalf("thinking transcript missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Ada is working on Diff duplicate Codex skills") || strings.Contains(rendered, "Supervisor") {
+	if strings.Contains(rendered, "Work on Diff duplicate Codex skills is underway") || strings.Contains(rendered, "Supervisor") {
 		t.Fatalf("thinking transcript should not expose supervisor chrome:\n%s", rendered)
 	}
 	desk := ansi.Strip(m.deskContent(90, 12))
-	for _, want := range []string{"Now", "00:09", "Ada on Diff duplicate Codex skills"} {
+	for _, want := range []string{"Now", "00:09", "Working on Diff duplicate Codex skills"} {
 		if !strings.Contains(desk, want) {
 			t.Fatalf("thinking desk missing %q:\n%s", want, desk)
 		}

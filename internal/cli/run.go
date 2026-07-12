@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/buildinfo"
 	"lcroom/internal/codexapp"
@@ -197,8 +196,6 @@ func Run(programName string, args []string) int {
 		return runSnapshot(ctx, svc, cfg)
 	case "screenshots":
 		return runScreenshots(ctx, svc, args[1:])
-	case "boss":
-		return runBoss(ctx, svc)
 	case "tui":
 		return runTUI(ctx, svc, serveAddr, mobileEnabled)
 	case "serve":
@@ -1142,22 +1139,6 @@ func stopRunningServer(running *server.RunningServer) error {
 	return errors.Join(shutdownErr, running.Wait())
 }
 
-func runBoss(ctx context.Context, svc *service.Service) int {
-	go svc.StartScheduler(ctx)
-	go svc.StartSessionClassifier(ctx)
-	go svc.StartTodoWorktreeSuggester(ctx)
-	go svc.StartCommitTodoChecker(ctx)
-	svc.StartBackgroundDiscovery(ctx)
-
-	m := boss.New(ctx, svc)
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "boss mode failed: %v\n", err)
-		return 1
-	}
-	return 0
-}
-
 func recoverInteractivePanic(cfg config.AppConfig, mode string) {
 	recovered := recover()
 	if recovered == nil {
@@ -1358,7 +1339,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|help-meta|boss|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|help-meta|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -1371,9 +1352,6 @@ func printUsage(programName string) {
 	fmt.Println("  --active-threshold <duration>")
 	fmt.Println("  --stuck-threshold <duration>")
 	fmt.Println("  --allow-multiple-instances")
-	fmt.Println("Boss mode:")
-	fmt.Println("  lcroom boss opens the chat-first high-level assistant UI")
-	fmt.Println("  Set boss_helm_model/boss_utility_model or LCROOM_BOSS_MODEL to override Boss chat models")
 	fmt.Println("Sanitize summaries flags:")
 	fmt.Println("  --project <path>")
 	fmt.Println("  --session-id <id>")
@@ -1413,7 +1391,7 @@ func min(a, b int) int {
 
 func guardedRuntimeMode(subcmd string) bool {
 	switch subcmd {
-	case "boss", "classify", "tui", "serve":
+	case "classify", "tui", "serve":
 		return true
 	default:
 		return false

@@ -61,17 +61,17 @@ func TestSuggestionsIncludeDevLCReviewCommandWhenPrefixed(t *testing.T) {
 	}
 }
 
-func TestSuggestionsIncludeBossCommand(t *testing.T) {
+func TestSuggestionsIncludeHelpCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false
 	for _, suggestion := range suggestions {
-		if suggestion.Insert == "/boss" {
+		if suggestion.Insert == "/help" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("Suggestions(/) should include /boss: %#v", suggestions)
+		t.Fatalf("Suggestions(/) should include /help: %#v", suggestions)
 	}
 }
 
@@ -264,16 +264,22 @@ func TestParsePermissionsHelpCommand(t *testing.T) {
 	}
 }
 
-func TestParseBossCommand(t *testing.T) {
-	inv, err := Parse("/boss")
+func TestParseHelpCommand(t *testing.T) {
+	inv, err := Parse("/help")
 	if err != nil {
-		t.Fatalf("Parse(/boss) error = %v", err)
+		t.Fatalf("Parse(/help) error = %v", err)
 	}
-	if inv.Kind != KindBoss {
-		t.Fatalf("Parse(/boss) kind = %q, want %q", inv.Kind, KindBoss)
+	if inv.Kind != KindHelp {
+		t.Fatalf("Parse(/help) kind = %q, want %q", inv.Kind, KindHelp)
 	}
-	if inv.Canonical != "/boss" {
-		t.Fatalf("Parse(/boss) canonical = %q, want /boss", inv.Canonical)
+	if inv.Canonical != "/help" {
+		t.Fatalf("Parse(/help) canonical = %q, want /help", inv.Canonical)
+	}
+}
+
+func TestParseBossCommandWasRemoved(t *testing.T) {
+	if _, err := Parse("/boss"); err == nil {
+		t.Fatalf("Parse(/boss) error = nil, want retired command rejection")
 	}
 }
 

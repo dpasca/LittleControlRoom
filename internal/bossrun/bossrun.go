@@ -174,7 +174,7 @@ func normalizeGoalRunDefaults(proposal *GoalProposal) {
 			proposal.Run.Objective = "Create a scoped LCAgent task and launch it with the approved objective."
 		}
 		if proposal.Run.SuccessCriteria == "" {
-			proposal.Run.SuccessCriteria = "A Boss-owned LCAgent task is created, launched, awaited, and harvested into the goal trace."
+			proposal.Run.SuccessCriteria = "A delegated LCAgent task is created, launched, awaited, and harvested into the goal trace."
 		}
 	default:
 		if proposal.Run.Title == "" {
@@ -430,7 +430,7 @@ func formatLCAgentGoalProposalPreview(proposal GoalProposal) string {
 		lines = append(lines, "", "Resources:")
 		lines = appendResourceLines(lines, proposal.Authority.Resources)
 	}
-	lines = append(lines, "", "Allowed action: create one Boss-owned agent task and launch LCAgent for it.")
+	lines = append(lines, "", "Allowed action: create one delegated agent task and launch LCAgent for it.")
 	if len(proposal.Authority.ForbiddenSideEffects) > 0 {
 		lines = append(lines, "Forbidden side effects: "+strings.Join(proposal.Authority.ForbiddenSideEffects, "; ")+".")
 	}

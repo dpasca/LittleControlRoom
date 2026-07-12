@@ -271,7 +271,7 @@ func validateBossAction(action bossAction) error {
 		_, _, err := goalProposalFromBossAction(action)
 		return err
 	default:
-		return fmt.Errorf("boss chat returned unsupported action kind %q", action.Kind)
+		return fmt.Errorf("Help chat returned unsupported action kind %q", action.Kind)
 	}
 }
 
@@ -286,10 +286,10 @@ func synthesizeToolLoopFallback(results []bossToolResult) string {
 func directGoalRunReportAnswer(result bossToolResult) string {
 	text := strings.TrimSpace(result.Text)
 	if text == "" {
-		return "I could not find any stored Boss goal-run detail."
+		return "I could not find any stored LCR goal-run detail."
 	}
 	if strings.HasPrefix(text, "Tool error:") {
-		return "I could not inspect the Boss goal run: " + strings.TrimSpace(strings.TrimPrefix(text, "Tool error:"))
+		return "I could not inspect the LCR goal run: " + strings.TrimSpace(strings.TrimPrefix(text, "Tool error:"))
 	}
 	return text
 }

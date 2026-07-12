@@ -167,7 +167,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
 	if m.bossSetupPrompt != nil {
-		return m.renderModalFooter(width, "Boss chat setup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
+		return m.renderModalFooter(width, "Help chat setup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
 	}
 	if m.setupMode {
 		if m.setupReviewMode {
@@ -1354,7 +1354,7 @@ func helpPanelLines() []string {
 			renderDialogAction("?", "toggle quick help", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("`", "Help Chat", commitActionKeyStyle, commitActionTextStyle),
 		),
-		commandPaletteHintStyle.Render("Try /setup, /ai, /perf, /errors, /codex, /todo, /skills, /mobile, /cpu, /ports, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
+		commandPaletteHintStyle.Render("Try /help, /setup, /ai, /perf, /errors, /codex, /todo, /skills, /mobile, /cpu, /ports, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
 		detailSectionStyle.Render("Navigate"),
 		renderHelpPanelActionRow(
 			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
@@ -1369,7 +1369,6 @@ func helpPanelLines() []string {
 		renderHelpPanelActionRow(
 			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("a", "cycle tab", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("b", "boss", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
 			renderDialogAction("o", "sort", navigateActionKeyStyle, navigateActionTextStyle),
 			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),

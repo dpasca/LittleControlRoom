@@ -91,7 +91,7 @@ func (e *QueryExecutor) processReport(ctx context.Context, action bossAction, vi
 	lines := []string{
 		fmt.Sprintf("Process report: %d suspicious project-local process%s across %s.", len(findings), pluralSuffix(len(findings)), scope),
 		"Scanned at: " + formatBossTimestamp(scannedAt) + ".",
-		"Safety note: report-only; Boss Chat cannot stop or kill processes.",
+		"Safety note: report-only; Help Chat cannot stop or kill processes.",
 	}
 	if note != "" {
 		lines = append(lines, "Target note: "+note)

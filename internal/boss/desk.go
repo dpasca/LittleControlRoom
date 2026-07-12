@@ -79,7 +79,7 @@ func (m Model) bossSidebarLines(width, height int) []string {
 	nowLimit, decisionLimit, todoLimit, watchingLimit := bossSidebarSectionLimits(height)
 
 	if rows := m.bossDeskChatStatsRows(width); len(rows) > 0 {
-		lines = appendDeskSection(lines, "Boss Chat", rows, width)
+		lines = appendDeskSection(lines, "Help Chat", rows, width)
 	}
 	if rows := takeDeskRows(m.bossDeskNowRows(width, now), nowLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Now", rows, width)
@@ -294,15 +294,14 @@ func (m Model) bossDeskNowRows(width int, now time.Time) []string {
 		}
 		label, style := bossEngineerActivityCell(activity, now)
 		title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
-		name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 		item := attentionItemForEngineerActivity(activity)
-		text := bossSummaryTextStyle.Render(name + " on ")
+		text := bossSummaryTextStyle.Render("Working on ")
 		if item.Kind == AttentionItemProject {
 			text += bossProjectIdentityStyle(item.ProjectPath, bossProjectNameStyle).Render(title)
 			rows = append(rows, m.bossDeskAttentionStyledRow(item, style, label, text, width))
 			continue
 		}
-		rows = append(rows, m.bossDeskAttentionRow(item, style, label, name+" on "+title, width))
+		rows = append(rows, m.bossDeskAttentionRow(item, style, label, "Working on "+title, width))
 	}
 	return rows
 }
@@ -319,7 +318,7 @@ func (m Model) bossDeskNeedsUserRows(width int, now time.Time) []string {
 		title := compactAgentTaskTitle(task)
 		detail := strings.TrimSpace(task.Summary)
 		if detail == "" {
-			detail = agentTaskDecisionQuestion(task.EngineerName)
+			detail = agentTaskDecisionQuestion()
 		}
 		rows = append(rows, m.bossDeskAttentionRow(attentionItemForAgentTask(task), bossAssessmentWaitingStyle, "review", bossDeskTextWithDetail(title, detail), width))
 	}
@@ -530,13 +529,12 @@ func (m Model) bossDeskNextLine(width int, now time.Time) string {
 	}
 	for _, activity := range m.activeEngineerActivities() {
 		title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
-		name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 		item := attentionItemForEngineerActivity(activity)
 		if item.Kind == AttentionItemProject {
-			text := bossSummaryTextStyle.Render("Let "+name+" finish ") + bossProjectIdentityStyle(item.ProjectPath, bossProjectNameStyle).Render(title)
+			text := bossSummaryTextStyle.Render("Let work finish on ") + bossProjectIdentityStyle(item.ProjectPath, bossProjectNameStyle).Render(title)
 			return m.bossDeskAttentionStyledRow(item, bossAssessmentWorkingStyle, "next", text, width)
 		}
-		return m.bossDeskAttentionRow(item, bossAssessmentWorkingStyle, "next", "Let "+name+" finish "+title, width)
+		return m.bossDeskAttentionRow(item, bossAssessmentWorkingStyle, "next", "Let work finish on "+title, width)
 	}
 	for _, task := range m.snapshot.OpenAgentTasks {
 		if model.NormalizeAgentTaskStatus(task.Status) == model.AgentTaskStatusCompleted {
@@ -596,18 +594,17 @@ func (m *Model) appendDeskEvent(kind, label, summary string) {
 
 func bossDeskActivityEventSummary(activity ViewEngineerActivity, fallback string) string {
 	title := strings.TrimSpace(firstNonEmpty(activity.Title, activity.ProjectPath, activity.TaskID, "engineer work"))
-	name := strings.TrimSpace(firstNonEmpty(activity.EngineerName, "Engineer"))
 	status := strings.TrimSpace(activity.Status)
 	switch status {
 	case "", "working":
-		return name + " started " + title
+		return "Work started on " + title
 	case "finishing", "rechecking":
-		return name + " is " + status + " " + title
+		return "Work on " + title + " is " + status
 	default:
 		if fallback = strings.TrimSpace(fallback); fallback != "" {
 			return fallback
 		}
-		return name + " is " + status + " on " + title
+		return "Work on " + title + " is " + status
 	}
 }
 

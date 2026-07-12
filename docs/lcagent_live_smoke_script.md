@@ -40,18 +40,18 @@ The metrics output includes timing rollups (`observed_elapsed_seconds`,
 `model_response_wait_seconds`, `tool_seconds`, and slowest gaps/runs) to help
 separate provider/model latency from local tool work.
 
-## Manual Boss Smoke
+## Manual Help Chat Smoke
 
-From Boss Chat, ask for one traceable LCAgent task against a disposable project,
+From Help Chat, ask for one traceable LCAgent task against a disposable project,
 for example:
 
 ```text
-Have LCAgent take a scoped task to inspect this temporary repo, make a one-line README change, run go test ./... as a verification command, and report the result as a Boss goal.
+Have LCAgent take a scoped task to inspect this temporary repo, make a one-line README change, run go test ./... as a verification command, and report the result as a Help Chat goal.
 ```
 
-Expected Boss behavior:
+Expected Help Chat behavior:
 
-- Boss proposes an `lcagent_task` goal.
+- Help Chat proposes an `lcagent_task` goal.
 - After approval, the goal trace records create, launch, await, and verify steps.
 - The goal completes only after LCAgent finishes and the trace is harvested.
 - `goal_run_report` shows the LCAgent session id, files changed, verification

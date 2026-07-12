@@ -860,17 +860,17 @@ func (m Model) applySettingsProjectCloudModelPickerSelection(provider, model str
 func (m Model) applySettingsBossCloudModelPickerSelection(provider, model string) (tea.Model, tea.Cmd) {
 	backend := settingsCloudModelBackendForProvider(provider)
 	if backend == config.AIBackendUnset {
-		m.closeSettingsLCAgentModelPicker("Boss Chat does not have a model list for " + settingsLCAgentModelPickerProviderLabel(provider) + ".")
+		m.closeSettingsLCAgentModelPicker("Help Chat does not have a model list for " + settingsLCAgentModelPickerProviderLabel(provider) + ".")
 		return m, nil
 	}
 	if len(m.settingsFields) > settingsFieldBossChatBackend {
 		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(backend))
 	}
 	fieldIndex := settingsFieldBossChatModel
-	label := "Boss helm model"
+	label := "Help Chat main model"
 	if m.settingsLCAgentModelPicker != nil && m.settingsLCAgentModelPicker.FieldIndex == settingsFieldBossUtilityModel {
 		fieldIndex = settingsFieldBossUtilityModel
-		label = "Boss utility model"
+		label = "Help Chat utility model"
 	}
 	if fieldIndex >= 0 && fieldIndex < len(m.settingsFields) {
 		m.settingsFields[fieldIndex].input.SetValue(strings.TrimSpace(model))
@@ -1226,31 +1226,31 @@ func settingsBossCloudModelProviderOptions() []settingsLCAgentProviderOption {
 		{
 			Value:       "openai",
 			Label:       "OpenAI",
-			Summary:     "Use direct OpenAI API inference for Boss Chat.",
+			Summary:     "Use direct OpenAI API inference for Help Chat.",
 			Description: "Uses the shared OpenAI API key and direct OpenAI model IDs.",
 		},
 		{
 			Value:       "openrouter",
 			Label:       "OpenRouter",
-			Summary:     "Use OpenRouter for Boss Chat.",
+			Summary:     "Use OpenRouter for Help Chat.",
 			Description: "Uses the shared OpenRouter API key and model list.",
 		},
 		{
 			Value:       "deepseek",
 			Label:       "DeepSeek",
-			Summary:     "Use direct DeepSeek for Boss Chat.",
+			Summary:     "Use direct DeepSeek for Help Chat.",
 			Description: "Uses the shared DeepSeek API key and direct DeepSeek model IDs.",
 		},
 		{
 			Value:       "moonshot",
 			Label:       "Moonshot",
-			Summary:     "Use direct Moonshot/Kimi for Boss Chat.",
+			Summary:     "Use direct Moonshot/Kimi for Help Chat.",
 			Description: "Uses the shared Moonshot API key and Kimi model IDs.",
 		},
 		{
 			Value:       "xiaomi",
 			Label:       "Xiaomi",
-			Summary:     "Use direct Xiaomi MiMo for Boss Chat.",
+			Summary:     "Use direct Xiaomi MiMo for Help Chat.",
 			Description: "Uses the shared Xiaomi API key and MiMo model IDs.",
 		},
 	}
@@ -1335,9 +1335,9 @@ func settingsLCAgentModelPickerRoleLabel(fieldIndex int) string {
 	case settingsFieldOpenRouterModel, settingsFieldDeepSeekModel, settingsFieldMoonshotModel, settingsFieldXiaomiModel:
 		return "Project reports model"
 	case settingsFieldBossChatModel:
-		return "Boss helm model"
+		return "Help Chat main model"
 	case settingsFieldBossUtilityModel:
-		return "Boss utility model"
+		return "Help Chat utility model"
 	case settingsFieldLCAgentUtilityModel:
 		return "Utility model"
 	case settingsFieldLCAgentVisionModel:

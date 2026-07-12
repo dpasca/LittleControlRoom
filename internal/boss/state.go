@@ -72,7 +72,6 @@ type AgentTaskBrief struct {
 	ID              string
 	ParentTaskID    string
 	Title           string
-	EngineerName    string
 	Kind            model.AgentTaskKind
 	Status          model.AgentTaskStatus
 	Summary         string
@@ -460,7 +459,6 @@ func agentTaskBriefFromTask(task model.AgentTask) AgentTaskBrief {
 		ID:              strings.TrimSpace(task.ID),
 		ParentTaskID:    strings.TrimSpace(task.ParentTaskID),
 		Title:           strings.TrimSpace(task.Title),
-		EngineerName:    EngineerNameForKey("agent_task", task.ID),
 		Kind:            model.NormalizeAgentTaskKind(task.Kind),
 		Status:          model.NormalizeAgentTaskStatus(task.Status),
 		Summary:         strings.TrimSpace(task.Summary),
@@ -526,7 +524,7 @@ func BuildStateBrief(snapshot StateSnapshot, now time.Time) string {
 		}
 	}
 	if len(snapshot.RecentGoalRuns) > 0 {
-		lines = append(lines, "Recent Boss goal runs:")
+		lines = append(lines, "Recent LCR goal runs:")
 		for _, goal := range snapshot.RecentGoalRuns {
 			lines = append(lines, "- "+operationalGoalRunLine(goal, now))
 		}
@@ -681,13 +679,9 @@ func compactAttentionAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	if parts[0] == "" {
 		parts[0] = "agent task"
 	}
-	engineerName := strings.TrimSpace(task.EngineerName)
-	if engineerName != "" {
-		parts = append(parts, engineerName)
-	}
 	status := model.NormalizeAgentTaskStatus(task.Status)
 	if status == model.AgentTaskStatusWaiting {
-		parts = append(parts, agentTaskDecisionQuestion(engineerName))
+		parts = append(parts, agentTaskDecisionQuestion())
 	} else if status != "" {
 		parts = append(parts, agentTaskBriefStatusLabel(status))
 	}
@@ -763,9 +757,6 @@ func operationalAgentTaskLine(task AgentTaskBrief, now time.Time) string {
 	}
 	taskID := strings.TrimSpace(task.ID)
 	parts := []string{fmt.Sprintf("%s (%s)", title, taskID)}
-	if name := strings.TrimSpace(task.EngineerName); name != "" {
-		parts = append(parts, "assigned: "+name)
-	}
 	if taskID != "" {
 		parts = append(parts, "show: agent_task:"+taskID)
 	}

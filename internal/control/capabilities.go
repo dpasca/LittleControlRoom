@@ -414,7 +414,7 @@ func EngineerSendPromptCapability() Capability {
 func AgentTaskCreateCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskCreate,
-		Description:  "Create a generic Boss-owned agent task and optionally start an embedded engineer session in its workspace.",
+		Description:  "Create a delegated agent task and optionally start an embedded engineer session in its workspace.",
 		InputSchema:  agentTaskCreateInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskExternal,
@@ -428,7 +428,7 @@ func AgentTaskCreateCapability() Capability {
 func AgentTaskContinueCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskContinue,
-		Description:  "Continue an existing Boss-owned agent task, reusing its workspace and engineer session when possible.",
+		Description:  "Continue an existing delegated agent task, reusing its workspace and engineer session when possible.",
 		InputSchema:  agentTaskContinueInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskExternal,
@@ -442,7 +442,7 @@ func AgentTaskContinueCapability() Capability {
 func AgentTaskCloseCapability() Capability {
 	return Capability{
 		Name:         CapabilityAgentTaskClose,
-		Description:  "Mark a Boss-owned agent task completed, waiting, or archived.",
+		Description:  "Mark a delegated agent task completed, waiting, or archived.",
 		InputSchema:  agentTaskCloseInputSchema(),
 		OutputSchema: agentTaskOutputSchema(),
 		Risk:         RiskWrite,

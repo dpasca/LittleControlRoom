@@ -16,6 +16,28 @@ type bossSessionSearchMatch struct {
 	Snippet   string
 }
 
+func (e *QueryExecutor) searchChatSessions(ctx context.Context, query string, limit int) ([]bossSessionSearchMatch, error) {
+	if e == nil || len(e.bossSessions) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 8
+	}
+	matches := make([]bossSessionSearchMatch, 0, limit)
+	for _, sessions := range e.bossSessions {
+		remaining := limit - len(matches)
+		if remaining <= 0 {
+			break
+		}
+		found, err := sessions.searchSessions(ctx, query, remaining)
+		if err != nil {
+			return nil, err
+		}
+		matches = append(matches, found...)
+	}
+	return matches, nil
+}
+
 func (s *bossSessionStore) searchSessions(ctx context.Context, query string, limit int) ([]bossSessionSearchMatch, error) {
 	if s == nil {
 		return nil, nil
@@ -72,7 +94,7 @@ func formatBossSessionSearchXML(query string, matches []bossSessionSearchMatch, 
 		bossXMLAttr(formatBossTimestamp(now)),
 	))
 	if len(matches) == 0 {
-		b.WriteString("\n<note>No saved boss chat sessions matched this query.</note>\n</boss_session_search>")
+		b.WriteString("\n<note>No saved Help chat sessions matched this query.</note>\n</boss_session_search>")
 		return b.String()
 	}
 	for _, match := range matches {

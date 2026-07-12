@@ -16,7 +16,6 @@ const (
 	KindAIStats         Kind = "ai-stats"
 	KindPerf            Kind = "perf"
 	KindErrors          Kind = "errors"
-	KindBoss            Kind = "boss"
 	KindRefresh         Kind = "refresh"
 	KindSort            Kind = "sort"
 	KindNonAIFolders    Kind = "non-ai-folders"
@@ -146,7 +145,6 @@ var specs = []Spec{
 	{Name: "ai", Usage: "/ai", Summary: "Open the internal AI stats dialog"},
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
-	{Name: "boss", Usage: "/boss [on|off|toggle]", Summary: "Open boss chat, or prompt for setup if needed"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
@@ -382,16 +380,6 @@ func SuggestionsWithCategories(input string, categoryNames []string) []Suggestio
 			choice("off", "Disable demo privacy mode"),
 			choice("settings", "Open privacy settings"),
 		)
-	case "boss":
-		argPrefix := ""
-		if len(fields) > 1 {
-			argPrefix = strings.ToLower(fields[len(fields)-1])
-		}
-		return slashcmd.EnumSuggestions("/boss ", argPrefix,
-			choice("on", "Open the boss chat layer"),
-			choice("off", "Close the boss chat layer"),
-			choice("toggle", "Toggle the boss chat layer"),
-		)
 	default:
 		return slashcmd.NameSuggestions(specs, namePrefix)
 	}
@@ -433,12 +421,6 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /errors")
 		}
 		return Invocation{Kind: KindErrors, Canonical: "/errors"}, nil
-	case "boss":
-		mode, err := parseToggleMode(rawArgs, "/boss")
-		if err != nil {
-			return Invocation{}, err
-		}
-		return Invocation{Kind: KindBoss, Toggle: mode, Canonical: "/boss " + string(mode)}, nil
 	case "refresh":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /refresh")

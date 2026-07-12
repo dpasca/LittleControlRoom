@@ -1,6 +1,7 @@
 openai_api_key = "sk-your-openai-api-key"
 
-# Boss chat is separate from project-analysis inference.
+# Help Chat is separate from project-analysis inference. The boss_* setting
+# names remain for compatibility with existing configs.
 # Leave boss_chat_backend blank to auto-use openai_api when an OpenAI key exists.
 # You can also use direct providers like "openrouter", "deepseek", "moonshot",
 # or "xiaomi", plus local OpenAI-compatible backends: "mlx" or "ollama".
