@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type helpChatOverlayGeometry struct {
@@ -158,14 +159,14 @@ func (m Model) renderHelpChatOverlay(body string, bodyW, bodyH int) string {
 }
 
 func (m Model) renderHelpChatHeader(width int) string {
-	parts := []string{
-		bossModeTitleStyle.Render("Help Chat"),
-		renderFooterStatus(m.helpChatModel.StatusText()),
+	parts := []string{helpChatTitleStyle.Render("Help Chat")}
+	if statusText := strings.TrimSpace(m.helpChatModel.StatusText()); statusText != "" {
+		parts = append(parts, helpChatStatusStyle.Render(statusText))
 	}
 	if usageText := strings.TrimSpace(m.helpChatModel.UsageText()); usageText != "" {
-		parts = append(parts, renderFooterUsage(usageText))
+		parts = append(parts, helpChatUsageStyle.Render(usageText))
 	}
-	return fitStyledWidth(strings.Join(parts, "  "), width)
+	return fitHelpChatSurfaceLine(strings.Join(parts, helpChatSurfaceFillStyle.Render("  ")), width)
 }
 
 func (m Model) renderHelpChatFooter(width int) string {
@@ -191,16 +192,34 @@ func (m Model) renderHelpChatFooter(width int) string {
 			footerExitAction("Esc", "close"),
 		}
 	}
-	segments := []string{renderFooterActionList(actions...)}
+	segments := []string{renderFooterActionListWithBackground(helpChatSurfaceBackground, actions...)}
 	if profileText := strings.TrimSpace(m.helpChatModel.ProfileText()); profileText != "" {
-		segments = append(segments, renderFooterUsage(profileText))
+		segments = append(segments, helpChatUsageStyle.Render(profileText))
 	}
-	return fitStyledWidth(renderFooterLine(width, segments...), width)
+	return fitHelpChatSurfaceLine(strings.Join(segments, helpChatSurfaceFillStyle.Render("  ")), width)
 }
 
-var helpChatPanelStyle = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("81")).
-	Padding(0, 1).
-	Background(lipgloss.Color("234")).
-	Foreground(lipgloss.Color("252"))
+func fitHelpChatSurfaceLine(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+	text = ansi.Truncate(text, width, "")
+	if padding := width - ansi.StringWidth(text); padding > 0 {
+		text += helpChatSurfaceFillStyle.Render(strings.Repeat(" ", padding))
+	}
+	return text
+}
+
+var (
+	helpChatSurfaceBackground = lipgloss.Color("234")
+	helpChatSurfaceFillStyle  = lipgloss.NewStyle().Background(helpChatSurfaceBackground)
+	helpChatTitleStyle        = bossModeTitleStyle.Background(helpChatSurfaceBackground)
+	helpChatStatusStyle       = footerStatusStyle.Background(helpChatSurfaceBackground)
+	helpChatUsageStyle        = footerUsageStyle.Background(helpChatSurfaceBackground)
+	helpChatPanelStyle        = lipgloss.NewStyle().
+					Border(lipgloss.RoundedBorder()).
+					BorderForeground(lipgloss.Color("81")).
+					Padding(0, 1).
+					Background(helpChatSurfaceBackground).
+					Foreground(lipgloss.Color("252"))
+)

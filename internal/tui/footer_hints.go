@@ -107,6 +107,20 @@ func renderFooterActionList(actions ...footerAction) string {
 	return strings.Join(segments, "  ")
 }
 
+func renderFooterActionListWithBackground(background lipgloss.Color, actions ...footerAction) string {
+	if len(actions) == 0 {
+		return ""
+	}
+	fillStyle := lipgloss.NewStyle().Background(background)
+	segments := make([]string, 0, len(actions))
+	for _, action := range actions {
+		if rendered := action.renderWithBackground(background); rendered != "" {
+			segments = append(segments, rendered)
+		}
+	}
+	return strings.Join(segments, fillStyle.Render("  "))
+}
+
 func joinFooterSegments(segments ...string) string {
 	filtered := make([]string, 0, len(segments))
 	for _, segment := range segments {
@@ -153,6 +167,10 @@ func renderLineWithRightSegment(left, right string, width int) string {
 }
 
 func (a footerAction) render() string {
+	return a.renderWithBackground("")
+}
+
+func (a footerAction) renderWithBackground(background lipgloss.Color) string {
 	key := strings.TrimSpace(a.key)
 	label := strings.TrimSpace(a.label)
 	if key == "" && label == "" {
@@ -175,6 +193,11 @@ func (a footerAction) render() string {
 		keyStyle = footerHideKeyStyle
 		labelStyle = footerHideLabelStyle
 	}
+	separator := " "
+	if background != "" {
+		labelStyle = labelStyle.Background(background)
+		separator = lipgloss.NewStyle().Background(background).Render(separator)
+	}
 
 	if key == "" {
 		return labelStyle.Render(label)
@@ -183,5 +206,5 @@ func (a footerAction) render() string {
 	if label == "" {
 		return keyRendered
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Left, keyRendered, " ", labelStyle.Render(label))
+	return lipgloss.JoinHorizontal(lipgloss.Left, keyRendered, separator, labelStyle.Render(label))
 }

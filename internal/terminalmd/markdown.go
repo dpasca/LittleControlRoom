@@ -10,6 +10,7 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/cellbuf"
 )
 
 const (
@@ -135,15 +136,39 @@ func renderBodyWithWidth(body string, color, background lipgloss.Color, width in
 	if !fitWidth {
 		return rendered
 	}
-	// Lip Gloss's width constraint is a final overflow guard and may split at
-	// any cell. Word-wrap first so ordinary words move intact to the next line;
-	// genuinely overlong tokens still fall through to the hard width guard.
-	rendered = ansi.Wordwrap(rendered, width, "")
-	style := lipgloss.NewStyle().Width(width)
+	// Keep styled words intact when possible while retaining style state across
+	// inserted line breaks. A single combined wrap also avoids the isolated-
+	// hyphen boundary artifact produced by a separate hard-wrap pass.
+	rendered = WrapStyled(rendered, width)
+	style := lipgloss.NewStyle()
 	if background != "" {
 		style = style.Background(background)
 	}
-	return style.Render(rendered)
+	lines = strings.Split(rendered, "\n")
+	for i, line := range lines {
+		line = ansi.Truncate(line, width, "")
+		padding := max(0, width-ansi.StringWidth(line))
+		lines[i] = style.Render(line)
+		if padding > 0 {
+			// Nested Markdown spans reset terminal state. Paint the trailing fill
+			// explicitly instead of relying on an outer background to survive
+			// those resets.
+			lines[i] += style.Render(strings.Repeat(" ", padding))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// WrapStyled word-wraps terminal text and restores active styles and links on
+// continuation lines. ansi.Wrap chooses the breakpoints; PenWriter makes each
+// resulting line self-contained so viewports can start at any wrapped line.
+func WrapStyled(text string, width int) string {
+	wrapped := ansi.Wrap(text, width, "")
+	var out strings.Builder
+	pen := cellbuf.NewPenWriter(&out)
+	_, _ = pen.Write([]byte(wrapped))
+	_ = pen.Close()
+	return out.String()
 }
 
 func markdownStyle(color, background lipgloss.Color) lipgloss.Style {
