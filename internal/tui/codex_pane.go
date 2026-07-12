@@ -1379,7 +1379,8 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 		renamedTask := false
 		var renameErr error
 		if !req.ContinueInterruptedTurn {
-			renamedTask, renameErr = m.maybeAutoRenameScratchTaskFromPrompt(req.ProjectPath, req.Prompt)
+			prompts := scratchTaskTitlePromptHistory(snapshot, scratchTaskTitleLaunchPrompt(req))
+			renamedTask, renameErr = m.maybeAutoRenameScratchTaskFromPrompts(req.ProjectPath, prompts)
 		}
 		return codexSessionOpenedMsg{
 			projectPath:      req.ProjectPath,
@@ -1527,7 +1528,8 @@ func (m Model) submitVisibleCodexCmd(draft codexDraft) tea.Cmd {
 		if err := session.SubmitInput(submission); err != nil {
 			return codexActionMsg{projectPath: projectPath, restoreDraft: draft, err: err}
 		}
-		renamedTask, renameErr := m.maybeAutoRenameScratchTaskFromPrompt(projectPath, draft.titleText())
+		prompts := scratchTaskTitlePromptHistory(session.Snapshot(), draft.titleText())
+		renamedTask, renameErr := m.maybeAutoRenameScratchTaskFromPrompts(projectPath, prompts)
 		status := "Prompt sent to " + label
 		if steer {
 			status = "Steer sent to " + label

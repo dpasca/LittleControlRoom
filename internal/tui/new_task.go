@@ -210,7 +210,7 @@ func (m Model) renderNewTaskContent(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) maybeAutoRenameScratchTaskFromPrompt(projectPath, prompt string) (bool, error) {
+func (m Model) maybeAutoRenameScratchTaskFromPrompts(projectPath string, prompts []string) (bool, error) {
 	if m.svc == nil {
 		return false, nil
 	}
@@ -218,6 +218,29 @@ func (m Model) maybeAutoRenameScratchTaskFromPrompt(projectPath, prompt string) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	result, err := m.svc.MaybeRenameScratchTaskFromPrompt(ctx, projectPath, prompt)
+	result, err := m.svc.MaybeRenameScratchTaskFromPrompts(ctx, projectPath, prompts)
 	return result.Renamed, err
+}
+
+func scratchTaskTitlePromptHistory(snapshot codexapp.Snapshot, latest string) []string {
+	prompts := make([]string, 0, len(snapshot.Entries)+1)
+	for _, entry := range snapshot.Entries {
+		if entry.Kind != codexapp.TranscriptUser {
+			continue
+		}
+		if prompt := strings.TrimSpace(entry.Text); prompt != "" {
+			prompts = append(prompts, prompt)
+		}
+	}
+	if latest = strings.TrimSpace(latest); latest != "" {
+		prompts = append(prompts, latest)
+	}
+	return prompts
+}
+
+func scratchTaskTitleLaunchPrompt(req codexapp.LaunchRequest) string {
+	if !req.InitialInput.Empty() {
+		return req.InitialInput.TranscriptText()
+	}
+	return strings.TrimSpace(req.Prompt)
 }

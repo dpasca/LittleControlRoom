@@ -553,6 +553,142 @@ func TestVisibleScratchTaskPromptAutoRenamesTemporaryTask(t *testing.T) {
 	}
 }
 
+func TestVisibleScratchTaskVagueFollowUpUsesEarlierPromptIntent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	initialPrompt := "Find what is wasting disk space and ask before deleting anything."
+	followUp := "Okay, let's clear the first batch."
+	svc.SetScratchTaskTitleAssessor(tuiScratchTaskTitleAssessorFunc(func(_ context.Context, input service.ScratchTaskTitleAssessmentInput) (service.ScratchTaskTitleAssessment, error) {
+		want := []string{initialPrompt, followUp}
+		if strings.Join(input.UserPromptHistory, "\n") != strings.Join(want, "\n") {
+			t.Fatalf("prompt history = %#v, want %#v", input.UserPromptHistory, want)
+		}
+		return service.ScratchTaskTitleAssessment{
+			CandidateTitle: "Recover Disk Space Safely",
+			Quality:        "high",
+			Confidence:     0.95,
+			Adopt:          true,
+			Reason:         "initial prompt contains the task intent",
+			Model:          "unit-title-model",
+		}, nil
+	}))
+	created, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	session := &fakeCodexSession{
+		projectPath: created.TaskPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptUser, Text: initialPrompt},
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: created.TaskPath}); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	m := New(ctx, svc)
+	m.codexManager = manager
+	m.codexVisibleProject = created.TaskPath
+	msg, ok := m.submitVisibleCodexCmd(codexDraft{Text: followUp})().(codexActionMsg)
+	if !ok {
+		t.Fatalf("submit command returned unexpected message")
+	}
+	if msg.err != nil {
+		t.Fatalf("codex action error = %v", msg.err)
+	}
+	if !msg.renamedTask {
+		t.Fatal("vague follow-up should rename from earlier prompt intent")
+	}
+	detail, err := st.GetProjectDetail(ctx, created.TaskPath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.Name != "Recover Disk Space Safely" {
+		t.Fatalf("stored name = %q, want history-derived title", detail.Summary.Name)
+	}
+}
+
+func TestOpeningTemporaryScratchTaskBackfillsNameFromTranscript(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	prompt := "Find what is wasting disk space and ask before deleting anything."
+	svc.SetScratchTaskTitleAssessor(tuiScratchTaskTitleAssessorFunc(func(_ context.Context, input service.ScratchTaskTitleAssessmentInput) (service.ScratchTaskTitleAssessment, error) {
+		if len(input.UserPromptHistory) != 1 || input.UserPromptHistory[0] != prompt {
+			t.Fatalf("prompt history = %#v, want transcript prompt", input.UserPromptHistory)
+		}
+		return service.ScratchTaskTitleAssessment{
+			CandidateTitle: "Recover Disk Space Safely",
+			Quality:        "high",
+			Confidence:     0.95,
+			Adopt:          true,
+			Reason:         "transcript contains concrete task intent",
+			Model:          "unit-title-model",
+		}, nil
+	}))
+	created, err := svc.CreateScratchTask(ctx, service.CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+
+	session := &fakeCodexSession{
+		projectPath: created.TaskPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			Started:  true,
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptUser, Text: prompt},
+			},
+		},
+	}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	m := New(ctx, svc)
+	m.codexManager = manager
+	cmd := m.openCodexSessionCmd(codexapp.LaunchRequest{ProjectPath: created.TaskPath})
+	if cmd == nil {
+		t.Fatal("openCodexSessionCmd() returned nil")
+	}
+	msg, ok := cmd().(codexSessionOpenedMsg)
+	if !ok {
+		t.Fatal("open command returned unexpected message")
+	}
+	if msg.err != nil {
+		t.Fatalf("open error = %v", msg.err)
+	}
+	if !msg.renamedTask {
+		t.Fatal("opening temporary task should backfill its title")
+	}
+}
+
 func TestVisibleScratchTaskPromptAutoRenameUsesTextAroundCollapsedPaste(t *testing.T) {
 	t.Parallel()
 

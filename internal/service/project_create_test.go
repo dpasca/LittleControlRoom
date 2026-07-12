@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -700,6 +701,101 @@ func TestMaybeRenameScratchTaskFromPromptRenamesTemporaryName(t *testing.T) {
 	}
 	if got := string(content); !strings.Contains(got, "Title-State: accepted") || !strings.Contains(got, "Title-Quality: high") {
 		t.Fatalf("TASK.md = %q, want accepted high-quality title metadata", got)
+	}
+}
+
+func TestMaybeRenameScratchTaskFromPromptRetriesSingleAssessorFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+	calls := 0
+	svc.SetScratchTaskTitleAssessor(scratchTaskTitleAssessorFunc(func(_ context.Context, input ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error) {
+		calls++
+		if calls == 1 {
+			return ScratchTaskTitleAssessment{}, errors.New("temporary title backend failure")
+		}
+		if input.LatestUserPrompt != "Investigate disk usage safely" {
+			t.Fatalf("latest prompt = %q, want submitted prompt", input.LatestUserPrompt)
+		}
+		return ScratchTaskTitleAssessment{
+			CandidateTitle: "Investigate Disk Usage",
+			Quality:        scratchTaskTitleQualityHigh,
+			Confidence:     0.94,
+			Adopt:          true,
+			Reason:         "specific investigation",
+			Model:          "unit-title-model",
+		}, nil
+	}))
+
+	created, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	renamed, err := svc.MaybeRenameScratchTaskFromPrompt(ctx, created.TaskPath, "Investigate disk usage safely")
+	if err != nil {
+		t.Fatalf("MaybeRenameScratchTaskFromPrompt() error = %v", err)
+	}
+	if !renamed.Renamed || renamed.TaskName != "Investigate Disk Usage" {
+		t.Fatalf("rename result = %#v, want retry to rename task", renamed)
+	}
+	if calls != scratchTaskTitleAssessmentAttempts {
+		t.Fatalf("assessment calls = %d, want %d", calls, scratchTaskTitleAssessmentAttempts)
+	}
+}
+
+func TestMaybeRenameScratchTaskFromPromptsRecoversIntentFromHistory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	cfg.ScratchRoot = filepath.Join(t.TempDir(), "tasks")
+	svc := New(cfg, st, events.NewBus(), nil)
+	wantHistory := []string{
+		"Find what is wasting disk space and ask before deleting anything.",
+		"Okay, let's clear the first batch.",
+	}
+	svc.SetScratchTaskTitleAssessor(scratchTaskTitleAssessorFunc(func(_ context.Context, input ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error) {
+		if strings.Join(input.UserPromptHistory, "\n") != strings.Join(wantHistory, "\n") {
+			t.Fatalf("prompt history = %#v, want %#v", input.UserPromptHistory, wantHistory)
+		}
+		if input.LatestUserPrompt != wantHistory[len(wantHistory)-1] {
+			t.Fatalf("latest prompt = %q, want vague follow-up", input.LatestUserPrompt)
+		}
+		return ScratchTaskTitleAssessment{
+			CandidateTitle: "Recover Disk Space Safely",
+			Quality:        scratchTaskTitleQualityHigh,
+			Confidence:     0.96,
+			Adopt:          true,
+			Reason:         "earlier prompt supplies concrete task intent",
+			Model:          "unit-title-model",
+		}, nil
+	}))
+
+	created, err := svc.CreateScratchTask(ctx, CreateScratchTaskRequest{})
+	if err != nil {
+		t.Fatalf("CreateScratchTask() error = %v", err)
+	}
+	renamed, err := svc.MaybeRenameScratchTaskFromPrompts(ctx, created.TaskPath, wantHistory)
+	if err != nil {
+		t.Fatalf("MaybeRenameScratchTaskFromPrompts() error = %v", err)
+	}
+	if !renamed.Renamed || renamed.TaskName != "Recover Disk Space Safely" {
+		t.Fatalf("rename result = %#v, want history-derived title", renamed)
 	}
 }
 

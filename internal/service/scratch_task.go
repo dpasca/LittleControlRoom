@@ -132,14 +132,19 @@ func (s *Service) CreateScratchTask(ctx context.Context, req CreateScratchTaskRe
 }
 
 func (s *Service) MaybeRenameScratchTaskFromPrompt(ctx context.Context, projectPath, prompt string) (RenameScratchTaskResult, error) {
+	return s.MaybeRenameScratchTaskFromPrompts(ctx, projectPath, []string{prompt})
+}
+
+func (s *Service) MaybeRenameScratchTaskFromPrompts(ctx context.Context, projectPath string, prompts []string) (RenameScratchTaskResult, error) {
 	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
 	if projectPath == "" || projectPath == "." {
 		return RenameScratchTaskResult{}, nil
 	}
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
+	promptHistory := normalizeScratchTaskTitlePromptHistory(prompts, "")
+	if len(promptHistory) == 0 {
 		return RenameScratchTaskResult{}, nil
 	}
+	latestPrompt := promptHistory[len(promptHistory)-1]
 
 	summaries, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
@@ -165,11 +170,12 @@ func (s *Service) MaybeRenameScratchTaskFromPrompt(ctx context.Context, projectP
 	if assessor == nil {
 		return RenameScratchTaskResult{}, nil
 	}
-	assessment, err := assessor.AssessScratchTaskTitle(ctx, ScratchTaskTitleAssessmentInput{
+	assessment, err := assessScratchTaskTitleWithRetry(ctx, assessor, ScratchTaskTitleAssessmentInput{
 		ProjectPath:       project.Path,
 		CurrentTitle:      oldTitle,
 		CurrentTitleState: titleState,
-		LatestUserPrompt:  prompt,
+		UserPromptHistory: promptHistory,
+		LatestUserPrompt:  latestPrompt,
 	})
 	if err != nil {
 		return RenameScratchTaskResult{}, err

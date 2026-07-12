@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"lcroom/internal/llm"
 )
@@ -26,13 +27,18 @@ const (
 	scratchTaskGeneratedTitleLimit         = 80
 	scratchTaskTitleLocalRunnerModel       = "gpt-5.4-mini"
 	scratchTaskTitleClaudeLocalRunnerModel = "haiku"
+	scratchTaskTitlePromptHistoryLimit     = 6
+	scratchTaskTitlePromptRuneLimit        = 2000
+	scratchTaskTitleAssessmentAttempts     = 2
+	scratchTaskTitleAssessmentRetryDelay   = 250 * time.Millisecond
 )
 
 type ScratchTaskTitleAssessmentInput struct {
-	ProjectPath       string `json:"project_path"`
-	CurrentTitle      string `json:"current_title"`
-	CurrentTitleState string `json:"current_title_state"`
-	LatestUserPrompt  string `json:"latest_user_prompt"`
+	ProjectPath       string   `json:"project_path"`
+	CurrentTitle      string   `json:"current_title"`
+	CurrentTitleState string   `json:"current_title_state"`
+	UserPromptHistory []string `json:"user_prompt_history"`
+	LatestUserPrompt  string   `json:"latest_user_prompt"`
 }
 
 type ScratchTaskTitleAssessment struct {
@@ -73,7 +79,12 @@ func (a *scratchTaskTitleLLMAssessor) AssessScratchTaskTitle(ctx context.Context
 	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
 	input.CurrentTitle = strings.TrimSpace(input.CurrentTitle)
 	input.CurrentTitleState = normalizeScratchTaskTitleState(input.CurrentTitleState)
-	input.LatestUserPrompt = strings.TrimSpace(input.LatestUserPrompt)
+	input.UserPromptHistory = normalizeScratchTaskTitlePromptHistory(input.UserPromptHistory, input.LatestUserPrompt)
+	if len(input.UserPromptHistory) > 0 {
+		input.LatestUserPrompt = input.UserPromptHistory[len(input.UserPromptHistory)-1]
+	} else {
+		input.LatestUserPrompt = ""
+	}
 	if input.LatestUserPrompt == "" {
 		return ScratchTaskTitleAssessment{}, errors.New("latest user prompt is required")
 	}
@@ -115,9 +126,9 @@ func (a *scratchTaskTitleLLMAssessor) AssessScratchTaskTitle(ctx context.Context
 
 const scratchTaskTitleInstructions = `You name scratch tasks for Little Control Room.
 
-Decide whether the latest user prompt contains enough semantic intent to produce a durable, dashboard-friendly task title.
+Decide whether the user prompt history contains enough semantic intent to produce a durable, dashboard-friendly task title. The history is chronological and the latest prompt is also provided separately. If the latest prompt is a vague follow-up or acknowledgement, use earlier prompts to recover the concrete task intent.
 
-A high-quality title is concise, specific, and names the concrete work or investigation. It should not be a greeting, acknowledgement, vague continuation, or generic phrase. If the prompt is only social setup, meta-chatter, or otherwise lacks a concrete task subject, do not adopt a title yet and keep watching future prompts.
+A high-quality title is concise, specific, and names the concrete work or investigation. It should not be a greeting, acknowledgement, vague continuation, or generic phrase. If the entire history is only social setup, meta-chatter, or otherwise lacks a concrete task subject, do not adopt a title yet and keep watching future prompts.
 
 Do not use keyword or regex rules. Judge the actual meaning of the prompt and return only the structured JSON.`
 
@@ -181,6 +192,60 @@ func sanitizeScratchTaskCandidateTitle(title string) string {
 		return ""
 	}
 	return truncateRunes(title, scratchTaskGeneratedTitleLimit)
+}
+
+func normalizeScratchTaskTitlePromptHistory(history []string, latest string) []string {
+	normalized := make([]string, 0, len(history)+1)
+	appendPrompt := func(prompt string) {
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" {
+			return
+		}
+		prompt = truncateRunes(prompt, scratchTaskTitlePromptRuneLimit)
+		if len(normalized) > 0 && normalized[len(normalized)-1] == prompt {
+			return
+		}
+		normalized = append(normalized, prompt)
+	}
+	for _, prompt := range history {
+		appendPrompt(prompt)
+	}
+	appendPrompt(latest)
+	if len(normalized) <= scratchTaskTitlePromptHistoryLimit {
+		return normalized
+	}
+	trimmed := make([]string, 0, scratchTaskTitlePromptHistoryLimit)
+	trimmed = append(trimmed, normalized[0])
+	trimmed = append(trimmed, normalized[len(normalized)-(scratchTaskTitlePromptHistoryLimit-1):]...)
+	return trimmed
+}
+
+func assessScratchTaskTitleWithRetry(ctx context.Context, assessor ScratchTaskTitleAssessor, input ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error) {
+	if assessor == nil {
+		return ScratchTaskTitleAssessment{}, errors.New("scratch task title assessor not configured")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var lastErr error
+	for attempt := 1; attempt <= scratchTaskTitleAssessmentAttempts; attempt++ {
+		assessment, err := assessor.AssessScratchTaskTitle(ctx, input)
+		if err == nil {
+			return assessment, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || attempt == scratchTaskTitleAssessmentAttempts {
+			break
+		}
+		timer := time.NewTimer(scratchTaskTitleAssessmentRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ScratchTaskTitleAssessment{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return ScratchTaskTitleAssessment{}, lastErr
 }
 
 func normalizeScratchTaskTitleState(state string) string {
