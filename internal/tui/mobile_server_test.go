@@ -32,6 +32,8 @@ func TestMobileCommandOpensLocalOnlyStatusPanel(t *testing.T) {
 		"Mobile Access",
 		"Local only",
 		"http://127.0.0.1:7777",
+		"127.0.0.1 accepts",
+		"connections only from this computer",
 		"Not reachable from the LAN",
 		"192.168.1.20",
 		"http://192.168.1.20:7777",
@@ -42,8 +44,8 @@ func TestMobileCommandOpensLocalOnlyStatusPanel(t *testing.T) {
 		}
 	}
 	header := ansi.Strip(got.renderTopStatusLine(80))
-	if !strings.Contains(header, "M:LOCAL") {
-		t.Fatalf("80-column top status = %q, want M:LOCAL indicator", header)
+	if !strings.Contains(header, "/mobile") || strings.Contains(header, "SETUP") {
+		t.Fatalf("80-column top status = %q, want compact /mobile indicator", header)
 	}
 }
 
@@ -64,14 +66,14 @@ func TestMobileCommandShowsLANPhoneURLAndPairingCode(t *testing.T) {
 		t.Fatal("/mobile should not queue background work")
 	}
 	panel := ansi.Strip(got.renderMobileDialogPanel(88, 26))
-	for _, want := range []string{"LAN ready", "Listener: 0.0.0.0:7777", "http://192.168.1.20:7777", "http://10.0.0.12:7777", "Required - code 123 456", "Trusted LAN only"} {
+	for _, want := range []string{"LAN ready", "Technical listener: 0.0.0.0:7777", "0.0.0.0 accepts connections", "http://192.168.1.20:7777", "http://10.0.0.12:7777", "Required - code 123 456", "Trusted LAN only"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("mobile panel = %q, want %q", panel, want)
 		}
 	}
 	header := ansi.Strip(got.renderTopStatusLine(100))
-	if !strings.Contains(header, "M:LAN") {
-		t.Fatalf("top status = %q, want M:LAN indicator", header)
+	if !strings.Contains(header, "/mobile LAN") {
+		t.Fatalf("top status = %q, want /mobile LAN indicator", header)
 	}
 }
 
@@ -91,14 +93,14 @@ func TestMobileCommandShowsDisabledSetupGuidance(t *testing.T) {
 		t.Fatal("/mobile should not queue background work")
 	}
 	panel := ansi.Strip(got.renderMobileDialogPanel(80, 24))
-	for _, want := range []string{"Disabled", "Not running", "http://192.168.1.20:7777", "enable the interface"} {
+	for _, want := range []string{"Disabled", "Not running", "http://192.168.1.20:7777", "enable the interface", "choose Phones on this", "LAN, save"} {
 		if !strings.Contains(panel, want) {
 			t.Fatalf("mobile panel = %q, want %q", panel, want)
 		}
 	}
 	header := ansi.Strip(got.renderTopStatusLine(80))
-	if !strings.Contains(header, "M:OFF") {
-		t.Fatalf("top status = %q, want M:OFF indicator", header)
+	if !strings.Contains(header, "/mobile") || strings.Contains(header, "OFF") {
+		t.Fatalf("top status = %q, want compact /mobile indicator", header)
 	}
 }
 

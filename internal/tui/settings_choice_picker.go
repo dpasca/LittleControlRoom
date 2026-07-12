@@ -30,6 +30,7 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 		settingsFieldLCAgentAuto,
 		settingsFieldLCAgentAdminWrite,
 		settingsFieldMobileEnabled,
+		settingsFieldMobileAccessMode,
 		settingsFieldBossChatOllamaThinking,
 		settingsFieldLCAgentToolProfile,
 		settingsFieldLCAgentContextProfile:
@@ -108,8 +109,29 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 		}
 	case settingsFieldMobileEnabled:
 		return []settingsChoiceOption{
-			{Value: "true", Label: "Enabled", Summary: "Start the bundled mobile client with the TUI.", Description: "The saved listen address is used on the next Little Control Room launch."},
+			{Value: "true", Label: "Enabled", Summary: "Start the bundled mobile client with the TUI.", Description: "The saved access choice and port are used on the next Little Control Room launch."},
 			{Value: "false", Label: "Disabled", Summary: "Do not start a mobile listener with the TUI.", Description: "The explicit lcroom serve command remains available when you need it."},
+		}
+	case settingsFieldMobileAccessMode:
+		return []settingsChoiceOption{
+			{
+				Value:       settingsMobileAccessLAN,
+				Label:       "Phones on this LAN",
+				Summary:     "Let paired phones on the same trusted network connect. Recommended for mobile use.",
+				Description: "Little Control Room listens on the implicit IP 0.0.0.0 and shows the usable phone URL in /mobile.",
+			},
+			{
+				Value:       settingsMobileAccessLocal,
+				Label:       "This computer only",
+				Summary:     "Keep the mobile web client private to this computer.",
+				Description: "Little Control Room listens on the implicit IP 127.0.0.1. A phone cannot reach this address.",
+			},
+			{
+				Value:       settingsMobileAccessCustom,
+				Label:       "Custom address",
+				Summary:     "Enter an explicit host and port for an advanced network setup.",
+				Description: "Use this for a particular interface, hostname, IPv6 address, or another setup that should not use the ordinary defaults.",
+			},
 		}
 	case settingsFieldBossChatOllamaThinking:
 		return []settingsChoiceOption{
@@ -366,6 +388,8 @@ func settingsChoiceOptionValueForField(fieldIndex int, raw string) string {
 			return "true"
 		}
 		return "false"
+	case settingsFieldMobileAccessMode:
+		return settingsMobileAccessModeValue(normalized)
 	case settingsFieldLCAgentAuto:
 		if normalized == "" {
 			return "low"
@@ -416,6 +440,8 @@ func settingsChoiceTitle(fieldIndex int) string {
 		return "LCAgent Admin Write"
 	case settingsFieldMobileEnabled:
 		return "Mobile Interface"
+	case settingsFieldMobileAccessMode:
+		return "Mobile Access"
 	case settingsFieldBossChatOllamaThinking:
 		return "Boss Ollama Thinking"
 	case settingsFieldLCAgentToolProfile:

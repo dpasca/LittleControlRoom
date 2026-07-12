@@ -152,7 +152,8 @@ func (m Model) renderMobileDialogContent(width, bodyH int) string {
 		detailField("State", stateStyle.Render(state)),
 	}
 	if listener := mobileRuntimeListenerLabel(status); listener != "" {
-		lines = append(lines, renderWrappedDetailField("Listener", detailValueStyle, width, listener))
+		lines = append(lines, renderWrappedDetailField("Technical listener", detailValueStyle, width, listener))
+		lines = append(lines, renderWrappedDetailField("Network note", detailMutedStyle, width, mobileListenAddressNote(listener)))
 	}
 	if computerURL := mobileComputerURL(status); computerURL != "" {
 		lines = append(lines, renderWrappedDetailField("This computer", detailValueStyle, width, computerURL))
@@ -258,9 +259,9 @@ func mobileNextStep(status MobileServerStatus) string {
 	case status.Error != "":
 		return "Open Mobile Setup to choose another address or port, save, and restart Little Control Room."
 	case status.Disabled:
-		return "Open Mobile Setup, enable the interface, choose a LAN listen address, save, and restart Little Control Room."
+		return "Open Mobile Setup, enable the interface, choose Phones on this LAN, save, and restart Little Control Room."
 	case !mobileListenerAcceptsLAN(status):
-		return "Open Mobile Setup, change the address to 0.0.0.0:" + mobileRuntimePort(status) + ", save, and restart Little Control Room."
+		return "Open Mobile Setup, choose Phones on this LAN, save, and restart Little Control Room."
 	default:
 		return "Check that this computer is connected to the same LAN as the phone, then reopen /mobile."
 	}
@@ -409,17 +410,32 @@ func (m Model) renderMobileTopStatusIndicator(width int) string {
 		return ""
 	}
 	status := m.mobileServerStatus
+	label := "/mobile"
+	if width >= 96 {
+		switch {
+		case status.Disabled:
+			label += " OFF"
+		case status.Error != "":
+			label += " ERR"
+		case !mobileRuntimeRunning(status):
+			label += " SETUP"
+		case mobileListenerAcceptsLAN(status):
+			label += " LAN"
+		default:
+			label += " SETUP"
+		}
+	}
 	switch {
 	case status.Disabled:
-		return detailMutedStyle.Render("M:OFF")
+		return detailMutedStyle.Render(label)
 	case status.Error != "":
-		return topStatusDangerBadgeStyle.Render("M:ERR")
+		return topStatusDangerBadgeStyle.Render(label)
 	case !mobileRuntimeRunning(status):
-		return detailMutedStyle.Render("M:--")
+		return topStatusSetupBadgeStyle.Render(label)
 	case mobileListenerAcceptsLAN(status):
-		return renderFooterUsage("M:LAN")
+		return renderFooterUsage(label)
 	default:
-		return topStatusSetupBadgeStyle.Render("M:LOCAL")
+		return topStatusSetupBadgeStyle.Render(label)
 	}
 }
 

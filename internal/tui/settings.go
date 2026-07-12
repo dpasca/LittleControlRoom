@@ -73,6 +73,8 @@ const (
 	settingsFieldStuckThreshold
 	settingsFieldInterval
 	settingsFieldMobileEnabled
+	settingsFieldMobileAccessMode
+	settingsFieldMobilePort
 	settingsFieldMobileListenAddress
 	settingsFieldAIBackend
 )
@@ -150,6 +152,9 @@ const (
 	settingsBrowserAutomationAlwaysShow     = "always-show"
 	settingsBrowserAutomationClassic        = "classic-browser-behavior"
 	settingsBrowserAutomationCustom         = "use-config-file-as-is"
+	settingsMobileAccessLocal               = "local"
+	settingsMobileAccessLAN                 = "lan"
+	settingsMobileAccessCustom              = "custom"
 )
 
 var (
@@ -259,9 +264,11 @@ func settingsSections() []settingsSection {
 			id:      settingsSectionMobile,
 			label:   "Mobile",
 			summary: "Phone access",
-			hint:    "Control whether the bundled web client starts with the TUI and which local or LAN address it uses. Changes take effect after restart.",
+			hint:    "Choose who can connect to the bundled web client. The technical listen address is derived for ordinary local and LAN use. Changes take effect after restart.",
 			fieldOrder: []int{
 				settingsFieldMobileEnabled,
+				settingsFieldMobileAccessMode,
+				settingsFieldMobilePort,
 				settingsFieldMobileListenAddress,
 			},
 		},
@@ -849,7 +856,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldStuckThreshold),
 		m.settingsFieldValue(settingsFieldInterval),
 		m.settingsFieldValue(settingsFieldMobileEnabled),
-		m.settingsFieldValue(settingsFieldMobileListenAddress),
+		m.settingsMobileListenAddressFromFields(),
 	)
 	if err != nil {
 		m.err = nil
@@ -1180,8 +1187,12 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "google"
 	case settingsFieldLCAgentWebSearchURL:
 		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "searxng"
-	case settingsFieldMobileListenAddress:
+	case settingsFieldMobileAccessMode:
 		return settings.MobileEnabled
+	case settingsFieldMobilePort:
+		return settings.MobileEnabled && settingsMobileAccessModeValue(m.settingsFieldValue(settingsFieldMobileAccessMode)) != settingsMobileAccessCustom
+	case settingsFieldMobileListenAddress:
+		return settings.MobileEnabled && settingsMobileAccessModeValue(m.settingsFieldValue(settingsFieldMobileAccessMode)) == settingsMobileAccessCustom
 	default:
 		return true
 	}
@@ -1397,6 +1408,8 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 	case settingsDrilldownMobile:
 		return []int{
 			settingsFieldMobileEnabled,
+			settingsFieldMobileAccessMode,
+			settingsFieldMobilePort,
 			settingsFieldMobileListenAddress,
 		}
 	default:
@@ -1804,6 +1817,87 @@ func (m Model) settingsFieldValue(index int) string {
 	return strings.TrimSpace(m.settingsFields[index].input.Value())
 }
 
+func settingsMobileAccessModeValue(raw string) string {
+	switch normalizeSettingsChoice(raw) {
+	case settingsMobileAccessLAN:
+		return settingsMobileAccessLAN
+	case settingsMobileAccessCustom:
+		return settingsMobileAccessCustom
+	default:
+		return settingsMobileAccessLocal
+	}
+}
+
+func settingsMobileAccessModeForAddress(address string) string {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		address = config.DefaultMobileListenAddress
+	}
+	host, _ := mobileListenHostPort(address)
+	switch host {
+	case "127.0.0.1":
+		return settingsMobileAccessLocal
+	case "0.0.0.0":
+		return settingsMobileAccessLAN
+	default:
+		return settingsMobileAccessCustom
+	}
+}
+
+func settingsMobilePortFromAddress(address string) string {
+	_, port := mobileListenHostPort(address)
+	if port != "" {
+		return port
+	}
+	_, port = mobileListenHostPort(config.DefaultMobileListenAddress)
+	return port
+}
+
+func (m Model) settingsMobileListenAddressFromFields() string {
+	port := strings.TrimSpace(m.settingsFieldValue(settingsFieldMobilePort))
+	if port == "" {
+		port = settingsMobilePortFromAddress(config.DefaultMobileListenAddress)
+	}
+	switch settingsMobileAccessModeValue(m.settingsFieldValue(settingsFieldMobileAccessMode)) {
+	case settingsMobileAccessLAN:
+		return "0.0.0.0:" + port
+	case settingsMobileAccessCustom:
+		return strings.TrimSpace(m.settingsFieldValue(settingsFieldMobileListenAddress))
+	default:
+		return "127.0.0.1:" + port
+	}
+}
+
+func settingsMobilePhoneURL(address string, lanAddresses []string) string {
+	host, port := mobileListenHostPort(address)
+	if port == "" || mobileLoopbackHost(host) {
+		return ""
+	}
+	if !mobileWildcardHost(host) {
+		return mobileHTTPURL(host, port)
+	}
+	addresses := normalizeMobileLANAddresses(lanAddresses)
+	if len(addresses) == 0 {
+		return ""
+	}
+	return mobileHTTPURL(addresses[0], port)
+}
+
+func mobileListenAddressNote(address string) string {
+	address = strings.TrimSpace(address)
+	host, _ := mobileListenHostPort(address)
+	switch {
+	case host == "127.0.0.1":
+		return "Listens on " + address + ". 127.0.0.1 accepts connections only from this computer."
+	case host == "0.0.0.0":
+		return "Listens on " + address + ". 0.0.0.0 accepts connections through this computer's available network addresses."
+	case address == "" || host == "":
+		return "The custom listen address must use host:port form."
+	default:
+		return "Listens on the custom address " + address + "."
+	}
+}
+
 func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings := m.currentSettingsBaseline()
 	if len(m.settingsFields) == 0 {
@@ -1850,7 +1944,7 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
 	settings.LCAgentWebSearchURL = m.settingsFieldValue(settingsFieldLCAgentWebSearchURL)
 	settings.MobileEnabled = strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldMobileEnabled, m.settingsFieldValue(settingsFieldMobileEnabled)), "true")
-	settings.MobileListenAddress = m.settingsFieldValue(settingsFieldMobileListenAddress)
+	settings.MobileListenAddress = m.settingsMobileListenAddressFromFields()
 	if settings.MobileListenAddress == "" {
 		settings.MobileListenAddress = config.DefaultMobileListenAddress
 	}
@@ -2215,7 +2309,7 @@ func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
 	case settingsDrilldownProjectScope:
 		return "Choose where projects are discovered and which folders or names stay hidden."
 	case settingsDrilldownMobile:
-		return "Choose whether the mobile web client starts with the TUI and where it listens. Loopback stays on this computer; LAN addresses require pairing."
+		return "Choose who can connect. LAN phones pair on first use; Custom address is for advanced setups."
 	default:
 		return "Configure this setup area."
 	}
@@ -2330,8 +2424,8 @@ func (m Model) renderSettingsDrilldownStatus(width int) []string {
 		lines = append(lines, detailField("Project roots", style.Render(state)+detailMutedStyle.Render(" - "+detail)))
 		return lines
 	case settingsDrilldownMobile:
-		_, state, style, detail := settingsMobileStepState(settings)
-		lines = append(lines, detailField("Mobile access", style.Render(state)+detailMutedStyle.Render(" - "+detail)))
+		preview, style := m.settingsMobileSetupPreview(settings)
+		lines = append(lines, renderWrappedDetailField("Preview", style, width, preview))
 		return lines
 	default:
 		return lines
@@ -2413,7 +2507,12 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 			return "Privacy"
 		}
 	case settingsDrilldownMobile:
-		return "Bundled Web Client"
+		switch fieldIndex {
+		case settingsFieldMobileEnabled:
+			return "Availability"
+		default:
+			return "Connection"
+		}
 	}
 	return ""
 }
@@ -2572,7 +2671,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 	projectValue := settingsProjectReportsOverviewValue(settings, projectChoice)
 	bossValue := settingsBossChatOverviewValue(settings, bossChoice)
 	lcagentValue, lcagentState, lcagentStyle, lcagentDetail := m.settingsLCAgentStepState(settings)
-	mobileValue, mobileState, mobileStyle, mobileDetail := settingsMobileStepState(settings)
+	mobileValue, mobileState, mobileStyle, mobileDetail := m.settingsMobileStepState(settings)
 	return []settingsGettingStartedStep{
 		{
 			Number:     "1",
@@ -2614,6 +2713,14 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 }
 
 func settingsMobileStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
+	return settingsMobileStepStateForLAN(settings, nil)
+}
+
+func (m Model) settingsMobileStepState(settings config.EditableSettings) (string, string, lipgloss.Style, string) {
+	return settingsMobileStepStateForLAN(settings, m.mobileServerStatus.LANAddresses)
+}
+
+func settingsMobileStepStateForLAN(settings config.EditableSettings, lanAddresses []string) (string, string, lipgloss.Style, string) {
 	address := strings.TrimSpace(settings.MobileListenAddress)
 	if address == "" {
 		address = config.DefaultMobileListenAddress
@@ -2622,9 +2729,34 @@ func settingsMobileStepState(settings config.EditableSettings) (string, string, 
 		return "Disabled", "off", detailMutedStyle, "The TUI will not start the mobile client; lcroom serve remains available."
 	}
 	if config.MobileListenAddressIsLoopback(address) {
-		return address, "local only", detailWarningStyle, "Only this computer can connect. Choose a LAN address for phone access; LAN listeners require pairing."
+		return "This computer only", "phone setup needed", detailWarningStyle, "Press Enter and choose Phones on this LAN to connect from a phone."
 	}
-	return address, "LAN ready", footerPrimaryLabelStyle, "Phones on the same trusted network can connect after pairing."
+	if phoneURL := settingsMobilePhoneURL(address, lanAddresses); phoneURL != "" {
+		return phoneURL, "LAN ready", footerPrimaryLabelStyle, "Phones on the same trusted network can connect after pairing."
+	}
+	return "Phones on this LAN", "LAN ready", footerPrimaryLabelStyle, "Save and restart, then run /mobile to see the phone URL and pairing code."
+}
+
+func (m Model) settingsMobileSetupPreview(settings config.EditableSettings) (string, lipgloss.Style) {
+	if !settings.MobileEnabled {
+		return "Off. The TUI will not start the mobile client.", detailMutedStyle
+	}
+	address := strings.TrimSpace(settings.MobileListenAddress)
+	if address == "" {
+		address = config.DefaultMobileListenAddress
+	}
+	mode := settingsMobileAccessModeForAddress(address)
+	bindLabel := "Implicit bind: " + address + "."
+	if mode == settingsMobileAccessCustom {
+		bindLabel = "Custom bind: " + address + "."
+	}
+	if config.MobileListenAddressIsLoopback(address) {
+		return "This computer only. " + bindLabel, detailWarningStyle
+	}
+	if phoneURL := settingsMobilePhoneURL(address, m.mobileServerStatus.LANAddresses); phoneURL != "" {
+		return "Phone: " + phoneURL + ". " + bindLabel, footerPrimaryLabelStyle
+	}
+	return "Phones on this LAN. " + bindLabel + " Run /mobile after restart for the phone URL.", detailWarningStyle
 }
 
 func settingsProjectReportsOverviewValue(settings config.EditableSettings, choice providerChoice) string {
@@ -3881,12 +4013,26 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			8,
 			settingsSectionMobile,
 		),
+		newSettingsField(
+			"Who can connect?",
+			"Press Enter to choose this computer, paired phones on the same LAN, or a custom listen address.",
+			settingsMobileAccessModeForAddress(settings.MobileListenAddress),
+			16,
+			settingsSectionMobile,
+		),
+		newSettingsField(
+			"Port",
+			"TCP port for the mobile web client. The default is 7777. Restart Little Control Room after changing it.",
+			settingsMobilePortFromAddress(settings.MobileListenAddress),
+			5,
+			settingsSectionMobile,
+		),
 		newSettingsFieldWithPlaceholder(
-			"Mobile address",
-			"Listen address in host:port form. Loopback is local only; a LAN address such as 0.0.0.0:7777 enables phone access and requires pairing. Restart after changing it.",
+			"Custom host:port",
+			"Advanced listen address in host:port form. Ordinary local and LAN setups derive this automatically.",
 			settings.MobileListenAddress,
 			128,
-			config.DefaultMobileListenAddress,
+			"192.168.1.20:7777",
 			settingsSectionMobile,
 		),
 		newSettingsField(
@@ -4000,21 +4146,29 @@ func (m Model) settingsFieldHint(index int) string {
 	switch index {
 	case settingsFieldMobileEnabled:
 		if strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldMobileEnabled, field.input.Value()), "true") {
-			return "The mobile client will start with the TUI at the saved address after Little Control Room restarts."
+			return "The mobile client will start with the TUI after Little Control Room restarts. Choose who can connect below."
 		}
 		return "The TUI will stop auto-starting the mobile client after restart. lcroom serve remains available for explicit runs."
+	case settingsFieldMobileAccessMode:
+		switch settingsMobileAccessModeValue(field.input.Value()) {
+		case settingsMobileAccessLAN:
+			return "Recommended for phones. The implicit listen IP is 0.0.0.0; paired devices on the same trusted LAN can connect."
+		case settingsMobileAccessCustom:
+			return "Advanced mode. Enter the complete listen address below; it remains visible in the saved configuration."
+		default:
+			return "The implicit listen IP is 127.0.0.1, so only this computer can connect. Choose Phones on this LAN for phone access."
+		}
+	case settingsFieldMobilePort:
+		return "The selected access mode currently resolves to " + m.settingsMobileListenAddressFromFields() + ". Restart Little Control Room after saving."
 	case settingsFieldMobileListenAddress:
 		address := strings.TrimSpace(field.input.Value())
-		if address == "" {
-			address = config.DefaultMobileListenAddress
-		}
 		if err := config.ValidateMobileListenAddress(address); err != nil {
-			return err.Error() + ". Use host:port, for example 127.0.0.1:7777 or 0.0.0.0:7777."
+			return err.Error() + ". Example: 192.168.1.20:7777."
 		}
 		if config.MobileListenAddressIsLoopback(address) {
-			return "Only this computer can connect at " + address + ". Use a LAN address such as 0.0.0.0:7777 for phone access, then restart."
+			return "This custom address is still local only. Choose Phones on this LAN for automatic LAN access."
 		}
-		return "Phones on the same trusted network can connect at " + address + " after pairing. Restart Little Control Room to apply this address."
+		return "Phones that can reach " + address + " may connect after pairing. Restart Little Control Room to apply it."
 	case settingsFieldAIBackend:
 		backend := config.AIBackend(strings.TrimSpace(field.input.Value()))
 		switch backend {

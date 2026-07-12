@@ -783,7 +783,7 @@ func TestMobileSettingsAppearInSetupAndDedicatedSection(t *testing.T) {
 			gettingStartedFields = append([]int(nil), section.fieldOrder...)
 		}
 	}
-	for _, field := range []int{settingsFieldMobileEnabled, settingsFieldMobileListenAddress} {
+	for _, field := range []int{settingsFieldMobileEnabled, settingsFieldMobileAccessMode, settingsFieldMobilePort, settingsFieldMobileListenAddress} {
 		if !slices.Contains(mobileFields, field) {
 			t.Fatalf("Mobile section missing field %d: %#v", field, mobileFields)
 		}
@@ -794,15 +794,24 @@ func TestMobileSettingsAppearInSetupAndDedicatedSection(t *testing.T) {
 
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	m := Model{settingsFields: newSettingsFields(settings), settingsBaseline: &settings}
-	if got := m.settingsDrilldownFieldOrder(settingsDrilldownMobile); !slices.Equal(got, []int{settingsFieldMobileEnabled, settingsFieldMobileListenAddress}) {
+	if got := m.settingsDrilldownFieldOrder(settingsDrilldownMobile); !slices.Equal(got, []int{settingsFieldMobileEnabled, settingsFieldMobileAccessMode, settingsFieldMobilePort, settingsFieldMobileListenAddress}) {
 		t.Fatalf("mobile drilldown fields = %#v", got)
 	}
-	if !m.settingsFieldVisible(settingsFieldMobileListenAddress) {
-		t.Fatal("mobile address should be visible while enabled")
+	if !m.settingsFieldVisible(settingsFieldMobileAccessMode) || !m.settingsFieldVisible(settingsFieldMobilePort) {
+		t.Fatal("access mode and port should be visible for the default local setup")
+	}
+	if m.settingsFieldVisible(settingsFieldMobileListenAddress) {
+		t.Fatal("custom address should be hidden for the default local setup")
+	}
+	m.settingsFields[settingsFieldMobileAccessMode].input.SetValue(settingsMobileAccessCustom)
+	if m.settingsFieldVisible(settingsFieldMobilePort) || !m.settingsFieldVisible(settingsFieldMobileListenAddress) {
+		t.Fatal("custom mode should replace the simple port field with host:port")
 	}
 	m.settingsFields[settingsFieldMobileEnabled].input.SetValue("false")
-	if m.settingsFieldVisible(settingsFieldMobileListenAddress) {
-		t.Fatal("mobile address should be hidden while disabled")
+	for _, field := range []int{settingsFieldMobileAccessMode, settingsFieldMobilePort, settingsFieldMobileListenAddress} {
+		if m.settingsFieldVisible(field) {
+			t.Fatalf("mobile detail field %d should be hidden while disabled", field)
+		}
 	}
 }
 
@@ -814,13 +823,58 @@ func TestGettingStartedShowsMobileReachability(t *testing.T) {
 		t.Fatalf("getting started steps = %d, want 4", len(steps))
 	}
 	mobile := steps[3]
-	if mobile.Title != "Mobile access" || mobile.State != "local only" || mobile.Value != config.DefaultMobileListenAddress {
+	if mobile.Title != "Mobile access" || mobile.State != "phone setup needed" || mobile.Value != "This computer only" {
 		t.Fatalf("default mobile step = %#v", mobile)
 	}
-	m.settingsFields[settingsFieldMobileListenAddress].input.SetValue("0.0.0.0:8787")
+	m.SetMobileServerStatus(MobileServerStatus{LANAddresses: []string{"192.168.1.20"}})
+	m.settingsFields[settingsFieldMobileAccessMode].input.SetValue(settingsMobileAccessLAN)
+	m.settingsFields[settingsFieldMobilePort].input.SetValue("8787")
 	mobile = m.settingsGettingStartedSteps()[3]
-	if mobile.State != "LAN ready" || mobile.Value != "0.0.0.0:8787" {
+	if mobile.State != "LAN ready" || mobile.Value != "http://192.168.1.20:8787" {
 		t.Fatalf("LAN mobile step = %#v", mobile)
+	}
+}
+
+func TestMobileAccessModesDeriveCompatibleListenAddresses(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{settingsFields: newSettingsFields(settings), settingsBaseline: &settings}
+
+	if got := m.settingsMobileListenAddressFromFields(); got != "127.0.0.1:7777" {
+		t.Fatalf("default listen address = %q", got)
+	}
+	m.settingsFields[settingsFieldMobileAccessMode].input.SetValue(settingsMobileAccessLAN)
+	m.settingsFields[settingsFieldMobilePort].input.SetValue("8787")
+	if got := m.settingsMobileListenAddressFromFields(); got != "0.0.0.0:8787" {
+		t.Fatalf("LAN listen address = %q", got)
+	}
+	m.settingsFields[settingsFieldMobileAccessMode].input.SetValue(settingsMobileAccessCustom)
+	m.settingsFields[settingsFieldMobileListenAddress].input.SetValue("192.168.1.20:9000")
+	if got := m.settingsMobileListenAddressFromFields(); got != "192.168.1.20:9000" {
+		t.Fatalf("custom listen address = %q", got)
+	}
+}
+
+func TestMobileSetupShowsPhoneURLAndTechnicalBindNote(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		settingsFields:    newSettingsFields(settings),
+		settingsBaseline:  &settings,
+		settingsDrilldown: settingsDrilldownMobile,
+	}
+	m.SetMobileServerStatus(MobileServerStatus{LANAddresses: []string{"192.168.1.20"}})
+	m.settingsFields[settingsFieldMobileAccessMode].input.SetValue(settingsMobileAccessLAN)
+
+	rendered := ansi.Strip(strings.Join(m.renderSettingsDrilldownStatus(72), "\n"))
+	for _, want := range []string{"Phone: http://192.168.1.20:7777", "Implicit bind: 0.0.0.0:7777"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("mobile setup status = %q, want %q", rendered, want)
+		}
+	}
+
+	m.settingsSelected = settingsFieldMobilePort
+	rendered = ansi.Strip(m.renderSettingsContent(72, 22))
+	if !strings.Contains(rendered, "> Port") {
+		t.Fatalf("compact mobile setup should keep selected Port visible: %q", rendered)
 	}
 }
 
