@@ -16,11 +16,12 @@ import (
 )
 
 type ResponsesClient struct {
-	apiKey     string
-	endpoint   string
-	httpClient *http.Client
-	usage      *UsageTracker
-	authHeader OpenAICompatibleAuthHeader
+	apiKey            string
+	endpoint          string
+	httpClient        *http.Client
+	usage             *UsageTracker
+	authHeader        OpenAICompatibleAuthHeader
+	requireParameters bool
 }
 
 type JSONSchemaRequest struct {
@@ -167,6 +168,11 @@ func (c *ResponsesClient) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 	if effort := strings.TrimSpace(req.ReasoningEffort); effort != "" {
 		reqBody["reasoning"] = map[string]any{
 			"effort": effort,
+		}
+	}
+	if c.requireParameters {
+		reqBody["provider"] = map[string]any{
+			"require_parameters": true,
 		}
 	}
 

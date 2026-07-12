@@ -18,6 +18,7 @@ type OpenAICompatibleResponsesRunnerOptions struct {
 	ChatResponseFormat    OpenAICompatibleChatResponseFormat
 	AuthHeader            OpenAICompatibleAuthHeader
 	ReasoningStyle        string
+	RequireParameters     bool
 }
 
 type OpenAICompatibleModelDiscovery struct {
@@ -219,13 +220,43 @@ func NewOpenAICompatibleResponsesRunner(baseURL, apiKey, defaultModel string, ti
 func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel string, timeout time.Duration, usage *UsageTracker, opts OpenAICompatibleResponsesRunnerOptions) JSONSchemaRunner {
 	authHeader := normalizeOpenAICompatibleAuthHeader(opts.AuthHeader)
 	responsesClient := NewResponsesClientWithBaseURLAndAuthHeader(apiKey, baseURL, timeout, usage, authHeader)
+	if responsesClient != nil {
+		responsesClient.requireParameters = opts.RequireParameters
+	}
 	chatFormat := normalizeOpenAICompatibleChatResponseFormat(opts.ChatResponseFormat)
 	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, chatFormat, authHeader, opts.ReasoningStyle)
-	jsonModeChatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONObject, authHeader, opts.ReasoningStyle)
-	if chatFormat == OpenAICompatibleChatResponseFormatJSONObject {
-		jsonModeChatClient = chatClient
+	if chatClient != nil {
+		chatClient.requireParameters = opts.RequireParameters
 	}
-	baseRunner := NewOpenAICompatibleStructuredOutputRunnerWithJSONModeFallback(responsesClient, chatClient, jsonModeChatClient, OpenAICompatibleStructuredOutputOptions{
+
+	var schemaChatClient JSONSchemaRunner
+	var jsonModeChatClient JSONSchemaRunner
+	var promptOnlyChatClient JSONSchemaRunner
+	if chatClient != nil {
+		switch chatFormat {
+		case OpenAICompatibleChatResponseFormatJSONObject:
+			jsonModeChatClient = chatClient
+		case OpenAICompatibleChatResponseFormatPromptOnly:
+			promptOnlyChatClient = chatClient
+		default:
+			schemaChatClient = chatClient
+		}
+	}
+	if jsonModeChatClient == nil && chatFormat != OpenAICompatibleChatResponseFormatPromptOnly {
+		client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONObject, authHeader, opts.ReasoningStyle)
+		if client != nil {
+			client.requireParameters = opts.RequireParameters
+			jsonModeChatClient = client
+		}
+	}
+	if promptOnlyChatClient == nil {
+		client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatPromptOnly, authHeader, opts.ReasoningStyle)
+		if client != nil {
+			client.requireParameters = opts.RequireParameters
+			promptOnlyChatClient = client
+		}
+	}
+	baseRunner := NewOpenAICompatibleStructuredOutputRunnerWithFallbacks(responsesClient, schemaChatClient, jsonModeChatClient, promptOnlyChatClient, OpenAICompatibleStructuredOutputOptions{
 		PreferChatCompletions: opts.PreferChatCompletions,
 	})
 	if baseRunner == nil {
