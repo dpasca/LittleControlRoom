@@ -588,18 +588,37 @@ func worktreeDescription(project model.ProjectSummary) string {
 		return ""
 	}
 	target := strings.TrimSpace(project.WorktreeParentBranch)
-	if target == "" {
-		target = "parent branch unavailable"
+	if project.RepoConflict {
+		return "Integration blocked by unresolved conflicts"
+	}
+	if project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress {
+		if target != "" {
+			return "Merge in progress into " + target
+		}
+		return "Merge in progress"
+	}
+	if project.RepoDirty {
+		if target != "" {
+			return "Ready to commit and merge into " + target
+		}
+		return "Ready to commit and merge back"
 	}
 	switch project.WorktreeMergeStatus {
 	case model.WorktreeMergeStatusMerged:
-		return "Merged into " + target
-	case model.WorktreeMergeStatusMergeInProgress:
-		return "Merge in progress into " + target
+		if target != "" {
+			return "No changes to integrate into " + target
+		}
+		return "No changes to integrate"
 	case model.WorktreeMergeStatusNotMerged:
-		return "Ready to merge into " + target
+		if target != "" {
+			return "Ready to merge into " + target
+		}
+		return "Ready to merge back"
 	default:
-		return "Linked worktree - target " + target
+		if target != "" {
+			return "Linked worktree - target " + target
+		}
+		return "Linked worktree - parent branch unavailable"
 	}
 }
 

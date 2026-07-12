@@ -175,7 +175,7 @@ func projectAssessmentRepoFallback(project model.ProjectSummary) string {
 		return repoSubmoduleAttentionPlainText(project)
 	}
 	if worktreeNeedsMergeBack(project) {
-		return worktreeMergeStatusSummary(project)
+		return worktreeIntegrationStatusSummary(project)
 	}
 	return ""
 }
@@ -914,31 +914,18 @@ func repoConflictDetailValue(project model.ProjectSummary) string {
 	return detailConflictStyle.Render("Unmerged files are present in this " + location + ". Use /resolve to ask a fresh engineer session for help, or resolve/abort the in-progress Git operation manually.")
 }
 
-func worktreeMergeStatusDetailValue(project model.ProjectSummary) string {
-	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
-	if project.RepoDirty {
-		switch project.WorktreeMergeStatus {
-		case model.WorktreeMergeStatusMerged:
-			return detailWarningStyle.Render(worktreeNothingToMergeText() + "; local changes")
-		case model.WorktreeMergeStatusMergeInProgress:
-			return detailWarningStyle.Render(worktreeMergingText(targetBranch) + "; local changes")
-		default:
-			return detailWarningStyle.Render(worktreeCommitBeforeMergeText(targetBranch))
-		}
+func worktreeIntegrationStatusDetailValue(project model.ProjectSummary) string {
+	text := worktreeIntegrationStatusDetailText(project)
+	if project.RepoConflict {
+		return detailConflictStyle.Render(text)
 	}
-	switch project.WorktreeMergeStatus {
-	case model.WorktreeMergeStatusMerged:
-		return detailValueStyle.Render(worktreeNothingToMergeText())
-	case model.WorktreeMergeStatusMergeInProgress:
-		return detailWarningStyle.Render(worktreeMergingText(targetBranch))
-	case model.WorktreeMergeStatusNotMerged:
-		return detailWarningStyle.Render(worktreeReadyToMergeText(targetBranch))
-	default:
-		if targetBranch != "" {
-			return detailMutedStyle.Render("unavailable for " + targetBranch)
-		}
-		return detailMutedStyle.Render("unavailable")
+	if project.RepoDirty || project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress || project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged {
+		return detailWarningStyle.Render(text)
 	}
+	if project.WorktreeMergeStatus == model.WorktreeMergeStatusUnknown {
+		return detailMutedStyle.Render(text)
+	}
+	return detailValueStyle.Render(text)
 }
 
 func repoSyncDetailValue(project model.ProjectSummary) string {

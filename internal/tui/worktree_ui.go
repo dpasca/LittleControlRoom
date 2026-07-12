@@ -45,15 +45,15 @@ const (
 )
 
 type projectListRow struct {
-	Kind                projectListRowKind
-	ProjectPath         string
-	RootPath            string
-	LinkedCount         int
-	LinkedActiveCount   int
-	LinkedDirtyCount    int
-	LinkedUnmergedCount int
-	Expanded            bool
-	PendingLaunchID     int64
+	Kind                          projectListRowKind
+	ProjectPath                   string
+	RootPath                      string
+	LinkedCount                   int
+	LinkedActiveCount             int
+	LinkedDirtyCount              int
+	LinkedPendingIntegrationCount int
+	Expanded                      bool
+	PendingLaunchID               int64
 }
 
 type worktreeRemoveConfirmState struct {
@@ -644,31 +644,40 @@ func projectWorktreeLabel(project model.ProjectSummary) string {
 	return name
 }
 
-func worktreeMergeStatusSummary(project model.ProjectSummary) string {
+func worktreeIntegrationStatusSummary(project model.ProjectSummary) string {
 	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
-	if project.RepoDirty {
-		switch project.WorktreeMergeStatus {
-		case model.WorktreeMergeStatusMerged:
-			return worktreeNothingToMergeText() + "; local changes"
-		case model.WorktreeMergeStatusMergeInProgress:
-			return worktreeMergingText(targetBranch) + "; local changes"
-		default:
-			return worktreeCommitBeforeMergeText(targetBranch)
+	if project.RepoConflict {
+		return "integration blocked by unresolved conflicts"
+	}
+	if project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress {
+		text := worktreeMergingText(targetBranch)
+		if project.RepoDirty {
+			text += "; local changes remain"
 		}
+		return text
+	}
+	if project.RepoDirty {
+		return worktreeReadyToCommitAndMergeText(targetBranch)
 	}
 	switch project.WorktreeMergeStatus {
 	case model.WorktreeMergeStatusMerged:
-		return worktreeNothingToMergeText()
-	case model.WorktreeMergeStatusMergeInProgress:
-		return worktreeMergingText(targetBranch)
+		return worktreeNoChangesToIntegrateText(targetBranch)
 	case model.WorktreeMergeStatusNotMerged:
 		return worktreeReadyToMergeText(targetBranch)
 	default:
 		if targetBranch != "" {
-			return "merge status unavailable for " + targetBranch
+			return "unavailable for " + targetBranch
 		}
-		return "merge status unavailable"
+		return "unavailable"
 	}
+}
+
+func worktreeNoChangesToIntegrateText(targetBranch string) string {
+	targetBranch = strings.TrimSpace(targetBranch)
+	if targetBranch != "" {
+		return "no changes to integrate into " + targetBranch
+	}
+	return "no changes to integrate"
 }
 
 func worktreeNothingToMergeText() string {
@@ -691,12 +700,12 @@ func worktreeMergingText(targetBranch string) string {
 	return "merge in progress"
 }
 
-func worktreeCommitBeforeMergeText(targetBranch string) string {
+func worktreeReadyToCommitAndMergeText(targetBranch string) string {
 	targetBranch = strings.TrimSpace(targetBranch)
 	if targetBranch != "" {
-		return "commit changes before merging into " + targetBranch
+		return "ready to commit and merge into " + targetBranch
 	}
-	return "commit changes before merging back"
+	return "ready to commit and merge back"
 }
 
 func worktreeNothingToMergeStatus(sourceBranch, targetBranch string) string {
@@ -907,19 +916,19 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 			children = append(children, project)
 		}
 		activeCount, dirtyCount := m.worktreeActivityCounts(children)
-		unmergedCount := worktreeUnmergedCount(children)
+		pendingIntegrationCount := worktreePendingIntegrationCount(children)
 		expanded := m.isWorktreeGroupExpanded(rootPath, children, selectedPath)
 
 		rows = append(rows, rootProject)
 		meta = append(meta, projectListRow{
-			Kind:                projectListRowRepo,
-			ProjectPath:         rootProject.Path,
-			RootPath:            rootPath,
-			LinkedCount:         len(children),
-			LinkedActiveCount:   activeCount,
-			LinkedDirtyCount:    dirtyCount,
-			LinkedUnmergedCount: unmergedCount,
-			Expanded:            expanded,
+			Kind:                          projectListRowRepo,
+			ProjectPath:                   rootProject.Path,
+			RootPath:                      rootPath,
+			LinkedCount:                   len(children),
+			LinkedActiveCount:             activeCount,
+			LinkedDirtyCount:              dirtyCount,
+			LinkedPendingIntegrationCount: pendingIntegrationCount,
+			Expanded:                      expanded,
 		})
 		if !expanded {
 			continue
@@ -981,10 +990,20 @@ func worktreeNeedsMergeBack(project model.ProjectSummary) bool {
 		project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged
 }
 
-func worktreeUnmergedCount(projects []model.ProjectSummary) int {
+func worktreeHasPendingIntegration(project model.ProjectSummary) bool {
+	if !projectUsesRepoUI(project) || project.WorktreeKind != model.WorktreeKindLinked {
+		return false
+	}
+	if project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress {
+		return false
+	}
+	return project.RepoDirty || project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged
+}
+
+func worktreePendingIntegrationCount(projects []model.ProjectSummary) int {
 	count := 0
 	for _, project := range projects {
-		if worktreeNeedsMergeBack(project) {
+		if worktreeHasPendingIntegration(project) {
 			count++
 		}
 	}
@@ -1059,7 +1078,7 @@ func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
 	return nil
 }
 
-func worktreeLinkedBadgeSummary(linked, active, dirty, unmerged, orphaned int) string {
+func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, orphaned int) string {
 	if linked <= 0 && orphaned <= 0 {
 		return ""
 	}
@@ -1070,8 +1089,8 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, unmerged, orphaned int) s
 	if orphaned > 0 {
 		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
 	}
-	if unmerged > 0 {
-		parts = append(parts, fmt.Sprintf("%d needs merge", unmerged))
+	if pendingIntegration > 0 {
+		parts = append(parts, fmt.Sprintf("%d to integrate", pendingIntegration))
 	}
 	if active > 0 {
 		parts = append(parts, fmt.Sprintf("%d active", active))
@@ -1081,7 +1100,7 @@ func worktreeLinkedBadgeSummary(linked, active, dirty, unmerged, orphaned int) s
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, unmerged, orphaned int) string {
+func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, pendingIntegration, orphaned int) string {
 	rootCount := 0
 	for _, project := range projects {
 		if projectIsWorktreeRoot(project) {
@@ -1102,8 +1121,8 @@ func worktreeGroupSummary(projects []model.ProjectSummary, active, dirty, unmerg
 	if orphaned > 0 {
 		parts = append(parts, fmt.Sprintf("%d orphaned", orphaned))
 	}
-	if unmerged > 0 {
-		parts = append(parts, fmt.Sprintf("%d needs merge", unmerged))
+	if pendingIntegration > 0 {
+		parts = append(parts, fmt.Sprintf("%d pending integration", pendingIntegration))
 	}
 	if active > 0 {
 		parts = append(parts, fmt.Sprintf("%d active", active))
@@ -1234,7 +1253,7 @@ func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.
 	if m.canMergeWorktreeBack(project) {
 		hint := "M or /wt merge"
 		if project.RepoDirty {
-			hint += " (commit dirty changes first)"
+			hint += " (automatically commits dirty changes first)"
 		}
 		hints = append(hints, hint)
 	}
@@ -1981,7 +2000,7 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 		detailValueStyle.Render(truncateText(confirm.BranchName, panelInnerW)),
 		detailMutedStyle.Render(truncateText(confirm.ProjectPath, panelInnerW)),
 	}
-	if statusHeader, statusBody, statusStyle := worktreeRemoveSafetyCopy(confirm.MergeStatus, confirm.TargetBranch); statusHeader != "" || statusBody != "" {
+	if statusHeader, statusBody, statusStyle := worktreeRemoveSafetyCopy(confirm.MergeStatus, confirm.TargetBranch, confirm.Dirty); statusHeader != "" || statusBody != "" {
 		lines = append(lines, "")
 		if statusHeader != "" {
 			lines = append(lines, statusStyle.Render(statusHeader))
@@ -2049,14 +2068,26 @@ func (m Model) renderWorktreeRemoveConfirmOverlay(body string, bodyW, bodyH int)
 	return overlayBlock(body, panel, bodyW, bodyH, left, top)
 }
 
-func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch string) (string, string, lipgloss.Style) {
+func worktreeRemoveSafetyCopy(status model.WorktreeMergeStatus, targetBranch string, dirty bool) (string, string, lipgloss.Style) {
 	targetBranch = strings.TrimSpace(targetBranch)
+	if dirty && status != model.WorktreeMergeStatusMergeInProgress {
+		switch {
+		case status == model.WorktreeMergeStatusNotMerged && targetBranch != "":
+			return "Pending integration", "This worktree has uncommitted changes and branch commits to integrate into " + targetBranch + ".", detailWarningStyle
+		case status == model.WorktreeMergeStatusNotMerged:
+			return "Pending integration", "This worktree has uncommitted changes and branch commits to integrate back.", detailWarningStyle
+		case targetBranch != "":
+			return "Pending integration", "This worktree has uncommitted changes to commit and merge into " + targetBranch + ".", detailWarningStyle
+		default:
+			return "Pending integration", "This worktree has uncommitted changes to commit and merge back.", detailWarningStyle
+		}
+	}
 	switch status {
 	case model.WorktreeMergeStatusMerged:
 		if targetBranch != "" {
-			return "Nothing to merge", "This branch has no pending commits for " + targetBranch + ".", detailValueStyle
+			return "No pending integration", "This branch has no pending commits for " + targetBranch + ".", detailValueStyle
 		}
-		return "Nothing to merge", "This branch has no pending commits for its merge target.", detailValueStyle
+		return "No pending integration", "This branch has no pending commits for its merge target.", detailValueStyle
 	case model.WorktreeMergeStatusMergeInProgress:
 		if targetBranch != "" {
 			return "Merge in progress", "This branch is merging into " + targetBranch + ". Finish or abort the root merge before removing the checkout.", detailWarningStyle
