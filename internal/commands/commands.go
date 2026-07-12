@@ -166,7 +166,7 @@ var specs = []Spec{
 	{Name: "restart", Usage: "/restart", Summary: "Restart the selected project's managed runtime"},
 	{Name: "run-edit", Usage: "/run-edit", Summary: "Edit the selected project's saved run command"},
 	{Name: "runtime", Usage: "/runtime", Summary: "Focus the selected project's runtime pane"},
-	{Name: "mobile", Usage: "/mobile", Summary: "Show the local mobile client URL and status"},
+	{Name: "mobile", Usage: "/mobile", Summary: "Open mobile status, phone URL, pairing, and setup"},
 	{Name: "cpu", Usage: "/cpu", Summary: "Inspect top CPU processes"},
 	{Name: "ports", Usage: "/ports", Summary: "Inspect project-local TCP listeners"},
 	{Name: "stop", Usage: "/stop", Summary: "Stop the selected project's managed runtime"},

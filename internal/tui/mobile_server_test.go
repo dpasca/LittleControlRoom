@@ -5,15 +5,18 @@ import (
 	"testing"
 
 	"lcroom/internal/commands"
+	"lcroom/internal/config"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestMobileCommandReportsRunningURL(t *testing.T) {
+func TestMobileCommandOpensLocalOnlyStatusPanel(t *testing.T) {
 	m := Model{}
 	m.SetMobileServerStatus(MobileServerStatus{
 		URL:           "http://127.0.0.1:7777",
 		ListenAddress: "127.0.0.1:7777",
+		LANAddresses:  []string{"192.168.1.20"},
 	})
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindMobile})
@@ -21,20 +24,36 @@ func TestMobileCommandReportsRunningURL(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("/mobile should not queue background work")
 	}
-	if got.status != "Mobile client available at http://127.0.0.1:7777" {
-		t.Fatalf("status = %q", got.status)
+	if !got.mobileDialogOpen {
+		t.Fatal("/mobile should open the mobile access panel")
 	}
-	rendered := ansi.Strip(got.renderTopStatusLine(80))
-	if !strings.Contains(rendered, "http://127.0.0.1:7777") {
-		t.Fatalf("80-column top status = %q, want the complete mobile URL", rendered)
+	panel := ansi.Strip(got.renderMobileDialogPanel(80, 24))
+	for _, want := range []string{
+		"Mobile Access",
+		"Local only",
+		"http://127.0.0.1:7777",
+		"Not reachable from the LAN",
+		"192.168.1.20",
+		"http://192.168.1.20:7777",
+		"Open Mobile Setup",
+	} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("mobile panel = %q, want %q", panel, want)
+		}
+	}
+	header := ansi.Strip(got.renderTopStatusLine(80))
+	if !strings.Contains(header, "M:LOCAL") {
+		t.Fatalf("80-column top status = %q, want M:LOCAL indicator", header)
 	}
 }
 
-func TestMobileCommandReportsLANPairingCode(t *testing.T) {
+func TestMobileCommandShowsLANPhoneURLAndPairingCode(t *testing.T) {
 	m := Model{}
 	m.SetMobileServerStatus(MobileServerStatus{
-		URL:           "http://192.168.1.20:7777",
-		ListenAddress: "192.168.1.20:7777",
+		URL:           "http://0.0.0.0:7777",
+		ListenAddress: "0.0.0.0:0",
+		BoundAddress:  "0.0.0.0:7777",
+		LANAddresses:  []string{"192.168.1.20", "10.0.0.12"},
 		PairingCode:   "123 456",
 		AuthRequired:  true,
 	})
@@ -44,17 +63,25 @@ func TestMobileCommandReportsLANPairingCode(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("/mobile should not queue background work")
 	}
-	for _, want := range []string{"http://192.168.1.20:7777", "pairing code 123 456"} {
-		if !strings.Contains(got.status, want) {
-			t.Fatalf("status = %q, want %q", got.status, want)
+	panel := ansi.Strip(got.renderMobileDialogPanel(88, 26))
+	for _, want := range []string{"LAN ready", "Listener: 0.0.0.0:7777", "http://192.168.1.20:7777", "http://10.0.0.12:7777", "Required - code 123 456", "Trusted LAN only"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("mobile panel = %q, want %q", panel, want)
 		}
+	}
+	header := ansi.Strip(got.renderTopStatusLine(100))
+	if !strings.Contains(header, "M:LAN") {
+		t.Fatalf("top status = %q, want M:LAN indicator", header)
 	}
 }
 
-func TestMobileCommandReportsDisabledSetting(t *testing.T) {
-	m := Model{}
+func TestMobileCommandShowsDisabledSetupGuidance(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.MobileEnabled = false
+	m := Model{settingsBaseline: &settings}
 	m.SetMobileServerStatus(MobileServerStatus{
 		ListenAddress: "127.0.0.1:7777",
+		LANAddresses:  []string{"192.168.1.20"},
 		Disabled:      true,
 	})
 
@@ -63,10 +90,66 @@ func TestMobileCommandReportsDisabledSetting(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("/mobile should not queue background work")
 	}
-	for _, want := range []string{"disabled in Settings", "lcroom serve"} {
-		if !strings.Contains(got.status, want) {
-			t.Fatalf("status = %q, want %q", got.status, want)
+	panel := ansi.Strip(got.renderMobileDialogPanel(80, 24))
+	for _, want := range []string{"Disabled", "Not running", "http://192.168.1.20:7777", "enable the interface"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("mobile panel = %q, want %q", panel, want)
 		}
+	}
+	header := ansi.Strip(got.renderTopStatusLine(80))
+	if !strings.Contains(header, "M:OFF") {
+		t.Fatalf("top status = %q, want M:OFF indicator", header)
+	}
+}
+
+func TestMobileDialogEnterOpensAuthoritativeSetupDrilldown(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	m := Model{
+		mobileDialogOpen: true,
+		settingsBaseline: &settings,
+	}
+
+	updated, cmd := m.updateMobileDialogMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("opening Mobile Setup should return field focus commands")
+	}
+	if got.mobileDialogOpen {
+		t.Fatal("mobile dialog should close before opening settings")
+	}
+	if !got.settingsMode || got.settingsDrilldown != settingsDrilldownMobile {
+		t.Fatalf("settings state = mode %v drilldown %q, want Mobile setup", got.settingsMode, got.settingsDrilldown)
+	}
+	if got.settingsSelected != settingsFieldMobileEnabled {
+		t.Fatalf("settings selection = %d, want mobile enabled field %d", got.settingsSelected, settingsFieldMobileEnabled)
+	}
+}
+
+func TestMobileDialogCopiesReachablePhoneURL(t *testing.T) {
+	previousWriter := clipboardTextWriter
+	var copied string
+	clipboardTextWriter = func(value string) error {
+		copied = value
+		return nil
+	}
+	t.Cleanup(func() { clipboardTextWriter = previousWriter })
+
+	m := Model{mobileDialogOpen: true}
+	m.SetMobileServerStatus(MobileServerStatus{
+		URL:           "http://0.0.0.0:7777",
+		ListenAddress: "0.0.0.0:7777",
+		LANAddresses:  []string{"192.168.1.20"},
+		AuthRequired:  true,
+		PairingCode:   "123 456",
+	})
+
+	updated, _ := m.updateMobileDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	got := updated.(Model)
+	if copied != "http://192.168.1.20:7777" {
+		t.Fatalf("copied URL = %q", copied)
+	}
+	if got.status != "Phone URL copied to clipboard" {
+		t.Fatalf("status = %q", got.status)
 	}
 }
 

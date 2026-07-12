@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,6 +88,27 @@ func TestResolveMobileRuntimeOptionsListenOverrideForcesOneRunStart(t *testing.T
 	}
 	if address != "0.0.0.0:9999" || !enabled {
 		t.Fatalf("resolved address/enabled = %q/%v, want 0.0.0.0:9999/true", address, enabled)
+	}
+}
+
+func TestLocalPrivateLANIPv4AddressesOnlyReturnsPrivateIPv4(t *testing.T) {
+	for _, address := range localPrivateLANIPv4Addresses() {
+		ip := net.ParseIP(address)
+		if ip == nil || ip.To4() == nil || !ip.IsPrivate() || ip.IsLoopback() {
+			t.Fatalf("LAN discovery returned unsuitable address %q", address)
+		}
+	}
+}
+
+func TestLANInterfaceRankPrefersPhysicalNetworkNames(t *testing.T) {
+	if got := lanInterfaceRank("en0"); got != 0 {
+		t.Fatalf("en0 rank = %d, want 0", got)
+	}
+	if got := lanInterfaceRank("bridge100"); got != 1 {
+		t.Fatalf("bridge100 rank = %d, want 1", got)
+	}
+	if got := lanInterfaceRank("utun4"); got != 2 {
+		t.Fatalf("utun4 rank = %d, want 2", got)
 	}
 }
 

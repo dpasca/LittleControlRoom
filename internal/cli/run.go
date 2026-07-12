@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -969,6 +970,7 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	if mobileEnabled {
 		mobileServer, mobileStatus = startTUIMobileServer(runCtx, svc, codexManager, mobileListenAddress)
 	}
+	mobileStatus.LANAddresses = localPrivateLANIPv4Addresses()
 	defer func() {
 		cancel()
 		if err := stopRunningServer(mobileServer); err != nil {
@@ -993,6 +995,90 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	return 0
 }
 
+type lanAddressCandidate struct {
+	address        string
+	interfaceIndex int
+	interfaceRank  int
+}
+
+func localPrivateLANIPv4Addresses() []string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	candidates := []lanAddressCandidate{}
+	seen := map[string]struct{}{}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			ip := interfaceAddressIP(address)
+			if ip == nil || ip.To4() == nil || !ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				continue
+			}
+			value := ip.To4().String()
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			candidates = append(candidates, lanAddressCandidate{
+				address:        value,
+				interfaceIndex: iface.Index,
+				interfaceRank:  lanInterfaceRank(iface.Name),
+			})
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].interfaceRank != candidates[j].interfaceRank {
+			return candidates[i].interfaceRank < candidates[j].interfaceRank
+		}
+		if candidates[i].interfaceIndex != candidates[j].interfaceIndex {
+			return candidates[i].interfaceIndex < candidates[j].interfaceIndex
+		}
+		return candidates[i].address < candidates[j].address
+	})
+	addresses := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		addresses = append(addresses, candidate.address)
+	}
+	return addresses
+}
+
+func interfaceAddressIP(address net.Addr) net.IP {
+	switch value := address.(type) {
+	case *net.IPNet:
+		return value.IP
+	case *net.IPAddr:
+		return value.IP
+	default:
+		ip, _, err := net.ParseCIDR(strings.TrimSpace(address.String()))
+		if err != nil {
+			return nil
+		}
+		return ip
+	}
+}
+
+func lanInterfaceRank(name string) int {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case strings.HasPrefix(name, "en"),
+		strings.HasPrefix(name, "eth"),
+		strings.HasPrefix(name, "wlan"),
+		strings.HasPrefix(name, "wl"):
+		return 0
+	case strings.HasPrefix(name, "bridge"):
+		return 1
+	default:
+		return 2
+	}
+}
+
 func startTUIMobileServer(ctx context.Context, svc *service.Service, liveSessions server.LiveSessionSource, listenAddress string) (*server.RunningServer, tui.MobileServerStatus) {
 	listenAddress = strings.TrimSpace(listenAddress)
 	if listenAddress == "" {
@@ -1015,6 +1101,7 @@ func startTUIMobileServer(ctx context.Context, svc *service.Service, liveSession
 		return nil, status
 	}
 	status.URL = running.URL()
+	status.BoundAddress = running.Address()
 	return running, status
 }
 
