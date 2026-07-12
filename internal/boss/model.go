@@ -1334,7 +1334,7 @@ func (m *Model) syncLayout(gotoBottom bool) {
 	layout := m.layout()
 	inputWidth := layout.chatInnerWidth
 	if m.simpleCoreInput {
-		inputWidth = maxInt(1, layout.chatInnerWidth-4)
+		inputWidth = helpChatInputInnerWidth(layout.chatInnerWidth)
 	}
 	m.input.SetWidth(maxInt(20, inputWidth))
 	m.input.SetHeight(layout.inputEditorHeight)
@@ -1496,10 +1496,11 @@ func (m Model) coreChatAuxiliaryHeights(height, inputHeight int) (int, int) {
 }
 
 const (
-	bossInputPromptWidth     = 2
-	bossInputChromeHeight    = 0
-	bossInputMinEditorHeight = 2
-	bossInputMaxEditorHeight = 6
+	bossInputPromptWidth         = 2
+	bossInputChromeHeight        = 0
+	bossInputMinEditorHeight     = 2
+	helpChatInputMinEditorHeight = 4
+	bossInputMaxEditorHeight     = 6
 )
 
 func bossInputBlockHeight(editorHeight int) int {
@@ -1507,7 +1508,11 @@ func bossInputBlockHeight(editorHeight int) int {
 }
 
 func (m Model) bossInputEditorHeight(width, topHeight int, includesHint bool) int {
-	desired := clampInt(bossInputVisualRows(m.input.Value(), width), bossInputMinEditorHeight, bossInputMaxEditorHeight)
+	minEditorHeight := bossInputMinEditorHeight
+	if m.helpChat {
+		minEditorHeight = helpChatInputMinEditorHeight
+	}
+	desired := clampInt(bossInputVisualRows(m.input.Value(), width), minEditorHeight, bossInputMaxEditorHeight)
 	hintHeight := 0
 	if includesHint {
 		hintHeight = 1
@@ -1515,7 +1520,7 @@ func (m Model) bossInputEditorHeight(width, topHeight int, includesHint bool) in
 	bodyHeight := maxInt(1, topHeight-4)
 	maxEditorHeight := bodyHeight - hintHeight - bossInputChromeHeight - 1
 	maxEditorHeight = clampInt(maxEditorHeight, 1, bossInputMaxEditorHeight)
-	if maxEditorHeight < bossInputMinEditorHeight {
+	if maxEditorHeight < minEditorHeight {
 		return maxEditorHeight
 	}
 	return minInt(desired, maxEditorHeight)
@@ -2265,7 +2270,7 @@ var (
 	helpChatUserContStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Background(helpChatSurfaceBackground)
 	helpChatMutedStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(helpChatSurfaceBackground)
 	helpChatToolCallStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(helpChatSurfaceBackground)
-	helpChatInputShellStyle         = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText)
+	helpChatInputShellStyle         = lipgloss.NewStyle().Background(bossInputBackground).Foreground(bossPanelText).Padding(0, 1)
 )
 
 func bossPanelInnerWidth(width int) int {
@@ -2307,11 +2312,15 @@ func renderBossInputBlock(_ textarea.Model, editorView string, width int) string
 
 func renderHelpChatInput(input textarea.Model, width, height int) string {
 	width = maxInt(1, width)
-	shell := helpChatInputShellStyle.Width(width).Padding(0, 1)
-	innerWidth := maxInt(1, width-shell.GetHorizontalPadding())
+	shell := helpChatInputShellStyle.Width(width)
+	innerWidth := helpChatInputInnerWidth(width)
 	body := fitRenderedBlock(input.View(), innerWidth, height)
 	rendered := shell.Render(body)
 	return fitRenderedBlock(rendered, width, height)
+}
+
+func helpChatInputInnerWidth(width int) int {
+	return maxInt(1, width-helpChatInputShellStyle.GetHorizontalPadding())
 }
 
 func panelHeightForRawLines(contentLines int) int {
@@ -2376,8 +2385,7 @@ func renderHelpAssistantMessage(content string, width int, projectHighlights []b
 		lines[0] = applyPrefixedMessageHighlights(lines[0], highlights)
 	}
 	lines[0] = helpChatAssistantPrefixStyle.Render(prefix) + lines[0]
-	rendered = ansi.Wordwrap(strings.Join(lines, "\n"), width, "")
-	rendered = ansi.Hardwrap(rendered, width, false)
+	rendered = terminalmd.WrapStyled(strings.Join(lines, "\n"), width)
 	lines = strings.Split(rendered, "\n")
 	if len(projectHighlights) > 0 {
 		for i, line := range lines {
@@ -2768,7 +2776,12 @@ func applyPrefixedMessageHighlights(line string, highlights []prefixedMessageHig
 func renderMessageLines(content string, style lipgloss.Style, width int) string {
 	lines := strings.Split(content, "\n")
 	for i, line := range lines {
-		lines[i] = style.Render(fitStyledLine(line, width))
+		line = ansi.Truncate(line, width, "")
+		padding := maxInt(0, width-ansi.StringWidth(ansi.Strip(line)))
+		lines[i] = style.Render(line)
+		if padding > 0 {
+			lines[i] += style.Render(strings.Repeat(" ", padding))
+		}
 	}
 	return strings.Join(lines, "\n")
 }

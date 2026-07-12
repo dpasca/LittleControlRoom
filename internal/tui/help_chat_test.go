@@ -8,7 +8,9 @@ import (
 	bossui "lcroom/internal/boss"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 func TestHelpChatLongTranscriptStaysInsideScrollableOverlay(t *testing.T) {
@@ -49,6 +51,64 @@ func TestHelpChatLongTranscriptStaysInsideScrollableOverlay(t *testing.T) {
 	assertHelpChatOverlayBorder(t, pageUpView, bodyHeight, geom)
 	if pageUpView == bottomView {
 		t.Fatalf("Page Up should change the visible help transcript")
+	}
+}
+
+func TestHelpChatOverlayPaintsEveryInteriorCell(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	defer func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	}()
+
+	const (
+		bodyWidth  = 112
+		bodyHeight = 38
+	)
+	geom := helpChatOverlayGeometryForSize(bodyWidth, bodyHeight)
+	help := bossui.NewEmbeddedHelp(context.Background(), nil)
+	updated, _ := help.Update(tea.WindowSizeMsg{Width: geom.chatWidth, Height: geom.chatHeight})
+	help = normalizeBossModel(updated)
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("A **styled** question with enough text to exercise the transcript background.")})
+	help = normalizeBossModel(updated)
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	help = normalizeBossModel(updated)
+
+	m := Model{helpChatModel: help}
+	rendered := m.renderHelpChatOverlay(fitPaneContent("", bodyWidth, bodyHeight), bodyWidth, bodyHeight)
+	lines := parseTerminalANSI(rendered)
+	if len(lines) != bodyHeight {
+		t.Fatalf("parsed help overlay height = %d, want %d", len(lines), bodyHeight)
+	}
+	for row := geom.top + 1; row < geom.top+geom.panelHeight-1; row++ {
+		assertTerminalLineHasExplicitBackground(t, lines[row], row, geom.left+1, geom.left+geom.panelWidth-1)
+	}
+}
+
+func assertTerminalLineHasExplicitBackground(t *testing.T, line terminalLine, row, left, right int) {
+	t.Helper()
+
+	column := 0
+	covered := left
+	for _, run := range line {
+		runWidth := ansi.StringWidth(run.text)
+		runLeft := column
+		runRight := column + runWidth
+		column = runRight
+		if runRight <= left || runLeft >= right {
+			continue
+		}
+		covered = max(covered, min(runRight, right))
+		hasExplicitBackground := run.style.hasBG || (run.style.reverse && run.style.hasFG)
+		if !hasExplicitBackground {
+			t.Fatalf("help overlay row %d columns %d..%d use the terminal default background in %q; runs=%#v", row, max(runLeft, left), min(runRight, right), run.text, line)
+		}
+	}
+	if covered < right {
+		t.Fatalf("help overlay row %d only renders through column %d, want interior through %d", row, covered, right)
 	}
 }
 

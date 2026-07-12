@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -648,6 +649,22 @@ func TestEmbeddedHelpAssistantResponseWordWrapsAtFullWidthAndKeepsBackground(t *
 	if got := strings.Count(rendered, "48;5;234"); got == 0 {
 		t.Fatalf("help chat Markdown response should keep the surface background:\n%q", rendered)
 	}
+	assertANSI256Background(t, rendered, 234)
+}
+
+func TestEmbeddedHelpAssistantKeepsHyphenatedWordsTogetherAtWrapBoundaries(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	content := "Based on attention scores and signals: the session needs follow-up before the next check-in."
+	for width := 24; width <= 96; width++ {
+		rendered := m.renderAssistantChatMessage(ChatMessage{Role: "assistant", Content: content}, width, nil)
+		for _, line := range strings.Split(ansi.Strip(rendered), "\n") {
+			if strings.TrimSpace(line) == "-" {
+				t.Fatalf("width %d split a hyphen onto its own line:\n%s", width, ansi.Strip(rendered))
+			}
+		}
+	}
 }
 
 func TestEmbeddedHelpUsesBossControlConfirmationFlow(t *testing.T) {
@@ -684,6 +701,18 @@ func TestEmbeddedHelpInputUsesSimpleCodexStyle(t *testing.T) {
 	m.syncLayout(true)
 
 	layout := m.layout()
+	if layout.inputEditorHeight != 4 {
+		t.Fatalf("help chat input height = %d, want four rows", layout.inputEditorHeight)
+	}
+	if got := m.input.Height(); got != 4 {
+		t.Fatalf("help chat textarea height = %d, want four rows", got)
+	}
+	if got := helpChatInputShellStyle.GetHorizontalPadding(); got != 2 {
+		t.Fatalf("help chat input shell horizontal padding = %d, want 2", got)
+	}
+	if got, want := m.input.Width()+bossInputPromptWidth, layout.chatInnerWidth-helpChatInputShellStyle.GetHorizontalPadding(); got != want {
+		t.Fatalf("help chat textarea width including prompt = %d, want padded-shell inner width %d", got, want)
+	}
 	rendered := m.renderCoreInput(layout)
 	stripped := ansi.Strip(rendered)
 	if !strings.Contains(stripped, "> first line") {
@@ -700,6 +729,76 @@ func TestEmbeddedHelpInputUsesSimpleCodexStyle(t *testing.T) {
 			t.Fatalf("help chat input line width = %d, want <= %d: %q", got, layout.chatInnerWidth, ansi.Strip(line))
 		}
 	}
+}
+
+func assertANSI256Background(t *testing.T, rendered string, want int) {
+	t.Helper()
+
+	background := -1
+	line := 0
+	column := 0
+	for i := 0; i < len(rendered); {
+		if rendered[i] == '\x1b' && i+1 < len(rendered) && rendered[i+1] == '[' {
+			end := i + 2
+			for end < len(rendered) && (rendered[end] < '@' || rendered[end] > '~') {
+				end++
+			}
+			if end < len(rendered) {
+				if rendered[end] == 'm' {
+					background = testANSI256Background(background, rendered[i+2:end])
+				}
+				i = end + 1
+				continue
+			}
+		}
+		if rendered[i] == '\n' {
+			line++
+			column = 0
+			i++
+			continue
+		}
+		if rendered[i] == '\r' {
+			i++
+			continue
+		}
+		if background != want {
+			t.Fatalf("visible help text cell at line %d column %d has ANSI-256 background %d, want %d; rendered=%q", line, column, background, want, rendered)
+		}
+		column++
+		i++
+	}
+}
+
+func testANSI256Background(current int, raw string) int {
+	if raw == "" {
+		return -1
+	}
+	parts := strings.Split(raw, ";")
+	params := make([]int, 0, len(parts))
+	for _, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			continue
+		}
+		params = append(params, value)
+	}
+	for i := 0; i < len(params); i++ {
+		switch {
+		case params[i] == 0 || params[i] == 49:
+			current = -1
+		case params[i] >= 40 && params[i] <= 47:
+			current = params[i] - 40
+		case params[i] >= 100 && params[i] <= 107:
+			current = params[i] - 100 + 8
+		case params[i] == 48 && i+2 < len(params) && params[i+1] == 5:
+			current = params[i+2]
+			i += 2
+		case params[i] == 48 && i+4 < len(params) && params[i+1] == 2:
+			current = -2
+			i += 4
+		}
+	}
+	return current
 }
 
 func TestEmbeddedHelpSlashNewClearsCurrentChat(t *testing.T) {
