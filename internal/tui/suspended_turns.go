@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,7 +15,9 @@ import (
 )
 
 const (
-	suspendedTurnResumeChoiceLimit = 8
+	suspendedTurnResumeChoiceLimit  = 8
+	suspendedTurnDisplayLimit       = 8
+	suspendedTurnContinuationPrompt = "Continue the work from the turn interrupted by the Little Control Room restart. First re-check the repository and any external tool state, then finish the user's most recent request. Do not repeat side effects that may already have completed; verify their current state before acting."
 )
 
 type suspendedTurnResumeDialogSelection int
@@ -29,33 +32,48 @@ type suspendedTurnResumeChoicesMsg struct {
 	err     error
 }
 
+type restartIntentsAcknowledgedMsg struct {
+	err error
+}
+
 type suspendedTurnResumeDialogState struct {
 	Choices  []suspendedTurnResumeChoice
 	Selected suspendedTurnResumeDialogSelection
 }
 
 type suspendedTurnResumeChoice struct {
-	ProjectPath  string
-	ProjectName  string
-	Provider     codexapp.Provider
-	SessionID    string
-	LastActivity time.Time
-	Summary      string
+	ProjectPath    string
+	ProjectName    string
+	Provider       codexapp.Provider
+	SessionID      string
+	ActiveTurnID   string
+	LastActivity   time.Time
+	Summary        string
+	CapturedOnQuit bool
 }
 
 func (m Model) loadSuspendedTurnResumeChoicesCmd() tea.Cmd {
 	ctx := m.ctx
 	svc := m.svc
+	dataDir := m.appDataDir()
 	return func() tea.Msg {
+		intents, intentErr := codexapp.ReadRestartIntents(dataDir)
 		if svc == nil || svc.Store() == nil {
-			return suspendedTurnResumeChoicesMsg{}
+			return suspendedTurnResumeChoicesMsg{
+				choices: mergeSuspendedTurnResumeChoices(nil, intents, suspendedTurnResumeChoiceLimit),
+				err:     intentErr,
+			}
 		}
 		projects, err := svc.Store().ListProjects(ctx, true)
 		if err != nil {
-			return suspendedTurnResumeChoicesMsg{err: err}
+			return suspendedTurnResumeChoicesMsg{
+				choices: mergeSuspendedTurnResumeChoices(nil, intents, suspendedTurnResumeChoiceLimit),
+				err:     errors.Join(intentErr, err),
+			}
 		}
 		return suspendedTurnResumeChoicesMsg{
-			choices: buildSuspendedTurnResumeChoices(projects, suspendedTurnResumeChoiceLimit),
+			choices: mergeSuspendedTurnResumeChoices(projects, intents, suspendedTurnResumeChoiceLimit),
+			err:     intentErr,
 		}
 	}
 }
@@ -67,7 +85,6 @@ func (m Model) applySuspendedTurnResumeChoicesMsg(msg suspendedTurnResumeChoices
 	m.suspendedTurnChecked = true
 	if msg.err != nil {
 		m.appendBackgroundErrorLogEntry("Interrupted turn check failed", msg.err, "")
-		return m, nil
 	}
 	m.openSuspendedTurnResumeDialog(msg.choices)
 	return m, nil
@@ -84,6 +101,64 @@ func (m *Model) openSuspendedTurnResumeDialog(choices []suspendedTurnResumeChoic
 	}
 	m.status = fmt.Sprintf("Found %d interrupted %s from before reload", len(choices), pluralize("turn", len(choices)))
 	return true
+}
+
+func mergeSuspendedTurnResumeChoices(projects []model.ProjectSummary, intents []codexapp.RestartIntent, fallbackLimit int) []suspendedTurnResumeChoice {
+	fallback := buildSuspendedTurnResumeChoices(projects, 0)
+	projectByPath := make(map[string]model.ProjectSummary, len(projects))
+	for _, project := range projects {
+		projectByPath[normalizeProjectPath(project.Path)] = project
+	}
+
+	captured := make([]suspendedTurnResumeChoice, 0, len(intents))
+	seen := make(map[string]struct{}, len(intents)+len(fallback))
+	for _, intent := range intents {
+		key := intent.Key()
+		if key == "" {
+			continue
+		}
+		project := projectByPath[normalizeProjectPath(intent.ProjectPath)]
+		name := strings.TrimSpace(project.Name)
+		if name == "" {
+			name = projectNameForPicker(project, intent.ProjectPath)
+		}
+		activity := intent.CapturedAt
+		if !project.LatestSessionLastEventAt.IsZero() {
+			activity = project.LatestSessionLastEventAt
+		}
+		captured = append(captured, suspendedTurnResumeChoice{
+			ProjectPath:    strings.TrimSpace(intent.ProjectPath),
+			ProjectName:    name,
+			Provider:       intent.Provider.Normalized(),
+			SessionID:      strings.TrimSpace(intent.SessionID),
+			ActiveTurnID:   strings.TrimSpace(intent.ActiveTurnID),
+			LastActivity:   activity,
+			Summary:        strings.TrimSpace(project.LatestSessionSummary),
+			CapturedOnQuit: true,
+		})
+		seen[key] = struct{}{}
+	}
+	sort.SliceStable(captured, func(i, j int) bool {
+		return captured[i].LastActivity.After(captured[j].LastActivity)
+	})
+
+	remaining := fallbackLimit - len(captured)
+	if fallbackLimit <= 0 {
+		remaining = len(fallback)
+	}
+	for _, choice := range fallback {
+		key := suspendedTurnDismissalKey(choice.ProjectPath, choice.Provider, choice.SessionID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		if remaining <= 0 {
+			continue
+		}
+		captured = append(captured, choice)
+		seen[key] = struct{}{}
+		remaining--
+	}
+	return captured
 }
 
 func buildSuspendedTurnResumeChoices(projects []model.ProjectSummary, limit int) []suspendedTurnResumeChoice {
@@ -194,8 +269,11 @@ func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (
 			PresentOnDisk: true,
 		}
 		updated, cmd := m.launchEmbeddedForProjectWithOptions(project, choice.Provider, embeddedLaunchOptions{
-			reveal:   false,
-			resumeID: choice.SessionID,
+			reveal:                  false,
+			resumeID:                choice.SessionID,
+			prompt:                  suspendedTurnContinuationPromptForChoice(choice),
+			continueInterruptedTurn: choice.CapturedOnQuit,
+			interruptedTurnID:       choice.ActiveTurnID,
 		})
 		m = normalizeUpdateModel(updated)
 		if cmd == nil {
@@ -210,6 +288,26 @@ func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (
 	}
 	m.status = fmt.Sprintf("Resuming %d interrupted %s in the background...", resumed, pluralize("turn", resumed))
 	return m, tea.Batch(cmds...)
+}
+
+func suspendedTurnContinuationPromptForChoice(choice suspendedTurnResumeChoice) string {
+	if !choice.CapturedOnQuit {
+		return ""
+	}
+	return suspendedTurnContinuationPrompt
+}
+
+func (m Model) acknowledgeRestartIntentsCmd(keys []string) tea.Cmd {
+	if len(keys) == 0 {
+		return nil
+	}
+	dataDir := m.appDataDir()
+	keys = append([]string(nil), keys...)
+	return func() tea.Msg {
+		return restartIntentsAcknowledgedMsg{
+			err: codexapp.AcknowledgeRestartIntents(dataDir, keys),
+		}
+	}
 }
 
 func (m *Model) dismissSuspendedTurnChoices(choices []suspendedTurnResumeChoice) {
@@ -295,21 +393,44 @@ func (m Model) renderSuspendedTurnResumeDialogContent(width int) string {
 		renderDialogHeader("Interrupted Turns", "", "", width),
 		"",
 	}
-	intro := fmt.Sprintf("Found %d engineer %s whose latest turn was still open when LCR restarted. Resume them in the background now?", count, pluralize("session", count))
+	capturedCount := 0
+	for _, choice := range dialog.Choices {
+		if choice.CapturedOnQuit {
+			capturedCount++
+		}
+	}
+	intro := fmt.Sprintf("Found %d engineer %s whose latest turn was still open when LCR restarted. Restore them in the background now?", count, pluralize("session", count))
+	if capturedCount == count {
+		intro = fmt.Sprintf("LCR saved %d in-flight engineer %s before quitting. Continue them in the background now?", count, pluralize("session", count))
+	}
 	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, intro)...)
 	lines = append(lines, "")
-	note := "Codex can continue or reattach active turns. OpenCode and Claude Code reattach when their CLI is still alive. LCAgent opens saved continuation context."
+	note := "Saved turns reopen their exact conversation and start a new continuation turn. Other unfinished artifacts are reopened for inspection only; LCR will not assume it owns their running process."
 	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, note)...)
 	lines = append(lines, "")
-	for _, choice := range dialog.Choices {
+	visibleChoices := dialog.Choices
+	if len(visibleChoices) > suspendedTurnDisplayLimit {
+		visibleChoices = visibleChoices[:suspendedTurnDisplayLimit]
+	}
+	for _, choice := range visibleChoices {
 		lines = append(lines, renderSuspendedTurnChoiceLine(choice, width))
 		if summary := strings.TrimSpace(choice.Summary); summary != "" {
 			lines = append(lines, "  "+detailMutedStyle.Render(truncateText(summary, max(12, width-2))))
 		}
 	}
+	if hidden := len(dialog.Choices) - len(visibleChoices); hidden > 0 {
+		lines = append(lines, detailMutedStyle.Render(fmt.Sprintf("  + %d more saved %s", hidden, pluralize("session", hidden))))
+	}
+	primaryLabel := "Restore All"
+	switch {
+	case capturedCount == count:
+		primaryLabel = "Continue All"
+	case capturedCount == 0:
+		primaryLabel = "Reopen All"
+	}
 	buttons := lipgloss.JoinHorizontal(
 		lipgloss.Left,
-		renderDialogButton("Resume All", dialog.Selected == suspendedTurnResumeSelectionResume),
+		renderDialogButton(primaryLabel, dialog.Selected == suspendedTurnResumeSelectionResume),
 		" ",
 		renderDialogButton("Skip", dialog.Selected == suspendedTurnResumeSelectionSkip),
 	)
@@ -324,6 +445,9 @@ func (m Model) renderSuspendedTurnResumeDialogContent(width int) string {
 
 func renderSuspendedTurnChoiceLine(choice suspendedTurnResumeChoice, width int) string {
 	left := fmt.Sprintf("- %s  %s", choice.Provider.Label(), firstNonEmptyTrimmed(choice.ProjectName, choice.ProjectPath))
+	if choice.CapturedOnQuit {
+		left += "  saved"
+	}
 	right := fmt.Sprintf("%s  %s", formatPickerActivity(choice.LastActivity), shortID(choice.SessionID))
 	if width <= 0 {
 		return left + "  " + right

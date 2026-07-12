@@ -27,16 +27,7 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "ctrl+c", "q":
-		if m.codexManager != nil {
-			_ = m.codexManager.CloseAll()
-		}
-		if m.runtimeManager != nil {
-			_ = m.runtimeManager.CloseAll()
-		}
-		if m.unsub != nil {
-			m.unsub()
-		}
-		return m, tea.Quit
+		return m.beginGracefulQuit()
 	case "/":
 		m.openCommandMode()
 		return m, textinput.Blink

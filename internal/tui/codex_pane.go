@@ -1189,6 +1189,14 @@ func (m *Model) openCodexSessionCmd(req codexapp.LaunchRequest) tea.Cmd {
 
 func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, revealOnOpen bool) tea.Cmd {
 	req = m.applyEmbeddedModelPreference(req)
+	restartIntentKey := ""
+	if req.ContinueInterruptedTurn {
+		restartIntentKey = (codexapp.RestartIntent{
+			Provider:    req.Provider,
+			ProjectPath: req.ProjectPath,
+			SessionID:   req.ResumeID,
+		}).Key()
+	}
 	manager := m.codexManager
 	provider := req.Provider.Normalized()
 	if provider == "" {
@@ -1360,7 +1368,11 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 		if !revealOnOpen {
 			status = backgroundStatus
 		}
-		renamedTask, renameErr := m.maybeAutoRenameScratchTaskFromPrompt(req.ProjectPath, req.Prompt)
+		renamedTask := false
+		var renameErr error
+		if !req.ContinueInterruptedTurn {
+			renamedTask, renameErr = m.maybeAutoRenameScratchTaskFromPrompt(req.ProjectPath, req.Prompt)
+		}
 		return codexSessionOpenedMsg{
 			projectPath:      req.ProjectPath,
 			snapshot:         snapshot,
@@ -1372,6 +1384,7 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 			renameErr:        renameErr,
 			perfOpID:         perfOpID,
 			perfDuration:     time.Since(startedAt),
+			restartIntentKey: restartIntentKey,
 		}
 	}
 }
@@ -1436,6 +1449,16 @@ func embeddedSessionOpenStatus(req codexapp.LaunchRequest, threadIDsToAvoid map[
 		return embeddedSessionOpenedStatus("Prompt sent to "+freshSessionLabel, revealOnOpen)
 	case req.ForceNew:
 		return embeddedSessionOpenedStatus("Fresh embedded "+label+" "+sessionLabel+" opened", revealOnOpen)
+	case req.ContinueInterruptedTurn && snapshot.BusyExternal:
+		return label + " is active in another process, so LCR left the saved continuation pending."
+	case req.ContinueInterruptedTurn && snapshot.Busy:
+		return embeddedSessionOpenedStatus("Continuing interrupted work in embedded "+label, revealOnOpen)
+	case req.ContinueInterruptedTurn:
+		status := strings.TrimSpace(snapshot.LastSystemNotice)
+		if status == "" {
+			status = "Restored interrupted embedded " + label + " session"
+		}
+		return embeddedSessionOpenedStatus(status, revealOnOpen)
 	case snapshot.BusyExternal && strings.TrimSpace(req.Prompt) != "":
 		if cmd := embeddedNewCommand(provider); cmd != "" {
 			return label + " is already active in another process. Prompt was not sent; use " + cmd + " for a separate session."

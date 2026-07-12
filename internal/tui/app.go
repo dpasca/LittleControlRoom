@@ -52,9 +52,10 @@ type Model struct {
 	privacyMode             bool
 	privacyPatterns         []string
 
-	loading bool
-	status  string
-	err     error
+	loading              bool
+	status               string
+	err                  error
+	gracefulQuitInFlight bool
 
 	mobileServerStatus MobileServerStatus
 	mobileDialogOpen   bool
@@ -1020,6 +1021,7 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.requestProjectsReloadCmd(),
 		m.requestScanCmd(false),
+		m.loadSuspendedTurnResumeChoicesCmd(),
 		m.loadRecentProjectParentsCmd(),
 		m.loadRuntimeSnapshotsCmd(),
 		m.loadCPUSnapshotCmd(),
@@ -1251,6 +1253,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
+	case gracefulQuitFinishedMsg:
+		return m.applyGracefulQuitFinishedMsg(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -1537,11 +1541,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
 			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)
 		}
-		if !m.suspendedTurnChecked {
-			allProjects := append([]model.ProjectSummary(nil), msg.projects...)
-			allProjects = append(allProjects, msg.archivedProjects...)
-			m.openSuspendedTurnResumeDialog(buildSuspendedTurnResumeChoices(allProjects, suspendedTurnResumeChoiceLimit))
-		}
 		if len(m.projects) > 0 {
 			m.syncDetailViewport(false)
 			return m, batchCmds(reloadCmd, m.requestSelectedProjectDetailViewCmd(), m.requestProcessScanCmd(""))
@@ -1750,6 +1749,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, batchCmds(reloadCmd, m.requestProjectInvalidationCmd(invalidateProjectStructure("")), suspendedTurnsCmd)
 	case suspendedTurnResumeChoicesMsg:
 		return m.applySuspendedTurnResumeChoicesMsg(msg)
+	case restartIntentsAcknowledgedMsg:
+		if msg.err != nil {
+			m.appendBackgroundErrorLogEntry("Interrupted turn acknowledgement failed", msg.err, "")
+		}
+		return m, nil
 	case commitPreviewMsg:
 		if msg.requestID != 0 && msg.requestID != m.commitPreviewRequestID {
 			return m, nil

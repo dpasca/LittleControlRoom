@@ -15,6 +15,7 @@ type fakeSession struct {
 	snapshot       Snapshot
 	submitted      []string
 	closed         bool
+	interrupted    bool
 	waitClosedFn   func(*fakeSession, time.Duration) bool
 	refreshCalls   int
 	refreshFn      func(*fakeSession) error
@@ -98,6 +99,7 @@ func (s *fakeSession) StageModelOverride(model, reasoningEffort string) error {
 }
 
 func (s *fakeSession) Interrupt() error {
+	s.interrupted = true
 	return nil
 }
 

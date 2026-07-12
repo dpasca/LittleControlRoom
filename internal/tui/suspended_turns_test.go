@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,6 +11,77 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+func TestMergeSuspendedTurnChoicesKeepsAllCapturedIntentsAheadOfFallbackLimit(t *testing.T) {
+	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	intents := make([]codexapp.RestartIntent, 0, 10)
+	for i := 0; i < 10; i++ {
+		intents = append(intents, codexapp.RestartIntent{
+			Provider:     codexapp.ProviderCodex,
+			ProjectPath:  fmt.Sprintf("/tmp/captured-%02d", i),
+			SessionID:    fmt.Sprintf("thread-%02d", i),
+			ActiveTurnID: fmt.Sprintf("turn-%02d", i),
+			CapturedAt:   now.Add(time.Duration(i) * time.Minute),
+		})
+	}
+	projects := []model.ProjectSummary{{
+		Path:                     "/tmp/fallback",
+		Name:                     "fallback",
+		PresentOnDisk:            true,
+		InScope:                  true,
+		LatestSessionID:          "codex:fallback",
+		LatestSessionFormat:      "modern",
+		LatestSessionLastEventAt: now,
+		LatestTurnStateKnown:     true,
+		LatestTurnCompleted:      false,
+	}}
+
+	choices := mergeSuspendedTurnResumeChoices(projects, intents, suspendedTurnResumeChoiceLimit)
+	if len(choices) != len(intents) {
+		t.Fatalf("choices len = %d, want all %d captured intents even above display limit", len(choices), len(intents))
+	}
+	for _, choice := range choices {
+		if !choice.CapturedOnQuit || choice.ActiveTurnID == "" {
+			t.Fatalf("captured choice lost restart metadata: %#v", choice)
+		}
+	}
+}
+
+func TestSuspendedTurnSkipKeepsCapturedRestartIntentForLater(t *testing.T) {
+	dataDir := t.TempDir()
+	intent := codexapp.RestartIntent{
+		Provider:     codexapp.ProviderLCAgent,
+		ProjectPath:  "/tmp/demo",
+		SessionID:    "thread-demo",
+		ActiveTurnID: "run-demo",
+		CapturedAt:   time.Now(),
+	}
+	if err := codexapp.WriteRestartIntents(dataDir, []codexapp.RestartIntent{intent}); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{
+		appDataDirPath: dataDir,
+		suspendedTurnDialog: &suspendedTurnResumeDialogState{
+			Choices: []suspendedTurnResumeChoice{{
+				ProjectPath:    intent.ProjectPath,
+				Provider:       intent.Provider,
+				SessionID:      intent.SessionID,
+				CapturedOnQuit: true,
+			}},
+			Selected: suspendedTurnResumeSelectionResume,
+		},
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got := updated.(Model)
+	if got.suspendedTurnDialog != nil || cmd != nil {
+		t.Fatalf("skip should close dialog without consuming captured intent")
+	}
+	loaded, err := codexapp.ReadRestartIntents(dataDir)
+	if err != nil || len(loaded) != 1 || loaded[0].Key() != intent.Key() {
+		t.Fatalf("restart intents after skip = %#v, err=%v", loaded, err)
+	}
+}
 
 func TestBuildSuspendedTurnResumeChoicesFiltersAndSorts(t *testing.T) {
 	now := time.Date(2026, 5, 21, 12, 0, 0, 0, time.UTC)
@@ -93,7 +165,7 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	}
 
 	updated, cmd := m.Update(suspendedTurnResumeChoicesMsg{choices: []suspendedTurnResumeChoice{
-		{ProjectPath: "/tmp/a", ProjectName: "a", Provider: codexapp.ProviderCodex, SessionID: "cx-a"},
+		{ProjectPath: "/tmp/a", ProjectName: "a", Provider: codexapp.ProviderCodex, SessionID: "cx-a", ActiveTurnID: "turn-a", CapturedOnQuit: true},
 		{ProjectPath: "/tmp/b", ProjectName: "b", Provider: codexapp.ProviderClaudeCode, SessionID: "cc-b"},
 	}})
 	if cmd != nil {
@@ -119,8 +191,14 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	if requests[0].ProjectPath != "/tmp/a" || requests[0].Provider != codexapp.ProviderCodex || requests[0].ResumeID != "cx-a" {
 		t.Fatalf("first request = %#v", requests[0])
 	}
+	if !requests[0].ContinueInterruptedTurn || requests[0].InterruptedTurnID != "turn-a" || requests[0].Prompt != suspendedTurnContinuationPrompt {
+		t.Fatalf("captured first request did not start an explicit continuation: %#v", requests[0])
+	}
 	if requests[1].ProjectPath != "/tmp/b" || requests[1].Provider != codexapp.ProviderClaudeCode || requests[1].ResumeID != "cc-b" {
 		t.Fatalf("second request = %#v", requests[1])
+	}
+	if requests[1].ContinueInterruptedTurn || requests[1].Prompt != "" {
+		t.Fatalf("artifact-only second request should reopen without injecting a prompt: %#v", requests[1])
 	}
 	if got.codexVisibleProject != "" {
 		t.Fatalf("confirmed startup resumes should stay hidden, visible project = %q", got.codexVisibleProject)
@@ -196,7 +274,7 @@ func TestSuspendedTurnHiddenPendingQuestionUpdateStaysHidden(t *testing.T) {
 	}
 }
 
-func TestProjectsMsgOpensSuspendedTurnDialogBeforeStartupScan(t *testing.T) {
+func TestProjectsMsgWaitsForProviderNeutralSuspendedTurnLoad(t *testing.T) {
 	now := time.Date(2026, 5, 21, 12, 5, 0, 0, time.UTC)
 	project := model.ProjectSummary{
 		Path:                     "/tmp/roman",
@@ -218,14 +296,18 @@ func TestProjectsMsgOpensSuspendedTurnDialogBeforeStartupScan(t *testing.T) {
 	if got.startupScanCompleted {
 		t.Fatalf("startup scan should not be marked complete")
 	}
-	if !got.suspendedTurnChecked {
-		t.Fatalf("suspended turn check should be satisfied by cached project summaries")
+	if got.suspendedTurnChecked {
+		t.Fatalf("projects cache should not race the provider-neutral restart intent load")
 	}
-	if got.suspendedTurnDialog == nil || len(got.suspendedTurnDialog.Choices) != 1 {
-		t.Fatalf("suspended turn dialog = %#v, want one cached choice", got.suspendedTurnDialog)
+	if got.suspendedTurnDialog != nil {
+		t.Fatalf("projects cache should not open the dialog before restart intents load")
 	}
-	if got.suspendedTurnDialog.Choices[0].SessionID != "lca_roman" {
-		t.Fatalf("dialog session = %q, want lca_roman", got.suspendedTurnDialog.Choices[0].SessionID)
+
+	choices := buildSuspendedTurnResumeChoices([]model.ProjectSummary{project}, suspendedTurnResumeChoiceLimit)
+	updated, _ = got.Update(suspendedTurnResumeChoicesMsg{choices: choices})
+	got = updated.(Model)
+	if got.suspendedTurnDialog == nil || len(got.suspendedTurnDialog.Choices) != 1 || got.suspendedTurnDialog.Choices[0].SessionID != "lca_roman" {
+		t.Fatalf("loaded suspended turn dialog = %#v, want lca_roman", got.suspendedTurnDialog)
 	}
 }
 

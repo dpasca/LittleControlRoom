@@ -19,7 +19,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 
 - Artifact-first scanning persists project and session state in SQLite and surfaces transparent attention reasons.
 - The TUI supports multi-project list/detail workflows, slash commands, project notes and TODOs, diff and commit helpers, and repo-health visibility.
-- Embedded Codex and OpenCode panes support live sessions, resume and new flows, model selection, approval and input handling, and mixed-provider project workflows.
+- Embedded Codex, OpenCode, Claude Code, and LCAgent panes support live sessions, resume and new flows, model selection, approval and input handling, mixed-provider project workflows, and graceful-restart journaling that can continue LCR-owned interrupted turns after confirmation.
 - Boss mode provides a chat-first high-level layer over the classic TUI, with read-only project-state queries, project-inventory reflection, bounded context-command lookup, confirmable control proposals, generic agent-task delegation, file-backed chat sessions, and separate boss-chat helm/utility inference configuration. In Boss Chat, Codex/OpenCode/Claude Code work sessions are called engineer sessions to distinguish them from Boss Chat transcripts.
 - Linked worktrees are first-class: grouped under repo roots, merge-aware, and surfaced with explicit conflict and status feedback.
 - Managed runtime commands can launch, stop, inspect, and follow project-local processes from the TUI.
@@ -43,6 +43,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 - Experimental LCAgent uses canonical thread state under the app data directory (`lcagent/threads/<thread-id>/state.json`) as the model-resume source of truth; JSONL session files are per-run traces for replay, metrics, and audit.
 - LCR-managed embedded agents preserve broad cross-directory access while applying provider-aware destructive-command guardrails; the current direct-`rm` policy, threat model, and known bypasses are documented in [docs/destructive_command_safety.md](docs/destructive_command_safety.md).
 - Reusable agent context/checkpoint helpers live in `internal/agentcontext`; LCAgent uses them for durable thread state, and Boss Chat uses them for per-session context checkpoints with compacted summaries plus recent chat tails.
+- Embedded graceful-restart intent lives under the app data directory in `embedded-sessions/restart-intents.json`; provider artifacts remain the conversation source of truth, and reopening a session is not treated as resuming in-flight model computation.
 - Boss chat inference is configured separately from background project-analysis inference, with a high-grade helm model for main Boss reasoning and a lower-cost utility model for routine routing, while summaries/classification continue to use Codex, OpenCode, Claude Code, MLX, Ollama, or another selected backend.
 - Boss chat transcripts are local Markdown text files under the app data directory (`boss-sessions/`), not SQLite rows; assistant recall packages search matches as XML-like snippets at query time.
 - If detector assumptions change, update [docs/codex_cli_footprint.md](docs/codex_cli_footprint.md) in the same change.
