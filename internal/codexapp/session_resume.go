@@ -57,6 +57,81 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	s.currentBrowserPageStale = s.currentBrowserPageURL != ""
 }
 
+// continueInterruptedTurn converts a turn captured during LCR shutdown into a
+// fresh continuation turn. Codex thread/resume restores the conversation but
+// intentionally does not restart generation. A hard helper exit can also
+// leave the captured turn reported as inProgress, so that exact turn is first
+// interrupted through the newly attached app-server.
+func (s *appServerSession) continueInterruptedTurn(capturedTurnID string, input Submission) error {
+	capturedTurnID = strings.TrimSpace(capturedTurnID)
+	s.mu.Lock()
+	threadID := strings.TrimSpace(s.threadID)
+	s.mu.Unlock()
+	if threadID == "" {
+		return fmt.Errorf("cannot continue interrupted Codex turn without a thread id")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
+	defer cancel()
+
+	thread, err := s.readThreadState(ctx, threadID)
+	if err != nil {
+		return fmt.Errorf("refresh interrupted Codex turn: %w", err)
+	}
+	s.hydrateResumedThread(thread)
+
+	if status, ok := resumedTurnStatus(thread, capturedTurnID); ok && turnStatusCompleted(status) {
+		s.appendSystemNotice("The captured Codex turn completed before shutdown; no continuation prompt was needed.")
+		return nil
+	}
+
+	activeTurnID := activeTurnIDFromThread(thread)
+	if activeTurnID != "" {
+		if capturedTurnID != "" && activeTurnID != capturedTurnID {
+			return fmt.Errorf("refusing to interrupt Codex turn %s while restoring captured turn %s", shortID(activeTurnID), shortID(capturedTurnID))
+		}
+		if _, err := s.call(ctx, "turn/interrupt", turnInterruptParams{
+			ThreadID: threadID,
+			TurnID:   activeTurnID,
+		}); err != nil {
+			// The old helper may have completed between thread/read and the
+			// interrupt request. Re-read once before treating that as a failure.
+			refreshed, refreshErr := s.readThreadState(ctx, threadID)
+			if refreshErr != nil || activeTurnIDFromThread(refreshed) != "" {
+				return fmt.Errorf("interrupt captured Codex turn: %w", err)
+			}
+			s.hydrateResumedThread(refreshed)
+		} else if err := s.waitForThreadIdleAfterInterrupt(ctx, threadID); err != nil {
+			return fmt.Errorf("wait for captured Codex turn to stop: %w", err)
+		}
+	}
+
+	s.appendSystemNotice("Starting a continuation turn for work interrupted by the LCR restart.")
+	return s.SubmitInput(input)
+}
+
+func resumedTurnStatus(thread resumedThread, turnID string) (string, bool) {
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" {
+		return "", false
+	}
+	for i := len(thread.Turns) - 1; i >= 0; i-- {
+		if strings.TrimSpace(thread.Turns[i].ID) == turnID {
+			return strings.TrimSpace(thread.Turns[i].Status), true
+		}
+	}
+	return "", false
+}
+
+func turnStatusCompleted(status string) bool {
+	switch normalizeTurnStatus(status) {
+	case "complete", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *appServerSession) mergeReconnectTranscriptLocked(threadID string) {
 	prior := s.reconnectTranscript
 	expectedThreadID := strings.TrimSpace(s.reconnectThreadID)

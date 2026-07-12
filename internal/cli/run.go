@@ -975,6 +975,12 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 			fmt.Fprintf(os.Stderr, "mobile server shutdown failed: %v\n", err)
 		}
 	}()
+	defer func() {
+		if _, err := codexManager.CloseAllForRestart(svc.Config().DataDir); err != nil {
+			fmt.Fprintf(os.Stderr, "embedded session shutdown failed: %v\n", err)
+			_ = codexManager.CloseAll()
+		}
+	}()
 
 	go svc.StartScheduler(runCtx)
 	go svc.StartSessionClassifier(runCtx)

@@ -589,6 +589,13 @@ type LaunchRequest struct {
 	ProjectPath string
 	ResumeID    string
 
+	// ContinueInterruptedTurn is set only for a turn captured by LCR's
+	// graceful-shutdown journal. Reopening a provider session restores context;
+	// this flag authorizes starting a new turn that continues the interrupted
+	// work after the provider helper has restarted.
+	ContinueInterruptedTurn bool
+	InterruptedTurnID       string
+
 	// ReconnectTranscript carries the richer live transcript across an explicit
 	// helper restart. Codex resume responses can omit tool activity from an
 	// interrupted turn, so the replacement helper merges this history back in.
@@ -639,6 +646,17 @@ type LaunchRequest struct {
 func (r LaunchRequest) Validate() error {
 	if strings.TrimSpace(r.ProjectPath) == "" {
 		return fmt.Errorf("project path required")
+	}
+	if r.ContinueInterruptedTurn {
+		if r.ForceNew {
+			return fmt.Errorf("interrupted turn continuation cannot force a new session")
+		}
+		if strings.TrimSpace(r.ResumeID) == "" {
+			return fmt.Errorf("interrupted turn continuation requires a session id")
+		}
+		if launchRequestInitialInput(r).Empty() {
+			return fmt.Errorf("interrupted turn continuation requires a prompt")
+		}
 	}
 	if err := r.PlaywrightPolicy.Validate(); err != nil {
 		return err
@@ -694,6 +712,7 @@ func sessionStateSnapshot(session Session) Snapshot {
 
 type Manager struct {
 	mu              sync.Mutex
+	shutdownMu      sync.Mutex
 	sessions        map[string]Session
 	updates         chan string
 	pendingUpdates  map[string]struct{}
@@ -706,6 +725,7 @@ type Manager struct {
 	reapInterval time.Duration
 
 	busyReconcileAfter time.Duration
+	restartStateSaved  bool
 }
 
 func NewManager() *Manager {
@@ -929,6 +949,62 @@ func (m *Manager) CloseAll() error {
 		}
 	}
 	return firstErr
+}
+
+// CloseAllForRestart durably captures locally-owned in-flight turns before it
+// interrupts and closes provider helpers. Repeated calls are safe and do not
+// erase intents written by the first shutdown pass.
+func (m *Manager) CloseAllForRestart(dataDir string) ([]RestartIntent, error) {
+	if m == nil {
+		return nil, nil
+	}
+	m.shutdownMu.Lock()
+	defer m.shutdownMu.Unlock()
+
+	if m.restartStateSaved {
+		return nil, m.CloseAll()
+	}
+
+	m.mu.Lock()
+	sessions := make([]Session, 0, len(m.sessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	m.mu.Unlock()
+
+	snapshots := make([]Snapshot, 0, len(sessions))
+	for _, session := range sessions {
+		snapshots = append(snapshots, sessionStateSnapshot(session))
+	}
+	intents := RestartIntentsFromSnapshots(snapshots, time.Now())
+	if len(intents) > 0 {
+		if err := mergeRestartIntents(dataDir, intents); err != nil {
+			return nil, err
+		}
+	}
+	m.restartStateSaved = true
+
+	restartKeys := make(map[string]struct{}, len(intents))
+	for _, intent := range intents {
+		restartKeys[intent.Key()] = struct{}{}
+	}
+	for _, session := range sessions {
+		snapshot := sessionStateSnapshot(session)
+		intent := RestartIntent{
+			Provider:    snapshot.Provider,
+			ProjectPath: snapshot.ProjectPath,
+			SessionID:   snapshot.ThreadID,
+		}
+		if _, ok := restartKeys[intent.Key()]; ok {
+			// Best effort: provider-specific Interrupt methods make the durable
+			// artifact explicitly interrupted before the helper is terminated.
+			_ = session.Interrupt()
+		}
+	}
+	if err := m.CloseAll(); err != nil {
+		return intents, err
+	}
+	return intents, nil
 }
 
 func (m *Manager) notify(projectPath string) {

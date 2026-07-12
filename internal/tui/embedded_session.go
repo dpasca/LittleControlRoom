@@ -35,6 +35,7 @@ type codexSessionOpenedMsg struct {
 	agentTaskName    string
 	perfOpID         int64
 	perfDuration     time.Duration
+	restartIntentKey string
 	err              error
 }
 
@@ -173,6 +174,10 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	}
 	status := msg.statusForReveal(revealOnOpen)
 	seenCmd := m.finishCodexPendingOpen(msg.projectPath, msg.snapshot, true, revealOnOpen)
+	restartAckCmd := tea.Cmd(nil)
+	if strings.TrimSpace(msg.restartIntentKey) != "" && !msg.snapshot.BusyExternal {
+		restartAckCmd = m.acknowledgeRestartIntentsCmd([]string{msg.restartIntentKey})
+	}
 	todoWorkStartedCmd := tea.Cmd(nil)
 	if hasTodoLaunchDraft {
 		todoWorkStartedCmd = m.markTodoWorkStartedCmd(msg.projectPath, draft.todoID, msg.snapshot)
@@ -180,7 +185,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		if draft.openModelFirst {
 			m.openCodexModelPickerLoading()
 			m.status = "Pick a model, then send the TODO draft."
-			return m, tea.Batch(seenCmd, todoWorkStartedCmd, m.openCodexModelPickerCmd())
+			return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, m.openCodexModelPickerCmd())
 		}
 		if draft.autoSubmit {
 			if status != "" {
@@ -195,9 +200,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.status = status
 	}
 	if focusInput {
-		return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot), m.codexInput.Focus())
+		return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot), m.codexInput.Focus())
 	}
-	return m, tea.Batch(seenCmd, todoWorkStartedCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot))
+	return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot))
 }
 
 func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
@@ -857,10 +862,12 @@ func (m Model) launchEmbeddedForProject(p model.ProjectSummary, provider codexap
 }
 
 type embeddedLaunchOptions struct {
-	forceNew bool
-	prompt   string
-	reveal   bool
-	resumeID string
+	forceNew                bool
+	prompt                  string
+	reveal                  bool
+	resumeID                string
+	continueInterruptedTurn bool
+	interruptedTurnID       string
 }
 
 func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) (tea.Model, tea.Cmd) {
@@ -916,6 +923,8 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		ResumeID:                   firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
 		ForceNew:                   options.forceNew,
 		Prompt:                     options.prompt,
+		ContinueInterruptedTurn:    options.continueInterruptedTurn,
+		InterruptedTurnID:          options.interruptedTurnID,
 		Preset:                     m.currentCodexLaunchPreset(),
 		PlaywrightPolicy:           m.currentPlaywrightPolicy(),
 		AppDataDir:                 m.appDataDir(),

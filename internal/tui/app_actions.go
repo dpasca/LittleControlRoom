@@ -761,16 +761,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		m.rebuildProjectList(selectedPath)
 		return m, m.savePrivacyModeCmd(m.privacyMode)
 	case commands.KindQuit:
-		if m.codexManager != nil {
-			_ = m.codexManager.CloseAll()
-		}
-		if m.runtimeManager != nil {
-			_ = m.runtimeManager.CloseAll()
-		}
-		if m.unsub != nil {
-			m.unsub()
-		}
-		return m, tea.Quit
+		return m.beginGracefulQuit()
 	default:
 		m.status = "Command not implemented"
 		return m, nil

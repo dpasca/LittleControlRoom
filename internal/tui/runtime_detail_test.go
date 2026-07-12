@@ -1286,10 +1286,23 @@ func TestQuitKeyStopsManagedRuntimes(t *testing.T) {
 	m := Model{runtimeManager: manager}
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
-		t.Fatalf("quit key should return tea.Quit")
+		t.Fatalf("quit key should queue graceful shutdown")
 	}
-	if _, ok := cmd().(tea.QuitMsg); !ok {
-		t.Fatalf("quit key command should emit tea.QuitMsg")
+	got := updated.(Model)
+	if !got.gracefulQuitInFlight {
+		t.Fatalf("quit key should mark graceful shutdown in flight")
+	}
+	rawMsg := cmd()
+	msg, ok := rawMsg.(gracefulQuitFinishedMsg)
+	if !ok {
+		t.Fatalf("quit command message = %T, want gracefulQuitFinishedMsg", rawMsg)
+	}
+	updated, quitCmd := got.update(msg)
+	if quitCmd == nil {
+		t.Fatalf("completed graceful shutdown should return tea.Quit")
+	}
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatalf("completed shutdown command should emit tea.QuitMsg")
 	}
 	_ = updated.(Model)
 
