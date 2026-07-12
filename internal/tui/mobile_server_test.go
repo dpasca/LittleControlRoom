@@ -50,10 +50,12 @@ func TestMobileCommandOpensLocalOnlyStatusPanel(t *testing.T) {
 }
 
 func TestMobileCommandShowsLANPhoneURLAndPairingCode(t *testing.T) {
-	m := Model{}
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.MobileListenAddress = "0.0.0.0:7777"
+	m := Model{settingsBaseline: &settings}
 	m.SetMobileServerStatus(MobileServerStatus{
 		URL:           "http://0.0.0.0:7777",
-		ListenAddress: "0.0.0.0:0",
+		ListenAddress: "0.0.0.0:7777",
 		BoundAddress:  "0.0.0.0:7777",
 		LANAddresses:  []string{"192.168.1.20", "10.0.0.12"},
 		PairingCode:   "123 456",
@@ -74,6 +76,27 @@ func TestMobileCommandShowsLANPhoneURLAndPairingCode(t *testing.T) {
 	header := ansi.Strip(got.renderTopStatusLine(100))
 	if !strings.Contains(header, "/mobile LAN") {
 		t.Fatalf("top status = %q, want /mobile LAN indicator", header)
+	}
+}
+
+func TestMobileTopStatusShowsRestartWhenSavedLANSetupAwaitsRestart(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.MobileEnabled = true
+	settings.MobileListenAddress = "0.0.0.0:7777"
+	m := Model{settingsBaseline: &settings}
+	m.SetMobileServerStatus(MobileServerStatus{
+		URL:           "http://127.0.0.1:7777",
+		ListenAddress: "127.0.0.1:7777",
+		BoundAddress:  "127.0.0.1:7777",
+		LANAddresses:  []string{"192.168.1.20"},
+	})
+
+	header := ansi.Strip(m.renderTopStatusLine(100))
+	if !strings.Contains(header, "/mobile RESTART") {
+		t.Fatalf("top status = %q, want /mobile RESTART indicator", header)
+	}
+	if strings.Contains(header, "/mobile SETUP") {
+		t.Fatalf("top status = %q, pending saved setup should not look incomplete", header)
 	}
 }
 

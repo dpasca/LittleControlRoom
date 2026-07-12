@@ -6,6 +6,8 @@ import (
 	urlpkg "net/url"
 	"strings"
 
+	"lcroom/internal/config"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -201,18 +203,35 @@ func (m Model) renderMobileDialogContent(width, bodyH int) string {
 
 func (m Model) mobileNextLaunchLabel() string {
 	settings := m.currentSettingsBaseline()
-	savedAddress := strings.TrimSpace(settings.MobileListenAddress)
-	if savedAddress == "" {
-		savedAddress = "127.0.0.1:7777"
-	}
-	runtimeEnabled := !m.mobileServerStatus.Disabled
-	if settings.MobileEnabled == runtimeEnabled && savedAddress == strings.TrimSpace(m.mobileServerStatus.ListenAddress) {
+	savedAddress := mobileSavedListenAddress(settings)
+	if !m.mobileRestartRequiredForSettings(settings) {
 		return ""
 	}
 	if !settings.MobileEnabled {
 		return "Disabled; restart required to apply the saved setup"
 	}
 	return "Enabled at " + savedAddress + "; restart required to apply the saved setup"
+}
+
+func (m Model) mobileRestartRequired() bool {
+	if m.settingsBaseline != nil {
+		return m.mobileRestartRequiredForSettings(*m.settingsBaseline)
+	}
+	return m.mobileRestartRequiredForSettings(m.currentSettingsBaseline())
+}
+
+func (m Model) mobileRestartRequiredForSettings(settings config.EditableSettings) bool {
+	runtimeEnabled := !m.mobileServerStatus.Disabled
+	return settings.MobileEnabled != runtimeEnabled ||
+		mobileSavedListenAddress(settings) != strings.TrimSpace(m.mobileServerStatus.ListenAddress)
+}
+
+func mobileSavedListenAddress(settings config.EditableSettings) string {
+	address := strings.TrimSpace(settings.MobileListenAddress)
+	if address == "" {
+		return config.DefaultMobileListenAddress
+	}
+	return address
 }
 
 func mobileRuntimeState(status MobileServerStatus) (string, lipgloss.Style) {
@@ -410,13 +429,16 @@ func (m Model) renderMobileTopStatusIndicator(width int) string {
 		return ""
 	}
 	status := m.mobileServerStatus
+	restartRequired := m.mobileRestartRequired()
 	label := "/mobile"
 	if width >= 96 {
 		switch {
-		case status.Disabled:
-			label += " OFF"
 		case status.Error != "":
 			label += " ERR"
+		case restartRequired:
+			label += " RESTART"
+		case status.Disabled:
+			label += " OFF"
 		case !mobileRuntimeRunning(status):
 			label += " SETUP"
 		case mobileListenerAcceptsLAN(status):
@@ -426,10 +448,12 @@ func (m Model) renderMobileTopStatusIndicator(width int) string {
 		}
 	}
 	switch {
-	case status.Disabled:
-		return detailMutedStyle.Render(label)
 	case status.Error != "":
 		return topStatusDangerBadgeStyle.Render(label)
+	case restartRequired:
+		return topStatusSetupBadgeStyle.Render(label)
+	case status.Disabled:
+		return detailMutedStyle.Render(label)
 	case !mobileRuntimeRunning(status):
 		return topStatusSetupBadgeStyle.Render(label)
 	case mobileListenerAcceptsLAN(status):
