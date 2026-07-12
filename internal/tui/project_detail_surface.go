@@ -134,7 +134,7 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 			mergeBackTone = projectDetailToneValue
 		}
 		surface.Field("Merge back", mergeBackText, mergeBackTone)
-		surface.RenderedField("Merge status", worktreeMergeStatusDetailText(p), worktreeMergeStatusDetailTone(p), worktreeMergeStatusDetailValue(p))
+		surface.RenderedField("Integration status", worktreeIntegrationStatusDetailText(p), worktreeIntegrationStatusDetailTone(p), worktreeIntegrationStatusDetailValue(p))
 	}
 
 	rootPath := projectWorktreeRootPath(p)
@@ -143,8 +143,8 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 	orphanedCount := len(orphanedFamily)
 	if projectUsesRepoUI(p) && (len(family) > 1 || p.WorktreeKind == model.WorktreeKindLinked || orphanedCount > 0) {
 		activeCount, dirtyCount := m.worktreeActivityCounts(family)
-		unmergedCount := worktreeUnmergedCount(family)
-		surface.Field("Worktrees", worktreeGroupSummary(family, activeCount, dirtyCount, unmergedCount, orphanedCount), projectDetailToneValue)
+		pendingIntegrationCount := worktreePendingIntegrationCount(family)
+		surface.Field("Worktrees", worktreeGroupSummary(family, activeCount, dirtyCount, pendingIntegrationCount, orphanedCount), projectDetailToneValue)
 		if projectIsWorktreeRoot(p) {
 			surface.Section("Worktree lanes")
 			family = append([]model.ProjectSummary(nil), family...)
@@ -433,34 +433,14 @@ func repoConflictDetailText(project model.ProjectSummary) string {
 	return "Unmerged files are present in this " + location + ". Use /resolve to ask a fresh engineer session for help, or resolve/abort the in-progress Git operation manually."
 }
 
-func worktreeMergeStatusDetailText(project model.ProjectSummary) string {
-	targetBranch := strings.TrimSpace(project.WorktreeParentBranch)
-	if project.RepoDirty {
-		switch project.WorktreeMergeStatus {
-		case model.WorktreeMergeStatusMerged:
-			return worktreeNothingToMergeText() + "; local changes"
-		case model.WorktreeMergeStatusMergeInProgress:
-			return worktreeMergingText(targetBranch) + "; local changes"
-		default:
-			return worktreeCommitBeforeMergeText(targetBranch)
-		}
-	}
-	switch project.WorktreeMergeStatus {
-	case model.WorktreeMergeStatusMerged:
-		return worktreeNothingToMergeText()
-	case model.WorktreeMergeStatusMergeInProgress:
-		return worktreeMergingText(targetBranch)
-	case model.WorktreeMergeStatusNotMerged:
-		return worktreeReadyToMergeText(targetBranch)
-	default:
-		if targetBranch != "" {
-			return "unavailable for " + targetBranch
-		}
-		return "unavailable"
-	}
+func worktreeIntegrationStatusDetailText(project model.ProjectSummary) string {
+	return worktreeIntegrationStatusSummary(project)
 }
 
-func worktreeMergeStatusDetailTone(project model.ProjectSummary) projectDetailSurfaceTone {
+func worktreeIntegrationStatusDetailTone(project model.ProjectSummary) projectDetailSurfaceTone {
+	if project.RepoConflict {
+		return projectDetailToneConflict
+	}
 	if project.RepoDirty {
 		return projectDetailToneWarning
 	}
@@ -483,7 +463,8 @@ func (m Model) worktreeLaneDetailText(current, member model.ProjectSummary) (str
 	}
 	statusParts := []string{}
 	tone := projectDetailToneValue
-	if op, ok := m.pendingGitOperation(member.Path); ok {
+	op, gitOperationPending := m.pendingGitOperation(member.Path)
+	if gitOperationPending {
 		statusParts = append(statusParts, op.shortLabel())
 	} else if member.RepoConflict {
 		statusParts = append(statusParts, "conflict")
@@ -503,14 +484,9 @@ func (m Model) worktreeLaneDetailText(current, member model.ProjectSummary) (str
 	if snapshot := m.projectRuntimeSnapshot(member.Path); snapshot.Running {
 		statusParts = append(statusParts, "runtime")
 	}
-	if member.WorktreeKind == model.WorktreeKindLinked {
-		switch member.WorktreeMergeStatus {
-		case model.WorktreeMergeStatusMerged:
-			statusParts = append(statusParts, worktreeNothingToMergeText())
-		case model.WorktreeMergeStatusMergeInProgress:
-			statusParts = append(statusParts, "merging")
-		case model.WorktreeMergeStatusNotMerged:
-			statusParts = append(statusParts, "needs merge")
+	if member.WorktreeKind == model.WorktreeKindLinked && !gitOperationPending && !member.RepoConflict {
+		if integration := worktreeLaneIntegrationText(member); integration != "" {
+			statusParts = append(statusParts, integration)
 		}
 	}
 	if filepath.Clean(member.Path) == filepath.Clean(current.Path) {
@@ -521,15 +497,28 @@ func (m Model) worktreeLaneDetailText(current, member model.ProjectSummary) (str
 
 func orphanedWorktreeDetailText(orphan model.ProjectSummary) string {
 	statusParts := []string{"orphaned"}
-	switch orphan.WorktreeMergeStatus {
-	case model.WorktreeMergeStatusMerged:
-		statusParts = append(statusParts, worktreeNothingToMergeText())
-	case model.WorktreeMergeStatusMergeInProgress:
-		statusParts = append(statusParts, "merging")
-	case model.WorktreeMergeStatusNotMerged:
-		statusParts = append(statusParts, "needs merge")
+	if orphan.RepoDirty {
+		statusParts = append(statusParts, "dirty")
+	}
+	if integration := worktreeLaneIntegrationText(orphan); integration != "" {
+		statusParts = append(statusParts, integration)
 	}
 	return projectWorktreeLabel(orphan) + " · " + strings.Join(statusParts, ", ")
+}
+
+func worktreeLaneIntegrationText(project model.ProjectSummary) string {
+	switch {
+	case project.WorktreeMergeStatus == model.WorktreeMergeStatusMergeInProgress:
+		return "merging"
+	case project.RepoDirty:
+		return "needs commit + merge"
+	case project.WorktreeMergeStatus == model.WorktreeMergeStatusNotMerged:
+		return "needs merge"
+	case project.WorktreeMergeStatus == model.WorktreeMergeStatusMerged:
+		return "no changes to integrate"
+	default:
+		return ""
+	}
 }
 
 func projectDetailReasonText(reason model.AttentionReason) string {

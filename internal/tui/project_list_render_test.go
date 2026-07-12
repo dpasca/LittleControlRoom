@@ -1977,7 +1977,7 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	if !strings.Contains(lines[2], "Keep root summary") {
 		t.Fatalf("renderProjectList() should keep the root repo assessment text, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "[1 linked, 1 active]") {
+	if !strings.Contains(lines[2], "[1 linked, 1 to integrate, 1 active]") {
 		t.Fatalf("renderProjectList() should show a compact linked-worktree badge, got %q", lines[2])
 	}
 	if strings.Contains(lines[2], "2 worktrees") {
@@ -2154,8 +2154,8 @@ func TestRenderProjectListSurfacesCleanUnmergedWorktree(t *testing.T) {
 	if !strings.Contains(lines[2], "▾ repo") || !strings.Contains(lines[2], "M") {
 		t.Fatalf("renderProjectList() should mark the root row when a linked worktree needs merging, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "[1 linked, 1 needs merge]") {
-		t.Fatalf("renderProjectList() should count unmerged linked worktrees in the root badge, got %q", lines[2])
+	if !strings.Contains(lines[2], "[1 linked, 1 to integrate]") {
+		t.Fatalf("renderProjectList() should count linked worktrees pending integration in the root badge, got %q", lines[2])
 	}
 	if !strings.Contains(lines[3], "↳ feat/parallel-lane") || !strings.Contains(lines[3], "M") {
 		t.Fatalf("renderProjectList() should mark the linked worktree row when it needs merging, got %q", lines[3])
@@ -2204,8 +2204,8 @@ func TestRenderProjectListShowsUnmergedBadgeWhenWorktreeGroupCollapsed(t *testin
 	if !strings.Contains(lines[2], "▸ repo") || !strings.Contains(lines[2], "M") {
 		t.Fatalf("renderProjectList() should mark collapsed root rows with unmerged linked work, got %q", lines[2])
 	}
-	if !strings.Contains(lines[2], "[1 linked, 1 needs merge]") {
-		t.Fatalf("renderProjectList() should keep unmerged linked work visible while collapsed, got %q", lines[2])
+	if !strings.Contains(lines[2], "[1 linked, 1 to integrate]") {
+		t.Fatalf("renderProjectList() should keep linked work pending integration visible while collapsed, got %q", lines[2])
 	}
 	if strings.Contains(lines[2], "feat/parallel-lane") {
 		t.Fatalf("renderProjectList() should keep child rows hidden while collapsed, got %q", lines[2])

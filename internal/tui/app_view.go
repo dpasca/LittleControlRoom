@@ -1058,11 +1058,11 @@ func (m Model) renderProjectList(width, height int) string {
 					disclosure = "▾ "
 				}
 				namePrefix = disclosure
-				if rowMeta.LinkedUnmergedCount > 0 {
+				if rowMeta.LinkedPendingIntegrationCount > 0 {
 					nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 					summaryStyle = detailWarningStyle
 				}
-				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, rowMeta.LinkedUnmergedCount, orphanedCount); badge != "" {
+				if badge := worktreeLinkedBadgeSummary(rowMeta.LinkedCount, rowMeta.LinkedActiveCount, rowMeta.LinkedDirtyCount, rowMeta.LinkedPendingIntegrationCount, orphanedCount); badge != "" {
 					if assessmentText == "-" {
 						assessmentText = badge
 					} else {
@@ -1073,7 +1073,7 @@ func (m Model) renderProjectList(width, height int) string {
 		case projectListRowWorktree:
 			namePrefix = "  ↳ "
 			nameLabel = projectWorktreeLabel(p)
-			if worktreeNeedsMergeBack(p) {
+			if worktreeHasPendingIntegration(p) {
 				nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 				summaryStyle = detailWarningStyle
 			}

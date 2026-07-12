@@ -135,3 +135,21 @@ func TestBuildProjectDetailKeepsTODOContentsOutOfSurface(t *testing.T) {
 		t.Fatalf("detail surface should not expose the attention total: %s", encoded)
 	}
 }
+
+func TestWorktreeDescriptionReportsPendingIntegrationForDirtyWorktree(t *testing.T) {
+	t.Parallel()
+	project := model.ProjectSummary{
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		WorktreeMergeStatus:  model.WorktreeMergeStatusMerged,
+		RepoDirty:            true,
+	}
+
+	if got, want := worktreeDescription(project), "Ready to commit and merge into master"; got != want {
+		t.Fatalf("dirty worktree description = %q, want %q", got, want)
+	}
+	project.RepoDirty = false
+	if got, want := worktreeDescription(project), "No changes to integrate into master"; got != want {
+		t.Fatalf("clean integrated worktree description = %q, want %q", got, want)
+	}
+}

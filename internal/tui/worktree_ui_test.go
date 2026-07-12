@@ -385,7 +385,7 @@ func TestRenderDetailContentForRootProjectShowsPruneSlashCommand(t *testing.T) {
 	}
 }
 
-func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
+func TestRenderDetailContentShowsWorktreeIntegrationStatus(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	m := Model{
@@ -416,14 +416,14 @@ func TestRenderDetailContentShowsWorktreeMergeStatus(t *testing.T) {
 	m.rebuildProjectList(childPath)
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "Merge status:") {
-		t.Fatalf("renderDetailContent() should show a merge status field for linked worktrees, got %q", rendered)
+	if !strings.Contains(rendered, "Integration status:") {
+		t.Fatalf("renderDetailContent() should show an integration status field for linked worktrees, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "ready to merge into master") {
-		t.Fatalf("renderDetailContent() should show the linked worktree merge status, got %q", rendered)
+		t.Fatalf("renderDetailContent() should show the linked worktree integration status, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "needs merge") {
-		t.Fatalf("renderDetailContent() should include worktree lane merge status in the family list, got %q", rendered)
+	if !strings.Contains(rendered, "1 pending integration") {
+		t.Fatalf("renderDetailContent() should count the linked worktree as pending integration, got %q", rendered)
 	}
 }
 
@@ -501,14 +501,14 @@ func TestRenderDetailContentPrioritizesDirtyWorktreeMergeReadiness(t *testing.T)
 	m.rebuildProjectList(childPath)
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "commit changes before merging into master") {
-		t.Fatalf("renderDetailContent() should put dirty merge readiness first, got %q", rendered)
+	if !strings.Contains(rendered, "ready to commit and merge into master") {
+		t.Fatalf("renderDetailContent() should describe the dirty worktree's LCR integration workflow, got %q", rendered)
 	}
-	if strings.Contains(rendered, "Merge status: ready to merge into master") {
+	if strings.Contains(rendered, "Integration status: ready to merge into master") {
 		t.Fatalf("renderDetailContent() should not present dirty worktrees as merge-ready, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "M or /wt merge (commit dirty changes first)") {
-		t.Fatalf("renderDetailContent() should describe the commit+merge action for dirty worktrees, got %q", rendered)
+	if !strings.Contains(rendered, "M or /wt merge (automatically commits dirty changes first)") {
+		t.Fatalf("renderDetailContent() should explain that the merge action automatically commits dirty worktrees, got %q", rendered)
 	}
 }
 
@@ -544,8 +544,11 @@ func TestRenderDetailContentDoesNotImplyDirtyIntegratedWorktreeWasMerged(t *test
 	m.rebuildProjectList(childPath)
 
 	rendered := ansi.Strip(m.renderDetailContent(100))
-	if !strings.Contains(rendered, "nothing to merge; local changes") {
-		t.Fatalf("renderDetailContent() should describe branch ancestry without implying a merge happened, got %q", rendered)
+	if !strings.Contains(rendered, "ready to commit and merge into master") {
+		t.Fatalf("renderDetailContent() should report dirty changes as ready for LCR integration, got %q", rendered)
+	}
+	if strings.Contains(rendered, "nothing to merge") {
+		t.Fatalf("renderDetailContent() should not describe a dirty worktree as having nothing to merge, got %q", rendered)
 	}
 	if strings.Contains(rendered, "merged into master") {
 		t.Fatalf("renderDetailContent() should not imply the dirty worktree was merged into master, got %q", rendered)
@@ -586,8 +589,85 @@ func TestRenderDetailContentShowsRepoCentricWorktreeSummary(t *testing.T) {
 	if !strings.Contains(rendered, "Worktrees:") {
 		t.Fatalf("renderDetailContent() should show worktree family details for the repo root, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "root + 1 linked, 1 active, 1 dirty") {
+	if !strings.Contains(rendered, "root + 1 linked, 1 pending integration, 1 active, 1 dirty") {
 		t.Fatalf("renderDetailContent() should describe the family without counting the root as a generic worktree, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "feat/parallel-lane · dirty, active, needs commit + merge") {
+		t.Fatalf("renderDetailContent() should describe dirty lane work as needing LCR's commit-and-merge flow, got %q", rendered)
+	}
+	if strings.Contains(rendered, "dirty, active, nothing to merge") {
+		t.Fatalf("renderDetailContent() should never pair a dirty lane with nothing to merge, got %q", rendered)
+	}
+}
+
+func TestRenderDetailContentCountsDirtyWorktreesAsPendingIntegration(t *testing.T) {
+	rootPath := "/tmp/repo"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusActive,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--player-car-selection",
+				Path:                 "/tmp/repo--player-car-selection",
+				Status:               model.StatusActive,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusMerged,
+				RepoBranch:           "player-car-selection",
+				RepoDirty:            true,
+			},
+			{
+				Name:                 "repo--fractalx-completion",
+				Path:                 "/tmp/repo--fractalx-completion",
+				Status:               model.StatusActive,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusNotMerged,
+				RepoBranch:           "vulkan-port/fractalx-completion",
+				RepoDirty:            true,
+			},
+			{
+				Name:                 "repo--audio-openal",
+				Path:                 "/tmp/repo--audio-openal",
+				Status:               model.StatusIdle,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				WorktreeMergeStatus:  model.WorktreeMergeStatusMerged,
+				RepoBranch:           "macos/audio-openal",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(rootPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(140))
+	for _, want := range []string{
+		"root + 3 linked, 2 pending integration, 3 active, 2 dirty",
+		"root: master · clean, active, current",
+		"player-car-selection · dirty, active, needs commit + merge",
+		"vulkan-port/fractalx-completion · dirty, active, needs commit + merge",
+		"macos/audio-openal · clean, no changes to integrate",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderDetailContent() missing %q in %q", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "dirty, active, nothing to merge") {
+		t.Fatalf("renderDetailContent() should not mix dirty state with nothing to merge, got %q", rendered)
 	}
 }
 
@@ -631,7 +711,7 @@ func TestRenderDetailContentShowsOrphanedWorktreeWarning(t *testing.T) {
 	if !strings.Contains(rendered, "1 orphaned checkout(s) still exist on disk") {
 		t.Fatalf("renderDetailContent() should explain the orphaned checkout state, got %q", rendered)
 	}
-	if !strings.Contains(rendered, "todo/stale-lane · orphaned, nothing to merge") {
+	if !strings.Contains(rendered, "todo/stale-lane · orphaned, no changes to integrate") {
 		t.Fatalf("renderDetailContent() should list the orphaned checkout branch and status, got %q", rendered)
 	}
 	if !strings.Contains(rendered, orphanPath) {
@@ -1911,6 +1991,16 @@ func TestRenderWorktreeRemoveConfirmShowsMergeSafetyCopy(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "branch ref stays in the repo") {
 		t.Fatalf("remove confirm should explain that only the checkout is removed, got %q", rendered)
+	}
+}
+
+func TestWorktreeRemoveSafetyCopyTreatsDirtyWorkAsPendingIntegration(t *testing.T) {
+	header, body, _ := worktreeRemoveSafetyCopy(model.WorktreeMergeStatusMerged, "master", true)
+	if header != "Pending integration" {
+		t.Fatalf("dirty integrated worktree header = %q, want pending integration", header)
+	}
+	if !strings.Contains(body, "uncommitted changes to commit and merge into master") {
+		t.Fatalf("dirty integrated worktree body = %q, want commit-and-merge explanation", body)
 	}
 }
 
