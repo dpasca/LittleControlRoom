@@ -225,7 +225,7 @@ Inside Help Chat:
 - `Ctrl+L`: Start a fresh empty Help Chat session.
 - `Alt+Enter`: Add a newline without sending.
 
-Help Chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/help-chat-sessions/`. Recall searches those transcripts and continues to include legacy `boss-sessions/` history. Help Chat can inspect the current dashboard and project/task context, propose confirmable actions, delegate work, and report completions without assigning human names to AI work sessions.
+Help Chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/help-chat-sessions/`. Recall searches those transcripts and continues to include legacy `boss-sessions/` history. Help Chat can inspect the current dashboard and project/task context, propose confirmable actions, delegate work, and report completions without assigning human names to AI work sessions. For new project work, the default confirmation creates a tracked TODO, prepares a dedicated worktree, and starts a fresh engineer there; press `q` in that confirmation to add the TODO without starting it. Starting and final launch/failure receipts are kept in the Help Chat transcript.
 
 ## Core Workflows
 

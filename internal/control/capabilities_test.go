@@ -219,6 +219,27 @@ func TestTodoAddCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestTodoCreateWorktreeAndStartEngineerCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityTodoCreateWorktreeAndStartEngineer)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityTodoCreateWorktreeAndStartEngineer)
+	}
+	if capability.Name != CapabilityTodoCreateWorktreeAndStartEngineer {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilityTodoCreateWorktreeAndStartEngineer)
+	}
+	if capability.Risk != RiskExternal || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected tracked worktree capability metadata: %#v", capability)
+	}
+	for _, effect := range []string{HostEffectMayCreateProjectTodo, HostEffectMayCreateProjectWorktree, HostEffectMayRevealEngineerSession} {
+		if !stringSliceContains(capability.HostEffects, effect) {
+			t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, effect)
+		}
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("tracked worktree schemas should be object schemas")
+	}
+}
+
 func TestTodoCompleteCapabilityMetadata(t *testing.T) {
 	capability, ok := CapabilityByName(CapabilityTodoComplete)
 	if !ok {
@@ -503,6 +524,30 @@ func TestValidateInvocationNormalizesTodoAddArgs(t *testing.T) {
 	}
 	if input.RequestID != "boss-turn-todo" || input.ProjectPath != "/tmp/demo" || input.Text != "Follow up on Boss desk TODO visibility." {
 		t.Fatalf("normalized todo add input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesTodoCreateWorktreeAndStartEngineerArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-worktree ",
+		Capability: CapabilityTodoCreateWorktreeAndStartEngineer,
+		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":" Demo ","todo_text":"  Fix Help Chat feedback.  ","prompt":"  Implement and verify the feedback.  ","provider":"auto","reveal":false}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	var input TodoCreateWorktreeAndStartEngineerInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if inv.RequestID != "boss-turn-worktree" ||
+		input.RequestID != "boss-turn-worktree" ||
+		input.ProjectPath != "/tmp/demo" ||
+		input.ProjectName != "Demo" ||
+		input.TodoText != "Fix Help Chat feedback." ||
+		input.Prompt != "Implement and verify the feedback." ||
+		input.Provider != ProviderAuto {
+		t.Fatalf("normalized tracked worktree input = %#v", input)
 	}
 }
 

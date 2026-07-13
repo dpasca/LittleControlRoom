@@ -8,20 +8,21 @@ import (
 )
 
 const (
-	FeatureSendPrompt       = "send_prompt"
-	FeatureResume           = "resume"
-	FeatureForceNew         = "force_new"
-	FeatureCreateTask       = "create_task"
-	FeatureContinueTask     = "continue_task"
-	FeatureCloseTask        = "close_task"
-	FeatureArchiveTask      = "archive_task"
-	FeatureAddTodo          = "add_todo"
-	FeatureCompleteTodo     = "complete_todo"
-	FeatureUpdateSettings   = "update_settings"
-	FeaturePrepareCommit    = "prepare_commit"
-	FeatureApprovalResponse = "approval_response"
-	FeatureReview           = "review"
-	FeatureCompact          = "compact"
+	FeatureSendPrompt                         = "send_prompt"
+	FeatureResume                             = "resume"
+	FeatureForceNew                           = "force_new"
+	FeatureCreateTask                         = "create_task"
+	FeatureContinueTask                       = "continue_task"
+	FeatureCloseTask                          = "close_task"
+	FeatureArchiveTask                        = "archive_task"
+	FeatureAddTodo                            = "add_todo"
+	FeatureCreateTodoWorktreeAndStartEngineer = "create_todo_worktree_and_start_engineer"
+	FeatureCompleteTodo                       = "complete_todo"
+	FeatureUpdateSettings                     = "update_settings"
+	FeaturePrepareCommit                      = "prepare_commit"
+	FeatureApprovalResponse                   = "approval_response"
+	FeatureReview                             = "review"
+	FeatureCompact                            = "compact"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	HostEffectMayCreateTaskWorkspace   = "may_create_task_workspace"
 	HostEffectMaySetProjectArchive     = "may_set_project_archive_state"
 	HostEffectMayCreateProjectTodo     = "may_create_project_todo"
+	HostEffectMayCreateProjectWorktree = "may_create_project_worktree"
 	HostEffectMayCompleteProjectTodo   = "may_complete_project_todo"
 	HostEffectMayUpdateSettings        = "may_update_settings"
 	HostEffectMayPrepareGitCommit      = "may_prepare_git_commit_preview"
@@ -211,6 +213,19 @@ type TodoAddInput struct {
 	Text        string `json:"text"`
 }
 
+type TodoCreateWorktreeAndStartEngineerInput struct {
+	RequestID    string   `json:"request_id,omitempty"`
+	ProjectPath  string   `json:"project_path"`
+	ProjectName  string   `json:"project_name"`
+	TodoText     string   `json:"todo_text"`
+	Prompt       string   `json:"prompt"`
+	Provider     Provider `json:"provider"`
+	Reveal       bool     `json:"reveal"`
+	TodoID       int64    `json:"todo_id,omitempty"`
+	TodoLabel    string   `json:"todo_label,omitempty"`
+	WorktreePath string   `json:"worktree_path,omitempty"`
+}
+
 type TodoCompleteInput struct {
 	RequestID   string `json:"request_id,omitempty"`
 	ProjectPath string `json:"project_path,omitempty"`
@@ -341,6 +356,7 @@ func Capabilities() []Capability {
 		ProjectArchiveCapability(),
 		ScratchTaskArchiveCapability(),
 		TodoAddCapability(),
+		TodoCreateWorktreeAndStartEngineerCapability(),
 		TodoCompleteCapability(),
 		SettingsUpdateCapability(),
 		GitPrepareCommitCapability(),
@@ -363,6 +379,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return ScratchTaskArchiveCapability(), true
 	case CapabilityTodoAdd:
 		return TodoAddCapability(), true
+	case CapabilityTodoCreateWorktreeAndStartEngineer:
+		return TodoCreateWorktreeAndStartEngineerCapability(), true
 	case CapabilityTodoComplete:
 		return TodoCompleteCapability(), true
 	case CapabilitySettingsUpdate:
@@ -501,6 +519,24 @@ func TodoAddCapability() Capability {
 			Available: true,
 			Features:  []string{FeatureAddTodo},
 		}},
+	}
+}
+
+func TodoCreateWorktreeAndStartEngineerCapability() Capability {
+	return Capability{
+		Name:         CapabilityTodoCreateWorktreeAndStartEngineer,
+		Description:  "Create a tracked project TODO, prepare a dedicated Git worktree, and start an engineer session there.",
+		InputSchema:  todoCreateWorktreeAndStartEngineerInputSchema(),
+		OutputSchema: todoCreateWorktreeAndStartEngineerOutputSchema(),
+		Risk:         RiskExternal,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects: []string{
+			HostEffectMayCreateProjectTodo,
+			HostEffectMayCreateProjectWorktree,
+			HostEffectMayRevealEngineerSession,
+		},
+		Providers: EngineerSendPromptCapability().Providers,
 	}
 }
 
@@ -700,6 +736,45 @@ func NormalizeTodoAddInput(input TodoAddInput) (TodoAddInput, error) {
 	}
 	if input.Text == "" {
 		return TodoAddInput{}, fmt.Errorf("todo text is required")
+	}
+	return input, nil
+}
+
+func NormalizeTodoCreateWorktreeAndStartEngineerInput(input TodoCreateWorktreeAndStartEngineerInput) (TodoCreateWorktreeAndStartEngineerInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" {
+		input.ProjectPath = filepath.Clean(input.ProjectPath)
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	input.TodoText = strings.TrimSpace(input.TodoText)
+	input.Prompt = strings.TrimSpace(input.Prompt)
+	input.TodoLabel = strings.TrimSpace(input.TodoLabel)
+	input.WorktreePath = strings.TrimSpace(input.WorktreePath)
+	if input.WorktreePath != "" {
+		input.WorktreePath = filepath.Clean(input.WorktreePath)
+	}
+	input.Provider = input.Provider.Normalized()
+	if input.ProjectPath == "" && input.ProjectName == "" {
+		return TodoCreateWorktreeAndStartEngineerInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	if input.TodoText == "" {
+		input.TodoText = input.Prompt
+	}
+	if input.Prompt == "" {
+		input.Prompt = input.TodoText
+	}
+	if input.TodoText == "" {
+		return TodoCreateWorktreeAndStartEngineerInput{}, fmt.Errorf("todo text is required")
+	}
+	if input.Prompt == "" {
+		return TodoCreateWorktreeAndStartEngineerInput{}, fmt.Errorf("engineer prompt is required")
+	}
+	if input.Provider == "" {
+		return TodoCreateWorktreeAndStartEngineerInput{}, fmt.Errorf("unsupported engineer provider: %s", input.Provider)
+	}
+	if input.TodoID < 0 {
+		return TodoCreateWorktreeAndStartEngineerInput{}, fmt.Errorf("todo_id cannot be negative")
 	}
 	return input, nil
 }
@@ -1026,6 +1101,34 @@ func validateTodoAddInvocation(inv Invocation) (Invocation, error) {
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityTodoAdd, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateTodoCreateWorktreeAndStartEngineerInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityTodoCreateWorktreeAndStartEngineer)
+	}
+	var input TodoCreateWorktreeAndStartEngineerInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityTodoCreateWorktreeAndStartEngineer, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityTodoCreateWorktreeAndStartEngineer)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeTodoCreateWorktreeAndStartEngineerInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityTodoCreateWorktreeAndStartEngineer, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -1397,6 +1500,42 @@ func todoAddOutputSchema() map[string]any {
 			"status":       map[string]any{"type": "string"},
 		},
 		"required": []string{"project_path", "todo_id", "text", "status"},
+	}
+}
+
+func todoCreateWorktreeAndStartEngineerInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":    map[string]any{"type": "string"},
+			"project_path":  map[string]any{"type": "string"},
+			"project_name":  map[string]any{"type": "string"},
+			"todo_text":     map[string]any{"type": "string"},
+			"prompt":        map[string]any{"type": "string"},
+			"provider":      map[string]any{"type": "string", "enum": ProviderStrings(false)},
+			"reveal":        map[string]any{"type": "boolean"},
+			"todo_id":       map[string]any{"type": "integer"},
+			"todo_label":    map[string]any{"type": "string"},
+			"worktree_path": map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "project_name", "todo_text", "prompt", "provider", "reveal"},
+	}
+}
+
+func todoCreateWorktreeAndStartEngineerOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"project_path":  map[string]any{"type": "string"},
+			"todo_id":       map[string]any{"type": "integer"},
+			"worktree_path": map[string]any{"type": "string"},
+			"provider":      map[string]any{"type": "string", "enum": ProviderStrings(false)},
+			"session_id":    map[string]any{"type": "string"},
+			"status":        map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "todo_id", "worktree_path", "provider", "session_id", "status"},
 	}
 }
 

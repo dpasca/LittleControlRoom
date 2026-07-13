@@ -584,6 +584,172 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 	}
 }
 
+func TestExecuteBossTrackedWorktreeLaunchCreatesTodoWorktreeAndEngineer(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	projectPath := filepath.Join(t.TempDir(), "tracked-repo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	runTUITestGit(t, "", "init", projectPath)
+	runTUITestGit(t, projectPath, "config", "user.email", "test@example.com")
+	runTUITestGit(t, projectPath, "config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("tracked repo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	runTUITestGit(t, projectPath, "add", "README.md")
+	runTUITestGit(t, projectPath, "commit", "-m", "initial")
+	if err := svc.Store().UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "Tracked Repo",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		RepoBranch:    runTUITestGit(t, projectPath, "branch", "--show-current"),
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("UpsertProjectState() error = %v", err)
+	}
+	projects, err := svc.Store().ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "thread-tracked-worktree",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{ctx: ctx, svc: svc, allProjects: projects, projects: projects, codexManager: manager}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: trackedWorktreeControlInvocationForTest(t, control.TodoCreateWorktreeAndStartEngineerInput{
+		ProjectPath: projectPath,
+		ProjectName: "Tracked Repo",
+		TodoText:    "Add durable Help Chat engineer launch feedback.",
+		Prompt:      "Implement durable Help Chat engineer launch feedback and verify it.",
+		Provider:    control.ProviderCodex,
+	})})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want TODO creation command")
+	}
+	created, ok := cmd().(bossTodoWorktreeTodoCreatedMsg)
+	if !ok || created.err != nil || created.todo.ID <= 0 {
+		t.Fatalf("TODO creation result = %#v, want created tracked TODO", created)
+	}
+
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	if len(got.pendingBossHostNotices) != 1 || !strings.Contains(got.pendingBossHostNotices[0].Content, "Starting TODO #") {
+		t.Fatalf("pending Help Chat notices = %#v, want durable starting receipt", got.pendingBossHostNotices)
+	}
+	var prepared bossTodoWorktreePreparedMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossTodoWorktreePreparedMsg); ok {
+			prepared = candidate
+			break
+		}
+	}
+	if prepared.err != nil || prepared.result.WorktreePath == "" {
+		t.Fatalf("worktree preparation = %#v, want prepared worktree", prepared)
+	}
+	if prepared.result.WorktreePath == projectPath {
+		t.Fatalf("worktree path = root path %q, want isolated checkout", projectPath)
+	}
+
+	updated, cmd = got.Update(prepared)
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatalf("handling prepared worktree returned nil command")
+	}
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = candidate
+		}
+	}
+	if result.Err != nil || result.Activity == nil {
+		t.Fatalf("launch result = %#v, want active tracked engineer", result)
+	}
+	if !strings.Contains(result.Status, "AI engineer launched") || !strings.Contains(result.Status, "TODO #") || !strings.Contains(result.Status, filepath.Base(prepared.result.WorktreePath)) {
+		t.Fatalf("launch status = %q, want durable task/worktree receipt", result.Status)
+	}
+	if len(requests) != 1 || requests[0].ProjectPath != prepared.result.WorktreePath || !requests[0].ForceNew {
+		t.Fatalf("launch requests = %#v, want one fresh worktree session", requests)
+	}
+	tracked, err := svc.Store().GetTodo(ctx, created.todo.ID)
+	if err != nil {
+		t.Fatalf("GetTodo() error = %v", err)
+	}
+	if tracked.WorkProjectPath != prepared.result.WorktreePath || tracked.WorkSessionID != "codex:thread-tracked-worktree" {
+		t.Fatalf("tracked TODO work = path:%q session:%q, want worktree/codex session", tracked.WorkProjectPath, tracked.WorkSessionID)
+	}
+	waitForControlAsyncRefreshes(t, svc)
+}
+
+func TestExecuteBossTrackedWorktreeLaunchKeepsTodoWhenWorktreeFails(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	projectPath := filepath.Join(t.TempDir(), "not-a-git-repo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := svc.Store().UpsertProjectState(ctx, model.ProjectState{Path: projectPath, Name: "No Git", PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()}); err != nil {
+		t.Fatalf("UpsertProjectState() error = %v", err)
+	}
+	projects, err := svc.Store().ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	launches := 0
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		launches++
+		return nil, nil
+	})
+	m := Model{ctx: ctx, svc: svc, allProjects: projects, projects: projects, codexManager: manager}
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: trackedWorktreeControlInvocationForTest(t, control.TodoCreateWorktreeAndStartEngineerInput{
+		ProjectPath: projectPath,
+		ProjectName: "No Git",
+		TodoText:    "Keep this request tracked if isolation is unavailable.",
+		Prompt:      "Try to start this safely.",
+		Provider:    control.ProviderCodex,
+	})})
+	got := updated.(Model)
+	created := cmd().(bossTodoWorktreeTodoCreatedMsg)
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	var prepared bossTodoWorktreePreparedMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossTodoWorktreePreparedMsg); ok {
+			prepared = candidate
+		}
+	}
+	if prepared.err == nil {
+		t.Fatalf("worktree preparation error = nil, want non-Git failure")
+	}
+	updated, cmd = got.Update(prepared)
+	_ = updated.(Model)
+	result, ok := cmd().(bossui.ControlInvocationResultMsg)
+	if !ok || result.Err == nil || !strings.Contains(result.Status, "No engineer was launched") {
+		t.Fatalf("failure result = %#v, want explicit no-launch receipt", result)
+	}
+	if launches != 0 {
+		t.Fatalf("engineer launches = %d, want no root fallback", launches)
+	}
+	tracked, err := svc.Store().GetTodo(ctx, created.todo.ID)
+	if err != nil || tracked.Done {
+		t.Fatalf("tracked TODO after failure = %#v, err=%v", tracked, err)
+	}
+	waitForControlAsyncRefreshes(t, svc)
+}
+
 func TestExecuteBossControlInvocationReportsBlockedLaunch(t *testing.T) {
 	projectPath := "/tmp/control-boss-blocked"
 	m := Model{
@@ -1211,7 +1377,7 @@ func TestExecuteBossControlInvocationBlocksFreshPromptWhileSameEngineerTurnActiv
 	}
 }
 
-func TestExecuteBossControlInvocationAllowsFreshPromptWhenSameEngineerSessionIdle(t *testing.T) {
+func TestExecuteBossControlInvocationDoesNotReplaceIdleEngineerSession(t *testing.T) {
 	projectPath := "/tmp/control-idle-fresh-allowed"
 	liveSession := &fakeCodexSession{
 		projectPath: projectPath,
@@ -1264,10 +1430,10 @@ func TestExecuteBossControlInvocationAllowsFreshPromptWhenSameEngineerSessionIdl
 	})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want refusal result")
 	}
-	if !strings.Contains(got.status, "Starting a new embedded Codex session") {
-		t.Fatalf("status = %q, want fresh session start", got.status)
+	if !strings.Contains(got.status, "idle turn does not show that its task is finished") {
+		t.Fatalf("status = %q, want idle-session safety explanation", got.status)
 	}
 	msgs := collectCmdMsgs(cmd)
 	var result bossui.ControlInvocationResultMsg
@@ -1277,11 +1443,11 @@ func TestExecuteBossControlInvocationAllowsFreshPromptWhenSameEngineerSessionIdl
 			break
 		}
 	}
-	if result.Err != nil {
-		t.Fatalf("result err = %v, want idle session to allow fresh launch", result.Err)
+	if result.Err == nil || !strings.Contains(result.Status, "dedicated worktree") {
+		t.Fatalf("result = %#v, want refusal with worktree guidance", result)
 	}
-	if len(requests) != 2 || !requests[1].ForceNew || requests[1].Prompt == "" {
-		t.Fatalf("launch requests = %#v, want second forced fresh prompt", requests)
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %#v, want no replacement launch", requests)
 	}
 }
 
@@ -1623,11 +1789,20 @@ func TestExecuteTodoAddControlAddsProjectTodo(t *testing.T) {
 		Text:        "Add the Boss Desk TODO list.",
 	}))
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate TODO add", cmd)
+	if cmd == nil {
+		t.Fatalf("executeControlInvocation() cmd = nil, want background TODO add")
 	}
-	if !strings.Contains(got.status, "Added TODO #") || !strings.Contains(got.status, "Alpha") {
-		t.Fatalf("status = %q, want TODO add status", got.status)
+	created, ok := cmd().(bossTodoAddedMsg)
+	if !ok || created.err != nil {
+		t.Fatalf("TODO add command result = %#v", created)
+	}
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	if !strings.Contains(got.status, "Added TODO #") || !strings.Contains(got.status, "It was not started") {
+		t.Fatalf("status = %q, want durable TODO-only status", got.status)
+	}
+	if cmd == nil {
+		t.Fatalf("TODO add result should emit Help Chat receipt and refresh")
 	}
 	detail, err := svc.Store().GetProjectDetail(ctx, projectPath, 0)
 	if err != nil {
@@ -1636,6 +1811,7 @@ func TestExecuteTodoAddControlAddsProjectTodo(t *testing.T) {
 	if len(detail.Todos) != 1 || detail.Todos[0].Text != "Add the Boss Desk TODO list." {
 		t.Fatalf("todos = %#v, want added TODO", detail.Todos)
 	}
+	waitForControlAsyncRefreshes(t, svc)
 }
 
 func TestExecuteTodoCompleteControlMarksTodoDone(t *testing.T) {
@@ -1972,6 +2148,14 @@ func controlInvocationRawForTest(t *testing.T, capability control.CapabilityName
 	}
 }
 
+func trackedWorktreeControlInvocationForTest(t *testing.T, input control.TodoCreateWorktreeAndStartEngineerInput) control.Invocation {
+	t.Helper()
+	if input.Provider == "" {
+		input.Provider = control.ProviderAuto
+	}
+	return controlInvocationRawForTest(t, control.CapabilityTodoCreateWorktreeAndStartEngineer, input)
+}
+
 func newControlTestService(t *testing.T) *service.Service {
 	t.Helper()
 	cfg := config.Default()
@@ -1986,4 +2170,13 @@ func newControlTestService(t *testing.T) *service.Service {
 		_ = st.Close()
 	})
 	return service.New(cfg, st, events.NewBus(), nil)
+}
+
+func waitForControlAsyncRefreshes(t *testing.T, svc *service.Service) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := svc.WaitForAsyncProjectRefreshes(ctx); err != nil {
+		t.Fatalf("wait for async project refreshes: %v", err)
+	}
 }

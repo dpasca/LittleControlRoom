@@ -154,7 +154,7 @@ func bossActionCarriesEngineerPrompt(action bossAction) bool {
 		return false
 	}
 	switch control.CapabilityName(strings.TrimSpace(action.ControlCapability)) {
-	case control.CapabilityEngineerSendPrompt, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+	case control.CapabilityEngineerSendPrompt, control.CapabilityTodoCreateWorktreeAndStartEngineer, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return true
 	default:
 		return false

@@ -3376,6 +3376,34 @@ func (s *Service) finishAsyncProjectRefresh(projectPath string) bool {
 	return false
 }
 
+// WaitForAsyncProjectRefreshes waits until the service has drained queued and
+// in-flight project refreshes. It is primarily useful for orderly shutdown and
+// deterministic integration-test cleanup; normal callers should leave TODO
+// refreshes asynchronous.
+func (s *Service) WaitForAsyncProjectRefreshes(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.backgroundRefreshMu.Lock()
+		idle := len(s.backgroundRefreshState) == 0
+		s.backgroundRefreshMu.Unlock()
+		if idle {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
 	return s.AddTodoWithAttachments(ctx, projectPath, text, nil)
 }

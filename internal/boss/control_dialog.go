@@ -38,6 +38,8 @@ func (m Model) controlConfirmationTitle() string {
 	switch m.pendingControl.Invocation.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		return "Engineer Handoff"
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		return "Tracked Engineer Task"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return "Engineer Task"
 	case control.CapabilityGitPrepareCommit:
@@ -211,6 +213,41 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
 			}
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		var input control.TodoCreateWorktreeAndStartEngineerInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			provider := input.Provider.Label()
+			if input.Provider == control.ProviderAuto {
+				provider = "Auto"
+			}
+			target := firstNonEmpty(input.ProjectName, input.ProjectPath, "selected project")
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: create tracked work in an isolated checkout", width)),
+				"",
+				renderBossControlDetail("Project", target, width),
+				renderBossControlDetail("Workspace", "dedicated worktree", width),
+				renderBossControlDetail("Engineer", provider, width),
+				"",
+				bossControlSectionStyle.Render(fitLine("TODO", width)),
+				renderBossControlPromptBox(input.TodoText, width),
+			}
+			if strings.TrimSpace(input.Prompt) != strings.TrimSpace(input.TodoText) {
+				lines = append(lines,
+					"",
+					bossControlSectionStyle.Render(fitLine("Engineer request", width)),
+					renderBossControlPromptBox(input.Prompt, width),
+				)
+			}
+			lines = append(lines,
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "start in worktree", uistyle.DialogActionPrimary),
+					renderBossControlAction("q", "TODO only", uistyle.DialogActionSecondary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+				}, "   "),
+			)
 			return strings.Join(lines, "\n")
 		}
 	case control.CapabilityTodoComplete:

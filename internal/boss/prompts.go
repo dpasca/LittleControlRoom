@@ -13,9 +13,9 @@ func bossTodoAddPolicyReviewSystemPrompt() string {
 	return strings.Join([]string{
 		"You are the Help Chat todo.add policy reviewer for Little Control Room.",
 		"The main planner proposed adding a project TODO. Decide whether that is allowed.",
-		"Allow todo.add only when the latest user message explicitly asks to make a TODO, backlog, queue, reminder, or pending item without starting work now, or when same-project active Codex/OpenCode work is in the middle of a turn and unrelated work must be parked for later.",
-		"Do not allow todo.add merely because a project already has an open idle Codex/OpenCode engineer session. Idle open sessions are safe to replace with a fresh engineer.send_prompt handoff.",
-		"For loaded-project implementation, change, fix, or investigation work the user wants handled now, reject todo.add and choose replacement_control_capability=\"engineer.send_prompt\" with replacement_session_mode=\"new\".",
+		"Allow todo.add only when the latest user message explicitly asks to make a TODO, backlog, queue, reminder, or pending item without starting work now.",
+		"An idle engineer turn does not prove that its task is finished. Do not replace an open idle session in the root checkout merely because it is between turns.",
+		"For loaded-project implementation, change, fix, or investigation work the user wants handled now, reject todo.add and choose replacement_control_capability=\"todo.create_worktree_and_start_engineer\".",
 		"Judge intent from the conversation and supplied app state. Do not use keyword rules; return only the structured review.",
 	}, "\n")
 }
@@ -33,7 +33,7 @@ func bossTodoAddPolicyReviewUserText(req AssistantRequest, action bossAction) st
 	if reason := strings.TrimSpace(action.Reason); reason != "" {
 		b.WriteString("planner_reason: " + clipText(reason, 500) + "\n")
 	}
-	b.WriteString("\nReturn allow_todo_add=true only if this really belongs in the project backlog. Otherwise return allow_todo_add=false and replacement_control_capability=\"engineer.send_prompt\".")
+	b.WriteString("\nReturn allow_todo_add=true only if this really belongs in the project backlog. Otherwise return allow_todo_add=false and replacement_control_capability=\"todo.create_worktree_and_start_engineer\".")
 	return strings.TrimSpace(b.String())
 }
 
@@ -274,7 +274,7 @@ var bossPlannerTaskIdentityPrompt = []string{
 
 var bossPlannerEvidencePrompt = []string{
 	"Treat asking an engineer as routine coworker coordination, not a special escalation. When an engineer is the right next step, choose the structured handoff or continue action directly instead of asking whether Help Chat may ask.",
-	"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone. Use project_detail or context first; if direct evidence does not explicitly inspect the current diff or latest engineer output, propose engineer.send_prompt with session_mode=new for a fresh verification.",
+	"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone. Use project_detail or context first; if direct evidence does not explicitly inspect the current diff or latest engineer output, propose todo.create_worktree_and_start_engineer for a fresh tracked verification.",
 	"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff.",
 	"Do not use cached engineer transcript search as a substitute for fresh external research. For user questions that need new web, current, or source checks, use read-only context only to identify the relevant project, task, or session, then propose engineer.send_prompt, agent_task.continue, or agent_task.create as appropriate.",
 }
@@ -284,7 +284,7 @@ var helpPlannerEvidencePrompt = []string{
 	"Only gather state when the latest user message asks about current status, projects, tasks, TODOs, processes, worktrees, sessions, settings, or app state.",
 	"Use help_reference when the user asks how to use Little Control Room, what command/keybinding to use, or what a workflow means.",
 	"Treat asking an engineer as routine coworker coordination, not a special escalation. When an engineer is the right next step, choose the structured handoff or continue action directly instead of asking whether Help Chat may ask.",
-	"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone. Use project_detail or context first; if direct evidence does not explicitly inspect the current diff or latest engineer output, propose engineer.send_prompt with session_mode=new for a fresh verification.",
+	"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone. Use project_detail or context first; if direct evidence does not explicitly inspect the current diff or latest engineer output, propose todo.create_worktree_and_start_engineer for a fresh tracked verification.",
 }
 
 var bossPlannerReadOnlyPrompt = []string{
@@ -312,7 +312,7 @@ var helpPlannerReadOnlyPrompt = []string{
 }
 
 var bossPlannerCapabilityCatalogPrompt = []string{
-	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
+	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, todo.create_worktree_and_start_engineer, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
 	"Available goal action kind: propose_goal. Supported goal_kind values are agent_task_cleanup and lcagent_task. " +
 		"agent_task_cleanup archives multiple delegated agent task records under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. " +
 		"lcagent_task creates one LCR-managed LCAgent task, launches LCAgent with scoped authority, records the handoff, waits for completion, harvests the trace, and verifies LCAgent reported checks.",
@@ -324,8 +324,10 @@ var bossPlannerControlRoutingPrompt = []string{
 	"Use settings.update for user requests to change Little Control Room app settings, including project scope settings, privacy mode, reasoning visibility, and Codex launch preset. Category privacy is managed from category operations, not settings.update. Do not route app settings changes through the Little Control Room repo or an engineer session.",
 	"Use git.prepare_commit for a simple commit or commit-and-push request on a loaded project. It opens the existing commit preview flow only; the operator still confirms Enter for commit or Alt+Enter for commit and push. Do not use engineer.send_prompt merely to create a git commit.",
 	"A git.prepare_commit control proposal opens exactly one loaded project preview. If the user asks to commit or push multiple loaded projects, do not silently pick one and drop the rest; propose the first clearly chosen preview and put a one-sentence scope note in answer naming what remains, or ask which project to start with.",
-	"Project implementation requests are not TODO requests. For loaded-project work the user wants handled now, propose engineer.send_prompt with session_mode=new even if that project already has an open idle Codex or OpenCode engineer session.",
-	"Use todo.add only when the user explicitly asks to make a TODO/backlog/queue/reminder, or when same-project active engineer work is in the middle of a turn and the user accepts parking unrelated work for later. An open idle engineer session alone must not cause todo.add.",
+	"For new loaded-project implementation, change, fix, or investigation work the user wants handled now, propose todo.create_worktree_and_start_engineer. It creates a durable TODO, prepares a dedicated worktree, and launches a fresh engineer there under one confirmation.",
+	"An idle engineer turn does not mean its existing task is finished. Do not replace an open root-checkout session just because it is between turns; use a dedicated tracked worktree for new work.",
+	"Use engineer.send_prompt for an explicit same-task follow-up, an explicit request to continue or steer a known project session, or work on an already-existing tracked TODO. Do not use it as the default for a new project task.",
+	"Use todo.add only when the user explicitly asks to make a TODO/backlog/queue/reminder without starting work now. The tracked-work confirmation also lets the user choose TODO-only with q.",
 	"Use todo.complete when the user asks to mark, close, finish, resolve, or clear an existing project TODO as done, or when gathered engineer/project evidence directly satisfies a linked TODO; never silently complete a TODO without a control confirmation.",
 	"When delegating project work for an open project TODO, set todo_id and todo_text on engineer.send_prompt, and set todo_label from the short TODO label when available. If the user names a TODO id, use that id; if the target TODO is unclear, inspect todo_report/project_detail or ask before sending work.",
 	"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation or external web/product/market research. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
@@ -356,19 +358,18 @@ var bossPlannerProposalPayloadPrompt = []string{
 	"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue for generic or host-level work.",
 	"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
 	"For propose_control/propose_goal, leave answer empty unless a short scope note is needed. A proposal answer must not say the action was already sent, run, completed, or approved.",
-	"For engineer.send_prompt, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. " +
-		"Default project handoffs to session_mode=new so unrelated work does not inherit stale engineer context. " +
-		"It is fine to start a fresh Codex/OpenCode handoff for a project that already has an open idle session; only a session in the middle of a turn is a blocker. " +
+	"For engineer.send_prompt and todo.create_worktree_and_start_engineer, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. " +
+		"Use tracked worktrees for unrelated new work so it does not inherit stale engineer context or replace an open root-checkout session. " +
 		"Use session_mode=resume_or_new only when the user explicitly asks to resume/continue a prior engineer session, clearly gives a same-topic follow-up, or provides an operator note meant to steer active work. " +
 		"Set reveal true only when the user asks to show/open the session.",
-	"If the current view lists active Codex engineer work and the user gives an operator note meant to steer that work, such as offering to log in or clarifying what the engineer should try next, propose engineer.send_prompt with session_mode=resume_or_new for that same project/task. The host will steer the active Codex turn when possible. Active work alone is not enough reason to resume; start a fresh separate handoff for new or unrelated project work.",
+	"If the current view lists active Codex engineer work and the user gives an operator note meant to steer that work, such as offering to log in or clarifying what the engineer should try next, propose engineer.send_prompt with session_mode=resume_or_new for that same project/task. The host will steer the active Codex turn when possible. Active work alone is not enough reason to resume; use todo.create_worktree_and_start_engineer for new or unrelated project work.",
 	"Wanting to see an app, page, server, screenshot, or browser result is not a request to reveal the engineer transcript pane; keep reveal false unless the user explicitly asks to show, open, or watch that engineer session.",
 	"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
 	"For project.set_archive_state, include project_path or exact project_name and project_archive_action=archive or unarchive for one target; for a batch, include project_archive_action and resources with kind=project entries instead.",
 	"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
 	"For settings.update, put every app settings change in settings_changes. Use values for list settings, value for scalar settings, and bool_value for boolean settings. Category privacy is managed through category operations, not settings.update.",
 	"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and the task id is known, propose agent_task.close with task_close_status=archived. This applies to open/review/waiting tasks too; do not downgrade cleanup to task_close_status=waiting.",
-	"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task. For todo.add, leave prompt empty and put the durable backlog item in todo_text. For todo.complete, put the target id in todo_id, known text in todo_text, and concise proof in todo_evidence.",
+	"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task. For todo.create_worktree_and_start_engineer, also put a durable task description in todo_text. For todo.add, leave prompt empty and put the durable backlog item in todo_text. For todo.complete, put the target id in todo_id, known text in todo_text, and concise proof in todo_evidence.",
 	"For prompt-bearing propose_control actions, fill intent_excerpt with a short excerpt of the user's wording that must survive reframing; fill preserved_meaning with source, metric, timeframe, negations, and explicit exclusions; fill success_condition with what the engineer must return or what missing evidence must be reported.",
 }
 
@@ -525,13 +526,13 @@ var bossActionPlannerForcedInstructions = []string{
 	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
 	"If the user asks to change Little Control Room app settings, choose kind=\"propose_control\" with control_capability=\"settings.update\".",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known.",
-	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
+	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"todo.create_worktree_and_start_engineer\" and fill todo_text plus prompt.",
 	"If the user asked for loaded-project work across multiple projects, do not silently collapse the request to one target. Choose kind=\"answer\" to name the targets and say Help Chat can prepare one handoff at a time, unless one first target is clearly chosen; then use answer as a scope note naming the remaining targets.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
 	"Choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" for a known related task.",
-	"Choose control_capability=\"engineer.send_prompt\" for loaded-project work.",
+	"Choose control_capability=\"todo.create_worktree_and_start_engineer\" for new loaded-project work.",
 	"Choose control_capability=\"agent_task.create\" for generic research with no natural loaded project.",
-	"If same-project active engineer work is in the middle of a turn, only park unrelated work as todo.add when the user accepts or asks for later backlog handling.",
+	"Do not replace an open idle root-checkout engineer session; its task may still be unfinished. Use a tracked worktree for unrelated new work.",
 
 	// TODOs and delegated tasks.
 	"If the user asks to mark/close/finish/resolve a project TODO as done, or gathered evidence directly satisfies a linked project TODO, choose kind=\"propose_control\" with control_capability=\"todo.complete\" and fill todo_id, todo_text, and todo_evidence.",
@@ -553,7 +554,7 @@ var bossActionPlannerForcedInstructions = []string{
 	"If gathered task data lacks the detail the user asked for and a task id is clear, and the user is asking for information or progress, choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" and ask that same task for the missing detail.",
 	"If the user asks whether commit/deploy/release is safe, or whether DB migration/schema/storage/API shape changed, do not answer from summaries.",
 	"Only answer if gathered data directly covers current-diff evidence.",
-	"Otherwise choose kind=\"propose_control\" with control_capability=\"engineer.send_prompt\" and session_mode=\"new\" for a fresh verification.",
+	"Otherwise choose kind=\"propose_control\" with control_capability=\"todo.create_worktree_and_start_engineer\" for a fresh tracked verification.",
 }
 
 var bossActionPlannerNormalInstructions = []string{
@@ -564,12 +565,12 @@ var bossActionPlannerNormalInstructions = []string{
 	// Work parking and delegation.
 	"If the user asks to change Little Control Room app settings, choose control_capability=\"settings.update\". Category privacy is managed from the category UI rather than settings.update.",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now and the project is ambiguous, choose a read-only query or ask for the project; when the project is known, choose control_capability=\"todo.add\".",
-	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"engineer.send_prompt\" with session_mode=\"new\"; an open idle Codex/OpenCode engineer session is not a reason to convert the work into a TODO.",
+	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"todo.create_worktree_and_start_engineer\" and fill todo_text plus prompt.",
 	"If the user asked for loaded-project work across multiple projects, do not silently collapse the request to one target. Choose kind=\"answer\" to name the targets and say Help Chat can prepare one handoff at a time, unless one first target is clearly chosen; then use answer as a scope note naming the remaining targets.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
 	"Use read-only context only to identify the relevant task/project.",
-	"Then choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" for a known related task, control_capability=\"engineer.send_prompt\" for loaded-project work, or control_capability=\"agent_task.create\" for generic research with no natural loaded project.",
-	"If same-project active engineer work is in the middle of a turn, only park unrelated work as todo.add when the user accepts or asks for later backlog handling.",
+	"Then choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" for a known related task, control_capability=\"todo.create_worktree_and_start_engineer\" for new loaded-project work, or control_capability=\"agent_task.create\" for generic research with no natural loaded project.",
+	"Do not replace an open idle root-checkout engineer session; its task may still be unfinished. Use a tracked worktree for unrelated new work.",
 
 	// Data gathering before action.
 	"If the user asks to mark/close/finish/resolve a project TODO as done and the TODO id/project is ambiguous, choose todo_report/project_detail before answering; when the TODO is known, choose control_capability=\"todo.complete\".",
@@ -589,7 +590,7 @@ var bossActionPlannerNormalInstructions = []string{
 	"Choose kind=\"propose_goal\" with goal_kind=\"lcagent_task\" when the user explicitly wants LCAgent to take a scoped task as a traceable LCR goal.",
 
 	// Safety checks.
-	"For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"engineer.send_prompt\" with session_mode=\"new\" if direct current-diff evidence is still missing.",
+	"For commit/deploy/release safety, or DB migration/schema/storage/API-shape questions, do not answer from summaries; use a read-only project/context query first and then propose control_capability=\"todo.create_worktree_and_start_engineer\" if direct current-diff evidence is still missing.",
 
 	// Concrete action mapping.
 	"For a resolved review/waiting task use control_capability=\"agent_task.close\".",

@@ -9,12 +9,12 @@ func bossTodoAddPolicyReviewSchema() map[string]any {
 	return bossObjectSchema(map[string]any{
 		"allow_todo_add": bossBooleanSchema("True only when adding a backlog TODO is the intended action."),
 		"replacement_control_capability": bossEnumStringSchema(
-			[]string{"", string(control.CapabilityEngineerSendPrompt)},
-			"When allow_todo_add is false for now-work on a loaded project, use engineer.send_prompt.",
+			[]string{"", string(control.CapabilityTodoCreateWorktreeAndStartEngineer)},
+			"When allow_todo_add is false for work requested now on a loaded project, use todo.create_worktree_and_start_engineer.",
 		),
 		"replacement_session_mode": bossEnumStringSchema(
 			[]string{"", string(control.SessionModeNew)},
-			"Use new for replacement engineer.send_prompt handoffs.",
+			"Deprecated compatibility field; leave empty for tracked worktree launches.",
 		),
 		"reason": bossStringSchema("Concise policy reason for the decision."),
 	}, []string{
@@ -197,7 +197,7 @@ func bossActionSchema() map[string]any {
 			},
 			"todo_text": map[string]any{
 				"type":        "string",
-				"description": "For todo.add proposals, the durable project TODO text to add; use todo.add only for explicit backlog/TODO intent or accepted later parking while active work is mid-turn. For engineer.send_prompt or todo.complete, the known linked TODO text. Otherwise empty.",
+				"description": "For todo.add or todo.create_worktree_and_start_engineer proposals, the durable project TODO text. For engineer.send_prompt or todo.complete, the known linked TODO text. Otherwise empty.",
 			},
 			"todo_label": map[string]any{
 				"type":        "string",
@@ -256,7 +256,7 @@ func bossActionSchema() map[string]any {
 			"engineer_provider": map[string]any{
 				"type":        "string",
 				"enum":        control.ProviderStrings(true),
-				"description": "For engineer.send_prompt and agent task launch proposals: auto, codex, opencode, claude_code, lcagent. Empty is treated as auto.",
+				"description": "For engineer.send_prompt, todo.create_worktree_and_start_engineer, and agent task launch proposals: auto, codex, opencode, claude_code, lcagent. Empty is treated as auto.",
 			},
 			"session_mode": map[string]any{
 				"type":        "string",
@@ -265,7 +265,7 @@ func bossActionSchema() map[string]any {
 			},
 			"prompt": map[string]any{
 				"type":        "string",
-				"description": "For engineer.send_prompt, agent_task.create, or agent_task.continue proposals, the boss-reframed executable task for the engineer. Otherwise empty.",
+				"description": "For engineer.send_prompt, todo.create_worktree_and_start_engineer, agent_task.create, or agent_task.continue proposals, the boss-reframed executable task for the engineer. Otherwise empty.",
 			},
 			"intent_excerpt": map[string]any{
 				"type":        "string",
@@ -281,7 +281,7 @@ func bossActionSchema() map[string]any {
 			},
 			"reveal": map[string]any{
 				"type":        "boolean",
-				"description": "For engineer.send_prompt and agent task launch proposals, whether to reveal the engineer session after sending.",
+				"description": "For engineer.send_prompt, todo.create_worktree_and_start_engineer, and agent task launch proposals, whether to reveal the engineer session after sending.",
 			},
 			"close_session": map[string]any{
 				"type":        "boolean",

@@ -205,6 +205,13 @@ func (m Model) renderHelpChatFooter(width int) string {
 			footerPrimaryAction("Enter", "confirm"),
 			footerExitAction("Esc", "cancel"),
 		}
+		if m.helpChatModel.TodoOnlyConfirmationActive() {
+			actions = []footerAction{
+				footerPrimaryAction("Enter", "start worktree"),
+				footerLowAction("q", "TODO only"),
+				footerExitAction("Esc", "cancel"),
+			}
+		}
 	}
 	if m.helpChatModel.OpenTargetPickerActive() {
 		actions = []footerAction{

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,9 @@ func (m Model) executeBossControlInvocation(msg bossui.ControlInvocationConfirme
 	if outcome.cmd == nil {
 		return m, bossControlResultCmd(resultInv, m.status, outcome.err)
 	}
+	if resultInv.Capability == control.CapabilityTodoAdd || resultInv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+		return m, outcome.cmd
+	}
 	return m, bossControlExecutionCmd(resultInv, outcome.cmd)
 }
 
@@ -49,6 +53,33 @@ type controlInvocationOutcome struct {
 	cmd   tea.Cmd
 	err   error
 	inv   control.Invocation
+}
+
+type bossTodoWorktreeTodoCreatedMsg struct {
+	inv      control.Invocation
+	input    control.TodoCreateWorktreeAndStartEngineerInput
+	project  model.ProjectSummary
+	provider codexapp.Provider
+	todo     model.TodoItem
+	err      error
+}
+
+type bossTodoAddedMsg struct {
+	inv     control.Invocation
+	input   control.TodoAddInput
+	project model.ProjectSummary
+	todo    model.TodoItem
+	err     error
+}
+
+type bossTodoWorktreePreparedMsg struct {
+	inv      control.Invocation
+	input    control.TodoCreateWorktreeAndStartEngineerInput
+	project  model.ProjectSummary
+	provider codexapp.Provider
+	todo     model.TodoItem
+	result   service.CreateTodoWorktreeResult
+	err      error
 }
 
 type bossTrackedTodo struct {
@@ -119,6 +150,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeTodoAddControlWithOutcome(input)
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		var input control.TodoCreateWorktreeAndStartEngineerInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeTodoCreateWorktreeAndStartEngineerControlWithOutcome(input)
 	case control.CapabilityTodoComplete:
 		var input control.TodoCompleteInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -356,6 +394,30 @@ func bossControlOpenedSessionActivity(inv control.Invocation, msg tea.Msg) *boss
 			return nil
 		}
 		title := bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath, opened.projectPath)
+		if title == "" {
+			title = "the selected project"
+		}
+		title = bossTrackedTodoTargetLabel(title, input.TodoID, input.TodoLabel, input.TodoText)
+		return &bossui.ViewEngineerActivity{
+			Kind:        "project",
+			ProjectPath: strings.TrimSpace(opened.projectPath),
+			Title:       title,
+			TodoID:      input.TodoID,
+			TodoLabel:   strings.TrimSpace(input.TodoLabel),
+			TodoText:    strings.TrimSpace(input.TodoText),
+			Provider:    provider,
+			SessionID:   sessionID,
+			Status:      "working",
+			Active:      true,
+			StartedAt:   startedAt,
+			LastEventAt: startedAt,
+		}
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		var input control.TodoCreateWorktreeAndStartEngineerInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return nil
+		}
+		title := bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath)
 		if title == "" {
 			title = "the selected project"
 		}
@@ -714,6 +776,19 @@ func codexProviderFromControlProvider(provider control.Provider) codexapp.Provid
 		return codexapp.ProviderLCAgent
 	default:
 		return ""
+	}
+}
+
+func controlProviderFromCodexProvider(provider codexapp.Provider) control.Provider {
+	switch provider.Normalized() {
+	case codexapp.ProviderOpenCode:
+		return control.ProviderOpenCode
+	case codexapp.ProviderClaudeCode:
+		return control.ProviderClaudeCode
+	case codexapp.ProviderLCAgent:
+		return control.ProviderLCAgent
+	default:
+		return control.ProviderCodex
 	}
 }
 
@@ -1097,14 +1172,226 @@ func (m Model) executeTodoAddControlWithOutcome(input control.TodoAddInput) cont
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	item, err := m.svc.AddTodo(m.ctx, project.Path, input.Text)
+	input.ProjectPath = strings.TrimSpace(project.Path)
+	input.ProjectName = firstNonEmptyTrimmed(input.ProjectName, projectNameForPicker(project, project.Path))
+	inv := todoAddInvocationFromInput(input)
+	m.status = "Adding project TODO..."
+	return controlInvocationOutcome{model: m, inv: inv, cmd: m.createBossTodoAddCmd(inv, input, project)}
+}
+
+func (m Model) createBossTodoAddCmd(inv control.Invocation, input control.TodoAddInput, project model.ProjectSummary) tea.Cmd {
+	svc := m.svc
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return func() tea.Msg {
+		if svc == nil {
+			return bossTodoAddedMsg{inv: inv, input: input, project: project, err: errors.New("service unavailable")}
+		}
+		item, err := svc.AddTodo(ctx, project.Path, input.Text)
+		return bossTodoAddedMsg{inv: inv, input: input, project: project, todo: item, err: err}
+	}
+}
+
+func (m Model) applyBossTodoAdded(msg bossTodoAddedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		status := "Could not add the project TODO: " + msg.err.Error()
+		m.status = status
+		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
+	}
+	status := fmt.Sprintf("Added TODO #%d to %s. It was not started.", msg.todo.ID, projectNameForPicker(msg.project, msg.project.Path))
+	m.status = status
+	return m, batchCmds(
+		bossControlResultCmd(msg.inv, status, nil),
+		m.requestProjectInvalidationCmd(invalidateProjectData(msg.project.Path)),
+	)
+}
+
+func todoAddInvocationFromInput(input control.TodoAddInput) control.Invocation {
+	normalized, err := control.NormalizeTodoAddInput(input)
+	if err != nil {
+		normalized = input
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return control.Invocation{}
+	}
+	return control.Invocation{Capability: control.CapabilityTodoAdd, RequestID: strings.TrimSpace(normalized.RequestID), Args: payload}
+}
+
+func (m Model) executeTodoCreateWorktreeAndStartEngineerControlWithOutcome(input control.TodoCreateWorktreeAndStartEngineerInput) controlInvocationOutcome {
+	if m.svc == nil {
+		err := errors.New("service unavailable")
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	project, err := m.resolveControlProjectRef(input.ProjectPath, input.ProjectName)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	name := projectNameForPicker(project, project.Path)
-	m.status = fmt.Sprintf("Added TODO #%d to %s", item.ID, name)
-	return controlInvocationOutcome{model: m}
+	provider, err := m.resolveControlEngineerProvider(input.Provider, project)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	if !project.PresentOnDisk {
+		err := fmt.Errorf("%s launch requires a folder present on disk", provider.Label())
+		m.status = err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	input.ProjectPath = strings.TrimSpace(project.Path)
+	input.ProjectName = firstNonEmptyTrimmed(input.ProjectName, projectNameForPicker(project, project.Path))
+	input.Provider = controlProviderFromCodexProvider(provider)
+	inv := todoCreateWorktreeAndStartEngineerInvocationFromInput(input)
+	m.status = "Creating tracked TODO for " + bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath) + "..."
+	return controlInvocationOutcome{
+		model: m,
+		inv:   inv,
+		cmd:   m.createBossTodoWorktreeTodoCmd(inv, input, project, provider),
+	}
+}
+
+func (m Model) createBossTodoWorktreeTodoCmd(inv control.Invocation, input control.TodoCreateWorktreeAndStartEngineerInput, project model.ProjectSummary, provider codexapp.Provider) tea.Cmd {
+	svc := m.svc
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return func() tea.Msg {
+		if svc == nil {
+			return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, err: errors.New("service unavailable")}
+		}
+		item, err := svc.AddTodo(ctx, project.Path, input.TodoText)
+		return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, todo: item, err: err}
+	}
+}
+
+func (m Model) applyBossTodoWorktreeTodoCreated(msg bossTodoWorktreeTodoCreatedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		status := fmt.Sprintf("Could not create the tracked TODO for %s, so no worktree or engineer was started: %v", bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath), msg.err)
+		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
+	}
+	msg.input.TodoID = msg.todo.ID
+	msg.input.TodoLabel = todoDisplayLabelFromItem(msg.todo)
+	msg.inv = todoCreateWorktreeAndStartEngineerInvocationFromInput(msg.input)
+	status := fmt.Sprintf("Starting TODO #%d for %s in a dedicated worktree...", msg.todo.ID, bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath))
+	m.status = status
+	var noticeCmd tea.Cmd
+	m, noticeCmd = m.updateBossHostChatNotice(status)
+	return m, batchCmds(
+		noticeCmd,
+		m.createBossTodoWorktreeCmd(msg.inv, msg.input, msg.project, msg.provider, msg.todo),
+		m.requestProjectInvalidationCmd(invalidateProjectData(msg.project.Path)),
+	)
+}
+
+func (m Model) createBossTodoWorktreeCmd(inv control.Invocation, input control.TodoCreateWorktreeAndStartEngineerInput, project model.ProjectSummary, provider codexapp.Provider, todo model.TodoItem) tea.Cmd {
+	svc := m.svc
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return func() tea.Msg {
+		if svc == nil {
+			return bossTodoWorktreePreparedMsg{inv: inv, input: input, project: project, provider: provider, todo: todo, err: errors.New("service unavailable")}
+		}
+		result, err := svc.CreateTodoWorktree(ctx, service.CreateTodoWorktreeRequest{ProjectPath: project.Path, TodoID: todo.ID})
+		return bossTodoWorktreePreparedMsg{inv: inv, input: input, project: project, provider: provider, todo: todo, result: result, err: err}
+	}
+}
+
+func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		status := fmt.Sprintf("Added TODO #%d to %s, but could not prepare its dedicated worktree. No engineer was launched: %v", msg.todo.ID, bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath), msg.err)
+		m.status = status
+		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
+	}
+	msg.input.TodoID = msg.todo.ID
+	msg.input.TodoLabel = firstNonEmptyTrimmed(msg.input.TodoLabel, todoDisplayLabelFromItem(msg.todo))
+	msg.input.WorktreePath = strings.TrimSpace(msg.result.WorktreePath)
+	msg.inv = todoCreateWorktreeAndStartEngineerInvocationFromInput(msg.input)
+	worktreeProject := model.ProjectSummary{
+		Path:                 msg.result.WorktreePath,
+		Name:                 filepath.Base(msg.result.WorktreePath),
+		PresentOnDisk:        true,
+		InScope:              true,
+		WorktreeRootPath:     msg.result.RootProjectPath,
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: msg.result.ParentBranch,
+		WorktreeOriginTodoID: msg.todo.ID,
+	}
+	prompt := m.engineerPromptWithRuntimeContext(msg.project, msg.input.Prompt, msg.todo)
+	updated, cmd := m.launchEmbeddedForProjectWithOptions(worktreeProject, msg.provider, embeddedLaunchOptions{
+		forceNew: true,
+		prompt:   prompt,
+		reveal:   msg.input.Reveal,
+	})
+	m = normalizeUpdateModel(updated)
+	if cmd == nil {
+		status := strings.TrimSpace(m.status)
+		if status == "" {
+			status = "engineer session launch did not start"
+		}
+		status = fmt.Sprintf("Added TODO #%d and prepared worktree %s, but no engineer was launched: %s", msg.todo.ID, filepath.Base(msg.result.WorktreePath), status)
+		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
+	}
+	m.status = fmt.Sprintf("Prepared worktree %s; launching %s for TODO #%d...", filepath.Base(msg.result.WorktreePath), msg.provider.Label(), msg.todo.ID)
+	cmd = m.trackBossTodoWorktreeEngineerLaunchCmd(msg.input, msg.provider, msg.todo, cmd)
+	return m, bossControlExecutionCmd(msg.inv, cmd)
+}
+
+func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWorktreeAndStartEngineerInput, provider codexapp.Provider, todo model.TodoItem, cmd tea.Cmd) tea.Cmd {
+	svc := m.svc
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		opened, ok := msg.(codexSessionOpenedMsg)
+		if !ok {
+			return msg
+		}
+		worktreeLabel := filepath.Base(firstNonEmptyTrimmed(input.WorktreePath, opened.projectPath))
+		projectLabel := bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath)
+		target := fmt.Sprintf("%s TODO #%d", projectLabel, todo.ID)
+		if label := strings.TrimSpace(firstNonEmptyTrimmed(input.TodoLabel, todo.Text)); label != "" {
+			target += " " + compactEngineerNoticeText(label, 48)
+		}
+		target = strings.TrimSpace(target)
+		if opened.err != nil {
+			opened.status = fmt.Sprintf("Added TODO #%d and prepared worktree %s, but no engineer was launched: %v", todo.ID, worktreeLabel, opened.err)
+			return opened
+		}
+		opened.status = fmt.Sprintf("%s AI engineer launched for %s in worktree %s.", provider.Label(), target, worktreeLabel)
+		if svc == nil {
+			opened.status += " The engineer is running, but TODO session tracking is unavailable."
+			return opened
+		}
+		at := embeddedSnapshotActivityAt(opened.snapshot)
+		if at.IsZero() {
+			at = time.Now()
+		}
+		source := modelSessionSourceFromCodexProvider(embeddedProvider(opened.snapshot))
+		if err := svc.MarkTodoWorkStarted(ctx, opened.projectPath, todo.ID, source, opened.snapshot.ThreadID, at); err != nil {
+			opened.status += " The engineer is running, but TODO session tracking failed: " + err.Error()
+		}
+		return opened
+	}
+}
+
+func todoCreateWorktreeAndStartEngineerInvocationFromInput(input control.TodoCreateWorktreeAndStartEngineerInput) control.Invocation {
+	normalized, err := control.NormalizeTodoCreateWorktreeAndStartEngineerInput(input)
+	if err != nil {
+		normalized = input
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return control.Invocation{}
+	}
+	return control.Invocation{Capability: control.CapabilityTodoCreateWorktreeAndStartEngineer, RequestID: strings.TrimSpace(normalized.RequestID), Args: payload}
 }
 
 func (m Model) executeTodoCompleteControlWithOutcome(input control.TodoCompleteInput) controlInvocationOutcome {
@@ -1566,6 +1853,9 @@ func (m Model) controlFreshSessionBlockedByActiveEngineerTurn(project model.Proj
 	}
 	if snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
 		return fmt.Sprintf("The embedded %s engineer session is already running for %s, so I did not start a fresh session. Wait for the current turn to finish, then try again.", provider.Label(), targetLabel), true
+	}
+	if snapshot, ok := m.liveEmbeddedSnapshotForProject(projectPath, provider); ok && snapshot.Started && !snapshot.Closed {
+		return fmt.Sprintf("The embedded %s engineer session is still open for %s. An idle turn does not show that its task is finished, so I did not replace it. Finish or close that session, or start the new request in a dedicated worktree.", provider.Label(), targetLabel), true
 	}
 	latestProvider := providerForSessionFormat(project.LatestSessionFormat)
 	if latestProvider == "" || latestProvider != provider {
