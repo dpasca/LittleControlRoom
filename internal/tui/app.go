@@ -228,7 +228,6 @@ type Model struct {
 	lastEmbeddedProvider          codexapp.Provider
 	embeddedActivityInFlight      map[string]bool
 	embeddedActivityQueued        map[string]embeddedSessionActivityRecordRequest
-	embeddedActivityWatermark     map[string]time.Time
 	codexTranscriptRev            map[string]uint64
 	codexVisibleProject           string
 	codexHiddenProject            string
@@ -708,7 +707,6 @@ func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager
 		codexSnapshots:                make(map[string]codexapp.Snapshot),
 		embeddedActivityInFlight:      make(map[string]bool),
 		embeddedActivityQueued:        make(map[string]embeddedSessionActivityRecordRequest),
-		embeddedActivityWatermark:     make(map[string]time.Time),
 		codexTranscriptRev:            make(map[string]uint64),
 		codexTranscriptFullHistory:    make(map[string]struct{}),
 		codexArtifactLinkScans:        make(map[string]codexArtifactLinkScanState),
@@ -2552,7 +2550,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure("")))
 			}
 			return m, batchCmds(cmds...)
-		case events.ProjectMoved, events.ScanCompleted, events.EventsDropped:
+		case events.ScanCompleted:
+			if strings.TrimSpace(msg.Payload["updated"]) == "0" {
+				// A stable scan refreshed the in-memory working set but changed no
+				// project data. Keep the current view instead of re-querying SQLite.
+				return m, batchCmds(cmds...)
+			}
+			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))
+			return m, batchCmds(cmds...)
+		case events.ProjectMoved, events.EventsDropped:
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))
 			return m, batchCmds(cmds...)
 		}

@@ -1063,8 +1063,10 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		MovedFromPath:              detail.Summary.MovedFromPath,
 		MovedAt:                    detail.Summary.MovedAt,
 		PreferredSessionSource:     detail.Summary.PreferredSessionSource,
+		AttentionReason:            detail.Reasons,
 		Sessions:                   detail.Sessions,
 		Artifacts:                  detail.Artifacts,
+		CreatedAt:                  detail.Summary.CreatedAt,
 	}
 }
 

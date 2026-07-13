@@ -253,29 +253,43 @@ func TestShouldRefreshProjectStatusAfterCodexSnapshotWhenTurnSettles(t *testing.
 	}
 }
 
-func TestShouldRecordEmbeddedSessionActivityAfterBusyProgress(t *testing.T) {
+func TestShouldPersistEmbeddedSessionTransitionKeepsStreamingPulsesInMemory(t *testing.T) {
 	now := time.Date(2026, 4, 10, 10, 57, 0, 0, time.UTC)
 	prev := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ThreadID:           "thread-demo",
 		Started:            true,
 		Busy:               true,
+		BusySince:          now.Add(-5 * time.Minute),
+		ActiveTurnID:       "turn-demo",
 		LastBusyActivityAt: now.Add(-time.Minute),
 	}
-	next := codexapp.Snapshot{
-		Started:            true,
-		Busy:               true,
-		LastBusyActivityAt: now,
+	next := prev
+	next.LastBusyActivityAt = now
+	if shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(true, prev, next) {
+		t.Fatal("streaming activity pulse should stay in the in-memory session snapshot")
 	}
-	if !shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(true, prev, next) {
-		t.Fatal("busy progress should record embedded activity")
+	if !shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(false, codexapp.Snapshot{}, next) {
+		t.Fatal("first live snapshot should persist the session start transition")
 	}
-	if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(true, next, next) {
-		t.Fatal("unchanged busy activity should not record another heartbeat")
+	waiting := next
+	waiting.PendingApproval = &codexapp.ApprovalRequest{ID: "approval-demo", Kind: codexapp.ApprovalCommandExecution}
+	if !shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(true, next, waiting) {
+		t.Fatal("approval transition should be persisted")
 	}
-	if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(true, next, codexapp.Snapshot{
-		Started:            true,
-		Busy:               false,
-		LastBusyActivityAt: now.Add(time.Minute),
-	}) {
+	if !shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(true, waiting, next) {
+		t.Fatal("return from waiting to working should be persisted")
+	}
+	newTurn := next
+	newTurn.ActiveTurnID = "turn-next"
+	newTurn.BusySince = now
+	if !shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(true, next, newTurn) {
+		t.Fatal("new active turn should be persisted")
+	}
+	idle := next
+	idle.Busy = false
+	idle.LastBusyActivityAt = now.Add(time.Minute)
+	if shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(true, next, idle) {
 		t.Fatal("idle snapshots should use the existing settle refresh path")
 	}
 }
@@ -555,6 +569,17 @@ func TestEmbeddedSessionActivityFromSnapshotUsesBusyActivity(t *testing.T) {
 	}
 	if !activity.LatestTurnStateKnown || activity.LatestTurnCompleted {
 		t.Fatalf("turn state = known:%t completed:%t, want live incomplete", activity.LatestTurnStateKnown, activity.LatestTurnCompleted)
+	}
+}
+
+func TestTodoWorkStateTreatsApprovalAsWaiting(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Started:         true,
+		Busy:            true,
+		PendingApproval: &codexapp.ApprovalRequest{ID: "approval-demo", Kind: codexapp.ApprovalCommandExecution},
+	}
+	if got := todoWorkStateFromEmbeddedSnapshot(snapshot, false); got != model.TodoWorkStateWaiting {
+		t.Fatalf("todo work state = %q, want waiting", got)
 	}
 }
 

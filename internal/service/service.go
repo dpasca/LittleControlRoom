@@ -86,6 +86,8 @@ type Service struct {
 	backgroundRefreshMu    sync.Mutex
 	backgroundRefreshState map[string]asyncProjectRefreshState
 	backgroundRefreshSlots chan struct{}
+	projectStateCacheMu    sync.RWMutex
+	projectStateCache      map[string]cachedProjectState
 
 	commitTodoNotifyCh  chan struct{}
 	commitTodoStartOnce sync.Once
@@ -145,6 +147,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		bossChatUsageTracker:   llm.NewUsageTracker(),
 		opencodeDiscovery:      llm.NewOpenCodeDiscovery(),
 		commitTodoNotifyCh:     make(chan struct{}, 1),
+		projectStateCache:      make(map[string]cachedProjectState),
 		gitFingerprintReader:   scanner.ReadGitFingerprint,
 		gitRepoStatusReader:    scanner.ReadGitRepoStatus,
 		gitWorktreeInfoReader:  scanner.ReadGitWorktreeInfo,
@@ -1269,13 +1272,16 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			if cached, ok := cachedFingerprints[path]; ok {
 				s.queueCommitTodoCheckForFingerprintChange(ctx, path, oldMap[path], cached, metadata.fingerprint)
 			}
-			if err := s.store.UpsertProjectGitFingerprint(ctx, model.ProjectGitFingerprint{
+			fingerprint := model.ProjectGitFingerprint{
 				ProjectPath:  path,
 				HeadHash:     metadata.fingerprint.HeadHash,
 				RecentHashes: append([]string(nil), metadata.fingerprint.RecentHashes...),
 				UpdatedAt:    now,
-			}); err != nil {
-				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist git fingerprint: %w", err))
+			}
+			if cached, ok := cachedFingerprints[path]; !ok || !sameProjectGitFingerprint(cached, fingerprint) {
+				if err := s.store.UpsertProjectGitFingerprint(ctx, fingerprint); err != nil {
+					return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist git fingerprint: %w", err))
+				}
 			}
 		}
 		if metadata.haveRepoStatus {
@@ -1284,6 +1290,14 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		if metadata.haveWorktreeInfo {
 			currentWorktreeInfo[path] = metadata.worktreeInfo
 		}
+	}
+	if s.projectStateCacheNeedsPrime(oldMap) {
+		progress.setPhase("loading project state into memory")
+		evidence, err := s.store.GetProjectScanEvidenceMap(ctx)
+		if err != nil {
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("load project scan evidence: %w", err))
+		}
+		s.primeProjectStateCache(oldMap, evidence)
 	}
 
 	updated := []string{}
@@ -1298,13 +1312,15 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		}
 		activity := activities[path]
 		old := oldMap[path]
-		currentDetail, haveCurrentDetail, err := s.currentProjectDetailForScan(ctx, path)
+		currentState, haveCurrentState, err := s.currentProjectStateForScan(ctx, path)
 		if err != nil {
 			unlockProjectState()
 			return ScanReport{}, progress.wrapTimeout(err)
 		}
-		if haveCurrentDetail {
-			old = currentDetail.Summary
+		if haveCurrentState && currentState.UpdatedAt.After(now) {
+			// The bulk summary snapshot was loaded earlier in this scan. Only a
+			// newer in-process mutation may override those durable summary fields.
+			old = overlayProjectSummaryWithState(old, currentState)
 		}
 		if old.SnoozedUntil != nil && now.After(*old.SnoozedUntil) {
 			if err := s.store.SetSnooze(ctx, path, nil); err != nil {
@@ -1359,9 +1375,12 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				CreatedAt:                  old.CreatedAt,
 				UpdatedAt:                  now,
 			}
-			if err := s.store.UpsertProjectState(ctx, state); err != nil {
-				unlockProjectState()
-				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist derived subdirectory project state: %w", err))
+			if s.projectStateNeedsPersistence(state) {
+				if err := s.store.UpsertProjectState(ctx, state); err != nil {
+					unlockProjectState()
+					return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist derived subdirectory project state: %w", err))
+				}
+				s.rememberProjectState(state)
 			}
 			if projectStateChanged(old, state) {
 				updated = append(updated, path)
@@ -1458,6 +1477,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 					return ScanReport{}, progress.wrapTimeout(fmt.Errorf("clear TODO work session for missing worktree: %w", err))
 				}
 			}
+			s.forgetProjectState(path)
 			unlockProjectState()
 			continue
 		}
@@ -1484,9 +1504,9 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				ensureSessionSnapshotHash(ctx, path, &sessions[0], gitStatus)
 			}
 		}
-		if haveCurrentDetail {
-			sessions = preserveCurrentSessionsNewerThan(sessions, currentDetail.Sessions, now)
-			artifacts = preserveCurrentArtifactsNewerThan(artifacts, currentDetail.Artifacts, now)
+		if haveCurrentState {
+			sessions = preserveCurrentSessionsNewerThan(sessions, currentState.Sessions, now)
+			artifacts = preserveCurrentArtifactsNewerThan(artifacts, currentState.Artifacts, now)
 			for _, session := range sessions {
 				if session.LastEventAt.After(lastActivity) {
 					lastActivity = session.LastEventAt
@@ -1551,6 +1571,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			Archived:                   archived,
 			Pinned:                     old.Pinned,
 			SnoozedUntil:               old.SnoozedUntil,
+			RunCommand:                 old.RunCommand,
 			MovedFromPath:              old.MovedFromPath,
 			MovedAt:                    old.MovedAt,
 			PreferredSessionSource:     old.PreferredSessionSource,
@@ -1561,9 +1582,12 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			UpdatedAt:                  now,
 		}
 
-		if err := s.store.UpsertProjectState(ctx, state); err != nil {
-			unlockProjectState()
-			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist project state: %w", err))
+		if s.projectStateNeedsPersistence(state) {
+			if err := s.store.UpsertProjectState(ctx, state); err != nil {
+				unlockProjectState()
+				return ScanReport{}, progress.wrapTimeout(fmt.Errorf("persist project state: %w", err))
+			}
+			s.rememberProjectState(state)
 		}
 		if classifier != nil {
 			queued, err := queueProjectClassification(ctx, classifier, state, opts)
@@ -1715,15 +1739,20 @@ sendLoop:
 	return results
 }
 
-func (s *Service) currentProjectDetailForScan(ctx context.Context, path string) (model.ProjectDetail, bool, error) {
+func (s *Service) currentProjectStateForScan(ctx context.Context, path string) (model.ProjectState, bool, error) {
+	if state, ok := s.cachedProjectState(path); ok {
+		return state, true, nil
+	}
 	detail, err := s.store.GetProjectDetail(ctx, path, 20)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || strings.HasPrefix(err.Error(), "project not found:") {
-			return model.ProjectDetail{}, false, nil
+			return model.ProjectState{}, false, nil
 		}
-		return model.ProjectDetail{}, false, fmt.Errorf("reload project state for scan: %w", err)
+		return model.ProjectState{}, false, fmt.Errorf("reload project state for scan: %w", err)
 	}
-	return detail, true, nil
+	state := projectStateFromDetail(detail)
+	s.rememberProjectState(state)
+	return state, true, nil
 }
 
 func (s *Service) consolidateMovedFromProjectDuplicates(ctx context.Context, projects map[string]model.ProjectSummary, now time.Time) (int, error) {
@@ -2997,6 +3026,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 	if err := s.store.UpsertProjectState(ctx, state); err != nil {
 		return model.ProjectState{}, fmt.Errorf("persist refreshed project state: %w", err)
 	}
+	s.rememberProjectState(state)
 	if classifier != nil {
 		queued, err := queueProjectClassification(ctx, classifier, state, opts)
 		if err != nil {

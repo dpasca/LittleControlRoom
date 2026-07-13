@@ -996,7 +996,60 @@ func TestScanPreservesEmbeddedActivityRecordedDuringScan(t *testing.T) {
 	}
 }
 
-func TestRecordEmbeddedSessionActivityQueuesClassificationForOpenCodeLiveSession(t *testing.T) {
+func TestRecordEmbeddedSessionActivityDoesNotClassifyLiveTurn(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	projectPath := filepath.Join(t.TempDir(), "demo")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "demo",
+		Status:        model.StatusIdle,
+		PresentOnDisk: true,
+		InScope:       true,
+		CreatedAt:     now.Add(-time.Hour),
+		UpdatedAt:     now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+
+	classifier := &recordingClassifier{}
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.SetSessionClassifier(classifier)
+	if err := svc.RecordEmbeddedSessionActivity(ctx, EmbeddedSessionActivity{
+		ProjectPath:          projectPath,
+		Source:               model.SessionSourceCodex,
+		SessionID:            "thread-live",
+		Format:               "modern",
+		LastActivityAt:       now,
+		LatestTurnStartedAt:  now,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  false,
+	}); err != nil {
+		t.Fatalf("RecordEmbeddedSessionActivity() error = %v", err)
+	}
+
+	if classifier.normalCalls != 0 || classifier.notifyCalls != 0 {
+		t.Fatalf("live turn classifier calls = queue:%d notify:%d, want none", classifier.normalCalls, classifier.notifyCalls)
+	}
+	detail, err := st.GetProjectDetail(ctx, projectPath, 20)
+	if err != nil {
+		t.Fatalf("get detail: %v", err)
+	}
+	if len(detail.Sessions) != 1 || !detail.Sessions[0].LatestTurnStateKnown || detail.Sessions[0].LatestTurnCompleted {
+		t.Fatalf("stored live session = %#v, want one known incomplete turn", detail.Sessions)
+	}
+}
+
+func TestRecordEmbeddedSessionActivityQueuesClassificationForSettledOpenCodeSession(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -1073,7 +1126,7 @@ func TestRecordEmbeddedSessionActivityQueuesClassificationForOpenCodeLiveSession
 	}
 }
 
-func TestRecordEmbeddedSessionActivityQueuesClassificationForCodexLiveSession(t *testing.T) {
+func TestRecordEmbeddedSessionActivityQueuesClassificationForSettledCodexSession(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {

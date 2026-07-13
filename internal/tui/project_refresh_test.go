@@ -183,7 +183,7 @@ func TestAgentTaskPathsDoNotUseProjectRefreshPipeline(t *testing.T) {
 		Busy:           true,
 		LastActivityAt: time.Now(),
 	}
-	if cmd := m.recordEmbeddedSessionActivityCmd(workspace, snapshot); cmd != nil {
+	if cmd := m.recordEmbeddedSessionTransitionCmd(workspace, snapshot); cmd != nil {
 		t.Fatal("agent-task activity should not be recorded through project session state")
 	}
 	snapshot.Busy = false
@@ -192,7 +192,7 @@ func TestAgentTaskPathsDoNotUseProjectRefreshPipeline(t *testing.T) {
 	}
 }
 
-func TestEmbeddedSessionActivityHeartbeatThrottlesAndCoalesces(t *testing.T) {
+func TestEmbeddedSessionTransitionsCoalesceWhilePersistenceIsInFlight(t *testing.T) {
 	projectPath := "/tmp/demo"
 	now := time.Date(2026, 6, 2, 5, 52, 40, 0, time.UTC)
 	m := Model{svc: newControlTestService(t)}
@@ -206,9 +206,9 @@ func TestEmbeddedSessionActivityHeartbeatThrottlesAndCoalesces(t *testing.T) {
 		LastActivityAt:     now,
 	}
 
-	first := m.recordEmbeddedSessionActivityCmd(projectPath, snapshot)
+	first := m.recordEmbeddedSessionTransitionCmd(projectPath, snapshot)
 	if first == nil {
-		t.Fatal("first busy heartbeat should schedule persistence")
+		t.Fatal("first live-session transition should schedule persistence")
 	}
 	activity, ok := embeddedSessionActivityFromSnapshot(projectPath, snapshot)
 	if !ok {
@@ -218,23 +218,11 @@ func TestEmbeddedSessionActivityHeartbeatThrottlesAndCoalesces(t *testing.T) {
 	if !m.embeddedActivityInFlight[key] {
 		t.Fatalf("in-flight activity keys = %#v, want %q", m.embeddedActivityInFlight, key)
 	}
-	if got := m.embeddedActivityWatermark[key]; !got.Equal(now) {
-		t.Fatalf("watermark = %v, want %v", got, now)
-	}
-
 	snapshot.LastBusyActivityAt = now.Add(time.Second)
 	snapshot.LastActivityAt = snapshot.LastBusyActivityAt
-	if cmd := m.recordEmbeddedSessionActivityCmd(projectPath, snapshot); cmd != nil {
-		t.Fatal("busy heartbeat inside persistence interval should be throttled")
-	}
-	if len(m.embeddedActivityQueued) != 0 {
-		t.Fatalf("queued activity = %#v, want none for throttled heartbeat", m.embeddedActivityQueued)
-	}
-
-	snapshot.LastBusyActivityAt = now.Add(embeddedSessionActivityRecordMinInterval)
-	snapshot.LastActivityAt = snapshot.LastBusyActivityAt
-	if cmd := m.recordEmbeddedSessionActivityCmd(projectPath, snapshot); cmd != nil {
-		t.Fatal("busy heartbeat should coalesce while previous persistence is in flight")
+	snapshot.PendingApproval = &codexapp.ApprovalRequest{ID: "approval-demo", Kind: codexapp.ApprovalCommandExecution}
+	if cmd := m.recordEmbeddedSessionTransitionCmd(projectPath, snapshot); cmd != nil {
+		t.Fatal("second transition should coalesce while previous persistence is in flight")
 	}
 	queued, ok := m.embeddedActivityQueued[key]
 	if !ok {
@@ -246,10 +234,10 @@ func TestEmbeddedSessionActivityHeartbeatThrottlesAndCoalesces(t *testing.T) {
 
 	next := m.finishEmbeddedSessionActivityRecordCmd(embeddedSessionActivityRecordedMsg{key: key, projectPath: projectPath})
 	if next == nil {
-		t.Fatal("finishing first heartbeat should start the coalesced heartbeat")
+		t.Fatal("finishing first transition should start the coalesced transition")
 	}
 	if !m.embeddedActivityInFlight[key] {
-		t.Fatal("coalesced heartbeat should be marked in flight")
+		t.Fatal("coalesced transition should be marked in flight")
 	}
 	if _, ok := m.embeddedActivityQueued[key]; ok {
 		t.Fatalf("queued activity should be consumed, got %#v", m.embeddedActivityQueued)
@@ -421,6 +409,35 @@ func TestBusProjectMovedRefreshesProjectStructureAndSelectedDetail(t *testing.T)
 	}
 	if len(got.summaryReloadInFlight) != 0 {
 		t.Fatalf("project moved event should not queue per-project summary reloads: %#v", got.summaryReloadInFlight)
+	}
+}
+
+func TestStableScanCompletionDoesNotReloadProjects(t *testing.T) {
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: "/tmp/demo",
+			Name: "demo",
+		}},
+		selected: 0,
+		detail: model.ProjectDetail{
+			Summary: model.ProjectSummary{
+				Path: "/tmp/demo",
+				Name: "demo",
+			},
+		},
+	}
+
+	updated, _ := m.Update(busMsg{
+		Type:    events.ScanCompleted,
+		Payload: map[string]string{"updated": "0"},
+	})
+	got := updated.(Model)
+
+	if got.projectsReloadInFlight {
+		t.Fatal("unchanged scan should not reload the project list")
+	}
+	if len(got.detailReloadInFlight) != 0 || len(got.summaryReloadInFlight) != 0 {
+		t.Fatalf("unchanged scan scheduled project reads: detail=%#v summary=%#v", got.detailReloadInFlight, got.summaryReloadInFlight)
 	}
 }
 

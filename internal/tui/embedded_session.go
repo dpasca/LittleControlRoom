@@ -404,8 +404,8 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		}
 		m.observeManagedBrowserLease(msg.projectPath, snapshot)
 		cmds = append(cmds, m.maybeReadManagedBrowserStateCmd(snapshot))
-		if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrevSnapshot, prevSnapshot, snapshot) {
-			statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(msg.projectPath, snapshot)
+		if shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(hadPrevSnapshot, prevSnapshot, snapshot) {
+			statusRefreshCmd = m.recordEmbeddedSessionTransitionCmd(msg.projectPath, snapshot)
 		}
 		if shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 			statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(msg.projectPath, snapshot)
@@ -611,8 +611,8 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 	sidebarDiffRefreshCmd := tea.Cmd(nil)
 	bossNoticeCmd := tea.Cmd(nil)
 	transcriptRenderCmd := tea.Cmd(nil)
-	if shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev, prevSnapshot, snapshot) {
-		statusRefreshCmd = m.recordEmbeddedSessionActivityCmd(projectPath, snapshot)
+	if shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(hadPrev, prevSnapshot, snapshot) {
+		statusRefreshCmd = m.recordEmbeddedSessionTransitionCmd(projectPath, snapshot)
 	}
 	if hadPrev && shouldRefreshProjectStatusAfterCodexSnapshot(prevSnapshot, snapshot) {
 		statusRefreshCmd = m.recordEmbeddedSessionSettledAndRefreshCmd(projectPath, snapshot)
@@ -742,14 +742,20 @@ func shouldRecordEmbeddedSessionSettledAfterDisappearance(prev codexapp.Snapshot
 	return prev.Busy
 }
 
-func shouldRecordEmbeddedSessionActivityAfterCodexSnapshot(hadPrev bool, prev, next codexapp.Snapshot) bool {
+func shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(hadPrev bool, prev, next codexapp.Snapshot) bool {
 	if next.Closed || !next.Started || !next.Busy || embeddedSnapshotActivityAt(next).IsZero() {
 		return false
 	}
-	if !hadPrev {
+	if !hadPrev || !prev.Started || prev.Closed || !prev.Busy {
 		return true
 	}
-	return embeddedSnapshotActivityAt(next).After(embeddedSnapshotActivityAt(prev))
+	if prev.Provider.Normalized() != next.Provider.Normalized() || strings.TrimSpace(prev.ThreadID) != strings.TrimSpace(next.ThreadID) {
+		return true
+	}
+	if strings.TrimSpace(prev.ActiveTurnID) != strings.TrimSpace(next.ActiveTurnID) || !prev.BusySince.Equal(next.BusySince) {
+		return true
+	}
+	return todoWorkStateFromEmbeddedSnapshot(prev, false) != todoWorkStateFromEmbeddedSnapshot(next, false)
 }
 
 func embeddedSessionActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {
@@ -790,7 +796,7 @@ func todoWorkStateFromEmbeddedSnapshot(snapshot codexapp.Snapshot, latestTurnCom
 	if snapshot.Closed || latestTurnCompleted {
 		return model.TodoWorkStateIdle
 	}
-	if snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
 		return model.TodoWorkStateWaiting
 	}
 	if snapshot.BrowserActivity.Normalize().State == browserctl.SessionActivityStateWaitingForUser {

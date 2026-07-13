@@ -89,7 +89,10 @@ func (s *Service) RecordEmbeddedSessionActivity(ctx context.Context, activity Em
 	if state.Path == "" {
 		return nil
 	}
-	if runtime.classifier != nil {
+	// Live token/activity pulses are held by the in-memory session manager. A
+	// durable transition may update project/TODO state, but transcript snapshot
+	// extraction and classification only make sense once the turn is settled.
+	if runtime.classifier != nil && activity.LatestTurnStateKnown && activity.LatestTurnCompleted {
 		queued, err := queueProjectClassification(ctx, runtime.classifier, state, ScanOptions{})
 		if err != nil {
 			return err

@@ -103,6 +103,146 @@ func (s *Store) GetProjectSummaryMap(ctx context.Context) (map[string]model.Proj
 	return out, rows.Err()
 }
 
+// ProjectScanEvidence is the reconstructible portion of project state needed
+// by the scanner. Loading it in bulk avoids issuing a full project-detail query
+// (including TODOs, events, and classifications) for every tracked project.
+type ProjectScanEvidence struct {
+	Reasons   []model.AttentionReason
+	Sessions  []model.SessionEvidence
+	Artifacts []model.ArtifactEvidence
+}
+
+// GetProjectScanEvidenceMap loads scan-relevant child rows in three bounded
+// table passes. The per-project limits match GetProjectDetail's scan inputs.
+func (s *Store) GetProjectScanEvidenceMap(ctx context.Context) (map[string]ProjectScanEvidence, error) {
+	out := make(map[string]ProjectScanEvidence)
+
+	reasonRows, err := s.db.QueryContext(ctx, `
+		SELECT project_path, code, text, weight
+		FROM project_reasons
+		ORDER BY project_path ASC, position ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for reasonRows.Next() {
+		var (
+			projectPath string
+			reason      model.AttentionReason
+		)
+		if err := reasonRows.Scan(&projectPath, &reason.Code, &reason.Text, &reason.Weight); err != nil {
+			reasonRows.Close()
+			return nil, err
+		}
+		evidence := out[projectPath]
+		evidence.Reasons = append(evidence.Reasons, reason)
+		out[projectPath] = evidence
+	}
+	if err := reasonRows.Err(); err != nil {
+		reasonRows.Close()
+		return nil, err
+	}
+	if err := reasonRows.Close(); err != nil {
+		return nil, err
+	}
+
+	sessionRows, err := s.db.QueryContext(ctx, `
+		SELECT project_path, session_id, source, raw_session_id, detected_project_path, session_file, format, snapshot_hash, started_at, last_event_at, error_count, latest_turn_started_at, latest_turn_state_known, latest_turn_completed
+		FROM project_sessions
+		ORDER BY project_path ASC, last_event_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	sessionCounts := make(map[string]int)
+	for sessionRows.Next() {
+		var (
+			session             model.SessionEvidence
+			source              string
+			startedAt           sql.NullInt64
+			lastEventAt         int64
+			latestTurnStartedAt sql.NullInt64
+			turnKnown           int
+			turnDone            int
+		)
+		if err := sessionRows.Scan(
+			&session.ProjectPath,
+			&session.SessionID,
+			&source,
+			&session.RawSessionID,
+			&session.DetectedProjectPath,
+			&session.SessionFile,
+			&session.Format,
+			&session.SnapshotHash,
+			&startedAt,
+			&lastEventAt,
+			&session.ErrorCount,
+			&latestTurnStartedAt,
+			&turnKnown,
+			&turnDone,
+		); err != nil {
+			sessionRows.Close()
+			return nil, err
+		}
+		projectPath := session.ProjectPath
+		if sessionCounts[projectPath] >= 30 {
+			continue
+		}
+		sessionCounts[projectPath]++
+		session.Source = model.NormalizeSessionSource(model.SessionSource(source))
+		if startedAt.Valid {
+			session.StartedAt = time.Unix(startedAt.Int64, 0)
+		}
+		session.LastEventAt = time.Unix(lastEventAt, 0)
+		if latestTurnStartedAt.Valid {
+			session.LatestTurnStartedAt = time.Unix(latestTurnStartedAt.Int64, 0)
+		}
+		session.LatestTurnStateKnown = turnKnown != 0
+		session.LatestTurnCompleted = turnDone != 0
+		session = model.NormalizeSessionEvidenceIdentity(session)
+		evidence := out[projectPath]
+		evidence.Sessions = append(evidence.Sessions, session)
+		out[projectPath] = evidence
+	}
+	if err := sessionRows.Err(); err != nil {
+		sessionRows.Close()
+		return nil, err
+	}
+	if err := sessionRows.Close(); err != nil {
+		return nil, err
+	}
+
+	artifactRows, err := s.db.QueryContext(ctx, `
+		SELECT project_path, path, kind, updated_at, note
+		FROM project_artifacts
+		ORDER BY project_path ASC, updated_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer artifactRows.Close()
+	artifactCounts := make(map[string]int)
+	for artifactRows.Next() {
+		var (
+			projectPath string
+			artifact    model.ArtifactEvidence
+			updatedAt   int64
+		)
+		if err := artifactRows.Scan(&projectPath, &artifact.Path, &artifact.Kind, &updatedAt, &artifact.Note); err != nil {
+			return nil, err
+		}
+		if artifactCounts[projectPath] >= 50 {
+			continue
+		}
+		artifactCounts[projectPath]++
+		artifact.UpdatedAt = time.Unix(updatedAt, 0)
+		evidence := out[projectPath]
+		evidence.Artifacts = append(evidence.Artifacts, artifact)
+		out[projectPath] = evidence
+	}
+	return out, artifactRows.Err()
+}
+
 func (s *Store) ListLinkedWorktreePathsForRoot(ctx context.Context, rootPath string) ([]string, error) {
 	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
 	if rootPath == "" || rootPath == "." {
@@ -152,6 +292,29 @@ func (s *Store) ListProjects(ctx context.Context, includeHistorical bool) ([]mod
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetOrphanedWorktreeSummaryMap returns the small set of forgotten linked
+// worktrees that still exist on disk. The TUI needs these for warnings, but it
+// should not load every project a second time to discover them.
+func (s *Store) GetOrphanedWorktreeSummaryMap(ctx context.Context) (map[string]model.ProjectSummary, error) {
+	query := projectSummaryBaseQuery()
+	query += ` WHERE p.worktree_kind = ? AND p.forgotten = 1 AND p.present_on_disk = 1`
+	rows, err := s.db.QueryContext(ctx, query, string(model.WorktreeKindLinked))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]model.ProjectSummary)
+	for rows.Next() {
+		project, err := scanSummaryRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[project.Path] = project
 	}
 	return out, rows.Err()
 }

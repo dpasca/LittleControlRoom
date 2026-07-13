@@ -369,6 +369,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureSessionClassificationIdentityColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureProjectReadPerformanceIndexes(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureAgentTaskMetadataColumns(ctx); err != nil {
 		return err
 	}
@@ -395,6 +398,22 @@ func (s *Store) initSchema(ctx context.Context) error {
 	}
 	if _, err := s.ReconcileLinkedWorktreeArchiveState(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) ensureProjectReadPerformanceIndexes(ctx context.Context) error {
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_project_sessions_project_last_event ON project_sessions(project_path, last_event_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_project_artifacts_project_updated ON project_artifacts(project_path, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_classifications_raw_session_updated ON session_classifications(raw_session_id, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_classifications_project_status_completed ON session_classifications(project_path, status, completed_at DESC, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_project_id ON events(project_path, id DESC)`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("ensure project read performance index: %w", err)
+		}
 	}
 	return nil
 }
