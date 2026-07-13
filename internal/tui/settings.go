@@ -221,8 +221,8 @@ func settingsSections() []settingsSection {
 		{
 			id:      settingsSectionLCAgent,
 			label:   "LCAgent",
-			summary: "Native worker",
-			hint:    "Configure the experimental LCR-native worker separately from project reports and Chat.",
+			summary: "Worker · Scout override",
+			hint:    "Configure the experimental LCR-native worker and an optional first-choice repository Scout route. Without an override, /chat Scout inherits Chat inference automatically; every Scout answer reports the available route, fallbacks, evidence, and trace.",
 			fieldOrder: []int{
 				settingsFieldLCAgentRoutePreset,
 				settingsFieldLCAgentModel,
@@ -2307,7 +2307,7 @@ func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
 	case settingsDrilldownBossChat:
 		return "Choose a realtime backend for /chat. This deliberately excludes Codex, OpenCode, and Claude Code because engineer sessions can be too slow for chat."
 	case settingsDrilldownLCAgent:
-		return "Configure the LCR-native worker essentials: Main Model, Utility Model, credentials, and web search. Use the LCAgent section for runtime policy and advanced launch fields."
+		return "Configure the LCR-native worker essentials and an optional first-choice repository Scout route. Without an override, /chat Scout inherits Chat inference automatically. Use the LCAgent section for runtime policy and advanced launch fields."
 	case settingsDrilldownProjectScope:
 		return "Choose where projects are discovered and which folders or names stay hidden."
 	case settingsDrilldownMobile:
@@ -4360,7 +4360,7 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldLCAgentRoutePreset:
 		switch strings.ToLower(strings.TrimSpace(field.input.Value())) {
 		case "":
-			return "LCAgent launches will use the individual model, autonomy, tool, and context fields below."
+			return "LCAgent launches use the individual fields below. An explicitly configured provider or main model also becomes /chat Scout's first-choice route before its automatic Chat fallbacks."
 		case "balanced":
 			return "Balanced uses direct DeepSeek V4 Pro with conservative coding budgets."
 		case "quality":

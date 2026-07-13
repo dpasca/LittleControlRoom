@@ -76,6 +76,30 @@ func TestDetectorIgnoresOutOfScopeSessions(t *testing.T) {
 	}
 }
 
+func TestDetectorIgnoresInternalRepositoryScoutActivity(t *testing.T) {
+	dataDir := t.TempDir()
+	project := t.TempDir()
+	sessionDir := filepath.Join(dataDir, "lcagent", "sessions", "2026", "05", "09")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"type":"session_meta","id":"lca_scout","started_at":"2026-05-09T01:00:00Z","cwd":"` + filepath.ToSlash(project) + `"}
+{"type":"delegation_mode","mode":"repository_scout"}
+{"type":"user_message","timestamp":"2026-05-09T01:00:01Z","message":"inspect docs"}
+{"type":"turn_complete","timestamp":"2026-05-09T01:00:02Z","summary":"done"}
+`
+	if err := os.WriteFile(filepath.Join(sessionDir, "lca_scout.jsonl"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	results, err := New(dataDir).Detect(context.Background(), scanner.NewPathScope([]string{project}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("repository Scout changed engineer activity: %#v", results)
+	}
+}
+
 func TestDetectorCountsExplicitPermissionDenialOnce(t *testing.T) {
 	dataDir := t.TempDir()
 	project := t.TempDir()

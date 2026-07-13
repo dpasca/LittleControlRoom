@@ -23,14 +23,15 @@ type Detector struct {
 }
 
 type parseResult struct {
-	sessionID     string
-	cwd           string
-	startedAt     time.Time
-	lastEventAt   time.Time
-	errorCount    int
-	turnKnown     bool
-	turnDone      bool
-	turnStartedAt time.Time
+	sessionID      string
+	cwd            string
+	delegationMode string
+	startedAt      time.Time
+	lastEventAt    time.Time
+	errorCount     int
+	turnKnown      bool
+	turnDone       bool
+	turnStartedAt  time.Time
 }
 
 func New(dataDir string) *Detector {
@@ -55,6 +56,11 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		}
 		parsed, err := parseSessionFile(path)
 		if err != nil || strings.TrimSpace(parsed.cwd) == "" {
+			continue
+		}
+		// Repository Scout traces are linked from Chat for evidence/audit, but
+		// a read-only lookup must not make a project look freshly engineered.
+		if strings.EqualFold(strings.TrimSpace(parsed.delegationMode), "repository_scout") {
 			continue
 		}
 		cwd := filepath.Clean(parsed.cwd)
@@ -192,6 +198,8 @@ func parseSessionFile(path string) (parseResult, error) {
 			if result.lastEventAt.IsZero() {
 				result.lastEventAt = result.startedAt
 			}
+		case "delegation_mode":
+			result.delegationMode = rawString(event["mode"])
 		case "user_message":
 			result.turnKnown = true
 			result.turnDone = false

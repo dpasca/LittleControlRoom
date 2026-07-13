@@ -22,6 +22,8 @@ type ToolOptions struct {
 	AdminWrite              bool
 	BrowserAvailable        bool
 	VisionAnalysisEnabled   bool
+	WorkspaceOnlyReads      bool
+	ReadOnly                bool
 }
 
 func Tools() []ToolDefinition {
@@ -37,6 +39,9 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		limitDescription = fmt.Sprintf("Max lines. Defaults to %d; central files often need 120-300 plus next_offset.", opts.DefaultReadLineLimit)
 	}
 	inspectionPathDescription := "Workspace-relative path, or absolute path for read-only inspection outside the workspace."
+	if opts.WorkspaceOnlyReads {
+		inspectionPathDescription = "Workspace-relative path, or absolute path inside the workspace. Reads outside the workspace are denied for this run."
+	}
 	writePathDescription := "Workspace-relative path, or absolute path inside the workspace; outside requires --admin-write."
 	patchPathDescription := "Patch paths may be workspace-relative or inside-workspace absolute paths; outside requires --admin-write."
 	if opts.AdminWrite {
@@ -495,6 +500,16 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 			case "start_process", "list_processes", "stop_process":
 				continue
 			default:
+				filtered = append(filtered, def)
+			}
+		}
+		defs = filtered
+	}
+	if opts.ReadOnly {
+		filtered := defs[:0]
+		for _, def := range defs {
+			switch def.Function.Name {
+			case "read_file", "file_outline", "module_outline", "repo_overview", "list_files", "search", "scout_files", "final_response":
 				filtered = append(filtered, def)
 			}
 		}

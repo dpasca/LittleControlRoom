@@ -286,7 +286,10 @@ model-tiered delegation for small jobs.
    `lcagent scout` is now the first primitive: it runs a bounded cheap-scout
    prompt with autonomy off, low max turns, expected structured handoff, and a
    `delegation_mode` event while reusing normal `lcagent exec` artifacts.
-   Remaining work is to expose it cleanly from embedded/Boss workflows.
+   Chat now exposes this loop as `project_scout`: it applies a workspace-only
+   read profile, inherits configured Chat/project inference when no explicit
+   LCAgent route exists, and returns file ranges plus the durable trace. Broader
+   embedded delegation remains future work.
 
 2. Start with read-only scout jobs on cheaper/faster models.
    Examples: "map the relevant files", "summarize this package", "find likely

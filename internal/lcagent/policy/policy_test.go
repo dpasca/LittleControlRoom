@@ -77,6 +77,32 @@ func TestWorkspaceResolveReadAllowsAbsolutePath(t *testing.T) {
 	}
 }
 
+func TestWorkspaceResolveReadCanRequireWorkspaceContainment(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	inside := filepath.Join(root, "inside.txt")
+	if err := os.WriteFile(inside, []byte("inside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := NewWorkspace(root, AutonomyOff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.WorkspaceOnlyReads = true
+	if got, err := w.ResolveRead(inside); err != nil {
+		t.Fatalf("ResolveRead workspace file: %v", err)
+	} else if want := filepath.Clean(inside); got != want {
+		t.Fatalf("ResolveRead workspace file = %q, want %q", got, want)
+	}
+	if _, err := w.ResolveRead(filepath.Join(outside, "outside.txt")); err == nil {
+		t.Fatal("ResolveRead outside workspace succeeded, want denial")
+	} else if !IsDenied(err) {
+		t.Fatalf("ResolveRead outside workspace error = %v, want denial", err)
+	} else if reason := DenialReason(err); !strings.Contains(reason, "outside the selected workspace") || strings.Contains(reason, "write") {
+		t.Fatalf("ResolveRead outside workspace denial = %q, want read-specific explanation", reason)
+	}
+}
+
 func TestWorkspaceResolveDeniesSymlinkEscape(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink setup requires elevated privileges on some Windows hosts")

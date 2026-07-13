@@ -17,6 +17,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/helpmeta"
+	"lcroom/internal/lcagent"
 	"lcroom/internal/model"
 )
 
@@ -24,6 +25,7 @@ const (
 	bossActionAnswer                 = "answer"
 	bossActionListProjects           = "list_projects"
 	bossActionProjectDetail          = "project_detail"
+	bossActionProjectScout           = "project_scout"
 	bossActionSessionClassifications = "session_classifications"
 	bossActionTodoReport             = "todo_report"
 	bossActionAgentTaskReport        = "agent_task_report"
@@ -96,8 +98,10 @@ type bossAction struct {
 }
 
 type bossToolResult struct {
-	Name string
-	Text string
+	Name        string
+	Text        string
+	UserReceipt string
+	Usage       model.LLMUsage
 }
 
 type bossStoreReader interface {
@@ -133,6 +137,12 @@ type QueryExecutor struct {
 	codexHome          string
 	codexHomeFallbacks []string
 	openCodeHome       string
+	projectScout       projectScout
+	dataDir            string
+}
+
+type projectScout interface {
+	Scout(context.Context, lcagent.ScoutRequest) (lcagent.ScoutResult, error)
 }
 
 type ViewContext struct {
@@ -242,6 +252,8 @@ func (e *QueryExecutor) Execute(ctx context.Context, action bossAction, snapshot
 		return e.reflectionReport(ctx, action, view)
 	case bossActionProjectDetail:
 		return e.projectDetail(ctx, action, view)
+	case bossActionProjectScout:
+		return e.projectScoutReport(ctx, action, view)
 	case bossActionSessionClassifications:
 		return e.sessionClassifications(ctx, action, view)
 	case bossActionTodoReport:

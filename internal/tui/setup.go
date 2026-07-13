@@ -57,8 +57,8 @@ func setupSectionMenuRows() []setupSectionMenuRow {
 		{
 			step:    setupStepLCAgentConfig,
 			label:   "LCAgent",
-			summary: "Native worker",
-			detail:  "Configure the LCR-native worker essentials: main model, utility model, credentials, and web search.",
+			summary: "Native worker · optional Scout override",
+			detail:  "Configure the LCR-native worker. Repository Scout in /chat inherits Chat inference automatically; these settings become an explicit first-choice Scout override.",
 		},
 		{
 			step:    setupStepSave,
@@ -376,7 +376,7 @@ func (m Model) setupAdvance() (tea.Model, tea.Cmd) {
 	case setupStepBossProvider:
 		return m.enterSetupStep(m.nextSetupStepAfterBossProvider(), "Chat selected. Press Enter to continue.")
 	case setupStepBossConfig:
-		return m.enterSetupStep(setupStepLCAgentConfig, "Chat details accepted. Configure LCAgent or keep the defaults.")
+		return m.enterSetupStep(setupStepLCAgentConfig, "Chat details accepted. LCAgent is optional for repository Scout; Scout inherits Chat inference by default.")
 	case setupStepLCAgentConfig:
 		return m.enterSetupStep(setupStepSave, "LCAgent details accepted. Press Enter to save setup.")
 	case setupStepSave:
@@ -572,7 +572,7 @@ func (m Model) enterSetupStep(step setupStep, status string) (tea.Model, tea.Cmd
 		m.setupFocusedRole = setupRoleLCAgent
 		m.setupConfigMode = true
 		if status == "" {
-			status = "LCAgent details. Enter accepts these fields."
+			status = "Optional LCAgent worker and Scout override. /chat Scout otherwise inherits Chat inference automatically."
 		}
 		cmd := m.focusSetupConfigField()
 		m.status = status
@@ -1061,6 +1061,7 @@ func (m Model) renderSetupReview(width int) string {
 		renderWrappedDetailField("Project reports", detailValueStyle, width, m.setupReviewChoiceSummary(projectChoice)),
 		renderWrappedDetailField("Chat", detailValueStyle, width, m.setupReviewChoiceSummary(bossChoice)),
 		renderWrappedDetailField("LCAgent", detailValueStyle, width, m.setupReviewLCAgentSummary(settings)),
+		renderWrappedDetailField("Repository Scout", detailValueStyle, width, setupReviewRepositoryScoutSummary(settings)),
 	}
 	if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
 		keyText := "saved"
@@ -1076,6 +1077,50 @@ func (m Model) renderSetupReview(width int) string {
 	}
 	lines = append(lines, renderWrappedDetailField("Next", detailValueStyle, width, "Enter saves setup. Esc goes back to the previous page."))
 	return strings.Join(lines, "\n")
+}
+
+func setupReviewRepositoryScoutSummary(settings config.EditableSettings) string {
+	routeOrder := setupRepositoryScoutAutomaticRouteOrder(settings)
+	fallback := ""
+	if routeOrder != "" {
+		fallback = "; falls back to " + routeOrder
+	}
+	receipt := ". Duplicate provider/model routes are skipped. Successful answers show route, evidence, and trace; failures list every attempted route and do not imply repository content is absent."
+	if preset := strings.TrimSpace(settings.LCAgentRoutePreset); preset != "" {
+		return "Explicit LCAgent " + settingsChoiceOptionLabelForField(settingsFieldLCAgentRoutePreset, preset) + " first" + fallback + receipt
+	}
+	provider := strings.ToLower(strings.TrimSpace(settings.LCAgentProvider))
+	if strings.TrimSpace(settings.EmbeddedLCAgentModel) != "" || strings.TrimSpace(settings.LCAgentEnvFile) != "" || (provider != "" && provider != "openrouter") {
+		return "Explicit LCAgent provider/model first" + fallback + receipt
+	}
+	if setupScoutBackendSupported(settings.BossChatBackend) {
+		return "Automatic route order: " + routeOrder + receipt + " No separate LCAgent setup is required."
+	}
+	if setupScoutBackendSupported(settings.AIBackend) {
+		return "Automatic route: compatible project-analysis inference. Configure Chat or an LCAgent override for a stronger first choice" + receipt
+	}
+	return "Unavailable until Chat has an API/local inference backend or an LCAgent route is configured. Chat still works where repository files are not required."
+}
+
+func setupRepositoryScoutAutomaticRouteOrder(settings config.EditableSettings) string {
+	var routes []string
+	if setupScoutBackendSupported(settings.BossChatBackend) {
+		utility := firstNonEmptyTrimmed(settings.BossUtilityModel, settingsBossUtilityDefaultLabel(settings))
+		routes = append(routes, "inherited Chat utility "+utility, "a distinct Chat main route if configured")
+	}
+	if setupScoutBackendSupported(settings.AIBackend) {
+		routes = append(routes, "compatible project-analysis inference")
+	}
+	return strings.Join(routes, ", then ")
+}
+
+func setupScoutBackendSupported(backend config.AIBackend) bool {
+	switch backend {
+	case config.AIBackendOpenAIAPI, config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi, config.AIBackendMLX, config.AIBackendOllama:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m Model) setupReviewLCAgentSummary(settings config.EditableSettings) string {
