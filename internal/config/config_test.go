@@ -85,6 +85,9 @@ func TestDefaultEnablesLoopbackMobileClient(t *testing.T) {
 	if !cfg.MobileEnabled {
 		t.Fatal("default mobile client should be enabled")
 	}
+	if cfg.MobileInputEnabled {
+		t.Fatal("default mobile session input should be disabled")
+	}
 	if got, want := cfg.MobileListenAddress, DefaultMobileListenAddress; got != want {
 		t.Fatalf("default mobile listen address = %q, want %q", got, want)
 	}
@@ -157,6 +160,7 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 		"active-threshold = \"15m\"\n" +
 		"stuck-threshold = \"3h\"\n"
 	content += "mobile_enabled = false\n" +
+		"mobile_input_enabled = true\n" +
 		"mobile_listen_address = \"0.0.0.0:8787\"\n"
 	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config file: %v", err)
@@ -172,6 +176,9 @@ func TestParseLoadsEditableSettingsFromConfigFile(t *testing.T) {
 	}
 	if cfg.MobileEnabled {
 		t.Fatal("mobile client should be disabled by loaded config")
+	}
+	if !cfg.MobileInputEnabled {
+		t.Fatal("mobile session input should be enabled by loaded config")
 	}
 	if got, want := cfg.MobileListenAddress, "0.0.0.0:8787"; got != want {
 		t.Fatalf("mobile listen address = %q, want %q", got, want)
@@ -568,7 +575,7 @@ func TestParseRejectsInvalidSnapshotLimit(t *testing.T) {
 func TestParseEditableSettings(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s", "false", "0.0.0.0:8787")
+	settings, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "sk-openrouter", "sk-deepseek", "sk-moonshot", "https://token-plan-sgp.xiaomimimo.com/v1", "sk-xiaomi", "mimo-v2.5-pro", "gpt-5.5", "gpt-5.4-mini", "true", "", "", "", "", "", "", "~/dev/repos,/tmp/other", "/tmp/skip", "quickgame_*,secret-demo", "medical,visa", "yolo", "observe", "headed", "promote", "project", "true", "false", "free", "~/bin/lcagent", "~/dev/repos/ChatNext3/.env.server.development", "quality", "deepseek", "medium", "true", "generous", "large", "10m", "openrouter", "deepseek/deepseek-v4-flash", "openai", "gpt-5.5", "off", "", "", "", "10m", "2h", "45s", "false", "true", "0.0.0.0:8787")
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -616,6 +623,9 @@ func TestParseEditableSettings(t *testing.T) {
 	}
 	if settings.MobileEnabled {
 		t.Fatal("mobile client should parse as disabled")
+	}
+	if !settings.MobileInputEnabled {
+		t.Fatal("mobile session input should parse as enabled")
 	}
 	if got, want := settings.MobileListenAddress, "0.0.0.0:8787"; got != want {
 		t.Fatalf("mobile listen address = %q, want %q", got, want)
@@ -865,7 +875,7 @@ func TestSaveEditableSettingsPersistsLCAgentMainVisionStamp(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "10m", "60s", "true", DefaultMobileListenAddress); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "10m", "60s", "true", "false", DefaultMobileListenAddress); err == nil {
 		t.Fatalf("expected validation error")
 	}
 }
@@ -873,7 +883,7 @@ func TestParseEditableSettingsRejectsInvalidThresholds(t *testing.T) {
 func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 	useTempHome(t)
 
-	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", DefaultMobileListenAddress); err == nil {
+	if _, err := ParseEditableSettings(AIBackendOpenAIAPI, AIBackendOpenAIAPI, "sk-test-example", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "turbo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", "false", DefaultMobileListenAddress); err == nil {
 		t.Fatalf("expected codex preset validation error")
 	}
 }
@@ -881,7 +891,7 @@ func TestParseEditableSettingsRejectsInvalidCodexPreset(t *testing.T) {
 func TestParseEditableSettingsAllowsMissingOpenAIAPIKeyForNonAPIBackends(t *testing.T) {
 	useTempHome(t)
 
-	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", DefaultMobileListenAddress)
+	settings, err := ParseEditableSettings(AIBackendCodex, AIBackendUnset, "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "/tmp/a", "", "", "", "yolo", "legacy", "headless", "manual", "task", "false", "false", "", "", "", "", "", "", "", "", "", "10m", "openrouter", "", "off", "", "off", "", "", "", "20m", "2h", "60s", "true", "false", DefaultMobileListenAddress)
 	if err != nil {
 		t.Fatalf("ParseEditableSettings() error = %v", err)
 	}
@@ -994,6 +1004,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 		ActiveThreshold:     15 * time.Minute,
 		StuckThreshold:      3 * time.Hour,
 		MobileEnabled:       false,
+		MobileInputEnabled:  true,
 		MobileListenAddress: "0.0.0.0:8787",
 	})
 	if err != nil {
@@ -1126,6 +1137,7 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	}
 	for _, want := range []string{
 		"mobile_enabled = false",
+		"mobile_input_enabled = true",
 		"mobile_listen_address = \"0.0.0.0:8787\"",
 	} {
 		if !strings.Contains(text, want) {

@@ -85,7 +85,7 @@ func TestHandlerServesMobileAppAndSemanticDashboard(t *testing.T) {
 	if !strings.Contains(appResponse.Body.String(), "Little Control Room") {
 		t.Fatalf("GET / did not return the mobile shell: %s", appResponse.Body.String())
 	}
-	for _, id := range []string{"dashboard-live-channels", "transcript-mode", "session-follow-button"} {
+	for _, id := range []string{"dashboard-live-channels", "transcript-mode", "session-follow-button", "session-composer", "session-message", "session-send-button"} {
 		if !strings.Contains(appResponse.Body.String(), `id="`+id+`"`) {
 			t.Fatalf("GET / missing monitoring control %q", id)
 		}

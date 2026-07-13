@@ -490,6 +490,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.ActiveThreshold = settings.ActiveThreshold
 	s.cfg.StuckThreshold = settings.StuckThreshold
 	s.cfg.MobileEnabled = settings.MobileEnabled
+	s.cfg.MobileInputEnabled = settings.MobileInputEnabled
 	s.cfg.MobileListenAddress = strings.TrimSpace(settings.MobileListenAddress)
 	s.cfg.HideReasoningSections = settings.HideReasoningSections
 	s.cfg.PrivacyMode = settings.PrivacyMode

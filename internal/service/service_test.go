@@ -178,6 +178,7 @@ func TestApplyEditableSettingsUpdatesMobilePreferences(t *testing.T) {
 	}
 	settings := config.EditableSettingsFromAppConfig(cfg)
 	settings.MobileEnabled = false
+	settings.MobileInputEnabled = true
 	settings.MobileListenAddress = "0.0.0.0:8787"
 
 	svc.ApplyEditableSettings(settings)
@@ -185,6 +186,9 @@ func TestApplyEditableSettingsUpdatesMobilePreferences(t *testing.T) {
 	got := svc.Config()
 	if got.MobileEnabled {
 		t.Fatal("mobile enabled = true, want false")
+	}
+	if !got.MobileInputEnabled {
+		t.Fatal("mobile input enabled = false, want true")
 	}
 	if got.MobileListenAddress != "0.0.0.0:8787" {
 		t.Fatalf("mobile listen address = %q, want 0.0.0.0:8787", got.MobileListenAddress)

@@ -50,8 +50,39 @@ type EngineerSessionDetailSurface struct {
 	Session      EngineerSessionItem       `json:"session"`
 	Entries      []EngineerTranscriptEntry `json:"entries"`
 	Instruments  []DetailFieldValue        `json:"instruments"`
+	Input        EngineerSessionInput      `json:"input"`
 	Truncated    bool                      `json:"truncated,omitempty"`
 	EmptyMessage string                    `json:"empty_message,omitempty"`
+}
+
+type EngineerSessionInput struct {
+	Enabled   bool   `json:"enabled"`
+	Available bool   `json:"available"`
+	Mode      string `json:"mode,omitempty"`
+	Label     string `json:"label,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+func BuildEngineerSessionInput(snapshot codexapp.Snapshot, enabled bool) EngineerSessionInput {
+	if !enabled {
+		return EngineerSessionInput{Reason: "Session messages are disabled in Mobile settings."}
+	}
+	availability := codexapp.DescribeSessionInput(snapshot)
+	input := EngineerSessionInput{
+		Enabled:   true,
+		Available: availability.Available,
+		Mode:      string(availability.Mode),
+		Reason:    availability.Reason,
+	}
+	switch availability.Mode {
+	case codexapp.SessionInputSteer:
+		input.Label = "Steer"
+	case codexapp.SessionInputQueue:
+		input.Label = "Queue"
+	default:
+		input.Label = "Send"
+	}
+	return input
 }
 
 func BuildLiveEngineerSession(snapshot codexapp.Snapshot, now time.Time) EngineerSessionItem {

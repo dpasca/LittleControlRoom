@@ -96,6 +96,7 @@ type AppConfig struct {
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
 	MobileEnabled             bool
+	MobileInputEnabled        bool
 	MobileListenAddress       string
 	AllowMultipleInstances    bool
 	SanitizeApply             bool
@@ -248,6 +249,7 @@ type fileConfig struct {
 	ActiveThreshold           string    `toml:"active-threshold"`
 	StuckThreshold            string    `toml:"stuck-threshold"`
 	MobileEnabled             *bool     `toml:"mobile_enabled"`
+	MobileInputEnabled        *bool     `toml:"mobile_input_enabled"`
 	MobileListenAddress       *string   `toml:"mobile_listen_address"`
 	HideReasoningSections     *bool     `toml:"hide_reasoning_sections"`
 	PrivacyMode               *bool     `toml:"privacy_mode"`
@@ -281,6 +283,7 @@ func Default() AppConfig {
 		ActiveThreshold:         20 * time.Minute,
 		StuckThreshold:          4 * time.Hour,
 		MobileEnabled:           true,
+		MobileInputEnabled:      false,
 		MobileListenAddress:     DefaultMobileListenAddress,
 		HideReasoningSections:   true,
 		PrivacyMode:             false,
@@ -771,6 +774,9 @@ func applyConfigFile(cfg *AppConfig) error {
 	}
 	if fc.MobileEnabled != nil {
 		cfg.MobileEnabled = *fc.MobileEnabled
+	}
+	if fc.MobileInputEnabled != nil {
+		cfg.MobileInputEnabled = *fc.MobileInputEnabled
 	}
 	if fc.MobileListenAddress != nil {
 		if value := strings.TrimSpace(*fc.MobileListenAddress); value != "" {

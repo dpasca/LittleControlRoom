@@ -783,7 +783,7 @@ func TestMobileSettingsAppearInSetupAndDedicatedSection(t *testing.T) {
 			gettingStartedFields = append([]int(nil), section.fieldOrder...)
 		}
 	}
-	for _, field := range []int{settingsFieldMobileEnabled, settingsFieldMobileAccessMode, settingsFieldMobilePort, settingsFieldMobileListenAddress} {
+	for _, field := range []int{settingsFieldMobileEnabled, settingsFieldMobileInputEnabled, settingsFieldMobileAccessMode, settingsFieldMobilePort, settingsFieldMobileListenAddress} {
 		if !slices.Contains(mobileFields, field) {
 			t.Fatalf("Mobile section missing field %d: %#v", field, mobileFields)
 		}
@@ -794,11 +794,11 @@ func TestMobileSettingsAppearInSetupAndDedicatedSection(t *testing.T) {
 
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	m := Model{settingsFields: newSettingsFields(settings), settingsBaseline: &settings}
-	if got := m.settingsDrilldownFieldOrder(settingsDrilldownMobile); !slices.Equal(got, []int{settingsFieldMobileEnabled, settingsFieldMobileAccessMode, settingsFieldMobilePort, settingsFieldMobileListenAddress}) {
+	if got := m.settingsDrilldownFieldOrder(settingsDrilldownMobile); !slices.Equal(got, []int{settingsFieldMobileEnabled, settingsFieldMobileInputEnabled, settingsFieldMobileAccessMode, settingsFieldMobilePort, settingsFieldMobileListenAddress}) {
 		t.Fatalf("mobile drilldown fields = %#v", got)
 	}
-	if !m.settingsFieldVisible(settingsFieldMobileAccessMode) || !m.settingsFieldVisible(settingsFieldMobilePort) {
-		t.Fatal("access mode and port should be visible for the default local setup")
+	if !m.settingsFieldVisible(settingsFieldMobileInputEnabled) || !m.settingsFieldVisible(settingsFieldMobileAccessMode) || !m.settingsFieldVisible(settingsFieldMobilePort) {
+		t.Fatal("session messages, access mode, and port should be visible for the default local setup")
 	}
 	if m.settingsFieldVisible(settingsFieldMobileListenAddress) {
 		t.Fatal("custom address should be hidden for the default local setup")

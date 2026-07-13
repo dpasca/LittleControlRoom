@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -16,8 +17,32 @@ import (
 
 const mobileRecordedSessionLimit = 8
 
+const (
+	mobileSessionInputMaxBodyBytes = 32 * 1024
+	mobileSessionInputMaxRunes     = 12000
+	mobileSessionRequestTTL        = 10 * time.Minute
+)
+
 type LiveSessionSource interface {
 	TrySessionSnapshot(projectPath string) (codexapp.Snapshot, bool)
+}
+
+type LiveSessionController interface {
+	LiveSessionSource
+	SubmitSessionInput(projectPath, expectedThreadID string, input codexapp.Submission) (codexapp.SessionInputResult, error)
+}
+
+type mobileSessionInputRequest struct {
+	ProjectPath string `json:"project_path"`
+	SessionID   string `json:"session_id"`
+	RequestID   string `json:"request_id"`
+	Text        string `json:"text"`
+}
+
+type mobileSessionInputResponse struct {
+	RequestID string `json:"request_id"`
+	Mode      string `json:"mode"`
+	Status    string `json:"status"`
 }
 
 func (s *Server) WithLiveSessions(source LiveSessionSource) *Server {
@@ -129,7 +154,9 @@ func (s *Server) handleMobileSessionDetail(w http.ResponseWriter, r *http.Reques
 	if snapshot, ok := s.liveSessionSnapshot(projectPath); ok {
 		liveItem := uisurface.BuildLiveEngineerSession(snapshot, time.Now())
 		if sessionID == liveItem.ID {
-			writeJSON(w, uisurface.BuildLiveEngineerSessionDetail(snapshot, time.Now()))
+			surface := uisurface.BuildLiveEngineerSessionDetail(snapshot, time.Now())
+			surface.Input = uisurface.BuildEngineerSessionInput(snapshot, s.svc.Config().MobileInputEnabled)
+			writeJSON(w, surface)
 			return
 		}
 	}
@@ -152,6 +179,115 @@ func (s *Server) handleMobileSessionDetail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, uisurface.BuildRecordedEngineerSessionDetail(evidence, classification, excerpt, time.Now()))
+}
+
+func (s *Server) handleMobileSessionInput(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !sameOrigin(r) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return
+	}
+	if s == nil || s.svc == nil || !s.svc.Config().MobileInputEnabled {
+		http.Error(w, "session messages are disabled in Mobile settings", http.StatusForbidden)
+		return
+	}
+
+	var request mobileSessionInputRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, mobileSessionInputMaxBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil || ensureJSONEOF(decoder) != nil {
+		http.Error(w, "invalid session message request", http.StatusBadRequest)
+		return
+	}
+	request.ProjectPath = strings.TrimSpace(request.ProjectPath)
+	request.SessionID = strings.TrimSpace(request.SessionID)
+	request.RequestID = strings.TrimSpace(request.RequestID)
+	request.Text = strings.TrimSpace(request.Text)
+	if request.ProjectPath == "" || request.SessionID == "" || request.RequestID == "" || request.Text == "" {
+		http.Error(w, "project, session, request ID, and message are required", http.StatusBadRequest)
+		return
+	}
+	if len(request.RequestID) > 128 || len([]rune(request.Text)) > mobileSessionInputMaxRunes {
+		http.Error(w, "session message request is too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if _, err := s.visibleMobileProjectDetail(r.Context(), request.ProjectPath); err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	snapshot, ok := s.liveSessionSnapshot(request.ProjectPath)
+	if !ok {
+		http.Error(w, "live engineer session not found", http.StatusNotFound)
+		return
+	}
+	liveItem := uisurface.BuildLiveEngineerSession(snapshot, time.Now())
+	if request.SessionID != liveItem.ID {
+		http.Error(w, "engineer session changed; reopen the current channel", http.StatusConflict)
+		return
+	}
+	controller, ok := s.liveSessions.(LiveSessionController)
+	if !ok {
+		http.Error(w, "live engineer session input is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !s.claimMobileInputRequest(request.RequestID, time.Now()) {
+		http.Error(w, "session message request was already handled", http.StatusConflict)
+		return
+	}
+	result, err := controller.SubmitSessionInput(request.ProjectPath, snapshot.ThreadID, codexapp.Submission{Text: request.Text})
+	if err != nil {
+		s.releaseMobileInputRequest(request.RequestID)
+		status := http.StatusConflict
+		if !errors.Is(err, codexapp.ErrSessionInputUnavailable) && !errors.Is(err, codexapp.ErrSessionChanged) {
+			status = http.StatusBadGateway
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	writeJSON(w, mobileSessionInputResponse{
+		RequestID: request.RequestID,
+		Mode:      string(result.Mode),
+		Status:    mobileSessionInputStatus(result.Mode),
+	})
+}
+
+func mobileSessionInputStatus(mode codexapp.SessionInputMode) string {
+	switch mode {
+	case codexapp.SessionInputSteer:
+		return "Steer sent"
+	case codexapp.SessionInputQueue:
+		return "Message queued"
+	default:
+		return "Message sent"
+	}
+}
+
+func (s *Server) claimMobileInputRequest(requestID string, now time.Time) bool {
+	s.mobileInputMu.Lock()
+	defer s.mobileInputMu.Unlock()
+	if s.mobileInputRequests == nil {
+		s.mobileInputRequests = make(map[string]time.Time)
+	}
+	for id, claimedAt := range s.mobileInputRequests {
+		if now.Sub(claimedAt) >= mobileSessionRequestTTL {
+			delete(s.mobileInputRequests, id)
+		}
+	}
+	if _, exists := s.mobileInputRequests[requestID]; exists {
+		return false
+	}
+	s.mobileInputRequests[requestID] = now
+	return true
+}
+
+func (s *Server) releaseMobileInputRequest(requestID string) {
+	s.mobileInputMu.Lock()
+	delete(s.mobileInputRequests, requestID)
+	s.mobileInputMu.Unlock()
 }
 
 func (s *Server) visibleMobileProjectDetail(ctx context.Context, projectPath string) (model.ProjectDetail, error) {

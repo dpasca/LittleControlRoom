@@ -71,6 +71,7 @@ playwright_isolation_scope = "task"
 # The TUI starts the mobile client by default on loopback. Use 0.0.0.0:7777 or
 # this computer's LAN IP for phone access; non-loopback listeners require pairing.
 mobile_enabled = true
+mobile_input_enabled = false
 mobile_listen_address = "127.0.0.1:7777"
 
 interval = "60s"

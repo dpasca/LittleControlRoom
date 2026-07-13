@@ -1295,6 +1295,133 @@ body.auth-locked .session-view {
   scrollbar-color: var(--cyan-dim) #030707;
 }
 
+.session-content.input-enabled .session-transcript {
+  height: clamp(220px, calc(100dvh - 585px), 520px);
+  min-height: 220px;
+}
+
+.session-composer {
+  position: sticky;
+  bottom: env(safe-area-inset-bottom);
+  z-index: 3;
+  padding: 8px;
+  border: 1px solid #080b0d;
+  border-top: 0;
+  border-radius: 0 0 5px 5px;
+  background: var(--panel-raised);
+  box-shadow: inset 0 1px 0 #68737c, inset 0 -3px 0 #151b20, 0 -5px 12px rgba(0, 0, 0, 0.32);
+}
+
+.session-composer[hidden] {
+  display: none;
+}
+
+.session-composer-status {
+  min-height: 24px;
+  padding: 0 3px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--cyan);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.session-composer-status > span:first-child {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+#session-composer-state {
+  overflow-wrap: anywhere;
+}
+
+.session-composer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 66px;
+  align-items: end;
+  gap: 7px;
+}
+
+.session-composer textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  max-height: 144px;
+  padding: 11px 12px;
+  resize: none;
+  overflow-y: auto;
+  border: 2px solid #05080a;
+  border-radius: 4px;
+  outline: 0;
+  background: var(--screen);
+  color: var(--screen-ink);
+  caret-color: var(--amber);
+  box-shadow: inset 0 0 0 1px #174142, inset 0 4px 10px #010303;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+.session-composer textarea:focus {
+  border-color: var(--cyan-dim);
+  box-shadow: inset 0 0 0 1px var(--cyan), inset 0 4px 10px #010303, 0 0 7px rgba(79, 214, 203, 0.2);
+}
+
+.session-composer textarea:disabled {
+  color: #6d8584;
+  border-color: #151c20;
+}
+
+.session-composer button {
+  width: 66px;
+  min-height: 48px;
+  padding: 7px 5px;
+  border: 1px solid #11171b;
+  border-radius: 4px;
+  background: var(--cyan);
+  color: #071414;
+  box-shadow: inset 0 1px 0 #a7f0e9, inset 0 -4px 0 #226c67, 0 1px 0 #050708;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.15;
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.session-composer button:disabled {
+  background: #414c54;
+  color: #89989d;
+  box-shadow: inset 0 1px 0 #66727a, inset 0 -4px 0 #242c31;
+  cursor: default;
+}
+
+.session-composer-feedback {
+  min-height: 0;
+  margin: 0;
+  padding: 0 3px;
+  overflow-wrap: anywhere;
+  color: var(--amber);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.session-composer-feedback:not(:empty) {
+  padding-top: 7px;
+}
+
+.session-composer.input-unavailable .session-composer-status {
+  color: var(--amber);
+}
+
 .transcript-entry {
   margin: 0;
   padding: 13px 2px 14px 12px;

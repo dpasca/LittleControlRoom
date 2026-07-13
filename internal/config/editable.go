@@ -79,6 +79,7 @@ type EditableSettings struct {
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
 	MobileEnabled             bool
+	MobileInputEnabled        bool
 	MobileListenAddress       string
 	HideReasoningSections     bool
 	PrivacyMode               bool
@@ -150,6 +151,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		ActiveThreshold:           cfg.ActiveThreshold,
 		StuckThreshold:            cfg.StuckThreshold,
 		MobileEnabled:             cfg.MobileEnabled,
+		MobileInputEnabled:        cfg.MobileInputEnabled,
 		MobileListenAddress:       cfg.MobileListenAddress,
 		HideReasoningSections:     cfg.HideReasoningSections,
 		PrivacyMode:               cfg.PrivacyMode,
@@ -302,7 +304,7 @@ func trimLCAgentModelProviderPrefix(model, prefix string) string {
 	return model
 }
 
-func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw, mobileEnabledRaw, mobileListenAddressRaw string) (EditableSettings, error) {
+func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openAIAPIKeyRaw, openRouterAPIKeyRaw, deepSeekAPIKeyRaw, moonshotAPIKeyRaw, xiaomiBaseURLRaw, xiaomiAPIKeyRaw, xiaomiModelRaw, bossHelmModelRaw, bossUtilityModelRaw, bossChatOllamaThinkingRaw, mlxBaseURLRaw, mlxAPIKeyRaw, mlxModelRaw, ollamaBaseURLRaw, ollamaAPIKeyRaw, ollamaModelRaw, includeRaw, excludeRaw, excludeProjectPatternsRaw, privacyPatternsRaw, codexLaunchPresetRaw, playwrightManagementModeRaw, playwrightDefaultBrowserRaw, playwrightLoginModeRaw, playwrightIsolationScopeRaw, hideReasoningSectionsRaw, privacyModeRaw, openCodeModelTierRaw, lcagentPathRaw, lcagentEnvFileRaw, lcagentRoutePresetRaw, lcagentProviderRaw, lcagentAutoRaw, lcagentAdminWriteRaw, lcagentToolProfileRaw, lcagentContextProfileRaw, lcagentRequestTimeoutRaw, lcagentUtilityProviderRaw, lcagentUtilityModelRaw, lcagentVisionProviderRaw, lcagentVisionModelRaw, lcagentWebSearchBackendRaw, lcagentWebSearchAPIKeyRaw, lcagentWebSearchEngineIDRaw, lcagentWebSearchURLRaw, activeRaw, stuckRaw, intervalRaw, mobileEnabledRaw, mobileInputEnabledRaw, mobileListenAddressRaw string) (EditableSettings, error) {
 	parsedBackend, err := ParseAIBackend(string(aiBackend))
 	if err != nil {
 		return EditableSettings{}, err
@@ -437,6 +439,13 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 			return EditableSettings{}, err
 		}
 	}
+	mobileInputEnabled := Default().MobileInputEnabled
+	if strings.TrimSpace(mobileInputEnabledRaw) != "" {
+		mobileInputEnabled, err = parseOptionalConfigBool(mobileInputEnabledRaw, "mobile_input_enabled")
+		if err != nil {
+			return EditableSettings{}, err
+		}
+	}
 	mobileListenAddress := strings.TrimSpace(mobileListenAddressRaw)
 	if mobileListenAddress == "" {
 		mobileListenAddress = DefaultMobileListenAddress
@@ -495,6 +504,7 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 		ActiveThreshold:          active,
 		StuckThreshold:           stuck,
 		MobileEnabled:            mobileEnabled,
+		MobileInputEnabled:       mobileInputEnabled,
 		MobileListenAddress:      mobileListenAddress,
 	}
 	if err := validateEditableSettings(settings); err != nil {
@@ -903,6 +913,7 @@ func renderEditableSettings(settings EditableSettings) string {
 	lines = append(lines, fmt.Sprintf("privacy_mode = %t", settings.PrivacyMode))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("mobile_enabled = %t", settings.MobileEnabled))
+	lines = append(lines, fmt.Sprintf("mobile_input_enabled = %t", settings.MobileInputEnabled))
 	lines = append(lines, fmt.Sprintf("mobile_listen_address = %s", strconv.Quote(settings.MobileListenAddress)))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("interval = %s", strconv.Quote(formatConfigDuration(settings.ScanInterval))))
