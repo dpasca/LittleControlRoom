@@ -291,11 +291,14 @@ func (s *Server) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.svc.Config()
 	projects = filterProjectSummariesByName(projects, cfg.ExcludeProjectPatterns)
-	writeJSON(w, uisurface.BuildDashboard(projects, categories, uisurface.BuildOptions{
-		Now:            time.Now(),
+	now := time.Now()
+	surface := uisurface.BuildDashboard(projects, categories, uisurface.BuildOptions{
+		Now:            now,
 		StuckThreshold: sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold),
 		HidePrivate:    cfg.PrivacyMode,
-	}))
+	})
+	surface.LiveSessions = s.mobileDashboardLiveSessions(surface.Projects, now)
+	writeJSON(w, surface)
 }
 
 func (s *Server) handleMobileProjectDetail(w http.ResponseWriter, r *http.Request) {

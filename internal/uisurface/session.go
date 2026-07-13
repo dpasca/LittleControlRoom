@@ -19,6 +19,7 @@ type EngineerSessionItem struct {
 	ID                 string    `json:"id"`
 	DisplayID          string    `json:"display_id"`
 	ProjectPath        string    `json:"project_path"`
+	ProjectName        string    `json:"project_name,omitempty"`
 	Provider           string    `json:"provider"`
 	ProviderLabel      string    `json:"provider_label"`
 	Live               bool      `json:"live"`

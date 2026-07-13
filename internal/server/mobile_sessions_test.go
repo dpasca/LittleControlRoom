@@ -27,6 +27,59 @@ func (s fakeLiveSessionSource) TrySessionSnapshot(string) (codexapp.Snapshot, bo
 	return s.snapshot, s.ok
 }
 
+type fakeLiveSessionMap map[string]codexapp.Snapshot
+
+func (s fakeLiveSessionMap) TrySessionSnapshot(projectPath string) (codexapp.Snapshot, bool) {
+	snapshot, ok := s[projectPath]
+	return snapshot, ok
+}
+
+func TestMobileDashboardLiveSessionsPrioritizeAttentionAndSkipClosed(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 13, 7, 0, 0, 0, time.UTC)
+	server := &Server{liveSessions: fakeLiveSessionMap{
+		"/tmp/working": {
+			Provider:       codexapp.ProviderCodex,
+			ProjectPath:    "/tmp/working",
+			ThreadID:       "working",
+			Started:        true,
+			Busy:           true,
+			LastActivityAt: now,
+		},
+		"/tmp/input": {
+			Provider:        codexapp.ProviderClaudeCode,
+			ProjectPath:     "/tmp/input",
+			ThreadID:        "input",
+			Started:         true,
+			LastActivityAt:  now.Add(-time.Minute),
+			PendingApproval: &codexapp.ApprovalRequest{},
+		},
+		"/tmp/closed": {
+			Provider:    codexapp.ProviderOpenCode,
+			ProjectPath: "/tmp/closed",
+			ThreadID:    "closed",
+			Started:     true,
+			Closed:      true,
+			Phase:       codexapp.SessionPhaseClosed,
+		},
+	}}
+
+	items := server.mobileDashboardLiveSessions([]uisurface.ProjectItem{
+		{Path: "/tmp/working", Name: "Working project"},
+		{Path: "/tmp/input", Name: "Input project"},
+		{Path: "/tmp/closed", Name: "Closed project"},
+	}, now)
+	if got, want := len(items), 2; got != want {
+		t.Fatalf("live session count = %d, want %d: %#v", got, want, items)
+	}
+	if items[0].ProjectName != "Input project" || items[0].Status.Label != "Input needed" {
+		t.Fatalf("first live session = %#v, want input-needed channel", items[0])
+	}
+	if items[1].ProjectName != "Working project" || items[1].Status.Label != "Working" {
+		t.Fatalf("second live session = %#v, want working channel", items[1])
+	}
+}
+
 func TestMobileSessionEndpointsMergeLiveAndRecordedSessions(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

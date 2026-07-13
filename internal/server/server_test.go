@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
@@ -59,7 +60,21 @@ func TestHandlerServesMobileAppAndSemanticDashboard(t *testing.T) {
 	cfg.DataDir = dataDir
 	cfg.DBPath = filepath.Join(dataDir, "little-control-room.sqlite")
 	svc := service.New(cfg, st, events.NewBus(), nil)
-	handler := New(svc).Handler(ctx)
+	handler := New(svc).WithLiveSessions(fakeLiveSessionSource{
+		ok: true,
+		snapshot: codexapp.Snapshot{
+			Provider:       codexapp.ProviderCodex,
+			ProjectPath:    projectPath,
+			ThreadID:       "dashboard-live",
+			Started:        true,
+			Busy:           true,
+			Phase:          codexapp.SessionPhaseRunning,
+			LastActivityAt: now,
+			Entries: []codexapp.TranscriptEntry{
+				{Kind: codexapp.TranscriptAgent, Text: "Monitoring the live mobile channel."},
+			},
+		},
+	}).Handler(ctx)
 
 	appRequest := httptest.NewRequest(http.MethodGet, "/", nil)
 	appResponse := httptest.NewRecorder()
@@ -69,6 +84,11 @@ func TestHandlerServesMobileAppAndSemanticDashboard(t *testing.T) {
 	}
 	if !strings.Contains(appResponse.Body.String(), "Little Control Room") {
 		t.Fatalf("GET / did not return the mobile shell: %s", appResponse.Body.String())
+	}
+	for _, id := range []string{"dashboard-live-channels", "transcript-mode", "session-follow-button"} {
+		if !strings.Contains(appResponse.Body.String(), `id="`+id+`"`) {
+			t.Fatalf("GET / missing monitoring control %q", id)
+		}
 	}
 	if appResponse.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("GET / should set a content security policy")
@@ -105,6 +125,15 @@ func TestHandlerServesMobileAppAndSemanticDashboard(t *testing.T) {
 	}
 	if got, want := dashboard.Projects[0].Summary, "Working tree has local changes"; got != want {
 		t.Fatalf("project summary = %q, want %q", got, want)
+	}
+	if got, want := len(dashboard.LiveSessions), 1; got != want {
+		t.Fatalf("dashboard live session count = %d, want %d", got, want)
+	}
+	if got, want := dashboard.LiveSessions[0].ProjectName, "Mobile demo"; got != want {
+		t.Fatalf("dashboard live session project = %q, want %q", got, want)
+	}
+	if !dashboard.LiveSessions[0].Live || dashboard.LiveSessions[0].Status.Label != "Working" {
+		t.Fatalf("dashboard live session = %#v", dashboard.LiveSessions[0])
 	}
 
 	detailRequest := httptest.NewRequest(http.MethodGet, "/api/mobile/projects/detail?path="+projectPath, nil)
@@ -163,7 +192,16 @@ func TestHandlerRejectsPrivateProjectInPrivacyMode(t *testing.T) {
 	cfg.DataDir = dataDir
 	cfg.DBPath = filepath.Join(dataDir, "little-control-room.sqlite")
 	cfg.PrivacyMode = true
-	handler := New(service.New(cfg, st, events.NewBus(), nil)).Handler(ctx)
+	handler := New(service.New(cfg, st, events.NewBus(), nil)).WithLiveSessions(fakeLiveSessionSource{
+		ok: true,
+		snapshot: codexapp.Snapshot{
+			Provider:    codexapp.ProviderCodex,
+			ProjectPath: projectPath,
+			ThreadID:    "private-live",
+			Started:     true,
+			Busy:        true,
+		},
+	}).Handler(ctx)
 
 	dashboardResponse := httptest.NewRecorder()
 	handler.ServeHTTP(dashboardResponse, httptest.NewRequest(http.MethodGet, "/api/mobile/dashboard", nil))
@@ -173,6 +211,9 @@ func TestHandlerRejectsPrivateProjectInPrivacyMode(t *testing.T) {
 	}
 	if len(dashboard.Projects) != 0 {
 		t.Fatalf("private project leaked into dashboard: %#v", dashboard.Projects)
+	}
+	if len(dashboard.LiveSessions) != 0 {
+		t.Fatalf("private live session leaked into dashboard: %#v", dashboard.LiveSessions)
 	}
 
 	detailResponse := httptest.NewRecorder()

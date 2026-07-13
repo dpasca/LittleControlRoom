@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,6 +25,41 @@ func (s *Server) WithLiveSessions(source LiveSessionSource) *Server {
 		s.liveSessions = source
 	}
 	return s
+}
+
+func (s *Server) mobileDashboardLiveSessions(projects []uisurface.ProjectItem, now time.Time) []uisurface.EngineerSessionItem {
+	items := make([]uisurface.EngineerSessionItem, 0)
+	for _, project := range projects {
+		snapshot, ok := s.liveSessionSnapshot(project.Path)
+		if !ok || snapshot.Closed || snapshot.Phase == codexapp.SessionPhaseClosed {
+			continue
+		}
+		item := uisurface.BuildLiveEngineerSession(snapshot, now)
+		item.ProjectName = project.Name
+		items = append(items, item)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		leftRank := mobileLiveSessionMonitorRank(items[i])
+		rightRank := mobileLiveSessionMonitorRank(items[j])
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		return items[i].LastActivityAt.After(items[j].LastActivityAt)
+	})
+	return items
+}
+
+func mobileLiveSessionMonitorRank(item uisurface.EngineerSessionItem) int {
+	switch item.Status.Tone {
+	case uisurface.ToneDanger, uisurface.ToneWarning:
+		return 0
+	case uisurface.TonePositive:
+		return 1
+	case uisurface.ToneInfo:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func (s *Server) handleMobileProjectSessions(w http.ResponseWriter, r *http.Request) {

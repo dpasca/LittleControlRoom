@@ -78,10 +78,11 @@ type DashboardCounts struct {
 }
 
 type DashboardSurface struct {
-	GeneratedAt time.Time       `json:"generated_at"`
-	Counts      DashboardCounts `json:"counts"`
-	Categories  []Category      `json:"categories"`
-	Projects    []ProjectItem   `json:"projects"`
+	GeneratedAt  time.Time             `json:"generated_at"`
+	Counts       DashboardCounts       `json:"counts"`
+	Categories   []Category            `json:"categories"`
+	Projects     []ProjectItem         `json:"projects"`
+	LiveSessions []EngineerSessionItem `json:"live_sessions,omitempty"`
 }
 
 type DetailBlockKind string

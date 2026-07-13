@@ -11,6 +11,11 @@
     projectSessionsPath: "",
     projectSessionSignature: "",
     sessionDetailSignature: "",
+    transcriptMode: window.localStorage.getItem("lcr.mobile.transcript-mode") || "conversation",
+    sessionEntries: [],
+    sessionEmptyMessage: "",
+    sessionLastEntryKey: "",
+    sessionHasNewActivity: false,
     sessionStickToBottom: true,
     sessionRequestID: 0,
     socket: null,
@@ -20,6 +25,7 @@
     authRequired: false,
     authenticated: false,
   };
+  if (!["conversation", "all"].includes(state.transcriptMode)) state.transcriptMode = "conversation";
 
   const elements = {
     body: document.body,
@@ -44,6 +50,9 @@
     operatorSprite: document.getElementById("operator-sprite"),
     operatorLamp: document.getElementById("operator-lamp"),
     operatorCaption: document.getElementById("operator-caption"),
+    dashboardLiveChannels: document.getElementById("dashboard-live-channels"),
+    dashboardLiveCount: document.getElementById("dashboard-live-count"),
+    dashboardLiveList: document.getElementById("dashboard-live-list"),
     attentionCount: document.getElementById("attention-count"),
     activeCount: document.getElementById("active-count"),
     allCount: document.getElementById("all-count"),
@@ -82,6 +91,8 @@
     sessionInstrumentToggle: document.getElementById("session-instrument-toggle"),
     sessionInstrumentSummary: document.getElementById("session-instrument-summary"),
     sessionInstrumentList: document.getElementById("session-instrument-list"),
+    transcriptMode: document.getElementById("transcript-mode"),
+    sessionFollowButton: document.getElementById("session-follow-button"),
     sessionUpdatedLabel: document.getElementById("session-updated-label"),
     sessionTruncated: document.getElementById("session-truncated"),
     sessionTranscript: document.getElementById("session-transcript"),
@@ -249,12 +260,57 @@
   function renderDashboard() {
     renderCategories();
     renderBucketFilter();
+    renderDashboardLiveSessions();
     renderProjects();
     updateOperatorScene();
     const generatedAt = new Date(state.dashboard.generated_at);
     elements.updatedLabel.textContent = Number.isNaN(generatedAt.getTime())
       ? "Updated"
       : `Updated ${formatClockTime(generatedAt)}`;
+  }
+
+  function renderDashboardLiveSessions() {
+    const sessions = state.dashboard?.live_sessions || [];
+    elements.dashboardLiveList.replaceChildren();
+    elements.dashboardLiveChannels.hidden = sessions.length === 0;
+    elements.dashboardLiveCount.textContent = sessions.length === 1 ? "1 live" : `${sessions.length} live`;
+    if (sessions.length === 0) return;
+
+    for (const session of sessions) {
+      const button = createElement("button", "project-session-button dashboard-session-button");
+      button.type = "button";
+      const projectName = session.project_name || projectNameForPath(session.project_path);
+      button.setAttribute("aria-label", `Open live ${session.provider_label} session for ${projectName}`);
+
+      const lamp = createElement("span", `lamp session-rack-lamp ${sessionLampClass(session)}`);
+      lamp.setAttribute("aria-hidden", "true");
+      button.append(lamp);
+
+      const content = createElement("span", "project-session-content");
+      const title = createElement("span", "project-session-title");
+      title.append(createElement("strong", "", projectName));
+      title.append(createElement("span", "live-flag", session.provider_label));
+      content.append(title);
+      content.append(createElement("span", "project-session-summary", session.summary));
+      button.append(content);
+
+      const meta = createElement("span", "project-session-meta");
+      const status = createElement("span", "metal-status", session.status.label);
+      const semanticClass = toneClass(session.status.tone);
+      if (semanticClass) status.classList.add(semanticClass);
+      meta.append(status);
+      meta.append(createElement("span", "project-session-time", session.last_activity_label));
+      button.append(meta);
+      button.append(createElement("span", "project-session-chevron", ">"));
+      button.addEventListener("click", () => void openDashboardSession(session));
+      elements.dashboardLiveList.append(button);
+    }
+  }
+
+  async function openDashboardSession(session) {
+    if (!session?.project_path || !session.id) return;
+    await openProject(session.project_path, false);
+    if (state.selectedPath === session.project_path) await openSession(session.id, true);
   }
 
   function renderCategories() {
@@ -548,6 +604,10 @@
     if (!sessionID || !state.selectedPath) return;
     state.selectedSessionID = sessionID;
     state.sessionDetailSignature = "";
+    state.sessionEntries = [];
+    state.sessionEmptyMessage = "";
+    state.sessionLastEntryKey = "";
+    state.sessionHasNewActivity = false;
     state.sessionStickToBottom = true;
     elements.body.classList.add("detail-open", "session-open");
     elements.sessionView.hidden = false;
@@ -612,6 +672,14 @@
     const transcript = elements.sessionTranscript;
     const wasNearBottom = state.sessionStickToBottom
       || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 72;
+    const entries = detail.entries || [];
+    const nextLastEntryKey = sessionEntryKey(entries.at(-1));
+    const hasNewActivity = !initial
+      && state.sessionLastEntryKey !== ""
+      && nextLastEntryKey !== state.sessionLastEntryKey;
+    state.sessionEntries = entries;
+    state.sessionEmptyMessage = detail.empty_message || "";
+    state.sessionLastEntryKey = nextLastEntryKey;
 
     elements.sessionState.replaceChildren();
     elements.sessionContent.hidden = false;
@@ -631,16 +699,24 @@
     elements.sessionTruncated.hidden = !detail.truncated;
 
     renderSessionInstruments(detail.instruments || [], session);
-    renderSessionTranscript(detail.entries || [], detail.empty_message);
+    renderSessionTranscript();
+    updateTranscriptControls();
 
     document.title = `${session.provider_label} - ${projectNameForPath(session.project_path)} - Little Control Room`;
     if (initial) window.scrollTo({ top: 0, behavior: "auto" });
     if (initial || wasNearBottom) {
       window.requestAnimationFrame(() => {
-        transcript.scrollTop = transcript.scrollHeight;
-        state.sessionStickToBottom = true;
+        scrollSessionToLatest();
       });
+    } else if (hasNewActivity) {
+      state.sessionHasNewActivity = true;
+      updateTranscriptControls();
     }
+  }
+
+  function sessionEntryKey(entry) {
+    if (!entry) return "";
+    return JSON.stringify([entry.item_id, entry.kind, entry.text]);
   }
 
   function renderSessionInstruments(instruments, session) {
@@ -657,15 +733,37 @@
     elements.sessionInstrumentSummary.textContent = [session.model, session.status.label].filter(Boolean).join(" / ") || "Session readout";
   }
 
-  function renderSessionTranscript(entries, emptyMessage) {
+  function renderSessionTranscript() {
+    const entries = state.transcriptMode === "all"
+      ? state.sessionEntries
+      : state.sessionEntries.filter((entry) => ["user", "agent", "plan", "error"].includes(entry.kind));
     elements.sessionTranscript.replaceChildren();
     if (entries.length === 0) {
-      elements.sessionTranscript.append(createElement("p", "transcript-empty", emptyMessage || "No transcript activity"));
+      const emptyMessage = state.transcriptMode === "conversation" && state.sessionEntries.length > 0
+        ? "No conversation entries yet"
+        : state.sessionEmptyMessage || "No transcript activity";
+      elements.sessionTranscript.append(createElement("p", "transcript-empty", emptyMessage));
       return;
     }
     for (const entry of entries) {
       elements.sessionTranscript.append(createTranscriptEntry(entry));
     }
+  }
+
+  function updateTranscriptControls() {
+    for (const button of elements.transcriptMode.querySelectorAll("button")) {
+      const selected = button.dataset.transcriptMode === state.transcriptMode;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    }
+    elements.sessionFollowButton.hidden = !state.sessionHasNewActivity;
+  }
+
+  function scrollSessionToLatest() {
+    elements.sessionTranscript.scrollTop = elements.sessionTranscript.scrollHeight;
+    state.sessionStickToBottom = true;
+    state.sessionHasNewActivity = false;
+    updateTranscriptControls();
   }
 
   function createTranscriptEntry(entry) {
@@ -692,6 +790,10 @@
   function hideSession() {
     state.selectedSessionID = "";
     state.sessionDetailSignature = "";
+    state.sessionEntries = [];
+    state.sessionEmptyMessage = "";
+    state.sessionLastEntryKey = "";
+    state.sessionHasNewActivity = false;
     state.sessionStickToBottom = true;
     state.sessionRequestID++;
     elements.body.classList.remove("session-open");
@@ -699,6 +801,7 @@
     elements.sessionView.setAttribute("aria-hidden", "true");
     elements.sessionContent.hidden = true;
     elements.sessionState.replaceChildren();
+    updateTranscriptControls();
   }
 
   function closeSession(updateHistory) {
@@ -967,16 +1070,32 @@
   elements.sessionInstruments.addEventListener("toggle", () => {
     elements.sessionInstrumentToggle.textContent = elements.sessionInstruments.open ? "-" : "+";
   });
+  elements.transcriptMode.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-transcript-mode]");
+    if (!button || button.dataset.transcriptMode === state.transcriptMode) return;
+    state.transcriptMode = button.dataset.transcriptMode;
+    window.localStorage.setItem("lcr.mobile.transcript-mode", state.transcriptMode);
+    renderSessionTranscript();
+    updateTranscriptControls();
+    window.requestAnimationFrame(() => {
+      if (state.sessionStickToBottom) scrollSessionToLatest();
+    });
+  });
+  elements.sessionFollowButton.addEventListener("click", scrollSessionToLatest);
   elements.sessionTranscript.addEventListener("scroll", () => {
     state.sessionStickToBottom = elements.sessionTranscript.scrollHeight
       - elements.sessionTranscript.scrollTop
       - elements.sessionTranscript.clientHeight < 72;
+    if (state.sessionStickToBottom && state.sessionHasNewActivity) {
+      state.sessionHasNewActivity = false;
+      updateTranscriptControls();
+    }
   }, { passive: true });
   window.addEventListener("popstate", openRouteFromLocation);
   window.addEventListener("resize", () => {
     if (!state.selectedSessionID || !state.sessionStickToBottom) return;
     window.requestAnimationFrame(() => {
-      elements.sessionTranscript.scrollTop = elements.sessionTranscript.scrollHeight;
+      scrollSessionToLatest();
     });
   });
   window.addEventListener("keydown", (event) => {
