@@ -2310,7 +2310,8 @@ func (m Model) renderTodoCopyDialogOverlay(body string, bodyW, bodyH int) string
 	}
 	candidates := m.existingWorktreeCandidates(copyDialog.ProjectPath)
 	if len(candidates) > 0 {
-		runButtons = append(runButtons, detailMutedStyle.Render(fmt.Sprintf("x for %d existing worktree(s)", len(candidates))))
+		runButtons = append(runButtons, renderTodoCopyHotkey("x")+
+			detailValueStyle.Render(fmt.Sprintf(" existing %s (%d)", pluralize("worktree", len(candidates)), len(candidates))))
 	}
 	providerButtons := make([]string, 0, 4)
 	for _, provider := range todoCopyDialogProviders() {
@@ -2470,17 +2471,23 @@ func (m Model) renderTodoExistingWorktreeOverlay(body string, bodyW, bodyH int) 
 func (m Model) renderTodoCopySectionHeader(title, hotkey string) string {
 	line := detailSectionStyle.Render(title)
 	if hotkey != "" {
-		line += "  " + detailMutedStyle.Render("["+hotkey+"]")
+		line += "  " + renderTodoCopyHotkey(hotkey)
 	}
 	return line
 }
 
+func renderTodoCopyHotkey(hotkey string) string {
+	return detailLabelStyle.Render("[" + strings.TrimSpace(hotkey) + "]")
+}
+
 func (m Model) renderTodoCopyModelToggle(enabled bool) string {
-	value := "[ ] change model"
+	state := "off"
+	stateStyle := detailMutedStyle
 	if enabled {
-		value = "[x] change model"
+		state = "on"
+		stateStyle = detailWarningStyle
 	}
-	return detailValueStyle.Render(value + "  (m)")
+	return renderTodoCopyHotkey("m") + detailValueStyle.Render(" change model ") + stateStyle.Render("("+state+")")
 }
 
 func (m Model) renderTodoCopyChooserColumns(width int, runButtons, providerButtons, optionButtons []string) string {

@@ -109,8 +109,8 @@ func TestTodoDialogCopyDialogIncludesClaudeAndDefaultsToClaudeProvider(t *testin
 	if strings.Contains(rendered, "Options  [m]") {
 		t.Fatalf("rendered copy dialog = %q, should not show options hotkey badge", rendered)
 	}
-	if !strings.Contains(rendered, "change model") {
-		t.Fatalf("rendered copy dialog = %q, want model toggle row", rendered)
+	if !strings.Contains(rendered, "[m] change model (off)") {
+		t.Fatalf("rendered copy dialog = %q, want bracketed model hotkey row", rendered)
 	}
 	lines := strings.Split(rendered, "\n")
 	foundEnterLine := false
@@ -1768,9 +1768,13 @@ func TestTodoDialogCanStartSelectedTodoInExistingWorktree(t *testing.T) {
 	if got.todoCopyDialog == nil || got.todoCopyDialog.Provider != codexapp.ProviderCodex {
 		t.Fatalf("todoCopyDialog = %#v, want Codex selected", got.todoCopyDialog)
 	}
-	rendered := ansi.Strip(got.renderTodoCopyDialogOverlay("", 100, 24))
-	if !strings.Contains(rendered, "x for 1 existing worktree(s)") {
-		t.Fatalf("rendered copy dialog = %q, want existing-worktree hint", rendered)
+	styled := got.renderTodoCopyDialogOverlay("", 100, 24)
+	rendered := ansi.Strip(styled)
+	if !strings.Contains(rendered, "[x] existing worktree (1)") {
+		t.Fatalf("rendered copy dialog = %q, want bracketed existing-worktree hint", rendered)
+	}
+	if strings.Contains(rendered, "worktree(s)") {
+		t.Fatalf("rendered copy dialog = %q, should use natural singular/plural wording", rendered)
 	}
 
 	updated, cmd := got.updateTodoCopyDialogMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
@@ -1807,6 +1811,25 @@ func TestTodoDialogCanStartSelectedTodoInExistingWorktree(t *testing.T) {
 	}
 	if requests[0].ProjectPath != worktreePath || requests[0].Provider != codexapp.ProviderCodex {
 		t.Fatalf("launch request = %#v, want Codex launch in %q", requests[0], worktreePath)
+	}
+}
+
+func TestRenderTodoCopyHotkeyUsesBracketedColor(t *testing.T) {
+	prevProfile := lipgloss.ColorProfile()
+	prevDarkBackground := lipgloss.HasDarkBackground()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	lipgloss.SetHasDarkBackground(true)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(prevProfile)
+		lipgloss.SetHasDarkBackground(prevDarkBackground)
+	})
+
+	rendered := renderTodoCopyHotkey("x")
+	if got := ansi.Strip(rendered); got != "[x]" {
+		t.Fatalf("renderTodoCopyHotkey() text = %q, want %q", got, "[x]")
+	}
+	if rendered == ansi.Strip(rendered) {
+		t.Fatalf("renderTodoCopyHotkey() should apply ANSI styling: %q", rendered)
 	}
 }
 
