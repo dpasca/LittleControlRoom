@@ -62,6 +62,10 @@ Little Control Room is not published through Homebrew, apt, Snap, Flatpak, Nix, 
 
 </details>
 
+Official GitHub release builds check for a newer stable release when the TUI starts, at most once every 24 hours. A new version appears as bright `/update <version>` text in the top bar; run `/update` to review it. The updater does not download or install anything until you explicitly highlight `Update & restart` and confirm. It then verifies GitHub's SHA-256 asset digests and the published checksum file, also verifies the Apple Developer signatures on macOS, replaces `lcroom` and `lcagent` together with rollback protection, saves active engineer turns, and restarts the TUI using the new binary.
+
+Source/development builds do not contact GitHub for updates. Build metadata also keeps the updater out of package-manager-owned installations when those distributions arrive. Set `LCR_DISABLE_UPDATE_CHECKS=true` to disable the once-daily automatic check in an official GitHub build; `/update` remains available for an explicit manual check.
+
 <details>
 <summary>Build from source</summary>
 
@@ -163,6 +167,7 @@ Main workflow:
 - `/codex [prompt]`, `/opencode [prompt]`, `/claude [prompt]`, `/lcagent [prompt]`: Resume the latest session for that provider, or start one.
 - `/codex-new [prompt]`, `/opencode-new [prompt]`, `/claude-new [prompt]`, `/lcagent-new [prompt]`: Start a fresh embedded session.
 - `/refresh`: Rescan projects and retry failed assessments.
+- `/update`: Check for a newer stable GitHub release and, after explicit confirmation, verify, install, and restart into it.
 
 Repo and runtime actions:
 
@@ -279,6 +284,8 @@ Type `/setup` from the TUI or edit `~/.little-control-room/config.toml` to chang
 ## Release Engineering
 
 macOS release binaries are signed and notarized by the release workflow. A tagged release must have the Apple Developer credentials configured; otherwise the release fails instead of publishing unsigned macOS artifacts. The installer verifies published signatures locally; notarization acceptance is enforced during the GitHub release job.
+
+GoReleaser marks official archives with `distribution=github`; that build metadata is what enables the in-app updater. Future package-manager builds should set their own distribution value so update ownership remains with the package manager. Release archives must continue to contain both `lcroom` and `lcagent`, `checksums.txt`, and GitHub-provided SHA-256 asset digests because the updater refuses incomplete or unverifiable releases.
 
 Required GitHub secrets:
 

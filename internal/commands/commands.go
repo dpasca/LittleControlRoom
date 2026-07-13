@@ -17,6 +17,7 @@ const (
 	KindPerf            Kind = "perf"
 	KindErrors          Kind = "errors"
 	KindRefresh         Kind = "refresh"
+	KindUpdate          Kind = "update"
 	KindSort            Kind = "sort"
 	KindNonAIFolders    Kind = "non-ai-folders"
 	KindTab             Kind = "tab"
@@ -147,6 +148,7 @@ var specs = []Spec{
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
+	{Name: "update", Usage: "/update", Summary: "Check for and install a newer GitHub release"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
 	{Name: "tab", Usage: "/tab [main|archived|toggle|category]", Summary: "Switch the Main, custom category, or Archived project-list tab"},
@@ -427,6 +429,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /refresh")
 		}
 		return Invocation{Kind: KindRefresh, Canonical: "/refresh"}, nil
+	case "update":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /update")
+		}
+		return Invocation{Kind: KindUpdate, Canonical: "/update"}, nil
 	case "sort":
 		mode, err := parseSortMode(rawArgs)
 		if err != nil {

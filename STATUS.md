@@ -25,6 +25,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 - Managed runtime commands can launch, stop, inspect, and follow project-local processes from the TUI.
 - The TUI hosts a monitor-first mobile web surface in-process, with persisted auto-start, listen-address, and default-off live-session message settings, a loopback default, a one-run CLI override, and a dedicated access panel that reports detected LAN URLs, pairing, and phone-control state without duplicating setup controls. Non-loopback clients pair through a short startup code and receive a persistent signed device cookie; the surface shares service, store, privacy, and UI-neutral semantic models, overlays nonblocking live engineer snapshots, falls back to recorded artifact transcripts, and can send, steer, or queue text only into the expected current live session when explicitly enabled.
 - Screenshot and export tooling exists for deterministic UI captures.
+- Official GitHub release builds use a UI-neutral, once-daily stable-release checker. The TUI surfaces an update badge and requires explicit approval before verified staging, rollback-protected replacement of both shipped binaries, graceful engineer-turn journaling, and an in-process restart; source and package-manager-owned builds do not self-update.
 
 ## Current Priorities
 

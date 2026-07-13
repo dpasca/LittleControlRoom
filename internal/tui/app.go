@@ -13,6 +13,7 @@ import (
 	bossui "lcroom/internal/boss"
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/buildinfo"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/events"
@@ -20,6 +21,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/selfupdate"
 	"lcroom/internal/service"
 	"lcroom/internal/sessionclassify"
 	"os"
@@ -56,6 +58,15 @@ type Model struct {
 	status               string
 	err                  error
 	gracefulQuitInFlight bool
+	relaunchAfterUpdate  bool
+	installedUpdate      string
+
+	selfUpdater               selfUpdateManager
+	selfUpdateCheckInFlight   bool
+	selfUpdateInstallInFlight bool
+	selfUpdateStatus          selfupdate.CheckResult
+	availableSelfUpdate       *selfupdate.Release
+	selfUpdateDialog          *selfUpdateDialogState
 
 	mobileServerStatus MobileServerStatus
 	mobileDialogOpen   bool
@@ -680,6 +691,8 @@ func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager
 		unsub:                         unsub,
 		loading:                       true,
 		status:                        initialProjectsStatus,
+		selfUpdater:                   selfupdate.New(selfupdate.Options{DataDir: initialConfig.DataDir, CurrentVersion: buildinfo.Version(), Distribution: buildinfo.Distribution()}),
+		selfUpdateCheckInFlight:       true,
 		commandInput:                  commandInput,
 		codexInput:                    codexInput,
 		codexPanelFocus:               embeddedCodexFocusMain,
@@ -1028,6 +1041,7 @@ func (m Model) Init() tea.Cmd {
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
 		spinnerTickCmd(),
+		m.checkSelfUpdateCmd(false),
 	}
 	if setupCmd := m.startupSetupSnapshotCmd(); setupCmd != nil {
 		cmds = append(cmds, setupCmd)
@@ -1260,6 +1274,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case gracefulQuitFinishedMsg:
 		return m.applyGracefulQuitFinishedMsg(msg)
+	case selfUpdateCheckMsg:
+		return m.applySelfUpdateCheckMsg(msg)
+	case selfUpdateInstallMsg:
+		return m.applySelfUpdateInstallMsg(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -1336,6 +1354,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.helpChatMode {
 			return m.updateHelpChatModeKey(msg)
+		}
+		if m.selfUpdateDialog != nil {
+			return m.updateSelfUpdateDialogMode(msg)
 		}
 		if m.bossSetupPrompt != nil {
 			return m.updateBossSetupPromptMode(msg)

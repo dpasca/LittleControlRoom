@@ -15,6 +15,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/rivo/uniseg v0.4.7
+	golang.org/x/mod v0.29.0
 	modernc.org/sqlite v1.46.1
 	mvdan.cc/sh/v3 v3.13.1
 )

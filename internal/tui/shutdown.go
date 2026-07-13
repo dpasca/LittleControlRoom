@@ -20,7 +20,11 @@ func (m Model) beginGracefulQuit() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.gracefulQuitInFlight = true
-	m.status = "Saving in-flight engineer turns before quitting..."
+	if m.relaunchAfterUpdate {
+		m.status = "Update installed; saving in-flight engineer turns before restarting..."
+	} else {
+		m.status = "Saving in-flight engineer turns before quitting..."
+	}
 	manager := m.codexManager
 	runtimeManager := m.runtimeManager
 	dataDir := m.appDataDir()

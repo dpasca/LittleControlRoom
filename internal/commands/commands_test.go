@@ -63,6 +63,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "update",
+			raw:  "/update",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindUpdate || inv.Canonical != "/update" {
+					t.Fatalf("update invocation = %#v, want canonical /update", inv)
+				}
+			},
+		},
+		{
 			name: "pull",
 			raw:  "/pull",
 			check: func(t *testing.T, inv Invocation) {

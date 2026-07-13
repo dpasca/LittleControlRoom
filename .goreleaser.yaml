@@ -20,7 +20,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X lcroom/internal/buildinfo.version={{.Version}} -X lcroom/internal/buildinfo.commit={{.Commit}} -X lcroom/internal/buildinfo.date={{.Date}}
+      - -s -w -X lcroom/internal/buildinfo.version={{.Version}} -X lcroom/internal/buildinfo.commit={{.Commit}} -X lcroom/internal/buildinfo.date={{.Date}} -X lcroom/internal/buildinfo.distribution=github
   - id: lcagent
     main: ./cmd/lcagent
     binary: lcagent
@@ -33,7 +33,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X lcroom/internal/buildinfo.version={{.Version}} -X lcroom/internal/buildinfo.commit={{.Commit}} -X lcroom/internal/buildinfo.date={{.Date}}
+      - -s -w -X lcroom/internal/buildinfo.version={{.Version}} -X lcroom/internal/buildinfo.commit={{.Commit}} -X lcroom/internal/buildinfo.date={{.Date}} -X lcroom/internal/buildinfo.distribution=github
 
 archives:
   - id: binaries

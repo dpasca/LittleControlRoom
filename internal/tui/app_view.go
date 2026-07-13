@@ -365,6 +365,9 @@ func (m Model) View() string {
 	if m.helpChatMode {
 		body = m.renderHelpChatOverlay(body, layout.width, layout.height)
 	}
+	if m.selfUpdateDialog != nil {
+		body = m.renderSelfUpdateDialogOverlay(body, layout.width, layout.height)
+	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
 }
@@ -509,7 +512,7 @@ func (m Model) renderTopStatusLine(width int) string {
 	if len(statusParts) > 0 {
 		segments = append(segments, joinFooterSegments(statusParts...))
 	}
-	rightSegment := joinFooterSegments(m.renderMobileTopStatusIndicator(width), m.renderTopCPUUsageSegment())
+	rightSegment := joinFooterSegments(m.renderSelfUpdateTopStatusIndicator(), m.renderMobileTopStatusIndicator(width), m.renderTopCPUUsageSegment())
 	if prioritizeTopStatus {
 		rightSegment = ""
 	}

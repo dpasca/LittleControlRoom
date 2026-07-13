@@ -75,6 +75,7 @@ var (
 	topStatusDangerPulseBadgeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("88")).Bold(true).Padding(0, 1)
 	topStatusConflictBadgeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("92")).Bold(true).Padding(0, 1)
 	topStatusSetupBadgeStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
+	topStatusUpdateBadgeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	projectListActiveTabStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true).Padding(0, 1)
 	projectListInactiveTabStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Background(lipgloss.Color("238")).Padding(0, 1)
 	projectListTabHotkeyStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
@@ -460,6 +461,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			}),
 			m.requestScanCmd(true),
 		)
+	case commands.KindUpdate:
+		return m.openSelfUpdateDialog()
 	case commands.KindSort:
 		return m, m.setSortMode(projectSortMode(inv.Sort))
 	case commands.KindNonAIFolders:

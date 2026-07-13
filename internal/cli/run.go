@@ -163,7 +163,11 @@ func Run(programName string, args []string) int {
 					return 1
 				}
 			}
-			defer runtimeLease.Close()
+			defer func() {
+				if runtimeLease != nil {
+					_ = runtimeLease.Close()
+				}
+			}()
 		}
 	}
 
@@ -172,7 +176,11 @@ func Run(programName string, args []string) int {
 		fmt.Fprintf(os.Stderr, "open store: %v\n", err)
 		return 1
 	}
-	defer st.Close()
+	defer func() {
+		if st != nil {
+			_ = st.Close()
+		}
+	}()
 
 	bus := events.NewBus()
 	detectorList := []detectors.Detector{
@@ -197,7 +205,24 @@ func Run(programName string, args []string) int {
 	case "screenshots":
 		return runScreenshots(ctx, svc, args[1:])
 	case "tui":
-		return runTUI(ctx, svc, serveAddr, mobileEnabled)
+		code, relaunch := runTUI(ctx, svc, serveAddr, mobileEnabled)
+		if code != 0 || !relaunch {
+			return code
+		}
+		cancel()
+		if err := st.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "close store before update restart: %v\n", err)
+			return 1
+		}
+		st = nil
+		if runtimeLease != nil {
+			if err := runtimeLease.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "release runtime lease before update restart: %v\n", err)
+				return 1
+			}
+			runtimeLease = nil
+		}
+		return execUpdatedProcess(programName, args)
 	case "serve":
 		return runServe(ctx, svc, serveAddr)
 	default:
@@ -959,7 +984,7 @@ func resolveMobileRuntimeOptions(cfg config.AppConfig, listenOverride string) (s
 	return listenAddress, enabled, nil
 }
 
-func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool) int {
+func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool) (int, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
 	codexManager := codexapp.NewManager()
 	var mobileServer *server.RunningServer
@@ -991,8 +1016,32 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	m.SetMobileServerStatus(mobileStatus)
 	m.EnableUIStallWatchdog()
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "tui failed: %v\n", err)
+		return 1, false
+	}
+	relaunch := false
+	switch final := finalModel.(type) {
+	case tui.Model:
+		_, relaunch = final.RelaunchAfterUpdate()
+	case *tui.Model:
+		if final != nil {
+			_, relaunch = final.RelaunchAfterUpdate()
+		}
+	}
+	return 0, relaunch
+}
+
+func execUpdatedProcess(programName string, args []string) int {
+	executable, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve updated executable for restart: %v\n", err)
+		return 1
+	}
+	argv := append([]string{programName}, args...)
+	if err := syscall.Exec(executable, argv, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "restart updated Little Control Room: %v\n", err)
 		return 1
 	}
 	return 0
