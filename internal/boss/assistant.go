@@ -833,20 +833,16 @@ func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantReques
 	if review.AllowTodoAdd {
 		return action, false, response, nil
 	}
-	if control.CapabilityName(strings.TrimSpace(review.ReplacementControlCapability)) != control.CapabilityEngineerSendPrompt {
+	if control.CapabilityName(strings.TrimSpace(review.ReplacementControlCapability)) != control.CapabilityTodoCreateWorktreeAndStartEngineer {
 		return action, false, response, nil
 	}
 	replacement := action
-	replacement.ControlCapability = string(control.CapabilityEngineerSendPrompt)
+	replacement.ControlCapability = string(control.CapabilityTodoCreateWorktreeAndStartEngineer)
 	replacement.EngineerProvider = firstNonEmpty(replacement.EngineerProvider, string(control.ProviderAuto))
-	replacement.SessionMode = string(control.SessionModeNew)
-	if mode := control.NormalizeSessionMode(review.ReplacementSessionMode); mode != "" {
-		replacement.SessionMode = string(mode)
-	}
+	replacement.SessionMode = ""
 	replacement.Prompt = firstNonEmpty(replacement.Prompt, replacement.TodoText)
 	replacement.TodoID = 0
 	replacement.TodoLabel = ""
-	replacement.TodoText = ""
 	replacement.TodoEvidence = ""
 	if reason := strings.TrimSpace(review.Reason); reason != "" {
 		replacement.Reason = "TODO policy review: " + reason

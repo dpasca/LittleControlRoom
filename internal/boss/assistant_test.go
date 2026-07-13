@@ -1195,11 +1195,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"A git.prepare_commit control proposal opens exactly one loaded project preview",
 		"do not silently pick one and drop the rest",
 		"Do not use engineer.send_prompt merely to create a git commit",
-		"Project implementation requests are not TODO requests",
-		"open idle Codex or OpenCode engineer session",
+		"todo.create_worktree_and_start_engineer",
+		"idle engineer turn does not mean its existing task is finished",
 		"Use todo.add only when the user explicitly asks",
-		"Default project handoffs to session_mode=new",
-		"It is fine to start a fresh Codex/OpenCode handoff",
+		"Use tracked worktrees for unrelated new work",
 		"Use session_mode=resume_or_new only when",
 		"operator note meant to steer that work",
 		"The host will steer the active Codex turn when possible",
@@ -1623,7 +1622,7 @@ func TestAssistantPlannerUserTextRequiresFreshDeployEvidence(t *testing.T) {
 		for _, want := range []string{
 			"do not answer from summaries",
 			"current-diff evidence",
-			`control_capability="engineer.send_prompt"`,
+			`control_capability="todo.create_worktree_and_start_engineer"`,
 		} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("planner user text missing %q:\n%s", want, got)
@@ -2000,9 +1999,8 @@ func TestAssistantTodoAddPolicyConvertsImplicitBacklogToFreshEngineerHandoff(t *
 			{OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass}), Usage: model.LLMUsage{TotalTokens: 3}},
 			{OutputText: encodedTodoAddPolicyReview(t, bossTodoAddPolicyReview{
 				AllowTodoAdd:                 false,
-				ReplacementControlCapability: string(control.CapabilityEngineerSendPrompt),
-				ReplacementSessionMode:       string(control.SessionModeNew),
-				Reason:                       "The user asked for project work now; an open idle engineer session is not a backlog request.",
+				ReplacementControlCapability: string(control.CapabilityTodoCreateWorktreeAndStartEngineer),
+				Reason:                       "The user asked for project work now; it should use a tracked worktree.",
 			}), Usage: model.LLMUsage{TotalTokens: 5}},
 		},
 	}
@@ -2036,23 +2034,22 @@ func TestAssistantTodoAddPolicyConvertsImplicitBacklogToFreshEngineerHandoff(t *
 		t.Fatalf("Reply() error = %v", err)
 	}
 	if resp.ControlInvocation == nil {
-		t.Fatalf("ControlInvocation = nil, want engineer.send_prompt proposal")
+		t.Fatalf("ControlInvocation = nil, want tracked worktree proposal")
 	}
-	if resp.ControlInvocation.Capability != control.CapabilityEngineerSendPrompt {
-		t.Fatalf("capability = %q, want engineer.send_prompt", resp.ControlInvocation.Capability)
+	if resp.ControlInvocation.Capability != control.CapabilityTodoCreateWorktreeAndStartEngineer {
+		t.Fatalf("capability = %q, want tracked worktree launch", resp.ControlInvocation.Capability)
 	}
-	var input control.EngineerSendPromptInput
+	var input control.TodoCreateWorktreeAndStartEngineerInput
 	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
 		t.Fatalf("decode invocation args: %v", err)
 	}
-	if input.SessionMode != control.SessionModeNew ||
-		input.ProjectPath != "/tmp/lcr" ||
-		input.TodoText != "" ||
+	if input.ProjectPath != "/tmp/lcr" ||
+		input.TodoText == "" ||
 		!strings.Contains(input.Prompt, "project change requests start a fresh engineer handoff") {
 		t.Fatalf("invocation args = %#v", input)
 	}
-	if !strings.Contains(resp.Content, "start a fresh session") {
-		t.Fatalf("proposal content = %q, want fresh-session confirmation", resp.Content)
+	if !strings.Contains(resp.Content, "dedicated worktree") || !strings.Contains(resp.Content, "q adds the TODO") {
+		t.Fatalf("proposal content = %q, want tracked-worktree confirmation", resp.Content)
 	}
 	if len(router.reqs) != 2 {
 		t.Fatalf("router requests = %d, want route plus todo policy review", len(router.reqs))

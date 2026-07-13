@@ -10,16 +10,17 @@ import (
 type CapabilityName string
 
 const (
-	CapabilityEngineerSendPrompt CapabilityName = "engineer.send_prompt"
-	CapabilityAgentTaskCreate    CapabilityName = "agent_task.create"
-	CapabilityAgentTaskContinue  CapabilityName = "agent_task.continue"
-	CapabilityAgentTaskClose     CapabilityName = "agent_task.close"
-	CapabilityProjectArchive     CapabilityName = "project.set_archive_state"
-	CapabilityScratchTaskArchive CapabilityName = "scratch_task.archive"
-	CapabilityTodoAdd            CapabilityName = "todo.add"
-	CapabilityTodoComplete       CapabilityName = "todo.complete"
-	CapabilitySettingsUpdate     CapabilityName = "settings.update"
-	CapabilityGitPrepareCommit   CapabilityName = "git.prepare_commit"
+	CapabilityEngineerSendPrompt                 CapabilityName = "engineer.send_prompt"
+	CapabilityAgentTaskCreate                    CapabilityName = "agent_task.create"
+	CapabilityAgentTaskContinue                  CapabilityName = "agent_task.continue"
+	CapabilityAgentTaskClose                     CapabilityName = "agent_task.close"
+	CapabilityProjectArchive                     CapabilityName = "project.set_archive_state"
+	CapabilityScratchTaskArchive                 CapabilityName = "scratch_task.archive"
+	CapabilityTodoAdd                            CapabilityName = "todo.add"
+	CapabilityTodoCreateWorktreeAndStartEngineer CapabilityName = "todo.create_worktree_and_start_engineer"
+	CapabilityTodoComplete                       CapabilityName = "todo.complete"
+	CapabilitySettingsUpdate                     CapabilityName = "settings.update"
+	CapabilityGitPrepareCommit                   CapabilityName = "git.prepare_commit"
 )
 
 func CapabilityNameValues() []CapabilityName {
@@ -31,6 +32,7 @@ func CapabilityNameValues() []CapabilityName {
 		CapabilityProjectArchive,
 		CapabilityScratchTaskArchive,
 		CapabilityTodoAdd,
+		CapabilityTodoCreateWorktreeAndStartEngineer,
 		CapabilityTodoComplete,
 		CapabilitySettingsUpdate,
 		CapabilityGitPrepareCommit,
@@ -236,6 +238,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateScratchTaskArchiveInvocation(inv)
 	case CapabilityTodoAdd:
 		return validateTodoAddInvocation(inv)
+	case CapabilityTodoCreateWorktreeAndStartEngineer:
+		return validateTodoCreateWorktreeAndStartEngineerInvocation(inv)
 	case CapabilityTodoComplete:
 		return validateTodoCompleteInvocation(inv)
 	case CapabilitySettingsUpdate:

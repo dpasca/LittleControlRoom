@@ -1220,6 +1220,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
 		return m.executeBossControlInvocation(msg)
 	}
+	if msg, ok := msg.(bossTodoWorktreeTodoCreatedMsg); ok {
+		return m.applyBossTodoWorktreeTodoCreated(msg)
+	}
+	if msg, ok := msg.(bossTodoAddedMsg); ok {
+		return m.applyBossTodoAdded(msg)
+	}
+	if msg, ok := msg.(bossTodoWorktreePreparedMsg); ok {
+		return m.applyBossTodoWorktreePrepared(msg)
+	}
 	if msg, ok := msg.(bossui.GoalRunConfirmedMsg); ok {
 		return m.executeBossGoalRun(msg)
 	}

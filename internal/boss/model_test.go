@@ -714,6 +714,50 @@ func TestEmbeddedHelpUsesBossControlConfirmationFlow(t *testing.T) {
 	}
 }
 
+func TestEmbeddedHelpTrackedWorktreeConfirmationCanChooseTodoOnly(t *testing.T) {
+	t.Parallel()
+
+	args, err := json.Marshal(control.TodoCreateWorktreeAndStartEngineerInput{
+		ProjectPath: "/tmp/alpha",
+		ProjectName: "Alpha",
+		TodoText:    "Add durable engineer feedback.",
+		Prompt:      "Implement durable engineer feedback.",
+		Provider:    control.ProviderCodex,
+	})
+	if err != nil {
+		t.Fatalf("marshal invocation: %v", err)
+	}
+	inv := control.Invocation{Capability: control.CapabilityTodoCreateWorktreeAndStartEngineer, Args: args}
+	m := NewEmbeddedHelp(context.Background(), nil)
+	updated, _ := m.Update(AssistantReplyMsg{response: AssistantResponse{Content: "Start tracked work?", ControlInvocation: &inv}})
+	got := updated.(Model)
+	if !got.TodoOnlyConfirmationActive() {
+		t.Fatalf("tracked worktree confirmation should expose TODO-only choice")
+	}
+	rendered := ansi.Strip(got.renderControlConfirmationDialog(100, 32))
+	for _, want := range []string{"Tracked Engineer Task", "dedicated worktree", "start in worktree", "TODO only"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("tracked worktree confirmation missing %q:\n%s", want, rendered)
+		}
+	}
+	updated, cmd := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got = updated.(Model)
+	if got.pendingControl != nil || cmd == nil {
+		t.Fatalf("q should confirm a TODO-only action, pending=%#v cmd=%v", got.pendingControl, cmd)
+	}
+	confirmed, ok := cmd().(ControlInvocationConfirmedMsg)
+	if !ok || confirmed.Invocation.Capability != control.CapabilityTodoAdd {
+		t.Fatalf("q confirmation = %#v, want todo.add", confirmed)
+	}
+	var input control.TodoAddInput
+	if err := json.Unmarshal(confirmed.Invocation.Args, &input); err != nil {
+		t.Fatalf("decode TODO-only input: %v", err)
+	}
+	if input.ProjectPath != "/tmp/alpha" || input.Text != "Add durable engineer feedback." {
+		t.Fatalf("TODO-only input = %#v", input)
+	}
+}
+
 func TestEmbeddedHelpInputUsesSimpleCodexStyle(t *testing.T) {
 	t.Parallel()
 
@@ -1282,6 +1326,49 @@ func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
 	flowRendered := ansi.Strip(got.renderTranscript(120))
 	if strings.Contains(flowRendered, "Work on Retire projects-control-center skill is underway") {
 		t.Fatalf("flow tab should not include control acknowledgements:\n%s", flowRendered)
+	}
+}
+
+func TestControlResultEngineerLaunchReceiptPersistsAcrossReload(t *testing.T) {
+	t.Parallel()
+
+	svc := newBossSessionTestService(t)
+	m := NewEmbeddedHelp(context.Background(), svc)
+	loadedMsg := m.loadLatestBossSessionCmd()().(bossSessionLoadedMsg)
+	updated, _ := m.Update(loadedMsg)
+	m = updated.(Model)
+	if m.sessionID == "" {
+		t.Fatalf("session id is empty")
+	}
+
+	const receipt = "Codex AI engineer launched for Alpha TODO #42 in worktree alpha--help-feedback."
+	updated, cmd := m.Update(ControlInvocationResultMsg{Status: receipt, AnnounceInChat: true})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("announced control result should return persistence command")
+	}
+	runBossTestCmd(cmd)
+
+	_, messages, err := got.sessionStore.loadSession(context.Background(), got.sessionID)
+	if err != nil {
+		t.Fatalf("loadSession() error = %v", err)
+	}
+	if len(messages) != 1 || messages[0].Content != receipt || messages[0].Kind != ChatMessageKindChat {
+		t.Fatalf("reloaded messages = %#v, want durable engineer receipt", messages)
+	}
+}
+
+func runBossTestCmd(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return
+	}
+	for _, nested := range batch {
+		runBossTestCmd(nested)
 	}
 }
 

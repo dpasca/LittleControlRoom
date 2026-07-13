@@ -124,6 +124,21 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			ProjectName: strings.TrimSpace(action.ProjectName),
 			Text:        text,
 		}
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		todoText := strings.TrimSpace(action.TodoText)
+		prompt := bossLosslessControlPrompt(action)
+		if todoText == "" {
+			todoText = strings.TrimSpace(action.Prompt)
+		}
+		payload = control.TodoCreateWorktreeAndStartEngineerInput{
+			RequestID:   strings.TrimSpace(action.RequestID),
+			ProjectPath: strings.TrimSpace(action.ProjectPath),
+			ProjectName: strings.TrimSpace(action.ProjectName),
+			TodoText:    todoText,
+			Prompt:      prompt,
+			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
+			Reveal:      action.Reveal,
+		}
 	case control.CapabilityTodoComplete:
 		payload = control.TodoCompleteInput{
 			RequestID:   strings.TrimSpace(action.RequestID),
@@ -372,6 +387,25 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			"Enter confirms; Esc cancels.",
 		}
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		var input control.TodoCreateWorktreeAndStartEngineerInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		provider := input.Provider.Label()
+		if input.Provider == control.ProviderAuto {
+			provider = "the preferred engineer"
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath, "the selected project")
+		lines := []string{
+			fmt.Sprintf("Start tracked work for %s with %s?", target, provider),
+			"",
+			strings.TrimSpace(input.TodoText),
+			"",
+			"I will create a project TODO, prepare a dedicated worktree, and launch a fresh engineer session there.",
+			"Enter starts in a worktree; q adds the TODO without starting; Esc cancels.",
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityTodoComplete:
 		var input control.TodoCompleteInput
 		if err := json.Unmarshal(inv.Args, &input); err != nil {
@@ -537,7 +571,7 @@ func copyControlInvocation(inv control.Invocation) control.Invocation {
 
 func controlProposalIsEngineerHandoff(inv control.Invocation) bool {
 	switch inv.Capability {
-	case control.CapabilityEngineerSendPrompt, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+	case control.CapabilityEngineerSendPrompt, control.CapabilityTodoCreateWorktreeAndStartEngineer, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return true
 	default:
 		return false
@@ -548,6 +582,8 @@ func controlProposalStatus(inv control.Invocation) string {
 	switch inv.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		return "Ready to send to engineer with Enter, or Esc to cancel"
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		return "Ready to start tracked work with Enter, add TODO only with q, or cancel with Esc"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return "Ready to run engineer task with Enter, or Esc to cancel"
 	case control.CapabilityGitPrepareCommit:
@@ -559,6 +595,9 @@ func controlProposalStatus(inv control.Invocation) string {
 
 func controlProposalFooterHint(inv control.Invocation) string {
 	if controlProposalIsEngineerHandoff(inv) {
+		if inv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+			return "Enter starts in worktree | q adds TODO only | Esc cancels"
+		}
 		return "Enter sends to engineer | Esc cancels"
 	}
 	if inv.Capability == control.CapabilityGitPrepareCommit {
@@ -571,6 +610,8 @@ func controlProposalSubmittingStatus(inv control.Invocation) string {
 	switch inv.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		return "Sending request to engineer session..."
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		return "Creating tracked TODO and dedicated worktree..."
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return "Sending request to engineer task..."
 	case control.CapabilityGitPrepareCommit:
@@ -582,6 +623,10 @@ func controlProposalSubmittingStatus(inv control.Invocation) string {
 
 func (m Model) ControlConfirmationActive() bool {
 	return m.pendingControl != nil || m.pendingGoal != nil
+}
+
+func (m Model) TodoOnlyConfirmationActive() bool {
+	return m.pendingControl != nil && m.pendingControl.Invocation.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer
 }
 
 func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -607,6 +652,42 @@ func (m Model) updateControlConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.appendDeskEvent("control", "cancel", "The pending control action was canceled.")
 		m.syncLayout(false)
 		return m, nil
+	case "q":
+		if m.pendingControl.Invocation.Capability != control.CapabilityTodoCreateWorktreeAndStartEngineer {
+			m.status = controlProposalStatus(m.pendingControl.Invocation)
+			return m, nil
+		}
+		if !m.embedded {
+			m.status = "Control actions need the main TUI host"
+			return m, nil
+		}
+		var input control.TodoCreateWorktreeAndStartEngineerInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err != nil {
+			m.status = "Could not prepare TODO-only action: " + err.Error()
+			return m, nil
+		}
+		args, err := json.Marshal(control.TodoAddInput{
+			RequestID:   strings.TrimSpace(input.RequestID),
+			ProjectPath: strings.TrimSpace(input.ProjectPath),
+			ProjectName: strings.TrimSpace(input.ProjectName),
+			Text:        strings.TrimSpace(input.TodoText),
+		})
+		if err != nil {
+			m.status = "Could not prepare TODO-only action: " + err.Error()
+			return m, nil
+		}
+		inv, err := control.ValidateInvocation(control.Invocation{
+			RequestID:  strings.TrimSpace(input.RequestID),
+			Capability: control.CapabilityTodoAdd,
+			Args:       args,
+		})
+		if err != nil {
+			m.status = "Could not prepare TODO-only action: " + err.Error()
+			return m, nil
+		}
+		m.pendingControl = nil
+		m.status = "Adding project TODO without starting work..."
+		return m, func() tea.Msg { return ControlInvocationConfirmedMsg{Invocation: inv} }
 	default:
 		m.status = controlProposalStatus(m.pendingControl.Invocation)
 		return m, nil

@@ -323,7 +323,7 @@ Likely next actions:
 - `project.add_todo`
 - `todo.mark_done`
 - `todo.create_worktree`
-- `todo.create_worktree_and_start_engineer`
+- `todo.create_worktree_and_start_engineer` (implemented as the default tracked Help Chat launch for new project work)
 - `process.terminate`
 - `runtime.start`
 - `runtime.stop`
