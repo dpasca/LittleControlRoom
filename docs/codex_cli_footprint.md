@@ -134,3 +134,5 @@ For embedded Codex sessions, LCR performs a bounded startup preflight outside th
 3. Add `--disable code_mode_host` only to that LCR-managed app-server process and show a compatibility notice.
 
 This fallback does not edit `~/.codex/config.toml`. Healthy installs keep the feature enabled, older CLIs without the feature are left unchanged, and raw host-spawn failures receive an actionable diagnosis instead of only opaque stderr.
+
+The compatibility result is reused while both the resolved Codex executable and `config.toml` fingerprints remain unchanged. LCR also repairs stale `state_5.sqlite` rollout paths once after a successful pass per Codex home and per LCR runtime, rather than rescanning the complete thread table for every embedded session. Failed cleanup attempts are not cached, so transient SQLite locks can recover on a later launch.

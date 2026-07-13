@@ -1296,30 +1296,20 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPerProjectLaunchStateAcrossOverla
 
 	updated, cmd = got.Update(openedA)
 	got = updated.(Model)
-	if got.codexVisibleProject != "/tmp/root--feat-a" {
-		t.Fatalf("codexVisibleProject = %q, want %q after the first session opens", got.codexVisibleProject, "/tmp/root--feat-a")
+	if got.codexVisibleProject != "" {
+		t.Fatalf("superseded first completion stole the visible pane: codexVisibleProject = %q", got.codexVisibleProject)
 	}
-	if got.status != "Pick a model, then send the TODO draft." {
-		t.Fatalf("status = %q, want model picker guidance for the first overlapping launch", got.status)
+	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != "/tmp/root--feat-b" {
+		t.Fatalf("pending open = %#v, want the newer worktree launch to remain active", got.codexPendingOpen)
 	}
-	if cmd == nil {
-		t.Fatalf("first overlapping session open should still return the model picker command")
+	if draft := got.codexDrafts["/tmp/root--feat-a"]; draft.Text != "TODO A" {
+		t.Fatalf("background first-session draft = %#v, want TODO A preserved", draft)
 	}
 	msgs = collectCmdMsgs(cmd)
-	var listA codexModelListMsg
-	ok = false
 	for _, msg := range msgs {
 		if typed, isList := msg.(codexModelListMsg); isList {
-			listA = typed
-			ok = true
-			break
+			t.Fatalf("superseded first completion opened a model picker for %q", typed.projectPath)
 		}
-	}
-	if !ok {
-		t.Fatalf("first model-picker cmd messages = %#v, want codexModelListMsg", msgs)
-	}
-	if listA.projectPath != "/tmp/root--feat-a" {
-		t.Fatalf("first model-picker project = %q, want %q", listA.projectPath, "/tmp/root--feat-a")
 	}
 
 	updated, cmd = got.Update(openedB)

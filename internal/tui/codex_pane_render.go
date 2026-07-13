@@ -108,14 +108,20 @@ func (m Model) renderCodexOpeningView(projectPath string) string {
 	spinner := spinnerFrames[m.spinnerFrame%len(spinnerFrames)]
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(label + " | " + projectName)
 	bodyHeight := max(3, height-6)
+	input := m.codexInput
+	input.SetWidth(max(20, width-4))
+	input.SetHeight(max(3, min(10, m.codexInput.LineCount()+1)))
+	composer := renderCodexComposer(input, width)
+	bodyHeight = max(3, bodyHeight-lipgloss.Height(composer))
 	body := m.renderHFramedPane(strings.Join([]string{
 		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("81")).Render(spinner + " " + headline),
 		"",
 		fitFooterWidth("Project: "+projectPath, max(24, width-4)),
 		fitFooterWidth(detail, max(24, width-4)),
+		fitFooterWidth("Type your draft now; press Enter after the session is ready to send it.", max(24, width-4)),
 	}, "\n"), width, bodyHeight, true)
 	footer := renderFooterLine(width, renderFooterStatus(spinner+" "+footerStatus))
-	return strings.Join([]string{renderFooterLine(width, title), body, footer}, "\n")
+	return strings.Join([]string{renderFooterLine(width, title), body, composer, footer}, "\n")
 }
 
 func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string {

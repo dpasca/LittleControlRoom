@@ -14,7 +14,6 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
-	"lcroom/internal/codexstate"
 )
 
 func (s *appServerSession) start(req LaunchRequest) error {
@@ -27,7 +26,7 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	if err != nil {
 		return err
 	}
-	if _, err := codexstate.SanitizeStateRolloutPaths(sourceHome); err != nil {
+	if _, err := sanitizeCodexStateRolloutPathsOnce(sourceHome); err != nil {
 		s.appendCodexHomeCleanupWarning(sourceHome, err)
 	}
 	codexHomeOverlay, err := prepareCodexHomeOverlayWithOptions(req.AppDataDir, sourceHome, shouldPrepareEmbeddedSkillOverlay(req))

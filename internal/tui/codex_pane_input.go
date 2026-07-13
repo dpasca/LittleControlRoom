@@ -14,8 +14,10 @@ import (
 func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if projectPath := m.codexPendingOpenProject(); m.codexPendingOpenVisible() && projectPath != "" {
 		if snapshot, ok := m.nonBlockingCodexSnapshot(projectPath); ok && codexSnapshotCanSettlePendingOpen(snapshot) {
+			requestID := m.codexPendingOpen.requestID
 			reveal := m.revealPendingEmbeddedOpenForSnapshot(projectPath, snapshot)
-			openCmd := m.finishCodexPendingOpen(projectPath, snapshot, true, reveal)
+			openCmd := m.finishCodexPendingOpenRequest(projectPath, requestID, snapshot, true, reveal)
+			m.setCodexOpenRequestReveal(requestID, false)
 			updated, cmd := m.updateCodexMode(msg)
 			return updated, batchCmds(openCmd, cmd)
 		}
@@ -23,10 +25,37 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "alt+up", "esc":
 			return m.hidePendingCodexOpen(projectPath)
-		default:
-			m.status = "Embedded " + label + " session is still starting..."
+		case "enter":
+			if m.currentCodexDraft().Empty() {
+				m.status = "Embedded " + label + " session is still starting..."
+			} else {
+				m.status = "Draft saved. Press Enter once the " + label + " session is ready to send it."
+			}
+			return m, nil
+		case "alt+enter", "ctrl+j":
+			m.codexInput.InsertString("\n")
+			m.noteCodexComposerKey(true)
+			m.persistVisibleCodexDraft()
+			m.syncCodexComposerSize()
+			return m, nil
+		case "ctrl+v":
+			if handled, cmd := m.tryHandleCodexPaste(msg, true); handled {
+				return m, cmd
+			}
 		}
-		return m, nil
+		if handled, cmd := m.tryHandleCodexPaste(msg, true); handled {
+			return m, cmd
+		}
+		if codexShouldIgnoreTextareaWordBackward(&m.codexInput, msg) || codexShouldIgnoreStraySGRMousePacket(msg) {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		before := m.codexInput.Value()
+		m.codexInput, cmd = m.codexInput.Update(msg)
+		m.noteCodexComposerKey(m.codexInput.Value() != before)
+		m.persistVisibleCodexDraft()
+		m.syncCodexComposerSize()
+		return m, cmd
 	}
 
 	snapshot, ok := m.currentCodexSnapshot()
@@ -672,7 +701,7 @@ func codexBulkTextInput(msg tea.KeyMsg) bool {
 }
 
 func (m *Model) tryAttachClipboardImage() (bool, error) {
-	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	projectPath := m.codexComposerProjectPath()
 	if projectPath == "" {
 		return false, nil
 	}
@@ -694,7 +723,7 @@ func (m *Model) tryAttachClipboardImage() (bool, error) {
 }
 
 func (m *Model) insertCodexPastedText(text string) {
-	if strings.TrimSpace(m.codexVisibleProject) == "" {
+	if m.codexComposerProjectPath() == "" {
 		return
 	}
 	token := m.nextCodexPastedTextToken(text)

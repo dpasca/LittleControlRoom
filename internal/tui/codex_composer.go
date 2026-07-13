@@ -252,7 +252,7 @@ func (m *Model) currentCodexDraftFor(projectPath string) codexDraft {
 		return codexDraft{}
 	}
 	draft := cloneCodexDraft(m.codexDrafts[projectPath])
-	if projectPath == m.codexVisibleProject {
+	if projectPath == m.codexComposerProjectPath() {
 		draft.Text = m.codexInput.Value()
 	}
 	return draft.normalized()
@@ -295,7 +295,14 @@ func (m *Model) markCodexSessionClosedHandled(projectPath string) bool {
 }
 
 func (m *Model) currentCodexDraft() codexDraft {
-	return m.currentCodexDraftFor(m.codexVisibleProject)
+	return m.currentCodexDraftFor(m.codexComposerProjectPath())
+}
+
+func (m Model) codexComposerProjectPath() string {
+	if projectPath := m.codexPendingOpenProject(); m.codexPendingOpenVisible() && projectPath != "" {
+		return projectPath
+	}
+	return strings.TrimSpace(m.codexVisibleProject)
 }
 
 func (m *Model) persistCodexDraft(projectPath string) {
@@ -315,10 +322,13 @@ func (m *Model) persistCodexDraft(projectPath string) {
 }
 
 func (m *Model) persistVisibleCodexDraft() {
-	m.persistCodexDraft(m.codexVisibleProject)
+	m.persistCodexDraft(m.codexComposerProjectPath())
 }
 
 func (m *Model) loadCodexDraft(projectPath string) {
+	if m.codexInput.CharLimit == 0 && m.codexInput.Width() == 0 {
+		m.codexInput = newCodexTextarea()
+	}
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		m.codexInput.SetValue("")
@@ -347,7 +357,7 @@ func (m *Model) restoreCodexDraft(projectPath string, draft codexDraft) {
 	} else {
 		m.codexDrafts[projectPath] = draft
 	}
-	if m.codexVisibleProject == projectPath {
+	if m.codexComposerProjectPath() == projectPath {
 		m.loadCodexDraft(projectPath)
 	}
 }
@@ -361,7 +371,7 @@ func (m *Model) clearCodexDraft(projectPath string) {
 		m.codexDrafts = make(map[string]codexDraft)
 	}
 	delete(m.codexDrafts, projectPath)
-	if m.codexVisibleProject == projectPath {
+	if m.codexComposerProjectPath() == projectPath {
 		m.codexInput.SetValue("")
 		m.codexInput.CursorEnd()
 		m.syncCodexComposerSize()
@@ -378,7 +388,7 @@ func (m *Model) currentCodexPastedTexts() []codexPastedText {
 }
 
 func (m *Model) setCurrentCodexAttachments(attachments []codexapp.Attachment) {
-	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	projectPath := m.codexComposerProjectPath()
 	if projectPath == "" {
 		return
 	}
@@ -396,7 +406,7 @@ func (m *Model) setCurrentCodexAttachments(attachments []codexapp.Attachment) {
 }
 
 func (m *Model) setCurrentCodexPastedTexts(pastedTexts []codexPastedText) {
-	projectPath := strings.TrimSpace(m.codexVisibleProject)
+	projectPath := m.codexComposerProjectPath()
 	if projectPath == "" {
 		return
 	}
