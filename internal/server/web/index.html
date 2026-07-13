@@ -10,8 +10,8 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=4">
-  <script defer src="/app.js?v=4"></script>
+  <link rel="stylesheet" href="/app.css?v=7">
+  <script defer src="/app.js?v=7"></script>
 </head>
 <body class="auth-pending">
   <div class="app-shell">
@@ -257,9 +257,20 @@
           </div>
           <div id="session-truncated" class="transcript-notice" hidden>Showing recent activity</div>
           <div id="session-transcript" class="session-transcript" aria-label="Engineer transcript"></div>
-          <div class="session-readonly-strip">
-            <span><i class="lamp green" aria-hidden="true"></i>Read only channel</span>
-            <span>LAN link</span>
+          <form id="session-composer" class="session-composer" hidden>
+            <div class="session-composer-status">
+              <span><i id="session-composer-lamp" class="lamp cyan" aria-hidden="true"></i><span id="session-composer-state">Live input</span></span>
+              <span id="session-composer-mode">Send</span>
+            </div>
+            <div class="session-composer-row">
+              <textarea id="session-message" rows="1" maxlength="12000" enterkeyhint="send" autocapitalize="sentences" autocomplete="off" spellcheck="true" aria-label="Message to engineer" placeholder="Message the engineer"></textarea>
+              <button id="session-send-button" type="submit">Send</button>
+            </div>
+            <p id="session-composer-feedback" class="session-composer-feedback" aria-live="polite"></p>
+          </form>
+          <div id="session-readonly-strip" class="session-readonly-strip">
+            <span><i class="lamp green" aria-hidden="true"></i><span id="session-readonly-label">Read only channel</span></span>
+            <span id="session-link-label">LAN link</span>
           </div>
         </article>
       </section>

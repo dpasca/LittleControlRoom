@@ -26,9 +26,11 @@ import (
 )
 
 type Server struct {
-	svc          *service.Service
-	liveSessions LiveSessionSource
-	mobileAuth   *MobileAuth
+	svc                 *service.Service
+	liveSessions        LiveSessionSource
+	mobileAuth          *MobileAuth
+	mobileInputMu       sync.Mutex
+	mobileInputRequests map[string]time.Time
 }
 
 type RunningServer struct {
@@ -186,6 +188,7 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.Handle("/api/mobile/projects/detail", s.protectMobile(http.HandlerFunc(s.handleMobileProjectDetail)))
 	mux.Handle("/api/mobile/projects/sessions", s.protectMobile(http.HandlerFunc(s.handleMobileProjectSessions)))
 	mux.Handle("/api/mobile/sessions/detail", s.protectMobile(http.HandlerFunc(s.handleMobileSessionDetail)))
+	mux.Handle("/api/mobile/sessions/input", s.protectMobile(http.HandlerFunc(s.handleMobileSessionInput)))
 	mux.HandleFunc("/assets/operator-station.png", handleOperatorStationAsset)
 	mux.Handle("/events/ws", s.protectMobile(s.handleEventsWS(ctx)))
 

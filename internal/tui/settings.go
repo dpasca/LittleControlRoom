@@ -73,6 +73,7 @@ const (
 	settingsFieldStuckThreshold
 	settingsFieldInterval
 	settingsFieldMobileEnabled
+	settingsFieldMobileInputEnabled
 	settingsFieldMobileAccessMode
 	settingsFieldMobilePort
 	settingsFieldMobileListenAddress
@@ -264,9 +265,10 @@ func settingsSections() []settingsSection {
 			id:      settingsSectionMobile,
 			label:   "Mobile",
 			summary: "Phone access",
-			hint:    "Choose who can connect to the bundled web client. The technical listen address is derived for ordinary local and LAN use. Changes take effect after restart.",
+			hint:    "Choose who can connect and whether paired phones may message live sessions. Listener changes need a restart; the message permission applies when saved.",
 			fieldOrder: []int{
 				settingsFieldMobileEnabled,
+				settingsFieldMobileInputEnabled,
 				settingsFieldMobileAccessMode,
 				settingsFieldMobilePort,
 				settingsFieldMobileListenAddress,
@@ -856,6 +858,7 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldStuckThreshold),
 		m.settingsFieldValue(settingsFieldInterval),
 		m.settingsFieldValue(settingsFieldMobileEnabled),
+		m.settingsFieldValue(settingsFieldMobileInputEnabled),
 		m.settingsMobileListenAddressFromFields(),
 	)
 	if err != nil {
@@ -1187,7 +1190,7 @@ func (m Model) settingsFieldVisible(index int) bool {
 		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "google"
 	case settingsFieldLCAgentWebSearchURL:
 		return normalizeSettingsChoice(m.settingsFieldValue(settingsFieldLCAgentWebSearchBackend)) == "searxng"
-	case settingsFieldMobileAccessMode:
+	case settingsFieldMobileAccessMode, settingsFieldMobileInputEnabled:
 		return settings.MobileEnabled
 	case settingsFieldMobilePort:
 		return settings.MobileEnabled && settingsMobileAccessModeValue(m.settingsFieldValue(settingsFieldMobileAccessMode)) != settingsMobileAccessCustom
@@ -1408,6 +1411,7 @@ func (m Model) settingsDrilldownFieldOrder(drilldown settingsDrilldownID) []int 
 	case settingsDrilldownMobile:
 		return []int{
 			settingsFieldMobileEnabled,
+			settingsFieldMobileInputEnabled,
 			settingsFieldMobileAccessMode,
 			settingsFieldMobilePort,
 			settingsFieldMobileListenAddress,
@@ -1944,6 +1948,7 @@ func (m Model) settingsDraftForInferenceStatus() config.EditableSettings {
 	settings.LCAgentWebSearchEngineID = m.settingsFieldValue(settingsFieldLCAgentWebSearchEngineID)
 	settings.LCAgentWebSearchURL = m.settingsFieldValue(settingsFieldLCAgentWebSearchURL)
 	settings.MobileEnabled = strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldMobileEnabled, m.settingsFieldValue(settingsFieldMobileEnabled)), "true")
+	settings.MobileInputEnabled = strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldMobileInputEnabled, m.settingsFieldValue(settingsFieldMobileInputEnabled)), "true")
 	settings.MobileListenAddress = m.settingsMobileListenAddressFromFields()
 	if settings.MobileListenAddress == "" {
 		settings.MobileListenAddress = config.DefaultMobileListenAddress
@@ -2510,6 +2515,8 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 		switch fieldIndex {
 		case settingsFieldMobileEnabled:
 			return "Availability"
+		case settingsFieldMobileInputEnabled:
+			return "Control"
 		default:
 			return "Connection"
 		}
@@ -4014,6 +4021,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionMobile,
 		),
 		newSettingsField(
+			"Session messages",
+			"Press Enter to allow or deny messages from paired phones to the currently live engineer session.",
+			strconv.FormatBool(settings.MobileInputEnabled),
+			8,
+			settingsSectionMobile,
+		),
+		newSettingsField(
 			"Who can connect?",
 			"Press Enter to choose this computer, paired phones on the same LAN, or a custom listen address.",
 			settingsMobileAccessModeForAddress(settings.MobileListenAddress),
@@ -4149,6 +4163,11 @@ func (m Model) settingsFieldHint(index int) string {
 			return "The mobile client will start with the TUI after Little Control Room restarts. Choose who can connect below."
 		}
 		return "The TUI will stop auto-starting the mobile client after restart. lcroom serve remains available for explicit runs."
+	case settingsFieldMobileInputEnabled:
+		if strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldMobileInputEnabled, field.input.Value()), "true") {
+			return "Paired phones may send messages only to the current live engineer session. Recorded sessions and approval controls remain read-only."
+		}
+		return "The phone can monitor engineer sessions but cannot send messages. This is the default."
 	case settingsFieldMobileAccessMode:
 		switch settingsMobileAccessModeValue(field.input.Value()) {
 		case settingsMobileAccessLAN:

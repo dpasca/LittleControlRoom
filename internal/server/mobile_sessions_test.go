@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,29 @@ type fakeLiveSessionMap map[string]codexapp.Snapshot
 func (s fakeLiveSessionMap) TrySessionSnapshot(projectPath string) (codexapp.Snapshot, bool) {
 	snapshot, ok := s[projectPath]
 	return snapshot, ok
+}
+
+type fakeLiveSessionController struct {
+	snapshot    codexapp.Snapshot
+	ok          bool
+	result      codexapp.SessionInputResult
+	err         error
+	projectPath string
+	threadID    string
+	text        string
+	calls       int
+}
+
+func (s *fakeLiveSessionController) TrySessionSnapshot(string) (codexapp.Snapshot, bool) {
+	return s.snapshot, s.ok
+}
+
+func (s *fakeLiveSessionController) SubmitSessionInput(projectPath, expectedThreadID string, input codexapp.Submission) (codexapp.SessionInputResult, error) {
+	s.calls++
+	s.projectPath = projectPath
+	s.threadID = expectedThreadID
+	s.text = input.Text
+	return s.result, s.err
 }
 
 func TestMobileDashboardLiveSessionsPrioritizeAttentionAndSkipClosed(t *testing.T) {
@@ -172,6 +196,9 @@ func TestMobileSessionEndpointsMergeLiveAndRecordedSessions(t *testing.T) {
 	if got, want := detail.Entries[1].Text, "The transcript is connected."; got != want {
 		t.Fatalf("latest transcript text = %q, want %q", got, want)
 	}
+	if detail.Input.Enabled || detail.Input.Available || detail.Input.Reason == "" {
+		t.Fatalf("default live input = %#v, want disabled with reason", detail.Input)
+	}
 
 	missingResponse := httptest.NewRecorder()
 	handler.ServeHTTP(missingResponse, httptest.NewRequest(http.MethodGet, "/api/mobile/sessions/detail?path="+projectPath+"&session_id=unknown", nil))
@@ -224,5 +251,110 @@ func TestMobileSessionSourceCannotCrossProjectBoundary(t *testing.T) {
 	}
 	if len(list.Sessions) != 0 {
 		t.Fatalf("cross-project live session leaked: %#v", list.Sessions)
+	}
+}
+
+func TestMobileSessionInputRequiresSettingAndTargetsCurrentLiveSession(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	dbPath := filepath.Join(dataDir, "little-control-room.sqlite")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	projectPath := "/tmp/mobile-input"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path: projectPath, Name: "Mobile input", PresentOnDisk: true, InScope: true, UpdatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.DataDir = dataDir
+	cfg.DBPath = dbPath
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	controller := &fakeLiveSessionController{
+		ok: true,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex, ProjectPath: projectPath, ThreadID: "live-input", Started: true,
+		},
+		result: codexapp.SessionInputResult{Mode: codexapp.SessionInputSend, Provider: codexapp.ProviderCodex, ThreadID: "live-input"},
+	}
+	handler := New(svc).WithLiveSessions(controller).Handler(ctx)
+	body := `{"project_path":"` + projectPath + `","session_id":"codex:live-input","request_id":"request-1","text":"Continue from my phone."}`
+
+	disabled := httptest.NewRecorder()
+	disabledRequest := httptest.NewRequest(http.MethodPost, "/api/mobile/sessions/input", strings.NewReader(body))
+	disabledRequest.Header.Set("Content-Type", "application/json")
+	disabledRequest.Header.Set("Origin", "http://lcr.test")
+	disabledRequest.Host = "lcr.test"
+	handler.ServeHTTP(disabled, disabledRequest)
+	if disabled.Code != http.StatusForbidden || controller.calls != 0 {
+		t.Fatalf("disabled input status=%d calls=%d body=%s", disabled.Code, controller.calls, disabled.Body.String())
+	}
+
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.MobileInputEnabled = true
+	svc.ApplyEditableSettings(settings)
+
+	detail := httptest.NewRecorder()
+	detailRequest := httptest.NewRequest(http.MethodGet, "/api/mobile/sessions/detail?path="+projectPath+"&session_id=codex%3Alive-input", nil)
+	handler.ServeHTTP(detail, detailRequest)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("GET writable session status = %d, body = %s", detail.Code, detail.Body.String())
+	}
+	var surface uisurface.EngineerSessionDetailSurface
+	if err := json.Unmarshal(detail.Body.Bytes(), &surface); err != nil {
+		t.Fatalf("decode writable session: %v", err)
+	}
+	if !surface.Input.Enabled || !surface.Input.Available || surface.Input.Label != "Send" {
+		t.Fatalf("writable session input = %#v", surface.Input)
+	}
+
+	crossOrigin := httptest.NewRecorder()
+	crossOriginRequest := httptest.NewRequest(http.MethodPost, "/api/mobile/sessions/input", strings.NewReader(strings.Replace(body, "request-1", "request-cross", 1)))
+	crossOriginRequest.Header.Set("Content-Type", "application/json")
+	crossOriginRequest.Header.Set("Origin", "http://other.test")
+	crossOriginRequest.Host = "lcr.test"
+	handler.ServeHTTP(crossOrigin, crossOriginRequest)
+	if crossOrigin.Code != http.StatusForbidden || controller.calls != 0 {
+		t.Fatalf("cross-origin input status=%d calls=%d", crossOrigin.Code, controller.calls)
+	}
+
+	stale := httptest.NewRecorder()
+	staleBody := strings.Replace(body, "codex:live-input", "codex:old-input", 1)
+	staleBody = strings.Replace(staleBody, "request-1", "request-stale", 1)
+	staleRequest := httptest.NewRequest(http.MethodPost, "/api/mobile/sessions/input", strings.NewReader(staleBody))
+	staleRequest.Header.Set("Content-Type", "application/json")
+	staleRequest.Header.Set("Origin", "http://lcr.test")
+	staleRequest.Host = "lcr.test"
+	handler.ServeHTTP(stale, staleRequest)
+	if stale.Code != http.StatusConflict || controller.calls != 0 {
+		t.Fatalf("stale input status=%d calls=%d body=%s", stale.Code, controller.calls, stale.Body.String())
+	}
+
+	accepted := httptest.NewRecorder()
+	acceptedRequest := httptest.NewRequest(http.MethodPost, "/api/mobile/sessions/input", strings.NewReader(body))
+	acceptedRequest.Header.Set("Content-Type", "application/json")
+	acceptedRequest.Header.Set("Origin", "http://lcr.test")
+	acceptedRequest.Host = "lcr.test"
+	handler.ServeHTTP(accepted, acceptedRequest)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("POST input status = %d, body = %s", accepted.Code, accepted.Body.String())
+	}
+	if controller.calls != 1 || controller.projectPath != projectPath || controller.threadID != "live-input" || controller.text != "Continue from my phone." {
+		t.Fatalf("controller call = %#v", controller)
+	}
+
+	duplicate := httptest.NewRecorder()
+	duplicateRequest := httptest.NewRequest(http.MethodPost, "/api/mobile/sessions/input", strings.NewReader(body))
+	duplicateRequest.Header.Set("Content-Type", "application/json")
+	duplicateRequest.Header.Set("Origin", "http://lcr.test")
+	duplicateRequest.Host = "lcr.test"
+	handler.ServeHTTP(duplicate, duplicateRequest)
+	if duplicate.Code != http.StatusConflict || controller.calls != 1 {
+		t.Fatalf("duplicate input status=%d calls=%d body=%s", duplicate.Code, controller.calls, duplicate.Body.String())
 	}
 }

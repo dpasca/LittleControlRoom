@@ -177,6 +177,13 @@ func (m Model) renderMobileDialogContent(width, bodyH int) string {
 		lines = append(lines, renderWrappedDetailField("After setup", detailValueStyle, width, suggestion))
 	}
 	lines = append(lines, renderWrappedDetailField("Pairing", mobilePairingStyle(status), width, mobilePairingLabel(status)))
+	inputLabel := "Monitor only"
+	inputStyle := detailMutedStyle
+	if m.currentSettingsBaseline().MobileInputEnabled {
+		inputLabel = "Live session messages enabled"
+		inputStyle = detailWarningStyle
+	}
+	lines = append(lines, renderWrappedDetailField("Phone control", inputStyle, width, inputLabel))
 
 	if nextLaunch := m.mobileNextLaunchLabel(); nextLaunch != "" {
 		lines = append(lines, renderWrappedDetailField("Next launch", detailWarningStyle, width, nextLaunch))

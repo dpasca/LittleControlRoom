@@ -17,6 +17,9 @@
     sessionLastEntryKey: "",
     sessionHasNewActivity: false,
     sessionStickToBottom: true,
+    sessionInput: null,
+    sessionSubmitting: false,
+    sessionFeedback: "",
     sessionRequestID: 0,
     socket: null,
     reconnectTimer: 0,
@@ -96,6 +99,16 @@
     sessionUpdatedLabel: document.getElementById("session-updated-label"),
     sessionTruncated: document.getElementById("session-truncated"),
     sessionTranscript: document.getElementById("session-transcript"),
+    sessionComposer: document.getElementById("session-composer"),
+    sessionComposerLamp: document.getElementById("session-composer-lamp"),
+    sessionComposerState: document.getElementById("session-composer-state"),
+    sessionComposerMode: document.getElementById("session-composer-mode"),
+    sessionMessage: document.getElementById("session-message"),
+    sessionSendButton: document.getElementById("session-send-button"),
+    sessionComposerFeedback: document.getElementById("session-composer-feedback"),
+    sessionReadonlyStrip: document.getElementById("session-readonly-strip"),
+    sessionReadonlyLabel: document.getElementById("session-readonly-label"),
+    sessionLinkLabel: document.getElementById("session-link-label"),
     protectedViews: document.querySelectorAll(".dashboard-view, .detail-view, .detail-placeholder, .session-view"),
   };
 
@@ -122,6 +135,27 @@
     const response = await window.fetch(url, {
       headers: { Accept: "application/json" },
       cache: "no-store",
+    });
+    if (response.status === 401) {
+      showAuthGate();
+      throw new AuthRequiredError();
+    }
+    if (!response.ok) {
+      const message = (await response.text()).trim();
+      throw new Error(message || `Request failed (${response.status})`);
+    }
+    return response.json();
+  }
+
+  async function postJSON(url, body) {
+    const response = await window.fetch(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+      body: JSON.stringify(body),
     });
     if (response.status === 401) {
       showAuthGate();
@@ -609,6 +643,9 @@
     state.sessionLastEntryKey = "";
     state.sessionHasNewActivity = false;
     state.sessionStickToBottom = true;
+    state.sessionInput = null;
+    state.sessionSubmitting = false;
+    state.sessionFeedback = "";
     elements.body.classList.add("detail-open", "session-open");
     elements.sessionView.hidden = false;
     elements.sessionView.removeAttribute("aria-hidden");
@@ -660,6 +697,7 @@
       detail.session?.id,
       detail.session?.transcript_revision,
       detail.session?.status?.label,
+      detail.input,
       entries.length,
       last.item_id,
       last.text,
@@ -700,6 +738,7 @@
 
     renderSessionInstruments(detail.instruments || [], session);
     renderSessionTranscript();
+    renderSessionComposer(detail);
     updateTranscriptControls();
 
     document.title = `${session.provider_label} - ${projectNameForPath(session.project_path)} - Little Control Room`;
@@ -750,6 +789,111 @@
     }
   }
 
+  function renderSessionComposer(detail) {
+    const session = detail.session || {};
+    const input = detail.input || {};
+    state.sessionInput = input;
+    const writableSurface = Boolean(session.live && input.enabled);
+    elements.sessionContent.classList.toggle("input-enabled", writableSurface);
+    elements.sessionComposer.hidden = !writableSurface;
+    elements.sessionReadonlyStrip.hidden = writableSurface;
+
+    if (!writableSurface) {
+      elements.sessionReadonlyLabel.textContent = session.live ? "Monitor only" : "Recorded channel";
+      elements.sessionLinkLabel.textContent = session.live ? "Input off" : "Stored";
+      return;
+    }
+
+    const sessionChanged = elements.sessionMessage.dataset.sessionId !== session.id;
+    if (sessionChanged) {
+      elements.sessionMessage.dataset.sessionId = session.id;
+      elements.sessionMessage.value = loadSessionDraft(session.id);
+      resizeSessionMessage();
+    }
+
+    const available = Boolean(input.available && !state.sessionSubmitting);
+    const modeLabel = input.label || "Send";
+    elements.sessionComposer.classList.toggle("input-unavailable", !input.available);
+    elements.sessionComposerLamp.className = `lamp ${input.available ? "cyan" : "amber"}`;
+    elements.sessionComposerState.textContent = state.sessionSubmitting
+      ? "Transmitting"
+      : input.available
+        ? "Live session input"
+        : input.reason || "Input unavailable";
+    elements.sessionComposerMode.textContent = modeLabel;
+    elements.sessionSendButton.textContent = state.sessionSubmitting ? "Sending" : modeLabel;
+    elements.sessionMessage.disabled = !available;
+    elements.sessionSendButton.disabled = !available || elements.sessionMessage.value.trim() === "";
+    elements.sessionComposerFeedback.textContent = state.sessionFeedback;
+  }
+
+  function sessionDraftKey(sessionID) {
+    return `lcr.mobile.session-draft.${sessionID}`;
+  }
+
+  function loadSessionDraft(sessionID) {
+    if (!sessionID) return "";
+    return window.localStorage.getItem(sessionDraftKey(sessionID)) || "";
+  }
+
+  function persistSessionDraft() {
+    const sessionID = elements.sessionMessage.dataset.sessionId;
+    if (!sessionID) return;
+    const value = elements.sessionMessage.value;
+    if (value) {
+      window.localStorage.setItem(sessionDraftKey(sessionID), value);
+    } else {
+      window.localStorage.removeItem(sessionDraftKey(sessionID));
+    }
+  }
+
+  function resizeSessionMessage() {
+    elements.sessionMessage.style.height = "auto";
+    elements.sessionMessage.style.height = `${Math.min(elements.sessionMessage.scrollHeight, 144)}px`;
+  }
+
+  function mobileRequestID() {
+    const random = new Uint32Array(2);
+    if (window.crypto?.getRandomValues) window.crypto.getRandomValues(random);
+    return `${Date.now().toString(36)}-${random[0].toString(36)}${random[1].toString(36)}`;
+  }
+
+  async function submitSessionMessage() {
+    const text = elements.sessionMessage.value.trim();
+    if (!text || state.sessionSubmitting || !state.sessionInput?.available || !state.selectedPath || !state.selectedSessionID) return;
+    state.sessionSubmitting = true;
+    state.sessionFeedback = "";
+    renderSessionComposer({
+      session: { id: state.selectedSessionID, live: true },
+      input: state.sessionInput,
+    });
+    try {
+      const result = await postJSON("/api/mobile/sessions/input", {
+        project_path: state.selectedPath,
+        session_id: state.selectedSessionID,
+        request_id: mobileRequestID(),
+        text,
+      });
+      elements.sessionMessage.value = "";
+      persistSessionDraft();
+      resizeSessionMessage();
+      state.sessionFeedback = result.status || "Message sent";
+      state.sessionStickToBottom = true;
+      await loadSessionDetail(state.selectedSessionID, true);
+    } catch (error) {
+      if (isAuthRequiredError(error)) return;
+      state.sessionFeedback = error.message || "Could not send the message";
+    } finally {
+      state.sessionSubmitting = false;
+      if (state.selectedSessionID) {
+        renderSessionComposer({
+          session: { id: state.selectedSessionID, live: true },
+          input: state.sessionInput || {},
+        });
+      }
+    }
+  }
+
   function updateTranscriptControls() {
     for (const button of elements.transcriptMode.querySelectorAll("button")) {
       const selected = button.dataset.transcriptMode === state.transcriptMode;
@@ -795,6 +939,9 @@
     state.sessionLastEntryKey = "";
     state.sessionHasNewActivity = false;
     state.sessionStickToBottom = true;
+    state.sessionInput = null;
+    state.sessionSubmitting = false;
+    state.sessionFeedback = "";
     state.sessionRequestID++;
     elements.body.classList.remove("session-open");
     elements.sessionView.hidden = true;
@@ -932,8 +1079,11 @@
       state.refreshTimer = window.setTimeout(async () => {
         const sessionID = state.selectedSessionID;
         await loadDashboard(false);
-        if (state.selectedPath) await openProject(state.selectedPath, false);
-        if (sessionID && state.selectedSessionID === sessionID) await loadSessionDetail(sessionID, false);
+        if (sessionID && state.selectedSessionID === sessionID) {
+          await loadSessionDetail(sessionID, false);
+        } else if (state.selectedPath) {
+          await openProject(state.selectedPath, false);
+        }
       }, 350);
     });
     socket.addEventListener("close", () => {
@@ -1048,8 +1198,11 @@
     }
     const sessionID = state.selectedSessionID;
     await loadDashboard(true);
-    if (state.selectedPath) await openProject(state.selectedPath, false);
-    if (sessionID && state.selectedSessionID === sessionID) await loadSessionDetail(sessionID, false);
+    if (sessionID && state.selectedSessionID === sessionID) {
+      await loadSessionDetail(sessionID, false);
+    } else if (state.selectedPath) {
+      await openProject(state.selectedPath, false);
+    }
   });
 
   elements.bucketFilter.addEventListener("click", (event) => {
@@ -1082,6 +1235,24 @@
     });
   });
   elements.sessionFollowButton.addEventListener("click", scrollSessionToLatest);
+  elements.sessionComposer.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void submitSessionMessage();
+  });
+  elements.sessionMessage.addEventListener("input", () => {
+    state.sessionFeedback = "";
+    persistSessionDraft();
+    resizeSessionMessage();
+    elements.sessionSendButton.disabled = state.sessionSubmitting
+      || !state.sessionInput?.available
+      || elements.sessionMessage.value.trim() === "";
+    elements.sessionComposerFeedback.textContent = "";
+  });
+  elements.sessionMessage.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) return;
+    event.preventDefault();
+    elements.sessionComposer.requestSubmit();
+  });
   elements.sessionTranscript.addEventListener("scroll", () => {
     state.sessionStickToBottom = elements.sessionTranscript.scrollHeight
       - elements.sessionTranscript.scrollTop
