@@ -21,7 +21,13 @@ const (
 	mobileSessionInputMaxBodyBytes = 32 * 1024
 	mobileSessionInputMaxRunes     = 12000
 	mobileSessionRequestTTL        = 10 * time.Minute
+	mobileLiveSnapshotCacheTTL     = 10 * time.Second
 )
+
+type mobileLiveSnapshot struct {
+	snapshot   codexapp.Snapshot
+	observedAt time.Time
+}
 
 type LiveSessionSource interface {
 	TrySessionSnapshot(projectPath string) (codexapp.Snapshot, bool)
@@ -47,7 +53,10 @@ type mobileSessionInputResponse struct {
 
 func (s *Server) WithLiveSessions(source LiveSessionSource) *Server {
 	if s != nil {
+		s.mobileLiveMu.Lock()
 		s.liveSessions = source
+		s.mobileLiveSnapshots = nil
+		s.mobileLiveMu.Unlock()
 	}
 	return s
 }
@@ -303,14 +312,62 @@ func (s *Server) visibleMobileProjectDetail(ctx context.Context, projectPath str
 }
 
 func (s *Server) liveSessionSnapshot(projectPath string) (codexapp.Snapshot, bool) {
-	if s == nil || s.liveSessions == nil {
+	return s.liveSessionSnapshotAt(projectPath, time.Now())
+}
+
+func (s *Server) liveSessionSnapshotAt(projectPath string, now time.Time) (codexapp.Snapshot, bool) {
+	if s == nil {
 		return codexapp.Snapshot{}, false
 	}
-	snapshot, ok := s.liveSessions.TrySessionSnapshot(projectPath)
-	if !ok || !sameCleanPath(snapshot.ProjectPath, projectPath) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
 		return codexapp.Snapshot{}, false
 	}
-	return snapshot, true
+	s.mobileLiveMu.Lock()
+	source := s.liveSessions
+	s.mobileLiveMu.Unlock()
+	if source == nil {
+		return codexapp.Snapshot{}, false
+	}
+	snapshot, ok := source.TrySessionSnapshot(projectPath)
+	if ok && sameCleanPath(snapshot.ProjectPath, projectPath) {
+		s.storeMobileLiveSnapshot(projectPath, snapshot, now)
+		return snapshot, true
+	}
+	return s.cachedMobileLiveSnapshot(projectPath, now)
+}
+
+func (s *Server) storeMobileLiveSnapshot(projectPath string, snapshot codexapp.Snapshot, observedAt time.Time) {
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	s.mobileLiveMu.Lock()
+	defer s.mobileLiveMu.Unlock()
+	if s.mobileLiveSnapshots == nil {
+		s.mobileLiveSnapshots = make(map[string]mobileLiveSnapshot)
+	}
+	s.mobileLiveSnapshots[filepath.Clean(projectPath)] = mobileLiveSnapshot{
+		snapshot:   snapshot,
+		observedAt: observedAt,
+	}
+}
+
+func (s *Server) cachedMobileLiveSnapshot(projectPath string, now time.Time) (codexapp.Snapshot, bool) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	key := filepath.Clean(projectPath)
+	s.mobileLiveMu.Lock()
+	defer s.mobileLiveMu.Unlock()
+	cached, ok := s.mobileLiveSnapshots[key]
+	if !ok {
+		return codexapp.Snapshot{}, false
+	}
+	if now.Before(cached.observedAt) || now.Sub(cached.observedAt) > mobileLiveSnapshotCacheTTL {
+		delete(s.mobileLiveSnapshots, key)
+		return codexapp.Snapshot{}, false
+	}
+	return cached.snapshot, true
 }
 
 func sameCleanPath(left, right string) bool {

@@ -47,6 +47,23 @@ type fakeLiveSessionController struct {
 	calls       int
 }
 
+type sequenceLiveSessionSource struct {
+	results []struct {
+		snapshot codexapp.Snapshot
+		ok       bool
+	}
+	next int
+}
+
+func (s *sequenceLiveSessionSource) TrySessionSnapshot(string) (codexapp.Snapshot, bool) {
+	if s.next >= len(s.results) {
+		return codexapp.Snapshot{}, false
+	}
+	result := s.results[s.next]
+	s.next++
+	return result.snapshot, result.ok
+}
+
 func (s *fakeLiveSessionController) TrySessionSnapshot(string) (codexapp.Snapshot, bool) {
 	return s.snapshot, s.ok
 }
@@ -102,6 +119,44 @@ func TestMobileDashboardLiveSessionsPrioritizeAttentionAndSkipClosed(t *testing.
 	}
 	if items[1].ProjectName != "Working project" || items[1].Status.Label != "Working" {
 		t.Fatalf("second live session = %#v, want working channel", items[1])
+	}
+}
+
+func TestMobileLiveSessionSnapshotSurvivesBriefLockContention(t *testing.T) {
+	t.Parallel()
+	projectPath := "/tmp/mobile-live-cache"
+	now := time.Date(2026, time.July, 13, 8, 0, 0, 0, time.UTC)
+	snapshot := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		ThreadID:           "live-cache",
+		Started:            true,
+		Busy:               true,
+		TranscriptRevision: 42,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptAgent, Text: "Stable live history"},
+		},
+	}
+	source := &sequenceLiveSessionSource{results: []struct {
+		snapshot codexapp.Snapshot
+		ok       bool
+	}{
+		{snapshot: snapshot, ok: true},
+		{ok: false},
+		{ok: false},
+	}}
+	server := &Server{liveSessions: source}
+
+	first, ok := server.liveSessionSnapshotAt(projectPath, now)
+	if !ok || first.ThreadID != snapshot.ThreadID {
+		t.Fatalf("first live snapshot = (%+v, %v), want current session", first, ok)
+	}
+	cached, ok := server.liveSessionSnapshotAt(projectPath, now.Add(mobileLiveSnapshotCacheTTL/2))
+	if !ok || cached.ThreadID != snapshot.ThreadID || cached.TranscriptRevision != snapshot.TranscriptRevision {
+		t.Fatalf("contended live snapshot = (%+v, %v), want cached current session", cached, ok)
+	}
+	if _, ok := server.liveSessionSnapshotAt(projectPath, now.Add(mobileLiveSnapshotCacheTTL+time.Nanosecond)); ok {
+		t.Fatal("expired live snapshot should not hide a missing session indefinitely")
 	}
 }
 
@@ -225,8 +280,8 @@ func TestMobileRecordedCodexSessionHidesInjectedModelContext(t *testing.T) {
 		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/mobile-recorded-preamble\n\n<INSTRUCTIONS>\nInternal project instructions\n</INSTRUCTIONS>"}]}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the mobile transcript.\n[attached image]"}]}}`,
 		`{"type":"event_msg","payload":{"type":"user_message","message":"Fix the mobile transcript."}}`,
-		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The visible transcript is clean."}]}}`,
-		`{"type":"event_msg","payload":{"type":"agent_message","message":"The visible transcript is clean."}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"## Visible transcript\n\n| Surface | State |\n| --- | --- |\n| Mobile | Clean |"}]}}`,
+		`{"type":"event_msg","payload":{"type":"agent_message","message":"## Visible transcript\n\n| Surface | State |\n| --- | --- |\n| Mobile | Clean |"}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
 		t.Fatalf("write recorded session: %v", err)
@@ -276,7 +331,8 @@ func TestMobileRecordedCodexSessionHidesInjectedModelContext(t *testing.T) {
 	if detail.Entries[0].Kind != "user" || detail.Entries[0].Text != "Fix the mobile transcript." {
 		t.Fatalf("visible user entry = %#v", detail.Entries[0])
 	}
-	if detail.Entries[1].Kind != "agent" || detail.Entries[1].Text != "The visible transcript is clean." {
+	wantMarkdown := "## Visible transcript\n\n| Surface | State |\n| --- | --- |\n| Mobile | Clean |"
+	if detail.Entries[1].Kind != "agent" || detail.Entries[1].Text != wantMarkdown {
 		t.Fatalf("visible agent entry = %#v", detail.Entries[1])
 	}
 	if strings.Contains(response.Body.String(), "AGENTS.md") || strings.Contains(response.Body.String(), "Internal project instructions") {

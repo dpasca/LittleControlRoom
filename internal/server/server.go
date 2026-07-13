@@ -29,6 +29,8 @@ type Server struct {
 	svc                 *service.Service
 	liveSessions        LiveSessionSource
 	mobileAuth          *MobileAuth
+	mobileLiveMu        sync.Mutex
+	mobileLiveSnapshots map[string]mobileLiveSnapshot
 	mobileInputMu       sync.Mutex
 	mobileInputRequests map[string]time.Time
 }
