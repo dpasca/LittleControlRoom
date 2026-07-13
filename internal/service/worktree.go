@@ -98,6 +98,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 		return CreateTodoWorktreeResult{}, err
 	}
 	defer unlockGitWrite()
+	if err := s.ensureRootCanCreateTodoWorktree(ctx, worktreeRootPath); err != nil {
+		return CreateTodoWorktreeResult{}, err
+	}
 
 	suggestionBranch := ""
 	suggestionSuffix := ""
@@ -1298,6 +1301,41 @@ func gitWorktreeAdd(ctx context.Context, repoPath, worktreePath, branchName stri
 		return gitCommandError(fmt.Sprintf("create git worktree %s on %s", worktreePath, branchName), err, out)
 	}
 	return nil
+}
+
+func (s *Service) ensureRootCanCreateTodoWorktree(ctx context.Context, rootPath string) error {
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	headExists, err := gitCommitExistsAtHEAD(ctx, rootPath)
+	if err != nil {
+		return fmt.Errorf("check worktree base in %s: %w", rootPath, err)
+	}
+	if headExists {
+		return nil
+	}
+	if s.gitWorktreeListReader == nil {
+		return fmt.Errorf("cannot safely create the first worktree for %s: Git worktree inspection is unavailable", rootPath)
+	}
+	worktrees, err := s.gitWorktreeListReader(ctx, rootPath)
+	if err != nil {
+		return fmt.Errorf("inspect existing worktrees before creating the first commit in %s: %w", rootPath, err)
+	}
+	linkedPaths := make([]string, 0, len(worktrees))
+	for _, worktree := range worktrees {
+		path := filepath.Clean(strings.TrimSpace(worktree.Path))
+		if path == "" || path == "." || samePath(path, rootPath) {
+			continue
+		}
+		linkedPaths = append(linkedPaths, path)
+	}
+	if len(linkedPaths) == 0 {
+		return nil
+	}
+	sort.Strings(linkedPaths)
+	return fmt.Errorf(
+		"cannot create another worktree for %s because the root repository has no commits and linked worktree %s already exists; continue that worktree or integrate it into the root branch first",
+		rootPath,
+		linkedPaths[0],
+	)
 }
 
 func gitWorktreeRemove(ctx context.Context, repoPath, worktreePath string, force bool) error {

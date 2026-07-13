@@ -679,6 +679,16 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
+	trackedTodo, err := m.resolveControlTrackedTodo(project, input.TodoID, input.TodoText)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	project, err = m.resolveControlTodoWorkProject(project, trackedTodo)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
 	provider, err := m.resolveControlEngineerProvider(input.Provider, project)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
@@ -707,11 +717,6 @@ func (m Model) executeEngineerSendPromptControlWithOutcome(input control.Enginee
 		return controlInvocationOutcome{model: m, err: err}
 	}
 
-	trackedTodo, err := m.resolveControlTrackedTodo(project, input.TodoID, input.TodoText)
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
 	input.TodoText = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoText, trackedTodo.Text))
 	input.TodoLabel = strings.TrimSpace(firstNonEmptyTrimmed(input.TodoLabel, todoDisplayLabelFromItem(trackedTodo)))
 	prompt := m.engineerPromptWithRuntimeContext(project, input.Prompt, trackedTodo)
@@ -2032,6 +2037,21 @@ func (m Model) resolveControlTrackedTodo(project model.ProjectSummary, todoID in
 		item.WorktreeSuggestion = &suggestion
 	}
 	return item, nil
+}
+
+func (m Model) resolveControlTodoWorkProject(project model.ProjectSummary, todo model.TodoItem) (model.ProjectSummary, error) {
+	if todo.ID <= 0 {
+		return project, nil
+	}
+	workProjectPath := filepath.Clean(strings.TrimSpace(todo.WorkProjectPath))
+	if workProjectPath == "" || workProjectPath == "." || normalizeProjectPath(workProjectPath) == normalizeProjectPath(project.Path) {
+		return project, nil
+	}
+	workProject, err := m.resolveControlProjectRef(workProjectPath, "")
+	if err != nil {
+		return model.ProjectSummary{}, fmt.Errorf("TODO #%d is linked to worktree %s, but that worktree is unavailable: %w", todo.ID, workProjectPath, err)
+	}
+	return workProject, nil
 }
 
 func engineerSendPromptInvocationFromInput(input control.EngineerSendPromptInput) control.Invocation {
