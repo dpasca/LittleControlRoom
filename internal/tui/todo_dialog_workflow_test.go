@@ -1095,6 +1095,19 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 		t.Fatalf("prompt = %q, want the TODO to stay unsent until after model selection", requests[0].Prompt)
 	}
 
+	// A provider may publish its first snapshot before the session-open command
+	// returns. That early update settles the pending pane and disables a later
+	// automatic reveal, but the already-visible TODO launch must still open its
+	// requested model picker when startup completes.
+	updated, _ = got.Update(codexUpdateMsg{projectPath: "/tmp/root--feat-model-pick"})
+	got = updated.(Model)
+	if got.codexVisibleProject != "/tmp/root--feat-model-pick" {
+		t.Fatalf("codexVisibleProject after early update = %q, want the worktree session to remain visible", got.codexVisibleProject)
+	}
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen after early update = %#v, want the ready snapshot to settle it", got.codexPendingOpen)
+	}
+
 	updated, cmd = got.Update(opened)
 	got = updated.(Model)
 	if got.codexVisibleProject != "/tmp/root--feat-model-pick" {
@@ -1105,6 +1118,12 @@ func TestTodoWorktreeLaunchWithModelPickerKeepsPromptUnsentUntilModelChoice(t *t
 	}
 	if got.status != "Pick a model, then send the TODO draft." {
 		t.Fatalf("status = %q, want model picker prompt", got.status)
+	}
+	if got.codexModelPicker == nil || !got.codexModelPicker.Loading {
+		t.Fatalf("codexModelPicker = %#v, want the loading model picker after session startup", got.codexModelPicker)
+	}
+	if rendered := ansi.Strip(got.View()); !strings.Contains(rendered, "Embedded Model Picker") {
+		t.Fatalf("visible session did not render its model picker: %q", rendered)
 	}
 	if cmd == nil {
 		t.Fatalf("session open should return the model picker command")

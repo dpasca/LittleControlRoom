@@ -199,7 +199,8 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.clearTodoLaunchDraft(msg.projectPath)
 		if draft.openModelFirst {
 			m.codexInput.Blur()
-			if !revealOnOpen {
+			projectAlreadyVisible := normalizeProjectPath(m.codexVisibleProject) == normalizeProjectPath(msg.projectPath)
+			if superseded || (!revealOnOpen && !projectAlreadyVisible) {
 				if !superseded {
 					m.status = "Fresh " + draft.provider.Label() + " session ready in the background with its TODO draft."
 				}
