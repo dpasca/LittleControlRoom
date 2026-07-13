@@ -775,14 +775,16 @@
     const session = detail.session || {};
     const input = detail.input || {};
     state.sessionInput = input;
-    const writableSurface = Boolean(session.live && input.enabled);
-    elements.sessionContent.classList.toggle("input-enabled", writableSurface);
-    elements.sessionComposer.hidden = !writableSurface;
-    elements.sessionReadonlyStrip.hidden = writableSurface;
+    const liveSurface = Boolean(session.live);
+    const inputEnabled = Boolean(liveSurface && input.enabled);
+    elements.sessionContent.classList.toggle("has-composer", liveSurface);
+    elements.sessionContent.classList.toggle("input-enabled", inputEnabled);
+    elements.sessionComposer.hidden = !liveSurface;
+    elements.sessionReadonlyStrip.hidden = liveSurface;
 
-    if (!writableSurface) {
-      elements.sessionReadonlyLabel.textContent = session.live ? "Monitor only" : "Recorded channel";
-      elements.sessionLinkLabel.textContent = session.live ? "Input off" : "Stored";
+    if (!liveSurface) {
+      elements.sessionReadonlyLabel.textContent = "Recorded transcript — no live session to message";
+      elements.sessionLinkLabel.textContent = "Stored";
       return;
     }
 
@@ -793,20 +795,23 @@
       resizeSessionMessage();
     }
 
-    const available = Boolean(input.available && !state.sessionSubmitting);
+    const available = Boolean(inputEnabled && input.available && !state.sessionSubmitting);
     const modeLabel = input.label || "Send";
-    elements.sessionComposer.classList.toggle("input-unavailable", !input.available);
-    elements.sessionComposerLamp.className = `lamp ${input.available ? "cyan" : "amber"}`;
+    elements.sessionComposer.classList.toggle("input-unavailable", !available);
+    elements.sessionComposerLamp.className = `lamp ${inputEnabled && input.available ? "cyan" : "amber"}`;
     elements.sessionComposerState.textContent = state.sessionSubmitting
       ? "Transmitting"
-      : input.available
+      : inputEnabled && input.available
         ? "Live session input"
-        : input.reason || "Input unavailable";
+        : input.reason || "Live input unavailable";
     elements.sessionComposerMode.textContent = modeLabel;
     elements.sessionSendButton.textContent = state.sessionSubmitting ? "Sending" : modeLabel;
     elements.sessionMessage.disabled = !available;
+    elements.sessionMessage.placeholder = inputEnabled ? "Message the engineer" : "Messaging is off";
     elements.sessionSendButton.disabled = !available || elements.sessionMessage.value.trim() === "";
-    elements.sessionComposerFeedback.textContent = state.sessionFeedback;
+    elements.sessionComposerFeedback.textContent = state.sessionFeedback || (inputEnabled
+      ? ""
+      : "Enable Session messages in Little Control Room’s Mobile settings to reply from this phone.");
   }
 
   function sessionDraftKey(sessionID) {
@@ -896,7 +901,7 @@
     if (entry.kind === "reasoning") {
       const details = createElement("details", "transcript-entry transcript-reasoning");
       const summary = createElement("summary", "transcript-entry-label", entry.label);
-      details.append(summary, createElement("p", "transcript-entry-text", entry.text));
+      details.append(summary, createMarkdownBody(entry.text));
       return details;
     }
 
@@ -904,8 +909,301 @@
     const label = createElement("div", "transcript-entry-label", entry.label);
     const semanticClass = toneClass(entry.tone);
     if (semanticClass) label.classList.add(semanticClass);
-    node.append(label, createElement("p", "transcript-entry-text", entry.text));
+    node.append(label, createMarkdownBody(entry.text));
     return node;
+  }
+
+  function createMarkdownBody(source) {
+    const body = createElement("div", "transcript-entry-text markdown-body");
+    renderMarkdownBlocks(body, String(source || "").replaceAll("\r\n", "\n"));
+    return body;
+  }
+
+  function renderMarkdownBlocks(container, source) {
+    const lines = source.split("\n");
+    let index = 0;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (line.trim() === "") {
+        index++;
+        continue;
+      }
+
+      const fence = line.match(/^\s*```([^`]*)$/);
+      if (fence) {
+        const codeLines = [];
+        index++;
+        while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
+          codeLines.push(lines[index]);
+          index++;
+        }
+        if (index < lines.length) index++;
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        const language = fence[1].trim().split(/\s+/, 1)[0];
+        if (language) code.className = `language-${language.replace(/[^a-z0-9_+-]/gi, "")}`;
+        code.textContent = codeLines.join("\n");
+        pre.append(code);
+        container.append(pre);
+        continue;
+      }
+
+      const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
+      if (heading) {
+        const node = document.createElement(`h${heading[1].length}`);
+        appendInlineMarkdown(node, heading[2].replace(/\s+#+\s*$/, ""));
+        container.append(node);
+        index++;
+        continue;
+      }
+
+      if (index + 1 < lines.length && isMarkdownTableHeader(line, lines[index + 1])) {
+        const headerCells = splitMarkdownTableRow(line);
+        const alignments = splitMarkdownTableRow(lines[index + 1]).map(markdownTableAlignment);
+        const table = document.createElement("table");
+        const head = document.createElement("thead");
+        const headRow = document.createElement("tr");
+        for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex++) {
+          const cell = document.createElement("th");
+          if (alignments[cellIndex]) cell.classList.add(`markdown-align-${alignments[cellIndex]}`);
+          appendInlineMarkdown(cell, headerCells[cellIndex]);
+          headRow.append(cell);
+        }
+        head.append(headRow);
+        table.append(head);
+        index += 2;
+        const tableBody = document.createElement("tbody");
+        while (index < lines.length && lines[index].includes("|") && lines[index].trim() !== "") {
+          const row = document.createElement("tr");
+          const cells = splitMarkdownTableRow(lines[index]);
+          for (let cellIndex = 0; cellIndex < headerCells.length; cellIndex++) {
+            const cell = document.createElement("td");
+            if (alignments[cellIndex]) cell.classList.add(`markdown-align-${alignments[cellIndex]}`);
+            appendInlineMarkdown(cell, cells[cellIndex] || "");
+            row.append(cell);
+          }
+          tableBody.append(row);
+          index++;
+        }
+        table.append(tableBody);
+        const scroller = createElement("div", "markdown-table-scroll");
+        scroller.append(table);
+        container.append(scroller);
+        continue;
+      }
+
+      if (/^\s{0,3}>/.test(line)) {
+        const quoteLines = [];
+        while (index < lines.length && /^\s{0,3}>/.test(lines[index])) {
+          quoteLines.push(lines[index].replace(/^\s{0,3}>\s?/, ""));
+          index++;
+        }
+        const quote = document.createElement("blockquote");
+        renderMarkdownBlocks(quote, quoteLines.join("\n"));
+        container.append(quote);
+        continue;
+      }
+
+      if (/^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$/.test(line)) {
+        container.append(document.createElement("hr"));
+        index++;
+        continue;
+      }
+
+      const listMatch = line.match(/^\s{0,3}([-+*]|\d+[.)])\s+(.+)$/);
+      if (listMatch) {
+        const ordered = /^\d/.test(listMatch[1]);
+        const list = document.createElement(ordered ? "ol" : "ul");
+        while (index < lines.length) {
+          const itemMatch = lines[index].match(/^\s{0,3}([-+*]|\d+[.)])\s+(.+)$/);
+          if (!itemMatch || /^\d/.test(itemMatch[1]) !== ordered) break;
+          const item = document.createElement("li");
+          const task = itemMatch[2].match(/^\[([ xX])\]\s+(.+)$/);
+          if (task) {
+            const checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.checked = task[1].toLowerCase() === "x";
+            checkbox.disabled = true;
+            item.append(checkbox, document.createTextNode(" "));
+            appendInlineMarkdown(item, task[2]);
+          } else {
+            appendInlineMarkdown(item, itemMatch[2]);
+          }
+          list.append(item);
+          index++;
+        }
+        container.append(list);
+        continue;
+      }
+
+      const paragraphLines = [line];
+      index++;
+      while (index < lines.length && lines[index].trim() !== "" && !startsMarkdownBlock(lines, index)) {
+        paragraphLines.push(lines[index]);
+        index++;
+      }
+      const paragraph = document.createElement("p");
+      paragraphLines.forEach((paragraphLine, lineIndex) => {
+        const hardBreak = /(?: {2,}|\\)$/.test(paragraphLine);
+        appendInlineMarkdown(paragraph, paragraphLine.replace(/(?: {2,}|\\)$/, ""));
+        if (lineIndex < paragraphLines.length - 1) {
+          paragraph.append(hardBreak ? document.createElement("br") : document.createTextNode(" "));
+        }
+      });
+      container.append(paragraph);
+    }
+  }
+
+  function startsMarkdownBlock(lines, index) {
+    const line = lines[index];
+    return /^\s*```/.test(line)
+      || /^\s{0,3}#{1,6}\s+/.test(line)
+      || /^\s{0,3}>/.test(line)
+      || /^\s{0,3}([-+*]|\d+[.)])\s+/.test(line)
+      || /^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$/.test(line)
+      || (index + 1 < lines.length && isMarkdownTableHeader(line, lines[index + 1]));
+  }
+
+  function isMarkdownTableHeader(header, separator) {
+    if (!header.includes("|")) return false;
+    const cells = splitMarkdownTableRow(separator);
+    return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+  }
+
+  function splitMarkdownTableRow(row) {
+    const trimmed = row.trim().replace(/^\|/, "").replace(/\|$/, "");
+    const cells = [];
+    let cell = "";
+    let escaped = false;
+    let inCode = false;
+    for (const char of trimmed) {
+      if (escaped) {
+        cell += char;
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+        cell += char;
+      } else if (char === "`") {
+        inCode = !inCode;
+        cell += char;
+      } else if (char === "|" && !inCode) {
+        cells.push(cell.trim());
+        cell = "";
+      } else {
+        cell += char;
+      }
+    }
+    cells.push(cell.trim());
+    return cells;
+  }
+
+  function markdownTableAlignment(cell) {
+    const value = cell.trim();
+    if (value.startsWith(":") && value.endsWith(":")) return "center";
+    if (value.endsWith(":")) return "right";
+    return "";
+  }
+
+  function appendInlineMarkdown(container, source) {
+    let cursor = 0;
+    while (cursor < source.length) {
+      const token = nextInlineMarkdownToken(source, cursor);
+      if (!token) {
+        appendMarkdownText(container, source.slice(cursor));
+        return;
+      }
+      appendMarkdownText(container, source.slice(cursor, token.start));
+      const node = document.createElement(token.tag);
+      if (token.tag === "code") {
+        node.textContent = token.content;
+      } else if (token.tag === "a") {
+        node.href = token.href;
+        node.target = "_blank";
+        node.rel = "noopener noreferrer";
+        appendInlineMarkdown(node, token.content);
+      } else {
+        appendInlineMarkdown(node, token.content);
+      }
+      container.append(node);
+      cursor = token.end;
+    }
+  }
+
+  function nextInlineMarkdownToken(source, start) {
+    for (let index = start; index < source.length; index++) {
+      if (source[index] === "\\") {
+        index++;
+        continue;
+      }
+      if (source[index] === "`") {
+        let markerLength = 1;
+        while (source[index + markerLength] === "`") markerLength++;
+        const marker = "`".repeat(markerLength);
+        const close = source.indexOf(marker, index + markerLength);
+        if (close >= 0) {
+          return { start: index, end: close + markerLength, tag: "code", content: source.slice(index + markerLength, close).trim() };
+        }
+      }
+      for (const [marker, tag] of [["**", "strong"], ["__", "strong"], ["~~", "del"]]) {
+        if (!source.startsWith(marker, index)) continue;
+        const close = source.indexOf(marker, index + marker.length);
+        if (close > index + marker.length) {
+          return { start: index, end: close + marker.length, tag, content: source.slice(index + marker.length, close) };
+        }
+      }
+      if (source[index] === "[") {
+        const labelEnd = source.indexOf("](", index + 1);
+        if (labelEnd > index + 1) {
+          const targetEnd = findMarkdownLinkTargetEnd(source, labelEnd + 2);
+          const href = targetEnd >= 0 ? safeMarkdownLink(source.slice(labelEnd + 2, targetEnd)) : "";
+          if (href) {
+            return { start: index, end: targetEnd + 1, tag: "a", content: source.slice(index + 1, labelEnd), href };
+          }
+        }
+      }
+      if (source[index] === "<") {
+        const close = source.indexOf(">", index + 1);
+        const content = close >= 0 ? source.slice(index + 1, close) : "";
+        const href = safeMarkdownLink(content);
+        if (href) return { start: index, end: close + 1, tag: "a", content, href };
+      }
+      if (source[index] === "*") {
+        const close = source.indexOf("*", index + 1);
+        if (close > index + 1) {
+          return { start: index, end: close + 1, tag: "em", content: source.slice(index + 1, close) };
+        }
+      }
+    }
+    return null;
+  }
+
+  function findMarkdownLinkTargetEnd(source, start) {
+    let depth = 0;
+    for (let index = start; index < source.length; index++) {
+      if (source[index] === "\\") {
+        index++;
+      } else if (source[index] === "(") {
+        depth++;
+      } else if (source[index] === ")") {
+        if (depth === 0) return index;
+        depth--;
+      }
+    }
+    return -1;
+  }
+
+  function safeMarkdownLink(rawTarget) {
+    const target = rawTarget.trim().replace(/^<|>$/g, "");
+    if (!/^(https?:|mailto:)/i.test(target)) return "";
+    try {
+      return new URL(target).href;
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function appendMarkdownText(container, text) {
+    container.append(document.createTextNode(text.replace(/\\([\\`*_[\]{}()#+\-.!>])/g, "$1")));
   }
 
   function projectNameForPath(path) {
