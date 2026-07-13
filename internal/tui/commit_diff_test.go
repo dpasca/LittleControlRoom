@@ -1472,10 +1472,11 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 			t.Fatalf("help chat overlay should not render the old right-side LLM label %q: %q", unwanted, rendered)
 		}
 	}
-	for _, want := range []string{"/new clear", "Ctrl+L clear"} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("help chat overlay should advertise %q: %q", want, rendered)
-		}
+	if !strings.Contains(rendered, "/new clear") {
+		t.Fatalf("help chat overlay should advertise /new clear: %q", rendered)
+	}
+	if strings.Contains(rendered, "Ctrl+L") {
+		t.Fatalf("help chat overlay should not advertise the uncommon Ctrl+L shortcut: %q", rendered)
 	}
 
 	updated, cmd = got.updateHelpChatModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'`'}})

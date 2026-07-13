@@ -197,7 +197,6 @@ func (m Model) renderHelpChatFooter(width int) string {
 		footerHideAction("Esc", "hide"),
 		footerHideAction("`", "hide"),
 		footerLowAction("/new", "clear"),
-		footerLowAction("Ctrl+L", "clear"),
 		footerNavAction("Alt+Enter", "newline"),
 	}
 	if m.helpChatModel.ControlConfirmationActive() {
