@@ -1138,6 +1138,12 @@ func extractContextCodexTranscriptItem(line string) (contextTranscriptItem, bool
 		if err := json.Unmarshal(top.Payload, &payload); err != nil || payload.Type != "message" {
 			return contextTranscriptItem{}, false
 		}
+		// Codex response-item user messages are model-context inputs. They can
+		// contain injected project instructions and environment data; the
+		// corresponding event_msg/user_message is the user-visible prompt.
+		if strings.EqualFold(strings.TrimSpace(payload.Role), "user") {
+			return contextTranscriptItem{}, false
+		}
 		return contextTranscriptItemFromRaw(payload.Role, payload.Content)
 	case "event_msg":
 		var payload struct {

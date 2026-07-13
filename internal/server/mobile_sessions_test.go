@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -204,6 +205,82 @@ func TestMobileSessionEndpointsMergeLiveAndRecordedSessions(t *testing.T) {
 	handler.ServeHTTP(missingResponse, httptest.NewRequest(http.MethodGet, "/api/mobile/sessions/detail?path="+projectPath+"&session_id=unknown", nil))
 	if missingResponse.Code != http.StatusNotFound {
 		t.Fatalf("GET unknown session status = %d, want 404", missingResponse.Code)
+	}
+}
+
+func TestMobileRecordedCodexSessionHidesInjectedModelContext(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	dbPath := filepath.Join(dataDir, "little-control-room.sqlite")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/mobile-recorded-preamble"
+	sessionFile := filepath.Join(dataDir, "recorded-session.jsonl")
+	transcript := strings.Join([]string{
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/mobile-recorded-preamble\n\n<INSTRUCTIONS>\nInternal project instructions\n</INSTRUCTIONS>"}]}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the mobile transcript.\n[attached image]"}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Fix the mobile transcript."}}`,
+		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The visible transcript is clean."}]}}`,
+		`{"type":"event_msg","payload":{"type":"agent_message","message":"The visible transcript is clean."}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
+		t.Fatalf("write recorded session: %v", err)
+	}
+
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "Mobile recorded preamble",
+		PresentOnDisk: true,
+		InScope:       true,
+		Status:        model.StatusActive,
+		LastActivity:  now,
+		UpdatedAt:     now,
+		Sessions: []model.SessionEvidence{{
+			Source:               model.SessionSourceCodex,
+			SessionID:            "codex:recorded-preamble",
+			RawSessionID:         "recorded-preamble",
+			ProjectPath:          projectPath,
+			SessionFile:          sessionFile,
+			Format:               "modern",
+			LastEventAt:          now,
+			LatestTurnStateKnown: true,
+			LatestTurnCompleted:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.DataDir = dataDir
+	cfg.DBPath = dbPath
+	handler := New(service.New(cfg, st, events.NewBus(), nil)).Handler(ctx)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/mobile/sessions/detail?path="+projectPath+"&session_id=codex%3Arecorded-preamble", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET recorded session status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var detail uisurface.EngineerSessionDetailSurface
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode recorded session: %v", err)
+	}
+	if got, want := len(detail.Entries), 2; got != want {
+		t.Fatalf("recorded transcript entries = %d, want %d: %#v", got, want, detail.Entries)
+	}
+	if detail.Entries[0].Kind != "user" || detail.Entries[0].Text != "Fix the mobile transcript." {
+		t.Fatalf("visible user entry = %#v", detail.Entries[0])
+	}
+	if detail.Entries[1].Kind != "agent" || detail.Entries[1].Text != "The visible transcript is clean." {
+		t.Fatalf("visible agent entry = %#v", detail.Entries[1])
+	}
+	if strings.Contains(response.Body.String(), "AGENTS.md") || strings.Contains(response.Body.String(), "Internal project instructions") {
+		t.Fatalf("recorded mobile transcript leaked injected context: %s", response.Body.String())
 	}
 }
 

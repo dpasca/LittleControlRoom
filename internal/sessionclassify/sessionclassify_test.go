@@ -143,6 +143,24 @@ func TestExtractSnapshotModernFixtureRecoversLifecycleFromTranscript(t *testing.
 	}
 }
 
+func TestExtractCodexTranscriptItemUsesUserVisibleEventsForUserTurns(t *testing.T) {
+	t.Parallel()
+
+	hidden := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions for /tmp/demo\n\n<INSTRUCTIONS>\nInternal context\n</INSTRUCTIONS>"}]}}`
+	if item, ok := extractCodexTranscriptItem(hidden); ok {
+		t.Fatalf("model-context user item should be hidden, got %#v", item)
+	}
+
+	visible := `{"type":"event_msg","payload":{"type":"user_message","message":"Fix the mobile transcript."}}`
+	item, ok := extractCodexTranscriptItem(visible)
+	if !ok {
+		t.Fatal("user-visible event was not extracted")
+	}
+	if item.Role != "user" || item.Text != "Fix the mobile transcript." {
+		t.Fatalf("user-visible event = %#v", item)
+	}
+}
+
 func TestExtractSnapshotOpenCodePreservesStructuredParts(t *testing.T) {
 	t.Parallel()
 
