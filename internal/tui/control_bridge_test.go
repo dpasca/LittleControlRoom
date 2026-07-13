@@ -584,6 +584,83 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 	}
 }
 
+func TestExecuteBossControlInvocationContinuesTodoInRecordedWorktree(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "KeyMaster")
+	worktreePath := filepath.Join(parent, "KeyMaster--initialize")
+	for _, path := range []string{projectPath, worktreePath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", path, err)
+		}
+	}
+	for _, state := range []model.ProjectState{
+		{Path: projectPath, Name: "KeyMaster", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, UpdatedAt: time.Now()},
+		{Path: worktreePath, Name: "KeyMaster--initialize", Status: model.StatusIdle, PresentOnDisk: true, InScope: true, WorktreeRootPath: projectPath, WorktreeKind: model.WorktreeKindLinked, UpdatedAt: time.Now()},
+	} {
+		if err := svc.Store().UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("UpsertProjectState(%s) error = %v", state.Path, err)
+		}
+	}
+	todo, err := svc.AddTodo(ctx, projectPath, "Initialize KeyMaster")
+	if err != nil {
+		t.Fatalf("AddTodo() error = %v", err)
+	}
+	if err := svc.Store().AttachTodoWorkSession(ctx, todo.ID, worktreePath, model.SessionSourceCodex, "codex:thread-keymaster-initialize", model.TodoWorkStateIdle, time.Now()); err != nil {
+		t.Fatalf("AttachTodoWorkSession() error = %v", err)
+	}
+
+	projects, err := svc.Store().ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v", err)
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "thread-keymaster-followup",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{ctx: ctx, svc: svc, allProjects: projects, projects: projects, codexManager: manager}
+
+	_, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
+			ProjectPath: projectPath,
+			ProjectName: "KeyMaster",
+			Provider:    control.ProviderCodex,
+			SessionMode: control.SessionModeResumeOrNew,
+			Prompt:      "KeyMaster is an API key ledger; continue the existing creation task with these requirements.",
+			TodoID:      todo.ID,
+			TodoText:    todo.Text,
+		}),
+	})
+	if cmd == nil {
+		t.Fatal("executeBossControlInvocation() cmd = nil, want worktree continuation")
+	}
+	msgs := collectCmdMsgs(cmd)
+	for _, msg := range msgs {
+		if result, ok := msg.(bossui.ControlInvocationResultMsg); ok && result.Err != nil {
+			t.Fatalf("control result error = %v", result.Err)
+		}
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %#v, want one worktree continuation", requests)
+	}
+	if requests[0].ProjectPath != worktreePath || requests[0].ForceNew {
+		t.Fatalf("launch request = %#v, want resume-or-new in %s", requests[0], worktreePath)
+	}
+	if !strings.Contains(requests[0].Prompt, "KeyMaster is an API key ledger") || !strings.Contains(requests[0].Prompt, "TODO text: Initialize KeyMaster") {
+		t.Fatalf("launch prompt = %q, want clarification plus tracked TODO context", requests[0].Prompt)
+	}
+}
+
 func TestExecuteBossTrackedWorktreeLaunchCreatesTodoWorktreeAndEngineer(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)

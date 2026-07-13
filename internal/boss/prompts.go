@@ -329,9 +329,11 @@ var bossPlannerControlRoutingPrompt = []string{
 	"For new loaded-project implementation, change, fix, or investigation work the user wants handled now, propose todo.create_worktree_and_start_engineer. It creates a durable TODO, prepares a dedicated worktree, and launches a fresh engineer there under one confirmation.",
 	"An idle engineer turn does not mean its existing task is finished. Do not replace an open root-checkout session just because it is between turns; use a dedicated tracked worktree for new work.",
 	"Use engineer.send_prompt for an explicit same-task follow-up, an explicit request to continue or steer a known project session, or work on an already-existing tracked TODO. Do not use it as the default for a new project task.",
+	"When the user describes, defines, or clarifies the purpose or requirements of a project Chat just created, treat that as a same-task follow-up to the creation TODO. Use engineer.send_prompt with the known todo_id and todo_text plus session_mode=resume_or_new for the existing linked worktree/session; do not create another TODO or sibling worktree. If the existing TODO or session is not identifiable from current state, inspect project_detail or todo_report before proposing work.",
 	"Use todo.add only when the user explicitly asks to make a TODO/backlog/queue/reminder without starting work now. The tracked-work confirmation also lets the user choose TODO-only with q.",
 	"Use todo.complete when the user asks to mark, close, finish, resolve, or clear an existing project TODO as done, or when gathered engineer/project evidence directly satisfies a linked TODO; never silently complete a TODO without a control confirmation.",
 	"When delegating project work for an open project TODO, set todo_id and todo_text on engineer.send_prompt, and set todo_label from the short TODO label when available. If the user names a TODO id, use that id; if the target TODO is unclear, inspect todo_report/project_detail or ask before sending work.",
+	"For engineer.send_prompt with a todo_id, set project_path to the TODO's owning project path, not its work_project_path; the host follows the TODO's recorded work_project_path to the existing worktree/session.",
 	"Use agent_task.create for temporary delegated work with no natural loaded project, including host/process/browser/system investigation or external web/product/market research. Use a generic agent task with resources and capabilities; do not encode special domains as task kinds.",
 	"Use agent_task.continue when the user asks to hit an existing open agent task again. Use agent_task.close when the task is done, should wait, or should be archived.",
 	"Use project.set_archive_state when project metadata identifies an in-scope regular loaded project, meaning it is not marked kind=scratch_task or kind=agent_task, and the user asks to archive, unarchive, hide, or move it between the Active and Archived tabs. This control does not add out-of-scope projects back to scope.",
@@ -542,6 +544,7 @@ var bossActionPlannerForcedInstructions = []string{
 	"Choose control_capability=\"todo.create_worktree_and_start_engineer\" for new loaded-project work.",
 	"Choose control_capability=\"agent_task.create\" for generic research with no natural loaded project.",
 	"Do not replace an open idle root-checkout engineer session; its task may still be unfinished. Use a tracked worktree for unrelated new work.",
+	"When the latest user message supplies the purpose or requirements for a project Chat just created and the creation TODO/session is known, choose engineer.send_prompt with session_mode=resume_or_new for that TODO; do not choose todo.create_worktree_and_start_engineer.",
 
 	// TODOs and delegated tasks.
 	"If the user asks to mark/close/finish/resolve a project TODO as done, or gathered evidence directly satisfies a linked project TODO, choose kind=\"propose_control\" with control_capability=\"todo.complete\" and fill todo_id, todo_text, and todo_evidence.",
@@ -581,6 +584,7 @@ var bossActionPlannerNormalInstructions = []string{
 	"Use read-only context only to identify the relevant task/project.",
 	"Then choose kind=\"propose_control\" with control_capability=\"agent_task.continue\" for a known related task, control_capability=\"todo.create_worktree_and_start_engineer\" for new loaded-project work, or control_capability=\"agent_task.create\" for generic research with no natural loaded project.",
 	"Do not replace an open idle root-checkout engineer session; its task may still be unfinished. Use a tracked worktree for unrelated new work.",
+	"When the latest user message supplies the purpose or requirements for a project Chat just created, keep it in the creation TODO/worktree: use engineer.send_prompt with session_mode=resume_or_new when that TODO/session is known, otherwise inspect project_detail or todo_report. Do not create another TODO or sibling worktree for that clarification.",
 
 	// Data gathering before action.
 	"If the user asks to mark/close/finish/resolve a project TODO as done and the TODO id/project is ambiguous, choose todo_report/project_detail before answering; when the TODO is known, choose control_capability=\"todo.complete\".",

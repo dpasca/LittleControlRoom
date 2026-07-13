@@ -81,6 +81,73 @@ func TestCreateTodoWorktreeFromNewlyCreatedEmptyGitRepo(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeFromEmptyRepoRejectsSecondLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	parent := t.TempDir()
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	created, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:    parent,
+		Name:          "KeyMaster",
+		CreateGitRepo: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrAttachProject() error = %v", err)
+	}
+
+	firstTodo, err := svc.AddTodo(ctx, created.ProjectPath, "Initialize KeyMaster")
+	if err != nil {
+		t.Fatalf("add first todo: %v", err)
+	}
+	first, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath:    created.ProjectPath,
+		TodoID:         firstTodo.ID,
+		BranchName:     "todo/initialize-keymaster",
+		WorktreeSuffix: "initialize-keymaster",
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() first error = %v", err)
+	}
+
+	secondTodo, err := svc.AddTodo(ctx, created.ProjectPath, "Implement KeyMaster")
+	if err != nil {
+		t.Fatalf("add second todo: %v", err)
+	}
+	_, err = svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath:    created.ProjectPath,
+		TodoID:         secondTodo.ID,
+		BranchName:     "todo/implement-keymaster",
+		WorktreeSuffix: "implement-keymaster",
+	})
+	if err == nil {
+		t.Fatal("CreateTodoWorktree() second error = nil, want unborn-root guard")
+	}
+	for _, want := range []string{
+		"root repository has no commits",
+		first.WorktreePath,
+		"continue that worktree or integrate it into the root branch first",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("CreateTodoWorktree() second error = %q, want %q", err, want)
+		}
+	}
+
+	worktrees, listErr := scanner.ListGitWorktrees(ctx, created.ProjectPath)
+	if listErr != nil {
+		t.Fatalf("ListGitWorktrees() error = %v", listErr)
+	}
+	if len(worktrees) != 2 {
+		t.Fatalf("worktrees after rejected second creation = %#v, want root plus first linked worktree", worktrees)
+	}
+}
+
 func TestCreateTodoWorktreeInheritsArchivedRoot(t *testing.T) {
 	t.Parallel()
 
