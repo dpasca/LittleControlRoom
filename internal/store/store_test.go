@@ -528,7 +528,7 @@ func TestSearchContextCachesSessionTranscriptWithoutToolOutput(t *testing.T) {
 	now := time.Now()
 	sessionFile := filepath.Join(t.TempDir(), "session.jsonl")
 	transcript := strings.Join([]string{
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Can you explain FCX?"}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Can you explain FCX?"}}`,
 		`{"type":"response_item","payload":{"type":"function_call_output","output":"zqxjtoolleak"}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"FCX is the internal game codename."}]}}`,
 	}, "\n") + "\n"
@@ -737,7 +737,7 @@ func TestSearchContextRefreshesSessionCacheFromArtifactMTime(t *testing.T) {
 
 	now := time.Now().Add(-10 * time.Minute).Truncate(time.Second)
 	sessionFile := filepath.Join(t.TempDir(), "running-session.jsonl")
-	initialTranscript := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Initial FCX context"}]}}` + "\n"
+	initialTranscript := `{"type":"event_msg","payload":{"type":"user_message","message":"Initial FCX context"}}` + "\n"
 	if err := os.WriteFile(sessionFile, []byte(initialTranscript), 0o644); err != nil {
 		t.Fatalf("write initial session file: %v", err)
 	}

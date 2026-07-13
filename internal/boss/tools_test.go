@@ -532,7 +532,7 @@ func TestQueryExecutorReportsLiveRunningSessionSample(t *testing.T) {
 
 	sessionFile := filepath.Join(tempDir, "session.jsonl")
 	transcript := strings.Join([]string{
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Keep going on FCX profile migration."}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Keep going on FCX profile migration."}}`,
 		`{"type":"response_item","payload":{"type":"function_call_output","output":"tool-output-should-not-leak"}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Currently compiling the compressed JSON profile migration path."}]}}`,
 	}, "\n") + "\n"
@@ -661,7 +661,7 @@ func TestQueryExecutorContextCommandSearchesEngineerTranscriptsWithHandles(t *te
 
 	sessionFile := filepath.Join(tempDir, "engineer-session.jsonl")
 	transcript := strings.Join([]string{
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"what was the summary flash about?"}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"what was the summary flash about?"}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The summary flash was about the boss attention row update cue, not an error badge."}]}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
@@ -723,9 +723,9 @@ func TestQueryExecutorContextCommandShowsEngineerExchange(t *testing.T) {
 
 	sessionFile := filepath.Join(tempDir, "engineer-session.jsonl")
 	transcript := strings.Join([]string{
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"what was the summary flash about?"}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"what was the summary flash about?"}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The summary flash was about the boss attention row update cue, not an error badge."}]}}`,
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"are you sure?"}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"are you sure?"}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(sessionFile, []byte(transcript), 0o644); err != nil {
 		t.Fatalf("write session: %v", err)
@@ -791,7 +791,7 @@ func TestQueryExecutorContextCommandShowsAgentTaskExchange(t *testing.T) {
 	codexHome := filepath.Join(tempDir, ".codex")
 	sessionID := "019agenttaskshow"
 	writeBossCodexSession(t, codexHome, sessionID, []string{
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Diff the duplicate skills and summarize the difference."}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Diff the duplicate skills and summarize the difference."}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The local openai-docs copy is a stale override; keep the system copy and remove the duplicate after checking custom edits."}]}}`,
 	})
 	workspace := filepath.Join(tempDir, "agent-workspace")
@@ -848,7 +848,7 @@ func TestQueryExecutorContextCommandShowsAgentTaskExchangeFromCodexFallbackHome(
 	realCodexHome := filepath.Join(tempDir, "real-codex-home")
 	sessionID := "019agenttaskfallbackhome"
 	writeBossCodexSession(t, realCodexHome, sessionID, []string{
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Diff the duplicate skills and summarize the difference."}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Diff the duplicate skills and summarize the difference."}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The fallback Codex home transcript says the user skill is stale and the system skill should win."}]}}`,
 	})
 	workspace := filepath.Join(tempDir, "agent-workspace")
@@ -903,7 +903,7 @@ func TestQueryExecutorContextCommandFallsBackFromEngineerSessionToAgentTask(t *t
 	codexHome := filepath.Join(tempDir, ".codex")
 	sessionID := "019agenttaskfallback"
 	writeBossCodexSession(t, codexHome, sessionID, []string{
-		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Explain the stale skill copy."}]}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"Explain the stale skill copy."}}`,
 		`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The user copy predates the system copy and should be treated as a stale local duplicate."}]}}`,
 	})
 	workspace := filepath.Join(tempDir, "agent-workspace")

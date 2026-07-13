@@ -399,6 +399,12 @@ func extractCodexTranscriptItem(line string) (TranscriptItem, bool) {
 		if payload.Type != "message" {
 			return TranscriptItem{}, false
 		}
+		// Codex response-item user messages are model-context inputs, not
+		// user-visible transcript events. Project instructions and environment
+		// context can appear here; actual prompts use event_msg/user_message.
+		if strings.EqualFold(strings.TrimSpace(payload.Role), "user") {
+			return TranscriptItem{}, false
+		}
 		text := extractCodexMessageText(payload.Content)
 		if payload.Role == "" || text == "" {
 			return TranscriptItem{}, false

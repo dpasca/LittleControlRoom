@@ -55,10 +55,16 @@ These are usable as a best-effort "latest turn completed" signal without parsing
 
 Observed recent conversational text usable for model-based "where was work left off?" classification:
 
-- `response_item.payload.type == "message"` with assistant/user text parts
+- `response_item.payload.type == "message"` with assistant text parts
 - `event_msg.payload.type == "user_message"` (`message`)
 - `event_msg.payload.type == "agent_message"` (`message`)
 - `event_msg.payload.type == "task_complete"` (`last_agent_message`)
+
+`response_item` messages with `role == "user"` are model-context inputs, not
+user-visible transcript events. They can contain injected `AGENTS.md`, skill,
+permission, or environment context alongside the real prompt. User-facing
+transcripts and classification input therefore take user turns from structured
+`event_msg.payload.type == "user_message"` records instead.
 
 ### Format B: legacy JSONL
 
