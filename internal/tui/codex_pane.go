@@ -176,11 +176,17 @@ func (m Model) idleProtectedEmbeddedProject() string {
 	return strings.TrimSpace(m.codexVisibleProject)
 }
 
-func (m Model) syncEmbeddedSessionIdleProtection() {
+func (m *Model) syncEmbeddedSessionIdleProtection() {
 	if m.codexManager == nil {
 		return
 	}
-	m.codexManager.SetIdleProtectedProject(m.idleProtectedEmbeddedProject())
+	projectPath := m.idleProtectedEmbeddedProject()
+	if m.codexIdleProtectionManager == m.codexManager && m.codexIdleProtectedProject == projectPath {
+		return
+	}
+	m.codexManager.SetIdleProtectedProject(projectPath)
+	m.codexIdleProtectedProject = projectPath
+	m.codexIdleProtectionManager = m.codexManager
 }
 
 func (m Model) codexPendingOpenProject() string {
@@ -638,9 +644,9 @@ func (m Model) currentCodexSnapshot() (codexapp.Snapshot, bool) {
 	return codexapp.Snapshot{}, false
 }
 
-// refreshCodexSnapshot attempts a non-blocking snapshot via TrySnapshot.
-// If the session lock is contended it returns the cached snapshot and sets
-// needsAsync=true so the caller can fire an async retry command.
+// refreshCodexSnapshot attempts a non-blocking state snapshot for background
+// sessions and a full snapshot for the visible session. If the session lock is
+// contended it returns the cached snapshot and asks the caller for an async retry.
 func (m *Model) refreshCodexSnapshot(projectPath string) (snapshot codexapp.Snapshot, ok bool, needsAsync bool) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -653,6 +659,26 @@ func (m *Model) refreshCodexSnapshot(projectPath string) (snapshot codexapp.Snap
 		}
 		m.dropCodexSnapshot(projectPath)
 		return codexapp.Snapshot{}, false, false
+	}
+	// Background sessions only need their small state view to update dashboard
+	// badges and completion/attention transitions. Copying a growing transcript
+	// for every streamed token makes hidden sessions compete with keyboard input
+	// and forces needless cache invalidation work. A full snapshot is fetched as
+	// soon as the session is revealed.
+	if normalizeProjectPath(m.codexVisibleProject) != normalizeProjectPath(projectPath) {
+		if _, supportsStateSnapshot := session.(codexTryStateSnapshooter); supportsStateSnapshot {
+			if state, got := stateSnapshotForCodexSession(session); got {
+				if cached, cachedOK := m.codexSnapshots[projectPath]; cachedOK {
+					state = overlayCodexSnapshotState(cached, state)
+				}
+				m.storeCodexSnapshot(projectPath, state)
+				return state, true, false
+			}
+			if cached, cachedOK := m.codexSnapshots[projectPath]; cachedOK {
+				return cached, true, true
+			}
+			return codexapp.Snapshot{}, false, true
+		}
 	}
 	if snap, got := session.TrySnapshot(); got {
 		m.storeCodexSnapshot(projectPath, snap)

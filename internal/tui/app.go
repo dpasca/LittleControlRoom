@@ -221,6 +221,8 @@ type Model struct {
 	codexTranscriptRev            map[string]uint64
 	codexVisibleProject           string
 	codexHiddenProject            string
+	codexIdleProtectedProject     string
+	codexIdleProtectionManager    *codexapp.Manager
 	codexPendingOpen              *codexPendingOpenState
 	codexOpenRequestSeq           uint64
 	codexOpenRevealByRequest      map[uint64]bool

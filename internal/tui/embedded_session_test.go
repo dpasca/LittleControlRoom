@@ -342,6 +342,75 @@ func TestCodexUpdateDefersAckForVisibleStreamingTranscript(t *testing.T) {
 	requireManagerUpdate(t, manager, projectPath)
 }
 
+func TestCodexUpdateThrottlesBackgroundStreamingWithoutCopyingTranscript(t *testing.T) {
+	projectPath := "/tmp/demo"
+	now := time.Date(2026, 6, 18, 9, 30, 0, 0, time.UTC)
+	prev := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		ThreadID:           "thread-demo",
+		Started:            true,
+		Busy:               true,
+		Phase:              codexapp.SessionPhaseRunning,
+		ActiveTurnID:       "turn-demo",
+		Status:             "Codex is working...",
+		LastBusyActivityAt: now,
+		TranscriptRevision: 1,
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: "cached transcript",
+		}},
+	}
+	next := prev
+	next.LastBusyActivityAt = now.Add(10 * time.Millisecond)
+	next.TranscriptRevision = 2
+	next.Entries = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "new streamed token",
+	}}
+
+	session, manager, notifySession := openFakeManagedCodexSession(t, projectPath, next)
+	requireManagerUpdate(t, manager, projectPath)
+	m := Model{
+		codexManager:       manager,
+		codexHiddenProject: projectPath,
+		codexInput:         newCodexTextarea(),
+		codexViewport:      viewport.New(80, 20),
+		width:              100,
+		height:             24,
+	}
+	m.storeCodexSnapshot(projectPath, prev)
+
+	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: projectPath})
+	got := normalizeUpdateModel(updated)
+	if _, ok := got.codexUpdateAckSeq[projectPath]; !ok {
+		t.Fatalf("background streaming update should defer manager ack")
+	}
+	if session.tryStateSnapshotCalls == 0 {
+		t.Fatalf("background update should use the lightweight state snapshot")
+	}
+	if session.trySnapshotCalls != 0 {
+		t.Fatalf("background update copied the full transcript %d time(s)", session.trySnapshotCalls)
+	}
+	if cached, ok := got.codexCachedSnapshot(projectPath); !ok || len(cached.Entries) != 1 || cached.Entries[0].Text != "cached transcript" {
+		t.Fatalf("background state refresh should preserve cached transcript, got %#v", cached.Entries)
+	}
+	if delay := got.codexStreamingUpdateAckDelay(projectPath); delay != codexBackgroundStreamingUpdateAckDelay {
+		t.Fatalf("background ack delay = %s, want %s", delay, codexBackgroundStreamingUpdateAckDelay)
+	}
+
+	notifySession()
+	assertNoManagerUpdate(t, manager)
+
+	seq := got.codexUpdateAckSeq[projectPath]
+	updated, _ = got.applyCodexUpdateAckMsg(codexUpdateAckMsg{projectPath: projectPath, seq: seq})
+	got = normalizeUpdateModel(updated)
+	if _, ok := got.codexUpdateAckSeq[projectPath]; ok {
+		t.Fatalf("deferred background ack state should clear after ack message")
+	}
+	requireManagerUpdate(t, manager, projectPath)
+}
+
 func TestCodexUpdateAcksImmediatelyForPendingApproval(t *testing.T) {
 	projectPath := "/tmp/demo"
 	prev := codexapp.Snapshot{
@@ -372,27 +441,39 @@ func TestCodexUpdateAcksImmediatelyForPendingApproval(t *testing.T) {
 		Text: "LCAgent requested command approval: make test",
 	}}
 
-	_, manager, notifySession := openFakeManagedCodexSession(t, projectPath, next)
-	requireManagerUpdate(t, manager, projectPath)
-	m := Model{
-		codexManager:        manager,
-		codexVisibleProject: projectPath,
-		codexHiddenProject:  projectPath,
-		codexInput:          newCodexTextarea(),
-		codexViewport:       viewport.New(80, 20),
-		width:               100,
-		height:              24,
-	}
-	m.storeCodexSnapshot(projectPath, prev)
+	for _, tc := range []struct {
+		name    string
+		visible bool
+	}{
+		{name: "visible", visible: true},
+		{name: "background", visible: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, manager, notifySession := openFakeManagedCodexSession(t, projectPath, next)
+			requireManagerUpdate(t, manager, projectPath)
+			m := Model{
+				codexManager:       manager,
+				codexHiddenProject: projectPath,
+				codexInput:         newCodexTextarea(),
+				codexViewport:      viewport.New(80, 20),
+				width:              100,
+				height:             24,
+			}
+			if tc.visible {
+				m.codexVisibleProject = projectPath
+			}
+			m.storeCodexSnapshot(projectPath, prev)
 
-	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: projectPath})
-	got := normalizeUpdateModel(updated)
-	if _, ok := got.codexUpdateAckSeq[projectPath]; ok {
-		t.Fatalf("pending approval update should ack immediately")
-	}
+			updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: projectPath})
+			got := normalizeUpdateModel(updated)
+			if _, ok := got.codexUpdateAckSeq[projectPath]; ok {
+				t.Fatalf("pending approval update should ack immediately")
+			}
 
-	notifySession()
-	requireManagerUpdate(t, manager, projectPath)
+			notifySession()
+			requireManagerUpdate(t, manager, projectPath)
+		})
+	}
 }
 
 func TestEmbeddedSessionActivityFromSnapshotUsesBusyActivity(t *testing.T) {

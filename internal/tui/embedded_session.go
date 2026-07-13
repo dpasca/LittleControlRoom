@@ -103,7 +103,10 @@ type codexTranscriptRenderedMsg struct {
 	links    []codexTranscriptLinkSpan
 }
 
-const codexStreamingUpdateAckDelay = spinnerTickInterval
+const (
+	codexStreamingUpdateAckDelay           = spinnerTickInterval
+	codexBackgroundStreamingUpdateAckDelay = 500 * time.Millisecond
+)
 
 func (m codexModelListMsg) statusSummary() string {
 	if m.err != nil {
@@ -494,9 +497,17 @@ func (m *Model) deferredCodexUpdateAckCmd(projectPath string) tea.Cmd {
 	}
 	m.codexUpdateAckSeq[projectPath]++
 	seq := m.codexUpdateAckSeq[projectPath]
-	return tea.Tick(codexStreamingUpdateAckDelay, func(time.Time) tea.Msg {
+	delay := m.codexStreamingUpdateAckDelay(projectPath)
+	return tea.Tick(delay, func(time.Time) tea.Msg {
 		return codexUpdateAckMsg{projectPath: projectPath, seq: seq}
 	})
+}
+
+func (m Model) codexStreamingUpdateAckDelay(projectPath string) time.Duration {
+	if normalizeProjectPath(m.codexVisibleProject) == normalizeProjectPath(projectPath) {
+		return codexStreamingUpdateAckDelay
+	}
+	return codexBackgroundStreamingUpdateAckDelay
 }
 
 func (m Model) applyCodexUpdateAckMsg(msg codexUpdateAckMsg) (tea.Model, tea.Cmd) {
@@ -514,7 +525,7 @@ func (m Model) applyCodexUpdateAckMsg(msg codexUpdateAckMsg) (tea.Model, tea.Cmd
 
 func (m Model) shouldDeferCodexStreamingUpdateAck(projectPath string, hadPrev bool, prev, next codexapp.Snapshot, ok, needsAsync, transcriptChanged bool) bool {
 	projectPath = strings.TrimSpace(projectPath)
-	if projectPath == "" || strings.TrimSpace(m.codexVisibleProject) != projectPath {
+	if projectPath == "" {
 		return false
 	}
 	if !hadPrev || !ok || next.Closed || !next.Busy {
@@ -525,6 +536,13 @@ func (m Model) shouldDeferCodexStreamingUpdateAck(projectPath string, hadPrev bo
 	}
 	if codexStreamingSnapshotNeedsImmediateAck(prev, next) {
 		return false
+	}
+	// A hidden streaming session has no transcript pane to animate. Keep its
+	// state current at a low rate instead of allowing token notifications to
+	// monopolize the Bubble Tea event loop. Critical state changes above still
+	// acknowledge immediately and therefore remain responsive.
+	if normalizeProjectPath(m.codexVisibleProject) != normalizeProjectPath(projectPath) {
+		return true
 	}
 	return transcriptChanged || needsAsync
 }
