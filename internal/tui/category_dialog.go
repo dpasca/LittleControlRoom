@@ -82,7 +82,6 @@ func (m Model) openCategoryDialog() (tea.Model, tea.Cmd) {
 		Marked:   map[string]bool{},
 	}
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Category operations open"
 	return m, nil

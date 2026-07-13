@@ -22,7 +22,7 @@ func (m Model) openBossSessionPicker() (tea.Model, tea.Cmd) {
 	m.sessionPickerSessions = nil
 	m.sessionPickerSelected = 0
 	m.sessionPickerErr = nil
-	m.status = "Loading Help chat sessions..."
+	m.status = "Loading Chat sessions..."
 	m.syncLayout(false)
 	return m, m.listBossSessionsCmd()
 }
@@ -45,14 +45,14 @@ func (m Model) applyBossSessionsListed(msg bossSessionsListedMsg) (tea.Model, te
 	m.sessionPickerLoading = false
 	m.sessionPickerErr = msg.err
 	if msg.err != nil {
-		m.status = "Help chat sessions failed: " + msg.err.Error()
+		m.status = "Chat sessions failed: " + msg.err.Error()
 		m.syncLayout(false)
 		return m, nil
 	}
 	m.sessionPickerSessions = append([]bossChatSession(nil), msg.sessions...)
 	m.sessionPickerSelected = m.defaultBossSessionPickerIndex()
 	if len(m.sessionPickerSessions) == 0 {
-		m.status = "No saved Help chat sessions"
+		m.status = "No saved Chat sessions"
 	} else {
 		m.status = "Boss session picker open"
 	}
@@ -80,7 +80,7 @@ func (m Model) updateBossSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	sessions := m.currentBossSessionPickerSessions()
 	if len(sessions) == 0 {
 		if msg.String() == "enter" {
-			m.closeBossSessionPicker("No saved Help chat sessions")
+			m.closeBossSessionPicker("No saved Chat sessions")
 		}
 		return m, nil
 	}
@@ -105,7 +105,7 @@ func (m Model) updateBossSessionPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.closeBossSessionPicker("")
 		m.sessionLoaded = false
-		m.status = "Opening Help chat session " + shortBossSessionID(session.SessionID) + "..."
+		m.status = "Opening Chat session " + shortBossSessionID(session.SessionID) + "..."
 		return m, m.loadBossSessionCmd(session.SessionID)
 	}
 	return m, nil
@@ -199,7 +199,7 @@ func (m Model) renderBossSessionPickerContent(width, bodyH int) string {
 	}
 	sessions := m.currentBossSessionPickerSessions()
 	if len(sessions) == 0 {
-		lines = append(lines, bossMutedStyle.Render(fitLine("No saved Help chat sessions yet. Use /new to start one.", width)))
+		lines = append(lines, bossMutedStyle.Render(fitLine("No saved Chat sessions yet. Use /new to start one.", width)))
 		return strings.Join(lines, "\n")
 	}
 
@@ -218,7 +218,7 @@ func (m Model) renderBossSessionPickerContent(width, bodyH int) string {
 		lines = append(lines, bossSessionPickerSectionStyle.Render(fitLine("About", width)))
 		title := strings.TrimSpace(selected.Title)
 		if title == "" {
-			title = "untitled Help chat"
+			title = "untitled Chat"
 		}
 		lines = append(lines, bossSessionPickerDetailStyle.Render(fitLine(title, width)))
 		lines = append(lines, bossMutedStyle.Render(fitLine(bossSessionPickerMeta(selected, m.now()), width)))
@@ -272,7 +272,7 @@ func (m Model) renderBossSessionPickerRow(session bossChatSession, selected bool
 	}
 	title := strings.TrimSpace(session.Title)
 	if title == "" {
-		title = "untitled Help chat"
+		title = "untitled Chat"
 	}
 	right := fmt.Sprintf("%s  %s", formatBossSessionPickerActivity(session.UpdatedAt), shortBossSessionID(session.SessionID))
 	leftWidth := 6

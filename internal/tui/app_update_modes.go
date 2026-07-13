@@ -39,14 +39,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		m.cyclePaneFocus(-1)
 		return m, nil
-	case "?":
-		m.showHelp = !m.showHelp
-		if m.showHelp {
-			m.status = "Quick help open. Press ? or Esc to close"
-		} else {
-			m.status = "Quick help closed"
-		}
-		return m, nil
 	case "f":
 		return m, m.openProjectFilterDialog()
 	case "a":
@@ -54,11 +46,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f3":
 		return m.cycleCodexSession(1)
 	case "esc":
-		if m.showHelp {
-			m.showHelp = false
-			m.status = "Quick help closed"
-			return m, nil
-		}
 		if m.focusProjectsPane() {
 			return m, nil
 		}
@@ -655,7 +642,6 @@ func (m *Model) applySectionToggle(label string, mode commands.ToggleMode, targe
 
 func (m *Model) openCommandMode() {
 	m.commandMode = true
-	m.showHelp = false
 	m.commandSelected = 0
 	m.commandInput.Focus()
 	m.commandInput.SetValue("/")

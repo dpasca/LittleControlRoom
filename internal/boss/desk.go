@@ -79,7 +79,7 @@ func (m Model) bossSidebarLines(width, height int) []string {
 	nowLimit, decisionLimit, todoLimit, watchingLimit := bossSidebarSectionLimits(height)
 
 	if rows := m.bossDeskChatStatsRows(width); len(rows) > 0 {
-		lines = appendDeskSection(lines, "Help Chat", rows, width)
+		lines = appendDeskSection(lines, "Chat", rows, width)
 	}
 	if rows := takeDeskRows(m.bossDeskNowRows(width, now), nowLimit); len(rows) > 0 {
 		lines = appendDeskSection(lines, "Now", rows, width)

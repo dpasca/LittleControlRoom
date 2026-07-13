@@ -83,7 +83,6 @@ func (m *Model) openMobileDialog() {
 	}
 	m.mobileDialogOpen = true
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Mobile access"
 }

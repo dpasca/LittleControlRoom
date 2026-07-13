@@ -46,7 +46,6 @@ func (m *Model) openProcessDialogForSelection() tea.Cmd {
 	}
 	dialog.Findings, dialog.ScannedAt = m.globalProcessFindings()
 	m.processDialog = &dialog
-	m.showHelp = false
 	m.err = nil
 	m.status = "Analyzing project processes..."
 	return m.requestProcessScanCmd("")

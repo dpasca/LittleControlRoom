@@ -12,6 +12,24 @@ func TestParse(t *testing.T) {
 		check func(t *testing.T, inv Invocation)
 	}{
 		{
+			name: "chat",
+			raw:  "/chat",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindChat || inv.Canonical != "/chat" {
+					t.Fatalf("chat invocation = %#v, want canonical /chat", inv)
+				}
+			},
+		},
+		{
+			name: "legacy help alias",
+			raw:  "/help",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindChat || inv.Canonical != "/chat" {
+					t.Fatalf("help invocation = %#v, want canonical /chat alias", inv)
+				}
+			},
+		},
+		{
 			name: "ai stats",
 			raw:  "/ai",
 			check: func(t *testing.T, inv Invocation) {

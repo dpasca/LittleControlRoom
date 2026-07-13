@@ -47,7 +47,7 @@ func TestTopicsIncludeCuratedWorkflowsAndKeybindings(t *testing.T) {
 		kind    TopicKind
 		surface Surface
 	}{
-		{TopicID(SurfaceMainTUI, TopicKindKeybinding, "help-chat"), TopicKindKeybinding, SurfaceMainTUI},
+		{TopicID(SurfaceMainTUI, TopicKindKeybinding, "chat"), TopicKindKeybinding, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindKeybinding, "project-todos"), TopicKindKeybinding, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "start-todo-work"), TopicKindWorkflow, SurfaceMainTUI},
 		{TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"), TopicKindWorkflow, SurfaceMainTUI},
@@ -87,7 +87,7 @@ func TestTopicsHaveUniqueIDs(t *testing.T) {
 }
 
 func TestTopicByIDReturnsDefensiveCopy(t *testing.T) {
-	id := CommandTopicID(SurfaceMainTUI, "help")
+	id := CommandTopicID(SurfaceMainTUI, "chat")
 	topic, ok := TopicByID(id)
 	if !ok {
 		t.Fatalf("TopicByID(%q) not found", id)

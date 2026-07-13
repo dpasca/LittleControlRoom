@@ -1,6 +1,6 @@
 # TUI Design Rules
 
-Little Control Room's terminal UI should stay consistent across the main dashboard, embedded session panes, and the centered Help Chat overlay.
+Little Control Room's terminal UI should stay consistent across the main dashboard, embedded session panes, and the centered Chat overlay.
 
 ## Dialog Actions
 

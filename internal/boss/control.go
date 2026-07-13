@@ -213,7 +213,7 @@ func bossLosslessControlPrompt(action bossAction) string {
 		success = "Answer the user's original request directly. If available evidence answers a different source, metric, timeframe, or scope, report that mismatch instead of substituting it."
 	}
 
-	lines := []string{"Help Chat lossless task packet:"}
+	lines := []string{"Chat lossless task packet:"}
 	if excerpt != "" {
 		lines = append(lines, "", "Original user wording to preserve:", excerpt)
 	}

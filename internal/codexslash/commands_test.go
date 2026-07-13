@@ -61,17 +61,17 @@ func TestSuggestionsIncludeDevLCReviewCommandWhenPrefixed(t *testing.T) {
 	}
 }
 
-func TestSuggestionsIncludeHelpCommand(t *testing.T) {
+func TestSuggestionsIncludeChatCommand(t *testing.T) {
 	suggestions := Suggestions("/")
 	found := false
 	for _, suggestion := range suggestions {
-		if suggestion.Insert == "/help" {
+		if suggestion.Insert == "/chat" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("Suggestions(/) should include /help: %#v", suggestions)
+		t.Fatalf("Suggestions(/) should include /chat: %#v", suggestions)
 	}
 }
 
@@ -264,16 +264,26 @@ func TestParsePermissionsHelpCommand(t *testing.T) {
 	}
 }
 
-func TestParseHelpCommand(t *testing.T) {
+func TestParseChatCommand(t *testing.T) {
+	inv, err := Parse("/chat")
+	if err != nil {
+		t.Fatalf("Parse(/chat) error = %v", err)
+	}
+	if inv.Kind != KindChat {
+		t.Fatalf("Parse(/chat) kind = %q, want %q", inv.Kind, KindChat)
+	}
+	if inv.Canonical != "/chat" {
+		t.Fatalf("Parse(/chat) canonical = %q, want /chat", inv.Canonical)
+	}
+}
+
+func TestParseHelpAliasCanonicalizesToChat(t *testing.T) {
 	inv, err := Parse("/help")
 	if err != nil {
 		t.Fatalf("Parse(/help) error = %v", err)
 	}
-	if inv.Kind != KindHelp {
-		t.Fatalf("Parse(/help) kind = %q, want %q", inv.Kind, KindHelp)
-	}
-	if inv.Canonical != "/help" {
-		t.Fatalf("Parse(/help) canonical = %q, want /help", inv.Canonical)
+	if inv.Kind != KindChat || inv.Canonical != "/chat" {
+		t.Fatalf("Parse(/help) = %#v, want hidden alias for /chat", inv)
 	}
 }
 

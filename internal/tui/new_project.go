@@ -132,7 +132,6 @@ func (m *Model) openNewProjectDialog(provider codexapp.Provider) tea.Cmd {
 	dialog.NameInput.Placeholder = "project-name (optional for existing folder path)"
 
 	m.newProjectDialog = dialog
-	m.showHelp = false
 	m.err = nil
 	m.status = "New project dialog open. Enter create/add, Esc cancel"
 	return batchCmds(m.setNewProjectSelection(newProjectFieldPath), m.refreshNewProjectPreview(), m.refreshNewProjectPathSuggestions())

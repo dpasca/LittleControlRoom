@@ -14,7 +14,7 @@ func (m Model) openSettingsBossChatBackendPicker() (tea.Model, tea.Cmd) {
 	options := m.settingsBossChatBackendOptions()
 	m.settingsBossChatPickerVisible = true
 	m.settingsBossChatPickerSelected = m.settingsBossChatBackendPickerSelection(options)
-	m.status = "Choose the helper for Help chat."
+	m.status = "Choose the helper for Chat."
 	return m, nil
 }
 
@@ -38,7 +38,7 @@ func (m Model) settingsBossChatBackendPickerSelection(options []providerChoice) 
 func (m Model) updateSettingsBossChatBackendPickerMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	options := m.settingsBossChatBackendOptions()
 	if len(options) == 0 {
-		m.closeSettingsBossChatBackendPicker("No Help chat options are available right now.")
+		m.closeSettingsBossChatBackendPicker("No Chat options are available right now.")
 		return m, nil
 	}
 
@@ -51,7 +51,7 @@ func (m Model) updateSettingsBossChatBackendPickerMode(msg tea.KeyMsg) (tea.Mode
 
 	switch msg.String() {
 	case "esc":
-		m.closeSettingsBossChatBackendPicker("Help chat chooser closed")
+		m.closeSettingsBossChatBackendPicker("Chat chooser closed")
 		return m, nil
 	case "up", "k", "shift+tab":
 		m.settingsBossChatPickerSelected = wrapIndex(m.settingsBossChatPickerSelected-1, len(options))
@@ -69,7 +69,7 @@ func (m Model) applySettingsBossChatBackendPickerSelection(option providerChoice
 	if len(m.settingsFields) > settingsFieldBossChatBackend {
 		m.settingsFields[settingsFieldBossChatBackend].input.SetValue(string(option.Value))
 	}
-	m.closeSettingsBossChatBackendPicker(fmt.Sprintf("Help chat set to %s. Press ctrl+s to save.", option.Label))
+	m.closeSettingsBossChatBackendPicker(fmt.Sprintf("Chat set to %s. Press ctrl+s to save.", option.Label))
 	return m.focusSettingsProviderDetail(option.Value)
 }
 

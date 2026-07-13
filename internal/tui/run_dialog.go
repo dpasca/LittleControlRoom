@@ -65,7 +65,6 @@ func (m *Model) openRunCommandDialog(project model.ProjectSummary, startAfterSav
 		StartAfterSave:    startAfterSave,
 	}
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	if startAfterSave {
 		m.status = "Set a run command for this project"

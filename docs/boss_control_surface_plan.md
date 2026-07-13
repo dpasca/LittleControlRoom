@@ -1,6 +1,6 @@
 # Boss Control Surface Plan
 
-> Historical design note: the standalone Boss Chat UI has been retired. Its control capabilities now live in the centered Help Chat overlay; the sidebar, bottom log, and Flow UI described here are not current product surfaces.
+> Historical design note: the standalone Boss Chat UI has been retired. Its control capabilities now live in the centered Chat overlay; the sidebar, bottom log, and Flow UI described here are not current product surfaces.
 
 This document defines the first planning pass for a generalized control surface that Boss Chat can use to act on Little Control Room without becoming tightly coupled to every TUI feature.
 
@@ -323,7 +323,7 @@ Likely next actions:
 - `project.add_todo`
 - `todo.mark_done`
 - `todo.create_worktree`
-- `todo.create_worktree_and_start_engineer` (implemented as the default tracked Help Chat launch for new project work)
+- `todo.create_worktree_and_start_engineer` (implemented as the default tracked Chat launch for new project work)
 - `process.terminate`
 - `runtime.start`
 - `runtime.stop`

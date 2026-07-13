@@ -109,7 +109,7 @@ func bossBrowserAttentionHostNoticeForSnapshot(projectPath string, hadPrevious b
 	lines := []string{
 		fmt.Sprintf("%s browser update for %s: %s", provider, projectName, summary),
 		"",
-		"If the browser window is open, finish that browser step there. Then come back to Help Chat and ask what the engineer found; I will read the task output before recommending the next move.",
+		"If the browser window is open, finish that browser step there. Then come back to Chat and ask what the engineer found; I will read the task output before recommending the next move.",
 	}
 	return strings.Join(lines, "\n")
 }

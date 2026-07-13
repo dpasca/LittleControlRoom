@@ -26,7 +26,7 @@ func (m Model) openHelpChatModeOrSetupPrompt() (tea.Model, tea.Cmd) {
 		return updated, batchCmds(surfaceCmd, openCmd)
 	}
 	m.openBossSetupPrompt()
-	m.status = "Help chat needs setup before it can open."
+	m.status = "Chat needs setup before it can open."
 	return m, surfaceCmd
 }
 
@@ -51,7 +51,6 @@ func (m Model) prepareHelpChatHostSurface() (Model, tea.Cmd) {
 
 func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 	m.helpChatMode = true
-	m.showHelp = false
 	m.showPerf = false
 	m.showAIStats = false
 	var initCmd tea.Cmd
@@ -63,7 +62,7 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 		m.helpChatModel = m.helpChatModel.WithViewContext(m.bossViewContext())
 		initCmd = m.helpChatModel.ActivateCmd()
 	}
-	m.status = "Help chat open. Ask a question, or press Esc/backtick to hide."
+	m.status = "Chat open. Ask a question, or press Esc/backtick to hide."
 	if m.width > 0 && m.height > 0 {
 		updated, _ := m.helpChatModel.Update(m.helpChatWindowSizeMsg())
 		m.helpChatModel = normalizeBossModel(updated)
@@ -97,7 +96,7 @@ func (m Model) updateHelpChatModeMessage(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateHelpChatModeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "`" {
-		m.closeHelpChatMode("Help chat hidden")
+		m.closeHelpChatMode("Chat hidden")
 		return m, nil
 	}
 	return m.updateHelpChatModeMessage(msg)
@@ -181,7 +180,7 @@ func (m Model) renderHelpChatOverlay(body string, bodyW, bodyH int) string {
 }
 
 func (m Model) renderHelpChatHeader(width int) string {
-	parts := []string{helpChatTitleStyle.Render("Help Chat")}
+	parts := []string{helpChatTitleStyle.Render("Chat")}
 	if statusText := strings.TrimSpace(m.helpChatModel.StatusText()); statusText != "" {
 		parts = append(parts, helpChatStatusStyle.Render(statusText))
 	}

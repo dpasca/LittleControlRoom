@@ -429,7 +429,6 @@ func formatPerfEventAge(now, at time.Time) string {
 func (m *Model) openPerfDialog() tea.Cmd {
 	m.showPerf = true
 	m.showAIStats = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Performance open. Press c to copy or Esc to close"
 	return nil

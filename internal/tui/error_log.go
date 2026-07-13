@@ -40,7 +40,6 @@ type errorLogAppendResult struct {
 func (m Model) openErrorLog() (tea.Model, tea.Cmd) {
 	m.errorLogVisible = true
 	m.commandMode = false
-	m.showHelp = false
 	if len(m.errorLogEntries) == 0 {
 		m.errorLogSelected = 0
 		m.status = "Error log open. No errors recorded yet"

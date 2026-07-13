@@ -1,6 +1,6 @@
 # Boss 2.0 Design Brief
 
-> Historical design note: the standalone Boss Chat UI has been retired. Its coordination capabilities now live in the centered Help Chat overlay, without the Boss sidebar, bottom log, Flow tab, or human-style AI worker names.
+> Historical design note: the standalone Boss Chat UI has been retired. Its coordination capabilities now live in the centered Chat overlay, without the Boss sidebar, bottom log, Flow tab, or human-style AI worker names.
 
 Boss 2.0 is the next architecture direction for Little Control Room's high-level assistant.
 

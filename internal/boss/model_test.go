@@ -46,7 +46,7 @@ func TestModelViewRendersBossPanels(t *testing.T) {
 	m.syncLayout(true)
 
 	view := m.View()
-	for _, want := range []string{"Help Chat", "Boss Desk", "Boss Log", "Watching", "Next", "Alpha"} {
+	for _, want := range []string{"Chat", "Boss Desk", "Boss Log", "Watching", "Next", "Alpha"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -107,7 +107,7 @@ func TestModelHeaderShowsLastUsage(t *testing.T) {
 		t.Fatalf("view missing token usage stats:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "t4.5k") {
-		t.Fatalf("Help chat usage should not show total token count:\n%s", rendered)
+		t.Fatalf("Chat usage should not show total token count:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "last $0.012") {
 		t.Fatalf("view missing last cost estimate:\n%s", rendered)
@@ -139,7 +139,7 @@ func TestBossSidebarShowsReadableChatStats(t *testing.T) {
 
 	rendered := ansi.Strip(strings.Join(m.bossSidebarLines(54, 20), "\n"))
 	for _, want := range []string{
-		"Help Chat",
+		"Chat",
 		"Model",
 		"gpt-5.5",
 		"Reasoning",
@@ -495,7 +495,7 @@ func TestModelChatOnlyViewOmitsDeskAndLog(t *testing.T) {
 	if strings.TrimSpace(rendered) == "" {
 		t.Fatalf("chat-only view should render the core chat surface")
 	}
-	for _, unwanted := range []string{"Help Chat", "Boss Desk", "Boss Log", "Watching", "Next"} {
+	for _, unwanted := range []string{"Chat", "Boss Desk", "Boss Log", "Watching", "Next"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("chat-only view should omit %q:\n%s", unwanted, rendered)
 		}
@@ -522,7 +522,7 @@ func TestEmbeddedHelpUsesSeparateSessionStore(t *testing.T) {
 		t.Fatalf("help session dir = %q, want %q", helpModel.sessionStore.dir, helpChatSessionsDirName)
 	}
 	if bossModel.sessionStore.dir == helpModel.sessionStore.dir {
-		t.Fatalf("help chat should not share legacy Boss chat session history: %q", helpModel.sessionStore.dir)
+		t.Fatalf("chat should not share legacy Chat session history: %q", helpModel.sessionStore.dir)
 	}
 }
 
@@ -536,24 +536,24 @@ func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
 	m.syncLayout(true)
 
 	if m.SlashActive() {
-		t.Fatalf("help chat should treat slash text as normal chat input")
+		t.Fatalf("chat should treat slash text as normal chat input")
 	}
 	updated, cmd := m.submit()
 	got := updated.(Model)
 	if got.sessionPickerVisible {
-		t.Fatalf("help chat slash-looking input should not open the Boss session picker")
+		t.Fatalf("chat slash-looking input should not open the Boss session picker")
 	}
 	if len(got.messages) != 1 || got.messages[0].Role != "user" || got.messages[0].Content != "/sessions" {
-		t.Fatalf("help chat should submit slash-looking text as a user question, got %#v", got.messages)
+		t.Fatalf("chat should submit slash-looking text as a user question, got %#v", got.messages)
 	}
 	if cmd == nil {
-		t.Fatalf("help chat slash-looking input should still submit to the assistant")
+		t.Fatalf("chat slash-looking input should still submit to the assistant")
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	got = updated.(Model)
 	if got.normalizedTranscriptTab() != bossTranscriptTabChat {
-		t.Fatalf("help chat Tab should not switch to Flow, got %q", got.normalizedTranscriptTab())
+		t.Fatalf("chat Tab should not switch to Flow, got %q", got.normalizedTranscriptTab())
 	}
 }
 
@@ -568,22 +568,22 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 	m.syncLayout(true)
 
 	rendered := ansi.Strip(m.View())
-	for _, unwanted := range []string{"Help Chat", "Boss Desk", "Boss Log", "Flow", "Tab switch"} {
+	for _, unwanted := range []string{"Chat", "Boss Desk", "Boss Log", "Flow", "Tab switch"} {
 		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("help chat view should omit Boss transcript control %q:\n%s", unwanted, rendered)
+			t.Fatalf("chat view should omit Boss transcript control %q:\n%s", unwanted, rendered)
 		}
 	}
 	if !strings.Contains(rendered, "Help> Ask me about Little Control Room.") {
-		t.Fatalf("help chat should use a Help speaker label:\n%s", rendered)
+		t.Fatalf("chat should use a Help speaker label:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "Boss>") {
-		t.Fatalf("help chat should not use Boss speaker labels:\n%s", rendered)
+		t.Fatalf("chat should not use Boss speaker labels:\n%s", rendered)
 	}
 
 	rawTranscript := m.renderTranscript(112)
 	for _, unwanted := range []string{"\x1b[48;2;0;0;0m", "\x1b[48;5;0m"} {
 		if strings.Contains(rawTranscript, unwanted) {
-			t.Fatalf("help chat transcript should not paint old black Boss backgrounds %q:\n%s", unwanted, rendered)
+			t.Fatalf("chat transcript should not paint old black Boss backgrounds %q:\n%s", unwanted, rendered)
 		}
 	}
 	for label, style := range map[string]lipgloss.Style{
@@ -591,7 +591,7 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 		"user":      helpChatUserMessageStyle,
 	} {
 		if got, want := fmt.Sprint(style.GetBackground()), fmt.Sprint(helpChatSurfaceBackground); got != want {
-			t.Fatalf("help chat %s text background = %s, want help surface %s", label, got, want)
+			t.Fatalf("chat %s text background = %s, want help surface %s", label, got, want)
 		}
 	}
 }
@@ -643,7 +643,7 @@ func TestEmbeddedHelpAssistantResponseWordWrapsAtFullWidthAndKeepsBackground(t *
 	}
 	for i, line := range lines {
 		if got := ansi.StringWidth(ansi.Strip(line)); got > width {
-			t.Fatalf("help chat response line %d width = %d, want <= %d: %q", i, got, width, ansi.Strip(line))
+			t.Fatalf("chat response line %d width = %d, want <= %d: %q", i, got, width, ansi.Strip(line))
 		}
 	}
 	for i, line := range lines[1:] {
@@ -671,7 +671,7 @@ func TestEmbeddedHelpAssistantResponseWordWrapsAtFullWidthAndKeepsBackground(t *
 		t.Fatalf("continuation lines should use more than the old prefix-reduced width:\n%s", ansi.Strip(rendered))
 	}
 	if got := strings.Count(rendered, "48;5;234"); got == 0 {
-		t.Fatalf("help chat Markdown response should keep the surface background:\n%q", rendered)
+		t.Fatalf("chat Markdown response should keep the surface background:\n%q", rendered)
 	}
 	assertANSI256Background(t, rendered, 234)
 }
@@ -702,12 +702,12 @@ func TestEmbeddedHelpUsesBossControlConfirmationFlow(t *testing.T) {
 	}})
 	got := updated.(Model)
 	if cmd != nil || got.pendingControl == nil || !got.ControlConfirmationActive() {
-		t.Fatalf("Help Chat should enter the shared confirmation flow, cmd=%v pending=%#v", cmd, got.pendingControl)
+		t.Fatalf("Chat should enter the shared confirmation flow, cmd=%v pending=%#v", cmd, got.pendingControl)
 	}
 	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if got.pendingControl != nil || cmd == nil {
-		t.Fatalf("Help Chat confirmation should emit the host control, cmd=%v pending=%#v", cmd, got.pendingControl)
+		t.Fatalf("Chat confirmation should emit the host control, cmd=%v pending=%#v", cmd, got.pendingControl)
 	}
 	if _, ok := cmd().(ControlInvocationConfirmedMsg); !ok {
 		t.Fatalf("confirmation command returned the wrong message type")
@@ -770,31 +770,31 @@ func TestEmbeddedHelpInputUsesSimpleCodexStyle(t *testing.T) {
 
 	layout := m.layout()
 	if layout.inputEditorHeight != 4 {
-		t.Fatalf("help chat input height = %d, want four rows", layout.inputEditorHeight)
+		t.Fatalf("chat input height = %d, want four rows", layout.inputEditorHeight)
 	}
 	if got := m.input.Height(); got != 4 {
-		t.Fatalf("help chat textarea height = %d, want four rows", got)
+		t.Fatalf("chat textarea height = %d, want four rows", got)
 	}
 	if got := helpChatInputShellStyle.GetHorizontalPadding(); got != 2 {
-		t.Fatalf("help chat input shell horizontal padding = %d, want 2", got)
+		t.Fatalf("chat input shell horizontal padding = %d, want 2", got)
 	}
 	if got, want := m.input.Width()+bossInputPromptWidth, layout.chatInnerWidth-helpChatInputShellStyle.GetHorizontalPadding(); got != want {
-		t.Fatalf("help chat textarea width including prompt = %d, want padded-shell inner width %d", got, want)
+		t.Fatalf("chat textarea width including prompt = %d, want padded-shell inner width %d", got, want)
 	}
 	rendered := m.renderCoreInput(layout)
 	stripped := ansi.Strip(rendered)
 	if !strings.Contains(stripped, "> first line") {
-		t.Fatalf("help chat input should render the first prompt:\n%s", stripped)
+		t.Fatalf("chat input should render the first prompt:\n%s", stripped)
 	}
 	if strings.Contains(stripped, "| second line") {
-		t.Fatalf("help chat input should not use the old Boss continuation bar:\n%s", stripped)
+		t.Fatalf("chat input should not use the old Boss continuation bar:\n%s", stripped)
 	}
 	if !strings.Contains(stripped, "  second line") {
-		t.Fatalf("help chat input should render a plain continuation indent:\n%s", stripped)
+		t.Fatalf("chat input should render a plain continuation indent:\n%s", stripped)
 	}
 	for _, line := range strings.Split(rendered, "\n") {
 		if got := ansi.StringWidth(ansi.Strip(line)); got > layout.chatInnerWidth {
-			t.Fatalf("help chat input line width = %d, want <= %d: %q", got, layout.chatInnerWidth, ansi.Strip(line))
+			t.Fatalf("chat input line width = %d, want <= %d: %q", got, layout.chatInnerWidth, ansi.Strip(line))
 		}
 	}
 }
@@ -891,7 +891,7 @@ func TestEmbeddedHelpSlashNewClearsCurrentChat(t *testing.T) {
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("/new should create a fresh help chat session")
+		t.Fatalf("/new should create a fresh chat session")
 	}
 	msg := cmd()
 	loaded, ok := msg.(bossSessionLoadedMsg)
@@ -912,8 +912,8 @@ func TestEmbeddedHelpSlashNewClearsCurrentChat(t *testing.T) {
 	if got.haveLastAssistantUsage || got.haveLastAssistantTime {
 		t.Fatalf("profile state should reset on /new")
 	}
-	if !strings.Contains(got.status, "Help chat") {
-		t.Fatalf("status = %q, want help chat status", got.status)
+	if !strings.Contains(got.status, "Chat") {
+		t.Fatalf("status = %q, want chat status", got.status)
 	}
 }
 
@@ -1222,7 +1222,7 @@ func TestControlResultIsContextNotBossChatTurn(t *testing.T) {
 		t.Fatalf("control result without service should not emit a command, got %T", cmd)
 	}
 	if len(got.messages) != 1 {
-		t.Fatalf("control result should not append a Help chat turn, got %#v", got.messages)
+		t.Fatalf("control result should not append a Chat turn, got %#v", got.messages)
 	}
 	if strings.Contains(got.renderTranscript(120), "Agent task agt_20260502T230818_4c3c890b46") {
 		t.Fatalf("control result leaked into transcript:\n%s", got.renderTranscript(120))
@@ -1258,7 +1258,7 @@ func TestControlResultRendersTransientActiveEngineerFeedback(t *testing.T) {
 	})
 	got := updated.(Model)
 	if len(got.messages) != 1 {
-		t.Fatalf("control result should not append a Help chat turn, got %#v", got.messages)
+		t.Fatalf("control result should not append a Chat turn, got %#v", got.messages)
 	}
 	rendered := ansi.Strip(got.renderTranscript(120))
 	for _, want := range []string{"You> just nuke that skill"} {
@@ -1309,7 +1309,7 @@ func TestControlResultCanAnnounceEngineerStartInChat(t *testing.T) {
 	})
 	got := updated.(Model)
 	if len(got.messages) != 2 {
-		t.Fatalf("control result should append a Help chat turn, got %#v", got.messages)
+		t.Fatalf("control result should append a Chat turn, got %#v", got.messages)
 	}
 	if got.messages[1].Kind != ChatMessageKindChat {
 		t.Fatalf("control result message kind = %q, want chat", got.messages[1].Kind)
@@ -1674,7 +1674,7 @@ func TestModelAltCOpensDialogAndCopiesFullMultilineInput(t *testing.T) {
 	if got.input.Value() != m.input.Value() {
 		t.Fatalf("input changed to %q, want %q", got.input.Value(), m.input.Value())
 	}
-	if got.status != "Copied full Help chat input to clipboard" {
+	if got.status != "Copied full Chat input to clipboard" {
 		t.Fatalf("status = %q, want copy confirmation", got.status)
 	}
 }
@@ -1898,7 +1898,7 @@ func TestModelAltOWithoutLinksLeavesPickerClosed(t *testing.T) {
 	if got.openTargetPicker != nil {
 		t.Fatalf("file picker should stay closed")
 	}
-	if got.status != "No files or links in this Help chat" {
+	if got.status != "No files or links in this Chat" {
 		t.Fatalf("status = %q, want no-links notice", got.status)
 	}
 }
@@ -2024,7 +2024,7 @@ func TestEmbeddedModelCanCancelControlInvocation(t *testing.T) {
 		t.Fatalf("status = %q", got.status)
 	}
 	if len(got.messages) != 0 {
-		t.Fatalf("cancel should not append a Help chat turn, got %#v", got.messages)
+		t.Fatalf("cancel should not append a Chat turn, got %#v", got.messages)
 	}
 	if len(got.operationalNotices) != 1 || got.operationalNotices[0].Code != "control_canceled" {
 		t.Fatalf("cancel notice = %#v, want one operational cancellation notice", got.operationalNotices)
@@ -2130,7 +2130,7 @@ func TestEmbeddedModelCanCancelGoalRun(t *testing.T) {
 		t.Fatalf("status = %q", got.status)
 	}
 	if len(got.messages) != 0 {
-		t.Fatalf("cancel should not append a Help chat turn, got %#v", got.messages)
+		t.Fatalf("cancel should not append a Chat turn, got %#v", got.messages)
 	}
 	if len(got.operationalNotices) != 1 || got.operationalNotices[0].Code != "goal_canceled" {
 		t.Fatalf("cancel notice = %#v, want one goal cancellation notice", got.operationalNotices)
@@ -2273,7 +2273,7 @@ func TestEmbeddedModelGivesSpareHeightToChatOnTallHosts(t *testing.T) {
 			DirtyProjects:          33,
 			PendingClassifications: 2,
 		}
-		m.status = "Help chat via gpt-5.4-mini"
+		m.status = "Chat via gpt-5.4-mini"
 
 		layout := m.layout()
 		renderedHeight := layout.topHeight + layout.middleGapHeight + layout.bottomHeight
@@ -2406,7 +2406,7 @@ func TestEmbeddedModelKeepsMediumWidthLowerPanelsCompact(t *testing.T) {
 			{Name: "release_notes", Status: model.StatusIdle, AttentionScore: 31, RepoBranch: "master"},
 		},
 	}
-	m.status = "Help chat via gpt-5.4-mini"
+	m.status = "Chat via gpt-5.4-mini"
 	m.syncLayout(true)
 
 	layout := m.layout()

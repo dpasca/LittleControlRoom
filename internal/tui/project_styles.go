@@ -32,33 +32,6 @@ func formatSnoozeDuration(d time.Duration) string {
 	return d.String()
 }
 
-func (m Model) renderHelpPanel(bodyW int) string {
-	panelWidth := min(bodyW, min(max(58, bodyW-12), 80))
-	panelInnerWidth := max(30, panelWidth-4)
-	contentLines := []string{commandPaletteTitleStyle.Render("Help")}
-	contentLines = append(contentLines, helpPanelLines()...)
-	content := lipgloss.NewStyle().
-		Width(panelInnerWidth).
-		Render(strings.Join(contentLines, "\n"))
-	return lipgloss.NewStyle().
-		Width(panelWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("214")).
-		Padding(0, 1, 1, 1).
-		Background(lipgloss.Color("234")).
-		Foreground(lipgloss.Color("252")).
-		Render(content)
-}
-
-func (m Model) renderHelpPanelOverlay(body string, bodyW, bodyH int) string {
-	panel := m.renderHelpPanel(bodyW)
-	panelWidth := lipgloss.Width(panel)
-	panelHeight := lipgloss.Height(panel)
-	left := max(0, (bodyW-panelWidth)/2)
-	top := max(0, (bodyH-panelHeight)/5)
-	return overlayBlock(body, panel, bodyW, bodyH, left, top)
-}
-
 func (m Model) classificationTag(project model.ProjectSummary) string {
 	switch project.LatestSessionClassification {
 	case model.ClassificationCompleted:

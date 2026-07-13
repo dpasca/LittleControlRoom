@@ -417,7 +417,7 @@ func TestQueryExecutorProjectDetailIncludesLinkedWorktreeActivity(t *testing.T) 
 				PresentOnDisk:        true,
 				WorktreeRootPath:     root,
 				WorktreeKind:         model.WorktreeKindLinked,
-				LatestSessionSummary: "Added Help Chat streaming and verified the checks.",
+				LatestSessionSummary: "Added Chat streaming and verified the checks.",
 			},
 		},
 		details: map[string]model.ProjectDetail{
@@ -446,7 +446,7 @@ func TestQueryExecutorProjectDetailIncludesLinkedWorktreeActivity(t *testing.T) 
 	for _, want := range []string{
 		"Worktree family activity:",
 		"linked: LittleControlRoom--streaming",
-		"Added Help Chat streaming",
+		"Added Chat streaming",
 		"worktree=linked",
 		"worktree_root=/tmp/lcr",
 	} {
@@ -773,7 +773,7 @@ func TestQueryExecutorContextCommandShowsEngineerExchange(t *testing.T) {
 		}
 	}
 	if strings.Contains(result.Text, `role="assistant"`) || strings.Contains(result.Text, `role="user"`) {
-		t.Fatalf("engineer excerpt should use Help Chat vocabulary for roles:\n%s", result.Text)
+		t.Fatalf("engineer excerpt should use Chat vocabulary for roles:\n%s", result.Text)
 	}
 }
 
@@ -1021,7 +1021,7 @@ func TestQueryExecutorSearchesCurrentHelpAndLegacyBossSessions(t *testing.T) {
 		t.Fatalf("searchChatSessions() matches = %#v, want current and legacy sessions", matches)
 	}
 	if matches[0].Turn.Content != "Current launch checklist" || matches[1].Turn.Content != "Legacy launch decision" {
-		t.Fatalf("search order = %q then %q, want current Help Chat before legacy", matches[0].Turn.Content, matches[1].Turn.Content)
+		t.Fatalf("search order = %q then %q, want current Chat before legacy", matches[0].Turn.Content, matches[1].Turn.Content)
 	}
 }
 

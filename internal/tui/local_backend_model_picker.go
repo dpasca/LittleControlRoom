@@ -61,7 +61,7 @@ func settingsFieldUsesLocalBackendModelPicker(index int) bool {
 
 func (m Model) localBackendModelPickerRoleLabel() string {
 	if m.setupFocusedRole == setupRoleBossChat {
-		return "Help chat"
+		return "Chat"
 	}
 	return "background AI tasks"
 }

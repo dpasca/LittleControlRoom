@@ -351,7 +351,6 @@ func (m *Model) openTodoDialog(project model.ProjectSummary) tea.Cmd {
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "TODO list open. Enter starts selected item; a adds, e edits, space toggles, p purges done"
 	m.syncTodoDialogSelection()

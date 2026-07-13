@@ -167,7 +167,7 @@ func (m Model) renderFooter(width int) string {
 		return m.renderModalFooter(width, "Command palette open", supplementSegments...)
 	}
 	if m.bossSetupPrompt != nil {
-		return m.renderModalFooter(width, "Help chat setup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
+		return m.renderModalFooter(width, "Chat setup: Enter choose, Tab switch, Esc cancel", supplementSegments...)
 	}
 	if m.setupMode {
 		if m.setupReviewMode {
@@ -852,7 +852,7 @@ func (m Model) renderCommandPaletteContent(width int) string {
 
 	suggestions := m.commandSuggestions()
 	if len(suggestions) == 0 {
-		lines = append(lines, commandPaletteHintStyle.Render("No matching commands. Try /help or /refresh."))
+		lines = append(lines, commandPaletteHintStyle.Render("No matching commands. Try /chat or /refresh."))
 	} else {
 		start, end := m.commandSuggestionWindow(len(suggestions))
 		if start > 0 {
@@ -1175,7 +1175,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 					footerHideAction("Esc", "list"),
 					footerNavAction("PgUp/PgDn", "page"),
 					footerNavAction("Tab", "switch"),
-					footerLowAction("?", "help"),
+					footerLowAction("/chat", "chat"),
 					footerExitAction("q", "quit"),
 				),
 				renderFooterStatus(fmt.Sprintf("%d%%", detailPercent)),
@@ -1186,7 +1186,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 				renderFooterActionList(
 					footerHideAction("Esc", "list"),
 					footerNavAction("Tab", "switch"),
-					footerLowAction("?", "help"),
+					footerLowAction("/chat", "chat"),
 					footerExitAction("q", "quit"),
 				),
 				renderFooterStatus(fmt.Sprintf("%d%%", detailPercent)),
@@ -1197,7 +1197,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 				renderFooterActionList(
 					footerHideAction("Esc", "list"),
 					footerNavAction("/", "cmd"),
-					footerLowAction("?", "help"),
+					footerLowAction("/chat", "chat"),
 					footerExitAction("q", "quit"),
 				),
 			)
@@ -1215,7 +1215,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 					footerNavAction("PgUp/PgDn", "page"),
 					footerNavAction("Tab", "switch"),
 					footerHideAction("Esc", "list"),
-					footerLowAction("?", "help"),
+					footerLowAction("/chat", "chat"),
 					footerExitAction("q", "quit"),
 				),
 				renderFooterStatus(fmt.Sprintf("%d%%", runtimePercent)),
@@ -1228,7 +1228,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 					footerNavAction("L/R", "pick"),
 					footerNavAction("Tab", "switch"),
 					footerHideAction("Esc", "list"),
-					footerLowAction("?", "help"),
+					footerLowAction("/chat", "chat"),
 					footerExitAction("q", "quit"),
 				),
 				renderFooterStatus(fmt.Sprintf("%d%%", runtimePercent)),
@@ -1253,7 +1253,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			}
 			actions = append(actions, projectActions...)
 			actions = append(actions,
-				footerLowAction("?", "help"),
+				footerLowAction("/chat", "chat"),
 				footerExitAction("q", "quit"),
 			)
 			return joinFooterSegments(
@@ -1267,7 +1267,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		actions = append(actions,
 			footerNavAction("Tab", "switch"),
 			footerNavAction("t", "TODO"),
-			footerLowAction("?", "help"),
+			footerLowAction("/chat", "chat"),
 			footerExitAction("q", "quit"),
 		)
 		return joinFooterSegments(
@@ -1280,7 +1280,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 			}
 			actions = append(actions, projectActions...)
 			actions = append(actions,
-				footerLowAction("?", "help"),
+				footerLowAction("/chat", "chat"),
 				footerExitAction("q", "quit"),
 			)
 			return joinFooterSegments(
@@ -1293,7 +1293,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		actions = append(actions, projectActions...)
 		actions = append(actions,
 			footerNavAction("Tab", "switch"),
-			footerLowAction("?", "help"),
+			footerLowAction("/chat", "chat"),
 			footerExitAction("q", "quit"),
 		)
 		return joinFooterSegments(
@@ -1303,7 +1303,7 @@ func compactFooterBase(width int, focused paneFocus, detailScroll, runtimeScroll
 		actions := []footerAction{
 			footerPrimaryAction("Enter", launchLabel),
 			footerNavAction("/", "cmd"),
-			footerLowAction("?", "help"),
+			footerLowAction("/chat", "chat"),
 			footerExitAction("q", "quit"),
 		}
 		if hasHiddenCodex {
@@ -1342,48 +1342,6 @@ func formatEstimatedCostUSD(costUSD float64) string {
 		return fmt.Sprintf("$%.3f", costUSD)
 	default:
 		return fmt.Sprintf("$%.4f", costUSD)
-	}
-}
-
-func helpPanelLines() []string {
-	return []string{
-		detailSectionStyle.Render("Palette"),
-		renderHelpPanelActionRow(
-			renderDialogAction("/", "open slash-command palette", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("Tab", "complete there", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("?", "toggle quick help", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("`", "Help Chat", commitActionKeyStyle, commitActionTextStyle),
-		),
-		commandPaletteHintStyle.Render("Try /help, /setup, /ai, /perf, /errors, /codex, /todo, /skills, /mobile, /cpu, /ports, /remove, /wt merge|remove|prune, /commit, /diff, or /run."),
-		detailSectionStyle.Render("Navigate"),
-		renderHelpPanelActionRow(
-			renderDialogAction("Tab", "switch pane", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("↑/↓ or j/k", "move", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("PgUp/PgDn", "page", navigateActionKeyStyle, navigateActionTextStyle),
-		),
-		renderHelpPanelActionRow(
-			renderDialogAction("Enter", "open/send", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("Esc", "back out", cancelActionKeyStyle, cancelActionTextStyle),
-		),
-		detailSectionStyle.Render("Quick Actions"),
-		renderHelpPanelActionRow(
-			renderDialogAction("f", "filter", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("a", "cycle tab", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("t", "todo", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("o", "sort", navigateActionKeyStyle, navigateActionTextStyle),
-			renderDialogAction("p", "pin", pushActionKeyStyle, pushActionTextStyle),
-			renderDialogAction("ctrl+v", "image", pushActionKeyStyle, pushActionTextStyle),
-		),
-		detailSectionStyle.Render("Compose & Status"),
-		renderHelpPanelActionRow(
-			renderDialogAction("Alt+Enter", "newline", commitActionKeyStyle, commitActionTextStyle),
-			renderDialogAction("ctrl+c", "interrupt busy session", cancelActionKeyStyle, cancelActionTextStyle),
-		),
-		detailSectionStyle.Render("Legend"),
-		renderHelpPanelLegendLine(),
-		renderHelpPanelActionRow(
-			renderDialogAction("q", "quit", disabledActionKeyStyle, disabledActionTextStyle),
-		),
 	}
 }
 

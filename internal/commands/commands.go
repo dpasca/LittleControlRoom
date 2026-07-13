@@ -12,7 +12,7 @@ import (
 type Kind string
 
 const (
-	KindHelp            Kind = "help"
+	KindChat            Kind = "chat"
 	KindAIStats         Kind = "ai-stats"
 	KindPerf            Kind = "perf"
 	KindErrors          Kind = "errors"
@@ -141,7 +141,8 @@ type Invocation struct {
 }
 
 var specs = []Spec{
-	{Name: "help", Usage: "/help", Summary: "Open Help Chat"},
+	{Name: "chat", Usage: "/chat", Summary: "Open Chat"},
+	{Name: "help", Usage: "/help", Summary: "Alias for /chat", Hidden: true},
 	{Name: "ai", Usage: "/ai", Summary: "Open the internal AI stats dialog"},
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
@@ -401,11 +402,11 @@ func Parse(input string) (Invocation, error) {
 
 	name, rawArgs := slashcmd.SplitCommandBody(body)
 	switch strings.ToLower(name) {
-	case "help":
+	case "chat", "help":
 		if rawArgs != "" {
-			return Invocation{}, fmt.Errorf("usage: /help")
+			return Invocation{}, fmt.Errorf("usage: /chat")
 		}
-		return Invocation{Kind: KindHelp, Canonical: "/help"}, nil
+		return Invocation{Kind: KindChat, Canonical: "/chat"}, nil
 	case "ai", "stats":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /ai")

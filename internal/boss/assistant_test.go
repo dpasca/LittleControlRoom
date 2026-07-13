@@ -756,7 +756,7 @@ func TestAssistantReplyRepairsToolProtocolIntoHelpChatControlProposal(t *testing
 <parameter=project_name>ChatNext3</parameter>
 <parameter=session_mode>new</parameter>
 <parameter=provider>auto</parameter>
-<parameter=prompt>Fix Help Chat wrapping and use the full response width.</parameter>
+<parameter=prompt>Fix Chat wrapping and use the full response width.</parameter>
 </function>
 </tool_call>`
 	planner := &fakeJSONSchemaRunner{
@@ -769,7 +769,7 @@ func TestAssistantReplyRepairsToolProtocolIntoHelpChatControlProposal(t *testing
 					ProjectName:       "ChatNext3",
 					EngineerProvider:  string(control.ProviderAuto),
 					SessionMode:       string(control.SessionModeNew),
-					Prompt:            "Fix Help Chat wrapping and use the full response width.",
+					Prompt:            "Fix Chat wrapping and use the full response width.",
 				}),
 				Usage: model.LLMUsage{TotalTokens: 9},
 			},
@@ -784,7 +784,7 @@ func TestAssistantReplyRepairsToolProtocolIntoHelpChatControlProposal(t *testing
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
 		HelpChat:   true,
 		StateBrief: "Visible projects: ChatNext3.",
-		Messages:   []ChatMessage{{Role: "user", Content: "Please fix Help Chat wrapping and response width."}},
+		Messages:   []ChatMessage{{Role: "user", Content: "Please fix Chat wrapping and response width."}},
 	})
 	if err != nil {
 		t.Fatalf("Reply() error = %v", err)
@@ -801,7 +801,7 @@ func TestAssistantReplyRepairsToolProtocolIntoHelpChatControlProposal(t *testing
 	if len(planner.reqs) != 2 ||
 		!strings.Contains(planner.reqs[1].UserText, "<tool_call>") ||
 		!strings.Contains(planner.reqs[1].UserText, "engineer.send_prompt") ||
-		!strings.Contains(planner.reqs[1].UserText, "Fix Help Chat wrapping") {
+		!strings.Contains(planner.reqs[1].UserText, "Fix Chat wrapping") {
 		t.Fatalf("planner requests = %#v, want one structured repair containing the malformed protocol", planner.reqs)
 	}
 	if resp.Usage.TotalTokens != 26 {
@@ -837,7 +837,7 @@ func TestAssistantReplyStillErrorsForMalformedPlannerJSON(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Reply() error = nil, want malformed JSON error")
 	}
-	if !strings.Contains(err.Error(), "decode Help chat action") || !strings.Contains(err.Error(), "repair") {
+	if !strings.Contains(err.Error(), "decode Chat action") || !strings.Contains(err.Error(), "repair") {
 		t.Fatalf("Reply() error = %q, want structured repair failure", err.Error())
 	}
 }
@@ -1050,7 +1050,7 @@ func TestBossPromptContextCompactsLongHistory(t *testing.T) {
 		Usage:      model.LLMUsage{TotalTokens: 7},
 	}}
 	router := &fakeJSONSchemaRunner{resp: []llm.JSONSchemaResponse{{
-		OutputText: `{"summary":"The user wants Help Chat context to stay compact while preserving the commit-routing discussion."}`,
+		OutputText: `{"summary":"The user wants Chat context to stay compact while preserving the commit-routing discussion."}`,
 		Model:      "gpt-utility",
 		Usage:      model.LLMUsage{TotalTokens: 5},
 	}}}
@@ -1087,7 +1087,7 @@ func TestBossPromptContextCompactsLongHistory(t *testing.T) {
 		t.Fatalf("router requests = %#v, want one compaction request", router.reqs)
 	}
 	joined := bossTextMessagesContent(runner.req.Messages)
-	if !strings.Contains(joined, "Compacted prior Help Chat summary") ||
+	if !strings.Contains(joined, "Compacted prior Chat summary") ||
 		!strings.Contains(joined, "commit-routing discussion") {
 		t.Fatalf("direct prompt missing compacted summary:\n%s", joined)
 	}
@@ -1111,10 +1111,10 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 
 	directPrompt := bossAssistantSystemPrompt()
 	for _, want := range []string{
-		"top-level Help Chat helper",
+		"top-level Chat helper",
 		"engineer threads",
 		"ordinary coworker coordination",
-		"Help Chat is the top-level conversation",
+		"Chat is the top-level conversation",
 		"linked task/thread records",
 		"Open agent tasks are delegated engineer work items",
 		"one tracked task with its linked engineer thread",
@@ -1130,7 +1130,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"Be proactive about finding facts",
 		"Do not answer commit, deploy, release, migration, schema, storage, or API-shape safety questions from summaries alone",
 		"Never say a deploy needs no DB migration unless direct evidence explicitly covers migrations, schema, storage, or the current diff",
-		"Cached engineer transcripts and Help Chat recall are for context, not fresh evidence",
+		"Cached engineer transcripts and Chat recall are for context, not fresh evidence",
 		"propose continuing that same task with the specific question",
 		"ongoing coworker chat",
 		"skip onboarding",
@@ -1156,7 +1156,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"structured control action",
 		"user must confirm",
 		"Do not say agent work will be done",
-		"Help Chat can propose opening the normal TUI commit preview through git.prepare_commit",
+		"Chat can propose opening the normal TUI commit preview through git.prepare_commit",
 		"operator must still confirm in that dialog",
 		"recommend one next move",
 	} {
@@ -1216,7 +1216,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"treat that as a request to manage those agent tasks",
 		"propose exactly one agent_task.continue",
 		"remove multiple delegated agent tasks",
-		"assents to a prior Help Chat plan",
+		"assents to a prior Chat plan",
 		"Do not answer with only a priority order",
 		"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue",
 		"leave answer empty unless a short scope note is needed",
@@ -1314,7 +1314,7 @@ func TestHelpChatPromptsAvoidUnrequestedStatusReports(t *testing.T) {
 		`choose kind="answer" immediately`,
 		"Never answer a casual turn with a snapshot",
 		"Do not turn casual input into a project, task, queue, process, or attention report.",
-		"current Help Chat transcript",
+		"current Chat transcript",
 		"Do not claim to have searched files, the web, or all previous conversations",
 	} {
 		if !strings.Contains(plannerPrompt, want) {
@@ -1337,12 +1337,12 @@ func TestHelpChatPromptsCoordinateWorkWithoutAgentNames(t *testing.T) {
 		"Work on X is underway",
 	} {
 		if !strings.Contains(prompt, want) {
-			t.Fatalf("Help Chat prompt missing %q:\n%s", want, prompt)
+			t.Fatalf("Chat prompt missing %q:\n%s", want, prompt)
 		}
 	}
 	for _, unwanted := range []string{"Use those names", "Ada or Grace", "visible named engineer"} {
 		if strings.Contains(prompt, unwanted) {
-			t.Fatalf("Help Chat prompt retained agent-name guidance %q:\n%s", unwanted, prompt)
+			t.Fatalf("Chat prompt retained agent-name guidance %q:\n%s", unwanted, prompt)
 		}
 	}
 }
@@ -1565,7 +1565,7 @@ func TestAssistantPlannerUserTextSteersMultiProjectHandoffScope(t *testing.T) {
 	} {
 		for _, want := range []string{
 			"do not silently collapse the request to one target",
-			"Help Chat can prepare one handoff at a time",
+			"Chat can prepare one handoff at a time",
 			"scope note naming the remaining targets",
 		} {
 			if !strings.Contains(got, want) {
@@ -1832,7 +1832,7 @@ func TestAssistantReplyCanProposeEngineerSendPromptControl(t *testing.T) {
 	}
 	if input.Provider != control.ProviderOpenCode ||
 		input.SessionMode != control.SessionModeNew ||
-		!strings.Contains(input.Prompt, "Help Chat lossless task packet:") ||
+		!strings.Contains(input.Prompt, "Chat lossless task packet:") ||
 		!strings.Contains(input.Prompt, "Tell OpenCode to fix Alpha's tests") ||
 		!strings.Contains(input.Prompt, "Please fix the failing tests and report what changed.") {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
@@ -2012,7 +2012,7 @@ func TestAssistantTodoAddPolicyConvertsImplicitBacklogToFreshEngineerHandoff(t *
 				ControlCapability: "todo.add",
 				ProjectPath:       "/tmp/lcr",
 				ProjectName:       "Little Control Room",
-				TodoText:          "Change Help Chat so project change requests start a fresh engineer handoff instead of becoming TODOs.",
+				TodoText:          "Change Chat so project change requests start a fresh engineer handoff instead of becoming TODOs.",
 				Reason:            "The project has an open engineer session.",
 			}),
 			Usage: model.LLMUsage{TotalTokens: 17},
@@ -2028,7 +2028,7 @@ func TestAssistantTodoAddPolicyConvertsImplicitBacklogToFreshEngineerHandoff(t *
 
 	resp, err := assistant.Reply(context.Background(), AssistantRequest{
 		StateBrief: "Visible projects: 1.\nCurrent TUI view:\n- classic TUI status: Embedded Codex session is already open in the background.",
-		Messages:   []ChatMessage{{Role: "user", Content: "change Little Control Room so Help chat does not turn project change requests into TODOs just because a session is open"}},
+		Messages:   []ChatMessage{{Role: "user", Content: "change Little Control Room so Chat does not turn project change requests into TODOs just because a session is open"}},
 	})
 	if err != nil {
 		t.Fatalf("Reply() error = %v", err)
@@ -2206,7 +2206,7 @@ func TestAssistantReplyBuildsLosslessEngineerTaskPacket(t *testing.T) {
 		t.Fatalf("decode invocation args: %v", err)
 	}
 	for _, want := range []string{
-		"Help Chat lossless task packet:",
+		"Chat lossless task packet:",
 		"Original user wording to preserve:",
 		"ranking in appfigures, not the order in terms of sales among our games",
 		"Reframed executable task:",
@@ -2324,7 +2324,7 @@ func TestAssistantReplyCanProposeAgentTaskContinueControl(t *testing.T) {
 		t.Fatalf("decode invocation args: %v", err)
 	}
 	if input.TaskID != "agt_roguellm" ||
-		!strings.Contains(input.Prompt, "Help Chat lossless task packet:") ||
+		!strings.Contains(input.Prompt, "Chat lossless task packet:") ||
 		!strings.Contains(input.Prompt, "cool") ||
 		!strings.Contains(input.Prompt, "Continue the stale roguellm dev-server cleanup.") {
 		t.Fatalf("invocation args = %s", resp.ControlInvocation.Args)
@@ -2823,7 +2823,7 @@ func TestAssistantReplyCanUseContextCommandForEngineerTranscripts(t *testing.T) 
 			})},
 			{OutputText: encodedBossAction(t, bossAction{
 				Kind:   bossActionAnswer,
-				Answer: "That was from the engineer session, not Help Chat: the flash was the attention-row update cue.",
+				Answer: "That was from the engineer session, not Chat: the flash was the attention-row update cue.",
 			})},
 		},
 	}

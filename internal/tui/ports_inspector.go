@@ -49,7 +49,6 @@ func (m *Model) openPortsDialog() tea.Cmd {
 	}
 	portsDialogSyncSelected(&dialog)
 	m.portsDialog = &dialog
-	m.showHelp = false
 	m.err = nil
 	m.status = "Inspecting project ports..."
 	return m.requestProcessScanCmd("")

@@ -656,7 +656,7 @@ func TestSettingsLCAgentModelValueLabelIncludesReasoning(t *testing.T) {
 	}
 	bossLabel := settingsLCAgentModelValueLabel(settings, settingsFieldBossChatModel)
 	if !strings.Contains(bossLabel, "OpenRouter / openai/gpt-5.5") || !strings.Contains(bossLabel, "reasoning: Provider Default") {
-		t.Fatalf("chat label = %q, want Help Chat model and provider-default reasoning", bossLabel)
+		t.Fatalf("chat label = %q, want Chat model and provider-default reasoning", bossLabel)
 	}
 }
 
@@ -776,13 +776,13 @@ func TestSettingsBossModelPickerOnlyUsesCloudSelectorForCloudBackend(t *testing.
 	localSettings := config.EditableSettings{BossChatBackend: config.AIBackendMLX}
 	localModel := Model{settingsFields: newSettingsFields(localSettings)}
 	if localModel.settingsFieldUsesUnifiedCloudModelPicker(settingsFieldBossChatModel) {
-		t.Fatal("Help Chat main model should not use cloud selector for MLX backend")
+		t.Fatal("Chat main model should not use cloud selector for MLX backend")
 	}
 
 	cloudSettings := config.EditableSettings{BossChatBackend: config.AIBackendOpenRouter}
 	cloudModel := Model{settingsFields: newSettingsFields(cloudSettings)}
 	if !cloudModel.settingsFieldUsesUnifiedCloudModelPicker(settingsFieldBossChatModel) {
-		t.Fatal("Help Chat main model should use cloud selector for OpenRouter backend")
+		t.Fatal("Chat main model should use cloud selector for OpenRouter backend")
 	}
 }
 

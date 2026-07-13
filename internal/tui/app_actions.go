@@ -407,7 +407,7 @@ func (m *Model) clearProjectSessionSeenLocal(projectPath string) {
 
 func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 	switch inv.Kind {
-	case commands.KindHelp:
+	case commands.KindChat:
 		return m.openHelpChatModeOrSetupPrompt()
 	case commands.KindAIStats:
 		return m, m.openAIStatsDialog()
@@ -1300,7 +1300,6 @@ func (m *Model) startCommitPreview(project model.ProjectSummary, intent service.
 	}
 
 	m.err = nil
-	m.showHelp = false
 	m.gitStatusDialog = nil
 	m.gitStatusApplying = false
 	m.diffView = nil
@@ -1345,7 +1344,6 @@ func (m Model) prepareDiffPreviewCmd(path string) tea.Cmd {
 
 func (m *Model) startDiffView(projectPath, projectName string) tea.Cmd {
 	m.err = nil
-	m.showHelp = false
 	m.diffView = newDiffViewState(projectPath, projectName)
 	m.syncDiffView(true)
 	m.setPendingGitSummary(projectPath, "Preparing diff view...")

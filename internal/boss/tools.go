@@ -574,14 +574,14 @@ func appendGoalRunLCAgentDetail(lines []string, result bossrun.GoalResult) []str
 
 func (e *QueryExecutor) searchBossSessions(ctx context.Context, action bossAction) (bossToolResult, error) {
 	if e == nil || len(e.bossSessions) == 0 {
-		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Help chat session search is not connected.</note></boss_session_search>`), nil
+		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Chat session search is not connected.</note></boss_session_search>`), nil
 	}
 	query := strings.TrimSpace(action.Query)
 	if query == "" {
 		query = strings.TrimSpace(action.Target)
 	}
 	if query == "" {
-		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Help chat session search needs a non-empty query.</note></boss_session_search>`), nil
+		return clippedToolResult(bossActionSearchBossSessions, `<boss_session_search matches="0"><note>Chat session search needs a non-empty query.</note></boss_session_search>`), nil
 	}
 	results, err := e.searchChatSessions(ctx, query, clampBossLimit(action.Limit, 6, 16))
 	if err != nil {
@@ -1352,7 +1352,7 @@ func (e *QueryExecutor) contextCommand(ctx context.Context, action bossAction, v
 
 func (e *QueryExecutor) contextCommandSearchBoss(ctx context.Context, parsed parsedContextCommand) (bossToolResult, error) {
 	if e == nil || len(e.bossSessions) == 0 {
-		return clippedToolResult(bossActionContextCommand, "Help Chat transcript search is not connected."), nil
+		return clippedToolResult(bossActionContextCommand, "Chat transcript search is not connected."), nil
 	}
 	query := strings.TrimSpace(parsed.Query)
 	if query == "" {
@@ -1407,7 +1407,7 @@ func (e *QueryExecutor) contextCommandSearchEngineer(ctx context.Context, parsed
 	now := e.now()
 	lines := []string{
 		fmt.Sprintf("ctx search engineer %q: %d matches.", query, len(sessionResults)),
-		"Engineer search covers Codex, OpenCode, or Claude Code task/project work logs. Use ctx search boss for Help Chat transcripts.",
+		"Engineer search covers Codex, OpenCode, or Claude Code task/project work logs. Use ctx search boss for Chat transcripts.",
 		"Use the handle with ctx show to fetch a bounded nearby exchange before quoting or correcting details.",
 	}
 	if projectPath != "" {
@@ -2072,21 +2072,21 @@ func clampContextCommandCount(value, defaultValue, maxValue int) int {
 
 func (e *QueryExecutor) resolveProjectPath(ctx context.Context, action bossAction, view ViewContext) (string, string, error) {
 	if strings.EqualFold(strings.TrimSpace(action.Target), "selected") {
-		return "", "", errors.New("Help chat cannot use the hidden classic TUI selection; ask for a project name or path")
+		return "", "", errors.New("Chat cannot use the hidden classic TUI selection; ask for a project name or path")
 	}
 	if path := strings.TrimSpace(action.ProjectPath); path != "" {
 		path = filepath.Clean(path)
 		project, err := e.store.GetProjectSummary(ctx, path, true)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return path, "exact path supplied by Help chat, but no project summary matched", nil
+				return path, "exact path supplied by Chat, but no project summary matched", nil
 			}
 			return "", "", err
 		}
 		if bossProjectHiddenByPrivacy(project, view) {
 			return "", "", fmt.Errorf("project is hidden while privacy mode is enabled")
 		}
-		return path, "exact project path supplied by Help chat", nil
+		return path, "exact project path supplied by Chat", nil
 	}
 	if name := strings.TrimSpace(action.ProjectName); name != "" {
 		projects, err := e.store.ListProjects(ctx, true)
@@ -2212,7 +2212,7 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 	if !view.Active && view.AllProjectCount == 0 && view.VisibleProjectCount == 0 && len(view.SystemNotices) == 0 && len(view.EngineerActivities) == 0 && len(view.RuntimeContexts) == 0 {
 		return "Current TUI view: no embedded classic TUI context was supplied."
 	}
-	mode := "standalone Help Chat"
+	mode := "standalone Chat"
 	if view.Embedded {
 		mode = "embedded over classic TUI"
 	}
@@ -2228,10 +2228,10 @@ func BuildViewContextBrief(view ViewContext, now time.Time) string {
 		lines = append(lines, "- privacy mode: enabled")
 	}
 	if view.FocusedPane != "" {
-		lines = append(lines, "- focused pane before Help Chat: "+view.FocusedPane)
+		lines = append(lines, "- focused pane before Chat: "+view.FocusedPane)
 	}
 	if view.Loading {
-		lines = append(lines, "- classic TUI was loading when Help Chat opened")
+		lines = append(lines, "- classic TUI was loading when Chat opened")
 	}
 	if status := strings.TrimSpace(view.Status); status != "" {
 		lines = append(lines, "- classic TUI status: "+clipText(status, 220))

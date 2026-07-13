@@ -61,7 +61,6 @@ func (m *Model) openExternalProcessStopConfirm(project model.ProjectSummary, sna
 		Selected:    externalProcessStopConfirmFocusKeep,
 	}
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Confirm external process stop"
 	return nil

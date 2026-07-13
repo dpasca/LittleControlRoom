@@ -31,7 +31,6 @@ func (m *Model) openProjectFilterDialog() tea.Cmd {
 	}
 	m.projectFilterDialog = dialog
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Project filter open. Type to narrow, Enter keep, Esc close"
 	return dialog.Input.Focus()

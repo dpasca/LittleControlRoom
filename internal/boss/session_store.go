@@ -118,7 +118,7 @@ func bossSessionHasAssistantMessage(messages []ChatMessage, content string) bool
 
 func (s *bossSessionStore) loadLatestOrCreate(ctx context.Context, now time.Time) (bossChatSession, []ChatMessage, bool, error) {
 	if s == nil {
-		return bossChatSession{}, nil, false, errors.New("Help chat session store is not available")
+		return bossChatSession{}, nil, false, errors.New("Chat session store is not available")
 	}
 	if now.IsZero() {
 		now = time.Now()
@@ -147,7 +147,7 @@ func (s *bossSessionStore) loadLatestOrCreate(ctx context.Context, now time.Time
 
 func (s *bossSessionStore) createSession(ctx context.Context, now time.Time) (bossChatSession, error) {
 	if s == nil {
-		return bossChatSession{}, errors.New("Help chat session store is not available")
+		return bossChatSession{}, errors.New("Chat session store is not available")
 	}
 	if err := ctx.Err(); err != nil {
 		return bossChatSession{}, err
@@ -192,12 +192,12 @@ func (s *bossSessionStore) createSession(ctx context.Context, now time.Time) (bo
 		}
 		return session, nil
 	}
-	return bossChatSession{}, errors.New("could not allocate a unique Help chat session id")
+	return bossChatSession{}, errors.New("could not allocate a unique Chat session id")
 }
 
 func (s *bossSessionStore) loadSession(ctx context.Context, sessionID string) (bossChatSession, []ChatMessage, error) {
 	if s == nil {
-		return bossChatSession{}, nil, errors.New("Help chat session store is not available")
+		return bossChatSession{}, nil, errors.New("Chat session store is not available")
 	}
 	if err := ctx.Err(); err != nil {
 		return bossChatSession{}, nil, err
@@ -216,7 +216,7 @@ func (s *bossSessionStore) loadSession(ctx context.Context, sessionID string) (b
 
 func (s *bossSessionStore) appendMessage(ctx context.Context, sessionID string, message ChatMessage) error {
 	if s == nil {
-		return errors.New("Help chat session store is not available")
+		return errors.New("Chat session store is not available")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -276,7 +276,7 @@ func (s *bossSessionStore) appendMessage(ctx context.Context, sessionID string, 
 
 func (s *bossSessionStore) listSessions(ctx context.Context, limit int) ([]bossChatSession, error) {
 	if s == nil {
-		return nil, errors.New("Help chat session store is not available")
+		return nil, errors.New("Chat session store is not available")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -314,7 +314,7 @@ func (s *bossSessionStore) listSessions(ctx context.Context, limit int) ([]bossC
 func (s *bossSessionStore) sessionPath(sessionID string) (string, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if !validBossSessionID(sessionID) {
-		return "", fmt.Errorf("invalid Help chat session id: %s", sessionID)
+		return "", fmt.Errorf("invalid Chat session id: %s", sessionID)
 	}
 	return filepath.Join(s.dir, sessionID+bossSessionFileExt), nil
 }
@@ -464,7 +464,7 @@ func writeBossSessionMarkdownHeader(w io.Writer, sessionID string, createdAt tim
 	if createdAt.IsZero() {
 		createdAt = time.Now()
 	}
-	_, err := fmt.Fprintf(w, "# Help Chat Session\n\nSession: %s\nCreated: %s\n\n---\n", sessionID, createdAt.UTC().Format(time.RFC3339Nano))
+	_, err := fmt.Fprintf(w, "# Chat Session\n\nSession: %s\nCreated: %s\n\n---\n", sessionID, createdAt.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("write boss session header: %w", err)
 	}
@@ -510,7 +510,7 @@ func bossSessionMarkdownRoleForMessage(message ChatMessage) string {
 func newBossSessionID(now time.Time) (string, error) {
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("generate Help chat session id: %w", err)
+		return "", fmt.Errorf("generate Chat session id: %w", err)
 	}
 	return "boss_" + now.UTC().Format("20060102_150405") + "_" + hex.EncodeToString(b[:]), nil
 }

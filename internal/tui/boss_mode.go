@@ -1104,10 +1104,10 @@ func normalizeBossModel(model tea.Model) bossui.Model {
 		return typed
 	case *bossui.Model:
 		if typed == nil {
-			panic("Help Chat update returned nil *boss.Model")
+			panic("Chat update returned nil *boss.Model")
 		}
 		return *typed
 	default:
-		panic(fmt.Sprintf("Help Chat update returned unsupported model type %T", model))
+		panic(fmt.Sprintf("Chat update returned unsupported model type %T", model))
 	}
 }

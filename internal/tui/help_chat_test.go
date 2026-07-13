@@ -20,21 +20,21 @@ func TestUnconfiguredHelpChatOpensSetupPrompt(t *testing.T) {
 	updated, cmd := m.openHelpChatModeOrSetupPrompt()
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("unconfigured Help Chat should not start async work")
+		t.Fatalf("unconfigured Chat should not start async work")
 	}
 	if got.helpChatMode {
-		t.Fatalf("unconfigured Help Chat should stay closed")
+		t.Fatalf("unconfigured Chat should stay closed")
 	}
 	if got.bossSetupPrompt == nil {
-		t.Fatalf("unconfigured Help Chat should open its setup prompt")
+		t.Fatalf("unconfigured Chat should open its setup prompt")
 	}
 	if !strings.Contains(got.bossSetupPrompt.Reason, "chat backend") {
 		t.Fatalf("setup prompt reason = %q, want provider-neutral chat guidance", got.bossSetupPrompt.Reason)
 	}
 	rendered := ansi.Strip(got.View())
-	for _, want := range []string{"Help Chat Setup", "Open setup", "Cancel"} {
+	for _, want := range []string{"Chat Setup", "Open setup", "Cancel"} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("Help Chat setup prompt missing %q: %q", want, rendered)
+			t.Fatalf("Chat setup prompt missing %q: %q", want, rendered)
 		}
 	}
 }
@@ -50,13 +50,13 @@ func TestHelpChatSetupPromptOpensFocusedSetup(t *testing.T) {
 	updated, cmd := m.updateBossSetupPromptMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("opening setup from the Help Chat prompt should return a focus command")
+		t.Fatalf("opening setup from the Chat prompt should return a focus command")
 	}
 	if got.bossSetupPrompt != nil || !got.settingsMode {
-		t.Fatalf("Help Chat setup prompt should close into settings")
+		t.Fatalf("Chat setup prompt should close into settings")
 	}
 	if got.settingsSelected != settingsFieldBossChatBackend {
-		t.Fatalf("settings selected = %d, want Help Chat backend field", got.settingsSelected)
+		t.Fatalf("settings selected = %d, want Chat backend field", got.settingsSelected)
 	}
 }
 
@@ -89,7 +89,7 @@ func TestHelpChatLongTranscriptStaysInsideScrollableOverlay(t *testing.T) {
 	bottomView := m.renderHelpChatOverlay(base, bodyWidth, bodyHeight)
 	assertHelpChatOverlayBorder(t, bottomView, bodyHeight, geom)
 	if !strings.Contains(ansi.Strip(bottomView), "END OF HELP TRANSCRIPT") {
-		t.Fatalf("help chat should initially show the bottom of a long transcript")
+		t.Fatalf("chat should initially show the bottom of a long transcript")
 	}
 
 	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyPgUp})
@@ -169,23 +169,23 @@ func assertHelpChatOverlayBorder(t *testing.T, rendered string, bodyHeight int, 
 	top := lines[geom.top]
 	bottom := lines[geom.top+geom.panelHeight-1]
 	if got := ansi.Strip(ansi.Cut(top, geom.left, geom.left+1)); got != "╭" {
-		t.Fatalf("help chat top-left border = %q, want ╭", got)
+		t.Fatalf("chat top-left border = %q, want ╭", got)
 	}
 	if got := ansi.Strip(ansi.Cut(top, geom.left+geom.panelWidth-1, geom.left+geom.panelWidth)); got != "╮" {
-		t.Fatalf("help chat top-right border = %q, want ╮", got)
+		t.Fatalf("chat top-right border = %q, want ╮", got)
 	}
 	if got := ansi.Strip(ansi.Cut(bottom, geom.left, geom.left+1)); got != "╰" {
-		t.Fatalf("help chat bottom-left border at configured height = %q, want ╰", got)
+		t.Fatalf("chat bottom-left border at configured height = %q, want ╰", got)
 	}
 	if got := ansi.Strip(ansi.Cut(bottom, geom.left+geom.panelWidth-1, geom.left+geom.panelWidth)); got != "╯" {
-		t.Fatalf("help chat bottom-right border at configured size = %q, want ╯", got)
+		t.Fatalf("chat bottom-right border at configured size = %q, want ╯", got)
 	}
 	for row := geom.top + 1; row < geom.top+geom.panelHeight-1; row++ {
 		if got := ansi.Strip(ansi.Cut(lines[row], geom.left, geom.left+1)); got != "│" {
-			t.Fatalf("help chat left border row %d = %q, want │", row-geom.top, got)
+			t.Fatalf("chat left border row %d = %q, want │", row-geom.top, got)
 		}
 		if got := ansi.Strip(ansi.Cut(lines[row], geom.left+geom.panelWidth-1, geom.left+geom.panelWidth)); got != "│" {
-			t.Fatalf("help chat right border row %d = %q, want │", row-geom.top, got)
+			t.Fatalf("chat right border row %d = %q, want │", row-geom.top, got)
 		}
 	}
 }

@@ -58,7 +58,6 @@ func (m Model) openArchiveDialog() (tea.Model, tea.Cmd) {
 		}
 	}
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Mark projects to archive"
 	return m, m.archiveDialog.Input.Focus()

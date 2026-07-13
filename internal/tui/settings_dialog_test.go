@@ -30,10 +30,10 @@ func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {
 	updated, cmd := m.updateSettingsMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("opening Help chat picker should not queue a command")
+		t.Fatalf("opening Chat picker should not queue a command")
 	}
 	if !got.settingsBossChatPickerVisible {
-		t.Fatalf("Help chat picker should open")
+		t.Fatalf("Chat picker should open")
 	}
 
 	updated, _ = got.updateSettingsBossChatBackendPickerMode(tea.KeyMsg{Type: tea.KeyDown})
@@ -41,10 +41,10 @@ func TestSettingsBossChatBackendPickerUpdatesField(t *testing.T) {
 	updated, _ = got.updateSettingsBossChatBackendPickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if got.settingsBossChatPickerVisible {
-		t.Fatalf("Help chat picker should close after choosing")
+		t.Fatalf("Chat picker should close after choosing")
 	}
 	if got.settingsFieldValue(settingsFieldBossChatBackend) != string(config.AIBackendOpenAIAPI) {
-		t.Fatalf("Help chat backend field = %q, want openai_api", got.settingsFieldValue(settingsFieldBossChatBackend))
+		t.Fatalf("Chat backend field = %q, want openai_api", got.settingsFieldValue(settingsFieldBossChatBackend))
 	}
 }
 
@@ -64,10 +64,10 @@ func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
 	got := updated.(Model)
 	fields := got.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
 	if !slices.Contains(fields, settingsFieldBossChatOllamaThinking) {
-		t.Fatalf("Help chat Ollama drilldown fields = %#v, want thinking field", fields)
+		t.Fatalf("Chat Ollama drilldown fields = %#v, want thinking field", fields)
 	}
 	rendered := ansi.Strip(got.renderSettingsContent(100, 24))
-	for _, want := range []string{"Ollama Thinking", "Help Chat Ollama thinking"} {
+	for _, want := range []string{"Ollama Thinking", "Chat Ollama thinking"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("settings content missing %q:\n%s", want, rendered)
 		}
@@ -77,10 +77,10 @@ func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
 	updated, _ = got.openSettingsChoicePicker(settingsFieldBossChatOllamaThinking)
 	got = updated.(Model)
 	if got.settingsChoicePicker == nil {
-		t.Fatalf("Help Chat Ollama thinking should open choice picker")
+		t.Fatalf("Chat Ollama thinking should open choice picker")
 	}
 	rendered = ansi.Strip(got.renderSettingsChoicePickerContent(56, 18))
-	for _, want := range []string{"Help Chat Ollama Thinking", "Off", "On"} {
+	for _, want := range []string{"Chat Ollama Thinking", "Off", "On"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("choice picker missing %q:\n%s", want, rendered)
 		}
@@ -88,7 +88,7 @@ func TestSettingsBossChatOllamaThinkingFieldUsesChoicePicker(t *testing.T) {
 	updated, _ = got.updateSettingsChoicePickerMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if got.settingsFieldValue(settingsFieldBossChatOllamaThinking) != "true" {
-		t.Fatalf("Help Chat Ollama thinking = %q, want true", got.settingsFieldValue(settingsFieldBossChatOllamaThinking))
+		t.Fatalf("Chat Ollama thinking = %q, want true", got.settingsFieldValue(settingsFieldBossChatOllamaThinking))
 	}
 }
 
@@ -922,7 +922,7 @@ func TestInferenceStatusCardsShowProjectAndBossChatSelections(t *testing.T) {
 	for _, want := range []string{
 		"Project reports",
 		"OpenCode",
-		"Help chat",
+		"Chat",
 		"OpenAI API",
 		"shared OpenAI API connection",
 		"project reports stay",
@@ -996,13 +996,13 @@ func TestProviderChoicesAreRoleSpecific(t *testing.T) {
 		}
 	}
 	if !foundBossDeepSeek {
-		t.Fatalf("Help chat choices should include direct DeepSeek")
+		t.Fatalf("Chat choices should include direct DeepSeek")
 	}
 	if got := providerChoiceLabel(bossChoices, config.AIBackendUnset, "missing"); got != "Auto" {
 		t.Fatalf("auto boss label = %q, want Auto", got)
 	}
 	if index := providerChoiceSelection(bossChoices, config.AIBackendCodex); index != 0 {
-		t.Fatalf("Help chat choices should not include Codex; selection fallback = %d, want 0", index)
+		t.Fatalf("Chat choices should not include Codex; selection fallback = %d, want 0", index)
 	}
 	auto := bossChoices[providerChoiceSelection(bossChoices, config.AIBackendUnset)]
 	if auto.State != "ready" || !strings.Contains(auto.Detail, "shared OpenAI API connection") {
@@ -1044,7 +1044,7 @@ func TestSettingsProviderPickersRenderSharedStatus(t *testing.T) {
 	}
 
 	bossPicker := ansi.Strip(m.renderSettingsBossChatBackendPickerContent(72))
-	for _, want := range []string{"Help Chat", "Auto", "ready", "shared OpenAI API connection", "Selected Helper", "After choosing"} {
+	for _, want := range []string{"Chat", "Auto", "ready", "shared OpenAI API connection", "Selected Helper", "After choosing"} {
 		if !strings.Contains(bossPicker, want) {
 			t.Fatalf("boss picker missing %q: %q", want, bossPicker)
 		}
@@ -1075,7 +1075,7 @@ func TestSettingsGettingStartedRendersStepGuide(t *testing.T) {
 	_ = m.setSettingsSelection(settingsFieldAIBackend)
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Setup Guide", "Project reports", "Help chat", "LCAgent", "Next: press Enter"} {
+	for _, want := range []string{"Setup Guide", "Project reports", "Chat", "LCAgent", "Next: press Enter"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("getting started guide missing %q: %q", want, rendered)
 		}
@@ -1143,12 +1143,12 @@ func TestSettingsAISectionShowsCompactProviderConnections(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Help chat", "Codex launch mode", "Show reasoning"} {
+	for _, want := range []string{"Providers & Models", "Provider Connections", "OpenAI API", "ready", "Chat", "Codex launch mode", "Show reasoning"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("providers and models section missing %q: %q", want, rendered)
 		}
 	}
-	for _, hidden := range []string{"OpenAI API key", "Help Chat main model", "MLX base URL"} {
+	for _, hidden := range []string{"OpenAI API key", "Chat main model", "MLX base URL"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("providers and models should stay compact and hide %q: %q", hidden, rendered)
 		}
@@ -1180,7 +1180,7 @@ func TestSettingsDrilldownShowsProviderDetailFieldsWhenRelevant(t *testing.T) {
 	m = updated.(Model)
 
 	rendered := ansi.Strip(m.renderSettingsContent(100, 24))
-	for _, hidden := range []string{"OpenAI API key", "Help Chat main model", "MLX base URL", "Ollama base URL"} {
+	for _, hidden := range []string{"OpenAI API key", "Chat main model", "MLX base URL", "Ollama base URL"} {
 		if strings.Contains(rendered, hidden) {
 			t.Fatalf("default project-report setup should hide %q until relevant: %q", hidden, rendered)
 		}
@@ -1229,12 +1229,12 @@ func TestSettingsProjectAndBossDrilldownsUseSharedOpenAIConnection(t *testing.T)
 	boss := updated.(Model)
 	bossFields := boss.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
 	if !slices.Contains(bossFields, settingsFieldOpenAIAPIKey) {
-		t.Fatalf("Help chat drilldown should include the same shared OpenAI connection field: %#v", bossFields)
+		t.Fatalf("Chat drilldown should include the same shared OpenAI connection field: %#v", bossFields)
 	}
 	bossRendered := ansi.Strip(boss.renderSettingsContent(100, 24))
-	for _, want := range []string{"Help Chat Setup", "Shared OpenAI Connection", "Help Chat Models", "Default: gpt-5.5", "Default: gpt-5.4-mini"} {
+	for _, want := range []string{"Chat Setup", "Shared OpenAI Connection", "Chat Models", "Default: gpt-5.5", "Default: gpt-5.4-mini"} {
 		if !strings.Contains(bossRendered, want) {
-			t.Fatalf("Help chat drilldown missing %q: %q", want, bossRendered)
+			t.Fatalf("Chat drilldown missing %q: %q", want, bossRendered)
 		}
 	}
 }
@@ -1258,7 +1258,7 @@ func TestSettingsDeepSeekProjectAndBossModelsAreSeparate(t *testing.T) {
 	for _, want := range []string{
 		"Project reports",
 		"DeepSeek / " + config.DefaultDeepSeekModel,
-		"Help chat",
+		"Chat",
 		"DeepSeek / " + config.DefaultDeepSeekProModel,
 		"LCAgent",
 	} {
@@ -1289,17 +1289,17 @@ func TestSettingsDeepSeekProjectAndBossModelsAreSeparate(t *testing.T) {
 	boss := updated.(Model)
 	bossFields := boss.visibleSettingsDrilldownFieldOrder(settingsDrilldownBossChat)
 	if slices.Contains(bossFields, settingsFieldDeepSeekModel) {
-		t.Fatalf("Help chat drilldown should not use the project DeepSeek model field: %#v", bossFields)
+		t.Fatalf("Chat drilldown should not use the project DeepSeek model field: %#v", bossFields)
 	}
 	bossRendered := ansi.Strip(boss.renderSettingsContent(100, 24))
 	for _, want := range []string{
-		"Help Chat main model",
+		"Chat main model",
 		"Default: " + config.DefaultDeepSeekProModel + " from DeepSeek",
-		"Help Chat utility model",
+		"Chat utility model",
 		"Default: " + config.DefaultDeepSeekModel + " from DeepSeek",
 	} {
 		if !strings.Contains(bossRendered, want) {
-			t.Fatalf("Help chat drilldown missing %q: %q", want, bossRendered)
+			t.Fatalf("Chat drilldown missing %q: %q", want, bossRendered)
 		}
 	}
 }
@@ -1327,27 +1327,27 @@ func TestSettingsXiaomiBossChatDrilldownShowsModelFields(t *testing.T) {
 		settingsFieldBossUtilityModel,
 	} {
 		if !slices.Contains(fields, want) {
-			t.Fatalf("Help chat Xiaomi drilldown fields = %#v, missing %d", fields, want)
+			t.Fatalf("Chat Xiaomi drilldown fields = %#v, missing %d", fields, want)
 		}
 	}
 	if slices.Contains(fields, settingsFieldXiaomiModel) {
-		t.Fatalf("Help chat drilldown should use Help Chat model fields, not the project Xiaomi model field: %#v", fields)
+		t.Fatalf("Chat drilldown should use Chat model fields, not the project Xiaomi model field: %#v", fields)
 	}
 
 	rendered := ansi.Strip(got.renderSettingsContent(100, 24))
 	for _, want := range []string{
-		"Help Chat Setup",
+		"Chat Setup",
 		"Shared Xiaomi Connection",
 		"Xiaomi base URL",
 		"Xiaomi API key",
-		"Help Chat Models",
-		"Help Chat main model",
+		"Chat Models",
+		"Chat main model",
 		"Default: " + config.DefaultXiaomiProModel + " from Xiaomi",
-		"Help Chat utility model",
+		"Chat utility model",
 		"Default: " + config.DefaultXiaomiModel + " from Xiaomi",
 	} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("Help chat Xiaomi drilldown missing %q: %q", want, rendered)
+			t.Fatalf("Chat Xiaomi drilldown missing %q: %q", want, rendered)
 		}
 	}
 
@@ -1468,7 +1468,7 @@ func TestSettingsSectionSwitchChangesVisibleFields(t *testing.T) {
 	if strings.Contains(rendered, "Main model provider") {
 		t.Fatalf("settings modal should hide the standalone LCAgent provider field: %q", rendered)
 	}
-	if strings.Contains(rendered, "Help Chat main model") {
+	if strings.Contains(rendered, "Chat main model") {
 		t.Fatalf("settings modal should not keep rendering the old section fields: %q", rendered)
 	}
 }

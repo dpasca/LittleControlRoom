@@ -103,29 +103,29 @@ func (m Model) runBossSlashCommand(raw string) (tea.Model, tea.Cmd) {
 		m.sessionTitle = ""
 		m.syncLayout(true)
 		if !m.hasPersistentSessions() {
-			m.status = "Started a fresh Help chat session"
+			m.status = "Started a fresh Chat session"
 			if strings.TrimSpace(inv.Prompt) != "" {
 				return m.submitChatMessage(inv.Prompt)
 			}
 			return m, nil
 		}
 		m.sessionLoaded = false
-		m.status = "Starting a fresh Help chat session..."
+		m.status = "Starting a fresh Chat session..."
 		return m, m.newBossSessionCmd(inv.Prompt)
 	case bossslash.KindSessions:
 		if !m.hasPersistentSessions() {
-			m.status = "Help chat sessions are unavailable without an app data directory"
+			m.status = "Chat sessions are unavailable without an app data directory"
 			return m, nil
 		}
 		if strings.TrimSpace(inv.SessionID) == "" {
 			return m.openBossSessionPicker()
 		}
-		m.status = "Opening Help chat session " + shortBossSessionID(inv.SessionID) + "..."
+		m.status = "Opening Chat session " + shortBossSessionID(inv.SessionID) + "..."
 		return m, m.loadBossSessionCmd(inv.SessionID)
 	case bossslash.KindHelp:
 		message := ChatMessage{Role: "assistant", Content: formatBossSlashHelp(), At: m.now()}
 		m.messages = append(m.messages, message)
-		m.status = "Help chat slash commands"
+		m.status = "Chat slash commands"
 		m.syncLayout(true)
 		return m, nil
 	case bossslash.KindSkills:
@@ -210,7 +210,7 @@ func renderBossSlashSuggestionRow(s bossslash.Suggestion, selected bool, width i
 }
 
 func formatBossSlashHelp() string {
-	lines := []string{"Help chat slash commands:"}
+	lines := []string{"Chat slash commands:"}
 	for _, spec := range bossslash.Specs() {
 		if spec.Hidden {
 			continue

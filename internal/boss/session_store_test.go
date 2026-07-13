@@ -149,7 +149,7 @@ func TestBossSessionStoreAppendCreatesReadableMarkdownFile(t *testing.T) {
 		t.Fatalf("ReadFile(session) error = %v", err)
 	}
 	text := string(data)
-	for _, want := range []string{"# Help Chat Session", "Session: boss_manual_session", "## User @ ", "Find the old launch notes"} {
+	for _, want := range []string{"# Chat Session", "Session: boss_manual_session", "## User @ ", "Find the old launch notes"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("session markdown missing %q:\n%s", want, text)
 		}

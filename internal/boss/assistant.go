@@ -130,22 +130,22 @@ func (a *Assistant) Configured() bool {
 
 func (a *Assistant) Label() string {
 	if a == nil {
-		return "Help chat offline"
+		return "Chat offline"
 	}
 	if !a.Configured() {
 		switch a.backend {
 		case config.AIBackendOpenAIAPI:
-			return "Help chat needs an OpenAI API key"
+			return "Chat needs an OpenAI API key"
 		case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
-			return "Help chat needs a " + a.backend.Label() + " API key"
+			return "Chat needs a " + a.backend.Label() + " API key"
 		case config.AIBackendMLX, config.AIBackendOllama:
-			return "Help chat needs " + a.backend.Label()
+			return "Chat needs " + a.backend.Label()
 		case config.AIBackendUnset:
-			return "Help chat needs a backend"
+			return "Chat needs a backend"
 		case config.AIBackendDisabled:
-			return "Help chat disabled"
+			return "Chat disabled"
 		default:
-			return "Help chat needs a supported API backend"
+			return "Chat needs a supported API backend"
 		}
 	}
 	if strings.TrimSpace(a.model) == "" {
@@ -167,7 +167,7 @@ func (a *Assistant) Reply(ctx context.Context, req AssistantRequest) (AssistantR
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("Help chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithTools(ctx, req)
@@ -185,7 +185,7 @@ func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit 
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("Help chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 	if a.query != nil && (a.planner != nil || a.queryRouter != nil) {
 		return a.replyWithToolsStream(ctx, req, emit)
@@ -195,11 +195,11 @@ func (a *Assistant) ReplyStream(ctx context.Context, req AssistantRequest, emit 
 
 func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	if a == nil || a.runner == nil {
-		return AssistantResponse{}, errors.New("Help chat needs text chat inference for this request")
+		return AssistantResponse{}, errors.New("Chat needs text chat inference for this request")
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("Help chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 	req, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
 	if err != nil {
@@ -226,11 +226,11 @@ func (a *Assistant) replyDirect(ctx context.Context, req AssistantRequest) (Assi
 
 func (a *Assistant) replyDirectStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
 	if a == nil || a.runner == nil {
-		return AssistantResponse{}, errors.New("Help chat needs text chat inference for this request")
+		return AssistantResponse{}, errors.New("Chat needs text chat inference for this request")
 	}
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("Help chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 	req, contextUsage, contextModel, err := a.preparePromptContext(ctx, req)
 	if err != nil {
@@ -310,7 +310,7 @@ func (a *Assistant) tryHelpChatFastAnswer(ctx context.Context, req AssistantRequ
 func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("Help chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 
 	var (
@@ -367,7 +367,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		}
 	}
 	if a.planner == nil {
-		return AssistantResponse{}, errors.New("Help chat needs structured planning for this request")
+		return AssistantResponse{}, errors.New("Chat needs structured planning for this request")
 	}
 	for round := 0; round < bossAssistantMaxToolRounds; round++ {
 		forceAnswer := round == bossAssistantMaxToolRounds-1
@@ -383,7 +383,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		if normalizeBossActionKind(action.Kind) == bossActionAnswer {
 			answer := strings.TrimSpace(action.Answer)
 			if answer == "" {
-				return AssistantResponse{}, errors.New("Help chat returned an empty final answer")
+				return AssistantResponse{}, errors.New("Chat returned an empty final answer")
 			}
 			return AssistantResponse{
 				Content:       answer,
@@ -443,7 +443,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
 	modelName := strings.TrimSpace(a.model)
 	if modelName == "" && a.requiresExplicitModel() {
-		return AssistantResponse{}, errors.New("Help chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
+		return AssistantResponse{}, errors.New("Chat needs a chat model; set boss_helm_model, boss_chat_model, or " + brand.BossAssistantModelEnvVar)
 	}
 
 	var (
@@ -502,7 +502,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		}
 	}
 	if a.planner == nil {
-		return AssistantResponse{}, errors.New("Help chat needs structured planning for this request")
+		return AssistantResponse{}, errors.New("Chat needs structured planning for this request")
 	}
 	for round := 0; round < bossAssistantMaxToolRounds; round++ {
 		forceAnswer := round == bossAssistantMaxToolRounds-1
@@ -518,7 +518,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		if normalizeBossActionKind(action.Kind) == bossActionAnswer {
 			answer := strings.TrimSpace(action.Answer)
 			if answer == "" {
-				return AssistantResponse{}, errors.New("Help chat returned an empty final answer")
+				return AssistantResponse{}, errors.New("Chat returned an empty final answer")
 			}
 			emitAssistantDelta(emit, answer)
 			return AssistantResponse{
@@ -589,7 +589,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 
 func (a *Assistant) streamFinalAnswer(ctx context.Context, req AssistantRequest, toolResults []bossToolResult, plannerAnswer string, emit func(AssistantStreamEvent)) (AssistantResponse, error) {
 	if a == nil || a.runner == nil {
-		return AssistantResponse{}, errors.New("Help chat needs text chat inference for this request")
+		return AssistantResponse{}, errors.New("Chat needs text chat inference for this request")
 	}
 	resp, err := runBossText(ctx, a.runner, llm.TextRequest{
 		Model:           strings.TrimSpace(a.model),
@@ -700,7 +700,7 @@ func (a *Assistant) planReadOnlyQueryRoute(ctx context.Context, req AssistantReq
 		return llm.JSONSchemaResponse{}, bossReadOnlyRoute{}, err
 	}
 	if strings.TrimSpace(response.OutputText) == "" {
-		return response, bossReadOnlyRoute{}, errors.New("Help chat returned no read-only route")
+		return response, bossReadOnlyRoute{}, errors.New("Chat returned no read-only route")
 	}
 	var route bossReadOnlyRoute
 	if err := llm.DecodeJSONObjectOutput(response.OutputText, &route); err != nil {
@@ -723,7 +723,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		return llm.JSONSchemaResponse{}, bossAction{}, err
 	}
 	if strings.TrimSpace(response.OutputText) == "" {
-		return response, bossAction{}, errors.New("Help chat returned no structured action")
+		return response, bossAction{}, errors.New("Chat returned no structured action")
 	}
 	var action bossAction
 	if decodeErr := llm.DecodeJSONObjectOutput(response.OutputText, &action); decodeErr != nil {
@@ -733,7 +733,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 			response.Model = repairModel
 		}
 		if repairErr != nil {
-			return response, bossAction{}, fmt.Errorf("decode Help chat action: %v; structured repair failed: %w", decodeErr, repairErr)
+			return response, bossAction{}, fmt.Errorf("decode Chat action: %v; structured repair failed: %w", decodeErr, repairErr)
 		}
 		action = repairedAction
 	}
@@ -771,7 +771,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 
 func (a *Assistant) repairBossAction(ctx context.Context, req AssistantRequest, toolResults []bossToolResult, forceAnswer bool, malformedOutput string) (llm.JSONSchemaResponse, bossAction, error) {
 	if a == nil || a.planner == nil {
-		return llm.JSONSchemaResponse{}, bossAction{}, errors.New("Help chat needs structured planning to repair an invalid action")
+		return llm.JSONSchemaResponse{}, bossAction{}, errors.New("Chat needs structured planning to repair an invalid action")
 	}
 	systemText := strings.TrimSpace(bossActionPlannerSystemPromptForRequest(req) + "\n\n" + strings.Join([]string{
 		"Repair one invalid prior planner response into the required boss_next_action schema.",
@@ -799,11 +799,11 @@ func (a *Assistant) repairBossAction(ctx context.Context, req AssistantRequest, 
 		return response, bossAction{}, err
 	}
 	if strings.TrimSpace(response.OutputText) == "" {
-		return response, bossAction{}, errors.New("Help chat returned no repaired structured action")
+		return response, bossAction{}, errors.New("Chat returned no repaired structured action")
 	}
 	var action bossAction
 	if err := llm.DecodeJSONObjectOutput(response.OutputText, &action); err != nil {
-		return response, bossAction{}, fmt.Errorf("decode repaired Help chat action: %w", err)
+		return response, bossAction{}, fmt.Errorf("decode repaired Chat action: %w", err)
 	}
 	return response, action, nil
 }
@@ -824,7 +824,7 @@ func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantReques
 		return action, false, response, err
 	}
 	if strings.TrimSpace(response.OutputText) == "" {
-		return action, false, response, errors.New("Help chat returned no todo.add policy review")
+		return action, false, response, errors.New("Chat returned no todo.add policy review")
 	}
 	var review bossTodoAddPolicyReview
 	if err := llm.DecodeJSONObjectOutput(response.OutputText, &review); err != nil {
@@ -869,7 +869,7 @@ func addLLMUsage(total *model.LLMUsage, usage model.LLMUsage) {
 
 func runBossText(ctx context.Context, runner llm.TextRunner, req llm.TextRequest, emit func(AssistantStreamEvent)) (llm.TextResponse, error) {
 	if runner == nil {
-		return llm.TextResponse{}, errors.New("Help chat needs text chat inference for this request")
+		return llm.TextResponse{}, errors.New("Chat needs text chat inference for this request")
 	}
 	if streamer, ok := runner.(llm.StreamingTextRunner); ok {
 		return streamer.RunTextStream(ctx, req, func(event llm.TextStreamEvent) error {

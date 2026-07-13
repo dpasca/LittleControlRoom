@@ -94,7 +94,7 @@ func formatBossSessionSearchXML(query string, matches []bossSessionSearchMatch, 
 		bossXMLAttr(formatBossTimestamp(now)),
 	))
 	if len(matches) == 0 {
-		b.WriteString("\n<note>No saved Help chat sessions matched this query.</note>\n</boss_session_search>")
+		b.WriteString("\n<note>No saved Chat sessions matched this query.</note>\n</boss_session_search>")
 		return b.String()
 	}
 	for _, match := range matches {

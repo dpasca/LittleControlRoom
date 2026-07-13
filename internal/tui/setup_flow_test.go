@@ -89,7 +89,7 @@ func TestSetupDetectionConfigIncludesCloudProviderSettings(t *testing.T) {
 		t.Fatalf("BossChatBackend = %s, want %s", cfg.BossChatBackend, config.AIBackendDeepSeek)
 	}
 	if cfg.BossHelmModel != "deepseek-v4-pro" || cfg.BossUtilityModel != "deepseek-v4-flash" {
-		t.Fatalf("Help Chat models = %q/%q, want DeepSeek models", cfg.BossHelmModel, cfg.BossUtilityModel)
+		t.Fatalf("Chat models = %q/%q, want DeepSeek models", cfg.BossHelmModel, cfg.BossUtilityModel)
 	}
 	if cfg.OpenAIAPIKey != "openai-key" || cfg.OpenRouterAPIKey != "openrouter-key" || cfg.DeepSeekAPIKey != "deepseek-key" || cfg.MoonshotAPIKey != "moonshot-key" {
 		t.Fatalf("cloud provider keys were not copied into setup detection config")
@@ -343,7 +343,7 @@ func TestRenderSetupSaveStepShowsFinalChoices(t *testing.T) {
 		"Save Setup",
 		"Project reports",
 		"OpenCode",
-		"Help chat",
+		"Chat",
 		"OpenAI API",
 		"OpenAI key",
 		"OpenCode tier",
@@ -502,7 +502,7 @@ func TestSetupEnterAdvancesToBossChatRole(t *testing.T) {
 	updated, _ = got.updateSetupMode(tea.KeyMsg{Type: tea.KeyDown})
 	got = updated.(Model)
 	if got.setupSelectedBossBackend() != config.AIBackendOpenAIAPI {
-		t.Fatalf("Help chat selected backend = %s, want openai_api", got.setupSelectedBossBackend())
+		t.Fatalf("Chat selected backend = %s, want openai_api", got.setupSelectedBossBackend())
 	}
 }
 
@@ -523,13 +523,13 @@ func TestSetupBossChatDisabledSavesSeparately(t *testing.T) {
 	updated, cmd := m.updateSetupMode(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("selecting disabled Help chat should not save before the save step")
+		t.Fatalf("selecting disabled Chat should not save before the save step")
 	}
 	if got.setupReviewMode || got.setupStep != setupStepLCAgentConfig {
-		t.Fatalf("selecting disabled Help chat should open the LCAgent setup step, got step=%v review=%v", got.setupStep, got.setupReviewMode)
+		t.Fatalf("selecting disabled Chat should open the LCAgent setup step, got step=%v review=%v", got.setupStep, got.setupReviewMode)
 	}
 	if got.currentSettingsBaseline().AIBackend != config.AIBackendCodex {
-		t.Fatalf("Help chat selection should not change project reports backend")
+		t.Fatalf("Chat selection should not change project reports backend")
 	}
 }
 
@@ -699,7 +699,7 @@ func TestSetupSectionCtrlSSavesLCAgentXiaomiBaseURL(t *testing.T) {
 		t.Fatalf("saved project reports backend = %s, want deepseek", saved.settings.AIBackend)
 	}
 	if saved.settings.BossChatBackend != config.AIBackendDeepSeek {
-		t.Fatalf("saved Help chat backend = %s, want deepseek", saved.settings.BossChatBackend)
+		t.Fatalf("saved Chat backend = %s, want deepseek", saved.settings.BossChatBackend)
 	}
 	if saved.settings.XiaomiBaseURL != xiaomiBaseURL {
 		t.Fatalf("saved Xiaomi base URL = %q, want %q", saved.settings.XiaomiBaseURL, xiaomiBaseURL)

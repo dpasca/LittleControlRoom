@@ -16,7 +16,6 @@ func (m Model) openIgnoredPicker() (tea.Model, tea.Cmd) {
 	m.ignoredPickerSelected = 0
 	m.ignoredPickerItems = nil
 	m.commandMode = false
-	m.showHelp = false
 	m.status = "Loading ignored projects..."
 	return m, m.loadIgnoredProjectsCmd()
 }

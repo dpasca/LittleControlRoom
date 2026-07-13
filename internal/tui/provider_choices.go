@@ -30,7 +30,7 @@ type providerChoice struct {
 func providerChoiceRoleTitle(role providerChoiceRole) string {
 	switch role {
 	case providerChoiceRoleBossChat:
-		return "Help Chat"
+		return "Chat"
 	default:
 		return "Project Reports"
 	}
@@ -39,7 +39,7 @@ func providerChoiceRoleTitle(role providerChoiceRole) string {
 func providerChoiceRoleListTitle(role providerChoiceRole) string {
 	switch role {
 	case providerChoiceRoleBossChat:
-		return "Who Should Handle Help Chat?"
+		return "Who Should Handle Chat?"
 	default:
 		return "Who Should Handle Project Reports?"
 	}
@@ -48,7 +48,7 @@ func providerChoiceRoleListTitle(role providerChoiceRole) string {
 func providerChoiceRolePurpose(role providerChoiceRole) string {
 	switch role {
 	case providerChoiceRoleBossChat:
-		return "This is the direct high-level /help conversation. It can use a different helper from background reports, or stay off."
+		return "This is the direct high-level /chat conversation. It can use a different helper from background reports, or stay off."
 	default:
 		return "This helper writes summaries, classifications, TODO help, and commit help in the background."
 	}
@@ -155,55 +155,55 @@ func (m Model) bossChatProviderChoices(settings config.EditableSettings) []provi
 		{
 			Value:       config.AIBackendUnset,
 			Label:       "Auto",
-			Summary:     "Leaves /help unconfigured until you choose a chat backend.",
-			Description: "If the shared OpenAI API connection already exists, /help can use it automatically. No OpenAI key is required unless you choose OpenAI API.",
+			Summary:     "Leaves /chat unconfigured until you choose a chat backend.",
+			Description: "If the shared OpenAI API connection already exists, /chat can use it automatically. No OpenAI key is required unless you choose OpenAI API.",
 		},
 		{
 			Value:       config.AIBackendOpenAIAPI,
 			Label:       "OpenAI API",
-			Summary:     "Lets /help answer through direct OpenAI API inference.",
+			Summary:     "Lets /chat answer through direct OpenAI API inference.",
 			Description: "A saved OpenAI API key is required. Project reports can still use Codex, OpenCode, Claude Code, MLX, Ollama, or another provider.",
 		},
 		{
 			Value:       config.AIBackendOpenRouter,
 			Label:       "OpenRouter",
-			Summary:     "Lets /help answer through the shared OpenRouter API connection.",
-			Description: "A saved OpenRouter API key is required. This keeps Help Chat direct while project reports can use a different backend.",
+			Summary:     "Lets /chat answer through the shared OpenRouter API connection.",
+			Description: "A saved OpenRouter API key is required. This keeps Chat direct while project reports can use a different backend.",
 		},
 		{
 			Value:       config.AIBackendDeepSeek,
 			Label:       "DeepSeek",
-			Summary:     "Lets /help answer through the direct DeepSeek API.",
+			Summary:     "Lets /chat answer through the direct DeepSeek API.",
 			Description: "A saved DeepSeek API key is required. This reuses the same connection LCAgent can use directly.",
 		},
 		{
 			Value:       config.AIBackendMoonshot,
 			Label:       "Moonshot",
-			Summary:     "Lets /help answer through the direct Moonshot/Kimi API.",
+			Summary:     "Lets /chat answer through the direct Moonshot/Kimi API.",
 			Description: "A saved Moonshot API key is required. This reuses the same connection LCAgent can use directly.",
 		},
 		{
 			Value:       config.AIBackendXiaomi,
 			Label:       "Xiaomi",
-			Summary:     "Lets /help answer through the direct Xiaomi MiMo API.",
+			Summary:     "Lets /chat answer through the direct Xiaomi MiMo API.",
 			Description: "A saved Xiaomi API key is required. This reuses the same connection LCAgent can use directly.",
 		},
 		{
 			Value:       config.AIBackendMLX,
 			Label:       "MLX",
-			Summary:     "Lets /help answer through your local MLX OpenAI-compatible endpoint.",
+			Summary:     "Lets /chat answer through your local MLX OpenAI-compatible endpoint.",
 			Description: "The MLX endpoint must be running. It uses the shared MLX endpoint, API key, and model fields.",
 		},
 		{
 			Value:       config.AIBackendOllama,
 			Label:       "Ollama",
-			Summary:     "Lets /help answer through your local Ollama OpenAI-compatible endpoint.",
+			Summary:     "Lets /chat answer through your local Ollama OpenAI-compatible endpoint.",
 			Description: "The Ollama endpoint must be running. It uses the shared Ollama endpoint, API key, and model fields.",
 		},
 		{
 			Value:       config.AIBackendDisabled,
 			Label:       "Off",
-			Summary:     "Keeps /help from answering with AI.",
+			Summary:     "Keeps /chat from answering with AI.",
 			Description: "No provider setup is needed. The rest of the TUI and project-report inference keep working.",
 		},
 	}
@@ -279,43 +279,43 @@ func bossChatProviderNextStep(choice providerChoice, settings config.EditableSet
 	switch choice.Value {
 	case config.AIBackendUnset:
 		if strings.TrimSpace(settings.OpenAIAPIKey) != "" {
-			return "Save to let Help chat use the shared OpenAI API connection automatically."
+			return "Save to let Chat use the shared OpenAI API connection automatically."
 		}
-		return "Choose a Help Chat backend, or save to leave /help unconfigured."
+		return "Choose a Chat backend, or save to leave /chat unconfigured."
 	case config.AIBackendDisabled:
-		return "Save to keep Help chat off."
+		return "Save to keep Chat off."
 	case config.AIBackendOpenAIAPI:
 		if strings.TrimSpace(settings.OpenAIAPIKey) == "" {
 			return "Paste and save an OpenAI API key."
 		}
-		return "Save to use OpenAI API for Help Chat."
+		return "Save to use OpenAI API for Chat."
 	case config.AIBackendOpenRouter:
 		if strings.TrimSpace(settings.OpenRouterAPIKey) == "" {
 			return "Paste and save an OpenRouter API key."
 		}
-		return "Save to use OpenRouter for Help Chat."
+		return "Save to use OpenRouter for Chat."
 	case config.AIBackendDeepSeek:
 		if strings.TrimSpace(settings.DeepSeekAPIKey) == "" {
 			return "Paste and save a DeepSeek API key."
 		}
-		return "Save to use DeepSeek for Help Chat."
+		return "Save to use DeepSeek for Chat."
 	case config.AIBackendMoonshot:
 		if strings.TrimSpace(settings.MoonshotAPIKey) == "" {
 			return "Paste and save a Moonshot API key."
 		}
-		return "Save to use Moonshot for Help Chat."
+		return "Save to use Moonshot for Chat."
 	case config.AIBackendXiaomi:
 		if strings.TrimSpace(settings.XiaomiAPIKey) == "" {
 			return "Paste and save a Xiaomi API key."
 		}
-		return "Save to use Xiaomi for Help Chat."
+		return "Save to use Xiaomi for Chat."
 	case config.AIBackendMLX, config.AIBackendOllama:
 		if choice.State == "ready" {
-			return "Save to use this local backend for Help Chat."
+			return "Save to use this local backend for Chat."
 		}
 		return "Start or configure the " + choice.Label + " local endpoint, then refresh."
 	default:
-		return "Choose a supported Help Chat backend."
+		return "Choose a supported Chat backend."
 	}
 }
 

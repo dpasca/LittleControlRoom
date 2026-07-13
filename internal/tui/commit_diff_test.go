@@ -1293,7 +1293,7 @@ func TestCommandPaletteScrollsSelectedSuggestionIntoView(t *testing.T) {
 	if !strings.Contains(rendered, "↓ ") {
 		t.Fatalf("rendered palette should show that later suggestions exist: %q", rendered)
 	}
-	if strings.Contains(rendered, "/help  Open the help panel") {
+	if strings.Contains(rendered, "/chat  Open Chat") {
 		t.Fatalf("rendered palette should scroll past the initial suggestions when selection moves later: %q", rendered)
 	}
 }
@@ -1339,92 +1339,6 @@ func TestDispatchSessionCommandOpensEmbeddedSessionPicker(t *testing.T) {
 	}
 }
 
-func TestHelpPanelLinesStayMinimal(t *testing.T) {
-	lines := helpPanelLines()
-	joined := ansi.Strip(strings.Join(lines, "\n"))
-
-	if len(lines) > 20 {
-		t.Fatalf("helpPanelLines() should stay compact, got %d lines: %q", len(lines), joined)
-	}
-	if !strings.Contains(joined, "slash-command palette") {
-		t.Fatalf("helpPanelLines() should explain the slash-command palette: %q", joined)
-	}
-	if !strings.Contains(joined, "Help Chat") {
-		t.Fatalf("helpPanelLines() should advertise the active Help Chat shortcut: %q", joined)
-	}
-	if !strings.Contains(joined, "/wt merge|remove|prune") {
-		t.Fatalf("helpPanelLines() should include concrete worktree slash-command examples: %q", joined)
-	}
-	if !strings.Contains(joined, "/setup, /ai, /perf, /errors, /codex, /todo") || !strings.Contains(joined, "/commit, /diff, or /run") {
-		t.Fatalf("helpPanelLines() should include concrete slash-command examples: %q", joined)
-	}
-	if !strings.Contains(joined, "interrupt busy session") {
-		t.Fatalf("helpPanelLines() should keep the session interrupt hint: %q", joined)
-	}
-	if !strings.Contains(joined, "`  Help Chat") || !strings.Contains(joined, "t  todo") || !strings.Contains(joined, "o  sort") || !strings.Contains(joined, "p  pin") || !strings.Contains(joined, "ctrl+v  image") {
-		t.Fatalf("helpPanelLines() should show the reordered quick actions: %q", joined)
-	}
-	if !strings.Contains(joined, "AGENT") || !strings.Contains(joined, "RUN") {
-		t.Fatalf("helpPanelLines() missing colored legend content: %q", joined)
-	}
-	if strings.Contains(joined, "/settings /new-project /open /run-edit") {
-		t.Fatalf("helpPanelLines() should not grow back into a slash-command inventory: %q", joined)
-	}
-	if strings.Contains(joined, "Runtime pane shows command, ports, URL, logs") {
-		t.Fatalf("helpPanelLines() should omit verbose runtime detail: %q", joined)
-	}
-}
-
-func TestRenderHelpPanelOmitsVerboseLegacyHints(t *testing.T) {
-	m := Model{}
-
-	rendered := ansi.Strip(m.renderHelpPanel(80))
-	if strings.Contains(rendered, "f   forget missing") {
-		t.Fatalf("renderHelpPanel() should not advertise forget while it is unavailable: %q", rendered)
-	}
-	if strings.Contains(rendered, "Runtime pane shows command, ports, URL, logs") {
-		t.Fatalf("renderHelpPanel() should not include verbose runtime prose: %q", rendered)
-	}
-	if !strings.Contains(rendered, "slash-command palette") {
-		t.Fatalf("renderHelpPanel() should explain the slash-command palette: %q", rendered)
-	}
-	if !strings.Contains(rendered, "ctrl+v") || !strings.Contains(rendered, "image") {
-		t.Fatalf("renderHelpPanel() should keep the paste hint: %q", rendered)
-	}
-}
-
-func TestViewWithHelpOverlayPreservesBackground(t *testing.T) {
-	m := Model{
-		projects: []model.ProjectSummary{{
-			Name:                             "demo",
-			Path:                             "/tmp/demo",
-			Status:                           model.StatusIdle,
-			PresentOnDisk:                    true,
-			LatestSessionClassification:      model.ClassificationCompleted,
-			LatestSessionClassificationType:  model.SessionCategoryCompleted,
-			LatestSessionSummary:             "Work appears complete for now.",
-			LatestSessionFormat:              "modern",
-			LatestSessionDetectedProjectPath: "/tmp/demo",
-		}},
-		selected: 0,
-		showHelp: true,
-		width:    100,
-		height:   24,
-	}
-	m.syncDetailViewport(false)
-
-	rendered := ansi.Strip(m.View())
-	if got := len(strings.Split(rendered, "\n")); got != m.height {
-		t.Fatalf("View() line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
-	}
-	if !strings.Contains(rendered, "Help") || !strings.Contains(rendered, "slash-command palette") {
-		t.Fatalf("View() should show the help overlay content: %q", rendered)
-	}
-	if !strings.Contains(rendered, "[Main") || !strings.Contains(rendered, "Summary") || !strings.Contains(rendered, "Path:") {
-		t.Fatalf("View() should preserve the dashboard behind the help overlay: %q", rendered)
-	}
-}
-
 func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.BossChatBackend = config.AIBackendOpenAIAPI
@@ -1439,69 +1353,63 @@ func TestBacktickOpensAndHidesHelpChat(t *testing.T) {
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'`'}})
 	got := updated.(Model)
 	if !got.helpChatMode {
-		t.Fatalf("backtick should open help chat")
+		t.Fatalf("backtick should open chat")
 	}
 	if !got.helpChatModelActive {
-		t.Fatalf("backtick should initialize the help chat model")
-	}
-	if got.showHelp {
-		t.Fatalf("backtick should not open the static quick help panel")
+		t.Fatalf("backtick should initialize the chat model")
 	}
 	if cmd == nil {
-		t.Fatalf("opening help chat should return the chat init command")
+		t.Fatalf("opening chat should return the chat init command")
 	}
 	rendered := ansi.Strip(got.View())
 	if got := len(strings.Split(rendered, "\n")); got != m.height {
-		t.Fatalf("View() with help chat line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
+		t.Fatalf("View() with chat line count = %d, want terminal height %d; render was %q", got, m.height, rendered)
 	}
-	if !strings.Contains(rendered, "Help Chat") {
-		t.Fatalf("help chat overlay should render the Help Chat modal: %q", rendered)
+	if !strings.Contains(rendered, "Chat") {
+		t.Fatalf("chat overlay should render the Chat modal: %q", rendered)
 	}
 	for _, unwanted := range []string{"Boss Desk", "Boss Log"} {
 		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("help chat overlay should render a frameless core chat, not %q: %q", unwanted, rendered)
+			t.Fatalf("chat overlay should render a frameless core chat, not %q: %q", unwanted, rendered)
 		}
 	}
 	for _, unwanted := range []string{"Tab chat/flow", "Flow"} {
 		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("help chat overlay should not expose Boss transcript controls %q: %q", unwanted, rendered)
+			t.Fatalf("chat overlay should not expose Boss transcript controls %q: %q", unwanted, rendered)
 		}
 	}
 	for _, unwanted := range []string{"LLM help", "LLM"} {
 		if strings.Contains(rendered, unwanted) {
-			t.Fatalf("help chat overlay should not render the old right-side LLM label %q: %q", unwanted, rendered)
+			t.Fatalf("chat overlay should not render the old right-side LLM label %q: %q", unwanted, rendered)
 		}
 	}
 	if !strings.Contains(rendered, "/new clear") {
-		t.Fatalf("help chat overlay should advertise /new clear: %q", rendered)
+		t.Fatalf("chat overlay should advertise /new clear: %q", rendered)
 	}
 	if strings.Contains(rendered, "Ctrl+L") {
-		t.Fatalf("help chat overlay should not advertise the uncommon Ctrl+L shortcut: %q", rendered)
+		t.Fatalf("chat overlay should not advertise the uncommon Ctrl+L shortcut: %q", rendered)
 	}
 
 	updated, cmd = got.updateHelpChatModeKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'`'}})
 	got = updated.(Model)
 	if got.helpChatMode {
-		t.Fatalf("backtick should hide help chat when it is active")
+		t.Fatalf("backtick should hide chat when it is active")
 	}
 	if cmd != nil {
-		t.Fatalf("hiding help chat with backtick should not return a command")
+		t.Fatalf("hiding chat with backtick should not return a command")
 	}
 }
 
-func TestQuestionMarkStillOpensQuickHelpPanel(t *testing.T) {
+func TestQuestionMarkDoesNotOpenAHelpPanel(t *testing.T) {
 	m := Model{}
 
 	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
 	got := updated.(Model)
-	if !got.showHelp {
-		t.Fatalf("question mark should open the static quick help panel")
-	}
 	if got.helpChatMode {
-		t.Fatalf("question mark should not open active Help Chat")
+		t.Fatalf("question mark should not open Chat")
 	}
 	if cmd != nil {
-		t.Fatalf("question mark help toggle should not return a command")
+		t.Fatalf("question mark should not return a command")
 	}
 }
 
@@ -3154,7 +3062,7 @@ func TestSlashCommandModeTakesPriorityOverDiffView(t *testing.T) {
 		t.Fatalf("opening command mode should return a blink command")
 	}
 
-	got.commandInput.SetValue("/help")
+	got.commandInput.SetValue("/chat")
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.BossChatBackend = config.AIBackendOpenAIAPI
 	settings.OpenAIAPIKey = "sk-test-example"
@@ -3162,16 +3070,13 @@ func TestSlashCommandModeTakesPriorityOverDiffView(t *testing.T) {
 	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if !got.helpChatMode {
-		t.Fatalf("command mode should open Help Chat once /help is submitted")
+		t.Fatalf("command mode should open Chat once /chat is submitted")
 	}
 	if got.diffView != nil {
-		t.Fatalf("/help should return from the diff to the dashboard before opening Help Chat")
+		t.Fatalf("/chat should return from the diff to the dashboard before opening Chat")
 	}
-	if got.showHelp {
-		t.Fatalf("/help should not open the static quick help panel")
-	}
-	if rendered := ansi.Strip(got.View()); !strings.Contains(rendered, "Help Chat") {
-		t.Fatalf("/help should render Help Chat over the dashboard: %q", rendered)
+	if rendered := ansi.Strip(got.View()); !strings.Contains(rendered, "Chat") {
+		t.Fatalf("/chat should render Chat over the dashboard: %q", rendered)
 	}
 }
 

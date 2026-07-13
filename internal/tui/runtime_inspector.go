@@ -33,7 +33,6 @@ func (m *Model) openRuntimeInspectorForSelection() tea.Cmd {
 		return nil
 	}
 	m.err = nil
-	m.showHelp = false
 	m.focusedPane = focusRuntime
 	m.status = focusedPaneStatus(m.focusedPane)
 	m.ensureSelectionVisible()

@@ -19,7 +19,6 @@ const aiStatsFailedProjectLimit = 5
 func (m *Model) openAIStatsDialog() tea.Cmd {
 	m.showAIStats = true
 	m.showPerf = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "AI stats open. Press c to copy, r to refresh, or Esc to close"
 	return m.refreshSetupSnapshotCmd(false)

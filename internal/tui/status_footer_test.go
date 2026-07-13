@@ -396,7 +396,7 @@ func TestRenderTopStatusLineShowsNavigationHintsInsteadOfAICounts(t *testing.T) 
 	m := Model{status: "Ready"}
 
 	rendered := ansi.Strip(m.renderTopStatusLine(160))
-	if !strings.Contains(rendered, "f filter") || !strings.Contains(rendered, "/ command") || !strings.Contains(rendered, "` help") {
+	if !strings.Contains(rendered, "f filter") || !strings.Contains(rendered, "/ command") || !strings.Contains(rendered, "` chat") {
 		t.Fatalf("top status line should surface navigation hints, got %q", rendered)
 	}
 	if strings.Contains(rendered, "Tab switch") {
@@ -435,6 +435,12 @@ func TestCompactFooterBaseSplitsGlobalActionsFromTopStatus(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "Tab switch") {
 		t.Fatalf("normal footer should keep pane switching guidance, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "/chat chat") {
+		t.Fatalf("normal footer should advertise Chat, got %q", rendered)
+	}
+	if strings.Contains(rendered, "? help") {
+		t.Fatalf("normal footer should not advertise the removed help dialog, got %q", rendered)
 	}
 }
 

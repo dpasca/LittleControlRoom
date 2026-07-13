@@ -2115,7 +2115,7 @@ func engineerReportContractPromptLines() []string {
 	return []string{
 		"",
 		"Report contract:",
-		"- Answer the user's exact request directly, with enough concrete detail for Help Chat to summarize without guessing.",
+		"- Answer the user's exact request directly, with enough concrete detail for Chat to summarize without guessing.",
 		"- Preserve source, metric, timeframe, scope, negations, and explicit exclusions from the user request; if evidence answers a different question, report that mismatch instead of substituting it.",
 		"- For comparison, diff, cleanup, or review work, name what was compared, what was kept, what was discarded, and the substantive differences.",
 		"- For retry, sync, export, file, or document work, say whether content changed and summarize the meaningful changes; if nothing changed, name the file or document and say there were no content changes.",

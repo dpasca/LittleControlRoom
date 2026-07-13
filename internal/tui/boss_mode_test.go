@@ -346,7 +346,7 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 		"Killed the stale dev server on port 5173",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("Help Chat transcript missing work outcome %q:\n%s", want, view)
+			t.Fatalf("Chat transcript missing work outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
@@ -426,7 +426,7 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 		"The broken preview is caused by the SVG",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("Help Chat transcript missing work outcome %q:\n%s", want, view)
+			t.Fatalf("Chat transcript missing work outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
@@ -749,7 +749,7 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 		"No stale roguellm dev server is running now.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("Help Chat transcript missing work outcome %q:\n%s", want, view)
+			t.Fatalf("Chat transcript missing work outcome %q:\n%s", want, view)
 		}
 	}
 	for _, want := range []string{
@@ -760,13 +760,13 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 		}
 	}
 	if strings.Contains(noticeText, "Should I close it") {
-		t.Fatalf("Help Chat review notice should not append a repeated close-or-continue question:\n%s", noticeText)
+		t.Fatalf("Chat review notice should not append a repeated close-or-continue question:\n%s", noticeText)
 	}
 	if strings.Contains(noticeText, "port 8127") || strings.Contains(noticeText, "```") {
-		t.Fatalf("Help Chat operational notice leaked raw output:\n%s", noticeText)
+		t.Fatalf("Chat operational notice leaked raw output:\n%s", noticeText)
 	}
 	if strings.Contains(view, "port 8127") || strings.Contains(view, "```") {
-		t.Fatalf("Help Chat transcript leaked raw output:\n%s", view)
+		t.Fatalf("Chat transcript leaked raw output:\n%s", view)
 	}
 }
 
@@ -843,7 +843,7 @@ func TestHelpChatHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	}
 	updated, cmd := m.updateBossHostNotice("Work on Cursor cleanup is ready for review.\n\nCursor access still needs user-side confirmation.")
 	if cmd != nil {
-		t.Fatalf("updateBossHostNotice() cmd = %T, want nil while Help Chat is closed", cmd)
+		t.Fatalf("updateBossHostNotice() cmd = %T, want nil while Chat is closed", cmd)
 	}
 	m = updated
 	if len(m.pendingBossHostNotices) != 1 {
@@ -862,7 +862,7 @@ func TestHelpChatHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 		"Cursor access still needs user-side confirmation.",
 	} {
 		if bossTextContains(view, want) {
-			t.Fatalf("reopened Help Chat transcript should not contain operational-only notice %q:\n%s", want, view)
+			t.Fatalf("reopened Chat transcript should not contain operational-only notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
@@ -880,7 +880,7 @@ func TestHelpChatHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *tes
 	}
 	updated, cmd := m.updateBossHostChatNotice("Work on ChatNext3 is ready for review.\n\nNo migration needed; DB/schema stayed untouched.")
 	if cmd != nil {
-		t.Fatalf("updateBossHostChatNotice() cmd = %T, want nil while Help Chat is closed", cmd)
+		t.Fatalf("updateBossHostChatNotice() cmd = %T, want nil while Chat is closed", cmd)
 	}
 	m = updated
 	if len(m.pendingBossHostNotices) != 1 {
@@ -896,7 +896,7 @@ func TestHelpChatHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *tes
 		"No migration needed; DB/schema stayed untouched.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Help Chat transcript missing queued chat notice %q:\n%s", want, view)
+			t.Fatalf("reopened Chat transcript missing queued chat notice %q:\n%s", want, view)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
@@ -914,9 +914,9 @@ func TestHelpChatHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testin
 	}
 	opened, _ := m.openHelpChatMode()
 	got := opened.(Model)
-	got.closeHelpChatMode("Help Chat hidden")
+	got.closeHelpChatMode("Chat hidden")
 
-	updated, cmd := got.updateBossHostChatNotice("Work completed while Help Chat was hidden.\n\nEverything is ready to review.")
+	updated, cmd := got.updateBossHostChatNotice("Work completed while Chat was hidden.\n\nEverything is ready to review.")
 	got = updated
 	if cmd != nil {
 		for _, msg := range collectCmdMsgs(cmd) {
@@ -929,11 +929,11 @@ func TestHelpChatHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testin
 	}
 	view := bossChatOnlyText(got.helpChatModel)
 	for _, want := range []string{
-		"Work completed while Help Chat was hidden.",
+		"Work completed while Chat was hidden.",
 		"Everything is ready to review.",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("hidden active Help Chat transcript missing notice %q:\n%s", want, view)
+			t.Fatalf("hidden active Chat transcript missing notice %q:\n%s", want, view)
 		}
 	}
 }
@@ -987,7 +987,7 @@ func TestWorkCompletionWhileClosedPersistsToHelpChatTranscript(t *testing.T) {
 		got = updated.(Model)
 	}
 	if !persisted {
-		t.Fatalf("hidden work completion should persist a Help Chat notice")
+		t.Fatalf("hidden work completion should persist a Chat notice")
 	}
 	if len(got.errorLogEntries) != 0 {
 		t.Fatalf("unexpected error log entries after persisting hidden notice: %#v", got.errorLogEntries)
@@ -1016,7 +1016,7 @@ func TestWorkCompletionWhileClosedPersistsToHelpChatTranscript(t *testing.T) {
 		"Killed the stale dev server on port 5173",
 	} {
 		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Help Chat transcript missing persisted hidden completion %q:\n%s", want, view)
+			t.Fatalf("reopened Chat transcript missing persisted hidden completion %q:\n%s", want, view)
 		}
 	}
 }
@@ -1041,7 +1041,7 @@ func TestHelpChatReplyContinuesAfterOverlayHidden(t *testing.T) {
 		got = updated.(Model)
 	}
 	if !got.helpChatModelActive {
-		t.Fatalf("Help Chat model should be active after opening")
+		t.Fatalf("Chat model should be active after opening")
 	}
 
 	updated, _ := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("answer this while hidden")})
@@ -1049,28 +1049,28 @@ func TestHelpChatReplyContinuesAfterOverlayHidden(t *testing.T) {
 	updated, chatCmd := got.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got = updated.(Model)
 	if chatCmd == nil {
-		t.Fatalf("submitting Help Chat should start async work")
+		t.Fatalf("submitting Chat should start async work")
 	}
 
 	updated, exitCmd := got.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	got = updated.(Model)
 	if exitCmd == nil {
-		t.Fatalf("Esc should hide Help Chat through an exit message")
+		t.Fatalf("Esc should hide Chat through an exit message")
 	}
 	for _, msg := range collectCmdMsgs(exitCmd) {
 		updated, _ = got.Update(msg)
 		got = updated.(Model)
 	}
 	if got.helpChatMode {
-		t.Fatalf("Help Chat should be hidden")
+		t.Fatalf("Chat should be hidden")
 	}
 	if !got.helpChatModelActive {
-		t.Fatalf("hiding Help Chat should keep its model alive")
+		t.Fatalf("hiding Chat should keep its model alive")
 	}
 
 	got = drainCmdMsgs(got, chatCmd)
 	if got.helpChatMode {
-		t.Fatalf("background Help Chat reply should not reopen the overlay")
+		t.Fatalf("background Chat reply should not reopen the overlay")
 	}
 
 	got.helpChatModel = bossui.Model{}
@@ -1090,7 +1090,7 @@ func TestHelpChatReplyContinuesAfterOverlayHidden(t *testing.T) {
 		"I could not reach my chat backend yet",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("hidden Help Chat reply did not finish with %q:\n%s", want, view)
+			t.Fatalf("hidden Chat reply did not finish with %q:\n%s", want, view)
 		}
 	}
 }
@@ -1232,7 +1232,7 @@ func TestHelpChatBrowserOpenResultIsRecordedAsOperationalNotice(t *testing.T) {
 	view := bossChatOnlyText(got.helpChatModel)
 	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	if strings.Contains(view, "Browser handoff") || strings.Contains(view, "Finish the browser flow there.") {
-		t.Fatalf("Help Chat transcript should not echo browser handoff:\n%s", view)
+		t.Fatalf("Chat transcript should not echo browser handoff:\n%s", view)
 	}
 	if !strings.Contains(noticeText, "Browser handoff") || !strings.Contains(noticeText, "Finish the browser flow there.") {
 		t.Fatalf("operational notice did not capture browser handoff:\n%s", noticeText)

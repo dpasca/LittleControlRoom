@@ -282,8 +282,6 @@ func (m Model) View() string {
 		body = m.renderPerfOverlay(body, layout.width, layout.height)
 	} else if m.showAIStats {
 		body = m.renderAIStatsOverlay(body, layout.width, layout.height)
-	} else if m.showHelp {
-		body = m.renderHelpPanelOverlay(body, layout.width, layout.height)
 	} else if m.projectFilterDialog != nil {
 		body = m.renderProjectFilterOverlay(body, layout.width, layout.height)
 	} else if m.categoryDialog != nil {
@@ -688,7 +686,7 @@ func (m Model) renderTopStatusActions(width int) string {
 	actions := []footerAction{
 		footerNavAction("f", "filter"),
 		footerNavAction("/", "command"),
-		footerNavAction("`", "help"),
+		footerNavAction("`", "chat"),
 	}
 	if len(m.errorLogEntries) > 0 && width >= 112 {
 		actions = append(actions, footerNavAction("/errors", "log"))

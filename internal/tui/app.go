@@ -300,7 +300,6 @@ type Model struct {
 	marqueeOffset int
 	showSessions  bool
 	showEvents    bool
-	showHelp      bool
 	showAIStats   bool
 	showPerf      bool
 
@@ -662,7 +661,7 @@ func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager
 	}
 	busCh, unsub := svc.Bus().Subscribe(128)
 	commandInput := textinput.New()
-	commandInput.Placeholder = "/help"
+	commandInput.Placeholder = "/chat"
 	commandInput.CharLimit = 280
 	commandInput.Width = 56
 	codexInput := newCodexTextarea()
@@ -1218,7 +1217,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if _, ok := msg.(bossui.ExitMsg); ok {
-		m.closeHelpChatMode("Help chat hidden")
+		m.closeHelpChatMode("Chat hidden")
 		return m, nil
 	}
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
@@ -1244,7 +1243,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if msg, ok := msg.(helpChatHostNoticePersistedMsg); ok {
 		if msg.err != nil {
-			m.appendBackgroundErrorLogEntry("Help chat notice save failed", msg.err, "")
+			m.appendBackgroundErrorLogEntry("Chat notice save failed", msg.err, "")
 		}
 		return m, nil
 	}
@@ -1755,7 +1754,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if errors.As(msg.err, &noChangesErr) {
 				dialog := gitStatusDialogFromNoChanges(noChangesErr)
 				m.err = nil
-				m.showHelp = false
 				m.gitStatusDialog = &dialog
 				m.gitStatusApplying = false
 				m.commitPreview = nil
@@ -1772,7 +1770,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if errors.As(msg.err, &submoduleErr) {
 				dialog := gitStatusDialogFromSubmoduleAttention(submoduleErr, msg.intent, msg.message)
 				m.err = nil
-				m.showHelp = false
 				m.gitStatusDialog = &dialog
 				m.gitStatusApplying = false
 				m.commitPreview = nil
@@ -1786,7 +1783,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if errors.As(msg.err, &submoduleResolvedErr) {
 				dialog := gitStatusDialogFromSubmoduleResolved(submoduleResolvedErr)
 				m.err = nil
-				m.showHelp = false
 				m.gitStatusDialog = &dialog
 				m.gitStatusApplying = false
 				m.commitPreview = nil
@@ -1806,7 +1802,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.err = nil
-		m.showHelp = false
 		m.gitStatusDialog = nil
 		m.gitStatusApplying = false
 		var backgroundError errorLogAppendResult

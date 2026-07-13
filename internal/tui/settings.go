@@ -222,7 +222,7 @@ func settingsSections() []settingsSection {
 			id:      settingsSectionLCAgent,
 			label:   "LCAgent",
 			summary: "Native worker",
-			hint:    "Configure the experimental LCR-native worker separately from project reports and Help chat.",
+			hint:    "Configure the experimental LCR-native worker separately from project reports and Chat.",
 			fieldOrder: []int{
 				settingsFieldLCAgentRoutePreset,
 				settingsFieldLCAgentModel,
@@ -459,7 +459,6 @@ func (m *Model) openPrivacySettingsMode() tea.Cmd {
 		Marked:   map[string]bool{},
 	}
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	if len(m.projectCategories) == 0 {
 		m.categoryDialog.Mode = categoryDialogModeActions
@@ -499,7 +498,6 @@ func (m *Model) openBrowserSettingsMode() tea.Cmd {
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Browser settings open. Press Enter to choose automation mode and ctrl+s to save."
 	return m.setSettingsSelection(settingsFieldBrowserAutomation)
@@ -543,7 +541,6 @@ func (m *Model) openSettingsModeWithBaseline(settings config.EditableSettings) t
 	m.localModelPickerVisible = false
 	m.setupMode = false
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Settings open. Choose a section, then press Enter."
 	if issue, ok := settingsLCAgentKnownModelProviderIssue(saved); ok {
@@ -1584,7 +1581,7 @@ func settingsDrilldownTitle(drilldown settingsDrilldownID) string {
 	case settingsDrilldownProjectReports:
 		return "Project Reports"
 	case settingsDrilldownBossChat:
-		return "Help Chat"
+		return "Chat"
 	case settingsDrilldownLCAgent:
 		return "LCAgent"
 	case settingsDrilldownProjectScope:
@@ -2308,7 +2305,7 @@ func settingsDrilldownSummary(drilldown settingsDrilldownID) string {
 	case settingsDrilldownProjectReports:
 		return "Choose the runner for background summaries, classification, TODO help, and commit help. Provider credentials are shared when another feature uses the same connection."
 	case settingsDrilldownBossChat:
-		return "Choose a realtime backend for /help. This deliberately excludes Codex, OpenCode, and Claude Code because engineer sessions can be too slow for chat."
+		return "Choose a realtime backend for /chat. This deliberately excludes Codex, OpenCode, and Claude Code because engineer sessions can be too slow for chat."
 	case settingsDrilldownLCAgent:
 		return "Configure the LCR-native worker essentials: Main Model, Utility Model, credentials, and web search. Use the LCAgent section for runtime policy and advanced launch fields."
 	case settingsDrilldownProjectScope:
@@ -2479,7 +2476,7 @@ func settingsDrilldownGroupForField(drilldown settingsDrilldownID, fieldIndex in
 		case settingsFieldOllamaBaseURL, settingsFieldOllamaAPIKey, settingsFieldOllamaModel:
 			return "Shared Ollama Connection"
 		case settingsFieldBossChatModel, settingsFieldBossUtilityModel:
-			return "Help Chat Models"
+			return "Chat Models"
 		case settingsFieldBossChatOllamaThinking:
 			return "Ollama Thinking"
 		}
@@ -2641,7 +2638,7 @@ func settingsProviderUsers(settings config.EditableSettings, backend config.AIBa
 		users = append(users, "Project reports")
 	}
 	if settings.BossChatBackend == backend {
-		users = append(users, "Help chat")
+		users = append(users, "Chat")
 	}
 	if backend == config.AIBackendOpenAIAPI && settingsLCAgentCredentialFieldRelevant(settings, "openai") {
 		users = append(users, "LCAgent")
@@ -2691,7 +2688,7 @@ func (m Model) settingsGettingStartedSteps() []settingsGettingStartedStep {
 		},
 		{
 			Number:     "2",
-			Title:      "Help chat",
+			Title:      "Chat",
 			Value:      bossValue,
 			State:      firstNonEmptyTrimmed(bossChoice.State, "needs setup"),
 			StateStyle: bossChoice.StateStyle,
@@ -3648,14 +3645,14 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 	return []settingsField{
 		newSensitiveSettingsField(
 			"OpenAI API key",
-			"Shared by Project reports, Help chat, and LCAgent when they use direct OpenAI API.",
+			"Shared by Project reports, Chat, and LCAgent when they use direct OpenAI API.",
 			settings.OpenAIAPIKey,
 			512,
 			settingsSectionGettingStarted,
 		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"OpenRouter API key",
-			"Shared by Project reports, Help chat, and LCAgent when they use OpenRouter.",
+			"Shared by Project reports, Chat, and LCAgent when they use OpenRouter.",
 			settings.OpenRouterAPIKey,
 			512,
 			"Paste OpenRouter API key",
@@ -3663,7 +3660,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"OpenRouter project model",
-			"Model ID used by OpenRouter for project reports, summaries, classification, commit messages, and TODO suggestions. Help chat has separate model fields.",
+			"Model ID used by OpenRouter for project reports, summaries, classification, commit messages, and TODO suggestions. Chat has separate model fields.",
 			settings.OpenRouterModel,
 			128,
 			"Default: "+config.DefaultOpenRouterModel,
@@ -3671,7 +3668,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"DeepSeek API key",
-			"Shared by Project reports, Help chat, and LCAgent when they use direct DeepSeek.",
+			"Shared by Project reports, Chat, and LCAgent when they use direct DeepSeek.",
 			settings.DeepSeekAPIKey,
 			512,
 			"Paste DeepSeek API key",
@@ -3679,7 +3676,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"DeepSeek project model",
-			"Model ID used by direct DeepSeek for project reports, summaries, classification, commit messages, and TODO suggestions. Help chat has separate model fields.",
+			"Model ID used by direct DeepSeek for project reports, summaries, classification, commit messages, and TODO suggestions. Chat has separate model fields.",
 			settings.DeepSeekModel,
 			128,
 			"Default: "+config.DefaultDeepSeekModel,
@@ -3687,7 +3684,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"Moonshot API key",
-			"Shared by Project reports, Help chat, and LCAgent when they use direct Moonshot/Kimi.",
+			"Shared by Project reports, Chat, and LCAgent when they use direct Moonshot/Kimi.",
 			settings.MoonshotAPIKey,
 			512,
 			"Paste Moonshot API key",
@@ -3695,7 +3692,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Moonshot project model",
-			"Model ID used by Moonshot for project reports, summaries, classification, commit messages, and TODO suggestions. Help chat has separate model fields.",
+			"Model ID used by Moonshot for project reports, summaries, classification, commit messages, and TODO suggestions. Chat has separate model fields.",
 			settings.MoonshotModel,
 			128,
 			"Default: "+config.DefaultMoonshotModel,
@@ -3711,7 +3708,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSensitiveSettingsFieldWithPlaceholder(
 			"Xiaomi API key",
-			"Shared by Project reports, Help chat, and LCAgent when they use direct Xiaomi MiMo.",
+			"Shared by Project reports, Chat, and LCAgent when they use direct Xiaomi MiMo.",
 			settings.XiaomiAPIKey,
 			512,
 			"Paste Xiaomi API key",
@@ -3719,7 +3716,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsFieldWithPlaceholder(
 			"Xiaomi project model",
-			"Model ID used by Xiaomi MiMo for project reports, summaries, classification, commit messages, and TODO suggestions. Help chat has separate model fields.",
+			"Model ID used by Xiaomi MiMo for project reports, summaries, classification, commit messages, and TODO suggestions. Chat has separate model fields.",
 			settings.XiaomiModel,
 			128,
 			"Default: "+config.DefaultXiaomiModel,
@@ -3733,38 +3730,38 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionAI,
 		),
 		newSettingsField(
-			"Help chat",
+			"Chat",
 			"Press Enter to choose Auto, direct API, local endpoint, or Off. This is separate from project analysis, so summaries can stay on another backend.",
 			string(settings.BossChatBackend),
 			32,
 			settingsSectionGettingStarted,
 		),
 		newSettingsFieldWithPlaceholder(
-			"Help Chat main model",
-			"High-grade Help Chat model for interactive answers, planning, risky choices, and control proposals. Leave blank for the displayed default or set LCROOM_BOSS_MODEL as an environment override.",
+			"Chat main model",
+			"High-grade Chat model for interactive answers, planning, risky choices, and control proposals. Leave blank for the displayed default or set LCROOM_BOSS_MODEL as an environment override.",
 			settings.BossHelmModel,
 			128,
 			"Default: "+settingsBossHelmDefaultLabel(settings),
 			settingsSectionAI,
 		),
 		newSettingsFieldWithPlaceholder(
-			"Help Chat utility model",
-			"Lower-cost Help Chat model for routine read-only query routing. Leave blank for the displayed utility default.",
+			"Chat utility model",
+			"Lower-cost Chat model for routine read-only query routing. Leave blank for the displayed utility default.",
 			settings.BossUtilityModel,
 			128,
 			"Default: "+settingsBossUtilityDefaultLabel(settings),
 			settingsSectionAI,
 		),
 		newSettingsField(
-			"Help Chat Ollama thinking",
-			"Press Enter to choose whether Ollama Help Chat answers request native thinking. Default on gives Help Chat deeper local reasoning; structured tasks still keep thinking off.",
+			"Chat Ollama thinking",
+			"Press Enter to choose whether Ollama Chat answers request native thinking. Default on gives Chat deeper local reasoning; structured tasks still keep thinking off.",
 			strconv.FormatBool(settings.BossChatOllamaThinking),
 			8,
 			settingsSectionAI,
 		),
 		newSettingsField(
 			"MLX base URL",
-			"Used when Project reports or Help chat uses MLX. Leave blank to use the default local OpenAI-compatible URL: http://127.0.0.1:8080/v1",
+			"Used when Project reports or Chat uses MLX. Leave blank to use the default local OpenAI-compatible URL: http://127.0.0.1:8080/v1",
 			settings.MLXBaseURL,
 			512,
 			settingsSectionAI,
@@ -3786,7 +3783,7 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 		),
 		newSettingsField(
 			"Ollama base URL",
-			"Used when Project reports or Help chat uses Ollama. Leave blank to use the default OpenAI-compatible URL: http://127.0.0.1:11434/v1",
+			"Used when Project reports or Chat uses Ollama. Leave blank to use the default OpenAI-compatible URL: http://127.0.0.1:11434/v1",
 			settings.OllamaBaseURL,
 			512,
 			settingsSectionAI,
@@ -4271,22 +4268,22 @@ func (m Model) settingsFieldHint(index int) string {
 		return field.hint
 	case settingsFieldOpenRouterModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Project reports and background helpers will request OpenRouter model " + model + ". Help chat model fields remain separate."
+			return "Project reports and background helpers will request OpenRouter model " + model + ". Chat model fields remain separate."
 		}
 		return "Blank uses " + config.DefaultOpenRouterModel + " for project reports and background helpers."
 	case settingsFieldDeepSeekModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Project reports and background helpers will request DeepSeek model " + model + ". Help chat model fields remain separate."
+			return "Project reports and background helpers will request DeepSeek model " + model + ". Chat model fields remain separate."
 		}
 		return "Blank uses " + config.DefaultDeepSeekModel + " for project reports and background helpers."
 	case settingsFieldMoonshotModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Project reports and background helpers will request Moonshot model " + model + ". Help chat model fields remain separate."
+			return "Project reports and background helpers will request Moonshot model " + model + ". Chat model fields remain separate."
 		}
 		return "Blank uses " + config.DefaultMoonshotModel + " for project reports and background helpers."
 	case settingsFieldXiaomiModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Project reports and background helpers will request Xiaomi MiMo model " + model + ". Help chat model fields remain separate."
+			return "Project reports and background helpers will request Xiaomi MiMo model " + model + ". Chat model fields remain separate."
 		}
 		return "Blank uses " + config.DefaultXiaomiModel + " for project reports and background helpers."
 	case settingsFieldProjectReasoning:
@@ -4297,35 +4294,35 @@ func (m Model) settingsFieldHint(index int) string {
 	case settingsFieldBossChatBackend:
 		switch config.AIBackend(strings.TrimSpace(field.input.Value())) {
 		case config.AIBackendOpenAIAPI:
-			return "Help chat will use direct OpenAI API inference even if project analysis uses another backend."
+			return "Chat will use direct OpenAI API inference even if project analysis uses another backend."
 		case config.AIBackendOpenRouter, config.AIBackendDeepSeek, config.AIBackendMoonshot, config.AIBackendXiaomi:
-			return "Help chat will use direct " + config.AIBackend(strings.TrimSpace(field.input.Value())).Label() + " API inference even if project analysis uses another backend."
+			return "Chat will use direct " + config.AIBackend(strings.TrimSpace(field.input.Value())).Label() + " API inference even if project analysis uses another backend."
 		case config.AIBackendMLX:
-			return "Help chat will use the MLX OpenAI-compatible endpoint and model fields below."
+			return "Chat will use the MLX OpenAI-compatible endpoint and model fields below."
 		case config.AIBackendOllama:
-			return "Help chat will use the Ollama OpenAI-compatible endpoint and model fields below."
+			return "Chat will use the Ollama OpenAI-compatible endpoint and model fields below."
 		case config.AIBackendDisabled:
-			return "Help chat will stay offline, while project analysis keeps using its own configured backend."
+			return "Chat will stay offline, while project analysis keeps using its own configured backend."
 		case config.AIBackendUnset:
-			return "Leave blank to auto-use openai_api when an OpenAI API key is saved; choose any listed API backend explicitly for Help Chat."
+			return "Leave blank to auto-use openai_api when an OpenAI API key is saved; choose any listed API backend explicitly for Chat."
 		default:
 			return field.hint
 		}
 	case settingsFieldBossChatModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Help Chat main calls will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
+			return "Chat main calls will request model " + model + ". LCROOM_BOSS_MODEL still wins if set in the environment."
 		}
 		return "Blank uses " + settingsBossHelmDefaultLabel(m.bossModelDefaultSettings()) + ". " + brand.BossAssistantModelEnvVar + " still wins if set in the environment."
 	case settingsFieldBossUtilityModel:
 		if model := strings.TrimSpace(field.input.Value()); model != "" {
-			return "Routine Help Chat utility calls will request model " + model + ". LCROOM_BOSS_MODEL still overrides all Help Chat model choices if set."
+			return "Routine Chat utility calls will request model " + model + ". LCROOM_BOSS_MODEL still overrides all Chat model choices if set."
 		}
-		return "Blank uses " + settingsBossUtilityDefaultLabel(m.bossModelDefaultSettings()) + ". " + brand.BossAssistantModelEnvVar + " still overrides all Help Chat model choices if set."
+		return "Blank uses " + settingsBossUtilityDefaultLabel(m.bossModelDefaultSettings()) + ". " + brand.BossAssistantModelEnvVar + " still overrides all Chat model choices if set."
 	case settingsFieldBossChatOllamaThinking:
 		if strings.EqualFold(settingsChoiceOptionValueForField(settingsFieldBossChatOllamaThinking, field.input.Value()), "true") {
-			return "Default on: Ollama Help Chat answers request native thinking. Final content is used; returned thinking is kept out of the answer."
+			return "Default on: Ollama Chat answers request native thinking. Final content is used; returned thinking is kept out of the answer."
 		}
-		return "Disabled: Ollama Help Chat asks for final content only, which is faster and more predictable."
+		return "Disabled: Ollama Chat asks for final content only, which is faster and more predictable."
 	case settingsFieldMLXBaseURL:
 		return field.hint
 	case settingsFieldMLXAPIKey:

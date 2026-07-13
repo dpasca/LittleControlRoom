@@ -531,7 +531,7 @@ func TestValidateInvocationNormalizesTodoCreateWorktreeAndStartEngineerArgs(t *t
 	inv, err := ValidateInvocation(Invocation{
 		RequestID:  " boss-turn-worktree ",
 		Capability: CapabilityTodoCreateWorktreeAndStartEngineer,
-		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":" Demo ","todo_text":"  Fix Help Chat feedback.  ","prompt":"  Implement and verify the feedback.  ","provider":"auto","reveal":false}`),
+		Args:       json.RawMessage(`{"project_path":" /tmp/demo/../demo ","project_name":" Demo ","todo_text":"  Fix Chat feedback.  ","prompt":"  Implement and verify the feedback.  ","provider":"auto","reveal":false}`),
 	})
 	if err != nil {
 		t.Fatalf("ValidateInvocation() error = %v", err)
@@ -544,7 +544,7 @@ func TestValidateInvocationNormalizesTodoCreateWorktreeAndStartEngineerArgs(t *t
 		input.RequestID != "boss-turn-worktree" ||
 		input.ProjectPath != "/tmp/demo" ||
 		input.ProjectName != "Demo" ||
-		input.TodoText != "Fix Help Chat feedback." ||
+		input.TodoText != "Fix Chat feedback." ||
 		input.Prompt != "Implement and verify the feedback." ||
 		input.Provider != ProviderAuto {
 		t.Fatalf("normalized tracked worktree input = %#v", input)

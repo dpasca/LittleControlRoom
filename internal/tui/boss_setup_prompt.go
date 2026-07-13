@@ -48,7 +48,7 @@ func (m *Model) openBossSetupPrompt() {
 		Selected: bossSetupPromptOpenSetup,
 		Reason:   m.bossSetupPromptReason(),
 	}
-	m.status = "Help chat needs setup before it can open."
+	m.status = "Chat needs setup before it can open."
 }
 
 func (m *Model) closeBossSetupPrompt(status string) {
@@ -62,27 +62,27 @@ func (m Model) bossSetupPromptReason() string {
 	settings := m.currentSettingsBaseline()
 	switch {
 	case settings.BossChatBackend == config.AIBackendDisabled:
-		return "Help chat is currently turned off."
+		return "Chat is currently turned off."
 	case settings.BossChatBackend == config.AIBackendMLX:
-		return "Help chat is set to MLX, but the local endpoint still needs setup."
+		return "Chat is set to MLX, but the local endpoint still needs setup."
 	case settings.BossChatBackend == config.AIBackendOllama:
-		return "Help chat is set to Ollama, but the local endpoint still needs setup."
+		return "Chat is set to Ollama, but the local endpoint still needs setup."
 	case settings.BossChatBackend == config.AIBackendOpenAIAPI && strings.TrimSpace(settings.OpenAIAPIKey) == "":
-		return "Help chat is set to OpenAI API, but needs a saved OpenAI API key before it can start."
+		return "Chat is set to OpenAI API, but needs a saved OpenAI API key before it can start."
 	case settings.BossChatBackend == config.AIBackendOpenRouter && strings.TrimSpace(settings.OpenRouterAPIKey) == "":
-		return "Help chat is set to OpenRouter, but needs a saved OpenRouter API key before it can start."
+		return "Chat is set to OpenRouter, but needs a saved OpenRouter API key before it can start."
 	case settings.BossChatBackend == config.AIBackendDeepSeek && strings.TrimSpace(settings.DeepSeekAPIKey) == "":
-		return "Help chat is set to DeepSeek, but needs a saved DeepSeek API key before it can start."
+		return "Chat is set to DeepSeek, but needs a saved DeepSeek API key before it can start."
 	case settings.BossChatBackend == config.AIBackendMoonshot && strings.TrimSpace(settings.MoonshotAPIKey) == "":
-		return "Help chat is set to Moonshot, but needs a saved Moonshot API key before it can start."
+		return "Chat is set to Moonshot, but needs a saved Moonshot API key before it can start."
 	case settings.BossChatBackend == config.AIBackendXiaomi && strings.TrimSpace(settings.XiaomiAPIKey) == "":
-		return "Help chat is set to Xiaomi, but needs a saved Xiaomi API key before it can start."
+		return "Chat is set to Xiaomi, but needs a saved Xiaomi API key before it can start."
 	case settings.BossChatBackend == config.AIBackendUnset:
-		return "Help chat is not configured yet. Open setup to choose a chat backend."
+		return "Chat is not configured yet. Open setup to choose a chat backend."
 	case settings.BossChatBackend != config.AIBackendOpenAIAPI:
-		return "Help chat is not connected to a supported direct chat backend yet."
+		return "Chat is not connected to a supported direct chat backend yet."
 	default:
-		return "Help chat needs one quick setup step before it can start."
+		return "Chat needs one quick setup step before it can start."
 	}
 }
 
@@ -92,7 +92,7 @@ func (m Model) updateBossSetupPromptMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
-		m.closeBossSetupPrompt("Help chat canceled. Run /setup anytime to configure it.")
+		m.closeBossSetupPrompt("Chat canceled. Run /setup anytime to configure it.")
 		return m, nil
 	case "tab", "shift+tab", "left", "right", "up", "down":
 		if m.bossSetupPrompt.Selected == bossSetupPromptOpenSetup {
@@ -102,7 +102,7 @@ func (m Model) updateBossSetupPromptMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "c", "n":
-		m.closeBossSetupPrompt("Help chat canceled. Run /setup anytime to configure it.")
+		m.closeBossSetupPrompt("Chat canceled. Run /setup anytime to configure it.")
 		return m, nil
 	case "s", "o":
 		return m.openSetupFromBossSetupPrompt()
@@ -110,7 +110,7 @@ func (m Model) updateBossSetupPromptMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.bossSetupPrompt.Selected == bossSetupPromptOpenSetup {
 			return m.openSetupFromBossSetupPrompt()
 		}
-		m.closeBossSetupPrompt("Help chat canceled. Run /setup anytime to configure it.")
+		m.closeBossSetupPrompt("Chat canceled. Run /setup anytime to configure it.")
 		return m, nil
 	}
 	return m, nil
@@ -124,7 +124,7 @@ func (m Model) openSetupFromBossSetupPrompt() (tea.Model, tea.Cmd) {
 
 func (m *Model) openSettingsModeForBossChat() tea.Cmd {
 	cmd := m.openQuickSetupSettingsMode(false)
-	m.status = "Configure Help chat in Getting Started, then run /help again."
+	m.status = "Configure Chat in Getting Started, then run /chat again."
 	return tea.Batch(cmd, m.setSettingsSelection(settingsFieldBossChatBackend))
 }
 
@@ -147,12 +147,12 @@ func (m Model) renderBossSetupPromptContent(width int) string {
 		return ""
 	}
 	lines := []string{
-		renderDialogHeader("Help Chat Setup", "", "", width),
+		renderDialogHeader("Chat Setup", "", "", width),
 		"",
 	}
 	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, prompt.Reason)...)
 	lines = append(lines, "")
-	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, "Project reports can stay on their current backend. This only configures the Help Chat conversation.")...)
+	lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, "Project reports can stay on their current backend. This only configures the Chat conversation.")...)
 	lines = append(lines, "")
 	lines = append(lines, strings.Join([]string{
 		renderDialogButton("Open setup", prompt.Selected == bossSetupPromptOpenSetup),

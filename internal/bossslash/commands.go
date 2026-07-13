@@ -29,12 +29,12 @@ type Invocation struct {
 }
 
 var specs = []Spec{
-	{Name: "new", Usage: "/new [prompt]", Summary: "Start a fresh boss chat session"},
-	{Name: "sessions", Usage: "/sessions [session-id]", Summary: "List recent boss chat sessions, or switch to one by ID"},
+	{Name: "new", Usage: "/new [prompt]", Summary: "Start a fresh Chat session"},
+	{Name: "sessions", Usage: "/sessions [session-id]", Summary: "List recent Chat sessions, or switch to one by ID"},
 	{Name: "session", Usage: "/session [session-id]", Summary: "Alias for /sessions", Hidden: true},
 	{Name: "resume", Usage: "/resume [session-id]", Summary: "Alias for /sessions", Hidden: true},
 	{Name: "skills", Usage: "/skills", Summary: "Show Codex skills and local duplicates that may be stale"},
-	{Name: "help", Usage: "/help", Summary: "Show boss chat slash commands"},
+	{Name: "help", Usage: "/help", Summary: "Show Chat slash commands"},
 	{Name: "boss", Usage: "/boss off", Summary: "Close boss mode"},
 }
 
@@ -68,7 +68,7 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{{
 			Insert:  "/new",
 			Display: "/new [prompt]",
-			Summary: "Start a fresh boss chat session; optional inline prompt opens it with that prompt",
+			Summary: "Start a fresh Chat session; optional inline prompt opens it with that prompt",
 		}}
 	case "sessions":
 		return []Suggestion{sessionSuggestion("/sessions")}
@@ -86,7 +86,7 @@ func Suggestions(input string) []Suggestion {
 		return []Suggestion{{
 			Insert:  "/help",
 			Display: "/help",
-			Summary: "Show boss chat slash commands",
+			Summary: "Show Chat slash commands",
 		}}
 	case "boss":
 		argPrefix := ""
@@ -168,6 +168,6 @@ func sessionSuggestion(insert string) Suggestion {
 	return Suggestion{
 		Insert:  insert,
 		Display: insert + " [session-id]",
-		Summary: "List recent boss chat sessions, or switch to one by ID",
+		Summary: "List recent Chat sessions, or switch to one by ID",
 	}
 }

@@ -90,7 +90,6 @@ func (m *Model) openCPUDialog() tea.Cmd {
 	}
 	cpuDialogSyncSelectedPID(&dialog)
 	m.cpuDialog = &dialog
-	m.showHelp = false
 	m.err = nil
 	m.status = "Inspecting CPU usage..."
 	return batchCmds(m.requestCPUSnapshotRefreshCmd(), m.requestProcessScanCmd(dialog.FlagProjectPath))

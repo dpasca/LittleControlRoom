@@ -271,7 +271,7 @@ func validateBossAction(action bossAction) error {
 		_, _, err := goalProposalFromBossAction(action)
 		return err
 	default:
-		return fmt.Errorf("Help chat returned unsupported action kind %q", action.Kind)
+		return fmt.Errorf("Chat returned unsupported action kind %q", action.Kind)
 	}
 }
 

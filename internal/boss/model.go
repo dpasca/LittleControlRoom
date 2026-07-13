@@ -700,7 +700,7 @@ func (m Model) clearHelpChat(prompt string) (tea.Model, tea.Cmd) {
 	m.lastAssistantModel = ""
 	m.haveLastContextReport = false
 	m.lastContextReport = bossContextReport{}
-	m.status = "Started a fresh help chat"
+	m.status = "Started a fresh chat"
 	m.syncLayout(true)
 	if strings.TrimSpace(prompt) != "" && !m.hasPersistentSessions() {
 		return m.submitChatMessage(prompt)
@@ -709,7 +709,7 @@ func (m Model) clearHelpChat(prompt string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.sessionLoaded = false
-	m.status = "Starting a fresh help chat..."
+	m.status = "Starting a fresh chat..."
 	return m, m.newBossSessionCmd(prompt)
 }
 
@@ -808,7 +808,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case bossSessionSavedMsg:
 		if msg.err != nil {
 			m.sessionErr = msg.err
-			m.status = "Help chat session save failed: " + msg.err.Error()
+			m.status = "Chat session save failed: " + msg.err.Error()
 		}
 		return m, nil
 	case bossSessionsListedMsg:
@@ -960,7 +960,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		m.pendingControl = nil
 		m.pendingGoal = nil
 		content := "I could not reach my chat backend yet: " + err.Error()
-		status := "Help chat could not answer"
+		status := "Chat could not answer"
 		var proposalErr controlProposalError
 		if errors.As(err, &proposalErr) {
 			content = "I could not prepare that control action: " + proposalErr.Unwrap().Error()
@@ -1044,14 +1044,14 @@ func (m *Model) applyAssistantStreamEvent(event AssistantStreamEvent) {
 func (m Model) copyInputToClipboard() (tea.Model, tea.Cmd) {
 	text := m.input.Value()
 	if text == "" {
-		m.status = "Help chat input is empty"
+		m.status = "Chat input is empty"
 		return m, nil
 	}
 	if err := clipboardTextWriter(text); err != nil {
-		m.status = "Help chat input copy failed: " + err.Error()
+		m.status = "Chat input copy failed: " + err.Error()
 		return m, nil
 	}
-	m.status = "Copied full Help chat input to clipboard"
+	m.status = "Copied full Chat input to clipboard"
 	return m, nil
 }
 
@@ -1123,7 +1123,7 @@ func (m Model) toggleTranscriptTab() Model {
 	switch m.normalizedTranscriptTab() {
 	case bossTranscriptTabFlow:
 		m.transcriptTab = bossTranscriptTabChat
-		m.status = "Switched to Help Chat tab"
+		m.status = "Switched to Chat tab"
 	default:
 		m.transcriptTab = bossTranscriptTabFlow
 		m.status = "Switched to Boss Flow tab"
@@ -1280,7 +1280,7 @@ func waitAssistantStreamCmd(streamID int, events <-chan assistantStreamEnvelope)
 	return func() tea.Msg {
 		envelope, ok := <-events
 		if !ok {
-			return assistantStreamMsg{streamID: streamID, events: events, envelope: assistantStreamEnvelope{err: fmt.Errorf("Help chat stream closed before the final response"), done: true}}
+			return assistantStreamMsg{streamID: streamID, events: events, envelope: assistantStreamEnvelope{err: fmt.Errorf("Chat stream closed before the final response"), done: true}}
 		}
 		return assistantStreamMsg{streamID: streamID, events: events, envelope: envelope}
 	}
@@ -1363,7 +1363,7 @@ func (m Model) layout() bossLayout {
 	height = maxInt(minHeight, height)
 	if height > 18 {
 		if !m.embedded {
-			// Standalone Help Chat owns its header bar and keeps one row of
+			// Standalone Chat owns its header bar and keeps one row of
 			// slack so exact-height renders do not scroll frames out of view.
 			height -= 2
 		}
@@ -1560,7 +1560,7 @@ func (m Model) renderChat(layout bossLayout) string {
 			hint = "Enter runs approved goal | Esc cancels"
 		}
 		if m.sending {
-			hint = "Help chat is thinking " + spinnerDots(m.spinnerFrame)
+			hint = "Chat is thinking " + spinnerDots(m.spinnerFrame)
 		}
 		parts = append(parts, bossMutedStyle.Render(fitLine(hint, layout.chatInnerWidth)))
 	}
@@ -1593,7 +1593,7 @@ func (m Model) renderCoreInput(layout bossLayout) string {
 func (m Model) renderTranscriptPanelTitle() string {
 	active := m.normalizedTranscriptTab()
 	return strings.Join([]string{
-		panelTitleStyle.Render("Help Chat"),
+		panelTitleStyle.Render("Chat"),
 		renderBossTranscriptTab("Chat", active == bossTranscriptTabChat),
 		renderBossTranscriptTab("Flow", active == bossTranscriptTabFlow),
 		bossTranscriptTabHotkeyStyle.Render("Tab") + bossTranscriptTabHintStyle.Render(" switch"),
@@ -2414,7 +2414,7 @@ func renderFlowNoticeMessage(message ChatMessage, width int, projectHighlights [
 }
 
 func renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
-	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, "Boss> ", "Help chat")
+	return renderStreamingAssistantMessageWithPrefix(content, toolCalls, width, spinnerFrame, projectHighlights, "Boss> ", "Chat")
 }
 
 func (m Model) renderStreamingAssistantMessage(content string, toolCalls []string, width, spinnerFrame int, projectHighlights []bossProjectTextHighlight) string {
@@ -2435,7 +2435,7 @@ func renderHelpStreamingAssistantMessage(content string, toolCalls []string, wid
 	if len(blocks) == 0 {
 		label = strings.TrimSpace(label)
 		if label == "" {
-			label = "Help chat"
+			label = "Chat"
 		}
 		blocks = append(blocks, helpChatMutedStyle.Render(fitLine(label+" is thinking "+spinnerDots(spinnerFrame), width)))
 	}
@@ -2461,7 +2461,7 @@ func renderStreamingAssistantMessageWithStylesOptions(content string, toolCalls 
 	if len(blocks) == 0 {
 		label = strings.TrimSpace(label)
 		if label == "" {
-			label = "Help chat"
+			label = "Chat"
 		}
 		blocks = append(blocks, mutedStyle.Render(fitLine(label+" is thinking "+spinnerDots(spinnerFrame), width)))
 	}
@@ -2477,9 +2477,9 @@ func (m Model) assistantMessagePrefix() string {
 
 func (m Model) chatSurfaceLabel() string {
 	if m.helpChat {
-		return "Help chat"
+		return "Chat"
 	}
-	return "Help chat"
+	return "Chat"
 }
 
 func renderTemporaryToolCalls(toolCalls []string, width int) string {

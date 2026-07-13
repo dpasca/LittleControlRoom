@@ -35,7 +35,6 @@ func (m *Model) openNewTaskDialog(request string, provider codexapp.Provider) te
 		Provider:             provider,
 		ProviderDefaultLabel: defaultLabel,
 	}
-	m.showHelp = false
 	m.err = nil
 	m.status = "New task dialog open. Enter create, m model, j/k choose agent, Esc cancel"
 	return nil

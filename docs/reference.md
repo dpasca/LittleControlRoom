@@ -26,7 +26,7 @@ For LAN mobile access, use the Mobile card in `/setup` or the Mobile section in 
 
 `lcroom classify` requires a configured AI backend. That can be Codex, OpenCode, Claude Code, MLX, Ollama, or an OpenAI API key. The TUI will open `/setup` automatically until you pick one.
 
-Open Help Chat from the main TUI with backtick or `/help`, including from an embedded provider pane. It appears as a centered overlay over the dashboard and receives a compact app-state brief, so the same conversation can explain LCR, inspect projects and tasks, propose confirmable controls, delegate work, and report completion without replacing the dashboard with a second project view. New project-work requests default to one confirmed tracked launch: LCR creates a project TODO, prepares a dedicated worktree, and starts a fresh engineer there. Press `q` in that confirmation to add the TODO without starting work. LCR records both the starting state and the final launch or partial-failure result in the Help Chat transcript, never falls back from failed worktree preparation into the root checkout, and does not treat an idle root engineer turn as proof that its task is finished. `Esc` or backtick hides the overlay while in-flight replies continue; `/new [prompt]` and `Ctrl+L` start a fresh Help Chat session. Transcripts are Markdown files under `~/.little-control-room/help-chat-sessions/`, and recall also searches legacy `boss-sessions/` files. The existing `boss_chat_backend`, `boss_helm_model`, `boss_utility_model`, `boss_chat_model`, and `LCROOM_BOSS_MODEL` names remain compatibility settings.
+Open Chat from the main TUI with backtick or `/chat`, including from an embedded provider pane. It appears as a centered overlay over the dashboard and receives a compact app-state brief, so the same conversation can explain LCR, inspect projects and tasks, propose confirmable controls, delegate work, and report completion without replacing the dashboard with a second project view. New project-work requests default to one confirmed tracked launch: LCR creates a project TODO, prepares a dedicated worktree, and starts a fresh engineer there. Press `q` in that confirmation to add the TODO without starting work. LCR records both the starting state and the final launch or partial-failure result in the Chat transcript, never falls back from failed worktree preparation into the root checkout, and does not treat an idle root engineer turn as proof that its task is finished. `Esc` or backtick hides the overlay while in-flight replies continue; `/new [prompt]` and `Ctrl+L` start a fresh Chat session. Transcripts are Markdown files under `~/.little-control-room/help-chat-sessions/`, and recall also searches legacy `boss-sessions/` files. The existing `boss_chat_backend`, `boss_helm_model`, `boss_utility_model`, `boss_chat_model`, and `LCROOM_BOSS_MODEL` names remain compatibility settings.
 
 ## Config File
 
@@ -35,7 +35,7 @@ Open Help Chat from the main TUI with backtick or `/help`, including from an emb
 - Example file: [`config.example.toml`](config.example.toml)
 - Supported format: TOML
 
-Use `/setup` for the Getting Started settings: project-report AI, Help Chat, LCAgent, mobile access, and the shared provider keys or local endpoint fields those choices need. The full `/settings` modal keeps that first-run section and adds AI/model details, MLX/Ollama endpoint/model overrides, project scope, experimental LCAgent launch settings, mobile startup/address controls, browser behavior, refresh timing, and advanced toggles. Project discovery paths live in Project Scope rather than quick setup. Mobile changes apply after restart. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
+Use `/setup` for the Getting Started settings: project-report AI, Chat, LCAgent, mobile access, and the shared provider keys or local endpoint fields those choices need. The full `/settings` modal keeps that first-run section and adds AI/model details, MLX/Ollama endpoint/model overrides, project scope, experimental LCAgent launch settings, mobile startup/address controls, browser behavior, refresh timing, and advanced toggles. Project discovery paths live in Project Scope rather than quick setup. Mobile changes apply after restart. The Browser section exposes a simplified `Browser windows` field with plain-language choices such as `Only when needed`, `Always show`, and `Classic browser behavior`, while the config file still stores the raw Playwright policy keys below:
 
 In `Only when needed`, newly launched embedded Codex and OpenCode sessions now route Playwright through an LCR-managed wrapper with a persistent browser profile. Codex gets a session-local `CODEX_HOME` overlay and OpenCode gets a session-local `XDG_CONFIG_HOME` overlay, both shadowing only the `playwright` skill so embedded sessions are guided toward the managed MCP path without changing the user's real global installs. On macOS, LCR backgrounds that managed browser and later reveals the same browser window for login or other human steps, so auth stays in the Playwright session the embedded assistant is actually driving. Existing embedded sessions still need to be reopened or reconnected before they pick up the new launch path, and Codex currently has the more complete browser-attention UX.
 
@@ -259,7 +259,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 ## TUI Keys
 
 - `/` open the command palette
-- Backtick or `/help` opens Help Chat over the dashboard, or prompts for setup when its backend is not configured; `Esc` or backtick hides it
+- Backtick or `/chat` opens Chat over the dashboard, or prompts for setup when its backend is not configured; `Esc` or backtick hides it
 - `↑/↓` move selection
 - `Enter` open or resume the selected project's latest embedded provider; fresh projects and scratch tasks default to Codex unless their create flow preselected another assistant
 - `Esc` hide the visible embedded session pane
@@ -298,7 +298,7 @@ While the diff screen is visible:
 
 The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 
-- `/help`
+- `/chat`
 - `/refresh`
 - `/sort attention`
 - `/sort recent`
@@ -402,12 +402,12 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/opencode-new` always starts a fresh OpenCode session.
 - `/lcagent` resumes the selected project's latest known LCAgent session when available, otherwise it starts a new one-shot run with the configured experimental provider.
 - `/lcagent-new` always starts a fresh LCAgent run. LCAgent is experimental and currently supports prompt turns, curated model selection plus custom model entry, local read/edit tools, in-pane approval for denied low-permission commands, a Medium shortcut for the current run, `/permissions` to explain or change session permissions, `/review` for read-only current-diff review, `/compact` for a Markdown handoff summary from the latest JSONL trace, and structured JSONL artifacts; attachments are not wired yet.
-- While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/sessions` (`/resume` and `/session` aliases), `/reconnect`, `/model`, `/status`, `/permissions`, `/compact`, `/review`, and `/help`. Embedded providers expose LCR's local command subset, not every native slash command from the provider CLI.
+- While an embedded Codex, Claude Code, OpenCode, or LCAgent pane is visible, local slash commands include `/new`, `/sessions` (`/resume` and `/session` aliases), `/reconnect`, `/model`, `/status`, `/permissions`, `/compact`, `/review`, and `/chat`. Embedded providers expose LCR's local command subset, not every native slash command from the provider CLI.
 - `/model` changes the model and reasoning for the current embedded tool and carries that choice forward to future embedded sessions of the same tool, including after restarting LCR.
 - `/sessions` with no session ID opens a picker for saved sessions from the current project and provider; `/sessions <session-id>` jumps straight to that session.
 - `/reconnect` restarts the current embedded provider helper and reconnects to the same session when possible, which is useful after refreshing `codex login` or other provider auth outside Little Control Room.
 - `/review` starts an embedded Codex review of uncommitted changes and streams the review-mode transcript into the pane.
-- While Help Chat is visible, `Enter` sends or confirms a proposal, `Alt+Enter` adds a newline, `/new [prompt]` starts a fresh session, `Ctrl+L` clears into a fresh session, and `Esc` or backtick hides the overlay.
+- While Chat is visible, `Enter` sends or confirms a proposal, `Alt+Enter` adds a newline, `/new [prompt]` starts a fresh session, `Ctrl+L` clears into a fresh session, and `Esc` or backtick hides the overlay.
 - Embedded Claude Code runs through Claude Code's `claude -p` stream flow. Prompt/response turns, session resume, and `/model` are wired, while unsupported in-pane actions fall back to the local command subset above.
 - The main list uses `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
 - The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail.

@@ -36,7 +36,6 @@ func (m *Model) openSkillsDialog() tea.Cmd {
 		RequestID: requestID,
 	}
 	m.commandMode = false
-	m.showHelp = false
 	m.err = nil
 	m.status = "Loading Codex skills..."
 	return m.loadSkillsInventoryCmd(requestID)

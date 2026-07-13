@@ -126,7 +126,7 @@ func TestRunHelpMetaWritesJSONCorpus(t *testing.T) {
 		seen[topic.ID] = topic
 	}
 	for _, id := range []string{
-		helpmeta.CommandTopicID(helpmeta.SurfaceMainTUI, "help"),
+		helpmeta.CommandTopicID(helpmeta.SurfaceMainTUI, "chat"),
 		helpmeta.TopicID(helpmeta.SurfaceMainTUI, helpmeta.TopicKindWorkflow, "merge-conflict-recovery"),
 		helpmeta.TopicID(helpmeta.SurfaceMainTUI, helpmeta.TopicKindKeybinding, "project-todos"),
 	} {

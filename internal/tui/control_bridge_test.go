@@ -459,7 +459,7 @@ func TestExecuteBossControlInvocationBatchesOpenAndBossResult(t *testing.T) {
 	if result.Activity == nil || result.Activity.Kind != "project" || result.Activity.Title != "cn3" || !result.Activity.Active {
 		t.Fatalf("result activity = %#v, want active project activity", result.Activity)
 	}
-	if strings.Contains(result.Status, "Alt+Up hides it") || strings.Contains(result.Status, "Prompt sent to embedded") || strings.Contains(result.Status, "Help Chat stayed open") {
+	if strings.Contains(result.Status, "Alt+Up hides it") || strings.Contains(result.Status, "Prompt sent to embedded") || strings.Contains(result.Status, "Chat stayed open") {
 		t.Fatalf("result status leaked embedded-pane copy: %q", result.Status)
 	}
 }
@@ -632,8 +632,8 @@ func TestExecuteBossTrackedWorktreeLaunchCreatesTodoWorktreeAndEngineer(t *testi
 	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: trackedWorktreeControlInvocationForTest(t, control.TodoCreateWorktreeAndStartEngineerInput{
 		ProjectPath: projectPath,
 		ProjectName: "Tracked Repo",
-		TodoText:    "Add durable Help Chat engineer launch feedback.",
-		Prompt:      "Implement durable Help Chat engineer launch feedback and verify it.",
+		TodoText:    "Add durable Chat engineer launch feedback.",
+		Prompt:      "Implement durable Chat engineer launch feedback and verify it.",
 		Provider:    control.ProviderCodex,
 	})})
 	got := updated.(Model)
@@ -648,7 +648,7 @@ func TestExecuteBossTrackedWorktreeLaunchCreatesTodoWorktreeAndEngineer(t *testi
 	updated, cmd = got.Update(created)
 	got = updated.(Model)
 	if len(got.pendingBossHostNotices) != 1 || !strings.Contains(got.pendingBossHostNotices[0].Content, "Starting TODO #") {
-		t.Fatalf("pending Help Chat notices = %#v, want durable starting receipt", got.pendingBossHostNotices)
+		t.Fatalf("pending Chat notices = %#v, want durable starting receipt", got.pendingBossHostNotices)
 	}
 	var prepared bossTodoWorktreePreparedMsg
 	for _, msg := range collectCmdMsgs(cmd) {
@@ -901,7 +901,7 @@ func TestExecuteBossGitPrepareCommitControlOpensPreview(t *testing.T) {
 		t.Fatalf("executeBossControlInvocation() cmd = nil, want commit preview command")
 	}
 	if got.helpChatMode {
-		t.Fatalf("helpChatMode = true, want Help Chat hidden while commit preview opens")
+		t.Fatalf("helpChatMode = true, want Chat hidden while commit preview opens")
 	}
 	if got.commitPreview == nil {
 		t.Fatalf("commitPreview = nil, want loading preview")
@@ -1802,7 +1802,7 @@ func TestExecuteTodoAddControlAddsProjectTodo(t *testing.T) {
 		t.Fatalf("status = %q, want durable TODO-only status", got.status)
 	}
 	if cmd == nil {
-		t.Fatalf("TODO add result should emit Help Chat receipt and refresh")
+		t.Fatalf("TODO add result should emit Chat receipt and refresh")
 	}
 	detail, err := svc.Store().GetProjectDetail(ctx, projectPath, 0)
 	if err != nil {

@@ -26,7 +26,7 @@ type Surface string
 const (
 	SurfaceMainTUI          Surface = "main_tui"
 	SurfaceEmbeddedEngineer Surface = "embedded_engineer"
-	SurfaceHelpChat         Surface = "help_chat"
+	SurfaceChat             Surface = "chat"
 	SurfaceControl          Surface = "control"
 )
 
@@ -117,18 +117,18 @@ func ControlCapabilityTopics() []Topic {
 func CuratedTopics() []Topic {
 	return cloneTopics([]Topic{
 		{
-			ID:      TopicID(SurfaceMainTUI, TopicKindKeybinding, "help-chat"),
+			ID:      TopicID(SurfaceMainTUI, TopicKindKeybinding, "chat"),
 			Kind:    TopicKindKeybinding,
 			Surface: SurfaceMainTUI,
-			Title:   "Open Help Chat",
-			Summary: "Use /help or the backtick key to open the active Help Chat overlay. Use ? for the compact static quick-help panel.",
-			Usage:   []string{"/help", "`", "?"},
+			Title:   "Open Chat",
+			Summary: "Use /chat or the backtick key to open the active Chat overlay.",
+			Usage:   []string{"/chat", "`"},
 			ManualSteps: []string{
-				"Press ` from the main project list to open or hide Help Chat.",
-				"Run /help from the slash-command palette to open Help Chat.",
-				"Press Esc or ` to hide Help Chat; press ? when you only want the compact quick-reference panel.",
+				"Press ` from the main project list to open or hide Chat.",
+				"Run /chat from the slash-command palette to open Chat.",
+				"Press Esc or ` to hide Chat.",
 			},
-			Related:    []string{CommandTopicID(SurfaceMainTUI, "help")},
+			Related:    []string{CommandTopicID(SurfaceMainTUI, "chat")},
 			SourceRefs: []string{"tui.updateNormalMode", "tui.dispatchCommand", "tui.renderHelpChatOverlay"},
 		},
 		{
