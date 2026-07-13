@@ -504,7 +504,7 @@ func (m *Model) deferredCodexUpdateAckCmd(projectPath string) tea.Cmd {
 }
 
 func (m Model) codexStreamingUpdateAckDelay(projectPath string) time.Duration {
-	if normalizeProjectPath(m.codexVisibleProject) == normalizeProjectPath(projectPath) {
+	if m.codexProjectHasVisiblePane(projectPath) {
 		return codexStreamingUpdateAckDelay
 	}
 	return codexBackgroundStreamingUpdateAckDelay
@@ -541,7 +541,7 @@ func (m Model) shouldDeferCodexStreamingUpdateAck(projectPath string, hadPrev bo
 	// state current at a low rate instead of allowing token notifications to
 	// monopolize the Bubble Tea event loop. Critical state changes above still
 	// acknowledge immediately and therefore remain responsive.
-	if normalizeProjectPath(m.codexVisibleProject) != normalizeProjectPath(projectPath) {
+	if !m.codexProjectHasVisiblePane(projectPath) {
 		return true
 	}
 	return transcriptChanged || needsAsync

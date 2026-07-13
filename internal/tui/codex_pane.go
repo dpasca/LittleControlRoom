@@ -166,6 +166,21 @@ func (m Model) codexVisible() bool {
 	return strings.TrimSpace(m.codexVisibleProject) != "" || m.codexPendingOpenVisible()
 }
 
+// codexProjectHasVisiblePane includes the early composer shown while a session
+// is still opening. That pane does not have codexVisibleProject assigned yet,
+// but it still needs full transcript snapshots so a resumed session can paint
+// its history as soon as the pending open settles.
+func (m Model) codexProjectHasVisiblePane(projectPath string) bool {
+	projectPath = normalizeProjectPath(projectPath)
+	if projectPath == "" {
+		return false
+	}
+	if normalizeProjectPath(m.codexVisibleProject) == projectPath {
+		return true
+	}
+	return m.codexPendingOpenVisible() && normalizeProjectPath(m.codexPendingOpenProject()) == projectPath
+}
+
 func (m Model) idleProtectedEmbeddedProject() string {
 	if m.helpChatMode || m.diffView != nil {
 		return ""
@@ -665,7 +680,7 @@ func (m *Model) refreshCodexSnapshot(projectPath string) (snapshot codexapp.Snap
 	// for every streamed token makes hidden sessions compete with keyboard input
 	// and forces needless cache invalidation work. A full snapshot is fetched as
 	// soon as the session is revealed.
-	if normalizeProjectPath(m.codexVisibleProject) != normalizeProjectPath(projectPath) {
+	if !m.codexProjectHasVisiblePane(projectPath) {
 		if _, supportsStateSnapshot := session.(codexTryStateSnapshooter); supportsStateSnapshot {
 			if state, got := stateSnapshotForCodexSession(session); got {
 				if cached, cachedOK := m.codexSnapshots[projectPath]; cachedOK {

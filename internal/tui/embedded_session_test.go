@@ -411,6 +411,56 @@ func TestCodexUpdateThrottlesBackgroundStreamingWithoutCopyingTranscript(t *test
 	requireManagerUpdate(t, manager, projectPath)
 }
 
+func TestCodexUpdateSettlesVisiblePendingOpenWithFullTranscript(t *testing.T) {
+	projectPath := "/tmp/resumed"
+	full := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		ThreadID:           "thread-resumed",
+		Started:            true,
+		TranscriptRevision: 7,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptUser, Text: "implement playthrough mode"},
+			{Kind: codexapp.TranscriptAgent, Text: "Implemented and verified the Android build."},
+		},
+	}
+	session, manager, _ := openFakeManagedCodexSession(t, projectPath, full)
+	requireManagerUpdate(t, manager, projectPath)
+	// Match production StateSnapshot behavior: it carries live state but not
+	// the potentially large transcript payload.
+	session.tryStateSnapshotFn = func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+		state := full
+		state.Entries = nil
+		state.Transcript = ""
+		return state, true
+	}
+
+	m := Model{
+		codexManager:  manager,
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(80, 20),
+		width:         100,
+		height:        24,
+	}
+	m.beginCodexPendingOpen(projectPath, codexapp.ProviderCodex)
+
+	updated, _ := m.applyCodexUpdateMsg(codexUpdateMsg{projectPath: projectPath})
+	got := normalizeUpdateModel(updated)
+	if got.codexPendingOpen != nil {
+		t.Fatal("ready snapshot should settle the visible pending open")
+	}
+	if got.codexVisibleProject != projectPath {
+		t.Fatalf("visible project = %q, want %q", got.codexVisibleProject, projectPath)
+	}
+	if session.trySnapshotCalls == 0 {
+		t.Fatal("visible pending open should fetch the full transcript snapshot")
+	}
+	cached, ok := got.codexCachedSnapshot(projectPath)
+	if !ok || len(cached.Entries) != len(full.Entries) {
+		t.Fatalf("settled pending transcript = %#v, want %#v", cached.Entries, full.Entries)
+	}
+}
+
 func TestCodexUpdateAcksImmediatelyForPendingApproval(t *testing.T) {
 	projectPath := "/tmp/demo"
 	prev := codexapp.Snapshot{
