@@ -10,8 +10,8 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=3">
-  <script defer src="/app.js?v=3"></script>
+  <link rel="stylesheet" href="/app.css?v=4">
+  <script defer src="/app.js?v=4"></script>
 </head>
 <body class="auth-pending">
   <div class="app-shell">
@@ -109,6 +109,14 @@
               <span id="operator-caption">Link pending</span>
             </div>
           </div>
+        </section>
+
+        <section id="dashboard-live-channels" class="dashboard-live-channels" aria-labelledby="dashboard-live-title" hidden>
+          <div class="section-plate dashboard-live-heading">
+            <span id="dashboard-live-title">Live engineer channels</span>
+            <span id="dashboard-live-count">0 live</span>
+          </div>
+          <div id="dashboard-live-list" class="dashboard-live-list"></div>
         </section>
 
         <div id="bucket-filter" class="selector-bank" role="group" aria-label="Project state">
@@ -231,6 +239,17 @@
             </summary>
             <div id="session-instrument-list" class="session-instrument-list"></div>
           </details>
+
+          <div class="transcript-controls">
+            <div id="transcript-mode" class="transcript-mode" role="group" aria-label="Transcript mode">
+              <button type="button" data-transcript-mode="conversation" class="selected" aria-pressed="true">Conversation</button>
+              <button type="button" data-transcript-mode="all" aria-pressed="false">All activity</button>
+            </div>
+            <button id="session-follow-button" class="session-follow-button" type="button" hidden aria-label="Jump to latest session activity" title="Jump to latest session activity">
+              <span aria-hidden="true">&#x2193;</span>
+              <span>Live</span>
+            </button>
+          </div>
 
           <div class="section-plate transcript-heading">
             <span>Transcript circuit</span>
