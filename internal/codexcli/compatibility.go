@@ -3,24 +3,39 @@ package codexcli
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	codeModeHostFeature       = "code_mode_host"
-	codeModeHostExecutable    = "codex-code-mode-host"
-	compatibilityProbeTimeout = 2 * time.Second
+	codeModeHostFeature    = "code_mode_host"
+	codeModeHostExecutable = "codex-code-mode-host"
 )
+
+var compatibilityProbeTimeout = 2 * time.Second
 
 // Compatibility records per-process safeguards applied to a Codex command.
 type Compatibility struct {
 	CodeModeHostDisabled bool
+}
+
+type featureProbeResult struct {
+	enabled bool
+	known   bool
+}
+
+var featureProbeCache = struct {
+	sync.Mutex
+	results map[string]featureProbeResult
+}{
+	results: make(map[string]featureProbeResult),
 }
 
 // ApplyCodeModeHostCompatibility keeps a packaging mismatch in the optional
@@ -34,10 +49,65 @@ func ApplyCodeModeHostCompatibility(cmd *exec.Cmd) Compatibility {
 		return Compatibility{}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), compatibilityProbeTimeout)
-	defer cancel()
-	enabled, known := codexFeatureEnabled(ctx, cmd, codeModeHostFeature)
-	return applyCodeModeHostFallback(cmd, enabled, known, hostAvailable)
+	cacheKey := codexFeatureProbeCacheKey(cmd, codeModeHostFeature)
+	featureProbeCache.Lock()
+	defer featureProbeCache.Unlock()
+	result := featureProbeResult{}
+	if cached, ok := featureProbeCache.results[cacheKey]; ok {
+		result = cached
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), compatibilityProbeTimeout)
+		defer cancel()
+		result.enabled, result.known = codexFeatureEnabled(ctx, cmd, codeModeHostFeature)
+		if result.known {
+			featureProbeCache.results[cacheKey] = result
+		}
+	}
+	return applyCodeModeHostFallback(cmd, result.enabled, result.known, hostAvailable)
+}
+
+func codexFeatureProbeCacheKey(cmd *exec.Cmd, feature string) string {
+	executable := ""
+	if cmd != nil {
+		executable = strings.TrimSpace(cmd.Path)
+		if executable == "" && len(cmd.Args) > 0 {
+			executable = strings.TrimSpace(cmd.Args[0])
+		}
+	}
+	parts := []string{feature, fileFingerprint(executable)}
+	if home := commandEnvValue(cmd, "CODEX_HOME"); home != "" {
+		parts = append(parts, fileFingerprint(filepath.Join(home, "config.toml")))
+	}
+	return strings.Join(parts, "|")
+}
+
+func commandEnvValue(cmd *exec.Cmd, name string) string {
+	if cmd == nil || strings.TrimSpace(name) == "" {
+		return ""
+	}
+	prefix := name + "="
+	for i := len(cmd.Env) - 1; i >= 0; i-- {
+		if strings.HasPrefix(cmd.Env[i], prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(cmd.Env[i], prefix))
+		}
+	}
+	return strings.TrimSpace(os.Getenv(name))
+}
+
+func fileFingerprint(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	resolved := path
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		resolved = target
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return resolved
+	}
+	return fmt.Sprintf("%s:%d:%d", resolved, info.Size(), info.ModTime().UnixNano())
 }
 
 func codexFeatureEnabled(ctx context.Context, target *exec.Cmd, feature string) (bool, bool) {

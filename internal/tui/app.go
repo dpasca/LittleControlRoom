@@ -222,6 +222,8 @@ type Model struct {
 	codexVisibleProject           string
 	codexHiddenProject            string
 	codexPendingOpen              *codexPendingOpenState
+	codexOpenRequestSeq           uint64
+	codexOpenRevealByRequest      map[uint64]bool
 	codexInput                    textarea.Model
 	codexDrafts                   map[string]codexDraft
 	codexSuggestedDraftsApplied   map[string]string
@@ -2265,6 +2267,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureCodexRuntime()
 		m.rememberEmbeddedProvider(provider)
 		m.beginNewCodexPendingOpenWithVisibilityAndReveal(req.ProjectPath, provider, msg.openModelFirst, msg.openModelFirst)
+		if msg.openModelFirst {
+			m.codexInput.Blur()
+		}
 		m.status = todoWorktreeSessionStartStatus(provider, msg.openModelFirst, len(msg.preparedPaths))
 		m.preferredSelectPath = msg.projectPath
 		if pendingRootPath != "" {

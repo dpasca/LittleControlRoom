@@ -23,6 +23,8 @@ type embeddedModelPreferencesSavedMsg struct {
 
 type codexSessionOpenedMsg struct {
 	projectPath      string
+	provider         codexapp.Provider
+	openRequestID    uint64
 	snapshot         codexapp.Snapshot
 	status           string
 	visibleStatus    string
@@ -42,6 +44,7 @@ type codexSessionOpenedMsg struct {
 type codexPendingOpenState struct {
 	projectPath      string
 	provider         codexapp.Provider
+	requestID        uint64
 	showWhilePending bool
 	newSession       bool
 	hideOnOpen       bool
@@ -135,8 +138,13 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	m.err = nil
 	renameRefreshCmd := m.scratchTaskRenameRefreshCmd(msg.projectPath, msg.renamedTask, msg.renameErr)
 	if msg.err != nil {
-		provider := m.codexPendingOpenProvider()
-		m.finishCodexPendingOpen(msg.projectPath, codexapp.Snapshot{}, false, false)
+		provider := msg.provider.Normalized()
+		if provider == "" {
+			provider = m.codexPendingOpenProvider()
+		}
+		revealFailure := m.revealEmbeddedOpenOnSessionOpened(msg)
+		m.finishCodexPendingOpenRequest(msg.projectPath, msg.openRequestID, codexapp.Snapshot{}, false, false)
+		m.completeCodexOpenRequest(msg.openRequestID)
 		m.clearTodoLaunchDraft(msg.projectPath)
 		if projectPath := strings.TrimSpace(msg.projectPath); projectPath != "" {
 			shouldShowFailure := true
@@ -145,7 +153,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			} else if _, ok := m.codexSession(projectPath); ok {
 				shouldShowFailure = false
 			}
-			if shouldShowFailure {
+			if shouldShowFailure && revealFailure {
 				m.showEmbeddedOpenFailure(msg.projectPath, provider, msg.err)
 			}
 		}
@@ -164,6 +172,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		m.rebuildProjectList(selectedPath)
 	}
 	revealOnOpen := m.revealEmbeddedOpenOnSessionOpened(msg)
+	superseded := msg.openRequestID != 0 && msg.openRequestID < m.codexOpenRequestSeq
 	focusInput := revealOnOpen
 	draft, hasTodoLaunchDraft := m.todoLaunchDraftFor(msg.projectPath)
 	if hasTodoLaunchDraft {
@@ -175,7 +184,8 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		}
 	}
 	status := msg.statusForReveal(revealOnOpen)
-	seenCmd := m.finishCodexPendingOpen(msg.projectPath, msg.snapshot, true, revealOnOpen)
+	seenCmd := m.finishCodexPendingOpenRequest(msg.projectPath, msg.openRequestID, msg.snapshot, true, revealOnOpen)
+	m.completeCodexOpenRequest(msg.openRequestID)
 	restartAckCmd := tea.Cmd(nil)
 	if strings.TrimSpace(msg.restartIntentKey) != "" && !msg.snapshot.BusyExternal {
 		restartAckCmd = m.acknowledgeRestartIntentsCmd([]string{msg.restartIntentKey})
@@ -185,6 +195,13 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 		todoWorkStartedCmd = m.markTodoWorkStartedCmd(msg.projectPath, draft.todoID, msg.snapshot)
 		m.clearTodoLaunchDraft(msg.projectPath)
 		if draft.openModelFirst {
+			m.codexInput.Blur()
+			if !revealOnOpen {
+				if !superseded {
+					m.status = "Fresh " + draft.provider.Label() + " session ready in the background with its TODO draft."
+				}
+				return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, renameRefreshCmd, m.maybeReadManagedBrowserStateCmd(msg.snapshot))
+			}
 			m.openCodexModelPickerLoading()
 			m.status = "Pick a model, then send the TODO draft."
 			return m, tea.Batch(seenCmd, todoWorkStartedCmd, restartAckCmd, m.openCodexModelPickerCmd())
@@ -199,7 +216,9 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 			m.status = "Fresh " + draft.provider.Label() + " session ready with TODO draft. Edit and press Enter to send."
 		}
 	} else {
-		m.status = status
+		if !superseded {
+			m.status = status
+		}
 	}
 	if msg.restartWarmup {
 		m.settleRestartWarmup(msg.projectPath, !msg.snapshot.BusyExternal)
@@ -374,8 +393,10 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 		providerLabel = embeddedProvider(snapshot).Label()
 		transcriptChanged = !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
 		if normalizeProjectPath(m.codexPendingOpenProject()) == normalizeProjectPath(msg.projectPath) && codexSnapshotCanSettlePendingOpen(snapshot) {
+			requestID := m.codexPendingOpen.requestID
 			reveal := m.revealPendingEmbeddedOpenForSnapshot(msg.projectPath, snapshot)
-			cmds = append(cmds, m.finishCodexPendingOpen(msg.projectPath, snapshot, true, reveal))
+			cmds = append(cmds, m.finishCodexPendingOpenRequest(msg.projectPath, requestID, snapshot, true, reveal))
+			m.setCodexOpenRequestReveal(requestID, false)
 		}
 		m.observeManagedBrowserLease(msg.projectPath, snapshot)
 		cmds = append(cmds, m.maybeReadManagedBrowserStateCmd(snapshot))
@@ -839,11 +860,14 @@ func (m Model) revealPendingEmbeddedOpen(projectPath string) (Model, bool) {
 	if pendingPath == "" || pendingPath != projectPath {
 		return m, false
 	}
-	if current := normalizeProjectPath(m.codexVisibleProject); current != "" && current != pendingPath {
-		m.persistVisibleCodexDraft()
+	if current := m.codexComposerProjectPath(); current != "" && normalizeProjectPath(current) != pendingPath {
+		m.persistCodexDraft(current)
 	}
 	m.codexPendingOpen.showWhilePending = true
 	m.codexPendingOpen.hideOnOpen = false
+	m.setCodexOpenRequestReveal(m.codexPendingOpen.requestID, true)
+	m.loadCodexDraft(projectPath)
+	_ = m.codexInput.Focus()
 	label := m.codexPendingOpenProvider().Label()
 	m.status = "Embedded " + label + " session is still starting..."
 	return m, true

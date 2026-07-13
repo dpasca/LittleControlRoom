@@ -110,6 +110,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexDrafts == nil {
 		m.codexDrafts = make(map[string]codexDraft)
 	}
+	if m.codexOpenRevealByRequest == nil {
+		m.codexOpenRevealByRequest = make(map[uint64]bool)
+	}
 	if m.codexTranscriptRenderInFlight == nil {
 		m.codexTranscriptRenderInFlight = make(map[codexTranscriptRenderKey]struct{})
 	}
@@ -277,16 +280,61 @@ func (m *Model) beginCodexPendingOpenWithOptions(projectPath string, provider co
 		m.codexPendingOpen = nil
 		return
 	}
-	if current := strings.TrimSpace(m.codexVisibleProject); current != "" && current != projectPath {
-		m.persistVisibleCodexDraft()
+	composerProject := m.codexComposerProjectPath()
+	if composerProject != "" && composerProject != projectPath {
+		m.persistCodexDraft(composerProject)
 	}
-	m.codexPendingOpen = &codexPendingOpenState{
+	if showWhilePending && m.codexPendingOpen != nil && m.codexPendingOpen.requestID != 0 {
+		m.setCodexOpenRequestReveal(m.codexPendingOpen.requestID, false)
+	}
+	m.codexOpenRequestSeq++
+	requestID := m.codexOpenRequestSeq
+	state := &codexPendingOpenState{
 		projectPath:      projectPath,
 		provider:         provider.Normalized(),
+		requestID:        requestID,
 		showWhilePending: showWhilePending,
 		newSession:       newSession,
 		hideOnOpen:       !revealOnOpen,
 	}
+	m.codexPendingOpen = state
+	if m.codexOpenRevealByRequest == nil {
+		m.codexOpenRevealByRequest = make(map[uint64]bool)
+	}
+	m.codexOpenRevealByRequest[requestID] = revealOnOpen
+	if showWhilePending {
+		m.loadCodexDraft(projectPath)
+		_ = m.codexInput.Focus()
+	}
+}
+
+func (m Model) codexPendingOpenRequestID(projectPath string, provider codexapp.Provider) uint64 {
+	if m.codexPendingOpen == nil || normalizeProjectPath(m.codexPendingOpen.projectPath) != normalizeProjectPath(projectPath) {
+		return 0
+	}
+	pendingProvider := m.codexPendingOpen.provider.Normalized()
+	provider = provider.Normalized()
+	if pendingProvider != "" && provider != "" && pendingProvider != provider {
+		return 0
+	}
+	return m.codexPendingOpen.requestID
+}
+
+func (m *Model) setCodexOpenRequestReveal(requestID uint64, reveal bool) {
+	if requestID == 0 {
+		return
+	}
+	if m.codexOpenRevealByRequest == nil {
+		m.codexOpenRevealByRequest = make(map[uint64]bool)
+	}
+	m.codexOpenRevealByRequest[requestID] = reveal
+}
+
+func (m *Model) completeCodexOpenRequest(requestID uint64) {
+	if requestID == 0 || m.codexOpenRevealByRequest == nil {
+		return
+	}
+	delete(m.codexOpenRevealByRequest, requestID)
 }
 
 func (m Model) revealPendingEmbeddedOpenOnSuccess(projectPath string) bool {
@@ -301,6 +349,11 @@ func (m Model) revealPendingEmbeddedOpenOnSuccess(projectPath string) bool {
 }
 
 func (m Model) revealEmbeddedOpenOnSessionOpened(msg codexSessionOpenedMsg) bool {
+	if msg.openRequestID != 0 && m.codexOpenRevealByRequest != nil {
+		if reveal, ok := m.codexOpenRevealByRequest[msg.openRequestID]; ok {
+			return reveal
+		}
+	}
 	projectPath := normalizeProjectPath(msg.projectPath)
 	if projectPath != "" && m.codexPendingOpen != nil && normalizeProjectPath(m.codexPendingOpen.projectPath) == projectPath {
 		return !m.codexPendingOpen.hideOnOpen
@@ -323,9 +376,15 @@ func (m Model) revealPendingEmbeddedOpenForSnapshot(projectPath string, snapshot
 }
 
 func (m *Model) finishCodexPendingOpen(projectPath string, snapshot codexapp.Snapshot, opened bool, reveal bool) tea.Cmd {
+	return m.finishCodexPendingOpenRequest(projectPath, 0, snapshot, opened, reveal)
+}
+
+func (m *Model) finishCodexPendingOpenRequest(projectPath string, requestID uint64, snapshot codexapp.Snapshot, opened bool, reveal bool) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	if pending := m.codexPendingOpenProject(); pending != "" && pending == projectPath {
-		m.codexPendingOpen = nil
+		if requestID == 0 || m.codexPendingOpen == nil || m.codexPendingOpen.requestID == 0 || m.codexPendingOpen.requestID == requestID {
+			m.codexPendingOpen = nil
+		}
 	}
 	if !opened {
 		m.pruneCodexSessionVisibility()
@@ -1206,6 +1265,7 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 	if provider == "" {
 		provider = codexapp.ProviderCodex
 	}
+	openRequestID := m.codexPendingOpenRequestID(req.ProjectPath, provider)
 	if req.RuntimeManager == nil {
 		req.RuntimeManager = m.runtimeManager
 	}
@@ -1313,6 +1373,8 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 		if manager == nil {
 			return codexSessionOpenedMsg{
 				projectPath:   req.ProjectPath,
+				provider:      provider,
+				openRequestID: openRequestID,
 				perfOpID:      perfOpID,
 				perfDuration:  time.Since(startedAt),
 				restartWarmup: restartWarmup,
@@ -1323,6 +1385,8 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 			if err := codexapp.CheckLCAgentProviderAccess(context.Background(), req); err != nil {
 				return codexSessionOpenedMsg{
 					projectPath:   req.ProjectPath,
+					provider:      provider,
+					openRequestID: openRequestID,
 					perfOpID:      perfOpID,
 					perfDuration:  time.Since(startedAt),
 					restartWarmup: restartWarmup,
@@ -1351,6 +1415,8 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 				}
 				return codexSessionOpenedMsg{
 					projectPath:   req.ProjectPath,
+					provider:      provider,
+					openRequestID: openRequestID,
 					perfOpID:      perfOpID,
 					perfDuration:  time.Since(startedAt),
 					restartWarmup: restartWarmup,
@@ -1384,6 +1450,8 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 		}
 		return codexSessionOpenedMsg{
 			projectPath:      req.ProjectPath,
+			provider:         provider,
+			openRequestID:    openRequestID,
 			snapshot:         snapshot,
 			status:           status,
 			visibleStatus:    visibleStatus,
@@ -1727,8 +1795,10 @@ func (m Model) restartVisibleCodexSessionCmd(prompt string) tea.Cmd {
 		req.Preset = codexcli.DefaultPreset()
 	}
 	if err := req.Validate(); err != nil {
+		provider := req.Provider.Normalized()
+		requestID := m.codexPendingOpenRequestID(projectPath, provider)
 		return func() tea.Msg {
-			return codexSessionOpenedMsg{projectPath: projectPath, err: err}
+			return codexSessionOpenedMsg{projectPath: projectPath, provider: provider, openRequestID: requestID, err: err}
 		}
 	}
 	return m.openCodexSessionCmd(req)
@@ -1788,9 +1858,11 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
 		req.Preset = codexcli.DefaultPreset()
 	}
+	provider := req.Provider.Normalized()
+	requestID := m.codexPendingOpenRequestID(projectPath, provider)
 	if err := req.Validate(); err != nil {
 		return func() tea.Msg {
-			return codexSessionOpenedMsg{projectPath: projectPath, err: err}
+			return codexSessionOpenedMsg{projectPath: projectPath, provider: provider, openRequestID: requestID, err: err}
 		}
 	}
 	manager := m.codexManager
@@ -1805,13 +1877,15 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 		}
 		session, _, err := manager.Open(req)
 		if err != nil {
-			return codexSessionOpenedMsg{projectPath: projectPath, err: err}
+			return codexSessionOpenedMsg{projectPath: projectPath, provider: provider, openRequestID: requestID, err: err}
 		}
 		snapshot := session.Snapshot()
 		return codexSessionOpenedMsg{
-			projectPath: projectPath,
-			snapshot:    snapshot,
-			status:      embeddedSessionReconnectStatus(req, snapshot),
+			projectPath:   projectPath,
+			provider:      provider,
+			openRequestID: requestID,
+			snapshot:      snapshot,
+			status:        embeddedSessionReconnectStatus(req, snapshot),
 		}
 	}
 }
@@ -1927,9 +2001,15 @@ func (m Model) hidePendingCodexOpen(projectPath string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	label := m.codexPendingOpenProvider().Label()
+	m.persistCodexDraft(projectPath)
 	m.codexPendingOpen.showWhilePending = false
 	m.codexPendingOpen.hideOnOpen = true
+	m.setCodexOpenRequestReveal(m.codexPendingOpen.requestID, false)
 	m.codexHiddenProject = projectPath
+	if visibleProject := strings.TrimSpace(m.codexVisibleProject); visibleProject != "" && visibleProject != projectPath {
+		m.loadCodexDraft(visibleProject)
+	}
+	m.codexInput.Blur()
 	m.syncDetailViewport(false)
 	m.status = "Embedded " + label + " session hidden."
 	return m, m.focusProjectPath(projectPath)
