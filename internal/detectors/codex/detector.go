@@ -35,6 +35,8 @@ type Detector struct {
 	cache      map[string]cachedParse
 	errorCache map[string]cachedError
 	turnCache  map[string]cachedTurnState
+	ownerCache map[string]cachedOwnership
+	parseOwner func(string) (string, string, bool)
 }
 
 type cachedParse struct {
@@ -65,6 +67,13 @@ type cachedTurnState struct {
 	state       turnLifecycleState
 }
 
+type cachedOwnership struct {
+	info      os.FileInfo
+	sessionID string
+	cwd       string
+	ok        bool
+}
+
 type turnLifecycleState struct {
 	known     bool
 	completed bool
@@ -86,6 +95,8 @@ func New(codexHome string) *Detector {
 		cache:            map[string]cachedParse{},
 		errorCache:       map[string]cachedError{},
 		turnCache:        map[string]cachedTurnState{},
+		ownerCache:       map[string]cachedOwnership{},
+		parseOwner:       parseSessionOwnershipFromFile,
 	}
 }
 
@@ -94,11 +105,11 @@ func (d *Detector) Name() string {
 }
 
 func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, error) {
-	if fastResults, used, err := d.detectFromStateDB(ctx, scope); err == nil && used {
+	if fastResults, rolloutInfo, used, err := d.detectFromStateDB(ctx, scope); err == nil && used {
 		// Reconcile state_5.sqlite with rollout files on disk. The JSONL files
 		// are the cwd source of truth, while the DB is a fast path for discovery
 		// and fallback when the rollout file is absent.
-		d.mergeSessionFilesFromDisk(ctx, scope, fastResults)
+		d.mergeSessionFilesFromDisk(ctx, scope, fastResults, rolloutInfo)
 		return fastResults, nil
 	}
 
@@ -176,7 +187,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 // the JSONL file wins because session logs are the source of truth. Keep this
 // pass narrowly scoped to the rollout files already referenced by the DB so
 // fast-path scans do not have to reparse an entire Codex archive on every run.
-func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.PathScope, results map[string]*model.DetectorProjectActivity) {
+func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.PathScope, results map[string]*model.DetectorProjectActivity, rolloutInfo map[string]os.FileInfo) {
 	sessions := map[string]model.SessionEvidence{}
 	reconcileFiles := map[string]string{}
 	for _, entry := range results {
@@ -190,6 +201,7 @@ func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.
 			}
 		}
 	}
+	d.pruneOwnershipCache(reconcileFiles)
 
 	for path, sessionID := range reconcileFiles {
 		select {
@@ -202,7 +214,7 @@ func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.
 		if strings.TrimSpace(owner.SessionID) == "" {
 			continue
 		}
-		corrected, ok := reconcileSessionOwnershipFromFile(path, owner)
+		corrected, ok := d.reconcileSessionOwnershipFromFile(path, owner, rolloutInfo[path])
 		if !ok {
 			continue
 		}
@@ -250,8 +262,8 @@ func (d *Detector) mergeSessionFilesFromDisk(ctx context.Context, scope scanner.
 	}
 }
 
-func reconcileSessionOwnershipFromFile(path string, base model.SessionEvidence) (model.SessionEvidence, bool) {
-	sessionID, cwd, ok := parseSessionOwnershipFromFile(path)
+func (d *Detector) reconcileSessionOwnershipFromFile(path string, base model.SessionEvidence, info os.FileInfo) (model.SessionEvidence, bool) {
+	sessionID, cwd, ok := d.parseSessionOwnershipWithCache(path, info)
 	if !ok {
 		return model.SessionEvidence{}, false
 	}
@@ -282,6 +294,66 @@ func reconcileSessionOwnershipFromFile(path string, base model.SessionEvidence) 
 		updated.DetectedProjectPath = cwd
 	}
 	return model.NormalizeSessionEvidenceIdentity(updated), true
+}
+
+func (d *Detector) parseSessionOwnershipWithCache(path string, info os.FileInfo) (string, string, bool) {
+	if info == nil {
+		var err error
+		info, err = os.Stat(path)
+		if err != nil {
+			return "", "", false
+		}
+	}
+
+	d.mu.Lock()
+	cached, cachedOK := d.ownerCache[path]
+	d.mu.Unlock()
+	if cachedOK && sameRolloutVersion(cached.info, info) {
+		return cached.sessionID, cached.cwd, cached.ok
+	}
+
+	parser := d.parseOwner
+	if parser == nil {
+		parser = parseSessionOwnershipFromFile
+	}
+	sessionID, cwd, ok := parser(path)
+	after, err := os.Stat(path)
+	if err != nil {
+		return sessionID, cwd, ok
+	}
+	if sameRolloutVersion(info, after) {
+		d.mu.Lock()
+		if d.ownerCache == nil {
+			d.ownerCache = map[string]cachedOwnership{}
+		}
+		d.ownerCache[path] = cachedOwnership{
+			info:      after,
+			sessionID: sessionID,
+			cwd:       cwd,
+			ok:        ok,
+		}
+		d.mu.Unlock()
+	}
+	return sessionID, cwd, ok
+}
+
+func (d *Detector) pruneOwnershipCache(files map[string]string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for path := range d.ownerCache {
+		if _, ok := files[path]; !ok {
+			delete(d.ownerCache, path)
+		}
+	}
+}
+
+func sameRolloutVersion(left, right os.FileInfo) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return os.SameFile(left, right) &&
+		left.Size() == right.Size() &&
+		left.ModTime().Equal(right.ModTime())
 }
 
 func parseSessionOwnershipFromFile(path string) (string, string, bool) {
@@ -398,18 +470,19 @@ func codexArtifactEvidence(dbPath string, session model.SessionEvidence) model.A
 	return artifact
 }
 
-func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, bool, error) {
+func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScope) (map[string]*model.DetectorProjectActivity, map[string]os.FileInfo, bool, error) {
 	dbPath := filepath.Join(d.codexHome, "state_5.sqlite")
-	if _, err := os.Stat(dbPath); err != nil {
+	dbInfo, err := os.Stat(dbPath)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, false, nil
+			return nil, nil, false, nil
 		}
-		return nil, false, err
+		return nil, nil, false, err
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
@@ -419,11 +492,12 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 		FROM threads
 	`)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
 	defer rows.Close()
 
 	results := map[string]*model.DetectorProjectActivity{}
+	rolloutInfo := map[string]os.FileInfo{}
 	now := time.Now()
 	used := false
 
@@ -466,6 +540,7 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 		lastEventAt := updatedTime
 		if rollout != "" {
 			if stat, err := os.Stat(rollout); err == nil {
+				rolloutInfo[rollout] = stat
 				if modTime := stat.ModTime(); modTime.After(lastEventAt) {
 					lastEventAt = modTime
 				}
@@ -490,10 +565,12 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 			artifactNote = "rollout path from state_5.sqlite threads"
 		}
 		artifactUpdated := lastEventAt
-		if stat, err := os.Stat(artifactPath); err == nil {
-			if modTime := stat.ModTime(); modTime.After(artifactUpdated) {
-				artifactUpdated = modTime
-			}
+		artifactInfo := dbInfo
+		if rollout != "" {
+			artifactInfo = rolloutInfo[rollout]
+		}
+		if artifactInfo != nil && artifactInfo.ModTime().After(artifactUpdated) {
+			artifactUpdated = artifactInfo.ModTime()
 		}
 
 		session := model.NormalizeSessionEvidenceIdentity(model.SessionEvidence{
@@ -522,7 +599,7 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, used, err
+		return nil, rolloutInfo, used, err
 	}
 
 	for _, entry := range results {
@@ -532,7 +609,7 @@ func (d *Detector) detectFromStateDB(ctx context.Context, scope scanner.PathScop
 		dedupeArtifacts(entry)
 	}
 
-	return results, used, nil
+	return results, rolloutInfo, used, nil
 }
 
 func (d *Detector) collectSessionFiles() ([]string, error) {

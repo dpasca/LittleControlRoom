@@ -165,3 +165,174 @@ func TestDetectorTreatsTurnAbortedAsSettled(t *testing.T) {
 		t.Fatalf("error counts session=%d entry=%d, want one interrupted turn error", session.ErrorCount, entry.ErrorCount)
 	}
 }
+
+func TestDetectorCachesUnchangedSessionAndRefreshesAppends(t *testing.T) {
+	dataDir := t.TempDir()
+	project := t.TempDir()
+	sessionDir := filepath.Join(dataDir, "lcagent", "sessions", "2026", "05", "09")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(sessionDir, "lca_live.jsonl")
+	content := `{"type":"session_meta","id":"lca_live","started_at":"2026-05-09T01:00:00Z","cwd":"` + filepath.ToSlash(project) + `"}
+{"type":"user_message","timestamp":"2026-05-09T01:00:01Z","message":"work"}
+`
+	if err := os.WriteFile(sessionPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	detector := New(dataDir)
+	parseCalls := 0
+	detector.parseSession = func(path string) (parseResult, error) {
+		parseCalls++
+		return parseSessionFile(path)
+	}
+	scope := scanner.NewPathScope([]string{project}, nil)
+
+	first, err := detector.Detect(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session := first[project].Sessions[0]; !session.LatestTurnStateKnown || session.LatestTurnCompleted {
+		t.Fatalf("first turn state known=%v completed=%v, want active", session.LatestTurnStateKnown, session.LatestTurnCompleted)
+	}
+	if _, err := detector.Detect(context.Background(), scope); err != nil {
+		t.Fatal(err)
+	}
+	if parseCalls != 1 {
+		t.Fatalf("unchanged session parsed %d times, want once", parseCalls)
+	}
+
+	file, err := os.OpenFile(sessionPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, writeErr := file.WriteString("{\"type\":\"turn_complete\",\"timestamp\":\"2026-05-09T01:00:02Z\"}\n")
+	closeErr := file.Close()
+	if writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	updated, err := detector.Detect(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parseCalls != 2 {
+		t.Fatalf("appended session parsed %d times, want twice", parseCalls)
+	}
+	if session := updated[project].Sessions[0]; !session.LatestTurnStateKnown || !session.LatestTurnCompleted {
+		t.Fatalf("updated turn state known=%v completed=%v, want complete", session.LatestTurnStateKnown, session.LatestTurnCompleted)
+	}
+}
+
+func TestDetectorRefreshesAtomicallyReplacedSessionWithSameMetadata(t *testing.T) {
+	dataDir := t.TempDir()
+	projectsDir := t.TempDir()
+	firstProject := filepath.Join(projectsDir, "project-a")
+	secondProject := filepath.Join(projectsDir, "project-b")
+	for _, path := range []string{firstProject, secondProject} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessionDir := filepath.Join(dataDir, "lcagent", "sessions", "2026", "05", "09")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(sessionDir, "lca_swap.jsonl")
+	firstContent := `{"type":"session_meta","id":"lca_one","started_at":"2026-05-09T01:00:00Z","cwd":"` + filepath.ToSlash(firstProject) + `"}` + "\n"
+	secondContent := `{"type":"session_meta","id":"lca_two","started_at":"2026-05-09T01:00:00Z","cwd":"` + filepath.ToSlash(secondProject) + `"}` + "\n"
+	if len(firstContent) != len(secondContent) {
+		t.Fatalf("replacement fixture sizes differ: %d != %d", len(firstContent), len(secondContent))
+	}
+	if err := os.WriteFile(sessionPath, []byte(firstContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	detector := New(dataDir)
+	parseCalls := 0
+	detector.parseSession = func(path string) (parseResult, error) {
+		parseCalls++
+		return parseSessionFile(path)
+	}
+	scope := scanner.NewPathScope([]string{projectsDir}, nil)
+	if _, err := detector.Detect(context.Background(), scope); err != nil {
+		t.Fatal(err)
+	}
+	originalInfo, err := os.Stat(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replacementPath := filepath.Join(sessionDir, "replacement.jsonl")
+	if err := os.WriteFile(replacementPath, []byte(secondContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(replacementPath, originalInfo.ModTime(), originalInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	replacementInfo, err := os.Stat(replacementPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacementInfo.Size() != originalInfo.Size() || !replacementInfo.ModTime().Equal(originalInfo.ModTime()) {
+		t.Fatalf("replacement metadata size=%d mtime=%v, want size=%d mtime=%v", replacementInfo.Size(), replacementInfo.ModTime(), originalInfo.Size(), originalInfo.ModTime())
+	}
+	if err := os.Rename(replacementPath, sessionPath); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := detector.Detect(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parseCalls != 2 {
+		t.Fatalf("atomically replaced session parsed %d times, want twice", parseCalls)
+	}
+	if updated[firstProject] != nil {
+		t.Fatalf("replaced session remained assigned to first project: %#v", updated[firstProject])
+	}
+	entry := updated[secondProject]
+	if entry == nil || len(entry.Sessions) != 1 || entry.Sessions[0].RawSessionID != "lca_two" {
+		t.Fatalf("replacement session = %#v", entry)
+	}
+}
+
+func TestDetectorPrunesDeletedSessionFromCache(t *testing.T) {
+	dataDir := t.TempDir()
+	project := t.TempDir()
+	sessionDir := filepath.Join(dataDir, "lcagent", "sessions")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(sessionDir, "lca_deleted.jsonl")
+	content := `{"type":"session_meta","id":"lca_deleted","started_at":"2026-05-09T01:00:00Z","cwd":"` + filepath.ToSlash(project) + `"}` + "\n"
+	if err := os.WriteFile(sessionPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	detector := New(dataDir)
+	scope := scanner.NewPathScope([]string{project}, nil)
+	if _, err := detector.Detect(context.Background(), scope); err != nil {
+		t.Fatal(err)
+	}
+	if len(detector.cache) != 1 {
+		t.Fatalf("cache size = %d, want one", len(detector.cache))
+	}
+	if err := os.Remove(sessionPath); err != nil {
+		t.Fatal(err)
+	}
+	results, err := detector.Detect(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results after deletion = %#v, want empty", results)
+	}
+	if len(detector.cache) != 0 {
+		t.Fatalf("cache size after deletion = %d, want zero", len(detector.cache))
+	}
+}
