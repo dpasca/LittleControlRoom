@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"lcroom/internal/model"
@@ -20,6 +21,15 @@ import (
 
 type Detector struct {
 	dataDir string
+
+	mu           sync.Mutex
+	cache        map[string]cachedParse
+	parseSession func(string) (parseResult, error)
+}
+
+type cachedParse struct {
+	info   os.FileInfo
+	result parseResult
 }
 
 type parseResult struct {
@@ -35,7 +45,11 @@ type parseResult struct {
 }
 
 func New(dataDir string) *Detector {
-	return &Detector{dataDir: dataDir}
+	return &Detector{
+		dataDir:      dataDir,
+		cache:        map[string]cachedParse{},
+		parseSession: parseSessionFile,
+	}
 }
 
 func (d *Detector) Name() string {
@@ -47,6 +61,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 	if err != nil {
 		return nil, err
 	}
+	d.pruneCache(files)
 	results := map[string]*model.DetectorProjectActivity{}
 	for _, path := range files {
 		select {
@@ -54,7 +69,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 			return nil, ctx.Err()
 		default:
 		}
-		parsed, err := parseSessionFile(path)
+		parsed, info, err := d.parseWithCache(path)
 		if err != nil || strings.TrimSpace(parsed.cwd) == "" {
 			continue
 		}
@@ -67,8 +82,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		if !scope.Allows(cwd) {
 			continue
 		}
-		info, statErr := os.Stat(path)
-		if statErr == nil && parsed.lastEventAt.IsZero() {
+		if parsed.lastEventAt.IsZero() {
 			parsed.lastEventAt = info.ModTime()
 		}
 
@@ -96,7 +110,7 @@ func (d *Detector) Detect(ctx context.Context, scope scanner.PathScope) (map[str
 		})
 		entry.Sessions = append(entry.Sessions, session)
 		updatedAt := parsed.lastEventAt
-		if statErr == nil && info.ModTime().After(updatedAt) {
+		if info.ModTime().After(updatedAt) {
 			updatedAt = info.ModTime()
 		}
 		entry.Artifacts = append(entry.Artifacts, model.ArtifactEvidence{
@@ -141,6 +155,67 @@ func (d *Detector) collectSessionFiles() ([]string, error) {
 	})
 	sort.Strings(files)
 	return files, err
+}
+
+func (d *Detector) parseWithCache(path string) (parseResult, os.FileInfo, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return parseResult{}, nil, err
+	}
+
+	d.mu.Lock()
+	cached, ok := d.cache[path]
+	d.mu.Unlock()
+	if ok && sameFileVersion(cached.info, info) {
+		return cached.result, info, nil
+	}
+
+	parser := d.parseSession
+	if parser == nil {
+		parser = parseSessionFile
+	}
+	parsed, err := parser(path)
+	if err != nil {
+		return parseResult{}, nil, err
+	}
+
+	// Only retain a parse when the file remained stable for the whole read.
+	// An actively appended or replaced session will be parsed again on the next
+	// scan instead of being associated with a newer, unparsed file version.
+	after, statErr := os.Stat(path)
+	if statErr != nil {
+		return parsed, info, nil
+	}
+	if sameFileVersion(info, after) {
+		d.mu.Lock()
+		d.cache[path] = cachedParse{info: after, result: parsed}
+		d.mu.Unlock()
+	}
+	return parsed, after, nil
+}
+
+func (d *Detector) pruneCache(files []string) {
+	current := make(map[string]struct{}, len(files))
+	for _, path := range files {
+		current[path] = struct{}{}
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for path := range d.cache {
+		if _, ok := current[path]; !ok {
+			delete(d.cache, path)
+		}
+	}
+}
+
+func sameFileVersion(left, right os.FileInfo) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	return os.SameFile(left, right) &&
+		left.Size() == right.Size() &&
+		left.ModTime().Equal(right.ModTime())
 }
 
 func parseSessionFile(path string) (parseResult, error) {

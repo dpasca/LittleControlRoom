@@ -176,6 +176,11 @@ func TestDetectFromStateDBPrefersSessionFileCWD(t *testing.T) {
 	}
 
 	d := New(codexHome)
+	parseCalls := 0
+	d.parseOwner = func(path string) (string, string, bool) {
+		parseCalls++
+		return parseSessionOwnershipFromFile(path)
+	}
 	results, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil))
 	if err != nil {
 		t.Fatalf("Detect() error = %v", err)
@@ -196,6 +201,97 @@ func TestDetectFromStateDBPrefersSessionFileCWD(t *testing.T) {
 	}
 	if entry.Sessions[0].ProjectPath != correctPath {
 		t.Fatalf("project path = %q, want %q", entry.Sessions[0].ProjectPath, correctPath)
+	}
+
+	if _, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil)); err != nil {
+		t.Fatalf("second Detect() error = %v", err)
+	}
+	if parseCalls != 1 {
+		t.Fatalf("unchanged rollout ownership parsed %d times, want once", parseCalls)
+	}
+
+	file, err := os.OpenFile(sessionFile, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open rollout for append: %v", err)
+	}
+	_, writeErr := file.WriteString("{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n")
+	closeErr := file.Close()
+	if writeErr != nil {
+		t.Fatalf("append rollout: %v", writeErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close rollout: %v", closeErr)
+	}
+	if _, err := d.Detect(context.Background(), scanner.NewPathScope([]string{root}, nil)); err != nil {
+		t.Fatalf("Detect() after append error = %v", err)
+	}
+	if parseCalls != 2 {
+		t.Fatalf("appended rollout ownership parsed %d times, want twice", parseCalls)
+	}
+}
+
+func TestOwnershipCacheRefreshesAtomicReplacementWithSameMetadata(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	firstProject := filepath.Join(root, "project-a")
+	secondProject := filepath.Join(root, "project-b")
+	rolloutPath := filepath.Join(root, "rollout.jsonl")
+	firstContent := "{\"type\":\"session_meta\",\"payload\":{\"id\":\"ses_one\",\"cwd\":\"" + firstProject + "\"}}\n"
+	secondContent := "{\"type\":\"session_meta\",\"payload\":{\"id\":\"ses_two\",\"cwd\":\"" + secondProject + "\"}}\n"
+	if len(firstContent) != len(secondContent) {
+		t.Fatalf("replacement fixture sizes differ: %d != %d", len(firstContent), len(secondContent))
+	}
+	if err := os.WriteFile(rolloutPath, []byte(firstContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d := New(root)
+	parseCalls := 0
+	d.parseOwner = func(path string) (string, string, bool) {
+		parseCalls++
+		return parseSessionOwnershipFromFile(path)
+	}
+	info, err := os.Stat(rolloutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, cwd, ok := d.parseSessionOwnershipWithCache(rolloutPath, info); !ok || cwd != firstProject {
+		t.Fatalf("first ownership cwd=%q ok=%v, want %q", cwd, ok, firstProject)
+	}
+	if _, cwd, ok := d.parseSessionOwnershipWithCache(rolloutPath, info); !ok || cwd != firstProject {
+		t.Fatalf("cached ownership cwd=%q ok=%v, want %q", cwd, ok, firstProject)
+	}
+	if parseCalls != 1 {
+		t.Fatalf("unchanged ownership parsed %d times, want once", parseCalls)
+	}
+
+	replacementPath := filepath.Join(root, "replacement.jsonl")
+	if err := os.WriteFile(replacementPath, []byte(secondContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(replacementPath, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	replacementInfo, err := os.Stat(replacementPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacementInfo.Size() != info.Size() || !replacementInfo.ModTime().Equal(info.ModTime()) {
+		t.Fatalf("replacement metadata size=%d mtime=%v, want size=%d mtime=%v", replacementInfo.Size(), replacementInfo.ModTime(), info.Size(), info.ModTime())
+	}
+	if err := os.Rename(replacementPath, rolloutPath); err != nil {
+		t.Fatal(err)
+	}
+	replacementInfo, err = os.Stat(rolloutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, cwd, ok := d.parseSessionOwnershipWithCache(rolloutPath, replacementInfo); !ok || cwd != secondProject {
+		t.Fatalf("replacement ownership cwd=%q ok=%v, want %q", cwd, ok, secondProject)
+	}
+	if parseCalls != 2 {
+		t.Fatalf("replaced ownership parsed %d times, want twice", parseCalls)
 	}
 }
 
