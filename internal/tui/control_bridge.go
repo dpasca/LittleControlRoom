@@ -1037,17 +1037,13 @@ func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArch
 		return controlInvocationOutcome{model: m, err: err}
 	}
 
-	project.Archived = archive
-	m.upsertProjectSummary(project)
+	m.applyProjectArchiveStateLocally([]model.ProjectSummary{project}, archive)
 	selectPath := project.Path
 	if (archive && m.archiveMode != projectArchiveArchived) || (!archive && m.archiveMode == projectArchiveArchived) {
 		selectPath = ""
 	}
 	m.rebuildProjectList(selectPath)
-	if normalizeProjectPath(m.detail.Summary.Path) == normalizeProjectPath(project.Path) {
-		m.detail.Summary = project
-		m.syncDetailViewport(false)
-	}
+	m.syncDetailViewport(false)
 
 	if archive {
 		m.status = fmt.Sprintf("Archived %q", name)
@@ -1100,13 +1096,9 @@ func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.Projec
 		if project.Archived == archive {
 			continue
 		}
-		project.Archived = archive
-		m.upsertProjectSummary(project)
-		if normalizeProjectPath(m.detail.Summary.Path) == normalizeProjectPath(project.Path) {
-			m.detail.Summary = project
-		}
 		changed++
 	}
+	m.applyProjectArchiveStateLocally(targets, archive)
 
 	m.rebuildProjectList("")
 	m.syncDetailViewport(false)

@@ -251,6 +251,14 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		}
 		worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 	}
+	archived := existing.Archived
+	if worktreeKind == model.WorktreeKindLinked && !archived {
+		projects, err := s.store.GetProjectSummaryMap(ctx)
+		if err != nil {
+			return fmt.Errorf("load worktree root archive state: %w", err)
+		}
+		archived = archivedWithWorktreeRoot(false, worktreeRootPath, worktreeKind, projects)
+	}
 
 	score := attention.Score(attention.Input{
 		Path:                       projectPath,
@@ -298,6 +306,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		RepoSubmoduleUnpushedCount: repoSubmoduleUnpushedCount,
 		ManuallyAdded:              true,
 		InScope:                    true,
+		Archived:                   archived,
 		Pinned:                     existing.Pinned,
 		SnoozedUntil:               existing.SnoozedUntil,
 		MovedFromPath:              existing.MovedFromPath,

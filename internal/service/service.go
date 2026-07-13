@@ -1324,6 +1324,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		if presentOnDisk && shouldForgetDerivedGitSubdirProject(old, projectKind, path, worktreeInfo, haveWorktreeInfo) {
 			worktreeRootPath := filepath.Clean(strings.TrimSpace(worktreeInfo.RootPath))
 			worktreeKind := modelWorktreeKindFromGit(worktreeInfo.Kind)
+			archived := archivedWithWorktreeRoot(old.Archived, worktreeRootPath, worktreeKind, oldMap)
 			state := model.ProjectState{
 				Path:                       path,
 				Name:                       projectName,
@@ -1348,7 +1349,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 				Forgotten:                  true,
 				ManuallyAdded:              old.ManuallyAdded,
 				InScope:                    false,
-				Archived:                   old.Archived,
+				Archived:                   archived,
 				Pinned:                     old.Pinned,
 				SnoozedUntil:               old.SnoozedUntil,
 				RunCommand:                 old.RunCommand,
@@ -1423,6 +1424,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			}
 			worktreeMergeStatus = resolveWorktreeMergeStatus(ctx, worktreeRootPath, worktreeKind, repoBranch, worktreeParentBranch)
 		}
+		archived := archivedWithWorktreeRoot(old.Archived, worktreeRootPath, worktreeKind, oldMap)
 		forgotten := old.Forgotten
 		staleLinkedWorktree := false
 		if worktreeKind == model.WorktreeKindLinked && liveLinkedWorktreeMissing(liveWorktreePathsByRoot, worktreeRootPath, path) {
@@ -1546,7 +1548,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			Forgotten:                  forgotten,
 			ManuallyAdded:              old.ManuallyAdded,
 			InScope:                    scope.Allows(path) || old.ManuallyAdded,
-			Archived:                   old.Archived,
+			Archived:                   archived,
 			Pinned:                     old.Pinned,
 			SnoozedUntil:               old.SnoozedUntil,
 			MovedFromPath:              old.MovedFromPath,
@@ -1594,6 +1596,10 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	if queuedClassifications > 0 && classifier != nil {
 		progress.setPhase("notifying queued classifications")
 		classifier.Notify()
+	}
+	progress.setPhase("reconciling linked worktree archive state")
+	if _, err := s.store.ReconcileLinkedWorktreeArchiveState(ctx); err != nil {
+		return ScanReport{}, progress.wrapTimeout(err)
 	}
 
 	if bus != nil {
@@ -3096,13 +3102,27 @@ func (s *Service) setProjectsArchived(ctx context.Context, projectPaths []string
 		return fmt.Errorf("project path is required")
 	}
 
+	projects, err := s.store.GetProjectSummaryMap(ctx)
+	if err != nil {
+		return err
+	}
+	if !archived {
+		if err := validateLinkedWorktreeUnarchiveTargets(projects, paths); err != nil {
+			return err
+		}
+	}
+	paths, err = expandProjectArchiveFamilyPaths(projects, paths)
+	if err != nil {
+		return err
+	}
+
 	unlockProjectState, err := s.lockProjectStateMutationsContext(ctx, paths)
 	if err != nil {
 		return err
 	}
 	defer unlockProjectState()
 
-	projects, err := s.store.GetProjectSummaryMap(ctx)
+	projects, err = s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
 		return err
 	}
@@ -3135,6 +3155,84 @@ func (s *Service) setProjectsArchived(ctx context.Context, projectPaths []string
 		_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: path, Type: string(events.ActionApplied), Payload: action})
 	}
 	return nil
+}
+
+func validateLinkedWorktreeUnarchiveTargets(projects map[string]model.ProjectSummary, projectPaths []string) error {
+	targets := make(map[string]struct{}, len(projectPaths))
+	for _, path := range projectPaths {
+		targets[filepath.Clean(strings.TrimSpace(path))] = struct{}{}
+	}
+	for path := range targets {
+		project := projects[path]
+		if project.Path == "" || project.WorktreeKind != model.WorktreeKindLinked {
+			continue
+		}
+		rootPath := filepath.Clean(strings.TrimSpace(project.WorktreeRootPath))
+		if rootPath == "" || rootPath == "." || rootPath == path {
+			continue
+		}
+		root := projects[rootPath]
+		if root.Path == "" || !root.Archived {
+			continue
+		}
+		if _, ok := targets[rootPath]; ok {
+			continue
+		}
+		return fmt.Errorf("linked worktree %s cannot be unarchived while repository root %s is archived; unarchive the root instead", path, rootPath)
+	}
+	return nil
+}
+
+func expandProjectArchiveFamilyPaths(projects map[string]model.ProjectSummary, projectPaths []string) ([]string, error) {
+	paths := cleanProjectPathList(projectPaths)
+	seen := make(map[string]struct{}, len(paths))
+	familyRoots := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		project := projects[path]
+		if project.Path == "" {
+			return nil, fmt.Errorf("project not found: %s", path)
+		}
+		seen[path] = struct{}{}
+
+		rootPath := filepath.Clean(strings.TrimSpace(project.WorktreeRootPath))
+		if project.WorktreeKind != model.WorktreeKindLinked || rootPath == "" || rootPath == "." || rootPath == path {
+			familyRoots[path] = struct{}{}
+		}
+	}
+
+	linkedPaths := make([]string, 0)
+	for _, project := range projects {
+		if project.WorktreeKind != model.WorktreeKindLinked {
+			continue
+		}
+		rootPath := filepath.Clean(strings.TrimSpace(project.WorktreeRootPath))
+		if _, ok := familyRoots[rootPath]; !ok {
+			continue
+		}
+		path := filepath.Clean(strings.TrimSpace(project.Path))
+		if path == "" || path == "." {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		linkedPaths = append(linkedPaths, path)
+	}
+	sort.Strings(linkedPaths)
+	return append(paths, linkedPaths...), nil
+}
+
+func archivedWithWorktreeRoot(archived bool, rootPath string, kind model.WorktreeKind, projects map[string]model.ProjectSummary) bool {
+	if archived || kind != model.WorktreeKindLinked {
+		return archived
+	}
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	if rootPath == "" || rootPath == "." {
+		return false
+	}
+	root := projects[rootPath]
+	return root.Path != "" && root.Archived
 }
 
 func cleanProjectPathList(projectPaths []string) []string {

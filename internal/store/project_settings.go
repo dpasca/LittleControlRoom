@@ -309,6 +309,71 @@ func (s *Store) SetProjectsArchived(ctx context.Context, paths []string, archive
 	return nil
 }
 
+// ReconcileLinkedWorktreeArchiveState repairs older project rows created before
+// archive state followed repository families. A linked worktree can remain
+// explicitly archived while its root is active, but it may not remain active
+// while its root is archived.
+func (s *Store) ReconcileLinkedWorktreeArchiveState(ctx context.Context) (int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path FROM projects WHERE archived = 1`)
+	if err != nil {
+		return 0, fmt.Errorf("load archived project roots: %w", err)
+	}
+	archivedRoots := map[string]struct{}{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan archived project root: %w", err)
+		}
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path != "" && path != "." {
+			archivedRoots[path] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("list archived project roots: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close archived project roots: %w", err)
+	}
+	if len(archivedRoots) == 0 {
+		return 0, nil
+	}
+
+	rows, err = s.db.QueryContext(ctx, `
+		SELECT path, worktree_root_path
+		FROM projects
+		WHERE worktree_kind = ? AND archived = 0
+	`, string(model.WorktreeKindLinked))
+	if err != nil {
+		return 0, fmt.Errorf("load active linked worktrees: %w", err)
+	}
+	paths := []string{}
+	for rows.Next() {
+		var path, rootPath string
+		if err := rows.Scan(&path, &rootPath); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan active linked worktree: %w", err)
+		}
+		rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+		if _, ok := archivedRoots[rootPath]; ok {
+			paths = append(paths, path)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("list active linked worktrees: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close active linked worktrees: %w", err)
+	}
+	if err := s.SetProjectsArchived(ctx, paths, true); err != nil {
+		return 0, fmt.Errorf("inherit archived root state for linked worktrees: %w", err)
+	}
+	return int64(len(paths)), nil
+}
+
 func (s *Store) MarkProjectManuallyAdded(ctx context.Context, path string, presentOnDisk bool) error {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if path == "" || path == "." {

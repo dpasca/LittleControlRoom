@@ -134,6 +134,83 @@ func TestListLinkedWorktreePathsForRoot(t *testing.T) {
 	}
 }
 
+func TestOpenReconcilesLinkedWorktreeWithArchivedRoot(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+
+	now := time.Now()
+	rootPath := "/tmp/archived-repo"
+	worktreePath := "/tmp/archived-repo--feature"
+	for _, state := range []model.ProjectState{
+		{
+			Path:             rootPath,
+			Name:             "archived-repo",
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+			InScope:          true,
+			Archived:         true,
+			UpdatedAt:        now,
+		},
+		{
+			Path:             worktreePath,
+			Name:             "archived-repo--feature",
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath + "/./",
+			WorktreeKind:     model.WorktreeKindLinked,
+			InScope:          true,
+			Archived:         false,
+			UpdatedAt:        now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			_ = st.Close()
+			t.Fatalf("seed %s: %v", state.Path, err)
+		}
+	}
+	before, err := st.GetProjectSummary(ctx, worktreePath, true)
+	if err != nil {
+		_ = st.Close()
+		t.Fatalf("get worktree before reopen: %v", err)
+	}
+	if before.Archived {
+		_ = st.Close()
+		t.Fatal("test setup should retain the legacy active worktree state before reopen")
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	st, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+
+	after, err := st.GetProjectSummary(ctx, worktreePath, true)
+	if err != nil {
+		t.Fatalf("get worktree after reopen: %v", err)
+	}
+	if !after.Archived {
+		t.Fatalf("linked worktree archived = false after reopen, want inherited archived root state: %#v", after)
+	}
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active projects: %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("archived repository family should not remain active after reconciliation: %#v", active)
+	}
+}
+
 func TestProjectCategoryAssignmentAndDelete(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

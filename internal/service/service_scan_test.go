@@ -1892,6 +1892,117 @@ func TestArchiveProjectMovesProjectOutOfCurrentList(t *testing.T) {
 	}
 }
 
+func TestArchiveProjectMovesLinkedWorktreeFamilyWithRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	parent := t.TempDir()
+	rootPath := filepath.Join(parent, "repo")
+	worktreePath := filepath.Join(parent, "repo--feature")
+	standalonePath := filepath.Join(parent, "standalone")
+	now := time.Now().UTC()
+	for _, state := range []model.ProjectState{
+		{
+			Path:             rootPath,
+			Name:             "repo",
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+			InScope:          true,
+			UpdatedAt:        now,
+		},
+		{
+			Path:             worktreePath,
+			Name:             "repo--feature",
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindLinked,
+			InScope:          true,
+			UpdatedAt:        now,
+		},
+		{
+			Path:          standalonePath,
+			Name:          "standalone",
+			Status:        model.StatusIdle,
+			PresentOnDisk: true,
+			InScope:       true,
+			UpdatedAt:     now,
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("seed project %s: %v", state.Path, err)
+		}
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if err := svc.ArchiveProject(ctx, rootPath); err != nil {
+		t.Fatalf("ArchiveProject(root) error = %v", err)
+	}
+
+	all, err := st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("ListProjects(all after root archive) error = %v", err)
+	}
+	archived := map[string]bool{}
+	for _, project := range all {
+		archived[project.Path] = project.Archived
+	}
+	if !archived[rootPath] || !archived[worktreePath] || archived[standalonePath] {
+		t.Fatalf("archive states after root archive = %#v, want root and linked worktree archived", archived)
+	}
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(active after root archive) error = %v", err)
+	}
+	if len(active) != 1 || active[0].Path != standalonePath {
+		t.Fatalf("active projects after root archive = %#v, want only standalone project", active)
+	}
+	if err := svc.UnarchiveProject(ctx, worktreePath); err == nil || !strings.Contains(err.Error(), "unarchive the root instead") {
+		t.Fatalf("UnarchiveProject(linked worktree under archived root) error = %v, want root guidance", err)
+	}
+	worktree, err := st.GetProjectSummary(ctx, worktreePath, true)
+	if err != nil {
+		t.Fatalf("GetProjectSummary(worktree after rejected unarchive) error = %v", err)
+	}
+	if !worktree.Archived {
+		t.Fatal("linked worktree should remain archived after rejected child-only unarchive")
+	}
+
+	if err := svc.UnarchiveProject(ctx, rootPath); err != nil {
+		t.Fatalf("UnarchiveProject(root) error = %v", err)
+	}
+	active, err = st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(active after root unarchive) error = %v", err)
+	}
+	if len(active) != 3 {
+		t.Fatalf("active projects after root unarchive = %#v, want repository family and standalone project", active)
+	}
+
+	if err := svc.ArchiveProject(ctx, worktreePath); err != nil {
+		t.Fatalf("ArchiveProject(linked worktree) error = %v", err)
+	}
+	all, err = st.ListProjects(ctx, true)
+	if err != nil {
+		t.Fatalf("ListProjects(all after worktree archive) error = %v", err)
+	}
+	archived = map[string]bool{}
+	for _, project := range all {
+		archived[project.Path] = project.Archived
+	}
+	if archived[rootPath] || !archived[worktreePath] || archived[standalonePath] {
+		t.Fatalf("archive states after worktree-only archive = %#v, want only linked worktree archived", archived)
+	}
+}
+
 func TestArchiveProjectsMovesBatchOutOfCurrentList(t *testing.T) {
 	t.Parallel()
 

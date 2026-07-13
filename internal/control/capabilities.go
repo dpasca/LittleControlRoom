@@ -472,7 +472,7 @@ func AgentTaskCloseCapability() Capability {
 func ProjectArchiveCapability() Capability {
 	return Capability{
 		Name:         CapabilityProjectArchive,
-		Description:  "Move an in-scope regular loaded project between the Active and Archived project-list tabs without touching its files or scope.",
+		Description:  "Move an in-scope regular loaded project between the Active and Archived project-list tabs without touching its files or scope. Repository roots move their linked worktrees with them.",
 		InputSchema:  projectArchiveInputSchema(),
 		OutputSchema: projectArchiveOutputSchema(),
 		Risk:         RiskWrite,

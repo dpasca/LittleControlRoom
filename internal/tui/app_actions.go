@@ -217,6 +217,42 @@ func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
 	m.allProjects = append(m.allProjects, summary)
 }
 
+func (m *Model) applyProjectArchiveStateLocally(targets []model.ProjectSummary, archived bool) {
+	if len(targets) == 0 {
+		return
+	}
+	targetPaths := make(map[string]struct{}, len(targets))
+	familyRoots := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		path := normalizeProjectPath(target.Path)
+		if path == "" {
+			continue
+		}
+		targetPaths[path] = struct{}{}
+		rootPath := normalizeProjectPath(target.WorktreeRootPath)
+		if target.WorktreeKind != model.WorktreeKindLinked || rootPath == "" || rootPath == path {
+			familyRoots[path] = struct{}{}
+		}
+	}
+
+	candidates := append(append([]model.ProjectSummary(nil), m.allProjects...), m.archivedProjects...)
+	for _, project := range candidates {
+		path := normalizeProjectPath(project.Path)
+		_, targeted := targetPaths[path]
+		if !targeted && project.WorktreeKind == model.WorktreeKindLinked {
+			_, targeted = familyRoots[projectWorktreeRootPath(project)]
+		}
+		if !targeted {
+			continue
+		}
+		project.Archived = archived
+		m.upsertProjectSummary(project)
+		if normalizeProjectPath(m.detail.Summary.Path) == path {
+			m.detail.Summary = project
+		}
+	}
+}
+
 func (m Model) preserveRefreshingAssessmentDisplays(summaries []model.ProjectSummary) []model.ProjectSummary {
 	if len(summaries) == 0 {
 		return summaries

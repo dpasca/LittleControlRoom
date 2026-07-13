@@ -81,6 +81,64 @@ func TestCreateTodoWorktreeFromNewlyCreatedEmptyGitRepo(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeInheritsArchivedRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "archived_repo")
+	initGitRepo(t, projectPath)
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	created, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: parent,
+		Name:       "archived_repo",
+	})
+	if err != nil {
+		t.Fatalf("CreateOrAttachProject() error = %v", err)
+	}
+	item, err := svc.AddTodo(ctx, created.ProjectPath, "Create a linked worktree after archiving the root")
+	if err != nil {
+		t.Fatalf("AddTodo() error = %v", err)
+	}
+	if err := svc.ArchiveProject(ctx, created.ProjectPath); err != nil {
+		t.Fatalf("ArchiveProject(root) error = %v", err)
+	}
+
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath:    created.ProjectPath,
+		TodoID:         item.ID,
+		BranchName:     "test/archive-inheritance",
+		WorktreeSuffix: "archive-inheritance",
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+	summaries, err := st.GetProjectSummaryMap(ctx)
+	if err != nil {
+		t.Fatalf("GetProjectSummaryMap() error = %v", err)
+	}
+	worktree, ok := summaries[result.WorktreePath]
+	if !ok {
+		t.Fatalf("new linked worktree %s was not persisted: %#v", result.WorktreePath, summaries)
+	}
+	if !worktree.Archived {
+		t.Fatalf("new linked worktree archived = false, want archived root state: %#v", worktree)
+	}
+	active, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("ListProjects(active) error = %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("archived root and newly linked worktree should stay out of active projects: %#v", active)
+	}
+}
+
 func TestMergeTodoWorktreeBackFromEmptyGitRepoAfterIndependentRootCommit(t *testing.T) {
 	t.Parallel()
 

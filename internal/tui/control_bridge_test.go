@@ -1051,6 +1051,92 @@ func TestExecuteProjectArchiveControlArchivesAndUnarchivesProject(t *testing.T) 
 	}
 }
 
+func TestExecuteProjectArchiveControlMovesLinkedWorktreeFamilyImmediately(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	parent := t.TempDir()
+	rootPath := filepath.Join(parent, "repo")
+	worktreePath := filepath.Join(parent, "repo--feature")
+	for _, state := range []model.ProjectState{
+		{
+			Path:             rootPath,
+			Name:             "repo",
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+			InScope:          true,
+			UpdatedAt:        time.Now(),
+		},
+		{
+			Path:             worktreePath,
+			Name:             "repo--feature",
+			Status:           model.StatusIdle,
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindLinked,
+			InScope:          true,
+			UpdatedAt:        time.Now(),
+		},
+	} {
+		if err := st.UpsertProjectState(ctx, state); err != nil {
+			t.Fatalf("seed project %s: %v", state.Path, err)
+		}
+	}
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	projects, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active projects: %v", err)
+	}
+	m := Model{
+		ctx:         ctx,
+		svc:         svc,
+		allProjects: projects,
+		projects:    projects,
+		sortMode:    sortByAttention,
+		visibility:  visibilityAllFolders,
+	}
+
+	updated, cmd := m.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityProjectArchive, control.ProjectArchiveInput{
+		ProjectPath: rootPath,
+		Action:      control.ProjectArchiveActionArchive,
+	}))
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	}
+	if len(got.allProjects) != 0 || len(got.archivedProjects) != 2 {
+		t.Fatalf("local project buckets after root archive = active %#v archived %#v, want whole family archived", got.allProjects, got.archivedProjects)
+	}
+	for _, project := range got.archivedProjects {
+		if !project.Archived {
+			t.Fatalf("local archived project %s retained archived=false", project.Path)
+		}
+	}
+
+	updated, cmd = got.executeControlInvocation(controlInvocationRawForTest(t, control.CapabilityProjectArchive, control.ProjectArchiveInput{
+		ProjectPath: rootPath,
+		Action:      control.ProjectArchiveActionUnarchive,
+	}))
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate unarchive", cmd)
+	}
+	if len(got.allProjects) != 2 || len(got.archivedProjects) != 0 {
+		t.Fatalf("local project buckets after root unarchive = active %#v archived %#v, want whole family active", got.allProjects, got.archivedProjects)
+	}
+	for _, project := range got.allProjects {
+		if project.Archived {
+			t.Fatalf("local active project %s retained archived=true", project.Path)
+		}
+	}
+}
+
 func TestExecuteProjectArchiveControlRejectsOutOfScopeUnarchive(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))

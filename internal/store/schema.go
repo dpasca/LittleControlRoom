@@ -393,6 +393,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureProjectsLinkedWorktreeRootIndex(ctx); err != nil {
 		return err
 	}
+	if _, err := s.ReconcileLinkedWorktreeArchiveState(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
