@@ -1730,6 +1730,7 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 		branchOverride = strings.TrimSpace(copyDialog.BranchOverride)
 		suffixOverride = strings.TrimSpace(copyDialog.WorktreeSuffixOverride)
 	}
+	selectedPath := m.currentSelectedProjectPath()
 	launchID, launchCtx := m.beginTodoPendingLaunch(projectPath, projectName, item.ID, item.Text, provider)
 	m.todoEditor = nil
 	m.todoDeleteConfirm = nil
@@ -1739,11 +1740,7 @@ func (m Model) startSelectedTodoInNewWorktree(provider codexapp.Provider, openMo
 	m.todoDialog = nil
 	m.rememberEmbeddedProvider(provider)
 	m.status = todoWorktreePreparingStatus
-	selectPath := projectPath
-	if pendingProject, ok := m.todoPendingLaunchProjectSummary(); ok {
-		selectPath = pendingProject.Path
-	}
-	m.rebuildProjectList(selectPath)
+	m.rebuildProjectList(selectedPath)
 	return m, m.createTodoWorktreeCmd(launchCtx, launchID, projectPath, item.ID, item.Text, item.Attachments, provider, openModelFirst, branchOverride, suffixOverride)
 }
 
