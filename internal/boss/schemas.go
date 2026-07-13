@@ -144,13 +144,17 @@ func bossActionSchema() map[string]any {
 				"type":        "string",
 				"description": "For kind=context_command, one tiny command such as: ctx search engineer \"query\" --project \"LittleControlRoom\" --limit 5; ctx show engineer:<session-id> --query \"query\" --before 1 --after 2 --max-chars 6000; ctx show agent_task:<task-id> --before 1 --after 4 --max-chars 6000; ctx recent engineer --project \"LittleControlRoom\" --limit 5; ctx search boss \"query\" --limit 5. Otherwise empty.",
 			},
+			"project_parent_path": map[string]any{
+				"type":        "string",
+				"description": "For project.create_and_start_engineer, the absolute existing parent directory for the new repository. Otherwise empty.",
+			},
 			"project_path": map[string]any{
 				"type":        "string",
-				"description": "Exact project path for project-specific queries, or empty.",
+				"description": "Exact loaded project path for project-specific actions and queries. Leave empty for project.create_and_start_engineer; the host derives it from project_parent_path and project_name.",
 			},
 			"project_name": map[string]any{
 				"type":        "string",
-				"description": "Exact project name if path is unavailable, or empty.",
+				"description": "For project.create_and_start_engineer, one new single-folder name. Otherwise the exact loaded project name if path is unavailable, or empty.",
 			},
 			"session_id": map[string]any{
 				"type":        "string",
@@ -198,7 +202,7 @@ func bossActionSchema() map[string]any {
 			},
 			"todo_text": map[string]any{
 				"type":        "string",
-				"description": "For todo.add or todo.create_worktree_and_start_engineer proposals, the durable project TODO text. For engineer.send_prompt or todo.complete, the known linked TODO text. Otherwise empty.",
+				"description": "For project.create_and_start_engineer, todo.add, or todo.create_worktree_and_start_engineer proposals, the durable project TODO text. For engineer.send_prompt or todo.complete, the known linked TODO text. Otherwise empty.",
 			},
 			"todo_label": map[string]any{
 				"type":        "string",
@@ -257,7 +261,7 @@ func bossActionSchema() map[string]any {
 			"engineer_provider": map[string]any{
 				"type":        "string",
 				"enum":        control.ProviderStrings(true),
-				"description": "For engineer.send_prompt, todo.create_worktree_and_start_engineer, and agent task launch proposals: auto, codex, opencode, claude_code, lcagent. Empty is treated as auto.",
+				"description": "For engineer.send_prompt, project.create_and_start_engineer, todo.create_worktree_and_start_engineer, and agent task launch proposals: auto, codex, opencode, claude_code, lcagent. Empty is treated as auto.",
 			},
 			"session_mode": map[string]any{
 				"type":        "string",
@@ -266,7 +270,7 @@ func bossActionSchema() map[string]any {
 			},
 			"prompt": map[string]any{
 				"type":        "string",
-				"description": "For engineer.send_prompt, todo.create_worktree_and_start_engineer, agent_task.create, or agent_task.continue proposals, the boss-reframed executable task for the engineer. Otherwise empty.",
+				"description": "For engineer.send_prompt, project.create_and_start_engineer, todo.create_worktree_and_start_engineer, agent_task.create, or agent_task.continue proposals, the boss-reframed executable task for the engineer. Otherwise empty.",
 			},
 			"intent_excerpt": map[string]any{
 				"type":        "string",
@@ -282,7 +286,7 @@ func bossActionSchema() map[string]any {
 			},
 			"reveal": map[string]any{
 				"type":        "boolean",
-				"description": "For engineer.send_prompt, todo.create_worktree_and_start_engineer, and agent task launch proposals, whether to reveal the engineer session after sending.",
+				"description": "For engineer.send_prompt, project.create_and_start_engineer, todo.create_worktree_and_start_engineer, and agent task launch proposals, whether to reveal the engineer session after sending.",
 			},
 			"close_session": map[string]any{
 				"type":        "boolean",
@@ -388,6 +392,7 @@ func bossActionSchema() map[string]any {
 			"target",
 			"query",
 			"command",
+			"project_parent_path",
 			"project_path",
 			"project_name",
 			"session_id",

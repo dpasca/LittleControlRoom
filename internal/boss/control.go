@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"lcroom/internal/control"
@@ -48,6 +49,79 @@ func wrapControlProposalError(err error) error {
 		return nil
 	}
 	return controlProposalError{err: err}
+}
+
+func validateControlProposalAgainstSnapshot(inv control.Invocation, snapshot StateSnapshot) error {
+	if !snapshot.LoadedProjectRefsKnown {
+		return nil
+	}
+	normalized, err := control.ValidateInvocation(inv)
+	if err != nil {
+		return err
+	}
+	switch normalized.Capability {
+	case control.CapabilityEngineerSendPrompt:
+		var input control.EngineerSendPromptInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return err
+		}
+		return requireLoadedControlProject(snapshot.LoadedProjects, input.ProjectPath, input.ProjectName)
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		var input control.TodoCreateWorktreeAndStartEngineerInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return err
+		}
+		return requireLoadedControlProject(snapshot.LoadedProjects, input.ProjectPath, input.ProjectName)
+	case control.CapabilityProjectCreateAndStartEngineer:
+		var input control.ProjectCreateAndStartEngineerInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return err
+		}
+		if controlProjectRefHasPath(snapshot.LoadedProjects, input.ProjectPath) {
+			return fmt.Errorf("project is already loaded: %s; use %s for new work in an existing project", input.ProjectPath, control.CapabilityTodoCreateWorktreeAndStartEngineer)
+		}
+	}
+	return nil
+}
+
+func requireLoadedControlProject(projects []ProjectRef, projectPath, projectName string) error {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath != "" {
+		projectPath = filepath.Clean(projectPath)
+		if controlProjectRefHasPath(projects, projectPath) {
+			return nil
+		}
+		return fmt.Errorf("project is not loaded: %s; use %s when creating a brand-new repository", projectPath, control.CapabilityProjectCreateAndStartEngineer)
+	}
+	projectName = strings.TrimSpace(projectName)
+	matchedPath := ""
+	for _, project := range projects {
+		if !strings.EqualFold(strings.TrimSpace(project.Name), projectName) && !strings.EqualFold(filepath.Base(strings.TrimSpace(project.Path)), projectName) {
+			continue
+		}
+		path := filepath.Clean(strings.TrimSpace(project.Path))
+		if matchedPath != "" && path != matchedPath {
+			return fmt.Errorf("project name is ambiguous: %s", projectName)
+		}
+		matchedPath = path
+	}
+	if matchedPath != "" {
+		return nil
+	}
+	return fmt.Errorf("project is not loaded: %s; use %s when creating a brand-new repository", projectName, control.CapabilityProjectCreateAndStartEngineer)
+}
+
+func controlProjectRefHasPath(projects []ProjectRef, projectPath string) bool {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" || projectPath == "." {
+		return false
+	}
+	for _, project := range projects {
+		if filepath.Clean(strings.TrimSpace(project.Path)) == projectPath {
+			return true
+		}
+	}
+	return false
 }
 
 func controlProposalFromBossAction(action bossAction) (control.Invocation, string, error) {
@@ -98,6 +172,16 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			Status:       control.AgentTaskCloseStatus(strings.TrimSpace(action.TaskCloseStatus)),
 			Summary:      strings.TrimSpace(action.TaskSummary),
 			CloseSession: action.CloseSession,
+		}
+	case control.CapabilityProjectCreateAndStartEngineer:
+		payload = control.ProjectCreateAndStartEngineerInput{
+			RequestID:   strings.TrimSpace(action.RequestID),
+			ParentPath:  strings.TrimSpace(action.ProjectParentPath),
+			ProjectName: strings.TrimSpace(action.ProjectName),
+			TodoText:    strings.TrimSpace(action.TodoText),
+			Prompt:      bossLosslessControlPrompt(action),
+			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
+			Reveal:      action.Reveal,
 		}
 	case control.CapabilityProjectArchive:
 		payload = control.ProjectArchiveInput{
@@ -387,6 +471,24 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			"Enter confirms; Esc cancels.",
 		}
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityProjectCreateAndStartEngineer:
+		var input control.ProjectCreateAndStartEngineerInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		provider := input.Provider.Label()
+		if input.Provider == control.ProviderAuto {
+			provider = "the preferred engineer"
+		}
+		lines := []string{
+			fmt.Sprintf("Create Git repository %s and start tracked work with %s?", input.ProjectPath, provider),
+			"",
+			strings.TrimSpace(input.TodoText),
+			"",
+			"I will create and register the repository, add a project TODO, prepare a dedicated worktree, and launch a fresh engineer session there.",
+			"Enter creates and starts; Esc cancels.",
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		var input control.TodoCreateWorktreeAndStartEngineerInput
 		if err := json.Unmarshal(inv.Args, &input); err != nil {
@@ -550,7 +652,7 @@ func controlResultContent(msg ControlInvocationResultMsg) string {
 		switch {
 		case status == "":
 			status = errText
-		case errText != "" && status != errText:
+		case errText != "" && status != errText && !strings.Contains(status, errText):
 			status += ": " + errText
 		}
 		return "I could not complete that control action: " + status
@@ -571,7 +673,7 @@ func copyControlInvocation(inv control.Invocation) control.Invocation {
 
 func controlProposalIsEngineerHandoff(inv control.Invocation) bool {
 	switch inv.Capability {
-	case control.CapabilityEngineerSendPrompt, control.CapabilityTodoCreateWorktreeAndStartEngineer, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+	case control.CapabilityEngineerSendPrompt, control.CapabilityProjectCreateAndStartEngineer, control.CapabilityTodoCreateWorktreeAndStartEngineer, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return true
 	default:
 		return false
@@ -582,6 +684,8 @@ func controlProposalStatus(inv control.Invocation) string {
 	switch inv.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		return "Ready to send to engineer with Enter, or Esc to cancel"
+	case control.CapabilityProjectCreateAndStartEngineer:
+		return "Ready to create the repository and start tracked work with Enter, or cancel with Esc"
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		return "Ready to start tracked work with Enter, add TODO only with q, or cancel with Esc"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
@@ -598,6 +702,9 @@ func controlProposalFooterHint(inv control.Invocation) string {
 		if inv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
 			return "Enter starts in worktree | q adds TODO only | Esc cancels"
 		}
+		if inv.Capability == control.CapabilityProjectCreateAndStartEngineer {
+			return "Enter creates repository and starts | Esc cancels"
+		}
 		return "Enter sends to engineer | Esc cancels"
 	}
 	if inv.Capability == control.CapabilityGitPrepareCommit {
@@ -610,6 +717,8 @@ func controlProposalSubmittingStatus(inv control.Invocation) string {
 	switch inv.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		return "Sending request to engineer session..."
+	case control.CapabilityProjectCreateAndStartEngineer:
+		return "Creating Git repository and tracked worktree..."
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		return "Creating tracked TODO and dedicated worktree..."
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:

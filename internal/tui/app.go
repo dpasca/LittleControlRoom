@@ -1223,6 +1223,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
 		return m.executeBossControlInvocation(msg)
 	}
+	if msg, ok := msg.(bossProjectCreateAndStartEngineerCreatedMsg); ok {
+		return m.applyBossProjectCreateAndStartEngineerCreated(msg)
+	}
 	if msg, ok := msg.(bossTodoWorktreeTodoCreatedMsg); ok {
 		return m.applyBossTodoWorktreeTodoCreated(msg)
 	}

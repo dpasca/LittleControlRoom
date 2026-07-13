@@ -338,6 +338,16 @@ func TestLoadStateSnapshotCountsActiveAndArchivedTabs(t *testing.T) {
 	if snapshot.ActiveProjects != 1 || snapshot.PossiblyStuckProjects != 0 {
 		t.Fatalf("operational counts = active %d stuck %d, want active-tab-only 1/0", snapshot.ActiveProjects, snapshot.PossiblyStuckProjects)
 	}
+	if !snapshot.LoadedProjectRefsKnown || len(snapshot.LoadedProjects) != 2 {
+		t.Fatalf("loaded project refs = known:%t refs:%#v, want active and archived projects", snapshot.LoadedProjectRefsKnown, snapshot.LoadedProjects)
+	}
+	loadedPaths := map[string]bool{}
+	for _, project := range snapshot.LoadedProjects {
+		loadedPaths[project.Path] = true
+	}
+	if !loadedPaths[filepath.Join(cfg.DataDir, "active")] || !loadedPaths[filepath.Join(cfg.DataDir, "archived")] || loadedPaths[filepath.Join(cfg.DataDir, "outside")] {
+		t.Fatalf("loaded project refs = %#v, want active and archived only", snapshot.LoadedProjects)
+	}
 
 	brief := BuildStateBrief(snapshot, now)
 	for _, want := range []string{
@@ -432,6 +442,16 @@ func TestLoadStateSnapshotIncludesOpenTodosWithPrivacyFiltering(t *testing.T) {
 	}
 	if len(privateSnapshot.OpenTodos) != 1 || privateSnapshot.OpenTodos[0].ID != publicTodo.ID {
 		t.Fatalf("privacy mode should include only non-private TODOs, got %#v", privateSnapshot.OpenTodos)
+	}
+	foundPublicRef := false
+	for _, project := range privateSnapshot.LoadedProjects {
+		if project.Path == privatePath {
+			t.Fatalf("privacy mode leaked private loaded-project ref: %#v", project)
+		}
+		foundPublicRef = foundPublicRef || project.Path == publicPath
+	}
+	if !privateSnapshot.LoadedProjectRefsKnown || !foundPublicRef {
+		t.Fatalf("privacy-filtered loaded refs = known:%t refs:%#v, want public project", privateSnapshot.LoadedProjectRefsKnown, privateSnapshot.LoadedProjects)
 	}
 }
 

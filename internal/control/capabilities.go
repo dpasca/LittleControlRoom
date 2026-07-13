@@ -26,14 +26,17 @@ const (
 )
 
 const (
-	HostEffectMayRevealEngineerSession = "may_reveal_engineer_session"
-	HostEffectMayCreateTaskWorkspace   = "may_create_task_workspace"
-	HostEffectMaySetProjectArchive     = "may_set_project_archive_state"
-	HostEffectMayCreateProjectTodo     = "may_create_project_todo"
-	HostEffectMayCreateProjectWorktree = "may_create_project_worktree"
-	HostEffectMayCompleteProjectTodo   = "may_complete_project_todo"
-	HostEffectMayUpdateSettings        = "may_update_settings"
-	HostEffectMayPrepareGitCommit      = "may_prepare_git_commit_preview"
+	HostEffectMayRevealEngineerSession   = "may_reveal_engineer_session"
+	HostEffectMayCreateProjectDirectory  = "may_create_project_directory"
+	HostEffectMayInitializeGitRepository = "may_initialize_git_repository"
+	HostEffectMayTrackProject            = "may_track_project"
+	HostEffectMayCreateTaskWorkspace     = "may_create_task_workspace"
+	HostEffectMaySetProjectArchive       = "may_set_project_archive_state"
+	HostEffectMayCreateProjectTodo       = "may_create_project_todo"
+	HostEffectMayCreateProjectWorktree   = "may_create_project_worktree"
+	HostEffectMayCompleteProjectTodo     = "may_complete_project_todo"
+	HostEffectMayUpdateSettings          = "may_update_settings"
+	HostEffectMayPrepareGitCommit        = "may_prepare_git_commit_preview"
 )
 
 type AgentTaskKind string
@@ -206,6 +209,20 @@ type ProjectArchiveInput struct {
 	Resources   []ResourceRef        `json:"resources,omitempty"`
 }
 
+type ProjectCreateAndStartEngineerInput struct {
+	RequestID    string   `json:"request_id,omitempty"`
+	ParentPath   string   `json:"parent_path"`
+	ProjectName  string   `json:"project_name"`
+	ProjectPath  string   `json:"project_path,omitempty"`
+	TodoText     string   `json:"todo_text"`
+	Prompt       string   `json:"prompt"`
+	Provider     Provider `json:"provider"`
+	Reveal       bool     `json:"reveal"`
+	TodoID       int64    `json:"todo_id,omitempty"`
+	TodoLabel    string   `json:"todo_label,omitempty"`
+	WorktreePath string   `json:"worktree_path,omitempty"`
+}
+
 type TodoAddInput struct {
 	RequestID   string `json:"request_id,omitempty"`
 	ProjectPath string `json:"project_path"`
@@ -353,6 +370,7 @@ func Capabilities() []Capability {
 		AgentTaskCreateCapability(),
 		AgentTaskContinueCapability(),
 		AgentTaskCloseCapability(),
+		ProjectCreateAndStartEngineerCapability(),
 		ProjectArchiveCapability(),
 		ScratchTaskArchiveCapability(),
 		TodoAddCapability(),
@@ -373,6 +391,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return AgentTaskContinueCapability(), true
 	case CapabilityAgentTaskClose:
 		return AgentTaskCloseCapability(), true
+	case CapabilityProjectCreateAndStartEngineer:
+		return ProjectCreateAndStartEngineerCapability(), true
 	case CapabilityProjectArchive:
 		return ProjectArchiveCapability(), true
 	case CapabilityScratchTaskArchive:
@@ -466,6 +486,27 @@ func AgentTaskCloseCapability() Capability {
 		Risk:         RiskWrite,
 		Confirmation: ConfirmationRequired,
 		RequiresHost: true,
+	}
+}
+
+func ProjectCreateAndStartEngineerCapability() Capability {
+	return Capability{
+		Name:         CapabilityProjectCreateAndStartEngineer,
+		Description:  "Create and register a new Git repository, add a tracked TODO, prepare a dedicated worktree, and start an engineer session there.",
+		InputSchema:  projectCreateAndStartEngineerInputSchema(),
+		OutputSchema: todoCreateWorktreeAndStartEngineerOutputSchema(),
+		Risk:         RiskExternal,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects: []string{
+			HostEffectMayCreateProjectDirectory,
+			HostEffectMayInitializeGitRepository,
+			HostEffectMayTrackProject,
+			HostEffectMayCreateProjectTodo,
+			HostEffectMayCreateProjectWorktree,
+			HostEffectMayRevealEngineerSession,
+		},
+		Providers: EngineerSendPromptCapability().Providers,
 	}
 }
 
@@ -719,6 +760,59 @@ func NormalizeProjectArchiveInput(input ProjectArchiveInput) (ProjectArchiveInpu
 		if resource.ProjectPath == "" && resource.Path == "" && resource.Label == "" {
 			return ProjectArchiveInput{}, fmt.Errorf("project archive resource needs project_path, path, or label")
 		}
+	}
+	return input, nil
+}
+
+func NormalizeProjectCreateAndStartEngineerInput(input ProjectCreateAndStartEngineerInput) (ProjectCreateAndStartEngineerInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ParentPath = strings.TrimSpace(input.ParentPath)
+	if input.ParentPath == "" {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("parent_path is required")
+	}
+	input.ParentPath = filepath.Clean(input.ParentPath)
+	if !filepath.IsAbs(input.ParentPath) {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("parent_path must be absolute")
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	if input.ProjectName == "" {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("project_name is required")
+	}
+	if input.ProjectName == "." || input.ProjectName == ".." || filepath.Base(input.ProjectName) != input.ProjectName || strings.ContainsAny(input.ProjectName, `/\\`) {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("project_name must be a single folder name")
+	}
+	wantProjectPath := filepath.Join(input.ParentPath, input.ProjectName)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" && filepath.Clean(input.ProjectPath) != wantProjectPath {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("project_path must match parent_path and project_name")
+	}
+	input.ProjectPath = wantProjectPath
+	input.TodoText = strings.TrimSpace(input.TodoText)
+	input.Prompt = strings.TrimSpace(input.Prompt)
+	if input.TodoText == "" {
+		input.TodoText = input.Prompt
+	}
+	if input.Prompt == "" {
+		input.Prompt = input.TodoText
+	}
+	if input.TodoText == "" {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("todo text is required")
+	}
+	if input.Prompt == "" {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("engineer prompt is required")
+	}
+	rawProvider := strings.TrimSpace(string(input.Provider))
+	input.Provider = input.Provider.Normalized()
+	if input.Provider == "" {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("unsupported engineer provider: %s", rawProvider)
+	}
+	input.TodoLabel = strings.TrimSpace(input.TodoLabel)
+	input.WorktreePath = strings.TrimSpace(input.WorktreePath)
+	if input.WorktreePath != "" {
+		input.WorktreePath = filepath.Clean(input.WorktreePath)
+	}
+	if input.TodoID < 0 {
+		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("todo_id cannot be negative")
 	}
 	return input, nil
 }
@@ -1045,6 +1139,34 @@ func validateScratchTaskArchiveInvocation(inv Invocation) (Invocation, error) {
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityScratchTaskArchive, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateProjectCreateAndStartEngineerInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityProjectCreateAndStartEngineer)
+	}
+	var input ProjectCreateAndStartEngineerInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityProjectCreateAndStartEngineer, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityProjectCreateAndStartEngineer)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeProjectCreateAndStartEngineerInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityProjectCreateAndStartEngineer, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -1433,6 +1555,27 @@ func scratchTaskArchiveOutputSchema() map[string]any {
 			"status":        map[string]any{"type": "string"},
 		},
 		"required": []string{"project_path", "archived_path", "status"},
+	}
+}
+
+func projectCreateAndStartEngineerInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":    map[string]any{"type": "string"},
+			"parent_path":   map[string]any{"type": "string", "description": "Absolute existing parent directory under which the new repository folder will be created."},
+			"project_name":  map[string]any{"type": "string", "description": "Single-folder name for the new repository."},
+			"project_path":  map[string]any{"type": "string", "description": "Derived target path. Leave empty in proposals; the host fills it from parent_path and project_name."},
+			"todo_text":     map[string]any{"type": "string"},
+			"prompt":        map[string]any{"type": "string"},
+			"provider":      map[string]any{"type": "string", "enum": ProviderStrings(false)},
+			"reveal":        map[string]any{"type": "boolean"},
+			"todo_id":       map[string]any{"type": "integer"},
+			"todo_label":    map[string]any{"type": "string"},
+			"worktree_path": map[string]any{"type": "string"},
+		},
+		"required": []string{"parent_path", "project_name", "todo_text", "prompt", "provider", "reveal"},
 	}
 }
 

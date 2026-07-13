@@ -50,6 +50,7 @@ A named action that Little Control Room can perform.
 Examples:
 
 - `engineer.send_prompt`
+- `project.create_and_start_engineer`
 - `project.add_todo`
 - `todo.create_worktree`
 - `runtime.start`
@@ -323,7 +324,8 @@ Likely next actions:
 - `project.add_todo`
 - `todo.mark_done`
 - `todo.create_worktree`
-- `todo.create_worktree_and_start_engineer` (implemented as the default tracked Chat launch for new project work)
+- `todo.create_worktree_and_start_engineer` (implemented as the default tracked Chat launch for work in an existing loaded project)
+- `project.create_and_start_engineer` (implemented as the exclusive new-repository creation, registration, and tracked launch)
 - `process.terminate`
 - `runtime.start`
 - `runtime.stop`

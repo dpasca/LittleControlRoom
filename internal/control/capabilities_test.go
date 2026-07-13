@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -240,6 +241,31 @@ func TestTodoCreateWorktreeAndStartEngineerCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestProjectCreateAndStartEngineerCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityProjectCreateAndStartEngineer)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityProjectCreateAndStartEngineer)
+	}
+	if capability.Risk != RiskExternal || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected new-repository capability metadata: %#v", capability)
+	}
+	for _, effect := range []string{
+		HostEffectMayCreateProjectDirectory,
+		HostEffectMayInitializeGitRepository,
+		HostEffectMayTrackProject,
+		HostEffectMayCreateProjectTodo,
+		HostEffectMayCreateProjectWorktree,
+		HostEffectMayRevealEngineerSession,
+	} {
+		if !stringSliceContains(capability.HostEffects, effect) {
+			t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, effect)
+		}
+	}
+	if capability.InputSchema["type"] != "object" || capability.OutputSchema["type"] != "object" {
+		t.Fatalf("new-repository capability schemas should be object schemas")
+	}
+}
+
 func TestTodoCompleteCapabilityMetadata(t *testing.T) {
 	capability, ok := CapabilityByName(CapabilityTodoComplete)
 	if !ok {
@@ -378,6 +404,61 @@ func TestNormalizeEngineerSendPromptInputRejectsInvalidInputs(t *testing.T) {
 		if !strings.Contains(err.Error(), tt.want) {
 			t.Fatalf("%s: error = %q, want containing %q", tt.name, err.Error(), tt.want)
 		}
+	}
+}
+
+func TestNormalizeProjectCreateAndStartEngineerInput(t *testing.T) {
+	parentPath := filepath.Join(string(filepath.Separator), "tmp", "repos", "..", "repos")
+	input, err := NormalizeProjectCreateAndStartEngineerInput(ProjectCreateAndStartEngineerInput{
+		RequestID:   " request-1 ",
+		ParentPath:  parentPath,
+		ProjectName: " KeyMaster ",
+		Prompt:      " Build the repository. ",
+		Provider:    ProviderAuto,
+	})
+	if err != nil {
+		t.Fatalf("NormalizeProjectCreateAndStartEngineerInput() error = %v", err)
+	}
+	if input.RequestID != "request-1" || input.ParentPath != filepath.Join(string(filepath.Separator), "tmp", "repos") {
+		t.Fatalf("normalized request identity/path = %#v", input)
+	}
+	if input.ProjectName != "KeyMaster" || input.ProjectPath != filepath.Join(input.ParentPath, "KeyMaster") {
+		t.Fatalf("normalized project target = %#v", input)
+	}
+	if input.TodoText != "Build the repository." || input.Prompt != "Build the repository." || input.Provider != ProviderAuto {
+		t.Fatalf("normalized tracked work = %#v", input)
+	}
+}
+
+func TestNormalizeProjectCreateAndStartEngineerInputRejectsInvalidTargets(t *testing.T) {
+	tests := []struct {
+		name  string
+		input ProjectCreateAndStartEngineerInput
+		want  string
+	}{
+		{
+			name:  "relative parent",
+			input: ProjectCreateAndStartEngineerInput{ParentPath: "repos", ProjectName: "KeyMaster", Prompt: "Build it."},
+			want:  "parent_path must be absolute",
+		},
+		{
+			name:  "nested name",
+			input: ProjectCreateAndStartEngineerInput{ParentPath: "/tmp/repos", ProjectName: "team/KeyMaster", Prompt: "Build it."},
+			want:  "project_name must be a single folder name",
+		},
+		{
+			name:  "mismatched derived path",
+			input: ProjectCreateAndStartEngineerInput{ParentPath: "/tmp/repos", ProjectName: "KeyMaster", ProjectPath: "/tmp/elsewhere", Prompt: "Build it."},
+			want:  "project_path must match",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NormalizeProjectCreateAndStartEngineerInput(tt.input)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want containing %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -548,6 +629,31 @@ func TestValidateInvocationNormalizesTodoCreateWorktreeAndStartEngineerArgs(t *t
 		input.Prompt != "Implement and verify the feedback." ||
 		input.Provider != ProviderAuto {
 		t.Fatalf("normalized tracked worktree input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesProjectCreateAndStartEngineerArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  " boss-turn-new-project ",
+		Capability: CapabilityProjectCreateAndStartEngineer,
+		Args:       json.RawMessage(`{"parent_path":" /tmp/repos/../repos ","project_name":" KeyMaster ","todo_text":"  Build KeyMaster.  ","prompt":"  Create and verify the repository.  ","provider":"codex","reveal":false}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	var input ProjectCreateAndStartEngineerInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized args: %v", err)
+	}
+	if inv.RequestID != "boss-turn-new-project" ||
+		input.RequestID != "boss-turn-new-project" ||
+		input.ParentPath != "/tmp/repos" ||
+		input.ProjectName != "KeyMaster" ||
+		input.ProjectPath != "/tmp/repos/KeyMaster" ||
+		input.TodoText != "Build KeyMaster." ||
+		input.Prompt != "Create and verify the repository." ||
+		input.Provider != ProviderCodex {
+		t.Fatalf("normalized new-repository input = %#v", input)
 	}
 }
 

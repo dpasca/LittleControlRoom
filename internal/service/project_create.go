@@ -21,6 +21,7 @@ type CreateOrAttachProjectRequest struct {
 	ParentPath             string
 	Name                   string
 	CreateGitRepo          bool
+	RequireNew             bool
 	PreferredSessionSource model.SessionSource
 	CategoryID             string
 	// CategoryExplicit assigns to CategoryID, or to Main when CategoryID is empty.
@@ -76,6 +77,9 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 	if exists && !info.IsDir() {
 		return CreateOrAttachProjectResult{}, fmt.Errorf("path already exists and is not a directory: %s", projectPath)
 	}
+	if exists && req.RequireNew {
+		return CreateOrAttachProjectResult{}, fmt.Errorf("target project path already exists: %s", projectPath)
+	}
 
 	projects, err := s.store.GetProjectSummaryMap(ctx)
 	if err != nil {
@@ -97,8 +101,14 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 	case exists:
 		result.Action = CreateOrAttachProjectAdded
 	default:
-		if err := os.MkdirAll(projectPath, 0o755); err != nil {
-			return CreateOrAttachProjectResult{}, fmt.Errorf("create project directory: %w", err)
+		var createErr error
+		if req.RequireNew {
+			createErr = os.Mkdir(projectPath, 0o755)
+		} else {
+			createErr = os.MkdirAll(projectPath, 0o755)
+		}
+		if createErr != nil {
+			return CreateOrAttachProjectResult{}, fmt.Errorf("create project directory: %w", createErr)
 		}
 		if req.CreateGitRepo && s.gitRepoInitializer != nil {
 			if err := s.gitRepoInitializer(ctx, projectPath); err != nil {
