@@ -108,6 +108,19 @@ type execRunOptions struct {
 	DelegationMode        string
 	DelegationDescription string
 	PromptTransform       func(string) string
+	Context               context.Context
+	ProviderConfig        *modeladapter.OpenRouterConfig
+	WorkspaceOnlyReads    bool
+	ReadOnlyTools         bool
+	DisableSkills         bool
+	RouteSource           string
+	RouteDescription      string
+	Capture               *execRunCapture
+}
+
+type execRunCapture struct {
+	SessionID    string
+	ArtifactPath string
 }
 
 type browserCapabilityConfig struct {
@@ -378,6 +391,10 @@ func runScout(args []string, stdout io.Writer) error {
 }
 
 func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) error {
+	runCtx := opts.Context
+	if runCtx == nil {
+		runCtx = context.Background()
+	}
 	commandName := strings.TrimSpace(opts.CommandName)
 	if commandName == "" {
 		commandName = "exec"
@@ -408,7 +425,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&outputRaw, "output", string(outputStreamJSON), "output: text, json, stream-json")
 	fs.StringVar(&scriptPath, "script", "", "scripted JSONL actions")
 	fs.StringVar(&routePresetRaw, "route-preset", defaultRoutePreset, "coding route preset: balanced, quality, mimo-2.5-pro-low, mimo-2.5-pro-high, mimo-2.5-pro-max, or cheap-scout; explicit flags override preset values")
-	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, or ollama")
+	fs.StringVar(&provider, "provider", "scripted", "provider: scripted, openrouter, openai, deepseek, moonshot, xiaomi, ollama, or mlx")
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
 	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "approval mode for denied low-autonomy commands: deny or ask")
@@ -452,7 +469,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		routePresetSet = true
 		applyLCAgentRoutePreset(routePreset, visitedFlags, &provider, &model, &finalModel, &reasoningEffort, &autoRaw, &toolProfileRaw, &contextProfileRaw, &providerOnlyRaw, &temperatureRaw, &requestTimeout)
 	}
-	if !visitedFlags["max-turns"] {
+	if !visitedFlags["max-turns"] && opts.DefaultMaxTurns <= 0 {
 		maxTurns = modeladapter.MaxTurnsForRequestTimeout(requestTimeout)
 	}
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -487,19 +504,23 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	workspace.AdminWrite = adminWrite
+	workspace.WorkspaceOnlyReads = opts.WorkspaceOnlyReads
 	instructions, err := projectinstructions.LoadWorkspace(workspace.Root)
 	if err != nil {
 		return fmt.Errorf("load project instructions: %w", err)
 	}
-	skillOptions := skillcatalog.DefaultOptions(workspace.Root)
-	if browserCapability.Enabled {
-		skillOptions.BrowserMode = skillcatalog.BrowserModeNativeTools
-	} else {
-		skillOptions.BrowserMode = skillcatalog.BrowserModeUnavailable
-	}
-	catalog, err := skillcatalog.Discover(context.Background(), skillOptions)
-	if err != nil {
-		return fmt.Errorf("load skills: %w", err)
+	var catalog skillcatalog.Catalog
+	if !opts.DisableSkills {
+		skillOptions := skillcatalog.DefaultOptions(workspace.Root)
+		if browserCapability.Enabled {
+			skillOptions.BrowserMode = skillcatalog.BrowserModeNativeTools
+		} else {
+			skillOptions.BrowserMode = skillcatalog.BrowserModeUnavailable
+		}
+		catalog, err = skillcatalog.Discover(runCtx, skillOptions)
+		if err != nil {
+			return fmt.Errorf("load skills: %w", err)
+		}
 	}
 	if dataDir == "" {
 		dataDir = defaultDataDir()
@@ -550,7 +571,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		case "xiaomi":
 			model = modeladapter.DefaultXiaomiModel
 		case "ollama":
-			resolved, err := resolveOllamaModel(context.Background(), envFile, requestTimeout)
+			resolved, err := resolveOllamaModel(runCtx, envFile, requestTimeout)
 			if err != nil {
 				return err
 			}
@@ -586,6 +607,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		return err
 	}
 	defer writer.Close()
+	if opts.Capture != nil {
+		opts.Capture.SessionID = sessionID
+		opts.Capture.ArtifactPath = writer.Path()
+	}
 	hostOS, hostArch := currentHostEnvironment()
 	meta := session.Meta(sessionID, workspace.Root, string(auto), provider, model, buildinfo.Version(), started)
 	meta["thread_id"] = threadID
@@ -626,6 +651,18 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			"reasoning_effort":  reasoningEffort,
 			"request_timeout":   requestTimeout.String(),
 			"max_turns":         maxTurns,
+		}); err != nil {
+			return err
+		}
+	}
+	if source := strings.TrimSpace(opts.RouteSource); source != "" {
+		if err := writer.Write(session.Event{
+			"type":        "inference_route",
+			"session_id":  sessionID,
+			"source":      source,
+			"description": strings.TrimSpace(opts.RouteDescription),
+			"provider":    provider,
+			"model":       model,
 		}); err != nil {
 			return err
 		}
@@ -781,9 +818,9 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		if err != nil {
 			return err
 		}
-		runErr = runner.Run(context.Background(), actions)
-	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama":
-		runErr = runChatLoop(context.Background(), writer, runner, threadStore, instructions.PromptSection(), resumeContext, modeladapter.OpenRouterConfig{
+		runErr = runner.Run(runCtx, actions)
+	case "openrouter", "openai", "deepseek", "moonshot", "xiaomi", "ollama", "mlx":
+		providerCfg := modeladapter.OpenRouterConfig{
 			Model:           model,
 			FinalModel:      finalModel,
 			EnvFile:         envFile,
@@ -793,7 +830,13 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
 			ProviderOnly:    splitCommaFields(providerOnlyRaw),
-		}, modeladapter.OpenRouterConfig{
+		}
+		if injected := opts.ProviderConfig; injected != nil {
+			providerCfg.APIKey = injected.APIKey
+			providerCfg.BaseURL = injected.BaseURL
+			providerCfg.HTTPClient = injected.HTTPClient
+		}
+		runErr = runChatLoop(runCtx, writer, runner, threadStore, instructions.PromptSection(), resumeContext, providerCfg, modeladapter.OpenRouterConfig{
 			Model:           utilityModel,
 			EnvFile:         envFile,
 			MaxTurns:        1,
@@ -807,7 +850,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 			RequestTimeout:  requestTimeout,
 			Temperature:     temperature,
 			OmitTemperature: omitTemperature,
-		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled)
+		}, strings.ToLower(strings.TrimSpace(provider)), utilityProvider, visionProvider, searchRefineMinBytes, toolProfile, fileLimits, contextOptions, requireFinalResponseTool, webSearchStatus.Enabled, opts.ReadOnlyTools)
 	default:
 		return fmt.Errorf("unsupported provider: %s", provider)
 	}
@@ -827,7 +870,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	return nil
 }
 
-func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled bool) error {
+func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runner, threadStore *threadStateStore, projectInstructionPrompt string, resumeContext *resumeContext, cfg modeladapter.OpenRouterConfig, utilityCfg modeladapter.OpenRouterConfig, visionCfg modeladapter.OpenRouterConfig, provider, utilityProvider, visionProvider string, searchRefineMinBytes int, toolProfile tools.FileProfile, fileLimits tools.FileLimits, contextOptions openRouterContextOptions, requireFinalResponseTool bool, webSearchEnabled, readOnlyTools bool) error {
 	contextOptions = contextOptions.withDefaults()
 	providerLabel := strings.ToLower(strings.TrimSpace(provider))
 	if providerLabel == "" {
@@ -914,6 +957,8 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	systemPromptOptions.BrowserAvailable = runner.BrowserAvailable
 	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
+	systemPromptOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
+	systemPromptOptions.ReadOnly = readOnlyTools
 	if resumeSection := resumeContext.systemPromptSection(); resumeSection != "" {
 		projectInstructionPrompt = strings.TrimSpace(projectInstructionPrompt + "\n\n" + resumeSection)
 	}
@@ -955,6 +1000,8 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.AdminWrite = runner.Patch.Workspace.AdminWrite
 	toolOptions.BrowserAvailable = runner.BrowserAvailable
 	toolOptions.VisionAnalysisEnabled = vision.Enabled
+	toolOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
+	toolOptions.ReadOnly = readOnlyTools
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0
@@ -1353,6 +1400,8 @@ func newChatProviderClient(provider string, cfg modeladapter.OpenRouterConfig) (
 		return modeladapter.NewXiaomiClient(cfg)
 	case "ollama":
 		return modeladapter.NewOllamaClient(cfg)
+	case "mlx":
+		return modeladapter.NewMLXClient(cfg)
 	default:
 		return modeladapter.NewOpenRouterClient(cfg)
 	}

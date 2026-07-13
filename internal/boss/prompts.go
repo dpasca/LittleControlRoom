@@ -289,7 +289,7 @@ var helpPlannerEvidencePrompt = []string{
 
 var bossPlannerReadOnlyPrompt = []string{
 	"Use queries when the user asks about a concrete project, project TODOs, open agent tasks, delegated/background agents, LCR goal runs, assessment status, current TUI state, Little Control Room usage, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-	"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, reflection_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory, help_reference, goal_run_report.",
+	"Available read-only query kinds: list_projects, project_detail, project_scout, session_classifications, todo_report, agent_task_report, reflection_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory, help_reference, goal_run_report.",
 	"Use reflection_report when the user asks what LCR knows, what data is available, project counts, total projects, Active vs Archived tab split, or portfolio-level aggregate facts.",
 	"Use help_reference when the user asks how to use Little Control Room, what slash command or keybinding to use, what a workflow means, what Chat can do, or how to perform an app action manually.",
 	"Use agent_task_report when the user asks about open, active, completed, archived, historical, or delegated agent tasks, background agents, task cleanup, or what the agents are doing.",
@@ -303,7 +303,7 @@ var bossPlannerReadOnlyPrompt = []string{
 
 var helpPlannerReadOnlyPrompt = []string{
 	"Use queries only when the latest user message asks about a concrete project, project TODOs, open agent tasks, delegated/background agents, LCR goal runs, assessment status, current TUI state, Little Control Room usage, Codex skills, suspicious PIDs/processes/CPU, codenames, aliases, concepts, or anything that requires more than the compact brief.",
-	"Available read-only query kinds: list_projects, project_detail, session_classifications, todo_report, agent_task_report, reflection_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory, help_reference, goal_run_report.",
+	"Available read-only query kinds: list_projects, project_detail, project_scout, session_classifications, todo_report, agent_task_report, reflection_report, current_tui, assessment_queue, process_report, search_context, search_boss_sessions, context_command, skills_inventory, help_reference, goal_run_report.",
 	"Use help_reference when the user asks how to use Little Control Room, slash commands, local embedded commands, Chat, keybindings, worktrees, workflows, or app capabilities.",
 	"Use process_report or the CPU system notice when the user asks about suspicious PIDs, hot CPU, ports, or project-local processes.",
 	"Use skills_inventory when the user asks about Codex skills, stale skills, installed skills, skill duplicates, or skill management.",
@@ -386,6 +386,8 @@ var bossPlannerContextLookupPrompt = []string{
 	"Do not answer that a concrete term is unknown until search_context has been tried.",
 	"For codename or alias status questions, search_context should usually come first; after it finds one project path, inspect project_detail before answering.",
 	"Prefer project_detail when the answer depends on a project's current state, especially after another query identifies the relevant project.",
+	"Use project_scout when the answer depends on fresh repository files: plans, roadmaps, documentation, source code, configuration, tests, or whether a file-backed feature exists. Put the user's concrete repository question in query.",
+	"Project metadata, TODOs, assessments, and cached transcripts are not evidence that repository content is absent. Before claiming that a plan, document, implementation, or feature does not exist, use project_scout; if Scout is unavailable or inconclusive, say inspection was unavailable or incomplete instead of making the negative claim.",
 	"When project_detail includes live engineer work context, treat it as fresher than stored assessments or board stats.",
 	"When project_detail includes worktree family activity, treat linked entries as current work on the same repo, not unrelated projects.",
 	"For project-specific queries, use project_path when a path is available or project_name when the user gives an exact project name.",
@@ -394,6 +396,7 @@ var bossPlannerContextLookupPrompt = []string{
 
 var bossPlannerAnswerPolicyPrompt = []string{
 	"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
+	"When project_scout is used, ground repository-content claims in its findings and evidence links. Do not reproduce its inference-route receipt because the host appends the exact receipt automatically.",
 	"Never claim you changed files, projects, TODOs, snoozes, panels, or sessions. Read-only query tools are report-only; control actions are proposals that need user confirmation before execution.",
 	"Final answers should sound like a concise coworker update: turn tool output into judgment instead of mirroring its bullet structure, and avoid capability pitches or optional menus.",
 	"Use Markdown formatting when it improves scanability. When an answer mentions a URL, local file, artifact, or directory, make the visible text a compact Markdown link label and put the full target in the link; do not show full disk paths as ordinary prose unless the user asks for the raw path.",
@@ -401,6 +404,7 @@ var bossPlannerAnswerPolicyPrompt = []string{
 
 var helpPlannerAnswerPolicyPrompt = []string{
 	"Do not invent facts. After query results are provided, answer from those results and the app-state brief.",
+	"When project_scout is used, ground repository-content claims in its findings and evidence links. Do not reproduce its inference-route receipt because the host appends the exact receipt automatically.",
 	"For greetings, thanks, acknowledgements, and short casual turns, choose kind=\"answer\" immediately with a brief conversational reply.",
 	"Never answer a casual turn with a snapshot, status report, attention list, queue report, repo state, or process summary.",
 	"If the user asks how Chat knows a personal detail, answer from the context boundary only: current Chat transcript, compacted same-session Chat summary if present, and app-state context in the prompt. Do not claim to have searched files, the web, or all previous conversations unless a read-only query result explicitly says so.",
@@ -447,6 +451,7 @@ func bossReadOnlyRouterSystemPromptForRequest(req AssistantRequest) string {
 			"Choose pass when the request needs multiple read-only queries or high-level planning; the full Chat planner will handle it.",
 			"Use help_reference for questions about how to use Little Control Room, slash commands, local embedded commands, Chat, keybindings, worktrees, workflows, or app capabilities.",
 			"Use project_detail for questions about one concrete project when an exact project path or name is available.",
+			"Use project_scout instead when the question depends on fresh repository files, including plans, roadmaps, docs, source code, config, tests, or whether file-backed work exists. Put the user's concrete repository question in query.",
 			"Use agent_task_report for questions about delegated/background agent tasks or what agents are doing.",
 			"Use process_report for suspicious PIDs, hot CPU, ports, or project-local processes.",
 			"Use skills_inventory for Codex skill inventory questions.",
@@ -465,6 +470,7 @@ func bossReadOnlyRouterSystemPromptForRequest(req AssistantRequest) string {
 		"Use goal_run_report when the user asks what LCR goal runs happened, whether a goal finished, what was verified, what failed, or asks to inspect a goal-run trace. If an exact goal run id is known from the user message or state brief, put only that id in query.",
 		"Use agent_task_report for questions about delegated/background agent tasks or what agents are doing.",
 		"Use project_detail for questions about one concrete project when an exact project path or name is available.",
+		"Use project_scout instead when the question depends on fresh repository files, including plans, roadmaps, docs, source code, config, tests, or whether file-backed work exists. Put the user's concrete repository question in query.",
 		"Use process_report for suspicious PIDs, hot CPU, ports, or project-local processes.",
 		"Use skills_inventory for Codex skill inventory questions.",
 		"Use help_reference for questions about how to use Little Control Room, slash commands, local embedded commands, Chat, or Chat-controllable app capabilities.",

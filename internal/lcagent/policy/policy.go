@@ -32,9 +32,10 @@ func ParseAutonomy(value string) (Autonomy, error) {
 }
 
 type Workspace struct {
-	Root       string
-	Auto       Autonomy
-	AdminWrite bool
+	Root               string
+	Auto               Autonomy
+	AdminWrite         bool
+	WorkspaceOnlyReads bool
 }
 
 type DenialError struct {
@@ -133,6 +134,17 @@ func (w Workspace) ResolveRead(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("path is required")
+	}
+	if w.WorkspaceOnlyReads {
+		if filepath.IsAbs(path) {
+			clean := filepath.Clean(path)
+			target, err := w.resolveWorkspaceTarget(clean, path)
+			if err != nil && IsDenied(err) && !isUnder(w.Root, clean) {
+				return "", Denied(fmt.Sprintf("read path is outside the selected workspace: %s", path))
+			}
+			return target, err
+		}
+		return w.Resolve(path)
 	}
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path), nil

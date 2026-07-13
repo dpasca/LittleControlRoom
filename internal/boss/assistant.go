@@ -111,6 +111,8 @@ func NewAssistant(svc *service.Service) *Assistant {
 		query.codexHome = svc.Config().CodexHome
 		query.codexHomeFallbacks = bossDefaultCodexHomeFallbacks(query.codexHome)
 		query.openCodeHome = svc.Config().OpenCodeHome
+		query.projectScout = svc.NewRepositoryScout()
+		query.dataDir = strings.TrimSpace(svc.Config().DataDir)
 	}
 	return &Assistant{
 		runner:       runner,
@@ -363,6 +365,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 			}, nil
 		}
 		if routeResult != nil {
+			addLLMUsage(&totalUsage, routeResult.Usage)
 			toolResults = append(toolResults, *routeResult)
 		}
 	}
@@ -381,7 +384,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 		}
 
 		if normalizeBossActionKind(action.Kind) == bossActionAnswer {
-			answer := strings.TrimSpace(action.Answer)
+			answer := appendBossToolReceipts(strings.TrimSpace(action.Answer), toolResults)
 			if answer == "" {
 				return AssistantResponse{}, errors.New("Chat returned an empty final answer")
 			}
@@ -397,6 +400,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 			if err != nil {
 				return AssistantResponse{}, wrapControlProposalError(err)
 			}
+			content = appendBossToolReceipts(content, toolResults)
 			return AssistantResponse{
 				Content:           content,
 				Model:             firstNonEmpty(usedModel, modelName),
@@ -410,6 +414,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 			if err != nil {
 				return AssistantResponse{}, wrapGoalProposalError(err)
 			}
+			content = appendBossToolReceipts(content, toolResults)
 			return AssistantResponse{
 				Content:       content,
 				Model:         firstNonEmpty(usedModel, modelName),
@@ -426,6 +431,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 				Text: "Tool error: " + err.Error(),
 			}
 		}
+		addLLMUsage(&totalUsage, result.Usage)
 		if reason := strings.TrimSpace(action.Reason); reason != "" {
 			result.Text = "Query reason: " + clipText(reason, 220) + "\n" + strings.TrimSpace(result.Text)
 		}
@@ -433,7 +439,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 	}
 
 	return AssistantResponse{
-		Content:       synthesizeToolLoopFallback(toolResults),
+		Content:       appendBossToolReceipts(synthesizeToolLoopFallback(toolResults), toolResults),
 		Model:         firstNonEmpty(usedModel, modelName),
 		Usage:         totalUsage,
 		PromptContext: req.PromptContext,
@@ -498,6 +504,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 			}, nil
 		}
 		if routeResult != nil {
+			addLLMUsage(&totalUsage, routeResult.Usage)
 			toolResults = append(toolResults, *routeResult)
 		}
 	}
@@ -516,7 +523,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		}
 
 		if normalizeBossActionKind(action.Kind) == bossActionAnswer {
-			answer := strings.TrimSpace(action.Answer)
+			answer := appendBossToolReceipts(strings.TrimSpace(action.Answer), toolResults)
 			if answer == "" {
 				return AssistantResponse{}, errors.New("Chat returned an empty final answer")
 			}
@@ -533,6 +540,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 			if err != nil {
 				return AssistantResponse{}, wrapControlProposalError(err)
 			}
+			content = appendBossToolReceipts(content, toolResults)
 			emitToolCall(emit, describeBossAction(action), "ready")
 			emitAssistantDelta(emit, content)
 			return AssistantResponse{
@@ -548,6 +556,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 			if err != nil {
 				return AssistantResponse{}, wrapGoalProposalError(err)
 			}
+			content = appendBossToolReceipts(content, toolResults)
 			emitToolCall(emit, describeBossAction(action), "ready")
 			emitAssistantDelta(emit, content)
 			return AssistantResponse{
@@ -571,13 +580,14 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 		} else {
 			emitToolCall(emit, toolCall, "done")
 		}
+		addLLMUsage(&totalUsage, result.Usage)
 		if reason := strings.TrimSpace(action.Reason); reason != "" {
 			result.Text = "Query reason: " + clipText(reason, 220) + "\n" + strings.TrimSpace(result.Text)
 		}
 		toolResults = append(toolResults, result)
 	}
 
-	fallback := synthesizeToolLoopFallback(toolResults)
+	fallback := appendBossToolReceipts(synthesizeToolLoopFallback(toolResults), toolResults)
 	emitAssistantDelta(emit, fallback)
 	return AssistantResponse{
 		Content:       fallback,
@@ -906,10 +916,34 @@ func emitToolCall(emit func(AssistantStreamEvent), call, state string) {
 	})
 }
 
+func appendBossToolReceipts(answer string, results []bossToolResult) string {
+	answer = strings.TrimSpace(answer)
+	seen := map[string]struct{}{}
+	var receipts []string
+	for _, result := range results {
+		receipt := strings.TrimSpace(result.UserReceipt)
+		if receipt == "" {
+			continue
+		}
+		if _, ok := seen[receipt]; ok {
+			continue
+		}
+		seen[receipt] = struct{}{}
+		receipts = append(receipts, receipt)
+	}
+	if len(receipts) == 0 {
+		return answer
+	}
+	if answer == "" {
+		return strings.Join(receipts, "\n")
+	}
+	return answer + "\n\n" + strings.Join(receipts, "\n")
+}
+
 func describeBossAction(action bossAction) string {
 	kind := normalizeBossActionKind(action.Kind)
 	switch kind {
-	case bossActionProjectDetail:
+	case bossActionProjectDetail, bossActionProjectScout:
 		target := firstNonEmpty(action.ProjectName, action.ProjectPath, action.Target)
 		if target != "" {
 			return kind + " " + clipText(target, 80)

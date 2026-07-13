@@ -16,6 +16,8 @@ type SystemPromptOptions struct {
 	VisionAnalysisEnabled   bool
 	HostOS                  string
 	HostArch                string
+	WorkspaceOnlyReads      bool
+	ReadOnly                bool
 }
 
 func SystemPrompt(skillIndex, projectInstructions string) string {
@@ -28,6 +30,9 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	}
 	if opts.MaxReadLineLimit <= 0 {
 		opts.MaxReadLineLimit = 1000
+	}
+	if opts.ReadOnly {
+		return readOnlySystemPrompt(projectInstructions, opts)
 	}
 	readScoutingLine := "When scouting with read_file, prefer 40-100 lines; use larger relevant ranges when needed. If read_file returns next_offset, continue there instead of overlapping."
 	if strings.EqualFold(opts.ToolProfile, "generous") {
@@ -151,6 +156,21 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 	}
 	if strings.TrimSpace(skillIndex) != "" {
 		lines = append(lines, "", strings.TrimSpace(skillIndex))
+	}
+	if strings.TrimSpace(projectInstructions) != "" {
+		lines = append(lines, "", strings.TrimSpace(projectInstructions))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func readOnlySystemPrompt(projectInstructions string, opts SystemPromptOptions) string {
+	lines := []string{
+		"You are LCAgent running a bounded read-only repository Scout for Little Control Room Chat.",
+		"Use only the provided repository inspection tools. Never modify files, run commands, access the web, or inspect outside the selected workspace.",
+		"Follow the project instructions below. Inspect progressively with list/search/outline/read, then call final_response with a compact evidence-grounded answer.",
+		"Read relevant source files before making positive claims. Before claiming something is absent, search the likely repository locations broadly enough to support that negative claim.",
+		"Keep confirmed findings separate from uncertainty. Name workspace-relative evidence files in the summary.",
+		"Set final_response files_changed to an empty array. Use completed only when the requested inspection is adequately supported; otherwise use partial or blocked and explain what could not be established.",
 	}
 	if strings.TrimSpace(projectInstructions) != "" {
 		lines = append(lines, "", strings.TrimSpace(projectInstructions))

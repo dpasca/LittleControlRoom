@@ -260,6 +260,23 @@ func NewOllamaClient(cfg OpenRouterConfig) (*Client, error) {
 	})
 }
 
+// NewMLXClient connects the LCAgent tool loop to an OpenAI-compatible local
+// MLX endpoint. Unlike the OpenRouter profile, it does not add provider-routing
+// fields or OpenRouter-specific headers.
+func NewMLXClient(cfg OpenRouterConfig) (*Client, error) {
+	return newChatCompletionsClient(cfg, chatProviderProfile{
+		Name:            "mlx",
+		APIKeyEnv:       "MLX_API_KEY",
+		BaseURLEnv:      "MLX_BASE_URL",
+		DefaultBaseURL:  "http://127.0.0.1:8080/v1",
+		DefaultModel:    "",
+		MaxTokensField:  "max_completion_tokens",
+		ExtraHeaders:    map[string]string{},
+		APIKeyOptional:  true,
+		OmitTemperature: true,
+	})
+}
+
 type chatProviderProfile struct {
 	Name            string
 	APIKeyEnv       string
@@ -367,7 +384,7 @@ func ModelIsKnownForProvider(provider, model string) bool {
 		return false
 	}
 	switch provider {
-	case "openrouter", "", "ollama":
+	case "openrouter", "", "ollama", "mlx":
 		return true // anything can be routed through openrouter
 	case "openai":
 		model = strings.ToLower(NormalizeModelForProvider("openai", model))
