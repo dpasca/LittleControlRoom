@@ -10,8 +10,8 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=9">
-  <script defer src="/app.js?v=9"></script>
+  <link rel="stylesheet" href="/app.css?v=10">
+  <script defer src="/app.js?v=10"></script>
 </head>
 <body class="auth-pending">
   <div class="app-shell">
@@ -248,7 +248,7 @@
               <span id="session-composer-mode">Send</span>
             </div>
             <div class="session-composer-row">
-              <textarea id="session-message" rows="1" maxlength="12000" enterkeyhint="send" autocapitalize="sentences" autocomplete="off" spellcheck="true" aria-label="Message to engineer" placeholder="Message the engineer"></textarea>
+              <textarea id="session-message" rows="1" maxlength="12000" enterkeyhint="send" autocapitalize="sentences" autocomplete="off" spellcheck="true" aria-label="Message to engineer" aria-describedby="session-composer-state session-composer-feedback" placeholder="Message the engineer"></textarea>
               <button id="session-send-button" type="submit">Send</button>
             </div>
             <p id="session-composer-feedback" class="session-composer-feedback" aria-live="polite"></p>
