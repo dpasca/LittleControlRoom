@@ -1613,7 +1613,7 @@ func parseContextOpenCodeTextPart(partData string) string {
 	if err := json.Unmarshal([]byte(partData), &payload); err != nil || payload.Type != "text" {
 		return ""
 	}
-	return contextSanitizeText(payload.Text)
+	return contextNormalizeTranscriptText(payload.Text)
 }
 
 func contextTranscriptItemFromRaw(role string, raw json.RawMessage) (contextTranscriptItem, bool) {
@@ -1622,7 +1622,7 @@ func contextTranscriptItemFromRaw(role string, raw json.RawMessage) (contextTran
 
 func contextTranscriptItemFromText(role, text string) (contextTranscriptItem, bool) {
 	role = strings.ToLower(strings.TrimSpace(role))
-	text = contextSanitizeText(text)
+	text = contextNormalizeTranscriptText(text)
 	if !contextAllowedTranscriptRole(role) || text == "" {
 		return contextTranscriptItem{}, false
 	}
@@ -1644,7 +1644,7 @@ func extractContextContentText(raw json.RawMessage) string {
 	}
 	var asString string
 	if err := json.Unmarshal(raw, &asString); err == nil {
-		return contextSanitizeText(asString)
+		return contextNormalizeTranscriptText(asString)
 	}
 
 	var blocks []struct {
@@ -1657,7 +1657,7 @@ func extractContextContentText(raw json.RawMessage) string {
 		for _, block := range blocks {
 			switch block.Type {
 			case "text", "input_text", "output_text":
-				if text := contextSanitizeText(block.Text); text != "" {
+				if text := contextNormalizeTranscriptText(block.Text); text != "" {
 					parts = append(parts, text)
 					continue
 				}
@@ -1668,7 +1668,7 @@ func extractContextContentText(raw json.RawMessage) string {
 				}
 			}
 		}
-		return contextSanitizeText(strings.Join(parts, "\n\n"))
+		return contextNormalizeTranscriptText(strings.Join(parts, "\n\n"))
 	}
 
 	var object struct {
@@ -1679,7 +1679,7 @@ func extractContextContentText(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &object); err == nil {
 		switch object.Type {
 		case "", "text", "input_text", "output_text":
-			if text := contextSanitizeText(object.Text); text != "" {
+			if text := contextNormalizeTranscriptText(object.Text); text != "" {
 				return text
 			}
 			if len(object.Content) > 0 {
@@ -1715,6 +1715,12 @@ func contextAppendLine(b *strings.Builder, line string) {
 
 func contextSanitizeText(text string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+}
+
+func contextNormalizeTranscriptText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.TrimSpace(text)
 }
 
 func contextRecentSessionSampleText(text string, maxLines, maxRunes int) string {

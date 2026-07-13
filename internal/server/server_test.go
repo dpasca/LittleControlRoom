@@ -106,6 +106,22 @@ func TestHandlerServesMobileAppAndSemanticDashboard(t *testing.T) {
 	if got, want := cssResponse.Header().Get("Cache-Control"), "no-store"; got != want {
 		t.Fatalf("GET /app.css cache control = %q, want %q", got, want)
 	}
+	css := cssResponse.Body.String()
+	transcriptRuleStart := strings.Index(css, ".transcript-entry-text {")
+	if transcriptRuleStart < 0 {
+		t.Fatal("mobile CSS is missing the transcript text rule")
+	}
+	transcriptRuleEnd := strings.Index(css[transcriptRuleStart:], "}")
+	if transcriptRuleEnd < 0 {
+		t.Fatal("mobile CSS transcript text rule is incomplete")
+	}
+	transcriptRule := css[transcriptRuleStart : transcriptRuleStart+transcriptRuleEnd]
+	if strings.Contains(transcriptRule, "ui-monospace") || !strings.Contains(transcriptRule, "ui-sans-serif") {
+		t.Fatalf("transcript text should use a proportional font stack: %s", transcriptRule)
+	}
+	if !strings.Contains(css, ".markdown-body table") || !strings.Contains(css, "width: max-content") {
+		t.Fatal("mobile CSS should preserve readable, horizontally scrollable Markdown tables")
+	}
 
 	dashboardRequest := httptest.NewRequest(http.MethodGet, "/api/mobile/dashboard", nil)
 	dashboardResponse := httptest.NewRecorder()

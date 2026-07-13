@@ -10,9 +10,12 @@ import (
 )
 
 const (
-	engineerSessionEntryLimit     = 120
-	engineerSessionTextRuneLimit  = 48000
-	engineerSessionEntryRuneLimit = 6000
+	engineerSessionEntryLimit             = 120
+	engineerSessionConversationEntryLimit = 80
+	engineerSessionTextRuneLimit          = 48000
+	engineerSessionConversationRuneLimit  = 36000
+	engineerSessionEntryRuneLimit         = 6000
+	engineerSessionActivityEntryRuneLimit = 2400
 )
 
 type EngineerSessionItem struct {
@@ -314,16 +317,15 @@ func liveEngineerSessionSummary(snapshot codexapp.Snapshot) string {
 	return strings.TrimSpace(snapshot.Status)
 }
 
+type engineerTranscriptCandidate struct {
+	index        int
+	conversation bool
+	entry        EngineerTranscriptEntry
+}
+
 func liveEngineerTranscriptEntries(entries []codexapp.TranscriptEntry) ([]EngineerTranscriptEntry, bool) {
-	reversed := make([]EngineerTranscriptEntry, 0, min(len(entries), engineerSessionEntryLimit))
-	usedRunes := 0
-	truncated := false
-	for i := len(entries) - 1; i >= 0; i-- {
-		if len(reversed) >= engineerSessionEntryLimit || usedRunes >= engineerSessionTextRuneLimit {
-			truncated = true
-			break
-		}
-		entry := entries[i]
+	candidates := make([]engineerTranscriptCandidate, 0, len(entries))
+	for index, entry := range entries {
 		text := strings.TrimSpace(entry.DisplayText)
 		if text == "" {
 			text = strings.TrimSpace(entry.Text)
@@ -334,28 +336,103 @@ func liveEngineerTranscriptEntries(entries []codexapp.TranscriptEntry) ([]Engine
 		if text == "" {
 			continue
 		}
-		remaining := engineerSessionTextRuneLimit - usedRunes
-		entryLimit := min(engineerSessionEntryRuneLimit, remaining)
-		clipped := clipSessionText(text, entryLimit)
-		if clipped != text {
-			truncated = true
-		}
-		usedRunes += len([]rune(clipped))
 		kind, label, tone := engineerTranscriptPresentation(entry.Kind)
-		reversed = append(reversed, EngineerTranscriptEntry{
-			ItemID: strings.TrimSpace(entry.ItemID),
-			Kind:   kind,
-			Label:  label,
-			Text:   clipped,
-			Tone:   tone,
+		candidates = append(candidates, engineerTranscriptCandidate{
+			index:        index,
+			conversation: engineerTranscriptConversationKind(entry.Kind),
+			entry: EngineerTranscriptEntry{
+				ItemID: strings.TrimSpace(entry.ItemID),
+				Kind:   kind,
+				Label:  label,
+				Text:   text,
+				Tone:   tone,
+			},
 		})
 	}
-
-	out := make([]EngineerTranscriptEntry, len(reversed))
-	for i := range reversed {
-		out[len(reversed)-1-i] = reversed[i]
+	if len(candidates) == 0 {
+		return nil, false
 	}
-	return out, truncated
+
+	selected := make(map[int]EngineerTranscriptEntry, min(len(candidates), engineerSessionEntryLimit))
+	usedRunes := 0
+	clippedAny := false
+	selectCandidate := func(candidate engineerTranscriptCandidate, runeBudget, entryRuneLimit int) bool {
+		if len(selected) >= engineerSessionEntryLimit || runeBudget <= 0 {
+			return false
+		}
+		remaining := engineerSessionTextRuneLimit - usedRunes
+		entryLimit := min(entryRuneLimit, runeBudget, remaining)
+		if entryLimit <= 0 {
+			return false
+		}
+		clipped := clipSessionText(candidate.entry.Text, entryLimit)
+		if clipped == "" {
+			return false
+		}
+		if clipped != candidate.entry.Text {
+			clippedAny = true
+		}
+		candidate.entry.Text = clipped
+		selected[candidate.index] = candidate.entry
+		usedRunes += len([]rune(clipped))
+		return true
+	}
+
+	conversationRunes := 0
+	conversationEntries := 0
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		if !candidate.conversation || conversationEntries >= engineerSessionConversationEntryLimit {
+			continue
+		}
+		budget := engineerSessionConversationRuneLimit - conversationRunes
+		before := usedRunes
+		if selectCandidate(candidate, budget, engineerSessionEntryRuneLimit) {
+			conversationRunes += usedRunes - before
+			conversationEntries++
+		}
+	}
+
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		if candidate.conversation {
+			continue
+		}
+		if _, ok := selected[candidate.index]; ok {
+			continue
+		}
+		selectCandidate(candidate, engineerSessionTextRuneLimit-usedRunes, engineerSessionActivityEntryRuneLimit)
+	}
+
+	// If activity used less than its reserved share, spend the remaining payload
+	// budget on older conversation entries instead of leaving useful history out.
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		if !candidate.conversation {
+			continue
+		}
+		if _, ok := selected[candidate.index]; ok {
+			continue
+		}
+		selectCandidate(candidate, engineerSessionTextRuneLimit-usedRunes, engineerSessionEntryRuneLimit)
+	}
+
+	out := make([]EngineerTranscriptEntry, 0, len(selected))
+	for _, candidate := range candidates {
+		if entry, ok := selected[candidate.index]; ok {
+			out = append(out, entry)
+		}
+	}
+	return out, clippedAny || len(out) < len(candidates)
+}
+
+func engineerTranscriptConversationKind(kind codexapp.TranscriptKind) bool {
+	switch kind {
+	case codexapp.TranscriptUser, codexapp.TranscriptAgent, codexapp.TranscriptPlan, codexapp.TranscriptError:
+		return true
+	default:
+		return false
+	}
 }
 
 func engineerTranscriptPresentation(kind codexapp.TranscriptKind) (string, string, Tone) {
