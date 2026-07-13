@@ -10,8 +10,8 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=7">
-  <script defer src="/app.js?v=7"></script>
+  <link rel="stylesheet" href="/app.css?v=9">
+  <script defer src="/app.js?v=9"></script>
 </head>
 <body class="auth-pending">
   <div class="app-shell">
@@ -119,21 +119,6 @@
           <div id="dashboard-live-list" class="dashboard-live-list"></div>
         </section>
 
-        <div id="bucket-filter" class="selector-bank" role="group" aria-label="Project state">
-          <button type="button" data-bucket="attention" class="selector-key selected">
-            <strong id="attention-count">0</strong>
-            <span>Need</span>
-          </button>
-          <button type="button" data-bucket="active" class="selector-key">
-            <strong id="active-count">0</strong>
-            <span>Active</span>
-          </button>
-          <button type="button" data-bucket="all" class="selector-key">
-            <strong id="all-count">0</strong>
-            <span>All</span>
-          </button>
-        </div>
-
         <div id="category-tabs" class="category-rail" role="tablist" aria-label="Project categories"></div>
 
         <label class="search-console">
@@ -146,7 +131,7 @@
         </label>
 
         <div class="rack-heading">
-          <p id="queue-title">Attention switchboard</p>
+          <p id="queue-title">Main projects</p>
           <div>
             <span id="updated-label">Loading</span>
             <span class="rack-divider" aria-hidden="true"></span>

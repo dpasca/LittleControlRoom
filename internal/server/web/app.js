@@ -4,7 +4,6 @@
   const state = {
     dashboard: null,
     category: window.localStorage.getItem("lcr.mobile.category") || "main",
-    bucket: window.localStorage.getItem("lcr.mobile.bucket") || "attention",
     query: "",
     selectedPath: "",
     selectedSessionID: "",
@@ -56,12 +55,8 @@
     dashboardLiveChannels: document.getElementById("dashboard-live-channels"),
     dashboardLiveCount: document.getElementById("dashboard-live-count"),
     dashboardLiveList: document.getElementById("dashboard-live-list"),
-    attentionCount: document.getElementById("attention-count"),
-    activeCount: document.getElementById("active-count"),
-    allCount: document.getElementById("all-count"),
     updatedLabel: document.getElementById("updated-label"),
     categoryTabs: document.getElementById("category-tabs"),
-    bucketFilter: document.getElementById("bucket-filter"),
     search: document.getElementById("project-search"),
     queueTitle: document.getElementById("queue-title"),
     queueCount: document.getElementById("queue-count"),
@@ -287,13 +282,10 @@
     if (!categories.some((category) => category.id === state.category)) {
       state.category = "main";
     }
-    const buckets = new Set(["attention", "active", "all"]);
-    if (!buckets.has(state.bucket)) state.bucket = "all";
   }
 
   function renderDashboard() {
     renderCategories();
-    renderBucketFilter();
     renderDashboardLiveSessions();
     renderProjects();
     updateOperatorScene();
@@ -358,9 +350,7 @@
       if (category.id === state.category) button.classList.add("selected");
       if (category.attention_count > 0) button.classList.add("has-attention");
       button.append(createElement("span", "tab-label", category.label));
-      const countLabel = category.attention_count > 0
-        ? `${category.attention_count}/${category.count}`
-        : String(category.count);
+      const countLabel = String(category.count);
       button.append(createElement("span", "tab-count", countLabel));
       button.addEventListener("click", () => {
         state.category = category.id;
@@ -371,30 +361,19 @@
     }
   }
 
-  function renderBucketFilter() {
-    const counts = state.dashboard?.counts || {};
-    elements.attentionCount.textContent = String(counts.attention || 0);
-    elements.activeCount.textContent = String(counts.active || 0);
-    elements.allCount.textContent = String(counts.all || 0);
-    for (const button of elements.bucketFilter.querySelectorAll("button")) {
-      const selected = button.dataset.bucket === state.bucket;
-      button.classList.toggle("selected", selected);
-      button.setAttribute("aria-pressed", String(selected));
-    }
-  }
-
   function visibleProjects() {
     const query = state.query.trim().toLocaleLowerCase();
-    return (state.dashboard?.projects || []).filter((project) => {
-      const inCategory = state.category === "all"
-        || (state.category === "main" ? !project.category_id : project.category_id === state.category);
-      const inBucket = state.bucket === "all" || project.bucket === state.bucket;
-      const matchesQuery = !query
-        || project.name.toLocaleLowerCase().includes(query)
+    const tabProjects = (state.dashboard?.projects || []).filter((project) => project.tab_id === state.category);
+    if (!query) return tabProjects;
+    const matchingRoots = new Set();
+    for (const project of tabProjects) {
+      const matchesQuery = project.name.toLocaleLowerCase().includes(query)
+        || (project.list_name || "").toLocaleLowerCase().includes(query)
         || project.summary.toLocaleLowerCase().includes(query)
         || project.path.toLocaleLowerCase().includes(query);
-      return inCategory && inBucket && matchesQuery;
-    });
+      if (matchesQuery) matchingRoots.add(project.worktree_root_path || project.path);
+    }
+    return tabProjects.filter((project) => matchingRoots.has(project.worktree_root_path || project.path));
   }
 
   function renderProjects() {
@@ -402,12 +381,8 @@
     elements.projectList.replaceChildren();
     elements.dashboardState.hidden = true;
 
-    const bucketLabels = {
-      attention: "Needs attention",
-      active: "Active work",
-      all: "Projects",
-    };
-    elements.queueTitle.textContent = state.query ? "Search results" : bucketLabels[state.bucket];
+    const selectedTab = (state.dashboard?.categories || []).find((category) => category.id === state.category);
+    elements.queueTitle.textContent = state.query ? "Search results" : `${selectedTab?.label || "Main"} projects`;
     elements.queueCount.textContent = String(projects.length);
 
     if (projects.length === 0) {
@@ -417,8 +392,9 @@
     }
 
     for (const project of projects) {
-      const row = createElement("li", "project-row");
-      const button = createElement("button", `project-button rack-row bucket-${project.bucket}`);
+      const hierarchyClass = project.worktree_role ? ` worktree-${project.worktree_role}` : "";
+      const row = createElement("li", `project-row${hierarchyClass}`);
+      const button = createElement("button", `project-button rack-row bucket-${project.bucket}${hierarchyClass}`);
       button.type = "button";
       button.dataset.path = project.path;
       button.setAttribute("aria-label", `Open ${project.name}`);
@@ -429,13 +405,19 @@
       button.append(lamp);
 
       const head = createElement("div", "project-row-head");
-      head.append(createElement("span", "project-name", project.name));
+      const nameLine = createElement("span", "project-name-line");
+      if (project.worktree_role === "child") nameLine.append(createElement("span", "worktree-branch", "↳"));
+      nameLine.append(createElement("span", "project-name", project.list_name || project.name));
+      if (project.worktree_role === "root" && project.linked_count > 0) {
+        nameLine.append(createElement("span", "worktree-count", `${project.linked_count} WT`));
+      }
+      head.append(nameLine);
       head.append(createElement("span", "project-time", project.last_activity_label));
       button.append(head);
       button.append(createElement("p", "project-summary", project.summary));
 
       const badges = createElement("div", "badge-row");
-      for (const badge of (project.badges || []).slice(0, 4)) {
+      for (const badge of (project.badges || []).slice(0, project.worktree_role === "child" ? 3 : 4)) {
         badges.append(createBadge(badge));
       }
       button.append(badges);
@@ -1203,14 +1185,6 @@
     } else if (state.selectedPath) {
       await openProject(state.selectedPath, false);
     }
-  });
-
-  elements.bucketFilter.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-bucket]");
-    if (!button) return;
-    state.bucket = button.dataset.bucket;
-    window.localStorage.setItem("lcr.mobile.bucket", state.bucket);
-    renderDashboard();
   });
 
   elements.search.addEventListener("input", () => {

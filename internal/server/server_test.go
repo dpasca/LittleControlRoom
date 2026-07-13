@@ -156,6 +156,26 @@ func TestHandlerServesMobileAppAndSemanticDashboard(t *testing.T) {
 	}
 }
 
+func TestFilterMobileDashboardProjectsMatchesDesktopTabs(t *testing.T) {
+	t.Parallel()
+	projects := []model.ProjectSummary{
+		{Path: "/tmp/scoped", InScope: true},
+		{Path: "/tmp/manual", ManuallyAdded: true},
+		{Path: "/tmp/archived", Archived: true},
+		{Path: "/tmp/outside"},
+	}
+
+	filtered := filterMobileDashboardProjects(projects)
+	if got, want := len(filtered), 3; got != want {
+		t.Fatalf("filtered count = %d, want %d", got, want)
+	}
+	for i, want := range []string{"/tmp/scoped", "/tmp/manual", "/tmp/archived"} {
+		if filtered[i].Path != want {
+			t.Fatalf("filtered[%d].Path = %q, want %q", i, filtered[i].Path, want)
+		}
+	}
+}
+
 func TestHandlerRejectsPrivateProjectInPrivacyMode(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
