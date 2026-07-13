@@ -282,7 +282,7 @@ func (s *Server) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 	if !requireGET(w, r) {
 		return
 	}
-	projects, err := s.svc.Store().ListProjects(r.Context(), false)
+	projects, err := s.svc.Store().ListProjects(r.Context(), true)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -294,14 +294,26 @@ func (s *Server) handleMobileDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.svc.Config()
 	projects = filterProjectSummariesByName(projects, cfg.ExcludeProjectPatterns)
+	projects = filterMobileDashboardProjects(projects)
 	now := time.Now()
 	surface := uisurface.BuildDashboard(projects, categories, uisurface.BuildOptions{
-		Now:            now,
-		StuckThreshold: sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold),
-		HidePrivate:    cfg.PrivacyMode,
+		Now:             now,
+		StuckThreshold:  sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold),
+		HidePrivate:     cfg.PrivacyMode,
+		IncludeArchived: true,
 	})
 	surface.LiveSessions = s.mobileDashboardLiveSessions(surface.Projects, now)
 	writeJSON(w, surface)
+}
+
+func filterMobileDashboardProjects(projects []model.ProjectSummary) []model.ProjectSummary {
+	filtered := make([]model.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		if project.Archived || project.InScope || project.ManuallyAdded {
+			filtered = append(filtered, project)
+		}
+	}
+	return filtered
 }
 
 func (s *Server) handleMobileProjectDetail(w http.ResponseWriter, r *http.Request) {

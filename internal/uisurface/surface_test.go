@@ -54,18 +54,129 @@ func TestBuildDashboardGroupsProjectsAndHidesPrivateCategories(t *testing.T) {
 	if surface.Counts.Attention != 1 || surface.Counts.Active != 1 || surface.Counts.All != 2 {
 		t.Fatalf("counts = %#v, want one attention and one active project", surface.Counts)
 	}
-	if got, want := surface.Projects[0].Summary, "Choose the mobile navigation."; got != want {
-		t.Fatalf("first project summary = %q, want %q", got, want)
+	if got, want := surface.Projects[0].Name, "Client project"; got != want {
+		t.Fatalf("first project = %q, want recent project %q", got, want)
 	}
-	if got, want := surface.Projects[0].Bucket, ProjectBucketAttention; got != want {
-		t.Fatalf("first project bucket = %q, want %q", got, want)
+	if got, want := surface.Projects[1].Summary, "Choose the mobile navigation."; got != want {
+		t.Fatalf("second project summary = %q, want %q", got, want)
 	}
 	if got, want := len(surface.Categories), 3; got != want {
-		t.Fatalf("category count = %d, want Main, Client, and All", got)
+		t.Fatalf("category count = %d, want Main, Client, and Archived", got)
+	}
+	if got, want := surface.Categories[2].ID, "archived"; got != want {
+		t.Fatalf("last tab = %q, want %q", got, want)
 	}
 	for _, category := range surface.Categories {
 		if category.ID == "cat_private" {
 			t.Fatalf("private category leaked into surface: %#v", category)
+		}
+	}
+}
+
+func TestBuildDashboardMatchesDesktopRecentOrderAndGroupsWorktrees(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 12, 12, 2, 0, 0, time.UTC)
+	rootPath := "/tmp/control-room"
+	projects := []model.ProjectSummary{
+		{
+			Path:             rootPath,
+			Name:             "Little Control Room",
+			CategoryID:       "cat_product",
+			CategoryName:     "Product",
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindMain,
+			RepoBranch:       "master",
+			LastActivity:     now.Add(-2 * time.Hour),
+		},
+		{
+			Path:             "/tmp/control-room--beta",
+			Name:             "Beta checkout",
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindLinked,
+			RepoBranch:       "todo/beta",
+			LastActivity:     now.Add(-65 * time.Second),
+		},
+		{
+			Path:             "/tmp/control-room--alpha",
+			Name:             "Alpha checkout",
+			PresentOnDisk:    true,
+			WorktreeRootPath: rootPath,
+			WorktreeKind:     model.WorktreeKindLinked,
+			RepoBranch:       "todo/alpha",
+			LastActivity:     now.Add(-115 * time.Second),
+		},
+		{
+			Path:          "/tmp/older",
+			Name:          "Older standalone",
+			PresentOnDisk: true,
+			LastActivity:  now.Add(-3 * time.Hour),
+		},
+		{
+			Path:          "/tmp/archived",
+			Name:          "Archived project",
+			PresentOnDisk: true,
+			Archived:      true,
+			LastActivity:  now,
+		},
+	}
+
+	surface := BuildDashboard(projects, []model.ProjectCategory{{ID: "cat_product", Name: "Product"}}, BuildOptions{
+		Now:             now,
+		IncludeArchived: true,
+	})
+
+	if got, want := len(surface.Projects), 5; got != want {
+		t.Fatalf("project count = %d, want %d", got, want)
+	}
+	byPath := make(map[string]ProjectItem, len(surface.Projects))
+	for _, project := range surface.Projects {
+		byPath[project.Path] = project
+	}
+	root := byPath[rootPath]
+	if root.WorktreeRole != "root" || root.LinkedCount != 2 || root.TabID != "cat_product" {
+		t.Fatalf("root hierarchy = %#v", root)
+	}
+	alpha := byPath["/tmp/control-room--alpha"]
+	if alpha.WorktreeRole != "child" || alpha.WorktreeRootPath != rootPath || alpha.ListName != "todo/alpha" || alpha.TabID != root.TabID {
+		t.Fatalf("alpha hierarchy = %#v", alpha)
+	}
+
+	productItems := []ProjectItem{}
+	for _, project := range surface.Projects {
+		if project.TabID == "cat_product" {
+			productItems = append(productItems, project)
+		}
+	}
+	wantProductPaths := []string{rootPath, "/tmp/control-room--alpha", "/tmp/control-room--beta"}
+	for i, want := range wantProductPaths {
+		if productItems[i].Path != want {
+			t.Fatalf("productItems[%d].Path = %q, want %q; items = %#v", i, productItems[i].Path, want, productItems)
+		}
+	}
+	if got := byPath["/tmp/archived"].TabID; got != "archived" {
+		t.Fatalf("archived tab id = %q, want archived", got)
+	}
+	if surface.Counts.All != 4 {
+		t.Fatalf("active dashboard count = %d, want archived project excluded", surface.Counts.All)
+	}
+}
+
+func TestSortProjectsByRecentUsesCreationAndMinuteAlphabeticalOrder(t *testing.T) {
+	t.Parallel()
+	minute := time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC)
+	projects := []model.ProjectSummary{
+		{Name: "Zulu", Path: "/tmp/zulu", LastActivity: minute.Add(55 * time.Second)},
+		{Name: "Alpha", Path: "/tmp/alpha", LastActivity: minute.Add(5 * time.Second)},
+		{Name: "New", Path: "/tmp/new", ManuallyAdded: true, CreatedAt: minute.Add(time.Minute)},
+	}
+
+	SortProjectsByRecent(projects)
+	want := []string{"New", "Alpha", "Zulu"}
+	for i := range want {
+		if projects[i].Name != want[i] {
+			t.Fatalf("projects[%d].Name = %q, want %q", i, projects[i].Name, want[i])
 		}
 	}
 }

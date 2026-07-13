@@ -46,9 +46,15 @@ const (
 type ProjectItem struct {
 	Path              string        `json:"path"`
 	Name              string        `json:"name"`
+	ListName          string        `json:"list_name,omitempty"`
 	Kind              string        `json:"kind"`
 	CategoryID        string        `json:"category_id"`
 	CategoryName      string        `json:"category_name,omitempty"`
+	TabID             string        `json:"tab_id"`
+	Archived          bool          `json:"archived,omitempty"`
+	WorktreeRole      string        `json:"worktree_role,omitempty"`
+	WorktreeRootPath  string        `json:"worktree_root_path,omitempty"`
+	LinkedCount       int           `json:"linked_count,omitempty"`
 	Summary           string        `json:"summary"`
 	Assessment        Status        `json:"assessment"`
 	Activity          Status        `json:"activity"`
@@ -118,9 +124,10 @@ type ProjectDetailSurface struct {
 }
 
 type BuildOptions struct {
-	Now            time.Time
-	StuckThreshold time.Duration
-	HidePrivate    bool
+	Now             time.Time
+	StuckThreshold  time.Duration
+	HidePrivate     bool
+	IncludeArchived bool
 }
 
 func (s *ProjectDetailSurface) Field(label, text string, tone Tone) {
@@ -165,28 +172,15 @@ func RenderedFieldValue(label, text string, tone Tone, renderedText string) Deta
 
 func BuildDashboard(projects []model.ProjectSummary, categories []model.ProjectCategory, options BuildOptions) DashboardSurface {
 	options = normalizedOptions(options)
-	items := make([]ProjectItem, 0, len(projects))
+	visible := make([]model.ProjectSummary, 0, len(projects))
 	for _, project := range projects {
-		if project.Archived || (options.HidePrivate && project.CategoryPrivate) {
+		if (!options.IncludeArchived && project.Archived) || (options.HidePrivate && project.CategoryPrivate) {
 			continue
 		}
-		items = append(items, BuildProjectItem(project, options))
+		visible = append(visible, project)
 	}
-
-	sort.SliceStable(items, func(i, j int) bool {
-		leftRank := projectBucketRank(items[i].Bucket)
-		rightRank := projectBucketRank(items[j].Bucket)
-		if leftRank != rightRank {
-			return leftRank < rightRank
-		}
-		if items[i].AttentionScore != items[j].AttentionScore {
-			return items[i].AttentionScore > items[j].AttentionScore
-		}
-		if !items[i].LastActivityAt.Equal(items[j].LastActivityAt) {
-			return items[i].LastActivityAt.After(items[j].LastActivityAt)
-		}
-		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
-	})
+	SortProjectsByRecent(visible)
+	items := buildDashboardProjectItems(visible, options)
 
 	surface := DashboardSurface{
 		GeneratedAt: options.Now,
@@ -194,6 +188,9 @@ func BuildDashboard(projects []model.ProjectSummary, categories []model.ProjectC
 		Categories:  buildCategories(items, categories, options.HidePrivate),
 	}
 	for _, item := range items {
+		if item.Archived {
+			continue
+		}
 		surface.Counts.All++
 		switch item.Bucket {
 		case ProjectBucketAttention:
@@ -205,6 +202,167 @@ func BuildDashboard(projects []model.ProjectSummary, categories []model.ProjectC
 		}
 	}
 	return surface
+}
+
+// SortProjectsByRecent is the shared desktop/mobile default ordering. Activity
+// within the same minute is deliberately alphabetical so the list does not
+// jump around while several projects are updating together.
+func SortProjectsByRecent(projects []model.ProjectSummary) {
+	sort.SliceStable(projects, func(i, j int) bool {
+		left := projectVisibilityRecency(projects[i]).Truncate(time.Minute)
+		right := projectVisibilityRecency(projects[j]).Truncate(time.Minute)
+		if left.IsZero() != right.IsZero() {
+			return !left.IsZero()
+		}
+		if !left.Equal(right) {
+			return left.After(right)
+		}
+		return projectAlphabeticalLess(projects[i], projects[j])
+	})
+}
+
+func projectVisibilityRecency(project model.ProjectSummary) time.Time {
+	recent := project.LastActivity
+	if project.ManuallyAdded && project.CreatedAt.After(recent) {
+		recent = project.CreatedAt
+	}
+	return recent
+}
+
+func projectAlphabeticalLess(left, right model.ProjectSummary) bool {
+	leftName := strings.ToLower(strings.TrimSpace(left.Name))
+	rightName := strings.ToLower(strings.TrimSpace(right.Name))
+	if leftName != rightName {
+		return leftName < rightName
+	}
+	if left.Name != right.Name {
+		return left.Name < right.Name
+	}
+	return left.Path < right.Path
+}
+
+func buildDashboardProjectItems(projects []model.ProjectSummary, options BuildOptions) []ProjectItem {
+	type projectGroup struct {
+		rootPath string
+		members  []model.ProjectSummary
+	}
+
+	groupOrder := make([]string, 0, len(projects))
+	groups := make(map[string]*projectGroup, len(projects))
+	for _, project := range projects {
+		rootPath := dashboardWorktreeRootPath(project)
+		key := rootPath
+		if project.Archived {
+			key = "archived\x00" + key
+		} else {
+			key = "active\x00" + key
+		}
+		if !dashboardProjectParticipatesInWorktreeFamily(project) {
+			key += "\x00" + project.Path
+		}
+		group, ok := groups[key]
+		if !ok {
+			group = &projectGroup{rootPath: rootPath}
+			groups[key] = group
+			groupOrder = append(groupOrder, key)
+		}
+		group.members = append(group.members, project)
+	}
+
+	items := make([]ProjectItem, 0, len(projects))
+	for _, key := range groupOrder {
+		group := groups[key]
+		if group == nil || len(group.members) == 0 {
+			continue
+		}
+		rootIndex := -1
+		for i, member := range group.members {
+			if dashboardProjectIsWorktreeRoot(member) {
+				rootIndex = i
+				break
+			}
+		}
+		if rootIndex < 0 || len(group.members) == 1 {
+			for _, member := range group.members {
+				item := BuildProjectItem(member, options)
+				item.TabID = dashboardProjectTabID(member)
+				items = append(items, item)
+			}
+			continue
+		}
+
+		root := group.members[rootIndex]
+		for _, member := range group.members {
+			if member.LastActivity.After(root.LastActivity) {
+				root.LastActivity = member.LastActivity
+			}
+		}
+		rootItem := BuildProjectItem(root, options)
+		rootItem.TabID = dashboardProjectTabID(root)
+		rootItem.WorktreeRole = "root"
+		rootItem.WorktreeRootPath = group.rootPath
+		rootItem.LinkedCount = len(group.members) - 1
+		items = append(items, rootItem)
+
+		for i, member := range group.members {
+			if i == rootIndex {
+				continue
+			}
+			item := BuildProjectItem(member, options)
+			item.ListName = dashboardWorktreeLabel(member)
+			item.TabID = rootItem.TabID
+			item.WorktreeRole = "child"
+			item.WorktreeRootPath = group.rootPath
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func dashboardProjectTabID(project model.ProjectSummary) string {
+	if project.Archived {
+		return "archived"
+	}
+	if categoryID := strings.TrimSpace(project.CategoryID); categoryID != "" {
+		return categoryID
+	}
+	return "main"
+}
+
+func dashboardWorktreeRootPath(project model.ProjectSummary) string {
+	rootPath := filepath.Clean(strings.TrimSpace(project.WorktreeRootPath))
+	if rootPath != "" && rootPath != "." {
+		return rootPath
+	}
+	return filepath.Clean(strings.TrimSpace(project.Path))
+}
+
+func dashboardProjectParticipatesInWorktreeFamily(project model.ProjectSummary) bool {
+	switch model.NormalizeProjectKind(project.Kind) {
+	case model.ProjectKindScratchTask, model.ProjectKindAgentTask:
+		return false
+	}
+	return dashboardProjectIsWorktreeRoot(project) || project.WorktreeKind == model.WorktreeKindLinked
+}
+
+func dashboardProjectIsWorktreeRoot(project model.ProjectSummary) bool {
+	switch model.NormalizeProjectKind(project.Kind) {
+	case model.ProjectKindScratchTask, model.ProjectKindAgentTask:
+		return false
+	}
+	path := filepath.Clean(strings.TrimSpace(project.Path))
+	return path != "" && path != "." && path == dashboardWorktreeRootPath(project)
+}
+
+func dashboardWorktreeLabel(project model.ProjectSummary) string {
+	if branch := strings.TrimSpace(project.RepoBranch); branch != "" {
+		return branch
+	}
+	name := filepath.Base(strings.TrimSpace(project.Path))
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return "worktree"
+	}
+	return name
 }
 
 func BuildProjectItem(project model.ProjectSummary, options BuildOptions) ProjectItem {
@@ -221,6 +379,8 @@ func BuildProjectItem(project model.ProjectSummary, options BuildOptions) Projec
 		Kind:              string(model.NormalizeProjectKind(project.Kind)),
 		CategoryID:        strings.TrimSpace(project.CategoryID),
 		CategoryName:      strings.TrimSpace(project.CategoryName),
+		TabID:             dashboardProjectTabID(project),
+		Archived:          project.Archived,
 		Summary:           summary,
 		Assessment:        assessment,
 		Activity:          activity,
@@ -333,17 +493,17 @@ func buildCategories(items []ProjectItem, categories []model.ProjectCategory, hi
 	counts := map[string]int{}
 	attentionCounts := map[string]int{}
 	for _, item := range items {
-		counts[item.CategoryID]++
-		if item.Bucket == ProjectBucketAttention {
-			attentionCounts[item.CategoryID]++
+		counts[item.TabID]++
+		if !item.Archived && item.Bucket == ProjectBucketAttention {
+			attentionCounts[item.TabID]++
 		}
 	}
 
 	out := []Category{{
 		ID:             "main",
 		Label:          "Main",
-		Count:          counts[""],
-		AttentionCount: attentionCounts[""],
+		Count:          counts["main"],
+		AttentionCount: attentionCounts["main"],
 	}}
 	ordered := append([]model.ProjectCategory(nil), categories...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -364,13 +524,7 @@ func buildCategories(items []ProjectItem, categories []model.ProjectCategory, hi
 			Private:        category.Private,
 		})
 	}
-	all := Category{ID: "all", Label: "All", Count: len(items)}
-	for _, item := range items {
-		if item.Bucket == ProjectBucketAttention {
-			all.AttentionCount++
-		}
-	}
-	return append(out, all)
+	return append(out, Category{ID: "archived", Label: "Archived", Count: counts["archived"]})
 }
 
 func projectAssessment(project model.ProjectSummary, options BuildOptions) (Status, model.SessionCategory, bool) {
@@ -791,16 +945,5 @@ func formatLastActivity(now, activity time.Time) string {
 		return fmt.Sprintf("%dd", max(1, int(age/(24*time.Hour))))
 	default:
 		return activity.Format("Jan 2")
-	}
-}
-
-func projectBucketRank(bucket ProjectBucket) int {
-	switch bucket {
-	case ProjectBucketAttention:
-		return 0
-	case ProjectBucketActive:
-		return 1
-	default:
-		return 2
 	}
 }
