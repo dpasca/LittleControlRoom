@@ -1164,6 +1164,61 @@ func TestSortProjectsTreatsManualCreationAsRecentBeforeFirstSession(t *testing.T
 	}
 }
 
+func TestSortProjectsRecentGroupsByMinuteThenAlphabetically(t *testing.T) {
+	minute := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	agentTask, err := projectSummaryForAgentTask(model.AgentTask{
+		ID:            "agt_alpha",
+		Title:         "Alpha task",
+		Status:        model.AgentTaskStatusActive,
+		WorkspacePath: "/tmp/alpha-task",
+		CreatedAt:     minute.Add(5 * time.Second),
+		LastTouchedAt: minute.Add(5 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("projectSummaryForAgentTask() error = %v", err)
+	}
+	projects := []model.ProjectSummary{
+		{
+			Name:           "Zulu project",
+			Path:           "/tmp/zulu-project",
+			LastActivity:   minute.Add(55 * time.Second),
+			AttentionScore: 1000,
+		},
+		{
+			Name:           "Beta project",
+			Path:           "/tmp/beta-project",
+			LastActivity:   minute.Add(time.Minute),
+			AttentionScore: 1,
+		},
+		agentTask,
+	}
+	m := Model{sortMode: sortByRecent}
+
+	m.sortProjects(projects)
+
+	want := []string{"Beta project", "Alpha task", "Zulu project"}
+	for i := range want {
+		if projects[i].Name != want[i] {
+			t.Fatalf("projects[%d].Name = %q, want %q; order = %#v", i, projects[i].Name, want[i], projects)
+		}
+	}
+}
+
+func TestSortProjectsAttentionUsesMinuteRecencyAndAlphabeticalTies(t *testing.T) {
+	minute := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
+	projects := []model.ProjectSummary{
+		{Name: "zulu", Path: "/tmp/zulu", LastActivity: minute.Add(55 * time.Second), AttentionScore: 50},
+		{Name: "Alpha", Path: "/tmp/alpha", LastActivity: minute.Add(5 * time.Second), AttentionScore: 50},
+	}
+	m := Model{sortMode: sortByAttention}
+
+	m.sortProjects(projects)
+
+	if projects[0].Name != "Alpha" {
+		t.Fatalf("first project = %q, want alphabetical order inside the same attention and activity minute", projects[0].Name)
+	}
+}
+
 func TestProjectRuntimeSnapshotUsesAsyncCacheOnly(t *testing.T) {
 	projectPath := t.TempDir()
 	manager := projectrun.NewManager()

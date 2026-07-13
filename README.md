@@ -184,7 +184,7 @@ Organization, display, and cleanup:
 - `/setup`: Open the Getting Started settings for first-run AI roles. Runs automatically on launch until you pick a backend.
 - `/settings`: Full preferences with Getting Started first, then Providers & Models, LCAgent, Project Scope, Mobile, Browser, and Advanced.
 - `/mobile`: Open the mobile access panel with the current listener, detected LAN phone URL, pairing code, and a direct jump to Mobile setup.
-- `/sort <attention|recent>` (`o`): Change the project ordering.
+- `/sort <attention|recent>` (`o`): Change the project and agent-task ordering. Recent activity is the default; it groups activity by minute and orders ties alphabetically.
 - `/tab [active|archived|toggle]` (`a`): Switch the project list between Active and Archived tabs.
 - `/non-ai-folders <on|off>`: Show or hide folders that have no AI activity yet.
 - `/focus <list|detail|runtime>`: Move focus between panes.

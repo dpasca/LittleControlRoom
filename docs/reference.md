@@ -267,7 +267,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `Tab` or `Shift+Tab` switch focus between list, detail, and runtime
 - `f` open the temporary project-name filter dialog
 - `a` switch between the Active and Archived project-list tabs
-- `o` toggle sort mode between `attention` and `recent activity`
+- `o` toggle sort mode between `recent activity` (the default, minute-grouped with alphabetical ties) and `attention`
 - `p` pin toggle
 - `q` quit
 - While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it

@@ -108,6 +108,9 @@ func TestNewCachesStableSettingsForUI(t *testing.T) {
 	if got := strings.Join(m.excludeProjectPatterns, ","); got != "vendor" {
 		t.Fatalf("exclude patterns = %q", got)
 	}
+	if m.sortMode != sortByRecent {
+		t.Fatalf("default sort mode = %q, want %q", m.sortMode, sortByRecent)
+	}
 }
 
 func TestNewWithCodexManagerUsesSharedLiveSessionManager(t *testing.T) {

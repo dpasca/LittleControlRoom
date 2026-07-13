@@ -704,7 +704,7 @@ func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager
 		uiDiagnostics:                 newUIStallDiagnostics(strings.TrimSpace(homeDir), os.Getpid()),
 		focusedPane:                   focusProjects,
 		assessmentFlashUntil:          make(map[string]time.Time),
-		sortMode:                      sortByAttention,
+		sortMode:                      sortByRecent,
 		visibility:                    visibilityAIFolders,
 		archiveMode:                   projectArchiveMain,
 		settingsBaseline:              &settingsBaseline,

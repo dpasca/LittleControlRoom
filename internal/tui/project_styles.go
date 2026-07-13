@@ -384,52 +384,69 @@ func sourceLabel(format string) string {
 }
 
 func (m *Model) sortProjects(projects []model.ProjectSummary) {
-	attentionScores := make(map[string]int, len(projects))
-	attentionScoreFor := func(project model.ProjectSummary) int {
-		if score, ok := attentionScores[project.Path]; ok {
-			return score
-		}
-		score := m.projectAttentionScore(project)
-		attentionScores[project.Path] = score
-		return score
-	}
-
 	switch m.sortMode {
 	case sortByRecent:
 		sort.SliceStable(projects, func(i, j int) bool {
-			li := projectVisibilityRecency(projects[i])
-			lj := projectVisibilityRecency(projects[j])
+			li := projectVisibilityRecencyMinute(projects[i])
+			lj := projectVisibilityRecencyMinute(projects[j])
 			if li.IsZero() != lj.IsZero() {
 				return !li.IsZero()
 			}
 			if !li.Equal(lj) {
 				return li.After(lj)
 			}
-			scoreI := attentionScoreFor(projects[i])
-			scoreJ := attentionScoreFor(projects[j])
-			if scoreI != scoreJ {
-				return scoreI > scoreJ
-			}
-			return projects[i].Name < projects[j].Name
+			return projectAlphabeticalLess(projects[i], projects[j])
 		})
 	default:
+		attentionScores := make(map[string]int, len(projects))
+		attentionScoreFor := func(project model.ProjectSummary) int {
+			if score, ok := attentionScores[project.Path]; ok {
+				return score
+			}
+			score := m.projectAttentionScore(project)
+			attentionScores[project.Path] = score
+			return score
+		}
 		sort.SliceStable(projects, func(i, j int) bool {
 			scoreI := attentionScoreFor(projects[i])
 			scoreJ := attentionScoreFor(projects[j])
 			if scoreI != scoreJ {
 				return scoreI > scoreJ
 			}
-			li := projectVisibilityRecency(projects[i])
-			lj := projectVisibilityRecency(projects[j])
+			li := projectVisibilityRecencyMinute(projects[i])
+			lj := projectVisibilityRecencyMinute(projects[j])
 			if li.IsZero() != lj.IsZero() {
 				return !li.IsZero()
 			}
 			if !li.Equal(lj) {
 				return li.After(lj)
 			}
-			return projects[i].Name < projects[j].Name
+			return projectAlphabeticalLess(projects[i], projects[j])
 		})
 	}
+}
+
+// projectVisibilityRecencyMinute keeps activity ordering stable when multiple
+// projects or agent tasks change within the same minute. Exact event times are
+// still retained for display and activity tracking.
+func projectVisibilityRecencyMinute(project model.ProjectSummary) time.Time {
+	recent := projectVisibilityRecency(project)
+	if recent.IsZero() {
+		return time.Time{}
+	}
+	return recent.Truncate(time.Minute)
+}
+
+func projectAlphabeticalLess(left, right model.ProjectSummary) bool {
+	leftName := strings.ToLower(strings.TrimSpace(left.Name))
+	rightName := strings.ToLower(strings.TrimSpace(right.Name))
+	if leftName != rightName {
+		return leftName < rightName
+	}
+	if left.Name != right.Name {
+		return left.Name < right.Name
+	}
+	return left.Path < right.Path
 }
 
 // projectVisibilityRecency treats an explicitly added project as recent even
