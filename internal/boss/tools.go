@@ -51,6 +51,7 @@ type bossAction struct {
 	Target                   string                   `json:"target"`
 	Query                    string                   `json:"query"`
 	Command                  string                   `json:"command"`
+	ProjectParentPath        string                   `json:"project_parent_path"`
 	ProjectPath              string                   `json:"project_path"`
 	ProjectName              string                   `json:"project_name"`
 	SessionID                string                   `json:"session_id"`

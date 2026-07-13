@@ -18,6 +18,7 @@ func normalizeBossAction(action *bossAction) {
 	action.Target = strings.TrimSpace(strings.ToLower(action.Target))
 	action.Query = strings.TrimSpace(action.Query)
 	action.Command = strings.TrimSpace(action.Command)
+	action.ProjectParentPath = strings.TrimSpace(action.ProjectParentPath)
 	action.ProjectPath = strings.TrimSpace(action.ProjectPath)
 	action.ProjectName = strings.TrimSpace(action.ProjectName)
 	action.SessionID = strings.TrimSpace(action.SessionID)
@@ -155,7 +156,7 @@ func bossActionCarriesEngineerPrompt(action bossAction) bool {
 		return false
 	}
 	switch control.CapabilityName(strings.TrimSpace(action.ControlCapability)) {
-	case control.CapabilityEngineerSendPrompt, control.CapabilityTodoCreateWorktreeAndStartEngineer, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
+	case control.CapabilityEngineerSendPrompt, control.CapabilityProjectCreateAndStartEngineer, control.CapabilityTodoCreateWorktreeAndStartEngineer, control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
 		return true
 	default:
 		return false

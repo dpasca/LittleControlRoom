@@ -38,6 +38,8 @@ func (m Model) controlConfirmationTitle() string {
 	switch m.pendingControl.Invocation.Capability {
 	case control.CapabilityEngineerSendPrompt:
 		return "Engineer Handoff"
+	case control.CapabilityProjectCreateAndStartEngineer:
+		return "New Repository Work"
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		return "Tracked Engineer Task"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
@@ -213,6 +215,40 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
 			}
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityProjectCreateAndStartEngineer:
+		var input control.ProjectCreateAndStartEngineerInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			provider := input.Provider.Label()
+			if input.Provider == control.ProviderAuto {
+				provider = "Auto"
+			}
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("External action: create a Git repository and start tracked work", width)),
+				"",
+				renderBossControlDetail("Repository", input.ProjectPath, width),
+				renderBossControlDetail("Git", "initialize new repository", width),
+				renderBossControlDetail("Workspace", "dedicated worktree", width),
+				renderBossControlDetail("Engineer", provider, width),
+				"",
+				bossControlSectionStyle.Render(fitLine("TODO", width)),
+				renderBossControlPromptBox(input.TodoText, width),
+			}
+			if strings.TrimSpace(input.Prompt) != strings.TrimSpace(input.TodoText) {
+				lines = append(lines,
+					"",
+					bossControlSectionStyle.Render(fitLine("Engineer request", width)),
+					renderBossControlPromptBox(input.Prompt, width),
+				)
+			}
+			lines = append(lines,
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "create and start", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+				}, "   "),
+			)
 			return strings.Join(lines, "\n")
 		}
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:

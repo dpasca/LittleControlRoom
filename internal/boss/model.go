@@ -984,6 +984,19 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 			content = "I heard you, but the model returned an empty reply."
 		}
 		if response.ControlInvocation != nil {
+			if proposalErr := validateControlProposalAgainstSnapshot(*response.ControlInvocation, snapshot); proposalErr != nil {
+				m.pendingControl = nil
+				m.pendingGoal = nil
+				saved = ChatMessage{
+					Role:    "assistant",
+					Content: "I could not prepare that control action: " + proposalErr.Error(),
+					At:      m.now(),
+				}
+				m.messages = append(m.messages, saved)
+				m.status = "Control action proposal failed"
+				m.syncLayout(true)
+				return m, m.saveBossChatMessageCmd(saved)
+			}
 			m.pendingControl = &ControlProposal{
 				Invocation: copyControlInvocation(*response.ControlInvocation),
 				Preview:    content,

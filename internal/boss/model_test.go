@@ -758,6 +758,38 @@ func TestEmbeddedHelpTrackedWorktreeConfirmationCanChooseTodoOnly(t *testing.T) 
 	}
 }
 
+func TestEmbeddedHelpNewRepositoryConfirmationShowsFilesystemEffects(t *testing.T) {
+	t.Parallel()
+
+	inv := validatedControlInvocationForTest(t, control.CapabilityProjectCreateAndStartEngineer, control.ProjectCreateAndStartEngineerInput{
+		ParentPath:  "/tmp/repos",
+		ProjectName: "KeyMaster",
+		TodoText:    "Build the initial KeyMaster repository.",
+		Prompt:      "Create the project structure and verify it.",
+		Provider:    control.ProviderCodex,
+	})
+	m := NewEmbeddedHelp(context.Background(), nil)
+	updated, _ := m.Update(AssistantReplyMsg{response: AssistantResponse{Content: "Create KeyMaster?", ControlInvocation: &inv}})
+	got := updated.(Model)
+	if got.TodoOnlyConfirmationActive() {
+		t.Fatalf("new repository confirmation must not expose the existing-project TODO-only shortcut")
+	}
+	rendered := ansi.Strip(got.renderControlConfirmationDialog(100, 36))
+	for _, want := range []string{
+		"New Repository Work",
+		"create a Git repository and start tracked work",
+		"/tmp/repos/KeyMaster",
+		"initialize new repository",
+		"dedicated worktree",
+		"Codex",
+		"create and start",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("new repository confirmation missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestEmbeddedHelpInputUsesSimpleCodexStyle(t *testing.T) {
 	t.Parallel()
 

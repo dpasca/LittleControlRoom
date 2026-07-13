@@ -312,7 +312,7 @@ var helpPlannerReadOnlyPrompt = []string{
 }
 
 var bossPlannerCapabilityCatalogPrompt = []string{
-	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, todo.create_worktree_and_start_engineer, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
+	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, project.create_and_start_engineer, todo.create_worktree_and_start_engineer, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
 	"Available goal action kind: propose_goal. Supported goal_kind values are agent_task_cleanup and lcagent_task. " +
 		"agent_task_cleanup archives multiple delegated agent task records under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. " +
 		"lcagent_task creates one LCR-managed LCAgent task, launches LCAgent with scoped authority, records the handoff, waits for completion, harvests the trace, and verifies LCAgent reported checks.",
@@ -321,6 +321,8 @@ var bossPlannerCapabilityCatalogPrompt = []string{
 var bossPlannerControlRoutingPrompt = []string{
 	"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
 	"An engineer.send_prompt control proposal sends to exactly one loaded project. If the user asks for work across multiple loaded projects, do not silently pick one and drop the rest; either ask/answer that Chat can prepare one project handoff at a time while naming the targets, or propose the first clearly chosen handoff and put a one-sentence scope note in answer naming what remains.",
+	"When the user asks to create a brand-new repository or project folder and start work there, use project.create_and_start_engineer, not engineer.send_prompt or todo.create_worktree_and_start_engineer. Set project_parent_path to the absolute existing parent directory, project_name to one new folder name, and fill todo_text plus prompt. One confirmation creates and registers a Git repository, adds the TODO, prepares a dedicated worktree, and launches a fresh engineer.",
+	"Use project.create_and_start_engineer only for a target that is not already loaded. For an existing loaded project, use todo.create_worktree_and_start_engineer. If the parent path or project name is ambiguous, ask instead of guessing.",
 	"Use settings.update for user requests to change Little Control Room app settings, including project scope settings, privacy mode, reasoning visibility, and Codex launch preset. Category privacy is managed from category operations, not settings.update. Do not route app settings changes through the Little Control Room repo or an engineer session.",
 	"Use git.prepare_commit for a simple commit or commit-and-push request on a loaded project. It opens the existing commit preview flow only; the operator still confirms Enter for commit or Alt+Enter for commit and push. Do not use engineer.send_prompt merely to create a git commit.",
 	"A git.prepare_commit control proposal opens exactly one loaded project preview. If the user asks to commit or push multiple loaded projects, do not silently pick one and drop the rest; propose the first clearly chosen preview and put a one-sentence scope note in answer naming what remains, or ask which project to start with.",
@@ -358,7 +360,7 @@ var bossPlannerProposalPayloadPrompt = []string{
 	"Do not use the Little Control Room project or another unrelated active engineer session as a proxy venue for generic or host-level work.",
 	"Before propose_control, resolve ambiguous targets with read-only queries or ask the user to name the project. Do not infer a project from hidden UI cursor state.",
 	"For propose_control/propose_goal, leave answer empty unless a short scope note is needed. A proposal answer must not say the action was already sent, run, completed, or approved.",
-	"For engineer.send_prompt and todo.create_worktree_and_start_engineer, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. " +
+	"For engineer.send_prompt, project.create_and_start_engineer, and todo.create_worktree_and_start_engineer, set provider to auto unless the user explicitly names Codex, OpenCode, Claude Code, or LCAgent. " +
 		"Use tracked worktrees for unrelated new work so it does not inherit stale engineer context or replace an open root-checkout session. " +
 		"Use session_mode=resume_or_new only when the user explicitly asks to resume/continue a prior engineer session, clearly gives a same-topic follow-up, or provides an operator note meant to steer active work. " +
 		"Set reveal true only when the user asks to show/open the session.",
@@ -369,7 +371,7 @@ var bossPlannerProposalPayloadPrompt = []string{
 	"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
 	"For settings.update, put every app settings change in settings_changes. Use values for list settings, value for scalar settings, and bool_value for boolean settings. Category privacy is managed through category operations, not settings.update.",
 	"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and the task id is known, propose agent_task.close with task_close_status=archived. This applies to open/review/waiting tasks too; do not downgrade cleanup to task_close_status=waiting.",
-	"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task. For todo.create_worktree_and_start_engineer, also put a durable task description in todo_text. For todo.add, leave prompt empty and put the durable backlog item in todo_text. For todo.complete, put the target id in todo_id, known text in todo_text, and concise proof in todo_evidence.",
+	"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task. For project.create_and_start_engineer and todo.create_worktree_and_start_engineer, also put a durable task description in todo_text. For todo.add, leave prompt empty and put the durable backlog item in todo_text. For todo.complete, put the target id in todo_id, known text in todo_text, and concise proof in todo_evidence.",
 	"For prompt-bearing propose_control actions, fill intent_excerpt with a short excerpt of the user's wording that must survive reframing; fill preserved_meaning with source, metric, timeframe, negations, and explicit exclusions; fill success_condition with what the engineer must return or what missing evidence must be reported.",
 }
 
@@ -532,6 +534,7 @@ var bossActionPlannerForcedInstructions = []string{
 	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
 	"If the user asks to change Little Control Room app settings, choose kind=\"propose_control\" with control_capability=\"settings.update\".",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known.",
+	"For a brand-new repository or project folder the user wants created and worked on now, choose control_capability=\"project.create_and_start_engineer\", set project_parent_path to the absolute existing parent, set project_name to one new folder name, and fill todo_text plus prompt.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"todo.create_worktree_and_start_engineer\" and fill todo_text plus prompt.",
 	"If the user asked for loaded-project work across multiple projects, do not silently collapse the request to one target. Choose kind=\"answer\" to name the targets and say Chat can prepare one handoff at a time, unless one first target is clearly chosen; then use answer as a scope note naming the remaining targets.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
@@ -571,6 +574,7 @@ var bossActionPlannerNormalInstructions = []string{
 	// Work parking and delegation.
 	"If the user asks to change Little Control Room app settings, choose control_capability=\"settings.update\". Category privacy is managed from the category UI rather than settings.update.",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now and the project is ambiguous, choose a read-only query or ask for the project; when the project is known, choose control_capability=\"todo.add\".",
+	"For a brand-new repository or project folder the user wants created and worked on now, choose control_capability=\"project.create_and_start_engineer\", set project_parent_path to the absolute existing parent, set project_name to one new folder name, and fill todo_text plus prompt. Ask if the parent or name is ambiguous.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"todo.create_worktree_and_start_engineer\" and fill todo_text plus prompt.",
 	"If the user asked for loaded-project work across multiple projects, do not silently collapse the request to one target. Choose kind=\"answer\" to name the targets and say Chat can prepare one handoff at a time, unless one first target is clearly chosen; then use answer as a scope note naming the remaining targets.",
 	"If the user asks for fresh/current external web, product, market, or source research, or asks a follow-up that needs an engineer to newly search, cached transcript snippets are not enough.",
@@ -587,7 +591,7 @@ var bossActionPlannerNormalInstructions = []string{
 
 	// Control and goal selection.
 	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
-	"Choose kind=\"propose_control\" if the user asked to change app settings, delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
+	"Choose kind=\"propose_control\" if the user asked to create and start work in a brand-new repository, change app settings, delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
 	"Also choose kind=\"propose_control\" if the user wants to archive/unarchive one or more regular loaded projects, or archive/remove a scratch task whose project metadata says kind=scratch_task.",
 	"Also choose kind=\"propose_control\" if the user wants fresh external research from an engineer.",
 	"Also choose kind=\"propose_control\" if fresh gathered data resolves a visible review/waiting agent task and a task id is clear.",

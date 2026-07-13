@@ -694,6 +694,166 @@ func TestExecuteBossTrackedWorktreeLaunchCreatesTodoWorktreeAndEngineer(t *testi
 	waitForControlAsyncRefreshes(t, svc)
 }
 
+func TestExecuteBossProjectCreateAndStartEngineerCreatesRepositoryTodoWorktreeAndEngineer(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	parentPath := t.TempDir()
+	projectPath := filepath.Join(parentPath, "KeyMaster")
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "thread-keymaster-create",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{ctx: ctx, svc: svc, codexManager: manager}
+	inv := controlInvocationRawForTest(t, control.CapabilityProjectCreateAndStartEngineer, control.ProjectCreateAndStartEngineerInput{
+		ParentPath:  parentPath,
+		ProjectName: "KeyMaster",
+		TodoText:    "Build the initial KeyMaster repository.",
+		Prompt:      "Create the initial project structure and verify it.",
+		Provider:    control.ProviderCodex,
+	})
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: inv})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want repository creation command")
+	}
+	created, ok := cmd().(bossProjectCreateAndStartEngineerCreatedMsg)
+	if !ok || created.err != nil {
+		t.Fatalf("repository creation result = %#v, want success", created)
+	}
+	if !created.folderExists || !created.gitInitialized || !created.projectTracked {
+		t.Fatalf("repository creation stages = folder:%v git:%v tracked:%v", created.folderExists, created.gitInitialized, created.projectTracked)
+	}
+	if created.result.ProjectPath != projectPath || created.project.Path != projectPath {
+		t.Fatalf("created project paths = result:%q summary:%q, want %q", created.result.ProjectPath, created.project.Path, projectPath)
+	}
+
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	if _, ok := got.projectSummaryByPathAllProjects(projectPath); !ok {
+		t.Fatalf("new repository should be available in the host project cache")
+	}
+	var todoCreated bossTodoWorktreeTodoCreatedMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossTodoWorktreeTodoCreatedMsg); ok {
+			todoCreated = candidate
+			break
+		}
+	}
+	if todoCreated.err != nil || todoCreated.todo.ID <= 0 || todoCreated.inv.Capability != control.CapabilityProjectCreateAndStartEngineer {
+		t.Fatalf("tracked TODO creation = %#v, want new-project control progress", todoCreated)
+	}
+
+	updated, cmd = got.Update(todoCreated)
+	got = updated.(Model)
+	var prepared bossTodoWorktreePreparedMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossTodoWorktreePreparedMsg); ok {
+			prepared = candidate
+			break
+		}
+	}
+	if prepared.err != nil || prepared.result.WorktreePath == "" || prepared.inv.Capability != control.CapabilityProjectCreateAndStartEngineer {
+		t.Fatalf("worktree preparation = %#v, want new-project control progress", prepared)
+	}
+
+	updated, cmd = got.Update(prepared)
+	got = updated.(Model)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = candidate
+		}
+	}
+	if result.Err != nil || result.Activity == nil || result.Invocation.Capability != control.CapabilityProjectCreateAndStartEngineer {
+		t.Fatalf("launch result = %#v, want successful new-project activity", result)
+	}
+	if !strings.Contains(result.Status, "Created Git repository "+projectPath) || !strings.Contains(result.Status, "AI engineer launched") {
+		t.Fatalf("launch status = %q, want repository and engineer receipt", result.Status)
+	}
+	if len(requests) != 1 || requests[0].ProjectPath != prepared.result.WorktreePath || !requests[0].ForceNew {
+		t.Fatalf("launch requests = %#v, want one fresh worktree session", requests)
+	}
+	tracked, err := svc.Store().GetTodo(ctx, todoCreated.todo.ID)
+	if err != nil || tracked.ProjectPath != projectPath || tracked.WorkProjectPath != prepared.result.WorktreePath {
+		t.Fatalf("tracked TODO = %#v, err=%v", tracked, err)
+	}
+	waitForControlAsyncRefreshes(t, svc)
+}
+
+func TestExecuteBossProjectCreateAndStartEngineerRejectsLoadedTarget(t *testing.T) {
+	projectPath := filepath.Join(t.TempDir(), "KeyMaster")
+	m := Model{allProjects: []model.ProjectSummary{{Path: projectPath, Name: "KeyMaster", PresentOnDisk: true}}}
+	inv := controlInvocationRawForTest(t, control.CapabilityProjectCreateAndStartEngineer, control.ProjectCreateAndStartEngineerInput{
+		ParentPath:  filepath.Dir(projectPath),
+		ProjectName: filepath.Base(projectPath),
+		TodoText:    "Build it.",
+		Prompt:      "Build it.",
+		Provider:    control.ProviderCodex,
+	})
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: inv})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("loaded-target rejection should emit a Chat result")
+	}
+	result, ok := cmd().(bossui.ControlInvocationResultMsg)
+	if !ok || result.Err == nil || !strings.Contains(result.Status, "already loaded") {
+		t.Fatalf("loaded-target result = %#v", result)
+	}
+	if !strings.Contains(got.status, "already loaded") {
+		t.Fatalf("host status = %q, want loaded-target rejection", got.status)
+	}
+}
+
+func TestExecuteBossProjectCreateAndStartEngineerReportsNoSideEffectsWhenParentIsMissing(t *testing.T) {
+	svc := newControlTestService(t)
+	parentPath := filepath.Join(t.TempDir(), "missing-parent")
+	projectPath := filepath.Join(parentPath, "KeyMaster")
+	m := Model{ctx: context.Background(), svc: svc}
+	inv := controlInvocationRawForTest(t, control.CapabilityProjectCreateAndStartEngineer, control.ProjectCreateAndStartEngineerInput{
+		ParentPath:  parentPath,
+		ProjectName: "KeyMaster",
+		TodoText:    "Build it.",
+		Prompt:      "Build it.",
+		Provider:    control.ProviderCodex,
+	})
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: inv})
+	got := updated.(Model)
+	created, ok := cmd().(bossProjectCreateAndStartEngineerCreatedMsg)
+	if !ok || created.err == nil || created.folderExists || created.gitInitialized || created.projectTracked {
+		t.Fatalf("missing-parent result = %#v, want failure before side effects", created)
+	}
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = candidate
+		}
+	}
+	if result.Err == nil || !strings.Contains(result.Status, "No folder, TODO, worktree, or engineer was created") {
+		t.Fatalf("missing-parent receipt = %#v", result)
+	}
+	if _, err := os.Stat(projectPath); !os.IsNotExist(err) {
+		t.Fatalf("target path should not exist, stat err = %v", err)
+	}
+	if !strings.Contains(got.status, "check repository parent path") {
+		t.Fatalf("host status = %q, want parent-path failure", got.status)
+	}
+	waitForControlAsyncRefreshes(t, svc)
+}
+
 func TestExecuteBossTrackedWorktreeLaunchKeepsTodoWhenWorktreeFails(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)

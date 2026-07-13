@@ -37,6 +37,13 @@ type StateSnapshot struct {
 	OpenTodos              []TodoBrief
 	OpenAgentTasks         []AgentTaskBrief
 	RecentGoalRuns         []GoalRunBrief
+	LoadedProjectRefsKnown bool
+	LoadedProjects         []ProjectRef
+}
+
+type ProjectRef struct {
+	Name string
+	Path string
 }
 
 type ProjectBrief struct {
@@ -133,10 +140,20 @@ func LoadStateSnapshot(ctx context.Context, svc *service.Service, now time.Time,
 	inventory := buildProjectInventory(allProjects)
 
 	snapshot := StateSnapshot{
-		LoadedAt:          now,
-		TotalProjects:     inventory.Total,
-		ActiveTabProjects: inventory.DashboardBuckets[projectDashboardBucketActive],
-		ArchivedProjects:  inventory.DashboardBuckets[projectDashboardBucketArchived],
+		LoadedAt:               now,
+		TotalProjects:          inventory.Total,
+		ActiveTabProjects:      inventory.DashboardBuckets[projectDashboardBucketActive],
+		ArchivedProjects:       inventory.DashboardBuckets[projectDashboardBucketArchived],
+		LoadedProjectRefsKnown: true,
+	}
+	for _, project := range allProjects {
+		if !projectActiveTab(project) && !projectArchivedTab(project) {
+			continue
+		}
+		snapshot.LoadedProjects = append(snapshot.LoadedProjects, ProjectRef{
+			Name: displayProjectName(project),
+			Path: strings.TrimSpace(project.Path),
+		})
 	}
 	for _, project := range projects {
 		switch project.Status {

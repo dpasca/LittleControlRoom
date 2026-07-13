@@ -145,6 +145,40 @@ func TestCreateOrAttachProjectAddsExistingDirectoryWithoutInitializingGit(t *tes
 	}
 }
 
+func TestCreateOrAttachProjectRequireNewRejectsExistingDirectory(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "existing")
+	if err := os.Mkdir(projectPath, 0o755); err != nil {
+		t.Fatalf("mkdir existing project: %v", err)
+	}
+
+	_, err = svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:    parent,
+		Name:          "existing",
+		CreateGitRepo: true,
+		RequireNew:    true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "target project path already exists") {
+		t.Fatalf("CreateOrAttachProject() error = %v, want existing-target rejection", err)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".git")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("RequireNew rejection should not initialize Git, stat err = %v", err)
+	}
+	if _, err := st.GetProjectSummary(ctx, projectPath, true); err == nil {
+		t.Fatalf("RequireNew rejection should not register the existing directory")
+	}
+}
+
 func TestCreateOrAttachProjectExplicitMainClearsExistingCategory(t *testing.T) {
 	t.Parallel()
 
