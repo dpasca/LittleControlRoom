@@ -1479,6 +1479,135 @@ func TestTodoCopyDialogBlocksDedicatedWorktreeWhileLaunchPending(t *testing.T) {
 	}
 }
 
+func TestStartingTodoWorktreePreservesProjectListSelection(t *testing.T) {
+	t.Parallel()
+
+	rootPath := "/tmp/repo"
+	otherPath := "/tmp/other"
+	root := model.ProjectSummary{
+		Path:             rootPath,
+		Name:             "repo",
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+	}
+	other := model.ProjectSummary{
+		Path:          otherPath,
+		Name:          "other",
+		PresentOnDisk: true,
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{root, other},
+		detail: model.ProjectDetail{
+			Summary: root,
+			Todos: []model.TodoItem{{
+				ID:          7,
+				ProjectPath: rootPath,
+				Text:        "Launch without moving the project selection",
+			}},
+		},
+		todoDialog: &todoDialogState{
+			ProjectPath: rootPath,
+			ProjectName: "repo",
+		},
+		visibility: visibilityAllFolders,
+		width:      100,
+		height:     24,
+	}
+	m.rebuildProjectList(rootPath)
+
+	updated, cmd := m.startSelectedTodoInNewWorktree(codexapp.ProviderCodex, false)
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("starting a TODO worktree should queue its background command")
+	}
+	if got.currentSelectedProjectPath() != rootPath {
+		t.Fatalf("selected path after background worktree start = %q, want %q", got.currentSelectedProjectPath(), rootPath)
+	}
+	pending, ok := got.todoPendingLaunchProjectSummary()
+	if !ok || got.indexByPath(pending.Path) < 0 {
+		t.Fatalf("pending worktree row = %#v ok=%v, want a visible background row", pending, ok)
+	}
+	if got.currentSelectedProjectPath() == pending.Path {
+		t.Fatalf("pending worktree row %q should not steal the project selection", pending.Path)
+	}
+}
+
+func TestTodoWorktreeLaunchAndSessionActivationPreserveLatestProjectListSelection(t *testing.T) {
+	t.Parallel()
+
+	rootPath := "/tmp/repo"
+	worktreePath := "/tmp/repo--feat-background"
+	otherPath := "/tmp/other"
+	root := model.ProjectSummary{
+		Path:             rootPath,
+		Name:             "repo",
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindMain,
+	}
+	other := model.ProjectSummary{
+		Path:          otherPath,
+		Name:          "other",
+		PresentOnDisk: true,
+	}
+	m := Model{
+		allProjects: []model.ProjectSummary{root, other},
+		todoPendingLaunch: &todoPendingLaunchState{
+			ID:          12,
+			ProjectPath: rootPath,
+			ProjectName: "repo",
+			TodoID:      7,
+			TodoText:    "Launch in the background",
+			Provider:    codexapp.ProviderCodex,
+		},
+		codexManager: codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+			return &fakeCodexSession{projectPath: req.ProjectPath}, nil
+		}),
+		codexInput:    newCodexTextarea(),
+		codexDrafts:   make(map[string]codexDraft),
+		codexViewport: viewport.New(0, 0),
+		visibility:    visibilityAllFolders,
+		width:         100,
+		height:        24,
+	}
+	m.rebuildProjectList(otherPath)
+
+	updated, cmd := m.Update(todoWorktreeLaunchMsg{
+		launchID:    12,
+		projectPath: worktreePath,
+		todoID:      7,
+		todoText:    "Launch in the background",
+		provider:    codexapp.ProviderCodex,
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("completed worktree creation should queue session open and refresh commands")
+	}
+	if got.currentSelectedProjectPath() != otherPath {
+		t.Fatalf("selected path after worktree creation = %q, want latest user selection %q", got.currentSelectedProjectPath(), otherPath)
+	}
+	if got.preferredSelectPath != "" {
+		t.Fatalf("preferred select path = %q, want no background selection override", got.preferredSelectPath)
+	}
+
+	worktree := model.ProjectSummary{
+		Path:             worktreePath,
+		Name:             "repo--feat-background",
+		Status:           model.StatusActive,
+		PresentOnDisk:    true,
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+	}
+	updated, _ = got.Update(projectsMsg{
+		projects: []model.ProjectSummary{root, worktree, other},
+	})
+	got = updated.(Model)
+	if got.currentSelectedProjectPath() != otherPath {
+		t.Fatalf("selected path after active session refresh = %q, want %q", got.currentSelectedProjectPath(), otherPath)
+	}
+}
+
 func TestProjectListShowsPendingTodoWorktreeLaunch(t *testing.T) {
 	t.Parallel()
 

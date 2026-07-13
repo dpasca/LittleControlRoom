@@ -2143,7 +2143,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completeAILatencyOp(msg.perfOpID, msg.perfDuration, msg.err, msg.status)
 		pendingCanceled := false
 		pendingRootPath := ""
-		selectedWasPending := false
 		selectAfterPending := m.currentSelectedProjectPath()
 		if msg.launchID != 0 {
 			pending := m.todoPendingLaunch
@@ -2151,8 +2150,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			pendingRootPath = pending.ProjectPath
-			_, selectedWasPending = m.todoPendingLaunchForProjectPath(m.currentSelectedProjectPath())
-			if selectedWasPending {
+			if _, selectedWasPending := m.todoPendingLaunchForProjectPath(selectAfterPending); selectedWasPending {
 				selectAfterPending = pendingRootPath
 			}
 			pendingCanceled = pending.Canceled
@@ -2268,7 +2266,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.codexInput.Blur()
 		}
 		m.status = todoWorktreeSessionStartStatus(provider, msg.openModelFirst, len(msg.preparedPaths))
-		m.preferredSelectPath = msg.projectPath
 		if pendingRootPath != "" {
 			m.rebuildProjectList(selectAfterPending)
 		}
