@@ -271,12 +271,11 @@ func (c *OpenAIClient) classifyAttempt(ctx context.Context, snapshotJSON []byte,
 	}
 
 	outputText := response.OutputText
-	if outputText == "" {
+	if strings.TrimSpace(outputText) == "" {
+		// JSON-mode providers can report a completed response while returning
+		// empty content, so missing structured output must remain retryable.
 		err := missingAssistantOutputError(response)
-		if strings.EqualFold(strings.TrimSpace(response.Status), "incomplete") {
-			return Result{}, &retryableClassificationError{cause: err}
-		}
-		return Result{}, err
+		return Result{}, &retryableClassificationError{cause: err}
 	}
 
 	var result Result

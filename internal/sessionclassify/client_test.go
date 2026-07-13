@@ -573,6 +573,55 @@ func TestOpenAIClientClassifyRetriesIncompleteWithFallback(t *testing.T) {
 	}
 }
 
+func TestOpenAIClientClassifyRetriesCompletedResponseWithoutAssistantOutput(t *testing.T) {
+	t.Parallel()
+
+	attempts := make([]string, 0, len(classifierAttemptPlan))
+	client := &OpenAIClient{
+		model: "deepseek-v4-flash",
+		responses: fakeJSONSchemaRunner{
+			run: func(_ context.Context, req llm.JSONSchemaRequest) (llm.JSONSchemaResponse, error) {
+				attempts = append(attempts, req.ReasoningEffort)
+				if len(attempts) == 1 {
+					return llm.JSONSchemaResponse{
+						Status: "completed",
+						Model:  "deepseek-v4-flash",
+					}, nil
+				}
+				return llm.JSONSchemaResponse{
+					Status:     "completed",
+					Model:      "deepseek-v4-flash",
+					OutputText: `{"category":"in_progress","summary":"Continuing deployment verification.","confidence":0.89}`,
+				}, nil
+			},
+		},
+	}
+
+	result, err := client.Classify(context.Background(), SessionSnapshot{
+		ProjectPath: "/tmp/demo",
+		SessionID:   "ses_demo",
+		Transcript: []TranscriptItem{
+			{Role: "user", Text: "Continue the deployment work."},
+			{Role: "assistant", Text: "I am running the remaining verification."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if result.Category != model.SessionCategoryInProgress {
+		t.Fatalf("category = %s, want in_progress", result.Category)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("attempts = %d, want 2", len(attempts))
+	}
+	if attempts[0] != classifierPrimaryReasoningEffort {
+		t.Fatalf("first attempt effort = %q, want %q", attempts[0], classifierPrimaryReasoningEffort)
+	}
+	if attempts[1] != classifierFallbackReasoningEffort {
+		t.Fatalf("second attempt effort = %q, want %q", attempts[1], classifierFallbackReasoningEffort)
+	}
+}
+
 func TestOpenAIClientClassifyRetriesTransientServerError(t *testing.T) {
 	t.Parallel()
 
