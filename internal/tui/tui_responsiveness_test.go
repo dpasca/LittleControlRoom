@@ -100,6 +100,17 @@ func TestSelectedDetailReloadOnlyRunsForLatestSelection(t *testing.T) {
 	}
 }
 
+func TestSpinnerTickAdvancesMarqueeTwoColumns(t *testing.T) {
+	m := Model{marqueeOffset: 7}
+
+	nextModel, _ := m.Update(spinnerTickMsg{})
+	next := normalizeUpdateModel(nextModel)
+
+	if got, want := next.marqueeOffset, 7+marqueeColumnsPerTick; got != want {
+		t.Fatalf("marquee offset = %d, want %d", got, want)
+	}
+}
+
 func TestRebuildProjectListIndexesWorktreeFamiliesAndTabs(t *testing.T) {
 	root := model.ProjectSummary{Path: "/tmp/root", Name: "root", PresentOnDisk: true}
 	child := model.ProjectSummary{
