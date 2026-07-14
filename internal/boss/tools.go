@@ -103,6 +103,7 @@ type bossToolResult struct {
 	Text        string
 	UserReceipt string
 	Usage       model.LLMUsage
+	Internal    bool
 }
 
 type bossStoreReader interface {

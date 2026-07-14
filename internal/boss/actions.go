@@ -88,6 +88,7 @@ func normalizeBossReadOnlyRoute(route *bossReadOnlyRoute) {
 	}
 	route.Kind = normalizeBossActionKind(route.Kind)
 	route.Answer = strings.TrimSpace(route.Answer)
+	route.PlannerDomain = normalizeBossPlannerDomain(route.PlannerDomain)
 	route.Target = strings.TrimSpace(strings.ToLower(route.Target))
 	route.Query = strings.TrimSpace(route.Query)
 	route.Command = strings.TrimSpace(route.Command)
@@ -278,11 +279,13 @@ func validateBossAction(action bossAction) error {
 }
 
 func synthesizeToolLoopFallback(results []bossToolResult) string {
-	if len(results) == 0 {
-		return "I do not have enough project data to answer that yet."
+	for i := len(results) - 1; i >= 0; i-- {
+		if results[i].Internal {
+			continue
+		}
+		return "I gathered the latest project data, but could not compose a polished answer. The most recent report was:\n\n" + strings.TrimSpace(results[i].Text)
 	}
-	last := results[len(results)-1]
-	return "I gathered the latest project data, but could not compose a polished answer. The most recent report was:\n\n" + strings.TrimSpace(last.Text)
+	return "I do not have enough project data to answer that yet."
 }
 
 func directGoalRunReportAnswer(result bossToolResult) string {

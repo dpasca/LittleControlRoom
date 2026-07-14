@@ -96,6 +96,10 @@ func bossReadOnlyRouteSchema() map[string]any {
 			"type":        "string",
 			"description": "Short user-facing answer when kind is answer; otherwise empty.",
 		},
+		"planner_domain": bossEnumStringSchema(
+			bossPlannerDomainStrings(),
+			"Planning policy family for this turn. Use inspection for read-only facts; project_work for repository work and project TODOs; agent_task for delegated task work; project_lifecycle for create/archive operations; settings for app settings; git for commit/push previews; goal for scoped goal runs; general only when no narrower family fits.",
+		),
 		"target": bossEnumStringSchema(
 			[]string{"", "selected"},
 			"Use selected only when the user explicitly asks about the selected classic TUI project.",
@@ -111,6 +115,7 @@ func bossReadOnlyRouteSchema() map[string]any {
 	}, []string{
 		"kind",
 		"answer",
+		"planner_domain",
 		"target",
 		"query",
 		"command",
