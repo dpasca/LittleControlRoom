@@ -606,6 +606,16 @@ func (m Model) cachedLiveCodexSnapshot(projectPath string) (codexapp.Snapshot, b
 	if projectPath == "" {
 		return codexapp.Snapshot{}, false
 	}
+	// A non-nil cache identifies normal application models (the constructor
+	// always initializes it). A nil cache is retained as a compatibility path
+	// for small unit-test models that predate the snapshot delivery loop.
+	if m.renderCachedSessionStateOnly && m.codexSnapshots != nil {
+		cached, ok := m.codexCachedSnapshot(projectPath)
+		if !ok || !cached.Started || cached.Closed {
+			return codexapp.Snapshot{}, false
+		}
+		return cached, true
+	}
 	session, ok := m.codexSession(projectPath)
 	if !ok {
 		return codexapp.Snapshot{}, false

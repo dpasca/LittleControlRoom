@@ -104,7 +104,7 @@ type codexTranscriptRenderedMsg struct {
 }
 
 const (
-	codexStreamingUpdateAckDelay           = spinnerTickInterval
+	codexStreamingUpdateAckDelay           = 120 * time.Millisecond
 	codexBackgroundStreamingUpdateAckDelay = 500 * time.Millisecond
 )
 

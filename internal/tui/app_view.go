@@ -63,6 +63,10 @@ func (m Model) renderDetailViewport(width, height int) string {
 }
 
 func (m Model) View() string {
+	// Rendering only consumes snapshots already delivered to the model. Looking
+	// up live sessions here makes every Bubble Tea redraw contend with session
+	// workers, even when the user is only moving the list selection.
+	m.renderCachedSessionStateOnly = true
 	m.noteUIProgress("View")
 	done := m.beginUIPhase("View", m.currentLatencyProjectPath(), "")
 	defer done()
@@ -780,6 +784,13 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 }
 
 func (m Model) projectTabCount(tab projectTabDescriptor) int {
+	if m.projectTabProjects != nil {
+		if tab.mode == projectArchiveArchived {
+			return m.archivedProjectTabCount
+		}
+		categoryID := strings.TrimSpace(tab.categoryID)
+		return len(m.projectTabProjects[categoryID]) + len(m.projectTabAgentTasks[categoryID])
+	}
 	if tab.mode == projectArchiveArchived {
 		return len(m.projectsVisibleForPrivacy(m.archivedProjects))
 	}
@@ -806,16 +817,22 @@ func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
 		return false
 	case projectArchiveMain, projectArchiveCategory:
 		categoryID := strings.TrimSpace(tab.categoryID)
-		for _, project := range m.allProjects {
-			if strings.TrimSpace(project.CategoryID) != categoryID {
+		projects := m.allProjects
+		tasks := m.openAgentTasks
+		if m.projectTabProjects != nil {
+			projects = m.projectTabProjects[categoryID]
+			tasks = m.projectTabAgentTasks[categoryID]
+		}
+		for _, project := range projects {
+			if m.projectTabProjects == nil && strings.TrimSpace(project.CategoryID) != categoryID {
 				continue
 			}
 			if m.projectSummaryHasTabAttention(project) {
 				return true
 			}
 		}
-		for _, task := range m.openAgentTasks {
-			if !agentTaskIsOpen(task) || strings.TrimSpace(task.CategoryID) != categoryID {
+		for _, task := range tasks {
+			if !agentTaskIsOpen(task) || (m.projectTabAgentTasks == nil && strings.TrimSpace(task.CategoryID) != categoryID) {
 				continue
 			}
 			if agentTaskHasTabAttention(task) {
@@ -827,14 +844,16 @@ func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
 }
 
 func (m Model) projectSummaryHasTabAttention(project model.ProjectSummary) bool {
-	if _, _, ok := m.projectPendingEmbeddedApproval(project.Path); ok {
-		return true
-	}
-	if _, ok := m.projectPendingBrowserAttention(project.Path); ok {
-		return true
-	}
-	if _, _, ok := m.projectPendingEmbeddedQuestion(project.Path); ok {
-		return true
+	if snapshot, ok := m.cachedLiveCodexSnapshot(project.Path); ok {
+		if snapshot.PendingApproval != nil {
+			return true
+		}
+		if _, ok := m.browserAttentionFromSnapshot(snapshot); ok {
+			return true
+		}
+		if snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+			return true
+		}
 	}
 	_, category, ok := visibleAssessmentStatusLabelAt(project, m.currentTime(), m.assessmentStallThreshold())
 	return ok && sessionCategoryHasTabAttention(category)
@@ -875,6 +894,7 @@ func renderProjectCategoryCommandHint() string {
 }
 
 func (m Model) renderProjectList(width, height int) string {
+	m.renderCachedSessionStateOnly = true
 	tabs := m.renderProjectArchiveTabs(width)
 	if len(m.projects) == 0 {
 		message := ""
@@ -1248,6 +1268,7 @@ func projectListVisibleLineCount(projects []model.ProjectSummary, start, end int
 }
 
 func (m Model) renderDetailContent(width int) string {
+	m.renderCachedSessionStateOnly = true
 	done := m.beginUIPhase("renderDetailContent", m.currentLatencyProjectPath(), fmt.Sprintf("width=%d", width))
 	defer done()
 	p, ok := m.selectedProject()

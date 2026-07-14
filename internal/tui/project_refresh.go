@@ -45,6 +45,8 @@ type detailMsg struct {
 	err    error
 }
 
+const selectedDetailReloadDebounce = 50 * time.Millisecond
+
 type projectSummaryMsg struct {
 	path    string
 	summary model.ProjectSummary
@@ -558,7 +560,15 @@ func (m *Model) requestProjectDetailViewCmd(path string) tea.Cmd {
 }
 
 func (m *Model) requestSelectedProjectDetailViewCmd() tea.Cmd {
-	return m.requestProjectDetailViewCmd(m.currentSelectedProjectPath())
+	path := m.currentSelectedProjectPath()
+	if path == "" || m.isAgentTaskProjectPath(path) {
+		return nil
+	}
+	m.selectedDetailRequestSeq++
+	seq := m.selectedDetailRequestSeq
+	return tea.Tick(selectedDetailReloadDebounce, func(time.Time) tea.Msg {
+		return selectedDetailReloadMsg{path: path, seq: seq}
+	})
 }
 
 func (m Model) waitBusCmd() tea.Cmd {
