@@ -106,12 +106,15 @@ var (
 	disabledActionTextStyle   = uistyle.DialogActionDisabledTextStyle
 )
 
-const spinnerTickInterval = 250 * time.Millisecond
+const spinnerTickInterval = 200 * time.Millisecond
 const projectListSelectionFlashDuration = 120 * time.Millisecond
 const marqueeColumnsPerTick = 2
-const runtimeSnapshotRefreshEveryTicks = 4
-const cpuSnapshotRefreshEveryTicks = 12
-const processScanRefreshEveryTicks = 240
+
+// Keep the heavier background work at its existing wall-clock cadence when the
+// animation tick changes.
+const runtimeSnapshotRefreshEveryTicks = int(time.Second / spinnerTickInterval)
+const cpuSnapshotRefreshEveryTicks = int((3 * time.Second) / spinnerTickInterval)
+const processScanRefreshEveryTicks = int(time.Minute / spinnerTickInterval)
 
 func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(spinnerTickInterval, func(time.Time) tea.Msg {
