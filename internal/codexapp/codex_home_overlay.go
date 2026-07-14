@@ -68,58 +68,122 @@ Do not use shell backgrounding, ad-hoc port hopping, or a bounded terminal comma
 const codexDirectRMRuleFilename = "lcroom-no-direct-rm.rules"
 
 const codexDirectRMExecPolicy = `# Managed by Little Control Room.
-# Keep broad agent filesystem access available while denying the direct rm
-# executable. More targeted editing and deletion tools remain available.
+# Named rm is validated by the PATH-pinned Little Control Room shim so it can
+# permit tightly scoped /tmp cleanup. Keep executable paths that bypass that
+# shim forbidden. More targeted editing and deletion tools remain available.
 prefix_rule(
-    pattern = [["rm", "/bin/rm", "/usr/bin/rm"]],
+    pattern = [["/bin/rm", "/usr/bin/rm"]],
     decision = "forbidden",
-    justification = "Little Control Room disables direct rm commands in embedded agent sessions. Use targeted file or patch tools, or ask the user to run intentional cleanup manually.",
-    match = ["rm file.txt", "rm -rf /Users/example", "/bin/rm -fr build"],
-    not_match = ["rmdir empty-dir", "echo rm"],
+    justification = "Little Control Room requires named rm commands to pass through its guarded PATH. Use rm -rf /tmp/<name> for temporary cleanup, targeted file or patch tools, or ask the user to run other intentional cleanup manually.",
+    match = ["/bin/rm -fr build", "/usr/bin/rm -rf /tmp/example"],
+    not_match = ["rm file.txt", "rm -rf /tmp/example", "rmdir empty-dir"],
 )
 
 prefix_rule(
     pattern = [["command", "builtin", "exec", "nohup", "sudo", "env", "/usr/bin/env"], ["rm", "/bin/rm", "/usr/bin/rm"]],
     decision = "forbidden",
-    justification = "Little Control Room disables direct rm commands in embedded agent sessions. Use targeted file or patch tools, or ask the user to run intentional cleanup manually.",
-    match = ["command rm file.txt", "sudo /bin/rm -rf build", "env rm file.txt"],
+    justification = "Little Control Room disables wrapped rm commands because they may bypass its guarded PATH. Use plain rm -rf /tmp/<name> for temporary cleanup, targeted file or patch tools, or ask the user to run other intentional cleanup manually.",
+    match = ["command rm file.txt", "sudo /bin/rm -rf build", "env rm -rf /tmp/example"],
     not_match = ["command echo rm", "sudo echo rm", "env MODE=rm echo ok"],
 )
 `
 
 const codexDirectRMShim = `#!/bin/sh
+block_rm() {
+    printf '%s\n' 'Blocked by Little Control Room: rm is disabled except for recursive forced cleanup of validated /tmp descendants.' >&2
+    printf '%s\n' 'Use plain rm -rf /tmp/<name>, targeted file or patch tools, or ask the user to run other intentional cleanup manually.' >&2
+    exit 126
+}
+
+tmp_root=$(
+    CDPATH=
+    cd -P /tmp 2>/dev/null && pwd -P
+) || block_rm
+
+is_safe_tmp_target() {
+    target=$1
+
+    # Require an absolute child spelled through /tmp. Do not allow /tmp itself,
+    # trailing slashes, or dot components that make the intended target unclear.
+    case "$target" in
+        /tmp/?*) ;;
+        *) return 1 ;;
+    esac
+    case "$target" in
+        */) return 1 ;;
+    esac
+    relative=${target#/tmp/}
+    case "/$relative/" in
+        */./*|*/../*) return 1 ;;
+    esac
+
+    # rm does not follow a final symlink, so validate the nearest existing
+    # parent. Resolving it physically prevents a symlinked parent from escaping
+    # the canonical /tmp tree and still permits a nonexistent final target.
+    parent=${target%/*}
+    while [ ! -e "$parent" ] && [ ! -L "$parent" ]; do
+        next_parent=${parent%/*}
+        if [ -z "$next_parent" ]; then
+            next_parent=/
+        fi
+        if [ "$next_parent" = "$parent" ]; then
+            return 1
+        fi
+        parent=$next_parent
+    done
+    if [ ! -d "$parent" ]; then
+        return 1
+    fi
+    canonical_parent=$(
+        CDPATH=
+        cd -P "$parent" 2>/dev/null && pwd -P
+    ) || return 1
+    case "$canonical_parent" in
+        "$tmp_root"|"$tmp_root"/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 recursive=0
 force=0
 scan_options=1
+target_count=0
+safe_targets=1
 for arg
 do
-    if [ "$scan_options" -eq 0 ]; then
-        continue
+    if [ "$scan_options" -eq 1 ]; then
+        case "$arg" in
+            --)
+                scan_options=0
+                continue
+                ;;
+            --recursive)
+                recursive=1
+                continue
+                ;;
+            --force)
+                force=1
+                continue
+                ;;
+            --*)
+                continue
+                ;;
+            -?*)
+                flags=${arg#-}
+                case "$flags" in *r*|*R*) recursive=1 ;; esac
+                case "$flags" in *f*) force=1 ;; esac
+                continue
+                ;;
+        esac
     fi
-    case "$arg" in
-        --)
-            scan_options=0
-            ;;
-        --recursive)
-            recursive=1
-            ;;
-        --force)
-            force=1
-            ;;
-        --*)
-            ;;
-        -?*)
-            flags=${arg#-}
-            case "$flags" in *r*|*R*) recursive=1 ;; esac
-            case "$flags" in *f*) force=1 ;; esac
-            ;;
-    esac
+    target_count=$((target_count + 1))
+    if ! is_safe_tmp_target "$arg"; then
+        safe_targets=0
+    fi
 done
 
-if [ "$recursive" -eq 1 ] && [ "$force" -eq 1 ]; then
-    printf '%s\n' 'Blocked by Little Control Room: recursive forced rm is disabled in embedded agent sessions.' >&2
-    printf '%s\n' 'Use targeted file or patch tools, or ask the user to run intentional cleanup manually.' >&2
-    exit 126
+if [ "$recursive" -ne 1 ] || [ "$force" -ne 1 ] || [ "$target_count" -eq 0 ] || [ "$safe_targets" -ne 1 ]; then
+    block_rm
 fi
 
 if [ -x /bin/rm ]; then

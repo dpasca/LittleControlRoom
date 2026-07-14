@@ -103,14 +103,10 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	blockedOutput, blockedErr := blocked.CombinedOutput()
 	var exitErr *exec.ExitError
 	if !errors.As(blockedErr, &exitErr) || exitErr.ExitCode() != 126 {
-		t.Fatalf("recursive forced shim call error = %v output=%q, want exit 126", blockedErr, string(blockedOutput))
+		t.Fatalf("targetless shim call error = %v output=%q, want exit 126", blockedErr, string(blockedOutput))
 	}
-	if !strings.Contains(string(blockedOutput), "recursive forced rm is disabled") {
-		t.Fatalf("recursive forced shim output = %q", string(blockedOutput))
-	}
-	allowed := exec.Command(shimPath, "-f")
-	if output, err := allowed.CombinedOutput(); err != nil {
-		t.Fatalf("non-recursive shim call error = %v output=%q", err, string(output))
+	if !strings.Contains(string(blockedOutput), "validated /tmp descendants") {
+		t.Fatalf("targetless shim output = %q", string(blockedOutput))
 	}
 
 	skillPath := filepath.Join(overlay, "skills", "playwright", "SKILL.md")
@@ -149,6 +145,195 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	}
 }
 
+func TestCodexDirectRMShimAllowsOnlyValidatedTmpDescendants(t *testing.T) {
+	overlay, err := prepareCodexHomeOverlayWithOptions(t.TempDir(), t.TempDir(), false)
+	if err != nil {
+		t.Fatalf("prepareCodexHomeOverlayWithOptions() error = %v", err)
+	}
+	shimPath := filepath.Join(overlay, "bin", "rm")
+
+	tmpRoot, err := os.MkdirTemp("/tmp", "lcroom-rm-shim-test-*")
+	if err != nil {
+		t.Skipf("create /tmp test root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpRoot) })
+
+	t.Run("recursive forced descendant", func(t *testing.T) {
+		target := filepath.Join(tmpRoot, "safe target")
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(target, "marker"), []byte("keep until removed"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertRMShimAllowed(t, shimPath, "-rf", "--", target)
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("target stat error = %v, want removed", err)
+		}
+	})
+
+	t.Run("separate recursive and force flags", func(t *testing.T) {
+		first := filepath.Join(tmpRoot, "first")
+		second := filepath.Join(tmpRoot, "second")
+		for _, target := range []string{first, second} {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertRMShimAllowed(t, shimPath, "-r", "-f", first, second)
+		for _, target := range []string{first, second} {
+			if _, err := os.Lstat(target); !os.IsNotExist(err) {
+				t.Fatalf("target %q stat error = %v, want removed", target, err)
+			}
+		}
+	})
+
+	t.Run("nonexistent descendant", func(t *testing.T) {
+		assertRMShimAllowed(t, shimPath, "-rf", filepath.Join(tmpRoot, "missing", "child"))
+	})
+
+	t.Run("non recursive rm remains blocked", func(t *testing.T) {
+		target := filepath.Join(tmpRoot, "non-recursive")
+		if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertRMShimBlocked(t, shimPath, "-f", target)
+		if _, err := os.Stat(target); err != nil {
+			t.Fatalf("blocked target stat error = %v", err)
+		}
+	})
+
+	t.Run("dot dot component remains blocked", func(t *testing.T) {
+		inside := filepath.Join(tmpRoot, "inside")
+		kept := filepath.Join(tmpRoot, "kept")
+		for _, target := range []string{inside, kept} {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertRMShimBlocked(t, shimPath, "-rf", inside+"/../kept")
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("blocked target stat error = %v", err)
+		}
+	})
+
+	outsideRoot, err := os.MkdirTemp("/var/tmp", "lcroom-rm-shim-outside-test-*")
+	if err != nil {
+		t.Skipf("create outside test root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(outsideRoot) })
+
+	tmpCanonical, err := filepath.EvalSymlinks("/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsideCanonical, err := filepath.EvalSymlinks(outsideRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outsideCanonical == tmpCanonical || strings.HasPrefix(outsideCanonical, tmpCanonical+string(os.PathSeparator)) {
+		t.Skipf("outside test root %q resolves below /tmp", outsideRoot)
+	}
+
+	t.Run("outside target remains blocked", func(t *testing.T) {
+		target := filepath.Join(outsideRoot, "outside")
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertRMShimBlocked(t, shimPath, "-rf", target)
+		if _, err := os.Stat(target); err != nil {
+			t.Fatalf("blocked target stat error = %v", err)
+		}
+	})
+
+	t.Run("mixed targets remain blocked atomically", func(t *testing.T) {
+		safeTarget := filepath.Join(tmpRoot, "mixed-safe")
+		outsideTarget := filepath.Join(outsideRoot, "mixed-outside")
+		for _, target := range []string{safeTarget, outsideTarget} {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		assertRMShimBlocked(t, shimPath, "-rf", safeTarget, outsideTarget)
+		for _, target := range []string{safeTarget, outsideTarget} {
+			if _, err := os.Stat(target); err != nil {
+				t.Fatalf("blocked target %q stat error = %v", target, err)
+			}
+		}
+	})
+
+	t.Run("symlinked parent cannot escape", func(t *testing.T) {
+		outsideTarget := filepath.Join(outsideRoot, "through-link")
+		if err := os.MkdirAll(outsideTarget, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(tmpRoot, "escape-link")
+		if err := os.Symlink(outsideRoot, link); err != nil {
+			t.Skipf("create symlink: %v", err)
+		}
+		assertRMShimBlocked(t, shimPath, "-rf", filepath.Join(link, "through-link"))
+		if _, err := os.Stat(outsideTarget); err != nil {
+			t.Fatalf("symlink escape target stat error = %v", err)
+		}
+	})
+
+	t.Run("final symlink is removed without following it", func(t *testing.T) {
+		outsideTarget := filepath.Join(outsideRoot, "final-link-target")
+		if err := os.MkdirAll(outsideTarget, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(tmpRoot, "final-link")
+		if err := os.Symlink(outsideTarget, link); err != nil {
+			t.Skipf("create symlink: %v", err)
+		}
+		assertRMShimAllowed(t, shimPath, "-rf", link)
+		if _, err := os.Lstat(link); !os.IsNotExist(err) {
+			t.Fatalf("final symlink stat error = %v, want removed", err)
+		}
+		if _, err := os.Stat(outsideTarget); err != nil {
+			t.Fatalf("final symlink target stat error = %v", err)
+		}
+	})
+
+	t.Run("trailing slash on final symlink remains blocked", func(t *testing.T) {
+		outsideTarget := filepath.Join(outsideRoot, "trailing-link-target")
+		if err := os.MkdirAll(outsideTarget, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(tmpRoot, "trailing-link")
+		if err := os.Symlink(outsideTarget, link); err != nil {
+			t.Skipf("create symlink: %v", err)
+		}
+		assertRMShimBlocked(t, shimPath, "-rf", link+"/")
+		if _, err := os.Lstat(link); err != nil {
+			t.Fatalf("blocked final symlink stat error = %v", err)
+		}
+		if _, err := os.Stat(outsideTarget); err != nil {
+			t.Fatalf("blocked final symlink target stat error = %v", err)
+		}
+	})
+}
+
+func assertRMShimAllowed(t *testing.T, shimPath string, args ...string) {
+	t.Helper()
+	output, err := exec.Command(shimPath, args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("rm shim args %q error = %v output=%q, want allowed", args, err, string(output))
+	}
+}
+
+func assertRMShimBlocked(t *testing.T, shimPath string, args ...string) {
+	t.Helper()
+	output, err := exec.Command(shimPath, args...).CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 126 {
+		t.Fatalf("rm shim args %q error = %v output=%q, want exit 126", args, err, string(output))
+	}
+	if !strings.Contains(string(output), "validated /tmp descendants") {
+		t.Fatalf("rm shim args %q output = %q, want denial reason", args, string(output))
+	}
+}
+
 func TestPrepareCodexHomeOverlayWithoutSkillShadowPreservesSourceSkills(t *testing.T) {
 	sourceHome := t.TempDir()
 	sourceSkillsDir := filepath.Join(sourceHome, "skills")
@@ -169,7 +354,7 @@ func TestPrepareCodexHomeOverlayWithoutSkillShadowPreservesSourceSkills(t *testi
 	}
 }
 
-func TestCodexDirectRMExecPolicyIsValidAndForbidden(t *testing.T) {
+func TestCodexDirectRMExecPolicyDelegatesNamedRMAndForbidsBypasses(t *testing.T) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		t.Skip("codex binary not available")
 	}
@@ -184,9 +369,11 @@ func TestCodexDirectRMExecPolicyIsValidAndForbidden(t *testing.T) {
 		command []string
 		want    string
 	}{
-		{name: "direct", command: []string{"rm", "-rf", "/Users/example"}, want: "forbidden"},
+		{name: "named outside", command: []string{"rm", "-rf", "/Users/example"}, want: ""},
+		{name: "named tmp", command: []string{"rm", "-rf", "/tmp/example"}, want: ""},
 		{name: "absolute", command: []string{"/bin/rm", "-fr", "build"}, want: "forbidden"},
-		{name: "wrapped", command: []string{"sudo", "/bin/rm", "-rf", "build"}, want: "forbidden"},
+		{name: "absolute tmp", command: []string{"/usr/bin/rm", "-rf", "/tmp/example"}, want: "forbidden"},
+		{name: "wrapped", command: []string{"sudo", "rm", "-rf", "/tmp/example"}, want: "forbidden"},
 		{name: "unrelated", command: []string{"rmdir", "empty-dir"}, want: ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

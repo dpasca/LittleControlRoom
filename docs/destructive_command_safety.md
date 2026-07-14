@@ -8,10 +8,10 @@ assets, task folders, and user-managed tooling. Read and ordinary write access
 therefore remain governed by each provider's normal permission mode.
 
 The safety policy adds a narrower invariant: an LCR-managed agent should not be
-able to launch a direct `rm` command as an ordinary model action. The primary
-failure being addressed is a well-intentioned agent expanding the wrong path in
-a recursive forced deletion, not a malicious process trying to escape
-containment.
+able to launch a direct `rm` command as an ordinary model action, except for a
+validated embedded-Codex cleanup rooted below `/tmp`. The primary failure being
+addressed is a well-intentioned agent expanding the wrong path in a recursive
+forced deletion, not a malicious process trying to escape containment.
 
 ## Threat Model
 
@@ -31,8 +31,8 @@ the recovery and containment layers. This feature is an additional seatbelt.
 
 | Provider path | Enforcement | Result |
 | --- | --- | --- |
-| Embedded Codex, direct shell command | LCR-owned Codex `prefix_rule` with `decision = "forbidden"` | Direct `rm`, `/bin/rm`, `/usr/bin/rm`, and common simple wrapper forms are rejected without an approval escape hatch. |
-| Embedded Codex, PATH-resolved child/wrapper command | LCR-owned `rm` shim pinned through `shell_environment_policy.set.PATH` | Recursive forced deletion is rejected; non-recursive uses delegate to the system executable so ordinary scripts retain more compatibility. |
+| Embedded Codex, PATH-resolved named `rm` | LCR-owned `rm` shim pinned through `shell_environment_policy.set.PATH` | Plain recursive forced cleanup is allowed only when every operand is a validated descendant spelled `/tmp/...`; every other invocation is rejected. |
+| Embedded Codex, absolute executable or common simple wrapper | LCR-owned Codex `prefix_rule` with `decision = "forbidden"` | Forms that can bypass the guarded executable, including `/bin/rm`, `/usr/bin/rm`, `sudo rm`, and `env rm`, are rejected without an approval escape hatch. |
 | LCAgent `run_command` | Structural Bash/Zsh parsing before command policy and execution | Direct `rm` is denied at every autonomy level. |
 | LCAgent `start_process` | The same structural parsing before approval and process-broker launch | A Low approval or switch to Medium cannot bypass the denial. |
 
@@ -55,11 +55,27 @@ through `shell_environment_policy.set.PATH`. The explicit Codex setting matters
 because login-shell initialization and shell snapshots can otherwise reorder an
 inherited `PATH`.
 
-Codex command rules are the primary layer. Codex can structurally split simple
-shell chains and apply the most restrictive matching rule to each command. The
-PATH shim covers useful secondary cases such as a child process resolving
-`rm -rf` by name. It intentionally delegates non-recursive invocations made by
-child scripts; direct model-issued `rm` remains blocked by exec-policy.
+Codex command rules match argument prefixes and apply the most restrictive
+matching decision, so they cannot express a path-aware exception beneath a
+blanket `rm` prohibition. Named `rm` is therefore intentionally left to the
+PATH shim, while native forbidden rules remain in place for absolute executable
+paths and common wrapper forms that may bypass it.
+
+The shim delegates to the system executable only when all of these conditions
+hold:
+
+- Both recursive and force options are present.
+- At least one target is present, and every target is an absolute path spelled
+  as a child of `/tmp`; `/tmp` itself is never accepted.
+- No target has a trailing slash or `.` / `..` component.
+- The nearest existing ancestor of every target's parent resolves physically to
+  the canonical `/tmp` tree. This rejects escape through a symlinked parent
+  while still allowing a nonexistent final target.
+
+Mixed safe and unsafe operands reject the entire invocation before deletion.
+Absolute executable paths and wrapper forms do not receive the exception. A
+normal `rm -rf /tmp/<name>` command, including arguments expanded by the shell
+before the shim runs, does.
 
 Relevant implementation:
 
@@ -132,13 +148,16 @@ When changing this policy:
 1. Keep cross-directory access independent from the direct-command guard.
 2. Preserve user Codex home entries; never overwrite the user's real `rules`,
    `bin`, or `skills` contents while building an overlay.
-3. Use structural command parsing for LCAgent. Do not replace it with textual
+3. Keep the Codex `/tmp` exception fail-closed: require recursive force, reject
+   the root and ambiguous paths, validate every operand, and resolve parent
+   directories physically before delegating.
+4. Use structural command parsing for LCAgent. Do not replace it with textual
    regex or keyword detection.
-4. Test positive cases, wrappers, nested shells, dynamic targets, and quoted
-   examples that must remain allowed.
-5. Validate the generated rule with `codex execpolicy check` when Codex is
+5. Test positive cases, wrappers, nested shells, dynamic targets, quoted
+   examples that must remain allowed, mixed operands, and symlinked parents.
+6. Validate the generated rule with `codex execpolicy check` when Codex is
    available.
-6. Run `make test`, `make scan`, and `make doctor` before merging.
+7. Run `make test`, `make scan`, and `make doctor` before merging.
 
 The focused tests live beside the implementation in
 `internal/commandguard`, `internal/codexapp`, `internal/lcagent/tools`, and
