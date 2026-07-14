@@ -73,6 +73,24 @@ func TestDecodeJSONObjectOutputIncludesPreviewOnFailure(t *testing.T) {
 	}
 }
 
+func TestDecodeJSONObjectOutputReportsTruncatedFencedJSON(t *testing.T) {
+	t.Parallel()
+
+	var decoded struct {
+		Message string `json:"message"`
+	}
+	err := DecodeJSONObjectOutput("```json\n{\n\"", &decoded)
+	if err == nil {
+		t.Fatal("expected truncated fenced JSON to fail")
+	}
+	if strings.Contains(err.Error(), "invalid character '`'") {
+		t.Fatalf("error = %q, should report the stripped JSON syntax failure", err.Error())
+	}
+	if !strings.Contains(err.Error(), "unexpected end of JSON input") {
+		t.Fatalf("error = %q, want truncated JSON cause", err.Error())
+	}
+}
+
 func TestStripMarkdownCodeBlock(t *testing.T) {
 	t.Parallel()
 

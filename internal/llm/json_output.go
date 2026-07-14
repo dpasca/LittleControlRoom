@@ -36,7 +36,7 @@ func DecodeJSONObjectOutput(outputText string, decoded any) error {
 		}
 	}
 
-	var firstErr error
+	var bestErr error
 	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
@@ -49,16 +49,18 @@ func DecodeJSONObjectOutput(outputText string, decoded any) error {
 		seen[candidate] = struct{}{}
 		if err := json.Unmarshal([]byte(candidate), decoded); err == nil {
 			return nil
-		} else if firstErr == nil {
-			firstErr = err
+		} else {
+			// Later candidates have had transport wrappers such as markdown fences
+			// removed, so their syntax error is normally the most actionable one.
+			bestErr = err
 		}
 	}
 
 	preview := clippedSingleLinePreview(sanitized, jsonOutputPreviewLimit)
-	if firstErr == nil {
+	if bestErr == nil {
 		return fmt.Errorf("failed to decode JSON output (preview=%q)", preview)
 	}
-	return fmt.Errorf("failed to decode JSON output (preview=%q): %w", preview, firstErr)
+	return fmt.Errorf("failed to decode JSON output (preview=%q): %w", preview, bestErr)
 }
 
 func StripMarkdownCodeBlock(text string) string {

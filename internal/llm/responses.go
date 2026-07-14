@@ -38,6 +38,7 @@ type JSONSchemaResponse struct {
 	Model            string
 	MaxOutputTokens  *int64
 	IncompleteReason string
+	FinishReason     string
 	OutputText       string
 	Usage            model.LLMUsage
 }

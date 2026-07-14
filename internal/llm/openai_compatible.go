@@ -19,6 +19,8 @@ type OpenAICompatibleResponsesRunnerOptions struct {
 	AuthHeader            OpenAICompatibleAuthHeader
 	ReasoningStyle        string
 	RequireParameters     bool
+	ChatMaxOutputTokens   int64
+	ChatMaxTokensField    string
 }
 
 type OpenAICompatibleModelDiscovery struct {
@@ -227,6 +229,8 @@ func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel
 	chatClient := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, chatFormat, authHeader, opts.ReasoningStyle)
 	if chatClient != nil {
 		chatClient.requireParameters = opts.RequireParameters
+		chatClient.maxOutputTokens = opts.ChatMaxOutputTokens
+		chatClient.maxTokensField = strings.TrimSpace(opts.ChatMaxTokensField)
 	}
 
 	var schemaChatClient JSONSchemaRunner
@@ -246,6 +250,8 @@ func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel
 		client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatJSONObject, authHeader, opts.ReasoningStyle)
 		if client != nil {
 			client.requireParameters = opts.RequireParameters
+			client.maxOutputTokens = opts.ChatMaxOutputTokens
+			client.maxTokensField = strings.TrimSpace(opts.ChatMaxTokensField)
 			jsonModeChatClient = client
 		}
 	}
@@ -253,6 +259,8 @@ func NewOpenAICompatibleResponsesRunnerWithOptions(baseURL, apiKey, defaultModel
 		client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions(apiKey, baseURL, timeout, usage, OpenAICompatibleChatResponseFormatPromptOnly, authHeader, opts.ReasoningStyle)
 		if client != nil {
 			client.requireParameters = opts.RequireParameters
+			client.maxOutputTokens = opts.ChatMaxOutputTokens
+			client.maxTokensField = strings.TrimSpace(opts.ChatMaxTokensField)
 			promptOnlyChatClient = client
 		}
 	}
