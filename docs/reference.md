@@ -115,15 +115,18 @@ playwright_isolation_scope = "task"
 Embedded Codex keeps the filesystem reach and approval behavior selected by
 `codex_launch_preset`; the default remains `yolo`. Little Control Room adds a
 narrow destructive-command seatbelt to every LCR-managed embedded Codex
-session: Codex exec-policy rules forbid direct `rm` invocations, and an LCR
-`rm` shim rejects recursive forced deletion when wrappers or child processes
-resolve `rm` through that session's `PATH`. This does not confine reads or
-ordinary writes to the current project.
+session. Its PATH-pinned `rm` shim permits plain `rm -rf /tmp/<name>` only when
+every operand is unambiguous and its parent resolves below `/tmp`; other named
+`rm` calls are rejected. Codex exec-policy rules separately forbid absolute
+executables and common wrapper forms that could bypass the shim. This does not
+confine reads or ordinary writes to the current project. LCAgent keeps its
+stricter policy and denies every direct `rm` invocation.
 
 The guard is deliberately narrower than a security sandbox. Other deletion
 mechanisms, an absolute executable hidden inside a script, or deliberate PATH
 replacement can bypass it. Keep normal backups and filesystem protections in
-place; use targeted file/patch tools for agent edits and run intentional bulk
+place; use the `/tmp` exception only for disposable temporary trees, use
+targeted file/patch tools for agent edits, and run other intentional bulk
 cleanup manually outside the embedded agent session.
 
 The architecture, threat model, maintenance invariants, and provider-extension
