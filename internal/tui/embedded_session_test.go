@@ -380,10 +380,20 @@ func TestCodexUpdateThrottlesBackgroundStreamingWithoutCopyingTranscript(t *test
 	next.TranscriptRevision = 2
 	next.Entries = []codexapp.TranscriptEntry{{
 		Kind: codexapp.TranscriptAgent,
-		Text: "new streamed token",
+		Text: "The updated session summary is ready for the main project row.",
+	}}
+	next.ActivityPreview = []codexapp.TranscriptEntry{{
+		Kind: codexapp.TranscriptAgent,
+		Text: "The updated session summary is ready for the main project row.",
 	}}
 
 	session, manager, notifySession := openFakeManagedCodexSession(t, projectPath, next)
+	session.tryStateSnapshotFn = func(*fakeCodexSession) (codexapp.Snapshot, bool) {
+		state := next
+		state.Entries = nil
+		state.Transcript = ""
+		return state, true
+	}
 	requireManagerUpdate(t, manager, projectPath)
 	m := Model{
 		codexManager:       manager,
@@ -408,6 +418,9 @@ func TestCodexUpdateThrottlesBackgroundStreamingWithoutCopyingTranscript(t *test
 	}
 	if cached, ok := got.codexCachedSnapshot(projectPath); !ok || len(cached.Entries) != 1 || cached.Entries[0].Text != "cached transcript" {
 		t.Fatalf("background state refresh should preserve cached transcript, got %#v", cached.Entries)
+	}
+	if cached, ok := got.codexCachedSnapshot(projectPath); !ok || liveEngineerSnapshotDetail(cached) != "The updated session summary is ready for the main project row." {
+		t.Fatalf("background state refresh should update the main-row activity preview, got %#v", cached.ActivityPreview)
 	}
 	if delay := got.codexStreamingUpdateAckDelay(projectPath); delay != codexBackgroundStreamingUpdateAckDelay {
 		t.Fatalf("background ack delay = %s, want %s", delay, codexBackgroundStreamingUpdateAckDelay)

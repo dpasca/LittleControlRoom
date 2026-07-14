@@ -398,6 +398,10 @@ func liveEngineerSnapshotDetail(snapshot codexapp.Snapshot) string {
 			return objective
 		}
 	}
+	activityEntries := snapshot.ActivityPreview
+	if detail := liveEngineerTranscriptDetail(activityEntries); detail != "" {
+		return detail
+	}
 	if detail := liveEngineerTranscriptDetail(snapshot.Entries); detail != "" {
 		return detail
 	}

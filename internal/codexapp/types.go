@@ -519,6 +519,7 @@ type Snapshot struct {
 	PendingApproval             *ApprovalRequest
 	PendingToolInput            *ToolInputRequest
 	PendingElicitation          *ElicitationRequest
+	ActivityPreview             []TranscriptEntry // Bounded text-only tail for lightweight state snapshots.
 	Entries                     []TranscriptEntry
 	Transcript                  string
 	Status                      string

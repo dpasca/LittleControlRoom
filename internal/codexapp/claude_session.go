@@ -235,6 +235,7 @@ func (s *claudeCodeSession) stateSnapshotLocked() Snapshot {
 		BusyExternal:       s.busyExternal,
 		BusySince:          s.busySince,
 		Closed:             s.closed,
+		ActivityPreview:    activityPreviewFromEntries(s.entries),
 		Status:             s.status,
 		LastError:          s.lastError,
 		LastSystemNotice:   s.lastSystemNotice,

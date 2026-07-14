@@ -563,6 +563,7 @@ func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapsho
 	cached.PendingApproval = state.PendingApproval
 	cached.PendingToolInput = state.PendingToolInput
 	cached.PendingElicitation = state.PendingElicitation
+	cached.ActivityPreview = cloneCodexActivityPreview(state.ActivityPreview)
 	cached.BrowserActivity = state.BrowserActivity
 	cached.CurrentBrowserPageURL = state.CurrentBrowserPageURL
 	cached.CurrentBrowserPageStale = state.CurrentBrowserPageStale
@@ -582,6 +583,15 @@ func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapsho
 		cached.Provider = state.Provider
 	}
 	return cached
+}
+
+func cloneCodexActivityPreview(entries []codexapp.TranscriptEntry) []codexapp.TranscriptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	cloned := make([]codexapp.TranscriptEntry, len(entries))
+	copy(cloned, entries)
+	return cloned
 }
 
 func overlayCodexSnapshotBrowserState(cached, state codexapp.Snapshot) codexapp.Snapshot {

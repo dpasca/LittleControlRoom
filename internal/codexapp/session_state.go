@@ -117,6 +117,7 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
 		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
 		PendingElicitation:       cloneElicitationRequest(s.pendingElicitation),
+		ActivityPreview:          activityPreviewFromInternalEntries(s.entries),
 		Status:                   s.status,
 		LastError:                s.lastError,
 		LastSystemNotice:         s.lastSystemNotice,

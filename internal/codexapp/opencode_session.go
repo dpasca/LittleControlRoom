@@ -371,6 +371,7 @@ func (s *openCodeSession) stateSnapshotLocked() Snapshot {
 		ActiveTurnID:             s.activeTurnID,
 		PendingApproval:          cloneApprovalRequest(s.pendingApproval),
 		PendingToolInput:         cloneToolInputRequest(s.pendingToolInput),
+		ActivityPreview:          activityPreviewFromInternalEntries(s.entries),
 		Status:                   s.status,
 		LastError:                s.lastError,
 		LastSystemNotice:         s.lastSystemNotice,

@@ -12,6 +12,8 @@ const (
 	maxExportedTranscriptBytes            = 2 * 1024 * 1024
 	maxExportedTranscriptEntryBytes       = 128 * 1024
 	maxExportedGeneratedImagePreviewBytes = 4 * 1024 * 1024
+	maxActivityPreviewEntries             = 6
+	maxActivityPreviewEntryBytes          = 4 * 1024
 )
 
 type transcriptExportCache struct {
@@ -78,6 +80,72 @@ func exportTranscriptEntries(entries []transcriptEntry) []TranscriptEntry {
 		out = append(out, reversed[i])
 	}
 	return out
+}
+
+func activityPreviewFromInternalEntries(entries []transcriptEntry) []TranscriptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	preview := make([]TranscriptEntry, 0, min(len(entries), maxActivityPreviewEntries))
+	for i := len(entries) - 1; i >= 0 && len(preview) < maxActivityPreviewEntries; i-- {
+		entry, ok := activityPreviewEntry(TranscriptEntry{
+			ItemID:      entries[i].ItemID,
+			Kind:        entries[i].Kind,
+			Text:        entries[i].Text,
+			DisplayText: entries[i].DisplayText,
+		})
+		if !ok {
+			continue
+		}
+		preview = append(preview, entry)
+	}
+	reverseTranscriptEntries(preview)
+	return preview
+}
+
+func activityPreviewFromEntries(entries []TranscriptEntry) []TranscriptEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	preview := make([]TranscriptEntry, 0, min(len(entries), maxActivityPreviewEntries))
+	for i := len(entries) - 1; i >= 0 && len(preview) < maxActivityPreviewEntries; i-- {
+		entry, ok := activityPreviewEntry(entries[i])
+		if !ok {
+			continue
+		}
+		preview = append(preview, entry)
+	}
+	reverseTranscriptEntries(preview)
+	return preview
+}
+
+func activityPreviewEntry(entry TranscriptEntry) (TranscriptEntry, bool) {
+	switch entry.Kind {
+	case TranscriptAgent, TranscriptPlan, TranscriptStatus, TranscriptSystem:
+	default:
+		return TranscriptEntry{}, false
+	}
+	entry.DisplayText = truncateActivityPreviewText(entry.DisplayText, maxActivityPreviewEntryBytes)
+	entry.Text = truncateActivityPreviewText(entry.Text, max(0, maxActivityPreviewEntryBytes-len(entry.DisplayText)))
+	entry.GeneratedImage = nil
+	if entry.Text == "" && entry.DisplayText == "" {
+		return TranscriptEntry{}, false
+	}
+	return entry, true
+}
+
+func truncateActivityPreviewText(text string, maxBytes int) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= maxBytes {
+		return text
+	}
+	return strings.TrimSpace(trimValidUTF8Prefix(text, maxBytes))
+}
+
+func reverseTranscriptEntries(entries []TranscriptEntry) {
+	for left, right := 0, len(entries)-1; left < right; left, right = left+1, right-1 {
+		entries[left], entries[right] = entries[right], entries[left]
+	}
 }
 
 func limitGeneratedImagePreviewForTranscriptExport(entry TranscriptEntry, retained *bool) TranscriptEntry {

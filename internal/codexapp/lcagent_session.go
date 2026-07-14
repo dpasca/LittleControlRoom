@@ -3348,6 +3348,7 @@ func (s *lcagentSession) stateSnapshotLocked() Snapshot {
 		SuggestedInputDraft:         suggestedDraft,
 		SuggestedInputDraftSource:   suggestedDraftSource,
 		PendingApproval:             cloneApprovalRequest(s.pendingApproval),
+		ActivityPreview:             activityPreviewFromEntries(s.entries),
 		LastActivityAt:              s.lastActivityAt,
 		CurrentCWD:                  s.projectPath,
 		PermissionLevel:             s.effectiveAutoLocked(),
