@@ -674,14 +674,14 @@ func TestDispatchResolveBlocksWhileSameEngineerTurnActive(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("dispatchCommand(/resolve) cmd = %#v, want nil while active engineer turn blocks launch", cmd)
 	}
-	if got.status != "Resolve blocked: fresh engineer session could not start" {
+	if got.status != "Resolve blocked: another engineer session is open" {
 		t.Fatalf("status = %q, want compact resolve refusal", got.status)
 	}
 	if got.actionNoticeDialog == nil {
 		t.Fatal("active engineer refusal should open a notice dialog")
 	}
-	if !strings.Contains(got.actionNoticeDialog.Message, "already running") {
-		t.Fatalf("notice = %q, want active engineer explanation", got.actionNoticeDialog.Message)
+	if !strings.Contains(got.actionNoticeDialog.Summary, "Another engineer session is already open") {
+		t.Fatalf("notice summary = %q, want concise engineer-session explanation", got.actionNoticeDialog.Summary)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want only the existing active session request", len(requests))
@@ -730,7 +730,7 @@ func TestDispatchResolveShowsIdleSessionBlockInNoticeDialog(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("dispatchCommand(/resolve) cmd = %#v, want nil while idle session blocks fresh launch", cmd)
 	}
-	if got.status != "Resolve blocked: fresh engineer session could not start" {
+	if got.status != "Resolve blocked: another engineer session is open" {
 		t.Fatalf("status = %q, want compact resolve refusal", got.status)
 	}
 	if strings.Contains(got.status, "An idle turn") {
@@ -744,14 +744,24 @@ func TestDispatchResolveShowsIdleSessionBlockInNoticeDialog(t *testing.T) {
 	for _, want := range []string{
 		"Resolve blocked",
 		"resolve-idle",
-		"An idle turn does not show that its task is finished",
-		"The /resolve command always starts a fresh engineer session",
-		"press Ctrl+C while it is idle to close it; then run /resolve again",
+		"Another engineer session is already open",
+		"Do this first",
+		"Open the existing engineer session",
+		"More detail",
+		"/resolve opens a new session",
+		"idle may not mean finished",
+		"ask it to resolve the conflict",
 		"Enter/Esc",
 	} {
 		if !strings.Contains(normalizedRendered, want) {
 			t.Fatalf("notice dialog missing %q:\n%s", want, rendered)
 		}
+	}
+	summaryIndex := strings.Index(normalizedRendered, "Another engineer session is already open")
+	actionIndex := strings.Index(normalizedRendered, "Do this first")
+	detailIndex := strings.Index(normalizedRendered, "More detail")
+	if summaryIndex < 0 || actionIndex <= summaryIndex || detailIndex <= actionIndex {
+		t.Fatalf("notice hierarchy should be summary, first action, then detail:\n%s", rendered)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want only the existing idle session request", len(requests))
@@ -762,6 +772,19 @@ func TestDispatchResolveShowsIdleSessionBlockInNoticeDialog(t *testing.T) {
 	}
 	if height := lipgloss.Height(narrowOverlay); height != 20 {
 		t.Fatalf("narrow notice height = %d, want 20", height)
+	}
+	normalizedNarrowOverlay := strings.Join(strings.Fields(narrowOverlay), " ")
+	for _, want := range []string{
+		"Another engineer session is already",
+		"/resolve cannot start",
+		"Do this first",
+		"Open the existing engineer session",
+		"More detail",
+		"Enter/Esc",
+	} {
+		if !strings.Contains(normalizedNarrowOverlay, want) {
+			t.Fatalf("narrow notice dialog missing %q:\n%s", want, narrowOverlay)
+		}
 	}
 	if !strings.Contains(narrowOverlay, "Resolve blocked") {
 		t.Fatalf("narrow notice lost its title:\n%s", narrowOverlay)
