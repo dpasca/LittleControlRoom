@@ -76,8 +76,8 @@ func (m Model) launchMergeConflictResolver(project model.ProjectSummary) (tea.Mo
 	provider := mergeConflictResolveControlProvider(m.preferredEmbeddedProviderForProject(project))
 	resolvedProvider, err := m.resolveControlEngineerProvider(provider, project)
 	if err == nil {
-		if message, blocked := m.mergeConflictResolveSessionBlock(project, resolvedProvider, "project"); blocked {
-			return m.openMergeConflictResolveBlockedDialog(project, message)
+		if m.mergeConflictResolveSessionBlocked(project, resolvedProvider, "project") {
+			return m.openMergeConflictResolveBlockedDialog(project)
 		}
 	}
 	outcome := m.executeEngineerSendPromptControlWithOutcome(control.EngineerSendPromptInput{
@@ -101,8 +101,8 @@ func (m Model) launchGitlinkConflictResolver(parent model.ProjectSummary, target
 		RepoDirty:     true,
 		RepoConflict:  true,
 	}
-	if message, blocked := m.mergeConflictResolveSessionBlock(project, provider, "the submodule conflict worktree"); blocked {
-		return m.openMergeConflictResolveBlockedDialog(project, message)
+	if m.mergeConflictResolveSessionBlocked(project, provider, "the submodule conflict worktree") {
+		return m.openMergeConflictResolveBlockedDialog(project)
 	}
 	return m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: true,
@@ -111,28 +111,26 @@ func (m Model) launchGitlinkConflictResolver(parent model.ProjectSummary, target
 	})
 }
 
-func (m Model) mergeConflictResolveSessionBlock(project model.ProjectSummary, provider codexapp.Provider, targetLabel string) (string, bool) {
-	if block, blocked := m.embeddedLaunchBlock(project, provider, true); blocked {
-		return block.Message, true
+func (m Model) mergeConflictResolveSessionBlocked(project model.ProjectSummary, provider codexapp.Provider, targetLabel string) bool {
+	if _, blocked := m.embeddedLaunchBlock(project, provider, true); blocked {
+		return true
 	}
-	return m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, targetLabel)
+	_, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, targetLabel)
+	return blocked
 }
 
-func (m Model) openMergeConflictResolveBlockedDialog(project model.ProjectSummary, message string) (tea.Model, tea.Cmd) {
+func (m Model) openMergeConflictResolveBlockedDialog(project model.ProjectSummary) (tea.Model, tea.Cmd) {
 	m.err = nil
-	m.status = "Resolve blocked: fresh engineer session could not start"
+	m.status = "Resolve blocked: another engineer session is open"
 	projectName := projectNameForPicker(project, project.Path)
-	m.openActionNoticeDialog("Resolve blocked", projectName, mergeConflictResolveBlockedMessage(message))
+	m.openActionNoticeDialog(
+		"Resolve blocked",
+		projectName,
+		"Another engineer session is already open, so /resolve cannot start.",
+		"Open the existing engineer session.",
+		"/resolve opens a new session, and Little Control Room will not replace an open one because idle may not mean finished. If it is busy, wait. Once idle, ask it to resolve the conflict or close it with Ctrl+C, then retry.",
+	)
 	return m, nil
-}
-
-func mergeConflictResolveBlockedMessage(message string) string {
-	message = strings.TrimSpace(message)
-	guidance := "The /resolve command always starts a fresh engineer session. Reopen the existing session and either ask it to handle the new conflict, or press Ctrl+C while it is idle to close it; then run /resolve again."
-	if message == "" {
-		return guidance
-	}
-	return message + "\n\n" + guidance
 }
 
 func (m Model) mergeConflictResolveTargetProject() (model.ProjectSummary, bool) {

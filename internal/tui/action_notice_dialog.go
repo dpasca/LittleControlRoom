@@ -8,16 +8,20 @@ import (
 )
 
 type actionNoticeDialogState struct {
-	Title   string
-	Subject string
-	Message string
+	Title    string
+	Subject  string
+	Summary  string
+	NextStep string
+	Details  string
 }
 
-func (m *Model) openActionNoticeDialog(title, subject, message string) {
+func (m *Model) openActionNoticeDialog(title, subject, summary, nextStep, details string) {
 	m.actionNoticeDialog = &actionNoticeDialogState{
-		Title:   strings.TrimSpace(title),
-		Subject: strings.TrimSpace(subject),
-		Message: strings.TrimSpace(message),
+		Title:    strings.TrimSpace(title),
+		Subject:  strings.TrimSpace(subject),
+		Summary:  strings.TrimSpace(summary),
+		NextStep: strings.TrimSpace(nextStep),
+		Details:  strings.TrimSpace(details),
 	}
 }
 
@@ -58,11 +62,19 @@ func (m Model) renderActionNoticeDialogContent(width int) string {
 		renderDialogHeader(title, dialog.Subject, "", width),
 		"",
 	}
-	message := dialog.Message
-	if message == "" {
-		message = "The requested action could not be completed."
+	summary := dialog.Summary
+	if summary == "" {
+		summary = "The requested action could not be completed."
 	}
-	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, message)...)
+	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, summary)...)
+	if dialog.NextStep != "" {
+		lines = append(lines, "", detailSectionStyle.Render("Do this first"))
+		lines = append(lines, renderWrappedDialogTextLines(detailValueStyle, width, dialog.NextStep)...)
+	}
+	if dialog.Details != "" {
+		lines = append(lines, "", detailSectionStyle.Render("More detail"))
+		lines = append(lines, renderWrappedDialogTextLines(detailMutedStyle, width, dialog.Details)...)
+	}
 	lines = append(lines,
 		"",
 		renderDialogAction("Enter/Esc", "dismiss", cancelActionKeyStyle, cancelActionTextStyle),
