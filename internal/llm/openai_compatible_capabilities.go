@@ -2,6 +2,8 @@ package llm
 
 import "strings"
 
+const xiaomiStructuredOutputMaxCompletionTokens int64 = 16_384
+
 type OpenAICompatibleChatResponseFormat string
 
 const (
@@ -18,17 +20,21 @@ type OpenAICompatibleProviderModelProfile struct {
 	ReasoningStyle        string
 	RequireParameters     bool
 	PreferChatCompletions bool
+	ChatMaxOutputTokens   int64
+	ChatMaxTokensField    string
 }
 
 type openAICompatibleProviderModelRule struct {
-	providerID         string
-	model              string
-	modelPrefix        string
-	chatResponseFormat OpenAICompatibleChatResponseFormat
-	authHeader         OpenAICompatibleAuthHeader
-	reasoningStyle     string
-	requireParameters  bool
-	preferChat         bool
+	providerID          string
+	model               string
+	modelPrefix         string
+	chatResponseFormat  OpenAICompatibleChatResponseFormat
+	authHeader          OpenAICompatibleAuthHeader
+	reasoningStyle      string
+	requireParameters   bool
+	preferChat          bool
+	chatMaxOutputTokens int64
+	chatMaxTokensField  string
 }
 
 var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
@@ -46,10 +52,12 @@ var openAICompatibleProviderModelRules = []openAICompatibleProviderModelRule{
 	{
 		// MiMo's structured-output transport is JSON mode; the schema is
 		// supplied in the prompt instead of response_format.json_schema.
-		providerID:         "xiaomi",
-		chatResponseFormat: OpenAICompatibleChatResponseFormatJSONObject,
-		authHeader:         OpenAICompatibleAuthHeaderAPIKey,
-		reasoningStyle:     "xiaomi",
+		providerID:          "xiaomi",
+		chatResponseFormat:  OpenAICompatibleChatResponseFormatJSONObject,
+		authHeader:          OpenAICompatibleAuthHeaderAPIKey,
+		reasoningStyle:      "xiaomi",
+		chatMaxOutputTokens: xiaomiStructuredOutputMaxCompletionTokens,
+		chatMaxTokensField:  "max_completion_tokens",
 	},
 	{
 		providerID:        "openrouter",
@@ -95,6 +103,12 @@ func OpenAICompatibleProviderModelProfileForProviderModel(providerID, model stri
 		if rule.preferChat {
 			profile.PreferChatCompletions = true
 		}
+		if rule.chatMaxOutputTokens > 0 {
+			profile.ChatMaxOutputTokens = rule.chatMaxOutputTokens
+		}
+		if strings.TrimSpace(rule.chatMaxTokensField) != "" {
+			profile.ChatMaxTokensField = strings.TrimSpace(rule.chatMaxTokensField)
+		}
 	}
 
 	return profile
@@ -116,6 +130,12 @@ func OpenAICompatibleResponsesRunnerOptionsForProviderModel(providerID, model st
 	}
 	if profile.PreferChatCompletions {
 		opts.PreferChatCompletions = true
+	}
+	if profile.ChatMaxOutputTokens > 0 {
+		opts.ChatMaxOutputTokens = profile.ChatMaxOutputTokens
+	}
+	if strings.TrimSpace(profile.ChatMaxTokensField) != "" {
+		opts.ChatMaxTokensField = strings.TrimSpace(profile.ChatMaxTokensField)
 	}
 	return opts
 }

@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	bossAssistantReasoningEffort      = "high"
-	bossReadOnlyRouterReasoningEffort = "low"
+	bossAssistantReasoningEffort        = "high"
+	bossReadOnlyRouterReasoningEffort   = "low"
+	bossStructuredRepairReasoningEffort = "low"
 )
 
 type ChatMessage struct {
@@ -736,7 +737,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		return response, bossAction{}, errors.New("Chat returned no structured action")
 	}
 	var action bossAction
-	if decodeErr := llm.DecodeJSONObjectOutput(response.OutputText, &action); decodeErr != nil {
+	if decodeErr := decodeBossJSONResponse(response, &action); decodeErr != nil {
 		repairResponse, repairedAction, repairErr := a.repairBossAction(ctx, req, toolResults, forceAnswer, response.OutputText)
 		addLLMUsage(&response.Usage, repairResponse.Usage)
 		if repairModel := strings.TrimSpace(repairResponse.Model); repairModel != "" {
@@ -803,7 +804,7 @@ func (a *Assistant) repairBossAction(ctx context.Context, req AssistantRequest, 
 		UserText:        userText,
 		SchemaName:      "boss_next_action",
 		Schema:          bossActionSchema(),
-		ReasoningEffort: bossAssistantReasoningEffort,
+		ReasoningEffort: a.structuredRepairReasoningEffort(),
 	})
 	if err != nil {
 		return response, bossAction{}, err
@@ -812,10 +813,31 @@ func (a *Assistant) repairBossAction(ctx context.Context, req AssistantRequest, 
 		return response, bossAction{}, errors.New("Chat returned no repaired structured action")
 	}
 	var action bossAction
-	if err := llm.DecodeJSONObjectOutput(response.OutputText, &action); err != nil {
+	if err := decodeBossJSONResponse(response, &action); err != nil {
 		return response, bossAction{}, fmt.Errorf("decode repaired Chat action: %w", err)
 	}
 	return response, action, nil
+}
+
+func (a *Assistant) structuredRepairReasoningEffort() string {
+	if a != nil && a.backend == config.AIBackendXiaomi {
+		// Xiaomi counts hidden thinking and visible JSON against the same output
+		// budget. Schema repair is narrow enough to reserve that budget for JSON.
+		return "none"
+	}
+	return bossStructuredRepairReasoningEffort
+}
+
+func decodeBossJSONResponse(response llm.JSONSchemaResponse, decoded any) error {
+	err := llm.DecodeJSONObjectOutput(response.OutputText, decoded)
+	if err == nil {
+		return nil
+	}
+	reason := strings.TrimSpace(response.IncompleteReason)
+	if reason == "" {
+		return err
+	}
+	return fmt.Errorf("model completion was incomplete (%s): %w", reason, err)
 }
 
 func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantRequest, action bossAction) (bossAction, bool, llm.JSONSchemaResponse, error) {

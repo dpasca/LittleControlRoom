@@ -661,6 +661,9 @@ func TestOpenAICompatibleProviderModelProfileMapsXiaomiToJSONModeAndAPIKeyHeader
 	if opts.ReasoningStyle != "xiaomi" {
 		t.Fatalf("Xiaomi reasoning style = %q, want xiaomi", opts.ReasoningStyle)
 	}
+	if opts.ChatMaxOutputTokens != xiaomiStructuredOutputMaxCompletionTokens || opts.ChatMaxTokensField != "max_completion_tokens" {
+		t.Fatalf("Xiaomi structured output budget = %d via %q", opts.ChatMaxOutputTokens, opts.ChatMaxTokensField)
+	}
 }
 
 func TestOpenAICompatibleChatCompletionsSendsXiaomiReasoning(t *testing.T) {
@@ -703,6 +706,70 @@ func TestOpenAICompatibleChatCompletionsSendsXiaomiReasoning(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleChatCompletionsCanDisableXiaomiReasoning(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"finish_reason":"stop","message":{"content":"{\"ok\":true}"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions("test-key", server.URL, time.Second, nil, OpenAICompatibleChatResponseFormatJSONObject, OpenAICompatibleAuthHeaderAPIKey, "xiaomi")
+	_, err := client.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		Model:           "mimo-v2.5-pro",
+		SystemText:      "system",
+		UserText:        "user",
+		SchemaName:      "xiaomi_repair",
+		Schema:          map[string]any{"type": "object"},
+		ReasoningEffort: "none",
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	thinking, ok := gotBody["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Fatalf("thinking = %#v, want disabled", gotBody["thinking"])
+	}
+	if _, ok := thinking["reasoning_effort"]; ok {
+		t.Fatalf("disabled thinking should omit reasoning_effort: %#v", thinking)
+	}
+}
+
+func TestOpenAICompatibleChatCompletionsSurfacesIncompleteFinishReason(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "mimo-v2.5-pro",
+			"choices": []any{map[string]any{
+				"finish_reason": "length",
+				"message":       map[string]any{"content": "```json\n{\n\""},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleChatCompletionsClientWithBaseURLAndOptions("test-key", server.URL, time.Second, nil, OpenAICompatibleChatResponseFormatJSONObject, OpenAICompatibleAuthHeaderAPIKey, "xiaomi")
+	response, err := client.RunJSONSchema(context.Background(), JSONSchemaRequest{
+		Model: "mimo-v2.5-pro", Schema: map[string]any{"type": "object"},
+	})
+	if err != nil {
+		t.Fatalf("RunJSONSchema() error = %v", err)
+	}
+	if response.Status != "incomplete" || response.IncompleteReason != "length" || response.FinishReason != "length" {
+		t.Fatalf("response completion state = %+v", response)
+	}
+	if response.OutputText != "```json\n{\n\"" {
+		t.Fatalf("OutputText = %q", response.OutputText)
+	}
+}
+
 func TestOpenAICompatibleResponsesRunnerUsesXiaomiJSONModeAndAPIKeyHeader(t *testing.T) {
 	t.Parallel()
 
@@ -725,6 +792,7 @@ func TestOpenAICompatibleResponsesRunnerUsesXiaomiJSONModeAndAPIKeyHeader(t *tes
 				ResponseFormat struct {
 					Type string `json:"type"`
 				} `json:"response_format"`
+				MaxCompletionTokens int64 `json:"max_completion_tokens"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode Xiaomi request: %v", err)
@@ -735,10 +803,13 @@ func TestOpenAICompatibleResponsesRunnerUsesXiaomiJSONModeAndAPIKeyHeader(t *tes
 			if len(body.Messages) != 2 || !strings.Contains(body.Messages[1].Content, `"type": "object"`) {
 				t.Fatalf("Xiaomi JSON-mode prompt should contain the requested schema: %#v", body.Messages)
 			}
+			if body.MaxCompletionTokens != xiaomiStructuredOutputMaxCompletionTokens {
+				t.Fatalf("Xiaomi max_completion_tokens = %d, want %d", body.MaxCompletionTokens, xiaomiStructuredOutputMaxCompletionTokens)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{
 				"model":"mimo-v2.5-pro",
-				"choices":[{"message":{"role":"assistant","content":"{\"message\":\"xiaomi auth ok\"}"}}]
+				"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"{\"message\":\"xiaomi auth ok\"}"}}]
 			}`))
 		case "/v1/models":
 			modelCalls++
@@ -770,6 +841,9 @@ func TestOpenAICompatibleResponsesRunnerUsesXiaomiJSONModeAndAPIKeyHeader(t *tes
 	}
 	if response.OutputText != "{\"message\":\"xiaomi auth ok\"}" {
 		t.Fatalf("OutputText = %q, want Xiaomi payload", response.OutputText)
+	}
+	if response.FinishReason != "stop" || response.IncompleteReason != "" {
+		t.Fatalf("Xiaomi completion state = %+v", response)
 	}
 	if chatCalls != 1 {
 		t.Fatalf("chat calls = %d, want 1", chatCalls)

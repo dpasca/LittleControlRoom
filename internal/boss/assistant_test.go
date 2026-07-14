@@ -12,6 +12,7 @@ import (
 
 	"lcroom/internal/agentcontext"
 	"lcroom/internal/bossrun"
+	"lcroom/internal/config"
 	"lcroom/internal/control"
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
@@ -744,6 +745,52 @@ func TestAssistantReplyRepairsPlainTextPlannerOutputAsFinalAnswer(t *testing.T) 
 	}
 	if !strings.Contains(planner.reqs[1].UserText, answer) || !strings.Contains(planner.reqs[1].SystemText, "Repair one invalid") {
 		t.Fatalf("repair request should include the malformed output and repair instructions: %+v", planner.reqs[1])
+	}
+	if planner.reqs[1].ReasoningEffort != bossStructuredRepairReasoningEffort {
+		t.Fatalf("repair reasoning = %q, want %q", planner.reqs[1].ReasoningEffort, bossStructuredRepairReasoningEffort)
+	}
+}
+
+func TestAssistantReplyRepairsTruncatedXiaomiJSONWithoutThinking(t *testing.T) {
+	t.Parallel()
+
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{
+				Status:           "incomplete",
+				IncompleteReason: "length",
+				FinishReason:     "length",
+				OutputText:       "```json\n{\n\"",
+			},
+			{OutputText: encodedBossAction(t, bossAction{Kind: bossActionAnswer, Answer: "I found the project and can prepare the confirmation."})},
+		},
+	}
+	assistant := &Assistant{
+		planner: planner,
+		query:   newQueryExecutor(&fakeBossStore{}),
+		model:   "mimo-v2.5-pro",
+		backend: config.AIBackendXiaomi,
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		HelpChat:   true,
+		StateBrief: "Visible projects: portfolio.",
+		Messages:   []ChatMessage{{Role: "user", Content: "Add career-private under the private projects tab."}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.Content != "I found the project and can prepare the confirmation." {
+		t.Fatalf("Content = %q", resp.Content)
+	}
+	if len(planner.reqs) != 2 {
+		t.Fatalf("planner requests = %d, want original plus repair", len(planner.reqs))
+	}
+	if planner.reqs[1].ReasoningEffort != "none" {
+		t.Fatalf("Xiaomi repair reasoning = %q, want none", planner.reqs[1].ReasoningEffort)
+	}
+	if !strings.Contains(planner.reqs[1].UserText, "```json") {
+		t.Fatalf("repair request omitted truncated output: %q", planner.reqs[1].UserText)
 	}
 }
 

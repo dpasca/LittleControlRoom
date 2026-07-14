@@ -25,6 +25,8 @@ type OpenAICompatibleChatCompletionsClient struct {
 	authHeader         OpenAICompatibleAuthHeader
 	reasoningStyle     string
 	requireParameters  bool
+	maxOutputTokens    int64
+	maxTokensField     string
 }
 
 type OpenAICompatibleStructuredOutputRunner struct {
@@ -145,6 +147,13 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 			"require_parameters": true,
 		}
 	}
+	if c.maxOutputTokens > 0 {
+		field := strings.TrimSpace(c.maxTokensField)
+		if field == "" {
+			field = "max_completion_tokens"
+		}
+		reqBody[field] = c.maxOutputTokens
+	}
 	if responseFormatType == OpenAICompatibleChatResponseFormatJSONObject {
 		reqBody["response_format"] = map[string]any{
 			"type": "json_object",
@@ -218,7 +227,8 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 			TotalTokens int64 `json:"total_tokens"`
 		} `json:"usage"`
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -236,7 +246,13 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 		OutputText: "",
 	}
 	if len(envelope.Choices) > 0 {
-		result.OutputText = strings.TrimSpace(envelope.Choices[0].Message.Content)
+		choice := envelope.Choices[0]
+		result.OutputText = strings.TrimSpace(choice.Message.Content)
+		result.FinishReason = strings.TrimSpace(choice.FinishReason)
+		if reason := chatCompletionIncompleteReason(result.FinishReason); reason != "" {
+			result.Status = "incomplete"
+			result.IncompleteReason = reason
+		}
 	}
 	if envelope.Usage != nil {
 		result.Usage = model.LLMUsage{
@@ -260,6 +276,16 @@ func (c *OpenAICompatibleChatCompletionsClient) RunJSONSchema(ctx context.Contex
 	}
 
 	return result, nil
+}
+
+func chatCompletionIncompleteReason(finishReason string) string {
+	finishReason = strings.TrimSpace(finishReason)
+	switch strings.ToLower(finishReason) {
+	case "", "stop":
+		return ""
+	default:
+		return finishReason
+	}
 }
 
 func NewOpenAICompatibleStructuredOutputRunner(responses, chat JSONSchemaRunner) JSONSchemaRunner {
@@ -425,7 +451,11 @@ func addOpenAICompatibleChatReasoning(body map[string]any, style, effort string)
 		body["thinking"] = map[string]any{"type": "enabled"}
 		body["reasoning_effort"] = effort
 	case "xiaomi":
-		body["thinking"] = map[string]any{"type": "enabled", "reasoning_effort": effort}
+		if strings.EqualFold(effort, "none") {
+			body["thinking"] = map[string]any{"type": "disabled"}
+		} else {
+			body["thinking"] = map[string]any{"type": "enabled", "reasoning_effort": effort}
+		}
 	}
 }
 
