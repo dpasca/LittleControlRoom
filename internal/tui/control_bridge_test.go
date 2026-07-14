@@ -867,6 +867,124 @@ func TestExecuteBossProjectCreateAndStartEngineerCreatesRepositoryTodoWorktreeAn
 	waitForControlAsyncRefreshes(t, svc)
 }
 
+func TestExecuteBossProjectCreateAndStartEngineerRegistersExistingRepositoryAndStartsWork(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	parentPath := t.TempDir()
+	projectPath := filepath.Join(parentPath, "career-private")
+	runTUITestGit(t, "", "init", projectPath)
+
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:       req.Provider,
+				ThreadID:       "thread-career-private",
+				Started:        true,
+				LastActivityAt: time.Now(),
+			},
+		}, nil
+	})
+	m := Model{ctx: ctx, svc: svc, codexManager: manager}
+	inv := controlInvocationRawForTest(t, control.CapabilityProjectCreateAndStartEngineer, control.ProjectCreateAndStartEngineerInput{
+		ParentPath:  parentPath,
+		ProjectName: "career-private",
+		TodoText:    "Set up the existing private career project.",
+		Prompt:      "Inspect the existing repository and continue the requested work.",
+		Provider:    control.ProviderCodex,
+	})
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: inv})
+	got := updated.(Model)
+	created, ok := cmd().(bossProjectCreateAndStartEngineerCreatedMsg)
+	if !ok || created.err != nil {
+		t.Fatalf("existing repository setup result = %#v, want success", created)
+	}
+	if created.result.Action != service.CreateOrAttachProjectAdded || created.result.GitRepoCreated {
+		t.Fatalf("existing repository result = %#v, want registration without Git initialization", created.result)
+	}
+	if !created.folderExists || !created.gitInitialized || !created.projectTracked {
+		t.Fatalf("existing repository stages = folder:%v git:%v tracked:%v", created.folderExists, created.gitInitialized, created.projectTracked)
+	}
+
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	var todoCreated bossTodoWorktreeTodoCreatedMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossTodoWorktreeTodoCreatedMsg); ok {
+			todoCreated = candidate
+			break
+		}
+	}
+	if todoCreated.err != nil || todoCreated.todo.ID <= 0 || todoCreated.projectSetupAction != service.CreateOrAttachProjectAdded {
+		t.Fatalf("existing repository TODO creation = %#v, want attached-project progress", todoCreated)
+	}
+
+	updated, cmd = got.Update(todoCreated)
+	got = updated.(Model)
+	var prepared bossTodoWorktreePreparedMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossTodoWorktreePreparedMsg); ok {
+			prepared = candidate
+			break
+		}
+	}
+	if prepared.err != nil || prepared.result.WorktreePath == "" || prepared.projectSetupAction != service.CreateOrAttachProjectAdded {
+		t.Fatalf("existing repository worktree preparation = %#v, want success", prepared)
+	}
+
+	updated, cmd = got.Update(prepared)
+	got = updated.(Model)
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = candidate
+		}
+	}
+	if result.Err != nil || result.Activity == nil {
+		t.Fatalf("existing repository launch result = %#v, want active tracked engineer", result)
+	}
+	if !strings.Contains(result.Status, "Registered existing Git repository "+projectPath) || !strings.Contains(result.Status, "AI engineer launched") {
+		t.Fatalf("launch status = %q, want existing-repository registration and engineer receipt", result.Status)
+	}
+	if len(requests) != 1 || requests[0].ProjectPath != prepared.result.WorktreePath || !requests[0].ForceNew {
+		t.Fatalf("launch requests = %#v, want one fresh worktree session", requests)
+	}
+	waitForControlAsyncRefreshes(t, svc)
+}
+
+func TestExecuteBossProjectCreateAndStartEngineerRejectsExistingNonGitFolderBeforeRegistration(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	parentPath := t.TempDir()
+	projectPath := filepath.Join(parentPath, "career-private")
+	if err := os.Mkdir(projectPath, 0o755); err != nil {
+		t.Fatalf("create existing non-Git folder: %v", err)
+	}
+	m := Model{ctx: ctx, svc: svc}
+	inv := controlInvocationRawForTest(t, control.CapabilityProjectCreateAndStartEngineer, control.ProjectCreateAndStartEngineerInput{
+		ParentPath:  parentPath,
+		ProjectName: "career-private",
+		TodoText:    "Set up the private career project.",
+		Prompt:      "Inspect the repository.",
+		Provider:    control.ProviderCodex,
+	})
+
+	_, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: inv})
+	created, ok := cmd().(bossProjectCreateAndStartEngineerCreatedMsg)
+	if !ok || created.err == nil || !strings.Contains(created.err.Error(), "not a Git repository") {
+		t.Fatalf("existing non-Git setup result = %#v, want preflight rejection", created)
+	}
+	if !created.folderExists || created.gitInitialized || created.projectTracked {
+		t.Fatalf("non-Git rejection stages = folder:%v git:%v tracked:%v", created.folderExists, created.gitInitialized, created.projectTracked)
+	}
+	if _, err := svc.Store().GetProjectSummary(ctx, projectPath, true); err == nil {
+		t.Fatalf("existing non-Git folder should not be registered")
+	}
+}
+
 func TestExecuteBossProjectCreateAndStartEngineerRejectsLoadedTarget(t *testing.T) {
 	projectPath := filepath.Join(t.TempDir(), "KeyMaster")
 	m := Model{allProjects: []model.ProjectSummary{{Path: projectPath, Name: "KeyMaster", PresentOnDisk: true}}}

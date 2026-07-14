@@ -776,13 +776,13 @@ func TestEmbeddedHelpNewRepositoryConfirmationShowsFilesystemEffects(t *testing.
 	}
 	rendered := ansi.Strip(got.renderControlConfirmationDialog(100, 36))
 	for _, want := range []string{
-		"New Repository Work",
-		"create a Git repository and start tracked work",
+		"Repository Setup & Work",
+		"set up a Git repository and start tracked work",
 		"/tmp/repos/KeyMaster",
-		"initialize new repository",
+		"register existing or initialize new",
 		"dedicated worktree",
 		"Codex",
-		"create and start",
+		"set up and start",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("new repository confirmation missing %q:\n%s", want, rendered)
@@ -956,6 +956,8 @@ func TestEmbeddedHelpCtrlLClearsCurrentChat(t *testing.T) {
 	m.messages = []ChatMessage{{Role: "user", Content: "old chat", At: time.Now()}}
 	m.input.SetValue("draft")
 	m.sending = true
+	canceled := false
+	m.assistantCancel = func() { canceled = true }
 	m.assistantStartedAt = time.Now().Add(-time.Second)
 	m.haveLastAssistantUsage = true
 	m.lastAssistantUsage = model.LLMUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13}
@@ -969,11 +971,73 @@ func TestEmbeddedHelpCtrlLClearsCurrentChat(t *testing.T) {
 	if len(got.messages) != 0 || got.input.Value() != "" {
 		t.Fatalf("Ctrl+L should clear messages and input, messages=%#v input=%q", got.messages, got.input.Value())
 	}
-	if got.sending || !got.assistantStartedAt.IsZero() || got.haveLastAssistantUsage {
+	if !canceled || got.sending || got.assistantCancel != nil || !got.assistantStartedAt.IsZero() || got.haveLastAssistantUsage {
 		t.Fatalf("Ctrl+L should clear active/profile state")
 	}
 	if got.assistantStreamID <= streamID {
 		t.Fatalf("Ctrl+L should invalidate active stream id")
+	}
+}
+
+func TestEmbeddedHelpCtrlCStopsActiveResponseAndKeepsDraft(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	canceled := false
+	m.sending = true
+	m.assistantCancel = func() { canceled = true }
+	m.assistantStartedAt = time.Now().Add(-time.Second)
+	m.input.SetValue("actually, use the existing repository")
+	streamID := m.assistantStreamID
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("Ctrl+C while Chat is responding should stop the response without closing Chat")
+	}
+	if !canceled || got.sending || got.assistantCancel != nil {
+		t.Fatalf("active response was not canceled cleanly: canceled=%v sending=%v cancel=%v", canceled, got.sending, got.assistantCancel)
+	}
+	if got.assistantStreamID <= streamID {
+		t.Fatalf("stopping should invalidate the active stream id")
+	}
+	if got.input.Value() != "actually, use the existing repository" {
+		t.Fatalf("draft = %q, want correction preserved", got.input.Value())
+	}
+	if !strings.Contains(got.status, "response stopped") {
+		t.Fatalf("status = %q, want stopped receipt", got.status)
+	}
+}
+
+func TestEmbeddedHelpEnterSteersActiveResponseWithDraft(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.messages = []ChatMessage{{Role: "user", Content: "cd /wrong/path", At: time.Now()}}
+	canceled := false
+	m.sending = true
+	m.assistantCancel = func() { canceled = true }
+	m.assistantStartedAt = time.Now().Add(-time.Second)
+	m.input.SetValue("Ignore that command; register the existing repository instead.")
+	streamID := m.assistantStreamID
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	defer got.cancelAssistantRun()
+	if cmd == nil {
+		t.Fatalf("Enter with a draft during an active response should start the steered request")
+	}
+	if !canceled || !got.sending || got.assistantCancel == nil {
+		t.Fatalf("steer did not replace the active response: canceled=%v sending=%v cancel=%v", canceled, got.sending, got.assistantCancel)
+	}
+	if got.assistantStreamID <= streamID+1 {
+		t.Fatalf("steer stream id = %d, want both old-stream invalidation and a new stream after %d", got.assistantStreamID, streamID)
+	}
+	if got.input.Value() != "" {
+		t.Fatalf("input = %q, want submitted correction cleared", got.input.Value())
+	}
+	if len(got.messages) != 2 || got.messages[1].Role != "user" || !strings.Contains(got.messages[1].Content, "register the existing repository") {
+		t.Fatalf("messages = %#v, want correction appended after mistaken input", got.messages)
 	}
 }
 

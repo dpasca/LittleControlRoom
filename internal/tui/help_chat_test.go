@@ -101,6 +101,27 @@ func TestHelpChatLongTranscriptStaysInsideScrollableOverlay(t *testing.T) {
 	}
 }
 
+func TestHelpChatFooterOffersStopAndSteerWhileResponding(t *testing.T) {
+	t.Parallel()
+
+	help := bossui.NewEmbeddedHelp(context.Background(), nil)
+	updated, _ := help.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("mistaken request")})
+	help = normalizeBossModel(updated)
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	help = normalizeBossModel(updated)
+
+	m := Model{helpChatModel: help}
+	footer := ansi.Strip(m.renderHelpChatFooter(100))
+	for _, want := range []string{"Enter steer", "Ctrl+C stop", "Esc hide"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("responding Chat footer missing %q: %q", want, footer)
+		}
+	}
+
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	help = normalizeBossModel(updated)
+}
+
 func TestHelpChatOverlayPaintsEveryInteriorCell(t *testing.T) {
 	prevProfile := lipgloss.ColorProfile()
 	prevDarkBackground := lipgloss.HasDarkBackground()

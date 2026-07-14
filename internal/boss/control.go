@@ -91,7 +91,7 @@ func requireLoadedControlProject(projects []ProjectRef, projectPath, projectName
 		if controlProjectRefHasPath(projects, projectPath) {
 			return nil
 		}
-		return fmt.Errorf("project is not loaded: %s; use %s when creating a brand-new repository", projectPath, control.CapabilityProjectCreateAndStartEngineer)
+		return fmt.Errorf("project is not loaded: %s; use %s when creating or registering a repository", projectPath, control.CapabilityProjectCreateAndStartEngineer)
 	}
 	projectName = strings.TrimSpace(projectName)
 	matchedPath := ""
@@ -108,7 +108,7 @@ func requireLoadedControlProject(projects []ProjectRef, projectPath, projectName
 	if matchedPath != "" {
 		return nil
 	}
-	return fmt.Errorf("project is not loaded: %s; use %s when creating a brand-new repository", projectName, control.CapabilityProjectCreateAndStartEngineer)
+	return fmt.Errorf("project is not loaded: %s; use %s when creating or registering a repository", projectName, control.CapabilityProjectCreateAndStartEngineer)
 }
 
 func controlProjectRefHasPath(projects []ProjectRef, projectPath string) bool {
@@ -481,12 +481,12 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			provider = "the preferred engineer"
 		}
 		lines := []string{
-			fmt.Sprintf("Create Git repository %s and start tracked work with %s?", input.ProjectPath, provider),
+			fmt.Sprintf("Set up Git repository %s and start tracked work with %s?", input.ProjectPath, provider),
 			"",
 			strings.TrimSpace(input.TodoText),
 			"",
-			"I will create and register the repository, add a project TODO, prepare a dedicated worktree, and launch a fresh engineer session there.",
-			"Enter creates and starts; Esc cancels.",
+			"I will register an existing Git repository at that path, or create one if the path is unused, then add a project TODO, prepare a dedicated worktree, and launch a fresh engineer session there.",
+			"Enter sets up and starts; Esc cancels.",
 		}
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
@@ -685,7 +685,7 @@ func controlProposalStatus(inv control.Invocation) string {
 	case control.CapabilityEngineerSendPrompt:
 		return "Ready to send to engineer with Enter, or Esc to cancel"
 	case control.CapabilityProjectCreateAndStartEngineer:
-		return "Ready to create the repository and start tracked work with Enter, or cancel with Esc"
+		return "Ready to set up the repository and start tracked work with Enter, or cancel with Esc"
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		return "Ready to start tracked work with Enter, add TODO only with q, or cancel with Esc"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
@@ -703,7 +703,7 @@ func controlProposalFooterHint(inv control.Invocation) string {
 			return "Enter starts in worktree | q adds TODO only | Esc cancels"
 		}
 		if inv.Capability == control.CapabilityProjectCreateAndStartEngineer {
-			return "Enter creates repository and starts | Esc cancels"
+			return "Enter sets up repository and starts | Esc cancels"
 		}
 		return "Enter sends to engineer | Esc cancels"
 	}
@@ -718,7 +718,7 @@ func controlProposalSubmittingStatus(inv control.Invocation) string {
 	case control.CapabilityEngineerSendPrompt:
 		return "Sending request to engineer session..."
 	case control.CapabilityProjectCreateAndStartEngineer:
-		return "Creating Git repository and tracked worktree..."
+		return "Setting up Git repository and tracked worktree..."
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		return "Creating tracked TODO and dedicated worktree..."
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:

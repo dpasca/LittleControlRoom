@@ -39,7 +39,7 @@ func (m Model) controlConfirmationTitle() string {
 	case control.CapabilityEngineerSendPrompt:
 		return "Engineer Handoff"
 	case control.CapabilityProjectCreateAndStartEngineer:
-		return "New Repository Work"
+		return "Repository Setup & Work"
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		return "Tracked Engineer Task"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
@@ -225,10 +225,10 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 				provider = "Auto"
 			}
 			lines := []string{
-				bossControlNoticeStyle.Render(fitLine("External action: create a Git repository and start tracked work", width)),
+				bossControlNoticeStyle.Render(fitLine("External action: set up a Git repository and start tracked work", width)),
 				"",
 				renderBossControlDetail("Repository", input.ProjectPath, width),
-				renderBossControlDetail("Git", "initialize new repository", width),
+				renderBossControlDetail("Git", "register existing or initialize new", width),
 				renderBossControlDetail("Workspace", "dedicated worktree", width),
 				renderBossControlDetail("Engineer", provider, width),
 				"",
@@ -245,7 +245,7 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 			lines = append(lines,
 				"",
 				strings.Join([]string{
-					renderBossControlAction("Enter", "create and start", uistyle.DialogActionPrimary),
+					renderBossControlAction("Enter", "set up and start", uistyle.DialogActionPrimary),
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
 			)

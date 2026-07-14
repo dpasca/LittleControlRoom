@@ -198,6 +198,15 @@ func (m Model) renderHelpChatFooter(width int) string {
 		footerLowAction("/new", "clear"),
 		footerNavAction("Alt+Enter", "newline"),
 	}
+	if m.helpChatModel.IsSending() {
+		actions = []footerAction{
+			footerPrimaryAction("Enter", "steer"),
+			footerExitAction("Ctrl+C", "stop"),
+			footerHideAction("Esc", "hide"),
+			footerHideAction("`", "hide"),
+			footerNavAction("Alt+Enter", "newline"),
+		}
+	}
 	if m.helpChatModel.ControlConfirmationActive() {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "confirm"),

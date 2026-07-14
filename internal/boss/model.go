@@ -95,6 +95,7 @@ type Model struct {
 	spinnerFrame        int
 	nowFn               func() time.Time
 	assistantStartedAt  time.Time
+	assistantCancel     context.CancelFunc
 
 	assistantStreamID      int
 	streamingAssistantText string
@@ -468,6 +469,10 @@ func (m Model) StatusText() string {
 	return status
 }
 
+func (m Model) IsSending() bool {
+	return m.sending
+}
+
 func (m Model) UsageText() string {
 	parts := make([]string, 0, 3)
 	if m.haveLastAssistantUsage {
@@ -682,6 +687,7 @@ func (m Model) clearHelpChat(prompt string) (tea.Model, tea.Cmd) {
 	if !m.helpChat {
 		return m, nil
 	}
+	m.cancelAssistantRun()
 	m.input.Reset()
 	m.bossSlashSelected = 0
 	m.messages = nil
@@ -866,7 +872,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch msg.String() {
-		case "ctrl+c", "esc", "alt+up":
+		case "ctrl+c":
+			if m.sending {
+				m.interruptAssistantRun()
+				return m, nil
+			}
+			return m, m.exitCmd()
+		case "esc", "alt+up":
 			return m, m.exitCmd()
 		case "alt+c":
 			if m.helpChat {
@@ -940,6 +952,7 @@ func (m Model) applyAssistantReply(response AssistantResponse, err error, snapsh
 		m.assistantStartedAt = time.Time{}
 	}
 	m.sending = false
+	m.cancelAssistantRun()
 	m.streamingAssistantText = ""
 	m.streamingToolCalls = nil
 	if err == nil {
@@ -1146,7 +1159,13 @@ func (m Model) toggleTranscriptTab() Model {
 
 func (m Model) submit() (tea.Model, tea.Cmd) {
 	if m.sending {
-		return m, nil
+		text := strings.TrimSpace(m.input.Value())
+		if text == "" {
+			m.status = m.chatSurfaceLabel() + " is still thinking; type a correction and press Enter, or press Ctrl+C to stop"
+			return m, nil
+		}
+		m.interruptAssistantRun()
+		return m.submitChatMessage(text)
 	}
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
@@ -1213,16 +1232,15 @@ func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, v
 	}
 }
 
-func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snapshot StateSnapshot, view ViewContext) tea.Cmd {
+func (m Model) askAssistantStreamCmd(runCtx context.Context, streamID int, messages []ChatMessage, snapshot StateSnapshot, view ViewContext) tea.Cmd {
 	assistant := m.assistant
-	parent := m.ctx
 	svc := m.svc
 	options := m.stateSnapshotOptions()
 	return func() tea.Msg {
 		events := make(chan assistantStreamEnvelope, 128)
 		go func() {
 			defer close(events)
-			ctx, cancel := childContext(parent, 120*time.Second)
+			ctx, cancel := childContext(runCtx, 120*time.Second)
 			defer cancel()
 			emit := func(event AssistantStreamEvent) {
 				select {
@@ -1287,6 +1305,27 @@ func (m Model) askAssistantStreamCmd(streamID int, messages []ChatMessage, snaps
 		}()
 		return assistantStreamStartedMsg{streamID: streamID, events: events}
 	}
+}
+
+func (m *Model) cancelAssistantRun() {
+	if m.assistantCancel == nil {
+		return
+	}
+	m.assistantCancel()
+	m.assistantCancel = nil
+}
+
+func (m *Model) interruptAssistantRun() {
+	m.cancelAssistantRun()
+	m.sending = false
+	m.assistantStreamID++
+	m.streamingAssistantText = ""
+	m.streamingToolCalls = nil
+	m.assistantStartedAt = time.Time{}
+	m.haveLastAssistantTime = false
+	m.lastAssistantTime = 0
+	m.status = m.chatSurfaceLabel() + " response stopped; edit or send a correction"
+	m.syncLayout(true)
 }
 
 func waitAssistantStreamCmd(streamID int, events <-chan assistantStreamEnvelope) tea.Cmd {

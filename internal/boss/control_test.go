@@ -40,7 +40,7 @@ func TestControlProposalFromBossActionBuildsNewRepositoryInvocation(t *testing.T
 	if input.TodoText != "Build the initial KeyMaster repository." || input.Prompt != "Create the project structure and verify it." || !input.Reveal {
 		t.Fatalf("new repository work = %#v", input)
 	}
-	for _, want := range []string{"Create Git repository /tmp/repos/KeyMaster", "register the repository", "dedicated worktree", "fresh engineer session"} {
+	for _, want := range []string{"Set up Git repository /tmp/repos/KeyMaster", "register an existing Git repository", "create one if the path is unused", "dedicated worktree", "fresh engineer session"} {
 		if !strings.Contains(preview, want) {
 			t.Fatalf("preview missing %q:\n%s", want, preview)
 		}

@@ -1,6 +1,7 @@
 package boss
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -32,6 +33,12 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	m.sending = true
 	m.assistantStreamID++
 	streamID := m.assistantStreamID
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	runCtx, cancel := context.WithCancel(parent)
+	m.assistantCancel = cancel
 	m.streamingAssistantText = ""
 	m.streamingToolCalls = nil
 	m.assistantStartedAt = m.now()
@@ -42,7 +49,7 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	m.syncLayout(true)
 	return m, tea.Batch(
 		m.saveBossChatMessageCmd(userMessage),
-		m.askAssistantStreamCmd(streamID, append([]ChatMessage(nil), m.messages...), m.snapshot, m.assistantViewContext()),
+		m.askAssistantStreamCmd(runCtx, streamID, append([]ChatMessage(nil), m.messages...), m.snapshot, m.assistantViewContext()),
 	)
 }
 

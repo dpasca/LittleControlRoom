@@ -56,12 +56,13 @@ type controlInvocationOutcome struct {
 }
 
 type bossTodoWorktreeTodoCreatedMsg struct {
-	inv      control.Invocation
-	input    control.TodoCreateWorktreeAndStartEngineerInput
-	project  model.ProjectSummary
-	provider codexapp.Provider
-	todo     model.TodoItem
-	err      error
+	inv                control.Invocation
+	input              control.TodoCreateWorktreeAndStartEngineerInput
+	project            model.ProjectSummary
+	provider           codexapp.Provider
+	projectSetupAction service.CreateOrAttachProjectAction
+	todo               model.TodoItem
+	err                error
 }
 
 type bossProjectCreateAndStartEngineerCreatedMsg struct {
@@ -85,13 +86,14 @@ type bossTodoAddedMsg struct {
 }
 
 type bossTodoWorktreePreparedMsg struct {
-	inv      control.Invocation
-	input    control.TodoCreateWorktreeAndStartEngineerInput
-	project  model.ProjectSummary
-	provider codexapp.Provider
-	todo     model.TodoItem
-	result   service.CreateTodoWorktreeResult
-	err      error
+	inv                control.Invocation
+	input              control.TodoCreateWorktreeAndStartEngineerInput
+	project            model.ProjectSummary
+	provider           codexapp.Provider
+	projectSetupAction service.CreateOrAttachProjectAction
+	todo               model.TodoItem
+	result             service.CreateTodoWorktreeResult
+	err                error
 }
 
 type bossTrackedTodo struct {
@@ -1278,7 +1280,7 @@ func (m Model) executeProjectCreateAndStartEngineerControlWithOutcome(input cont
 	}
 	input.Provider = controlProviderFromCodexProvider(provider)
 	inv := projectCreateAndStartEngineerInvocationFromInput(input)
-	m.status = "Creating and registering Git repository " + input.ProjectName + "..."
+	m.status = "Setting up Git repository " + input.ProjectName + "..."
 	return controlInvocationOutcome{
 		model: m,
 		inv:   inv,
@@ -1320,18 +1322,39 @@ func (m Model) createBossProjectAndStartEngineerCmd(inv control.Invocation, inpu
 			msg.err = fmt.Errorf("repository parent path is not a directory: %s", input.ParentPath)
 			return msg
 		}
+		targetInfo, targetErr := os.Stat(input.ProjectPath)
+		targetExists := targetErr == nil
+		switch {
+		case targetErr != nil && !errors.Is(targetErr, os.ErrNotExist):
+			msg.err = fmt.Errorf("check target repository path: %w", targetErr)
+			return msg
+		case targetExists && !targetInfo.IsDir():
+			msg.err = fmt.Errorf("target repository path exists and is not a directory: %s", input.ProjectPath)
+			return msg
+		case targetExists:
+			msg.folderExists = true
+			if _, gitErr := os.Stat(filepath.Join(input.ProjectPath, ".git")); gitErr != nil {
+				if errors.Is(gitErr, os.ErrNotExist) {
+					msg.err = fmt.Errorf("target folder exists but is not a Git repository: %s", input.ProjectPath)
+				} else {
+					msg.err = fmt.Errorf("check existing Git repository: %w", gitErr)
+				}
+				return msg
+			}
+			msg.gitInitialized = true
+		}
 		msg.result, msg.err = svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
 			ParentPath:             input.ParentPath,
 			Name:                   input.ProjectName,
 			CreateGitRepo:          true,
-			RequireNew:             true,
+			RequireNew:             !targetExists,
 			PreferredSessionSource: modelSessionSourceFromCodexProvider(provider),
 		})
-		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "creating and registering the repository")
+		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "setting up and registering the repository")
 		if info, statErr := os.Stat(input.ProjectPath); statErr == nil && info.IsDir() {
 			msg.folderExists = true
 		}
-		if info, statErr := os.Stat(filepath.Join(input.ProjectPath, ".git")); statErr == nil && info.IsDir() {
+		if _, statErr := os.Stat(filepath.Join(input.ProjectPath, ".git")); statErr == nil {
 			msg.gitInitialized = true
 		}
 		observeCtx, observeCancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1340,13 +1363,13 @@ func (m Model) createBossProjectAndStartEngineerCmd(inv control.Invocation, inpu
 			msg.project = summary
 			msg.projectTracked = true
 		} else if msg.err == nil {
-			msg.err = fmt.Errorf("load newly registered project: %w", summaryErr)
+			msg.err = fmt.Errorf("load registered project: %w", summaryErr)
 		}
 		if msg.err == nil && !msg.folderExists {
-			msg.err = fmt.Errorf("repository creation returned without a target directory")
+			msg.err = fmt.Errorf("repository setup returned without a target directory")
 		}
 		if msg.err == nil && !msg.gitInitialized {
-			msg.err = fmt.Errorf("repository creation returned without an initialized Git repository")
+			msg.err = fmt.Errorf("repository setup returned without a Git repository")
 		}
 		return msg
 	}
@@ -1365,14 +1388,14 @@ func (m Model) applyBossProjectCreateAndStartEngineerCreated(msg bossProjectCrea
 	msg.input.Provider = controlProviderFromCodexProvider(msg.provider)
 	msg.inv = projectCreateAndStartEngineerInvocationFromInput(msg.input)
 	m.upsertProjectSummary(msg.project)
-	status := fmt.Sprintf("Created and registered Git repository %s. Creating its tracked TODO...", msg.input.ProjectName)
+	status := projectSetupReceipt(msg.result.Action, msg.input.ProjectName) + ". Creating its tracked TODO..."
 	m.status = status
 	var noticeCmd tea.Cmd
 	m, noticeCmd = m.updateBossHostChatNotice(status)
 	trackedInput := todoCreateWorktreeInputFromProjectCreate(inputWithCreatedProjectDefaults(msg.input, msg.result))
 	return m, batchCmds(
 		noticeCmd,
-		m.createBossTodoWorktreeTodoCmd(msg.inv, trackedInput, msg.project, msg.provider),
+		m.createBossTodoWorktreeTodoCmd(msg.inv, trackedInput, msg.project, msg.provider, msg.result.Action),
 		m.requestProjectInvalidationCmd(invalidateProjectStructure(msg.result.ProjectPath)),
 	)
 }
@@ -1399,16 +1422,28 @@ func todoCreateWorktreeInputFromProjectCreate(input control.ProjectCreateAndStar
 }
 
 func bossProjectCreateAndStartEngineerFailureStatus(msg bossProjectCreateAndStartEngineerCreatedMsg) string {
-	status := fmt.Sprintf("Could not create and register Git repository %s: %v.", msg.input.ProjectPath, msg.err)
+	status := fmt.Sprintf("Could not set up and register Git repository %s: %v.", msg.input.ProjectPath, msg.err)
 	switch {
 	case msg.projectTracked:
 		return status + " The repository is registered in Little Control Room, but no TODO, worktree, or engineer was started."
 	case msg.gitInitialized:
 		return status + " The target folder and Git repository exist, but no TODO, worktree, or engineer was started."
 	case msg.folderExists:
-		return status + " The target folder exists, but Git setup did not finish and no TODO, worktree, or engineer was started."
+		return status + " The target folder exists, but it is not a usable Git repository; no TODO, worktree, or engineer was started."
 	default:
 		return status + " No folder, TODO, worktree, or engineer was created."
+	}
+}
+
+func projectSetupReceipt(action service.CreateOrAttachProjectAction, target string) string {
+	target = strings.TrimSpace(target)
+	switch action {
+	case service.CreateOrAttachProjectAdded:
+		return "Registered existing Git repository " + target
+	case service.CreateOrAttachProjectCreated:
+		return "Created Git repository " + target
+	default:
+		return "Set up Git repository " + target
 	}
 }
 
@@ -1441,11 +1476,11 @@ func (m Model) executeTodoCreateWorktreeAndStartEngineerControlWithOutcome(input
 	return controlInvocationOutcome{
 		model: m,
 		inv:   inv,
-		cmd:   m.createBossTodoWorktreeTodoCmd(inv, input, project, provider),
+		cmd:   m.createBossTodoWorktreeTodoCmd(inv, input, project, provider, ""),
 	}
 }
 
-func (m Model) createBossTodoWorktreeTodoCmd(inv control.Invocation, input control.TodoCreateWorktreeAndStartEngineerInput, project model.ProjectSummary, provider codexapp.Provider) tea.Cmd {
+func (m Model) createBossTodoWorktreeTodoCmd(inv control.Invocation, input control.TodoCreateWorktreeAndStartEngineerInput, project model.ProjectSummary, provider codexapp.Provider, projectSetupAction service.CreateOrAttachProjectAction) tea.Cmd {
 	svc := m.svc
 	ctx := m.ctx
 	if ctx == nil {
@@ -1453,18 +1488,18 @@ func (m Model) createBossTodoWorktreeTodoCmd(inv control.Invocation, input contr
 	}
 	return func() tea.Msg {
 		if svc == nil {
-			return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, err: errors.New("service unavailable")}
+			return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, err: errors.New("service unavailable")}
 		}
 		item, err := svc.AddTodo(ctx, project.Path, input.TodoText)
-		return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, todo: item, err: err}
+		return bossTodoWorktreeTodoCreatedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, todo: item, err: err}
 	}
 }
 
 func (m Model) applyBossTodoWorktreeTodoCreated(msg bossTodoWorktreeTodoCreatedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		status := fmt.Sprintf("Could not create the tracked TODO for %s, so no worktree or engineer was started: %v", bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath), msg.err)
-		if msg.inv.Capability == control.CapabilityProjectCreateAndStartEngineer {
-			status = fmt.Sprintf("Created and registered Git repository %s, but could not create its tracked TODO. No worktree or engineer was started: %v", msg.input.ProjectPath, msg.err)
+		if msg.projectSetupAction != "" {
+			status = fmt.Sprintf("%s, but could not create its tracked TODO. No worktree or engineer was started: %v", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.err)
 		}
 		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
 	}
@@ -1477,12 +1512,12 @@ func (m Model) applyBossTodoWorktreeTodoCreated(msg bossTodoWorktreeTodoCreatedM
 	m, noticeCmd = m.updateBossHostChatNotice(status)
 	return m, batchCmds(
 		noticeCmd,
-		m.createBossTodoWorktreeCmd(msg.inv, msg.input, msg.project, msg.provider, msg.todo),
+		m.createBossTodoWorktreeCmd(msg.inv, msg.input, msg.project, msg.provider, msg.projectSetupAction, msg.todo),
 		m.requestProjectInvalidationCmd(invalidateProjectData(msg.project.Path)),
 	)
 }
 
-func (m Model) createBossTodoWorktreeCmd(inv control.Invocation, input control.TodoCreateWorktreeAndStartEngineerInput, project model.ProjectSummary, provider codexapp.Provider, todo model.TodoItem) tea.Cmd {
+func (m Model) createBossTodoWorktreeCmd(inv control.Invocation, input control.TodoCreateWorktreeAndStartEngineerInput, project model.ProjectSummary, provider codexapp.Provider, projectSetupAction service.CreateOrAttachProjectAction, todo model.TodoItem) tea.Cmd {
 	svc := m.svc
 	ctx := m.ctx
 	if ctx == nil {
@@ -1490,18 +1525,18 @@ func (m Model) createBossTodoWorktreeCmd(inv control.Invocation, input control.T
 	}
 	return func() tea.Msg {
 		if svc == nil {
-			return bossTodoWorktreePreparedMsg{inv: inv, input: input, project: project, provider: provider, todo: todo, err: errors.New("service unavailable")}
+			return bossTodoWorktreePreparedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, todo: todo, err: errors.New("service unavailable")}
 		}
 		result, err := svc.CreateTodoWorktree(ctx, service.CreateTodoWorktreeRequest{ProjectPath: project.Path, TodoID: todo.ID})
-		return bossTodoWorktreePreparedMsg{inv: inv, input: input, project: project, provider: provider, todo: todo, result: result, err: err}
+		return bossTodoWorktreePreparedMsg{inv: inv, input: input, project: project, provider: provider, projectSetupAction: projectSetupAction, todo: todo, result: result, err: err}
 	}
 }
 
 func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		status := fmt.Sprintf("Added TODO #%d to %s, but could not prepare its dedicated worktree. No engineer was launched: %v", msg.todo.ID, bossControlProjectTargetLabel(msg.input.ProjectName, msg.input.ProjectPath), msg.err)
-		if msg.inv.Capability == control.CapabilityProjectCreateAndStartEngineer {
-			status = fmt.Sprintf("Created and registered Git repository %s and added TODO #%d, but could not prepare its dedicated worktree. No engineer was launched: %v", msg.input.ProjectPath, msg.todo.ID, msg.err)
+		if msg.projectSetupAction != "" {
+			status = fmt.Sprintf("%s and added TODO #%d, but could not prepare its dedicated worktree. No engineer was launched: %v", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.todo.ID, msg.err)
 		}
 		m.status = status
 		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
@@ -1533,17 +1568,17 @@ func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (t
 			cause = "engineer session launch did not start"
 		}
 		status := fmt.Sprintf("Added TODO #%d and prepared worktree %s, but no engineer was launched: %s", msg.todo.ID, filepath.Base(msg.result.WorktreePath), cause)
-		if msg.inv.Capability == control.CapabilityProjectCreateAndStartEngineer {
-			status = fmt.Sprintf("Created Git repository %s, added TODO #%d, and prepared worktree %s, but no engineer was launched: %s", msg.input.ProjectPath, msg.todo.ID, filepath.Base(msg.result.WorktreePath), cause)
+		if msg.projectSetupAction != "" {
+			status = fmt.Sprintf("%s, added TODO #%d, and prepared worktree %s, but no engineer was launched: %s", projectSetupReceipt(msg.projectSetupAction, msg.input.ProjectPath), msg.todo.ID, filepath.Base(msg.result.WorktreePath), cause)
 		}
 		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
 	}
 	m.status = fmt.Sprintf("Prepared worktree %s; launching %s for TODO #%d...", filepath.Base(msg.result.WorktreePath), msg.provider.Label(), msg.todo.ID)
-	cmd = m.trackBossTodoWorktreeEngineerLaunchCmd(msg.input, msg.provider, msg.todo, msg.inv.Capability == control.CapabilityProjectCreateAndStartEngineer, cmd)
+	cmd = m.trackBossTodoWorktreeEngineerLaunchCmd(msg.input, msg.provider, msg.todo, msg.projectSetupAction, cmd)
 	return m, bossControlExecutionCmd(msg.inv, cmd)
 }
 
-func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWorktreeAndStartEngineerInput, provider codexapp.Provider, todo model.TodoItem, createdProject bool, cmd tea.Cmd) tea.Cmd {
+func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWorktreeAndStartEngineerInput, provider codexapp.Provider, todo model.TodoItem, projectSetupAction service.CreateOrAttachProjectAction, cmd tea.Cmd) tea.Cmd {
 	svc := m.svc
 	ctx := m.ctx
 	if ctx == nil {
@@ -1564,14 +1599,14 @@ func (m Model) trackBossTodoWorktreeEngineerLaunchCmd(input control.TodoCreateWo
 		target = strings.TrimSpace(target)
 		if opened.err != nil {
 			opened.status = fmt.Sprintf("Added TODO #%d and prepared worktree %s, but no engineer was launched: %v", todo.ID, worktreeLabel, opened.err)
-			if createdProject {
-				opened.status = fmt.Sprintf("Created Git repository %s, added TODO #%d, and prepared worktree %s, but no engineer was launched: %v", input.ProjectPath, todo.ID, worktreeLabel, opened.err)
+			if projectSetupAction != "" {
+				opened.status = fmt.Sprintf("%s, added TODO #%d, and prepared worktree %s, but no engineer was launched: %v", projectSetupReceipt(projectSetupAction, input.ProjectPath), todo.ID, worktreeLabel, opened.err)
 			}
 			return opened
 		}
 		opened.status = fmt.Sprintf("%s AI engineer launched for %s in worktree %s.", provider.Label(), target, worktreeLabel)
-		if createdProject {
-			opened.status = fmt.Sprintf("Created Git repository %s; %s AI engineer launched for %s in worktree %s.", input.ProjectPath, provider.Label(), target, worktreeLabel)
+		if projectSetupAction != "" {
+			opened.status = fmt.Sprintf("%s; %s AI engineer launched for %s in worktree %s.", projectSetupReceipt(projectSetupAction, input.ProjectPath), provider.Label(), target, worktreeLabel)
 		}
 		if svc == nil {
 			opened.status += " The engineer is running, but TODO session tracking is unavailable."

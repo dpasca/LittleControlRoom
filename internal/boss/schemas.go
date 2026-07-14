@@ -146,7 +146,7 @@ func bossActionSchema() map[string]any {
 			},
 			"project_parent_path": map[string]any{
 				"type":        "string",
-				"description": "For project.create_and_start_engineer, the absolute existing parent directory for the new repository. Otherwise empty.",
+				"description": "For project.create_and_start_engineer, the absolute existing parent directory for the new or existing untracked repository. Otherwise empty.",
 			},
 			"project_path": map[string]any{
 				"type":        "string",
@@ -154,7 +154,7 @@ func bossActionSchema() map[string]any {
 			},
 			"project_name": map[string]any{
 				"type":        "string",
-				"description": "For project.create_and_start_engineer, one new single-folder name. Otherwise the exact loaded project name if path is unavailable, or empty.",
+				"description": "For project.create_and_start_engineer, the target single-folder name; it may already exist when registering an untracked Git repository. Otherwise the exact loaded project name if path is unavailable, or empty.",
 			},
 			"session_id": map[string]any{
 				"type":        "string",

@@ -492,7 +492,7 @@ func AgentTaskCloseCapability() Capability {
 func ProjectCreateAndStartEngineerCapability() Capability {
 	return Capability{
 		Name:         CapabilityProjectCreateAndStartEngineer,
-		Description:  "Create and register a new Git repository, add a tracked TODO, prepare a dedicated worktree, and start an engineer session there.",
+		Description:  "Create a new or register an existing untracked Git repository, add a tracked TODO, prepare a dedicated worktree, and start an engineer session there.",
 		InputSchema:  projectCreateAndStartEngineerInputSchema(),
 		OutputSchema: todoCreateWorktreeAndStartEngineerOutputSchema(),
 		Risk:         RiskExternal,
@@ -1564,8 +1564,8 @@ func projectCreateAndStartEngineerInputSchema() map[string]any {
 		"additionalProperties": false,
 		"properties": map[string]any{
 			"request_id":    map[string]any{"type": "string"},
-			"parent_path":   map[string]any{"type": "string", "description": "Absolute existing parent directory under which the new repository folder will be created."},
-			"project_name":  map[string]any{"type": "string", "description": "Single-folder name for the new repository."},
+			"parent_path":   map[string]any{"type": "string", "description": "Absolute existing parent directory containing the target repository path."},
+			"project_name":  map[string]any{"type": "string", "description": "Single-folder name for the new or existing untracked repository."},
 			"project_path":  map[string]any{"type": "string", "description": "Derived target path. Leave empty in proposals; the host fills it from parent_path and project_name."},
 			"todo_text":     map[string]any{"type": "string"},
 			"prompt":        map[string]any{"type": "string"},
