@@ -108,6 +108,7 @@ var (
 
 const spinnerTickInterval = 250 * time.Millisecond
 const projectListSelectionFlashDuration = 120 * time.Millisecond
+const marqueeColumnsPerTick = 2
 const runtimeSnapshotRefreshEveryTicks = 4
 const cpuSnapshotRefreshEveryTicks = 12
 const processScanRefreshEveryTicks = 240

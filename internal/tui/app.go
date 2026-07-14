@@ -2597,7 +2597,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		m.recordUIStallFromSpinnerTick(m.currentTime())
 		m.spinnerFrame = (m.spinnerFrame + 1) % spinnerAnimationFrameWrap
-		m.marqueeOffset++
+		m.marqueeOffset += marqueeColumnsPerTick
 		m.refreshUsagePulse()
 		m.pruneTransientHighlights(m.currentTime())
 		refreshCmd := tea.Cmd(nil)
