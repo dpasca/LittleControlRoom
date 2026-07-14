@@ -16,6 +16,7 @@ func bossTodoAddPolicyReviewSystemPrompt() string {
 		"Allow todo.add only when the latest user message explicitly asks to make a TODO, backlog, queue, reminder, or pending item without starting work now.",
 		"An idle engineer turn does not prove that its task is finished. Do not replace an open idle session in the root checkout merely because it is between turns.",
 		"For loaded-project implementation, change, fix, or investigation work the user wants handled now, reject todo.add and choose replacement_control_capability=\"todo.create_worktree_and_start_engineer\".",
+		"For a request that only adds/registers a project in Little Control Room or places it in a named category/tab, reject todo.add and choose replacement_control_capability=\"project.set_category\" with replacement_category_name. This is app organization, not project backlog or repository work.",
 		"Judge intent from the conversation and supplied app state. Do not use keyword rules; return only the structured review.",
 	}, "\n")
 }
@@ -33,7 +34,35 @@ func bossTodoAddPolicyReviewUserText(req AssistantRequest, action bossAction) st
 	if reason := strings.TrimSpace(action.Reason); reason != "" {
 		b.WriteString("planner_reason: " + clipText(reason, 500) + "\n")
 	}
-	b.WriteString("\nReturn allow_todo_add=true only if this really belongs in the project backlog. Otherwise return allow_todo_add=false and replacement_control_capability=\"todo.create_worktree_and_start_engineer\".")
+	b.WriteString("\nReturn allow_todo_add=true only if this really belongs in the project backlog. Otherwise return allow_todo_add=false and choose project.set_category for LCR category placement or todo.create_worktree_and_start_engineer for repository work requested now.")
+	return strings.TrimSpace(b.String())
+}
+
+func bossHelpProjectWorkPolicyReviewSystemPrompt() string {
+	return strings.Join([]string{
+		"You are the Help Chat project-work boundary reviewer for Little Control Room.",
+		"The main planner proposed an engineer-bearing project control. Decide whether the latest user message actually asks for repository work.",
+		"Allow project work for implementation, fixes, investigation, research, or an explicit request to start/continue an engineer task.",
+		"Reject project work when the request only adds or registers an existing project folder in Little Control Room, places a project in a named category/tab such as Private, or otherwise changes LCR project-list organization.",
+		"For category-only organization, set replacement_control_capability=\"project.set_category\" and replacement_category_name to the exact category named by the user. The replacement must not create a TODO, worktree, engineer session, repository folder, or repository content.",
+		"Judge semantic intent from the conversation and supplied app state. Do not use keyword rules; return only the structured review.",
+	}, "\n")
+}
+
+func bossHelpProjectWorkPolicyReviewUserText(req AssistantRequest, action bossAction) string {
+	var b strings.Builder
+	writeBossPromptContextText(&b, req, 10, 900)
+	b.WriteString("\nProposed project-work action:\n")
+	b.WriteString("control_capability: " + strings.TrimSpace(action.ControlCapability) + "\n")
+	b.WriteString("project_parent_path: " + strings.TrimSpace(action.ProjectParentPath) + "\n")
+	b.WriteString("project_path: " + strings.TrimSpace(action.ProjectPath) + "\n")
+	b.WriteString("project_name: " + strings.TrimSpace(action.ProjectName) + "\n")
+	b.WriteString("todo_text: " + strings.TrimSpace(action.TodoText) + "\n")
+	b.WriteString("prompt: " + strings.TrimSpace(action.Prompt) + "\n")
+	if reason := strings.TrimSpace(action.Reason); reason != "" {
+		b.WriteString("planner_reason: " + clipText(reason, 500) + "\n")
+	}
+	b.WriteString("\nReturn allow_project_work=false only when this is LCR organization rather than repository work, and provide the project.set_category replacement plus exact destination category.")
 	return strings.TrimSpace(b.String())
 }
 
@@ -312,7 +341,7 @@ var helpPlannerReadOnlyPrompt = []string{
 }
 
 var bossPlannerCapabilityCatalogPrompt = []string{
-	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, project.create_and_start_engineer, todo.create_worktree_and_start_engineer, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
+	"Available control action kind: propose_control with control_capability equal to engineer.send_prompt, project.create_and_start_engineer, project.set_category, todo.create_worktree_and_start_engineer, agent_task.create, agent_task.continue, agent_task.close, project.set_archive_state, scratch_task.archive, todo.add, todo.complete, settings.update, or git.prepare_commit.",
 	"Available goal action kind: propose_goal. Supported goal_kind values are agent_task_cleanup and lcagent_task. " +
 		"agent_task_cleanup archives multiple delegated agent task records under one approval, executes primitive agent_task.close archived actions, refreshes state, verifies that selected records left the active set, and reports failures. " +
 		"lcagent_task creates one LCR-managed LCAgent task, launches LCAgent with scoped authority, records the handoff, waits for completion, harvests the trace, and verifies LCAgent reported checks.",
@@ -321,9 +350,11 @@ var bossPlannerCapabilityCatalogPrompt = []string{
 var bossPlannerControlRoutingPrompt = []string{
 	"Use engineer.send_prompt only for explicit project/repo work on a loaded project. Do not use it for host operations or generic temporary work.",
 	"An engineer.send_prompt control proposal sends to exactly one loaded project. If the user asks for work across multiple loaded projects, do not silently pick one and drop the rest; either ask/answer that Chat can prepare one project handoff at a time while naming the targets, or propose the first clearly chosen handoff and put a one-sentence scope note in answer naming what remains.",
+	"Use project.set_category when the user asks to add/register an existing project folder in Little Control Room and place it in a named category/tab, including a Private tab, or to move a loaded project between category tabs. Set project_path to the absolute existing folder when it is not loaded yet, project_name when useful, and project_category_name to the exact existing category name.",
+	"A project.set_category request is Little Control Room organization, not repository work. It must not create a project TODO, worktree, engineer task, or repository files. Do not use project.create_and_start_engineer, todo.add, todo.create_worktree_and_start_engineer, or engineer.send_prompt for category-only placement.",
 	"When the user asks to create a brand-new repository or to register an existing untracked Git repository and start work there, use project.create_and_start_engineer, not engineer.send_prompt or todo.create_worktree_and_start_engineer. Set project_parent_path to the absolute existing parent directory, project_name to the target single-folder name, and fill todo_text plus prompt. One confirmation creates or registers the Git repository, adds the TODO, prepares a dedicated worktree, and launches a fresh engineer.",
 	"Use project.create_and_start_engineer only for a target that is not already loaded. It may already exist on disk when the user says it is an existing Git repository that needs to be registered. For an existing loaded project, use todo.create_worktree_and_start_engineer. If the parent path or project name is ambiguous, ask instead of guessing.",
-	"Use settings.update for user requests to change Little Control Room app settings, including project scope settings, privacy mode, reasoning visibility, and Codex launch preset. Category privacy is managed from category operations, not settings.update. Do not route app settings changes through the Little Control Room repo or an engineer session.",
+	"Use settings.update for user requests to change Little Control Room app settings, including project scope settings, privacy mode, reasoning visibility, and Codex launch preset. Moving a project to an existing category uses project.set_category; changing whether a category itself is private remains in the category UI. Do not route app settings or project-list organization through the Little Control Room repo or an engineer session.",
 	"Use git.prepare_commit for a simple commit or commit-and-push request on a loaded project. It opens the existing commit preview flow only; the operator still confirms Enter for commit or Alt+Enter for commit and push. Do not use engineer.send_prompt merely to create a git commit.",
 	"A git.prepare_commit control proposal opens exactly one loaded project preview. If the user asks to commit or push multiple loaded projects, do not silently pick one and drop the rest; propose the first clearly chosen preview and put a one-sentence scope note in answer naming what remains, or ask which project to start with.",
 	"For new loaded-project implementation, change, fix, or investigation work the user wants handled now, propose todo.create_worktree_and_start_engineer. It creates a durable TODO, prepares a dedicated worktree, and launches a fresh engineer there under one confirmation.",
@@ -370,8 +401,9 @@ var bossPlannerProposalPayloadPrompt = []string{
 	"Wanting to see an app, page, server, screenshot, or browser result is not a request to reveal the engineer transcript pane; keep reveal false unless the user explicitly asks to show, open, or watch that engineer session.",
 	"For agent_task.create, task_kind must be agent unless parent_task_id is set and the user asked for a subagent; put affected projects, PIDs, ports, files, sessions, or related tasks in resources; put allowed action namespaces such as process.inspect, process.terminate, repo.edit, test.run, browser.inspect in capabilities.",
 	"For project.set_archive_state, include project_path or exact project_name and project_archive_action=archive or unarchive for one target; for a batch, include project_archive_action and resources with kind=project entries instead.",
+	"For project.set_category, include project_category_name and either an absolute existing project_path or the exact name of an already loaded project. The destination category must already exist. Do not fill todo_text, prompt, provider, or session fields.",
 	"For agent_task.continue, include task_id and a fresh prompt. For agent_task.close, include task_id, task_close_status, task_summary, and close_session.",
-	"For settings.update, put every app settings change in settings_changes. Use values for list settings, value for scalar settings, and bool_value for boolean settings. Category privacy is managed through category operations, not settings.update.",
+	"For settings.update, put every app settings change in settings_changes. Use values for list settings, value for scalar settings, and bool_value for boolean settings. Project category placement uses project.set_category; category privacy itself is managed through the category UI, not settings.update.",
 	"If the user asks to remove, erase, archive, hide, close, get rid of, or clear from the active record a delegated agent task and the task id is known, propose agent_task.close with task_close_status=archived. This applies to open/review/waiting tasks too; do not downgrade cleanup to task_close_status=waiting.",
 	"For propose_control, the prompt field is the boss-reframed executable task for the engineer session or task. For project.create_and_start_engineer and todo.create_worktree_and_start_engineer, also put a durable task description in todo_text. For todo.add, leave prompt empty and put the durable backlog item in todo_text. For todo.complete, put the target id in todo_id, known text in todo_text, and concise proof in todo_evidence.",
 	"For prompt-bearing propose_control actions, fill intent_excerpt with a short excerpt of the user's wording that must survive reframing; fill preserved_meaning with source, metric, timeframe, negations, and explicit exclusions; fill success_condition with what the engineer must return or what missing evidence must be reported.",
@@ -535,6 +567,7 @@ var bossActionPlannerForcedInstructions = []string{
 	// Work parking and delegation.
 	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
 	"If the user asks to change Little Control Room app settings, choose kind=\"propose_control\" with control_capability=\"settings.update\".",
+	"If the user asks to add/register an existing folder in LCR and place it in a named category tab, or move a loaded project to such a tab, choose kind=\"propose_control\" with control_capability=\"project.set_category\". Fill project_category_name plus the absolute existing project_path when known. This is app organization, so do not create a TODO or start project work.",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now, choose kind=\"propose_control\" with control_capability=\"todo.add\" once the project is known.",
 	"For a brand-new repository or an existing untracked Git repository the user wants registered and worked on now, choose control_capability=\"project.create_and_start_engineer\", set project_parent_path to the absolute existing parent, set project_name to the target single-folder name, and fill todo_text plus prompt.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"todo.create_worktree_and_start_engineer\" and fill todo_text plus prompt.",
@@ -575,7 +608,8 @@ var bossActionPlannerNormalInstructions = []string{
 	"If a visible linked task or project can likely answer the question, choose one read-only query before answering.",
 
 	// Work parking and delegation.
-	"If the user asks to change Little Control Room app settings, choose control_capability=\"settings.update\". Category privacy is managed from the category UI rather than settings.update.",
+	"If the user asks to change Little Control Room app settings, choose control_capability=\"settings.update\". Project placement in an existing category uses project.set_category; changing category privacy itself remains in the category UI.",
+	"If the user asks to add/register an existing folder in LCR and place it in a named category tab, or move a loaded project to such a tab, choose control_capability=\"project.set_category\". Fill project_category_name plus the absolute existing project_path when known. Do not turn app organization into a TODO, worktree, or engineer request.",
 	"If the user asks to queue, enqueue, backlog, remember, or add pending project work without starting it now and the project is ambiguous, choose a read-only query or ask for the project; when the project is known, choose control_capability=\"todo.add\".",
 	"For a brand-new repository or an existing untracked Git repository the user wants registered and worked on now, choose control_capability=\"project.create_and_start_engineer\", set project_parent_path to the absolute existing parent, set project_name to the target single-folder name, and fill todo_text plus prompt. Ask if the parent or name is ambiguous.",
 	"For loaded-project implementation/change requests the user wants handled now, choose control_capability=\"todo.create_worktree_and_start_engineer\" and fill todo_text plus prompt.",
@@ -595,7 +629,7 @@ var bossActionPlannerNormalInstructions = []string{
 
 	// Control and goal selection.
 	"For a simple request to make a git commit or commit-and-push now on a loaded project, choose kind=\"propose_control\" with control_capability=\"git.prepare_commit\". Set push_after_commit=true only when the user asked to push too.",
-	"Choose kind=\"propose_control\" if the user asked to create and start work in a brand-new repository, register and work in an existing untracked Git repository, change app settings, delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
+	"Choose kind=\"propose_control\" if the user asked to create and start work in a brand-new repository, register and work in an existing untracked Git repository, register or categorize an existing project without starting work, change app settings, delegate project work, add or complete a project TODO/backlog item, manage/continue/solve/archive/remove an agent task, or manage/continue/solve/archive/remove one agent task.",
 	"Also choose kind=\"propose_control\" if the user wants to archive/unarchive one or more regular loaded projects, or archive/remove a scratch task whose project metadata says kind=scratch_task.",
 	"Also choose kind=\"propose_control\" if the user wants fresh external research from an engineer.",
 	"Also choose kind=\"propose_control\" if fresh gathered data resolves a visible review/waiting agent task and a task id is clear.",
@@ -613,6 +647,7 @@ var bossActionPlannerNormalInstructions = []string{
 	"For multiple tasks the user wants removed, use propose_goal agent_task_cleanup.",
 	"For multiple delegated task records the user wants gone use propose_goal agent_task_cleanup.",
 	"For a scratch task project the user wants gone use control_capability=\"scratch_task.archive\".",
+	"For an existing folder the user wants added to a category tab, or a loaded project moved to a category tab, use control_capability=\"project.set_category\" with project_category_name. This includes a category named Private and is distinct from archiving or repository work.",
 	"For one regular loaded project the user wants moved between Active and Archived tabs use control_capability=\"project.set_archive_state\" with project_archive_action=\"archive\" or \"unarchive\".",
 	"For multiple regular loaded projects in the same archive/unarchive request use one project.set_archive_state proposal with all selected projects in resources.",
 	"For a missing detail, progress request, or fresh external follow-up on a known related task use control_capability=\"agent_task.continue\".",

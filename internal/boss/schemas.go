@@ -9,8 +9,11 @@ func bossTodoAddPolicyReviewSchema() map[string]any {
 	return bossObjectSchema(map[string]any{
 		"allow_todo_add": bossBooleanSchema("True only when adding a backlog TODO is the intended action."),
 		"replacement_control_capability": bossEnumStringSchema(
-			[]string{"", string(control.CapabilityTodoCreateWorktreeAndStartEngineer)},
-			"When allow_todo_add is false for work requested now on a loaded project, use todo.create_worktree_and_start_engineer.",
+			[]string{"", string(control.CapabilityProjectSetCategory), string(control.CapabilityTodoCreateWorktreeAndStartEngineer)},
+			"When allow_todo_add is false, use project.set_category for LCR category placement or todo.create_worktree_and_start_engineer for repository work requested now.",
+		),
+		"replacement_category_name": bossStringSchema(
+			"Exact existing category name when replacement_control_capability is project.set_category; otherwise empty.",
 		),
 		"replacement_session_mode": bossEnumStringSchema(
 			[]string{"", string(control.SessionModeNew)},
@@ -20,7 +23,25 @@ func bossTodoAddPolicyReviewSchema() map[string]any {
 	}, []string{
 		"allow_todo_add",
 		"replacement_control_capability",
+		"replacement_category_name",
 		"replacement_session_mode",
+		"reason",
+	})
+}
+
+func bossHelpProjectWorkPolicyReviewSchema() map[string]any {
+	return bossObjectSchema(map[string]any{
+		"allow_project_work": bossBooleanSchema("True only when the latest user request actually asks for repository implementation, investigation, or other engineer work."),
+		"replacement_control_capability": bossEnumStringSchema(
+			[]string{"", string(control.CapabilityProjectSetCategory)},
+			"Use project.set_category when the request only adds/registers/categorizes a project inside LCR.",
+		),
+		"replacement_category_name": bossStringSchema("Exact existing destination category name for project.set_category, or empty."),
+		"reason":                    bossStringSchema("Concise policy reason for the decision."),
+	}, []string{
+		"allow_project_work",
+		"replacement_control_capability",
+		"replacement_category_name",
 		"reason",
 	})
 }
@@ -150,7 +171,7 @@ func bossActionSchema() map[string]any {
 			},
 			"project_path": map[string]any{
 				"type":        "string",
-				"description": "Exact loaded project path for project-specific actions and queries. Leave empty for project.create_and_start_engineer; the host derives it from project_parent_path and project_name.",
+				"description": "Exact loaded project path for project-specific actions and queries. For project.set_category it may instead be an absolute existing folder that LCR should register. Leave empty for project.create_and_start_engineer; the host derives it from project_parent_path and project_name.",
 			},
 			"project_name": map[string]any{
 				"type":        "string",
@@ -199,6 +220,10 @@ func bossActionSchema() map[string]any {
 				"type":        "string",
 				"enum":        control.ProjectArchiveActionStrings(true),
 				"description": "For project.set_archive_state proposals: archive or unarchive. Use archive to move a regular project out of Active; use unarchive to restore it to Active when in scope.",
+			},
+			"project_category_name": map[string]any{
+				"type":        "string",
+				"description": "For project.set_category, the exact existing Little Control Room category/tab name. Otherwise empty.",
 			},
 			"todo_text": map[string]any{
 				"type":        "string",
@@ -405,6 +430,7 @@ func bossActionSchema() map[string]any {
 			"task_close_status",
 			"task_summary",
 			"project_archive_action",
+			"project_category_name",
 			"todo_id",
 			"todo_label",
 			"todo_text",

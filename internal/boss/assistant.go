@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -635,7 +636,15 @@ type bossReadOnlyRoute struct {
 type bossTodoAddPolicyReview struct {
 	AllowTodoAdd                 bool   `json:"allow_todo_add"`
 	ReplacementControlCapability string `json:"replacement_control_capability"`
+	ReplacementCategoryName      string `json:"replacement_category_name"`
 	ReplacementSessionMode       string `json:"replacement_session_mode"`
+	Reason                       string `json:"reason"`
+}
+
+type bossHelpProjectWorkPolicyReview struct {
+	AllowProjectWork             bool   `json:"allow_project_work"`
+	ReplacementControlCapability string `json:"replacement_control_capability"`
+	ReplacementCategoryName      string `json:"replacement_category_name"`
 	Reason                       string `json:"reason"`
 }
 
@@ -762,6 +771,18 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 			prepareBossActionForRequest(&action, req)
 		}
 	}
+	if reviewed, changed, reviewResponse, err := a.reviewHelpProjectWorkPolicy(ctx, req, action); err != nil {
+		if ctx.Err() != nil {
+			return response, bossAction{}, err
+		}
+	} else {
+		addLLMUsage(&response.Usage, reviewResponse.Usage)
+		if changed {
+			action = reviewed
+			normalizeBossAction(&action)
+			prepareBossActionForRequest(&action, req)
+		}
+	}
 	if err := validateBossAction(action); err != nil {
 		if normalizeBossActionKind(action.Kind) == bossActionProposeControl {
 			return response, bossAction{}, wrapControlProposalError(err)
@@ -865,7 +886,20 @@ func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantReques
 	if review.AllowTodoAdd {
 		return action, false, response, nil
 	}
-	if control.CapabilityName(strings.TrimSpace(review.ReplacementControlCapability)) != control.CapabilityTodoCreateWorktreeAndStartEngineer {
+	switch control.CapabilityName(strings.TrimSpace(review.ReplacementControlCapability)) {
+	case control.CapabilityProjectSetCategory:
+		categoryName := strings.Join(strings.Fields(strings.TrimSpace(review.ReplacementCategoryName)), " ")
+		if categoryName == "" {
+			return action, false, response, nil
+		}
+		replacement := categoryControlReplacementFromAction(action, categoryName)
+		if reason := strings.TrimSpace(review.Reason); reason != "" {
+			replacement.Reason = "TODO policy review: " + reason
+		}
+		return replacement, true, response, nil
+	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		// Continue below.
+	default:
 		return action, false, response, nil
 	}
 	replacement := action
@@ -880,6 +914,82 @@ func (a *Assistant) reviewTodoAddPolicy(ctx context.Context, req AssistantReques
 		replacement.Reason = "TODO policy review: " + reason
 	}
 	return replacement, true, response, nil
+}
+
+func (a *Assistant) reviewHelpProjectWorkPolicy(ctx context.Context, req AssistantRequest, action bossAction) (bossAction, bool, llm.JSONSchemaResponse, error) {
+	if a == nil || a.queryRouter == nil || !req.HelpChat || !bossActionStartsProjectWork(action) {
+		return action, false, llm.JSONSchemaResponse{}, nil
+	}
+	response, err := a.queryRouter.RunJSONSchema(ctx, llm.JSONSchemaRequest{
+		Model:           firstNonEmpty(strings.TrimSpace(a.utilityModel), strings.TrimSpace(a.model)),
+		SystemText:      bossHelpProjectWorkPolicyReviewSystemPrompt(),
+		UserText:        bossHelpProjectWorkPolicyReviewUserText(req, action),
+		SchemaName:      "boss_help_project_work_policy_review",
+		Schema:          bossHelpProjectWorkPolicyReviewSchema(),
+		ReasoningEffort: bossReadOnlyRouterReasoningEffort,
+	})
+	if err != nil {
+		return action, false, response, err
+	}
+	if strings.TrimSpace(response.OutputText) == "" {
+		return action, false, response, errors.New("Chat returned no Help project-work policy review")
+	}
+	var review bossHelpProjectWorkPolicyReview
+	if err := llm.DecodeJSONObjectOutput(response.OutputText, &review); err != nil {
+		return action, false, response, fmt.Errorf("decode Help project-work policy review: %w", err)
+	}
+	if review.AllowProjectWork {
+		return action, false, response, nil
+	}
+	if control.CapabilityName(strings.TrimSpace(review.ReplacementControlCapability)) != control.CapabilityProjectSetCategory {
+		return action, false, response, nil
+	}
+	categoryName := strings.Join(strings.Fields(strings.TrimSpace(review.ReplacementCategoryName)), " ")
+	if categoryName == "" {
+		return action, false, response, nil
+	}
+	replacement := categoryControlReplacementFromAction(action, categoryName)
+	if reason := strings.TrimSpace(review.Reason); reason != "" {
+		replacement.Reason = "Help project-work policy review: " + reason
+	}
+	return replacement, true, response, nil
+}
+
+func bossActionStartsProjectWork(action bossAction) bool {
+	if normalizeBossActionKind(action.Kind) != bossActionProposeControl {
+		return false
+	}
+	switch control.CapabilityName(strings.TrimSpace(action.ControlCapability)) {
+	case control.CapabilityEngineerSendPrompt,
+		control.CapabilityProjectCreateAndStartEngineer,
+		control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		return true
+	default:
+		return false
+	}
+}
+
+func categoryControlReplacementFromAction(action bossAction, categoryName string) bossAction {
+	replacement := action
+	replacement.ControlCapability = string(control.CapabilityProjectSetCategory)
+	replacement.ProjectCategoryName = strings.Join(strings.Fields(strings.TrimSpace(categoryName)), " ")
+	if strings.TrimSpace(replacement.ProjectPath) == "" && strings.TrimSpace(replacement.ProjectParentPath) != "" && strings.TrimSpace(replacement.ProjectName) != "" {
+		replacement.ProjectPath = filepath.Join(strings.TrimSpace(replacement.ProjectParentPath), strings.TrimSpace(replacement.ProjectName))
+	}
+	replacement.ProjectParentPath = ""
+	replacement.ProjectArchiveAction = ""
+	replacement.TodoID = 0
+	replacement.TodoLabel = ""
+	replacement.TodoText = ""
+	replacement.TodoEvidence = ""
+	replacement.EngineerProvider = ""
+	replacement.SessionMode = ""
+	replacement.Prompt = ""
+	replacement.IntentExcerpt = ""
+	replacement.PreservedMeaning = ""
+	replacement.SuccessCondition = ""
+	replacement.Reveal = false
+	return replacement
 }
 
 func bossActionIsTodoAddProposal(action bossAction) bool {

@@ -867,6 +867,100 @@ func TestExecuteBossProjectCreateAndStartEngineerCreatesRepositoryTodoWorktreeAn
 	waitForControlAsyncRefreshes(t, svc)
 }
 
+func TestExecuteBossProjectSetCategoryRegistersExistingFolderWithoutCreatingProjectWork(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	category, err := svc.CreateProjectCategory(ctx, "Private")
+	if err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	if _, err := svc.SetProjectCategoryPrivate(ctx, category.Name, true); err != nil {
+		t.Fatalf("SetProjectCategoryPrivate() error = %v", err)
+	}
+	projectPath := filepath.Join(t.TempDir(), "career-private")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("create existing project folder: %v", err)
+	}
+	m := Model{ctx: ctx, svc: svc}
+	inv := controlInvocationRawForTest(t, control.CapabilityProjectSetCategory, control.ProjectSetCategoryInput{
+		ProjectPath:  projectPath,
+		ProjectName:  "career-private",
+		CategoryName: "Private",
+	})
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: inv})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want category command")
+	}
+	set, ok := cmd().(bossProjectCategorySetMsg)
+	if !ok || set.err != nil {
+		t.Fatalf("project category result = %#v, want success", set)
+	}
+	if set.result.Action != service.CreateOrAttachProjectAdded || set.project.CategoryName != "Private" || !set.project.CategoryPrivate {
+		t.Fatalf("category setup = action:%q project:%#v", set.result.Action, set.project)
+	}
+
+	updated, cmd = got.Update(set)
+	got = updated.(Model)
+	if !strings.Contains(got.status, "Added \"career-private\" to Little Control Room in the Private category") || !strings.Contains(got.status, "No project work was created") {
+		t.Fatalf("status = %q, want category-only receipt", got.status)
+	}
+	var result bossui.ControlInvocationResultMsg
+	for _, msg := range collectCmdMsgs(cmd) {
+		if candidate, ok := msg.(bossui.ControlInvocationResultMsg); ok {
+			result = candidate
+		}
+	}
+	if result.Err != nil || result.Invocation.Capability != control.CapabilityProjectSetCategory {
+		t.Fatalf("control result = %#v", result)
+	}
+	detail, err := svc.Store().GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() error = %v", err)
+	}
+	if detail.Summary.CategoryName != "Private" || !detail.Summary.ManuallyAdded {
+		t.Fatalf("stored project = %#v", detail.Summary)
+	}
+	if len(detail.Todos) != 0 || detail.Summary.TotalTODOCount != 0 {
+		t.Fatalf("category-only action created TODOs: %#v", detail.Todos)
+	}
+	if _, err := os.Stat(filepath.Join(projectPath, ".git")); !os.IsNotExist(err) {
+		t.Fatalf("category-only action should not initialize Git, stat err = %v", err)
+	}
+	waitForControlAsyncRefreshes(t, svc)
+}
+
+func TestExecuteBossProjectSetCategoryRejectsMissingFolderWithoutCreatingIt(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	if _, err := svc.CreateProjectCategory(ctx, "Private"); err != nil {
+		t.Fatalf("CreateProjectCategory() error = %v", err)
+	}
+	projectPath := filepath.Join(t.TempDir(), "missing-project")
+	m := Model{ctx: ctx, svc: svc}
+	inv := controlInvocationRawForTest(t, control.CapabilityProjectSetCategory, control.ProjectSetCategoryInput{
+		ProjectPath:  projectPath,
+		ProjectName:  "missing-project",
+		CategoryName: "Private",
+	})
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{Invocation: inv})
+	got := updated.(Model)
+	set, ok := cmd().(bossProjectCategorySetMsg)
+	if !ok || set.err == nil || !strings.Contains(set.err.Error(), "does not exist") {
+		t.Fatalf("missing project category result = %#v", set)
+	}
+	updated, resultCmd := got.Update(set)
+	got = updated.(Model)
+	if resultCmd == nil || !strings.Contains(got.status, "does not exist") {
+		t.Fatalf("missing project status = %q", got.status)
+	}
+	if _, err := os.Stat(projectPath); !os.IsNotExist(err) {
+		t.Fatalf("category-only action created missing project folder, stat err = %v", err)
+	}
+}
+
 func TestExecuteBossProjectCreateAndStartEngineerRegistersExistingRepositoryAndStartsWork(t *testing.T) {
 	ctx := context.Background()
 	svc := newControlTestService(t)

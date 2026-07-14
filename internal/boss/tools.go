@@ -64,6 +64,7 @@ type bossAction struct {
 	TaskCloseStatus          string                   `json:"task_close_status"`
 	TaskSummary              string                   `json:"task_summary"`
 	ProjectArchiveAction     string                   `json:"project_archive_action"`
+	ProjectCategoryName      string                   `json:"project_category_name"`
 	TodoID                   int64                    `json:"todo_id"`
 	TodoLabel                string                   `json:"todo_label"`
 	TodoText                 string                   `json:"todo_text"`

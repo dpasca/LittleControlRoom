@@ -80,6 +80,16 @@ func validateControlProposalAgainstSnapshot(inv control.Invocation, snapshot Sta
 		if controlProjectRefHasPath(snapshot.LoadedProjects, input.ProjectPath) {
 			return fmt.Errorf("project is already loaded: %s; use %s for new work in an existing project", input.ProjectPath, control.CapabilityTodoCreateWorktreeAndStartEngineer)
 		}
+	case control.CapabilityProjectSetCategory:
+		var input control.ProjectSetCategoryInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			return err
+		}
+		// An absolute existing path may intentionally be outside the loaded
+		// project set because this control is also the registration boundary.
+		if strings.TrimSpace(input.ProjectPath) == "" {
+			return requireLoadedControlProject(snapshot.LoadedProjects, "", input.ProjectName)
+		}
 	}
 	return nil
 }
@@ -182,6 +192,13 @@ func controlProposalFromBossAction(action bossAction) (control.Invocation, strin
 			Prompt:      bossLosslessControlPrompt(action),
 			Provider:    control.Provider(strings.TrimSpace(action.EngineerProvider)),
 			Reveal:      action.Reveal,
+		}
+	case control.CapabilityProjectSetCategory:
+		payload = control.ProjectSetCategoryInput{
+			RequestID:    strings.TrimSpace(action.RequestID),
+			ProjectPath:  strings.TrimSpace(action.ProjectPath),
+			ProjectName:  strings.TrimSpace(action.ProjectName),
+			CategoryName: strings.TrimSpace(action.ProjectCategoryName),
 		}
 	case control.CapabilityProjectArchive:
 		payload = control.ProjectArchiveInput{
@@ -488,6 +505,26 @@ func controlConfirmationContent(inv control.Invocation) (string, error) {
 			"I will register an existing Git repository at that path, or create one if the path is unused, then add a project TODO, prepare a dedicated worktree, and launch a fresh engineer session there.",
 			"Enter sets up and starts; Esc cancels.",
 		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	case control.CapabilityProjectSetCategory:
+		var input control.ProjectSetCategoryInput
+		if err := json.Unmarshal(inv.Args, &input); err != nil {
+			return "", err
+		}
+		target := firstNonEmpty(input.ProjectName, input.ProjectPath, "the project")
+		lines := []string{
+			fmt.Sprintf("Place %s in the %s project category?", target, input.CategoryName),
+			"",
+		}
+		if input.ProjectPath != "" {
+			lines = append(lines, "Existing folder: "+input.ProjectPath, "")
+		}
+		lines = append(lines,
+			"If the folder is not loaded yet, I will register that existing folder first.",
+			"This changes only Little Control Room organization: no project files, TODO, worktree, or engineer session will be created.",
+			"",
+			"Enter confirms; Esc cancels.",
+		)
 		return strings.TrimSpace(strings.Join(lines, "\n")), nil
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		var input control.TodoCreateWorktreeAndStartEngineerInput

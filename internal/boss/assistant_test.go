@@ -794,6 +794,126 @@ func TestAssistantReplyRepairsTruncatedXiaomiJSONWithoutThinking(t *testing.T) {
 	}
 }
 
+func TestHelpChatCategoryOnlyRequestRedirectsMistakenProjectWorkProposal(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass}), Usage: model.LLMUsage{TotalTokens: 3}},
+			{OutputText: encodedHelpProjectWorkPolicyReview(t, bossHelpProjectWorkPolicyReview{
+				AllowProjectWork:             false,
+				ReplacementControlCapability: string(control.CapabilityProjectSetCategory),
+				ReplacementCategoryName:      "Private",
+				Reason:                       "The user asked for LCR project-list organization, not repository work.",
+			}), Usage: model.LLMUsage{TotalTokens: 5}},
+		},
+	}
+	planner := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{{
+			Model: "gpt-test",
+			OutputText: encodedBossAction(t, bossAction{
+				Kind:              bossActionProposeControl,
+				ControlCapability: string(control.CapabilityProjectCreateAndStartEngineer),
+				ProjectParentPath: "/tmp/repos",
+				ProjectName:       "career-private",
+				TodoText:          "Place career-private in LCR's Private tab.",
+				Prompt:            "Update the project so it appears in the Private tab.",
+				EngineerProvider:  string(control.ProviderAuto),
+				Reason:            "The project is not loaded yet.",
+			}),
+			Usage: model.LLMUsage{TotalTokens: 17},
+		}},
+	}
+	assistant := &Assistant{
+		planner:      planner,
+		queryRouter:  router,
+		query:        newQueryExecutor(&fakeBossStore{}),
+		model:        "gpt-test",
+		utilityModel: "gpt-utility",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{{
+			Role:    "user",
+			Content: "Add career-private under the Private projects tab.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil || resp.ControlInvocation.Capability != control.CapabilityProjectSetCategory {
+		t.Fatalf("ControlInvocation = %#v, want project.set_category", resp.ControlInvocation)
+	}
+	var input control.ProjectSetCategoryInput
+	if err := json.Unmarshal(resp.ControlInvocation.Args, &input); err != nil {
+		t.Fatalf("decode category invocation: %v", err)
+	}
+	if input.ProjectPath != "/tmp/repos/career-private" || input.ProjectName != "career-private" || input.CategoryName != "Private" {
+		t.Fatalf("category invocation = %#v", input)
+	}
+	if strings.Contains(resp.Content, "start tracked work") || strings.Contains(resp.Content, "launch a fresh engineer") {
+		t.Fatalf("category-only confirmation leaked project work: %q", resp.Content)
+	}
+	if !strings.Contains(resp.Content, "no project files, TODO, worktree, or engineer session") {
+		t.Fatalf("category-only confirmation omitted side-effect boundary: %q", resp.Content)
+	}
+	if len(router.reqs) != 2 || router.reqs[1].SchemaName != "boss_help_project_work_policy_review" || router.reqs[1].Model != "gpt-utility" {
+		t.Fatalf("policy review requests = %#v", router.reqs)
+	}
+	if resp.Usage.TotalTokens != 25 {
+		t.Fatalf("usage total = %d, want route+planner+policy usage", resp.Usage.TotalTokens)
+	}
+}
+
+func TestHelpChatProjectWorkPolicyKeepsExplicitImplementationRequest(t *testing.T) {
+	t.Parallel()
+
+	router := &fakeJSONSchemaRunner{
+		resp: []llm.JSONSchemaResponse{
+			{OutputText: encodedReadOnlyRoute(t, bossReadOnlyRoute{Kind: bossReadOnlyRoutePass})},
+			{OutputText: encodedHelpProjectWorkPolicyReview(t, bossHelpProjectWorkPolicyReview{
+				AllowProjectWork: true,
+				Reason:           "The user explicitly asked to implement and test a repository change.",
+			})},
+		},
+	}
+	planner := &fakeJSONSchemaRunner{resp: []llm.JSONSchemaResponse{{
+		OutputText: encodedBossAction(t, bossAction{
+			Kind:              bossActionProposeControl,
+			ControlCapability: string(control.CapabilityTodoCreateWorktreeAndStartEngineer),
+			ProjectPath:       "/tmp/lcr",
+			ProjectName:       "Little Control Room",
+			TodoText:          "Fix the Help Chat category control.",
+			Prompt:            "Implement the Help Chat category control and run the tests.",
+			EngineerProvider:  string(control.ProviderAuto),
+		}),
+	}}}
+	assistant := &Assistant{
+		planner:     planner,
+		queryRouter: router,
+		query:       newQueryExecutor(&fakeBossStore{}),
+		model:       "gpt-test",
+	}
+
+	resp, err := assistant.Reply(context.Background(), AssistantRequest{
+		HelpChat: true,
+		Messages: []ChatMessage{{
+			Role:    "user",
+			Content: "Implement the Help Chat category control in Little Control Room and test it.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Reply() error = %v", err)
+	}
+	if resp.ControlInvocation == nil || resp.ControlInvocation.Capability != control.CapabilityTodoCreateWorktreeAndStartEngineer {
+		t.Fatalf("ControlInvocation = %#v, want explicit implementation work preserved", resp.ControlInvocation)
+	}
+	if len(router.reqs) != 2 || router.reqs[1].SchemaName != "boss_help_project_work_policy_review" {
+		t.Fatalf("policy review requests = %#v", router.reqs)
+	}
+}
+
 func TestAssistantReplyRepairsToolProtocolIntoHelpChatControlProposal(t *testing.T) {
 	t.Parallel()
 
@@ -1226,6 +1346,7 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"fresh external research",
 		"propose_control",
 		"agent_task.create",
+		"project.set_category",
 		"project.set_archive_state",
 		"scratch_task.archive",
 		"engineer.send_prompt control proposal sends to exactly one loaded project",
@@ -1236,6 +1357,8 @@ func TestBossPromptsPreferCoworkerBriefAndSearchBeforeUnknown(t *testing.T) {
 		"project TODOs are separate from delegated agent tasks",
 		"Do not answer that there are no open agent tasks",
 		"Use engineer.send_prompt only for explicit project/repo work",
+		"A project.set_category request is Little Control Room organization, not repository work",
+		"Do not use project.create_and_start_engineer, todo.add, todo.create_worktree_and_start_engineer, or engineer.send_prompt for category-only placement",
 		"project Chat just created",
 		"do not create another TODO or sibling worktree",
 		"host follows the TODO's recorded work_project_path",
@@ -2925,6 +3048,15 @@ func encodedTodoAddPolicyReview(t *testing.T, review bossTodoAddPolicyReview) st
 	raw, err := json.Marshal(review)
 	if err != nil {
 		t.Fatalf("marshal todo.add policy review: %v", err)
+	}
+	return string(raw)
+}
+
+func encodedHelpProjectWorkPolicyReview(t *testing.T, review bossHelpProjectWorkPolicyReview) string {
+	t.Helper()
+	raw, err := json.Marshal(review)
+	if err != nil {
+		t.Fatalf("marshal Help project-work policy review: %v", err)
 	}
 	return string(raw)
 }

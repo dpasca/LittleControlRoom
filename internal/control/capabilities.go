@@ -15,6 +15,7 @@ const (
 	FeatureContinueTask                       = "continue_task"
 	FeatureCloseTask                          = "close_task"
 	FeatureArchiveTask                        = "archive_task"
+	FeatureSetProjectCategory                 = "set_project_category"
 	FeatureAddTodo                            = "add_todo"
 	FeatureCreateTodoWorktreeAndStartEngineer = "create_todo_worktree_and_start_engineer"
 	FeatureCompleteTodo                       = "complete_todo"
@@ -30,6 +31,7 @@ const (
 	HostEffectMayCreateProjectDirectory  = "may_create_project_directory"
 	HostEffectMayInitializeGitRepository = "may_initialize_git_repository"
 	HostEffectMayTrackProject            = "may_track_project"
+	HostEffectMaySetProjectCategory      = "may_set_project_category"
 	HostEffectMayCreateTaskWorkspace     = "may_create_task_workspace"
 	HostEffectMaySetProjectArchive       = "may_set_project_archive_state"
 	HostEffectMayCreateProjectTodo       = "may_create_project_todo"
@@ -223,6 +225,24 @@ type ProjectCreateAndStartEngineerInput struct {
 	WorktreePath string   `json:"worktree_path,omitempty"`
 }
 
+// ProjectSetCategoryInput changes only Little Control Room organization. When
+// ProjectPath names an existing folder that is not loaded yet, the host may
+// register it before assigning the category. It must never create the folder or
+// turn the request into project TODO/worktree/engineer work.
+type ProjectSetCategoryInput struct {
+	RequestID    string `json:"request_id,omitempty"`
+	ProjectPath  string `json:"project_path"`
+	ProjectName  string `json:"project_name"`
+	CategoryName string `json:"category_name"`
+}
+
+type ProjectSetCategoryResult struct {
+	ProjectPath  string `json:"project_path"`
+	CategoryName string `json:"category_name"`
+	Registered   bool   `json:"registered"`
+	Status       string `json:"status"`
+}
+
 type TodoAddInput struct {
 	RequestID   string `json:"request_id,omitempty"`
 	ProjectPath string `json:"project_path"`
@@ -371,6 +391,7 @@ func Capabilities() []Capability {
 		AgentTaskContinueCapability(),
 		AgentTaskCloseCapability(),
 		ProjectCreateAndStartEngineerCapability(),
+		ProjectSetCategoryCapability(),
 		ProjectArchiveCapability(),
 		ScratchTaskArchiveCapability(),
 		TodoAddCapability(),
@@ -393,6 +414,8 @@ func CapabilityByName(name CapabilityName) (Capability, bool) {
 		return AgentTaskCloseCapability(), true
 	case CapabilityProjectCreateAndStartEngineer:
 		return ProjectCreateAndStartEngineerCapability(), true
+	case CapabilityProjectSetCategory:
+		return ProjectSetCategoryCapability(), true
 	case CapabilityProjectArchive:
 		return ProjectArchiveCapability(), true
 	case CapabilityScratchTaskArchive:
@@ -507,6 +530,24 @@ func ProjectCreateAndStartEngineerCapability() Capability {
 			HostEffectMayRevealEngineerSession,
 		},
 		Providers: EngineerSendPromptCapability().Providers,
+	}
+}
+
+func ProjectSetCategoryCapability() Capability {
+	return Capability{
+		Name:         CapabilityProjectSetCategory,
+		Description:  "Place a project in an existing Little Control Room category, registering an existing folder first when needed. This changes only LCR organization and never creates project work.",
+		InputSchema:  projectSetCategoryInputSchema(),
+		OutputSchema: projectSetCategoryOutputSchema(),
+		Risk:         RiskWrite,
+		Confirmation: ConfirmationRequired,
+		RequiresHost: true,
+		HostEffects:  []string{HostEffectMayTrackProject, HostEffectMaySetProjectCategory},
+		Providers: []ProviderCapability{{
+			ID:        ProviderAuto,
+			Available: true,
+			Features:  []string{FeatureSetProjectCategory},
+		}},
 	}
 }
 
@@ -813,6 +854,30 @@ func NormalizeProjectCreateAndStartEngineerInput(input ProjectCreateAndStartEngi
 	}
 	if input.TodoID < 0 {
 		return ProjectCreateAndStartEngineerInput{}, fmt.Errorf("todo_id cannot be negative")
+	}
+	return input, nil
+}
+
+func NormalizeProjectSetCategoryInput(input ProjectSetCategoryInput) (ProjectSetCategoryInput, error) {
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	input.ProjectPath = strings.TrimSpace(input.ProjectPath)
+	if input.ProjectPath != "" {
+		input.ProjectPath = filepath.Clean(input.ProjectPath)
+		if !filepath.IsAbs(input.ProjectPath) {
+			return ProjectSetCategoryInput{}, fmt.Errorf("project_path must be absolute")
+		}
+	}
+	input.ProjectName = strings.TrimSpace(input.ProjectName)
+	rawCategoryName := strings.TrimSpace(input.CategoryName)
+	if strings.ContainsAny(rawCategoryName, "\r\n") {
+		return ProjectSetCategoryInput{}, fmt.Errorf("category_name must be one line")
+	}
+	input.CategoryName = strings.Join(strings.Fields(rawCategoryName), " ")
+	if input.ProjectPath == "" && input.ProjectName == "" {
+		return ProjectSetCategoryInput{}, fmt.Errorf("project_path or project_name is required")
+	}
+	if input.CategoryName == "" {
+		return ProjectSetCategoryInput{}, fmt.Errorf("category_name is required")
 	}
 	return input, nil
 }
@@ -1167,6 +1232,34 @@ func validateProjectCreateAndStartEngineerInvocation(inv Invocation) (Invocation
 	payload, err := json.Marshal(normalized)
 	if err != nil {
 		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityProjectCreateAndStartEngineer, err)
+	}
+	inv.RequestID = normalized.RequestID
+	inv.Args = payload
+	return inv, nil
+}
+
+func validateProjectSetCategoryInvocation(inv Invocation) (Invocation, error) {
+	if len(inv.Args) == 0 {
+		return Invocation{}, fmt.Errorf("%s args are required", CapabilityProjectSetCategory)
+	}
+	var input ProjectSetCategoryInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		return Invocation{}, fmt.Errorf("decode %s args: %w", CapabilityProjectSetCategory, err)
+	}
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	if inv.RequestID != "" && input.RequestID != "" && inv.RequestID != input.RequestID {
+		return Invocation{}, fmt.Errorf("request_id mismatch between invocation and %s args", CapabilityProjectSetCategory)
+	}
+	if input.RequestID == "" {
+		input.RequestID = inv.RequestID
+	}
+	normalized, err := NormalizeProjectSetCategoryInput(input)
+	if err != nil {
+		return Invocation{}, err
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return Invocation{}, fmt.Errorf("encode normalized %s args: %w", CapabilityProjectSetCategory, err)
 	}
 	inv.RequestID = normalized.RequestID
 	inv.Args = payload
@@ -1576,6 +1669,34 @@ func projectCreateAndStartEngineerInputSchema() map[string]any {
 			"worktree_path": map[string]any{"type": "string"},
 		},
 		"required": []string{"parent_path", "project_name", "todo_text", "prompt", "provider", "reveal"},
+	}
+}
+
+func projectSetCategoryInputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"request_id":    map[string]any{"type": "string"},
+			"project_path":  map[string]any{"type": "string", "description": "Absolute existing project folder path, or empty only when project_name identifies an already loaded project."},
+			"project_name":  map[string]any{"type": "string", "description": "Exact loaded project name when path is unavailable, or an optional display name when project_path is supplied."},
+			"category_name": map[string]any{"type": "string", "description": "Exact name of an existing Little Control Room project category."},
+		},
+		"required": []string{"project_path", "project_name", "category_name"},
+	}
+}
+
+func projectSetCategoryOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"project_path":  map[string]any{"type": "string"},
+			"category_name": map[string]any{"type": "string"},
+			"registered":    map[string]any{"type": "boolean"},
+			"status":        map[string]any{"type": "string"},
+		},
+		"required": []string{"project_path", "category_name", "registered", "status"},
 	}
 }
 

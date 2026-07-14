@@ -22,6 +22,7 @@ type CreateOrAttachProjectRequest struct {
 	Name                   string
 	CreateGitRepo          bool
 	RequireNew             bool
+	RequireExisting        bool
 	PreferredSessionSource model.SessionSource
 	CategoryID             string
 	// CategoryExplicit assigns to CategoryID, or to Main when CategoryID is empty.
@@ -61,6 +62,9 @@ func (s *Service) RecentProjectParentPaths(ctx context.Context, limit int) ([]st
 }
 
 func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachProjectRequest) (CreateOrAttachProjectResult, error) {
+	if req.RequireNew && req.RequireExisting {
+		return CreateOrAttachProjectResult{}, fmt.Errorf("project cannot require both a new and an existing path")
+	}
 	normalized, err := normalizeCreateOrAttachProjectRequest(req)
 	if err != nil {
 		return CreateOrAttachProjectResult{}, err
@@ -79,6 +83,9 @@ func (s *Service) CreateOrAttachProject(ctx context.Context, req CreateOrAttachP
 	}
 	if exists && req.RequireNew {
 		return CreateOrAttachProjectResult{}, fmt.Errorf("target project path already exists: %s", projectPath)
+	}
+	if !exists && req.RequireExisting {
+		return CreateOrAttachProjectResult{}, fmt.Errorf("target project path does not exist: %s", projectPath)
 	}
 
 	projects, err := s.store.GetProjectSummaryMap(ctx)
