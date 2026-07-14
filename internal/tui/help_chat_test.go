@@ -112,7 +112,7 @@ func TestHelpChatFooterOffersStopAndSteerWhileResponding(t *testing.T) {
 
 	m := Model{helpChatModel: help}
 	footer := ansi.Strip(m.renderHelpChatFooter(100))
-	for _, want := range []string{"Enter steer", "Ctrl+C stop", "Esc hide"} {
+	for _, want := range []string{"Enter steer", "Ctrl+C stop", "Esc hide", "Ctrl+V paste", "Alt+C copy menu"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("responding Chat footer missing %q: %q", want, footer)
 		}
@@ -120,6 +120,39 @@ func TestHelpChatFooterOffersStopAndSteerWhileResponding(t *testing.T) {
 
 	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	help = normalizeBossModel(updated)
+}
+
+func TestHelpChatFooterOffersCopyPasteAndSelectionControls(t *testing.T) {
+	t.Parallel()
+
+	help := bossui.NewEmbeddedHelp(context.Background(), nil)
+	m := Model{helpChatModel: help}
+	footer := ansi.Strip(m.renderHelpChatFooter(120))
+	for _, want := range []string{"Ctrl+V paste", "Alt+C copy menu"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("Chat footer missing %q: %q", want, footer)
+		}
+	}
+	narrowFooter := ansi.Strip(m.renderHelpChatFooter(68))
+	for _, want := range []string{"Ctrl+V paste", "Alt+C copy menu"} {
+		if !strings.Contains(narrowFooter, want) {
+			t.Fatalf("narrow Chat footer missing %q: %q", want, narrowFooter)
+		}
+	}
+
+	updated, _ := help.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
+	help = normalizeBossModel(updated)
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyTab})
+	help = normalizeBossModel(updated)
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	help = normalizeBossModel(updated)
+	m.helpChatModel = help
+	footer = ansi.Strip(m.renderHelpChatFooter(120))
+	for _, want := range []string{"Space mark", "arrows move", "Esc cancel"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("Chat selection footer missing %q: %q", want, footer)
+		}
+	}
 }
 
 func TestHelpChatOverlayPaintsEveryInteriorCell(t *testing.T) {

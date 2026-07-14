@@ -1835,6 +1835,83 @@ func TestModelAltCDialogCanCopyVisibleOutput(t *testing.T) {
 	}
 }
 
+func TestEmbeddedHelpSupportsClipboardCopyAndPaste(t *testing.T) {
+	var copied string
+	previousReader := clipboardTextReader
+	previousWriter := clipboardTextWriter
+	clipboardTextReader = func() (string, error) {
+		return "pasted line 1\npasted line 2", nil
+	}
+	clipboardTextWriter = func(text string) error {
+		copied = text
+		return nil
+	}
+	t.Cleanup(func() {
+		clipboardTextReader = previousReader
+		clipboardTextWriter = previousWriter
+	})
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.input.SetValue("copy this help question")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
+	got := updated.(Model)
+	if cmd != nil || got.inputCopyDialog == nil {
+		t.Fatalf("Chat Alt+C should open the copy menu, cmd=%v dialog=%#v", cmd, got.inputCopyDialog)
+	}
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil || copied != "copy this help question" {
+		t.Fatalf("Chat copy all = %q, cmd=%v", copied, cmd)
+	}
+
+	got.input.Reset()
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("Chat Ctrl+V should paste synchronously")
+	}
+	if want := "pasted line 1\npasted line 2"; got.input.Value() != want {
+		t.Fatalf("Chat pasted input = %q, want %q", got.input.Value(), want)
+	}
+	if got.status != "Pasted clipboard text into Chat input" {
+		t.Fatalf("Chat paste status = %q", got.status)
+	}
+}
+
+func TestEmbeddedHelpRendersInputCopySelection(t *testing.T) {
+	previousProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() {
+		lipgloss.SetColorProfile(previousProfile)
+	})
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 72
+	m.height = 20
+	m.input.SetValue("select this")
+	m.syncLayout(false)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
+	got := updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyTab})
+	got = updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeySpace})
+	got = updated.(Model)
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got = updated.(Model)
+
+	if !got.InputSelectionActive() {
+		t.Fatalf("Chat should remain in input selection mode")
+	}
+	rendered := got.renderCoreInput(got.layout())
+	if !strings.Contains(rendered, "48;5;222") {
+		t.Fatalf("Chat input should visibly highlight the selected range:\n%s", rendered)
+	}
+}
+
 func TestModelAltOOpensFilePickerForMarkdownLinks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notes.md")
 	m := New(context.Background(), nil)

@@ -193,18 +193,29 @@ func (m Model) renderHelpChatHeader(width int) string {
 func (m Model) renderHelpChatFooter(width int) string {
 	actions := []footerAction{
 		footerPrimaryAction("Enter", "send"),
+		footerLowAction("Alt+C", "copy menu"),
+		footerNavAction("Ctrl+V", "paste"),
+		footerNavAction("Alt+Enter", "newline"),
+		footerLowAction("/new", "clear"),
 		footerHideAction("Esc", "hide"),
 		footerHideAction("`", "hide"),
-		footerLowAction("/new", "clear"),
-		footerNavAction("Alt+Enter", "newline"),
 	}
 	if m.helpChatModel.IsSending() {
 		actions = []footerAction{
 			footerPrimaryAction("Enter", "steer"),
 			footerExitAction("Ctrl+C", "stop"),
+			footerLowAction("Alt+C", "copy menu"),
+			footerNavAction("Ctrl+V", "paste"),
+			footerNavAction("Alt+Enter", "newline"),
 			footerHideAction("Esc", "hide"),
 			footerHideAction("`", "hide"),
-			footerNavAction("Alt+Enter", "newline"),
+		}
+	}
+	if m.helpChatModel.InputSelectionActive() {
+		actions = []footerAction{
+			footerPrimaryAction("Space", "mark"),
+			footerNavAction("arrows", "move"),
+			footerExitAction("Esc", "cancel"),
 		}
 	}
 	if m.helpChatModel.ControlConfirmationActive() {

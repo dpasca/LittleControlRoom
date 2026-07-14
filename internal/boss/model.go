@@ -473,6 +473,10 @@ func (m Model) IsSending() bool {
 	return m.sending
 }
 
+func (m Model) InputSelectionActive() bool {
+	return m.inputSelection != nil
+}
+
 func (m Model) UsageText() string {
 	parts := make([]string, 0, 3)
 	if m.haveLastAssistantUsage {
@@ -881,9 +885,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc", "alt+up":
 			return m, m.exitCmd()
 		case "alt+c":
-			if m.helpChat {
-				return m, nil
-			}
 			m.openInputCopyDialog()
 			return m, nil
 		case "alt+o":
@@ -900,6 +901,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+r":
 			m.status = "Refreshing project state..."
 			return m, m.loadStateCmd()
+		case "ctrl+v":
+			return m.pasteInputFromClipboard()
 		case "ctrl+l":
 			if m.helpChat {
 				return m.clearHelpChat("")
@@ -1637,7 +1640,7 @@ func (m Model) renderCoreChat(layout bossLayout) string {
 
 func (m Model) renderCoreInput(layout bossLayout) string {
 	if m.simpleCoreInput {
-		return renderHelpChatInput(m.input, layout.chatInnerWidth, layout.inputHeight)
+		return renderHelpChatInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth, layout.inputHeight)
 	}
 	return fitRenderedBlock(renderBossInputWithSelection(m.input, m.inputSelection, layout.chatInnerWidth), layout.chatInnerWidth, layout.inputHeight)
 }
@@ -2251,6 +2254,7 @@ func bossSummaryFingerprint(project ProjectBrief) string {
 }
 
 var (
+	clipboardTextReader           = clipboard.ReadAll
 	clipboardTextWriter           = clipboard.WriteAll
 	bossPanelBackground           = lipgloss.Color("#000000")
 	helpChatSurfaceBackground     = lipgloss.Color("234")
@@ -2356,10 +2360,29 @@ func renderBossInputBlock(_ textarea.Model, editorView string, width int) string
 }
 
 func renderHelpChatInput(input textarea.Model, width, height int) string {
+	return renderHelpChatInputBlock(input.View(), width, height)
+}
+
+func renderHelpChatInputWithSelection(input textarea.Model, sel *inputcomposer.SelectionState, width, height int) string {
+	editorView := input.View()
+	if sel != nil {
+		input.SetWidth(maxInt(20, helpChatInputInnerWidth(width)))
+		editorView = inputcomposer.RenderSelectionEditor(input, sel, inputcomposer.SelectionStyles{
+			Line:        bossInputSelectionLineStyle,
+			CursorLine:  bossInputSelectionCursorLineStyle,
+			Range:       bossInputSelectionRangeStyle,
+			Cursor:      bossInputSelectionCursorStyle,
+			CursorRange: bossInputSelectionCursorRangeStyle,
+		})
+	}
+	return renderHelpChatInputBlock(editorView, width, height)
+}
+
+func renderHelpChatInputBlock(editorView string, width, height int) string {
 	width = maxInt(1, width)
 	shell := helpChatInputShellStyle.Width(width)
 	innerWidth := helpChatInputInnerWidth(width)
-	body := fitRenderedBlock(input.View(), innerWidth, height)
+	body := fitRenderedBlock(editorView, innerWidth, height)
 	rendered := shell.Render(body)
 	return fitRenderedBlock(rendered, width, height)
 }

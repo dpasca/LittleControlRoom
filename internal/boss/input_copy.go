@@ -103,6 +103,23 @@ func (m Model) copyVisibleOutputToClipboard() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) pasteInputFromClipboard() (tea.Model, tea.Cmd) {
+	text, err := clipboardTextReader()
+	if err != nil {
+		m.status = "Chat input paste failed: " + err.Error()
+		return m, nil
+	}
+	if text == "" {
+		m.status = "Clipboard text is empty"
+		return m, nil
+	}
+	m.input.InsertString(text)
+	m.syncBossSlashSelection()
+	m.syncLayout(false)
+	m.status = "Pasted clipboard text into Chat input"
+	return m, nil
+}
+
 func visibleBossOutputCopyText(view string) string {
 	return trimBlankBossCopyLines(trimRightBossCopyLines(ansi.Strip(view)))
 }
