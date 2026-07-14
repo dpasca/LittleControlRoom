@@ -47,6 +47,56 @@ func TestControlProposalFromBossActionBuildsNewRepositoryInvocation(t *testing.T
 	}
 }
 
+func TestControlProposalFromBossActionBuildsProjectCategoryInvocationWithoutProjectWork(t *testing.T) {
+	action := bossAction{
+		Kind:                bossActionProposeControl,
+		ControlCapability:   string(control.CapabilityProjectSetCategory),
+		RequestID:           " category-1 ",
+		ProjectPath:         " /tmp/repos/career-private ",
+		ProjectName:         " career-private ",
+		ProjectCategoryName: " Private ",
+	}
+
+	inv, preview, err := controlProposalFromBossAction(action)
+	if err != nil {
+		t.Fatalf("controlProposalFromBossAction() error = %v", err)
+	}
+	if inv.Capability != control.CapabilityProjectSetCategory || inv.RequestID != "category-1" {
+		t.Fatalf("invocation = %#v", inv)
+	}
+	var input control.ProjectSetCategoryInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode invocation: %v", err)
+	}
+	if input.ProjectPath != "/tmp/repos/career-private" || input.ProjectName != "career-private" || input.CategoryName != "Private" {
+		t.Fatalf("category input = %#v", input)
+	}
+	for _, want := range []string{"Place career-private in the Private project category", "Existing folder: /tmp/repos/career-private", "register that existing folder", "no project files, TODO, worktree, or engineer session"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("preview missing %q:\n%s", want, preview)
+		}
+	}
+}
+
+func TestValidateProjectCategoryProposalAllowsUnloadedAbsolutePathButRequiresLoadedNameOnly(t *testing.T) {
+	pathInvocation := validatedControlInvocationForTest(t, control.CapabilityProjectSetCategory, control.ProjectSetCategoryInput{
+		ProjectPath:  "/tmp/repos/career-private",
+		CategoryName: "Private",
+	})
+	if err := validateControlProposalAgainstSnapshot(pathInvocation, StateSnapshot{LoadedProjectRefsKnown: true}); err != nil {
+		t.Fatalf("unloaded absolute path should be allowed for registration: %v", err)
+	}
+
+	nameInvocation := validatedControlInvocationForTest(t, control.CapabilityProjectSetCategory, control.ProjectSetCategoryInput{
+		ProjectName:  "career-private",
+		CategoryName: "Private",
+	})
+	err := validateControlProposalAgainstSnapshot(nameInvocation, StateSnapshot{LoadedProjectRefsKnown: true})
+	if err == nil || !strings.Contains(err.Error(), "project is not loaded") {
+		t.Fatalf("name-only unloaded category proposal error = %v", err)
+	}
+}
+
 func TestValidateControlProposalAgainstSnapshotDistinguishesLoadedAndNewProjects(t *testing.T) {
 	snapshot := StateSnapshot{
 		LoadedProjectRefsKnown: true,

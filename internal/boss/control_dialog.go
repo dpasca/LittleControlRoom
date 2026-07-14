@@ -40,6 +40,8 @@ func (m Model) controlConfirmationTitle() string {
 		return "Engineer Handoff"
 	case control.CapabilityProjectCreateAndStartEngineer:
 		return "Repository Setup & Work"
+	case control.CapabilityProjectSetCategory:
+		return "Project Category"
 	case control.CapabilityTodoCreateWorktreeAndStartEngineer:
 		return "Tracked Engineer Task"
 	case control.CapabilityAgentTaskCreate, control.CapabilityAgentTaskContinue:
@@ -196,6 +198,30 @@ func (m Model) renderStructuredControlConfirmationContent(width int) string {
 					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
 				}, "   "),
 			}
+			return strings.Join(lines, "\n")
+		}
+	case control.CapabilityProjectSetCategory:
+		var input control.ProjectSetCategoryInput
+		if err := json.Unmarshal(m.pendingControl.Invocation.Args, &input); err == nil {
+			target := firstNonEmpty(input.ProjectName, input.ProjectPath, "selected project")
+			lines := []string{
+				bossControlNoticeStyle.Render(fitLine("LCR organization only: register if needed and set category", width)),
+				"",
+				renderBossControlDetail("Project", target, width),
+			}
+			if input.ProjectPath != "" {
+				lines = append(lines, renderBossControlDetail("Path", input.ProjectPath, width))
+			}
+			lines = append(lines,
+				renderBossControlDetail("Category", input.CategoryName, width),
+				renderBossControlDetail("Files", "unchanged", width),
+				renderBossControlDetail("Project work", "none", width),
+				"",
+				strings.Join([]string{
+					renderBossControlAction("Enter", "place", uistyle.DialogActionPrimary),
+					renderBossControlAction("Esc", "cancel", uistyle.DialogActionCancel),
+				}, "   "),
+			)
 			return strings.Join(lines, "\n")
 		}
 	case control.CapabilityTodoAdd:

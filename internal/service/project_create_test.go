@@ -179,6 +179,35 @@ func TestCreateOrAttachProjectRequireNewRejectsExistingDirectory(t *testing.T) {
 	}
 }
 
+func TestCreateOrAttachProjectRequireExistingRejectsMissingDirectoryWithoutCreatingIt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	parent := t.TempDir()
+	projectPath := filepath.Join(parent, "missing")
+	_, err = svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath:      parent,
+		Name:            "missing",
+		RequireExisting: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "target project path does not exist") {
+		t.Fatalf("CreateOrAttachProject() error = %v, want missing-target rejection", err)
+	}
+	if _, statErr := os.Stat(projectPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("missing target should not be created, stat err = %v", statErr)
+	}
+	if _, loadErr := st.GetProjectSummary(ctx, projectPath, true); loadErr == nil {
+		t.Fatalf("missing target should not be registered")
+	}
+}
+
 func TestCreateOrAttachProjectExplicitMainClearsExistingCategory(t *testing.T) {
 	t.Parallel()
 

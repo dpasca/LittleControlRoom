@@ -201,6 +201,29 @@ func TestProjectArchiveCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestProjectSetCategoryCapabilityMetadata(t *testing.T) {
+	capability, ok := CapabilityByName(CapabilityProjectSetCategory)
+	if !ok {
+		t.Fatalf("CapabilityByName(%q) not found", CapabilityProjectSetCategory)
+	}
+	if capability.Name != CapabilityProjectSetCategory {
+		t.Fatalf("Name = %q, want %q", capability.Name, CapabilityProjectSetCategory)
+	}
+	if capability.Risk != RiskWrite || capability.Confirmation != ConfirmationRequired || !capability.RequiresHost {
+		t.Fatalf("unexpected project category capability metadata: %#v", capability)
+	}
+	for _, effect := range []string{HostEffectMayTrackProject, HostEffectMaySetProjectCategory} {
+		if !stringSliceContains(capability.HostEffects, effect) {
+			t.Fatalf("HostEffects = %#v, want %q", capability.HostEffects, effect)
+		}
+	}
+	for _, forbidden := range []string{HostEffectMayCreateProjectTodo, HostEffectMayCreateProjectWorktree, HostEffectMayRevealEngineerSession, HostEffectMayCreateProjectDirectory} {
+		if stringSliceContains(capability.HostEffects, forbidden) {
+			t.Fatalf("HostEffects = %#v, must not include %q", capability.HostEffects, forbidden)
+		}
+	}
+}
+
 func TestTodoAddCapabilityMetadata(t *testing.T) {
 	capability, ok := CapabilityByName(CapabilityTodoAdd)
 	if !ok {
@@ -584,6 +607,33 @@ func TestValidateInvocationNormalizesProjectArchiveArgs(t *testing.T) {
 		input.ProjectPath != "/tmp/demo" ||
 		input.Action != ProjectArchiveActionUnarchive {
 		t.Fatalf("normalized project archive input = %#v", input)
+	}
+}
+
+func TestValidateInvocationNormalizesProjectSetCategoryArgs(t *testing.T) {
+	inv, err := ValidateInvocation(Invocation{
+		RequestID:  "category-1",
+		Capability: CapabilityProjectSetCategory,
+		Args:       json.RawMessage(`{"project_path":" /tmp/repos/../repos/career-private ","project_name":" career-private ","category_name":" Private "}`),
+	})
+	if err != nil {
+		t.Fatalf("ValidateInvocation() error = %v", err)
+	}
+	var input ProjectSetCategoryInput
+	if err := json.Unmarshal(inv.Args, &input); err != nil {
+		t.Fatalf("decode normalized input: %v", err)
+	}
+	if input.RequestID != "category-1" || input.ProjectPath != "/tmp/repos/career-private" || input.ProjectName != "career-private" || input.CategoryName != "Private" {
+		t.Fatalf("normalized input = %#v", input)
+	}
+}
+
+func TestNormalizeProjectSetCategoryRequiresAbsoluteExistingTargetReferenceAndCategory(t *testing.T) {
+	if _, err := NormalizeProjectSetCategoryInput(ProjectSetCategoryInput{ProjectPath: "relative/project", CategoryName: "Private"}); err == nil || !strings.Contains(err.Error(), "must be absolute") {
+		t.Fatalf("relative project path error = %v", err)
+	}
+	if _, err := NormalizeProjectSetCategoryInput(ProjectSetCategoryInput{ProjectName: "career-private"}); err == nil || !strings.Contains(err.Error(), "category_name is required") {
+		t.Fatalf("missing category error = %v", err)
 	}
 }
 

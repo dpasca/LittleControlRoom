@@ -37,7 +37,7 @@ func (m Model) executeBossControlInvocation(msg bossui.ControlInvocationConfirme
 	if outcome.cmd == nil {
 		return m, bossControlResultCmd(resultInv, m.status, outcome.err)
 	}
-	if resultInv.Capability == control.CapabilityTodoAdd || resultInv.Capability == control.CapabilityProjectCreateAndStartEngineer || resultInv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
+	if resultInv.Capability == control.CapabilityProjectSetCategory || resultInv.Capability == control.CapabilityTodoAdd || resultInv.Capability == control.CapabilityProjectCreateAndStartEngineer || resultInv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
 		return m, outcome.cmd
 	}
 	return m, bossControlExecutionCmd(resultInv, outcome.cmd)
@@ -75,6 +75,15 @@ type bossProjectCreateAndStartEngineerCreatedMsg struct {
 	gitInitialized bool
 	projectTracked bool
 	err            error
+}
+
+type bossProjectCategorySetMsg struct {
+	inv      control.Invocation
+	input    control.ProjectSetCategoryInput
+	result   service.CreateOrAttachProjectResult
+	project  model.ProjectSummary
+	category model.ProjectCategory
+	err      error
 }
 
 type bossTodoAddedMsg struct {
@@ -150,6 +159,13 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			return controlInvocationOutcome{model: m, err: err}
 		}
 		return m.executeProjectCreateAndStartEngineerControlWithOutcome(input)
+	case control.CapabilityProjectSetCategory:
+		var input control.ProjectSetCategoryInput
+		if err := json.Unmarshal(normalized.Args, &input); err != nil {
+			m.status = "Control request invalid: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		return m.executeProjectSetCategoryControlWithOutcome(input)
 	case control.CapabilityProjectArchive:
 		var input control.ProjectArchiveInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -1103,6 +1119,116 @@ func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArch
 		m.status = fmt.Sprintf("Unarchived %q; still outside project scope", name)
 	}
 	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) executeProjectSetCategoryControlWithOutcome(input control.ProjectSetCategoryInput) controlInvocationOutcome {
+	if m.svc == nil || m.svc.Store() == nil {
+		err := errors.New("service unavailable")
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	if strings.TrimSpace(input.ProjectPath) == "" {
+		project, err := m.resolveControlProjectRef("", input.ProjectName)
+		if err != nil {
+			m.status = "Control request failed: " + err.Error()
+			return controlInvocationOutcome{model: m, err: err}
+		}
+		input.ProjectPath = strings.TrimSpace(project.Path)
+		input.ProjectName = firstNonEmptyTrimmed(input.ProjectName, projectRemovalName(project))
+	} else if project, ok := m.projectSummaryByPathAllProjects(input.ProjectPath); ok {
+		input.ProjectName = firstNonEmptyTrimmed(input.ProjectName, projectRemovalName(project))
+	}
+	input, err := control.NormalizeProjectSetCategoryInput(input)
+	if err != nil {
+		m.status = "Control request failed: " + err.Error()
+		return controlInvocationOutcome{model: m, err: err}
+	}
+	inv := projectSetCategoryInvocationFromInput(input)
+	m.status = fmt.Sprintf("Placing %s in %s...", bossControlProjectTargetLabel(input.ProjectName, input.ProjectPath), input.CategoryName)
+	return controlInvocationOutcome{
+		model: m,
+		inv:   inv,
+		cmd:   m.setBossProjectCategoryCmd(inv, input),
+	}
+}
+
+func (m Model) setBossProjectCategoryCmd(inv control.Invocation, input control.ProjectSetCategoryInput) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossProjectCategorySetMsg{inv: inv, input: input}
+		if svc == nil || svc.Store() == nil {
+			msg.err = errors.New("service unavailable")
+			return msg
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
+		defer cancel()
+		category, err := svc.Store().GetProjectCategoryByName(ctx, input.CategoryName)
+		if err != nil {
+			msg.err = fmt.Errorf("load destination project category: %w", err)
+			return msg
+		}
+		msg.category = category
+		msg.result, msg.err = svc.CreateOrAttachProject(ctx, service.CreateOrAttachProjectRequest{
+			ParentPath:       filepath.Dir(input.ProjectPath),
+			Name:             filepath.Base(input.ProjectPath),
+			RequireExisting:  true,
+			CategoryID:       category.ID,
+			CategoryExplicit: true,
+		})
+		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "registering and categorizing the project")
+		if msg.err != nil {
+			return msg
+		}
+		msg.project, msg.err = svc.Store().GetProjectSummary(ctx, msg.result.ProjectPath, true)
+		if msg.err != nil {
+			msg.err = fmt.Errorf("load categorized project: %w", msg.err)
+		}
+		return msg
+	}
+}
+
+func (m Model) applyBossProjectCategorySet(msg bossProjectCategorySetMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		status := "Could not place the project in the requested category: " + msg.err.Error()
+		m.status = status
+		return m, bossControlResultCmd(msg.inv, status, errors.New(status))
+	}
+	msg.input.ProjectPath = strings.TrimSpace(msg.result.ProjectPath)
+	msg.input.ProjectName = firstNonEmptyTrimmed(msg.input.ProjectName, msg.result.ProjectName, projectRemovalName(msg.project))
+	msg.input.CategoryName = strings.TrimSpace(msg.category.Name)
+	msg.inv = projectSetCategoryInvocationFromInput(msg.input)
+	m.upsertProjectSummary(msg.project)
+	m.rebuildProjectList(msg.project.Path)
+	m.syncDetailViewport(false)
+	name := projectRemovalName(msg.project)
+	if name == "" {
+		name = filepath.Base(msg.project.Path)
+	}
+	status := fmt.Sprintf("Placed %q in the %s category. No project work was created.", name, msg.category.Name)
+	if msg.result.Action == service.CreateOrAttachProjectAdded {
+		status = fmt.Sprintf("Added %q to Little Control Room in the %s category. No project work was created.", name, msg.category.Name)
+	}
+	m.status = status
+	return m, batchCmds(
+		bossControlResultCmd(msg.inv, status, nil),
+		m.requestProjectInvalidationCmd(invalidateProjectStructure(msg.project.Path)),
+	)
+}
+
+func projectSetCategoryInvocationFromInput(input control.ProjectSetCategoryInput) control.Invocation {
+	normalized, err := control.NormalizeProjectSetCategoryInput(input)
+	if err != nil {
+		normalized = input
+	}
+	payload, err := json.Marshal(normalized)
+	if err != nil {
+		return control.Invocation{}
+	}
+	return control.Invocation{Capability: control.CapabilityProjectSetCategory, RequestID: strings.TrimSpace(normalized.RequestID), Args: payload}
 }
 
 func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.ProjectArchiveInput, targets []model.ProjectSummary) controlInvocationOutcome {

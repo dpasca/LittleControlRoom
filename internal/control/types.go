@@ -15,6 +15,7 @@ const (
 	CapabilityAgentTaskContinue                  CapabilityName = "agent_task.continue"
 	CapabilityAgentTaskClose                     CapabilityName = "agent_task.close"
 	CapabilityProjectCreateAndStartEngineer      CapabilityName = "project.create_and_start_engineer"
+	CapabilityProjectSetCategory                 CapabilityName = "project.set_category"
 	CapabilityProjectArchive                     CapabilityName = "project.set_archive_state"
 	CapabilityScratchTaskArchive                 CapabilityName = "scratch_task.archive"
 	CapabilityTodoAdd                            CapabilityName = "todo.add"
@@ -31,6 +32,7 @@ func CapabilityNameValues() []CapabilityName {
 		CapabilityAgentTaskContinue,
 		CapabilityAgentTaskClose,
 		CapabilityProjectCreateAndStartEngineer,
+		CapabilityProjectSetCategory,
 		CapabilityProjectArchive,
 		CapabilityScratchTaskArchive,
 		CapabilityTodoAdd,
@@ -236,6 +238,8 @@ func ValidateInvocation(inv Invocation) (Invocation, error) {
 		return validateAgentTaskCloseInvocation(inv)
 	case CapabilityProjectCreateAndStartEngineer:
 		return validateProjectCreateAndStartEngineerInvocation(inv)
+	case CapabilityProjectSetCategory:
+		return validateProjectSetCategoryInvocation(inv)
 	case CapabilityProjectArchive:
 		return validateProjectArchiveInvocation(inv)
 	case CapabilityScratchTaskArchive:

@@ -43,6 +43,7 @@ func normalizeBossAction(action *bossAction) {
 	} else {
 		action.ProjectArchiveAction = strings.TrimSpace(action.ProjectArchiveAction)
 	}
+	action.ProjectCategoryName = strings.Join(strings.Fields(strings.TrimSpace(action.ProjectCategoryName)), " ")
 	if action.TodoID < 0 {
 		action.TodoID = 0
 	}
