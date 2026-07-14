@@ -740,6 +740,9 @@ func (m Model) worktreeFamily(rootPath string) []model.ProjectSummary {
 	if rootPath == "" {
 		return nil
 	}
+	if m.worktreeFamilies != nil {
+		return m.worktreeFamilies[rootPath]
+	}
 	out := make([]model.ProjectSummary, 0, 4)
 	for _, project := range m.projectListSourceProjects() {
 		if !projectParticipatesInWorktreeFamily(project) {
@@ -771,7 +774,10 @@ func (m Model) existingWorktreeCandidates(projectPath string) []model.ProjectSum
 
 func (m *Model) rebuildProjectList(selectedPath string) {
 	m.ensureSelectedCategoryTab()
-	sorted := append([]model.ProjectSummary(nil), m.projectListSourceProjects()...)
+	m.rebuildProjectTabIndex()
+	sourceProjects := m.projectListSourceProjects()
+	m.worktreeFamilies = indexWorktreeFamilies(sourceProjects)
+	sorted := append([]model.ProjectSummary(nil), sourceProjects...)
 	if pendingProject, ok := m.todoPendingLaunchProjectSummary(); ok && m.archiveMode != projectArchiveArchived {
 		sorted = append(sorted, pendingProject)
 	}
@@ -802,6 +808,44 @@ func (m *Model) rebuildProjectList(selectedPath string) {
 		m.selected = max(0, len(m.projects)-1)
 	}
 	m.ensureSelectionVisible()
+}
+
+func (m *Model) invalidateProjectRenderIndexes() {
+	m.worktreeFamilies = nil
+	m.projectTabProjects = nil
+	m.projectTabAgentTasks = nil
+}
+
+func (m *Model) rebuildProjectTabIndex() {
+	m.projectTabProjects = make(map[string][]model.ProjectSummary)
+	for _, project := range m.allProjects {
+		categoryID := strings.TrimSpace(project.CategoryID)
+		m.projectTabProjects[categoryID] = append(m.projectTabProjects[categoryID], project)
+	}
+	m.projectTabAgentTasks = make(map[string][]model.AgentTask)
+	for _, task := range m.openAgentTasks {
+		if !agentTaskIsOpen(task) {
+			continue
+		}
+		categoryID := strings.TrimSpace(task.CategoryID)
+		m.projectTabAgentTasks[categoryID] = append(m.projectTabAgentTasks[categoryID], task)
+	}
+	m.archivedProjectTabCount = len(m.projectsVisibleForPrivacy(m.archivedProjects))
+}
+
+func indexWorktreeFamilies(projects []model.ProjectSummary) map[string][]model.ProjectSummary {
+	families := make(map[string][]model.ProjectSummary)
+	for _, project := range projects {
+		if !projectParticipatesInWorktreeFamily(project) {
+			continue
+		}
+		rootPath := filepath.Clean(strings.TrimSpace(projectWorktreeRootPath(project)))
+		if rootPath == "" {
+			continue
+		}
+		families[rootPath] = append(families[rootPath], project)
+	}
+	return families
 }
 
 func (m Model) projectListSourceProjects() []model.ProjectSummary {

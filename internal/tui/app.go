@@ -41,6 +41,10 @@ type Model struct {
 	projectCategories       []model.ProjectCategory
 	openAgentTasks          []model.AgentTask
 	orphanedWorktreesByRoot map[string][]model.ProjectSummary
+	worktreeFamilies        map[string][]model.ProjectSummary
+	projectTabProjects      map[string][]model.ProjectSummary
+	projectTabAgentTasks    map[string][]model.AgentTask
+	archivedProjectTabCount int
 	projects                []model.ProjectSummary
 	projectRows             []projectListRow
 	detail                  model.ProjectDetail
@@ -224,6 +228,7 @@ type Model struct {
 	portsDialog                   *portsDialogState
 	processWarningLastCount       int
 	codexSnapshots                map[string]codexapp.Snapshot
+	renderCachedSessionStateOnly  bool
 	embeddedProviderOverrides     map[string]codexapp.Provider
 	lastEmbeddedProvider          codexapp.Provider
 	embeddedActivityInFlight      map[string]bool
@@ -315,13 +320,14 @@ type Model struct {
 
 	hideReasoningSections bool
 
-	newProjectRecentParents []string
-	worktreeExpanded        map[string]bool
-	detailReloadInFlight    map[string]bool
-	detailReloadQueued      map[string]bool
-	detailReloadErrors      map[string]string
-	summaryReloadInFlight   map[string]bool
-	summaryReloadQueued     map[string]bool
+	newProjectRecentParents  []string
+	worktreeExpanded         map[string]bool
+	detailReloadInFlight     map[string]bool
+	detailReloadQueued       map[string]bool
+	detailReloadErrors       map[string]string
+	selectedDetailRequestSeq uint64
+	summaryReloadInFlight    map[string]bool
+	summaryReloadQueued      map[string]bool
 }
 
 type codexTranscriptRenderCache struct {
@@ -624,6 +630,11 @@ type pendingGitOperation struct {
 type busMsg events.Event
 
 type spinnerTickMsg struct{}
+
+type selectedDetailReloadMsg struct {
+	path string
+	seq  uint64
+}
 
 type projectSortMode string
 type projectVisibilityMode string
@@ -1682,6 +1693,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncDetailViewport(false)
 		}
 		return m, reloadCmd
+	case selectedDetailReloadMsg:
+		if msg.seq != m.selectedDetailRequestSeq || normalizeProjectPath(msg.path) != m.currentDetailTargetPath() {
+			return m, nil
+		}
+		return m, m.requestProjectDetailViewCmd(msg.path)
 	case projectSummaryMsg:
 		reloadCmd := m.finishProjectSummaryReloadCmd(msg.path)
 		m.clearExpiredPendingGitSummaryForPath(msg.path)

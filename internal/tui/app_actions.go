@@ -106,11 +106,11 @@ var (
 	disabledActionTextStyle   = uistyle.DialogActionDisabledTextStyle
 )
 
-const spinnerTickInterval = 120 * time.Millisecond
-const projectListSelectionFlashDuration = spinnerTickInterval
-const runtimeSnapshotRefreshEveryTicks = 8
-const cpuSnapshotRefreshEveryTicks = 25
-const processScanRefreshEveryTicks = 500
+const spinnerTickInterval = 250 * time.Millisecond
+const projectListSelectionFlashDuration = 120 * time.Millisecond
+const runtimeSnapshotRefreshEveryTicks = 4
+const cpuSnapshotRefreshEveryTicks = 12
+const processScanRefreshEveryTicks = 240
 
 func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(spinnerTickInterval, func(time.Time) tea.Msg {
@@ -205,6 +205,7 @@ func (m *Model) upsertProjectSummary(summary model.ProjectSummary) {
 	if path == "" {
 		return
 	}
+	m.invalidateProjectRenderIndexes()
 	summary.Path = path
 	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
 	m.archivedProjects = removeProjectSummaryFromSlice(m.archivedProjects, path)
@@ -320,6 +321,7 @@ func (m *Model) removeProjectSummary(projectPath string) {
 	if path == "" {
 		return
 	}
+	m.invalidateProjectRenderIndexes()
 	m.allProjects = removeProjectSummaryFromSlice(m.allProjects, path)
 	m.archivedProjects = removeProjectSummaryFromSlice(m.archivedProjects, path)
 	m.projects = removeProjectSummaryFromSlice(m.projects, path)
