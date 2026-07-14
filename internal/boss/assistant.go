@@ -48,6 +48,8 @@ type AssistantRequest struct {
 	SessionID  string
 	HelpChat   bool
 
+	PlannerDomain string
+
 	PromptContext BossPromptContext
 }
 
@@ -338,9 +340,12 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 	if strings.TrimSpace(contextModel) != "" {
 		usedModel = strings.TrimSpace(contextModel)
 	}
-	routeResponse, routeResult, routed, directAnswer, err := a.tryReadOnlyQueryRoute(ctx, req, nil)
+	routeResponse, routeResult, routed, directAnswer, route, err := a.tryReadOnlyQueryRoute(ctx, req, nil)
 	if err != nil {
 		return AssistantResponse{}, err
+	}
+	if route.PlannerDomain != "" {
+		req.PlannerDomain = route.PlannerDomain
 	}
 	if strings.TrimSpace(routeResponse.OutputText) != "" {
 		addLLMUsage(&totalUsage, routeResponse.Usage)
@@ -371,6 +376,7 @@ func (a *Assistant) replyWithTools(ctx context.Context, req AssistantRequest) (A
 			toolResults = append(toolResults, *routeResult)
 		}
 	}
+	toolResults = appendBossControlReference(toolResults, req.PlannerDomain, nil)
 	if a.planner == nil {
 		return AssistantResponse{}, errors.New("Chat needs structured planning for this request")
 	}
@@ -475,9 +481,12 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 	if strings.TrimSpace(contextModel) != "" {
 		usedModel = strings.TrimSpace(contextModel)
 	}
-	routeResponse, routeResult, routed, directAnswer, err := a.tryReadOnlyQueryRoute(ctx, req, emit)
+	routeResponse, routeResult, routed, directAnswer, route, err := a.tryReadOnlyQueryRoute(ctx, req, emit)
 	if err != nil {
 		return AssistantResponse{}, err
+	}
+	if route.PlannerDomain != "" {
+		req.PlannerDomain = route.PlannerDomain
 	}
 	if strings.TrimSpace(routeResponse.OutputText) != "" {
 		addLLMUsage(&totalUsage, routeResponse.Usage)
@@ -510,6 +519,7 @@ func (a *Assistant) replyWithToolsStream(ctx context.Context, req AssistantReque
 			toolResults = append(toolResults, *routeResult)
 		}
 	}
+	toolResults = appendBossControlReference(toolResults, req.PlannerDomain, emit)
 	if a.planner == nil {
 		return AssistantResponse{}, errors.New("Chat needs structured planning for this request")
 	}
@@ -622,6 +632,7 @@ func (a *Assistant) streamFinalAnswer(ctx context.Context, req AssistantRequest,
 type bossReadOnlyRoute struct {
 	Kind              string `json:"kind"`
 	Answer            string `json:"answer"`
+	PlannerDomain     string `json:"planner_domain"`
 	Target            string `json:"target"`
 	Query             string `json:"query"`
 	Command           string `json:"command"`
@@ -667,28 +678,28 @@ func (a *Assistant) tryStructuredHandleQueryRoute(ctx context.Context, req Assis
 	return &result, true, nil
 }
 
-func (a *Assistant) tryReadOnlyQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (llm.JSONSchemaResponse, *bossToolResult, bool, string, error) {
+func (a *Assistant) tryReadOnlyQueryRoute(ctx context.Context, req AssistantRequest, emit func(AssistantStreamEvent)) (llm.JSONSchemaResponse, *bossToolResult, bool, string, bossReadOnlyRoute, error) {
 	if a == nil || a.queryRouter == nil || a.query == nil {
-		return llm.JSONSchemaResponse{}, nil, false, "", nil
+		return llm.JSONSchemaResponse{}, nil, false, "", bossReadOnlyRoute{}, nil
 	}
 	response, route, err := a.planReadOnlyQueryRoute(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return response, nil, false, "", err
+			return response, nil, false, "", route, err
 		}
-		return response, nil, false, "", nil
+		return response, nil, false, "", route, nil
 	}
 	if req.HelpChat && normalizeBossActionKind(route.Kind) == bossActionAnswer {
 		if answer := strings.TrimSpace(route.Answer); answer != "" {
-			return response, nil, false, answer, nil
+			return response, nil, false, answer, route, nil
 		}
 	}
 	action, ok := bossActionFromReadOnlyRoute(route)
 	if !ok {
-		return response, nil, false, "", nil
+		return response, nil, false, "", route, nil
 	}
 	result := a.executeReadOnlyQueryAction(ctx, action, req, emit)
-	return response, &result, true, "", nil
+	return response, &result, true, "", route, nil
 }
 
 func (a *Assistant) executeReadOnlyQueryAction(ctx context.Context, action bossAction, req AssistantRequest, emit func(AssistantStreamEvent)) bossToolResult {
@@ -736,7 +747,7 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 		SystemText:      bossActionPlannerSystemPromptForRequest(req),
 		UserText:        bossActionPlannerUserText(req, toolResults, forceAnswer),
 		SchemaName:      "boss_next_action",
-		Schema:          bossActionSchema(),
+		Schema:          bossActionSchemaForRequest(req),
 		ReasoningEffort: bossAssistantReasoningEffort,
 	})
 	if err != nil {
@@ -759,6 +770,10 @@ func (a *Assistant) planAction(ctx context.Context, req AssistantRequest, toolRe
 	}
 	normalizeBossAction(&action)
 	prepareBossActionForRequest(&action, req)
+	// Validate the model-produced action before policy reviews may safely rewrite it across domains.
+	if err := validateBossActionForPlannerDomain(action, req.PlannerDomain); err != nil {
+		return response, bossAction{}, err
+	}
 	if reviewed, changed, reviewResponse, err := a.reviewTodoAddPolicy(ctx, req, action); err != nil {
 		if ctx.Err() != nil {
 			return response, bossAction{}, err
@@ -824,7 +839,7 @@ func (a *Assistant) repairBossAction(ctx context.Context, req AssistantRequest, 
 		SystemText:      systemText,
 		UserText:        userText,
 		SchemaName:      "boss_next_action",
-		Schema:          bossActionSchema(),
+		Schema:          bossActionSchemaForRequest(req),
 		ReasoningEffort: a.structuredRepairReasoningEffort(),
 	})
 	if err != nil {

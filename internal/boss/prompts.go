@@ -247,6 +247,9 @@ func bossActionPlannerSystemPrompt() string {
 }
 
 func bossActionPlannerSystemPromptForRequest(req AssistantRequest) string {
+	if bossPlannerDomainIsScoped(req.PlannerDomain) {
+		return bossScopedActionPlannerSystemPromptForRequest(req)
+	}
 	if req.HelpChat {
 		return bossPromptLines(
 			helpPlannerOpeningPrompt,
@@ -284,6 +287,88 @@ func bossActionPlannerSystemPromptForRequest(req AssistantRequest) string {
 		bossSharedEngineerOutputPrompt,
 		bossPlannerAnswerStylePrompt,
 	)
+}
+
+func bossScopedActionPlannerSystemPromptForRequest(req AssistantRequest) string {
+	opening := bossPlannerOpeningPrompt
+	evidence := bossScopedPlannerEvidencePrompt
+	answerPolicy := bossScopedPlannerAnswerPolicyPrompt
+	if req.HelpChat {
+		opening = helpPlannerOpeningPrompt
+		evidence = append(append([]string(nil), helpScopedPlannerEvidencePrompt...), evidence...)
+		answerPolicy = helpScopedPlannerAnswerPolicyPrompt
+	}
+	sections := [][]string{
+		opening,
+		bossScopedBossContextPrompt,
+		evidence,
+		bossScopedPlannerBoundaryPrompt(req.PlannerDomain),
+		bossScopedPlannerContextPrompt,
+		answerPolicy,
+		bossPlannerAnswerStylePrompt,
+	}
+	if req.HelpChat {
+		sections = append(sections, helpPlannerAnswerStylePrompt)
+	}
+	switch normalizeBossPlannerDomain(req.PlannerDomain) {
+	case bossPlannerDomainProjectWork, bossPlannerDomainAgentTask, bossPlannerDomainGoal:
+		sections = append(sections, bossSharedEngineerOutputPrompt)
+	}
+	return bossPromptLines(sections...)
+}
+
+var bossScopedBossContextPrompt = []string{
+	"Chat is the top-level conversation. Engineer output lives in linked task/thread records, so inspect that record when the user asks what happened or what the engineer knows.",
+	"Read-only and control-reference results are background evidence, not spoken Chat turns; synthesize them instead of reciting raw tool output.",
+}
+
+var bossScopedPlannerEvidencePrompt = []string{
+	"Do not invent facts. Use a read-only query when the answer depends on current application, task, project, process, transcript, or repository state.",
+	"Cached summaries and transcripts are recall context, not fresh external research or current repository-file evidence.",
+	"Do not claim commit, deploy, release, migration, schema, storage, or API-shape safety without direct current evidence. Never say a deploy needs no DB migration unless that evidence explicitly covers migrations, schema, storage, or the current diff.",
+	"When fresh work or research is needed, use only a handoff or goal allowed by the scoped control_reference; otherwise state what still needs inspection.",
+}
+
+var helpScopedPlannerEvidencePrompt = []string{
+	"Do not turn casual input into a project, task, queue, process, or attention report.",
+	"For greetings, thanks, acknowledgements, and short casual turns, answer briefly without gathering state.",
+}
+
+var bossScopedPlannerAnswerPolicyPrompt = []string{
+	"After query results are provided, answer only from those results and the current Chat conversation.",
+	"When project_scout is used, ground repository-content claims in its findings and evidence links. Do not reproduce its inference-route receipt because the host appends the exact receipt automatically.",
+	"Never claim you changed files, projects, TODOs, settings, panels, or sessions. Read-only tools are report-only; control actions are proposals requiring confirmation.",
+	"Turn tool output into concise judgment instead of mirroring its report structure. Use compact Markdown link labels for URLs, files, artifacts, and directories.",
+}
+
+var helpScopedPlannerAnswerPolicyPrompt = []string{
+	"After query results are provided, answer only from those results and the current Chat conversation.",
+	"For greetings, thanks, acknowledgements, and short casual turns, choose kind=\"answer\" immediately with a brief conversational reply.",
+	"Never answer a casual turn with a snapshot, status report, attention list, queue report, repo state, or process summary.",
+	"If the user asks how Chat knows a personal detail, name only the current Chat transcript, its compacted same-session summary if present, and any explicit read-only results gathered for this turn.",
+	"Never claim you changed files, projects, TODOs, settings, panels, or sessions. Read-only tools are report-only; control actions are proposals requiring confirmation.",
+	"Use Markdown formatting when it improves scanability.",
+}
+
+func bossScopedPlannerBoundaryPrompt(domain string) []string {
+	domain = normalizeBossPlannerDomain(domain)
+	return []string{
+		"This turn has planner_domain=" + domain + ". Stay within that policy family.",
+		"A scoped control_reference may be included with the tool results. Treat it as the authoritative capability, routing, and payload reference for this turn; do not propose capabilities outside it.",
+		"Current portfolio and TUI state are not ambient planner context on scoped turns. Use the read-only query tools when current state, identifiers, or target resolution matter.",
+		"The structured schema intentionally omits fields and action kinds that do not belong to this domain. Do not recreate omitted fields in answer text.",
+		"Use kind=answer when no query or confirmed action is needed. Use one read-only query when fresh app evidence is required. Use propose_control or propose_goal only when allowed by the scoped schema and reference.",
+		"Control and goal outputs are proposals that require user confirmation. Never claim the proposed action already ran, changed state, or was approved.",
+	}
+}
+
+var bossScopedPlannerContextPrompt = []string{
+	"Use project_detail for current state of one known project and search_context for an unfamiliar name, alias, codename, or a set of matching projects.",
+	"Use todo_report for project TODO identity and agent_task_report for delegated task identity. Project TODOs and delegated agent tasks are different records.",
+	"Use context_command to inspect exact linked engineer or agent-task output. Cached transcript context is recall, not fresh external research.",
+	"Use project_scout when repository files, plans, docs, configuration, source, or tests are needed as fresh evidence; do not infer that file-backed work is absent without that inspection.",
+	"Use help_reference for Little Control Room commands, keybindings, workflows, and manual UI paths.",
+	"Do not infer a project from the hidden TUI cursor. Resolve ambiguous targets with a read-only query or ask the user.",
 }
 
 var helpPlannerOpeningPrompt = []string{
@@ -480,6 +565,7 @@ func bossReadOnlyRouterSystemPromptForRequest(req AssistantRequest) string {
 	if req.HelpChat {
 		return strings.Join([]string{
 			"You are the fast read-only query router for Chat in Little Control Room.",
+			"Always select the narrowest planner_domain for the latest user message, including when kind=pass or kind=answer. This is semantic model routing; base it on the whole request, not keywords.",
 			"Choose answer only for greetings, thanks, acknowledgements, small talk, or short casual turns that need no app state, no workflow reference, and no action proposal. Put the entire brief reply in answer.",
 			"Choose exactly one read-only query only when the latest user message is asking for information, status, recall, inspection, app usage, workflow, command, keybinding, or audit details that a single query can gather.",
 			"Do not route casual turns to status report, project report, task report, attention, queue, repo-state, or process-summary queries.",
@@ -499,6 +585,7 @@ func bossReadOnlyRouterSystemPromptForRequest(req AssistantRequest) string {
 	}
 	return strings.Join([]string{
 		"You are the fast read-only query router for Chat in Little Control Room.",
+		"Always select the narrowest planner_domain for the latest user message, including when kind=pass. This is semantic model routing; base it on the whole request, not keywords.",
 		"Do not choose answer; choose pass for user requests that need direct Chat judgment.",
 		"Choose exactly one read-only query only when the latest user message is asking for information, status, recall, inspection, or audit details that a single query can gather.",
 		"Choose pass for requests to change state, delegate work, continue work, clear tasks, archive records, launch/stop processes, commit, fix, confirm a proposal, or anything that may need user confirmation.",
@@ -521,7 +608,11 @@ func bossReadOnlyRouterSystemPromptForRequest(req AssistantRequest) string {
 
 func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResult, forceAnswer bool) string {
 	var b strings.Builder
-	writeBossPromptContextText(&b, req, 18, 1200)
+	if bossPlannerDomainIsScoped(req.PlannerDomain) {
+		writeBossConversationText(&b, req, 18, 1200)
+	} else {
+		writeBossPromptContextText(&b, req, 18, 1200)
+	}
 	if len(toolResults) > 0 {
 		b.WriteString("\nTool results already gathered:\n")
 		for _, result := range toolResults {
@@ -533,12 +624,18 @@ func bossActionPlannerUserText(req AssistantRequest, toolResults []bossToolResul
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(bossActionPlannerTurnInstruction(forceAnswer))
+	b.WriteString(bossActionPlannerTurnInstruction(forceAnswer, req.PlannerDomain))
 	b.WriteString("\n")
 	return strings.TrimSpace(b.String())
 }
 
-func bossActionPlannerTurnInstruction(forceAnswer bool) string {
+func bossActionPlannerTurnInstruction(forceAnswer bool, domain string) string {
+	if bossPlannerDomainIsScoped(domain) {
+		if forceAnswer {
+			return "Choose kind=\"answer\", kind=\"propose_control\", or kind=\"propose_goal\" now, limited by the scoped schema and control_reference. Use gathered data and do not request another query."
+		}
+		return "Choose kind=\"answer\" if the available evidence is enough. Otherwise choose one read-only query, or a control/goal proposal allowed by the scoped schema and control_reference."
+	}
 	if forceAnswer {
 		return bossPromptParagraph(bossActionPlannerForcedInstructions)
 	}
@@ -666,9 +763,30 @@ func bossPromptParagraph(sentences []string) string {
 
 func bossReadOnlyRouterUserText(req AssistantRequest) string {
 	var b strings.Builder
-	writeBossPromptContextText(&b, req, 8, 900)
+	writeBossConversationText(&b, req, 8, 900)
 	b.WriteString("\nPick one read-only route for the latest user message, or kind=\"pass\" if this is not a single-query inspection request.")
 	return strings.TrimSpace(b.String())
+}
+
+func writeBossConversationText(b *strings.Builder, req AssistantRequest, recentLimit int, contentLimit int) {
+	if b == nil {
+		return
+	}
+	if summary := bossPromptContextSummaryText(req); summary != "" {
+		b.WriteString(summary)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Recent chat:\n")
+	for _, message := range bossPromptRecentMessages(req, recentLimit) {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		b.WriteString(normalizeChatRole(message.Role))
+		b.WriteString(": ")
+		b.WriteString(clipText(content, contentLimit))
+		b.WriteString("\n")
+	}
 }
 
 func bossDirectMessages(req AssistantRequest) []llm.TextMessage {
