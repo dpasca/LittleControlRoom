@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"sort"
@@ -22,6 +23,8 @@ const (
 	mobileSessionInputMaxRunes     = 12000
 	mobileSessionRequestTTL        = 10 * time.Minute
 	mobileLiveSnapshotCacheTTL     = 10 * time.Second
+	mobileLiveStreamPollInterval   = 150 * time.Millisecond
+	mobileLiveStreamKeepalive      = 15 * time.Second
 )
 
 type mobileLiveSnapshot struct {
@@ -49,6 +52,30 @@ type mobileSessionInputResponse struct {
 	RequestID string `json:"request_id"`
 	Mode      string `json:"mode"`
 	Status    string `json:"status"`
+}
+
+type mobileLiveStreamRevision struct {
+	threadID           string
+	transcriptRevision uint64
+	phase              codexapp.SessionPhase
+	started            bool
+	busy               bool
+	busyExternal       bool
+	closed             bool
+	pendingApproval    bool
+	pendingToolInput   bool
+	pendingElicitation bool
+	status             string
+	lastError          string
+	lastSystemNotice   string
+	lastActivityAt     time.Time
+	model              string
+	reasoningEffort    string
+	permissionLevel    string
+	goalStatus         codexapp.ThreadGoalStatus
+	goalObjective      string
+	goalUpdatedAt      time.Time
+	mobileInputEnabled bool
 }
 
 func (s *Server) WithLiveSessions(source LiveSessionSource) *Server {
@@ -188,6 +215,140 @@ func (s *Server) handleMobileSessionDetail(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, uisurface.BuildRecordedEngineerSessionDetail(evidence, classification, excerpt, time.Now()))
+}
+
+func (s *Server) handleMobileSessionStream(w http.ResponseWriter, r *http.Request) {
+	if !requireGET(w, r) {
+		return
+	}
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-store")
+		return
+	}
+	projectPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
+	if projectPath == "" || sessionID == "" {
+		http.Error(w, "missing path or session_id query param", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.visibleMobileProjectDetail(r.Context(), projectPath); err != nil {
+		http.Error(w, "project not found", http.StatusNotFound)
+		return
+	}
+	snapshot, ok := s.liveSessionSnapshot(projectPath)
+	if !ok {
+		http.Error(w, "live engineer session not found", http.StatusNotFound)
+		return
+	}
+	if liveItem := uisurface.BuildLiveEngineerSession(snapshot, time.Now()); liveItem.ID != sessionID {
+		http.Error(w, "engineer session changed; reopen the current channel", http.StatusConflict)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "live session streaming is unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
+	if _, err := fmt.Fprint(w, "retry: 1000\n\n"); err != nil {
+		return
+	}
+
+	lastRevision := mobileLiveStreamRevision{}
+	haveRevision := false
+	sendSnapshot := func(snapshot codexapp.Snapshot, now time.Time) error {
+		inputEnabled := s.svc.Config().MobileInputEnabled
+		revision := buildMobileLiveStreamRevision(snapshot, inputEnabled)
+		if haveRevision && revision == lastRevision {
+			return nil
+		}
+		surface := uisurface.BuildLiveEngineerSessionDetail(snapshot, now)
+		surface.Input = uisurface.BuildEngineerSessionInput(snapshot, inputEnabled)
+		payload, err := json.Marshal(surface)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "event: session\ndata: %s\n\n", payload); err != nil {
+			return err
+		}
+		lastRevision = revision
+		haveRevision = true
+		flusher.Flush()
+		return nil
+	}
+	if err := sendSnapshot(snapshot, time.Now()); err != nil {
+		return
+	}
+
+	poll := time.NewTicker(mobileLiveStreamPollInterval)
+	keepalive := time.NewTicker(mobileLiveStreamKeepalive)
+	defer poll.Stop()
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-keepalive.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case now := <-poll.C:
+			snapshot, ok := s.liveSessionSnapshotAt(projectPath, now)
+			if !ok {
+				_, _ = fmt.Fprint(w, "event: end\ndata: session unavailable\n\n")
+				flusher.Flush()
+				return
+			}
+			liveItem := uisurface.BuildLiveEngineerSession(snapshot, now)
+			if liveItem.ID != sessionID {
+				_, _ = fmt.Fprint(w, "event: replaced\ndata: engineer session changed\n\n")
+				flusher.Flush()
+				return
+			}
+			if err := sendSnapshot(snapshot, now); err != nil {
+				return
+			}
+			if snapshot.Closed || snapshot.Phase == codexapp.SessionPhaseClosed {
+				_, _ = fmt.Fprint(w, "event: end\ndata: session closed\n\n")
+				flusher.Flush()
+				return
+			}
+		}
+	}
+}
+
+func buildMobileLiveStreamRevision(snapshot codexapp.Snapshot, mobileInputEnabled bool) mobileLiveStreamRevision {
+	revision := mobileLiveStreamRevision{
+		threadID:           strings.TrimSpace(snapshot.ThreadID),
+		transcriptRevision: snapshot.TranscriptRevision,
+		phase:              snapshot.Phase,
+		started:            snapshot.Started,
+		busy:               snapshot.Busy,
+		busyExternal:       snapshot.BusyExternal,
+		closed:             snapshot.Closed,
+		pendingApproval:    snapshot.PendingApproval != nil,
+		pendingToolInput:   snapshot.PendingToolInput != nil,
+		pendingElicitation: snapshot.PendingElicitation != nil,
+		status:             snapshot.Status,
+		lastError:          snapshot.LastError,
+		lastSystemNotice:   snapshot.LastSystemNotice,
+		lastActivityAt:     snapshot.LastActivityAt,
+		model:              snapshot.Model,
+		reasoningEffort:    snapshot.ReasoningEffort,
+		permissionLevel:    snapshot.PermissionLevel,
+		mobileInputEnabled: mobileInputEnabled,
+	}
+	if snapshot.Goal != nil {
+		revision.goalStatus = snapshot.Goal.Status
+		revision.goalObjective = snapshot.Goal.Objective
+		revision.goalUpdatedAt = snapshot.Goal.UpdatedAt
+	}
+	return revision
 }
 
 func (s *Server) handleMobileSessionInput(w http.ResponseWriter, r *http.Request) {

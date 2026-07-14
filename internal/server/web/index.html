@@ -10,8 +10,8 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=10">
-  <script defer src="/app.js?v=10"></script>
+  <link rel="stylesheet" href="/app.css?v=11">
+  <script defer src="/app.js?v=11"></script>
 </head>
 <body class="auth-pending">
   <div class="app-shell">
@@ -111,9 +111,24 @@
           </div>
         </section>
 
+        <div class="dashboard-counters" aria-label="Project overview">
+          <div class="dashboard-counter counter-attention">
+            <strong id="attention-count">--</strong>
+            <span>Need</span>
+          </div>
+          <div class="dashboard-counter counter-active">
+            <strong id="active-count">--</strong>
+            <span>Active</span>
+          </div>
+          <div class="dashboard-counter counter-all">
+            <strong id="all-count">--</strong>
+            <span>All</span>
+          </div>
+        </div>
+
         <section id="dashboard-live-channels" class="dashboard-live-channels" aria-labelledby="dashboard-live-title" hidden>
           <div class="section-plate dashboard-live-heading">
-            <span id="dashboard-live-title">Live engineer channels</span>
+            <span id="dashboard-live-title">Live agents</span>
             <span id="dashboard-live-count">0 live</span>
           </div>
           <div id="dashboard-live-list" class="dashboard-live-list"></div>
@@ -137,6 +152,14 @@
             <span class="rack-divider" aria-hidden="true"></span>
             <span id="queue-count">0</span>
           </div>
+        </div>
+
+        <div class="project-list-header" aria-hidden="true">
+          <span>Project / summary</span>
+          <span>Assess</span>
+          <span>Agent</span>
+          <span>Flags</span>
+          <span></span>
         </div>
 
         <div id="dashboard-state" class="dashboard-state" aria-live="polite">

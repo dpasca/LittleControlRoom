@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -53,6 +55,25 @@ type sequenceLiveSessionSource struct {
 		ok       bool
 	}
 	next int
+}
+
+type mutableLiveSessionSource struct {
+	mu       sync.RWMutex
+	snapshot codexapp.Snapshot
+	ok       bool
+}
+
+func (s *mutableLiveSessionSource) TrySessionSnapshot(string) (codexapp.Snapshot, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snapshot, s.ok
+}
+
+func (s *mutableLiveSessionSource) Set(snapshot codexapp.Snapshot, ok bool) {
+	s.mu.Lock()
+	s.snapshot = snapshot
+	s.ok = ok
+	s.mu.Unlock()
 }
 
 func (s *sequenceLiveSessionSource) TrySessionSnapshot(string) (codexapp.Snapshot, bool) {
@@ -157,6 +178,106 @@ func TestMobileLiveSessionSnapshotSurvivesBriefLockContention(t *testing.T) {
 	}
 	if _, ok := server.liveSessionSnapshotAt(projectPath, now.Add(mobileLiveSnapshotCacheTTL+time.Nanosecond)); ok {
 		t.Fatal("expired live snapshot should not hide a missing session indefinitely")
+	}
+}
+
+func TestMobileLiveSessionStreamPushesTranscriptRevisions(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dataDir := t.TempDir()
+	dbPath := filepath.Join(dataDir, "little-control-room.sqlite")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/mobile-live-stream"
+	now := time.Now()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "Mobile live stream",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     now,
+	}); err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+
+	snapshot := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		ThreadID:           "streaming-session",
+		Started:            true,
+		Busy:               true,
+		Phase:              codexapp.SessionPhaseRunning,
+		TranscriptRevision: 1,
+		LastActivityAt:     now,
+		Entries: []codexapp.TranscriptEntry{
+			{ItemID: "agent-1", Kind: codexapp.TranscriptAgent, Text: "Starting"},
+		},
+	}
+	source := &mutableLiveSessionSource{snapshot: snapshot, ok: true}
+	cfg := config.Default()
+	cfg.DataDir = dataDir
+	cfg.DBPath = dbPath
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	httpServer := httptest.NewServer(New(svc).WithLiveSessions(source).Handler(ctx))
+	defer httpServer.Close()
+
+	response, err := http.Get(httpServer.URL + "/api/mobile/sessions/stream?path=" + projectPath + "&session_id=codex%3Astreaming-session")
+	if err != nil {
+		t.Fatalf("open live stream: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("live stream status = %d", response.StatusCode)
+	}
+	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/event-stream") {
+		t.Fatalf("live stream content type = %q", got)
+	}
+
+	eventsCh := make(chan uisurface.EngineerSessionDetailSurface, 4)
+	go func() {
+		scanner := bufio.NewScanner(response.Body)
+		scanner.Buffer(make([]byte, 1024), 128*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if !strings.HasPrefix(line, "data: {") {
+				continue
+			}
+			var surface uisurface.EngineerSessionDetailSurface
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &surface); err == nil {
+				eventsCh <- surface
+			}
+		}
+	}()
+
+	nextEvent := func(label string) uisurface.EngineerSessionDetailSurface {
+		t.Helper()
+		select {
+		case event := <-eventsCh:
+			return event
+		case <-time.After(3 * time.Second):
+			t.Fatalf("timed out waiting for %s stream event", label)
+			return uisurface.EngineerSessionDetailSurface{}
+		}
+	}
+	initial := nextEvent("initial")
+	if initial.Session.TranscriptRevision != 1 || len(initial.Entries) != 1 || initial.Entries[0].Text != "Starting" {
+		t.Fatalf("initial live stream event = %#v", initial)
+	}
+
+	snapshot.TranscriptRevision = 2
+	snapshot.LastActivityAt = time.Now()
+	snapshot.Entries = []codexapp.TranscriptEntry{
+		{ItemID: "agent-1", Kind: codexapp.TranscriptAgent, Text: "Streaming in real time"},
+	}
+	source.Set(snapshot, true)
+	updated := nextEvent("updated")
+	if updated.Session.TranscriptRevision != 2 || len(updated.Entries) != 1 || updated.Entries[0].Text != "Streaming in real time" {
+		t.Fatalf("updated live stream event = %#v", updated)
 	}
 }
 
