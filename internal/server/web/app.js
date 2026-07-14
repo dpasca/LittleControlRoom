@@ -10,6 +10,7 @@
     projectSessionsPath: "",
     projectSessionSignature: "",
     sessionDetailSignature: "",
+    sessionTranscriptRevision: 0,
     transcriptMode: window.localStorage.getItem("lcr.mobile.transcript-mode") || "conversation",
     sessionEntries: [],
     sessionEmptyMessage: "",
@@ -20,6 +21,9 @@
     sessionSubmitting: false,
     sessionFeedback: "",
     sessionRequestID: 0,
+    sessionStream: null,
+    sessionStreamKey: "",
+    sessionStreamConnected: false,
     socket: null,
     reconnectTimer: 0,
     refreshTimer: 0,
@@ -52,6 +56,9 @@
     operatorSprite: document.getElementById("operator-sprite"),
     operatorLamp: document.getElementById("operator-lamp"),
     operatorCaption: document.getElementById("operator-caption"),
+    attentionCount: document.getElementById("attention-count"),
+    activeCount: document.getElementById("active-count"),
+    allCount: document.getElementById("all-count"),
     dashboardLiveChannels: document.getElementById("dashboard-live-channels"),
     dashboardLiveCount: document.getElementById("dashboard-live-count"),
     dashboardLiveList: document.getElementById("dashboard-live-list"),
@@ -171,6 +178,7 @@
     state.authRequired = true;
     state.authenticated = false;
     window.clearTimeout(state.reconnectTimer);
+    closeSessionStream();
     if (state.socket) {
       const socket = state.socket;
       state.socket = null;
@@ -378,6 +386,7 @@
 
   function renderProjects() {
     const projects = visibleProjects();
+    const liveSessions = new Map((state.dashboard?.live_sessions || []).map((session) => [session.project_path, session]));
     elements.projectList.replaceChildren();
     elements.dashboardState.hidden = true;
 
@@ -404,6 +413,7 @@
       lamp.setAttribute("aria-hidden", "true");
       button.append(lamp);
 
+      const core = createElement("span", "project-core");
       const head = createElement("div", "project-row-head");
       const nameLine = createElement("span", "project-name-line");
       if (project.worktree_role === "child") nameLine.append(createElement("span", "worktree-branch", "↳"));
@@ -413,19 +423,104 @@
       }
       head.append(nameLine);
       head.append(createElement("span", "project-time", project.last_activity_label));
-      button.append(head);
-      button.append(createElement("p", "project-summary", project.summary));
+      core.append(head);
+      core.append(createElement("span", "project-summary", project.summary));
 
-      const badges = createElement("div", "badge-row");
-      for (const badge of (project.badges || []).slice(0, project.worktree_role === "child" ? 3 : 4)) {
-        badges.append(createBadge(badge));
+      const context = createElement("span", "project-context");
+      if (project.open_todo_count > 0) {
+        context.append(createElement("span", "project-mini-label", `${project.open_todo_count} TODO`));
       }
-      button.append(badges);
+      if (context.childElementCount > 0) core.append(context);
+      button.append(core);
+
+      button.append(createAssessmentSignal(project.assessment));
+      button.append(createAgentSignal(project, liveSessions.get(project.path)));
+      button.append(createFlagSignal(project));
       button.append(createElement("span", "project-chevron", ">"));
       button.addEventListener("click", () => openProject(project.path, true));
       row.append(button);
       elements.projectList.append(row);
     }
+  }
+
+  function createAssessmentSignal(assessment = {}) {
+    let glyph = "·";
+    switch (assessment.tone) {
+      case "positive":
+        glyph = "✓";
+        break;
+      case "warning":
+        glyph = "?";
+        break;
+      case "danger":
+      case "conflict":
+        glyph = "!";
+        break;
+      case "info":
+        glyph = "↻";
+        break;
+      default:
+        break;
+    }
+    return createProjectSignal("assessment", glyph, assessment.label || "No assessment", assessment.tone);
+  }
+
+  function createAgentSignal(project, liveSession) {
+    const provider = liveSession?.provider_label || project.source_label || "";
+    const active = Boolean(liveSession?.live);
+    const status = liveSession?.status?.label || (provider ? "No live engineer" : "No engineer");
+    const signal = createProjectSignal("agent", active ? "◆" : provider ? "◇" : "·", providerTag(provider), active ? "positive" : "muted");
+    signal.classList.toggle("signal-live", active);
+    signal.title = `${provider || "Engineer"}: ${status}`;
+    signal.setAttribute("aria-label", signal.title);
+    return signal;
+  }
+
+  function createFlagSignal(project) {
+    const repositoryFlags = (project.badges || []).filter((badge) => badge.kind === "repository");
+    if (repositoryFlags.length > 0) {
+      const flag = repositoryFlags[0];
+      return createProjectSignal("flags", "⚑", flag.label, flag.tone);
+    }
+    if (project.open_todo_count > 0) {
+      return createProjectSignal("flags", "□", String(project.open_todo_count), "muted", `${project.open_todo_count} open TODO`);
+    }
+    return createProjectSignal("flags", "·", "clear", "muted", "No project flags");
+  }
+
+  function createProjectSignal(kind, glyph, value, tone, accessibleLabel = "") {
+    const signal = createElement("span", `project-signal signal-${kind}`);
+    const semanticClass = toneClass(tone);
+    if (semanticClass) signal.classList.add(semanticClass);
+    signal.append(createElement("span", "project-signal-glyph", glyph));
+    signal.append(createElement("span", "project-signal-value", compactSignalValue(value)));
+    signal.title = accessibleLabel || String(value || "");
+    signal.setAttribute("aria-label", signal.title);
+    return signal;
+  }
+
+  function compactSignalValue(value) {
+    const label = String(value || "").trim();
+    if (!label) return "—";
+    const normalized = label.toLocaleLowerCase();
+    const aliases = new Map([
+      ["no assessment", "none"],
+      ["not assessed", "none"],
+      ["follow up", "next"],
+      ["follow-up", "next"],
+      ["in progress", "work"],
+      ["assessing", "work"],
+      ["working", "work"],
+      ["claude code", "cc"],
+      ["opencode", "oc"],
+      ["lcagent", "lc"],
+      ["codex", "cx"],
+    ]);
+    return aliases.get(normalized) || normalized;
+  }
+
+  function providerTag(provider) {
+    return compactSignalValue(provider) === "none" ? "—" : compactSignalValue(provider);
   }
 
   function projectLampClass(project) {
@@ -616,10 +711,75 @@
     return row;
   }
 
+  function closeSessionStream() {
+    if (state.sessionStream) state.sessionStream.close();
+    state.sessionStream = null;
+    state.sessionStreamKey = "";
+    state.sessionStreamConnected = false;
+  }
+
+  function connectSessionStream(session) {
+    if (!session?.live || !session.id || !session.project_path || typeof window.EventSource !== "function") {
+      closeSessionStream();
+      return;
+    }
+    const key = `${session.project_path}\n${session.id}`;
+    if (state.sessionStream && state.sessionStreamKey === key) return;
+
+    closeSessionStream();
+    const source = new window.EventSource(
+      `/api/mobile/sessions/stream?path=${encodeURIComponent(session.project_path)}&session_id=${encodeURIComponent(session.id)}`,
+    );
+    state.sessionStream = source;
+    state.sessionStreamKey = key;
+
+    source.addEventListener("open", () => {
+      if (state.sessionStream !== source) return;
+      state.sessionStreamConnected = true;
+      elements.sessionUpdatedLabel.textContent = "Streaming live";
+    });
+    source.addEventListener("session", (event) => {
+      if (state.sessionStream !== source) return;
+      let detail;
+      try {
+        detail = JSON.parse(event.data);
+      } catch (_error) {
+        return;
+      }
+      if (state.selectedPath !== session.project_path || state.selectedSessionID !== session.id) return;
+      if (sessionDetailIsOlder(detail)) return;
+      state.sessionStreamConnected = true;
+      const signature = sessionDetailSignature(detail);
+      if (signature === state.sessionDetailSignature) return;
+      state.sessionDetailSignature = signature;
+      renderSessionDetail(detail, false);
+    });
+    source.addEventListener("error", () => {
+      if (state.sessionStream !== source) return;
+      state.sessionStreamConnected = false;
+      if (state.selectedSessionID === session.id) elements.sessionUpdatedLabel.textContent = "Stream reconnecting";
+    });
+    const finishStream = (event) => {
+      if (state.sessionStream !== source) return;
+      closeSessionStream();
+      if (state.selectedSessionID !== session.id) return;
+      elements.sessionUpdatedLabel.textContent = event.type === "replaced" ? "Session changed" : "Live session ended";
+      void loadProjectSessions(session.project_path, false);
+    };
+    source.addEventListener("end", finishStream);
+    source.addEventListener("replaced", finishStream);
+  }
+
+  function sessionDetailIsOlder(detail) {
+    const revision = Number(detail?.session?.transcript_revision || 0);
+    return revision > 0 && revision < state.sessionTranscriptRevision;
+  }
+
   async function openSession(sessionID, updateHistory) {
     if (!sessionID || !state.selectedPath) return;
     state.selectedSessionID = sessionID;
     state.sessionDetailSignature = "";
+    state.sessionTranscriptRevision = 0;
     state.sessionEntries = [];
     state.sessionEmptyMessage = "";
     state.sessionLastEntryKey = "";
@@ -653,6 +813,7 @@
         `/api/mobile/sessions/detail?path=${encodeURIComponent(projectPath)}&session_id=${encodeURIComponent(sessionID)}`,
       );
       if (requestID !== state.sessionRequestID || state.selectedSessionID !== sessionID || state.selectedPath !== projectPath) return;
+      if (sessionDetailIsOlder(detail)) return;
       const signature = sessionDetailSignature(detail);
       if (!initial && signature === state.sessionDetailSignature) return;
       state.sessionDetailSignature = signature;
@@ -700,6 +861,7 @@
     state.sessionEntries = entries;
     state.sessionEmptyMessage = detail.empty_message || "";
     state.sessionLastEntryKey = nextLastEntryKey;
+    state.sessionTranscriptRevision = Math.max(state.sessionTranscriptRevision, Number(session.transcript_revision || 0));
 
     elements.sessionState.replaceChildren();
     elements.sessionContent.hidden = false;
@@ -714,7 +876,7 @@
     elements.sessionID.textContent = session.display_id;
     elements.sessionLiveLamp.className = `lamp ${sessionLampClass(session)}`;
     elements.sessionUpdatedLabel.textContent = session.live
-      ? `Live ${session.last_activity_label}`
+      ? `${state.sessionStreamConnected ? "Streaming" : "Live"} ${session.last_activity_label}`
       : `Updated ${session.last_activity_label}`;
     elements.sessionTruncated.hidden = !detail.truncated;
 
@@ -722,6 +884,11 @@
     renderSessionTranscript();
     renderSessionComposer(detail);
     updateTranscriptControls();
+    if (session.live) {
+      connectSessionStream(session);
+    } else {
+      closeSessionStream();
+    }
 
     document.title = `${session.provider_label} - ${projectNameForPath(session.project_path)} - Little Control Room`;
     if (initial) window.scrollTo({ top: 0, behavior: "auto" });
@@ -758,16 +925,64 @@
     const entries = state.transcriptMode === "all"
       ? state.sessionEntries
       : state.sessionEntries.filter((entry) => ["user", "agent", "plan", "error"].includes(entry.kind));
-    elements.sessionTranscript.replaceChildren();
     if (entries.length === 0) {
       const emptyMessage = state.transcriptMode === "conversation" && state.sessionEntries.length > 0
         ? "No conversation entries yet"
         : state.sessionEmptyMessage || "No transcript activity";
-      elements.sessionTranscript.append(createElement("p", "transcript-empty", emptyMessage));
+      const existingEmpty = elements.sessionTranscript.querySelector(":scope > .transcript-empty");
+      if (existingEmpty && existingEmpty.textContent === emptyMessage && elements.sessionTranscript.childElementCount === 1) return;
+      elements.sessionTranscript.replaceChildren(createElement("p", "transcript-empty", emptyMessage));
       return;
     }
-    for (const entry of entries) {
-      elements.sessionTranscript.append(createTranscriptEntry(entry));
+
+    const existing = new Map();
+    for (const node of elements.sessionTranscript.children) {
+      if (node.dataset.entryKey) existing.set(node.dataset.entryKey, node);
+    }
+    const occurrences = new Map();
+    const nextNodes = [];
+    entries.forEach((entry, index) => {
+      const baseKey = entry.item_id ? `${entry.kind}:${entry.item_id}` : `${entry.kind}:position-${index}`;
+      const occurrence = occurrences.get(baseKey) || 0;
+      occurrences.set(baseKey, occurrence + 1);
+      const key = `${baseKey}:${occurrence}`;
+      const signature = JSON.stringify([entry.kind, entry.label, entry.tone, entry.text]);
+      let node = existing.get(key);
+      if (!node || node.dataset.entrySignature !== signature) {
+        node = createTranscriptEntry(entry);
+        node.dataset.entryKey = key;
+        node.dataset.entrySignature = signature;
+      }
+      nextNodes.push(node);
+    });
+    reconcileTranscriptNodes(nextNodes);
+  }
+
+  function reconcileTranscriptNodes(nextNodes) {
+    const keep = new Set(nextNodes);
+    for (const node of [...elements.sessionTranscript.children]) {
+      if (!keep.has(node)) node.remove();
+    }
+    nextNodes.forEach((node, index) => {
+      const current = elements.sessionTranscript.children[index];
+      if (current !== node) elements.sessionTranscript.insertBefore(node, current || null);
+    });
+  }
+
+  function sessionStreamAvailable() {
+    return Boolean(state.sessionStream && state.sessionStreamConnected);
+  }
+
+  function refreshSelectedSessionFallback() {
+    if (!state.selectedSessionID || sessionStreamAvailable()) return;
+    void loadSessionDetail(state.selectedSessionID, false);
+  }
+
+  function refreshSelectedProjectSessions() {
+    if (state.selectedSessionID) {
+      refreshSelectedSessionFallback();
+    } else if (state.selectedPath) {
+      void loadProjectSessions(state.selectedPath, false);
     }
   }
 
@@ -1212,8 +1427,10 @@
   }
 
   function hideSession() {
+    closeSessionStream();
     state.selectedSessionID = "";
     state.sessionDetailSignature = "";
+    state.sessionTranscriptRevision = 0;
     state.sessionEntries = [];
     state.sessionEmptyMessage = "";
     state.sessionLastEntryKey = "";
@@ -1295,6 +1512,9 @@
 
   function updateOperatorScene() {
     const counts = state.dashboard?.counts || {};
+    elements.attentionCount.textContent = String(counts.attention || 0);
+    elements.activeCount.textContent = String(counts.active || 0);
+    elements.allCount.textContent = String(counts.all || 0);
     let scene = "idle";
     let count = String(counts.all || 0);
     let label = counts.all === 1 ? "Project monitored" : "Projects monitored";
@@ -1360,7 +1580,7 @@
         const sessionID = state.selectedSessionID;
         await loadDashboard(false);
         if (sessionID && state.selectedSessionID === sessionID) {
-          await loadSessionDetail(sessionID, false);
+          if (!sessionStreamAvailable()) await loadSessionDetail(sessionID, false);
         } else if (state.selectedPath) {
           await openProject(state.selectedPath, false);
         }
@@ -1554,12 +1774,7 @@
   updateSystemTime();
   window.setInterval(updateSystemTime, 30000);
   window.setInterval(() => {
-    if (!state.authenticated) return;
-    if (state.selectedSessionID) {
-      void loadSessionDetail(state.selectedSessionID, false);
-    } else if (state.selectedPath) {
-      void loadProjectSessions(state.selectedPath, false);
-    }
+    if (state.authenticated) refreshSelectedProjectSessions();
   }, 2500);
   void bootstrap();
 })();
