@@ -111,6 +111,29 @@ func TestSpinnerTickAdvancesMarqueeTwoColumns(t *testing.T) {
 	}
 }
 
+func TestSpinnerTickCadenceKeepsBackgroundRefreshesThrottled(t *testing.T) {
+	if got, want := spinnerTickInterval, 200*time.Millisecond; got != want {
+		t.Fatalf("spinner tick interval = %s, want %s", got, want)
+	}
+
+	tests := []struct {
+		name       string
+		everyTicks int
+		want       time.Duration
+	}{
+		{name: "runtime snapshots", everyTicks: runtimeSnapshotRefreshEveryTicks, want: time.Second},
+		{name: "CPU snapshots", everyTicks: cpuSnapshotRefreshEveryTicks, want: 3 * time.Second},
+		{name: "process scans", everyTicks: processScanRefreshEveryTicks, want: time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := time.Duration(tt.everyTicks) * spinnerTickInterval; got != tt.want {
+				t.Fatalf("refresh cadence = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRebuildProjectListIndexesWorktreeFamiliesAndTabs(t *testing.T) {
 	root := model.ProjectSummary{Path: "/tmp/root", Name: "root", PresentOnDisk: true}
 	child := model.ProjectSummary{
