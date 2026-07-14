@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -673,14 +674,103 @@ func TestDispatchResolveBlocksWhileSameEngineerTurnActive(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("dispatchCommand(/resolve) cmd = %#v, want nil while active engineer turn blocks launch", cmd)
 	}
-	if !strings.Contains(got.status, "already running") {
-		t.Fatalf("status = %q, want active engineer refusal", got.status)
+	if got.status != "Resolve blocked: fresh engineer session could not start" {
+		t.Fatalf("status = %q, want compact resolve refusal", got.status)
+	}
+	if got.actionNoticeDialog == nil {
+		t.Fatal("active engineer refusal should open a notice dialog")
+	}
+	if !strings.Contains(got.actionNoticeDialog.Message, "already running") {
+		t.Fatalf("notice = %q, want active engineer explanation", got.actionNoticeDialog.Message)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want only the existing active session request", len(requests))
 	}
 	if len(liveSession.submitted) != 0 {
 		t.Fatalf("active session received submissions: %#v", liveSession.submitted)
+	}
+}
+
+func TestDispatchResolveShowsIdleSessionBlockInNoticeDialog(t *testing.T) {
+	projectPath := "/tmp/resolve-idle"
+	liveSession := &fakeCodexSession{
+		projectPath: projectPath,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			ThreadID: "idle-thread",
+			Started:  true,
+			Status:   "Codex turn completed",
+		},
+	}
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return liveSession, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderCodex,
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:          projectPath,
+			Name:          "resolve-idle",
+			PresentOnDisk: true,
+			RepoConflict:  true,
+			RepoDirty:     true,
+		}},
+		selected: 0,
+	}
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("dispatchCommand(/resolve) cmd = %#v, want nil while idle session blocks fresh launch", cmd)
+	}
+	if got.status != "Resolve blocked: fresh engineer session could not start" {
+		t.Fatalf("status = %q, want compact resolve refusal", got.status)
+	}
+	if strings.Contains(got.status, "An idle turn") {
+		t.Fatalf("top status retained the long explanation: %q", got.status)
+	}
+	if got.actionNoticeDialog == nil {
+		t.Fatal("idle engineer refusal should open a notice dialog")
+	}
+	rendered := ansi.Strip(got.renderActionNoticeDialogContent(72))
+	normalizedRendered := strings.Join(strings.Fields(rendered), " ")
+	for _, want := range []string{
+		"Resolve blocked",
+		"resolve-idle",
+		"An idle turn does not show that its task is finished",
+		"The /resolve command always starts a fresh engineer session",
+		"press Ctrl+C while it is idle to close it; then run /resolve again",
+		"Enter/Esc",
+	} {
+		if !strings.Contains(normalizedRendered, want) {
+			t.Fatalf("notice dialog missing %q:\n%s", want, rendered)
+		}
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the existing idle session request", len(requests))
+	}
+	narrowOverlay := ansi.Strip(got.renderActionNoticeDialogOverlay("", 60, 20))
+	if width := lipgloss.Width(narrowOverlay); width != 60 {
+		t.Fatalf("narrow notice width = %d, want 60", width)
+	}
+	if height := lipgloss.Height(narrowOverlay); height != 20 {
+		t.Fatalf("narrow notice height = %d, want 20", height)
+	}
+	if !strings.Contains(narrowOverlay, "Resolve blocked") {
+		t.Fatalf("narrow notice lost its title:\n%s", narrowOverlay)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if got.actionNoticeDialog != nil {
+		t.Fatal("Esc should close the resolve notice dialog")
 	}
 }
 

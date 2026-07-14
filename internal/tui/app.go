@@ -61,6 +61,7 @@ type Model struct {
 	loading              bool
 	status               string
 	err                  error
+	actionNoticeDialog   *actionNoticeDialogState
 	gracefulQuitInFlight bool
 	relaunchAfterUpdate  bool
 	installedUpdate      string
@@ -1373,6 +1374,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.helpChatMode {
 			return m.updateHelpChatModeKey(msg)
+		}
+		if m.actionNoticeDialog != nil {
+			return m.updateActionNoticeDialogMode(msg)
 		}
 		if m.selfUpdateDialog != nil {
 			return m.updateSelfUpdateDialogMode(msg)

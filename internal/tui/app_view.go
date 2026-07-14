@@ -72,6 +72,17 @@ func (m Model) View() string {
 	defer done()
 	if m.codexVisible() {
 		body := m.renderCodexView()
+		if m.actionNoticeDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderActionNoticeDialogOverlay(body, width, height)
+		}
 		if m.skillsDialog != nil {
 			width := m.width
 			if width <= 0 {
@@ -371,6 +382,9 @@ func (m Model) View() string {
 	}
 	if m.selfUpdateDialog != nil {
 		body = m.renderSelfUpdateDialogOverlay(body, layout.width, layout.height)
+	}
+	if m.actionNoticeDialog != nil {
+		body = m.renderActionNoticeDialogOverlay(body, layout.width, layout.height)
 	}
 
 	return strings.Join([]string{header, body, m.renderFooter(layout.width)}, "\n")
