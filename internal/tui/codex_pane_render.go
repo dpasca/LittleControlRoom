@@ -820,30 +820,35 @@ func managedBrowserActivityCanReveal(provider codexapp.Provider, activity browse
 }
 
 func (m Model) liveManagedBrowserActivityCanReveal(snapshot codexapp.Snapshot) bool {
+	state, ok := m.attachedManagedBrowserSessionState(snapshot)
+	return ok && state.BrowserActivity.Normalize().Live()
+}
+
+func (m Model) attachedManagedBrowserSessionState(snapshot codexapp.Snapshot) (codexapp.Snapshot, bool) {
 	projectPath := strings.TrimSpace(firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject))
 	if projectPath == "" {
-		return false
+		return codexapp.Snapshot{}, false
 	}
 	if normalizeProjectPath(projectPath) != normalizeProjectPath(m.codexVisibleProject) {
-		return false
+		return codexapp.Snapshot{}, false
 	}
 	session, ok := m.codexSession(projectPath)
 	if !ok {
-		return false
+		return codexapp.Snapshot{}, false
 	}
 	state, ok := stateSnapshotForCodexSession(session)
 	if !ok || !managedBrowserRevealTargetAttached(state) {
-		return false
+		return codexapp.Snapshot{}, false
 	}
 	if strings.TrimSpace(state.ManagedBrowserSessionKey) != strings.TrimSpace(snapshot.ManagedBrowserSessionKey) {
-		return false
+		return codexapp.Snapshot{}, false
 	}
 	snapshotProvider := embeddedProvider(snapshot)
 	stateProvider := embeddedProvider(state)
 	if snapshotProvider.Normalized() != "" && stateProvider.Normalized() != "" && snapshotProvider != stateProvider {
-		return false
+		return codexapp.Snapshot{}, false
 	}
-	return state.BrowserActivity.Normalize().Live()
+	return state, true
 }
 
 func (m Model) managedBrowserCachedVisible(snapshot codexapp.Snapshot) bool {
@@ -859,12 +864,22 @@ func (m Model) freshManagedBrowserState(snapshot codexapp.Snapshot) (browserctl.
 	return state.Normalize(), true
 }
 
-func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.Cmd {
+func (m *Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.Cmd {
 	sessionKey := strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
 	if sessionKey == "" || snapshot.BusyExternal || snapshot.Closed {
 		return nil
 	}
-	if state, ok := m.cachedManagedBrowserState(sessionKey); ok && managedBrowserStateFreshForUI(state, m.currentTime()) {
+	now := m.currentTime()
+	if state, ok := m.cachedManagedBrowserState(sessionKey); ok &&
+		managedBrowserStateFreshForUI(state, now) &&
+		m.managedBrowserStateRecentlyFetched(sessionKey, now) {
+		return nil
+	}
+	if m.managedBrowserAvailability[sessionKey] == managedBrowserAvailabilityGone &&
+		m.managedBrowserStateRecentlyFetched(sessionKey, now) {
+		return nil
+	}
+	if !m.beginManagedBrowserStateRead(sessionKey) {
 		return nil
 	}
 	retryAttempts := 0
@@ -872,6 +887,14 @@ func (m Model) maybeReadManagedBrowserStateCmd(snapshot codexapp.Snapshot) tea.C
 		retryAttempts = managedBrowserStateHydrationRetryAttempts
 	}
 	return m.readManagedBrowserStateCmd(sessionKey, retryAttempts)
+}
+
+func (m *Model) maybeRefreshVisibleManagedBrowserStateCmd() tea.Cmd {
+	snapshot, ok := m.currentCachedCodexSnapshot()
+	if !ok || !managedBrowserRevealTargetAttached(snapshot) || !managedBrowserFlowSupported(embeddedProvider(snapshot)) {
+		return nil
+	}
+	return m.maybeReadManagedBrowserStateCmd(snapshot)
 }
 
 func managedBrowserStateHydrationShouldRetry(snapshot codexapp.Snapshot) bool {

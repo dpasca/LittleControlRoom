@@ -266,6 +266,9 @@ type Model struct {
 	browserController             *browserctl.Controller
 	browserLeaseSnapshot          browserctl.ControllerSnapshot
 	managedBrowserStates          map[string]browserctl.ManagedPlaywrightState
+	managedBrowserStateFetchedAt  map[string]time.Time
+	managedBrowserAvailability    map[string]managedBrowserAvailability
+	managedBrowserReadsInFlight   map[string]bool
 	questionNotify                *questionNotification
 	codexInputCopyDialog          *inputcomposer.CopyDialogState
 	codexInputSelection           *codexInputSelectionState
@@ -362,19 +365,23 @@ type actionMsg struct {
 }
 
 type browserOpenMsg struct {
-	projectPath             string
-	status                  string
-	err                     error
-	browserLeaseSnapshot    browserctl.ControllerSnapshot
-	browserLeaseSnapshotSet bool
-	managedBrowserState     browserctl.ManagedPlaywrightState
-	managedBrowserStateSet  bool
+	projectPath              string
+	status                   string
+	err                      error
+	browserLeaseSnapshot     browserctl.ControllerSnapshot
+	browserLeaseSnapshotSet  bool
+	managedBrowserState      browserctl.ManagedPlaywrightState
+	managedBrowserStateSet   bool
+	managedBrowserProbe      bool
+	managedBrowserProbeLive  bool
+	managedBrowserSessionKey string
 }
 
 type managedBrowserStateMsg struct {
 	sessionKey             string
 	state                  browserctl.ManagedPlaywrightState
 	err                    error
+	retryable              bool
 	retryAttemptsRemaining int
 }
 
@@ -742,6 +749,9 @@ func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager
 		hideReasoningSections:         initialSettings.HideReasoningSections,
 		browserController:             browserctl.NewController(),
 		managedBrowserStates:          make(map[string]browserctl.ManagedPlaywrightState),
+		managedBrowserStateFetchedAt:  make(map[string]time.Time),
+		managedBrowserAvailability:    make(map[string]managedBrowserAvailability),
+		managedBrowserReadsInFlight:   make(map[string]bool),
 		detailReloadInFlight:          make(map[string]bool),
 		detailReloadQueued:            make(map[string]bool),
 		detailReloadErrors:            make(map[string]string),
@@ -1956,6 +1966,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.managedBrowserState.UpdatedAt = m.currentTime()
 			}
 			m.rememberManagedBrowserState(msg.managedBrowserState)
+		} else if msg.managedBrowserProbe && !msg.managedBrowserProbeLive {
+			m.markManagedBrowserStateGone(msg.managedBrowserSessionKey)
 		}
 		if msg.err != nil {
 			m.reportError("Open failed", msg.err, msg.projectPath)
@@ -1971,12 +1983,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case managedBrowserStateMsg:
 		if msg.err == nil {
+			m.finishManagedBrowserStateRead(msg.sessionKey)
 			m.rememberManagedBrowserState(msg.state)
 		} else {
-			m.forgetManagedBrowserState(msg.sessionKey)
-			if msg.retryAttemptsRemaining > 0 {
+			if msg.retryable && msg.retryAttemptsRemaining > 0 {
 				return m, m.delayedReadManagedBrowserStateCmd(msg.sessionKey, msg.retryAttemptsRemaining-1)
 			}
+			m.finishManagedBrowserStateRead(msg.sessionKey)
+			m.markManagedBrowserStateGone(msg.sessionKey)
 		}
 		return m, nil
 	case codexArtifactPreviewMsg:
@@ -2583,7 +2597,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cpuSnapshotCmd = m.requestCPUSnapshotRefreshCmd()
 		}
 		sidebarDiffCmd := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd()
-		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, sidebarDiffCmd)
+		browserStateCmd := m.maybeRefreshVisibleManagedBrowserStateCmd()
+		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, sidebarDiffCmd, browserStateCmd)
 	case codexUpdateMsg:
 		return m.applyCodexUpdateMsg(msg)
 	case codexUpdateAckMsg:

@@ -21,10 +21,19 @@ var externalPathRevealer = revealExternalPath
 var managedBrowserSessionRevealer = browserctl.RevealManagedPlaywrightSession
 var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
 
-const managedBrowserStateFreshWindow = 30 * time.Second
+const managedBrowserStateFreshWindow = 5 * time.Second
+const managedBrowserStateRefreshInterval = 2 * time.Second
 const managedBrowserStateHydrationRetryAttempts = 20
 
 var managedBrowserStateHydrationRetryDelay = 250 * time.Millisecond
+
+type managedBrowserAvailability string
+
+const (
+	managedBrowserAvailabilityChecking managedBrowserAvailability = "checking"
+	managedBrowserAvailabilityLive     managedBrowserAvailability = "live"
+	managedBrowserAvailabilityGone     managedBrowserAvailability = "gone"
+)
 
 func openProjectDirInBrowser(path string) error {
 	if strings.TrimSpace(path) == "" {
@@ -88,6 +97,22 @@ func revealManagedBrowserSession(dataDir, sessionKey string) (browserctl.Managed
 	return state, nil
 }
 
+func probeAndRevealManagedBrowserSession(dataDir, sessionKey string) (browserctl.ManagedPlaywrightState, bool, error) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return browserctl.ManagedPlaywrightState{}, false, fmt.Errorf("managed browser session key is required")
+	}
+	probe := readManagedBrowserStateMsg(dataDir, sessionKey, 0)
+	if probe.err != nil {
+		return browserctl.ManagedPlaywrightState{}, false, fmt.Errorf("managed browser is no longer attached; use /reconnect: %w", probe.err)
+	}
+	state, err := revealManagedBrowserSession(dataDir, sessionKey)
+	if err != nil {
+		return probe.state.Normalize(), true, err
+	}
+	return state.Normalize(), true, nil
+}
+
 func (m *Model) rememberManagedBrowserState(state browserctl.ManagedPlaywrightState) {
 	sessionKey := strings.TrimSpace(state.SessionKey)
 	if sessionKey == "" {
@@ -97,14 +122,32 @@ func (m *Model) rememberManagedBrowserState(state browserctl.ManagedPlaywrightSt
 		m.managedBrowserStates = make(map[string]browserctl.ManagedPlaywrightState)
 	}
 	m.managedBrowserStates[sessionKey] = state.Normalize()
+	if m.managedBrowserStateFetchedAt == nil {
+		m.managedBrowserStateFetchedAt = make(map[string]time.Time)
+	}
+	if m.managedBrowserAvailability == nil {
+		m.managedBrowserAvailability = make(map[string]managedBrowserAvailability)
+	}
+	m.managedBrowserStateFetchedAt[sessionKey] = m.currentTime()
+	m.managedBrowserAvailability[sessionKey] = managedBrowserAvailabilityLive
 }
 
-func (m *Model) forgetManagedBrowserState(sessionKey string) {
+func (m *Model) markManagedBrowserStateGone(sessionKey string) {
 	sessionKey = strings.TrimSpace(sessionKey)
-	if sessionKey == "" || len(m.managedBrowserStates) == 0 {
+	if sessionKey == "" {
 		return
 	}
-	delete(m.managedBrowserStates, sessionKey)
+	if len(m.managedBrowserStates) > 0 {
+		delete(m.managedBrowserStates, sessionKey)
+	}
+	if m.managedBrowserStateFetchedAt == nil {
+		m.managedBrowserStateFetchedAt = make(map[string]time.Time)
+	}
+	if m.managedBrowserAvailability == nil {
+		m.managedBrowserAvailability = make(map[string]managedBrowserAvailability)
+	}
+	m.managedBrowserStateFetchedAt[sessionKey] = m.currentTime()
+	m.managedBrowserAvailability[sessionKey] = managedBrowserAvailabilityGone
 }
 
 func (m Model) cachedManagedBrowserState(sessionKey string) (browserctl.ManagedPlaywrightState, bool) {
@@ -116,6 +159,64 @@ func (m Model) cachedManagedBrowserState(sessionKey string) (browserctl.ManagedP
 		return browserctl.ManagedPlaywrightState{}, false
 	}
 	return state.Normalize(), true
+}
+
+func (m Model) managedBrowserStateRecentlyFetched(sessionKey string, now time.Time) bool {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return false
+	}
+	fetchedAt := m.managedBrowserStateFetchedAt[sessionKey]
+	if fetchedAt.IsZero() {
+		if state, ok := m.cachedManagedBrowserState(sessionKey); ok {
+			// Compatibility for models and tests constructed before fetched-at was
+			// tracked separately. Production reads always populate fetchedAt.
+			fetchedAt = state.UpdatedAt
+		}
+	}
+	if fetchedAt.IsZero() {
+		return false
+	}
+	if now.IsZero() {
+		now = m.currentTime()
+	}
+	age := now.Sub(fetchedAt)
+	return age >= 0 && age <= managedBrowserStateRefreshInterval
+}
+
+func (m *Model) beginManagedBrowserStateRead(sessionKey string) bool {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return false
+	}
+	if m.managedBrowserReadsInFlight == nil {
+		m.managedBrowserReadsInFlight = make(map[string]bool)
+	}
+	if m.managedBrowserReadsInFlight[sessionKey] {
+		return false
+	}
+	m.managedBrowserReadsInFlight[sessionKey] = true
+	m.markManagedBrowserStateChecking(sessionKey)
+	return true
+}
+
+func (m *Model) markManagedBrowserStateChecking(sessionKey string) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" {
+		return
+	}
+	if m.managedBrowserAvailability == nil {
+		m.managedBrowserAvailability = make(map[string]managedBrowserAvailability)
+	}
+	m.managedBrowserAvailability[sessionKey] = managedBrowserAvailabilityChecking
+}
+
+func (m *Model) finishManagedBrowserStateRead(sessionKey string) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	if sessionKey == "" || len(m.managedBrowserReadsInFlight) == 0 {
+		return
+	}
+	delete(m.managedBrowserReadsInFlight, sessionKey)
 }
 
 func (m Model) readManagedBrowserStateCmd(sessionKey string, retryAttemptsRemaining int) tea.Cmd {
@@ -146,13 +247,27 @@ func (m Model) delayedReadManagedBrowserStateCmd(sessionKey string, retryAttempt
 
 func readManagedBrowserStateMsg(dataDir, sessionKey string, retryAttemptsRemaining int) managedBrowserStateMsg {
 	state, err := managedBrowserStateReader(dataDir, sessionKey)
-	if err == nil && !managedBrowserStateFreshForUI(state, time.Now()) {
-		err = fmt.Errorf("managed browser state is stale")
+	retryable := err != nil
+	if err == nil && strings.TrimSpace(state.SessionKey) != strings.TrimSpace(sessionKey) {
+		err = fmt.Errorf("managed browser state belongs to a different session")
+		retryable = false
+	}
+	if err == nil {
+		now := time.Now()
+		switch {
+		case !managedBrowserStateHeartbeatFresh(state, now):
+			err = fmt.Errorf("managed browser is no longer attached")
+			retryable = false
+		case !state.Normalize().RevealSupported:
+			err = fmt.Errorf("managed browser window is not available yet")
+			retryable = true
+		}
 	}
 	return managedBrowserStateMsg{
 		sessionKey:             sessionKey,
 		state:                  state,
 		err:                    err,
+		retryable:              retryable,
 		retryAttemptsRemaining: retryAttemptsRemaining,
 	}
 }
@@ -162,6 +277,11 @@ func managedBrowserStateFreshForUI(state browserctl.ManagedPlaywrightState, now 
 	if !state.RevealSupported {
 		return false
 	}
+	return managedBrowserStateHeartbeatFresh(state, now)
+}
+
+func managedBrowserStateHeartbeatFresh(state browserctl.ManagedPlaywrightState, now time.Time) bool {
+	state = state.Normalize()
 	if state.UpdatedAt.IsZero() {
 		return false
 	}

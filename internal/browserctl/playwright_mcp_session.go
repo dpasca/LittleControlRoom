@@ -470,6 +470,11 @@ func (s *PlaywrightMCPBrowserSession) markMCPStopped() {
 			return nil
 		}
 		state.MCPPID = 0
+		state.BrowserPID = 0
+		state.BrowserAppPath = ""
+		state.BrowserAppName = ""
+		state.BrowserExecutable = ""
+		state.RevealSupported = false
 		state.UpdatedAt = time.Now().UTC()
 		return WriteManagedPlaywrightState(s.paths, state)
 	})

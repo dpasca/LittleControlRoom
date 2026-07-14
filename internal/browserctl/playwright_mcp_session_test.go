@@ -58,6 +58,22 @@ done
 	if state.MCPPID == 0 || state.ProfileKey != "profile-demo" || state.Provider != "lcagent" {
 		t.Fatalf("state after lazy start = %#v", state)
 	}
+	state.BrowserPID = 321
+	state.BrowserAppName = "Chromium"
+	state.RevealSupported = true
+	if err := WriteManagedPlaywrightState(session.paths, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadManagedPlaywrightState(dir, "session-demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.MCPPID != 0 || state.BrowserPID != 0 || state.RevealSupported || state.BrowserAppName != "" {
+		t.Fatalf("browser attachment after close = %#v, want cleared", state)
+	}
 }
 
 func TestPlaywrightMCPBrowserSessionPrefersConfiguredBrowserPath(t *testing.T) {

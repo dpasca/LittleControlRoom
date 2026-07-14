@@ -375,12 +375,24 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if !m.managedBrowserCanReveal(snapshot) {
+		if !managedBrowserRevealTargetAttached(snapshot) {
 			m.status = "Managed browser window is not attached to this session. Use /reconnect or start a fresh session if you need the browser again."
 			return m, nil
 		}
-		m.status = "Showing the managed browser window..."
-		return m, m.revealManagedBrowserCmd(
+		canReveal := m.managedBrowserCanReveal(snapshot)
+		if !canReveal {
+			if _, ok := m.attachedManagedBrowserSessionState(snapshot); !ok {
+				m.status = "Managed browser window is not attached to this session. Use /reconnect or start a fresh session if you need the browser again."
+				return m, nil
+			}
+		}
+		if canReveal {
+			m.status = "Showing the managed browser window..."
+		} else {
+			m.status = "Checking the managed browser window..."
+		}
+		m.markManagedBrowserStateChecking(sessionKey)
+		return m, m.probeAndRevealManagedBrowserCmd(
 			sessionKey,
 			managedBrowserLeaseRef(embeddedProvider(snapshot), firstNonEmptyString(snapshot.ProjectPath, m.codexVisibleProject), snapshot.ThreadID),
 			"Managed browser window is ready. Continue there, then return here when you want Codex to keep going.",

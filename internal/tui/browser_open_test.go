@@ -9,6 +9,21 @@ import (
 	"lcroom/internal/model"
 )
 
+func stubLiveManagedBrowserStateReader(t *testing.T) {
+	t.Helper()
+	previous := managedBrowserStateReader
+	t.Cleanup(func() { managedBrowserStateReader = previous })
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{
+			SessionKey:      sessionKey,
+			MCPPID:          122,
+			BrowserPID:      123,
+			RevealSupported: true,
+			UpdatedAt:       time.Now().UTC(),
+		}, nil
+	}
+}
+
 func TestOpenProjectDirInBrowserUsesDirectoryFileURL(t *testing.T) {
 	dir := t.TempDir()
 

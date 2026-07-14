@@ -341,6 +341,7 @@ func TestVisibleLCAgentBrowserWaitShowsBrowserActionAfterStateHydrates(t *testin
 }
 
 func TestVisibleLCAgentBrowserWaitCanRevealFromLiveStateBeforeBrowserStateHydrates(t *testing.T) {
+	stubLiveManagedBrowserStateReader(t)
 	projectPath := "/tmp/lcagent-browser-live"
 	cached := codexapp.Snapshot{
 		Provider: codexapp.ProviderLCAgent,

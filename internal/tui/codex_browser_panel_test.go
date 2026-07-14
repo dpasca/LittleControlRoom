@@ -160,6 +160,7 @@ func TestVisibleCodexURLBasedElicitationCanOpenBrowser(t *testing.T) {
 }
 
 func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
+	stubLiveManagedBrowserStateReader(t)
 	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -251,6 +252,7 @@ func TestVisibleCodexCanOpenCurrentBackgroundBrowserPage(t *testing.T) {
 }
 
 func TestVisibleCodexCanOpenManagedBrowserWithoutCurrentPageURL(t *testing.T) {
+	stubLiveManagedBrowserStateReader(t)
 	now := time.Date(2026, 5, 30, 19, 10, 0, 0, time.UTC)
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
@@ -450,6 +452,215 @@ func TestVisibleCodexManagedBrowserHydrationRetriesEarlyUnrevealableState(t *tes
 	}
 }
 
+func TestVisibleIdleCodexManagedBrowserRenewsExpiredCachedState(t *testing.T) {
+	now := time.Now().UTC()
+	previousStateReader := managedBrowserStateReader
+	defer func() { managedBrowserStateReader = previousStateReader }()
+
+	readCount := 0
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		readCount++
+		return browserctl.ManagedPlaywrightState{
+			SessionKey:      sessionKey,
+			MCPPID:          122,
+			BrowserPID:      123,
+			Hidden:          true,
+			RevealSupported: true,
+			UpdatedAt:       now,
+		}, nil
+	}
+
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderCodex,
+		ProjectPath:              "/tmp/demo",
+		Started:                  true,
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://example.test/login",
+	}
+	expiredAt := now.Add(-managedBrowserStateFreshWindow - time.Second)
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+		nowFn: func() time.Time { return now },
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {
+				SessionKey:      "managed-demo",
+				MCPPID:          122,
+				BrowserPID:      123,
+				Hidden:          true,
+				RevealSupported: true,
+				UpdatedAt:       expiredAt,
+			},
+		},
+		managedBrowserStateFetchedAt: map[string]time.Time{
+			"managed-demo": expiredAt,
+		},
+		managedBrowserAvailability: map[string]managedBrowserAvailability{
+			"managed-demo": managedBrowserAvailabilityLive,
+		},
+	}
+
+	if footer := ansi.Strip(m.renderCodexFooter(snapshot, 160)); strings.Contains(footer, "ctrl+o") {
+		t.Fatalf("expired cached state should not advertise ctrl+o before renewal: %q", footer)
+	}
+	cmd := m.maybeRefreshVisibleManagedBrowserStateCmd()
+	if cmd == nil {
+		t.Fatal("expired visible browser state should queue an asynchronous refresh")
+	}
+	if duplicate := m.maybeRefreshVisibleManagedBrowserStateCmd(); duplicate != nil {
+		t.Fatal("browser state refresh should be coalesced while a read is in flight")
+	}
+
+	msg, ok := cmd().(managedBrowserStateMsg)
+	if !ok {
+		t.Fatalf("refresh command returned %T, want managedBrowserStateMsg", msg)
+	}
+	if msg.err != nil {
+		t.Fatalf("managed browser refresh error = %v", msg.err)
+	}
+	updated, followup := m.Update(msg)
+	got := updated.(Model)
+	if followup != nil {
+		t.Fatal("successful browser state refresh should not queue a retry")
+	}
+	if readCount != 1 || got.managedBrowserReadsInFlight["managed-demo"] {
+		t.Fatalf("browser state refresh count/in-flight = %d/%t, want 1/false", readCount, got.managedBrowserReadsInFlight["managed-demo"])
+	}
+	if got.managedBrowserAvailability["managed-demo"] != managedBrowserAvailabilityLive {
+		t.Fatalf("browser availability = %q, want live", got.managedBrowserAvailability["managed-demo"])
+	}
+	if footer := ansi.Strip(got.renderCodexFooter(snapshot, 160)); !strings.Contains(footer, "ctrl+o show browser") {
+		t.Fatalf("renewed idle browser should advertise ctrl+o: %q", footer)
+	}
+}
+
+func TestVisibleCodexStaleBrowserHeartbeatBecomesGoneWithoutRetry(t *testing.T) {
+	now := time.Now().UTC()
+	previousStateReader := managedBrowserStateReader
+	defer func() { managedBrowserStateReader = previousStateReader }()
+
+	managedBrowserStateReader = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		return browserctl.ManagedPlaywrightState{
+			SessionKey:      sessionKey,
+			MCPPID:          122,
+			BrowserPID:      123,
+			RevealSupported: true,
+			UpdatedAt:       now.Add(-time.Minute),
+		}, nil
+	}
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderCodex,
+		ProjectPath:              "/tmp/demo",
+		Started:                  true,
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://example.test/login",
+	}
+	m := Model{
+		codexVisibleProject: "/tmp/demo",
+		codexSnapshots: map[string]codexapp.Snapshot{
+			"/tmp/demo": snapshot,
+		},
+		nowFn: func() time.Time { return now },
+	}
+
+	cmd := m.maybeRefreshVisibleManagedBrowserStateCmd()
+	if cmd == nil {
+		t.Fatal("unknown visible browser state should queue a probe")
+	}
+	msg := cmd().(managedBrowserStateMsg)
+	if msg.err == nil || msg.retryable {
+		t.Fatalf("stale heartbeat result = err %v, retryable %t; want terminal gone result", msg.err, msg.retryable)
+	}
+	updated, retry := m.Update(msg)
+	got := updated.(Model)
+	if retry != nil {
+		t.Fatal("stale browser heartbeat should not queue hydration retries")
+	}
+	if got.managedBrowserAvailability["managed-demo"] != managedBrowserAvailabilityGone {
+		t.Fatalf("browser availability = %q, want gone", got.managedBrowserAvailability["managed-demo"])
+	}
+	if _, ok := got.managedBrowserStates["managed-demo"]; ok {
+		t.Fatal("gone browser should not retain a revealable cached state")
+	}
+	if immediate := got.maybeRefreshVisibleManagedBrowserStateCmd(); immediate != nil {
+		t.Fatal("gone browser should throttle immediate repeat probes")
+	}
+}
+
+func TestVisibleIdleCodexCtrlOProbesExpiredCacheAndRevealsLiveBrowser(t *testing.T) {
+	now := time.Now().UTC()
+	stubLiveManagedBrowserStateReader(t)
+
+	snapshot := codexapp.Snapshot{
+		Provider:                 codexapp.ProviderCodex,
+		ProjectPath:              "/tmp/demo",
+		Started:                  true,
+		ThreadID:                 "thread-demo",
+		BrowserActivity:          browserctl.SessionActivity{Policy: settingsAutomaticPlaywrightPolicy},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://example.test/login",
+	}
+	session := &fakeCodexSession{projectPath: "/tmp/demo", snapshot: snapshot}
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		return session, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{ProjectPath: "/tmp/demo"}); err != nil {
+		t.Fatal(err)
+	}
+
+	previousSessionRevealer := managedBrowserSessionRevealer
+	defer func() { managedBrowserSessionRevealer = previousSessionRevealer }()
+	revealed := false
+	managedBrowserSessionRevealer = func(_ string, sessionKey string) (browserctl.ManagedPlaywrightState, error) {
+		revealed = true
+		return browserctl.ManagedPlaywrightState{
+			SessionKey:      sessionKey,
+			MCPPID:          122,
+			BrowserPID:      123,
+			RevealSupported: true,
+			UpdatedAt:       time.Now().UTC(),
+		}, nil
+	}
+
+	m := Model{
+		codexManager:        manager,
+		codexVisibleProject: "/tmp/demo",
+		codexHiddenProject:  "/tmp/demo",
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		nowFn:               func() time.Time { return now },
+		managedBrowserStates: map[string]browserctl.ManagedPlaywrightState{
+			"managed-demo": {
+				SessionKey:      "managed-demo",
+				MCPPID:          122,
+				BrowserPID:      123,
+				RevealSupported: true,
+				UpdatedAt:       now.Add(-managedBrowserStateFreshWindow - time.Second),
+			},
+		},
+	}
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlO})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("ctrl+o should probe an expired cache for an attached live session")
+	}
+	if got.status != "Checking the managed browser window..." {
+		t.Fatalf("status = %q, want checking notice", got.status)
+	}
+	openMsg := cmd().(browserOpenMsg)
+	if openMsg.err != nil {
+		t.Fatalf("probe-and-reveal error = %v", openMsg.err)
+	}
+	if !revealed || !openMsg.managedBrowserProbeLive {
+		t.Fatalf("probe reveal/live = %t/%t, want true/true", revealed, openMsg.managedBrowserProbeLive)
+	}
+}
+
 func TestFinishedLCAgentBrowserPageDoesNotRetryHydration(t *testing.T) {
 	now := time.Now()
 	previousStateReader := managedBrowserStateReader
@@ -490,6 +701,7 @@ func TestFinishedLCAgentBrowserPageDoesNotRetryHydration(t *testing.T) {
 }
 
 func TestVisibleCodexBrowserWaitCanRevealWithoutCachedState(t *testing.T) {
+	stubLiveManagedBrowserStateReader(t)
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
 		snapshot: codexapp.Snapshot{

@@ -81,6 +81,12 @@ done
 	if search.Status != "searched" || !strings.Contains(search.Snapshot, "backend: browser") || !strings.Contains(search.Snapshot, "LCAgent Browser") {
 		t.Fatalf("search result = %#v", search)
 	}
+	state.BrowserPID = 321
+	state.BrowserAppName = "Chromium"
+	state.RevealSupported = true
+	if err := WriteManagedPlaywrightState(session.paths, state); err != nil {
+		t.Fatal(err)
+	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +96,9 @@ done
 	}
 	if state.MCPPID != 0 {
 		t.Fatalf("MCPPID after close = %d, want 0", state.MCPPID)
+	}
+	if state.BrowserPID != 0 || state.RevealSupported || state.BrowserAppName != "" {
+		t.Fatalf("browser attachment after close = %#v, want cleared", state)
 	}
 }
 

@@ -143,6 +143,34 @@ func (m Model) revealManagedBrowserCmd(managedSessionKey string, ref browserctl.
 	}
 }
 
+func (m Model) probeAndRevealManagedBrowserCmd(managedSessionKey string, ref browserctl.SessionRef, successStatus string) tea.Cmd {
+	controller := m.ensureBrowserController()
+	dataDir := m.appDataDir()
+	managedSessionKey = strings.TrimSpace(managedSessionKey)
+	return func() tea.Msg {
+		state, live, err := probeAndRevealManagedBrowserSession(dataDir, managedSessionKey)
+		msg := browserOpenMsg{
+			err:                      err,
+			managedBrowserProbe:      true,
+			managedBrowserProbeLive:  live,
+			managedBrowserSessionKey: managedSessionKey,
+		}
+		if live {
+			msg.managedBrowserState = state
+			msg.managedBrowserStateSet = true
+		}
+		if err != nil {
+			if controller != nil {
+				msg.browserLeaseSnapshot = controller.ReleaseInteractive(ref)
+				msg.browserLeaseSnapshotSet = true
+			}
+			return msg
+		}
+		msg.status = successStatus
+		return msg
+	}
+}
+
 func (m Model) currentInteractiveBrowserLeaseOwner() *browserctl.InteractiveLease {
 	if m.browserLeaseSnapshot.Interactive == nil {
 		return nil
