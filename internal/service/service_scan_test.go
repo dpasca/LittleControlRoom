@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"lcroom/internal/aibackend"
 	"lcroom/internal/appfs"
 	"lcroom/internal/config"
@@ -332,6 +333,54 @@ func TestReadScanGitMetadataUsesBoundedConcurrency(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("metadata reads did not finish after release")
+	}
+}
+
+func TestWithScanGitMetadataTimeoutSharesConcurrentTimeoutSet(t *testing.T) {
+	oldTimeout := scanGitMetadataTimeout
+	scanGitMetadataTimeout = 10 * time.Millisecond
+	defer func() {
+		scanGitMetadataTimeout = oldTimeout
+	}()
+
+	timedOutPaths := &scanGitMetadataTimeoutSet{}
+	blockingReader := func(ctx context.Context, _ string) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	readers := []func(context.Context, string) (string, error){
+		withScanGitMetadataTimeout(blockingReader, timedOutPaths),
+		withScanGitMetadataTimeout(blockingReader, timedOutPaths),
+	}
+
+	root := t.TempDir()
+	paths := make([]string, 64)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range paths {
+		paths[i] = filepath.Join(root, fmt.Sprintf("project-%d", i))
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			_, _ = readers[index%len(readers)](context.Background(), paths[index])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for _, path := range paths {
+		if !timedOutPaths.contains(path) {
+			t.Fatalf("timeout set does not contain %s", path)
+		}
+	}
+
+	skippedReader := withScanGitMetadataTimeout(func(context.Context, string) (string, error) {
+		t.Fatal("reader called for a path that already timed out")
+		return "", nil
+	}, timedOutPaths)
+	if _, err := skippedReader(context.Background(), paths[0]); err == nil || !strings.Contains(err.Error(), "after earlier timeout") {
+		t.Fatalf("read after timeout error = %v, want earlier-timeout skip", err)
 	}
 }
 

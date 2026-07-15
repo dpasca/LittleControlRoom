@@ -259,21 +259,42 @@ func cloneAppConfig(cfg config.AppConfig) config.AppConfig {
 	return cloned
 }
 
-func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, error), timedOutPaths map[string]struct{}) func(context.Context, string) (T, error) {
+type scanGitMetadataTimeoutSet struct {
+	mu    sync.Mutex
+	paths map[string]struct{}
+}
+
+func (s *scanGitMetadataTimeoutSet) contains(path string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.paths[path]
+	return ok
+}
+
+func (s *scanGitMetadataTimeoutSet) add(path string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.paths == nil {
+		s.paths = make(map[string]struct{})
+	}
+	s.paths[path] = struct{}{}
+}
+
+func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, error), timedOutPaths *scanGitMetadataTimeoutSet) func(context.Context, string) (T, error) {
 	if reader == nil {
 		return nil
 	}
-	var timedOutMu sync.Mutex
 	return func(parent context.Context, path string) (T, error) {
 		var zero T
 		cleanPath := filepath.Clean(strings.TrimSpace(path))
-		if timedOutPaths != nil {
-			timedOutMu.Lock()
-			if _, ok := timedOutPaths[cleanPath]; ok {
-				timedOutMu.Unlock()
-				return zero, fmt.Errorf("skipping git metadata read for %s after earlier timeout", cleanPath)
-			}
-			timedOutMu.Unlock()
+		if timedOutPaths.contains(cleanPath) {
+			return zero, fmt.Errorf("skipping git metadata read for %s after earlier timeout", cleanPath)
 		}
 		timeout := scanGitMetadataTimeout
 		if timeout <= 0 {
@@ -293,11 +314,7 @@ func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, 
 
 		value, err := reader(ctx, path)
 		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			if timedOutPaths != nil {
-				timedOutMu.Lock()
-				timedOutPaths[cleanPath] = struct{}{}
-				timedOutMu.Unlock()
-			}
+			timedOutPaths.add(cleanPath)
 			return zero, fmt.Errorf("git metadata read timed out for %s after %s: %w", path, timeout, ctx.Err())
 		}
 		return value, err
@@ -1011,7 +1028,7 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 	runtime := s.runtimeSnapshot()
 	cfg := runtime.cfg
 	classifier := runtime.classifier
-	timedOutGitPaths := map[string]struct{}{}
+	timedOutGitPaths := &scanGitMetadataTimeoutSet{}
 	gitFingerprintReader := withScanGitMetadataTimeout(runtime.gitFingerprintReader, timedOutGitPaths)
 	gitRepoStatusReader := withScanGitMetadataTimeout(runtime.gitRepoStatusReader, timedOutGitPaths)
 	gitWorktreeInfoReader := withScanGitMetadataTimeout(runtime.gitWorktreeInfoReader, timedOutGitPaths)
