@@ -877,9 +877,11 @@ func TestVisibleCodexURLBasedElicitationHintsOpenBrowser(t *testing.T) {
 		URL:     "https://example.test/login",
 	}
 
-	renderedBlocks := strings.Join(m.renderCodexElicitationBlocks(request, 120), "\n")
-	if !strings.Contains(renderedBlocks, "Press O to reveal the managed browser window, then finish the login flow and press Enter when you are done.") {
-		t.Fatalf("renderCodexElicitationBlocks() missing managed login hint: %q", renderedBlocks)
+	dialogSnapshot := m.codexSnapshots["/tmp/demo"]
+	dialogSnapshot.PendingElicitation = &request
+	renderedDialog := ansi.Strip(m.renderCodexElicitationDialogContent(dialogSnapshot, request, 120))
+	if !strings.Contains(renderedDialog, "Press O to show the managed browser. Finish there, then press Enter here when you are done.") {
+		t.Fatalf("renderCodexElicitationDialogContent() missing managed login hint: %q", renderedDialog)
 	}
 
 	footer := ansi.Strip(m.renderCodexFooter(codexapp.Snapshot{

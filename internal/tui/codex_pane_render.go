@@ -35,7 +35,11 @@ func (m Model) renderCodexView() string {
 	if height <= 0 {
 		height = 30
 	}
-	return m.renderCodexSplitView(snapshot, width, height)
+	body := m.renderCodexSplitView(snapshot, width, height)
+	if snapshot.PendingElicitation != nil {
+		body = m.renderCodexElicitationDialogOverlay(body, width, height, snapshot)
+	}
+	return body
 }
 
 func (m Model) renderCodexMainView(snapshot codexapp.Snapshot, width, height int) string {
@@ -167,15 +171,18 @@ func (m Model) codexLowerBlocks(snapshot codexapp.Snapshot, width int) []string 
 			lines = append(lines, browser)
 		}
 		lines = append(lines, m.renderCodexSlashBlocks(width)...)
-		input := m.codexInput
-		input.SetWidth(max(20, width-4))
-		input.SetHeight(max(3, min(10, m.codexInput.LineCount()+1)))
-		if m.codexInputSelectionActive() {
-			lines = append(lines, renderCodexComposerWithSelection(input, m.codexInputSelection, width))
-		} else if m.codexComposerSelection.dragging && m.codexComposerSelection.hasRange() {
-			lines = append(lines, renderCodexComposerWithMouseSelection(input, m.codexComposerSelection, width))
-		} else {
-			lines = append(lines, renderCodexComposer(input, width))
+		showComposer := snapshot.PendingElicitation == nil || codexElicitationNeedsComposer(*snapshot.PendingElicitation)
+		if showComposer {
+			input := m.codexInput
+			input.SetWidth(max(20, width-4))
+			input.SetHeight(max(3, min(10, m.codexInput.LineCount()+1)))
+			if m.codexInputSelectionActive() {
+				lines = append(lines, renderCodexComposerWithSelection(input, m.codexInputSelection, width))
+			} else if m.codexComposerSelection.dragging && m.codexComposerSelection.hasRange() {
+				lines = append(lines, renderCodexComposerWithMouseSelection(input, m.codexComposerSelection, width))
+			} else {
+				lines = append(lines, renderCodexComposer(input, width))
+			}
 		}
 		return lines
 	}
@@ -185,8 +192,6 @@ func (m Model) renderCodexRequestBlocks(snapshot codexapp.Snapshot, width int) [
 	switch {
 	case snapshot.PendingToolInput != nil:
 		return m.renderCodexToolInputBlocks(*snapshot.PendingToolInput, width)
-	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeForm:
-		return m.renderCodexElicitationBlocks(*snapshot.PendingElicitation, width)
 	default:
 		return nil
 	}
@@ -195,9 +200,7 @@ func (m Model) renderCodexRequestBlocks(snapshot codexapp.Snapshot, width int) [
 func (m Model) renderCodexBrowserPanel(snapshot codexapp.Snapshot, width int) string {
 	lines := []string{}
 	lines = append(lines, m.codexBrowserReconnectLines(snapshot)...)
-	if snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode != codexapp.ElicitationModeForm {
-		lines = append(lines, m.renderCodexElicitationBlocks(*snapshot.PendingElicitation, width)...)
-	} else {
+	if snapshot.PendingElicitation == nil {
 		lines = append(lines, m.renderCodexCurrentBrowserPageBlocks(snapshot, width)...)
 	}
 	lines = compactNonEmptyStrings(lines)
@@ -238,30 +241,6 @@ func (m Model) renderCodexToolInputBlocks(request codexapp.ToolInputRequest, wid
 			line += " - " + desc
 		}
 		lines = append(lines, fitFooterWidth(line, width))
-	}
-	return lines
-}
-
-func (m Model) renderCodexElicitationBlocks(request codexapp.ElicitationRequest, width int) []string {
-	lines := []string{fitFooterWidth("MCP input: "+request.Summary(), width)}
-	loginURL := ""
-	managedSessionKey := ""
-	if snapshot, ok := m.currentCachedCodexSnapshot(); ok {
-		loginURL = managedBrowserLoginURL(embeddedProvider(snapshot), snapshot.BrowserActivity.Policy, request.Mode, request.URL)
-		managedSessionKey = strings.TrimSpace(snapshot.ManagedBrowserSessionKey)
-	}
-	if request.Mode == codexapp.ElicitationModeURL && strings.TrimSpace(request.URL) != "" {
-		lines = append(lines, fitFooterWidth("Requested URL: "+request.URL, width))
-		if loginURL != "" && managedSessionKey != "" {
-			lines = append(lines, fitFooterWidth("Press O to reveal the managed browser window, then finish the login flow and press Enter when you are done.", width))
-		}
-	}
-	if request.Mode == codexapp.ElicitationModeForm {
-		lines = append(lines, fitFooterWidth("Paste JSON or text into the composer, then press Enter to accept.", width))
-		if len(request.RequestedSchema) > 0 {
-			schemaSummary := strings.TrimSpace(string(request.RequestedSchema))
-			lines = append(lines, fitFooterWidth("Requested schema: "+schemaSummary, width))
-		}
 	}
 	return lines
 }
