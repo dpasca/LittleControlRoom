@@ -242,7 +242,7 @@ Chat sessions are saved as grep-friendly Markdown transcripts under the app data
 
 Most day-to-day use falls into a few buckets:
 
-- **Run and monitor** — Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. In the command editor, type a detected command prefix and press `Tab` to complete it; use Up/Down to cycle matches. Press `Tab` or `/runtime` from the dashboard when you want to work directly in the runtime pane.
+- **Run and monitor** — Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. The command editor visibly lists project-derived completions, including package scripts, Make/Just targets, and Go entrypoints. Type a prefix and press `Tab` to complete it; use Up/Down to cycle matches. Press `Tab` or `/runtime` from the dashboard when you want to work directly in the runtime pane.
 
   [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
 

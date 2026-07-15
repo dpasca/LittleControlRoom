@@ -272,6 +272,87 @@ func TestRunCommandDialogAutocompletesDetectedCommandWhileEditing(t *testing.T) 
 	}
 }
 
+func TestRunCommandDialogShowsAndCyclesMatchingProjectCommands(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	makefile := `.PHONY: test tui tui-parallel serve
+
+test:
+	go test ./...
+
+tui:
+	go run ./cmd/app
+
+tui-parallel:
+	go run ./cmd/app --parallel
+
+serve:
+	go run ./cmd/app serve
+`
+	if err := os.WriteFile(filepath.Join(projectPath, "Makefile"), []byte(makefile), 0o644); err != nil {
+		t.Fatalf("write Makefile: %v", err)
+	}
+
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "make tu",
+	}, false)
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	rendered := ansi.Strip(m.renderRunCommandContent(88))
+	for _, want := range []string{"Autocomplete", "make tui", "make tui-parallel", "Tab completes", "Up/Down selects"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("run command autocomplete missing %q:\n%s", want, rendered)
+		}
+	}
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != "make tui" {
+		t.Fatalf("initial completion = %q, want make tui", got)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != "make tui-parallel" {
+		t.Fatalf("completion after Down = %q, want make tui-parallel", got)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if got := m.runCommandDialog.Input.Value(); got != "make tui-parallel" {
+		t.Fatalf("command after Tab = %q, want make tui-parallel", got)
+	}
+}
+
+func TestRunCommandDialogExplainsWhenNoProjectCommandsAreDetected(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "empty",
+		Path:          projectPath,
+		PresentOnDisk: true,
+	}, false)
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if !m.runCommandDialog.SuggestionChecked {
+		t.Fatal("run command autocomplete lookup should be marked complete")
+	}
+	rendered := ansi.Strip(m.renderRunCommandContent(80))
+	if !strings.Contains(rendered, "No project commands detected; enter a command manually.") {
+		t.Fatalf("run command dialog should explain the empty autocomplete state:\n%s", rendered)
+	}
+}
+
 func TestRunCommandSuggestionDoesNotOverwriteTypedInput(t *testing.T) {
 	t.Parallel()
 

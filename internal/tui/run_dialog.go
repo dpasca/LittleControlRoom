@@ -21,7 +21,9 @@ type runCommandDialogState struct {
 	Input             textinput.Model
 	Suggestions       []projectrun.Suggestion
 	SuggestionReason  string
+	SuggestionError   string
 	SuggestionPending bool
+	SuggestionChecked bool
 	SuggestionSeq     int64
 	StartAfterSave    bool
 	Submitting        bool
@@ -177,7 +179,7 @@ func (m Model) loadRunCommandSuggestionsCmd(projectPath string, seq int64) tea.C
 		return nil
 	}
 	return func() tea.Msg {
-		suggestions, err := projectrun.Candidates(projectPath)
+		suggestions, err := projectrun.Completions(projectPath)
 		return runCommandSuggestionMsg{
 			projectPath: projectPath,
 			seq:         seq,
@@ -201,6 +203,33 @@ func currentRunCommandSuggestionReason(dialog *runCommandDialogState) string {
 		}
 	}
 	return ""
+}
+
+func matchingRunCommandSuggestions(dialog *runCommandDialogState) []projectrun.Suggestion {
+	if dialog == nil {
+		return nil
+	}
+	matchedCommands := dialog.Input.MatchedSuggestions()
+	if len(matchedCommands) == 0 {
+		return nil
+	}
+
+	byCommand := make(map[string]projectrun.Suggestion, len(dialog.Suggestions))
+	for _, suggestion := range dialog.Suggestions {
+		command := strings.TrimSpace(suggestion.Command)
+		if command != "" {
+			byCommand[command] = suggestion
+		}
+	}
+
+	matched := make([]projectrun.Suggestion, 0, len(matchedCommands))
+	for _, command := range matchedCommands {
+		command = strings.TrimSpace(command)
+		if suggestion, ok := byCommand[command]; ok {
+			matched = append(matched, suggestion)
+		}
+	}
+	return matched
 }
 
 func (m Model) startProjectRuntimeCmd(projectPath, command string) tea.Cmd {
@@ -413,15 +442,78 @@ func (m Model) renderRunCommandContent(width int) string {
 	} else if dialog.SuggestionPending {
 		lines = append(lines, "")
 		lines = append(lines, detailField("Hint", detailMutedStyle.Render("Checking project files for a suggested command...")))
+	} else if strings.TrimSpace(dialog.SuggestionError) != "" {
+		lines = append(lines, "")
+		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("Unavailable: "+dialog.SuggestionError)))
+	} else if dialog.SuggestionChecked && len(dialog.Suggestions) == 0 {
+		lines = append(lines, "")
+		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("No project commands detected; enter a command manually.")))
 	}
 	if len(dialog.Suggestions) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, commandPaletteHintStyle.Render("Type a detected command prefix; Tab completes it and Up/Down cycles matches."))
+		lines = append(lines, "", commandPaletteTitleStyle.Render("Autocomplete"))
+		matches := matchingRunCommandSuggestions(dialog)
+		visible := matches
+		selected := dialog.Input.CurrentSuggestionIndex()
+		if len(visible) == 0 {
+			visible = dialog.Suggestions
+			selected = -1
+		}
+		start, end := runCommandSuggestionWindow(selected, len(visible))
+		if start > 0 {
+			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↑ %d more", start)))
+		}
+		for i := start; i < end; i++ {
+			lines = append(lines, renderRunCommandSuggestionRow(visible[i], i == selected, width))
+		}
+		if end < len(visible) {
+			lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(visible)-end)))
+		}
+		if len(matches) == 0 {
+			lines = append(lines, commandPaletteHintStyle.Render("Type a prefix to filter detected commands; Tab completes."))
+		} else {
+			lines = append(lines, commandPaletteHintStyle.Render("Tab completes; Up/Down selects another match."))
+		}
 	}
 	lines = append(lines, "")
 	lines = append(lines, renderDialogAction("Enter", saveRunDialogPrimaryLabel(dialog), commitActionKeyStyle, commitActionTextStyle))
 	lines = append(lines, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
 	return strings.Join(lines, "\n")
+}
+
+func runCommandSuggestionWindow(selected, total int) (int, int) {
+	if total <= 0 {
+		return 0, 0
+	}
+	limit := min(4, total)
+	if selected < 0 {
+		return 0, limit
+	}
+	start := max(0, selected-limit+1)
+	start = min(start, total-limit)
+	return start, start + limit
+}
+
+func renderRunCommandSuggestionRow(suggestion projectrun.Suggestion, selected bool, width int) string {
+	commandWidth := max(16, min(38, width/2))
+	command := truncateText(strings.TrimSpace(suggestion.Command), commandWidth)
+	reason := strings.TrimSpace(suggestion.Reason)
+	marker := " "
+	if selected {
+		marker = ">"
+	}
+	row := marker + " " + command
+	reasonWidth := width - lipgloss.Width(row) - 2
+	if reason != "" && reasonWidth >= 8 {
+		row += "  " + truncateText(reason, reasonWidth)
+	}
+	if selected {
+		return commandPaletteSelectStyle.Width(width).Render(row)
+	}
+	styledRow := marker + " " + commandPalettePickStyle.Render(command)
+	if reason != "" && reasonWidth >= 8 {
+		styledRow += "  " + detailMutedStyle.Render(truncateText(reason, reasonWidth))
+	}
+	return commandPaletteRowStyle.Width(width).Render(styledRow)
 }
 
 func saveRunDialogPrimaryLabel(dialog *runCommandDialogState) string {

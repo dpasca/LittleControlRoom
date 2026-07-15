@@ -2105,9 +2105,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		dialog.SuggestionPending = false
+		dialog.SuggestionChecked = true
 		if msg.err != nil {
+			dialog.SuggestionError = strings.TrimSpace(msg.err.Error())
 			return m, nil
 		}
+		dialog.SuggestionError = ""
 		dialog.Suggestions = append([]projectrun.Suggestion(nil), msg.suggestions...)
 		commands := make([]string, 0, len(dialog.Suggestions))
 		for _, suggestion := range dialog.Suggestions {

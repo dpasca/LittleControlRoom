@@ -109,6 +109,12 @@ func candidatesAtPath(projectPath string) ([]Suggestion, error) {
 }
 
 func nestedCandidates(projectPath string) ([]Suggestion, error) {
+	return nestedCandidatesWith(projectPath, candidatesAtPath)
+}
+
+type candidateDetector func(string) ([]Suggestion, error)
+
+func nestedCandidatesWith(projectPath string, detect candidateDetector) ([]Suggestion, error) {
 	type match struct {
 		relPath     string
 		suggestions []Suggestion
@@ -137,7 +143,7 @@ func nestedCandidates(projectPath string) ([]Suggestion, error) {
 			return filepath.SkipDir
 		}
 
-		suggestions, err := candidatesAtPath(path)
+		suggestions, err := detect(path)
 		if err != nil {
 			return err
 		}
