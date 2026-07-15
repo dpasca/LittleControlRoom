@@ -448,7 +448,7 @@ type runCommandSavedMsg struct {
 type runCommandSuggestionMsg struct {
 	projectPath string
 	seq         int64
-	suggestion  projectrun.Suggestion
+	suggestions []projectrun.Suggestion
 	err         error
 }
 
@@ -2108,15 +2108,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, nil
 		}
-		if strings.TrimSpace(dialog.Input.Value()) != "" {
+		dialog.Suggestions = append([]projectrun.Suggestion(nil), msg.suggestions...)
+		commands := make([]string, 0, len(dialog.Suggestions))
+		for _, suggestion := range dialog.Suggestions {
+			if command := strings.TrimSpace(suggestion.Command); command != "" {
+				commands = append(commands, command)
+			}
+		}
+		if len(commands) == 0 {
 			return m, nil
 		}
-		if strings.TrimSpace(msg.suggestion.Command) == "" {
-			return m, nil
+		if strings.TrimSpace(dialog.Input.Value()) == "" {
+			dialog.Input.SetValue(commands[0])
+			dialog.Input.CursorEnd()
 		}
-		dialog.Input.SetValue(msg.suggestion.Command)
-		dialog.Input.CursorEnd()
-		dialog.SuggestionReason = strings.TrimSpace(msg.suggestion.Reason)
+		dialog.Input.SetSuggestions(commands)
+		dialog.SuggestionReason = currentRunCommandSuggestionReason(dialog)
 		return m, nil
 	case todoActionMsg:
 		if msg.err != nil {

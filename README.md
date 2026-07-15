@@ -242,7 +242,7 @@ Chat sessions are saved as grep-friendly Markdown transcripts under the app data
 
 Most day-to-day use falls into a few buckets:
 
-- **Run and monitor** — Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. Press `Tab` or `/runtime` when you want to work directly in the runtime pane.
+- **Run and monitor** — Use `/run` or `/start` to launch a saved runtime, `/restart` to bounce it, `/run-edit` to change the command, and `/stop` to shut it down. In the command editor, type a detected command prefix and press `Tab` to complete it; use Up/Down to cycle matches. Press `Tab` or `/runtime` from the dashboard when you want to work directly in the runtime pane.
 
   [![Runtime pane focused on a running session](docs/screenshots/main-panel-live-runtime.png)](docs/screenshots/main-panel-live-runtime.png)
 
@@ -254,7 +254,7 @@ Most day-to-day use falls into a few buckets:
 
 - **Keep broad access with a narrow deletion seatbelt** — LCR-managed embedded Codex sessions keep the selected launch preset's cross-directory access, including YOLO. Their guarded `rm` allows plain `rm -rf /tmp/<name>` only when every target's parent resolves below `/tmp`; other `rm` uses, absolute executables, and common wrapper forms remain blocked. LCAgent still denies direct `rm` through both bounded commands and managed-process launches at every permission level. This is protection against the common accidental command, not a complete deletion sandbox; targeted editing tools and other filesystem APIs still work, so backups remain important. See the [destructive-command safety design](docs/destructive_command_safety.md) for the threat model and known limits.
 
-- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, OpenCode, or experimental LCAgent). Linked worktrees prepare Git submodules by default; repos can use [`.lcroom/worktrees.toml`](docs/worktree_prep.md) only when they need to opt out or customize preparation.
+- **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, OpenCode, or experimental LCAgent). New linked worktrees inherit the source project's saved run command and prepare Git submodules by default; repos can use [`.lcroom/worktrees.toml`](docs/worktree_prep.md) only when they need to opt out or customize preparation.
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
 

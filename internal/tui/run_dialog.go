@@ -19,6 +19,7 @@ type runCommandDialogState struct {
 	ProjectPath       string
 	ProjectName       string
 	Input             textinput.Model
+	Suggestions       []projectrun.Suggestion
 	SuggestionReason  string
 	SuggestionPending bool
 	SuggestionSeq     int64
@@ -54,13 +55,14 @@ func (m *Model) openRunCommandDialog(project model.ProjectSummary, startAfterSav
 	input.Placeholder = "pnpm dev"
 	input.CharLimit = 4096
 	input.Width = 72
+	input.ShowSuggestions = true
 	input.SetValue(command)
 
 	m.runCommandDialog = &runCommandDialogState{
 		ProjectPath:       project.Path,
 		ProjectName:       projectTitle(project.Path, project.Name),
 		Input:             input,
-		SuggestionPending: command == "",
+		SuggestionPending: true,
 		SuggestionSeq:     1,
 		StartAfterSave:    startAfterSave,
 	}
@@ -72,10 +74,7 @@ func (m *Model) openRunCommandDialog(project model.ProjectSummary, startAfterSav
 		m.status = "Editing saved run command"
 	}
 	focusCmd := m.runCommandDialog.Input.Focus()
-	if command != "" {
-		return focusCmd
-	}
-	return batchCmds(focusCmd, m.loadRunCommandSuggestionCmd(project.Path, m.runCommandDialog.SuggestionSeq))
+	return batchCmds(focusCmd, m.loadRunCommandSuggestionsCmd(project.Path, m.runCommandDialog.SuggestionSeq))
 }
 
 func (m *Model) closeRunCommandDialog(status string) {
@@ -143,6 +142,7 @@ func (m Model) updateRunCommandDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	dialog.Input, cmd = dialog.Input.Update(msg)
+	dialog.SuggestionReason = currentRunCommandSuggestionReason(dialog)
 	return m, cmd
 }
 
@@ -171,20 +171,36 @@ func (m Model) saveRunCommandCmd(projectPath, command string, startAfter bool) t
 	}
 }
 
-func (m Model) loadRunCommandSuggestionCmd(projectPath string, seq int64) tea.Cmd {
+func (m Model) loadRunCommandSuggestionsCmd(projectPath string, seq int64) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		return nil
 	}
 	return func() tea.Msg {
-		suggestion, err := projectrun.Suggest(projectPath)
+		suggestions, err := projectrun.Candidates(projectPath)
 		return runCommandSuggestionMsg{
 			projectPath: projectPath,
 			seq:         seq,
-			suggestion:  suggestion,
+			suggestions: suggestions,
 			err:         err,
 		}
 	}
+}
+
+func currentRunCommandSuggestionReason(dialog *runCommandDialogState) string {
+	if dialog == nil {
+		return ""
+	}
+	current := strings.TrimSpace(dialog.Input.CurrentSuggestion())
+	if current == "" {
+		return ""
+	}
+	for _, suggestion := range dialog.Suggestions {
+		if strings.TrimSpace(suggestion.Command) == current {
+			return strings.TrimSpace(suggestion.Reason)
+		}
+	}
+	return ""
 }
 
 func (m Model) startProjectRuntimeCmd(projectPath, command string) tea.Cmd {
@@ -397,6 +413,10 @@ func (m Model) renderRunCommandContent(width int) string {
 	} else if dialog.SuggestionPending {
 		lines = append(lines, "")
 		lines = append(lines, detailField("Hint", detailMutedStyle.Render("Checking project files for a suggested command...")))
+	}
+	if len(dialog.Suggestions) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, commandPaletteHintStyle.Render("Type a detected command prefix; Tab completes it and Up/Down cycles matches."))
 	}
 	lines = append(lines, "")
 	lines = append(lines, renderDialogAction("Enter", saveRunDialogPrimaryLabel(dialog), commitActionKeyStyle, commitActionTextStyle))

@@ -219,6 +219,57 @@ func TestOpenRunCommandDialogLoadsSuggestionAsync(t *testing.T) {
 	if m.runCommandDialog.SuggestionPending {
 		t.Fatal("suggestion pending should clear after the async lookup returns")
 	}
+	if got := m.runCommandDialog.Input.AvailableSuggestions(); !slices.Contains(got, "./bin/dev") {
+		t.Fatalf("available run command suggestions = %#v, want ./bin/dev", got)
+	}
+}
+
+func TestRunCommandDialogAutocompletesDetectedCommandWhileEditing(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	manifest := `{"scripts":{"dev":"vite"},"packageManager":"pnpm@9.0.0"}`
+	if err := os.WriteFile(filepath.Join(projectPath, "package.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "pn",
+	}, false)
+	if m.runCommandDialog == nil {
+		t.Fatal("openRunCommandDialog() should open the dialog")
+	}
+	if !m.runCommandDialog.SuggestionPending {
+		t.Fatal("openRunCommandDialog() should load completions for an existing command")
+	}
+
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if got := m.runCommandDialog.Input.Value(); got != "pn" {
+		t.Fatalf("command before completion = %q, want typed prefix pn", got)
+	}
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != "pnpm dev" {
+		t.Fatalf("current completion = %q, want pnpm dev", got)
+	}
+
+	updated, _ := m.updateRunCommandDialogMode(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if got := m.runCommandDialog.Input.Value(); got != "pnpm dev" {
+		t.Fatalf("command after Tab = %q, want pnpm dev", got)
+	}
+	if got := m.runCommandDialog.SuggestionReason; got != `Found package.json script "dev".` {
+		t.Fatalf("completion reason = %q", got)
+	}
+	if rendered := ansi.Strip(m.renderRunCommandContent(80)); !strings.Contains(rendered, "Tab completes") {
+		t.Fatalf("run command dialog should advertise completion controls:\n%s", rendered)
+	}
 }
 
 func TestRunCommandSuggestionDoesNotOverwriteTypedInput(t *testing.T) {

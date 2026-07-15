@@ -405,6 +405,54 @@ func TestCreateTodoWorktreeInheritsProjectCategory(t *testing.T) {
 	}
 }
 
+func TestCreateTodoWorktreeInheritsRunCommand(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	if err := svc.SetRunCommand(ctx, projectPath, "pnpm dev"); err != nil {
+		t.Fatalf("set root run command: %v", err)
+	}
+
+	item, err := svc.AddTodo(ctx, projectPath, "Keep the runtime command in the worktree")
+	if err != nil {
+		t.Fatalf("add todo: %v", err)
+	}
+	result, err := svc.CreateTodoWorktree(ctx, CreateTodoWorktreeRequest{
+		ProjectPath:    projectPath,
+		TodoID:         item.ID,
+		BranchName:     "feat/inherit-run-command",
+		WorktreeSuffix: "feat-inherit-run-command",
+	})
+	if err != nil {
+		t.Fatalf("CreateTodoWorktree() error = %v", err)
+	}
+
+	detail, err := st.GetProjectDetail(ctx, result.WorktreePath, 5)
+	if err != nil {
+		t.Fatalf("GetProjectDetail() for worktree error = %v", err)
+	}
+	if got := detail.Summary.RunCommand; got != "pnpm dev" {
+		t.Fatalf("worktree run command = %q, want inherited pnpm dev", got)
+	}
+}
+
 func TestCreateTodoWorktreeWaitsForRootCreationLock(t *testing.T) {
 	t.Parallel()
 

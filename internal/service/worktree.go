@@ -88,6 +88,7 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if strings.TrimSpace(worktreeRootPath) == "" {
 		worktreeRootPath = projectPath
 	}
+	sourceRunCommand := s.projectRunCommandForWorktreeSource(ctx, projectPath, worktreeRootPath)
 	unlock, err := s.worktreeCreateLocks.LockContext(ctx, filepath.Clean(worktreeRootPath))
 	if err != nil {
 		return CreateTodoWorktreeResult{}, fmt.Errorf("wait for existing worktree creation in %s: %w", worktreeRootPath, err)
@@ -169,6 +170,11 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if attachErr != nil {
 		return result, fmt.Errorf("created worktree at %s but failed to track it in Little Control Room: %w", worktreePath, attachErr)
 	}
+	if sourceRunCommand != "" {
+		if err := s.store.SetRunCommand(ctx, worktreePath, sourceRunCommand); err != nil {
+			return result, fmt.Errorf("inherit run command for worktree %s: %w", worktreePath, err)
+		}
+	}
 	if strings.TrimSpace(parentBranch) != "" {
 		if err := s.store.SetWorktreeParentBranch(ctx, worktreePath, parentBranch); err != nil {
 			return result, fmt.Errorf("record parent branch for worktree %s: %w", worktreePath, err)
@@ -213,6 +219,31 @@ func (s *Service) projectCategoryForWorktreeSource(ctx context.Context, projectP
 		return "", false
 	}
 	return strings.TrimSpace(summary.CategoryID), true
+}
+
+func (s *Service) projectRunCommandForWorktreeSource(ctx context.Context, projectPaths ...string) string {
+	if s == nil || s.store == nil {
+		return ""
+	}
+	seen := map[string]struct{}{}
+	for _, projectPath := range projectPaths {
+		projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+		if projectPath == "" || projectPath == "." {
+			continue
+		}
+		if _, ok := seen[projectPath]; ok {
+			continue
+		}
+		seen[projectPath] = struct{}{}
+		summary, err := s.store.GetProjectSummary(ctx, projectPath, true)
+		if err != nil {
+			continue
+		}
+		if command := strings.TrimSpace(summary.RunCommand); command != "" {
+			return command
+		}
+	}
+	return ""
 }
 
 func (s *Service) RegenerateTodoWorktreeSuggestion(ctx context.Context, projectPath string, todoID int64) error {
