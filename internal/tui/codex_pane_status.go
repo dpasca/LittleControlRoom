@@ -80,6 +80,18 @@ func codexSnapshotBrowserWaitingForUser(snapshot codexapp.Snapshot) bool {
 }
 
 func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
+	switch {
+	case snapshot.PendingApproval != nil:
+		return "Waiting for approval"
+	case snapshot.PendingToolInput != nil:
+		return "Waiting for your answer"
+	case snapshot.PendingElicitation != nil && snapshot.PendingElicitation.Mode == codexapp.ElicitationModeURL:
+		return "Waiting for browser input"
+	case snapshot.PendingElicitation != nil && codexElicitationNeedsComposer(*snapshot.PendingElicitation):
+		return "Waiting for tool input"
+	case snapshot.PendingElicitation != nil:
+		return "Waiting for your decision"
+	}
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseReconciling:
 		if codexStatusIsCompacting(snapshot.Status) {
