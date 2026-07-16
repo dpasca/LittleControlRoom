@@ -30,6 +30,7 @@ import (
 	"lcroom/internal/helpmeta"
 	"lcroom/internal/model"
 	"lcroom/internal/modeleval"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/runtimeguard"
 	"lcroom/internal/server"
 	"lcroom/internal/service"
@@ -996,10 +997,11 @@ func resolveMobileRuntimeOptions(cfg config.AppConfig, listenOverride string) (s
 func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool) (int, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
 	codexManager := codexapp.NewManager()
+	runtimeManager := projectrun.NewManager()
 	var mobileServer *server.RunningServer
 	mobileStatus := tui.MobileServerStatus{ListenAddress: mobileListenAddress, Disabled: !mobileEnabled}
 	if mobileEnabled {
-		mobileServer, mobileStatus = startTUIMobileServer(runCtx, svc, codexManager, mobileListenAddress)
+		mobileServer, mobileStatus = startTUIMobileServer(runCtx, svc, codexManager, runtimeManager, mobileListenAddress)
 	}
 	mobileStatus.LANAddresses = localPrivateLANIPv4Addresses()
 	defer func() {
@@ -1021,7 +1023,7 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	go svc.StartCommitTodoChecker(runCtx)
 	svc.StartBackgroundDiscovery(runCtx)
 
-	m := tui.NewWithCodexManager(runCtx, svc, codexManager)
+	m := tui.NewWithManagers(runCtx, svc, codexManager, runtimeManager)
 	m.SetMobileServerStatus(mobileStatus)
 	m.EnableUIStallWatchdog()
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -1140,13 +1142,13 @@ func lanInterfaceRank(name string) int {
 	}
 }
 
-func startTUIMobileServer(ctx context.Context, svc *service.Service, liveSessions server.LiveSessionSource, listenAddress string) (*server.RunningServer, tui.MobileServerStatus) {
+func startTUIMobileServer(ctx context.Context, svc *service.Service, liveSessions server.LiveSessionSource, runtimeManager *projectrun.Manager, listenAddress string) (*server.RunningServer, tui.MobileServerStatus) {
 	listenAddress = strings.TrimSpace(listenAddress)
 	if listenAddress == "" {
 		listenAddress = server.DefaultListenAddress
 	}
 	status := tui.MobileServerStatus{ListenAddress: listenAddress}
-	mobileServer := server.New(svc).WithLiveSessions(liveSessions)
+	mobileServer := server.New(svc).WithLiveSessions(liveSessions).WithRuntimeManager(runtimeManager)
 	auth, err := configureMobileServerAuth(mobileServer, svc, listenAddress)
 	if err != nil {
 		status.Error = err.Error()
