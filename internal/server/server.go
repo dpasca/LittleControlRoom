@@ -18,6 +18,7 @@ import (
 	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
 	"lcroom/internal/service"
 	"lcroom/internal/sessionclassify"
 	"lcroom/internal/uisurface"
@@ -28,6 +29,7 @@ import (
 type Server struct {
 	svc                 *service.Service
 	liveSessions        LiveSessionSource
+	runtimeManager      *projectrun.Manager
 	mobileAuth          *MobileAuth
 	mobileLiveMu        sync.Mutex
 	mobileLiveSnapshots map[string]mobileLiveSnapshot
@@ -57,6 +59,16 @@ func New(svc *service.Service) *Server {
 func (s *Server) WithMobileAuth(auth *MobileAuth) *Server {
 	if s != nil {
 		s.mobileAuth = auth
+	}
+	return s
+}
+
+// WithRuntimeManager shares the TUI's managed runtime registry with the
+// mobile console. Sharing the same manager keeps both views consistent and
+// prevents the phone from starting a second, invisible runtime registry.
+func (s *Server) WithRuntimeManager(manager *projectrun.Manager) *Server {
+	if s != nil {
+		s.runtimeManager = manager
 	}
 	return s
 }
@@ -189,6 +201,13 @@ func (s *Server) Handler(ctx context.Context) http.Handler {
 	mux.Handle("/api/mobile/dashboard", s.protectMobile(http.HandlerFunc(s.handleMobileDashboard)))
 	mux.Handle("/api/mobile/projects/detail", s.protectMobile(http.HandlerFunc(s.handleMobileProjectDetail)))
 	mux.Handle("/api/mobile/projects/sessions", s.protectMobile(http.HandlerFunc(s.handleMobileProjectSessions)))
+	mux.Handle("/api/mobile/projects/sidebar", s.protectMobile(http.HandlerFunc(s.handleMobileProjectSidebar)))
+	mux.Handle("/api/mobile/projects/todos", s.protectMobile(http.HandlerFunc(s.handleMobileProjectTodos)))
+	mux.Handle("/api/mobile/projects/todos/action", s.protectMobile(http.HandlerFunc(s.handleMobileProjectTodoAction)))
+	mux.Handle("/api/mobile/projects/runtime", s.protectMobile(http.HandlerFunc(s.handleMobileProjectRuntime)))
+	mux.Handle("/api/mobile/projects/runtime/action", s.protectMobile(http.HandlerFunc(s.handleMobileProjectRuntimeAction)))
+	mux.Handle("/api/mobile/commands/suggestions", s.protectMobile(http.HandlerFunc(s.handleMobileCommandSuggestions)))
+	mux.Handle("/api/mobile/commands/execute", s.protectMobile(http.HandlerFunc(s.handleMobileCommandExecute)))
 	mux.Handle("/api/mobile/sessions/detail", s.protectMobile(http.HandlerFunc(s.handleMobileSessionDetail)))
 	mux.Handle("/api/mobile/sessions/stream", s.protectMobile(http.HandlerFunc(s.handleMobileSessionStream)))
 	mux.Handle("/api/mobile/sessions/input", s.protectMobile(http.HandlerFunc(s.handleMobileSessionInput)))

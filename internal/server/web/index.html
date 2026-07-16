@@ -10,8 +10,8 @@
   <title>Little Control Room</title>
   <link rel="icon" href="data:,">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/app.css?v=11">
-  <script defer src="/app.js?v=11"></script>
+  <link rel="stylesheet" href="/app.css?v=12">
+  <script defer src="/app.js?v=12"></script>
 </head>
 <body class="auth-pending">
   <div class="app-shell">
@@ -37,6 +37,9 @@
           <p>Portable command system</p>
           <h1>Little Control Room</h1>
         </div>
+        <button id="command-button" class="hardware-button command-button" type="button" aria-label="Open slash commands" title="Slash commands">
+          <span aria-hidden="true">/</span>
+        </button>
         <button id="refresh-button" class="hardware-button" type="button" aria-label="Refresh projects" title="Refresh projects">
           <span aria-hidden="true">&#x21bb;</span>
         </button>
@@ -223,6 +226,49 @@
         </div>
 
         <div id="session-state" class="detail-state session-state" aria-live="polite"></div>
+
+        <nav id="session-action-deck" class="session-action-deck" aria-label="Project quick controls" hidden>
+          <button type="button" class="session-action-key" data-quick-panel="command" aria-label="Open slash commands">
+            <span class="session-action-glyph" aria-hidden="true">/</span>
+            <span>Command</span>
+          </button>
+          <button type="button" class="session-action-key" data-quick-panel="session" aria-label="Open live session information">
+            <span class="session-action-glyph" aria-hidden="true">&#x25c9;</span>
+            <span>Session</span>
+          </button>
+          <button type="button" class="session-action-key" data-quick-panel="details" aria-label="Open project details">
+            <span class="session-action-glyph" aria-hidden="true">i</span>
+            <span>Details</span>
+          </button>
+          <button type="button" class="session-action-key" data-quick-panel="todo" aria-label="Open project TODOs">
+            <span class="session-action-glyph" aria-hidden="true">&#x2611;</span>
+            <span>TODO</span>
+          </button>
+          <button type="button" class="session-action-key" data-quick-panel="runtime" aria-label="Open project runtime">
+            <span class="session-action-glyph" aria-hidden="true">&#x25b6;</span>
+            <span>Runtime</span>
+          </button>
+        </nav>
+
+        <section id="session-project-summary" class="session-project-summary" aria-labelledby="session-project-summary-title" hidden>
+          <div class="session-project-summary-head">
+            <span id="session-project-summary-lamp" class="lamp green" aria-hidden="true"></span>
+            <span id="session-project-summary-title">Latest assessment</span>
+            <span id="session-project-assessment" class="metal-status">Standby</span>
+          </div>
+          <p id="session-project-summary-text">Project summary unavailable.</p>
+        </section>
+
+        <section id="session-standby" class="session-standby" hidden aria-labelledby="session-standby-title">
+          <span class="lamp amber" aria-hidden="true"></span>
+          <div>
+            <p class="instrument-label">Engineer channel standby</p>
+            <h2 id="session-standby-title">No live AI session</h2>
+            <p>Open a recorded channel below, or use the slash control when a desktop-hosted session is available.</p>
+          </div>
+          <div id="session-standby-list" class="session-standby-list"></div>
+        </section>
+
         <article id="session-content" class="session-content" hidden>
           <header class="session-strip">
             <div class="session-strip-main">
@@ -284,5 +330,22 @@
       </section>
     </main>
   </div>
+
+  <dialog id="quick-panel-dialog" class="quick-panel-dialog" aria-labelledby="quick-panel-title">
+    <div class="quick-panel-case">
+      <div class="quick-panel-grip" aria-hidden="true"><span></span></div>
+      <header class="quick-panel-header">
+        <div>
+          <p id="quick-panel-kicker" class="instrument-label">Project instrument</p>
+          <h2 id="quick-panel-title">Quick panel</h2>
+        </div>
+        <button id="quick-panel-close" class="hardware-button quick-panel-close" type="button" aria-label="Close panel" title="Close panel">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </header>
+      <div id="quick-panel-status" class="quick-panel-status" aria-live="polite"></div>
+      <div id="quick-panel-content" class="quick-panel-content"></div>
+    </div>
+  </dialog>
 </body>
 </html>

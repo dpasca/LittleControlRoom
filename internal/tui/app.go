@@ -683,12 +683,21 @@ const (
 )
 
 func New(ctx context.Context, svc *service.Service) Model {
-	return NewWithCodexManager(ctx, svc, nil)
+	return NewWithManagers(ctx, svc, nil, nil)
 }
 
 func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager *codexapp.Manager) Model {
+	return NewWithManagers(ctx, svc, codexManager, nil)
+}
+
+// NewWithManagers lets hosted surfaces such as the mobile console observe and
+// control the exact same embedded-session and runtime registries as the TUI.
+func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *codexapp.Manager, runtimeManager *projectrun.Manager) Model {
 	if codexManager == nil {
 		codexManager = codexapp.NewManager()
+	}
+	if runtimeManager == nil {
+		runtimeManager = projectrun.NewManager()
 	}
 	busCh, unsub := svc.Bus().Subscribe(128)
 	commandInput := textinput.New()
@@ -751,7 +760,7 @@ func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager
 		privacyMode:                   initialSettings.PrivacyMode,
 		privacyPatterns:               append([]string(nil), initialSettings.PrivacyPatterns...),
 		codexManager:                  codexManager,
-		runtimeManager:                projectrun.NewManager(),
+		runtimeManager:                runtimeManager,
 		runtimeSnapshots:              make(map[string]projectrun.Snapshot),
 		runtimeProcessSnapshots:       nil,
 		runtimeProcessSelected:        make(map[string]string),
