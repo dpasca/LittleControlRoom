@@ -66,16 +66,21 @@ func (s *appServerSession) SubmitInput(input Submission) error {
 		}
 	}
 
+	// MCP startup is best-effort and has its own bounded waits. Do not spend the
+	// turn RPC deadline while waiting for fresh-session tools to register: Codex
+	// may accept turn/start just as that shared deadline expires, leaving LCR to
+	// report a false failure and restore an already-delivered draft.
+	if err := s.ensurePlaywrightMCPReady(context.Background()); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+	if err := s.ensureRuntimeMCPReady(context.Background()); err != nil {
+		s.appendSystemError(err)
+		return err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
-	if err := s.ensurePlaywrightMCPReady(ctx); err != nil {
-		s.appendSystemError(err)
-		return err
-	}
-	if err := s.ensureRuntimeMCPReady(ctx); err != nil {
-		s.appendSystemError(err)
-		return err
-	}
 
 	if pauseGoalForManualPrompt {
 		if err := s.pauseGoalForManualPrompt(ctx, threadID, activeTurnID, goalToPause); err != nil {
