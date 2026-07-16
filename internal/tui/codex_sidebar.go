@@ -44,8 +44,9 @@ const (
 )
 
 const (
-	embeddedSidebarDiffAutoInterval = 2 * time.Second
-	embeddedSidebarPreviewTextLimit = 52
+	embeddedSidebarDiffAutoInterval        = 2 * time.Second
+	embeddedSidebarPreviewTextLimit        = 52
+	embeddedSidebarSummaryPreviewTextLimit = embeddedSidebarPreviewTextLimit * 3
 )
 
 var embeddedSidebarMutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
@@ -1550,7 +1551,7 @@ func (m Model) renderEmbeddedSidebarSummarySection(snapshot codexapp.Snapshot, w
 	if !ok {
 		return nil
 	}
-	rows := embeddedSidebarPreviewRows(summary, style, width)
+	rows := embeddedSidebarPreviewRowsWithLimit(summary, style, width, embeddedSidebarSummaryPreviewTextLimit)
 	if len(rows) == 0 {
 		return nil
 	}
@@ -1999,7 +2000,11 @@ func embeddedSidebarWrappedRows(text string, style lipgloss.Style, width int) []
 }
 
 func embeddedSidebarPreviewRows(text string, style lipgloss.Style, width int) []string {
-	text = embeddedSidebarPreviewText(text)
+	return embeddedSidebarPreviewRowsWithLimit(text, style, width, embeddedSidebarPreviewTextLimit)
+}
+
+func embeddedSidebarPreviewRowsWithLimit(text string, style lipgloss.Style, width, limit int) []string {
+	text = embeddedSidebarPreviewTextWithLimit(text, limit)
 	if text == "" {
 		return nil
 	}
@@ -2007,11 +2012,15 @@ func embeddedSidebarPreviewRows(text string, style lipgloss.Style, width int) []
 }
 
 func embeddedSidebarPreviewText(text string) string {
+	return embeddedSidebarPreviewTextWithLimit(text, embeddedSidebarPreviewTextLimit)
+}
+
+func embeddedSidebarPreviewTextWithLimit(text string, limit int) string {
 	text = strings.Join(strings.Fields(text), " ")
 	if text == "" {
 		return ""
 	}
-	return fitFooterWidth(text, embeddedSidebarPreviewTextLimit)
+	return fitFooterWidth(text, limit)
 }
 
 func embeddedSidebarURLRow(label, rawURL string, width int) string {

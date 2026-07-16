@@ -356,20 +356,24 @@ func TestEmbeddedSidebarBrowserHintHighlightsCtrlO(t *testing.T) {
 func TestEmbeddedSidebarSummaryPreviewWrapsAndClampsProjectListSummary(t *testing.T) {
 	projectPath := "/tmp/lcr-sidebar-demo"
 	m := testEmbeddedSidebarModel(projectPath)
+	summary := "This summary mirrors the dashboard assessment text and wraps cleanly inside the sidebar. It now has enough room to explain what changed, what was verified, and what concrete follow-up remains before clipping this deliberately omitted tail."
 	m.allProjects = []model.ProjectSummary{{
 		Name:                            "demo",
 		Path:                            projectPath,
 		LatestSessionFormat:             "codex_jsonl",
 		LatestSessionClassification:     model.ClassificationCompleted,
 		LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
-		LatestSessionSummary:            "This summary mirrors the dashboard assessment text and wraps cleanly inside the sidebar without ellipses.",
+		LatestSessionSummary:            summary,
 	}}
 
 	rendered := ansi.Strip(strings.Join(m.renderEmbeddedSidebarSummarySection(testEmbeddedSidebarSnapshot(projectPath), 32), "\n"))
 	if !strings.Contains(rendered, "Summary") ||
-		!strings.Contains(rendered, "dashboard assessment tex") ||
+		!strings.Contains(rendered, "explain what changed") ||
 		!strings.Contains(rendered, "...") {
 		t.Fatalf("wrapped sidebar summary missing expected text:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "deliberately omitted tail") {
+		t.Fatalf("wrapped sidebar summary exceeded its preview budget:\n%s", rendered)
 	}
 	for _, line := range strings.Split(rendered, "\n") {
 		if width := ansi.StringWidth(line); width > 32 {
