@@ -42,6 +42,7 @@ Older notes from the previous rolling-log workflow live in [docs/status_archive.
 - Project mapping comes from session metadata `cwd` values.
 - OpenCode artifacts live primarily under `~/.local/share/opencode` and are mapped via session and project metadata.
 - Live embedded-session snapshots and scan working sets are rebuildable in-memory projections; SQLite persists meaningful session transitions and changed project state, not streaming activity heartbeats.
+- Full project scans are service-coordinated and non-overlapping, while targeted project refreshes remain independent; scheduler interval changes apply live and scheduled scans use bounded cooperative deadlines.
 - Experimental LCAgent uses canonical thread state under the app data directory (`lcagent/threads/<thread-id>/state.json`) as the model-resume source of truth; JSONL session files are per-run traces for replay, metrics, and audit.
 - LCR-managed embedded agents preserve broad cross-directory access while applying provider-aware destructive-command guardrails; the current direct-`rm` policy, threat model, and known bypasses are documented in [docs/destructive_command_safety.md](docs/destructive_command_safety.md).
 - Reusable agent context/checkpoint helpers live in `internal/agentcontext`; LCAgent uses them for durable thread state, and Chat uses them for per-session context checkpoints with compacted summaries plus recent chat tails.

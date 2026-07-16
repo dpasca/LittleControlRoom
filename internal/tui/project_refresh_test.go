@@ -441,6 +441,69 @@ func TestStableScanCompletionDoesNotReloadProjects(t *testing.T) {
 	}
 }
 
+func TestStableScanCompletionSurfacesAndDeduplicatesGitMetadataWarning(t *testing.T) {
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	m := Model{nowFn: func() time.Time { return now }}
+	msg := busMsg{
+		Type: events.ScanCompleted,
+		Payload: map[string]string{
+			"updated":                           "0",
+			"git_metadata_timeouts":             "2",
+			"git_metadata_timeout_path_samples": "/tmp/one\n/tmp/two",
+		},
+	}
+
+	updated, _ := m.Update(msg)
+	got := updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log entries = %d, want 1", len(got.errorLogEntries))
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "Git metadata scan warning" || !strings.Contains(entry.Message, "/tmp/one, /tmp/two") {
+		t.Fatalf("Git metadata warning entry = %#v", entry)
+	}
+	if got.projectsReloadInFlight {
+		t.Fatal("stable scan warning should not reload the project list")
+	}
+
+	updated, _ = got.Update(msg)
+	got = updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("duplicate warning error log entries = %d, want 1", len(got.errorLogEntries))
+	}
+}
+
+func TestScheduledScanFailureSurfacesWithoutProjectReloadAndDeduplicates(t *testing.T) {
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	m := Model{nowFn: func() time.Time { return now }}
+	msg := busMsg{
+		Type: events.ScanFailed,
+		Payload: map[string]string{
+			"source":     "scheduled",
+			"error_kind": "timeout",
+			"error":      "scan timed out while detecting project activity",
+		},
+	}
+
+	updated, _ := m.Update(msg)
+	got := updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log entries = %d, want 1", len(got.errorLogEntries))
+	}
+	if got.errorLogEntries[0].Status != "Scheduled scan timed out" {
+		t.Fatalf("failure status = %q, want scheduled timeout", got.errorLogEntries[0].Status)
+	}
+	if got.projectsReloadInFlight || len(got.detailReloadInFlight) != 0 || len(got.summaryReloadInFlight) != 0 {
+		t.Fatalf("scan failure scheduled project reloads: projects=%v detail=%#v summary=%#v", got.projectsReloadInFlight, got.detailReloadInFlight, got.summaryReloadInFlight)
+	}
+
+	updated, _ = got.Update(msg)
+	got = updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("duplicate failure error log entries = %d, want 1", len(got.errorLogEntries))
+	}
+}
+
 func TestBusEventsDroppedRefreshesProjectStructureAndSelectedDetail(t *testing.T) {
 	m := Model{
 		projects: []model.ProjectSummary{{

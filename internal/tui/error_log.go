@@ -19,6 +19,7 @@ const (
 	maxErrorLogEntries            = 200
 	aiBalanceErrorStatus          = "AI provider balance insufficient"
 	aiBalanceErrorDuplicateWindow = 10 * time.Minute
+	scanErrorDuplicateWindow      = 10 * time.Minute
 )
 
 type errorLogEntry struct {
@@ -127,6 +128,32 @@ func (m *Model) appendErrorLogEntry(status string, err error, projectPath string
 		m.errorLogSelected = len(m.errorLogEntries) - 1
 	}
 	return result
+}
+
+func (m *Model) appendScanErrorLogEntry(status string, err error) errorLogAppendResult {
+	return m.appendDeduplicatedBackgroundErrorLogEntry(status, err, "", scanErrorDuplicateWindow)
+}
+
+func (m *Model) appendDeduplicatedBackgroundErrorLogEntry(status string, err error, projectPath string, window time.Duration) errorLogAppendResult {
+	result := errorLogAppendResult{Status: errorSummaryText(status)}
+	if err == nil {
+		return result
+	}
+
+	status = errorSummaryText(status)
+	message := strings.TrimSpace(err.Error())
+	projectPath = strings.TrimSpace(projectPath)
+	now := m.currentTime()
+	for _, existing := range m.errorLogEntries {
+		if existing.Status != status || existing.Message != message || existing.ProjectPath != projectPath {
+			continue
+		}
+		elapsed := now.Sub(existing.At)
+		if elapsed >= 0 && elapsed <= window {
+			return result
+		}
+	}
+	return m.appendBackgroundErrorLogEntry(status, err, projectPath)
 }
 
 func errorLogStatusForError(status string, err error) (string, bool) {

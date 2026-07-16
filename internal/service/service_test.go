@@ -195,6 +195,43 @@ func TestApplyEditableSettingsUpdatesMobilePreferences(t *testing.T) {
 	}
 }
 
+func TestApplyEditableSettingsUpdatesLCAgentVisionAndRecentModels(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Default()
+	svc := &Service{
+		cfg:               cfg,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+	}
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.LCAgentVisionProvider = "openai"
+	settings.LCAgentVisionModel = "openai/gpt-5-mini"
+	settings.LCAgentMainVisionProvider = "openrouter"
+	settings.LCAgentMainVisionModel = "openai/gpt-5.4"
+	settings.RecentCodexModels = []string{"gpt-5.4"}
+	settings.RecentLCAgentModels = []string{"openai/gpt-5-mini"}
+
+	svc.ApplyEditableSettings(settings)
+	settings.RecentCodexModels[0] = "mutated"
+	settings.RecentLCAgentModels[0] = "mutated"
+
+	got := svc.Config()
+	if got.LCAgentVisionProvider != "openai" || got.LCAgentVisionModel != "gpt-5-mini" {
+		t.Fatalf("LCAgent vision config = %q/%q, want openai/gpt-5-mini", got.LCAgentVisionProvider, got.LCAgentVisionModel)
+	}
+	if got.LCAgentMainVisionProvider != "openrouter" || got.LCAgentMainVisionModel != "openai/gpt-5.4" {
+		t.Fatalf("LCAgent main vision config = %q/%q", got.LCAgentMainVisionProvider, got.LCAgentMainVisionModel)
+	}
+	if len(got.RecentCodexModels) != 1 || got.RecentCodexModels[0] != "gpt-5.4" {
+		t.Fatalf("recent Codex models = %#v, want copied settings", got.RecentCodexModels)
+	}
+	if len(got.RecentLCAgentModels) != 1 || got.RecentLCAgentModels[0] != "openai/gpt-5-mini" {
+		t.Fatalf("recent LCAgent models = %#v, want copied settings", got.RecentLCAgentModels)
+	}
+}
+
 func TestApplyEditableSettingsRefreshesAIClientsWhenBackendConfigChanges(t *testing.T) {
 	t.Parallel()
 

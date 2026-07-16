@@ -43,22 +43,23 @@ type ManagedPlaywrightPaths struct {
 }
 
 type ManagedPlaywrightState struct {
-	SessionKey            string            `json:"session_key"`
-	ProfileKey            string            `json:"profile_key"`
-	Provider              string            `json:"provider"`
-	ProjectPath           string            `json:"project_path"`
-	LaunchMode            ManagedLaunchMode `json:"launch_mode"`
-	Policy                Policy            `json:"policy"`
-	MCPPID                int               `json:"mcp_pid"`
-	BrowserPID            int               `json:"browser_pid"`
-	BrowserAppPath        string            `json:"browser_app_path"`
-	BrowserAppName        string            `json:"browser_app_name"`
-	BrowserExecutable     string            `json:"browser_executable"`
-	ProfileBackupPath     string            `json:"profile_backup_path,omitempty"`
-	ProfileRecoveryReason string            `json:"profile_recovery_reason,omitempty"`
-	Hidden                bool              `json:"hidden"`
-	RevealSupported       bool              `json:"reveal_supported"`
-	UpdatedAt             time.Time         `json:"updated_at"`
+	SessionKey              string            `json:"session_key"`
+	ProfileKey              string            `json:"profile_key"`
+	Provider                string            `json:"provider"`
+	ProjectPath             string            `json:"project_path"`
+	LaunchMode              ManagedLaunchMode `json:"launch_mode"`
+	Policy                  Policy            `json:"policy"`
+	MCPPID                  int               `json:"mcp_pid"`
+	BrowserPID              int               `json:"browser_pid"`
+	BrowserAppPath          string            `json:"browser_app_path"`
+	BrowserAppName          string            `json:"browser_app_name"`
+	BrowserExecutable       string            `json:"browser_executable"`
+	ProfileBackupPath       string            `json:"profile_backup_path,omitempty"`
+	ProfileRecoveryReason   string            `json:"profile_recovery_reason,omitempty"`
+	ProfilePreflightWarning string            `json:"profile_preflight_warning,omitempty"`
+	Hidden                  bool              `json:"hidden"`
+	RevealSupported         bool              `json:"reveal_supported"`
+	UpdatedAt               time.Time         `json:"updated_at"`
 }
 
 type ManagedBrowserProcess struct {
@@ -558,6 +559,7 @@ func (s ManagedPlaywrightState) Normalize() ManagedPlaywrightState {
 	normalized.BrowserExecutable = strings.TrimSpace(normalized.BrowserExecutable)
 	normalized.ProfileBackupPath = strings.TrimSpace(normalized.ProfileBackupPath)
 	normalized.ProfileRecoveryReason = strings.TrimSpace(normalized.ProfileRecoveryReason)
+	normalized.ProfilePreflightWarning = strings.TrimSpace(normalized.ProfilePreflightWarning)
 	normalized.LaunchMode = normalized.LaunchMode.Normalize()
 	normalized.Policy = normalized.Policy.Normalize()
 	normalized.RevealSupported = normalized.BrowserPID > 0 || normalized.BrowserAppPath != "" || normalized.BrowserAppName != ""

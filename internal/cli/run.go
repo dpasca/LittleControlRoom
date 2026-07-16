@@ -279,6 +279,15 @@ func runScan(ctx context.Context, svc *service.Service) int {
 	fmt.Printf("tracked projects: %d\n", report.TrackedProjectCount)
 	fmt.Printf("updated projects: %d\n", len(report.UpdatedProjects))
 	fmt.Printf("queued classifications: %d\n", report.QueuedClassifications)
+	if report.GitMetadataTimeoutCount > 0 {
+		fmt.Printf("git metadata timeouts: %d\n", report.GitMetadataTimeoutCount)
+		for _, path := range report.GitMetadataTimeoutPathSamples {
+			fmt.Printf("  - %s\n", path)
+		}
+		if remaining := report.GitMetadataTimeoutCount - len(report.GitMetadataTimeoutPathSamples); remaining > 0 {
+			fmt.Printf("  ... and %d more\n", remaining)
+		}
+	}
 	return 0
 }
 
@@ -1248,6 +1257,11 @@ func allGoroutineStack() []byte {
 }
 
 func runServe(ctx context.Context, svc *service.Service, addr string) int {
+	if bus := svc.Bus(); bus != nil {
+		scanEvents, unsubscribe := bus.Subscribe(256)
+		defer unsubscribe()
+		go logServeScanEvents(ctx, scanEvents, os.Stderr)
+	}
 	go func() {
 		if _, err := svc.ScanOnce(ctx); err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "initial serve scan failed: %v\n", err)

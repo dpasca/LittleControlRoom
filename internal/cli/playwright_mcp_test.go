@@ -1,12 +1,33 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 	"time"
 
 	"lcroom/internal/browserctl"
 )
+
+func TestWritePlaywrightMCPProfilePreflightNoticesSurfacesWarning(t *testing.T) {
+	var stderr bytes.Buffer
+	writePlaywrightMCPProfilePreflightNotices(&stderr, browserctl.ManagedPlaywrightProfilePreflight{
+		CompatibilityWarning: "  browser profile compatibility check skipped: deadline exceeded  ",
+	})
+
+	want := "playwright-mcp warning: browser profile compatibility check skipped: deadline exceeded\n"
+	if got := stderr.String(); got != want {
+		t.Fatalf("preflight stderr = %q, want %q", got, want)
+	}
+}
+
+func TestWritePlaywrightMCPProfilePreflightNoticesIsQuietWithoutEvent(t *testing.T) {
+	var stderr bytes.Buffer
+	writePlaywrightMCPProfilePreflightNotices(&stderr, browserctl.ManagedPlaywrightProfilePreflight{})
+	if got := stderr.String(); got != "" {
+		t.Fatalf("preflight stderr = %q, want no output", got)
+	}
+}
 
 func TestPlaywrightMCPChildArgsUsesManagedBrowserExecutableOverride(t *testing.T) {
 	t.Setenv("LCR_PLAYWRIGHT_BROWSER_EXECUTABLE", "/tmp/lcr-browser")

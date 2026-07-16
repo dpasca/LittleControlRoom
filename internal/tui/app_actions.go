@@ -14,6 +14,7 @@ import (
 	"lcroom/internal/uistyle"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -802,14 +803,59 @@ func commandAssistantProvider(raw string) codexapp.Provider {
 }
 
 func scanCompleteStatus(report service.ScanReport) string {
-	if report.QueuedClassifications <= 0 {
-		return fmt.Sprintf("Scan complete: %d updated", len(report.UpdatedProjects))
+	parts := []string{fmt.Sprintf("Scan complete: %d updated", len(report.UpdatedProjects))}
+	if report.QueuedClassifications > 0 {
+		label := "classifications"
+		if report.QueuedClassifications == 1 {
+			label = "classification"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s queued", report.QueuedClassifications, label))
 	}
-	label := "classifications"
-	if report.QueuedClassifications == 1 {
-		label = "classification"
+	if report.GitMetadataTimeoutCount > 0 {
+		label := "Git metadata timeouts"
+		if report.GitMetadataTimeoutCount == 1 {
+			label = "Git metadata timeout"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", report.GitMetadataTimeoutCount, label))
 	}
-	return fmt.Sprintf("Scan complete: %d updated, %d %s queued", len(report.UpdatedProjects), report.QueuedClassifications, label)
+	return strings.Join(parts, ", ")
+}
+
+func scanGitMetadataTimeoutEventError(payload map[string]string) error {
+	count, err := strconv.Atoi(strings.TrimSpace(payload["git_metadata_timeouts"]))
+	if err != nil || count <= 0 {
+		return nil
+	}
+	paths := make([]string, 0, 8)
+	for _, path := range strings.Split(payload["git_metadata_timeout_path_samples"], "\n") {
+		if path = strings.TrimSpace(path); path != "" {
+			paths = append(paths, path)
+		}
+	}
+
+	detail := fmt.Sprintf("Git metadata reads timed out for %d project", count)
+	if count != 1 {
+		detail += "s"
+	}
+	if len(paths) > 0 {
+		detail += ": " + strings.Join(paths, ", ")
+		if remaining := count - len(paths); remaining > 0 {
+			detail += fmt.Sprintf(" (+%d more)", remaining)
+		}
+	}
+	return errors.New(detail)
+}
+
+func scheduledScanFailureEventError(payload map[string]string) (string, error) {
+	status := "Scheduled scan failed"
+	if strings.TrimSpace(payload["error_kind"]) == "timeout" {
+		status = "Scheduled scan timed out"
+	}
+	detail := strings.TrimSpace(payload["error"])
+	if detail == "" {
+		detail = "the scheduled project scan did not complete"
+	}
+	return status, errors.New(detail)
 }
 
 func loadedProjectsStatus(projectCount int, sortMode projectSortMode, visibility projectVisibilityMode, projectFilter string) string {

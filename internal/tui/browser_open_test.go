@@ -106,6 +106,39 @@ func TestManagedBrowserStateFreshForUIRejectsStaleState(t *testing.T) {
 	}
 }
 
+func TestManagedBrowserStateMsgSurfacesAndDeduplicatesPreflightWarning(t *testing.T) {
+	now := time.Date(2026, time.July, 16, 10, 0, 0, 0, time.UTC)
+	m := Model{nowFn: func() time.Time { return now }}
+	msg := managedBrowserStateMsg{
+		sessionKey: "managed-demo",
+		state: browserctl.ManagedPlaywrightState{
+			SessionKey:              "managed-demo",
+			ProjectPath:             "/tmp/demo",
+			ProfilePreflightWarning: "browser profile compatibility check skipped: deadline exceeded",
+			UpdatedAt:               now,
+		},
+	}
+
+	updated, _ := m.Update(msg)
+	got := updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("error log entries = %d, want 1", len(got.errorLogEntries))
+	}
+	entry := got.errorLogEntries[0]
+	if entry.Status != "Browser profile compatibility warning" || entry.ProjectPath != "/tmp/demo" {
+		t.Fatalf("browser warning entry = %#v", entry)
+	}
+	if entry.Message != "browser profile compatibility check skipped: deadline exceeded" {
+		t.Fatalf("browser warning message = %q", entry.Message)
+	}
+
+	updated, _ = got.Update(msg)
+	got = updated.(Model)
+	if len(got.errorLogEntries) != 1 {
+		t.Fatalf("duplicate browser warning entries = %d, want 1", len(got.errorLogEntries))
+	}
+}
+
 func TestDispatchOpenCommandOpensSelectedProjectInBrowser(t *testing.T) {
 	dir := t.TempDir()
 

@@ -1938,6 +1938,28 @@ func TestSettingsSavedMsgAppliesProjectNameFilterImmediately(t *testing.T) {
 	if !strings.Contains(got.status, "Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now") {
 		t.Fatalf("status = %q, want immediate-apply notice", got.status)
 	}
+	if !strings.Contains(got.status, "Scan timing updates immediately") || strings.Contains(got.status, "until the next launch") {
+		t.Fatalf("status = %q, want live scheduler timing notice", got.status)
+	}
+}
+
+func TestSettingsSavedMsgRescansAfterScoringThresholdChange(t *testing.T) {
+	baseline := config.EditableSettingsFromAppConfig(config.Default())
+	next := baseline
+	next.ActiveThreshold = 5 * time.Minute
+	m := Model{
+		settingsMode:     true,
+		settingsBaseline: &baseline,
+	}
+
+	updated, cmd := m.Update(settingsSavedMsg{path: "/tmp/config.toml", settings: next})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("scoring threshold change should apply settings and queue a rescan")
+	}
+	if !strings.Contains(got.status, "Project scoring thresholds changed; rescanning projects") {
+		t.Fatalf("status = %q, want scoring rescan notice", got.status)
+	}
 }
 
 func TestSettingsSavedMsgExplainsMobileRestart(t *testing.T) {

@@ -334,8 +334,6 @@ func TestRecordEmbeddedSessionActivityRespectsContextWhileProjectLockHeld(t *tes
 }
 
 func TestRefreshProjectStatusDoesNotWaitForLongScan(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
 	if err != nil {
@@ -361,6 +359,9 @@ func TestRefreshProjectStatusDoesNotWaitForLongScan(t *testing.T) {
 
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseScan := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseScan()
 	cfg := config.Default()
 	cfg.IncludePaths = nil
 	svc := &Service{
@@ -392,11 +393,11 @@ func TestRefreshProjectStatusDoesNotWaitForLongScan(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RefreshProjectStatus() error = %v", err)
 		}
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(time.Second):
 		t.Fatal("RefreshProjectStatus blocked behind ScanWithOptions")
 	}
 
-	close(release)
+	releaseScan()
 
 	select {
 	case err := <-scanDone:

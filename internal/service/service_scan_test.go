@@ -15,6 +15,7 @@ import (
 	"lcroom/internal/store"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -172,6 +173,12 @@ func TestScanWithOptionsTimesOutHungWorktreeReadersAndRepairsCodexSessionFile(t 
 	}
 	if report.QueuedClassifications != 1 {
 		t.Fatalf("QueuedClassifications = %d, want 1", report.QueuedClassifications)
+	}
+	if report.GitMetadataTimeoutCount != 1 {
+		t.Fatalf("GitMetadataTimeoutCount = %d, want 1", report.GitMetadataTimeoutCount)
+	}
+	if len(report.GitMetadataTimeoutPathSamples) != 1 || report.GitMetadataTimeoutPathSamples[0] != hungPath {
+		t.Fatalf("GitMetadataTimeoutPathSamples = %#v, want [%q]", report.GitMetadataTimeoutPathSamples, hungPath)
 	}
 	if classifier.normalCalls != 1 {
 		t.Fatalf("QueueProject() calls = %d, want 1", classifier.normalCalls)
@@ -374,6 +381,20 @@ func TestWithScanGitMetadataTimeoutSharesConcurrentTimeoutSet(t *testing.T) {
 			t.Fatalf("timeout set does not contain %s", path)
 		}
 	}
+	count, samples := timedOutPaths.snapshot(8)
+	if count != len(paths) {
+		t.Fatalf("timeout snapshot count = %d, want %d", count, len(paths))
+	}
+	if len(samples) != 8 {
+		t.Fatalf("timeout snapshot samples = %d, want 8", len(samples))
+	}
+	expected := append([]string(nil), paths...)
+	sort.Strings(expected)
+	for i := range samples {
+		if samples[i] != expected[i] {
+			t.Fatalf("timeout snapshot sample %d = %q, want %q", i, samples[i], expected[i])
+		}
+	}
 
 	skippedReader := withScanGitMetadataTimeout(func(context.Context, string) (string, error) {
 		t.Fatal("reader called for a path that already timed out")
@@ -381,6 +402,68 @@ func TestWithScanGitMetadataTimeoutSharesConcurrentTimeoutSet(t *testing.T) {
 	}, timedOutPaths)
 	if _, err := skippedReader(context.Background(), paths[0]); err == nil || !strings.Contains(err.Error(), "after earlier timeout") {
 		t.Fatalf("read after timeout error = %v, want earlier-timeout skip", err)
+	}
+}
+
+func TestFullScansSerializeAndWaitingScanHonorsContext(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := &Service{
+		cfg:       cfg,
+		store:     st,
+		bus:       events.NewBus(),
+		detectors: []detectors.Detector{blockingDetector{started: started, release: release}},
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, scanErr := svc.ScanWithOptions(ctx, ScanOptions{})
+		firstDone <- scanErr
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first scan did not reach blocking detector")
+	}
+
+	if _, err, scanStarted := svc.tryScanWithOptions(ctx, ScanOptions{}); err != nil || scanStarted {
+		t.Fatalf("tryScanWithOptions() = started %v, error %v; want busy skip", scanStarted, err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 60*time.Millisecond)
+	defer cancel()
+	_, err = svc.ScanWithOptions(waitCtx, ScanOptions{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waiting ScanWithOptions() error = %v, want deadline exceeded", err)
+	}
+	detail, ok := ScanTimeoutDetail(err)
+	if !ok || !strings.Contains(detail, "waiting for another project scan") {
+		t.Fatalf("waiting scan timeout detail = %q, %v; want full-scan wait phase", detail, ok)
+	}
+	select {
+	case <-started:
+		t.Fatal("a second detector started while the first full scan was blocked")
+	default:
+	}
+
+	close(release)
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first ScanWithOptions() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first scan did not finish after release")
 	}
 }
 

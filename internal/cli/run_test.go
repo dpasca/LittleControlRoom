@@ -31,6 +31,40 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+func TestLogServeScanEventsSurfacesWarningsAndDeduplicatesRepeats(t *testing.T) {
+	at := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	eventCh := make(chan events.Event, 4)
+	for _, event := range []events.Event{
+		{Type: events.ScanCompleted, At: at, Payload: map[string]string{
+			"git_metadata_timeouts":             "2",
+			"git_metadata_timeout_path_samples": "/tmp/one\n/tmp/two",
+		}},
+		{Type: events.ScanFailed, At: at.Add(time.Minute), Payload: map[string]string{
+			"error_kind": "timeout",
+			"error":      "scan timed out\nwhile detecting projects",
+		}},
+		{Type: events.ScanCompleted, At: at.Add(2 * time.Minute), Payload: map[string]string{
+			"git_metadata_timeouts":             "2",
+			"git_metadata_timeout_path_samples": "/tmp/one\n/tmp/two",
+		}},
+		{Type: events.ScanFailed, At: at.Add(3 * time.Minute), Payload: map[string]string{
+			"error_kind": "timeout",
+			"error":      "scan timed out\nwhile detecting projects",
+		}},
+	} {
+		eventCh <- event
+	}
+	close(eventCh)
+
+	var output strings.Builder
+	logServeScanEvents(context.Background(), eventCh, &output)
+	want := "scan warning: Git metadata reads timed out for 2 projects: /tmp/one, /tmp/two\n" +
+		"scheduled scan timed out: scan timed out while detecting projects\n"
+	if got := output.String(); got != want {
+		t.Fatalf("serve scan event log = %q, want %q", got, want)
+	}
+}
+
 func TestConfigureMobileServerAuthOnlyProtectsLANListeners(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()

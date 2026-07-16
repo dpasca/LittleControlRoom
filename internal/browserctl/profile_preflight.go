@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const managedPlaywrightBrowserVersionTimeout = 2 * time.Second
+const (
+	managedPlaywrightBrowserVersionTimeout   = 5 * time.Second
+	managedPlaywrightBrowserVersionWaitDelay = 250 * time.Millisecond
+)
 
 type ManagedPlaywrightProfilePreflight struct {
 	BrowserVersion        string
@@ -23,6 +26,7 @@ type ManagedPlaywrightProfilePreflight struct {
 	ProfileMajor          int
 	ProfileVersionSource  string
 	ProfileBackupPath     string
+	CompatibilityWarning  string
 	RemovedSingletonFiles []string
 }
 
@@ -77,9 +81,11 @@ func prepareManagedPlaywrightProfileForLaunch(paths ManagedPlaywrightPaths, brow
 	}
 	browserVersion, browserMajor, ok, err := managedBrowserExecutableVersion(browserExecutable)
 	if err != nil {
+		preflight.CompatibilityWarning = fmt.Sprintf("browser profile compatibility check skipped: %v", err)
 		return preflight, nil
 	}
 	if !ok {
+		preflight.CompatibilityWarning = fmt.Sprintf("browser profile compatibility check skipped: unrecognized version %q from %s", browserVersion, browserExecutable)
 		return preflight, nil
 	}
 	preflight.BrowserVersion = browserVersion
@@ -152,19 +158,56 @@ func jsonStringAt(root map[string]any, path ...string) string {
 }
 
 func managedBrowserExecutableVersion(executable string) (string, int, bool, error) {
+	return managedBrowserExecutableVersionWithTimeout(executable, managedPlaywrightBrowserVersionTimeout)
+}
+
+func managedBrowserExecutableVersionWithTimeout(executable string, timeout time.Duration) (string, int, bool, error) {
 	executable = strings.TrimSpace(executable)
 	if executable == "" {
 		return "", 0, false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), managedPlaywrightBrowserVersionTimeout)
-	defer cancel()
-	raw, err := exec.CommandContext(ctx, executable, "--version").Output()
-	if err != nil {
-		return "", 0, false, err
+	if timeout <= 0 {
+		return "", 0, false, fmt.Errorf("browser version probe timeout must be positive")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, executable, "--version")
+	// Isolate wrapper descendants so a timed-out version probe can clean up the
+	// whole probe tree instead of leaving orphaned helpers behind.
+	configureVersionProbeProcessGroup(cmd)
+	// A browser wrapper may leave a descendant holding the stdout pipe after the
+	// wrapper is killed. Bound that wait as well as the process itself.
+	cmd.WaitDelay = managedPlaywrightBrowserVersionWaitDelay
+	raw, err := cmd.Output()
 	version := strings.TrimSpace(string(raw))
+	if err != nil {
+		bestEffortKillVersionProbeProcessGroup(cmd)
+		// WaitDelay may close a pipe inherited by an orphaned wrapper child after
+		// the version process itself exited successfully. Its valid output is
+		// still authoritative.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			if major, ok := chromiumMajorVersion(version); ok {
+				return version, major, true, nil
+			}
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", 0, false, fmt.Errorf("read browser version from %s within %s: %w", executable, timeout, ctxErr)
+		}
+		return "", 0, false, fmt.Errorf("read browser version from %s: %w", executable, err)
+	}
 	major, ok := chromiumMajorVersion(version)
 	return version, major, ok, nil
+}
+
+func applyManagedPlaywrightProfilePreflight(state ManagedPlaywrightState, preflight ManagedPlaywrightProfilePreflight) ManagedPlaywrightState {
+	if recoveryReason := preflight.RecoveryReason(); preflight.ProfileBackupPath != "" || recoveryReason != "" {
+		state.ProfileBackupPath = preflight.ProfileBackupPath
+		state.ProfileRecoveryReason = recoveryReason
+	}
+	// Unlike a recovery record, a warning describes only the latest launch
+	// attempt. Clear it after a subsequent successful compatibility check.
+	state.ProfilePreflightWarning = strings.TrimSpace(preflight.CompatibilityWarning)
+	return state
 }
 
 func chromiumMajorVersion(version string) (int, bool) {

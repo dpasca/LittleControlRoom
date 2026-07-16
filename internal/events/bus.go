@@ -11,6 +11,7 @@ const (
 	ProjectChanged        Type = "project_changed"
 	ProjectMoved          Type = "project_moved"
 	ScanCompleted         Type = "scan_completed"
+	ScanFailed            Type = "scan_failed"
 	ActionApplied         Type = "action_applied"
 	ClassificationUpdated Type = "classification_updated"
 	EventsDropped         Type = "events_dropped"

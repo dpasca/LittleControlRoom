@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -64,20 +65,19 @@ func runPlaywrightMCP(args []string) int {
 		fmt.Fprintf(os.Stderr, "playwright-mcp profile preflight failed: %v\n", err)
 		return 1
 	}
-	if preflight.ProfileBackupPath != "" {
-		fmt.Fprintf(os.Stderr, "playwright-mcp %s; backup=%s\n", preflight.RecoveryReason(), preflight.ProfileBackupPath)
-	}
+	writePlaywrightMCPProfilePreflightNotices(os.Stderr, preflight)
 
 	state := browserctl.ManagedPlaywrightState{
-		SessionKey:            paths.SessionKey,
-		ProfileKey:            paths.ProfileKey,
-		Provider:              paths.Provider,
-		ProjectPath:           paths.ProjectPath,
-		LaunchMode:            paths.LaunchMode,
-		Policy:                browserctl.PolicyFromEnv(),
-		ProfileBackupPath:     preflight.ProfileBackupPath,
-		ProfileRecoveryReason: preflight.RecoveryReason(),
-		UpdatedAt:             time.Now().UTC(),
+		SessionKey:              paths.SessionKey,
+		ProfileKey:              paths.ProfileKey,
+		Provider:                paths.Provider,
+		ProjectPath:             paths.ProjectPath,
+		LaunchMode:              paths.LaunchMode,
+		Policy:                  browserctl.PolicyFromEnv(),
+		ProfileBackupPath:       preflight.ProfileBackupPath,
+		ProfileRecoveryReason:   preflight.RecoveryReason(),
+		ProfilePreflightWarning: preflight.CompatibilityWarning,
+		UpdatedAt:               time.Now().UTC(),
 	}
 	if err := writeManagedPlaywrightState(paths, state); err != nil {
 		fmt.Fprintf(os.Stderr, "playwright-mcp state init failed: %v\n", err)
@@ -123,6 +123,15 @@ func runPlaywrightMCP(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "playwright-mcp wait failed: %v\n", err)
 	return 1
+}
+
+func writePlaywrightMCPProfilePreflightNotices(w io.Writer, preflight browserctl.ManagedPlaywrightProfilePreflight) {
+	if preflight.ProfileBackupPath != "" {
+		fmt.Fprintf(w, "playwright-mcp %s; backup=%s\n", preflight.RecoveryReason(), preflight.ProfileBackupPath)
+	}
+	if warning := strings.TrimSpace(preflight.CompatibilityWarning); warning != "" {
+		fmt.Fprintf(w, "playwright-mcp warning: %s\n", warning)
+	}
 }
 
 func playwrightMCPChildArgs(paths browserctl.ManagedPlaywrightPaths, launchMode browserctl.ManagedLaunchMode) []string {

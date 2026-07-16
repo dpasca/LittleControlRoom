@@ -1998,6 +1998,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.err = nil
 		m.status = msg.status
+		if msg.managedBrowserStateSet {
+			m.appendManagedBrowserPreflightWarning(msg.managedBrowserState)
+		}
 		if m.helpChatMode && strings.TrimSpace(msg.status) != "" {
 			var hostCmd tea.Cmd
 			m, hostCmd = m.updateBossHostNotice("Browser handoff: " + strings.TrimSpace(msg.status))
@@ -2008,6 +2011,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.finishManagedBrowserStateRead(msg.sessionKey)
 			m.rememberManagedBrowserState(msg.state)
+			m.appendManagedBrowserPreflightWarning(msg.state)
 		} else {
 			if msg.retryable && msg.retryAttemptsRemaining > 0 {
 				return m, m.delayedReadManagedBrowserStateCmd(msg.sessionKey, msg.retryAttemptsRemaining-1)
@@ -2419,6 +2423,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		previousSettings := m.currentSettingsBaseline()
 		scopeSettingsChanged := projectScopeSettingsChanged(previousSettings, msg.settings)
+		attentionSettingsChanged := projectAttentionSettingsChanged(previousSettings, msg.settings)
+		projectScanSettingsChanged := scopeSettingsChanged || attentionSettingsChanged
 		mobileSettingsChanged := mobileServerSettingsChanged(previousSettings, msg.settings)
 		reloadLCAgentProject, shouldReloadLCAgent := m.shouldReloadEmbeddedLCAgentAfterSettingsSave(previousSettings, msg.settings)
 		settingsEmbeddedProject := m.settingsEmbeddedProject
@@ -2440,9 +2446,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.embeddedModelPrefs = embeddedModelPreferencesFromSettings(msg.settings)
 		m.hideReasoningSections = msg.settings.HideReasoningSections
 		m.settingsMode = false
-		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now; the running scheduler keeps its current timing until the next launch of %s.", msg.path, brand.CLIName)
+		m.status = fmt.Sprintf("Settings saved to %s. Filters, API keys, local endpoint/model overrides, Codex launch mode, and browser automation policy are applying in the background now. Scan timing updates immediately.", msg.path)
 		if scopeSettingsChanged {
 			m.status = fmt.Sprintf("Settings saved to %s. Project scope changed; rescanning projects in the background now.", msg.path)
+		} else if attentionSettingsChanged {
+			m.status = fmt.Sprintf("Settings saved to %s. Project scoring thresholds changed; rescanning projects in the background now.", msg.path)
 		}
 		if shouldReloadLCAgent {
 			m.beginCodexPendingOpen(reloadLCAgentProject, codexapp.ProviderLCAgent)
@@ -2458,7 +2466,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status += " " + errorStatusWithHint(settingsConfigIssueStatus) + "."
 		}
 		m.rebuildProjectList(selectedPath)
-		cmds := []tea.Cmd{m.applyEditableSettingsCmdWithScan(msg.settings, scopeSettingsChanged), m.refreshSetupSnapshotCmd(false)}
+		cmds := []tea.Cmd{m.applyEditableSettingsCmdWithScan(msg.settings, projectScanSettingsChanged), m.refreshSetupSnapshotCmd(false)}
 		if shouldReloadLCAgent {
 			cmds = append(cmds, m.reloadEmbeddedLCAgentAfterSettingsCmd(reloadLCAgentProject, msg.settings))
 		}
@@ -2598,12 +2606,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, batchCmds(cmds...)
 		case events.ScanCompleted:
+			if err := scanGitMetadataTimeoutEventError(msg.Payload); err != nil {
+				m.appendScanErrorLogEntry("Git metadata scan warning", err)
+			}
 			if strings.TrimSpace(msg.Payload["updated"]) == "0" {
 				// A stable scan refreshed the in-memory working set but changed no
 				// project data. Keep the current view instead of re-querying SQLite.
 				return m, batchCmds(cmds...)
 			}
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))
+			return m, batchCmds(cmds...)
+		case events.ScanFailed:
+			status, err := scheduledScanFailureEventError(msg.Payload)
+			m.appendScanErrorLogEntry(status, err)
 			return m, batchCmds(cmds...)
 		case events.ProjectMoved, events.EventsDropped:
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(m.currentSelectedProjectPath())))

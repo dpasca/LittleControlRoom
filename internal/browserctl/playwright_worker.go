@@ -369,16 +369,12 @@ func (s *PlaywrightBrowserSession) markWorkerStarted(pid int) {
 }
 
 func (s *PlaywrightBrowserSession) markProfilePreflight(preflight ManagedPlaywrightProfilePreflight) {
-	if preflight.ProfileBackupPath == "" && preflight.RecoveryReason() == "" {
-		return
-	}
 	_ = WithManagedPlaywrightStateLock(s.paths.DataDir, s.paths.SessionKey, func() error {
 		state, err := ReadManagedPlaywrightState(s.paths.DataDir, s.paths.SessionKey)
 		if err != nil {
 			state = ManagedPlaywrightState{SessionKey: s.paths.SessionKey, ProfileKey: s.paths.ProfileKey, Provider: s.paths.Provider, ProjectPath: s.paths.ProjectPath, LaunchMode: s.paths.LaunchMode, Policy: s.cfg.Policy}
 		}
-		state.ProfileBackupPath = preflight.ProfileBackupPath
-		state.ProfileRecoveryReason = preflight.RecoveryReason()
+		state = applyManagedPlaywrightProfilePreflight(state, preflight)
 		state.UpdatedAt = time.Now().UTC()
 		return WriteManagedPlaywrightState(s.paths, state)
 	})

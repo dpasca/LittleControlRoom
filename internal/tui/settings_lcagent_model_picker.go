@@ -423,7 +423,6 @@ func (m Model) updateSettingsLCAgentModelPickerMode(msg tea.KeyMsg) (tea.Model, 
 		}
 		return m, cmd
 	}
-	return m, nil
 }
 
 func (m Model) updateSettingsLCAgentModelPickerProviderStep(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

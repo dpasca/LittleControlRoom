@@ -914,6 +914,11 @@ func projectScopeSettingsChanged(previous, next config.EditableSettings) bool {
 		!stringSlicesEqual(previous.ExcludePaths, next.ExcludePaths)
 }
 
+func projectAttentionSettingsChanged(previous, next config.EditableSettings) bool {
+	return previous.ActiveThreshold != next.ActiveThreshold ||
+		previous.StuckThreshold != next.StuckThreshold
+}
+
 func mobileServerSettingsChanged(previous, next config.EditableSettings) bool {
 	previous = config.NormalizeEditableSettings(previous)
 	next = config.NormalizeEditableSettings(next)

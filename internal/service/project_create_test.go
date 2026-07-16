@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,55 @@ type scratchTaskTitleAssessorFunc func(context.Context, ScratchTaskTitleAssessme
 
 func (f scratchTaskTitleAssessorFunc) AssessScratchTaskTitle(ctx context.Context, input ScratchTaskTitleAssessmentInput) (ScratchTaskTitleAssessment, error) {
 	return f(ctx, input)
+}
+
+func TestManualProjectScoringSnapshotsEditableThresholds(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	cfg := config.Default()
+	svc := &Service{cfg: cfg, store: st, bus: events.NewBus()}
+	projectPath := t.TempDir()
+	settingsA := config.EditableSettingsFromAppConfig(cfg)
+	settingsB := settingsA
+	settingsB.ActiveThreshold = 5 * time.Minute
+	settingsB.StuckThreshold = 30 * time.Minute
+
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			if i%2 == 0 {
+				svc.ApplyEditableSettings(settingsA)
+			} else {
+				svc.ApplyEditableSettings(settingsB)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			if err := svc.upsertManualProjectState(ctx, model.ProjectSummary{}, projectPath, "demo", model.ProjectKindProject); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+		}
+	}()
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		t.Fatalf("upsertManualProjectState() error = %v", err)
+	default:
+	}
 }
 
 func TestCreateOrAttachProjectCreatesDirectoryAndGitRepo(t *testing.T) {

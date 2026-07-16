@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -24,6 +25,7 @@ var managedBrowserStateReader = browserctl.ReadManagedPlaywrightState
 const managedBrowserStateFreshWindow = 5 * time.Second
 const managedBrowserStateRefreshInterval = 2 * time.Second
 const managedBrowserStateHydrationRetryAttempts = 20
+const managedBrowserPreflightWarningDuplicateWindow = 10 * time.Minute
 
 var managedBrowserStateHydrationRetryDelay = 250 * time.Millisecond
 
@@ -130,6 +132,19 @@ func (m *Model) rememberManagedBrowserState(state browserctl.ManagedPlaywrightSt
 	}
 	m.managedBrowserStateFetchedAt[sessionKey] = m.currentTime()
 	m.managedBrowserAvailability[sessionKey] = managedBrowserAvailabilityLive
+}
+
+func (m *Model) appendManagedBrowserPreflightWarning(state browserctl.ManagedPlaywrightState) {
+	warning := strings.TrimSpace(state.ProfilePreflightWarning)
+	if warning == "" {
+		return
+	}
+	m.appendDeduplicatedBackgroundErrorLogEntry(
+		"Browser profile compatibility warning",
+		errors.New(warning),
+		state.ProjectPath,
+		managedBrowserPreflightWarningDuplicateWindow,
+	)
 }
 
 func (m *Model) markManagedBrowserStateGone(sessionKey string) {

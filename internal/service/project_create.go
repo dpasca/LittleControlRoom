@@ -235,6 +235,7 @@ func existingProjectVisibleInDefaultList(project model.ProjectSummary) bool {
 }
 
 func (s *Service) upsertManualProjectState(ctx context.Context, existing model.ProjectSummary, projectPath, name string, kind model.ProjectKind) error {
+	cfg := s.Config()
 	unlockProjectState := s.lockProjectStateMutation(projectPath)
 	defer unlockProjectState()
 
@@ -288,8 +289,8 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		Unread:                     attention.AssessmentUnread(existing),
 		SnoozedUntil:               existing.SnoozedUntil,
 		HasActivity:                false,
-		ActiveThreshold:            s.cfg.ActiveThreshold,
-		StuckThreshold:             s.cfg.StuckThreshold,
+		ActiveThreshold:            cfg.ActiveThreshold,
+		StuckThreshold:             cfg.StuckThreshold,
 		OpenTodoCount:              existing.OpenTODOCount,
 	})
 

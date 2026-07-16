@@ -35,6 +35,8 @@ const asyncProjectRefreshTimeout = 30 * time.Second
 const asyncProjectRefreshConcurrency = 1
 const bossAssistantHTTPTimeout = 90 * time.Second
 const missingLinkedWorktreeRetention = 7 * 24 * time.Hour
+const fullScanLockPollInterval = 25 * time.Millisecond
+const scanGitMetadataTimeoutPathLimit = 8
 
 var scanGitMetadataTimeout = 1500 * time.Millisecond
 var scanGitMetadataConcurrency = 8
@@ -79,6 +81,12 @@ type Service struct {
 
 	mu sync.Mutex
 
+	fullScanMu sync.Mutex
+
+	schedulerWakeOnce    sync.Once
+	schedulerWakeCh      chan struct{}
+	scheduledScanTimeout time.Duration
+
 	projectStateLocks   keyedmutex.Locker
 	worktreeCreateLocks keyedmutex.Locker
 	gitWriteLocks       keyedmutex.Locker
@@ -122,12 +130,14 @@ type detectedProjectMove struct {
 }
 
 type ScanReport struct {
-	At                    time.Time
-	ActivityProjectCount  int
-	TrackedProjectCount   int
-	UpdatedProjects       []string
-	QueuedClassifications int
-	States                []model.ProjectState
+	At                            time.Time
+	ActivityProjectCount          int
+	TrackedProjectCount           int
+	UpdatedProjects               []string
+	QueuedClassifications         int
+	GitMetadataTimeoutCount       int
+	GitMetadataTimeoutPathSamples []string
+	States                        []model.ProjectState
 }
 
 type ScanOptions struct {
@@ -153,6 +163,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitWorktreeInfoReader:  scanner.ReadGitWorktreeInfo,
 		gitWorktreeListReader:  scanner.ListGitWorktrees,
 		gitRepoInitializer:     runGitInit,
+		scheduledScanTimeout:   defaultScheduledScanTimeout,
 	}
 	svc.configureAIClientsLocked()
 	svc.bestEffortPrepareInternalWorkspaceState()
@@ -284,6 +295,25 @@ func (s *scanGitMetadataTimeoutSet) add(path string) {
 		s.paths = make(map[string]struct{})
 	}
 	s.paths[path] = struct{}{}
+}
+
+func (s *scanGitMetadataTimeoutSet) snapshot(limit int) (int, []string) {
+	if s == nil {
+		return 0, nil
+	}
+	s.mu.Lock()
+	paths := make([]string, 0, len(s.paths))
+	for path := range s.paths {
+		paths = append(paths, path)
+	}
+	s.mu.Unlock()
+
+	sort.Strings(paths)
+	count := len(paths)
+	if limit >= 0 && len(paths) > limit {
+		paths = paths[:limit]
+	}
+	return count, paths
 }
 
 func withScanGitMetadataTimeout[T any](reader func(context.Context, string) (T, error), timedOutPaths *scanGitMetadataTimeoutSet) func(context.Context, string) (T, error) {
@@ -435,6 +465,61 @@ func (s *Service) lockMutation(ctx context.Context) (func(), error) {
 	}
 }
 
+func (s *Service) lockFullScanContext(ctx context.Context) (func(), error) {
+	if s == nil {
+		return func() {}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ticker := time.NewTicker(fullScanLockPollInterval)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("wait for another project scan: %w", err)
+		}
+		if s.fullScanMu.TryLock() {
+			return s.fullScanMu.Unlock, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for another project scan: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Service) tryLockFullScan() (func(), bool) {
+	if s == nil {
+		return func() {}, true
+	}
+	if !s.fullScanMu.TryLock() {
+		return nil, false
+	}
+	return s.fullScanMu.Unlock, true
+}
+
+func (s *Service) schedulerWakeChannel() chan struct{} {
+	if s == nil {
+		return nil
+	}
+	s.schedulerWakeOnce.Do(func() {
+		s.schedulerWakeCh = make(chan struct{}, 1)
+	})
+	return s.schedulerWakeCh
+}
+
+func (s *Service) notifySchedulerConfigChanged() {
+	if s == nil {
+		return
+	}
+	wakeCh := s.schedulerWakeChannel()
+	select {
+	case wakeCh <- struct{}{}:
+	default:
+	}
+}
+
 func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -444,9 +529,9 @@ func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
 func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	settings = config.NormalizeEditableSettings(settings)
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	reconfigureAIClients := editableSettingsRequireAIClientRefresh(s.cfg, settings)
+	scanIntervalChanged := s.cfg.ScanInterval != settings.ScanInterval
 	currentBackend := s.cfg.EffectiveAIBackend()
 	nextBackend := config.ResolveAIBackend(settings.AIBackend, settings.OpenAIAPIKey)
 	currentBossChatBackend := s.cfg.EffectiveBossChatBackend()
@@ -489,6 +574,10 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.EmbeddedLCAgentModel = strings.TrimSpace(settings.EmbeddedLCAgentModel)
 	s.cfg.EmbeddedLCAgentReasoning = strings.TrimSpace(settings.EmbeddedLCAgentReasoning)
 	s.cfg.OpenCodeModelTier = strings.TrimSpace(settings.OpenCodeModelTier)
+	s.cfg.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
+	s.cfg.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
+	s.cfg.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
+	s.cfg.RecentLCAgentModels = append([]string(nil), settings.RecentLCAgentModels...)
 	s.cfg.LCAgentPath = strings.TrimSpace(settings.LCAgentPath)
 	s.cfg.LCAgentEnvFile = strings.TrimSpace(settings.LCAgentEnvFile)
 	s.cfg.LCAgentRoutePreset = strings.TrimSpace(settings.LCAgentRoutePreset)
@@ -500,6 +589,10 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.LCAgentRequestTimeout = settings.LCAgentRequestTimeout
 	s.cfg.LCAgentUtilityProvider = strings.TrimSpace(settings.LCAgentUtilityProvider)
 	s.cfg.LCAgentUtilityModel = strings.TrimSpace(settings.LCAgentUtilityModel)
+	s.cfg.LCAgentVisionProvider = strings.TrimSpace(settings.LCAgentVisionProvider)
+	s.cfg.LCAgentVisionModel = strings.TrimSpace(settings.LCAgentVisionModel)
+	s.cfg.LCAgentMainVisionProvider = strings.TrimSpace(settings.LCAgentMainVisionProvider)
+	s.cfg.LCAgentMainVisionModel = strings.TrimSpace(settings.LCAgentMainVisionModel)
 	s.cfg.LCAgentWebSearchBackend = strings.TrimSpace(settings.LCAgentWebSearchBackend)
 	s.cfg.LCAgentWebSearchAPIKey = strings.TrimSpace(settings.LCAgentWebSearchAPIKey)
 	s.cfg.LCAgentWebSearchEngineID = strings.TrimSpace(settings.LCAgentWebSearchEngineID)
@@ -522,6 +615,11 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	}
 	if currentBossChatBackend != nextBossChatBackend || currentBossChatOllamaThinking != settings.BossChatOllamaThinking {
 		s.resetBossChatUsageLocked()
+	}
+	s.mu.Unlock()
+
+	if scanIntervalChanged {
+		s.notifySchedulerConfigChanged()
 	}
 }
 
@@ -1023,7 +1121,38 @@ func (s *Service) ScanOnce(ctx context.Context) (ScanReport, error) {
 }
 
 func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanReport, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	progress := &scanProgressTracker{}
+	progress.setPhase("waiting for another project scan")
+	unlock, err := s.lockFullScanContext(ctx)
+	if err != nil {
+		return ScanReport{}, progress.wrapTimeout(err)
+	}
+	defer unlock()
+	return s.scanWithOptions(ctx, opts, progress)
+}
+
+func (s *Service) tryScanWithOptions(ctx context.Context, opts ScanOptions) (ScanReport, error, bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return ScanReport{}, err, false
+	}
+	unlock, ok := s.tryLockFullScan()
+	if !ok {
+		return ScanReport{}, nil, false
+	}
+	defer unlock()
+
+	progress := &scanProgressTracker{}
+	returnReport, err := s.scanWithOptions(ctx, opts, progress)
+	return returnReport, err, true
+}
+
+func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progress *scanProgressTracker) (ScanReport, error) {
 	progress.setPhase("starting project scan")
 	runtime := s.runtimeSnapshot()
 	cfg := runtime.cfg
@@ -1626,13 +1755,16 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 		unlockProjectState()
 	}
 
+	gitMetadataTimeoutCount, gitMetadataTimeoutPaths := timedOutGitPaths.snapshot(scanGitMetadataTimeoutPathLimit)
 	report := ScanReport{
-		At:                    now,
-		ActivityProjectCount:  len(activities),
-		TrackedProjectCount:   len(states),
-		UpdatedProjects:       updated,
-		QueuedClassifications: queuedClassifications,
-		States:                states,
+		At:                            now,
+		ActivityProjectCount:          len(activities),
+		TrackedProjectCount:           len(states),
+		UpdatedProjects:               updated,
+		QueuedClassifications:         queuedClassifications,
+		GitMetadataTimeoutCount:       gitMetadataTimeoutCount,
+		GitMetadataTimeoutPathSamples: gitMetadataTimeoutPaths,
+		States:                        states,
 	}
 	if queuedClassifications > 0 && classifier != nil {
 		progress.setPhase("notifying queued classifications")
@@ -1649,8 +1781,10 @@ func (s *Service) ScanWithOptions(ctx context.Context, opts ScanOptions) (ScanRe
 			Type: events.ScanCompleted,
 			At:   now,
 			Payload: map[string]string{
-				"updated":                fmt.Sprintf("%d", len(updated)),
-				"queued_classifications": fmt.Sprintf("%d", queuedClassifications),
+				"updated":                           fmt.Sprintf("%d", len(updated)),
+				"queued_classifications":            fmt.Sprintf("%d", queuedClassifications),
+				"git_metadata_timeouts":             fmt.Sprintf("%d", gitMetadataTimeoutCount),
+				"git_metadata_timeout_path_samples": strings.Join(gitMetadataTimeoutPaths, "\n"),
 			},
 		})
 	}
@@ -3741,20 +3875,4 @@ func (s *Service) ForgetProject(ctx context.Context, projectPath string) error {
 	s.bus.Publish(events.Event{Type: events.ActionApplied, At: now, ProjectPath: projectPath, Payload: map[string]string{"action": "forget_project"}})
 	_ = s.store.AddEvent(ctx, model.StoredEvent{At: now, ProjectPath: projectPath, Type: string(events.ActionApplied), Payload: "forget_project"})
 	return nil
-}
-
-func (s *Service) StartScheduler(ctx context.Context) {
-	if s.cfg.ScanInterval <= 0 {
-		return
-	}
-	ticker := time.NewTicker(s.cfg.ScanInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			_, _ = s.ScanOnce(ctx)
-		}
-	}
 }

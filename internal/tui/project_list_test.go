@@ -1564,6 +1564,25 @@ func TestScanCompleteStatusIncludesQueuedClassifications(t *testing.T) {
 	}
 }
 
+func TestScanCompleteStatusIncludesGitMetadataTimeouts(t *testing.T) {
+	tests := []struct {
+		name  string
+		count int
+		want  string
+	}{
+		{name: "singular", count: 1, want: "Scan complete: 0 updated, 1 Git metadata timeout"},
+		{name: "plural", count: 3, want: "Scan complete: 0 updated, 3 Git metadata timeouts"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := scanCompleteStatus(service.ScanReport{GitMetadataTimeoutCount: tt.count})
+			if got != tt.want {
+				t.Fatalf("scanCompleteStatus() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFitFooterWidth(t *testing.T) {
 	if got := fitFooterWidth("abcdefghij", 7); got != "abcd..." {
 		t.Fatalf("fitFooterWidth() = %q, want %q", got, "abcd...")
