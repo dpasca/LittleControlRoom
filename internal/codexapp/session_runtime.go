@@ -945,8 +945,11 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 				s.mcpServerStartup = make(map[string]mcpServerStartupState)
 			}
 			s.mcpServerStartup[name] = msg.Status
-			if name == "playwright" && msg.Status == mcpServerStartupStateReady {
-				s.playwrightMCPReady = true
+			switch name {
+			case "playwright":
+				s.playwrightMCPReady = msg.Status == mcpServerStartupStateReady
+			case "lcr_runtime":
+				s.runtimeMCPReady = msg.Status == mcpServerStartupStateReady
 			}
 		}
 		s.mu.Unlock()

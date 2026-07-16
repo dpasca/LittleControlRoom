@@ -2783,6 +2783,136 @@ func TestEnsureRuntimeMCPReadyTimesOutWithNotice(t *testing.T) {
 	}
 }
 
+func TestMCPStartupStatusNotificationTracksRuntimeReadiness(t *testing.T) {
+	s := &appServerSession{
+		entryIndex: make(map[string]int),
+		notify:     func() {},
+	}
+
+	s.handleNotification("mcpServer/startupStatus/updated", json.RawMessage(`{
+		"name":"lcr_runtime",
+		"status":"ready"
+	}`))
+	if !s.runtimeMCPReady {
+		t.Fatalf("runtimeMCPReady = false after ready notification, want true")
+	}
+	if got := s.mcpServerStartup["lcr_runtime"]; got != mcpServerStartupStateReady {
+		t.Fatalf("runtime startup status = %q, want %q", got, mcpServerStartupStateReady)
+	}
+
+	s.handleNotification("mcpServer/startupStatus/updated", json.RawMessage(`{
+		"name":"lcr_runtime",
+		"status":"starting"
+	}`))
+	if s.runtimeMCPReady {
+		t.Fatalf("runtimeMCPReady = true after starting notification, want false")
+	}
+}
+
+func TestSubmitSkipsRuntimeReadinessProbeAfterReadyNotification(t *testing.T) {
+	callCount := 0
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_456",
+		entryIndex:         make(map[string]int),
+		notify:             func() {},
+		runtimeMCPExpected: true,
+		rpcCallHook: func(ctx context.Context, method string, _ any) (json.RawMessage, error) {
+			callCount++
+			if method != "turn/start" {
+				t.Fatalf("rpc method = %q, want turn/start without another runtime readiness probe", method)
+			}
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("turn/start context error = %v", err)
+			}
+			return json.RawMessage(`{"turn":{"id":"turn_cached"}}`), nil
+		},
+	}
+	s.handleNotification("mcpServer/startupStatus/updated", json.RawMessage(`{
+		"name":"lcr_runtime",
+		"status":"ready"
+	}`))
+
+	if err := s.Submit("use the ready runtime"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	if callCount != 1 {
+		t.Fatalf("rpc call count = %d, want 1", callCount)
+	}
+	if snapshot := s.Snapshot(); snapshot.ActiveTurnID != "turn_cached" {
+		t.Fatalf("active turn id = %q, want turn_cached", snapshot.ActiveTurnID)
+	}
+}
+
+func TestSubmitUsesFreshRPCDeadlineAfterRuntimeReadinessCheck(t *testing.T) {
+	var readinessDeadline time.Time
+
+	s := &appServerSession{
+		projectPath:           "/tmp/demo",
+		threadID:              "thread_456",
+		entryIndex:            make(map[string]int),
+		notify:                func() {},
+		runtimeMCPExpected:    true,
+		browserHandoffPending: true,
+	}
+	s.rpcCallHook = func(ctx context.Context, method string, _ any) (json.RawMessage, error) {
+		switch method {
+		case "mcpServerStatus/list":
+			var ok bool
+			readinessDeadline, ok = ctx.Deadline()
+			if !ok {
+				t.Fatal("runtime readiness context has no deadline")
+			}
+			s.mu.Lock()
+			if s.mcpServerStartup == nil {
+				s.mcpServerStartup = make(map[string]mcpServerStartupState)
+			}
+			s.mcpServerStartup["lcr_runtime"] = mcpServerStartupStateFailed
+			s.mu.Unlock()
+			return json.RawMessage(`{"data":[]}`), nil
+		case "turn/start":
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("turn/start context already expired: %v", err)
+			}
+			turnDeadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("turn/start context has no deadline")
+			}
+			if !turnDeadline.After(readinessDeadline.Add(5 * time.Second)) {
+				t.Fatalf("turn/start deadline = %v, readiness deadline = %v; want a fresh RPC budget", turnDeadline, readinessDeadline)
+			}
+			return json.RawMessage(`{"turn":{"id":"turn_fresh"}}`), nil
+		default:
+			t.Fatalf("unexpected rpc method %q", method)
+			return nil, nil
+		}
+	}
+
+	if err := s.Submit("continue after browser login"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+
+	snapshot := s.Snapshot()
+	if !snapshot.Busy || snapshot.ActiveTurnID != "turn_fresh" {
+		t.Fatalf("snapshot = %#v, want active fresh turn", snapshot)
+	}
+	if s.browserHandoffPending {
+		t.Fatal("browser handoff remains pending after successful turn/start")
+	}
+	if snapshot.LastError != "" {
+		t.Fatalf("last error = %q, want none", snapshot.LastError)
+	}
+	userEntries := 0
+	for _, entry := range snapshot.Entries {
+		if entry.Kind == TranscriptUser && entry.Text == "continue after browser login" {
+			userEntries++
+		}
+	}
+	if userEntries != 1 {
+		t.Fatalf("matching user entries = %d, want exactly one", userEntries)
+	}
+}
+
 func TestManagedPlaywrightMCPReadyInTrustedProject(t *testing.T) {
 	if os.Getenv("LCROOM_EMBEDDED_CX_BROWSER_SMOKE") == "" {
 		t.Skip("set LCROOM_EMBEDDED_CX_BROWSER_SMOKE=1 to run the real embedded Codex Playwright smoke test")
