@@ -38,7 +38,7 @@ func codexHostSlashCommand(input string) (commands.Invocation, bool) {
 		return commands.Invocation{}, false
 	}
 	switch inv.Kind {
-	case commands.KindTaskActions, commands.KindResolve:
+	case commands.KindTaskActions, commands.KindResolve, commands.KindRepairTerminal:
 		return inv, true
 	default:
 		return commands.Invocation{}, false

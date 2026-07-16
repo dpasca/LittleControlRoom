@@ -167,6 +167,7 @@ Main workflow:
 - `/codex [prompt]`, `/opencode [prompt]`, `/claude [prompt]`, `/lcagent [prompt]`: Resume the latest session for that provider, or start one.
 - `/codex-new [prompt]`, `/opencode-new [prompt]`, `/claude-new [prompt]`, `/lcagent-new [prompt]`: Start a fresh embedded session.
 - `/refresh`: Rescan projects and retry failed assessments.
+- `/repair-terminal`: Reinitialize alternate-screen, cursor, mouse, and bracketed-paste modes after external terminal-state corruption. `Ctrl+L` is the immediate shortcut.
 - `/update`: Check for a newer stable GitHub release and, after explicit confirmation, verify, install, and restart into it.
 
 Repo and runtime actions:

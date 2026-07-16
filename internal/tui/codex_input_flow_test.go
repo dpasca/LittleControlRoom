@@ -199,9 +199,10 @@ func TestVisibleCodexCtrlVAttachesClipboardImage(t *testing.T) {
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("ctrl+v image attach should not queue a command")
+	if cmd == nil || !got.codexClipboardPasteInFlight {
+		t.Fatalf("ctrl+v image attach should queue background clipboard work")
 	}
+	got = completeCodexClipboardPaste(t, got, cmd)
 	attachments := got.currentCodexAttachments()
 	if len(attachments) != 1 {
 		t.Fatalf("attachments = %d, want 1", len(attachments))
@@ -261,9 +262,10 @@ func TestVisibleCodexBackspaceRemovesInlineImageMarker(t *testing.T) {
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("ctrl+v image attach should not queue a command")
+	if cmd == nil {
+		t.Fatalf("ctrl+v image attach should queue background clipboard work")
 	}
+	got = completeCodexClipboardPaste(t, got, cmd)
 
 	updated, cmd = got.updateCodexMode(tea.KeyMsg{Type: tea.KeyBackspace})
 	got = updated.(Model)
@@ -330,9 +332,10 @@ func TestVisibleCodexCtrlVPastesLargeTextAsPlaceholder(t *testing.T) {
 
 	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("ctrl+v large text paste should not queue a command")
+	if cmd == nil || !got.codexClipboardPasteInFlight {
+		t.Fatalf("ctrl+v large text paste should queue background clipboard work")
 	}
+	got = completeCodexClipboardPaste(t, got, cmd)
 	if got.codexInput.Value() != "[Paste #1: 1 line] " {
 		t.Fatalf("composer = %q, want large paste placeholder", got.codexInput.Value())
 	}
@@ -572,8 +575,9 @@ func TestVisibleCodexBackspaceRemovesLargePastePlaceholder(t *testing.T) {
 		height:              24,
 	}
 
-	updated, _ := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
+	updated, pasteCmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyCtrlV})
 	got := updated.(Model)
+	got = completeCodexClipboardPaste(t, got, pasteCmd)
 	updated, cmd := got.updateCodexMode(tea.KeyMsg{Type: tea.KeyBackspace})
 	got = updated.(Model)
 	if cmd != nil {
@@ -588,6 +592,23 @@ func TestVisibleCodexBackspaceRemovesLargePastePlaceholder(t *testing.T) {
 	if got.status != "Removed [1 line pasted] placeholder" {
 		t.Fatalf("status = %q, want placeholder removal notice", got.status)
 	}
+}
+
+func completeCodexClipboardPaste(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("clipboard paste command is nil")
+	}
+	raw := cmd()
+	msg, ok := raw.(codexClipboardPasteMsg)
+	if !ok {
+		t.Fatalf("clipboard paste command returned %T", raw)
+	}
+	updated, followup := m.applyCodexClipboardPasteMsg(msg)
+	if followup != nil {
+		t.Fatal("applying clipboard paste should not queue follow-up work")
+	}
+	return updated.(Model)
 }
 
 func TestVisibleCodexSubmissionStripsInlineImageMarker(t *testing.T) {

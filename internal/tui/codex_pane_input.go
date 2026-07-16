@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	tea "github.com/charmbracelet/bubbletea"
 	"lcroom/internal/codexapp"
@@ -10,6 +11,13 @@ import (
 	"strings"
 	"unicode"
 )
+
+type codexClipboardPasteMsg struct {
+	projectPath string
+	attachment  *codexapp.Attachment
+	text        string
+	err         error
+}
 
 func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if projectPath := m.codexPendingOpenProject(); m.codexPendingOpenVisible() && projectPath != "" {
@@ -669,40 +677,66 @@ func (m *Model) tryHandleCodexPaste(msg tea.KeyMsg, allowImage bool) (bool, tea.
 		return false, nil
 	}
 
-	if allowImage {
-		attached, err := m.tryAttachClipboardImage()
-		if err != nil {
-			m.status = err.Error()
-			m.noteCodexComposerKey(false)
-			return true, nil
-		}
-		if attached {
-			m.noteCodexComposerKey(true)
-			return true, nil
-		}
+	if m.codexClipboardPasteInFlight {
+		m.status = "Clipboard paste is already in progress"
+		return true, nil
 	}
+	projectPath := m.codexComposerProjectPath()
+	if projectPath == "" {
+		return true, nil
+	}
+	m.codexClipboardPasteInFlight = true
+	m.status = "Reading clipboard..."
+	return true, readCodexClipboardCmd(projectPath, allowImage)
+}
 
-	text, err := clipboardTextReader()
-	if err != nil {
-		m.reportError("Clipboard paste failed", err, m.codexVisibleProject)
-		m.noteCodexComposerKey(false)
-		return true, nil
+func readCodexClipboardCmd(projectPath string, allowImage bool) tea.Cmd {
+	return func() tea.Msg {
+		if allowImage {
+			attachment, err := clipboardImageAttachment()
+			switch {
+			case err == nil:
+				return codexClipboardPasteMsg{projectPath: projectPath, attachment: &attachment}
+			case !errors.Is(err, errClipboardHasNoImage):
+				return codexClipboardPasteMsg{projectPath: projectPath, err: err}
+			}
+		}
+		text, err := clipboardTextReader()
+		return codexClipboardPasteMsg{projectPath: projectPath, text: text, err: err}
 	}
-	if text == "" {
-		m.noteCodexComposerKey(false)
-		return true, nil
+}
+
+func (m Model) applyCodexClipboardPasteMsg(msg codexClipboardPasteMsg) (tea.Model, tea.Cmd) {
+	m.codexClipboardPasteInFlight = false
+	if msg.projectPath != m.codexComposerProjectPath() {
+		m.status = "Clipboard paste canceled because the active composer changed"
+		return m, nil
 	}
-	if shouldCollapseCodexPaste(text) {
-		m.insertCodexPastedText(text)
+	if msg.err != nil {
+		m.reportError("Clipboard paste failed", msg.err, msg.projectPath)
+		m.noteCodexComposerKey(false)
+		return m, nil
+	}
+	if msg.attachment != nil {
+		m.attachCodexClipboardImage(*msg.attachment)
 		m.noteCodexComposerKey(true)
-		return true, nil
+		return m, nil
 	}
-	m.codexInput.InsertString(text)
+	if msg.text == "" {
+		m.noteCodexComposerKey(false)
+		return m, nil
+	}
+	if shouldCollapseCodexPaste(msg.text) {
+		m.insertCodexPastedText(msg.text)
+		m.noteCodexComposerKey(true)
+		return m, nil
+	}
+	m.codexInput.InsertString(msg.text)
 	m.noteCodexComposerKey(true)
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	m.syncCodexSlashSelection()
-	return true, nil
+	return m, nil
 }
 
 func codexBulkTextInput(msg tea.KeyMsg) bool {
@@ -712,18 +746,7 @@ func codexBulkTextInput(msg tea.KeyMsg) bool {
 	return shouldCollapseCodexPaste(string(msg.Runes))
 }
 
-func (m *Model) tryAttachClipboardImage() (bool, error) {
-	projectPath := m.codexComposerProjectPath()
-	if projectPath == "" {
-		return false, nil
-	}
-	attachment, err := clipboardImageAttachment()
-	if err != nil {
-		if err == errClipboardHasNoImage {
-			return false, nil
-		}
-		return false, err
-	}
+func (m *Model) attachCodexClipboardImage(attachment codexapp.Attachment) {
 	m.appendCurrentCodexAttachment(attachment)
 	attachments := m.currentCodexAttachments()
 	index := len(attachments) - 1
@@ -731,7 +754,6 @@ func (m *Model) tryAttachClipboardImage() (bool, error) {
 	m.persistVisibleCodexDraft()
 	m.syncCodexComposerSize()
 	m.status = "Attached " + codexAttachmentComposerToken(index, attachment)
-	return true, nil
 }
 
 func (m *Model) insertCodexPastedText(text string) {

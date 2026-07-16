@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -41,12 +42,21 @@ type todoDialogState struct {
 }
 
 type todoEditorState struct {
-	ProjectPath string
-	ProjectName string
-	TodoID      int64
-	Input       textarea.Model
-	Attachments []model.TodoAttachment
-	Submitting  bool
+	ProjectPath   string
+	ProjectName   string
+	TodoID        int64
+	Input         textarea.Model
+	Attachments   []model.TodoAttachment
+	Submitting    bool
+	ClipboardBusy bool
+}
+
+type todoClipboardPasteMsg struct {
+	projectPath string
+	todoID      int64
+	attachment  *model.TodoAttachment
+	text        string
+	err         error
 }
 
 type todoPendingSaveState struct {
@@ -1073,23 +1083,13 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dialog.Submitting = true
 		return m, m.startTodoEditorSave(text)
 	case "ctrl+v":
-		attached, err := m.tryAttachTodoClipboardImage()
-		if err != nil {
-			m.status = err.Error()
+		if dialog.ClipboardBusy {
+			m.status = "Clipboard paste is already in progress"
 			return m, nil
 		}
-		if attached {
-			return m, nil
-		}
-		text, err := clipboardTextReader()
-		if err != nil {
-			m.reportError("Clipboard paste failed", err, dialog.ProjectPath)
-			return m, nil
-		}
-		if text != "" {
-			dialog.Input.InsertString(text)
-		}
-		return m, nil
+		dialog.ClipboardBusy = true
+		m.status = "Reading clipboard..."
+		return m, readTodoClipboardCmd(m.appDataDir(), dialog.ProjectPath, dialog.TodoID)
 	case "backspace", "delete":
 		if strings.TrimSpace(dialog.Input.Value()) == "" && len(dialog.Attachments) > 0 {
 			removed := todoAttachmentLabel(len(dialog.Attachments)-1, dialog.Attachments[len(dialog.Attachments)-1])
@@ -1103,26 +1103,43 @@ func (m Model) updateTodoEditorMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *Model) tryAttachTodoClipboardImage() (bool, error) {
-	dialog := m.todoEditor
-	if dialog == nil {
-		return false, nil
-	}
-	attachment, err := durableClipboardImageAttachment(m.appDataDir())
-	if err != nil {
-		if err == errClipboardHasNoImage {
-			return false, nil
+func readTodoClipboardCmd(dataDir, projectPath string, todoID int64) tea.Cmd {
+	return func() tea.Msg {
+		attachment, err := durableClipboardImageAttachment(dataDir)
+		if err == nil {
+			todoAttachments := todoAttachmentsFromCodex([]codexapp.Attachment{attachment})
+			if len(todoAttachments) > 0 {
+				return todoClipboardPasteMsg{projectPath: projectPath, todoID: todoID, attachment: &todoAttachments[0]}
+			}
 		}
-		return false, err
+		if err != nil && !errors.Is(err, errClipboardHasNoImage) {
+			return todoClipboardPasteMsg{projectPath: projectPath, todoID: todoID, err: err}
+		}
+		text, textErr := clipboardTextReader()
+		return todoClipboardPasteMsg{projectPath: projectPath, todoID: todoID, text: text, err: textErr}
 	}
-	todoAttachments := todoAttachmentsFromCodex([]codexapp.Attachment{attachment})
-	if len(todoAttachments) == 0 {
-		return false, nil
+}
+
+func (m Model) applyTodoClipboardPasteMsg(msg todoClipboardPasteMsg) (tea.Model, tea.Cmd) {
+	dialog := m.todoEditor
+	if dialog == nil || dialog.ProjectPath != msg.projectPath || dialog.TodoID != msg.todoID {
+		return m, nil
 	}
-	dialog.Attachments = append(cloneTodoAttachments(dialog.Attachments), todoAttachments[0])
+	dialog.ClipboardBusy = false
+	if msg.err != nil {
+		m.reportError("Clipboard paste failed", msg.err, dialog.ProjectPath)
+		return m, nil
+	}
+	if msg.attachment == nil {
+		if msg.text != "" {
+			dialog.Input.InsertString(msg.text)
+		}
+		return m, nil
+	}
+	dialog.Attachments = append(cloneTodoAttachments(dialog.Attachments), *msg.attachment)
 	index := len(dialog.Attachments) - 1
 	m.status = "Attached " + todoAttachmentLabel(index, dialog.Attachments[index]) + " to TODO"
-	return true, nil
+	return m, nil
 }
 
 func (m Model) updateTodoDeleteConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

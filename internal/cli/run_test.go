@@ -227,6 +227,39 @@ func TestFormatRuntimeConflictMessageIncludesRecovery(t *testing.T) {
 	}
 }
 
+func TestHasDirectTerminalOutputRejectsPipedStartupDiagnostics(t *testing.T) {
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	defer stdoutReader.Close()
+	defer stdoutWriter.Close()
+	stderrReader, stderrWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stderr pipe: %v", err)
+	}
+	defer stderrReader.Close()
+	defer stderrWriter.Close()
+
+	if got := directTerminalOutput(func(uintptr) bool { return false }, stdoutWriter, stderrWriter); got != nil {
+		t.Fatal("piped startup diagnostics must not be allowed to reset /dev/tty")
+	}
+}
+
+func TestHasDirectTerminalOutputAcceptsTerminalBackedOutput(t *testing.T) {
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	defer stdoutReader.Close()
+	defer stdoutWriter.Close()
+
+	wantFD := stdoutWriter.Fd()
+	if got := directTerminalOutput(func(fd uintptr) bool { return fd == wantFD }, stdoutWriter); got != stdoutWriter {
+		t.Fatalf("terminal-backed startup diagnostics selected %v, want stdout", got)
+	}
+}
+
 func TestWriteInteractivePanicDump(t *testing.T) {
 	t.Parallel()
 
