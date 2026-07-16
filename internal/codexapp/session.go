@@ -306,9 +306,11 @@ type resumedTurn struct {
 }
 
 type resumedThread struct {
-	ID     string              `json:"id"`
-	Status resumedThreadStatus `json:"status"`
-	Turns  []resumedTurn       `json:"turns"`
+	ID             string              `json:"id"`
+	SessionID      string              `json:"sessionId"`
+	ParentThreadID *string             `json:"parentThreadId"`
+	Status         resumedThreadStatus `json:"status"`
+	Turns          []resumedTurn       `json:"turns"`
 }
 
 type threadResumeResponse struct {
@@ -448,7 +450,9 @@ type byteRange struct {
 
 type threadStartedNotification struct {
 	Thread struct {
-		ID string `json:"id"`
+		ID             string  `json:"id"`
+		SessionID      string  `json:"sessionId"`
+		ParentThreadID *string `json:"parentThreadId"`
 	} `json:"thread"`
 }
 

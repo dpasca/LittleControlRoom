@@ -84,6 +84,86 @@ func TestHydrateResumedThreadBuildsTranscript(t *testing.T) {
 	}
 }
 
+func TestResumeThreadRedirectsSubAgentToSessionRoot(t *testing.T) {
+	var resumed []string
+	s := &appServerSession{
+		projectPath:       "/tmp/demo",
+		entryIndex:        make(map[string]int),
+		notify:            func() {},
+		reconnectThreadID: "thread_child",
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "thread/resume" {
+				return nil, fmt.Errorf("method = %q, want thread/resume", method)
+			}
+			request, ok := params.(threadResumeParams)
+			if !ok {
+				return nil, fmt.Errorf("params = %#v, want threadResumeParams", params)
+			}
+			resumed = append(resumed, request.ThreadID)
+			switch request.ThreadID {
+			case "thread_child":
+				return json.RawMessage(`{"thread":{"id":"thread_child","sessionId":"thread_root","parentThreadId":"thread_root","status":{"type":"idle"},"turns":[]}}`), nil
+			case "thread_root":
+				return json.RawMessage(`{"thread":{"id":"thread_root","sessionId":"thread_root","parentThreadId":null,"status":{"type":"idle"},"turns":[]}}`), nil
+			default:
+				return nil, fmt.Errorf("unexpected resume thread %q", request.ThreadID)
+			}
+		},
+	}
+
+	threadID, err := s.resumeThread(context.Background(), "thread_child")
+	if err != nil {
+		t.Fatalf("resumeThread() error = %v", err)
+	}
+	if threadID != "thread_root" {
+		t.Fatalf("resumeThread() = %q, want thread_root", threadID)
+	}
+	if got, want := strings.Join(resumed, ","), "thread_child,thread_root"; got != want {
+		t.Fatalf("resumed threads = %q, want %q", got, want)
+	}
+	if snapshot := s.Snapshot(); snapshot.ThreadID != "thread_root" {
+		t.Fatalf("snapshot thread = %q, want thread_root", snapshot.ThreadID)
+	}
+}
+
+func TestSubAgentNotificationsDoNotReplaceOrMutateRootThread(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		threadID:    "thread_root",
+		started:     true,
+		model:       "gpt-root",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+
+	s.handleNotification("thread/started", json.RawMessage(`{"thread":{"id":"thread_child","sessionId":"thread_root","parentThreadId":"thread_root"}}`))
+	s.handleNotification("turn/started", json.RawMessage(`{"threadId":"thread_child","turn":{"id":"turn_child","status":"inProgress"}}`))
+	s.handleNotification("item/agentMessage/delta", json.RawMessage(`{"threadId":"thread_child","turnId":"turn_child","itemId":"item_child","delta":"child output"}`))
+	s.handleNotification("thread/tokenUsage/updated", json.RawMessage(`{"threadId":"thread_child","turnId":"turn_child","tokenUsage":{"total":{"totalTokens":99}}}`))
+	s.handleNotification("model/rerouted", json.RawMessage(`{"threadId":"thread_child","turnId":"turn_child","fromModel":"gpt-child","toModel":"gpt-child-rerouted","reason":"fallback"}`))
+	s.handleNotification("error", json.RawMessage(`{"threadId":"thread_child","turnId":"turn_child","error":{"message":"child failed"}}`))
+
+	snapshot := s.Snapshot()
+	if snapshot.ThreadID != "thread_root" {
+		t.Fatalf("thread id = %q, want thread_root", snapshot.ThreadID)
+	}
+	if snapshot.Busy || snapshot.ActiveTurnID != "" {
+		t.Fatalf("root busy state changed by child: busy=%v turn=%q", snapshot.Busy, snapshot.ActiveTurnID)
+	}
+	if snapshot.Model != "gpt-root" {
+		t.Fatalf("root model = %q, want gpt-root", snapshot.Model)
+	}
+	if snapshot.TokenUsage != nil {
+		t.Fatalf("root token usage = %#v, want nil", snapshot.TokenUsage)
+	}
+	if snapshot.LastError != "" {
+		t.Fatalf("root last error = %q, want empty", snapshot.LastError)
+	}
+	if len(snapshot.Entries) != 0 {
+		t.Fatalf("root entries = %#v, want no child output", snapshot.Entries)
+	}
+}
+
 func TestHydrateResumedThreadRestoresOnlyUnresolvedBrowserHandoff(t *testing.T) {
 	policy := browserctl.Policy{
 		ManagementMode:     browserctl.ManagementModeManaged,

@@ -7,9 +7,18 @@ import (
 	"time"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/codexstate"
 )
 
 func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
+	if resumeID := strings.TrimSpace(req.ResumeID); resumeID != "" {
+		rootID, err := codexstate.ThreadRootID(req.CodexHome, resumeID)
+		if err != nil {
+			log.Printf("WARN codexapp: resolve Codex root thread resume_id=%q err=%v", resumeID, err)
+		} else if rootID = strings.TrimSpace(rootID); rootID != "" {
+			req.ResumeID = rootID
+		}
+	}
 	policy := req.PlaywrightPolicy.Normalize()
 	ensureManagedPlaywrightSessionKey(&req)
 	reconnectTranscript := cloneTranscriptEntries(req.ReconnectTranscript)

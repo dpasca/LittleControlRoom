@@ -188,17 +188,22 @@ func (s *appServerSession) startThread(ctx context.Context) (string, error) {
 }
 
 func (s *appServerSession) resumeThread(ctx context.Context, threadID string) (string, error) {
-	result, err := s.call(ctx, "thread/resume", threadResumeParams{
-		ThreadID:       threadID,
-		ApprovalPolicy: approvalPolicyForPreset(s.preset),
-		Sandbox:        sandboxModeForPreset(s.preset),
-	})
+	requestedThreadID := strings.TrimSpace(threadID)
+	response, err := s.resumeThreadResponse(ctx, requestedThreadID)
 	if err != nil {
 		return "", err
 	}
-	var response threadResumeResponse
-	if err := json.Unmarshal(result, &response); err != nil {
-		return "", err
+	rootThreadID := strings.TrimSpace(response.Thread.SessionID)
+	if rootThreadID != "" && rootThreadID != strings.TrimSpace(response.Thread.ID) {
+		response, err = s.resumeThreadResponse(ctx, rootThreadID)
+		if err != nil {
+			return "", fmt.Errorf("resume root Codex thread %s for sub-agent thread %s: %w", shortID(rootThreadID), shortID(requestedThreadID), err)
+		}
+		s.mu.Lock()
+		if strings.TrimSpace(s.reconnectThreadID) == requestedThreadID {
+			s.reconnectThreadID = rootThreadID
+		}
+		s.mu.Unlock()
 	}
 	if strings.TrimSpace(response.Thread.ID) == "" {
 		return "", fmt.Errorf("thread/resume returned no thread id")
@@ -213,6 +218,22 @@ func (s *appServerSession) resumeThread(ctx context.Context, threadID string) (s
 		s.appendSystemNotice("Resumed embedded Codex session " + shortID(response.Thread.ID) + ".")
 	}
 	return response.Thread.ID, nil
+}
+
+func (s *appServerSession) resumeThreadResponse(ctx context.Context, threadID string) (threadResumeResponse, error) {
+	result, err := s.call(ctx, "thread/resume", threadResumeParams{
+		ThreadID:       threadID,
+		ApprovalPolicy: approvalPolicyForPreset(s.preset),
+		Sandbox:        sandboxModeForPreset(s.preset),
+	})
+	if err != nil {
+		return threadResumeResponse{}, err
+	}
+	var response threadResumeResponse
+	if err := json.Unmarshal(result, &response); err != nil {
+		return threadResumeResponse{}, err
+	}
+	return response, nil
 }
 
 func (s *appServerSession) RefreshBusyElsewhere() error {
@@ -725,6 +746,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		var msg threadStartedNotification
 		if err := json.Unmarshal(params, &msg); err == nil && msg.Thread.ID != "" {
 			s.mu.Lock()
+			if !s.shouldTrackStartedThreadLocked(msg) {
+				s.mu.Unlock()
+				return
+			}
 			s.touchLocked()
 			s.threadID = msg.Thread.ID
 			s.started = true
@@ -737,6 +762,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
+		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchLocked()
 		turnID := strings.TrimSpace(msg.Turn.ID)
 		if s.busy || strings.TrimSpace(s.activeTurnID) != "" {
@@ -758,6 +787,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
+		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchBusyLocked()
 		status := formatTurnCompletionStatus(msg.Turn.Status, s.busySince, time.Now())
 		s.queueTurnCompletionLocked(msg.Turn.ID, status)
@@ -769,6 +802,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
+		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchBusyLocked()
 		status := formatTurnCompletionStatus(firstNonEmpty(msg.Turn.Status, msg.Reason, "interrupted"), s.busySince, time.Now())
 		s.queueTurnCompletionLocked(firstNonEmpty(msg.Turn.ID, msg.TurnID), status)
@@ -796,6 +833,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
+		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchBusyLocked()
 		s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 		if msg.SummaryIndex > 0 {
@@ -811,6 +852,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
+		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchBusyLocked()
 		s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 		if _, ok := s.browserToolCalls[msg.ItemID]; ok {
@@ -879,6 +924,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
+		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchLocked()
 		s.tokenUsage = cloneThreadTokenUsage(&msg.TokenUsage)
 		s.mu.Unlock()
@@ -918,6 +967,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			return
 		}
 		s.mu.Lock()
+		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchLocked()
 		if toModel := strings.TrimSpace(msg.ToModel); toModel != "" {
 			s.model = toModel
@@ -929,20 +982,62 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		s.notify()
 	case "error":
 		var msg struct {
-			Error struct {
+			ThreadID string `json:"threadId"`
+			Error    struct {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(params, &msg); err == nil && strings.TrimSpace(msg.Error.Message) != "" {
+			s.mu.Lock()
+			matches := s.notificationMatchesThreadLocked(msg.ThreadID)
+			s.mu.Unlock()
+			if !matches {
+				return
+			}
 			s.appendSystemError(errors.New(msg.Error.Message))
 		}
 	}
 }
 
+func (s *appServerSession) shouldTrackStartedThreadLocked(msg threadStartedNotification) bool {
+	threadID := strings.TrimSpace(msg.Thread.ID)
+	if threadID == "" {
+		return false
+	}
+	if current := strings.TrimSpace(s.threadID); current != "" {
+		return current == threadID
+	}
+	// A resume response establishes the authoritative thread after app-server
+	// has returned its session-tree metadata. Ignore interim thread/started
+	// notifications so a resumed sub-agent cannot become the direct-input target.
+	if strings.TrimSpace(s.reconnectThreadID) != "" {
+		return false
+	}
+	if parentID := stringValue(msg.Thread.ParentThreadID); parentID != "" {
+		return false
+	}
+	if sessionID := strings.TrimSpace(msg.Thread.SessionID); sessionID != "" && sessionID != threadID {
+		return false
+	}
+	return true
+}
+
+func (s *appServerSession) notificationMatchesThreadLocked(threadID string) bool {
+	threadID = strings.TrimSpace(threadID)
+	if current := strings.TrimSpace(s.threadID); current != "" {
+		return threadID == "" || threadID == current
+	}
+	// During resume, hydrate from the response before accepting any streamed
+	// thread events. The requested ID may itself be a sub-agent that resolves
+	// to a different root thread.
+	return strings.TrimSpace(s.reconnectThreadID) == ""
+}
+
 func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 	var msg struct {
-		TurnID string                     `json:"turnId"`
-		Item   map[string]json.RawMessage `json:"item"`
+		ThreadID string                     `json:"threadId"`
+		TurnID   string                     `json:"turnId"`
+		Item     map[string]json.RawMessage `json:"item"`
 	}
 	if err := json.Unmarshal(params, &msg); err != nil {
 		return
@@ -951,6 +1046,10 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 	itemID := decodeRawString(msg.Item["id"])
 
 	s.mu.Lock()
+	if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+		s.mu.Unlock()
+		return
+	}
 	s.touchBusyLocked()
 	if itemType == "contextCompaction" {
 		s.contextCompactionActive = true
@@ -998,6 +1097,10 @@ func (s *appServerSession) handleItemDelta(params json.RawMessage, kind Transcri
 		return
 	}
 	s.mu.Lock()
+	if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+		s.mu.Unlock()
+		return
+	}
 	s.touchBusyLocked()
 	s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 	s.appendDeltaToItemLocked(msg.ItemID, kind, msg.Delta)
@@ -1019,6 +1122,10 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	refreshGeneratedImageThreadID := ""
 
 	s.mu.Lock()
+	if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+		s.mu.Unlock()
+		return
+	}
 	s.touchBusyLocked()
 	if itemType == "contextCompaction" {
 		s.contextCompactionActive = false
