@@ -266,8 +266,9 @@ func (s *appServerSession) readMCPServerReady(ctx context.Context, name string) 
 
 func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID string, input Submission, pendingModel, pendingReasoning, currentModel, currentReasoning string) error {
 	params := turnStartParams{
-		ThreadID: threadID,
-		Input:    encodeSubmissionInput(input),
+		ThreadID:          threadID,
+		Input:             encodeSubmissionInput(input),
+		AdditionalContext: s.managedBrowserTurnContext(),
 	}
 	if pendingModel != "" {
 		params.Model = pendingModel
@@ -305,9 +306,10 @@ func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID stri
 
 func (s *appServerSession) steerTurn(ctx context.Context, threadID, expectedTurnID string, input Submission) (string, error) {
 	result, err := s.call(ctx, "turn/steer", turnSteerParams{
-		ThreadID:       threadID,
-		ExpectedTurnID: expectedTurnID,
-		Input:          encodeSubmissionInput(input),
+		ThreadID:          threadID,
+		ExpectedTurnID:    expectedTurnID,
+		Input:             encodeSubmissionInput(input),
+		AdditionalContext: s.managedBrowserTurnContext(),
 	})
 	if err != nil {
 		return "", err

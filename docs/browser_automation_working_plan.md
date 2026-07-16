@@ -24,7 +24,8 @@ It is intentionally different from `STATUS.md`:
 - OpenCode sessions now track their live Playwright tool activity plus the current managed browser page URL, so the shared browser strip/reveal UI can surface the same current-page and reconnect guidance patterns that Codex already uses.
 - OpenCode browser-backed question waits now reuse that same managed browser state, so when OpenCode pauses for user input the session can stay in a `waiting for user` browser state and keep `ctrl+o` available to reveal or refocus the managed browser window.
 - LCAgent now exposes native `browser_*` tools backed by an LCR-managed Playwright MCP process, tracks current page state in the embedded UI, and shadows the `playwright` skill by browser capability.
-- Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
+- Already-running embedded Codex helper processes do not retroactively pick up new MCP launch wiring; they still need to be reopened or reconnected.
+- Every managed Codex turn start and steer now carries LCR-owned application context for the structured browser-attention contract. A reopened or reconnected thread therefore receives current handoff guidance even when its persisted history names an older generated Playwright skill path.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
 - Embedded Codex and OpenCode can now make an explicit, structured `lcr_runtime/request_browser_attention` handoff after Playwright reaches a human-only step. The handoff carries a bounded user-facing instruction, survives turn idle/history replay, and is cleared by the next successfully submitted user message rather than by parsing assistant prose.
 - Runtime-skill availability and managed-Playwright availability are gated independently, so `Classic browser behavior` does not advertise a managed-browser handoff that cannot succeed.
@@ -120,6 +121,7 @@ Make browser automation feel quiet and predictable by default:
 - A managed embedded Codex smoke test now builds a real `lcroom` helper binary and verifies that a fresh trusted session can see Playwright MCP tools before the first turn starts.
 - The real embedded OpenCode Playwright smoke now launches with its own temporary `XDG_DATA_HOME`, so it exercises the managed browser path without polluting the user's normal OpenCode DB or leaving `tmp-oc-browser-smoke-*` projects in the dashboard.
 - Browser-attention coverage now verifies the exact structured tool identity, required instruction, stale or mismatched managed state rejection, failed tool results, idle and resume persistence, successful-response clearing, inactivity protection, popup acknowledgement/retry behavior, and OpenCode parity.
+- Codex turn-start and turn-steer coverage now verifies that current managed-browser guidance is supplied as application context only when both managed Playwright and the runtime MCP are available, without rewriting the user's submitted text.
 - Handoff state reads use the same cross-process state lock as the managed-browser writer, and hydration coverage verifies that initially hidden OpenCode/LCAgent waits surface as soon as their revealable browser state arrives.
 - macOS window-control coverage now verifies PID-targeted JXA scripts, bounded immediate and delayed calls, retained `(-600)` diagnostics, and termination of hung commands without requiring a live UI.
 
@@ -132,7 +134,7 @@ Make browser automation feel quiet and predictable by default:
 - Embedded elicitation replies are wired.
 - Managed same-context browser reveal is working in both hidden and visible session flows for newly launched embedded sessions.
 - Codex reconstructs an unresolved structured browser handoff from ordered thread history after reconnect; a later structured user-message item resolves it.
-- This launch override currently applies to newly started embedded sessions only.
+- MCP launch overrides apply when an embedded helper process starts. Reopened and reconnected threads use the new helper wiring, and per-turn LCR application context prevents older persisted skill references from suppressing the current structured handoff.
 
 ### OpenCode
 

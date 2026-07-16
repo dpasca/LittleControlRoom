@@ -377,16 +377,23 @@ type turnInterruptParams struct {
 }
 
 type turnSteerParams struct {
-	ThreadID       string      `json:"threadId"`
-	ExpectedTurnID string      `json:"expectedTurnId"`
-	Input          []userInput `json:"input"`
+	ThreadID          string                            `json:"threadId"`
+	ExpectedTurnID    string                            `json:"expectedTurnId"`
+	Input             []userInput                       `json:"input"`
+	AdditionalContext map[string]additionalContextEntry `json:"additionalContext,omitempty"`
 }
 
 type turnStartParams struct {
-	ThreadID string      `json:"threadId"`
-	Input    []userInput `json:"input"`
-	Model    string      `json:"model,omitempty"`
-	Effort   string      `json:"effort,omitempty"`
+	ThreadID          string                            `json:"threadId"`
+	Input             []userInput                       `json:"input"`
+	Model             string                            `json:"model,omitempty"`
+	Effort            string                            `json:"effort,omitempty"`
+	AdditionalContext map[string]additionalContextEntry `json:"additionalContext,omitempty"`
+}
+
+type additionalContextEntry struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
 }
 
 type threadStartParams struct {
