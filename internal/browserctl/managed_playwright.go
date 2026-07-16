@@ -610,9 +610,6 @@ func setMacApplicationProcessVisible(pid int, visible, frontmost bool) error {
 	if err := managedPlaywrightMacScriptRunner(args, managedPlaywrightMacScriptTimeout); err != nil {
 		return fmt.Errorf("set managed browser process %d visibility: %w", pid, err)
 	}
-	if visible && frontmost {
-		scheduleMacApplicationProcessDelayedRaise(pid)
-	}
 	return nil
 }
 
@@ -630,33 +627,84 @@ func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]
 		`ObjC.import("ApplicationServices");`,
 		`const pid = ` + strconv.Itoa(pid) + `;`,
 		`const applicationElement = $.AXUIElementCreateApplication(pid);`,
+		`function currentApplicationState() {`,
+		`  const application = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);`,
+		`  if (!application) {`,
+		`    return { application: null, terminated: true, finishedLaunching: false, activationPolicy: -1, active: false };`,
+		`  }`,
+		`  return {`,
+		`    application: application,`,
+		`    terminated: Boolean(application.terminated),`,
+		`    finishedLaunching: Boolean(application.finishedLaunching),`,
+		`    activationPolicy: Number(application.activationPolicy),`,
+		`    active: Boolean(application.active),`,
+		`  };`,
+		`}`,
+		`function applicationStateSummary(state) {`,
+		`  return "terminated=" + state.terminated + ", finishedLaunching=" + state.finishedLaunching + ", activationPolicy=" + state.activationPolicy + ", active=" + state.active;`,
+		`}`,
 		`function setAXBoolean(attribute, value) {`,
 		`  const status = Number($.AXUIElementSetAttributeValue(applicationElement, $(attribute), value));`,
 		`  if (status !== 0) {`,
 		`    throw new Error("failed to set " + attribute + " for browser PID " + pid + " (AXError " + status + ")");`,
 		`  }`,
 		`}`,
-		`function updateProcessVisibility() {`,
-		`  setAXBoolean("AXHidden", ` + visibleLiteral + `);`,
 	}
+	if !visible {
+		lines = append(lines,
+			`function hideProcessWhenReady() {`,
+			`  const state = currentApplicationState();`,
+			`  const prohibited = Number($.NSApplicationActivationPolicyProhibited);`,
+			`  if (!state.application || state.terminated || !state.finishedLaunching || !isFinite(state.activationPolicy) || state.activationPolicy < 0 || state.activationPolicy === prohibited) {`,
+			`    throw new Error("managed browser process " + pid + " is not ready for background hiding (" + applicationStateSummary(state) + ")");`,
+			`  }`,
+			`  setAXBoolean("AXHidden", `+visibleLiteral+`);`,
+			`}`,
+			`hideProcessWhenReady();`,
+		)
+		return []string{"-l", "JavaScript", "-e", strings.Join(lines, "\n")}, nil
+	}
+
+	if frontmost {
+		lines = append(lines, `let activationAccepted = false;`)
+	}
+	lines = append(lines,
+		`function updateProcessVisibility() {`,
+		`  setAXBoolean("AXHidden", `+visibleLiteral+`);`,
+	)
 	if frontmost {
 		lines = append(lines,
 			`  setAXBoolean("AXFrontmost", $.kCFBooleanTrue);`,
-			`  const runningApplication = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);`,
-			`  if (!runningApplication) {`,
+			`  const state = currentApplicationState();`,
+			`  if (!state.application) {`,
 			`    throw new Error("managed browser process " + pid + " is not running");`,
 			`  }`,
 			`  const activationOptions = $.NSApplicationActivateAllWindows | $.NSApplicationActivateIgnoringOtherApps;`,
-			`  if (!runningApplication.activateWithOptions(activationOptions)) {`,
-			`    throw new Error("managed browser process " + pid + " rejected activation");`,
-			`  }`,
+			`  activationAccepted = Boolean(state.application.activateWithOptions(activationOptions));`,
 			`  setAXBoolean("AXFrontmost", $.kCFBooleanTrue);`,
 		)
 	}
-	lines = append(lines,
-		`}`,
-		`updateProcessVisibility();`,
-	)
+	lines = append(lines, `}`)
+	if frontmost {
+		lines = append(lines,
+			`function revealAndVerifyInteractive() {`,
+			`  let state = currentApplicationState();`,
+			`  const prohibited = Number($.NSApplicationActivationPolicyProhibited);`,
+			`  for (let attempt = 0; attempt < 4; attempt++) {`,
+			`    updateProcessVisibility();`,
+			`    $.NSThread.sleepForTimeInterval(0.150);`,
+			`    state = currentApplicationState();`,
+			`    if (state.application && !state.terminated && isFinite(state.activationPolicy) && state.activationPolicy >= 0 && state.activationPolicy !== prohibited && state.active) {`,
+			`      return;`,
+			`    }`,
+			`  }`,
+			`  throw new Error("managed browser process " + pid + " did not become interactive (" + applicationStateSummary(state) + ", activationAccepted=" + activationAccepted + ")");`,
+			`}`,
+			`revealAndVerifyInteractive();`,
+		)
+	} else {
+		lines = append(lines, `updateProcessVisibility();`)
+	}
 	return []string{"-l", "JavaScript", "-e", strings.Join(lines, "\n")}, nil
 }
 
@@ -707,16 +755,6 @@ func macApplicationNamedProcessVisibilityScript(appName string, visible, frontmo
 	return args, nil
 }
 
-func scheduleMacApplicationProcessDelayedRaise(pid int) {
-	args, err := macApplicationProcessDelayedRaiseScript(pid, 300*time.Millisecond)
-	if err != nil {
-		return
-	}
-	go func() {
-		_ = managedPlaywrightMacScriptRunner(args, managedPlaywrightMacScriptTimeout)
-	}()
-}
-
 func scheduleMacApplicationNamedProcessDelayedRaise(appName string) {
 	args, err := macApplicationNamedProcessDelayedRaiseScript(appName, 300*time.Millisecond)
 	if err != nil {
@@ -725,25 +763,6 @@ func scheduleMacApplicationNamedProcessDelayedRaise(appName string) {
 	go func() {
 		_ = managedPlaywrightMacScriptRunner(args, managedPlaywrightMacScriptTimeout)
 	}()
-}
-
-func macApplicationProcessDelayedRaiseScript(pid int, delay time.Duration) ([]string, error) {
-	args, err := macApplicationProcessVisibilityScript(pid, true, true)
-	if err != nil {
-		return nil, err
-	}
-	if delay < 0 {
-		delay = 0
-	}
-	delayLiteral := strconv.FormatFloat(delay.Seconds(), 'f', 3, 64)
-	script := args[len(args)-1]
-	script = strings.TrimSuffix(script, "updateProcessVisibility();")
-	script += `$.NSThread.sleepForTimeInterval(` + delayLiteral + `);` + "\n"
-	script += "updateProcessVisibility();\n"
-	script += `$.NSThread.sleepForTimeInterval(0.300);` + "\n"
-	script += `updateProcessVisibility();`
-	args[len(args)-1] = script
-	return args, nil
 }
 
 func runBoundedMacApplicationScript(args []string, timeout time.Duration) error {

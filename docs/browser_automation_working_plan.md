@@ -16,8 +16,9 @@ It is intentionally different from `STATUS.md`:
 - The managed wrapper now gives each Codex session a stable managed browser/session key plus a persistent Playwright profile directory.
 - Newly launched embedded Codex sessions also get a session-local `CODEX_HOME` overlay that shadows the managed `playwright` skill and, when registered, the `lcr_runtime` skill, so LCR can steer browser behavior without mutating the user's real `~/.codex`.
 - On macOS, `Only when needed` now runs managed Codex browser work in a backgrounded headed browser so LCR can reveal that same browser context later for login or other human steps.
-- The macOS background browser monitor keeps re-hiding a managed browser while LCR still marks it hidden, because Chrome/Playwright can re-show or refocus the app after the initial launch hide. An explicit LCR reveal clears that hidden state.
+- The macOS background browser monitor waits until Chromium has finished registering as an activatable application before hiding it, then keeps re-hiding it while LCR still marks it hidden. This avoids interrupting Chromium's launch transition and leaving a live automation process with a visible but non-interactive window.
 - Managed browser reveal now records a cross-session foreground marker before raising the macOS window. Background monitors using the same Chromium application respect that marker, so one hidden session cannot collapse a different session that the user just revealed.
+- PID-targeted macOS reveal now retries within one bounded operation and verifies that the exact Chromium process actually became active and interactively activatable. A misleading AppKit acceptance no longer becomes a false-success status; the failed handoff is restored as an actionable browser-attention dialog.
 - Managed embedded Codex submissions now wait briefly for Playwright MCP tools to become ready before starting the first turn, which avoids a fresh-session race where browser tools could be missing on the first prompt.
 - Newly launched embedded OpenCode sessions now override `mcp.playwright` through `OPENCODE_CONFIG_CONTENT` to point at the same LCR-managed Playwright wrapper, using the same managed session/profile key model as Codex.
 - Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows the managed `playwright` skill and, when registered, the `lcr_runtime` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
@@ -104,9 +105,9 @@ Make browser automation feel quiet and predictable by default:
   - later sessions are blocked cleanly instead of blindly opening another browser login flow
   - failed browser-reveal attempts release the slot immediately
 - Managed browser metadata is now written under the LCR data dir so the TUI can find and reveal the correct browser session instead of opening the URL in a disconnected desktop browser.
-- On macOS, managed browser hide/reveal now targets the browser PID through Accessibility/AppKit instead of depending on the `System Events` application host. Every `osascript` attempt, including delayed raises and the named-process fallback, is time-bounded and preserves useful diagnostics.
+- On macOS, managed browser hide/reveal now targets the browser PID through Accessibility/AppKit instead of depending on the `System Events` application host. Every `osascript` attempt, including verified activation retries and the named-process fallback, is time-bounded and preserves useful diagnostics.
 - On macOS, managed browser reveal now raises the target process window after un-hiding it, which keeps parallel Chrome-backed Playwright sessions from falling back to whichever Chrome window was last active.
-- On macOS, reveal also schedules a short delayed second raise so the browser stays frontmost after the TUI finishes processing the reveal key.
+- On macOS, PID reveal performs its short activation retries and active-process verification inside the same bounded command, so Enter/`ctrl+o` cannot report success before the browser is ready for keyboard and pointer input.
 - On macOS, managed background browsers are re-hidden until the user reveals them through LCR, which reduces focus stealing from later Playwright navigations or newly created browser windows.
 - The shadow Playwright skill now tells embedded Codex to use the already-registered Playwright MCP tools instead of shelling out to a separate CLI browser path.
 - LCR now has a small non-TUI browser control surface:
@@ -123,7 +124,7 @@ Make browser automation feel quiet and predictable by default:
 - Browser-attention coverage now verifies the exact structured tool identity, required instruction, stale or mismatched managed state rejection, failed tool results, idle and resume persistence, successful-response clearing, inactivity protection, popup acknowledgement/retry behavior, and OpenCode parity.
 - Codex turn-start and turn-steer coverage now verifies that current managed-browser guidance is supplied as application context only when both managed Playwright and the runtime MCP are available, without rewriting the user's submitted text.
 - Handoff state reads use the same cross-process state lock as the managed-browser writer, and hydration coverage verifies that initially hidden OpenCode/LCAgent waits surface as soon as their revealable browser state arrives.
-- macOS window-control coverage now verifies PID-targeted JXA scripts, bounded immediate and delayed calls, retained `(-600)` diagnostics, and termination of hung commands without requiring a live UI.
+- macOS window-control coverage now verifies launch-safe background hiding, PID-targeted activation postconditions, bounded verified retries, retained `(-600)` diagnostics, and termination of hung commands without requiring a live UI.
 
 ## Current Provider Status
 
