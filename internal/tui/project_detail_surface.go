@@ -42,44 +42,44 @@ func projectDetailFieldValue(label, text string, tone projectDetailSurfaceTone) 
 	return uisurface.FieldValue(label, text, tone)
 }
 
-func projectDetailRenderedFieldValue(label, text string, tone projectDetailSurfaceTone, renderedText string) projectDetailSurfaceFieldValue {
-	return uisurface.RenderedFieldValue(label, text, tone, renderedText)
-}
-
 func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.ProjectDetail) projectDetailSurface {
-	var surface projectDetailSurface
-
-	summaryText := m.projectAssessmentDisplayTextAt(p, m.currentTime(), m.assessmentStallThreshold())
-	summaryTone := projectDetailToneValue
-	if projectAssessmentRefreshing(p) {
-		summaryTone = projectDetailToneMuted
+	now := m.currentTime()
+	stuckThreshold := m.assessmentStallThreshold()
+	surface := uisurface.BuildProjectDetailOverview(p, uisurface.BuildOptions{
+		Now:            now,
+		StuckThreshold: stuckThreshold,
+	})
+	for blockIndex := range surface.Blocks {
+		block := &surface.Blocks[blockIndex]
+		if block.Label == "Summary" {
+			block.Text = m.projectAssessmentDisplayTextAt(p, now, stuckThreshold)
+			block.Tone = projectDetailToneValue
+			if projectAssessmentRefreshing(p) {
+				block.Tone = projectDetailToneMuted
+			}
+			if strings.TrimSpace(block.Text) == "" || block.Text == "-" {
+				block.Text = "not assessed yet"
+				block.Tone = projectDetailToneMuted
+			}
+		}
+		for fieldIndex := range block.Fields {
+			field := &block.Fields[fieldIndex]
+			switch field.Label {
+			case "Assessment":
+				field.Text = projectAssessmentLabelWithThreshold(p, now, stuckThreshold)
+				field.Tone = projectDetailAssessmentTone(p, now, stuckThreshold)
+				field.RenderedText = assessmentDisplayStyle(p, now, stuckThreshold).Render(field.Text)
+			case "Activity":
+				field.Text = projectActivityStatus(p)
+				field.Tone = projectDetailActivityTone(p)
+				field.RenderedText = activityDisplayStyle(p).Render(field.Text)
+			}
+		}
 	}
-	if strings.TrimSpace(summaryText) == "" || summaryText == "-" {
-		summaryText = "not assessed yet"
-		summaryTone = projectDetailToneMuted
-	}
-
-	surface.WrappedField("Summary", summaryText, summaryTone)
-	surface.Field("Path", p.Path, projectDetailToneValue)
 	if model.NormalizeProjectKind(p.Kind) == model.ProjectKindScratchTask {
 		surface.Field("Kind", "scratch task", projectDetailToneValue)
 		surface.Text("Press d or use /remove to archive or delete this task.", projectDetailToneMuted)
 	}
-
-	assessmentText := projectAssessmentLabelWithThreshold(p, m.currentTime(), m.assessmentStallThreshold())
-	statusFields := []projectDetailSurfaceFieldValue{
-		projectDetailRenderedFieldValue(
-			"Assessment",
-			assessmentText,
-			projectDetailAssessmentTone(p, m.currentTime(), m.assessmentStallThreshold()),
-			assessmentDisplayStyle(p, m.currentTime(), m.assessmentStallThreshold()).Render(assessmentText),
-		),
-	}
-	if shouldShowProjectActivity(p) {
-		activityText := projectActivityStatus(p)
-		statusFields = append(statusFields, projectDetailRenderedFieldValue("Activity", activityText, projectDetailActivityTone(p), activityDisplayStyle(p).Render(activityText)))
-	}
-	surface.FieldGroup(statusFields...)
 
 	if browserAttention, ok := m.projectPendingBrowserAttention(p.Path); ok {
 		surface.WrappedField("Browser", browserAttentionDetailSummary(browserAttention), projectDetailToneWarning)

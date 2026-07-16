@@ -402,21 +402,11 @@ func BuildProjectItem(project model.ProjectSummary, options BuildOptions) Projec
 func BuildProjectDetail(detail model.ProjectDetail, options BuildOptions) ProjectDetailSurface {
 	options = normalizedOptions(options)
 	project := detail.Summary
-	item := BuildProjectItem(project, options)
-	item.Badges = badgesWithoutKind(item.Badges, "todos")
-	surface := ProjectDetailSurface{Project: item}
-
-	statusFields := []DetailFieldValue{
-		FieldValue("Assessment", item.Assessment.Label, item.Assessment.Tone),
-	}
-	if item.Activity.Label != "Idle" {
-		statusFields = append(statusFields, FieldValue("Activity", item.Activity.Label, item.Activity.Tone))
-	}
-	surface.FieldGroup(statusFields...)
+	surface := BuildProjectDetailOverview(project, options)
+	item := surface.Project
 	if item.CategoryName != "" {
 		surface.Field("Category", item.CategoryName, ToneValue)
 	}
-	surface.WrappedField("Path", item.Path, ToneValue)
 
 	lastActivity := "Never"
 	lastActivityTone := ToneMuted
@@ -457,6 +447,38 @@ func BuildProjectDetail(detail model.ProjectDetail, options BuildOptions) Projec
 			surface.Bullet(reason.Text, tone)
 		}
 	}
+	return surface
+}
+
+// BuildProjectDetailOverview is the canonical project-detail prefix shared by
+// the terminal detail panel and compact web surfaces. Platform renderers may
+// enrich the surface with live-only blocks, but summary, path, assessment, and
+// activity should always originate here so those high-value fields do not
+// drift between the TUI and mobile UI.
+func BuildProjectDetailOverview(project model.ProjectSummary, options BuildOptions) ProjectDetailSurface {
+	options = normalizedOptions(options)
+	item := BuildProjectItem(project, options)
+	item.Badges = badgesWithoutKind(item.Badges, "todos")
+	surface := ProjectDetailSurface{Project: item}
+
+	summary := strings.TrimSpace(item.Summary)
+	summaryTone := ToneValue
+	if summary == "" {
+		summary = "Not assessed yet"
+		summaryTone = ToneMuted
+	} else if assessmentRefreshing(project) || item.Assessment.Tone == ToneMuted {
+		summaryTone = ToneMuted
+	}
+	surface.WrappedField("Summary", summary, summaryTone)
+	surface.WrappedField("Path", item.Path, ToneValue)
+
+	statusFields := []DetailFieldValue{
+		FieldValue("Assessment", item.Assessment.Label, item.Assessment.Tone),
+	}
+	if item.Activity.Label != "Idle" {
+		statusFields = append(statusFields, FieldValue("Activity", item.Activity.Label, item.Activity.Tone))
+	}
+	surface.FieldGroup(statusFields...)
 	return surface
 }
 
