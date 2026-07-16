@@ -17,6 +17,7 @@ const (
 	KindPerf            Kind = "perf"
 	KindErrors          Kind = "errors"
 	KindRefresh         Kind = "refresh"
+	KindRepairTerminal  Kind = "repair-terminal"
 	KindUpdate          Kind = "update"
 	KindSort            Kind = "sort"
 	KindNonAIFolders    Kind = "non-ai-folders"
@@ -148,6 +149,7 @@ var specs = []Spec{
 	{Name: "perf", Usage: "/perf", Summary: "Open the internal responsiveness and wait tracker"},
 	{Name: "errors", Usage: "/errors", Summary: "Open the recent error log"},
 	{Name: "refresh", Usage: "/refresh", Summary: "Rescan projects and retry failed assessments"},
+	{Name: "repair-terminal", Usage: "/repair-terminal", Summary: "Reinitialize terminal display and paste handling"},
 	{Name: "update", Usage: "/update", Summary: "Check for and install a newer GitHub release"},
 	{Name: "sort", Usage: "/sort attention|recent", Summary: "Set list ordering"},
 	{Name: "non-ai-folders", Usage: "/non-ai-folders on|off", Summary: "Show or hide folders without AI activity"},
@@ -429,6 +431,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /refresh")
 		}
 		return Invocation{Kind: KindRefresh, Canonical: "/refresh"}, nil
+	case "repair-terminal":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /repair-terminal")
+		}
+		return Invocation{Kind: KindRepairTerminal, Canonical: "/repair-terminal"}, nil
 	case "update":
 		if rawArgs != "" {
 			return Invocation{}, fmt.Errorf("usage: /update")

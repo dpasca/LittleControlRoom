@@ -468,6 +468,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 			}),
 			m.requestScanCmd(true),
 		)
+	case commands.KindRepairTerminal:
+		return m.beginTerminalRepair(false)
 	case commands.KindUpdate:
 		return m.openSelfUpdateDialog()
 	case commands.KindSort:

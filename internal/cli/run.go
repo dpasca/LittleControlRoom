@@ -39,6 +39,7 @@ import (
 	"lcroom/internal/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/term"
 )
 
 const recentMoveWindow = 24 * time.Hour
@@ -1553,13 +1554,16 @@ func printPlainRuntimeError(message string) {
 }
 
 func restoreTerminalForPlainText() {
-	const reset = "\r\x1b[0m\x1b[?25h\x1b[?1049l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\r"
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if err != nil {
+	// A nested lcroom command can inherit the parent TUI's controlling tty even
+	// when all of its own stdio is piped. Opening /dev/tty in that situation
+	// would reset the still-running parent application's alternate-screen,
+	// cursor, and bracketed-paste modes. Repair only the exact output descriptor
+	// this process is writing to; never reopen an inherited controlling tty.
+	tty := directTerminalOutput(term.IsTerminal, os.Stdout, os.Stderr)
+	if tty == nil {
 		return
 	}
-	defer tty.Close()
-
+	const reset = "\r\x1b[0m\x1b[?25h\x1b[?1049l\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\r"
 	_, _ = tty.WriteString(reset)
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	defer cancel()
@@ -1567,4 +1571,16 @@ func restoreTerminalForPlainText() {
 	cmd.Stdin = tty
 	_ = cmd.Run()
 	_, _ = tty.WriteString(reset)
+}
+
+func directTerminalOutput(isTerminal func(uintptr) bool, outputs ...*os.File) *os.File {
+	if isTerminal == nil {
+		return nil
+	}
+	for _, output := range outputs {
+		if output != nil && isTerminal(output.Fd()) {
+			return output
+		}
+	}
+	return nil
 }

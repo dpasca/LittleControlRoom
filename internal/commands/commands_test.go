@@ -63,6 +63,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "repair terminal",
+			raw:  "/repair-terminal",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindRepairTerminal || inv.Canonical != "/repair-terminal" {
+					t.Fatalf("repair-terminal invocation = %#v", inv)
+				}
+			},
+		},
+		{
 			name: "update",
 			raw:  "/update",
 			check: func(t *testing.T, inv Invocation) {

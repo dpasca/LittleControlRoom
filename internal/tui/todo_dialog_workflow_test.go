@@ -2368,8 +2368,18 @@ func TestTodoEditorCtrlVAttachesDurableClipboardImageAndBackspaceRemovesIt(t *te
 
 	updated, cmd := m.updateTodoEditorMode(tea.KeyMsg{Type: tea.KeyCtrlV})
 	got := updated.(Model)
+	if cmd == nil || got.todoEditor == nil || !got.todoEditor.ClipboardBusy {
+		t.Fatalf("ctrl+v image attach should queue background clipboard work")
+	}
+	raw := cmd()
+	pasteMsg, ok := raw.(todoClipboardPasteMsg)
+	if !ok {
+		t.Fatalf("clipboard paste command returned %T", raw)
+	}
+	updated, cmd = got.applyTodoClipboardPasteMsg(pasteMsg)
+	got = updated.(Model)
 	if cmd != nil {
-		t.Fatalf("ctrl+v image attach should not queue a command")
+		t.Fatal("applying TODO clipboard paste should not queue follow-up work")
 	}
 	if got.todoEditor == nil || len(got.todoEditor.Attachments) != 1 {
 		t.Fatalf("attachments = %#v, want one image", got.todoEditor)

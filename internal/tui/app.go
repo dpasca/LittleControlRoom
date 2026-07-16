@@ -209,6 +209,9 @@ type Model struct {
 
 	mouseEnabled                  bool
 	codexSelection                textSelection
+	terminalHealthCheckTicks      int
+	terminalHealthCheckInFlight   bool
+	terminalRepairInFlight        bool
 	codexManager                  *codexapp.Manager
 	runtimeManager                *projectrun.Manager
 	runtimeRefreshInFlight        bool
@@ -244,6 +247,7 @@ type Model struct {
 	codexOpenRevealByRequest      map[uint64]bool
 	codexInput                    textarea.Model
 	codexDrafts                   map[string]codexDraft
+	codexClipboardPasteInFlight   bool
 	codexSuggestedDraftsApplied   map[string]string
 	codexTranscriptRenderInFlight map[codexTranscriptRenderKey]struct{}
 	codexPanelFocus               embeddedCodexPanelFocus
@@ -1269,6 +1273,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
 		return m.executeBossControlInvocation(msg)
 	}
+	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "ctrl+l" {
+		return m.beginTerminalRepair(false)
+	}
 	if msg, ok := msg.(bossProjectCreateAndStartEngineerCreatedMsg); ok {
 		return m.applyBossProjectCreateAndStartEngineerCreated(msg)
 	}
@@ -1309,6 +1316,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case gracefulQuitFinishedMsg:
 		return m.applyGracefulQuitFinishedMsg(msg)
+	case terminalHealthCheckMsg:
+		return m.applyTerminalHealthCheckMsg(msg)
+	case terminalRepairFinishedMsg:
+		return m.applyTerminalRepairFinishedMsg(msg)
+	case codexClipboardPasteMsg:
+		return m.applyCodexClipboardPasteMsg(msg)
+	case todoClipboardPasteMsg:
+		return m.applyTodoClipboardPasteMsg(msg)
 	case selfUpdateCheckMsg:
 		return m.applySelfUpdateCheckMsg(msg)
 	case selfUpdateInstallMsg:
@@ -2665,7 +2680,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		sidebarDiffCmd := m.requestVisibleBusyEmbeddedSidebarDiffRefreshCmd()
 		browserStateCmd := m.maybeRefreshVisibleManagedBrowserStateCmd()
-		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, sidebarDiffCmd, browserStateCmd)
+		m.terminalHealthCheckTicks++
+		terminalHealthCmd := tea.Cmd(nil)
+		if m.terminalHealthCheckTicks >= terminalHealthCheckEveryTicks {
+			m.terminalHealthCheckTicks = 0
+			terminalHealthCmd = m.requestTerminalHealthCheckCmd()
+		}
+		return m, batchCmds(spinnerTickCmd(), refreshCmd, processScanCmd, cpuSnapshotCmd, sidebarDiffCmd, browserStateCmd, terminalHealthCmd)
 	case codexUpdateMsg:
 		return m.applyCodexUpdateMsg(msg)
 	case codexUpdateAckMsg:
