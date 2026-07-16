@@ -375,7 +375,10 @@ func TestMacApplicationProcessVisibilityScriptRaisesTargetWindowWhenFrontmost(t 
 		`setAXBoolean("AXHidden", $.kCFBooleanFalse)`,
 		`setAXBoolean("AXFrontmost", $.kCFBooleanTrue)`,
 		`NSRunningApplication.runningApplicationWithProcessIdentifier(pid)`,
-		`runningApplication.activateWithOptions(activationOptions)`,
+		`state.application.activateWithOptions(activationOptions)`,
+		`activationAccepted = Boolean`,
+		`revealAndVerifyInteractive()`,
+		`state.activationPolicy !== prohibited && state.active`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
@@ -386,37 +389,35 @@ func TestMacApplicationProcessVisibilityScriptRaisesTargetWindowWhenFrontmost(t 
 	}
 }
 
-func TestMacApplicationProcessDelayedRaiseScriptRepeatsTargetWindowRaise(t *testing.T) {
-	args, err := macApplicationProcessDelayedRaiseScript(49916, 300*time.Millisecond)
+func TestMacApplicationProcessVisibilityScriptWaitsUntilLaunchBeforeHiding(t *testing.T) {
+	args, err := macApplicationProcessVisibilityScript(49916, false, false)
 	if err != nil {
-		t.Fatalf("macApplicationProcessDelayedRaiseScript() error = %v", err)
+		t.Fatalf("macApplicationProcessVisibilityScript() error = %v", err)
 	}
 	script := strings.Join(args, "\n")
 	for _, want := range []string{
-		`$.NSThread.sleepForTimeInterval(0.300)`,
 		`const pid = 49916`,
-		`setAXBoolean("AXHidden", $.kCFBooleanFalse)`,
-		`setAXBoolean("AXFrontmost", $.kCFBooleanTrue)`,
-		`runningApplication.activateWithOptions(activationOptions)`,
+		`state.terminated`,
+		`!state.finishedLaunching`,
+		`NSApplicationActivationPolicyProhibited`,
+		`state.activationPolicy < 0`,
+		`setAXBoolean("AXHidden", $.kCFBooleanTrue)`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
 	}
-	if got := strings.Count(script, `updateProcessVisibility();`); got != 2 {
-		t.Fatalf("visibility update count = %d, want 2:\n%s", got, script)
-	}
-	if strings.Contains(script, "System Events") {
-		t.Fatalf("delayed PID reveal must not depend on System Events:\n%s", script)
+	if readyIndex, hideIndex := strings.Index(script, `!state.finishedLaunching`), strings.Index(script, `setAXBoolean("AXHidden", $.kCFBooleanTrue)`); readyIndex < 0 || hideIndex < 0 || readyIndex >= hideIndex {
+		t.Fatalf("launch readiness check must precede hide:\n%s", script)
 	}
 }
 
-func TestSetMacApplicationProcessVisibleBoundsImmediateAndDelayedReveal(t *testing.T) {
+func TestSetMacApplicationProcessVisibleBoundsVerifiedReveal(t *testing.T) {
 	type invocation struct {
 		args    []string
 		timeout time.Duration
 	}
-	invocations := make(chan invocation, 2)
+	invocations := make(chan invocation, 1)
 	previousRunner := managedPlaywrightMacScriptRunner
 	managedPlaywrightMacScriptRunner = func(args []string, timeout time.Duration) error {
 		invocations <- invocation{args: append([]string(nil), args...), timeout: timeout}
@@ -428,23 +429,28 @@ func TestSetMacApplicationProcessVisibleBoundsImmediateAndDelayedReveal(t *testi
 		t.Fatalf("setMacApplicationProcessVisible() error = %v", err)
 	}
 
-	for index := 0; index < 2; index++ {
-		select {
-		case call := <-invocations:
-			if call.timeout != managedPlaywrightMacScriptTimeout {
-				t.Fatalf("invocation %d timeout = %s, want %s", index, call.timeout, managedPlaywrightMacScriptTimeout)
-			}
-			script := strings.Join(call.args, "\n")
-			wantUpdates := 1
-			if index == 1 {
-				wantUpdates = 2
-			}
-			if got := strings.Count(script, `updateProcessVisibility();`); got != wantUpdates {
-				t.Fatalf("invocation %d visibility update count = %d, want %d:\n%s", index, got, wantUpdates, script)
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("timed out waiting for invocation %d", index)
+	select {
+	case call := <-invocations:
+		if call.timeout != managedPlaywrightMacScriptTimeout {
+			t.Fatalf("invocation timeout = %s, want %s", call.timeout, managedPlaywrightMacScriptTimeout)
 		}
+		script := strings.Join(call.args, "\n")
+		for _, want := range []string{
+			`for (let attempt = 0; attempt < 4; attempt++)`,
+			`$.NSThread.sleepForTimeInterval(0.150)`,
+			`did not become interactive`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Fatalf("verified reveal script missing %q:\n%s", want, script)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for verified reveal invocation")
+	}
+	select {
+	case extra := <-invocations:
+		t.Fatalf("unexpected unverified follow-up reveal: %s", strings.Join(extra.args, "\n"))
+	default:
 	}
 }
 
