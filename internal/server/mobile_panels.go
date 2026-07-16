@@ -647,6 +647,7 @@ func decodeMobileActionRequest(w http.ResponseWriter, r *http.Request, target an
 func mobileNavigationSuggestions(query string, hasProject bool) []mobileCommandSuggestion {
 	all := []mobileCommandSuggestion{
 		{Insert: "/session", Display: "/session", Summary: "Return to the current engineer transcript", Source: "mobile", Supported: hasProject, DisabledReason: mobileProjectRequiredReason(hasProject), ClientAction: "session"},
+		{Insert: "/sidebar", Display: "/sidebar", Summary: "Open live engineer telemetry", Source: "mobile", Supported: hasProject, DisabledReason: mobileProjectRequiredReason(hasProject), ClientAction: "sidebar"},
 		{Insert: "/details", Display: "/details", Summary: "Open the shared project details panel", Source: "mobile", Supported: hasProject, DisabledReason: mobileProjectRequiredReason(hasProject), ClientAction: "details"},
 		{Insert: "/todo", Display: "/todo", Summary: "Open the repository-scoped TODO panel", Source: "mobile", Supported: hasProject, DisabledReason: mobileProjectRequiredReason(hasProject), ClientAction: "todo"},
 		{Insert: "/runtime", Display: "/runtime", Summary: "Open runtime processes and controls", Source: "mobile", Supported: hasProject, DisabledReason: mobileProjectRequiredReason(hasProject), ClientAction: "runtime"},

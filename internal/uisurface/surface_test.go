@@ -2,6 +2,7 @@ package uisurface
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -244,6 +245,42 @@ func TestBuildProjectDetailKeepsTODOContentsOutOfSurface(t *testing.T) {
 	}
 	if strings.Contains(encoded, `"attention_score"`) {
 		t.Fatalf("detail surface should not expose the attention total: %s", encoded)
+	}
+}
+
+func TestBuildProjectDetailStartsWithSharedOverview(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.July, 16, 9, 30, 0, 0, time.UTC)
+	project := model.ProjectSummary{
+		Path:                            "/tmp/shared-detail",
+		Name:                            "Shared detail",
+		PresentOnDisk:                   true,
+		Status:                          model.StatusActive,
+		LatestSessionClassification:     model.ClassificationCompleted,
+		LatestSessionClassificationType: model.SessionCategoryNeedsFollowUp,
+		LatestSessionSummary:            "Review the mobile action deck.",
+	}
+	options := BuildOptions{Now: now}
+	overview := BuildProjectDetailOverview(project, options)
+	detail := BuildProjectDetail(model.ProjectDetail{Summary: project}, options)
+
+	if len(overview.Blocks) != 3 {
+		t.Fatalf("overview block count = %d, want summary, path, and status", len(overview.Blocks))
+	}
+	if len(detail.Blocks) < len(overview.Blocks) || !reflect.DeepEqual(detail.Blocks[:len(overview.Blocks)], overview.Blocks) {
+		t.Fatalf("detail prefix = %#v, want shared overview %#v", detail.Blocks, overview.Blocks)
+	}
+	if got, want := overview.Blocks[0].Label, "Summary"; got != want {
+		t.Fatalf("first overview label = %q, want %q", got, want)
+	}
+	if got, want := overview.Blocks[0].Text, project.LatestSessionSummary; got != want {
+		t.Fatalf("overview summary = %q, want %q", got, want)
+	}
+	if got, want := overview.Blocks[1].Label, "Path"; got != want {
+		t.Fatalf("second overview label = %q, want %q", got, want)
+	}
+	if got, want := overview.Blocks[2].Fields[0].Label, "Assessment"; got != want {
+		t.Fatalf("status label = %q, want %q", got, want)
 	}
 }
 

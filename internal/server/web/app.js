@@ -7,6 +7,9 @@
     query: "",
     selectedPath: "",
     selectedSessionID: "",
+    selectedProjectDetail: null,
+    projectDetailCache: new Map(),
+    selectedProjectSessions: [],
     projectSessionsPath: "",
     projectSessionSignature: "",
     sessionDetailSignature: "",
@@ -20,10 +23,14 @@
     sessionInput: null,
     sessionSubmitting: false,
     sessionFeedback: "",
+    sessionLive: false,
     sessionRequestID: 0,
     sessionStream: null,
     sessionStreamKey: "",
     sessionStreamConnected: false,
+    quickPanel: "",
+    quickPanelRequestID: 0,
+    commandSuggestionRequestID: 0,
     socket: null,
     reconnectTimer: 0,
     refreshTimer: 0,
@@ -36,6 +43,7 @@
   const elements = {
     body: document.body,
     systemTime: document.getElementById("system-time"),
+    commandButton: document.getElementById("command-button"),
     refreshButton: document.getElementById("refresh-button"),
     connectionDot: document.getElementById("connection-dot"),
     connectionLabel: document.getElementById("connection-label"),
@@ -84,6 +92,13 @@
     sessionView: document.getElementById("session-view"),
     sessionBackButton: document.getElementById("session-back-button"),
     sessionState: document.getElementById("session-state"),
+    sessionActionDeck: document.getElementById("session-action-deck"),
+    sessionProjectSummary: document.getElementById("session-project-summary"),
+    sessionProjectSummaryLamp: document.getElementById("session-project-summary-lamp"),
+    sessionProjectAssessment: document.getElementById("session-project-assessment"),
+    sessionProjectSummaryText: document.getElementById("session-project-summary-text"),
+    sessionStandby: document.getElementById("session-standby"),
+    sessionStandbyList: document.getElementById("session-standby-list"),
     sessionContent: document.getElementById("session-content"),
     sessionProjectName: document.getElementById("session-project-name"),
     sessionLiveLamp: document.getElementById("session-live-lamp"),
@@ -111,6 +126,12 @@
     sessionReadonlyStrip: document.getElementById("session-readonly-strip"),
     sessionReadonlyLabel: document.getElementById("session-readonly-label"),
     sessionLinkLabel: document.getElementById("session-link-label"),
+    quickPanelDialog: document.getElementById("quick-panel-dialog"),
+    quickPanelKicker: document.getElementById("quick-panel-kicker"),
+    quickPanelTitle: document.getElementById("quick-panel-title"),
+    quickPanelClose: document.getElementById("quick-panel-close"),
+    quickPanelStatus: document.getElementById("quick-panel-status"),
+    quickPanelContent: document.getElementById("quick-panel-content"),
     protectedViews: document.querySelectorAll(".dashboard-view, .detail-view, .detail-placeholder, .session-view"),
   };
 
@@ -179,6 +200,7 @@
     state.authenticated = false;
     window.clearTimeout(state.reconnectTimer);
     closeSessionStream();
+    closeQuickPanel();
     if (state.socket) {
       const socket = state.socket;
       state.socket = null;
@@ -343,8 +365,15 @@
 
   async function openDashboardSession(session) {
     if (!session?.project_path || !session.id) return;
-    await openProject(session.project_path, false);
-    if (state.selectedPath === session.project_path) await openSession(session.id, true);
+    const detail = await prepareProjectContext(session.project_path);
+    if (!detail || state.selectedPath !== session.project_path) return;
+    state.selectedProjectSessions = [session];
+    await openSession(session.id, false);
+    window.history.pushState(
+      { projectPath: session.project_path, sessionID: session.id },
+      "",
+      `#session=${encodeURIComponent(session.id)}&project=${encodeURIComponent(session.project_path)}`,
+    );
   }
 
   function renderCategories() {
@@ -553,6 +582,7 @@
       const surface = await fetchJSON(`/api/mobile/projects/sessions?path=${encodeURIComponent(path)}`);
       if (state.selectedPath !== path) return;
       const sessions = surface.sessions || [];
+      state.selectedProjectSessions = sessions;
       const signature = JSON.stringify(sessions.map((session) => [
         session.id,
         session.live,
@@ -623,8 +653,116 @@
     return "green dim";
   }
 
-  async function openProject(path, updateHistory) {
+  function sessionFirstLayout() {
+    return window.matchMedia("(max-width: 899px)").matches;
+  }
+
+  async function prepareProjectContext(path) {
+    if (!path) return null;
+    state.selectedPath = path;
+    renderProjects();
+    let detail = state.projectDetailCache.get(path) || null;
+    try {
+      detail = await fetchJSON(`/api/mobile/projects/detail?path=${encodeURIComponent(path)}`);
+      if (state.selectedPath !== path) return null;
+      state.projectDetailCache.set(path, detail);
+      state.selectedProjectDetail = detail;
+      renderSessionProjectContext(detail);
+      return detail;
+    } catch (error) {
+      if (isAuthRequiredError(error)) return null;
+      if (state.selectedPath === path) renderSessionProjectContext(detail);
+      throw error;
+    }
+  }
+
+  async function openProjectSessionFirst(path, updateHistory) {
     if (!path) return;
+    if (state.selectedSessionID) hideSession();
+    state.selectedPath = path;
+    state.selectedProjectSessions = [];
+    elements.body.classList.add("detail-open", "session-open");
+    elements.sessionView.hidden = false;
+    elements.sessionView.removeAttribute("aria-hidden");
+    elements.sessionContent.hidden = true;
+    elements.sessionStandby.hidden = true;
+    elements.sessionActionDeck.hidden = false;
+    elements.sessionProjectSummary.hidden = true;
+    elements.sessionProjectName.textContent = projectNameForPath(path);
+    elements.sessionState.replaceChildren(createElement("p", "", "Tuning engineer channel"));
+    renderProjects();
+
+    try {
+      const [detail, sessionsSurface] = await Promise.all([
+        prepareProjectContext(path),
+        fetchJSON(`/api/mobile/projects/sessions?path=${encodeURIComponent(path)}`),
+      ]);
+      if (!detail || state.selectedPath !== path) return;
+      const sessions = sessionsSurface.sessions || [];
+      state.selectedProjectSessions = sessions;
+      state.projectSessionsPath = path;
+      const liveSession = sessions.find((session) => session.live);
+      if (liveSession) {
+        await openSession(liveSession.id, false);
+        if (updateHistory && state.selectedPath === path && state.selectedSessionID === liveSession.id) {
+          window.history.pushState(
+            { projectPath: path, sessionID: liveSession.id },
+            "",
+            `#session=${encodeURIComponent(liveSession.id)}&project=${encodeURIComponent(path)}`,
+          );
+        }
+        return;
+      }
+      showSessionStandby(sessions);
+      if (updateHistory) {
+        window.history.pushState({ projectPath: path }, "", `#project=${encodeURIComponent(path)}`);
+      }
+    } catch (error) {
+      if (isAuthRequiredError(error) || state.selectedPath !== path) return;
+      elements.sessionState.replaceChildren();
+      showSessionStandby([], `Could not read engineer sessions: ${error.message}`);
+      if (updateHistory) {
+        window.history.pushState({ projectPath: path }, "", `#project=${encodeURIComponent(path)}`);
+      }
+    }
+  }
+
+  function showSessionStandby(sessions, message = "") {
+    closeSessionStream();
+    state.selectedSessionID = "";
+    elements.sessionState.replaceChildren();
+    elements.sessionContent.hidden = true;
+    elements.sessionActionDeck.hidden = false;
+    elements.sessionStandby.hidden = false;
+    const copy = elements.sessionStandby.querySelector("p:last-child");
+    copy.textContent = message || "Open a recorded channel below, or use the slash control when a desktop-hosted session is available.";
+    elements.sessionStandbyList.replaceChildren();
+    const recorded = (sessions || []).filter((session) => !session.live).slice(0, 4);
+    if (recorded.length === 0) {
+      elements.sessionStandbyList.append(createElement("p", "panel-empty", "No recorded engineer channels were found."));
+      return;
+    }
+    for (const session of recorded) {
+      const button = createElement("button", "project-session-button");
+      button.type = "button";
+      button.append(createElement("span", `lamp session-rack-lamp ${sessionLampClass(session)}`));
+      const content = createElement("span", "project-session-content");
+      const title = createElement("span", "project-session-title");
+      title.append(createElement("strong", "", session.provider_label));
+      title.append(createElement("span", "session-short-id", session.display_id));
+      content.append(title, createElement("span", "project-session-summary", session.summary));
+      button.append(content, createElement("span", "project-session-chevron", ">"));
+      button.addEventListener("click", () => void openSession(session.id, true));
+      elements.sessionStandbyList.append(button);
+    }
+  }
+
+  async function openProject(path, updateHistory, forceDetail = false) {
+    if (!path) return;
+    if (sessionFirstLayout() && !forceDetail) {
+      await openProjectSessionFirst(path, updateHistory);
+      return;
+    }
     if (state.selectedSessionID && (updateHistory || path !== state.selectedPath)) hideSession();
     state.selectedPath = path;
     elements.body.classList.add("detail-open");
@@ -641,6 +779,8 @@
     try {
       const detail = await fetchJSON(`/api/mobile/projects/detail?path=${encodeURIComponent(path)}`);
       if (state.selectedPath !== path) return;
+      state.projectDetailCache.set(path, detail);
+      state.selectedProjectDetail = detail;
       renderProjectDetail(detail);
     } catch (error) {
       if (isAuthRequiredError(error)) return;
@@ -651,6 +791,9 @@
 
   function renderProjectDetail(detail) {
     const project = detail.project;
+    state.projectDetailCache.set(project.path, detail);
+    if (state.selectedPath === project.path) state.selectedProjectDetail = detail;
+    renderSessionProjectContext(detail);
     elements.detailState.replaceChildren();
     elements.detailCategory.textContent = project.category_name || "Main";
     elements.detailTitle.textContent = project.name;
@@ -665,34 +808,69 @@
     window.scrollTo({ top: 0, behavior: "auto" });
   }
 
+  function renderSessionProjectContext(detail) {
+    const project = detail?.project;
+    if (!project) {
+      elements.sessionProjectSummary.hidden = true;
+      return;
+    }
+    state.selectedProjectDetail = detail;
+    elements.sessionProjectName.textContent = project.name || projectNameForPath(project.path);
+    elements.sessionProjectSummary.hidden = false;
+    elements.sessionProjectSummaryText.textContent = project.summary || "No recent assessment summary.";
+    elements.sessionProjectAssessment.textContent = project.assessment?.label || "Not assessed";
+    elements.sessionProjectAssessment.className = "metal-status";
+    const assessmentClass = toneClass(project.assessment?.tone);
+    if (assessmentClass) elements.sessionProjectAssessment.classList.add(assessmentClass);
+    elements.sessionProjectSummaryLamp.className = `lamp ${projectSummaryLampClass(project)}`;
+  }
+
+  function projectSummaryLampClass(project) {
+    switch (project?.assessment?.tone) {
+      case "danger":
+      case "conflict":
+        return "red";
+      case "warning":
+        return "amber";
+      case "info":
+        return "cyan";
+      default:
+        return "green";
+    }
+  }
+
   function renderDetailBlocks(blocks) {
     elements.detailBlocks.replaceChildren();
+    appendDetailBlocks(elements.detailBlocks, blocks);
+  }
+
+  function appendDetailBlocks(container, blocks) {
     for (const block of blocks) {
       switch (block.kind) {
         case "field":
         case "wrapped_field":
-          elements.detailBlocks.append(createDetailField(block.label, block.text, block.tone));
+          container.append(createDetailField(block.label, block.text, block.tone));
           break;
         case "field_group":
           for (const field of block.fields || []) {
-            elements.detailBlocks.append(createDetailField(field.label, field.text, field.tone));
+            container.append(createDetailField(field.label, field.text, field.tone));
           }
           break;
         case "section":
-          elements.detailBlocks.append(createElement("h3", "detail-section-title", block.text));
+          container.append(createElement("h3", "detail-section-title", block.text));
           break;
         case "bullet": {
           const bullet = createElement("p", "detail-bullet", block.text);
           const semanticClass = toneClass(block.tone);
           if (semanticClass) bullet.classList.add(semanticClass);
-          elements.detailBlocks.append(bullet);
+          container.append(bullet);
           break;
         }
         case "text": {
           const text = createElement("p", "detail-text", block.text);
           const semanticClass = toneClass(block.tone);
           if (semanticClass) text.classList.add(semanticClass);
-          elements.detailBlocks.append(text);
+          container.append(text);
           break;
         }
         default:
@@ -709,6 +887,656 @@
     if (semanticClass) valueNode.classList.add(semanticClass);
     row.append(valueNode);
     return row;
+  }
+
+  function quickPanelDefinition(kind) {
+    const definitions = {
+      command: ["Slash command circuit", "Commands"],
+      session: ["Live engineer telemetry", "Session information"],
+      details: ["Shared project surface", "Project details"],
+      todo: ["Repository work register", "TODOs"],
+      runtime: ["Process control bank", "Runtime"],
+    };
+    return definitions[kind] || ["Project instrument", "Quick panel"];
+  }
+
+  function openQuickPanel(kind) {
+    if (!kind) return;
+    const [kicker, title] = quickPanelDefinition(kind);
+    state.quickPanel = kind;
+    state.quickPanelRequestID++;
+    elements.quickPanelKicker.textContent = kicker;
+    elements.quickPanelTitle.textContent = title;
+    elements.quickPanelStatus.textContent = "";
+    elements.quickPanelStatus.className = "quick-panel-status";
+    elements.quickPanelContent.replaceChildren();
+    for (const button of elements.sessionActionDeck.querySelectorAll("[data-quick-panel]")) {
+      button.classList.toggle("active", button.dataset.quickPanel === kind);
+    }
+    if (!elements.quickPanelDialog.open) elements.quickPanelDialog.showModal();
+    switch (kind) {
+      case "command":
+        renderCommandPanel();
+        break;
+      case "session":
+        void loadSessionSidebarPanel();
+        break;
+      case "details":
+        void loadDetailsPanel();
+        break;
+      case "todo":
+        void loadTodoPanel();
+        break;
+      case "runtime":
+        void loadRuntimePanel();
+        break;
+      default:
+        setQuickPanelStatus("Unknown panel", "danger");
+        break;
+    }
+  }
+
+  function closeQuickPanel() {
+    if (!elements.quickPanelDialog?.open) return;
+    state.quickPanel = "";
+    state.quickPanelRequestID++;
+    state.commandSuggestionRequestID++;
+    elements.quickPanelDialog.close();
+    for (const button of elements.sessionActionDeck.querySelectorAll("[data-quick-panel]")) {
+      button.classList.remove("active");
+    }
+  }
+
+  function setQuickPanelStatus(message, tone = "") {
+    elements.quickPanelStatus.textContent = message || "";
+    elements.quickPanelStatus.className = "quick-panel-status";
+    const semanticClass = toneClass(tone);
+    if (semanticClass) elements.quickPanelStatus.classList.add(semanticClass);
+  }
+
+  function renderPanelLoading(message = "Reading instrument") {
+    const stateNode = createElement("div", "dashboard-state");
+    const lines = createElement("div", "loading-lines");
+    lines.setAttribute("aria-hidden", "true");
+    lines.append(document.createElement("span"), document.createElement("span"), document.createElement("span"));
+    stateNode.append(lines, createElement("p", "", message));
+    elements.quickPanelContent.replaceChildren(stateNode);
+  }
+
+  function renderPanelError(error, retry) {
+    const message = createElement("p", "panel-empty", error.message || String(error));
+    elements.quickPanelContent.replaceChildren(message);
+    setQuickPanelStatus("Instrument unavailable", "warning");
+    if (retry) {
+      const button = createElement("button", "error-action", "Try again");
+      button.type = "button";
+      button.addEventListener("click", retry);
+      elements.quickPanelContent.append(button);
+    }
+  }
+
+  function createPanelSection(section, index = 0) {
+    const details = createElement("details", "panel-section");
+    details.open = index === 0 || section.id === "summary";
+    const summary = document.createElement("summary");
+    summary.append(createElement("span", "", section.title || "Readout"));
+    if (section.summary) summary.append(createElement("span", "panel-section-summary", section.summary));
+    const body = createElement("div", "panel-section-body");
+    appendDetailBlocks(body, section.blocks || []);
+    details.append(summary, body);
+    return details;
+  }
+
+  function renderPanelSections(sections) {
+    const fragment = document.createDocumentFragment();
+    (sections || []).forEach((section, index) => fragment.append(createPanelSection(section, index)));
+    if (!fragment.childNodes.length) fragment.append(createElement("p", "panel-empty", "No instrument data is available."));
+    elements.quickPanelContent.replaceChildren(fragment);
+  }
+
+  async function loadSessionSidebarPanel() {
+    if (!state.selectedPath) {
+      renderPanelError(new Error("Select a project first."));
+      return;
+    }
+    const requestID = ++state.quickPanelRequestID;
+    renderPanelLoading("Reading live session telemetry");
+    try {
+      const surface = await fetchJSON(`/api/mobile/projects/sidebar?path=${encodeURIComponent(state.selectedPath)}`);
+      if (requestID !== state.quickPanelRequestID || state.quickPanel !== "session") return;
+      elements.quickPanelTitle.textContent = `${surface.session.provider_label} session`;
+      setQuickPanelStatus(`Updated ${formatClockTime(new Date(surface.updated_at))}`);
+      renderPanelSections(surface.sections || []);
+    } catch (error) {
+      if (isAuthRequiredError(error) || requestID !== state.quickPanelRequestID) return;
+      renderPanelError(error, () => void loadSessionSidebarPanel());
+    }
+  }
+
+  async function loadDetailsPanel() {
+    if (!state.selectedPath) {
+      renderPanelError(new Error("Select a project first."));
+      return;
+    }
+    const requestID = ++state.quickPanelRequestID;
+    renderPanelLoading("Reading shared project details");
+    try {
+      const detail = await fetchJSON(`/api/mobile/projects/detail?path=${encodeURIComponent(state.selectedPath)}`);
+      if (requestID !== state.quickPanelRequestID || state.quickPanel !== "details") return;
+      state.projectDetailCache.set(state.selectedPath, detail);
+      state.selectedProjectDetail = detail;
+      renderSessionProjectContext(detail);
+      renderDetailsPanel(detail);
+    } catch (error) {
+      if (isAuthRequiredError(error) || requestID !== state.quickPanelRequestID) return;
+      renderPanelError(error, () => void loadDetailsPanel());
+    }
+  }
+
+  function renderDetailsPanel(detail) {
+    const project = detail.project || {};
+    elements.quickPanelTitle.textContent = project.name || "Project details";
+    setQuickPanelStatus("Shared with the TUI project-detail surface");
+    const plate = createElement("header", "detail-header project-plate");
+    const top = createElement("div", "project-plate-top");
+    const copy = document.createElement("div");
+    copy.append(createElement("p", "instrument-label", project.category_name || "Main"));
+    copy.append(createElement("h2", "", project.name || "Project"));
+    top.append(copy, createElement("span", "plate-index", "P"));
+    plate.append(top, createElement("p", "detail-summary", project.summary || "No recent assessment summary."));
+    const badges = createElement("div", "badge-row status-lamps");
+    for (const badge of project.badges || []) badges.append(createBadge(badge));
+    plate.append(badges);
+    const section = {
+      id: "details",
+      title: "Project instruments",
+      summary: project.assessment?.label || "Details",
+      blocks: detail.blocks || [],
+    };
+    elements.quickPanelContent.replaceChildren(plate, createPanelSection(section, 0));
+  }
+
+  async function loadTodoPanel() {
+    if (!state.selectedPath) {
+      renderPanelError(new Error("Select a project first."));
+      return;
+    }
+    const requestID = ++state.quickPanelRequestID;
+    renderPanelLoading("Reading repository TODOs");
+    try {
+      const surface = await fetchJSON(`/api/mobile/projects/todos?path=${encodeURIComponent(state.selectedPath)}`);
+      if (requestID !== state.quickPanelRequestID || state.quickPanel !== "todo") return;
+      renderTodoPanel(surface);
+    } catch (error) {
+      if (isAuthRequiredError(error) || requestID !== state.quickPanelRequestID) return;
+      renderPanelError(error, () => void loadTodoPanel());
+    }
+  }
+
+  function renderTodoPanel(surface) {
+    elements.quickPanelTitle.textContent = surface.scope_label || "TODOs";
+    setQuickPanelStatus(surface.write_enabled
+      ? "Phone control armed · changes sync with the TUI"
+      : "Read only · enable Phone control in Mobile settings");
+    const root = createElement("div", "todo-panel");
+    const toolbar = createElement("div", "todo-toolbar");
+    toolbar.append(createElement("span", "", `${surface.open_count} open · ${surface.done_count} resolved`));
+    if (surface.done_count > 0 && surface.write_enabled) {
+      const purge = createElement("button", "panel-action-button danger", "Clear resolved");
+      purge.type = "button";
+      purge.addEventListener("click", () => {
+        if (window.confirm("Delete all resolved TODOs?")) void mutateTodo({ action: "purge_done" });
+      });
+      toolbar.append(purge);
+    } else {
+      toolbar.append(createElement("span", "", surface.scope_project?.name || "Repository"));
+    }
+    root.append(toolbar);
+
+    if (surface.write_enabled) root.append(createTodoEditor());
+    const list = createElement("div", "todo-list");
+    if (!(surface.todos || []).length) {
+      list.append(createElement("p", "panel-empty", "No TODOs yet."));
+    } else {
+      for (const todo of surface.todos) list.append(createTodoItem(todo, surface.write_enabled));
+    }
+    root.append(list);
+    elements.quickPanelContent.replaceChildren(root);
+  }
+
+  function createTodoEditor(todo = null) {
+    const well = createElement("form", "todo-editor-well");
+    well.dataset.todoId = todo?.id ? String(todo.id) : "";
+    const row = createElement("div", "todo-editor-row");
+    const input = document.createElement("input");
+    input.className = "todo-editor-input";
+    input.type = "text";
+    input.maxLength = 12000;
+    input.placeholder = todo ? "Edit TODO" : "Add a TODO";
+    input.setAttribute("aria-label", todo ? "Edit TODO" : "New TODO");
+    input.value = todo?.text || "";
+    const save = createElement("button", "todo-save-button", todo ? "Save" : "Add");
+    save.type = "submit";
+    save.disabled = input.value.trim() === "";
+    input.addEventListener("input", () => { save.disabled = input.value.trim() === ""; });
+    well.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      void mutateTodo({ action: todo ? "update" : "add", todo_id: todo?.id, text });
+    });
+    row.append(input, save);
+    well.append(row);
+    if (todo) {
+      const cancel = createElement("button", "panel-action-button", "Cancel edit");
+      cancel.type = "button";
+      cancel.addEventListener("click", () => void loadTodoPanel());
+      well.append(cancel);
+      window.requestAnimationFrame(() => input.focus());
+    }
+    return well;
+  }
+
+  function createTodoItem(todo, writeEnabled) {
+    const item = createElement("article", `todo-item${todo.done ? " done" : ""}`);
+    const main = createElement("div", "todo-item-main");
+    const toggle = createElement("button", "todo-toggle", todo.done ? "✓" : "□");
+    toggle.type = "button";
+    toggle.disabled = !writeEnabled;
+    toggle.setAttribute("aria-label", todo.done ? "Mark TODO unresolved" : "Mark TODO resolved");
+    toggle.addEventListener("click", () => void mutateTodo({ action: "toggle", todo_id: todo.id, done: !todo.done }));
+    const todoText = createElement("p", "todo-item-text", todo.text);
+    const textIsLong = todo.text.length > 320;
+    if (textIsLong) todoText.classList.add("collapsible");
+    main.append(toggle, todoText);
+    item.append(main);
+    const metaParts = [];
+    if (todo.work_state) metaParts.push(todo.work_state);
+    if (todo.work_provider && todo.work_provider !== "unknown") metaParts.push(todo.work_provider);
+    if (todo.attachment_count) metaParts.push(`${todo.attachment_count} attachment(s)`);
+    if (metaParts.length) item.append(createElement("p", "todo-item-meta", metaParts.join(" · ")));
+    const actions = createElement("div", "todo-item-actions");
+    if (textIsLong) {
+      actions.append(createExpansionButton(todoText, "Show more", "Show less"));
+    }
+    if (writeEnabled) {
+      const edit = createElement("button", "panel-action-button", "Edit");
+      edit.type = "button";
+      edit.addEventListener("click", () => {
+        const panel = elements.quickPanelContent.querySelector(".todo-panel");
+        const current = panel?.querySelector(".todo-editor-well");
+        if (current) current.replaceWith(createTodoEditor(todo));
+      });
+      const remove = createElement("button", "panel-action-button danger", "Delete");
+      remove.type = "button";
+      remove.addEventListener("click", () => {
+        if (window.confirm("Delete this TODO?")) void mutateTodo({ action: "delete", todo_id: todo.id });
+      });
+      actions.append(edit, remove);
+    }
+    if (actions.childElementCount) item.append(actions);
+    return item;
+  }
+
+  function createExpansionButton(target, collapsedLabel, expandedLabel) {
+    const button = createElement("button", "panel-action-button", collapsedLabel);
+    button.type = "button";
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", () => {
+      const expanded = target.classList.toggle("expanded");
+      button.textContent = expanded ? expandedLabel : collapsedLabel;
+      button.setAttribute("aria-expanded", String(expanded));
+    });
+    return button;
+  }
+
+  async function mutateTodo(action) {
+    if (!state.selectedPath || state.quickPanel !== "todo") return;
+    setQuickPanelStatus("Applying TODO change");
+    setPanelBusy(true);
+    try {
+      const surface = await postJSON("/api/mobile/projects/todos/action", {
+        project_path: state.selectedPath,
+        request_id: mobileRequestID(),
+        ...action,
+      });
+      if (state.quickPanel !== "todo") return;
+      renderTodoPanel(surface);
+      await refreshSelectedProjectContext();
+    } catch (error) {
+      if (isAuthRequiredError(error)) return;
+      setQuickPanelStatus(error.message || "Could not change TODO", "warning");
+    } finally {
+      setPanelBusy(false);
+    }
+  }
+
+  async function loadRuntimePanel() {
+    if (!state.selectedPath) {
+      renderPanelError(new Error("Select a project first."));
+      return;
+    }
+    const requestID = ++state.quickPanelRequestID;
+    renderPanelLoading("Scanning project runtime");
+    try {
+      const surface = await fetchJSON(`/api/mobile/projects/runtime?path=${encodeURIComponent(state.selectedPath)}`);
+      if (requestID !== state.quickPanelRequestID || state.quickPanel !== "runtime") return;
+      renderRuntimePanel(surface);
+    } catch (error) {
+      if (isAuthRequiredError(error) || requestID !== state.quickPanelRequestID) return;
+      renderPanelError(error, () => void loadRuntimePanel());
+    }
+  }
+
+  function renderRuntimePanel(surface) {
+    elements.quickPanelTitle.textContent = surface.project?.name ? `${surface.project.name} runtime` : "Runtime";
+    setQuickPanelStatus(surface.write_enabled
+      ? `Scanned ${formatClockTime(new Date(surface.updated_at))} · phone control armed`
+      : "Runtime is read only · enable Phone control in Mobile settings");
+    const root = createElement("div", "runtime-panel");
+    const toolbar = createElement("div", "runtime-toolbar");
+    const running = (surface.processes || []).filter((process) => process.running).length;
+    toolbar.append(createElement("span", "", `${running} running · ${(surface.processes || []).length} detected`));
+    toolbar.append(createElement("span", "", surface.run_command ? "Command ready" : "No run command"));
+    root.append(toolbar);
+
+    const commandWell = createElement("form", "runtime-command-well");
+    const commandRow = createElement("div", "runtime-command-row");
+    const commandInput = document.createElement("input");
+    commandInput.className = "runtime-command-input";
+    commandInput.type = "text";
+    commandInput.maxLength = 2000;
+    commandInput.value = surface.run_command || "";
+    commandInput.placeholder = "Project run command";
+    commandInput.setAttribute("aria-label", "Runtime command");
+    commandInput.disabled = !surface.write_enabled;
+    const start = createElement("button", "runtime-main-action", "Start");
+    start.type = "submit";
+    start.disabled = !surface.write_enabled || commandInput.value.trim() === "";
+    commandInput.addEventListener("input", () => {
+      start.disabled = !surface.write_enabled || commandInput.value.trim() === "";
+    });
+    commandWell.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void mutateRuntime({ action: "start", command: commandInput.value.trim() });
+    });
+    commandRow.append(commandInput, start);
+    commandWell.append(commandRow);
+    root.append(commandWell);
+
+    const list = createElement("div", "runtime-list");
+    if (!(surface.processes || []).length) {
+      list.append(createElement("p", "panel-empty", "No managed runtime or project-local listener is active."));
+    } else {
+      for (const process of surface.processes) list.append(createRuntimeProcess(process));
+    }
+    root.append(list);
+    if ((surface.warnings || []).length) {
+      const warningSection = {
+        id: "warnings",
+        title: "Process warnings",
+        summary: `${surface.warnings.length} warning(s)`,
+        blocks: surface.warnings.map((warning) => ({ kind: "bullet", text: warning, tone: "warning" })),
+      };
+      root.append(createPanelSection(warningSection, 1));
+    }
+    elements.quickPanelContent.replaceChildren(root);
+  }
+
+  function createRuntimeProcess(process) {
+    const card = createElement("article", "runtime-process");
+    const head = createElement("div", "runtime-process-head");
+    const lampClass = process.status?.tone === "danger" ? "red" : process.running ? "green" : "amber dim";
+    head.append(createElement("span", `lamp ${lampClass}`));
+    head.append(createElement("strong", "", process.name || "Runtime"));
+    const status = createElement("span", "metal-status", process.status?.label || "Unknown");
+    const semanticClass = toneClass(process.status?.tone);
+    if (semanticClass) status.classList.add(semanticClass);
+    head.append(status);
+    card.append(head);
+    let commandToggle = null;
+    if (process.command) {
+      const command = createElement("p", "runtime-command", process.command);
+      if (process.command.length > 280) {
+        command.classList.add("collapsible");
+        commandToggle = createExpansionButton(command, "Show command", "Hide command");
+      }
+      card.append(command);
+    }
+    const meta = [];
+    if (process.pid) meta.push(`PID ${process.pid}`);
+    if ((process.ports || []).length) meta.push(`ports ${process.ports.join(", ")}`);
+    meta.push(process.managed ? "managed" : "external");
+    card.append(createElement("p", "runtime-process-meta", meta.join(" · ")));
+    if ((process.recent_output || []).length) {
+      const output = createElement("details", "panel-section");
+      const summary = document.createElement("summary");
+      summary.append(createElement("span", "", "Recent output"));
+      const body = createElement("div", "panel-section-body");
+      body.append(createElement("pre", "runtime-output", process.recent_output.join("\n")));
+      output.append(summary, body);
+      card.append(output);
+    }
+    const actions = createElement("div", "runtime-process-actions");
+    if (commandToggle) actions.append(commandToggle);
+    for (const rawURL of process.urls || []) {
+      const url = runtimeURLForPhone(rawURL);
+      const open = createElement("a", "panel-action-button", "Open");
+      open.href = url;
+      open.target = "_blank";
+      open.rel = "noopener noreferrer";
+      actions.append(open);
+    }
+    if (process.can_restart) {
+      const restart = createElement("button", "panel-action-button", "Restart");
+      restart.type = "button";
+      restart.addEventListener("click", () => {
+        if (window.confirm(`Restart ${process.name}?`)) {
+          void mutateRuntime({ action: "restart", process_id: process.id, command: process.command });
+        }
+      });
+      actions.append(restart);
+    }
+    if (process.can_stop) {
+      const stop = createElement("button", "panel-action-button danger", "Stop");
+      stop.type = "button";
+      stop.addEventListener("click", () => {
+        if (window.confirm(`Stop ${process.name}?`)) void mutateRuntime({ action: "stop", process_id: process.id });
+      });
+      actions.append(stop);
+    }
+    if (actions.childElementCount) card.append(actions);
+    return card;
+  }
+
+  function runtimeURLForPhone(rawURL) {
+    try {
+      const parsed = new URL(rawURL);
+      if (["127.0.0.1", "localhost", "::1", "[::1]"].includes(parsed.hostname)) {
+        parsed.hostname = window.location.hostname;
+      }
+      return parsed.href;
+    } catch (_error) {
+      return rawURL;
+    }
+  }
+
+  async function mutateRuntime(action) {
+    if (!state.selectedPath || state.quickPanel !== "runtime") return;
+    setQuickPanelStatus(`${action.action === "stop" ? "Stopping" : "Starting"} runtime`);
+    setPanelBusy(true);
+    try {
+      const surface = await postJSON("/api/mobile/projects/runtime/action", {
+        project_path: state.selectedPath,
+        request_id: mobileRequestID(),
+        ...action,
+      });
+      if (state.quickPanel === "runtime") renderRuntimePanel(surface);
+    } catch (error) {
+      if (isAuthRequiredError(error)) return;
+      setQuickPanelStatus(error.message || "Could not control runtime", "warning");
+    } finally {
+      setPanelBusy(false);
+    }
+  }
+
+  function setPanelBusy(busy) {
+    for (const control of elements.quickPanelContent.querySelectorAll("button, input, textarea")) {
+      if (busy) {
+        control.dataset.wasDisabled = String(control.disabled);
+        control.disabled = true;
+      } else if (control.dataset.wasDisabled !== undefined) {
+        control.disabled = control.dataset.wasDisabled === "true";
+        delete control.dataset.wasDisabled;
+      }
+    }
+  }
+
+  function renderCommandPanel() {
+    const consoleNode = createElement("form", "command-console");
+    const well = createElement("div", "command-input-well");
+    const row = createElement("div", "command-input-row");
+    const input = document.createElement("input");
+    input.className = "command-input";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.autocapitalize = "off";
+    input.spellcheck = false;
+    input.value = "/";
+    input.maxLength = 2000;
+    input.setAttribute("aria-label", "Slash command");
+    const run = createElement("button", "command-run-button", "Run");
+    run.type = "submit";
+    const suggestions = createElement("div", "command-suggestions");
+    suggestions.setAttribute("role", "listbox");
+    input.addEventListener("input", () => void loadCommandSuggestions(input, suggestions));
+    consoleNode.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void executeCommand(input.value, input, suggestions);
+    });
+    row.append(input, run);
+    well.append(row);
+    consoleNode.append(well, suggestions);
+    elements.quickPanelContent.replaceChildren(consoleNode);
+    setQuickPanelStatus(state.selectedPath
+      ? `Commands target ${projectNameForPath(state.selectedPath)}`
+      : "Dashboard command palette");
+    void loadCommandSuggestions(input, suggestions);
+    window.requestAnimationFrame(() => {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  }
+
+  async function loadCommandSuggestions(input, container) {
+    const requestID = ++state.commandSuggestionRequestID;
+    const query = input.value.trimStart() || "/";
+    const live = currentSessionIsLive();
+    const params = new URLSearchParams({ q: query, context: live ? "session" : "dashboard" });
+    if (state.selectedPath) params.set("path", state.selectedPath);
+    try {
+      const surface = await fetchJSON(`/api/mobile/commands/suggestions?${params.toString()}`);
+      if (requestID !== state.commandSuggestionRequestID || state.quickPanel !== "command") return;
+      container.replaceChildren();
+      const suggestions = surface.suggestions || [];
+      if (!suggestions.length) {
+        container.append(createElement("p", "panel-empty", "No matching slash commands."));
+        return;
+      }
+      for (const suggestion of suggestions.slice(0, 18)) {
+        const button = createElement("button", "command-suggestion");
+        button.type = "button";
+        button.disabled = !suggestion.supported;
+        button.setAttribute("role", "option");
+        button.append(createElement("strong", "", suggestion.display || suggestion.insert));
+        button.append(createElement("span", "command-source", suggestion.source || "command"));
+        button.append(createElement("small", "", suggestion.supported
+          ? suggestion.summary
+          : `${suggestion.summary} · ${suggestion.disabled_reason || "Unavailable on mobile"}`));
+        button.addEventListener("click", () => {
+          input.value = suggestion.insert;
+          input.focus();
+          void loadCommandSuggestions(input, container);
+        });
+        container.append(button);
+      }
+    } catch (error) {
+      if (isAuthRequiredError(error) || requestID !== state.commandSuggestionRequestID) return;
+      container.replaceChildren(createElement("p", "panel-empty", error.message || "Could not load commands"));
+    }
+  }
+
+  async function executeCommand(raw, input, suggestions) {
+    const command = raw.trim();
+    if (!command.startsWith("/")) {
+      setQuickPanelStatus("Enter a slash command", "warning");
+      return;
+    }
+    const localAction = new Map([
+      ["/session", "session"],
+      ["/sidebar", "session-panel"],
+      ["/details", "details"],
+      ["/todo", "todo"],
+      ["/runtime", "runtime"],
+    ]).get(command.toLowerCase());
+    if (localAction) {
+      if (!state.selectedPath) {
+        setQuickPanelStatus("Select a project first", "warning");
+        return;
+      }
+      if (localAction === "session") {
+        closeQuickPanel();
+      } else {
+        openQuickPanel(localAction === "session-panel" ? "session" : localAction);
+      }
+      return;
+    }
+    setQuickPanelStatus(`Running ${command}`);
+    setPanelBusy(true);
+    try {
+      const result = await postJSON("/api/mobile/commands/execute", {
+        project_path: state.selectedPath,
+        session_id: currentSessionIsLive() ? state.selectedSessionID : "",
+        request_id: mobileRequestID(),
+        command,
+      });
+      if (result.client_action && ["details", "todo", "runtime"].includes(result.client_action)) {
+        openQuickPanel(result.client_action);
+        return;
+      }
+      setQuickPanelStatus(result.status || `${command} complete`);
+      if (command === "/refresh") await loadDashboard(false);
+      if (result.client_action === "session") {
+        closeQuickPanel();
+        if (state.selectedSessionID) await loadSessionDetail(state.selectedSessionID, false);
+      } else {
+        input.value = command;
+        void loadCommandSuggestions(input, suggestions);
+      }
+    } catch (error) {
+      if (isAuthRequiredError(error)) return;
+      setQuickPanelStatus(error.message || `Could not run ${command}`, "warning");
+    } finally {
+      setPanelBusy(false);
+    }
+  }
+
+  function currentSessionIsLive() {
+    return Boolean(state.selectedSessionID && (state.sessionLive
+      || state.selectedProjectSessions.some((session) => session.id === state.selectedSessionID && session.live)));
+  }
+
+  async function refreshSelectedProjectContext() {
+    if (!state.selectedPath) return;
+    try {
+      const detail = await fetchJSON(`/api/mobile/projects/detail?path=${encodeURIComponent(state.selectedPath)}`);
+      if (detail?.project?.path !== state.selectedPath) return;
+      state.projectDetailCache.set(state.selectedPath, detail);
+      state.selectedProjectDetail = detail;
+      renderSessionProjectContext(detail);
+    } catch (error) {
+      if (!isAuthRequiredError(error)) setQuickPanelStatus("Change saved; summary refresh is pending");
+    }
   }
 
   function closeSessionStream() {
@@ -788,10 +1616,14 @@
     state.sessionInput = null;
     state.sessionSubmitting = false;
     state.sessionFeedback = "";
+    state.sessionLive = false;
     elements.body.classList.add("detail-open", "session-open");
     elements.sessionView.hidden = false;
     elements.sessionView.removeAttribute("aria-hidden");
     elements.sessionContent.hidden = true;
+    elements.sessionStandby.hidden = true;
+    elements.sessionActionDeck.hidden = false;
+    renderSessionProjectContext(state.projectDetailCache.get(state.selectedPath) || state.selectedProjectDetail);
     elements.sessionState.replaceChildren(createElement("p", "", "Tuning engineer channel"));
     elements.sessionProjectName.textContent = projectNameForPath(state.selectedPath);
     if (updateHistory) {
@@ -850,6 +1682,7 @@
 
   function renderSessionDetail(detail, initial) {
     const session = detail.session;
+    state.sessionLive = Boolean(session.live);
     const transcript = elements.sessionTranscript;
     const wasNearBottom = state.sessionStickToBottom
       || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 72;
@@ -1423,11 +2256,13 @@
 
   function projectNameForPath(path) {
     const project = (state.dashboard?.projects || []).find((item) => item.path === path);
-    return project?.name || elements.detailTitle.textContent || "Project";
+    const cached = state.projectDetailCache.get(path)?.project;
+    return cached?.name || project?.name || elements.detailTitle.textContent || "Project";
   }
 
   function hideSession() {
     closeSessionStream();
+    closeQuickPanel();
     state.selectedSessionID = "";
     state.sessionDetailSignature = "";
     state.sessionTranscriptRevision = 0;
@@ -1439,11 +2274,16 @@
     state.sessionInput = null;
     state.sessionSubmitting = false;
     state.sessionFeedback = "";
+    state.sessionLive = false;
     state.sessionRequestID++;
     elements.body.classList.remove("session-open");
     elements.sessionView.hidden = true;
     elements.sessionView.setAttribute("aria-hidden", "true");
     elements.sessionContent.hidden = true;
+    elements.sessionActionDeck.hidden = true;
+    elements.sessionProjectSummary.hidden = true;
+    elements.sessionStandby.hidden = true;
+    elements.sessionStandbyList.replaceChildren();
     elements.sessionState.replaceChildren();
     updateTranscriptControls();
   }
@@ -1451,6 +2291,10 @@
   function closeSession(updateHistory) {
     if (updateHistory && window.history.state?.sessionID === state.selectedSessionID) {
       window.history.back();
+      return;
+    }
+    if (sessionFirstLayout()) {
+      closeProject(updateHistory);
       return;
     }
     const projectPath = state.selectedPath;
@@ -1471,6 +2315,8 @@
   function closeProject(updateHistory) {
     hideSession();
     state.selectedPath = "";
+    state.selectedProjectDetail = null;
+    state.selectedProjectSessions = [];
     elements.body.classList.remove("detail-open");
     elements.detailView.hidden = true;
     elements.detailView.setAttribute("aria-hidden", "true");
@@ -1497,7 +2343,7 @@
     const message = createElement("p", "", `Could not load project: ${error.message}`);
     const retry = createElement("button", "error-action", "Try again");
     retry.type = "button";
-    retry.addEventListener("click", () => openProject(state.selectedPath, false));
+    retry.addEventListener("click", () => openProject(state.selectedPath, false, true));
     elements.detailState.replaceChildren(message, retry);
   }
 
@@ -1613,7 +2459,12 @@
     const sessionID = params.get("session") || "";
 
     if (projectPath && sessionID) {
-      if (projectPath !== state.selectedPath) await openProject(projectPath, false);
+      if (projectPath !== state.selectedPath || !state.projectDetailCache.has(projectPath)) {
+        await prepareProjectContext(projectPath);
+      } else {
+        state.selectedPath = projectPath;
+        renderSessionProjectContext(state.projectDetailCache.get(projectPath));
+      }
       if (sessionID !== state.selectedSessionID) await openSession(sessionID, false);
       return;
     }
@@ -1691,6 +2542,14 @@
 
   elements.authRetry.addEventListener("click", () => void bootstrap());
 
+  elements.commandButton.addEventListener("click", async () => {
+    if (!state.authenticated) {
+      await bootstrap();
+      return;
+    }
+    openQuickPanel("command");
+  });
+
   elements.refreshButton.addEventListener("click", async () => {
     if (!state.authenticated) {
       await bootstrap();
@@ -1712,6 +2571,18 @@
 
   elements.backButton.addEventListener("click", () => closeProject(true));
   elements.sessionBackButton.addEventListener("click", () => closeSession(true));
+  elements.sessionActionDeck.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-quick-panel]");
+    if (button) openQuickPanel(button.dataset.quickPanel);
+  });
+  elements.quickPanelClose.addEventListener("click", closeQuickPanel);
+  elements.quickPanelDialog.addEventListener("click", (event) => {
+    if (event.target === elements.quickPanelDialog) closeQuickPanel();
+  });
+  elements.quickPanelDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeQuickPanel();
+  });
   elements.sessionInstruments.addEventListener("toggle", () => {
     elements.sessionInstrumentToggle.textContent = elements.sessionInstruments.open ? "-" : "+";
   });
@@ -1764,6 +2635,10 @@
   window.addEventListener("keydown", (event) => {
     if (!state.authenticated) return;
     if (event.key !== "Escape") return;
+    if (elements.quickPanelDialog.open) {
+      closeQuickPanel();
+      return;
+    }
     if (state.selectedSessionID) {
       closeSession(true);
     } else if (state.selectedPath) {
