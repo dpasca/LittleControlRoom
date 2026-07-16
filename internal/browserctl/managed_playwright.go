@@ -1,6 +1,7 @@
 package browserctl
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -77,7 +78,15 @@ var (
 	managedPlaywrightStateLocks      keyedmutex.Locker
 	managedPlaywrightVisibilityLocks keyedmutex.Locker
 	managedPlaywrightProcessHider    = HideManagedBrowserProcess
+	managedPlaywrightMacScriptRunner = runBoundedMacApplicationScript
 )
+
+const (
+	managedPlaywrightMacScriptTimeout   = 4 * time.Second
+	managedPlaywrightMacScriptWaitDelay = 250 * time.Millisecond
+)
+
+type macApplicationCommandFactory func(context.Context, string, ...string) *exec.Cmd
 
 type osProcessSnapshot struct {
 	PID     int
@@ -598,8 +607,8 @@ func setMacApplicationProcessVisible(pid int, visible, frontmost bool) error {
 	if err != nil {
 		return err
 	}
-	if err := exec.Command("osascript", args...).Run(); err != nil {
-		return err
+	if err := managedPlaywrightMacScriptRunner(args, managedPlaywrightMacScriptTimeout); err != nil {
+		return fmt.Errorf("set managed browser process %d visibility: %w", pid, err)
 	}
 	if visible && frontmost {
 		scheduleMacApplicationProcessDelayedRaise(pid)
@@ -611,33 +620,44 @@ func macApplicationProcessVisibilityScript(pid int, visible, frontmost bool) ([]
 	if pid <= 0 {
 		return nil, fmt.Errorf("managed browser pid required")
 	}
-	pidLiteral := strconv.Itoa(pid)
-	visibleLiteral := "false"
+	visibleLiteral := "$.kCFBooleanTrue"
 	if visible {
-		visibleLiteral = "true"
+		visibleLiteral = "$.kCFBooleanFalse"
 	}
 	lines := []string{
-		`tell application "System Events"`,
-		`set targetProcess to first application process whose unix id is ` + pidLiteral,
-		`set visible of targetProcess to ` + visibleLiteral,
+		`ObjC.import("Foundation");`,
+		`ObjC.import("AppKit");`,
+		`ObjC.import("ApplicationServices");`,
+		`const pid = ` + strconv.Itoa(pid) + `;`,
+		`const applicationElement = $.AXUIElementCreateApplication(pid);`,
+		`function setAXBoolean(attribute, value) {`,
+		`  const status = Number($.AXUIElementSetAttributeValue(applicationElement, $(attribute), value));`,
+		`  if (status !== 0) {`,
+		`    throw new Error("failed to set " + attribute + " for browser PID " + pid + " (AXError " + status + ")");`,
+		`  }`,
+		`}`,
+		`function updateProcessVisibility() {`,
+		`  setAXBoolean("AXHidden", ` + visibleLiteral + `);`,
 	}
 	if frontmost {
 		lines = append(lines,
-			`set frontmost of targetProcess to true`,
-			`try`,
-			`if (count of windows of targetProcess) > 0 then`,
-			`perform action "AXRaise" of window 1 of targetProcess`,
-			`end if`,
-			`end try`,
-			`set frontmost of targetProcess to true`,
+			`  setAXBoolean("AXFrontmost", $.kCFBooleanTrue);`,
+			`  const runningApplication = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);`,
+			`  if (!runningApplication) {`,
+			`    throw new Error("managed browser process " + pid + " is not running");`,
+			`  }`,
+			`  const activationOptions = $.NSApplicationActivateAllWindows | $.NSApplicationActivateIgnoringOtherApps;`,
+			`  if (!runningApplication.activateWithOptions(activationOptions)) {`,
+			`    throw new Error("managed browser process " + pid + " rejected activation");`,
+			`  }`,
+			`  setAXBoolean("AXFrontmost", $.kCFBooleanTrue);`,
 		)
 	}
-	lines = append(lines, `end tell`)
-	args := make([]string, 0, len(lines)*2)
-	for _, line := range lines {
-		args = append(args, "-e", line)
-	}
-	return args, nil
+	lines = append(lines,
+		`}`,
+		`updateProcessVisibility();`,
+	)
+	return []string{"-l", "JavaScript", "-e", strings.Join(lines, "\n")}, nil
 }
 
 func setMacApplicationNamedProcessVisible(appName string, visible, frontmost bool) error {
@@ -645,8 +665,8 @@ func setMacApplicationNamedProcessVisible(appName string, visible, frontmost boo
 	if err != nil {
 		return err
 	}
-	if err := exec.Command("osascript", args...).Run(); err != nil {
-		return err
+	if err := managedPlaywrightMacScriptRunner(args, managedPlaywrightMacScriptTimeout); err != nil {
+		return fmt.Errorf("set managed browser application %q visibility: %w", strings.TrimSpace(appName), err)
 	}
 	if visible && frontmost {
 		scheduleMacApplicationNamedProcessDelayedRaise(appName)
@@ -692,12 +712,8 @@ func scheduleMacApplicationProcessDelayedRaise(pid int) {
 	if err != nil {
 		return
 	}
-	cmd := exec.Command("osascript", args...)
-	if err := cmd.Start(); err != nil {
-		return
-	}
 	go func() {
-		_ = cmd.Wait()
+		_ = managedPlaywrightMacScriptRunner(args, managedPlaywrightMacScriptTimeout)
 	}()
 }
 
@@ -706,50 +722,66 @@ func scheduleMacApplicationNamedProcessDelayedRaise(appName string) {
 	if err != nil {
 		return
 	}
-	cmd := exec.Command("osascript", args...)
-	if err := cmd.Start(); err != nil {
-		return
-	}
 	go func() {
-		_ = cmd.Wait()
+		_ = managedPlaywrightMacScriptRunner(args, managedPlaywrightMacScriptTimeout)
 	}()
 }
 
 func macApplicationProcessDelayedRaiseScript(pid int, delay time.Duration) ([]string, error) {
-	if pid <= 0 {
-		return nil, fmt.Errorf("managed browser pid required")
+	args, err := macApplicationProcessVisibilityScript(pid, true, true)
+	if err != nil {
+		return nil, err
 	}
 	if delay < 0 {
 		delay = 0
 	}
-	pidLiteral := strconv.Itoa(pid)
 	delayLiteral := strconv.FormatFloat(delay.Seconds(), 'f', 3, 64)
-	lines := []string{
-		`delay ` + delayLiteral,
-		`tell application "System Events"`,
-		`set targetProcess to first application process whose unix id is ` + pidLiteral,
-		`set visible of targetProcess to true`,
-		`set frontmost of targetProcess to true`,
-		`try`,
-		`if (count of windows of targetProcess) > 0 then`,
-		`perform action "AXRaise" of window 1 of targetProcess`,
-		`end if`,
-		`end try`,
-		`delay 0.300`,
-		`set visible of targetProcess to true`,
-		`set frontmost of targetProcess to true`,
-		`try`,
-		`if (count of windows of targetProcess) > 0 then`,
-		`perform action "AXRaise" of window 1 of targetProcess`,
-		`end if`,
-		`end try`,
-		`end tell`,
-	}
-	args := make([]string, 0, len(lines)*2)
-	for _, line := range lines {
-		args = append(args, "-e", line)
-	}
+	script := args[len(args)-1]
+	script = strings.TrimSuffix(script, "updateProcessVisibility();")
+	script += `$.NSThread.sleepForTimeInterval(` + delayLiteral + `);` + "\n"
+	script += "updateProcessVisibility();\n"
+	script += `$.NSThread.sleepForTimeInterval(0.300);` + "\n"
+	script += `updateProcessVisibility();`
+	args[len(args)-1] = script
 	return args, nil
+}
+
+func runBoundedMacApplicationScript(args []string, timeout time.Duration) error {
+	return runBoundedMacApplicationScriptWithCommand(args, timeout, exec.CommandContext)
+}
+
+func runBoundedMacApplicationScriptWithCommand(args []string, timeout time.Duration, command macApplicationCommandFactory) error {
+	if timeout <= 0 {
+		return fmt.Errorf("macOS browser window command timeout must be positive")
+	}
+	if command == nil {
+		return fmt.Errorf("macOS browser window command factory required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := command(ctx, "osascript", args...)
+	if cmd == nil {
+		return fmt.Errorf("macOS browser window command factory returned no command")
+	}
+	configureIsolatedProcessGroup(cmd)
+	cmd.WaitDelay = managedPlaywrightMacScriptWaitDelay
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	bestEffortKillProcessGroup(cmd)
+	detail := strings.TrimSpace(string(output))
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if detail != "" {
+			return fmt.Errorf("osascript timed out after %s: %w; output: %s", timeout, ctxErr, detail)
+		}
+		return fmt.Errorf("osascript timed out after %s: %w", timeout, ctxErr)
+	}
+	if detail != "" {
+		return fmt.Errorf("osascript failed: %w; output: %s", err, detail)
+	}
+	return fmt.Errorf("osascript failed: %w", err)
 }
 
 func macApplicationNamedProcessDelayedRaiseScript(appName string, delay time.Duration) ([]string, error) {

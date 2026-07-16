@@ -174,14 +174,14 @@ func managedBrowserExecutableVersionWithTimeout(executable string, timeout time.
 	cmd := exec.CommandContext(ctx, executable, "--version")
 	// Isolate wrapper descendants so a timed-out version probe can clean up the
 	// whole probe tree instead of leaving orphaned helpers behind.
-	configureVersionProbeProcessGroup(cmd)
+	configureIsolatedProcessGroup(cmd)
 	// A browser wrapper may leave a descendant holding the stdout pipe after the
 	// wrapper is killed. Bound that wait as well as the process itself.
 	cmd.WaitDelay = managedPlaywrightBrowserVersionWaitDelay
 	raw, err := cmd.Output()
 	version := strings.TrimSpace(string(raw))
 	if err != nil {
-		bestEffortKillVersionProbeProcessGroup(cmd)
+		bestEffortKillProcessGroup(cmd)
 		// WaitDelay may close a pipe inherited by an orphaned wrapper child after
 		// the version process itself exited successfully. Its valid output is
 		// still authoritative.

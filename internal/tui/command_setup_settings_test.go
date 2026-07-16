@@ -276,13 +276,15 @@ func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	testRoot := t.TempDir()
+	st, err := store.Open(filepath.Join(testRoot, "little-control-room.sqlite"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
 
-	projectPath := filepath.Join(t.TempDir(), "demo")
+	projectRoot := filepath.Join(testRoot, "projects")
+	projectPath := filepath.Join(projectRoot, "demo")
 	if err := os.MkdirAll(projectPath, 0o755); err != nil {
 		t.Fatalf("mkdir project: %v", err)
 	}
@@ -298,7 +300,11 @@ func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
 		t.Fatalf("seed project: %v", err)
 	}
 
-	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	cfg := config.Default()
+	cfg.IncludePaths = []string{projectRoot}
+	cfg.DataDir = filepath.Join(testRoot, "data")
+	cfg.ScratchRoot = filepath.Join(testRoot, "scratch")
+	svc := service.New(cfg, st, events.NewBus(), nil)
 	svc.SetSessionClassifier(&usageSnapshotClassifier{})
 
 	m := Model{

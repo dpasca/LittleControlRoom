@@ -7,14 +7,14 @@ import (
 	"syscall"
 )
 
-func configureVersionProbeProcessGroup(cmd *exec.Cmd) {
+func configureIsolatedProcessGroup(cmd *exec.Cmd) {
 	if cmd == nil {
 		return
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
-func bestEffortKillVersionProbeProcessGroup(cmd *exec.Cmd) {
+func bestEffortKillProcessGroup(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil || cmd.Process.Pid <= 0 {
 		return
 	}

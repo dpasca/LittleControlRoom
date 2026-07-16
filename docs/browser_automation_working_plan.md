@@ -14,19 +14,22 @@ It is intentionally different from `STATUS.md`:
 - In managed mode, embedded Codex overrides the `playwright` MCP registration per process and launches Playwright with LCR-controlled flags.
 - Newly launched embedded Codex sessions now go through an LCR-owned `playwright-mcp` wrapper instead of calling `mcp-server-playwright` directly.
 - The managed wrapper now gives each Codex session a stable managed browser/session key plus a persistent Playwright profile directory.
-- Newly launched embedded Codex sessions also get a session-local `CODEX_HOME` overlay that shadows only the `playwright` skill, so LCR can steer browser behavior without mutating the user's real `~/.codex`.
+- Newly launched embedded Codex sessions also get a session-local `CODEX_HOME` overlay that shadows the managed `playwright` skill and, when registered, the `lcr_runtime` skill, so LCR can steer browser behavior without mutating the user's real `~/.codex`.
 - On macOS, `Only when needed` now runs managed Codex browser work in a backgrounded headed browser so LCR can reveal that same browser context later for login or other human steps.
 - The macOS background browser monitor keeps re-hiding a managed browser while LCR still marks it hidden, because Chrome/Playwright can re-show or refocus the app after the initial launch hide. An explicit LCR reveal clears that hidden state.
 - Managed browser reveal now records a cross-session foreground marker before raising the macOS window. Background monitors using the same Chromium application respect that marker, so one hidden session cannot collapse a different session that the user just revealed.
 - Managed embedded Codex submissions now wait briefly for Playwright MCP tools to become ready before starting the first turn, which avoids a fresh-session race where browser tools could be missing on the first prompt.
 - Newly launched embedded OpenCode sessions now override `mcp.playwright` through `OPENCODE_CONFIG_CONTENT` to point at the same LCR-managed Playwright wrapper, using the same managed session/profile key model as Codex.
-- Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows only the `playwright` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
+- Newly launched embedded OpenCode sessions also get a session-local `XDG_CONFIG_HOME` overlay that shadows the managed `playwright` skill and, when registered, the `lcr_runtime` skill, so OpenCode is steered toward the managed MCP path without changing the user's real `~/.config/opencode`.
 - OpenCode sessions now track their live Playwright tool activity plus the current managed browser page URL, so the shared browser strip/reveal UI can surface the same current-page and reconnect guidance patterns that Codex already uses.
 - OpenCode browser-backed question waits now reuse that same managed browser state, so when OpenCode pauses for user input the session can stay in a `waiting for user` browser state and keep `ctrl+o` available to reveal or refocus the managed browser window.
 - LCAgent now exposes native `browser_*` tools backed by an LCR-managed Playwright MCP process, tracks current page state in the embedded UI, and shadows the `playwright` skill by browser capability.
 - Existing embedded Codex sessions do not retroactively pick up the new launch behavior; they need to be reopened or reconnected.
 - URL-based login waits already have an LCR-managed attention flow and interactive-browser lease.
+- Embedded Codex and OpenCode can now make an explicit, structured `lcr_runtime/request_browser_attention` handoff after Playwright reaches a human-only step. The handoff carries a bounded user-facing instruction, survives turn idle/history replay, and is cleared by the next successfully submitted user message rather than by parsing assistant prose.
+- Runtime-skill availability and managed-Playwright availability are gated independently, so `Classic browser behavior` does not advertise a managed-browser handoff that cannot succeed.
 - Live browser waits are now surfaced passively in the project list, detail pane, attention reasons, and footer so the popup is not the only visible signal.
+- Browser waits now raise the centered attention dialog even while the affected embedded session is visible, unless another provider input dialog already owns the foreground. Dismissing it acknowledges that specific handoff while leaving the Browser sidebar and `ctrl+o` available; a changed instruction or failed reveal can surface it again.
 - Embedded Codex sessions now remember the latest Playwright page URL they reached, and the visible pane can reveal that same managed browser window with `ctrl+o`.
 - `ctrl+o` now reveals or focuses a live attached managed Codex browser based on fresh managed browser state or live Codex browser activity, even when the session has not reported a current page URL, so hidden login windows do not become unreachable.
 - Visible embedded sessions briefly retry managed browser-state hydration when a browser page or login handoff appears before the Playwright wrapper has written a revealable browser PID, so `ctrl+o` can become available without leaving and re-entering the session.
@@ -84,7 +87,7 @@ Make browser automation feel quiet and predictable by default:
   - idle
   - active
   - waiting for user
-- Browser-attention prompts appear when a hidden embedded session needs help.
+- Browser-attention prompts appear when an embedded session needs help, including while that session is already visible. A specific dismissal is deduplicated without erasing the underlying Browser sidebar state.
 
 ### Actionable Handoffs
 
@@ -100,6 +103,7 @@ Make browser automation feel quiet and predictable by default:
   - later sessions are blocked cleanly instead of blindly opening another browser login flow
   - failed browser-reveal attempts release the slot immediately
 - Managed browser metadata is now written under the LCR data dir so the TUI can find and reveal the correct browser session instead of opening the URL in a disconnected desktop browser.
+- On macOS, managed browser hide/reveal now targets the browser PID through Accessibility/AppKit instead of depending on the `System Events` application host. Every `osascript` attempt, including delayed raises and the named-process fallback, is time-bounded and preserves useful diagnostics.
 - On macOS, managed browser reveal now raises the target process window after un-hiding it, which keeps parallel Chrome-backed Playwright sessions from falling back to whichever Chrome window was last active.
 - On macOS, reveal also schedules a short delayed second raise so the browser stays frontmost after the TUI finishes processing the reveal key.
 - On macOS, managed background browsers are re-hidden until the user reveals them through LCR, which reduces focus stealing from later Playwright navigations or newly created browser windows.
@@ -115,6 +119,9 @@ Make browser automation feel quiet and predictable by default:
 - A Codex smoke check can now verify the overlay without a live user session by running `codex debug prompt-input` against that overlay and checking that the shadow Playwright skill is what Codex sees.
 - A managed embedded Codex smoke test now builds a real `lcroom` helper binary and verifies that a fresh trusted session can see Playwright MCP tools before the first turn starts.
 - The real embedded OpenCode Playwright smoke now launches with its own temporary `XDG_DATA_HOME`, so it exercises the managed browser path without polluting the user's normal OpenCode DB or leaving `tmp-oc-browser-smoke-*` projects in the dashboard.
+- Browser-attention coverage now verifies the exact structured tool identity, required instruction, stale or mismatched managed state rejection, failed tool results, idle and resume persistence, successful-response clearing, inactivity protection, popup acknowledgement/retry behavior, and OpenCode parity.
+- Handoff state reads use the same cross-process state lock as the managed-browser writer, and hydration coverage verifies that initially hidden OpenCode/LCAgent waits surface as soon as their revealable browser state arrives.
+- macOS window-control coverage now verifies PID-targeted JXA scripts, bounded immediate and delayed calls, retained `(-600)` diagnostics, and termination of hung commands without requiring a live UI.
 
 ## Current Provider Status
 
@@ -124,6 +131,7 @@ Make browser automation feel quiet and predictable by default:
 - Managed mode now overrides the embedded Codex `playwright` MCP launch to use the LCR wrapper plus a persistent Playwright profile.
 - Embedded elicitation replies are wired.
 - Managed same-context browser reveal is working in both hidden and visible session flows for newly launched embedded sessions.
+- Codex reconstructs an unresolved structured browser handoff from ordered thread history after reconnect; a later structured user-message item resolves it.
 - This launch override currently applies to newly started embedded sessions only.
 
 ### OpenCode
@@ -133,6 +141,7 @@ Make browser automation feel quiet and predictable by default:
 - Managed sessions now also shadow the OpenCode `playwright` skill per session, which keeps real browser tasks on the managed MCP path instead of falling back to standalone Playwright CLI/browser launches.
 - OpenCode now reports live Playwright tool activity and the current managed browser page URL into the shared embedded browser UI, including `ctrl+o` reveal/focus handling and reconnect guidance when the session browser wiring no longer matches current settings.
 - OpenCode browser-backed structured-input waits now keep the session in a `waiting for user` browser state, which lets the same browser-attention/reveal flow stay active while the user is answering a browser-related prompt.
+- OpenCode also recognizes the exact structured runtime handoff, retains its instruction through idle/history refresh, and clears it on a successful user submission without accepting similarly named tools or failed results.
 - Managed OpenCode browser smoke coverage is now isolated from the user's real OpenCode data home, so smoke verification no longer depends on or mutates the normal dashboard state.
 - Embedded elicitation control is still weaker than Codex, so browser-attention/login waits are not yet at full parity.
 - Treat as managed for normal Playwright browsing, with improving UI parity but still interaction-limited until the embedded reply path is clearer.
@@ -152,13 +161,13 @@ Make browser automation feel quiet and predictable by default:
 
 ## Immediate Next Steps
 
-1. Make the backgrounded browser reveal path feel more robust in real use.
-   - Verify that the macOS hide/reveal behavior is stable across actual login sites.
-   - Decide whether the first reveal should do anything more explicit than just surface the managed browser window.
+1. Verify the hardened backgrounded browser reveal path in real login flows.
+   - Exercise login, MFA, consent, and CAPTCHA pages across Chromium updates.
+   - Confirm Accessibility permission failures remain actionable in the centered dialog.
 
-2. Keep refining passive visibility outside popups.
-   - Verify the project-list/detail/footer browser wait signals against real login flows.
-   - Decide whether dismissed browser popups should leave behind a stronger action affordance than the footer alert.
+2. Evaluate whether the advisory handoff should become a mechanically blocking MCP elicitation.
+   - The current tool deliberately returns immediately and tells the assistant to end its turn.
+   - A future blocking version would need a bidirectional runtime-MCP dispatcher plus an explicit tool timeout and granular elicitation approval policy.
 
 3. Keep tightening tests around managed Codex transitions.
    - waiting -> show browser -> accept
@@ -202,7 +211,7 @@ Make browser automation feel quiet and predictable by default:
 ## Open Questions
 
 - Should URL-based login waits stay manual on the final "accept/done" step, or should that eventually be guided more explicitly?
-- What is the right place to surface browser-attention state when the popup is dismissed?
+- Should structured browser handoffs remain advisory turn boundaries, or eventually block through MCP elicitation until the user accepts?
 - When the real controller exists, should isolation default to per-task or per-project?
 - What is the cleanest way to let OpenCode and Claude participate without brittle wrappers?
 

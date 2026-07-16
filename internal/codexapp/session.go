@@ -126,6 +126,9 @@ type appServerSession struct {
 	currentBrowserPageURL   string
 	currentBrowserPageStale bool
 	browserToolCalls        map[string]browserToolCall
+	browserHandoffPending   bool
+	browserHandoffAt        time.Time
+	browserHandoffMessage   string
 	mcpServerStartup        map[string]mcpServerStartupState
 	mcpUsage                map[string]*mcpUsageStats
 	mcpUsageItemIDs         map[string]struct{}

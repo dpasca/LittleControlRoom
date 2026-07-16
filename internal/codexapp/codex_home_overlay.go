@@ -13,7 +13,7 @@ import (
 	"lcroom/internal/codexstate"
 )
 
-const shadowPlaywrightSkillMarkdown = `---
+const shadowPlaywrightSkillMarkdownBase = `---
 name: "playwright"
 description: "Use the embedded Playwright MCP tools already wired through Little Control Room. Do not launch a standalone Playwright CLI/browser from this embedded session."
 ---
@@ -24,18 +24,42 @@ This embedded Little Control Room session already has a ` + "`playwright`" + ` M
 Use the Playwright MCP tools directly.
 
 Do not shell out to ` + "`npx @playwright/mcp`" + `, ` + "`playwright-mcp`" + `, ` + "`playwright_cli.sh`" + `, or any standalone Playwright browser launcher from the terminal unless the user explicitly asks to debug that wrapper itself.
+`
 
+const shadowPlaywrightBrowserAttentionMarkdown = `
 ## When the user needs to interact with the page
 
-- Ask Little Control Room to show or reveal the managed browser window for this session.
+- First navigate the managed Playwright browser to the exact page where the user must act.
+- Then call ` + "`lcr_runtime/request_browser_attention`" + ` with a short ` + "`message`" + ` that tells the user exactly what to do. Little Control Room will show its browser-attention dialog for this session.
+- After that call succeeds, stop the current turn. Do not call Playwright or any other tool again until the user sends a new message confirming the browser step is finished.
 - Do not open the same URL in a separate desktop browser for login or MFA; that creates a disconnected browser context.
+`
 
+const shadowPlaywrightManualBrowserAttentionMarkdown = `
+## When the user needs to interact with the page
+
+- First navigate the managed Playwright browser to the exact page where the user must act.
+- Tell the user that the managed browser needs attention and end the current turn so they can reveal it from Little Control Room's Browser sidebar.
+- Do not open the same URL in a separate desktop browser for login or MFA; that creates a disconnected browser context.
+`
+
+const shadowPlaywrightGuardrailsMarkdown = `
 ## Guardrails
 
 - Prefer the existing ` + "`playwright/...`" + ` tools over shell commands.
 - Treat terminal Playwright CLI commands as a last resort for debugging the wrapper itself.
 - If a separate CLI launch would create a second browser context, stop and explain the limitation instead.
 `
+
+func shadowPlaywrightSkillMarkdown(runtimeAvailable bool) string {
+	text := shadowPlaywrightSkillMarkdownBase
+	if runtimeAvailable {
+		text += shadowPlaywrightBrowserAttentionMarkdown
+	} else {
+		text += shadowPlaywrightManualBrowserAttentionMarkdown
+	}
+	return text + shadowPlaywrightGuardrailsMarkdown
+}
 
 const shadowPlaywrightWrapperScript = `#!/usr/bin/env bash
 set -euo pipefail
@@ -45,7 +69,7 @@ echo "Use the embedded Playwright MCP tools or reveal the managed browser window
 exit 2
 `
 
-const shadowRuntimeSkillMarkdown = `---
+const shadowRuntimeSkillMarkdownBase = `---
 name: "runtime"
 description: "Use Little Control Room runtime MCP tools for local dev servers, watchers, and project-local port checks. Do not launch duplicate long-running server processes from the shell."
 ---
@@ -61,9 +85,23 @@ Use its runtime tools for local app/server/watch processes:
 - Set ` + "`create_new`" + ` true only when the user needs another concurrent copy of the same command/cwd.
 - Set ` + "`replace_existing`" + ` true only when a fresh managed instance is needed.
 - Call ` + "`stop_process`" + ` only when the user asks to stop a managed runtime or when cleaning up a temporary process you started.
+`
 
+const shadowRuntimeBrowserAttentionMarkdown = `
+- Call ` + "`request_browser_attention`" + ` with a short user-facing ` + "`message`" + ` after Playwright has navigated to an exact page that needs login, MFA, consent, CAPTCHA, or another human-only browser step. After it succeeds, stop the current turn and wait for a new user message before using any more tools. This lets Little Control Room show its browser-attention dialog for the same managed browser context.
+`
+
+const shadowRuntimeSkillMarkdownFooter = `
 Do not use shell backgrounding, ad-hoc port hopping, or a bounded terminal command for dev servers/watchers when the runtime MCP tools are available.
 `
+
+func shadowRuntimeSkillMarkdown(browserAttentionAvailable bool) string {
+	text := shadowRuntimeSkillMarkdownBase
+	if browserAttentionAvailable {
+		text += shadowRuntimeBrowserAttentionMarkdown
+	}
+	return text + shadowRuntimeSkillMarkdownFooter
+}
 
 const codexDirectRMRuleFilename = "lcroom-no-direct-rm.rules"
 
@@ -197,10 +235,14 @@ exit 127
 `
 
 func prepareCodexHomeOverlay(dataDir, requestedHome string) (string, error) {
-	return prepareCodexHomeOverlayWithOptions(dataDir, requestedHome, true)
+	return prepareCodexHomeOverlayForLaunch(dataDir, requestedHome, true, true)
 }
 
 func prepareCodexHomeOverlayWithOptions(dataDir, requestedHome string, shadowSkills bool) (string, error) {
+	return prepareCodexHomeOverlayForLaunch(dataDir, requestedHome, shadowSkills, shadowSkills)
+}
+
+func prepareCodexHomeOverlayForLaunch(dataDir, requestedHome string, shadowPlaywright, shadowRuntime bool) (string, error) {
 	sourceHome, err := effectiveCodexHome(requestedHome)
 	if err != nil {
 		return "", err
@@ -210,22 +252,22 @@ func prepareCodexHomeOverlayWithOptions(dataDir, requestedHome string, shadowSki
 	if err != nil {
 		return "", fmt.Errorf("create codex home overlay: %w", err)
 	}
-	if err := populateCodexHomeOverlay(overlayRoot, sourceHome, shadowSkills); err != nil {
+	if err := populateCodexHomeOverlay(overlayRoot, sourceHome, shadowPlaywright, shadowRuntime); err != nil {
 		_ = os.RemoveAll(overlayRoot)
 		return "", err
 	}
 	return overlayRoot, nil
 }
 
-func populateCodexHomeOverlay(overlayRoot, sourceHome string, shadowSkills bool) error {
+func populateCodexHomeOverlay(overlayRoot, sourceHome string, shadowPlaywright, shadowRuntime bool) error {
 	if err := os.MkdirAll(overlayRoot, 0o700); err != nil {
 		return fmt.Errorf("mkdir codex overlay root: %w", err)
 	}
-	if err := mirrorCodexHomeEntries(overlayRoot, sourceHome, shadowSkills); err != nil {
+	if err := mirrorCodexHomeEntries(overlayRoot, sourceHome, shadowPlaywright || shadowRuntime); err != nil {
 		return err
 	}
-	if shadowSkills {
-		if err := installShadowPlaywrightSkill(overlayRoot, sourceHome); err != nil {
+	if shadowPlaywright || shadowRuntime {
+		if err := installEmbeddedSkillOverrides(overlayRoot, sourceHome, shadowPlaywright, shadowRuntime); err != nil {
 			return err
 		}
 	}
@@ -313,7 +355,7 @@ func installCodexDirectRMGuard(overlayRoot, sourceHome string) error {
 	return nil
 }
 
-func installShadowPlaywrightSkill(overlayRoot, sourceHome string) error {
+func installEmbeddedSkillOverrides(overlayRoot, sourceHome string, shadowPlaywright, shadowRuntime bool) error {
 	overlaySkillsDir := filepath.Join(overlayRoot, "skills")
 	if err := os.MkdirAll(overlaySkillsDir, 0o700); err != nil {
 		return fmt.Errorf("mkdir overlay skills dir: %w", err)
@@ -326,7 +368,7 @@ func installShadowPlaywrightSkill(overlayRoot, sourceHome string) error {
 	}
 	for _, entry := range sourceEntries {
 		name := strings.TrimSpace(entry.Name())
-		if name == "" || name == "playwright" || name == "runtime" {
+		if name == "" || (shadowPlaywright && name == "playwright") || (shadowRuntime && name == "runtime") {
 			continue
 		}
 		sourcePath := filepath.Join(sourceSkillsDir, name)
@@ -336,23 +378,28 @@ func installShadowPlaywrightSkill(overlayRoot, sourceHome string) error {
 		}
 	}
 
-	overlayPlaywrightDir := filepath.Join(overlaySkillsDir, "playwright")
-	overlayScriptsDir := filepath.Join(overlayPlaywrightDir, "scripts")
-	if err := os.MkdirAll(overlayScriptsDir, 0o700); err != nil {
-		return fmt.Errorf("mkdir overlay playwright scripts dir: %w", err)
+	browserAttentionAvailable := shadowPlaywright && shadowRuntime
+	if shadowPlaywright {
+		overlayPlaywrightDir := filepath.Join(overlaySkillsDir, "playwright")
+		overlayScriptsDir := filepath.Join(overlayPlaywrightDir, "scripts")
+		if err := os.MkdirAll(overlayScriptsDir, 0o700); err != nil {
+			return fmt.Errorf("mkdir overlay playwright scripts dir: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(overlayPlaywrightDir, "SKILL.md"), []byte(shadowPlaywrightSkillMarkdown(browserAttentionAvailable)), 0o644); err != nil {
+			return fmt.Errorf("write overlay Playwright SKILL.md: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(overlayScriptsDir, "playwright_cli.sh"), []byte(shadowPlaywrightWrapperScript), 0o755); err != nil {
+			return fmt.Errorf("write overlay Playwright wrapper: %w", err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(overlayPlaywrightDir, "SKILL.md"), []byte(shadowPlaywrightSkillMarkdown), 0o644); err != nil {
-		return fmt.Errorf("write overlay Playwright SKILL.md: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(overlayScriptsDir, "playwright_cli.sh"), []byte(shadowPlaywrightWrapperScript), 0o755); err != nil {
-		return fmt.Errorf("write overlay Playwright wrapper: %w", err)
-	}
-	overlayRuntimeDir := filepath.Join(overlaySkillsDir, "runtime")
-	if err := os.MkdirAll(overlayRuntimeDir, 0o700); err != nil {
-		return fmt.Errorf("mkdir overlay runtime skill dir: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(overlayRuntimeDir, "SKILL.md"), []byte(shadowRuntimeSkillMarkdown), 0o644); err != nil {
-		return fmt.Errorf("write overlay runtime SKILL.md: %w", err)
+	if shadowRuntime {
+		overlayRuntimeDir := filepath.Join(overlaySkillsDir, "runtime")
+		if err := os.MkdirAll(overlayRuntimeDir, 0o700); err != nil {
+			return fmt.Errorf("mkdir overlay runtime skill dir: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(overlayRuntimeDir, "SKILL.md"), []byte(shadowRuntimeSkillMarkdown(browserAttentionAvailable)), 0o644); err != nil {
+			return fmt.Errorf("write overlay runtime SKILL.md: %w", err)
+		}
 	}
 	return nil
 }

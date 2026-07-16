@@ -413,7 +413,7 @@ func (s *appServerSession) CloseDueToInactivity() error {
 		s.mu.Unlock()
 		return nil
 	}
-	if s.busy || s.pendingApproval != nil {
+	if s.busy || s.pendingApproval != nil || s.pendingToolInput != nil || s.pendingElicitation != nil || s.browserHandoffPending {
 		s.touchLocked()
 		s.mu.Unlock()
 		return nil

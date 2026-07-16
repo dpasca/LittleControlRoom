@@ -719,6 +719,9 @@ func lcagentReplayBrowserActivity(event map[string]json.RawMessage, current brow
 	activity.State = state
 	activity.ServerName = firstNonEmpty(rawJSONString(event["server_name"]), "playwright")
 	activity.ToolName = firstNonEmpty(rawJSONString(event["tool"]), rawJSONString(event["tool_name"]), activity.ToolName)
+	if state == browserctl.SessionActivityStateWaitingForUser {
+		activity.AttentionMessage = strings.TrimSpace(rawJSONString(event["message"]))
+	}
 	activity.LastEventAt = rawJSONTime(event["timestamp"])
 	return activity.Normalize()
 }

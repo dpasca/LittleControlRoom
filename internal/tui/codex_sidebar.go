@@ -1424,6 +1424,9 @@ func (m Model) embeddedSidebarBrowserRowsWithMode(snapshot codexapp.Snapshot, wi
 		rows = append(rows, embeddedSidebarFieldRow("State", "waiting", detailWarningStyle, width))
 		if detail {
 			rows = append(rows, embeddedSidebarWrappedFieldRows("Source", source, embeddedSidebarMutedStyle, width, 0)...)
+			if message := strings.TrimSpace(activity.AttentionMessage); message != "" {
+				rows = append(rows, embeddedSidebarWrappedFieldRows("Needed", message, detailValueStyle, width, 0)...)
+			}
 		} else {
 			rows = append(rows, embeddedSidebarFieldRow("Source", source, embeddedSidebarMutedStyle, width))
 		}

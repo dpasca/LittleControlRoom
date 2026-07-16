@@ -269,6 +269,7 @@ type Model struct {
 	codexPickerProject            string
 	codexPickerProvider           codexapp.Provider
 	browserAttention              *browserAttentionNotification
+	browserAttentionAcknowledged  map[string]string
 	browserController             *browserctl.Controller
 	browserLeaseSnapshot          browserctl.ControllerSnapshot
 	managedBrowserStates          map[string]browserctl.ManagedPlaywrightState
@@ -375,6 +376,7 @@ type browserOpenMsg struct {
 	projectPath              string
 	status                   string
 	err                      error
+	managedBrowserRef        browserctl.SessionRef
 	browserLeaseSnapshot     browserctl.ControllerSnapshot
 	browserLeaseSnapshotSet  bool
 	managedBrowserState      browserctl.ManagedPlaywrightState
@@ -730,6 +732,7 @@ func NewWithCodexManager(ctx context.Context, svc *service.Service, codexManager
 		codexTranscriptFullHistory:    make(map[string]struct{}),
 		codexArtifactLinkScans:        make(map[string]codexArtifactLinkScanState),
 		codexToolAnswers:              make(map[string]codexToolAnswerState),
+		browserAttentionAcknowledged:  make(map[string]string),
 		aiLatencyInFlight:             make(map[int64]aiLatencyOp),
 		detailViewport:                detailViewport,
 		runtimeViewport:               runtimeViewport,
@@ -1514,6 +1517,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateArchiveDialogMode(msg)
 		}
 		if m.codexVisible() {
+			if m.browserAttentionDialogCanTakeFocus() && m.codexInputCopyDialog == nil && m.embeddedSidebarDetail == nil {
+				return m.updateBrowserAttentionMode(msg)
+			}
 			return m.updateCodexMode(msg)
 		}
 		if m.commandMode {
@@ -1994,6 +2000,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.err != nil {
 			m.reportError("Open failed", msg.err, msg.projectPath)
+			if strings.TrimSpace(msg.managedBrowserSessionKey) != "" {
+				m.restoreBrowserAttentionAfterRevealFailure(msg)
+			}
 			return m, nil
 		}
 		m.err = nil
@@ -2012,6 +2021,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.finishManagedBrowserStateRead(msg.sessionKey)
 			m.rememberManagedBrowserState(msg.state)
 			m.appendManagedBrowserPreflightWarning(msg.state)
+			m.redetectBrowserAttentionForManagedSession(msg.sessionKey)
 		} else {
 			if msg.retryable && msg.retryAttemptsRemaining > 0 {
 				return m, m.delayedReadManagedBrowserStateCmd(msg.sessionKey, msg.retryAttemptsRemaining-1)
