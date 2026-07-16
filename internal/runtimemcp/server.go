@@ -1,6 +1,7 @@
 package runtimemcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,33 +15,44 @@ import (
 
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/store"
+	"lcroom/internal/todocapture"
 )
 
 const (
-	serverName               = "little-control-room-runtime"
-	defaultProtocolVersion   = "2024-11-05"
-	processInspectionTimeout = 900 * time.Millisecond
+	serverName                     = "little-control-room-runtime"
+	legacyProtocolVersion          = "2024-11-05"
+	structuredToolsProtocolVersion = "2025-06-18"
+	defaultProtocolVersion         = legacyProtocolVersion
+	processInspectionTimeout       = 900 * time.Millisecond
 )
 
 type Options struct {
-	ProjectPath string
-	Provider    string
-	DataDir     string
-	SessionKey  string
-	Input       io.Reader
-	Output      io.Writer
-	Manager     *projectrun.Manager
+	ProjectPath     string
+	Provider        string
+	DataDir         string
+	SessionKey      string
+	DBPath          string
+	TodoCaptureMode todocapture.CaptureMode
+	Input           io.Reader
+	Output          io.Writer
+	Manager         *projectrun.Manager
+	TodoHandler     todocapture.Handler
 }
 
 type Server struct {
-	projectPath string
-	provider    string
-	dataDir     string
-	sessionKey  string
-	input       io.Reader
-	output      io.Writer
-	manager     *projectrun.Manager
-	ownManager  bool
+	projectPath     string
+	provider        string
+	dataDir         string
+	sessionKey      string
+	input           io.Reader
+	output          io.Writer
+	manager         *projectrun.Manager
+	ownManager      bool
+	todoMode        todocapture.CaptureMode
+	todoHandler     todocapture.Handler
+	todoStore       *store.Store
+	protocolVersion string
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -70,15 +82,34 @@ func New(opts Options) (*Server, error) {
 		manager = projectrun.NewManager()
 		ownManager = true
 	}
+	todoMode := todocapture.NormalizeCaptureMode(opts.TodoCaptureMode)
+	todoHandler := opts.TodoHandler
+	var todoStore *store.Store
+	if todoMode.Enabled() && todoHandler == nil {
+		dbPath := strings.TrimSpace(opts.DBPath)
+		if dbPath == "" {
+			return nil, errors.New("DB path is required when project TODO capture is enabled")
+		}
+		var err error
+		todoStore, err = store.Open(dbPath)
+		if err != nil {
+			return nil, fmt.Errorf("open TODO capture store: %w", err)
+		}
+		todoHandler = todocapture.NewExternalService(todoStore, todoMode)
+	}
 	return &Server{
-		projectPath: projectPath,
-		provider:    strings.TrimSpace(opts.Provider),
-		dataDir:     strings.TrimSpace(opts.DataDir),
-		sessionKey:  strings.TrimSpace(opts.SessionKey),
-		input:       input,
-		output:      output,
-		manager:     manager,
-		ownManager:  ownManager,
+		projectPath:     projectPath,
+		provider:        strings.TrimSpace(opts.Provider),
+		dataDir:         strings.TrimSpace(opts.DataDir),
+		sessionKey:      strings.TrimSpace(opts.SessionKey),
+		input:           input,
+		output:          output,
+		manager:         manager,
+		ownManager:      ownManager,
+		todoMode:        todoMode,
+		todoHandler:     todoHandler,
+		todoStore:       todoStore,
+		protocolVersion: defaultProtocolVersion,
 	}, nil
 }
 
@@ -88,6 +119,9 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	if s.ownManager {
 		defer func() { _ = s.manager.CloseAll() }()
+	}
+	if s.todoStore != nil {
+		defer s.todoStore.Close()
 	}
 
 	decoder := json.NewDecoder(s.input)
@@ -116,28 +150,34 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) (rpcResponse, bool)
 	}
 	switch strings.TrimSpace(req.Method) {
 	case "initialize":
+		protocolVersion := negotiatedProtocolVersion(req.Params)
+		s.protocolVersion = protocolVersion
+		result := map[string]any{
+			"protocolVersion": protocolVersion,
+			"capabilities": map[string]any{
+				"tools": map[string]any{
+					"listChanged": false,
+				},
+			},
+			"serverInfo": map[string]any{
+				"name":    serverName,
+				"version": "0.1.0",
+			},
+		}
+		if s.todoMode.Enabled() {
+			result["instructions"] = todocapture.AgentInstructions(s.todoMode)
+		}
 		return rpcResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: map[string]any{
-				"protocolVersion": requestedProtocolVersion(req.Params),
-				"capabilities": map[string]any{
-					"tools": map[string]any{
-						"listChanged": false,
-					},
-				},
-				"serverInfo": map[string]any{
-					"name":    serverName,
-					"version": "0.1.0",
-				},
-			},
+			Result:  result,
 		}, true
 	case "tools/list":
 		return rpcResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"tools": runtimeTools(),
+				"tools": runtimeTools(s.todoMode, s.supportsStructuredTools()),
 			},
 		}, true
 	case "tools/call":
@@ -172,23 +212,84 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 			return toolCallResult{}, fmt.Errorf("decode list_processes args: %w", err)
 		}
 		report := s.processReport(ctx, !req.IncludeObservedSet || req.IncludeObserved)
-		return jsonToolResult(report, false)
+		return s.jsonToolResult(report, false)
 	case "start_process":
 		var req startProcessArgs
 		if err := json.Unmarshal(args, &req); err != nil {
 			return toolCallResult{}, fmt.Errorf("decode start_process args: %w", err)
 		}
 		report, isErr := s.startProcess(ctx, req)
-		return jsonToolResult(report, isErr)
+		return s.jsonToolResult(report, isErr)
 	case "stop_process":
 		var req stopProcessArgs
 		if err := json.Unmarshal(args, &req); err != nil {
 			return toolCallResult{}, fmt.Errorf("decode stop_process args: %w", err)
 		}
 		report, isErr := s.stopProcess(ctx, req)
-		return jsonToolResult(report, isErr)
+		return s.jsonToolResult(report, isErr)
+	case "list_project_todos":
+		if !s.todoMode.Enabled() || s.todoHandler == nil {
+			return toolCallResult{}, fmt.Errorf("project TODO capture is disabled")
+		}
+		var listArgs struct{}
+		if err := decodeStrictToolArgs(args, &listArgs); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode list_project_todos args: %w", err)
+		}
+		response, err := s.todoHandler.HandleTodoCapture(ctx, todocapture.Request{
+			Action: todocapture.ActionList,
+			Origin: s.todoOrigin(),
+		})
+		if err != nil {
+			return s.jsonToolResult(map[string]any{"success": false, "error": err.Error()}, true)
+		}
+		return s.jsonToolResult(response.List, false)
+	case "add_project_todo":
+		if !s.todoMode.Enabled() || s.todoHandler == nil {
+			return toolCallResult{}, fmt.Errorf("project TODO capture is disabled")
+		}
+		var add addProjectTodoArgs
+		if err := decodeStrictToolArgs(args, &add); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode add_project_todo args: %w", err)
+		}
+		response, err := s.todoHandler.HandleTodoCapture(ctx, todocapture.Request{
+			Action: todocapture.ActionAdd,
+			Origin: s.todoOrigin(),
+			Add: todocapture.AddRequest{
+				Text:           add.Text,
+				CaptureKind:    todocapture.CaptureKind(add.CaptureKind),
+				ReviewRevision: add.ReviewRevision,
+			},
+		})
+		if err != nil {
+			return s.jsonToolResult(map[string]any{"success": false, "error": err.Error()}, true)
+		}
+		return s.jsonToolResult(response.Add, false)
 	default:
 		return toolCallResult{}, fmt.Errorf("unknown runtime tool: %s", name)
+	}
+}
+
+func decodeStrictToolArgs(data json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Server) todoOrigin() todocapture.Origin {
+	return todocapture.Origin{
+		ProjectPath: s.projectPath,
+		Provider:    s.provider,
+		SessionKey:  s.sessionKey,
 	}
 }
 
@@ -390,8 +491,8 @@ func observedListenerSummary(projectPath string, instance procinspect.ProjectIns
 	}
 }
 
-func runtimeTools() []mcpTool {
-	return []mcpTool{
+func runtimeTools(todoMode todocapture.CaptureMode, structuredTools bool) []mcpTool {
+	tools := []mcpTool{
 		{
 			Name:        "list_processes",
 			Description: "List Little Control Room managed runtime processes for this project and observed project-local TCP listeners. Call this before starting a local server/watch process when ports may already be active.",
@@ -431,20 +532,117 @@ func runtimeTools() []mcpTool {
 			},
 		},
 	}
+	if !todoMode.Enabled() {
+		return tools
+	}
+	allowedCaptureKinds := []string{string(todocapture.CaptureExplicitRequest)}
+	if todoMode.Allows(todocapture.CaptureClearDeferral) {
+		allowedCaptureKinds = append(allowedCaptureKinds, string(todocapture.CaptureClearDeferral))
+	}
+	listTool := mcpTool{
+		Name:        "list_project_todos",
+		Description: "List the open Little Control Room TODOs for this session's repository. The repository scope is derived from the launch path and cannot be overridden. Always call this before add_project_todo, compare the proposed item with every open TODO for semantic duplicates, and retain review_revision for the add call.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties":           map[string]any{},
+		},
+	}
+	addTool := mcpTool{
+		Name:        "add_project_todo",
+		Description: "Add one repository-scoped Little Control Room TODO after list_project_todos has been reviewed. Do not call for a semantic duplicate. Pass the exact review_revision from that list result; a todos_changed disposition means the list changed, so list again and reassess. The repository scope is fixed by the host and cannot be supplied by the model.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"text": map[string]any{
+					"type":        "string",
+					"description": "Concise, actionable TODO text preserving the user's intent.",
+					"minLength":   1,
+				},
+				"capture_kind": map[string]any{
+					"type":        "string",
+					"enum":        allowedCaptureKinds,
+					"description": "Why capture is authorized. The server rejects clear_deferral unless the configured mode permits it.",
+				},
+				"review_revision": map[string]any{
+					"type":        "string",
+					"description": "Exact review_revision returned by the immediately preceding list_project_todos call.",
+					"minLength":   1,
+				},
+			},
+			"required": []string{"text", "capture_kind", "review_revision"},
+		},
+	}
+	if structuredTools {
+		listTool.OutputSchema = todoListOutputSchema()
+		listTool.Annotations = &mcpToolAnnotations{
+			Title:           "List project TODOs",
+			ReadOnlyHint:    true,
+			DestructiveHint: false,
+			IdempotentHint:  true,
+			OpenWorldHint:   false,
+		}
+		addTool.OutputSchema = todoAddOutputSchema()
+		addTool.Annotations = &mcpToolAnnotations{
+			Title:           "Add project TODO",
+			ReadOnlyHint:    false,
+			DestructiveHint: false,
+			IdempotentHint:  true,
+			OpenWorldHint:   false,
+		}
+	}
+	return append(tools, listTool, addTool)
 }
 
-func jsonToolResult(value any, isError bool) (toolCallResult, error) {
+func todoListOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"scope":        map[string]any{"type": "object"},
+			"capture_mode": map[string]any{"type": "string"},
+			"open_todos": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"type": "object"},
+			},
+			"review_revision": map[string]any{"type": "string"},
+		},
+		"required": []string{"scope", "capture_mode", "open_todos", "review_revision"},
+	}
+}
+
+func todoAddOutputSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"scope":                   map[string]any{"type": "object"},
+			"disposition":             map[string]any{"type": "string", "enum": []string{todocapture.DispositionCreated, todocapture.DispositionExistingDuplicate, todocapture.DispositionTodosChanged}},
+			"todo":                    map[string]any{"type": "object"},
+			"current_open_todos":      map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			"current_review_revision": map[string]any{"type": "string"},
+			"warnings":                map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+		},
+		"required": []string{"scope", "disposition", "current_review_revision"},
+	}
+}
+
+func (s *Server) jsonToolResult(value any, isError bool) (toolCallResult, error) {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return toolCallResult{}, err
 	}
-	return toolCallResult{
+	result := toolCallResult{
 		Content: []mcpContent{{
 			Type: "text",
 			Text: string(data),
 		}},
 		IsError: isError,
-	}, nil
+	}
+	if !isError && s.supportsStructuredTools() {
+		result.StructuredContent = value
+	}
+	return result, nil
 }
 
 func startMessage(result projectrun.StartResult) string {
@@ -553,17 +751,24 @@ func formatTime(value time.Time) string {
 	return value.Format(time.RFC3339)
 }
 
-func requestedProtocolVersion(raw json.RawMessage) string {
+func negotiatedProtocolVersion(raw json.RawMessage) string {
 	var params struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return defaultProtocolVersion
 	}
-	if trimmed := strings.TrimSpace(params.ProtocolVersion); trimmed != "" {
-		return trimmed
+	switch strings.TrimSpace(params.ProtocolVersion) {
+	case structuredToolsProtocolVersion:
+		return structuredToolsProtocolVersion
+	case legacyProtocolVersion:
+		return legacyProtocolVersion
 	}
 	return defaultProtocolVersion
+}
+
+func (s *Server) supportsStructuredTools() bool {
+	return s != nil && s.protocolVersion == structuredToolsProtocolVersion
 }
 
 func rpcErrorResponse(id json.RawMessage, code int, message string) rpcResponse {
@@ -602,9 +807,19 @@ type rpcError struct {
 }
 
 type mcpTool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description"`
+	InputSchema  map[string]any      `json:"inputSchema"`
+	OutputSchema map[string]any      `json:"outputSchema,omitempty"`
+	Annotations  *mcpToolAnnotations `json:"annotations,omitempty"`
+}
+
+type mcpToolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    bool   `json:"readOnlyHint"`
+	DestructiveHint bool   `json:"destructiveHint"`
+	IdempotentHint  bool   `json:"idempotentHint"`
+	OpenWorldHint   bool   `json:"openWorldHint"`
 }
 
 type mcpContent struct {
@@ -613,8 +828,9 @@ type mcpContent struct {
 }
 
 type toolCallResult struct {
-	Content []mcpContent `json:"content"`
-	IsError bool         `json:"isError,omitempty"`
+	Content           []mcpContent `json:"content"`
+	StructuredContent any          `json:"structuredContent,omitempty"`
+	IsError           bool         `json:"isError,omitempty"`
 }
 
 type toolCallParams struct {
@@ -625,6 +841,12 @@ type toolCallParams struct {
 type listProcessesArgs struct {
 	IncludeObserved    bool `json:"include_observed"`
 	IncludeObservedSet bool
+}
+
+type addProjectTodoArgs struct {
+	Text           string `json:"text"`
+	CaptureKind    string `json:"capture_kind"`
+	ReviewRevision string `json:"review_revision"`
 }
 
 func (a *listProcessesArgs) UnmarshalJSON(data []byte) error {

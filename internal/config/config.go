@@ -14,6 +14,7 @@ import (
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/todocapture"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
@@ -84,6 +85,7 @@ type AppConfig struct {
 	LCAgentWebSearchURL       string
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
+	EngineerTodoCaptureMode   todocapture.CaptureMode
 	DataDir                   string
 	DBPath                    string
 	ConfigPath                string
@@ -245,6 +247,7 @@ type fileConfig struct {
 	PlaywrightDefaultBrowser  *string   `toml:"playwright_default_browser_mode"`
 	PlaywrightLoginMode       *string   `toml:"playwright_login_mode"`
 	PlaywrightIsolationScope  *string   `toml:"playwright_isolation_scope"`
+	EngineerTodoCaptureMode   *string   `toml:"engineer_todo_capture_mode"`
 	ScanInterval              string    `toml:"interval"`
 	ActiveThreshold           string    `toml:"active-threshold"`
 	StuckThreshold            string    `toml:"stuck-threshold"`
@@ -275,6 +278,7 @@ func Default() AppConfig {
 		BossChatOllamaThinking:  true,
 		CodexLaunchPreset:       codexcli.DefaultPreset(),
 		PlaywrightPolicy:        browserctl.DefaultPolicy(),
+		EngineerTodoCaptureMode: todocapture.ModeExplicit,
 		DataDir:                 dataDir,
 		DBPath:                  filepath.Join(dataDir, brand.DBFileName),
 		ConfigPath:              filepath.Join(dataDir, brand.ConfigFileName),
@@ -338,6 +342,7 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	lcagentWebSearchEngineID := fs.String("lcagent-web-search-engine-id", cfg.LCAgentWebSearchEngineID, "LCAgent Google Programmable Search engine ID")
 	lcagentWebSearchURL := fs.String("lcagent-web-search-url", cfg.LCAgentWebSearchURL, "LCAgent web search endpoint URL, used by SearXNG")
 	codexLaunchPreset := fs.String("codex-launch-preset", string(cfg.CodexLaunchPreset), "Codex launch preset: yolo, full-auto, or safe")
+	engineerTodoCaptureMode := fs.String("engineer-todo-capture-mode", string(cfg.EngineerTodoCaptureMode), "Embedded engineer TODO capture: off, explicit_only, or explicit_and_clear_deferrals")
 	dbPath := fs.String("db", cfg.DBPath, fmt.Sprintf("Path to %s SQLite database", brand.Name))
 	scanInterval := fs.Duration("interval", cfg.ScanInterval, "Scan interval")
 	active := fs.Duration("active-threshold", cfg.ActiveThreshold, "Active status threshold")
@@ -450,6 +455,10 @@ func Parse(subcmd string, args []string) (AppConfig, error) {
 	cfg.CodexLaunchPreset, err = codexcli.ParsePreset(*codexLaunchPreset)
 	if err != nil {
 		return AppConfig{}, fmt.Errorf("codex-launch-preset: %w", err)
+	}
+	cfg.EngineerTodoCaptureMode, err = todocapture.ParseCaptureMode(*engineerTodoCaptureMode)
+	if err != nil {
+		return AppConfig{}, fmt.Errorf("engineer-todo-capture-mode: %w", err)
 	}
 	cfg.DBPath, err = expandHome(*dbPath)
 	if err != nil {
@@ -763,6 +772,13 @@ func applyConfigFile(cfg *AppConfig) error {
 		}
 		cfg.PlaywrightPolicy.IsolationScope = value
 	}
+	if fc.EngineerTodoCaptureMode != nil {
+		value, err := todocapture.ParseCaptureMode(*fc.EngineerTodoCaptureMode)
+		if err != nil {
+			return fmt.Errorf("config engineer_todo_capture_mode: %w", err)
+		}
+		cfg.EngineerTodoCaptureMode = value
+	}
 	if err := applyOptionalConfigDuration(&cfg.ScanInterval, fc.ScanInterval, "interval"); err != nil {
 		return err
 	}
@@ -810,6 +826,9 @@ func validate(cfg AppConfig) error {
 		return err
 	}
 	if err := cfg.PlaywrightPolicy.Validate(); err != nil {
+		return err
+	}
+	if _, err := todocapture.ParseCaptureMode(string(cfg.EngineerTodoCaptureMode)); err != nil {
 		return err
 	}
 	if _, err := ParseAIBackend(string(cfg.AIBackend)); err != nil {

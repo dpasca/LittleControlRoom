@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/todocapture"
 )
 
 func useTempHome(t *testing.T) string {
@@ -61,6 +62,27 @@ func TestDefaultUsesManagedPlaywrightPolicy(t *testing.T) {
 	}
 	if got, want := cfg.PlaywrightPolicy.IsolationScope, browserctl.IsolationScopeTask; got != want {
 		t.Fatalf("default playwright isolation scope = %s, want %s", got, want)
+	}
+}
+
+func TestDefaultUsesExplicitOnlyEngineerTodoCapture(t *testing.T) {
+	if got, want := Default().EngineerTodoCaptureMode, todocapture.ModeExplicit; got != want {
+		t.Fatalf("default engineer TODO capture mode = %s, want %s", got, want)
+	}
+}
+
+func TestParseLoadsEngineerTodoCaptureMode(t *testing.T) {
+	useTempHome(t)
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte(`engineer_todo_capture_mode = "explicit_and_clear_deferrals"`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Parse("scan", []string{"--config", configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EngineerTodoCaptureMode != todocapture.ModeExplicitAndClearDeferrals {
+		t.Fatalf("capture mode = %s", cfg.EngineerTodoCaptureMode)
 	}
 }
 
@@ -1000,12 +1022,13 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 			LoginMode:          browserctl.LoginModePromote,
 			IsolationScope:     browserctl.IsolationScopeProject,
 		},
-		ScanInterval:        45 * time.Second,
-		ActiveThreshold:     15 * time.Minute,
-		StuckThreshold:      3 * time.Hour,
-		MobileEnabled:       false,
-		MobileInputEnabled:  true,
-		MobileListenAddress: "0.0.0.0:8787",
+		EngineerTodoCaptureMode: todocapture.ModeExplicitAndClearDeferrals,
+		ScanInterval:            45 * time.Second,
+		ActiveThreshold:         15 * time.Minute,
+		StuckThreshold:          3 * time.Hour,
+		MobileEnabled:           false,
+		MobileInputEnabled:      true,
+		MobileListenAddress:     "0.0.0.0:8787",
 	})
 	if err != nil {
 		t.Fatalf("SaveEditableSettings() error = %v", err)
@@ -1018,6 +1041,9 @@ func TestSaveEditableSettingsWritesReadableTOML(t *testing.T) {
 	text := string(raw)
 	if !strings.Contains(text, "include_paths = [") {
 		t.Fatalf("saved config should include include_paths array: %q", text)
+	}
+	if !strings.Contains(text, `engineer_todo_capture_mode = "explicit_and_clear_deferrals"`) {
+		t.Fatalf("saved config should include engineer TODO capture mode: %q", text)
 	}
 	if !strings.Contains(text, "ai_backend = \"openai_api\"") {
 		t.Fatalf("saved config should include ai_backend: %q", text)

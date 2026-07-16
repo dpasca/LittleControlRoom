@@ -25,6 +25,7 @@ It is also used internally, but this is not a commercial product. It is an opini
 - Opening, resuming, or switching embedded Codex, OpenCode, or Claude Code sessions directly from the dashboard
 - Reopening Claude Code sessions that are already running in another terminal
 - Keeping common actions close at hand: refresh, pin, snooze, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
+- Optionally letting LCR-embedded Codex, OpenCode, Claude Code, and LCAgent sessions add duplicate-checked, repository-scoped TODOs when work is explicitly deferred
 
 ## Quick Start
 

@@ -26,6 +26,7 @@ import (
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
+	"lcroom/internal/todocapture"
 )
 
 type outputMode string
@@ -410,7 +411,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	}
 	fs := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw string
+	var cwd, dataDir, autoRaw, outputRaw, scriptPath, provider, model, finalModel, envFile, reasoningEffort, temperatureRaw, providerOnlyRaw, toolProfileRaw, contextProfileRaw, resumeRaw, continueRaw, routePresetRaw, approvalModeRaw, todoCaptureModeRaw string
 	var utilityProviderRaw, utilityModel string
 	var visionProviderRaw, visionModel string
 	var webSearchBackend, webSearchAPIKey, webSearchEngineID, webSearchURL string
@@ -429,6 +430,7 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	fs.StringVar(&model, "model", "", "model name")
 	fs.StringVar(&finalModel, "final-model", "", "optional model for no-tools final synthesis")
 	fs.StringVar(&approvalModeRaw, "approval-mode", approvalModeDeny, "approval mode for denied low-autonomy commands: deny or ask")
+	fs.StringVar(&todoCaptureModeRaw, "lcr-todo-capture-mode", string(todocapture.ModeOff), "Little Control Room host TODO capture mode")
 	fs.StringVar(&envFile, "env-file", "", "optional dotenv file for provider credentials")
 	fs.StringVar(&reasoningEffort, "reasoning-effort", "", "optional provider reasoning effort, for example low")
 	fs.StringVar(&temperatureRaw, "temperature", "", "optional sampling temperature; defaults to 0.2 for chat-completions providers that send temperature; use omitted to suppress")
@@ -557,6 +559,13 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 	approvalMode, err := normalizeApprovalMode(approvalModeRaw)
 	if err != nil {
 		return err
+	}
+	todoCaptureMode, err := todocapture.ParseCaptureMode(todoCaptureModeRaw)
+	if err != nil {
+		return err
+	}
+	if todoCaptureMode.Enabled() && approvalMode != approvalModeAsk {
+		return fmt.Errorf("--lcr-todo-capture-mode requires --approval-mode ask from a Little Control Room host")
 	}
 	if strings.TrimSpace(model) == "" {
 		switch strings.ToLower(strings.TrimSpace(provider)) {
@@ -805,6 +814,10 @@ func runExecWithOptions(args []string, stdout io.Writer, opts execRunOptions) er
 		broker := newStdioApprovalBroker(writer, sessionID, workspace.Root, os.Stdin)
 		runner.Approvals = broker
 		runner.Processes = broker
+		if todoCaptureMode.Enabled() {
+			runner.ProjectTodos = broker
+			runner.TodoCaptureMode = todoCaptureMode
+		}
 		runner.SteerMessages = broker.steerMessages
 	}
 
@@ -959,6 +972,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	systemPromptOptions.VisionAnalysisEnabled = vision.Enabled
 	systemPromptOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
 	systemPromptOptions.ReadOnly = readOnlyTools
+	systemPromptOptions.TodoCaptureMode = runner.TodoCaptureMode
 	if resumeSection := resumeContext.systemPromptSection(); resumeSection != "" {
 		projectInstructionPrompt = strings.TrimSpace(projectInstructionPrompt + "\n\n" + resumeSection)
 	}
@@ -1002,6 +1016,7 @@ func runChatLoop(ctx context.Context, writer *session.Writer, runner script.Runn
 	toolOptions.VisionAnalysisEnabled = vision.Enabled
 	toolOptions.WorkspaceOnlyReads = runner.Files.Workspace.WorkspaceOnlyReads
 	toolOptions.ReadOnly = readOnlyTools
+	toolOptions.TodoCaptureMode = runner.TodoCaptureMode
 	toolsDef := modeladapter.ToolsWithOptions(toolOptions)
 	finalVerificationFeedbacks := 0
 	finalResponseToolFeedbacks := 0

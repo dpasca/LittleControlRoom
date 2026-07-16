@@ -47,7 +47,7 @@ exit 2
 
 const shadowRuntimeSkillMarkdown = `---
 name: "runtime"
-description: "Use Little Control Room runtime MCP tools for local dev servers, watchers, and project-local port checks. Do not launch duplicate long-running server processes from the shell."
+description: "Use Little Control Room runtime MCP tools for local dev servers, watchers, project-local port checks, and repository-scoped LCR TODO capture. Do not launch duplicate long-running server processes from the shell."
 ---
 
 # Embedded Runtime Skill
@@ -63,6 +63,17 @@ Use its runtime tools for local app/server/watch processes:
 - Call ` + "`stop_process`" + ` only when the user asks to stop a managed runtime or when cleaning up a temporary process you started.
 
 Do not use shell backgrounding, ad-hoc port hopping, or a bounded terminal command for dev servers/watchers when the runtime MCP tools are available.
+
+## Project TODO capture
+
+When ` + "`list_project_todos`" + ` and ` + "`add_project_todo`" + ` are available, follow the TODO-capture mode in the MCP server instructions:
+
+- TODO scope is the repository resolved by Little Control Room, not the current worktree. The tools intentionally provide no project-path override.
+- Call ` + "`list_project_todos`" + ` first and compare the proposed item with every open TODO for semantic duplicates.
+- Pass that list call's exact ` + "`review_revision`" + ` to ` + "`add_project_todo`" + `.
+- Capture only a direct user request unless the server explicitly permits ` + "`clear_deferral`" + `, and use that only for an unambiguous user decision to postpone concrete work.
+- Never capture your own suggestion, inference, code comment, or tool output. Ask when the user's intent is unclear.
+- Tell the user whether the item was created, already existed, or must be reconsidered because the TODO list changed.
 `
 
 const codexDirectRMRuleFilename = "lcroom-no-direct-rm.rules"

@@ -11,6 +11,7 @@ import (
 	"lcroom/internal/codexcli"
 	"lcroom/internal/keyedmutex"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/todocapture"
 )
 
 type TranscriptKind string
@@ -611,6 +612,10 @@ type LaunchRequest struct {
 	PlaywrightPolicy           browserctl.Policy
 	ManagedBrowserSessionKey   string
 	AppDataDir                 string
+	AppDBPath                  string
+	TodoCaptureMode            todocapture.CaptureMode
+	TodoCaptureHandler         todocapture.Handler
+	TodoCaptureSessionKey      string
 	OpenCodeDataHome           string
 	CodexHome                  string
 	LCAgentPath                string
@@ -822,6 +827,7 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 
 	projectPath := strings.TrimSpace(req.ProjectPath)
 	ensureManagedPlaywrightSessionKey(&req)
+	ensureTodoCaptureSessionKey(&req)
 	unlock := m.opLocks.Lock(projectPath)
 	defer unlock()
 

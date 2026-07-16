@@ -212,6 +212,12 @@ func (s *Store) initSchema(ctx context.Context) error {
 			event_type TEXT NOT NULL,
 			payload TEXT NOT NULL
 		);`,
+		`CREATE INDEX IF NOT EXISTS idx_events_type_id ON events(event_type, id);`,
+		`CREATE TABLE IF NOT EXISTS runtime_settings (
+			setting_key TEXT PRIMARY KEY,
+			setting_value TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS recent_project_parent_paths (
 			parent_path TEXT PRIMARY KEY,
 			last_used_at INTEGER NOT NULL

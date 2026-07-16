@@ -9,8 +9,11 @@ import (
 	"lcroom/internal/llm"
 	"lcroom/internal/model"
 	"lcroom/internal/scanner"
+	"lcroom/internal/store"
+	"lcroom/internal/todocapture"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -163,6 +166,102 @@ func TestApplyEditableSettingsUpdatesPrivacyMode(t *testing.T) {
 	}
 	if got.HideReasoningSections {
 		t.Fatalf("hide reasoning sections = true, want false")
+	}
+}
+
+func TestApplyEditableSettingsFailsCapturePolicyClosedButAppliesOtherSettings(t *testing.T) {
+	t.Parallel()
+	cfg := config.Default()
+	st, err := store.Open(filepath.Join(t.TempDir(), "closed.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	svc := &Service{
+		cfg:               cfg,
+		store:             st,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+	}
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	settings.EngineerTodoCaptureMode = todocapture.ModeOff
+	settings.PrivacyMode = true
+	err = svc.ApplyEditableSettings(settings)
+	if err == nil {
+		t.Fatal("ApplyEditableSettings() error = nil, want policy persistence error")
+	}
+	got := svc.Config()
+	if got.EngineerTodoCaptureMode != todocapture.ModeOff {
+		t.Fatalf("capture mode = %s, want fail-closed off", got.EngineerTodoCaptureMode)
+	}
+	if !got.PrivacyMode {
+		t.Fatal("privacy mode was not applied alongside policy error")
+	}
+}
+
+func TestInitializeTodoCapturePolicyIsExplicitHostAction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "initial-policy.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg := config.Default()
+	cfg.EngineerTodoCaptureMode = todocapture.ModeExplicit
+	svc := New(cfg, st, events.NewBus(), nil)
+	if _, found, err := st.RuntimeSetting(ctx, todocapture.RuntimeModeSettingKey); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Fatal("service construction unexpectedly changed runtime authorization")
+	}
+	if err := svc.InitializeTodoCapturePolicy(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := st.RuntimeSetting(ctx, todocapture.RuntimeModeSettingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || got != string(todocapture.ModeExplicit) {
+		t.Fatalf("initialized runtime policy = %q, %v; want %q, true", got, found, todocapture.ModeExplicit)
+	}
+}
+
+func TestApplyEditableSettingsRetriesPolicyPersistenceWhenConfigAlreadyMatches(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "policy-retry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetRuntimeSetting(ctx, todocapture.RuntimeModeSettingKey, string(todocapture.ModeExplicitAndClearDeferrals)); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.EngineerTodoCaptureMode = todocapture.ModeOff
+	svc := &Service{
+		cfg:               cfg,
+		store:             st,
+		bus:               events.NewBus(),
+		llmUsageTracker:   llm.NewUsageTracker(),
+		opencodeDiscovery: llm.NewOpenCodeDiscovery(),
+	}
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	if err := svc.ApplyEditableSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := st.RuntimeSetting(ctx, todocapture.RuntimeModeSettingKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || got != string(todocapture.ModeOff) {
+		t.Fatalf("persisted capture mode = %q, %v; want %q, true", got, ok, todocapture.ModeOff)
 	}
 }
 

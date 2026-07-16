@@ -190,6 +190,12 @@ func Run(programName string, args []string) int {
 		lcagentdetector.New(cfg.DataDir),
 	}
 	svc := service.New(cfg, st, bus, detectorList)
+	if subcmd == "tui" || subcmd == "serve" {
+		if err := svc.InitializeTodoCapturePolicy(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "TODO capture policy error: %v\n", err)
+			return 1
+		}
+	}
 
 	switch subcmd {
 	case "scan":
@@ -1018,6 +1024,7 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	go svc.StartScheduler(runCtx)
 	go svc.StartSessionClassifier(runCtx)
 	go svc.StartTodoWorktreeSuggester(runCtx)
+	go svc.StartTodoCaptureRelay(runCtx)
 	go svc.StartCommitTodoChecker(runCtx)
 	svc.StartBackgroundDiscovery(runCtx)
 
@@ -1270,6 +1277,7 @@ func runServe(ctx context.Context, svc *service.Service, addr string) int {
 	go svc.StartScheduler(ctx)
 	go svc.StartSessionClassifier(ctx)
 	go svc.StartTodoWorktreeSuggester(ctx)
+	go svc.StartTodoCaptureRelay(ctx)
 	go svc.StartCommitTodoChecker(ctx)
 	svc.StartBackgroundDiscovery(ctx)
 

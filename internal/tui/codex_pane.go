@@ -1311,22 +1311,24 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 	return m.openCodexSessionCmdWithVisibilityAndWarmup(req, revealOnOpen, false)
 }
 
-func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRequest, revealOnOpen, restartWarmup bool) tea.Cmd {
+func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.LaunchRequest {
 	req = m.applyEmbeddedModelPreference(req)
-	restartIntentKey := ""
-	if req.ContinueInterruptedTurn {
-		restartIntentKey = (codexapp.RestartIntent{
-			Provider:    req.Provider,
-			ProjectPath: req.ProjectPath,
-			SessionID:   req.ResumeID,
-		}).Key()
+	if m.svc != nil {
+		cfg := m.svc.Config()
+		if strings.TrimSpace(req.AppDBPath) == "" {
+			req.AppDBPath = cfg.DBPath
+		}
+		if req.TodoCaptureMode == "" {
+			req.TodoCaptureMode = cfg.EngineerTodoCaptureMode
+		}
+		if req.TodoCaptureHandler == nil {
+			req.TodoCaptureHandler = m.svc
+		}
 	}
-	manager := m.codexManager
 	provider := req.Provider.Normalized()
 	if provider == "" {
 		provider = codexapp.ProviderCodex
 	}
-	openRequestID := m.codexPendingOpenRequestID(req.ProjectPath, provider)
 	if req.RuntimeManager == nil {
 		req.RuntimeManager = m.runtimeManager
 	}
@@ -1411,6 +1413,25 @@ func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRe
 			req.LCAgentWebSearchURL = m.lcagentWebSearchURL()
 		}
 	}
+	return req
+}
+
+func (m *Model) openCodexSessionCmdWithVisibilityAndWarmup(req codexapp.LaunchRequest, revealOnOpen, restartWarmup bool) tea.Cmd {
+	req = m.enrichEmbeddedLaunchRequest(req)
+	restartIntentKey := ""
+	if req.ContinueInterruptedTurn {
+		restartIntentKey = (codexapp.RestartIntent{
+			Provider:    req.Provider,
+			ProjectPath: req.ProjectPath,
+			SessionID:   req.ResumeID,
+		}).Key()
+	}
+	manager := m.codexManager
+	provider := req.Provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	openRequestID := m.codexPendingOpenRequestID(req.ProjectPath, provider)
 	perfOpID := m.beginAILatencyOp("Embedded open", req.ProjectPath, provider.Label())
 	previousThreadID := ""
 	if manager != nil {
@@ -1919,6 +1940,7 @@ func (m Model) reconnectVisibleCodexSessionCmd() tea.Cmd {
 	if req.Provider.Normalized() == codexapp.ProviderCodex && req.Preset == "" {
 		req.Preset = codexcli.DefaultPreset()
 	}
+	req = m.enrichEmbeddedLaunchRequest(req)
 	provider := req.Provider.Normalized()
 	requestID := m.codexPendingOpenRequestID(projectPath, provider)
 	if err := req.Validate(); err != nil {

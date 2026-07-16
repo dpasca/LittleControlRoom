@@ -27,6 +27,7 @@ import (
 	skillcatalog "lcroom/internal/lcagent/skills"
 	"lcroom/internal/lcagent/tools"
 	lcrmodel "lcroom/internal/model"
+	"lcroom/internal/todocapture"
 )
 
 const (
@@ -65,6 +66,8 @@ type Runner struct {
 	SearchRefineMinBytes int
 	Approvals            ApprovalBroker
 	Processes            ProcessBroker
+	ProjectTodos         ProjectTodoBroker
+	TodoCaptureMode      todocapture.CaptureMode
 	Skills               skillcatalog.Catalog
 	SessionID            string
 	Prompt               string
@@ -342,6 +345,14 @@ type analyzeImageArgs struct {
 type captureScreenshotArgs struct {
 	Path    string `json:"path,omitempty"`
 	DelayMS int    `json:"delay_ms,omitempty"`
+}
+
+type listProjectTodosArgs struct{}
+
+type addProjectTodoArgs struct {
+	Text           string                  `json:"text"`
+	CaptureKind    todocapture.CaptureKind `json:"capture_kind"`
+	ReviewRevision string                  `json:"review_revision"`
 }
 
 type qualityPlanArgs QualityPlan
@@ -1263,6 +1274,53 @@ func (r *Runner) RunTool(ctx context.Context, action Action) (tools.ToolResult, 
 		}
 		var err error
 		result, err = r.runScoutFiles(ctx, args)
+		if err != nil {
+			return tools.ToolResult{}, err
+		}
+	case "list_project_todos":
+		var args listProjectTodosArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.ProjectTodos == nil || !todocapture.NormalizeCaptureMode(r.TodoCaptureMode).Enabled() {
+			result = tools.ToolResult{Success: false, Error: "project TODO tools are not available for this LCAgent run"}
+			break
+		}
+		var err error
+		result, err = r.ProjectTodos.RequestProjectTodo(ctx, ProjectTodoRequest{
+			SessionID: r.SessionID,
+			Action:    todocapture.ActionList,
+		})
+		if err != nil {
+			return tools.ToolResult{}, err
+		}
+	case "add_project_todo":
+		var args addProjectTodoArgs
+		if invalid, ok := decodeToolArgs(action.Tool, action.Args, &args); !ok {
+			result = invalid
+			break
+		}
+		if r.ProjectTodos == nil || !todocapture.NormalizeCaptureMode(r.TodoCaptureMode).Enabled() {
+			result = tools.ToolResult{Success: false, Error: "project TODO tools are not available for this LCAgent run"}
+			break
+		}
+		kind, err := todocapture.ParseCaptureKind(string(args.CaptureKind))
+		if err != nil {
+			result = tools.ToolResult{Success: false, Error: err.Error()}
+			break
+		}
+		if !todocapture.NormalizeCaptureMode(r.TodoCaptureMode).Allows(kind) {
+			result = tools.ToolResult{Success: false, Error: fmt.Sprintf("capture kind %q is not allowed in %s mode", kind, todocapture.NormalizeCaptureMode(r.TodoCaptureMode))}
+			break
+		}
+		result, err = r.ProjectTodos.RequestProjectTodo(ctx, ProjectTodoRequest{
+			SessionID:      r.SessionID,
+			Action:         todocapture.ActionAdd,
+			Text:           strings.TrimSpace(args.Text),
+			CaptureKind:    kind,
+			ReviewRevision: strings.TrimSpace(args.ReviewRevision),
+		})
 		if err != nil {
 			return tools.ToolResult{}, err
 		}

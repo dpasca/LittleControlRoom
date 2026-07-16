@@ -2,13 +2,240 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"lcroom/internal/model"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
+
+type ReviewedTodoDisposition string
+
+const (
+	ReviewedTodoCreated  ReviewedTodoDisposition = "created"
+	ReviewedTodoExisting ReviewedTodoDisposition = "existing"
+	ReviewedTodoStale    ReviewedTodoDisposition = "stale_review"
+)
+
+type ReviewedTodoResult struct {
+	Disposition     ReviewedTodoDisposition
+	Todo            model.TodoItem
+	CurrentTodos    []model.TodoItem
+	CurrentRevision string
+}
+
+var ErrRuntimePolicyDenied = errors.New("runtime policy no longer permits this operation")
+
+// ListOpenTodosForReview returns the exact open-TODO snapshot an external
+// writer must review before attempting a duplicate-safe insert.
+func (s *Store) ListOpenTodosForReview(ctx context.Context, projectPath string) ([]model.TodoItem, string, error) {
+	todos, err := listOpenTodosForReview(ctx, s.db, projectPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return todos, todoReviewRevision(projectPath, todos), nil
+}
+
+// AddTodoReviewed atomically verifies the reviewed snapshot, checks for an
+// exact-equivalent open TODO, and inserts only when the snapshot is current.
+// The transaction is IMMEDIATE so concurrent MCP clients cannot both pass the
+// duplicate check and insert the same item.
+func (s *Store) AddTodoReviewed(ctx context.Context, projectPath, text, reviewedRevision string) (ReviewedTodoResult, error) {
+	return s.addTodoReviewed(ctx, projectPath, text, reviewedRevision, "", nil)
+}
+
+// AddTodoReviewedWithRuntimePolicy linearizes a live authorization check with
+// the reviewed insert. A policy downgrade that commits before this write
+// transaction therefore prevents the write, even if the caller listed TODOs
+// under an older policy moments earlier.
+func (s *Store) AddTodoReviewedWithRuntimePolicy(ctx context.Context, projectPath, text, reviewedRevision, policyKey string, allowedValues []string) (ReviewedTodoResult, error) {
+	return s.addTodoReviewed(ctx, projectPath, text, reviewedRevision, strings.TrimSpace(policyKey), allowedValues)
+}
+
+func (s *Store) addTodoReviewed(ctx context.Context, projectPath, text, reviewedRevision, policyKey string, allowedValues []string) (ReviewedTodoResult, error) {
+	projectPath = strings.TrimSpace(projectPath)
+	text = strings.TrimSpace(text)
+	if projectPath == "" {
+		return ReviewedTodoResult{}, fmt.Errorf("project path is required")
+	}
+	if text == "" {
+		return ReviewedTodoResult{}, fmt.Errorf("todo text is required")
+	}
+	if strings.TrimSpace(reviewedRevision) == "" {
+		return ReviewedTodoResult{}, fmt.Errorf("review revision is required; list project TODOs before adding")
+	}
+
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
+		}
+	}()
+	if policyKey != "" {
+		var currentPolicy string
+		if err := conn.QueryRowContext(ctx, `
+			SELECT setting_value
+			FROM runtime_settings
+			WHERE setting_key = ?
+		`, policyKey).Scan(&currentPolicy); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ReviewedTodoResult{}, ErrRuntimePolicyDenied
+			}
+			return ReviewedTodoResult{}, err
+		}
+		allowed := false
+		for _, value := range allowedValues {
+			if strings.TrimSpace(currentPolicy) == strings.TrimSpace(value) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return ReviewedTodoResult{}, fmt.Errorf("%w: current value is %q", ErrRuntimePolicyDenied, strings.TrimSpace(currentPolicy))
+		}
+	}
+
+	current, err := listOpenTodosForReview(ctx, conn, projectPath)
+	if err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	currentRevision := todoReviewRevision(projectPath, current)
+	canonicalText := canonicalTodoIdentity(text)
+	for _, todo := range current {
+		if canonicalTodoIdentity(todo.Text) == canonicalText {
+			if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+				return ReviewedTodoResult{}, err
+			}
+			committed = true
+			return ReviewedTodoResult{
+				Disposition:     ReviewedTodoExisting,
+				Todo:            todo,
+				CurrentTodos:    current,
+				CurrentRevision: currentRevision,
+			}, nil
+		}
+	}
+	if reviewedRevision != currentRevision {
+		if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+			return ReviewedTodoResult{}, err
+		}
+		committed = true
+		return ReviewedTodoResult{
+			Disposition:     ReviewedTodoStale,
+			CurrentTodos:    current,
+			CurrentRevision: currentRevision,
+		}, nil
+	}
+
+	now := time.Now()
+	if _, err := conn.ExecContext(ctx, `
+		UPDATE project_todos
+		SET position = position + 1
+		WHERE project_path = ? AND done = 0
+	`, projectPath); err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	result, err := conn.ExecContext(ctx, `
+		INSERT INTO project_todos(project_path, text, done, position, created_at, updated_at)
+		VALUES (?, ?, 0, 0, ?, ?)
+	`, projectPath, text, now.Unix(), now.Unix())
+	if err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE projects SET updated_at = ? WHERE path = ?`, now.Unix(), projectPath); err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return ReviewedTodoResult{}, err
+	}
+	committed = true
+	item := model.TodoItem{
+		ID:          id,
+		ProjectPath: projectPath,
+		Text:        text,
+		Position:    0,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	for i := range current {
+		current[i].Position++
+	}
+	current = append([]model.TodoItem{item}, current...)
+	return ReviewedTodoResult{
+		Disposition:     ReviewedTodoCreated,
+		Todo:            item,
+		CurrentTodos:    current,
+		CurrentRevision: todoReviewRevision(projectPath, current),
+	}, nil
+}
+
+type todoReviewQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func listOpenTodosForReview(ctx context.Context, queryer todoReviewQueryer, projectPath string) ([]model.TodoItem, error) {
+	rows, err := queryer.QueryContext(ctx, `
+		SELECT id, project_path, text, position, created_at, updated_at
+		FROM project_todos
+		WHERE project_path = ? AND done = 0
+		ORDER BY position ASC, id ASC
+	`, projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	todos := make([]model.TodoItem, 0)
+	for rows.Next() {
+		var item model.TodoItem
+		var createdAt, updatedAt int64
+		if err := rows.Scan(&item.ID, &item.ProjectPath, &item.Text, &item.Position, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		item.CreatedAt = time.Unix(createdAt, 0)
+		item.UpdatedAt = time.Unix(updatedAt, 0)
+		todos = append(todos, item)
+	}
+	return todos, rows.Err()
+}
+
+func canonicalTodoIdentity(text string) string {
+	return strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n"))
+}
+
+func todoReviewRevision(projectPath string, todos []model.TodoItem) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("lcroom-open-todos-v1\x00"))
+	_, _ = hash.Write([]byte(filepath.Clean(strings.TrimSpace(projectPath))))
+	_, _ = hash.Write([]byte{'\x00'})
+	for _, todo := range todos {
+		_, _ = hash.Write([]byte(strconv.FormatInt(todo.ID, 10)))
+		_, _ = hash.Write([]byte{'\x00'})
+		_, _ = hash.Write([]byte(canonicalTodoIdentity(todo.Text)))
+		_, _ = hash.Write([]byte{'\x00'})
+		_, _ = hash.Write([]byte(strconv.Itoa(todo.Position)))
+		_, _ = hash.Write([]byte{'\x00'})
+		_, _ = hash.Write([]byte(strconv.FormatInt(todo.UpdatedAt.Unix(), 10)))
+		_, _ = hash.Write([]byte{'\n'})
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
 
 func (s *Store) SetSnooze(ctx context.Context, path string, until *time.Time) error {
 	var v any

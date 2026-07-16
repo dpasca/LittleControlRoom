@@ -41,7 +41,7 @@ func TestRunScoutWithRouteUsesReadOnlyHarnessAndReturnsEvidence(t *testing.T) {
 		}
 		for _, tool := range body.Tools {
 			switch tool.Function.Name {
-			case "run_command", "apply_patch", "create_file", "load_skill":
+			case "run_command", "apply_patch", "create_file", "load_skill", "list_project_todos", "add_project_todo":
 				t.Fatalf("read-only Scout exposed %s", tool.Function.Name)
 			}
 		}

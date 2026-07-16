@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/todocapture"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -34,7 +35,8 @@ func settingsFieldUsesChoicePicker(fieldIndex int) bool {
 		settingsFieldMobileAccessMode,
 		settingsFieldBossChatOllamaThinking,
 		settingsFieldLCAgentToolProfile,
-		settingsFieldLCAgentContextProfile:
+		settingsFieldLCAgentContextProfile,
+		settingsFieldEngineerTodoCaptureMode:
 		return true
 	default:
 		return false
@@ -102,6 +104,12 @@ func settingsChoiceOptionsForField(fieldIndex int) []settingsChoiceOption {
 			{Value: "off", Label: "Off", Summary: "Deny file edits and non-read commands.", Description: "Use when you want LCAgent to inspect and explain before changing files."},
 			{Value: "low", Label: "Low", Summary: "Allow workspace edits plus read-only and verifier commands.", Description: "Default for coding: LCAgent can edit workspace files, run approved checks such as tests, lint, typecheck, or build, and asks before broader command execution."},
 			{Value: "medium", Label: "Medium", Summary: "Allow workspace commands without repeated approvals.", Description: "Use for trusted local tasks that need setup, custom build commands, managed processes, or fewer repeated approvals. Writes still stay inside the workspace unless admin write is enabled."},
+		}
+	case settingsFieldEngineerTodoCaptureMode:
+		return []settingsChoiceOption{
+			{Value: string(todocapture.ModeOff), Label: "Off", Summary: "Revoke TODO writes immediately.", Description: "Runtime process tools remain available. New or reconnected sessions omit TODO tools; calls from existing external sessions are denied by the live policy."},
+			{Value: string(todocapture.ModeExplicit), Label: "Explicit only", Summary: "Capture only direct user requests.", Description: "Safe default. The engineer lists current TODOs, checks semantic duplicates, then records a direct request and reports the result. Reconnect a session opened while capture was off."},
+			{Value: string(todocapture.ModeExplicitAndClearDeferrals), Label: "Explicit + clear deferrals", Summary: "Also capture unambiguous decisions to postpone work.", Description: "The engineer may record a concrete deferral without a direct add-TODO command, but must ask when intent is unclear and must not capture its own suggestions. Reconnect existing sessions to expose the expanded tool schema."},
 		}
 	case settingsFieldLCAgentAdminWrite:
 		return []settingsChoiceOption{
@@ -411,6 +419,15 @@ func settingsChoiceOptionValueForField(fieldIndex int, raw string) string {
 			return "balanced"
 		}
 		return normalized
+	case settingsFieldEngineerTodoCaptureMode:
+		switch normalized {
+		case "off":
+			return string(todocapture.ModeOff)
+		case "explicit-and-clear-deferrals":
+			return string(todocapture.ModeExplicitAndClearDeferrals)
+		default:
+			return string(todocapture.ModeExplicit)
+		}
 	default:
 		return normalized
 	}
@@ -461,6 +478,8 @@ func settingsChoiceTitle(fieldIndex int) string {
 		return "LCAgent Tool Profile"
 	case settingsFieldLCAgentContextProfile:
 		return "LCAgent Context Profile"
+	case settingsFieldEngineerTodoCaptureMode:
+		return "Engineer TODO Capture"
 	default:
 		return "Setting"
 	}

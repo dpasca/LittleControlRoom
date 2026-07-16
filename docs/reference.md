@@ -57,6 +57,7 @@ For managed-browser debugging outside the TUI, Little Control Room also exposes:
 - `exclude_paths`
 - `exclude_project_patterns`
 - `codex_launch_preset`
+- `engineer_todo_capture_mode`
 - `embedded_lcagent_model`
 - `embedded_lcagent_reasoning_effort`
 - `lcagent_path`
@@ -95,6 +96,9 @@ include_paths = [
 exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
+# Embedded engineer TODO capture: off, explicit_only (default), or
+# explicit_and_clear_deferrals.
+engineer_todo_capture_mode = "explicit_only"
 # LCAgent is experimental. Leave lcagent_path blank to use the bundled binary,
 # PATH lookup, or source-checkout go run fallback. Saved provider keys are used before
 # process environment variables; lcagent_env_file is an advanced fallback.
@@ -111,6 +115,16 @@ playwright_default_browser_mode = "headless"
 playwright_login_mode = "promote"
 playwright_isolation_scope = "task"
 ```
+
+### Embedded engineer TODO capture
+
+`engineer_todo_capture_mode` lets LCR-managed Codex, OpenCode, Claude Code, and LCAgent sessions add items to the current repository's LCR TODO list. It applies only to sessions embedded by LCR; an unrelated provider process opened in another terminal does not receive these tools. Codex, OpenCode, and Claude Code use the embedded `lcr_runtime` MCP server, while LCAgent uses an equivalent native host broker.
+
+The default, `explicit_only`, acts only when the user directly asks to remember or add work for later. `explicit_and_clear_deferrals` also permits an unambiguous user decision to postpone concrete work. `off` disables writes. Neither enabled mode permits an engineer to capture its own suggestions, code comments, tool output, or ambiguous ideas. The agent must list open TODOs first, compare them for semantic duplicates, pass the returned review revision when adding, and report whether the item was created, already existed, or needs review again because the list changed.
+
+Scope is derived from the embedded session's trusted launch path; the tool accepts no project-path override. A session in a linked worktree or repository subdirectory writes to the loaded main repository's TODO list. If Git/LCR scope cannot be resolved unambiguously, the write fails closed. Inserts are serialized across MCP processes, and exact retries are duplicate-safe even when two engineers race.
+
+Policy downgrades and `off` are enforced against already-running calls through the live policy. Newly enabled tools or an expanded clear-deferral schema require reopening or `/reconnect` for an already-initialized Codex, OpenCode, Claude Code, or LCAgent session. LCAgent receives the same contract through its per-run native tools.
 
 Embedded Codex keeps the filesystem reach and approval behavior selected by
 `codex_launch_preset`; the default remains `yolo`. Little Control Room adds a
