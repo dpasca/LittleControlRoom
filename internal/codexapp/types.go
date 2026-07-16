@@ -81,6 +81,7 @@ func (p Provider) SourceTag() string {
 
 type TranscriptEntry struct {
 	ItemID         string
+	TurnID         string
 	Kind           TranscriptKind
 	Text           string
 	DisplayText    string // optional; if set, used for rendering instead of Text
@@ -516,6 +517,9 @@ type Snapshot struct {
 	LastBusyActivityAt          time.Time
 	Closed                      bool
 	ActiveTurnID                string
+	HistoryHasMore              bool
+	HistoryLoading              bool
+	HistoryLoadError            string
 	PendingApproval             *ApprovalRequest
 	PendingToolInput            *ToolInputRequest
 	PendingElicitation          *ElicitationRequest

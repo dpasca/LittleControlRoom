@@ -303,6 +303,7 @@ func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID stri
 	}
 	s.clearBrowserHandoffLocked()
 	s.setBusyLocked(response.Turn.ID, false)
+	s.bindLatestUnassignedUserTurnLocked(response.Turn.ID)
 	s.status = "Codex is working..."
 	s.mu.Unlock()
 	s.notify()
@@ -330,6 +331,7 @@ func (s *appServerSession) recordSteerSubmission(turnID string) {
 	s.clearBrowserHandoffLocked()
 	if turnID != "" {
 		s.setBusyLocked(turnID, false)
+		s.bindLatestUnassignedUserTurnLocked(turnID)
 	} else {
 		s.busy = true
 		s.busyExternal = false
@@ -338,6 +340,27 @@ func (s *appServerSession) recordSteerSubmission(turnID string) {
 	s.status = "Sent follow-up to Codex"
 	s.mu.Unlock()
 	s.notify()
+}
+
+func (s *appServerSession) bindLatestUnassignedUserTurnLocked(turnID string) {
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" {
+		return
+	}
+	for i := len(s.entries) - 1; i >= 0; i-- {
+		if s.entries[i].Kind != TranscriptUser {
+			continue
+		}
+		if strings.TrimSpace(s.entries[i].TurnID) == turnID {
+			return
+		}
+		if strings.TrimSpace(s.entries[i].TurnID) != "" {
+			continue
+		}
+		s.entries[i].TurnID = turnID
+		s.invalidateTranscriptCacheLocked()
+		return
+	}
 }
 
 func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID string) (string, bool, error) {

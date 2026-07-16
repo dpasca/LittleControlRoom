@@ -16,6 +16,8 @@ import (
 	"lcroom/internal/codexcli"
 )
 
+const codexResumeInitialTurnLimit = 64
+
 func (s *appServerSession) start(req LaunchRequest) error {
 	cmd := exec.Command("codex", "app-server")
 	cmd.Dir = req.ProjectPath
@@ -211,6 +213,7 @@ func (s *appServerSession) resumeThread(ctx context.Context, threadID string) (s
 	s.mu.Lock()
 	s.applyThreadConfigLocked(response.ApprovalPolicy, response.CWD, response.Model, response.ModelProvider, stringValue(response.ReasoningEffort), stringValue(response.ServiceTier), response.Sandbox)
 	s.mu.Unlock()
+	s.initializeHistoryPagination(response.Thread)
 	s.hydrateResumedThread(response.Thread)
 	if snapshot := s.Snapshot(); snapshot.BusyExternal {
 		s.appendSystemNotice("Resumed embedded Codex session " + shortID(response.Thread.ID) + ". It is already active in another Codex process, so embedded controls are read-only until it finishes.")
@@ -221,19 +224,54 @@ func (s *appServerSession) resumeThread(ctx context.Context, threadID string) (s
 }
 
 func (s *appServerSession) resumeThreadResponse(ctx context.Context, threadID string) (threadResumeResponse, error) {
-	result, err := s.call(ctx, "thread/resume", threadResumeParams{
+	params := threadResumeParams{
 		ThreadID:       threadID,
 		ApprovalPolicy: approvalPolicyForPreset(s.preset),
 		Sandbox:        sandboxModeForPreset(s.preset),
-	})
+		ExcludeTurns:   true,
+		InitialTurnsPage: &threadResumeInitialTurnsPageParams{
+			Limit:         codexResumeInitialTurnLimit,
+			SortDirection: "desc",
+			ItemsView:     "summary",
+		},
+	}
+	result, err := s.call(ctx, "thread/resume", params)
 	if err != nil {
-		return threadResumeResponse{}, err
+		// Older app-server versions may reject the bounded-history fields. Keep
+		// the legacy request as a compatibility fallback instead of turning a
+		// valid saved session into a fresh thread.
+		params.ExcludeTurns = false
+		params.InitialTurnsPage = nil
+		result, err = s.call(ctx, "thread/resume", params)
+		if err != nil {
+			return threadResumeResponse{}, err
+		}
 	}
 	var response threadResumeResponse
 	if err := json.Unmarshal(result, &response); err != nil {
 		return threadResumeResponse{}, err
 	}
+	applyInitialTurnsPage(&response)
 	return response, nil
+}
+
+func applyInitialTurnsPage(response *threadResumeResponse) {
+	if response == nil || response.InitialTurnsPage == nil {
+		return
+	}
+	page := response.InitialTurnsPage
+	turns := make([]resumedTurn, len(page.Data))
+	for i := range page.Data {
+		// The bootstrap page is requested newest-first so app-server can stop
+		// after a bounded tail. Transcript hydration expects chronological order.
+		turns[len(page.Data)-1-i] = page.Data[i]
+	}
+	response.Thread.Turns = turns
+	response.Thread.HistoryTruncated = page.NextCursor != nil && strings.TrimSpace(*page.NextCursor) != ""
+	response.Thread.HistorySummaryOnly = len(turns) > 0 || response.Thread.HistoryTruncated
+	if page.NextCursor != nil {
+		response.Thread.HistoryNextCursor = strings.TrimSpace(*page.NextCursor)
+	}
 }
 
 func (s *appServerSession) RefreshBusyElsewhere() error {
@@ -257,18 +295,8 @@ func (s *appServerSession) RefreshBusyElsewhere() error {
 	ctx, cancel := context.WithTimeout(context.Background(), rpcTimeout)
 	defer cancel()
 
-	result, err := s.call(ctx, "thread/resume", threadResumeParams{
-		ThreadID:       threadID,
-		ApprovalPolicy: approvalPolicyForPreset(s.preset),
-		Sandbox:        sandboxModeForPreset(s.preset),
-	})
+	response, err := s.resumeThreadResponse(ctx, threadID)
 	if err != nil {
-		s.appendSystemError(err)
-		return err
-	}
-
-	var response threadResumeResponse
-	if err := json.Unmarshal(result, &response); err != nil {
 		s.appendSystemError(err)
 		return err
 	}

@@ -140,6 +140,9 @@ func (m *Model) ensureCodexRuntime() {
 	if m.codexTranscriptFullHistory == nil {
 		m.codexTranscriptFullHistory = make(map[string]struct{})
 	}
+	if m.codexHistoryLoads == nil {
+		m.codexHistoryLoads = make(map[string]codexHistoryViewportRestore)
+	}
 	if m.codexArtifactLinkScans == nil {
 		m.codexArtifactLinkScans = make(map[string]codexArtifactLinkScanState)
 	}
@@ -894,6 +897,10 @@ func (m *Model) dropCodexSnapshot(projectPath string) {
 	delete(m.codexSnapshots, projectPath)
 	delete(m.codexTranscriptRev, projectPath)
 	delete(m.codexTranscriptFullHistory, projectPath)
+	delete(m.codexHistoryLoads, projectPath)
+	if m.codexPendingTurnJump.ProjectPath == projectPath {
+		m.codexPendingTurnJump = codexTurnJumpRequest{}
+	}
 	delete(m.codexLCAgentStatusVisible, projectPath)
 	m.resetCodexTranscriptCaches(projectPath)
 }
@@ -951,6 +958,7 @@ func codexTranscriptEntriesEqual(left, right []codexapp.TranscriptEntry) bool {
 	}
 	for i := range left {
 		if left[i].ItemID != right[i].ItemID ||
+			left[i].TurnID != right[i].TurnID ||
 			left[i].Kind != right[i].Kind ||
 			left[i].Text != right[i].Text ||
 			left[i].DisplayText != right[i].DisplayText ||
@@ -1048,8 +1056,10 @@ func (m Model) cachedCodexTranscriptContent(projectPath string, width int) (stri
 func (m *Model) renderAndCacheCodexTranscript(projectPath string, snapshot codexapp.Snapshot, width int) string {
 	rendered := ""
 	links := []codexTranscriptLinkSpan(nil)
+	anchors := []codexTranscriptTurnAnchor(nil)
 	m.measureAISyncLatency("Embedded transcript render", projectPath, embeddedProvider(snapshot).Label(), func() {
-		rendered, links = m.renderCodexTranscriptContentFromSnapshotWithLinksForProject(projectPath, snapshot, width)
+		options := m.codexTranscriptRenderOptionsFor(projectPath)
+		rendered, links, anchors = renderCodexTranscriptContentFromSnapshotWithMetadataForProjectOptions(snapshot, width, options)
 	})
 	m.codexTranscriptCache = codexTranscriptRenderCache{
 		projectPath:    strings.TrimSpace(projectPath),
@@ -1059,6 +1069,7 @@ func (m *Model) renderAndCacheCodexTranscript(projectPath string, snapshot codex
 		transcriptRev:  m.codexTranscriptRevision(projectPath),
 		rendered:       rendered,
 		links:          links,
+		turnAnchors:    anchors,
 	}
 	return rendered
 }
@@ -1192,15 +1203,23 @@ func (m *Model) requestVisibleCodexTranscriptRenderCmd() tea.Cmd {
 }
 
 func (m *Model) requestCodexTranscriptRenderCmd(projectPath string, snapshot codexapp.Snapshot, width int) tea.Cmd {
+	return m.requestCodexTranscriptRenderCmdMode(projectPath, snapshot, width, false)
+}
+
+func (m *Model) requestCodexTranscriptRenderCmdForced(projectPath string, snapshot codexapp.Snapshot, width int) tea.Cmd {
+	return m.requestCodexTranscriptRenderCmdMode(projectPath, snapshot, width, true)
+}
+
+func (m *Model) requestCodexTranscriptRenderCmdMode(projectPath string, snapshot codexapp.Snapshot, width int, force bool) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		return nil
 	}
 	width = max(24, width)
-	if m.codexTranscriptCacheMatches(projectPath, width) {
+	if !force && m.codexTranscriptCacheMatches(projectPath, width) {
 		return nil
 	}
-	if codexTranscriptCacheMissCanRender(snapshot) && !m.codexViewportContentCanStayStale(projectPath, width, snapshot) {
+	if !force && codexTranscriptCacheMissCanRender(snapshot) && !m.codexViewportContentCanStayStale(projectPath, width, snapshot) {
 		return nil
 	}
 	key := m.codexTranscriptRenderKey(projectPath, width)
@@ -1213,11 +1232,12 @@ func (m *Model) requestCodexTranscriptRenderCmd(projectPath string, snapshot cod
 	m.codexTranscriptRenderInFlight[key] = struct{}{}
 	options := m.codexTranscriptRenderOptionsFor(projectPath)
 	return func() tea.Msg {
-		rendered, links := renderCodexTranscriptContentFromSnapshotWithLinksForProjectOptions(snapshot, width, options)
+		rendered, links, anchors := renderCodexTranscriptContentFromSnapshotWithMetadataForProjectOptions(snapshot, width, options)
 		return codexTranscriptRenderedMsg{
-			key:      key,
-			rendered: rendered,
-			links:    links,
+			key:         key,
+			rendered:    rendered,
+			links:       links,
+			turnAnchors: anchors,
 		}
 	}
 }
@@ -1239,6 +1259,9 @@ func (m Model) applyCodexTranscriptRenderedMsg(msg codexTranscriptRenderedMsg) (
 			return m, nil
 		}
 		if snapshot.Closed || !snapshot.Busy {
+			if m.codexHistoryLoadPending(msg.key.projectPath) {
+				return m, m.requestCodexTranscriptRenderCmdForced(msg.key.projectPath, snapshot, msg.key.width)
+			}
 			return m, m.requestCodexTranscriptRenderCmd(msg.key.projectPath, snapshot, msg.key.width)
 		}
 		if msg.key.transcriptRev > currentKey.transcriptRev {
@@ -1246,6 +1269,9 @@ func (m Model) applyCodexTranscriptRenderedMsg(msg codexTranscriptRenderedMsg) (
 		}
 		m.applyCodexTranscriptRenderedContent(msg)
 		if msg.key.transcriptRev < currentKey.transcriptRev {
+			if m.codexHistoryLoadPending(msg.key.projectPath) {
+				return m, m.requestCodexTranscriptRenderCmdForced(msg.key.projectPath, snapshot, msg.key.width)
+			}
 			return m, m.requestCodexTranscriptRenderCmd(msg.key.projectPath, snapshot, msg.key.width)
 		}
 		return m, nil
@@ -1263,9 +1289,11 @@ func (m *Model) applyCodexTranscriptRenderedContent(msg codexTranscriptRenderedM
 		transcriptRev:  msg.key.transcriptRev,
 		rendered:       msg.rendered,
 		links:          msg.links,
+		turnAnchors:    msg.turnAnchors,
 	}
 	if strings.TrimSpace(m.codexVisibleProject) == msg.key.projectPath {
-		stickToBottom := m.codexViewport.AtBottom()
+		restore, restoreHistory := m.codexHistoryLoads[msg.key.projectPath]
+		stickToBottom := !restoreHistory && m.codexViewport.AtBottom()
 		m.codexViewport.SetContent(msg.rendered)
 		m.codexViewportContent = codexViewportContentState{
 			projectPath:    msg.key.projectPath,
@@ -1274,8 +1302,26 @@ func (m *Model) applyCodexTranscriptRenderedContent(msg codexTranscriptRenderedM
 			fullHistory:    msg.key.fullHistory,
 			transcriptRev:  msg.key.transcriptRev,
 		}
-		if stickToBottom {
+		if restoreHistory {
+			offset := restore.YOffset + max(0, m.codexViewport.TotalLineCount()-restore.TotalLines)
+			if restore.AnchorTurnID != "" {
+				if anchor, ok := codexTranscriptTurnAnchorByID(msg.turnAnchors, restore.AnchorTurnID); ok {
+					offset = anchor.Line + restore.AnchorLineDelta
+				}
+			}
+			m.codexViewport.SetYOffset(max(0, offset))
+			delete(m.codexHistoryLoads, msg.key.projectPath)
+		} else if stickToBottom {
 			m.codexViewport.GotoBottom()
+		}
+		if m.codexPendingTurnJump.ProjectPath == msg.key.projectPath {
+			if anchor, ok := codexTranscriptTurnAnchorByID(msg.turnAnchors, m.codexPendingTurnJump.TurnID); ok {
+				m.codexViewport.SetYOffset(anchor.Line)
+				m.status = "Jumped to selected turn"
+			} else {
+				m.status = "Selected turn is not available in the rendered transcript"
+			}
+			m.codexPendingTurnJump = codexTurnJumpRequest{}
 		}
 	}
 }

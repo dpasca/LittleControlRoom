@@ -98,9 +98,10 @@ type codexDeferredSnapshotMsg struct {
 }
 
 type codexTranscriptRenderedMsg struct {
-	key      codexTranscriptRenderKey
-	rendered string
-	links    []codexTranscriptLinkSpan
+	key         codexTranscriptRenderKey
+	rendered    string
+	links       []codexTranscriptLinkSpan
+	turnAnchors []codexTranscriptTurnAnchor
 }
 
 const (
@@ -251,16 +252,14 @@ func (m Model) applyCodexActionMsg(msg codexActionMsg) (tea.Model, tea.Cmd) {
 	linkScanCmd := tea.Cmd(nil)
 	transcriptRenderCmd := tea.Cmd(nil)
 	if msg.refreshView && strings.TrimSpace(msg.projectPath) != "" {
-		prevSnapshot, hadPrevSnapshot := m.codexSnapshots[strings.TrimSpace(msg.projectPath)]
 		snapshot, ok, needsAsync := m.refreshCodexSnapshot(msg.projectPath)
 		if needsAsync {
 			refreshCmd = m.deferredCodexSnapshotCmd(msg.projectPath)
 		}
 		if ok {
-			transcriptChanged := !hadPrevSnapshot || codexTranscriptStateChanged(prevSnapshot, snapshot)
 			if strings.TrimSpace(m.codexVisibleProject) == strings.TrimSpace(msg.projectPath) {
 				m.resetCodexToolAnswerState(msg.projectPath)
-				m.syncCodexViewport(transcriptChanged)
+				m.syncCodexViewport(false)
 				transcriptRenderCmd = m.requestVisibleCodexTranscriptRenderCmd()
 				linkScanCmd = m.maybeStartCodexArtifactLinkScan(msg.projectPath, snapshot)
 			}
@@ -426,7 +425,7 @@ func (m Model) applyCodexUpdateMsg(msg codexUpdateMsg) (tea.Model, tea.Cmd) {
 	if m.codexVisibleProject == msg.projectPath {
 		viewportStarted := time.Now()
 		m.resetCodexToolAnswerState(msg.projectPath)
-		m.syncCodexViewport(transcriptChanged)
+		m.syncCodexViewport(false)
 		transcriptRenderCmd = m.requestVisibleCodexTranscriptRenderCmd()
 		m.recordAISyncLatency("Embedded viewport", msg.projectPath, providerLabel, time.Since(viewportStarted), "")
 		if ok {
@@ -606,7 +605,6 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 	snapshot := msg.snapshot
 	m.observeManagedBrowserLease(projectPath, snapshot)
 	providerLabel := embeddedProvider(snapshot).Label()
-	transcriptChanged := !hadPrev || codexTranscriptStateChanged(prevSnapshot, snapshot)
 	statusRefreshCmd := tea.Cmd(nil)
 	sidebarDiffRefreshCmd := tea.Cmd(nil)
 	bossNoticeCmd := tea.Cmd(nil)
@@ -631,7 +629,7 @@ func (m Model) applyCodexDeferredSnapshotMsg(msg codexDeferredSnapshotMsg) (tea.
 	if m.codexVisibleProject == projectPath {
 		viewportStarted := time.Now()
 		m.resetCodexToolAnswerState(projectPath)
-		m.syncCodexViewport(transcriptChanged)
+		m.syncCodexViewport(false)
 		transcriptRenderCmd = m.requestVisibleCodexTranscriptRenderCmd()
 		m.recordAISyncLatency("Embedded viewport", projectPath, providerLabel, time.Since(viewportStarted), "deferred")
 		if codexSnapshotBrowserWaitingForUser(snapshot) {

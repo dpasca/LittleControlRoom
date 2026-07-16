@@ -58,6 +58,7 @@ func (m Model) renderCodexMainView(snapshot codexapp.Snapshot, width, height int
 			transcript.SetYOffset(maxOffset)
 		}
 	case m.codexViewportContentCanStayStale(projectPath, transcript.Width, snapshot):
+	case m.codexHistoryLoadPending(projectPath):
 	case func() bool {
 		rendered, ok := m.cachedCodexTranscriptContent(projectPath, transcript.Width)
 		if !ok {
@@ -71,9 +72,21 @@ func (m Model) renderCodexMainView(snapshot codexapp.Snapshot, width, height int
 	default:
 		transcript.SetContent(renderCodexTranscriptCacheMissContent(snapshot))
 	}
+	positionIndicator := ""
+	if !transcript.AtBottom() {
+		transcript.Height = max(1, transcriptHeight-1)
+		message := "↓ More recent conversation below · PgDn to catch up"
+		if snapshot.HistoryLoading {
+			message = "↑ Loading older turns · ↓ More recent conversation below"
+		}
+		positionIndicator = lipgloss.NewStyle().Foreground(lipgloss.Color("221")).Render(fitFooterWidth(message, width))
+	}
 	viewOutput := transcript.View()
 	if m.codexSelection.dragging && m.codexSelection.hasRange() {
 		viewOutput = overlaySelectionHighlight(viewOutput, m.codexSelection, transcript.YOffset)
+	}
+	if positionIndicator != "" {
+		viewOutput += "\n" + positionIndicator
 	}
 	body := m.renderHFramedPane(viewOutput, width, transcriptHeight, m.codexMainFocused())
 
@@ -1055,6 +1068,11 @@ func (m Model) renderCodexTranscriptContentFromSnapshotWithLinksForProject(proje
 }
 
 func renderCodexTranscriptContentFromSnapshotWithLinksForProjectOptions(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan) {
+	rendered, links, _ := renderCodexTranscriptContentFromSnapshotWithMetadataForProjectOptions(snapshot, width, options)
+	return rendered, links
+}
+
+func renderCodexTranscriptContentFromSnapshotWithMetadataForProjectOptions(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan, []codexTranscriptTurnAnchor) {
 	if strings.TrimSpace(options.projectPath) == "" {
 		options.projectPath = strings.TrimSpace(snapshot.ProjectPath)
 	}
@@ -1062,16 +1080,16 @@ func renderCodexTranscriptContentFromSnapshotWithLinksForProjectOptions(snapshot
 		options.blockMode = codexDenseBlockSummary
 		options.blockModeSet = true
 	}
-	if rendered, links := renderCodexTranscriptEntriesWithLinksConfigured(snapshot, width, options); strings.TrimSpace(rendered) != "" {
-		return rendered, links
+	if rendered, links, anchors := renderCodexTranscriptEntriesWithMetadataConfigured(snapshot, width, options); strings.TrimSpace(rendered) != "" {
+		return rendered, links, anchors
 	}
 	if snapshot.Closed {
-		return embeddedProvider(snapshot).Label() + " session closed.", nil
+		return embeddedProvider(snapshot).Label() + " session closed.", nil, nil
 	}
 	if notice := strings.TrimSpace(snapshot.LastSystemNotice); notice != "" {
-		return "[system] " + sanitizeCodexRenderedText(notice), nil
+		return "[system] " + sanitizeCodexRenderedText(notice), nil, nil
 	}
-	return "Type a prompt and press Enter.", nil
+	return "Type a prompt and press Enter.", nil, nil
 }
 
 func renderCodexTranscriptCacheMissContent(snapshot codexapp.Snapshot) string {

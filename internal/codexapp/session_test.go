@@ -99,6 +99,9 @@ func TestResumeThreadRedirectsSubAgentToSessionRoot(t *testing.T) {
 			if !ok {
 				return nil, fmt.Errorf("params = %#v, want threadResumeParams", params)
 			}
+			if !request.ExcludeTurns || request.InitialTurnsPage == nil || request.InitialTurnsPage.ItemsView != "summary" {
+				return nil, fmt.Errorf("resume history params = %#v, want bounded summary page", request)
+			}
 			resumed = append(resumed, request.ThreadID)
 			switch request.ThreadID {
 			case "thread_child":
@@ -123,6 +126,212 @@ func TestResumeThreadRedirectsSubAgentToSessionRoot(t *testing.T) {
 	}
 	if snapshot := s.Snapshot(); snapshot.ThreadID != "thread_root" {
 		t.Fatalf("snapshot thread = %q, want thread_root", snapshot.ThreadID)
+	}
+}
+
+func TestResumeThreadResponseUsesRecentSummaryPage(t *testing.T) {
+	cursor := "older-turns"
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			if method != "thread/resume" {
+				return nil, fmt.Errorf("method = %q, want thread/resume", method)
+			}
+			request, ok := params.(threadResumeParams)
+			if !ok {
+				return nil, fmt.Errorf("params = %#v, want threadResumeParams", params)
+			}
+			if !request.ExcludeTurns {
+				t.Fatal("excludeTurns = false, want metadata-only thread payload")
+			}
+			if request.InitialTurnsPage == nil {
+				t.Fatal("initialTurnsPage = nil, want recent transcript bootstrap")
+			}
+			if got := request.InitialTurnsPage.Limit; got != codexResumeInitialTurnLimit {
+				t.Fatalf("initial turn limit = %d, want %d", got, codexResumeInitialTurnLimit)
+			}
+			if got := request.InitialTurnsPage.SortDirection; got != "desc" {
+				t.Fatalf("initial turn sort = %q, want desc", got)
+			}
+			if got := request.InitialTurnsPage.ItemsView; got != "summary" {
+				t.Fatalf("initial turn item view = %q, want summary", got)
+			}
+			return json.RawMessage(`{
+				"thread": {
+					"id": "thread_root",
+					"sessionId": "thread_root",
+					"status": {"type": "idle"},
+					"turns": [{"id": "turn_full_history_should_not_win", "status": "completed", "items": []}]
+				},
+				"initialTurnsPage": {
+					"data": [
+						{"id": "turn_new", "status": "completed", "items": [
+							{"id": "agent_new", "type": "agentMessage", "text": "new answer"}
+						]},
+						{"id": "turn_old", "status": "completed", "items": [
+							{"id": "user_old", "type": "userMessage", "content": [{"type": "text", "text": "old question"}]}
+						]}
+					],
+					"nextCursor": "` + cursor + `"
+				}
+			}`), nil
+		},
+	}
+
+	response, err := s.resumeThreadResponse(context.Background(), "thread_root")
+	if err != nil {
+		t.Fatalf("resumeThreadResponse() error = %v", err)
+	}
+	if len(response.Thread.Turns) != 2 {
+		t.Fatalf("resumed turns = %#v, want two summary turns", response.Thread.Turns)
+	}
+	if response.Thread.Turns[0].ID != "turn_old" || response.Thread.Turns[1].ID != "turn_new" {
+		t.Fatalf("resumed turn order = %q, %q; want chronological old, new", response.Thread.Turns[0].ID, response.Thread.Turns[1].ID)
+	}
+	if !response.Thread.HistorySummaryOnly || !response.Thread.HistoryTruncated {
+		t.Fatalf("history flags = summary:%t truncated:%t, want true/true", response.Thread.HistorySummaryOnly, response.Thread.HistoryTruncated)
+	}
+
+	s.hydrateResumedThread(response.Thread)
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 3 {
+		t.Fatalf("snapshot entries = %#v, want disclosure plus two conversation entries", snapshot.Entries)
+	}
+	if snapshot.Entries[0].Kind != TranscriptSystem || !strings.Contains(snapshot.Entries[0].Text, "Older transcript turns") {
+		t.Fatalf("summary disclosure = %#v, want older-turn notice", snapshot.Entries[0])
+	}
+	if snapshot.Entries[1].Kind != TranscriptUser || snapshot.Entries[1].Text != "old question" {
+		t.Fatalf("older summary entry = %#v, want old user question", snapshot.Entries[1])
+	}
+	if snapshot.Entries[2].Kind != TranscriptAgent || snapshot.Entries[2].Text != "new answer" {
+		t.Fatalf("newer summary entry = %#v, want new agent answer", snapshot.Entries[2])
+	}
+}
+
+func TestResumeThreadResponseFallsBackForLegacyAppServer(t *testing.T) {
+	callCount := 0
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rpcCallHook: func(_ context.Context, method string, params any) (json.RawMessage, error) {
+			callCount++
+			if method != "thread/resume" {
+				return nil, fmt.Errorf("method = %q, want thread/resume", method)
+			}
+			request, ok := params.(threadResumeParams)
+			if !ok {
+				return nil, fmt.Errorf("params = %#v, want threadResumeParams", params)
+			}
+			switch callCount {
+			case 1:
+				if !request.ExcludeTurns || request.InitialTurnsPage == nil {
+					t.Fatalf("first resume params = %#v, want bounded request", request)
+				}
+				return nil, errors.New("legacy app-server rejected bounded resume fields")
+			case 2:
+				if request.ExcludeTurns || request.InitialTurnsPage != nil {
+					t.Fatalf("fallback resume params = %#v, want legacy request", request)
+				}
+				return json.RawMessage(`{
+					"thread": {
+						"id": "thread_legacy",
+						"status": {"type": "idle"},
+						"turns": [{"id": "turn_legacy", "status": "completed", "items": []}]
+					}
+				}`), nil
+			default:
+				return nil, fmt.Errorf("unexpected resume call %d", callCount)
+			}
+		},
+	}
+
+	response, err := s.resumeThreadResponse(context.Background(), "thread_legacy")
+	if err != nil {
+		t.Fatalf("resumeThreadResponse() error = %v", err)
+	}
+	if callCount != 2 {
+		t.Fatalf("resume call count = %d, want bounded request plus legacy fallback", callCount)
+	}
+	if len(response.Thread.Turns) != 1 || response.Thread.Turns[0].ID != "turn_legacy" {
+		t.Fatalf("legacy response turns = %#v, want full legacy history", response.Thread.Turns)
+	}
+	if response.Thread.HistorySummaryOnly || response.Thread.HistoryTruncated {
+		t.Fatalf("legacy history flags = summary:%t truncated:%t, want false/false", response.Thread.HistorySummaryOnly, response.Thread.HistoryTruncated)
+	}
+}
+
+func TestLoadOlderHistoryPrependsSummaryPageAndKeepsTurnAnchors(t *testing.T) {
+	notifications := 0
+	s := &appServerSession{
+		projectPath:        "/tmp/demo",
+		threadID:           "thread_root",
+		entryIndex:         make(map[string]int),
+		historyLoadedTurns: make(map[string]struct{}),
+		notify:             func() { notifications++ },
+	}
+	initial := resumedThread{
+		ID:                 "thread_root",
+		HistorySummaryOnly: true,
+		HistoryTruncated:   true,
+		HistoryNextCursor:  "cursor-older",
+		Status:             resumedThreadStatus{Type: "idle"},
+		Turns: []resumedTurn{{
+			ID:     "turn_recent",
+			Status: "completed",
+			Items: []map[string]json.RawMessage{{
+				"id":      json.RawMessage(`"user_recent"`),
+				"type":    json.RawMessage(`"userMessage"`),
+				"content": json.RawMessage(`[{"type":"text","text":"recent question"}]`),
+			}},
+		}},
+	}
+	s.initializeHistoryPagination(initial)
+	s.hydrateResumedThread(initial)
+	s.rpcCallHook = func(_ context.Context, method string, params any) (json.RawMessage, error) {
+		if method != "thread/turns/list" {
+			return nil, fmt.Errorf("method = %q, want thread/turns/list", method)
+		}
+		request, ok := params.(threadTurnsListParams)
+		if !ok {
+			return nil, fmt.Errorf("params = %#v, want threadTurnsListParams", params)
+		}
+		if request.ThreadID != "thread_root" || request.Cursor != "cursor-older" || request.Limit != codexResumeInitialTurnLimit || request.SortDirection != "desc" || request.ItemsView != "summary" {
+			t.Fatalf("history request = %#v, want bounded descending summary page", request)
+		}
+		if snapshot := s.Snapshot(); !snapshot.HistoryLoading {
+			t.Fatal("history loading state should be visible while the provider call is in flight")
+		}
+		return json.RawMessage(`{
+			"data": [
+				{"id":"turn_middle","status":"completed","items":[{"id":"user_middle","type":"userMessage","content":[{"type":"text","text":"middle question"}]}]},
+				{"id":"turn_oldest","status":"completed","items":[{"id":"user_oldest","type":"userMessage","content":[{"type":"text","text":"oldest question"}]}]}
+			],
+			"nextCursor": null
+		}`), nil
+	}
+
+	if err := s.LoadOlderHistory(); err != nil {
+		t.Fatalf("LoadOlderHistory() error = %v", err)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.HistoryLoading || snapshot.HistoryHasMore || snapshot.HistoryLoadError != "" {
+		t.Fatalf("history state = loading:%t more:%t error:%q, want completed beginning", snapshot.HistoryLoading, snapshot.HistoryHasMore, snapshot.HistoryLoadError)
+	}
+	if notifications < 2 {
+		t.Fatalf("history notifications = %d, want loading and completion updates", notifications)
+	}
+	if len(snapshot.Entries) != 4 {
+		t.Fatalf("entries = %#v, want notice plus three user turns", snapshot.Entries)
+	}
+	wantTurns := []string{"", "turn_oldest", "turn_middle", "turn_recent"}
+	wantText := []string{"Historical tool details", "oldest question", "middle question", "recent question"}
+	for i := range snapshot.Entries {
+		if snapshot.Entries[i].TurnID != wantTurns[i] || !strings.Contains(snapshot.Entries[i].Text, wantText[i]) {
+			t.Fatalf("entry %d = %#v, want turn %q containing %q", i, snapshot.Entries[i], wantTurns[i], wantText[i])
+		}
 	}
 }
 
@@ -227,6 +436,58 @@ func TestHydrateResumedThreadRestoresOnlyUnresolvedBrowserHandoff(t *testing.T) 
 	}
 	if snapshot.BrowserActivity.AttentionMessage != "" {
 		t.Fatalf("resolved browser message = %q, want empty", snapshot.BrowserActivity.AttentionMessage)
+	}
+}
+
+func TestSummaryHistoryHydrationPreservesLiveBrowserHandoffState(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	now := time.Now()
+	s := &appServerSession{
+		projectPath:           "/tmp/demo",
+		entryIndex:            make(map[string]int),
+		notify:                func() {},
+		playwrightPolicy:      policy,
+		browserHandoffPending: true,
+		browserHandoffAt:      now,
+		browserHandoffMessage: "Finish signing in.",
+		currentBrowserPageURL: "https://example.com/login",
+		browserActivity: browserctl.SessionActivity{
+			Policy:           policy,
+			State:            browserctl.SessionActivityStateWaitingForUser,
+			AttentionMessage: "Finish signing in.",
+			LastEventAt:      now,
+		},
+	}
+
+	s.hydrateResumedThread(resumedThread{
+		ID:                 "thread_browser_summary",
+		Status:             resumedThreadStatus{Type: "idle"},
+		HistorySummaryOnly: true,
+		Turns: []resumedTurn{{
+			ID:     "turn_browser_summary",
+			Status: "completed",
+			Items: []map[string]json.RawMessage{{
+				"id":   json.RawMessage(`"agent_summary"`),
+				"type": json.RawMessage(`"agentMessage"`),
+				"text": json.RawMessage(`"Waiting for login."`),
+			}},
+		}},
+	})
+
+	snapshot := s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("browser activity = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.AttentionMessage, "Finish signing in."; got != want {
+		t.Fatalf("browser attention = %q, want %q", got, want)
+	}
+	if got, want := snapshot.CurrentBrowserPageURL, "https://example.com/login"; got != want {
+		t.Fatalf("browser page URL = %q, want %q", got, want)
 	}
 }
 

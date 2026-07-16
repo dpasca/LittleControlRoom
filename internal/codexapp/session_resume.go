@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const resumedHistorySummaryItemID = "lcroom-resumed-history-summary"
+
 func (s *appServerSession) hydrateResumedThread(thread resumedThread) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,6 +173,7 @@ func reconnectTranscriptEntries(entries []TranscriptEntry) []transcriptEntry {
 		}
 		out = append(out, transcriptEntry{
 			ItemID:         strings.TrimSpace(entry.ItemID),
+			TurnID:         strings.TrimSpace(entry.TurnID),
 			Kind:           entry.Kind,
 			Text:           entry.Text,
 			DisplayText:    entry.DisplayText,
@@ -195,6 +198,7 @@ func mergeReconnectTranscriptSnapshots(current, recovered []TranscriptEntry) []T
 		}
 		out = append(out, TranscriptEntry{
 			ItemID:         entry.ItemID,
+			TurnID:         entry.TurnID,
 			Kind:           entry.Kind,
 			Text:           entry.Text,
 			DisplayText:    entry.DisplayText,
@@ -349,9 +353,21 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 	if thread.ID != "" {
 		s.threadID = thread.ID
 	}
-	currentBrowserPageURL := ""
-	browserHandoffPending := false
-	browserHandoffMessage := ""
+	if thread.HistorySummaryOnly && !s.historyInitialized {
+		s.historySummaryOnly = true
+		s.historyNextCursor = strings.TrimSpace(thread.HistoryNextCursor)
+		s.historyHasMore = s.historyNextCursor != "" || thread.HistoryTruncated
+		s.historyInitialized = true
+	}
+	s.syncHistorySummaryNoticeLocked()
+	currentBrowserPageURL := s.currentBrowserPageURL
+	browserHandoffPending := s.browserHandoffPending
+	browserHandoffMessage := s.browserHandoffMessage
+	if !thread.HistorySummaryOnly {
+		currentBrowserPageURL = ""
+		browserHandoffPending = false
+		browserHandoffMessage = ""
+	}
 	for _, turn := range thread.Turns {
 		for _, item := range turn.Items {
 			if strings.TrimSpace(decodeRawString(item["type"])) == "userMessage" {
@@ -372,7 +388,7 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 				}
 			}
 			itemID, kind, text, image := s.renderThreadItemForTurn(turn.Status, item)
-			s.mergeRenderedHistoryItemLocked(itemID, kind, text, image)
+			s.mergeRenderedHistoryItemLocked(turn.ID, itemID, kind, text, image)
 		}
 		if turn.Status == "failed" && turn.Error != nil && strings.TrimSpace(turn.Error.Message) != "" {
 			s.appendEntryLocked("", TranscriptError, turn.Error.Message)

@@ -252,6 +252,8 @@ type Model struct {
 	codexTranscriptRenderInFlight map[codexTranscriptRenderKey]struct{}
 	codexPanelFocus               embeddedCodexPanelFocus
 	codexSidebarSelected          embeddedCodexSidebarSection
+	codexSidebarTurnSelected      int
+	codexPendingTurnJump          codexTurnJumpRequest
 	embeddedSidebarDetail         *embeddedSidebarDetailState
 	embeddedSidebarDiffs          map[string]embeddedSidebarDiffState
 	embeddedSidebarDiffSeq        int64
@@ -302,6 +304,7 @@ type Model struct {
 	codexTranscriptCache          codexTranscriptRenderCache
 	codexViewportContent          codexViewportContentState
 	codexTranscriptFullHistory    map[string]struct{}
+	codexHistoryLoads             map[string]codexHistoryViewportRestore
 	codexUpdateAckSeq             map[string]uint64
 	codexComposerLastKeyAt        time.Time
 	codexComposerLastChangeAt     time.Time
@@ -347,6 +350,7 @@ type codexTranscriptRenderCache struct {
 	transcriptRev  uint64
 	rendered       string
 	links          []codexTranscriptLinkSpan
+	turnAnchors    []codexTranscriptTurnAnchor
 }
 
 type codexViewportContentState struct {
@@ -743,6 +747,7 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		embeddedActivityQueued:        make(map[string]embeddedSessionActivityRecordRequest),
 		codexTranscriptRev:            make(map[string]uint64),
 		codexTranscriptFullHistory:    make(map[string]struct{}),
+		codexHistoryLoads:             make(map[string]codexHistoryViewportRestore),
 		codexArtifactLinkScans:        make(map[string]codexArtifactLinkScanState),
 		codexToolAnswers:              make(map[string]codexToolAnswerState),
 		browserAttentionAcknowledged:  make(map[string]string),
@@ -1396,10 +1401,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			m.codexViewport, cmd = m.codexViewport.Update(msg)
+			historyCmd := tea.Cmd(nil)
 			if msg.Button == tea.MouseButtonWheelUp {
-				m.maybeLoadFullCodexHistoryAtViewportTop()
+				historyCmd = m.maybeRequestOlderCodexHistoryAtViewportTop()
+				if historyCmd == nil {
+					m.maybeLoadFullCodexHistoryAtViewportTop()
+				}
 			}
-			return m, cmd
+			return m, batchCmds(cmd, historyCmd)
 		}
 	case tea.KeyMsg:
 		if m.helpChatMode {
@@ -2695,6 +2704,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexDeferredSnapshotMsg(msg)
 	case codexTranscriptRenderedMsg:
 		return m.applyCodexTranscriptRenderedMsg(msg)
+	case codexHistoryPageLoadedMsg:
+		return m.applyCodexHistoryPageLoadedMsg(msg)
 	}
 
 	return m, nil

@@ -36,6 +36,11 @@ type codexTranscriptLinkSpan struct {
 	EndLine   int
 }
 
+type codexTranscriptTurnAnchor struct {
+	TurnID string
+	Line   int
+}
+
 func (m Model) renderCodexTranscriptEntriesWithLinks(snapshot codexapp.Snapshot, width int) (string, []codexTranscriptLinkSpan) {
 	return m.renderCodexTranscriptEntriesWithLinksOptions(snapshot, width, codexTranscriptRenderOptions{})
 }
@@ -67,12 +72,17 @@ func (m Model) normalizeCodexTranscriptRenderOptions(snapshot codexapp.Snapshot,
 }
 
 func renderCodexTranscriptEntriesWithLinksConfigured(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan) {
+	rendered, links, _ := renderCodexTranscriptEntriesWithMetadataConfigured(snapshot, width, options)
+	return rendered, links
+}
+
+func renderCodexTranscriptEntriesWithMetadataConfigured(snapshot codexapp.Snapshot, width int, options codexTranscriptRenderOptions) (string, []codexTranscriptLinkSpan, []codexTranscriptTurnAnchor) {
 	entries := codexTranscriptEntriesFromSnapshot(snapshot)
 	if !options.lcagentStatusVisible {
 		entries = collapseLCAgentStatusEntries(entries)
 	}
 	if len(entries) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	blockMode := options.blockMode.normalized()
 	if snapshot.Provider.Normalized() == codexapp.ProviderCodex {
@@ -92,6 +102,8 @@ func renderCodexTranscriptEntriesWithLinksConfigured(snapshot codexapp.Snapshot,
 	contentWidth := max(18, width-4)
 	blocks := make([]string, 0, len(entries)*2)
 	links := make([]codexTranscriptLinkSpan, 0)
+	turnAnchors := make([]codexTranscriptTurnAnchor, 0)
+	anchoredTurns := make(map[string]struct{})
 	lineIndex := 0
 	var previousKind codexapp.TranscriptKind
 	hasPrevious := false
@@ -146,13 +158,19 @@ func renderCodexTranscriptEntriesWithLinksConfigured(snapshot codexapp.Snapshot,
 					EndLine:   endLine,
 				})
 			}
+			if turnID := strings.TrimSpace(entry.TurnID); turnID != "" {
+				if _, exists := anchoredTurns[turnID]; !exists {
+					anchoredTurns[turnID] = struct{}{}
+					turnAnchors = append(turnAnchors, codexTranscriptTurnAnchor{TurnID: turnID, Line: startLine})
+				}
+			}
 			previousKind = entry.Kind
 			hasPrevious = true
 		}
 	}
 	// Flush trailing reasoning (model still thinking)
 	flushReasoning()
-	return strings.Join(blocks, ""), links
+	return strings.Join(blocks, ""), links, turnAnchors
 }
 
 func collapseLCAgentStatusEntries(entries []codexapp.TranscriptEntry) []codexapp.TranscriptEntry {

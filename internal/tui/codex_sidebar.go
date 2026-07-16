@@ -33,6 +33,7 @@ type embeddedCodexSidebarSection int
 
 const (
 	embeddedCodexSidebarSession embeddedCodexSidebarSection = iota
+	embeddedCodexSidebarRecentTurns
 	embeddedCodexSidebarQuality
 	embeddedCodexSidebarVision
 	embeddedCodexSidebarBrowser
@@ -168,6 +169,7 @@ func (m Model) embeddedSidebarVisibleSections(snapshot codexapp.Snapshot) []embe
 	projectPath := m.embeddedSidebarProjectPath(snapshot)
 	candidates := []embeddedCodexSidebarSection{
 		embeddedCodexSidebarSession,
+		embeddedCodexSidebarRecentTurns,
 		embeddedCodexSidebarQuality,
 		embeddedCodexSidebarVision,
 		embeddedCodexSidebarBrowser,
@@ -189,6 +191,8 @@ func (m Model) embeddedSidebarSectionAvailable(snapshot codexapp.Snapshot, proje
 	switch section {
 	case embeddedCodexSidebarSession:
 		return len(m.embeddedSidebarSessionRows(snapshot, 1)) > 0
+	case embeddedCodexSidebarRecentTurns:
+		return len(embeddedSidebarRecentTurns(snapshot, 5)) > 0
 	case embeddedCodexSidebarQuality:
 		return len(embeddedSidebarQualitySummaryRows(snapshot, 1)) > 0
 	case embeddedCodexSidebarVision:
@@ -212,6 +216,20 @@ func (m *Model) moveEmbeddedSidebarSelection(snapshot codexapp.Snapshot, delta i
 	if len(sections) == 0 {
 		return
 	}
+	if m.codexSidebarSelected == embeddedCodexSidebarRecentTurns {
+		turns := embeddedSidebarRecentTurns(snapshot, 5)
+		m.codexSidebarTurnSelected = clampInt(m.codexSidebarTurnSelected, 0, max(0, len(turns)-1))
+		switch {
+		case delta < 0 && m.codexSidebarTurnSelected > 0:
+			m.codexSidebarTurnSelected--
+			m.status = "Recent turn: " + turns[m.codexSidebarTurnSelected].Label + " (Enter jump)"
+			return
+		case delta > 0 && m.codexSidebarTurnSelected+1 < len(turns):
+			m.codexSidebarTurnSelected++
+			m.status = "Recent turn: " + turns[m.codexSidebarTurnSelected].Label + " (Enter jump)"
+			return
+		}
+	}
 	idx := -1
 	for i, section := range sections {
 		if section == m.codexSidebarSelected {
@@ -229,8 +247,21 @@ func (m *Model) moveEmbeddedSidebarSelection(snapshot codexapp.Snapshot, delta i
 	}
 	idx %= len(sections)
 	m.codexSidebarSelected = sections[idx]
+	if m.codexSidebarSelected == embeddedCodexSidebarRecentTurns {
+		turns := embeddedSidebarRecentTurns(snapshot, 5)
+		if delta < 0 {
+			m.codexSidebarTurnSelected = max(0, len(turns)-1)
+		} else {
+			m.codexSidebarTurnSelected = 0
+		}
+	}
 	m.status = "Sidebar: " + strings.ToLower(embeddedSidebarSectionTitle(m.codexSidebarSelected))
-	if m.codexSidebarSelected != embeddedCodexSidebarDiff {
+	if m.codexSidebarSelected == embeddedCodexSidebarRecentTurns {
+		turns := embeddedSidebarRecentTurns(snapshot, 5)
+		if len(turns) > 0 {
+			m.status = "Recent turn: " + turns[m.codexSidebarTurnSelected].Label + " (Enter jump)"
+		}
+	} else if m.codexSidebarSelected != embeddedCodexSidebarDiff {
 		m.status += " (Enter details)"
 	}
 }
@@ -259,6 +290,13 @@ func (m Model) updateCodexSidebarMode(snapshot codexapp.Snapshot, msg tea.KeyMsg
 		switch m.codexSidebarSelected {
 		case embeddedCodexSidebarDiff:
 			return m.openEmbeddedSidebarDiff(projectPath)
+		case embeddedCodexSidebarRecentTurns:
+			turns := embeddedSidebarRecentTurns(snapshot, 5)
+			if len(turns) == 0 {
+				return m, nil
+			}
+			index := clampInt(m.codexSidebarTurnSelected, 0, len(turns)-1)
+			return m.jumpToCodexTurn(turns[index])
 		default:
 			return m.openEmbeddedSidebarDetail(snapshot, projectPath, m.codexSidebarSelected)
 		}
@@ -270,6 +308,8 @@ func embeddedSidebarSectionTitle(section embeddedCodexSidebarSection) string {
 	switch section {
 	case embeddedCodexSidebarSession:
 		return "Session"
+	case embeddedCodexSidebarRecentTurns:
+		return "Recent Turns"
 	case embeddedCodexSidebarQuality:
 		return "Quality"
 	case embeddedCodexSidebarVision:
@@ -763,6 +803,7 @@ func (m Model) renderEmbeddedCodexSidebar(snapshot codexapp.Snapshot, width, hei
 	contentWidth := max(12, width-2)
 	lines := []string{}
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarSessionSection(snapshot, contentWidth))
+	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarRecentTurnsSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarQualitySection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarVisionSection(snapshot, contentWidth))
 	lines = appendEmbeddedSidebarSection(lines, m.renderEmbeddedSidebarBrowserSection(snapshot, contentWidth))
@@ -796,7 +837,7 @@ func embeddedSidebarActionRow(key, label string, width int) string {
 }
 
 func (m Model) renderEmbeddedSidebarSectionHeader(section embeddedCodexSidebarSection, title string, width int) string {
-	selected := m.codexSidebarSelected == section && m.codexPanelFocus == embeddedCodexFocusSidebar
+	selected := section != embeddedCodexSidebarRecentTurns && m.codexSidebarSelected == section && m.codexPanelFocus == embeddedCodexFocusSidebar
 	marker := " "
 	if selected {
 		marker = ">"
@@ -814,6 +855,66 @@ func (m Model) renderEmbeddedSidebarSessionSection(snapshot codexapp.Snapshot, w
 		return nil
 	}
 	return append([]string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarSession, "Session", width)}, rows...)
+}
+
+type embeddedSidebarRecentTurn struct {
+	TurnID string
+	Label  string
+}
+
+func embeddedSidebarRecentTurns(snapshot codexapp.Snapshot, limit int) []embeddedSidebarRecentTurn {
+	if limit <= 0 {
+		return nil
+	}
+	turns := make([]embeddedSidebarRecentTurn, 0, limit)
+	seen := make(map[string]struct{})
+	for _, entry := range codexTranscriptEntriesFromSnapshot(snapshot) {
+		turnID := strings.TrimSpace(entry.TurnID)
+		if entry.Kind != codexapp.TranscriptUser || turnID == "" {
+			continue
+		}
+		if _, exists := seen[turnID]; exists {
+			continue
+		}
+		label := strings.TrimSpace(firstNonEmptyString(entry.DisplayText, entry.Text))
+		label = strings.Join(strings.Fields(label), " ")
+		if label == "" {
+			label = "Turn " + shortID(turnID)
+		}
+		seen[turnID] = struct{}{}
+		turns = append(turns, embeddedSidebarRecentTurn{TurnID: turnID, Label: label})
+	}
+	if len(turns) > limit {
+		turns = turns[len(turns)-limit:]
+	}
+	for left, right := 0, len(turns)-1; left < right; left, right = left+1, right-1 {
+		turns[left], turns[right] = turns[right], turns[left]
+	}
+	return turns
+}
+
+func (m Model) renderEmbeddedSidebarRecentTurnsSection(snapshot codexapp.Snapshot, width int) []string {
+	turns := embeddedSidebarRecentTurns(snapshot, 5)
+	if len(turns) == 0 {
+		return nil
+	}
+	rows := []string{m.renderEmbeddedSidebarSectionHeader(embeddedCodexSidebarRecentTurns, "Recent Turns", width)}
+	selectedIndex := clampInt(m.codexSidebarTurnSelected, 0, len(turns)-1)
+	for i, turn := range turns {
+		selected := m.codexPanelFocus == embeddedCodexFocusSidebar && m.codexSidebarSelected == embeddedCodexSidebarRecentTurns && i == selectedIndex
+		marker := "  "
+		if selected {
+			marker = "> "
+		}
+		row := fitLine(marker+turn.Label, width)
+		if selected {
+			row = commandPaletteSelectStyle.Width(width).Render(row)
+		} else {
+			row = embeddedSidebarMutedStyle.Render(row)
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func (m Model) embeddedSidebarSessionRows(snapshot codexapp.Snapshot, width int) []string {

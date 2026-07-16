@@ -859,15 +859,21 @@ func (s *appServerSession) appendDeltaToItemLocked(itemID string, kind Transcrip
 	s.entries = append(s.entries, transcriptEntry{ItemID: itemID, Kind: kind, Text: text})
 }
 
-func (s *appServerSession) mergeRenderedHistoryItemLocked(itemID string, kind TranscriptKind, text string, image *GeneratedImageArtifact) {
+func (s *appServerSession) mergeRenderedHistoryItemLocked(turnID, itemID string, kind TranscriptKind, text string, image *GeneratedImageArtifact) {
 	if image == nil {
 		s.mergeHistoryItemLocked(itemID, kind, text)
-		return
+	} else {
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		s.upsertRenderedItemEntryLocked(itemID, kind, text, image)
 	}
-	if strings.TrimSpace(text) == "" {
-		return
+	if turnID = strings.TrimSpace(turnID); turnID != "" && itemID != "" {
+		if index, ok := s.entryIndex[itemID]; ok && s.entries[index].TurnID != turnID {
+			s.entries[index].TurnID = turnID
+			s.invalidateTranscriptCacheLocked()
+		}
 	}
-	s.upsertRenderedItemEntryLocked(itemID, kind, text, image)
 }
 
 func (s *appServerSession) mergeHistoryItemLocked(itemID string, kind TranscriptKind, text string) {

@@ -136,6 +136,13 @@ type appServerSession struct {
 	runtimeMCPReady         bool
 	entries                 []transcriptEntry
 	entryIndex              map[string]int
+	historyLoadedTurns      map[string]struct{}
+	historyNextCursor       string
+	historyHasMore          bool
+	historyLoading          bool
+	historyLoadError        string
+	historySummaryOnly      bool
+	historyInitialized      bool
 	transcriptRevision      uint64
 	transcriptCache         transcriptExportCache
 	reconnectThreadID       string
@@ -144,6 +151,7 @@ type appServerSession struct {
 
 type transcriptEntry struct {
 	ItemID         string
+	TurnID         string
 	Kind           TranscriptKind
 	Text           string
 	DisplayText    string
@@ -306,22 +314,32 @@ type resumedTurn struct {
 }
 
 type resumedThread struct {
-	ID             string              `json:"id"`
-	SessionID      string              `json:"sessionId"`
-	ParentThreadID *string             `json:"parentThreadId"`
-	Status         resumedThreadStatus `json:"status"`
-	Turns          []resumedTurn       `json:"turns"`
+	ID                 string              `json:"id"`
+	SessionID          string              `json:"sessionId"`
+	ParentThreadID     *string             `json:"parentThreadId"`
+	Status             resumedThreadStatus `json:"status"`
+	Turns              []resumedTurn       `json:"turns"`
+	HistorySummaryOnly bool                `json:"-"`
+	HistoryTruncated   bool                `json:"-"`
+	HistoryNextCursor  string              `json:"-"`
+}
+
+type threadTurnsPage struct {
+	Data            []resumedTurn `json:"data"`
+	NextCursor      *string       `json:"nextCursor"`
+	BackwardsCursor *string       `json:"backwardsCursor"`
 }
 
 type threadResumeResponse struct {
-	ApprovalPolicy  json.RawMessage `json:"approvalPolicy"`
-	CWD             string          `json:"cwd"`
-	Model           string          `json:"model"`
-	ModelProvider   string          `json:"modelProvider"`
-	ReasoningEffort *string         `json:"reasoningEffort"`
-	ServiceTier     *string         `json:"serviceTier"`
-	Sandbox         json.RawMessage `json:"sandbox"`
-	Thread          resumedThread   `json:"thread"`
+	ApprovalPolicy   json.RawMessage  `json:"approvalPolicy"`
+	CWD              string           `json:"cwd"`
+	Model            string           `json:"model"`
+	ModelProvider    string           `json:"modelProvider"`
+	ReasoningEffort  *string          `json:"reasoningEffort"`
+	ServiceTier      *string          `json:"serviceTier"`
+	Sandbox          json.RawMessage  `json:"sandbox"`
+	Thread           resumedThread    `json:"thread"`
+	InitialTurnsPage *threadTurnsPage `json:"initialTurnsPage"`
 }
 
 type threadReadResponse struct {
@@ -406,9 +424,25 @@ type threadStartParams struct {
 }
 
 type threadResumeParams struct {
-	ThreadID       string `json:"threadId"`
-	ApprovalPolicy string `json:"approvalPolicy"`
-	Sandbox        string `json:"sandbox"`
+	ThreadID         string                              `json:"threadId"`
+	ApprovalPolicy   string                              `json:"approvalPolicy"`
+	Sandbox          string                              `json:"sandbox"`
+	ExcludeTurns     bool                                `json:"excludeTurns,omitempty"`
+	InitialTurnsPage *threadResumeInitialTurnsPageParams `json:"initialTurnsPage,omitempty"`
+}
+
+type threadResumeInitialTurnsPageParams struct {
+	Limit         uint32 `json:"limit,omitempty"`
+	SortDirection string `json:"sortDirection,omitempty"`
+	ItemsView     string `json:"itemsView,omitempty"`
+}
+
+type threadTurnsListParams struct {
+	ThreadID      string `json:"threadId"`
+	Cursor        string `json:"cursor,omitempty"`
+	Limit         uint32 `json:"limit,omitempty"`
+	SortDirection string `json:"sortDirection,omitempty"`
+	ItemsView     string `json:"itemsView,omitempty"`
 }
 
 type threadReadParams struct {

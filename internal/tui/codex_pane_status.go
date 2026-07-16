@@ -92,6 +92,14 @@ func codexFooterStatus(snapshot codexapp.Snapshot, now time.Time) string {
 	case snapshot.PendingElicitation != nil:
 		return "Waiting for your decision"
 	}
+	if !snapshot.Busy {
+		switch {
+		case snapshot.HistoryLoading:
+			return "Loading older turns"
+		case strings.TrimSpace(snapshot.HistoryLoadError) != "":
+			return "Older history load failed"
+		}
+	}
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseReconciling:
 		if codexStatusIsCompacting(snapshot.Status) {

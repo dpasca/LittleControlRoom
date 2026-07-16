@@ -158,6 +158,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.closeVisibleCodexCmd()
 	case "pgup":
 		viewportnav.PageUp(&m.codexViewport)
+		if cmd := m.maybeRequestOlderCodexHistoryAtViewportTop(); cmd != nil {
+			return m, cmd
+		}
 		m.maybeLoadFullCodexHistoryAtViewportTop()
 		return m, nil
 	case "pgdown":
@@ -165,6 +168,9 @@ func (m Model) updateCodexMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+u":
 		m.codexViewport.HalfPageUp()
+		if cmd := m.maybeRequestOlderCodexHistoryAtViewportTop(); cmd != nil {
+			return m, cmd
+		}
 		m.maybeLoadFullCodexHistoryAtViewportTop()
 		return m, nil
 	case "ctrl+d":
@@ -919,7 +925,7 @@ func (m *Model) syncCodexViewport(resetToBottom bool) {
 
 	offset := m.codexViewport.YOffset
 	if !m.codexViewportContentMatches(projectPath, m.codexViewport.Width) {
-		if !m.codexViewportContentCanStayStale(projectPath, m.codexViewport.Width, snapshot) {
+		if !m.codexHistoryLoadPending(projectPath) && !m.codexViewportContentCanStayStale(projectPath, m.codexViewport.Width, snapshot) {
 			m.measureAISyncLatency("Embedded viewport sync", projectPath, providerLabel, func() {
 				m.setCodexViewportTranscript(projectPath, snapshot, m.codexViewport.Width)
 			})

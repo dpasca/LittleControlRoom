@@ -90,6 +90,7 @@ func activityPreviewFromInternalEntries(entries []transcriptEntry) []TranscriptE
 	for i := len(entries) - 1; i >= 0 && len(preview) < maxActivityPreviewEntries; i-- {
 		entry, ok := activityPreviewEntry(TranscriptEntry{
 			ItemID:      entries[i].ItemID,
+			TurnID:      entries[i].TurnID,
 			Kind:        entries[i].Kind,
 			Text:        entries[i].Text,
 			DisplayText: entries[i].DisplayText,
@@ -172,6 +173,7 @@ func exportTranscriptEntry(entry transcriptEntry) (TranscriptEntry, bool) {
 	}
 	return TranscriptEntry{
 		ItemID:         entry.ItemID,
+		TurnID:         entry.TurnID,
 		Kind:           entry.Kind,
 		Text:           truncateExportedTranscriptText(text),
 		DisplayText:    truncateExportedTranscriptText(strings.TrimSpace(entry.DisplayText)),
