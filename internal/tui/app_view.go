@@ -208,6 +208,17 @@ func (m Model) View() string {
 			}
 			return m.renderAgentTaskActionOverlay(body, width, height)
 		}
+		if m.browserAttentionDialogCanTakeFocus() {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderBrowserAttentionOverlay(body, width, height)
+		}
 		return body
 	}
 

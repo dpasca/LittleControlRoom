@@ -61,6 +61,9 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 	if !strings.Contains(text, "Use the embedded Playwright MCP tools already wired through Little Control Room") {
 		t.Fatalf("overlay Playwright skill text missing managed browser guidance: %s", text)
 	}
+	if !strings.Contains(text, "lcr_runtime/request_browser_attention") || !strings.Contains(text, "exact page") {
+		t.Fatalf("overlay Playwright skill text missing structured browser-attention handoff guidance: %s", text)
+	}
 
 	runtimeSkillPath := filepath.Join(overlayRoot, "opencode", "skills", "runtime", "SKILL.md")
 	runtimeRaw, err := os.ReadFile(runtimeSkillPath)
@@ -68,7 +71,7 @@ func TestPrepareOpenCodeConfigOverlayShadowsPlaywrightSkillAndSymlinksRest(t *te
 		t.Fatalf("read overlay runtime skill: %v", err)
 	}
 	runtimeText := string(runtimeRaw)
-	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") {
+	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") || !strings.Contains(runtimeText, "request_browser_attention") {
 		t.Fatalf("overlay runtime skill text missing runtime MCP guidance: %s", runtimeText)
 	}
 	if strings.Contains(runtimeText, "original runtime skill") {

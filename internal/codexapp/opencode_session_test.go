@@ -803,6 +803,164 @@ func TestOpenCodeSessionBrowserQuestionMarksWaitingForUser(t *testing.T) {
 	}
 }
 
+func TestOpenCodeSessionManagedBrowserAttentionPersistsUntilUserResponds(t *testing.T) {
+	const attentionPart = `{
+		"id":"part_browser_attention",
+		"sessionID":"ses_test",
+		"messageID":"msg_browser_attention",
+		"type":"tool",
+		"tool":"lcr_runtime_request_browser_attention",
+		"state":{"status":"completed","input":{"message":"Sign in to Gitea, then return here."},"output":"{}"}
+	}`
+	session := newTestOpenCodeSession(t, `[
+		{
+			"info":{
+				"id":"msg_browser_attention",
+				"sessionID":"ses_test",
+				"role":"assistant",
+				"time":{"completed":1}
+			},
+			"parts":[`+attentionPart+`]
+		}
+	]`)
+	session.playwrightPolicy = browserctl.DefaultPolicy()
+	session.busy = true
+	session.activeTurnID = "msg_browser_attention"
+
+	session.handleEventData(`{
+		"type":"message.part.updated",
+		"properties":{"part":` + attentionPart + `}
+	}`)
+
+	snapshot := session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ServerName, "playwright"; got != want {
+		t.Fatalf("snapshot.BrowserActivity.ServerName = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ToolName, "browser_handoff"; got != want {
+		t.Fatalf("snapshot.BrowserActivity.ToolName = %q, want %q", got, want)
+	}
+	if snapshot.BrowserActivity.LastEventAt.IsZero() {
+		t.Fatal("browser handoff should record its request time")
+	}
+	if got, want := snapshot.BrowserActivity.AttentionMessage, "Sign in to Gitea, then return here."; got != want {
+		t.Fatalf("snapshot.BrowserActivity.AttentionMessage = %q, want %q", got, want)
+	}
+	session.mu.Lock()
+	session.busy = false
+	session.mu.Unlock()
+	if err := session.CloseDueToInactivity(); err != nil {
+		t.Fatalf("session.CloseDueToInactivity() error = %v", err)
+	}
+	if session.Snapshot().Closed {
+		t.Fatal("browser handoff awaiting user input should prevent inactivity shutdown")
+	}
+	firstEventAt := snapshot.BrowserActivity.LastEventAt
+
+	// Repeated updates for the same completed tool part must not retrigger the handoff.
+	session.handleEventData(`{
+		"type":"message.part.updated",
+		"properties":{"part":` + attentionPart + `}
+	}`)
+	if got := session.Snapshot().BrowserActivity.LastEventAt; !got.Equal(firstEventAt) {
+		t.Fatalf("duplicate browser handoff LastEventAt = %v, want %v", got, firstEventAt)
+	}
+
+	// OpenCode emits idle and then LCR refreshes history at turn completion. The
+	// structured tool part in history must reconstruct the pending handoff.
+	session.handleEventData(`{"type":"session.idle","properties":{"sessionID":"ses_test"}}`)
+	snapshot = session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State after idle refresh = %q, want %q", got, want)
+	}
+	if err := session.SubmitInput(Submission{Attachments: []Attachment{{Kind: AttachmentLocalImage, Path: filepath.Join(t.TempDir(), "missing.png")}}}); err == nil {
+		t.Fatal("session.SubmitInput() error = nil, want missing attachment failure")
+	}
+	if got, want := session.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State after failed submit = %q, want %q", got, want)
+	}
+
+	if err := session.Submit("The browser step is complete."); err != nil {
+		t.Fatalf("session.Submit() error = %v", err)
+	}
+	snapshot = session.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State after submit = %q, want %q", got, want)
+	}
+	if got := snapshot.BrowserActivity.AttentionMessage; got != "" {
+		t.Fatalf("snapshot.BrowserActivity.AttentionMessage after submit = %q, want empty", got)
+	}
+
+	// A delayed duplicate event from the resolved part must not resurrect the dialog.
+	session.handleEventData(`{
+		"type":"message.part.updated",
+		"properties":{"part":` + attentionPart + `}
+	}`)
+	if got, want := session.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State after stale duplicate = %q, want %q", got, want)
+	}
+	// A history refresh that races ahead of OpenCode persisting the new user
+	// message must not resurrect the already-resolved tool part.
+	session.handleEventData(`{"type":"session.idle","properties":{"sessionID":"ses_test"}}`)
+	if got, want := session.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("snapshot.BrowserActivity.State after stale history refresh = %q, want %q", got, want)
+	}
+}
+
+func TestOpenCodeSessionManagedBrowserAttentionRequiresExactCompletedTool(t *testing.T) {
+	tests := []struct {
+		name   string
+		tool   string
+		status string
+		output string
+	}{
+		{name: "nearby tool name", tool: "lcr_runtime_request_browser_attention_extra", status: "completed"},
+		{name: "different MCP server", tool: "other_request_browser_attention", status: "completed"},
+		{name: "tool still running", tool: "lcr_runtime_request_browser_attention", status: "running"},
+		{name: "completed MCP error", tool: "lcr_runtime_request_browser_attention", status: "completed", output: `,"output":{"isError":true}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := newTestOpenCodeSession(t, "")
+			session.playwrightPolicy = browserctl.DefaultPolicy()
+			toolJSON, err := json.Marshal(tt.tool)
+			if err != nil {
+				t.Fatalf("json.Marshal(tool) error = %v", err)
+			}
+			statusJSON, err := json.Marshal(tt.status)
+			if err != nil {
+				t.Fatalf("json.Marshal(status) error = %v", err)
+			}
+			session.handleEventData(`{
+				"type":"message.part.updated",
+				"properties":{"part":{
+					"id":"part_attention_candidate",
+					"sessionID":"ses_test",
+					"messageID":"msg_attention_candidate",
+					"type":"tool",
+					"tool":` + string(toolJSON) + `,
+					"state":{"status":` + string(statusJSON) + tt.output + `}
+				}}
+			}`)
+
+			if got, want := session.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+				t.Fatalf("snapshot.BrowserActivity.State = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestOpenCodeBrowserAttentionMessageUsesStructuredInputAndFallback(t *testing.T) {
+	if got, want := openCodeBrowserAttentionMessage(json.RawMessage(`{"message":"  Complete MFA  "}`)), "Complete MFA"; got != want {
+		t.Fatalf("openCodeBrowserAttentionMessage() = %q, want %q", got, want)
+	}
+	if got, want := openCodeBrowserAttentionMessage(json.RawMessage(`{}`)), "Complete the requested step in the managed browser."; got != want {
+		t.Fatalf("openCodeBrowserAttentionMessage() fallback = %q, want %q", got, want)
+	}
+}
+
 func TestOpenCodeSessionBusyStatusKeepsExistingBusySince(t *testing.T) {
 	session := newTestOpenCodeSession(t, "")
 	startedAt := time.Date(2026, 3, 22, 12, 0, 0, 0, time.UTC)
@@ -1095,6 +1253,8 @@ func newTestOpenCodeSessionWithStatus(t *testing.T, messagesResponse, statusResp
 			_, _ = w.Write([]byte(messagesResponse))
 		case "/session/status":
 			_, _ = w.Write([]byte(statusResponse))
+		case "/session/ses_test/prompt_async":
+			_, _ = w.Write([]byte(`{}`))
 		case "/permission", "/question":
 			_, _ = w.Write([]byte(`[]`))
 		default:

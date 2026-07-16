@@ -10,6 +10,10 @@ import (
 )
 
 func prepareOpenCodeConfigOverlay(dataDir, requestedConfigRoot string) (string, error) {
+	return prepareOpenCodeConfigOverlayForLaunch(dataDir, requestedConfigRoot, true, true)
+}
+
+func prepareOpenCodeConfigOverlayForLaunch(dataDir, requestedConfigRoot string, shadowPlaywright, shadowRuntime bool) (string, error) {
 	sourceRoot, err := effectiveOpenCodeConfigRoot(requestedConfigRoot)
 	if err != nil {
 		return "", err
@@ -20,21 +24,21 @@ func prepareOpenCodeConfigOverlay(dataDir, requestedConfigRoot string) (string, 
 		return "", fmt.Errorf("create opencode config overlay: %w", err)
 	}
 	overlayConfigRoot := filepath.Join(overlayXDGRoot, "opencode")
-	if err := populateOpenCodeConfigOverlay(overlayConfigRoot, sourceRoot); err != nil {
+	if err := populateOpenCodeConfigOverlay(overlayConfigRoot, sourceRoot, shadowPlaywright, shadowRuntime); err != nil {
 		_ = os.RemoveAll(overlayXDGRoot)
 		return "", err
 	}
 	return overlayXDGRoot, nil
 }
 
-func populateOpenCodeConfigOverlay(overlayConfigRoot, sourceConfigRoot string) error {
+func populateOpenCodeConfigOverlay(overlayConfigRoot, sourceConfigRoot string, shadowPlaywright, shadowRuntime bool) error {
 	if err := os.MkdirAll(overlayConfigRoot, 0o700); err != nil {
 		return fmt.Errorf("mkdir opencode overlay root: %w", err)
 	}
 	if err := mirrorOpenCodeConfigEntries(overlayConfigRoot, sourceConfigRoot); err != nil {
 		return err
 	}
-	if err := installShadowPlaywrightSkill(overlayConfigRoot, sourceConfigRoot); err != nil {
+	if err := installEmbeddedSkillOverrides(overlayConfigRoot, sourceConfigRoot, shadowPlaywright, shadowRuntime); err != nil {
 		return err
 	}
 	return nil

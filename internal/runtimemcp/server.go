@@ -12,14 +12,17 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/browserctl"
 	"lcroom/internal/procinspect"
 	"lcroom/internal/projectrun"
 )
 
 const (
-	serverName               = "little-control-room-runtime"
-	defaultProtocolVersion   = "2024-11-05"
-	processInspectionTimeout = 900 * time.Millisecond
+	serverName                                 = "little-control-room-runtime"
+	defaultProtocolVersion                     = "2024-11-05"
+	processInspectionTimeout                   = 900 * time.Millisecond
+	managedBrowserAttentionHeartbeatMaxAge     = 5 * time.Second
+	managedBrowserAttentionMessageMaxRuneCount = 800
 )
 
 type Options struct {
@@ -187,9 +190,96 @@ func (s *Server) handleToolCall(ctx context.Context, raw json.RawMessage) (toolC
 		}
 		report, isErr := s.stopProcess(ctx, req)
 		return jsonToolResult(report, isErr)
+	case "request_browser_attention":
+		var req requestBrowserAttentionArgs
+		if err := json.Unmarshal(args, &req); err != nil {
+			return toolCallResult{}, fmt.Errorf("decode request_browser_attention args: %w", err)
+		}
+		report, isErr := s.requestBrowserAttention(req)
+		return jsonToolResult(report, isErr)
 	default:
 		return toolCallResult{}, fmt.Errorf("unknown runtime tool: %s", name)
 	}
+}
+
+func (s *Server) requestBrowserAttention(req requestBrowserAttentionArgs) (map[string]any, bool) {
+	attentionMessage := strings.TrimSpace(req.Message)
+	if attentionMessage == "" {
+		return map[string]any{
+			"success": false,
+			"error":   "message is required so Little Control Room can explain the browser step to the user",
+		}, true
+	}
+	if len([]rune(attentionMessage)) > managedBrowserAttentionMessageMaxRuneCount {
+		return map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("message must be at most %d characters", managedBrowserAttentionMessageMaxRuneCount),
+		}, true
+	}
+	sessionKey := strings.TrimSpace(s.sessionKey)
+	if sessionKey == "" {
+		return map[string]any{
+			"success": false,
+			"error":   "managed browser attention is unavailable because this embedded session has no browser session key",
+		}, true
+	}
+
+	var state browserctl.ManagedPlaywrightState
+	err := browserctl.WithManagedPlaywrightStateLock(s.dataDir, sessionKey, func() error {
+		var readErr error
+		state, readErr = browserctl.ReadManagedPlaywrightState(s.dataDir, sessionKey)
+		return readErr
+	})
+	if err != nil {
+		return map[string]any{
+			"success": false,
+			"error":   "managed browser attention is unavailable until a Playwright browser page has opened for this session",
+		}, true
+	}
+	state = state.Normalize()
+	if state.SessionKey != sessionKey {
+		return map[string]any{
+			"success": false,
+			"error":   "managed browser state belongs to a different embedded session",
+		}, true
+	}
+	if filepath.Clean(state.ProjectPath) != s.projectPath {
+		return map[string]any{
+			"success": false,
+			"error":   "managed browser state belongs to a different project",
+		}, true
+	}
+	if state.Provider != "" && !strings.EqualFold(state.Provider, s.provider) {
+		return map[string]any{
+			"success": false,
+			"error":   "managed browser state belongs to a different provider",
+		}, true
+	}
+	if !state.RevealSupported || state.BrowserPID <= 0 {
+		return map[string]any{
+			"success": false,
+			"error":   "managed browser window is not available for this session yet; navigate with Playwright first, then retry",
+		}, true
+	}
+	now := time.Now()
+	heartbeatAge := now.Sub(state.UpdatedAt)
+	if state.UpdatedAt.IsZero() || heartbeatAge < 0 || heartbeatAge > managedBrowserAttentionHeartbeatMaxAge {
+		return map[string]any{
+			"success": false,
+			"error":   "managed browser is no longer attached to this session; reconnect before requesting browser attention",
+		}, true
+	}
+
+	return map[string]any{
+		"success":          true,
+		"message":          "Little Control Room recorded the managed-browser handoff. Stop this turn now and do not call Playwright again until the user sends a new message.",
+		"requested_action": attentionMessage,
+		"project_path":     s.projectPath,
+		"provider":         s.provider,
+		"session_key":      sessionKey,
+		"browser_pid":      state.BrowserPID,
+		"reveal_supported": state.RevealSupported,
+	}, false
 }
 
 func (s *Server) startProcess(ctx context.Context, req startProcessArgs) (map[string]any, bool) {
@@ -430,6 +520,22 @@ func runtimeTools() []mcpTool {
 				},
 			},
 		},
+		{
+			Name:        "request_browser_attention",
+			Description: "Notify Little Control Room that the already-open managed Playwright page for this same embedded session needs human interaction, such as login, MFA, consent, or CAPTCHA. Call this only after navigating to the exact page with Playwright. Provide a short user-facing instruction. On success, stop the current turn and do not call Playwright again until the user sends a new message. Do not open a separate browser context.",
+			InputSchema: map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"message": map[string]any{
+						"type":        "string",
+						"description": "Short user-facing instruction describing the exact browser action needed, for example: Sign in to Gitea in the managed browser, then return to Little Control Room.",
+						"maxLength":   managedBrowserAttentionMessageMaxRuneCount,
+					},
+				},
+				"required": []string{"message"},
+			},
+		},
 	}
 }
 
@@ -651,4 +757,8 @@ type startProcessArgs struct {
 
 type stopProcessArgs struct {
 	ProcessID string `json:"process_id"`
+}
+
+type requestBrowserAttentionArgs struct {
+	Message string `json:"message"`
 }

@@ -1,8 +1,11 @@
 package browserctl
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -366,14 +369,20 @@ func TestMacApplicationProcessVisibilityScriptRaisesTargetWindowWhenFrontmost(t 
 	}
 	script := strings.Join(args, "\n")
 	for _, want := range []string{
-		"unix id is 49916",
-		"set visible of targetProcess to true",
-		`perform action "AXRaise" of window 1 of targetProcess`,
-		"set frontmost of targetProcess to true",
+		`-l`,
+		`JavaScript`,
+		`const pid = 49916`,
+		`setAXBoolean("AXHidden", $.kCFBooleanFalse)`,
+		`setAXBoolean("AXFrontmost", $.kCFBooleanTrue)`,
+		`NSRunningApplication.runningApplicationWithProcessIdentifier(pid)`,
+		`runningApplication.activateWithOptions(activationOptions)`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
+	}
+	if strings.Contains(script, "System Events") {
+		t.Fatalf("PID reveal must not depend on System Events:\n%s", script)
 	}
 }
 
@@ -384,18 +393,58 @@ func TestMacApplicationProcessDelayedRaiseScriptRepeatsTargetWindowRaise(t *test
 	}
 	script := strings.Join(args, "\n")
 	for _, want := range []string{
-		"delay 0.300",
-		"unix id is 49916",
-		"set visible of targetProcess to true",
-		`perform action "AXRaise" of window 1 of targetProcess`,
-		"set frontmost of targetProcess to true",
+		`$.NSThread.sleepForTimeInterval(0.300)`,
+		`const pid = 49916`,
+		`setAXBoolean("AXHidden", $.kCFBooleanFalse)`,
+		`setAXBoolean("AXFrontmost", $.kCFBooleanTrue)`,
+		`runningApplication.activateWithOptions(activationOptions)`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
 		}
 	}
-	if got := strings.Count(script, `perform action "AXRaise" of window 1 of targetProcess`); got != 2 {
-		t.Fatalf("raise count = %d, want 2:\n%s", got, script)
+	if got := strings.Count(script, `updateProcessVisibility();`); got != 2 {
+		t.Fatalf("visibility update count = %d, want 2:\n%s", got, script)
+	}
+	if strings.Contains(script, "System Events") {
+		t.Fatalf("delayed PID reveal must not depend on System Events:\n%s", script)
+	}
+}
+
+func TestSetMacApplicationProcessVisibleBoundsImmediateAndDelayedReveal(t *testing.T) {
+	type invocation struct {
+		args    []string
+		timeout time.Duration
+	}
+	invocations := make(chan invocation, 2)
+	previousRunner := managedPlaywrightMacScriptRunner
+	managedPlaywrightMacScriptRunner = func(args []string, timeout time.Duration) error {
+		invocations <- invocation{args: append([]string(nil), args...), timeout: timeout}
+		return nil
+	}
+	t.Cleanup(func() { managedPlaywrightMacScriptRunner = previousRunner })
+
+	if err := setMacApplicationProcessVisible(49916, true, true); err != nil {
+		t.Fatalf("setMacApplicationProcessVisible() error = %v", err)
+	}
+
+	for index := 0; index < 2; index++ {
+		select {
+		case call := <-invocations:
+			if call.timeout != managedPlaywrightMacScriptTimeout {
+				t.Fatalf("invocation %d timeout = %s, want %s", index, call.timeout, managedPlaywrightMacScriptTimeout)
+			}
+			script := strings.Join(call.args, "\n")
+			wantUpdates := 1
+			if index == 1 {
+				wantUpdates = 2
+			}
+			if got := strings.Count(script, `updateProcessVisibility();`); got != wantUpdates {
+				t.Fatalf("invocation %d visibility update count = %d, want %d:\n%s", index, got, wantUpdates, script)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for invocation %d", index)
+		}
 	}
 }
 
@@ -448,10 +497,79 @@ func TestMacApplicationProcessVisibilityScriptDoesNotRaiseWindowWhenHiding(t *te
 		t.Fatalf("macApplicationProcessVisibilityScript() error = %v", err)
 	}
 	script := strings.Join(args, "\n")
-	if strings.Contains(script, "AXRaise") {
-		t.Fatalf("hide script should not raise windows:\n%s", script)
+	for _, unwanted := range []string{"AXFrontmost", "activateWithOptions", "System Events"} {
+		if strings.Contains(script, unwanted) {
+			t.Fatalf("hide script should not contain %q:\n%s", unwanted, script)
+		}
 	}
-	if !strings.Contains(script, "set visible of targetProcess to false") {
+	if !strings.Contains(script, `setAXBoolean("AXHidden", $.kCFBooleanTrue)`) {
 		t.Fatalf("script should hide the target process:\n%s", script)
+	}
+}
+
+func TestRunBoundedMacApplicationScriptIncludesOSAScriptDiagnostics(t *testing.T) {
+	err := runBoundedMacApplicationScriptWithCommand(
+		[]string{"-e", "ignored"},
+		time.Second,
+		macApplicationScriptHelperCommand("failure"),
+	)
+	if err == nil {
+		t.Fatal("runBoundedMacApplicationScriptWithCommand() error = nil")
+	}
+	for _, want := range []string{"osascript failed", "Application isn’t running", "(-600)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestRunBoundedMacApplicationScriptTerminatesHungCommand(t *testing.T) {
+	// Leave enough time for the helper test binary to start even when Go is
+	// running several package test processes concurrently. The helper itself
+	// sleeps for ten seconds, so this still exercises the timeout path.
+	const timeout = 250 * time.Millisecond
+	startedAt := time.Now()
+	err := runBoundedMacApplicationScriptWithCommand(
+		[]string{"-e", "ignored"},
+		timeout,
+		macApplicationScriptHelperCommand("hang"),
+	)
+	elapsed := time.Since(startedAt)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runBoundedMacApplicationScriptWithCommand() error = %v, want deadline exceeded", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("hung command returned after %s, want bounded execution", elapsed)
+	}
+	if !strings.Contains(err.Error(), "started helper before hanging") {
+		t.Fatalf("timeout error should preserve command output: %v", err)
+	}
+}
+
+func macApplicationScriptHelperCommand(scenario string) macApplicationCommandFactory {
+	return func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestMacApplicationScriptHelperProcess")
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_MAC_APPLICATION_SCRIPT_HELPER=1",
+			"MAC_APPLICATION_SCRIPT_HELPER_SCENARIO="+scenario,
+		)
+		return cmd
+	}
+}
+
+func TestMacApplicationScriptHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_MAC_APPLICATION_SCRIPT_HELPER") != "1" {
+		return
+	}
+	switch os.Getenv("MAC_APPLICATION_SCRIPT_HELPER_SCENARIO") {
+	case "failure":
+		_, _ = fmt.Fprintln(os.Stderr, "execution error: System Events got an error: Application isn’t running. (-600)")
+		os.Exit(17)
+	case "hang":
+		_, _ = fmt.Fprintln(os.Stderr, "started helper before hanging")
+		time.Sleep(10 * time.Second)
+		os.Exit(0)
+	default:
+		os.Exit(0)
 	}
 }

@@ -41,6 +41,11 @@ type openCodeSession struct {
 	playwrightPolicy         browserctl.Policy
 	managedBrowserSessionKey string
 	browserActivity          browserctl.SessionActivity
+	browserHandoffPending    bool
+	browserHandoffAt         time.Time
+	browserHandoffPartID     string
+	browserHandoffResolved   map[string]struct{}
+	browserAttentionMessage  string
 	currentBrowserPageURL    string
 	openCodeConfigOverlay    string
 	runtimeManager           *projectrun.Manager
@@ -489,6 +494,7 @@ func (s *openCodeSession) SubmitInput(input Submission) error {
 	}
 
 	s.mu.Lock()
+	s.resolveBrowserHandoffLocked()
 	s.setBusyLocked(false)
 	if model != "" {
 		s.model = model
@@ -703,6 +709,7 @@ func (s *openCodeSession) Close() error {
 	s.clearBusyLocked()
 	s.pendingApproval = nil
 	s.pendingToolInput = nil
+	s.resolveBrowserHandoffLocked()
 	s.status = "OpenCode session closed"
 	cmd := s.cmd
 	cancel := s.cancel
@@ -726,12 +733,13 @@ func (s *openCodeSession) CloseDueToInactivity() error {
 		s.mu.Unlock()
 		return nil
 	}
-	if s.busy || s.pendingApproval != nil || s.pendingToolInput != nil {
+	if s.busy || s.pendingApproval != nil || s.pendingToolInput != nil || s.browserHandoffPending {
 		s.touchLocked()
 		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
+	s.resolveBrowserHandoffLocked()
 	s.status = idleShutdownNotice
 	s.lastSystemNotice = idleShutdownNotice
 	s.appendEntryLocked("", TranscriptSystem, idleShutdownNotice)
@@ -785,7 +793,12 @@ func (s *openCodeSession) ReconcileBusyState() error {
 func (s *openCodeSession) start(parent context.Context, req LaunchRequest) error {
 	xdgConfigHome := ""
 	if shouldPrepareEmbeddedSkillOverlay(req) {
-		overlay, err := prepareOpenCodeConfigOverlay(req.AppDataDir, "")
+		overlay, err := prepareOpenCodeConfigOverlayForLaunch(
+			req.AppDataDir,
+			"",
+			shouldShadowPlaywrightSkill(req.PlaywrightPolicy),
+			shouldShadowRuntimeSkill(req),
+		)
 		if err != nil {
 			return err
 		}
@@ -949,6 +962,7 @@ func (s *openCodeSession) refreshSessionState(parent context.Context, external b
 		s.clearBusyLocked()
 		s.setBrowserActivityIdleLocked()
 		if latestError != "" {
+			s.resolveBrowserHandoffLocked()
 			s.lastError = latestError
 			s.lastSystemNotice = latestError
 			s.status = latestError
@@ -1073,11 +1087,20 @@ func (s *openCodeSession) refreshPendingRequests(ctx context.Context) error {
 }
 
 func (s *openCodeSession) rebuildTranscriptLocked(messages []openCodeMessage) (string, bool) {
+	resolvedBrowserHandoffs := s.browserHandoffResolved
+	if resolvedBrowserHandoffs == nil {
+		resolvedBrowserHandoffs = make(map[string]struct{})
+	}
 	s.entries = nil
 	s.entryIndex = make(map[string]int)
 	s.messageRole = make(map[string]string)
 	s.partKind = make(map[string]TranscriptKind)
 	s.partType = make(map[string]string)
+	s.browserHandoffPending = false
+	s.browserHandoffAt = time.Time{}
+	s.browserHandoffPartID = ""
+	s.browserHandoffResolved = resolvedBrowserHandoffs
+	s.browserAttentionMessage = ""
 	s.browserActivity = browserctl.DefaultSessionActivity(s.playwrightPolicy)
 	s.currentBrowserPageURL = ""
 	s.invalidateTranscriptCacheLocked()
@@ -1130,7 +1153,11 @@ func (s *openCodeSession) applyMessageInfoLocked(info openCodeMessageInfo) strin
 	if messageID != "" {
 		s.messageRole[messageID] = strings.TrimSpace(info.Role)
 	}
+	if strings.EqualFold(strings.TrimSpace(info.Role), "user") {
+		s.resolveBrowserHandoffLocked()
+	}
 	if summary, detail := renderOpenCodeMessageError(info); summary != "" {
+		s.resolveBrowserHandoffLocked()
 		s.upsertItemEntryLocked(messageID, TranscriptError, detail)
 		return summary
 	}
@@ -1174,15 +1201,153 @@ func (s *openCodeSession) applyMessageInfoLocked(info openCodeMessageInfo) strin
 }
 
 func (s *openCodeSession) setBrowserActivityIdleLocked() {
+	if s.browserHandoffPending {
+		s.setBrowserHandoffWaitingLocked()
+		return
+	}
 	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
 	activity.LastEventAt = s.browserActivity.Normalize().LastEventAt
 	s.browserActivity = activity.Normalize()
+}
+
+func isOpenCodeManagedBrowserAttentionTool(rawTool string) bool {
+	serverName, toolName := openCodeMCPToolCallInfo(rawTool)
+	return serverName == "lcr_runtime" && toolName == "request_browser_attention"
+}
+
+func (s *openCodeSession) setBrowserHandoffWaitingLocked() {
+	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	activity.State = browserctl.SessionActivityStateWaitingForUser
+	activity.ServerName = "playwright"
+	activity.ToolName = "browser_handoff"
+	activity.AttentionMessage = s.browserAttentionMessage
+	activity.LastEventAt = s.browserHandoffAt
+	s.browserActivity = activity.Normalize()
+}
+
+func (s *openCodeSession) resolveBrowserHandoffLocked() {
+	partID := strings.TrimSpace(s.browserHandoffPartID)
+	if !s.browserHandoffPending && partID == "" {
+		return
+	}
+	if partID != "" {
+		if s.browserHandoffResolved == nil {
+			s.browserHandoffResolved = make(map[string]struct{})
+		}
+		s.browserHandoffResolved[partID] = struct{}{}
+	}
+	s.browserHandoffPending = false
+	s.browserHandoffAt = time.Time{}
+	s.browserHandoffPartID = ""
+	s.browserAttentionMessage = ""
+	s.setBrowserActivityIdleLocked()
+}
+
+func (s *openCodeSession) applyBrowserAttentionToolStateLocked(raw json.RawMessage) {
+	var payload struct {
+		Type  string `json:"type"`
+		ID    string `json:"id"`
+		Tool  string `json:"tool"`
+		State struct {
+			Status  string          `json:"status"`
+			IsError bool            `json:"isError"`
+			Input   json.RawMessage `json:"input"`
+			Output  json.RawMessage `json:"output"`
+			Result  json.RawMessage `json:"result"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil || strings.TrimSpace(payload.Type) != "tool" {
+		return
+	}
+	if !isOpenCodeManagedBrowserAttentionTool(payload.Tool) {
+		return
+	}
+
+	partID := strings.TrimSpace(payload.ID)
+	if partID != "" {
+		if _, resolved := s.browserHandoffResolved[partID]; resolved {
+			return
+		}
+	}
+
+	switch strings.TrimSpace(payload.State.Status) {
+	case "completed":
+		if payload.State.IsError || openCodeStructuredToolResultIsError(payload.State.Output) || openCodeStructuredToolResultIsError(payload.State.Result) {
+			if partID == "" || strings.TrimSpace(s.browserHandoffPartID) == partID {
+				s.resolveBrowserHandoffLocked()
+			} else if partID != "" {
+				if s.browserHandoffResolved == nil {
+					s.browserHandoffResolved = make(map[string]struct{})
+				}
+				s.browserHandoffResolved[partID] = struct{}{}
+			}
+			return
+		}
+		if s.browserHandoffPending && strings.TrimSpace(s.browserHandoffPartID) == partID {
+			return
+		}
+		s.browserHandoffPending = true
+		s.browserHandoffAt = time.Now()
+		s.browserHandoffPartID = partID
+		s.browserAttentionMessage = openCodeBrowserAttentionMessage(payload.State.Input)
+		s.status = "Browser needs attention"
+		s.lastSystemNotice = "OpenCode requested browser input"
+		s.setBrowserHandoffWaitingLocked()
+	case "error", "failed":
+		if partID != "" {
+			if s.browserHandoffResolved == nil {
+				s.browserHandoffResolved = make(map[string]struct{})
+			}
+			s.browserHandoffResolved[partID] = struct{}{}
+		}
+		if partID == "" || strings.TrimSpace(s.browserHandoffPartID) == partID {
+			s.resolveBrowserHandoffLocked()
+		}
+	}
+}
+
+func openCodeBrowserAttentionMessage(raw json.RawMessage) string {
+	var input struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &input); err == nil {
+		if message := strings.TrimSpace(input.Message); message != "" {
+			return message
+		}
+	}
+	return "Complete the requested step in the managed browser."
+}
+
+func openCodeStructuredToolResultIsError(raw json.RawMessage) bool {
+	raw = json.RawMessage(bytes.TrimSpace(raw))
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return false
+	}
+	var envelope struct {
+		IsError bool `json:"isError"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.IsError {
+		return true
+	}
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return false
+	}
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" || !json.Valid([]byte(encoded)) {
+		return false
+	}
+	return openCodeStructuredToolResultIsError(json.RawMessage(encoded))
 }
 
 func (s *openCodeSession) reconcileBrowserInteractiveStateLocked() {
 	activity := s.browserActivity.Normalize()
 	if !activity.Enabled() {
 		s.browserActivity = activity
+		return
+	}
+	if s.browserHandoffPending {
+		s.setBrowserHandoffWaitingLocked()
 		return
 	}
 
@@ -1319,6 +1484,7 @@ func (s *openCodeSession) applyPartLocked(role string, raw json.RawMessage, repl
 		}
 	}
 	s.applyPlaywrightToolStateLocked(raw)
+	s.applyBrowserAttentionToolStateLocked(raw)
 	if strings.TrimSpace(text) == "" {
 		return
 	}
@@ -1550,6 +1716,7 @@ func (s *openCodeSession) waitForExit() {
 		s.clearBusyLocked()
 		s.pendingApproval = nil
 		s.pendingToolInput = nil
+		s.resolveBrowserHandoffLocked()
 		if err != nil {
 			s.lastError = err.Error()
 			s.lastSystemNotice = "OpenCode server exited with error"

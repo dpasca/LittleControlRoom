@@ -29,7 +29,12 @@ func (s *appServerSession) start(req LaunchRequest) error {
 	if _, err := sanitizeCodexStateRolloutPathsOnce(sourceHome); err != nil {
 		s.appendCodexHomeCleanupWarning(sourceHome, err)
 	}
-	codexHomeOverlay, err := prepareCodexHomeOverlayWithOptions(req.AppDataDir, sourceHome, shouldPrepareEmbeddedSkillOverlay(req))
+	codexHomeOverlay, err := prepareCodexHomeOverlayForLaunch(
+		req.AppDataDir,
+		sourceHome,
+		shouldShadowPlaywrightSkill(req.PlaywrightPolicy),
+		shouldShadowRuntimeSkill(req),
+	)
 	if err != nil {
 		return err
 	}
@@ -1027,6 +1032,14 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	}
 	if itemType == "mcpToolCall" {
 		s.recordCodexMCPToolUsageLocked(itemID, msg.Item)
+		if isManagedBrowserAttentionToolCall(msg.Item) {
+			s.browserHandoffPending = true
+			s.browserHandoffAt = time.Now()
+			s.browserHandoffMessage = managedBrowserAttentionMessage(msg.Item)
+			s.status = "Browser needs attention"
+			s.lastSystemNotice = "Codex requested browser input"
+			s.refreshBrowserActivityLocked(s.browserHandoffAt)
+		}
 		if call, ok := s.browserToolCallForItem(msg.Item); ok {
 			if s.browserToolCalls == nil {
 				s.browserToolCalls = make(map[string]browserToolCall)

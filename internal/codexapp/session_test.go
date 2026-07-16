@@ -84,6 +84,72 @@ func TestHydrateResumedThreadBuildsTranscript(t *testing.T) {
 	}
 }
 
+func TestHydrateResumedThreadRestoresOnlyUnresolvedBrowserHandoff(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+
+	thread := resumedThread{
+		ID:     "thread_browser_handoff_resume",
+		Status: resumedThreadStatus{Type: "idle"},
+		Turns: []resumedTurn{{
+			ID:     "turn_browser_handoff",
+			Status: "completed",
+			Items: []map[string]json.RawMessage{
+				{
+					"id":      json.RawMessage(`"item_user"`),
+					"type":    json.RawMessage(`"userMessage"`),
+					"content": json.RawMessage(`[{"type":"text","text":"Open the admin page"}]`),
+				},
+				{
+					"id":        json.RawMessage(`"item_browser_handoff"`),
+					"type":      json.RawMessage(`"mcpToolCall"`),
+					"server":    json.RawMessage(`"lcr_runtime"`),
+					"tool":      json.RawMessage(`"request_browser_attention"`),
+					"arguments": json.RawMessage(`{"message":"Sign in to Gitea in the managed browser."}`),
+					"status":    json.RawMessage(`"completed"`),
+				},
+			},
+		}},
+	}
+	s.hydrateResumedThread(thread)
+	snapshot := s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("restored browser activity = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.AttentionMessage, "Sign in to Gitea in the managed browser."; got != want {
+		t.Fatalf("restored browser message = %q, want %q", got, want)
+	}
+
+	thread.Turns = append(thread.Turns, resumedTurn{
+		ID:     "turn_after_browser_handoff",
+		Status: "completed",
+		Items: []map[string]json.RawMessage{{
+			"id":      json.RawMessage(`"item_user_done"`),
+			"type":    json.RawMessage(`"userMessage"`),
+			"content": json.RawMessage(`[{"type":"text","text":"Login is finished"}]`),
+		}},
+	})
+	s.hydrateResumedThread(thread)
+	snapshot = s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("resolved browser activity = %q, want %q", got, want)
+	}
+	if snapshot.BrowserActivity.AttentionMessage != "" {
+		t.Fatalf("resolved browser message = %q, want empty", snapshot.BrowserActivity.AttentionMessage)
+	}
+}
+
 func TestHydrateResumedThreadPreservesToolProgressAcrossReconnect(t *testing.T) {
 	s := &appServerSession{
 		projectPath:       "/tmp/demo",
@@ -1422,6 +1488,202 @@ func TestHandleItemCompletedTracksCurrentPlaywrightPageURL(t *testing.T) {
 	}
 }
 
+func TestRuntimeBrowserAttentionToolPersistsUntilUserResponds(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		threadID:         "thread_browser_handoff",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser_handoff",
+			"type": "mcpToolCall",
+			"server": "lcr_runtime",
+			"tool": "request_browser_attention",
+			"arguments": {"message":"Sign in to Gitea in the managed browser."},
+			"status": "completed"
+		}
+	}`))
+
+	snapshot := s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("browser activity state = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ServerName, "playwright"; got != want {
+		t.Fatalf("browser activity server = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.ToolName, "browser_handoff"; got != want {
+		t.Fatalf("browser activity tool = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.AttentionMessage, "Sign in to Gitea in the managed browser."; got != want {
+		t.Fatalf("browser attention message = %q, want %q", got, want)
+	}
+	if snapshot.BrowserActivity.LastEventAt.IsZero() {
+		t.Fatal("browser handoff should record its request time")
+	}
+
+	s.handleNotification("thread/status/changed", json.RawMessage(`{
+		"threadId": "thread_browser_handoff",
+		"status": {"type":"idle"}
+	}`))
+	snapshot = s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("browser activity after turn idle = %q, want %q", got, want)
+	}
+
+	s.rpcCallHook = func(_ context.Context, method string, _ any) (json.RawMessage, error) {
+		if method != "turn/start" {
+			t.Fatalf("method = %q, want turn/start", method)
+		}
+		return json.RawMessage(`{"turn":{"id":"turn_after_browser_handoff"}}`), nil
+	}
+	if err := s.Submit("done"); err != nil {
+		t.Fatalf("Submit() error = %v", err)
+	}
+	snapshot = s.Snapshot()
+	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("browser activity after user response = %q, want %q", got, want)
+	}
+}
+
+func TestCompletedRuntimeBrowserAttentionWithErrorDoesNotCreateBrowserWait(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		threadID:         "thread_error_browser_handoff",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_error_browser_handoff",
+			"type": "mcpToolCall",
+			"server": "lcr_runtime",
+			"tool": "request_browser_attention",
+			"arguments": {"message":"Finish login."},
+			"status": "completed",
+			"error": {"message":"managed browser is no longer attached"}
+		}
+	}`))
+
+	if got, want := s.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("browser activity state = %q, want %q", got, want)
+	}
+}
+
+func TestFailedRuntimeBrowserAttentionToolDoesNotCreateBrowserWait(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		threadID:         "thread_failed_browser_handoff",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_failed_browser_handoff",
+			"type": "mcpToolCall",
+			"server": "lcr_runtime",
+			"tool": "request_browser_attention",
+			"status": "failed"
+		}
+	}`))
+
+	if got, want := s.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateIdle; got != want {
+		t.Fatalf("browser activity state = %q, want %q", got, want)
+	}
+}
+
+func TestRuntimeBrowserAttentionPersistsWhenUserResponseCannotStart(t *testing.T) {
+	policy := browserctl.Policy{
+		ManagementMode:     browserctl.ManagementModeManaged,
+		DefaultBrowserMode: browserctl.BrowserModeHeadless,
+		LoginMode:          browserctl.LoginModePromote,
+		IsolationScope:     browserctl.IsolationScopeTask,
+	}
+	s := &appServerSession{
+		projectPath:      "/tmp/demo",
+		threadID:         "thread_browser_handoff_retry",
+		entryIndex:       make(map[string]int),
+		notify:           func() {},
+		playwrightPolicy: policy,
+		browserActivity:  browserctl.DefaultSessionActivity(policy),
+	}
+	s.handleItemCompleted(json.RawMessage(`{
+		"item": {
+			"id": "item_browser_handoff_retry",
+			"type": "mcpToolCall",
+			"server": "lcr_runtime",
+			"tool": "request_browser_attention",
+			"arguments": {"message":"Finish login in the managed browser."},
+			"status": "completed"
+		}
+	}`))
+	s.rpcCallHook = func(_ context.Context, method string, _ any) (json.RawMessage, error) {
+		if method != "turn/start" {
+			t.Fatalf("method = %q, want turn/start", method)
+		}
+		return nil, errors.New("transport unavailable")
+	}
+
+	if err := s.Submit("done"); err == nil {
+		t.Fatal("Submit() error = nil, want transport failure")
+	}
+	if got, want := s.Snapshot().BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
+		t.Fatalf("browser activity after failed response = %q, want %q", got, want)
+	}
+}
+
+func TestRuntimeBrowserAttentionPreventsInactivityClose(t *testing.T) {
+	prior := time.Now().Add(-2 * time.Minute)
+	s := &appServerSession{
+		projectPath:           "/tmp/demo",
+		threadID:              "thread_browser_handoff_inactivity",
+		entryIndex:            make(map[string]int),
+		notify:                func() {},
+		lastActivityAt:        prior,
+		browserHandoffPending: true,
+		browserHandoffAt:      prior,
+	}
+
+	if err := s.CloseDueToInactivity(); err != nil {
+		t.Fatalf("CloseDueToInactivity() error = %v", err)
+	}
+	snapshot := s.Snapshot()
+	if snapshot.Closed {
+		t.Fatal("browser-attention wait should not close for inactivity")
+	}
+	if !snapshot.LastActivityAt.After(prior) {
+		t.Fatalf("last activity = %s, want after %s", snapshot.LastActivityAt, prior)
+	}
+}
+
 func TestPlaywrightElicitationUpdatesBrowserActivity(t *testing.T) {
 	policy := browserctl.Policy{
 		ManagementMode:     browserctl.ManagementModeManaged,
@@ -1469,6 +1731,9 @@ func TestPlaywrightElicitationUpdatesBrowserActivity(t *testing.T) {
 	}
 	if got, want := snapshot.LastSystemNotice, "Playwright requested browser input"; got != want {
 		t.Fatalf("last system notice = %q, want %q", got, want)
+	}
+	if got, want := snapshot.BrowserActivity.AttentionMessage, "Log in to continue"; got != want {
+		t.Fatalf("browser attention message = %q, want %q", got, want)
 	}
 	if snapshot.PendingElicitation == nil {
 		t.Fatalf("pending elicitation = nil, want request")

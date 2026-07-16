@@ -125,10 +125,17 @@ func (m Model) openManagedBrowserLogin(projectPath string, provider codexapp.Pro
 func (m Model) revealManagedBrowserCmd(managedSessionKey string, ref browserctl.SessionRef, successStatus string) tea.Cmd {
 	controller := m.ensureBrowserController()
 	dataDir := m.appDataDir()
+	managedSessionKey = strings.TrimSpace(managedSessionKey)
+	ref = ref.Normalize()
 	return func() tea.Msg {
 		state, err := revealManagedBrowserSession(dataDir, managedSessionKey)
 		if err != nil {
-			msg := browserOpenMsg{err: err}
+			msg := browserOpenMsg{
+				projectPath:              ref.ProjectPath,
+				err:                      err,
+				managedBrowserRef:        ref,
+				managedBrowserSessionKey: managedSessionKey,
+			}
 			if controller != nil {
 				msg.browserLeaseSnapshot = controller.ReleaseInteractive(ref)
 				msg.browserLeaseSnapshotSet = true
@@ -136,9 +143,12 @@ func (m Model) revealManagedBrowserCmd(managedSessionKey string, ref browserctl.
 			return msg
 		}
 		return browserOpenMsg{
-			status:                 successStatus,
-			managedBrowserState:    state,
-			managedBrowserStateSet: true,
+			projectPath:              ref.ProjectPath,
+			status:                   successStatus,
+			managedBrowserRef:        ref,
+			managedBrowserState:      state,
+			managedBrowserStateSet:   true,
+			managedBrowserSessionKey: managedSessionKey,
 		}
 	}
 }
@@ -147,10 +157,13 @@ func (m Model) probeAndRevealManagedBrowserCmd(managedSessionKey string, ref bro
 	controller := m.ensureBrowserController()
 	dataDir := m.appDataDir()
 	managedSessionKey = strings.TrimSpace(managedSessionKey)
+	ref = ref.Normalize()
 	return func() tea.Msg {
 		state, live, err := probeAndRevealManagedBrowserSession(dataDir, managedSessionKey)
 		msg := browserOpenMsg{
+			projectPath:              ref.ProjectPath,
 			err:                      err,
+			managedBrowserRef:        ref,
 			managedBrowserProbe:      true,
 			managedBrowserProbeLive:  live,
 			managedBrowserSessionKey: managedSessionKey,

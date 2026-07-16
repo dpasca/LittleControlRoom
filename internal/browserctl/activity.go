@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type SessionActivityState string
@@ -15,11 +16,12 @@ const (
 )
 
 type SessionActivity struct {
-	Policy      Policy
-	State       SessionActivityState
-	ServerName  string
-	ToolName    string
-	LastEventAt time.Time
+	Policy           Policy
+	State            SessionActivityState
+	ServerName       string
+	ToolName         string
+	AttentionMessage string
+	LastEventAt      time.Time
 }
 
 func DefaultSessionActivity(policy Policy) SessionActivity {
@@ -37,8 +39,32 @@ func (a SessionActivity) Normalize() SessionActivity {
 	}
 	normalized.ServerName = strings.TrimSpace(a.ServerName)
 	normalized.ToolName = strings.TrimSpace(a.ToolName)
+	if normalized.State == SessionActivityStateWaitingForUser {
+		normalized.AttentionMessage = truncateSessionActivityAttentionMessage(a.AttentionMessage, 800)
+	}
 	normalized.LastEventAt = a.LastEventAt
 	return normalized
+}
+
+func truncateSessionActivityAttentionMessage(message string, maxRunes int) string {
+	message = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			return r
+		}
+		return -1
+	}, message)
+	message = strings.TrimSpace(message)
+	if message == "" || maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(message)
+	if len(runes) <= maxRunes {
+		return message
+	}
+	if maxRunes == 1 {
+		return "…"
+	}
+	return strings.TrimSpace(string(runes[:maxRunes-1])) + "…"
 }
 
 func (a SessionActivity) Enabled() bool {

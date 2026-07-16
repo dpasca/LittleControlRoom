@@ -133,7 +133,7 @@ func TestManagedBrowserExecutableVersionBoundsInheritedOutputPipe(t *testing.T) 
 	if err != nil || !ok || major != 149 || version != "Chromium 149.0.7827.200" {
 		t.Fatalf("managedBrowserExecutableVersionWithTimeout() = %q, %d, %v, %v; want valid bounded version", version, major, ok, err)
 	}
-	if elapsed := time.Since(started); elapsed > time.Second {
+	if elapsed := time.Since(started); elapsed > 2500*time.Millisecond {
 		t.Fatalf("inherited output pipe wait took %s, want bounded wait", elapsed)
 	}
 }

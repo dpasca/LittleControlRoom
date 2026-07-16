@@ -118,6 +118,9 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 	if !strings.Contains(text, "Use the Playwright MCP tools directly.") {
 		t.Fatalf("overlay skill = %q, want embedded MCP guidance", text)
 	}
+	if !strings.Contains(text, "lcr_runtime/request_browser_attention") || !strings.Contains(text, "exact page") {
+		t.Fatalf("overlay skill = %q, want structured browser-attention handoff guidance", text)
+	}
 	if strings.Contains(text, "original skill") {
 		t.Fatalf("overlay skill should not mirror original Playwright skill contents: %q", text)
 	}
@@ -137,7 +140,7 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 		t.Fatalf("read overlay runtime skill: %v", err)
 	}
 	runtimeText := string(runtimeData)
-	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") {
+	if !strings.Contains(runtimeText, "lcr_runtime") || !strings.Contains(runtimeText, "start_process") || !strings.Contains(runtimeText, "request_browser_attention") {
 		t.Fatalf("overlay runtime skill = %q, want runtime MCP guidance", runtimeText)
 	}
 	if strings.Contains(runtimeText, "original runtime skill") {
@@ -314,6 +317,65 @@ func TestCodexDirectRMShimAllowsOnlyValidatedTmpDescendants(t *testing.T) {
 	})
 }
 
+func TestPrepareCodexHomeOverlayDoesNotAdvertiseUnavailableRuntimeHandoff(t *testing.T) {
+	sourceHome := filepath.Join(t.TempDir(), ".codex")
+	runtimeDir := filepath.Join(sourceHome, "skills", "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("mkdir source runtime skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "SKILL.md"), []byte("original runtime skill"), 0o644); err != nil {
+		t.Fatalf("write source runtime skill: %v", err)
+	}
+
+	overlay, err := prepareCodexHomeOverlayForLaunch(t.TempDir(), sourceHome, true, false)
+	if err != nil {
+		t.Fatalf("prepareCodexHomeOverlayForLaunch() error = %v", err)
+	}
+	playwrightRaw, err := os.ReadFile(filepath.Join(overlay, "skills", "playwright", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read overlay Playwright skill: %v", err)
+	}
+	if strings.Contains(string(playwrightRaw), "request_browser_attention") {
+		t.Fatalf("Playwright skill advertises unavailable runtime handoff: %s", playwrightRaw)
+	}
+	runtimePath := filepath.Join(overlay, "skills", "runtime")
+	if target, err := os.Readlink(runtimePath); err != nil {
+		t.Fatalf("read runtime skill symlink: %v", err)
+	} else if target != runtimeDir {
+		t.Fatalf("runtime skill symlink = %q, want %q", target, runtimeDir)
+	}
+}
+
+func TestPrepareCodexHomeOverlayRuntimeOnlyPreservesPlaywrightSkill(t *testing.T) {
+	sourceHome := filepath.Join(t.TempDir(), ".codex")
+	playwrightDir := filepath.Join(sourceHome, "skills", "playwright")
+	runtimeDir := filepath.Join(sourceHome, "skills", "runtime")
+	for _, dir := range []string{playwrightDir, runtimeDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir source skill: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(playwrightDir, "SKILL.md"), []byte("original playwright skill"), 0o644); err != nil {
+		t.Fatalf("write source playwright skill: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "SKILL.md"), []byte("original runtime skill"), 0o644); err != nil {
+		t.Fatalf("write source runtime skill: %v", err)
+	}
+
+	overlay, err := prepareCodexHomeOverlayForLaunch(t.TempDir(), sourceHome, false, true)
+	if err != nil {
+		t.Fatalf("prepareCodexHomeOverlayForLaunch() error = %v", err)
+	}
+	assertSymlinkTo(t, filepath.Join(overlay, "skills", "playwright"), playwrightDir)
+	runtimeRaw, err := os.ReadFile(filepath.Join(overlay, "skills", "runtime", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read overlay runtime skill: %v", err)
+	}
+	if strings.Contains(string(runtimeRaw), "request_browser_attention") {
+		t.Fatalf("runtime-only overlay advertises unavailable managed-browser handoff: %s", runtimeRaw)
+	}
+}
+
 func assertRMShimAllowed(t *testing.T, shimPath string, args ...string) {
 	t.Helper()
 	output, err := exec.Command(shimPath, args...).CombinedOutput()
@@ -455,7 +517,7 @@ func TestPrepareCodexHomeOverlayCreatesStandaloneShadowSkillWhenSourceHomeMissin
 	if err != nil {
 		t.Fatalf("read overlay skill: %v", err)
 	}
-	if !strings.Contains(string(data), "Little Control Room") || !strings.Contains(string(data), "lcr_runtime") {
+	if !strings.Contains(string(data), "Little Control Room") || !strings.Contains(string(data), "lcr_runtime") || !strings.Contains(string(data), "request_browser_attention") {
 		t.Fatalf("overlay skill = %q, want LCR guidance", string(data))
 	}
 }

@@ -269,6 +269,7 @@ func (s *appServerSession) touchBusyLocked() {
 }
 
 func (s *appServerSession) clearActiveStateLocked() {
+	preserveBrowserHandoff := s.browserHandoffPending && !s.closed
 	s.clearBusyLocked("")
 	s.compacting = false
 	s.contextCompactionActive = false
@@ -276,7 +277,14 @@ func (s *appServerSession) clearActiveStateLocked() {
 	s.pendingToolInput = nil
 	s.pendingElicitation = nil
 	s.browserToolCalls = nil
-	s.browserActivity = browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	if preserveBrowserHandoff {
+		s.refreshBrowserActivityLocked(time.Now())
+	} else {
+		s.browserHandoffPending = false
+		s.browserHandoffAt = time.Time{}
+		s.browserHandoffMessage = ""
+		s.browserActivity = browserctl.DefaultSessionActivity(s.playwrightPolicy)
+	}
 }
 
 func (s *appServerSession) browserToolCallForItem(item map[string]json.RawMessage) (browserToolCall, bool) {
@@ -289,6 +297,38 @@ func (s *appServerSession) browserToolCallForItem(item map[string]json.RawMessag
 		ServerName: serverName,
 		ToolName:   toolName,
 	}, true
+}
+
+func isManagedBrowserAttentionToolCall(item map[string]json.RawMessage) bool {
+	serverName, toolName := codexMCPToolCallInfo(item)
+	if serverName != "lcr_runtime" || toolName != "request_browser_attention" {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(decodeRawString(item["status"])), "completed") {
+		return false
+	}
+	errorValue := strings.TrimSpace(string(item["error"]))
+	return errorValue == "" || errorValue == "null"
+}
+
+func managedBrowserAttentionMessage(item map[string]json.RawMessage) string {
+	var args struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(item["arguments"], &args); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(args.Message)
+}
+
+func (s *appServerSession) clearBrowserHandoffLocked() {
+	if !s.browserHandoffPending {
+		return
+	}
+	s.browserHandoffPending = false
+	s.browserHandoffAt = time.Time{}
+	s.browserHandoffMessage = ""
+	s.refreshBrowserActivityLocked(time.Now())
 }
 
 func (s *appServerSession) updateBrowserPageURLLocked(call browserToolCall, item map[string]json.RawMessage) {
@@ -307,6 +347,13 @@ func (s *appServerSession) refreshBrowserActivityLocked(now time.Time) {
 	activity := browserctl.DefaultSessionActivity(s.playwrightPolicy)
 	previous := s.browserActivity.Normalize()
 	activity.LastEventAt = previous.LastEventAt
+	if s.browserHandoffPending {
+		activity.State = browserctl.SessionActivityStateWaitingForUser
+		activity.ServerName = "playwright"
+		activity.ToolName = "browser_handoff"
+		activity.AttentionMessage = s.browserHandoffMessage
+		activity.LastEventAt = s.browserHandoffAt
+	}
 
 	var current browserToolCall
 	for _, call := range s.browserToolCalls {
@@ -323,6 +370,7 @@ func (s *appServerSession) refreshBrowserActivityLocked(now time.Time) {
 	if request := s.pendingElicitation; request != nil {
 		if browserctl.IsPlaywrightToolCall(request.ServerName, "") || current.ServerName != "" || current.ToolName != "" {
 			activity.State = browserctl.SessionActivityStateWaitingForUser
+			activity.AttentionMessage = strings.TrimSpace(request.Message)
 			if strings.TrimSpace(request.ServerName) != "" {
 				activity.ServerName = strings.TrimSpace(request.ServerName)
 			}
@@ -369,6 +417,9 @@ func (s *appServerSession) syncThreadStatusLocked(threadID string, status resume
 		s.reconciling = false
 	case "systemError":
 		hadState := s.compacting || s.busy || s.pendingCompletion != nil || strings.TrimSpace(s.activeTurnID) != "" || s.pendingApproval != nil || s.pendingToolInput != nil || s.pendingElicitation != nil
+		s.browserHandoffPending = false
+		s.browserHandoffAt = time.Time{}
+		s.browserHandoffMessage = ""
 		s.clearActiveStateLocked()
 		if hadState {
 			s.status = "Codex thread reported a system error"

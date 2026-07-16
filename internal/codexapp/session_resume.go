@@ -350,8 +350,18 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 		s.threadID = thread.ID
 	}
 	currentBrowserPageURL := ""
+	browserHandoffPending := false
+	browserHandoffMessage := ""
 	for _, turn := range thread.Turns {
 		for _, item := range turn.Items {
+			if strings.TrimSpace(decodeRawString(item["type"])) == "userMessage" {
+				browserHandoffPending = false
+				browserHandoffMessage = ""
+			}
+			if isManagedBrowserAttentionToolCall(item) {
+				browserHandoffPending = true
+				browserHandoffMessage = managedBrowserAttentionMessage(item)
+			}
 			itemID := strings.TrimSpace(decodeRawString(item["id"]))
 			s.recordCodexMCPToolUsageLocked(itemID, item)
 			if call, ok := s.browserToolCallForItem(item); ok {
@@ -368,6 +378,14 @@ func (s *appServerSession) mergeResumedThreadItemsLocked(thread resumedThread) s
 			s.appendEntryLocked("", TranscriptError, turn.Error.Message)
 		}
 	}
+	s.browserHandoffPending = browserHandoffPending
+	s.browserHandoffMessage = browserHandoffMessage
+	if browserHandoffPending {
+		s.browserHandoffAt = time.Now()
+	} else {
+		s.browserHandoffAt = time.Time{}
+	}
+	s.refreshBrowserActivityLocked(time.Now())
 	return currentBrowserPageURL
 }
 

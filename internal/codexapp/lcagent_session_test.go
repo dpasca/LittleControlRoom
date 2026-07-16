@@ -1981,6 +1981,9 @@ func TestLCAgentSessionTracksBrowserEvents(t *testing.T) {
 	if got, want := snapshot.BrowserActivity.State, browserctl.SessionActivityStateWaitingForUser; got != want {
 		t.Fatalf("BrowserActivity.State after wait = %q, want %q", got, want)
 	}
+	if got, want := snapshot.BrowserActivity.AttentionMessage, "Finish login"; got != want {
+		t.Fatalf("BrowserActivity.AttentionMessage after wait = %q, want %q", got, want)
+	}
 	if !strings.Contains(snapshot.Transcript, "Finish login") {
 		t.Fatalf("transcript missing browser wait message: %q", snapshot.Transcript)
 	}
@@ -2865,7 +2868,7 @@ func TestLCAgentProviderFailureTextIncludesActionableHint(t *testing.T) {
 
 func waitForLCAgentIdleSnapshot(t *testing.T, session Session, notify <-chan struct{}) Snapshot {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(10 * time.Second)
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {

@@ -262,7 +262,11 @@ func (m Model) renderCodexCurrentBrowserPageBlocks(snapshot codexapp.Snapshot, w
 	}
 	lines := []string{}
 	if codexSnapshotBrowserWaitingForUser(snapshot) {
-		summary := strings.TrimSpace(snapshot.BrowserActivity.Normalize().Summary())
+		activity := snapshot.BrowserActivity.Normalize()
+		summary := strings.TrimSpace(activity.AttentionMessage)
+		if summary == "" {
+			summary = strings.TrimSpace(activity.Summary())
+		}
 		if summary == "" {
 			summary = "Browser is waiting for you."
 		}

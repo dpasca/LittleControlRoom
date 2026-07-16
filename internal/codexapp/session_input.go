@@ -295,6 +295,7 @@ func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID stri
 	} else {
 		s.reasoningEffort = currentReasoning
 	}
+	s.clearBrowserHandoffLocked()
 	s.setBusyLocked(response.Turn.ID, false)
 	s.status = "Codex is working..."
 	s.mu.Unlock()
@@ -319,6 +320,7 @@ func (s *appServerSession) steerTurn(ctx context.Context, threadID, expectedTurn
 func (s *appServerSession) recordSteerSubmission(turnID string) {
 	turnID = strings.TrimSpace(turnID)
 	s.mu.Lock()
+	s.clearBrowserHandoffLocked()
 	if turnID != "" {
 		s.setBusyLocked(turnID, false)
 	} else {
