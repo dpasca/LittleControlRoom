@@ -1092,11 +1092,11 @@ func TestSuggestionsWorktreeArguments(t *testing.T) {
 
 func TestSuggestionsWorktreeAliasArguments(t *testing.T) {
 	got := Suggestions("/worktree ")
-	if len(got) != 4 {
-		t.Fatalf("Suggestions(/worktree ) len = %d, want 4", len(got))
+	if len(got) != 3 {
+		t.Fatalf("Suggestions(/worktree ) len = %d, want 3", len(got))
 	}
-	if got[0].Insert != "/wt lanes" {
-		t.Fatalf("first suggestion = %q, want /wt lanes", got[0].Insert)
+	if got[0].Insert != "/wt merge" {
+		t.Fatalf("first suggestion = %q, want /wt merge", got[0].Insert)
 	}
 }
 

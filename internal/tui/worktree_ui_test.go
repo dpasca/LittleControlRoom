@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-func TestRenderFooterShowsWorktreeHintsForRepoFamily(t *testing.T) {
+func TestRenderFooterOmitsLaneToggleForRepoFamily(t *testing.T) {
 	rootPath := "/tmp/repo"
 	m := Model{
 		focusedPane: focusProjects,
@@ -47,8 +47,8 @@ func TestRenderFooterShowsWorktreeHintsForRepoFamily(t *testing.T) {
 	m.rebuildProjectList(rootPath)
 
 	rendered := ansi.Strip(m.renderFooter(160))
-	if !strings.Contains(rendered, "w lanes") {
-		t.Fatalf("renderFooter() should advertise worktree lane toggling, got %q", rendered)
+	if strings.Contains(rendered, "w lanes") {
+		t.Fatalf("renderFooter() should not advertise obsolete worktree lane toggling, got %q", rendered)
 	}
 	if strings.Contains(rendered, "/wt") {
 		t.Fatalf("renderFooter() should reserve the worktree slash-command hint for linked worktree rows, got %q", rendered)
@@ -89,8 +89,8 @@ func TestRenderFooterShowsRemoveHintForLinkedWorktree(t *testing.T) {
 	}
 
 	rendered := ansi.Strip(m.renderFooter(160))
-	if !strings.Contains(rendered, "w lanes") {
-		t.Fatalf("renderFooter() should keep lane toggling available on a linked worktree row, got %q", rendered)
+	if strings.Contains(rendered, "w lanes") {
+		t.Fatalf("renderFooter() should not advertise obsolete lane toggling on a linked worktree row, got %q", rendered)
 	}
 	if !strings.Contains(rendered, "x remove") {
 		t.Fatalf("renderFooter() should advertise linked worktree removal when it is allowed, got %q", rendered)

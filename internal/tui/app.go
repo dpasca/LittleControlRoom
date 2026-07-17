@@ -334,7 +334,6 @@ type Model struct {
 	hideReasoningSections bool
 
 	newProjectRecentParents  []string
-	worktreeExpanded         map[string]bool
 	detailReloadInFlight     map[string]bool
 	detailReloadQueued       map[string]bool
 	detailReloadErrors       map[string]string

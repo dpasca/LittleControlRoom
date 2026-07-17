@@ -1052,7 +1052,7 @@ func TestRenderProjectListKeepsWorktreePrefixFixedWhileScrollingName(t *testing.
 			},
 		},
 		projectRows: []projectListRow{
-			{Kind: projectListRowRepo, ProjectPath: rootPath, RootPath: rootPath, LinkedCount: 1, Expanded: true},
+			{Kind: projectListRowRepo, ProjectPath: rootPath, RootPath: rootPath, LinkedCount: 1},
 			{Kind: projectListRowWorktree, ProjectPath: "/tmp/repo--alpha-bravo-charlie-delta-echo-worktree-lane", RootPath: rootPath},
 		},
 		selected:      1,
@@ -1080,11 +1080,10 @@ func TestRenderProjectListKeepsWorktreePrefixFixedWhileScrollingName(t *testing.
 	}
 }
 
-func TestRenderProjectListKeepsRepoDisclosureFixedWhileScrollingName(t *testing.T) {
+func TestRenderProjectListScrollsRepoNameWithoutDisclosurePrefix(t *testing.T) {
 	const width = 120
 	projectW, _ := projectListColumnWidths(width - projectListSelectionGutterWidth)
 	longName := "repo-alpha-bravo-charlie-delta-echo-worktree-family"
-	prefix := "▾ "
 	m := Model{
 		projects: []model.ProjectSummary{{
 			Name:             longName,
@@ -1099,7 +1098,6 @@ func TestRenderProjectListKeepsRepoDisclosureFixedWhileScrollingName(t *testing.
 			ProjectPath: "/tmp/repo-alpha-bravo-charlie-delta-echo-worktree-family",
 			RootPath:    "/tmp/repo-alpha-bravo-charlie-delta-echo-worktree-family",
 			LinkedCount: 1,
-			Expanded:    true,
 		}},
 		selected:      0,
 		marqueeOffset: projectW + 6,
@@ -1113,13 +1111,12 @@ func TestRenderProjectListKeepsRepoDisclosureFixedWhileScrollingName(t *testing.
 		t.Fatalf("renderProjectList() expected tabs, header, and one row, got %q", rendered)
 	}
 	row := lines[2]
-	expected := prefix + marqueeScrollText(longName, projectW-ansi.StringWidth(prefix), m.marqueeOffset)
+	expected := marqueeScrollText(longName, projectW, m.marqueeOffset)
 	if !strings.Contains(row, expected) {
-		t.Fatalf("renderProjectList() should keep the disclosure marker fixed and scroll only the repo label %q in row %q", expected, row)
+		t.Fatalf("renderProjectList() should scroll the full repo label %q in row %q", expected, row)
 	}
-	legacy := marqueeScrollText(prefix+longName, projectW, m.marqueeOffset)
-	if strings.Contains(row, legacy) {
-		t.Fatalf("renderProjectList() should not scroll the disclosure marker with the repo label, got legacy window %q in row %q", legacy, row)
+	if strings.ContainsAny(row, "▸▾") {
+		t.Fatalf("renderProjectList() should not prefix repo roots with a disclosure marker, got %q", row)
 	}
 }
 
@@ -1935,7 +1932,7 @@ func TestScratchTaskActionArchiveQueuesArchiveCommand(t *testing.T) {
 	}
 }
 
-func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
+func TestRenderProjectListAlwaysShowsLinkedWorktreesUnderRepoRow(t *testing.T) {
 	rootPath := "/tmp/repo"
 	m := Model{
 		allProjects: []model.ProjectSummary{
@@ -1960,19 +1957,18 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 				RepoDirty:        true,
 			},
 		},
-		worktreeExpanded: map[string]bool{rootPath: false},
-		sortMode:         sortByAttention,
-		visibility:       visibilityAllFolders,
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
 	}
 
 	m.rebuildProjectList(rootPath)
 	rendered := ansi.Strip(m.renderProjectList(140, 8))
 	lines := strings.Split(rendered, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("renderProjectList() expected tabs, header, and one grouped row, got %q", rendered)
+	if len(lines) != 4 {
+		t.Fatalf("renderProjectList() expected tabs, header, root, and linked worktree rows, got %q", rendered)
 	}
-	if !strings.Contains(lines[2], "▸ repo") {
-		t.Fatalf("renderProjectList() should show a collapsed disclosure row, got %q", lines[2])
+	if strings.ContainsAny(lines[2], "▸▾") {
+		t.Fatalf("renderProjectList() should not show a disclosure marker on the repo root, got %q", lines[2])
 	}
 	if !strings.Contains(lines[2], "Keep root summary") {
 		t.Fatalf("renderProjectList() should keep the root repo assessment text, got %q", lines[2])
@@ -1983,8 +1979,8 @@ func TestRenderProjectListCollapsesLinkedWorktreesUnderRepoRow(t *testing.T) {
 	if strings.Contains(lines[2], "2 worktrees") {
 		t.Fatalf("renderProjectList() should not describe the root repo as a generic worktree, got %q", lines[2])
 	}
-	if strings.Contains(lines[2], "feat/parallel-lane") {
-		t.Fatalf("renderProjectList() should keep child worktree rows hidden while collapsed, got %q", lines[2])
+	if !strings.Contains(lines[3], "↳ feat/parallel") {
+		t.Fatalf("renderProjectList() should always show the indented linked worktree row, got %q", lines[3])
 	}
 }
 
@@ -2058,22 +2054,21 @@ func TestRebuildProjectListUsesMostRecentWorktreeActivityForRootRow(t *testing.T
 				WorktreeKind:     model.WorktreeKindLinked,
 			},
 		},
-		worktreeExpanded: map[string]bool{rootPath: false},
-		sortMode:         sortByAttention,
-		visibility:       visibilityAllFolders,
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
 	}
 
 	m.rebuildProjectList(rootPath)
 
-	if len(m.projects) != 1 {
-		t.Fatalf("rebuildProjectList() grouped projects = %#v, want a single root row", m.projects)
+	if len(m.projects) != 2 {
+		t.Fatalf("rebuildProjectList() grouped projects = %#v, want root and linked worktree rows", m.projects)
 	}
 	if got := m.projects[0].LastActivity; !got.Equal(worktreeLast) {
 		t.Fatalf("root row LastActivity = %v, want %v from the linked worktree", got, worktreeLast)
 	}
 }
 
-func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
+func TestRenderProjectListShowsWorktreeChildrenWithoutRootDisclosure(t *testing.T) {
 	rootPath := "/tmp/repo"
 	m := Model{
 		allProjects: []model.ProjectSummary{
@@ -2096,9 +2091,8 @@ func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 				RepoBranch:       "feat/parallel-lane",
 			},
 		},
-		worktreeExpanded: map[string]bool{rootPath: true},
-		sortMode:         sortByAttention,
-		visibility:       visibilityAllFolders,
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
 	}
 
 	m.rebuildProjectList(rootPath)
@@ -2107,10 +2101,10 @@ func TestRenderProjectListShowsExpandedWorktreeChildren(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("renderProjectList() expected tabs, header, root, and child rows, got %q", rendered)
 	}
-	if !strings.Contains(lines[2], "▾ repo") {
-		t.Fatalf("renderProjectList() should show an expanded disclosure row, got %q", lines[2])
+	if strings.ContainsAny(lines[2], "▸▾") {
+		t.Fatalf("renderProjectList() should omit disclosure markers from the repo root, got %q", lines[2])
 	}
-	if !strings.Contains(lines[3], "↳ feat/parallel-lane") {
+	if !strings.Contains(lines[3], "  ↳ feat/parallel-lane") {
 		t.Fatalf("renderProjectList() should render the child worktree branch label, got %q", lines[3])
 	}
 }
@@ -2149,9 +2143,9 @@ func TestRenderProjectListSurfacesCleanUnmergedWorktree(t *testing.T) {
 	rendered := ansi.Strip(m.renderProjectList(160, 8))
 	lines := strings.Split(rendered, "\n")
 	if len(lines) != 4 {
-		t.Fatalf("renderProjectList() should auto-expand a clean unmerged worktree, got %q", rendered)
+		t.Fatalf("renderProjectList() should show a clean unmerged worktree, got %q", rendered)
 	}
-	if !strings.Contains(lines[2], "▾ repo") || !strings.Contains(lines[2], "M") {
+	if strings.ContainsAny(lines[2], "▸▾") || !strings.Contains(lines[2], "M") {
 		t.Fatalf("renderProjectList() should mark the root row when a linked worktree needs merging, got %q", lines[2])
 	}
 	if !strings.Contains(lines[2], "[1 linked, 1 to integrate]") {
@@ -2165,9 +2159,11 @@ func TestRenderProjectListSurfacesCleanUnmergedWorktree(t *testing.T) {
 	}
 }
 
-func TestRenderProjectListShowsUnmergedBadgeWhenWorktreeGroupCollapsed(t *testing.T) {
+func TestWorktreeVisibilityKeysDoNotHideRows(t *testing.T) {
 	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
 	m := Model{
+		focusedPane: focusProjects,
 		allProjects: []model.ProjectSummary{
 			{
 				Name:             "repo",
@@ -2180,7 +2176,7 @@ func TestRenderProjectListShowsUnmergedBadgeWhenWorktreeGroupCollapsed(t *testin
 			},
 			{
 				Name:                 "repo--feat-parallel-lane",
-				Path:                 "/tmp/repo--feat-parallel-lane",
+				Path:                 childPath,
 				Status:               model.StatusIdle,
 				PresentOnDisk:        true,
 				WorktreeRootPath:     rootPath,
@@ -2190,25 +2186,27 @@ func TestRenderProjectListShowsUnmergedBadgeWhenWorktreeGroupCollapsed(t *testin
 				RepoBranch:           "feat/parallel-lane",
 			},
 		},
-		worktreeExpanded: map[string]bool{rootPath: false},
-		sortMode:         sortByAttention,
-		visibility:       visibilityAllFolders,
+		sortMode:   sortByAttention,
+		visibility: visibilityAllFolders,
 	}
 
 	m.rebuildProjectList(rootPath)
-	rendered := ansi.Strip(m.renderProjectList(160, 8))
-	lines := strings.Split(rendered, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("renderProjectList() expected tabs, header, and collapsed root row, got %q", rendered)
+	keys := []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("w")},
+		{Type: tea.KeyRunes, Runes: []rune("h")},
+		{Type: tea.KeyLeft},
+		{Type: tea.KeyRunes, Runes: []rune("l")},
+		{Type: tea.KeyRight},
 	}
-	if !strings.Contains(lines[2], "▸ repo") || !strings.Contains(lines[2], "M") {
-		t.Fatalf("renderProjectList() should mark collapsed root rows with unmerged linked work, got %q", lines[2])
-	}
-	if !strings.Contains(lines[2], "[1 linked, 1 to integrate]") {
-		t.Fatalf("renderProjectList() should keep linked work pending integration visible while collapsed, got %q", lines[2])
-	}
-	if strings.Contains(lines[2], "feat/parallel-lane") {
-		t.Fatalf("renderProjectList() should keep child rows hidden while collapsed, got %q", lines[2])
+	for _, key := range keys {
+		next, cmd := m.updateNormalMode(key)
+		if cmd != nil {
+			t.Fatalf("updateNormalMode(%q) returned an unexpected command", key.String())
+		}
+		m = next.(Model)
+		if len(m.projects) != 2 || m.projects[0].Path != rootPath || m.projects[1].Path != childPath {
+			t.Fatalf("updateNormalMode(%q) hid worktree rows: %#v", key.String(), m.projects)
+		}
 	}
 }
 
@@ -2236,49 +2234,6 @@ func TestRenderProjectListKeepsVisibleWorktreeFamilyWhenChildMatchesPrivacyPatte
 				RepoBranch:       "tests/make-test-failures",
 			},
 		},
-		worktreeExpanded: map[string]bool{rootPath: false},
-		sortMode:         sortByAttention,
-		visibility:       visibilityAllFolders,
-		privacyMode:      true,
-		privacyPatterns:  []string{"*test*"},
-	}
-
-	m.rebuildProjectList(rootPath)
-	rendered := ansi.Strip(m.renderProjectList(140, 8))
-	lines := strings.Split(rendered, "\n")
-	if len(lines) != 3 {
-		t.Fatalf("renderProjectList() expected tabs, header, and grouped root row, got %q", rendered)
-	}
-	if !strings.Contains(lines[2], "[1 linked]") {
-		t.Fatalf("renderProjectList() should keep linked lanes visible under a visible root, got %q", lines[2])
-	}
-}
-
-func TestToggleSelectedWorktreeGroupStillWorksWhenChildMatchesPrivacyPattern(t *testing.T) {
-	rootPath := "/tmp/LittleControlRoom"
-	childPath := "/tmp/LittleControlRoom--make-test-failures"
-	m := Model{
-		focusedPane: focusProjects,
-		allProjects: []model.ProjectSummary{
-			{
-				Name:             "LittleControlRoom",
-				Path:             rootPath,
-				Status:           model.StatusIdle,
-				PresentOnDisk:    true,
-				WorktreeRootPath: rootPath,
-				WorktreeKind:     model.WorktreeKindMain,
-				RepoBranch:       "feat/worktree-ux",
-			},
-			{
-				Name:             "LittleControlRoom--make-test-failures",
-				Path:             childPath,
-				Status:           model.StatusIdle,
-				PresentOnDisk:    true,
-				WorktreeRootPath: rootPath,
-				WorktreeKind:     model.WorktreeKindLinked,
-				RepoBranch:       "tests/make-test-failures",
-			},
-		},
 		sortMode:        sortByAttention,
 		visibility:      visibilityAllFolders,
 		privacyMode:     true,
@@ -2286,14 +2241,15 @@ func TestToggleSelectedWorktreeGroupStillWorksWhenChildMatchesPrivacyPattern(t *
 	}
 
 	m.rebuildProjectList(rootPath)
-	cmd := m.toggleSelectedWorktreeGroup()
-	if m.status != "Worktrees expanded" {
-		t.Fatalf("status = %q, want worktrees expanded", m.status)
+	rendered := ansi.Strip(m.renderProjectList(140, 8))
+	lines := strings.Split(rendered, "\n")
+	if len(lines) != 4 {
+		t.Fatalf("renderProjectList() expected tabs, header, root, and linked worktree rows, got %q", rendered)
 	}
-	if len(m.projectRows) != 2 || m.projectRows[1].Kind != projectListRowWorktree {
-		t.Fatalf("projectRows = %#v, want expanded root + child worktree rows", m.projectRows)
+	if !strings.Contains(lines[2], "[1 linked]") {
+		t.Fatalf("renderProjectList() should keep linked lanes visible under a visible root, got %q", lines[2])
 	}
-	if cmd == nil {
-		t.Fatalf("toggleSelectedWorktreeGroup() should still request a detail refresh after expansion")
+	if !strings.Contains(lines[3], "↳ tests/") {
+		t.Fatalf("renderProjectList() should always show the privacy-matched linked lane under its visible root, got %q", lines[3])
 	}
 }

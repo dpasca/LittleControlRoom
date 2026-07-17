@@ -52,7 +52,6 @@ type projectListRow struct {
 	LinkedActiveCount             int
 	LinkedDirtyCount              int
 	LinkedPendingIntegrationCount int
-	Expanded                      bool
 	PendingLaunchID               int64
 }
 
@@ -788,7 +787,7 @@ func (m *Model) rebuildProjectList(selectedPath string) {
 	filtered := filterProjects(sorted, m.visibility, m.excludeProjectPatterns, m.projectFilter)
 	filtered = m.projectsVisibleForPrivacy(filtered)
 	filtered = expandVisibleWorktreeFamilies(filtered, sorted)
-	m.projects, m.projectRows = m.buildProjectRows(filtered, selectedPath)
+	m.projects, m.projectRows = m.buildProjectRows(filtered)
 	if len(m.projects) == 0 {
 		m.selected = 0
 		m.offset = 0
@@ -888,7 +887,7 @@ func filterProjectSummariesByCategory(projects []model.ProjectSummary, categoryI
 	return out
 }
 
-func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath string) ([]model.ProjectSummary, []projectListRow) {
+func (m Model) buildProjectRows(projects []model.ProjectSummary) ([]model.ProjectSummary, []projectListRow) {
 	projects = partitionProjectsByKind(projects)
 
 	type group struct {
@@ -961,7 +960,6 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 		}
 		activeCount, dirtyCount := m.worktreeActivityCounts(children)
 		pendingIntegrationCount := worktreePendingIntegrationCount(children)
-		expanded := m.isWorktreeGroupExpanded(rootPath, children, selectedPath)
 
 		rows = append(rows, rootProject)
 		meta = append(meta, projectListRow{
@@ -972,11 +970,7 @@ func (m Model) buildProjectRows(projects []model.ProjectSummary, selectedPath st
 			LinkedActiveCount:             activeCount,
 			LinkedDirtyCount:              dirtyCount,
 			LinkedPendingIntegrationCount: pendingIntegrationCount,
-			Expanded:                      expanded,
 		})
-		if !expanded {
-			continue
-		}
 		for _, child := range children {
 			rowKind := projectListRowWorktree
 			pendingLaunchID := int64(0)
@@ -1054,74 +1048,6 @@ func worktreePendingIntegrationCount(projects []model.ProjectSummary) int {
 	return count
 }
 
-func (m Model) isWorktreeGroupExpanded(rootPath string, children []model.ProjectSummary, selectedPath string) bool {
-	if m.worktreeExpanded != nil {
-		if expanded, ok := m.worktreeExpanded[rootPath]; ok {
-			return expanded
-		}
-	}
-	selectedPath = filepath.Clean(strings.TrimSpace(selectedPath))
-	for _, child := range children {
-		if filepath.Clean(child.Path) == selectedPath {
-			return true
-		}
-		if _, ok := m.pendingGitOperation(child.Path); ok {
-			return true
-		}
-		if worktreeNeedsMergeBack(child) {
-			return true
-		}
-		if child.RepoDirty || child.Status != model.StatusIdle || m.projectHasLiveCodexSession(child.Path) || m.projectRuntimeSnapshot(child.Path).Running {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *Model) toggleSelectedWorktreeGroup() tea.Cmd {
-	row, project, ok := m.selectedProjectRow()
-	if !ok {
-		m.status = "No project selected"
-		return nil
-	}
-	if row.RootPath == "" || row.LinkedCount == 0 && row.Kind != projectListRowWorktree && row.Kind != projectListRowPendingWorktree {
-		m.status = "No sibling worktrees to show"
-		return nil
-	}
-	rootPath := row.RootPath
-	if rootPath == "" {
-		rootPath = projectWorktreeRootPath(project)
-	}
-	children := make([]model.ProjectSummary, 0, 4)
-	for _, member := range m.worktreeFamily(rootPath) {
-		if filepath.Clean(member.Path) == filepath.Clean(rootPath) {
-			continue
-		}
-		children = append(children, member)
-	}
-	if m.worktreeExpanded == nil {
-		m.worktreeExpanded = map[string]bool{}
-	}
-	next := !m.isWorktreeGroupExpanded(rootPath, children, project.Path)
-	if (row.Kind == projectListRowWorktree || row.Kind == projectListRowPendingWorktree) && !next {
-		m.worktreeExpanded[rootPath] = false
-		m.rebuildProjectList(rootPath)
-		m.status = "Worktrees collapsed"
-		return m.requestProjectDetailViewCmd(rootPath)
-	}
-	m.worktreeExpanded[rootPath] = next
-	m.rebuildProjectList(project.Path)
-	if next {
-		m.status = "Worktrees expanded"
-	} else {
-		m.status = "Worktrees collapsed"
-	}
-	if selected, ok := m.selectedProject(); ok {
-		return m.requestProjectDetailViewCmd(selected.Path)
-	}
-	return nil
-}
-
 func worktreeLinkedBadgeSummary(linked, active, dirty, pendingIntegration, orphaned int) string {
 	if linked <= 0 && orphaned <= 0 {
 		return ""
@@ -1193,24 +1119,12 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if project.RepoConflict && width >= 80 {
 		actions = append(actions, footerPrimaryAction("/resolve", "resolve"))
 	}
-	rootPath := row.RootPath
-	if rootPath == "" {
-		rootPath = projectWorktreeRootPath(project)
-	}
 	if row.Kind == projectListRowPendingWorktree {
 		actions = append(actions, footerPrimaryAction("Enter", "status"), footerHideAction("x", "abort"))
 		return actions
 	}
-	family := m.worktreeFamily(rootPath)
-	if len(family) <= 1 && row.Kind != projectListRowWorktree && row.LinkedCount == 0 {
-		return actions
-	}
-
-	if len(family) > 1 || row.LinkedCount > 0 || row.Kind == projectListRowWorktree {
-		actions = append(actions, footerNavAction("w", "lanes"))
-		if row.Kind == projectListRowWorktree && width >= 80 {
-			actions = append(actions, footerNavAction("/wt", "ops"))
-		}
+	if row.Kind == projectListRowWorktree && width >= 80 {
+		actions = append(actions, footerNavAction("/wt", "ops"))
 	}
 	if row.Kind == projectListRowWorktree && m.canMergeWorktreeBack(project) && width >= 80 {
 		label := "merge"
@@ -1291,9 +1205,6 @@ func (m Model) worktreeActionHints(project model.ProjectSummary, family []model.
 		return nil
 	}
 	hints := make([]string, 0, 4)
-	if len(family) > 1 || project.WorktreeKind == model.WorktreeKindLinked {
-		hints = append(hints, "w or /wt lanes")
-	}
 	if m.canMergeWorktreeBack(project) {
 		hint := "M or /wt merge"
 		if project.RepoDirty {

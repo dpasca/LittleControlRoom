@@ -152,31 +152,10 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.moveRuntimeActionSelection(-1)
 			return m, nil
 		}
-		if m.focusedPane == focusProjects {
-			if row, project, ok := m.selectedProjectRow(); ok {
-				if row.Kind == projectListRowWorktree || row.Kind == projectListRowPendingWorktree {
-					if m.worktreeExpanded == nil {
-						m.worktreeExpanded = map[string]bool{}
-					}
-					m.worktreeExpanded[row.RootPath] = false
-					m.rebuildProjectList(projectWorktreeRootPath(project))
-					m.status = "Worktrees collapsed"
-					return m, m.requestProjectDetailViewCmd(projectWorktreeRootPath(project))
-				}
-				if row.Kind == projectListRowRepo && row.LinkedCount > 0 && row.Expanded {
-					return m, m.toggleSelectedWorktreeGroup()
-				}
-			}
-		}
 	case "right", "l":
 		if m.focusedPane == focusRuntime {
 			m.moveRuntimeActionSelection(1)
 			return m, nil
-		}
-		if m.focusedPane == focusProjects {
-			if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowRepo && row.LinkedCount > 0 && !row.Expanded {
-				return m, m.toggleSelectedWorktreeGroup()
-			}
 		}
 	case "[":
 		if m.focusedPane == focusRuntime {
@@ -204,8 +183,6 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openScratchTaskActionConfirmForSelection()
 	case "t":
 		return m, m.openTodoDialogForSelection()
-	case "w":
-		return m, m.toggleSelectedWorktreeGroup()
 	case "M":
 		return m, m.openWorktreeMergeConfirmForSelection()
 	case "x":

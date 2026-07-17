@@ -54,7 +54,6 @@ const (
 	KindLCAgent         Kind = "lcagent"
 	KindLCAgentNew      Kind = "lcagent-new"
 	KindTodo            Kind = "todo"
-	KindWorktreeLanes   Kind = "worktree-lanes"
 	KindWorktreeMerge   Kind = "worktree-merge"
 	KindWorktreeRemove  Kind = "worktree-remove"
 	KindWorktreePrune   Kind = "worktree-prune"
@@ -187,7 +186,7 @@ var specs = []Spec{
 	{Name: "lcagent", Usage: "/lcagent [prompt]", Summary: "Resume the selected project's latest experimental LCAgent session, or start a new one"},
 	{Name: "lcagent-new", Usage: "/lcagent-new [prompt]", Summary: "Start a fresh experimental LCAgent session in the selected project"},
 	{Name: "todo", Usage: "/todo", Summary: "Open the selected project's TODO list"},
-	{Name: "wt", Usage: "/wt lanes|merge|remove|prune", Summary: "Toggle worktree lanes or manage the selected worktree"},
+	{Name: "wt", Usage: "/wt merge|remove|prune", Summary: "Manage the selected worktree"},
 	{Name: "pin", Usage: "/pin", Summary: "Toggle pin on the selected project"},
 	{Name: "read", Usage: "/read [all]", Summary: "Mark the selected project, or all visible projects, as read"},
 	{Name: "unread", Usage: "/unread", Summary: "Mark the selected project as unread"},
@@ -369,7 +368,6 @@ func SuggestionsWithCategories(input string, categoryNames []string) []Suggestio
 			argPrefix = strings.ToLower(fields[len(fields)-1])
 		}
 		return slashcmd.EnumSuggestions("/wt ", argPrefix,
-			choice("lanes", "Expand or collapse the current worktree family"),
 			choice("merge", "Merge the selected linked worktree back into its parent branch"),
 			choice("remove", "Remove the selected linked worktree"),
 			choice("prune", "Prune stale git worktree registrations for the current repo"),
@@ -939,8 +937,6 @@ func normalizeAssistantArg(raw string) (string, error) {
 
 func parseWorktreeCommand(raw string) (Invocation, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "lanes":
-		return Invocation{Kind: KindWorktreeLanes, Canonical: "/wt lanes"}, nil
 	case "merge":
 		return Invocation{Kind: KindWorktreeMerge, Canonical: "/wt merge"}, nil
 	case "remove":
@@ -948,7 +944,7 @@ func parseWorktreeCommand(raw string) (Invocation, error) {
 	case "prune":
 		return Invocation{Kind: KindWorktreePrune, Canonical: "/wt prune"}, nil
 	default:
-		return Invocation{}, fmt.Errorf("usage: /wt lanes|merge|remove|prune")
+		return Invocation{}, fmt.Errorf("usage: /wt merge|remove|prune")
 	}
 }
 

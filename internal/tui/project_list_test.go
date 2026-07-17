@@ -872,15 +872,18 @@ func TestBuildProjectRowsDoesNotTreatRepoSubdirectoryAsLinkedWorktree(t *testing
 		},
 	}
 
-	rows, meta := m.buildProjectRows(m.allProjects, "")
-	if len(rows) != 2 || len(meta) != 2 {
-		t.Fatalf("rows/meta lengths = %d/%d, want 2/2; rows=%#v meta=%#v", len(rows), len(meta), rows, meta)
+	rows, meta := m.buildProjectRows(m.allProjects)
+	if len(rows) != 3 || len(meta) != 3 {
+		t.Fatalf("rows/meta lengths = %d/%d, want 3/3; rows=%#v meta=%#v", len(rows), len(meta), rows, meta)
 	}
 	if rows[0].Path != rootPath || meta[0].Kind != projectListRowRepo || meta[0].LinkedCount != 1 {
 		t.Fatalf("root row/meta = %#v/%#v, want repo row with exactly one linked worktree", rows[0], meta[0])
 	}
-	if rows[1].Path != derivedPath || meta[1].Kind != projectListRowStandalone {
-		t.Fatalf("derived row/meta = %#v/%#v, want standalone subdirectory row", rows[1], meta[1])
+	if rows[1].Path != linkedPath || meta[1].Kind != projectListRowWorktree {
+		t.Fatalf("linked row/meta = %#v/%#v, want visible linked worktree row", rows[1], meta[1])
+	}
+	if rows[2].Path != derivedPath || meta[2].Kind != projectListRowStandalone {
+		t.Fatalf("derived row/meta = %#v/%#v, want standalone subdirectory row", rows[2], meta[2])
 	}
 
 	family := m.worktreeFamily(rootPath)

@@ -661,8 +661,8 @@ func truncateText(text string, width int) string {
 	return string(runes[:width-3]) + "..."
 }
 
-// projectListNameCellText keeps hierarchy/disclosure markers fixed while the
-// selected project's label scrolls inside the remaining cell width.
+// projectListNameCellText keeps hierarchy markers fixed while the selected
+// project's label scrolls inside the remaining cell width.
 func projectListNameCellText(prefix, label string, width int, selected bool, offset int) string {
 	if width <= 0 {
 		return ""

@@ -1101,11 +1101,6 @@ func (m Model) renderProjectList(width, height int) string {
 		switch rowMeta.Kind {
 		case projectListRowRepo:
 			if rowMeta.LinkedCount > 0 {
-				disclosure := "▸ "
-				if rowMeta.Expanded {
-					disclosure = "▾ "
-				}
-				namePrefix = disclosure
 				if rowMeta.LinkedPendingIntegrationCount > 0 {
 					nameStyle = nameStyle.Inherit(detailWarningStyle).Bold(true)
 					summaryStyle = detailWarningStyle
