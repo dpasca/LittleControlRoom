@@ -368,6 +368,77 @@ func TestVisibleCodexManagedBrowserWithoutCurrentPageURLHydratesState(t *testing
 	}
 }
 
+func TestManagedBrowserHydrationKeepsVisibleTranscriptPinnedToBottomWhenHintAppears(t *testing.T) {
+	now := time.Now().UTC()
+	projectPath := "/tmp/demo"
+	snapshot := codexapp.Snapshot{
+		Provider:           codexapp.ProviderCodex,
+		ProjectPath:        projectPath,
+		Started:            true,
+		TranscriptRevision: 1,
+		Status:             "Codex session ready",
+		BrowserActivity: browserctl.SessionActivity{
+			Policy: settingsAutomaticPlaywrightPolicy,
+		},
+		ManagedBrowserSessionKey: "managed-demo",
+		CurrentBrowserPageURL:    "https://example.test/",
+		Entries: []codexapp.TranscriptEntry{{
+			Kind: codexapp.TranscriptAgent,
+			Text: strings.Repeat("answer line\n", 80),
+		}},
+	}
+	settings := config.EditableSettings{PlaywrightPolicy: settingsAutomaticPlaywrightPolicy}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexHiddenProject:  projectPath,
+		codexInput:          newCodexTextarea(),
+		codexViewport:       viewport.New(0, 0),
+		settingsBaseline:    &settings,
+		nowFn:               func() time.Time { return now },
+		width:               80,
+		height:              20,
+	}
+	m.ensureCodexRuntime()
+	m.storeCodexSnapshot(projectPath, snapshot)
+	m.syncCodexViewport(true)
+	if !m.codexViewport.AtBottom() {
+		t.Fatal("initial transcript should be pinned to the bottom")
+	}
+	if blocks := strings.Join(m.codexLowerBlocks(snapshot, m.width), "\n"); strings.Contains(blocks, "Press ctrl+o") {
+		t.Fatalf("browser reveal hint should not appear before state hydration: %q", blocks)
+	}
+	beforeHeight := m.codexViewport.Height
+
+	updated, cmd := m.Update(managedBrowserStateMsg{
+		sessionKey: "managed-demo",
+		state: browserctl.ManagedPlaywrightState{
+			SessionKey:      "managed-demo",
+			BrowserPID:      123,
+			Hidden:          true,
+			RevealSupported: true,
+			UpdatedAt:       now,
+		},
+	})
+	got := normalizeUpdateModel(updated)
+	if cmd != nil {
+		t.Fatal("successful browser state hydration should not queue another command")
+	}
+	if blocks := strings.Join(got.codexLowerBlocks(snapshot, got.width), "\n"); !strings.Contains(blocks, "Press ctrl+o") {
+		t.Fatalf("browser reveal hint should appear after state hydration: %q", blocks)
+	}
+	if got.codexViewport.Height >= beforeHeight {
+		t.Fatalf("browser reveal hint should reduce transcript height, before=%d after=%d", beforeHeight, got.codexViewport.Height)
+	}
+	if !got.codexViewport.AtBottom() {
+		maxOffset := max(0, got.codexViewport.TotalLineCount()-got.codexViewport.Height)
+		t.Fatalf("hydration should keep transcript pinned to bottom, offset=%d max=%d", got.codexViewport.YOffset, maxOffset)
+	}
+	rendered := ansi.Strip(got.renderCodexMainView(snapshot, got.width, got.height))
+	if strings.Contains(rendered, "More recent conversation below") {
+		t.Fatalf("bottom-pinned transcript should not show a stale catch-up indicator:\n%s", rendered)
+	}
+}
+
 func TestVisibleCodexManagedBrowserHydrationRetriesEarlyUnrevealableState(t *testing.T) {
 	now := time.Now()
 	previousStateReader := managedBrowserStateReader
