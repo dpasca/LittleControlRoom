@@ -196,6 +196,7 @@ func (m Model) renderHelpChatFooter(width int) string {
 		footerLowAction("Alt+C", "copy menu"),
 		footerNavAction("Ctrl+V", "paste"),
 		footerNavAction("Alt+Enter", "newline"),
+		footerLowAction("/log", "logs"),
 		footerLowAction("/new", "clear"),
 		footerHideAction("Esc", "hide"),
 		footerHideAction("`", "hide"),
@@ -207,6 +208,7 @@ func (m Model) renderHelpChatFooter(width int) string {
 			footerLowAction("Alt+C", "copy menu"),
 			footerNavAction("Ctrl+V", "paste"),
 			footerNavAction("Alt+Enter", "newline"),
+			footerLowAction("/log", "logs"),
 			footerHideAction("Esc", "hide"),
 			footerHideAction("`", "hide"),
 		}
