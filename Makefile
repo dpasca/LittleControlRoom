@@ -3,6 +3,8 @@ SHELL := /bin/zsh
 APP := lcroom
 APP_NAME := Little Control Room
 GO ?= go
+GORELEASER ?= goreleaser
+GORELEASER_VERSION := $(shell awk '$$1 == "goreleaser" { print $$2; exit }' .tool-versions)
 
 DEFAULT_DATA_DIR_NEW := $(HOME)/.little-control-room
 DATA_DIR ?= $(DEFAULT_DATA_DIR_NEW)
@@ -35,12 +37,13 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-snapshot screenshots mockups tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy tidy-check fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all build-check deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-tools release-check release-verify release-snapshot screenshots mockups tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
 	@echo ""
 	@echo "  make tidy            - go mod tidy"
+	@echo "  make tidy-check      - verify go.mod/go.sum are tidy without changing them"
 	@echo "  make fmt             - gofmt project files"
 	@echo "  make vet             - run go vet ./..."
 	@echo "  make test            - run go vet and go test ./..."
@@ -52,6 +55,7 @@ help:
 	@echo "  make build           - build ./$(APP)"
 	@echo "  make build-agent     - build ./lcagent"
 	@echo "  make build-all       - build lcroom and lcagent"
+	@echo "  make build-check     - verify modules, test, and build both local binaries"
 	@echo "  make deploy-bins     - rebuild repo-local ./lcroom and ./lcagent, then smoke check them"
 	@echo "  make install         - go install lcroom"
 	@echo "  make install-agent   - go install lcagent"
@@ -62,7 +66,9 @@ help:
 	@echo "  make classify        - drain latest-session AI classification queue"
 	@echo "  make doctor          - print cached detected artifacts/reasons"
 	@echo "  make doctor-scan     - refresh state, then print detected artifacts/reasons"
-	@echo "  make release-snapshot - build local GoReleaser archives under dist/"
+	@echo "  make release-check   - run the shared local/CI release preflight"
+	@echo "  make release-verify  - verify existing GoReleaser archives under dist/"
+	@echo "  make release-snapshot - preflight, build, and verify local release archives"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make mockups         - render static high-level UI mockups"
 	@echo "  make tui             - run TUI dashboard"
@@ -93,6 +99,9 @@ help:
 
 tidy:
 	$(GO) mod tidy
+
+tidy-check:
+	$(GO) mod tidy -diff
 
 fmt:
 	$(GO) fmt ./...
@@ -127,6 +136,10 @@ build-agent:
 
 build-all: build build-agent
 
+build-check: tidy-check test build-all
+	./$(APP) --version
+	./lcagent --version
+
 deploy-bins: build-all
 	./$(APP) --version
 	./lcagent --help >/dev/null
@@ -158,8 +171,25 @@ doctor:
 doctor-scan:
 	$(GO) run ./cmd/$(APP) doctor $(COMMON_FLAGS) --scan
 
-release-snapshot:
-	goreleaser release --snapshot --clean --skip=notarize
+release-tools:
+	@if ! command -v "$(GORELEASER)" >/dev/null 2>&1; then \
+		echo "GoReleaser $(GORELEASER_VERSION) is required (macOS: brew install goreleaser)." >&2; \
+		exit 1; \
+	fi
+	@actual_version="$$("$(GORELEASER)" --version | awk '/^GitVersion:/ { print $$2; exit }')"; \
+	if [ "$$actual_version" != "$(GORELEASER_VERSION)" ]; then \
+		echo "warning: local GoReleaser is $$actual_version; CI uses pinned $(GORELEASER_VERSION)" >&2; \
+	fi
+
+release-check: build-check release-tools
+	$(GORELEASER) check
+
+release-verify:
+	./scripts/verify-release-snapshot.sh dist
+
+release-snapshot: release-check
+	$(GORELEASER) release --snapshot --clean --skip=notarize
+	$(MAKE) release-verify
 
 screenshots:
 	$(GO) run ./cmd/$(APP) screenshots $(COMMON_FLAGS) --screenshot-config "$(SCREENSHOT_CONFIG)" $(SCREENSHOT_OUTPUT_FLAG)

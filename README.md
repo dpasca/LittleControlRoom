@@ -84,6 +84,13 @@ make build-all
 ./lcroom tui
 ```
 
+To run the same non-mutating module check, vet, tests, and local binary
+build used by CI:
+
+```bash
+make build-check
+```
+
 Or install the CLI to your Go bin:
 
 ```bash
@@ -298,13 +305,22 @@ Required GitHub secrets:
 - `MACOS_NOTARY_KEY_ID`: App Store Connect API key ID
 - `MACOS_NOTARY_ISSUER_ID`: App Store Connect issuer UUID
 
-For local archive smoke checks, run:
+Every push to `master` and every pull request now runs `make build-check` on
+both Linux and macOS, followed by the same cross-platform release snapshot
+build used locally. GoReleaser is pinned in `.tool-versions`; CI installs that
+exact version automatically.
+
+Before tagging a release, run:
 
 ```bash
+make release-check
 make release-snapshot
 ```
 
-Snapshot archives under `dist/` are for local verification only, not public distribution.
+`make release-snapshot` builds all four platform archives, verifies their
+checksums, and confirms that every archive contains `lcroom`, `lcagent`,
+`README.md`, and `LICENSE`. Snapshot archives under `dist/` are for local
+verification only, not public distribution.
 
 ## Notes
 

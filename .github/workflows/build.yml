@@ -1,0 +1,73 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "Little Control Room CI"
+          git config --global user.email "ci@little-control-room.local"
+
+      - name: Check and build
+        run: make build-check
+
+  release-snapshot:
+    name: Release snapshot
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "Little Control Room CI"
+          git config --global user.email "ci@little-control-room.local"
+
+      - name: Install pinned GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version-file: .tool-versions
+          install-only: true
+
+      - name: Build and verify release snapshot
+        run: make release-snapshot

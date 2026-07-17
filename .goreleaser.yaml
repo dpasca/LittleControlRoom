@@ -2,11 +2,6 @@ version: 2
 
 project_name: lcroom
 
-before:
-  hooks:
-    - go mod tidy
-    - go test ./...
-
 builds:
   - id: lcroom
     main: ./cmd/lcroom
