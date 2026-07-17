@@ -85,6 +85,11 @@ func TestServiceResolvesUniqueSymlinkSpellingAndFailsClosedOnAmbiguity(t *testin
 	}
 
 	upsertCaptureProject(t, st, model.ProjectState{Path: root, Name: "physical", WorktreeKind: model.WorktreeKindMain, WorktreeRootPath: root})
+	_, err = svc.List(ctx, Origin{ProjectPath: root})
+	if err == nil || !strings.Contains(err.Error(), "multiple loaded") {
+		t.Fatalf("ambiguous exact-path error = %v", err)
+	}
+
 	secondAlias := filepath.Join(t.TempDir(), "second-alias")
 	if err := os.Symlink(root, secondAlias); err != nil {
 		t.Fatal(err)

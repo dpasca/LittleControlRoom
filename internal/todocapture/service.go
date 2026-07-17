@@ -305,21 +305,20 @@ func (s *Service) ResolveProject(ctx context.Context, requestedPath string) (Pro
 	info, err := scanner.ReadGitWorktreeInfo(ctx, requestedPath)
 	if err == nil {
 		repositoryRoot := filepath.Clean(info.RootPath)
-		summary, err := s.store.GetProjectSummary(ctx, repositoryRoot, true)
-		if err == nil {
-			return ProjectScope{
-				RequestedPath: requestedPath,
-				ProjectPath:   summary.Path,
-				ProjectName:   summary.Name,
-				FromWorktree:  info.Kind == scanner.GitWorktreeKindLinked || requestedPath != summary.Path,
-			}, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return ProjectScope{}, fmt.Errorf("resolve loaded repository root %s: %w", repositoryRoot, err)
-		}
 		summary, found, err := s.uniqueSymlinkEquivalentProject(ctx, repositoryRoot)
 		if err != nil {
 			return ProjectScope{}, err
+		}
+		if !found {
+			// EvalSymlinks can fail for a temporarily unavailable path even
+			// when Git supplied a durable root spelling. Preserve exact-path
+			// resolution in that case, but only after the uniqueness check.
+			summary, err = s.store.GetProjectSummary(ctx, repositoryRoot, true)
+			if err == nil {
+				found = true
+			} else if !errors.Is(err, sql.ErrNoRows) {
+				return ProjectScope{}, fmt.Errorf("resolve loaded repository root %s: %w", repositoryRoot, err)
+			}
 		}
 		if found {
 			return ProjectScope{
