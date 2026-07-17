@@ -1,4 +1,4 @@
-SHELL := /bin/zsh
+SHELL := /bin/bash
 
 APP := lcroom
 APP_NAME := Little Control Room
@@ -207,8 +207,7 @@ tui:
 	exit $$rc
 
 tui-parallel-clean:
-	@setopt local_options null_glob; \
-	active_commands="$$(ps -axo command=)"; \
+	@active_commands="$$(ps -axo command=)"; \
 	for dir in /tmp/lcroom-parallel-*; do \
 		[ -d "$$dir" ] || continue; \
 		db="$$dir/little-control-room.sqlite"; \
