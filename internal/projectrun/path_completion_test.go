@@ -18,6 +18,9 @@ func TestPathCompletionBuildsDirectoryAndExecutableSuggestions(t *testing.T) {
 	if rootQuery.Directory != "." || rootQuery.NamePrefix != "too" || !rootQuery.FirstWord {
 		t.Fatalf("root query = %#v", rootQuery)
 	}
+	if !rootQuery.Explicit {
+		t.Fatal("./ path should be explicit")
+	}
 	rootSuggestions := rootQuery.Suggestions([]PathCompletionEntry{
 		{Name: "tools", Directory: true},
 		{Name: "todo.txt"},
@@ -42,6 +45,37 @@ func TestPathCompletionBuildsDirectoryAndExecutableSuggestions(t *testing.T) {
 	}
 }
 
+func TestPathCompletionStartsFromBareProjectDirectoryPrefix(t *testing.T) {
+	t.Parallel()
+
+	rootQuery, ok := ParsePathCompletion("too", len([]rune("too")))
+	if !ok {
+		t.Fatal("ParsePathCompletion() should consider a bare first word as a root path prefix")
+	}
+	if rootQuery.Directory != "." || rootQuery.NamePrefix != "too" || !rootQuery.FirstWord || rootQuery.Explicit {
+		t.Fatalf("bare root query = %#v", rootQuery)
+	}
+	rootSuggestions := rootQuery.Suggestions([]PathCompletionEntry{
+		{Name: "tools", Directory: true},
+		{Name: "todo.txt"},
+		{Name: "tool.sh", Executable: true},
+	})
+	if got := suggestionCommands(rootSuggestions); !slices.Equal(got, []string{"tools/"}) {
+		t.Fatalf("bare root suggestions = %#v, want tools/", got)
+	}
+
+	fileQuery, ok := ParsePathCompletion("tools/bu", len([]rune("tools/bu")))
+	if !ok || !fileQuery.Explicit {
+		t.Fatalf("nested bare path should have explicit path intent: %#v, ok=%v", fileQuery, ok)
+	}
+	fileSuggestions := fileQuery.Suggestions([]PathCompletionEntry{
+		{Name: "build and run.sh", Executable: true},
+	})
+	if got := suggestionCommands(fileSuggestions); !slices.Equal(got, []string{`tools/build\ and\ run.sh`}) {
+		t.Fatalf("bare nested suggestions = %#v", got)
+	}
+}
+
 func TestPathCompletionSupportsArgumentsAndOpenQuotes(t *testing.T) {
 	t.Parallel()
 
@@ -63,6 +97,11 @@ func TestPathCompletionSupportsArgumentsAndOpenQuotes(t *testing.T) {
 	boundaryQuery, ok := ParsePathCompletion("echo ready && ./to", len([]rune("echo ready && ./to")))
 	if !ok || !boundaryQuery.FirstWord {
 		t.Fatalf("path after command boundary should be a first word: %#v, ok=%v", boundaryQuery, ok)
+	}
+
+	bareArgumentQuery, ok := ParsePathCompletion("bash tools/bu", len([]rune("bash tools/bu")))
+	if !ok || !bareArgumentQuery.Explicit || bareArgumentQuery.FirstWord {
+		t.Fatalf("bare nested argument should be an explicit path: %#v, ok=%v", bareArgumentQuery, ok)
 	}
 }
 

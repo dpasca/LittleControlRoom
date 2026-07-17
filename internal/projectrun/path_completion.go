@@ -25,15 +25,21 @@ type PathCompletionQuery struct {
 	Directory  string
 	NamePrefix string
 	FirstWord  bool
+	// Explicit is true when the token uses path syntax such as "./" or "/".
+	// A bare first command word is also considered as an ambiguous root path
+	// prefix, but callers can fall back to command completion when it has no
+	// matching project entry.
+	Explicit bool
 
 	commandPrefix string
 	rawToken      string
 	quote         rune
 }
 
-// ParsePathCompletion recognizes a project-relative path in the shell word at
-// the end of command. Path completion is deliberately scoped to "./..." paths
-// so browsing never escapes the selected project.
+// ParsePathCompletion recognizes a project-relative path candidate in the
+// shell word at the end of command. Both "./tools/run.sh" and
+// "tools/run.sh" are supported. A bare first word such as "too" can begin
+// root-directory completion without requiring the user to type "./".
 func ParsePathCompletion(command string, cursor int) (PathCompletionQuery, bool) {
 	runes := []rune(command)
 	if cursor != len(runes) {
@@ -47,11 +53,27 @@ func ParsePathCompletion(command string, cursor int) (PathCompletionQuery, bool)
 
 	rawToken := string(runes[start:])
 	decoded, quote, ok := decodePathToken(rawToken, activeQuote)
-	if !ok || !strings.HasPrefix(decoded, "./") {
+	if !ok {
 		return PathCompletionQuery{}, false
 	}
 
-	relative := strings.TrimPrefix(decoded, "./")
+	explicit := strings.HasPrefix(decoded, "./") || strings.Contains(decoded, "/")
+	relative := decoded
+	if strings.HasPrefix(relative, "./") {
+		relative = strings.TrimPrefix(relative, "./")
+	}
+	if relative == "" && !explicit {
+		return PathCompletionQuery{}, false
+	}
+	// A bare argument is usually a command argument rather than a path. Once
+	// it contains a slash, its project-relative path intent is unambiguous.
+	if !explicit && !firstWord {
+		return PathCompletionQuery{}, false
+	}
+	if strings.HasPrefix(relative, "~") || path.IsAbs(relative) || hasParentPathComponent(relative) {
+		return PathCompletionQuery{}, false
+	}
+
 	var directory, namePrefix string
 	if strings.HasSuffix(relative, "/") {
 		directory = strings.TrimSuffix(relative, "/")
@@ -64,9 +86,6 @@ func ParsePathCompletion(command string, cursor int) (PathCompletionQuery, bool)
 	if directory == "" {
 		directory = "."
 	}
-	if hasParentPathComponent(directory) {
-		return PathCompletionQuery{}, false
-	}
 	directory = path.Clean(directory)
 	if directory == ".." || strings.HasPrefix(directory, "../") || path.IsAbs(directory) {
 		return PathCompletionQuery{}, false
@@ -76,6 +95,7 @@ func ParsePathCompletion(command string, cursor int) (PathCompletionQuery, bool)
 		Directory:     directory,
 		NamePrefix:    namePrefix,
 		FirstWord:     firstWord,
+		Explicit:      explicit,
 		commandPrefix: string(runes[:start]),
 		rawToken:      rawToken,
 		quote:         quote,
@@ -94,6 +114,12 @@ func (q PathCompletionQuery) Suggestions(entries []PathCompletionEntry) []Sugges
 			continue
 		}
 		if !entry.Directory && q.FirstWord && !entry.Executable {
+			continue
+		}
+		// A bare executable name has no slash, so a shell would search PATH
+		// instead of running the project-root file. Keep ambiguous bare-root
+		// completion to directories; "./" still enables root executables.
+		if !q.Explicit && q.FirstWord && q.Directory == "." && !entry.Directory {
 			continue
 		}
 

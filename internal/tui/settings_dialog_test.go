@@ -233,6 +233,9 @@ func TestRunCommandDialogAutocompletesDetectedCommandWhileEditing(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(projectPath, "package.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
+	if err := os.Mkdir(filepath.Join(projectPath, "pnpm-cache"), 0o755); err != nil {
+		t.Fatalf("mkdir pnpm-cache: %v", err)
+	}
 
 	m := Model{}
 	cmd := m.openRunCommandDialog(model.ProjectSummary{
@@ -395,6 +398,72 @@ func TestRunCommandDialogCompletesExecutableProjectPathByDirectory(t *testing.T)
 	}
 }
 
+func TestRunCommandDialogCompletesBarePathAndEnterUsesSelection(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	toolsPath := filepath.Join(projectPath, "tools")
+	if err := os.MkdirAll(toolsPath, 0o755); err != nil {
+		t.Fatalf("mkdir tools: %v", err)
+	}
+	scriptName := "build_and_run_desktop.sh"
+	if runtime.GOOS == "windows" {
+		scriptName = "build_and_run_desktop.cmd"
+	}
+	if err := os.WriteFile(filepath.Join(toolsPath, scriptName), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "too",
+	}, true)
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != "tools/" {
+		t.Fatalf("bare directory completion = %q, want tools/", got)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.runCommandDialog == nil {
+		t.Fatal("Enter on a directory completion should keep the dialog open")
+	}
+	if got := m.runCommandDialog.Input.Value(); got != "tools/" {
+		t.Fatalf("command after directory Enter = %q, want tools/", got)
+	}
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+	}
+
+	expectedScript := "tools/" + scriptName
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != expectedScript {
+		t.Fatalf("script completion = %q, want %q", got, expectedScript)
+	}
+	updated, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.runCommandDialog != nil {
+		t.Fatal("Enter on an executable completion should submit the dialog")
+	}
+	msgs := collectCmdMsgs(cmd)
+	if len(msgs) != 1 {
+		t.Fatalf("save command messages = %#v, want one", msgs)
+	}
+	saved, ok := msgs[0].(runCommandSavedMsg)
+	if !ok {
+		t.Fatalf("save command message = %T, want runCommandSavedMsg", msgs[0])
+	}
+	if saved.command != expectedScript {
+		t.Fatalf("submitted command = %q, want highlighted completion %q", saved.command, expectedScript)
+	}
+}
+
 func TestRunCommandDialogCompletesNonExecutablePathArgument(t *testing.T) {
 	t.Parallel()
 
@@ -448,7 +517,7 @@ func TestRunCommandDialogExplainsWhenNoProjectCommandsAreDetected(t *testing.T) 
 		t.Fatal("run command autocomplete lookup should be marked complete")
 	}
 	rendered := ansi.Strip(m.renderRunCommandContent(80))
-	if !strings.Contains(rendered, "No conventional commands detected; type ./ to complete a project path.") {
+	if !strings.Contains(rendered, "No conventional commands detected; start typing a project path to complete it.") {
 		t.Fatalf("run command dialog should explain the empty autocomplete state:\n%s", rendered)
 	}
 }

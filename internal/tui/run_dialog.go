@@ -143,6 +143,14 @@ func (m Model) updateRunCommandDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		command := strings.TrimSpace(dialog.Input.Value())
+		if suggestion, ok := currentRunCommandSuggestion(dialog); ok {
+			command = strings.TrimSpace(suggestion.Command)
+			if runCommandPathSuggestionIsDirectory(dialog, command) {
+				dialog.Input.SetValue(command)
+				dialog.Input.CursorEnd()
+				return m, m.refreshRunCommandAutocomplete()
+			}
+		}
 		if command == "" {
 			m.status = "Run command is required"
 			return m, nil
@@ -224,18 +232,18 @@ func (m *Model) refreshRunCommandAutocomplete() tea.Cmd {
 		return nil
 	}
 
-	query, pathActive := projectrun.ParsePathCompletion(dialog.Input.Value(), dialog.Input.Position())
-	if pathActive && runCommandMatchesDetectedSuggestion(dialog) {
-		pathActive = false
+	query, pathCandidate := projectrun.ParsePathCompletion(dialog.Input.Value(), dialog.Input.Position())
+	if pathCandidate && runCommandMatchesDetectedSuggestion(dialog) {
+		pathCandidate = false
 	}
 
-	dialog.PathCompletionActive = pathActive
+	dialog.PathCompletionActive = pathCandidate
 	dialog.PathCompletionDirectory = ""
 	dialog.PathSuggestionPending = false
 	dialog.PathSuggestionError = ""
 	dialog.PathSuggestions = nil
 
-	if !pathActive {
+	if !pathCandidate {
 		setRunCommandActiveSuggestions(dialog, dialog.CommandSuggestions)
 		return nil
 	}
@@ -256,8 +264,23 @@ func (m *Model) refreshRunCommandAutocomplete() tea.Cmd {
 		seq := m.runCommandRequestSeq
 		dialog.PathLoadingDirectories[directory] = seq
 		dialog.PathSuggestionPending = true
-		setRunCommandActiveSuggestions(dialog, nil)
+		if query.Explicit {
+			setRunCommandActiveSuggestions(dialog, nil)
+		} else {
+			setRunCommandActiveSuggestions(dialog, dialog.CommandSuggestions)
+		}
 		return m.loadRunCommandPathEntriesCmd(dialog.ProjectPath, directory, seq)
+	}
+
+	if !query.Explicit {
+		if dialog.PathSuggestionError != "" || len(dialog.PathSuggestions) == 0 {
+			dialog.PathCompletionActive = false
+			dialog.PathSuggestionError = ""
+			setRunCommandActiveSuggestions(dialog, dialog.CommandSuggestions)
+			return nil
+		}
+		setRunCommandActiveSuggestions(dialog, mergeRunCommandSuggestions(dialog.CommandSuggestions, dialog.PathSuggestions))
+		return nil
 	}
 
 	setRunCommandActiveSuggestions(dialog, dialog.PathSuggestions)
@@ -318,19 +341,59 @@ func setRunCommandActiveSuggestions(dialog *runCommandDialogState, suggestions [
 }
 
 func currentRunCommandSuggestionReason(dialog *runCommandDialogState) string {
-	if dialog == nil {
+	suggestion, ok := currentRunCommandSuggestion(dialog)
+	if !ok {
 		return ""
+	}
+	return strings.TrimSpace(suggestion.Reason)
+}
+
+func currentRunCommandSuggestion(dialog *runCommandDialogState) (projectrun.Suggestion, bool) {
+	if dialog == nil {
+		return projectrun.Suggestion{}, false
 	}
 	current := strings.TrimSpace(dialog.Input.CurrentSuggestion())
 	if current == "" {
-		return ""
+		return projectrun.Suggestion{}, false
 	}
 	for _, suggestion := range dialog.Suggestions {
 		if strings.TrimSpace(suggestion.Command) == current {
-			return strings.TrimSpace(suggestion.Reason)
+			return suggestion, true
 		}
 	}
-	return ""
+	return projectrun.Suggestion{}, false
+}
+
+func runCommandPathSuggestionIsDirectory(dialog *runCommandDialogState, command string) bool {
+	command = strings.TrimSpace(command)
+	if dialog == nil || command == "" || !strings.HasSuffix(command, "/") {
+		return false
+	}
+	for _, suggestion := range dialog.PathSuggestions {
+		if strings.TrimSpace(suggestion.Command) == command {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeRunCommandSuggestions(groups ...[]projectrun.Suggestion) []projectrun.Suggestion {
+	var merged []projectrun.Suggestion
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, suggestion := range group {
+			command := strings.TrimSpace(suggestion.Command)
+			if command == "" {
+				continue
+			}
+			if _, ok := seen[command]; ok {
+				continue
+			}
+			seen[command] = struct{}{}
+			merged = append(merged, suggestion)
+		}
+	}
+	return merged
 }
 
 func matchingRunCommandSuggestions(dialog *runCommandDialogState) []projectrun.Suggestion {
@@ -584,7 +647,7 @@ func (m Model) renderRunCommandContent(width int) string {
 		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("Unavailable: "+dialog.SuggestionError)))
 	} else if dialog.SuggestionChecked && len(dialog.CommandSuggestions) == 0 {
 		lines = append(lines, "")
-		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("No conventional commands detected; type ./ to complete a project path.")))
+		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("No conventional commands detected; start typing a project path to complete it.")))
 	}
 	if len(dialog.Suggestions) > 0 {
 		lines = append(lines, "", commandPaletteTitleStyle.Render("Autocomplete"))
@@ -608,7 +671,7 @@ func (m Model) renderRunCommandContent(width int) string {
 		if len(matches) == 0 {
 			lines = append(lines, commandPaletteHintStyle.Render("Type a prefix to filter detected commands; Tab completes."))
 		} else {
-			lines = append(lines, commandPaletteHintStyle.Render("Tab completes; Up/Down selects another match."))
+			lines = append(lines, commandPaletteHintStyle.Render("Tab completes; Enter uses the highlighted match; Up/Down selects another."))
 		}
 	}
 	lines = append(lines, "")
