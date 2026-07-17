@@ -132,6 +132,7 @@ func (m *Model) rememberManagedBrowserState(state browserctl.ManagedPlaywrightSt
 	}
 	m.managedBrowserStateFetchedAt[sessionKey] = m.currentTime()
 	m.managedBrowserAvailability[sessionKey] = managedBrowserAvailabilityLive
+	m.syncVisibleCodexViewportForManagedBrowserState(sessionKey)
 }
 
 func (m *Model) appendManagedBrowserPreflightWarning(state browserctl.ManagedPlaywrightState) {
@@ -163,6 +164,22 @@ func (m *Model) markManagedBrowserStateGone(sessionKey string) {
 	}
 	m.managedBrowserStateFetchedAt[sessionKey] = m.currentTime()
 	m.managedBrowserAvailability[sessionKey] = managedBrowserAvailabilityGone
+	m.syncVisibleCodexViewportForManagedBrowserState(sessionKey)
+}
+
+func (m *Model) syncVisibleCodexViewportForManagedBrowserState(sessionKey string) {
+	sessionKey = strings.TrimSpace(sessionKey)
+	snapshot, ok := m.currentCachedCodexSnapshot()
+	if sessionKey == "" ||
+		!ok ||
+		m.codexViewport.Height <= 0 ||
+		strings.TrimSpace(snapshot.ManagedBrowserSessionKey) != sessionKey {
+		return
+	}
+	// Browser-state hydration can add or remove the reveal hint above the
+	// composer without producing a session snapshot update. Resize the stored
+	// viewport here so scroll input and rendering keep the same bottom boundary.
+	m.syncCodexViewport(false)
 }
 
 func (m Model) cachedManagedBrowserState(sessionKey string) (browserctl.ManagedPlaywrightState, bool) {
