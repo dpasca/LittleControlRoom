@@ -423,7 +423,18 @@ func trimChatHistory(messages []ChatMessage, limit int) []ChatMessage {
 func conversationalChatMessages(messages []ChatMessage) []ChatMessage {
 	out := make([]ChatMessage, 0, len(messages))
 	for _, message := range messages {
-		if chatMessageIsFlow(message) {
+		if normalizeChatMessageKind(message.Kind) != ChatMessageKindChat {
+			continue
+		}
+		out = append(out, message)
+	}
+	return out
+}
+
+func modelVisibleChatMessages(messages []ChatMessage) []ChatMessage {
+	out := make([]ChatMessage, 0, len(messages))
+	for _, message := range messages {
+		if chatMessageIsLog(message) {
 			continue
 		}
 		out = append(out, message)
@@ -435,10 +446,16 @@ func chatMessageIsFlow(message ChatMessage) bool {
 	return normalizeChatMessageKind(message.Kind) == ChatMessageKindFlow
 }
 
+func chatMessageIsLog(message ChatMessage) bool {
+	return normalizeChatMessageKind(message.Kind) == ChatMessageKindLog
+}
+
 func normalizeChatMessageKind(kind string) string {
 	switch strings.TrimSpace(strings.ToLower(kind)) {
 	case ChatMessageKindFlow:
 		return ChatMessageKindFlow
+	case ChatMessageKindLog:
+		return ChatMessageKindLog
 	default:
 		return ChatMessageKindChat
 	}

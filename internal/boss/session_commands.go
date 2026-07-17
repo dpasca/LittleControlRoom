@@ -49,7 +49,7 @@ func (m Model) submitChatMessage(text string) (tea.Model, tea.Cmd) {
 	m.syncLayout(true)
 	return m, tea.Batch(
 		m.saveBossChatMessageCmd(userMessage),
-		m.askAssistantStreamCmd(runCtx, streamID, append([]ChatMessage(nil), m.messages...), m.snapshot, m.assistantViewContext()),
+		m.askAssistantStreamCmd(runCtx, streamID, modelVisibleChatMessages(m.messages), m.snapshot, m.assistantViewContext()),
 	)
 }
 

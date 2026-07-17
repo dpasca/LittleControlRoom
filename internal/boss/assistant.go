@@ -34,6 +34,7 @@ type ChatMessage struct {
 const (
 	ChatMessageKindChat = "chat"
 	ChatMessageKindFlow = "flow"
+	ChatMessageKindLog  = "log"
 )
 
 type HandoffHighlight struct {

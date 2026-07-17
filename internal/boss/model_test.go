@@ -557,6 +557,70 @@ func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
 	}
 }
 
+func TestEmbeddedHelpHidesToolActivityUntilLogCommand(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 17, 9, 10, 11, 0, time.Local)
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 112
+	m.height = 24
+	m.nowFn = func() time.Time { return now }
+	m.sending = true
+	m.applyAssistantStreamEvent(AssistantStreamEvent{
+		Kind:      AssistantStreamToolCall,
+		ToolCall:  "project_detail /tmp/alpha",
+		ToolState: "running",
+	})
+	now = now.Add(2 * time.Second)
+	m.applyAssistantStreamEvent(AssistantStreamEvent{
+		Kind:      AssistantStreamToolCall,
+		ToolCall:  "project_detail /tmp/alpha",
+		ToolState: "done",
+	})
+
+	rendered := ansi.Strip(m.renderTranscript(112))
+	for _, hidden := range []string{"Tool calls", "project_detail /tmp/alpha"} {
+		if strings.Contains(rendered, hidden) {
+			t.Fatalf("Chat should hide live tool activity %q until /log:\n%s", hidden, rendered)
+		}
+	}
+
+	m.input.SetValue("/log")
+	updated, cmd := m.submit()
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("/log should render local history without async work")
+	}
+	if !got.sending {
+		t.Fatalf("/log should not interrupt an in-flight Chat response")
+	}
+	if got.input.Value() != "" {
+		t.Fatalf("/log input = %q, want cleared", got.input.Value())
+	}
+	if len(got.messages) != 1 || !chatMessageIsLog(got.messages[0]) {
+		t.Fatalf("/log messages = %#v, want one local log entry", got.messages)
+	}
+	if conversational := conversationalChatMessages(got.messages); len(conversational) != 0 {
+		t.Fatalf("/log leaked into model-visible conversation: %#v", conversational)
+	}
+	if visible := modelVisibleChatMessages(got.messages); len(visible) != 0 {
+		t.Fatalf("/log leaked into assistant request messages: %#v", visible)
+	}
+
+	rendered = ansi.Strip(got.renderTranscript(112))
+	for _, want := range []string{
+		"09:10:11 tool: project_detail /tmp/alpha",
+		"09:10:13 done: project_detail /tmp/alpha",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("/log output missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Tool calls") {
+		t.Fatalf("/log should keep the compact one-line format:\n%s", rendered)
+	}
+}
+
 func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 	t.Parallel()
 
@@ -568,13 +632,13 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 	m.syncLayout(true)
 
 	rendered := ansi.Strip(m.View())
-	for _, unwanted := range []string{"Chat", "Boss Desk", "Boss Log", "Flow", "Tab switch"} {
+	for _, unwanted := range []string{"Boss Desk", "Boss Log", "Flow", "Tab switch"} {
 		if strings.Contains(rendered, unwanted) {
 			t.Fatalf("chat view should omit Boss transcript control %q:\n%s", unwanted, rendered)
 		}
 	}
-	if !strings.Contains(rendered, "Help> Ask me about Little Control Room.") {
-		t.Fatalf("chat should use a Help speaker label:\n%s", rendered)
+	if !strings.Contains(rendered, "Chat> Ask me about Little Control Room.") {
+		t.Fatalf("chat should use a Chat speaker label:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "Boss>") {
 		t.Fatalf("chat should not use Boss speaker labels:\n%s", rendered)
@@ -613,7 +677,7 @@ func TestEmbeddedHelpRendersHostNoticesInChatWithoutFlow(t *testing.T) {
 	}
 	got.syncLayout(true)
 	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Help> Work on Project Task is ready for review.") {
+	if !strings.Contains(rendered, "Chat> Work on Project Task is ready for review.") {
 		t.Fatalf("help host notice missing from chat:\n%s", rendered)
 	}
 	if strings.Contains(rendered, "Flow") {
@@ -651,18 +715,18 @@ func TestEmbeddedHelpAssistantResponseWordWrapsAtFullWidthAndKeepsBackground(t *
 		if strings.HasPrefix(stripped, " ") {
 			t.Fatalf("continuation line %d should start at the left edge:\n%s", i+1, ansi.Strip(rendered))
 		}
-		if strings.HasPrefix(strings.TrimLeft(stripped, " "), "Help>") {
+		if strings.HasPrefix(strings.TrimLeft(stripped, " "), "Chat>") {
 			t.Fatalf("continuation line %d should not repeat the speaker label:\n%s", i+1, ansi.Strip(rendered))
 		}
 	}
 	plain := strings.Join(strings.Fields(ansi.Strip(rendered)), " ")
-	wantPlain := "Help> This is a long wrapped help response that should continue under the message body instead of snapping back to the left edge."
+	wantPlain := "Chat> This is a long wrapped help response that should continue under the message body instead of snapping back to the left edge."
 	if plain != wantPlain {
 		t.Fatalf("wrapped response changed word boundaries:\n got: %q\nwant: %q", plain, wantPlain)
 	}
 	usedFullWidth := false
 	for _, line := range lines[1:] {
-		if ansi.StringWidth(strings.TrimRight(ansi.Strip(line), " ")) > width-len("Help> ") {
+		if ansi.StringWidth(strings.TrimRight(ansi.Strip(line), " ")) > width-len("Chat> ") {
 			usedFullWidth = true
 			break
 		}
