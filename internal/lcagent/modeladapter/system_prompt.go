@@ -3,6 +3,8 @@ package modeladapter
 import (
 	"fmt"
 	"strings"
+
+	"lcroom/internal/todocapture"
 )
 
 type SystemPromptOptions struct {
@@ -18,6 +20,7 @@ type SystemPromptOptions struct {
 	HostArch                string
 	WorkspaceOnlyReads      bool
 	ReadOnly                bool
+	TodoCaptureMode         todocapture.CaptureMode
 }
 
 func SystemPrompt(skillIndex, projectInstructions string) string {
@@ -153,6 +156,9 @@ func SystemPromptWithOptions(skillIndex, projectInstructions string, opts System
 		lines = append(lines,
 			fmt.Sprintf("For this run, read_file defaults to %d lines and permits up to %d lines. Once outline/search identifies a central file, read enough contiguous context rather than sampling tiny chunks.", opts.DefaultReadLineLimit, opts.MaxReadLineLimit),
 		)
+	}
+	if todocapture.NormalizeCaptureMode(opts.TodoCaptureMode).Enabled() {
+		lines = append(lines, "", todocapture.AgentInstructions(opts.TodoCaptureMode))
 	}
 	if strings.TrimSpace(skillIndex) != "" {
 		lines = append(lines, "", strings.TrimSpace(skillIndex))

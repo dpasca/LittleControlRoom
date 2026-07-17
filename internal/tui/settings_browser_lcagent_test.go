@@ -775,7 +775,9 @@ func TestOpenLCAgentSessionFillsWebSearchSettings(t *testing.T) {
 }
 
 func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
-	previous := config.EditableSettingsFromAppConfig(config.Default())
+	cfg := config.Default()
+	cfg.DBPath = filepath.Join(t.TempDir(), "little-control-room.sqlite")
+	previous := config.EditableSettingsFromAppConfig(cfg)
 	saved := previous
 	saved.LCAgentWebSearchBackend = "exa"
 	saved.LCAgentWebSearchAPIKey = "exa-key"
@@ -816,6 +818,7 @@ func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
 		t.Fatalf("manager.Open() error = %v", err)
 	}
 	m := Model{
+		svc:                      service.New(cfg, nil, events.NewBus(), nil),
 		codexManager:             manager,
 		settingsBaseline:         &previous,
 		settingsEmbeddedProject:  "/tmp/demo",
@@ -855,6 +858,9 @@ func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
 	}
 	if captured.PendingModel != "custom-lcagent-model" {
 		t.Fatalf("pending model = %q, want custom-lcagent-model", captured.PendingModel)
+	}
+	if captured.AppDBPath != cfg.DBPath || captured.TodoCaptureMode != saved.EngineerTodoCaptureMode || captured.TodoCaptureHandler != m.svc {
+		t.Fatalf("reload TODO capture context = db %q mode %q handler %T", captured.AppDBPath, captured.TodoCaptureMode, captured.TodoCaptureHandler)
 	}
 	if !strings.Contains(opened.status, "Restarted LCAgent") {
 		t.Fatalf("opened status = %q, want restart notice", opened.status)
@@ -2053,5 +2059,21 @@ func TestSettingsSavedMsgQueuesScanAfterScopePathChange(t *testing.T) {
 	}
 	if _, ok := msgs[0].(scanMsg); !ok {
 		t.Fatalf("scan command returned %T, want scanMsg", msgs[0])
+	}
+}
+
+func TestEditableSettingsApplyErrorStillQueuesRequestedScan(t *testing.T) {
+	m := Model{}
+
+	updated, cmd := m.Update(editableSettingsAppliedMsg{
+		scanAfter: true,
+		err:       errors.New("capture policy persistence failed"),
+	})
+	got := updated.(Model)
+	if !got.scanInFlight {
+		t.Fatal("settings apply error should still honor the requested scan")
+	}
+	if cmd == nil {
+		t.Fatal("settings apply error should return the requested scan command")
 	}
 }

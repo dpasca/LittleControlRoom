@@ -27,6 +27,7 @@ import (
 	"lcroom/internal/scanner"
 	"lcroom/internal/sessionclassify"
 	"lcroom/internal/store"
+	"lcroom/internal/todocapture"
 	"lcroom/internal/todoworktree"
 )
 
@@ -80,6 +81,9 @@ type Service struct {
 	refreshProjectStatusFn    func(context.Context, string) error
 
 	mu sync.Mutex
+	// todoCapturePolicyMu makes in-process LCAgent policy changes linearizable
+	// with capture calls. External MCP writers use the DB transaction check.
+	todoCapturePolicyMu sync.RWMutex
 
 	fullScanMu sync.Mutex
 
@@ -165,9 +169,34 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitRepoInitializer:     runGitInit,
 		scheduledScanTimeout:   defaultScheduledScanTimeout,
 	}
+	svc.cfg.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(svc.cfg.EngineerTodoCaptureMode)
 	svc.configureAIClientsLocked()
 	svc.bestEffortPrepareInternalWorkspaceState()
 	return svc
+}
+
+// InitializeTodoCapturePolicy publishes the configured grant for long-lived
+// TUI/serve hosts. Read-only and one-shot commands intentionally do not call it,
+// so constructing a Service for doctor/snapshot work cannot change authorization.
+func (s *Service) InitializeTodoCapturePolicy(ctx context.Context) error {
+	if s == nil || s.store == nil {
+		return fmt.Errorf("initialize engineer TODO capture policy: store unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.todoCapturePolicyMu.Lock()
+	defer s.todoCapturePolicyMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mode := todocapture.NormalizeCaptureMode(s.cfg.EngineerTodoCaptureMode)
+	if err := s.store.SetRuntimeSetting(ctx, todocapture.RuntimeModeSettingKey, string(mode)); err != nil {
+		// Never launch a new external writer from an unpersisted policy.
+		s.cfg.EngineerTodoCaptureMode = todocapture.ModeOff
+		return fmt.Errorf("initialize engineer TODO capture policy: %w", err)
+	}
+	s.cfg.EngineerTodoCaptureMode = mode
+	return nil
 }
 
 func (s *Service) Store() *store.Store {
@@ -526,9 +555,20 @@ func (s *Service) SetSessionClassifier(classifier SessionClassifier) {
 	s.classifier = classifier
 }
 
-func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
+func (s *Service) ApplyEditableSettings(settings config.EditableSettings) error {
 	settings = config.NormalizeEditableSettings(settings)
+	s.todoCapturePolicyMu.Lock()
+	defer s.todoCapturePolicyMu.Unlock()
 	s.mu.Lock()
+	var todoPolicyErr error
+	if s.store != nil {
+		if err := s.store.SetRuntimeSetting(context.Background(), todocapture.RuntimeModeSettingKey, string(settings.EngineerTodoCaptureMode)); err != nil {
+			// Fail closed for newly launched sessions even though an already-running
+			// external MCP may need reconnecting to drop its stale persisted grant.
+			s.cfg.EngineerTodoCaptureMode = todocapture.ModeOff
+			todoPolicyErr = fmt.Errorf("apply engineer TODO capture policy; existing embedded sessions may retain the prior policy until reconnected: %w", err)
+		}
+	}
 
 	reconfigureAIClients := editableSettingsRequireAIClientRefresh(s.cfg, settings)
 	scanIntervalChanged := s.cfg.ScanInterval != settings.ScanInterval
@@ -599,6 +639,9 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	s.cfg.LCAgentWebSearchURL = strings.TrimSpace(settings.LCAgentWebSearchURL)
 	s.cfg.CodexLaunchPreset = settings.CodexLaunchPreset
 	s.cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
+	if todoPolicyErr == nil {
+		s.cfg.EngineerTodoCaptureMode = settings.EngineerTodoCaptureMode
+	}
 	s.cfg.ScanInterval = settings.ScanInterval
 	s.cfg.ActiveThreshold = settings.ActiveThreshold
 	s.cfg.StuckThreshold = settings.StuckThreshold
@@ -621,6 +664,7 @@ func (s *Service) ApplyEditableSettings(settings config.EditableSettings) {
 	if scanIntervalChanged {
 		s.notifySchedulerConfigChanged()
 	}
+	return todoPolicyErr
 }
 
 func (s *Service) resetSessionUsageLocked() {
@@ -3686,6 +3730,35 @@ func (s *Service) WaitForAsyncProjectRefreshes(ctx context.Context) error {
 
 func (s *Service) AddTodo(ctx context.Context, projectPath, text string) (model.TodoItem, error) {
 	return s.AddTodoWithAttachments(ctx, projectPath, text, nil)
+}
+
+func (s *Service) HandleTodoCapture(ctx context.Context, req todocapture.Request) (todocapture.Response, error) {
+	if s == nil || s.store == nil {
+		return todocapture.Response{}, fmt.Errorf("TODO capture service is unavailable")
+	}
+	s.todoCapturePolicyMu.RLock()
+	defer s.todoCapturePolicyMu.RUnlock()
+	mode := s.Config().EngineerTodoCaptureMode
+	req.Origin.PublishedInProcess = true
+	response, err := todocapture.NewService(s.store, mode).HandleTodoCapture(ctx, req)
+	if err != nil {
+		return todocapture.Response{}, err
+	}
+	if response.Add != nil && response.Add.Disposition == todocapture.DispositionCreated {
+		projectPath := response.Add.Scope.ProjectPath
+		s.refreshProjectStatusAsync(projectPath)
+		now := time.Now()
+		s.bus.Publish(events.Event{
+			Type:        events.ActionApplied,
+			At:          now,
+			ProjectPath: projectPath,
+			Payload: map[string]string{
+				"action":   "add_todo",
+				"provider": strings.TrimSpace(req.Origin.Provider),
+			},
+		})
+	}
+	return response, nil
 }
 
 func (s *Service) AddTodoWithAttachments(ctx context.Context, projectPath, text string, attachments []model.TodoAttachment) (model.TodoItem, error) {

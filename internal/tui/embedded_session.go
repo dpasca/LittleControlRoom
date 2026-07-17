@@ -1163,6 +1163,7 @@ func (m *Model) reloadEmbeddedLCAgentAfterSettingsCmd(projectPath string, settin
 	projectPath = strings.TrimSpace(projectPath)
 	manager := m.codexManager
 	req := m.lcagentLaunchRequestFromSettings(projectPath, settings)
+	req = m.enrichEmbeddedLaunchRequest(req)
 	perfOpID := m.beginAILatencyOp("Embedded reload", projectPath, "LCAgent settings")
 	return func() tea.Msg {
 		startedAt := time.Now()

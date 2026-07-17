@@ -17,6 +17,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/todocapture"
 )
 
 func TestLCAgentCommandSpecFallsBackToProjectSourceCheckout(t *testing.T) {
@@ -95,6 +96,8 @@ printf '%s\n' '{"type":"turn_complete"}'
 		LCAgentRequestTimeout: 10 * time.Minute,
 		PendingModel:          "deepseek/test-model",
 		PendingReasoning:      "low",
+		TodoCaptureMode:       todocapture.ModeExplicit,
+		TodoCaptureHandler:    &recordingLCAgentTodoHandler{},
 		Prompt:                "please run the fake agent",
 	}, func() {
 		select {
@@ -147,6 +150,7 @@ printf '%s\n' '{"type":"turn_complete"}'
 		"--auto", "medium",
 		"--output", "stream-json",
 		"--approval-mode", "ask",
+		"--lcr-todo-capture-mode", string(todocapture.ModeExplicit),
 		"--require-final-response-tool",
 		"--admin-write",
 		"--utility-provider", "deepseek",

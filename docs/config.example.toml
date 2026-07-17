@@ -35,6 +35,11 @@ exclude_paths = []
 exclude_project_patterns = []
 codex_launch_preset = "yolo"
 
+# Let LCR-embedded engineers add repository-scoped TODOs after listing and
+# checking the current TODOs. Values: "off", "explicit_only", or
+# "explicit_and_clear_deferrals". Explicit-only is the safe default.
+engineer_todo_capture_mode = "explicit_only"
+
 # Experimental LCAgent provider. Leave lcagent_path blank to use the bundled
 # sibling binary, PATH lookup, or source-checkout go run fallback. The env file can
 # contain OPENROUTER_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, XIAOMI_API_KEY, or

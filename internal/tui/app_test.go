@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 	"lcroom/internal/sessionclassify"
+	"lcroom/internal/store"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -163,6 +164,36 @@ func TestSavePrivacyModeCmdAppliesToSharedService(t *testing.T) {
 	}
 	if !svc.Config().PrivacyMode {
 		t.Fatal("privacy mode was not applied to the shared service")
+	}
+}
+
+func TestSavePrivacyModeCmdReportsLivePolicyApplyFailure(t *testing.T) {
+	cfg := config.Default()
+	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
+	st, err := store.Open(filepath.Join(t.TempDir(), "closed.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := service.New(cfg, st, events.NewBus(), nil)
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	settings := config.EditableSettingsFromAppConfig(cfg)
+	m := Model{
+		svc:                svc,
+		settingsBaseline:   &settings,
+		settingsConfigPath: cfg.ConfigPath,
+	}
+
+	msg, ok := m.savePrivacyModeCmd(true)().(privacyModeSavedMsg)
+	if !ok {
+		t.Fatal("savePrivacyModeCmd() did not return privacyModeSavedMsg")
+	}
+	if msg.err != nil {
+		t.Fatalf("config save unexpectedly failed: %v", msg.err)
+	}
+	if msg.applyErr == nil {
+		t.Fatal("live TODO policy apply failure was not reported")
 	}
 }
 

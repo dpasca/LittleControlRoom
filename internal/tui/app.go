@@ -608,12 +608,14 @@ type setupSnapshotMsg struct {
 
 type editableSettingsAppliedMsg struct {
 	scanAfter bool
+	err       error
 }
 
 type privacyModeSavedMsg struct {
 	privacyMode bool
 	path        string
 	err         error
+	applyErr    error
 }
 
 type ignoredProjectsMsg struct {
@@ -2553,6 +2555,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("AI setup saved to %s. %s is now selected.", msg.path, msg.settings.AIBackend.Label())
 		return m, tea.Batch(m.applyEditableSettingsCmd(msg.settings), m.refreshSetupSnapshotCmd(false))
 	case editableSettingsAppliedMsg:
+		if msg.err != nil {
+			m.reportError("Settings saved, but the live TODO capture policy could not be applied", msg.err, "")
+			if msg.scanAfter {
+				return m, m.requestScanCmd(false)
+			}
+			return m, nil
+		}
 		if msg.scanAfter {
 			return m, m.requestScanCmd(false)
 		}
@@ -2575,6 +2584,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case privacyModeSavedMsg:
 		if msg.err != nil {
 			m.reportError("Privacy mode updated for this run; config save failed", msg.err, "")
+			return m, nil
+		}
+		if msg.applyErr != nil {
+			m.reportError("Privacy mode saved, but the live TODO capture policy could not be applied", msg.applyErr, "")
 			return m, nil
 		}
 		m.err = nil

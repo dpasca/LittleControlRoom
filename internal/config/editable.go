@@ -11,6 +11,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/todocapture"
 )
 
 type EditableSettings struct {
@@ -75,6 +76,7 @@ type EditableSettings struct {
 	LCAgentWebSearchURL       string
 	CodexLaunchPreset         codexcli.Preset
 	PlaywrightPolicy          browserctl.Policy
+	EngineerTodoCaptureMode   todocapture.CaptureMode
 	ScanInterval              time.Duration
 	ActiveThreshold           time.Duration
 	StuckThreshold            time.Duration
@@ -147,6 +149,7 @@ func EditableSettingsFromAppConfig(cfg AppConfig) EditableSettings {
 		LCAgentWebSearchURL:       cfg.LCAgentWebSearchURL,
 		CodexLaunchPreset:         cfg.CodexLaunchPreset,
 		PlaywrightPolicy:          cfg.PlaywrightPolicy.Normalize(),
+		EngineerTodoCaptureMode:   todocapture.NormalizeCaptureMode(cfg.EngineerTodoCaptureMode),
 		ScanInterval:              cfg.ScanInterval,
 		ActiveThreshold:           cfg.ActiveThreshold,
 		StuckThreshold:            cfg.StuckThreshold,
@@ -228,6 +231,7 @@ func firstNonEmptyTrimmed(values ...string) string {
 
 func NormalizeEditableSettings(settings EditableSettings) EditableSettings {
 	settings.ProjectReasoningEffort = strings.TrimSpace(settings.ProjectReasoningEffort)
+	settings.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)
 	settings.MobileListenAddress = strings.TrimSpace(settings.MobileListenAddress)
 	if settings.MobileListenAddress == "" {
 		settings.MobileListenAddress = DefaultMobileListenAddress
@@ -480,6 +484,7 @@ func ParseEditableSettings(aiBackend AIBackend, bossChatBackend AIBackend, openA
 			LoginMode:          playwrightLoginMode,
 			IsolationScope:     playwrightIsolationScope,
 		},
+		EngineerTodoCaptureMode:  Default().EngineerTodoCaptureMode,
 		OpenCodeModelTier:        strings.TrimSpace(openCodeModelTierRaw),
 		LCAgentPath:              lcagentPath,
 		LCAgentEnvFile:           lcagentEnvFile,
@@ -611,6 +616,7 @@ func validateEditableSettings(settings EditableSettings) error {
 		cfg.MobileListenAddress = DefaultMobileListenAddress
 	}
 	cfg.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
+	cfg.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)
 	return validate(cfg)
 }
 
@@ -907,6 +913,8 @@ func renderEditableSettings(settings EditableSettings) string {
 	lines = append(lines, fmt.Sprintf("playwright_default_browser_mode = %s", strconv.Quote(string(normalizedPolicy.DefaultBrowserMode))))
 	lines = append(lines, fmt.Sprintf("playwright_login_mode = %s", strconv.Quote(string(normalizedPolicy.LoginMode))))
 	lines = append(lines, fmt.Sprintf("playwright_isolation_scope = %s", strconv.Quote(string(normalizedPolicy.IsolationScope))))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("engineer_todo_capture_mode = %s", strconv.Quote(string(todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)))))
 	lines = append(lines, "")
 	lines = append(lines, fmt.Sprintf("hide_reasoning_sections = %t", settings.HideReasoningSections))
 	lines = append(lines, "")

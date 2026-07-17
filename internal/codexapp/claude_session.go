@@ -36,6 +36,8 @@ const (
 	claudeStatusTranscriptTemplate = "Claude session %s\nModel: %s\nMode: %s\nSession file: %s"
 	claudeDefaultModelAlias        = "sonnet"
 	claudeDefaultReasoningEffort   = "medium"
+	claudeRuntimeMCPListTODOsTool  = "mcp__lcr_runtime__list_project_todos"
+	claudeRuntimeMCPAddTODOTool    = "mcp__lcr_runtime__add_project_todo"
 )
 
 type claudeCodeSession struct {
@@ -44,6 +46,8 @@ type claudeCodeSession struct {
 	notify           func()
 	playwrightPolicy browserctl.Policy
 	runtimeManager   *projectrun.Manager
+	runtimeMCPConfig string
+	runtimeMCPPrompt string
 
 	mu                 sync.Mutex
 	claudeHome         string
@@ -134,6 +138,10 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 	if preset == "" {
 		preset = codexcli.DefaultPreset()
 	}
+	runtimeMCPConfig, runtimeMCPPrompt, err := claudeRuntimeMCPLaunchOptions(req)
+	if err != nil {
+		return nil, fmt.Errorf("configure Claude Code runtime MCP: %w", err)
+	}
 
 	s := &claudeCodeSession{
 		projectPath:      req.ProjectPath,
@@ -141,6 +149,8 @@ func newClaudeCodeSession(req LaunchRequest, notify func()) (Session, error) {
 		notify:           notify,
 		playwrightPolicy: req.PlaywrightPolicy.Normalize(),
 		runtimeManager:   req.RuntimeManager,
+		runtimeMCPConfig: runtimeMCPConfig,
+		runtimeMCPPrompt: runtimeMCPPrompt,
 		claudeHome:       claudeHome,
 		pendingModel:     strings.TrimSpace(req.PendingModel),
 		pendingReasoning: strings.TrimSpace(req.PendingReasoning),
@@ -329,7 +339,7 @@ func (s *claudeCodeSession) SubmitInput(input Submission) error {
 
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
-		cmd, stdin, stdout, stderr, err = startClaudeTurn(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy)
+		cmd, stdin, stdout, stderr, err = startClaudeTurnWithRuntimeMCP(ctx, s.projectPath, sessionID, model, reasoning, permissionMode, s.playwrightPolicy, s.runtimeMCPConfig, s.runtimeMCPPrompt)
 		if err != nil {
 			cancel()
 			s.mu.Unlock()
@@ -1184,7 +1194,11 @@ func (s *claudeCodeSession) refreshActiveLocked() {
 }
 
 func startClaudeTurn(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
-	args := claudeTurnArgs(resumeID, model, reasoning, permissionMode)
+	return startClaudeTurnWithRuntimeMCP(ctx, projectPath, resumeID, model, reasoning, permissionMode, policy, "", "")
+}
+
+func startClaudeTurnWithRuntimeMCP(ctx context.Context, projectPath, resumeID, model, reasoning, permissionMode string, policy browserctl.Policy, runtimeMCPConfig, runtimeMCPPrompt string) (*exec.Cmd, io.WriteCloser, io.ReadCloser, io.ReadCloser, error) {
+	args := claudeTurnArgsWithRuntimeMCP(resumeID, model, reasoning, permissionMode, runtimeMCPConfig, runtimeMCPPrompt)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectPath

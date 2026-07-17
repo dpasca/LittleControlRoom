@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/lcagent/modeladapter"
 	lcrmodel "lcroom/internal/model"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/todocapture"
 )
 
 const (
@@ -76,6 +77,8 @@ type lcagentSession struct {
 	webSearchEngineID   string
 	webSearchURL        string
 	runtimeManager      *projectrun.Manager
+	todoCaptureHandler  todocapture.Handler
+	todoCaptureMode     todocapture.CaptureMode
 	notify              func()
 	playwrightPolicy    browserctl.Policy
 
@@ -245,6 +248,8 @@ func newLCAgentSession(req LaunchRequest, notify func()) (Session, error) {
 		webSearchEngineID:        strings.TrimSpace(req.LCAgentWebSearchEngineID),
 		webSearchURL:             strings.TrimSpace(req.LCAgentWebSearchURL),
 		runtimeManager:           req.RuntimeManager,
+		todoCaptureHandler:       req.TodoCaptureHandler,
+		todoCaptureMode:          todocapture.NormalizeCaptureMode(req.TodoCaptureMode),
 		notify:                   notify,
 		playwrightPolicy:         playwrightPolicy,
 		model:                    model,
@@ -1641,6 +1646,9 @@ func (s *lcagentSession) launchPreparedRun(prepared lcagentPreparedRun) error {
 		"--max-turns", strconv.Itoa(prepared.maxTurns),
 		"--require-final-response-tool",
 	)
+	if s.todoCaptureHandler != nil && s.todoCaptureMode.Enabled() {
+		args = append(args, "--lcr-todo-capture-mode", string(s.todoCaptureMode))
+	}
 	if prepared.browserControl == "managed" {
 		args = append(args,
 			"--browser-session-key", prepared.browserSessionKey,
@@ -1957,6 +1965,8 @@ func (s *lcagentSession) handleEvent(line []byte) {
 		}
 	case "process_request":
 		s.handleLCAgentProcessRequest(event)
+	case "todo_request":
+		s.handleLCAgentTodoRequest(event)
 	case "patch_diff_summary":
 		if summary := rawJSONString(event["summary"]); summary != "" {
 			s.appendAsync(TranscriptFileChange, summary)
@@ -2320,6 +2330,46 @@ func (s *lcagentSession) handleLCAgentProcessRequest(event map[string]json.RawMe
 	s.status = lcagentProcessRequestStatus(request.Action)
 	if text := lcagentProcessRequestText(request.Action, request.Command, request.CWD, request.ProjectPath); text != "" {
 		s.appendEntryLocked(TranscriptStatus, text)
+	}
+	s.touchLocked()
+	s.mu.Unlock()
+
+	bridge.handle(request)
+}
+
+func (s *lcagentSession) handleLCAgentTodoRequest(event map[string]json.RawMessage) {
+	request := lcagentTodoRequest{
+		ID:             strings.TrimSpace(rawJSONString(event["id"])),
+		Action:         todocapture.Action(strings.TrimSpace(rawJSONString(event["action"]))),
+		Text:           strings.TrimSpace(rawJSONString(event["text"])),
+		CaptureKind:    todocapture.CaptureKind(strings.TrimSpace(rawJSONString(event["capture_kind"]))),
+		ReviewRevision: strings.TrimSpace(rawJSONString(event["review_revision"])),
+	}
+	if request.ID == "" {
+		return
+	}
+
+	s.mu.Lock()
+	bridge := lcagentTodoBridge{
+		handler: s.todoCaptureHandler,
+		mode:    s.todoCaptureMode,
+		origin: todocapture.Origin{
+			ProjectPath: s.projectPath,
+			Provider:    string(ProviderLCAgent),
+			SessionKey:  firstNonEmpty(s.runID, s.threadID),
+		},
+		stdin:       s.stdin,
+		appendAsync: s.appendAsync,
+	}
+	switch request.Action {
+	case todocapture.ActionList:
+		s.status = "Reviewing project TODOs"
+		s.appendEntryLocked(TranscriptStatus, "LCAgent reviewing open LCR TODOs for this project")
+	case todocapture.ActionAdd:
+		s.status = "Adding project TODO"
+		s.appendEntryLocked(TranscriptStatus, "LCAgent adding an LCR TODO for this project")
+	default:
+		s.status = "Handling project TODO request"
 	}
 	s.touchLocked()
 	s.mu.Unlock()

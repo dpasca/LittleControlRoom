@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"lcroom/internal/browserctl"
+	"lcroom/internal/todocapture"
 )
 
 func applyPlaywrightPolicyEnvironment(cmd *exec.Cmd, provider Provider, policy browserctl.Policy) {
@@ -29,7 +30,7 @@ func providerSupportsManagedPlaywright(provider Provider) bool {
 
 func providerSupportsRuntimeMCP(provider Provider) bool {
 	switch provider.Normalized() {
-	case ProviderCodex, ProviderOpenCode:
+	case ProviderCodex, ProviderOpenCode, ProviderClaudeCode:
 		return true
 	default:
 		return false
@@ -50,6 +51,17 @@ func ensureManagedPlaywrightSessionKey(req *LaunchRequest) {
 		return
 	}
 	req.ManagedBrowserSessionKey = browserctl.NewManagedSessionKey()
+}
+
+func ensureTodoCaptureSessionKey(req *LaunchRequest) {
+	if req == nil || !req.TodoCaptureMode.Enabled() || strings.TrimSpace(req.TodoCaptureSessionKey) != "" {
+		return
+	}
+	if resumeID := strings.TrimSpace(req.ResumeID); resumeID != "" && !req.ForceNew {
+		req.TodoCaptureSessionKey = resumeID
+		return
+	}
+	req.TodoCaptureSessionKey = browserctl.NewManagedSessionKey()
 }
 
 func applyCodexPlaywrightMCPOverrides(cmd *exec.Cmd, req LaunchRequest) {
@@ -167,7 +179,15 @@ func runtimeMCPCommand(req LaunchRequest) (string, []string, bool) {
 	if dataDir := strings.TrimSpace(req.AppDataDir); dataDir != "" {
 		args = append(args, "--data-dir", dataDir)
 	}
-	if sessionKey := firstNonEmpty(strings.TrimSpace(req.ManagedBrowserSessionKey), strings.TrimSpace(req.ResumeID)); sessionKey != "" {
+	if dbPath := strings.TrimSpace(req.AppDBPath); dbPath != "" {
+		args = append(args, "--db-path", dbPath)
+	}
+	args = append(args, "--todo-capture-mode", string(todocapture.NormalizeCaptureMode(req.TodoCaptureMode)))
+	sessionKey := strings.TrimSpace(req.TodoCaptureSessionKey)
+	if sessionKey == "" && !req.ForceNew {
+		sessionKey = strings.TrimSpace(req.ResumeID)
+	}
+	if sessionKey != "" {
 		args = append(args, "--session-key", sessionKey)
 	}
 	return executablePath, args, true

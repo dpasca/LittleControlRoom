@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"lcroom/internal/lcagent/tools"
+	"lcroom/internal/todocapture"
 )
 
 type ApprovalDecision string
@@ -54,6 +55,22 @@ type ProcessRequest struct {
 
 type ProcessBroker interface {
 	RequestProcess(context.Context, ProcessRequest) (tools.ToolResult, error)
+}
+
+type ProjectTodoRequest struct {
+	ID             string
+	SessionID      string
+	Action         todocapture.Action
+	Text           string
+	CaptureKind    todocapture.CaptureKind
+	ReviewRevision string
+}
+
+// ProjectTodoBroker forwards repository-scoped TODO actions to the embedding
+// Little Control Room host. The model-facing request deliberately carries no
+// project path, provider, or session-origin override.
+type ProjectTodoBroker interface {
+	RequestProjectTodo(context.Context, ProjectTodoRequest) (tools.ToolResult, error)
 }
 
 func NormalizeApprovalDecision(raw string) ApprovalDecision {

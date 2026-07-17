@@ -8,7 +8,11 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
+	"lcroom/internal/events"
 	"lcroom/internal/model"
+	"lcroom/internal/projectrun"
+	"lcroom/internal/service"
+	"lcroom/internal/todocapture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -553,6 +557,84 @@ func TestVisibleOpenCodeSlashReconnectReopensSameSession(t *testing.T) {
 	}
 	if len(requests[1].ReconnectTranscript) != 1 || requests[1].ReconnectTranscript[0].ItemID != "call_live_tool" {
 		t.Fatalf("second launch reconnect transcript = %#v, want live transcript carried across helper restart", requests[1].ReconnectTranscript)
+	}
+}
+
+func TestReconnectPreservesTodoCaptureContextForEveryEmbeddedProvider(t *testing.T) {
+	for _, provider := range []codexapp.Provider{
+		codexapp.ProviderCodex,
+		codexapp.ProviderOpenCode,
+		codexapp.ProviderClaudeCode,
+		codexapp.ProviderLCAgent,
+	} {
+		t.Run(string(provider), func(t *testing.T) {
+			cfg := config.Default()
+			cfg.DataDir = t.TempDir()
+			cfg.DBPath = filepath.Join(cfg.DataDir, "little-control-room.sqlite")
+			cfg.EngineerTodoCaptureMode = todocapture.ModeExplicit
+			svc := service.New(cfg, nil, events.NewBus(), nil)
+			runtimeManager := projectrun.NewManager()
+			t.Cleanup(func() { _ = runtimeManager.CloseAll() })
+
+			var requests []codexapp.LaunchRequest
+			manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, _ func()) (codexapp.Session, error) {
+				requests = append(requests, req)
+				return &fakeCodexSession{
+					projectPath: req.ProjectPath,
+					snapshot: codexapp.Snapshot{
+						Provider: provider,
+						Started:  true,
+						ThreadID: "existing-thread",
+						Preset:   req.Preset,
+					},
+				}, nil
+			})
+			if _, _, err := manager.Open(codexapp.LaunchRequest{
+				ProjectPath: "/tmp/demo",
+				Provider:    provider,
+				ResumeID:    "existing-thread",
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			m := Model{
+				svc:                 svc,
+				codexManager:        manager,
+				runtimeManager:      runtimeManager,
+				codexVisibleProject: "/tmp/demo",
+				appDataDirPath:      cfg.DataDir,
+			}
+			cmd := m.reconnectVisibleCodexSessionCmd()
+			if cmd == nil {
+				t.Fatal("reconnect command is nil")
+			}
+			opened, ok := cmd().(codexSessionOpenedMsg)
+			if !ok {
+				t.Fatal("reconnect command did not return codexSessionOpenedMsg")
+			}
+			if opened.err != nil {
+				t.Fatal(opened.err)
+			}
+			if len(requests) != 2 {
+				t.Fatalf("launch requests = %d, want 2", len(requests))
+			}
+			reconnect := requests[1]
+			if reconnect.RuntimeManager != runtimeManager {
+				t.Fatal("reconnect lost the shared runtime manager")
+			}
+			if reconnect.AppDBPath != cfg.DBPath {
+				t.Fatalf("reconnect DB path = %q, want %q", reconnect.AppDBPath, cfg.DBPath)
+			}
+			if reconnect.TodoCaptureMode != todocapture.ModeExplicit {
+				t.Fatalf("reconnect TODO capture mode = %q, want %q", reconnect.TodoCaptureMode, todocapture.ModeExplicit)
+			}
+			if reconnect.TodoCaptureHandler != svc {
+				t.Fatal("reconnect lost the in-process TODO capture handler")
+			}
+			if reconnect.TodoCaptureSessionKey != "existing-thread" {
+				t.Fatalf("reconnect TODO session key = %q, want existing thread", reconnect.TodoCaptureSessionKey)
+			}
+		})
 	}
 }
 

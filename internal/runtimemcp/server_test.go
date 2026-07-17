@@ -13,6 +13,7 @@ import (
 
 	"lcroom/internal/browserctl"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/todocapture"
 )
 
 func TestRuntimeMCPListsTools(t *testing.T) {
@@ -219,6 +220,166 @@ func TestRuntimeMCPRequestBrowserAttentionRejectsStaleBrowserHeartbeat(t *testin
 	payload := decodeToolJSON(t, responses[0].Result)
 	if payload["success"] != false || !strings.Contains(fmt.Sprint(payload["error"]), "no longer attached") {
 		t.Fatalf("browser attention payload = %#v, want stale-browser error", payload)
+	}
+}
+
+func TestRuntimeMCPProtocolVersionGatesStructuredToolFields(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name           string
+		requested      string
+		wantNegotiated string
+		wantStructured bool
+	}{
+		{name: "legacy", requested: legacyProtocolVersion, wantNegotiated: legacyProtocolVersion},
+		{name: "structured", requested: structuredToolsProtocolVersion, wantNegotiated: structuredToolsProtocolVersion, wantStructured: true},
+		{name: "unknown newer revision", requested: "2025-11-25", wantNegotiated: legacyProtocolVersion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := strings.NewReader(strings.Join([]string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + tc.requested + `"}}`,
+				`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+				`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_project_todos","arguments":{}}}`,
+			}, "\n"))
+			var output bytes.Buffer
+			manager := projectrun.NewManager()
+			defer manager.CloseAll()
+			if err := Run(context.Background(), Options{
+				ProjectPath:     t.TempDir(),
+				TodoCaptureMode: todocapture.ModeExplicit,
+				TodoHandler:     &recordingTodoHandler{},
+				Input:           input,
+				Output:          &output,
+				Manager:         manager,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			responses := decodeResponses(t, output.String())
+			if len(responses) != 3 {
+				t.Fatalf("responses len = %d, want 3: %s", len(responses), output.String())
+			}
+			if !strings.Contains(string(responses[0].Result), `"protocolVersion":"`+tc.wantNegotiated+`"`) {
+				t.Fatalf("initialize result = %s, want negotiated version %q", responses[0].Result, tc.wantNegotiated)
+			}
+			tools := string(responses[1].Result)
+			if got := strings.Contains(tools, `"outputSchema"`) || strings.Contains(tools, `"annotations"`); got != tc.wantStructured {
+				t.Fatalf("structured tool metadata visibility = %v, want %v: %s", got, tc.wantStructured, tools)
+			}
+			callResult := string(responses[2].Result)
+			if got := strings.Contains(callResult, `"structuredContent"`); got != tc.wantStructured {
+				t.Fatalf("structured result visibility = %v, want %v: %s", got, tc.wantStructured, callResult)
+			}
+		})
+	}
+}
+
+func TestRuntimeMCPTodoToolsFollowCaptureModeAndHideScope(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                  string
+		mode                  todocapture.CaptureMode
+		wantTools             bool
+		wantClearDeferralEnum bool
+	}{
+		{name: "off", mode: todocapture.ModeOff},
+		{name: "explicit", mode: todocapture.ModeExplicit, wantTools: true},
+		{name: "clear deferrals", mode: todocapture.ModeExplicitAndClearDeferrals, wantTools: true, wantClearDeferralEnum: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := strings.NewReader(strings.Join([]string{
+				`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`,
+				`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
+			}, "\n"))
+			var output bytes.Buffer
+			manager := projectrun.NewManager()
+			defer manager.CloseAll()
+			err := Run(context.Background(), Options{
+				ProjectPath:     t.TempDir(),
+				TodoCaptureMode: tc.mode,
+				TodoHandler:     &recordingTodoHandler{},
+				Input:           input,
+				Output:          &output,
+				Manager:         manager,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			responses := decodeResponses(t, output.String())
+			initialize := string(responses[0].Result)
+			tools := string(responses[1].Result)
+			if got := strings.Contains(tools, `"list_project_todos"`); got != tc.wantTools {
+				t.Fatalf("TODO tool visibility = %v, want %v: %s", got, tc.wantTools, tools)
+			}
+			if got := strings.Contains(initialize, `"instructions"`); got != tc.wantTools {
+				t.Fatalf("initialize instructions visibility = %v, want %v: %s", got, tc.wantTools, initialize)
+			}
+			if strings.Contains(tools, `"project_path"`) {
+				t.Fatalf("TODO schemas expose model-controlled project_path: %s", tools)
+			}
+			clearEnum := `"enum":["explicit_request","clear_deferral"]`
+			if got := strings.Contains(tools, clearEnum); got != tc.wantClearDeferralEnum {
+				t.Fatalf("clear_deferral enum visibility = %v, want %v: %s", got, tc.wantClearDeferralEnum, tools)
+			}
+		})
+	}
+}
+
+func TestRuntimeMCPTodoCallsInjectTrustedOrigin(t *testing.T) {
+	t.Parallel()
+	handler := &recordingTodoHandler{}
+	input := strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_project_todos","arguments":{}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add_project_todo","arguments":{"text":"Add keyboard navigation","capture_kind":"explicit_request","review_revision":"rev-1","project_path":"/attacker"}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_project_todo","arguments":{"text":"Add keyboard navigation","capture_kind":"explicit_request","review_revision":"rev-1"}}}`,
+	}, "\n"))
+	var output bytes.Buffer
+	manager := projectrun.NewManager()
+	defer manager.CloseAll()
+	err := Run(context.Background(), Options{
+		ProjectPath:     "/trusted/project",
+		Provider:        "claude_code",
+		SessionKey:      "trusted-session",
+		TodoCaptureMode: todocapture.ModeExplicit,
+		TodoHandler:     handler,
+		Input:           input,
+		Output:          &output,
+		Manager:         manager,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	responses := decodeResponses(t, output.String())
+	if len(responses) != 3 || len(handler.requests) != 2 {
+		t.Fatalf("responses=%d requests=%d output=%s", len(responses), len(handler.requests), output.String())
+	}
+	if len(responses[1].Error) == 0 || string(responses[1].Error) == "null" {
+		t.Fatalf("forged extra field did not fail schema/decoding path: %s", responses[1].Result)
+	}
+	for _, request := range handler.requests {
+		if request.Origin.ProjectPath != "/trusted/project" || request.Origin.Provider != "claude_code" || request.Origin.SessionKey != "trusted-session" {
+			t.Fatalf("origin = %#v", request.Origin)
+		}
+	}
+	if handler.requests[1].Add.Text != "Add keyboard navigation" {
+		t.Fatalf("add request = %#v", handler.requests[1].Add)
+	}
+}
+
+type recordingTodoHandler struct {
+	requests []todocapture.Request
+}
+
+func (h *recordingTodoHandler) HandleTodoCapture(_ context.Context, request todocapture.Request) (todocapture.Response, error) {
+	h.requests = append(h.requests, request)
+	switch request.Action {
+	case todocapture.ActionList:
+		return todocapture.Response{List: &todocapture.ListResult{ReviewRevision: "rev-1", OpenTodos: []todocapture.Todo{}}}, nil
+	case todocapture.ActionAdd:
+		todo := todocapture.Todo{ID: 1, Text: request.Add.Text}
+		return todocapture.Response{Add: &todocapture.AddResult{Disposition: todocapture.DispositionCreated, Todo: &todo, CurrentRevision: "rev-2"}}, nil
+	default:
+		return todocapture.Response{}, errors.New("unexpected action")
 	}
 }
 

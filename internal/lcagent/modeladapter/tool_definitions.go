@@ -3,6 +3,8 @@ package modeladapter
 import (
 	"fmt"
 	"strings"
+
+	"lcroom/internal/todocapture"
 )
 
 type ToolOptions struct {
@@ -24,6 +26,7 @@ type ToolOptions struct {
 	VisionAnalysisEnabled   bool
 	WorkspaceOnlyReads      bool
 	ReadOnly                bool
+	TodoCaptureMode         todocapture.CaptureMode
 }
 
 func Tools() []ToolDefinition {
@@ -234,6 +237,9 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 	}
 	if opts.BrowserAvailable {
 		defs = append(defs, browserToolDefinitions()...)
+	}
+	if todocapture.NormalizeCaptureMode(opts.TodoCaptureMode).Enabled() {
+		defs = append(defs, projectTodoToolDefinitions(opts.TodoCaptureMode)...)
 	}
 	defs = append(defs,
 		ToolDefinition{
@@ -516,6 +522,44 @@ func ToolsWithOptions(opts ToolOptions) []ToolDefinition {
 		defs = filtered
 	}
 	return defs
+}
+
+func projectTodoToolDefinitions(mode todocapture.CaptureMode) []ToolDefinition {
+	captureKinds := []string{string(todocapture.CaptureExplicitRequest)}
+	if todocapture.NormalizeCaptureMode(mode) == todocapture.ModeExplicitAndClearDeferrals {
+		captureKinds = append(captureKinds, string(todocapture.CaptureClearDeferral))
+	}
+	return []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "list_project_todos",
+				Description: "List open Little Control Room TODOs for this session's repository and return the review_revision required by add_project_todo. The host resolves linked worktrees to their loaded repository root.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties":           map[string]any{},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionSpec{
+				Name:        "add_project_todo",
+				Description: "Add one reviewed TODO to this session's Little Control Room repository scope. Call list_project_todos first and do not add a semantic duplicate. A stale review is rejected without writing.",
+				Parameters: map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"properties": map[string]any{
+						"text":            map[string]any{"type": "string", "minLength": 1, "description": "Concrete future work to track."},
+						"capture_kind":    map[string]any{"type": "string", "enum": captureKinds, "description": "Why the user authorized this capture."},
+						"review_revision": map[string]any{"type": "string", "minLength": 1, "description": "Exact review_revision from the preceding list_project_todos result."},
+					},
+					"required": []string{"text", "capture_kind", "review_revision"},
+				},
+			},
+		},
+	}
 }
 
 func browserToolDefinitions() []ToolDefinition {

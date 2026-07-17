@@ -14,6 +14,7 @@ import (
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
 	"lcroom/internal/lcagent/modeladapter"
+	"lcroom/internal/todocapture"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -77,6 +78,7 @@ const (
 	settingsFieldMobileAccessMode
 	settingsFieldMobilePort
 	settingsFieldMobileListenAddress
+	settingsFieldEngineerTodoCaptureMode
 	settingsFieldAIBackend
 )
 
@@ -286,9 +288,10 @@ func settingsSections() []settingsSection {
 		{
 			id:      settingsSectionAdvanced,
 			label:   "Advanced",
-			summary: "Timing knobs",
-			hint:    "Refresh timing and other low-level tuning knobs. Most users can leave these alone.",
+			summary: "Engineer permissions and timing",
+			hint:    "Control what AI engineers may save to project TODOs, plus refresh timing and other low-level tuning.",
 			fieldOrder: []int{
+				settingsFieldEngineerTodoCaptureMode,
 				settingsFieldActiveThreshold,
 				settingsFieldStuckThreshold,
 				settingsFieldInterval,
@@ -858,6 +861,12 @@ func (m Model) saveSettingsFromFields() (tea.Model, tea.Cmd) {
 		m.settingsFieldValue(settingsFieldMobileInputEnabled),
 		m.settingsMobileListenAddressFromFields(),
 	)
+	if err != nil {
+		m.err = nil
+		m.status = err.Error()
+		return m, nil
+	}
+	settings.EngineerTodoCaptureMode, err = todocapture.ParseCaptureMode(m.settingsFieldValue(settingsFieldEngineerTodoCaptureMode))
 	if err != nil {
 		m.err = nil
 		m.status = err.Error()
@@ -1725,8 +1734,8 @@ func (m Model) applyEditableSettingsCmdWithScan(settings config.EditableSettings
 	return func() tea.Msg {
 		// Apply service-side AI client reconfiguration off the Bubble Tea update
 		// path so local backend probing cannot stall the UI thread.
-		m.svc.ApplyEditableSettings(saved)
-		return editableSettingsAppliedMsg{scanAfter: scanAfter}
+		err := m.svc.ApplyEditableSettings(saved)
+		return editableSettingsAppliedMsg{scanAfter: scanAfter, err: err}
 	}
 }
 
@@ -1754,10 +1763,11 @@ func (m Model) savePrivacyModeCmd(privacyMode bool) tea.Cmd {
 	path := m.currentWritableConfigPath()
 	return func() tea.Msg {
 		err := config.SaveEditableSettings(path, settings)
+		var applyErr error
 		if m.svc != nil {
-			m.svc.ApplyEditableSettings(settings)
+			applyErr = m.svc.ApplyEditableSettings(settings)
 		}
-		return privacyModeSavedMsg{privacyMode: privacyMode, path: path, err: err}
+		return privacyModeSavedMsg{privacyMode: privacyMode, path: path, err: err, applyErr: applyErr}
 	}
 }
 
@@ -4052,6 +4062,13 @@ func newSettingsFields(settings config.EditableSettings) []settingsField {
 			settingsSectionMobile,
 		),
 		newSettingsField(
+			"Engineer TODO capture",
+			"Press Enter to choose whether embedded Codex, OpenCode, Claude Code, and LCAgent sessions may add repository-scoped LCR TODOs. Restrictions apply immediately; reconnect an existing session to expose newly enabled tools.",
+			string(settings.EngineerTodoCaptureMode),
+			40,
+			settingsSectionAdvanced,
+		),
+		newSettingsField(
 			"Project reports",
 			"Press Enter to choose the helper for summaries, classification, TODO help, and commit help.",
 			string(settings.AIBackend),
@@ -4147,6 +4164,7 @@ func cloneEditableSettings(settings config.EditableSettings) config.EditableSett
 	settings.ExcludeProjectPatterns = append([]string(nil), settings.ExcludeProjectPatterns...)
 	settings.PrivacyPatterns = append([]string(nil), settings.PrivacyPatterns...)
 	settings.PlaywrightPolicy = settings.PlaywrightPolicy.Normalize()
+	settings.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(settings.EngineerTodoCaptureMode)
 	settings.RecentCodexModels = append([]string(nil), settings.RecentCodexModels...)
 	settings.RecentClaudeModels = append([]string(nil), settings.RecentClaudeModels...)
 	settings.RecentOpenCodeModels = append([]string(nil), settings.RecentOpenCodeModels...)
@@ -4190,6 +4208,15 @@ func (m Model) settingsFieldHint(index int) string {
 			return "This custom address is still local only. Choose Phones on this LAN for automatic LAN access."
 		}
 		return "Phones that can reach " + address + " may connect after pairing. Restart Little Control Room to apply it."
+	case settingsFieldEngineerTodoCaptureMode:
+		switch settingsChoiceOptionValueForField(index, field.input.Value()) {
+		case string(todocapture.ModeOff):
+			return "TODO writes are revoked immediately. New or reconnected sessions omit the capture tools; runtime process tools remain available."
+		case string(todocapture.ModeExplicitAndClearDeferrals):
+			return "Also captures unambiguous user decisions to defer concrete work. Reconnect existing sessions to expose the expanded schema."
+		default:
+			return "Captures only direct user requests; agents must list TODOs first. Reconnect a session opened while capture was off."
+		}
 	case settingsFieldAIBackend:
 		backend := config.AIBackend(strings.TrimSpace(field.input.Value()))
 		switch backend {

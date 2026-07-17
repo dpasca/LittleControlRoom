@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/projectrun"
+	"lcroom/internal/todocapture"
 )
 
 func TestCodexPlaywrightMCPConfigOverridesManagedHeadless(t *testing.T) {
@@ -198,12 +199,15 @@ func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 	manager := projectrun.NewManager()
 	defer func() { _ = manager.CloseAll() }()
 	req := LaunchRequest{
-		Provider:          ProviderCodex,
-		ProjectPath:       "/tmp/demo",
-		AppDataDir:        "/tmp/lcr-data",
-		CLIExecutablePath: "/tmp/lcroom-test-bin",
-		ResumeID:          "session-demo",
-		RuntimeManager:    manager,
+		Provider:              ProviderCodex,
+		ProjectPath:           "/tmp/demo",
+		AppDataDir:            "/tmp/lcr-data",
+		AppDBPath:             "/tmp/lcr-data/custom.sqlite",
+		CLIExecutablePath:     "/tmp/lcroom-test-bin",
+		ResumeID:              "session-demo",
+		TodoCaptureMode:       todocapture.ModeExplicit,
+		TodoCaptureSessionKey: "capture-session",
+		RuntimeManager:        manager,
 	}
 
 	got := codexRuntimeMCPConfigOverrides(req)
@@ -218,11 +222,39 @@ func TestCodexRuntimeMCPConfigOverrides(t *testing.T) {
 		`"--provider","codex"`,
 		`"--project-path","/tmp/demo"`,
 		`"--data-dir","/tmp/lcr-data"`,
-		`"--session-key","session-demo"`,
+		`"--db-path","/tmp/lcr-data/custom.sqlite"`,
+		`"--todo-capture-mode","explicit_only"`,
+		`"--session-key","capture-session"`,
 	} {
 		if !strings.Contains(got[1], want) {
 			t.Fatalf("runtime args override = %q, want substring %q", got[1], want)
 		}
+	}
+}
+
+func TestEnsureTodoCaptureSessionKeyDoesNotReuseResumeIDForFreshThread(t *testing.T) {
+	req := LaunchRequest{
+		ResumeID:        "previous-thread",
+		ForceNew:        true,
+		TodoCaptureMode: todocapture.ModeExplicit,
+	}
+	ensureTodoCaptureSessionKey(&req)
+	if strings.TrimSpace(req.TodoCaptureSessionKey) == "" {
+		t.Fatal("fresh thread TODO capture session key is empty")
+	}
+	if req.TodoCaptureSessionKey == req.ResumeID {
+		t.Fatalf("fresh thread TODO capture session key reused old resume id %q", req.ResumeID)
+	}
+}
+
+func TestEnsureTodoCaptureSessionKeyUsesResumeIDForReconnect(t *testing.T) {
+	req := LaunchRequest{
+		ResumeID:        "existing-thread",
+		TodoCaptureMode: todocapture.ModeExplicit,
+	}
+	ensureTodoCaptureSessionKey(&req)
+	if req.TodoCaptureSessionKey != req.ResumeID {
+		t.Fatalf("reconnect TODO capture session key = %q, want resume id %q", req.TodoCaptureSessionKey, req.ResumeID)
 	}
 }
 

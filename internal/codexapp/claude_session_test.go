@@ -263,6 +263,52 @@ func TestClaudeTurnArgsIncludeVerboseForStreamJSON(t *testing.T) {
 	}
 }
 
+func TestClaudeTurnArgsAddRuntimeMCPWithoutReplacingUserServers(t *testing.T) {
+	const (
+		config = `{"mcpServers":{"lcr_runtime":{"type":"stdio","command":"/tmp/lcroom","args":["runtime-mcp"]}}}`
+		prompt = "Follow the shared LCR TODO capture policy."
+	)
+	got := claudeTurnArgsWithRuntimeMCP("ses-demo", "sonnet", "high", "acceptEdits", config, prompt)
+	want := []string{
+		"-p",
+		"--verbose",
+		"--input-format=stream-json",
+		"--output-format=stream-json",
+		"--permission-mode", "acceptEdits",
+		"--resume", "ses-demo",
+		"--model", "sonnet",
+		"--effort", "high",
+		"--mcp-config", config,
+		"--append-system-prompt", prompt,
+		"--allowedTools", claudeRuntimeMCPListTODOsTool + "," + claudeRuntimeMCPAddTODOTool,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
+	}
+	for _, arg := range got {
+		if arg == "--strict-mcp-config" {
+			t.Fatal("runtime MCP args must preserve user-configured MCP servers")
+		}
+	}
+}
+
+func TestClaudeTurnArgsOmitRuntimeMCPFlagsWithoutConfig(t *testing.T) {
+	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", "  ", "ignored instructions")
+	want := claudeTurnArgs("", "", "", "acceptEdits")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
+	}
+}
+
+func TestClaudeTurnArgsKeepRuntimeMCPWithoutTODOPreapproval(t *testing.T) {
+	const config = `{"mcpServers":{"lcr_runtime":{"type":"stdio","command":"/tmp/lcroom"}}}`
+	got := claudeTurnArgsWithRuntimeMCP("", "", "", "acceptEdits", config, "")
+	want := append(claudeTurnArgs("", "", "", "acceptEdits"), "--mcp-config", config)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("claudeTurnArgsWithRuntimeMCP() = %#v, want %#v", got, want)
+	}
+}
+
 func TestClaudeSnapshotIncludesBusySinceForInternalTurn(t *testing.T) {
 	startedAt := time.Date(2026, 3, 31, 9, 0, 0, 0, time.UTC)
 	session := &claudeCodeSession{

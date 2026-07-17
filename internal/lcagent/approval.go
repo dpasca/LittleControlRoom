@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/lcagent/script"
 	"lcroom/internal/lcagent/session"
 	"lcroom/internal/lcagent/tools"
+	"lcroom/internal/todocapture"
 )
 
 const (
@@ -32,12 +33,20 @@ type processResponse struct {
 	Error  string           `json:"error"`
 }
 
+type projectTodoResponse struct {
+	Type   string           `json:"type"`
+	ID     string           `json:"id"`
+	Result tools.ToolResult `json:"result"`
+	Error  string           `json:"error"`
+}
+
 type stdioApprovalBroker struct {
 	writer           *session.Writer
 	sessionID        string
 	cwd              string
 	responses        <-chan approvalResponse
 	processResponses <-chan processResponse
+	todoResponses    <-chan projectTodoResponse
 	steerMessages    <-chan string
 	nextID           int64
 }
@@ -56,21 +65,24 @@ func normalizeApprovalMode(raw string) (string, error) {
 func newStdioApprovalBroker(writer *session.Writer, sessionID, cwd string, input io.Reader) *stdioApprovalBroker {
 	responses := make(chan approvalResponse, 8)
 	processResponses := make(chan processResponse, 8)
+	todoResponses := make(chan projectTodoResponse, 8)
 	steerMessages := make(chan string, 8)
-	go readStdioResponses(input, responses, processResponses, steerMessages)
+	go readStdioResponses(input, responses, processResponses, todoResponses, steerMessages)
 	return &stdioApprovalBroker{
 		writer:           writer,
 		sessionID:        strings.TrimSpace(sessionID),
 		cwd:              strings.TrimSpace(cwd),
 		responses:        responses,
 		processResponses: processResponses,
+		todoResponses:    todoResponses,
 		steerMessages:    steerMessages,
 	}
 }
 
-func readStdioResponses(input io.Reader, approvalResponses chan<- approvalResponse, processResponses chan<- processResponse, steerMessages chan<- string) {
+func readStdioResponses(input io.Reader, approvalResponses chan<- approvalResponse, processResponses chan<- processResponse, todoResponses chan<- projectTodoResponse, steerMessages chan<- string) {
 	defer close(approvalResponses)
 	defer close(processResponses)
+	defer close(todoResponses)
 	defer close(steerMessages)
 	if input == nil {
 		return
@@ -106,6 +118,16 @@ func readStdioResponses(input io.Reader, approvalResponses chan<- approvalRespon
 				continue
 			}
 			processResponses <- response
+		case "todo_response":
+			var response projectTodoResponse
+			if err := json.Unmarshal(scanner.Bytes(), &response); err != nil {
+				continue
+			}
+			response.ID = strings.TrimSpace(response.ID)
+			if response.ID == "" {
+				continue
+			}
+			todoResponses <- response
 		case "steer":
 			var response struct {
 				Message string `json:"message"`
@@ -253,6 +275,46 @@ func (b *stdioApprovalBroker) RequestProcess(ctx context.Context, request script
 	}
 }
 
+func (b *stdioApprovalBroker) RequestProjectTodo(ctx context.Context, request script.ProjectTodoRequest) (tools.ToolResult, error) {
+	if b == nil || b.writer == nil {
+		return tools.ToolResult{Success: false, Error: "project TODO broker unavailable"}, nil
+	}
+	request.ID = firstNonEmptyString(strings.TrimSpace(request.ID), b.nextProjectTodoID())
+	request.SessionID = firstNonEmptyString(strings.TrimSpace(request.SessionID), b.sessionID)
+	event := session.Event{
+		"type":       "todo_request",
+		"session_id": request.SessionID,
+		"id":         request.ID,
+		"action":     string(request.Action),
+	}
+	if request.Action == todocapture.ActionAdd {
+		event["text"] = strings.TrimSpace(request.Text)
+		event["capture_kind"] = string(request.CaptureKind)
+		event["review_revision"] = strings.TrimSpace(request.ReviewRevision)
+	}
+	if err := b.writer.Write(event); err != nil {
+		return tools.ToolResult{}, err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return tools.ToolResult{Success: false, Error: ctx.Err().Error()}, ctx.Err()
+		case response, ok := <-b.todoResponses:
+			if !ok {
+				return tools.ToolResult{Success: false, Error: "project TODO response channel closed"}, nil
+			}
+			if response.ID != request.ID {
+				continue
+			}
+			if strings.TrimSpace(response.Error) != "" && response.Result.Error == "" {
+				response.Result.Success = false
+				response.Result.Error = strings.TrimSpace(response.Error)
+			}
+			return response.Result, nil
+		}
+	}
+}
+
 func (b *stdioApprovalBroker) nextApprovalID() string {
 	n := atomic.AddInt64(&b.nextID, 1)
 	return fmt.Sprintf("lca_approval_%d", n)
@@ -261,6 +323,11 @@ func (b *stdioApprovalBroker) nextApprovalID() string {
 func (b *stdioApprovalBroker) nextProcessID() string {
 	n := atomic.AddInt64(&b.nextID, 1)
 	return fmt.Sprintf("lca_process_%d", n)
+}
+
+func (b *stdioApprovalBroker) nextProjectTodoID() string {
+	n := atomic.AddInt64(&b.nextID, 1)
+	return fmt.Sprintf("lca_todo_%d", n)
 }
 
 func approvalDecisionStatus(decision script.ApprovalDecision) string {
