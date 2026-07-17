@@ -99,8 +99,8 @@ func TestResumeThreadRedirectsSubAgentToSessionRoot(t *testing.T) {
 			if !ok {
 				return nil, fmt.Errorf("params = %#v, want threadResumeParams", params)
 			}
-			if !request.ExcludeTurns || request.InitialTurnsPage == nil || request.InitialTurnsPage.ItemsView != "summary" {
-				return nil, fmt.Errorf("resume history params = %#v, want bounded summary page", request)
+			if !request.ExcludeTurns || request.InitialTurnsPage == nil || request.InitialTurnsPage.ItemsView != "full" {
+				return nil, fmt.Errorf("resume history params = %#v, want bounded full page", request)
 			}
 			resumed = append(resumed, request.ThreadID)
 			switch request.ThreadID {
@@ -129,7 +129,7 @@ func TestResumeThreadRedirectsSubAgentToSessionRoot(t *testing.T) {
 	}
 }
 
-func TestResumeThreadResponseUsesRecentSummaryPage(t *testing.T) {
+func TestResumeThreadResponseUsesRecentCompletePage(t *testing.T) {
 	cursor := "older-turns"
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
@@ -149,14 +149,14 @@ func TestResumeThreadResponseUsesRecentSummaryPage(t *testing.T) {
 			if request.InitialTurnsPage == nil {
 				t.Fatal("initialTurnsPage = nil, want recent transcript bootstrap")
 			}
-			if got := request.InitialTurnsPage.Limit; got != codexResumeInitialTurnLimit {
-				t.Fatalf("initial turn limit = %d, want %d", got, codexResumeInitialTurnLimit)
+			if got, want := request.InitialTurnsPage.Limit, uint32(8); got != want {
+				t.Fatalf("initial turn limit = %d, want %d", got, want)
 			}
 			if got := request.InitialTurnsPage.SortDirection; got != "desc" {
 				t.Fatalf("initial turn sort = %q, want desc", got)
 			}
-			if got := request.InitialTurnsPage.ItemsView; got != "summary" {
-				t.Fatalf("initial turn item view = %q, want summary", got)
+			if got := request.InitialTurnsPage.ItemsView; got != "full" {
+				t.Fatalf("initial turn item view = %q, want full", got)
 			}
 			return json.RawMessage(`{
 				"thread": {
@@ -167,10 +167,11 @@ func TestResumeThreadResponseUsesRecentSummaryPage(t *testing.T) {
 				},
 				"initialTurnsPage": {
 					"data": [
-						{"id": "turn_new", "status": "completed", "items": [
+						{"id": "turn_new", "status": "completed", "itemsView": "full", "items": [
+							{"id": "agent_new_progress", "type": "agentMessage", "text": "new progress update"},
 							{"id": "agent_new", "type": "agentMessage", "text": "new answer"}
 						]},
-						{"id": "turn_old", "status": "completed", "items": [
+						{"id": "turn_old", "status": "completed", "itemsView": "full", "items": [
 							{"id": "user_old", "type": "userMessage", "content": [{"type": "text", "text": "old question"}]}
 						]}
 					],
@@ -185,28 +186,32 @@ func TestResumeThreadResponseUsesRecentSummaryPage(t *testing.T) {
 		t.Fatalf("resumeThreadResponse() error = %v", err)
 	}
 	if len(response.Thread.Turns) != 2 {
-		t.Fatalf("resumed turns = %#v, want two summary turns", response.Thread.Turns)
+		t.Fatalf("resumed turns = %#v, want two complete turns", response.Thread.Turns)
 	}
 	if response.Thread.Turns[0].ID != "turn_old" || response.Thread.Turns[1].ID != "turn_new" {
 		t.Fatalf("resumed turn order = %q, %q; want chronological old, new", response.Thread.Turns[0].ID, response.Thread.Turns[1].ID)
 	}
-	if !response.Thread.HistorySummaryOnly || !response.Thread.HistoryTruncated {
-		t.Fatalf("history flags = summary:%t truncated:%t, want true/true", response.Thread.HistorySummaryOnly, response.Thread.HistoryTruncated)
+	if response.Thread.HistorySummaryOnly || !response.Thread.HistoryTruncated {
+		t.Fatalf("history flags = summary:%t truncated:%t, want false/true", response.Thread.HistorySummaryOnly, response.Thread.HistoryTruncated)
 	}
 
+	s.initializeHistoryPagination(response.Thread)
 	s.hydrateResumedThread(response.Thread)
 	snapshot := s.Snapshot()
-	if len(snapshot.Entries) != 3 {
-		t.Fatalf("snapshot entries = %#v, want disclosure plus two conversation entries", snapshot.Entries)
+	if len(snapshot.Entries) != 4 {
+		t.Fatalf("snapshot entries = %#v, want disclosure plus three conversation entries", snapshot.Entries)
 	}
 	if snapshot.Entries[0].Kind != TranscriptSystem || !strings.Contains(snapshot.Entries[0].Text, "Older transcript turns") {
-		t.Fatalf("summary disclosure = %#v, want older-turn notice", snapshot.Entries[0])
+		t.Fatalf("history disclosure = %#v, want older-turn notice", snapshot.Entries[0])
 	}
 	if snapshot.Entries[1].Kind != TranscriptUser || snapshot.Entries[1].Text != "old question" {
-		t.Fatalf("older summary entry = %#v, want old user question", snapshot.Entries[1])
+		t.Fatalf("older entry = %#v, want old user question", snapshot.Entries[1])
 	}
-	if snapshot.Entries[2].Kind != TranscriptAgent || snapshot.Entries[2].Text != "new answer" {
-		t.Fatalf("newer summary entry = %#v, want new agent answer", snapshot.Entries[2])
+	if snapshot.Entries[2].Kind != TranscriptAgent || snapshot.Entries[2].Text != "new progress update" {
+		t.Fatalf("newer progress entry = %#v, want complete turn progress", snapshot.Entries[2])
+	}
+	if snapshot.Entries[3].Kind != TranscriptAgent || snapshot.Entries[3].Text != "new answer" {
+		t.Fatalf("newer final entry = %#v, want final answer", snapshot.Entries[3])
 	}
 }
 
@@ -263,7 +268,7 @@ func TestResumeThreadResponseFallsBackForLegacyAppServer(t *testing.T) {
 	}
 }
 
-func TestLoadOlderHistoryPrependsSummaryPageAndKeepsTurnAnchors(t *testing.T) {
+func TestLoadOlderHistoryPrependsCompletePageAndKeepsTurnAnchors(t *testing.T) {
 	notifications := 0
 	s := &appServerSession{
 		projectPath:        "/tmp/demo",
@@ -274,7 +279,7 @@ func TestLoadOlderHistoryPrependsSummaryPageAndKeepsTurnAnchors(t *testing.T) {
 	}
 	initial := resumedThread{
 		ID:                 "thread_root",
-		HistorySummaryOnly: true,
+		HistorySummaryOnly: false,
 		HistoryTruncated:   true,
 		HistoryNextCursor:  "cursor-older",
 		Status:             resumedThreadStatus{Type: "idle"},
@@ -298,16 +303,16 @@ func TestLoadOlderHistoryPrependsSummaryPageAndKeepsTurnAnchors(t *testing.T) {
 		if !ok {
 			return nil, fmt.Errorf("params = %#v, want threadTurnsListParams", params)
 		}
-		if request.ThreadID != "thread_root" || request.Cursor != "cursor-older" || request.Limit != codexResumeInitialTurnLimit || request.SortDirection != "desc" || request.ItemsView != "summary" {
-			t.Fatalf("history request = %#v, want bounded descending summary page", request)
+		if request.ThreadID != "thread_root" || request.Cursor != "cursor-older" || request.Limit != codexResumeInitialTurnLimit || request.SortDirection != "desc" || request.ItemsView != "full" {
+			t.Fatalf("history request = %#v, want bounded descending full page", request)
 		}
 		if snapshot := s.Snapshot(); !snapshot.HistoryLoading {
 			t.Fatal("history loading state should be visible while the provider call is in flight")
 		}
 		return json.RawMessage(`{
 			"data": [
-				{"id":"turn_middle","status":"completed","items":[{"id":"user_middle","type":"userMessage","content":[{"type":"text","text":"middle question"}]}]},
-				{"id":"turn_oldest","status":"completed","items":[{"id":"user_oldest","type":"userMessage","content":[{"type":"text","text":"oldest question"}]}]}
+				{"id":"turn_middle","status":"completed","itemsView":"full","items":[{"id":"user_middle","type":"userMessage","content":[{"type":"text","text":"middle question"}]}]},
+				{"id":"turn_oldest","status":"completed","itemsView":"full","items":[{"id":"user_oldest","type":"userMessage","content":[{"type":"text","text":"oldest question"}]}]}
 			],
 			"nextCursor": null
 		}`), nil
@@ -323,11 +328,11 @@ func TestLoadOlderHistoryPrependsSummaryPageAndKeepsTurnAnchors(t *testing.T) {
 	if notifications < 2 {
 		t.Fatalf("history notifications = %d, want loading and completion updates", notifications)
 	}
-	if len(snapshot.Entries) != 4 {
-		t.Fatalf("entries = %#v, want notice plus three user turns", snapshot.Entries)
+	if len(snapshot.Entries) != 3 {
+		t.Fatalf("entries = %#v, want three complete user turns", snapshot.Entries)
 	}
-	wantTurns := []string{"", "turn_oldest", "turn_middle", "turn_recent"}
-	wantText := []string{"Historical tool details", "oldest question", "middle question", "recent question"}
+	wantTurns := []string{"turn_oldest", "turn_middle", "turn_recent"}
+	wantText := []string{"oldest question", "middle question", "recent question"}
 	for i := range snapshot.Entries {
 		if snapshot.Entries[i].TurnID != wantTurns[i] || !strings.Contains(snapshot.Entries[i].Text, wantText[i]) {
 			t.Fatalf("entry %d = %#v, want turn %q containing %q", i, snapshot.Entries[i], wantTurns[i], wantText[i])

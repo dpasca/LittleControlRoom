@@ -56,7 +56,7 @@ func (s *appServerSession) LoadOlderHistory() error {
 		Cursor:        cursor,
 		Limit:         codexResumeInitialTurnLimit,
 		SortDirection: "desc",
-		ItemsView:     "summary",
+		ItemsView:     "full",
 	})
 	if err != nil {
 		return s.finishHistoryLoadError(fmt.Errorf("load older Codex turns: %w", err))
@@ -84,6 +84,7 @@ func (s *appServerSession) LoadOlderHistory() error {
 	}
 	s.historyNextCursor = nextCursor
 	s.historyHasMore = nextCursor != ""
+	s.historySummaryOnly = s.historySummaryOnly || resumedTurnsUseSummaryItems(turns)
 	s.historyLoading = false
 	s.historyLoadError = ""
 	s.syncHistorySummaryNoticeLocked()
@@ -166,15 +167,20 @@ func (s *appServerSession) prependHistoryTurnsLocked(turns []resumedTurn) {
 }
 
 func (s *appServerSession) syncHistorySummaryNoticeLocked() {
-	notice := "Historical tool details are summarized in the embedded view; the full session remains in the provider log."
-	if s.historyHasMore {
+	notice := ""
+	switch {
+	case s.historyHasMore && s.historySummaryOnly:
 		notice = "Older transcript turns are available. Scroll to the top to load them; historical tool details stay summarized for a quick open."
+	case s.historyHasMore:
+		notice = "Older transcript turns are available. Scroll to the top to load them."
+	case s.historySummaryOnly:
+		notice = "Historical tool details are summarized in the embedded view; the full session remains in the provider log."
 	}
-	if index, ok := s.entryIndex[resumedHistorySummaryItemID]; ok && index == 0 && s.historySummaryOnly && s.entries[index].Text == notice {
+	if index, ok := s.entryIndex[resumedHistorySummaryItemID]; ok && index == 0 && notice != "" && s.entries[index].Text == notice {
 		return
 	}
 	removed := s.removeHistorySummaryNoticeLocked()
-	if !s.historySummaryOnly {
+	if notice == "" {
 		if removed {
 			s.invalidateTranscriptCacheLocked()
 		}

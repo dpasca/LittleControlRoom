@@ -16,7 +16,10 @@ import (
 	"lcroom/internal/codexcli"
 )
 
-const codexResumeInitialTurnLimit = 64
+// Keep enough complete turns for the recent-turn navigator while bounding
+// cold-resume work. Older complete turns are fetched a page at a time when the
+// reader scrolls to the top of the transcript.
+const codexResumeInitialTurnLimit = 8
 
 func (s *appServerSession) start(req LaunchRequest) error {
 	cmd := exec.Command("codex", "app-server")
@@ -232,7 +235,7 @@ func (s *appServerSession) resumeThreadResponse(ctx context.Context, threadID st
 		InitialTurnsPage: &threadResumeInitialTurnsPageParams{
 			Limit:         codexResumeInitialTurnLimit,
 			SortDirection: "desc",
-			ItemsView:     "summary",
+			ItemsView:     "full",
 		},
 	}
 	result, err := s.call(ctx, "thread/resume", params)
@@ -268,10 +271,20 @@ func applyInitialTurnsPage(response *threadResumeResponse) {
 	}
 	response.Thread.Turns = turns
 	response.Thread.HistoryTruncated = page.NextCursor != nil && strings.TrimSpace(*page.NextCursor) != ""
-	response.Thread.HistorySummaryOnly = len(turns) > 0 || response.Thread.HistoryTruncated
+	response.Thread.HistorySummaryOnly = resumedTurnsUseSummaryItems(turns)
 	if page.NextCursor != nil {
 		response.Thread.HistoryNextCursor = strings.TrimSpace(*page.NextCursor)
 	}
+}
+
+func resumedTurnsUseSummaryItems(turns []resumedTurn) bool {
+	for _, turn := range turns {
+		switch strings.ToLower(strings.TrimSpace(turn.ItemsView)) {
+		case "summary", "notloaded":
+			return true
+		}
+	}
+	return false
 }
 
 func (s *appServerSession) RefreshBusyElsewhere() error {
