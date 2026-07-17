@@ -137,6 +137,7 @@ type Model struct {
 	newProjectDialog                    *newProjectDialogState
 	newTaskDialog                       *newTaskDialogState
 	runCommandDialog                    *runCommandDialogState
+	runCommandRequestSeq                int64
 	skillsDialog                        *skillsDialogState
 	preferredSelectPath                 string
 	diffView                            *diffViewState
@@ -459,6 +460,14 @@ type runCommandSuggestionMsg struct {
 	projectPath string
 	seq         int64
 	suggestions []projectrun.Suggestion
+	err         error
+}
+
+type runCommandPathEntriesMsg struct {
+	projectPath string
+	directory   string
+	seq         int64
+	entries     []projectrun.PathCompletionEntry
 	err         error
 }
 
@@ -2160,23 +2169,39 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		dialog.SuggestionError = ""
-		dialog.Suggestions = append([]projectrun.Suggestion(nil), msg.suggestions...)
-		commands := make([]string, 0, len(dialog.Suggestions))
-		for _, suggestion := range dialog.Suggestions {
+		dialog.CommandSuggestions = append([]projectrun.Suggestion(nil), msg.suggestions...)
+		commands := make([]string, 0, len(dialog.CommandSuggestions))
+		for _, suggestion := range dialog.CommandSuggestions {
 			if command := strings.TrimSpace(suggestion.Command); command != "" {
 				commands = append(commands, command)
 			}
 		}
 		if len(commands) == 0 {
-			return m, nil
+			return m, m.refreshRunCommandAutocomplete()
 		}
 		if strings.TrimSpace(dialog.Input.Value()) == "" {
 			dialog.Input.SetValue(commands[0])
 			dialog.Input.CursorEnd()
 		}
-		dialog.Input.SetSuggestions(commands)
-		dialog.SuggestionReason = currentRunCommandSuggestionReason(dialog)
-		return m, nil
+		return m, m.refreshRunCommandAutocomplete()
+	case runCommandPathEntriesMsg:
+		dialog := m.runCommandDialog
+		if dialog == nil || filepath.Clean(dialog.ProjectPath) != filepath.Clean(msg.projectPath) {
+			return m, nil
+		}
+		ensureRunCommandPathMaps(dialog)
+		if dialog.PathLoadingDirectories[msg.directory] != msg.seq {
+			return m, nil
+		}
+		delete(dialog.PathLoadingDirectories, msg.directory)
+		if msg.err != nil {
+			dialog.PathDirectoryErrors[msg.directory] = strings.TrimSpace(msg.err.Error())
+		} else {
+			delete(dialog.PathDirectoryErrors, msg.directory)
+			dialog.PathEntries[msg.directory] = append([]projectrun.PathCompletionEntry(nil), msg.entries...)
+			dialog.PathLoadedDirectories[msg.directory] = true
+		}
+		return m, m.refreshRunCommandAutocomplete()
 	case todoActionMsg:
 		if msg.err != nil {
 			m.reportError("TODO action failed", msg.err, msg.projectPath)

@@ -16,17 +16,27 @@ import (
 )
 
 type runCommandDialogState struct {
-	ProjectPath       string
-	ProjectName       string
-	Input             textinput.Model
-	Suggestions       []projectrun.Suggestion
-	SuggestionReason  string
-	SuggestionError   string
-	SuggestionPending bool
-	SuggestionChecked bool
-	SuggestionSeq     int64
-	StartAfterSave    bool
-	Submitting        bool
+	ProjectPath             string
+	ProjectName             string
+	Input                   textinput.Model
+	CommandSuggestions      []projectrun.Suggestion
+	PathSuggestions         []projectrun.Suggestion
+	Suggestions             []projectrun.Suggestion
+	SuggestionReason        string
+	SuggestionError         string
+	SuggestionPending       bool
+	SuggestionChecked       bool
+	SuggestionSeq           int64
+	PathCompletionActive    bool
+	PathCompletionDirectory string
+	PathSuggestionPending   bool
+	PathSuggestionError     string
+	PathEntries             map[string][]projectrun.PathCompletionEntry
+	PathLoadedDirectories   map[string]bool
+	PathLoadingDirectories  map[string]int64
+	PathDirectoryErrors     map[string]string
+	StartAfterSave          bool
+	Submitting              bool
 }
 
 func (m Model) handleRunCommand(project model.ProjectSummary, command string) (tea.Model, tea.Cmd) {
@@ -60,13 +70,18 @@ func (m *Model) openRunCommandDialog(project model.ProjectSummary, startAfterSav
 	input.ShowSuggestions = true
 	input.SetValue(command)
 
+	m.runCommandRequestSeq++
 	m.runCommandDialog = &runCommandDialogState{
-		ProjectPath:       project.Path,
-		ProjectName:       projectTitle(project.Path, project.Name),
-		Input:             input,
-		SuggestionPending: true,
-		SuggestionSeq:     1,
-		StartAfterSave:    startAfterSave,
+		ProjectPath:            project.Path,
+		ProjectName:            projectTitle(project.Path, project.Name),
+		Input:                  input,
+		SuggestionPending:      true,
+		SuggestionSeq:          m.runCommandRequestSeq,
+		PathEntries:            make(map[string][]projectrun.PathCompletionEntry),
+		PathLoadedDirectories:  make(map[string]bool),
+		PathLoadingDirectories: make(map[string]int64),
+		PathDirectoryErrors:    make(map[string]string),
+		StartAfterSave:         startAfterSave,
 	}
 	m.commandMode = false
 	m.err = nil
@@ -76,7 +91,8 @@ func (m *Model) openRunCommandDialog(project model.ProjectSummary, startAfterSav
 		m.status = "Editing saved run command"
 	}
 	focusCmd := m.runCommandDialog.Input.Focus()
-	return batchCmds(focusCmd, m.loadRunCommandSuggestionsCmd(project.Path, m.runCommandDialog.SuggestionSeq))
+	pathCmd := m.refreshRunCommandAutocomplete()
+	return batchCmds(focusCmd, m.loadRunCommandSuggestionsCmd(project.Path, m.runCommandDialog.SuggestionSeq), pathCmd)
 }
 
 func (m *Model) closeRunCommandDialog(status string) {
@@ -144,8 +160,8 @@ func (m Model) updateRunCommandDialogMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	dialog.Input, cmd = dialog.Input.Update(msg)
-	dialog.SuggestionReason = currentRunCommandSuggestionReason(dialog)
-	return m, cmd
+	pathCmd := m.refreshRunCommandAutocomplete()
+	return m, batchCmds(cmd, pathCmd)
 }
 
 func (m Model) saveRunCommandCmd(projectPath, command string, startAfter bool) tea.Cmd {
@@ -187,6 +203,118 @@ func (m Model) loadRunCommandSuggestionsCmd(projectPath string, seq int64) tea.C
 			err:         err,
 		}
 	}
+}
+
+func (m Model) loadRunCommandPathEntriesCmd(projectPath, directory string, seq int64) tea.Cmd {
+	return func() tea.Msg {
+		entries, err := projectrun.ReadPathCompletionEntries(projectPath, directory)
+		return runCommandPathEntriesMsg{
+			projectPath: projectPath,
+			directory:   directory,
+			seq:         seq,
+			entries:     entries,
+			err:         err,
+		}
+	}
+}
+
+func (m *Model) refreshRunCommandAutocomplete() tea.Cmd {
+	dialog := m.runCommandDialog
+	if dialog == nil {
+		return nil
+	}
+
+	query, pathActive := projectrun.ParsePathCompletion(dialog.Input.Value(), dialog.Input.Position())
+	if pathActive && runCommandMatchesDetectedSuggestion(dialog) {
+		pathActive = false
+	}
+
+	dialog.PathCompletionActive = pathActive
+	dialog.PathCompletionDirectory = ""
+	dialog.PathSuggestionPending = false
+	dialog.PathSuggestionError = ""
+	dialog.PathSuggestions = nil
+
+	if !pathActive {
+		setRunCommandActiveSuggestions(dialog, dialog.CommandSuggestions)
+		return nil
+	}
+
+	directory := query.Directory
+	dialog.PathCompletionDirectory = directory
+	ensureRunCommandPathMaps(dialog)
+
+	switch {
+	case strings.TrimSpace(dialog.PathDirectoryErrors[directory]) != "":
+		dialog.PathSuggestionError = dialog.PathDirectoryErrors[directory]
+	case dialog.PathLoadedDirectories[directory]:
+		dialog.PathSuggestions = query.Suggestions(dialog.PathEntries[directory])
+	case dialog.PathLoadingDirectories[directory] != 0:
+		dialog.PathSuggestionPending = true
+	default:
+		m.runCommandRequestSeq++
+		seq := m.runCommandRequestSeq
+		dialog.PathLoadingDirectories[directory] = seq
+		dialog.PathSuggestionPending = true
+		setRunCommandActiveSuggestions(dialog, nil)
+		return m.loadRunCommandPathEntriesCmd(dialog.ProjectPath, directory, seq)
+	}
+
+	setRunCommandActiveSuggestions(dialog, dialog.PathSuggestions)
+	return nil
+}
+
+func ensureRunCommandPathMaps(dialog *runCommandDialogState) {
+	if dialog.PathEntries == nil {
+		dialog.PathEntries = make(map[string][]projectrun.PathCompletionEntry)
+	}
+	if dialog.PathLoadedDirectories == nil {
+		dialog.PathLoadedDirectories = make(map[string]bool)
+	}
+	if dialog.PathLoadingDirectories == nil {
+		dialog.PathLoadingDirectories = make(map[string]int64)
+	}
+	if dialog.PathDirectoryErrors == nil {
+		dialog.PathDirectoryErrors = make(map[string]string)
+	}
+}
+
+func runCommandMatchesDetectedSuggestion(dialog *runCommandDialogState) bool {
+	if dialog == nil {
+		return false
+	}
+	current := strings.TrimSpace(dialog.Input.Value())
+	if current == "" {
+		return false
+	}
+	for _, suggestion := range dialog.CommandSuggestions {
+		if strings.TrimSpace(suggestion.Command) == current {
+			return true
+		}
+	}
+	return false
+}
+
+func setRunCommandActiveSuggestions(dialog *runCommandDialogState, suggestions []projectrun.Suggestion) {
+	if dialog == nil {
+		return
+	}
+	dialog.Suggestions = append([]projectrun.Suggestion(nil), suggestions...)
+	commands := make([]string, 0, len(dialog.Suggestions))
+	seen := make(map[string]struct{}, len(dialog.Suggestions))
+	for _, suggestion := range dialog.Suggestions {
+		command := strings.TrimSpace(suggestion.Command)
+		if command == "" {
+			continue
+		}
+		if _, ok := seen[command]; ok {
+			continue
+		}
+		seen[command] = struct{}{}
+		commands = append(commands, command)
+	}
+	dialog.Input.SetSuggestions(commands)
+	dialog.SuggestionReason = currentRunCommandSuggestionReason(dialog)
 }
 
 func currentRunCommandSuggestionReason(dialog *runCommandDialogState) string {
@@ -439,15 +567,24 @@ func (m Model) renderRunCommandContent(width int) string {
 	if strings.TrimSpace(dialog.SuggestionReason) != "" {
 		lines = append(lines, "")
 		lines = append(lines, detailField("Hint", detailMutedStyle.Render(dialog.SuggestionReason)))
+	} else if dialog.PathCompletionActive && dialog.PathSuggestionPending {
+		lines = append(lines, "")
+		lines = append(lines, detailField("Hint", detailMutedStyle.Render("Checking "+runCommandPathDisplay(dialog.PathCompletionDirectory)+" for path completions...")))
+	} else if dialog.PathCompletionActive && strings.TrimSpace(dialog.PathSuggestionError) != "" {
+		lines = append(lines, "")
+		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("Unavailable: "+dialog.PathSuggestionError)))
+	} else if dialog.PathCompletionActive && len(dialog.PathSuggestions) == 0 {
+		lines = append(lines, "")
+		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("No matching project path.")))
 	} else if dialog.SuggestionPending {
 		lines = append(lines, "")
 		lines = append(lines, detailField("Hint", detailMutedStyle.Render("Checking project files for a suggested command...")))
 	} else if strings.TrimSpace(dialog.SuggestionError) != "" {
 		lines = append(lines, "")
 		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("Unavailable: "+dialog.SuggestionError)))
-	} else if dialog.SuggestionChecked && len(dialog.Suggestions) == 0 {
+	} else if dialog.SuggestionChecked && len(dialog.CommandSuggestions) == 0 {
 		lines = append(lines, "")
-		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("No project commands detected; enter a command manually.")))
+		lines = append(lines, detailField("Autocomplete", detailMutedStyle.Render("No conventional commands detected; type ./ to complete a project path.")))
 	}
 	if len(dialog.Suggestions) > 0 {
 		lines = append(lines, "", commandPaletteTitleStyle.Render("Autocomplete"))
@@ -478,6 +615,14 @@ func (m Model) renderRunCommandContent(width int) string {
 	lines = append(lines, renderDialogAction("Enter", saveRunDialogPrimaryLabel(dialog), commitActionKeyStyle, commitActionTextStyle))
 	lines = append(lines, renderDialogAction("Esc", "cancel", cancelActionKeyStyle, cancelActionTextStyle))
 	return strings.Join(lines, "\n")
+}
+
+func runCommandPathDisplay(directory string) string {
+	directory = filepath.ToSlash(strings.TrimSpace(directory))
+	if directory == "" || directory == "." {
+		return "./"
+	}
+	return "./" + strings.Trim(directory, "/") + "/"
 }
 
 func runCommandSuggestionWindow(selected, total int) (int, int) {

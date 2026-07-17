@@ -12,6 +12,7 @@ import (
 	"lcroom/internal/model"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -329,6 +330,105 @@ serve:
 	}
 }
 
+func TestRunCommandDialogCompletesExecutableProjectPathByDirectory(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	toolsPath := filepath.Join(projectPath, "tools")
+	if err := os.MkdirAll(toolsPath, 0o755); err != nil {
+		t.Fatalf("mkdir tools: %v", err)
+	}
+	scriptName := "build_and_run_desktop.sh"
+	if runtime.GOOS == "windows" {
+		scriptName = "build_and_run_desktop.cmd"
+	}
+	scriptPath := filepath.Join(toolsPath, scriptName)
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsPath, "build_notes.txt"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatalf("write non-executable file: %v", err)
+	}
+
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "./too",
+	}, false)
+	if rendered := ansi.Strip(m.renderRunCommandContent(88)); !strings.Contains(rendered, "Checking ./ for path completions") {
+		t.Fatalf("path lookup should have an explicit pending state:\n%s", rendered)
+	}
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != "./tools/" {
+		t.Fatalf("directory completion = %q, want ./tools/", got)
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if got := m.runCommandDialog.Input.Value(); got != "./tools/" {
+		t.Fatalf("command after directory Tab = %q, want ./tools/", got)
+	}
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+	}
+
+	expectedScript := "./tools/" + scriptName
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != expectedScript {
+		t.Fatalf("script completion = %q", got)
+	}
+	if suggestions := m.runCommandDialog.Input.AvailableSuggestions(); slices.Contains(suggestions, "./tools/build_notes.txt") {
+		t.Fatalf("first command word should not offer non-executable files: %#v", suggestions)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if got := m.runCommandDialog.Input.Value(); got != expectedScript {
+		t.Fatalf("command after script Tab = %q", got)
+	}
+	if rendered := ansi.Strip(m.renderRunCommandContent(88)); !strings.Contains(rendered, "Executable file under the selected project") {
+		t.Fatalf("completed executable should retain a path hint:\n%s", rendered)
+	}
+}
+
+func TestRunCommandDialogCompletesNonExecutablePathArgument(t *testing.T) {
+	t.Parallel()
+
+	projectPath := t.TempDir()
+	toolsPath := filepath.Join(projectPath, "tools")
+	if err := os.MkdirAll(toolsPath, 0o755); err != nil {
+		t.Fatalf("mkdir tools: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(toolsPath, "setup script.sh"), []byte("echo setup\n"), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	m := Model{}
+	cmd := m.openRunCommandDialog(model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "bash ./tools/set",
+	}, false)
+	for _, msg := range collectCmdMsgs(cmd) {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if got := m.runCommandDialog.Input.CurrentSuggestion(); got != `bash ./tools/setup\ script.sh` {
+		t.Fatalf("argument completion = %q", got)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(Model)
+	if got := m.runCommandDialog.Input.Value(); got != `bash ./tools/setup\ script.sh` {
+		t.Fatalf("command after argument Tab = %q", got)
+	}
+}
+
 func TestRunCommandDialogExplainsWhenNoProjectCommandsAreDetected(t *testing.T) {
 	t.Parallel()
 
@@ -348,7 +448,7 @@ func TestRunCommandDialogExplainsWhenNoProjectCommandsAreDetected(t *testing.T) 
 		t.Fatal("run command autocomplete lookup should be marked complete")
 	}
 	rendered := ansi.Strip(m.renderRunCommandContent(80))
-	if !strings.Contains(rendered, "No project commands detected; enter a command manually.") {
+	if !strings.Contains(rendered, "No conventional commands detected; type ./ to complete a project path.") {
 		t.Fatalf("run command dialog should explain the empty autocomplete state:\n%s", rendered)
 	}
 }
