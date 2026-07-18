@@ -470,6 +470,7 @@ func TestRenderTopStatusLineShowsMergeConflictBadge(t *testing.T) {
 
 func TestDispatchResolveStartsParallelBackgroundResolverWithoutReplacingEngineer(t *testing.T) {
 	projectPath := "/tmp/resolve-conflict"
+	now := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
@@ -506,6 +507,9 @@ func TestDispatchResolveStartsParallelBackgroundResolverWithoutReplacingEngineer
 			RepoBranch:    "feat/conflict",
 		}},
 		selected: 0,
+		nowFn: func() time.Time {
+			return now
+		},
 	}
 
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
@@ -585,7 +589,7 @@ func TestDispatchResolveStartsParallelBackgroundResolverWithoutReplacingEngineer
 		t.Fatalf("top status should replace stale conflict guidance with resolver state: %q", topStatus)
 	}
 	projectRow := ansi.Strip(visible.renderProjectList(160, 6))
-	for _, want := range []string{"resolve", "CX resolve"} {
+	for _, want := range []string{"resolve", "CX 00:00"} {
 		if !strings.Contains(projectRow, want) {
 			t.Fatalf("project row missing resolver signal %q:\n%s", want, projectRow)
 		}

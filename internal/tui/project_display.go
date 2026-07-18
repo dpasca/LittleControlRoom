@@ -294,7 +294,11 @@ func (m Model) projectUnfinishedTurnLooksLive(project model.ProjectSummary, now 
 func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) (string, string, bool) {
 	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok && resolver.active() {
 		tag := resolver.provider().SourceTag()
-		return tag + " resolve", tag, true
+		label := tag + " resolve"
+		if elapsed := resolver.elapsed(now); elapsed != "" {
+			label = tag + " " + elapsed
+		}
+		return label, tag, true
 	}
 	if entry, ok := m.restartWarmupForProject(project.Path); ok {
 		tag := entry.Provider.SourceTag()

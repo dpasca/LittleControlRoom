@@ -525,6 +525,37 @@ func TestProjectAgentDisplayUsesLiveBusyTimer(t *testing.T) {
 	}
 }
 
+func TestProjectAgentDisplayUsesConflictResolverTimer(t *testing.T) {
+	projectPath := "/tmp/demo"
+	startedAt := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	m := Model{
+		mergeConflictResolvers: map[string]mergeConflictResolverState{
+			projectPath: {
+				OwnerProjectPath:   projectPath,
+				SessionProjectPath: projectPath,
+				Provider:           codexapp.ProviderCodex,
+				Phase:              mergeConflictResolverRunning,
+				StartedAt:          startedAt,
+			},
+		},
+	}
+	project := model.ProjectSummary{
+		Path:          projectPath,
+		PresentOnDisk: true,
+	}
+
+	label, tag, live := m.projectAgentDisplay(project, startedAt.Add(37*time.Second))
+	if !live {
+		t.Fatalf("projectAgentDisplay() live = false, want true")
+	}
+	if tag != "CX" {
+		t.Fatalf("projectAgentDisplay() tag = %q, want %q", tag, "CX")
+	}
+	if label != "CX 00:37" {
+		t.Fatalf("projectAgentDisplay() label = %q, want %q", label, "CX 00:37")
+	}
+}
+
 func TestProjectAgentDisplayUsesLiveActiveTurnTimer(t *testing.T) {
 	session := &fakeCodexSession{
 		projectPath: "/tmp/demo",
