@@ -46,6 +46,7 @@ type suspendedTurnResumeChoice struct {
 	Provider       codexapp.Provider
 	SessionID      string
 	ActiveTurnID   string
+	Parallel       bool
 	LastActivity   time.Time
 	Summary        string
 	CapturedOnQuit bool
@@ -55,6 +56,7 @@ type restartWarmupEntry struct {
 	ProjectPath    string
 	ProjectName    string
 	Provider       codexapp.Provider
+	Parallel       bool
 	CapturedOnQuit bool
 }
 
@@ -76,7 +78,7 @@ func (m *Model) beginRestartWarmup(entries []restartWarmupEntry) {
 		}
 		entry.ProjectPath = strings.TrimSpace(entry.ProjectPath)
 		entry.Provider = provider
-		pending[path] = entry
+		pending[restartWarmupKey(path, entry.Parallel)] = entry
 	}
 	if len(pending) == 0 {
 		m.restartWarmup = nil
@@ -92,20 +94,28 @@ func (m Model) restartWarmupForProject(projectPath string) (restartWarmupEntry, 
 	if m.restartWarmup == nil {
 		return restartWarmupEntry{}, false
 	}
-	entry, ok := m.restartWarmup.PendingByPath[normalizeProjectPath(projectPath)]
+	entry, ok := m.restartWarmup.PendingByPath[restartWarmupKey(projectPath, false)]
 	return entry, ok
 }
 
 func (m *Model) settleRestartWarmup(projectPath string, succeeded bool) {
+	m.settleRestartWarmupLane(projectPath, false, succeeded)
+}
+
+func (m *Model) settleParallelRestartWarmup(projectPath string, succeeded bool) {
+	m.settleRestartWarmupLane(projectPath, true, succeeded)
+}
+
+func (m *Model) settleRestartWarmupLane(projectPath string, parallel, succeeded bool) {
 	if m.restartWarmup == nil {
 		return
 	}
-	path := normalizeProjectPath(projectPath)
-	entry, ok := m.restartWarmup.PendingByPath[path]
+	key := restartWarmupKey(projectPath, parallel)
+	entry, ok := m.restartWarmup.PendingByPath[key]
 	if !ok {
 		return
 	}
-	delete(m.restartWarmup.PendingByPath, path)
+	delete(m.restartWarmup.PendingByPath, key)
 	if succeeded {
 		m.restartWarmup.Succeeded++
 	} else {
@@ -130,6 +140,14 @@ func (m *Model) settleRestartWarmup(projectPath string, succeeded bool) {
 	if failedSaved > 0 {
 		m.status += " Saved continuations remain available for retry."
 	}
+}
+
+func restartWarmupKey(projectPath string, parallel bool) string {
+	key := normalizeProjectPath(projectPath)
+	if parallel {
+		key += "\x00parallel"
+	}
+	return key
 }
 
 func (m Model) renderRestartWarmupNotice() string {
@@ -224,6 +242,7 @@ func buildRestartIntentResumeChoices(projects []model.ProjectSummary, intents []
 			Provider:       intent.Provider.Normalized(),
 			SessionID:      strings.TrimSpace(intent.SessionID),
 			ActiveTurnID:   strings.TrimSpace(intent.ActiveTurnID),
+			Parallel:       intent.Parallel,
 			LastActivity:   activity,
 			Summary:        strings.TrimSpace(project.LatestSessionSummary),
 			CapturedOnQuit: true,
@@ -284,14 +303,22 @@ func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (
 			Name:          choice.ProjectName,
 			PresentOnDisk: true,
 		}
-		updated, cmd := m.launchEmbeddedForProjectWithOptions(project, choice.Provider, embeddedLaunchOptions{
-			reveal:                  false,
-			resumeID:                choice.SessionID,
-			prompt:                  suspendedTurnContinuationPromptForChoice(choice),
-			continueInterruptedTurn: choice.CapturedOnQuit,
-			interruptedTurnID:       choice.ActiveTurnID,
-			restartWarmup:           true,
-		})
+		var (
+			updated tea.Model
+			cmd     tea.Cmd
+		)
+		if choice.Parallel {
+			updated, cmd = m.resumeParallelMergeConflictResolver(project, choice)
+		} else {
+			updated, cmd = m.launchEmbeddedForProjectWithOptions(project, choice.Provider, embeddedLaunchOptions{
+				reveal:                  false,
+				resumeID:                choice.SessionID,
+				prompt:                  suspendedTurnContinuationPromptForChoice(choice),
+				continueInterruptedTurn: choice.CapturedOnQuit,
+				interruptedTurnID:       choice.ActiveTurnID,
+				restartWarmup:           true,
+			})
+		}
 		m = normalizeUpdateModel(updated)
 		if cmd == nil {
 			continue
@@ -301,6 +328,7 @@ func (m Model) resumeSuspendedTurnChoices(choices []suspendedTurnResumeChoice) (
 			ProjectPath:    choice.ProjectPath,
 			ProjectName:    choice.ProjectName,
 			Provider:       choice.Provider,
+			Parallel:       choice.Parallel,
 			CapturedOnQuit: choice.CapturedOnQuit,
 		})
 		resumed++
@@ -457,6 +485,9 @@ func (m Model) renderSuspendedTurnResumeDialogContent(width int) string {
 
 func renderSuspendedTurnChoiceLine(choice suspendedTurnResumeChoice, width int) string {
 	left := fmt.Sprintf("- %s  %s", choice.Provider.Label(), firstNonEmptyTrimmed(choice.ProjectName, choice.ProjectPath))
+	if choice.Parallel {
+		left += "  background resolver"
+	}
 	if choice.CapturedOnQuit {
 		left += "  saved"
 	}

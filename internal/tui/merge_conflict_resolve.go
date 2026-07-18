@@ -1,11 +1,12 @@
 package tui
 
 import (
+	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 
 	"lcroom/internal/codexapp"
-	"lcroom/internal/control"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
 
@@ -17,6 +18,24 @@ type mergeConflictResolveTargetMsg struct {
 	target     service.GitlinkConflictResolveTarget
 	hasGitlink bool
 	err        error
+}
+
+type mergeConflictResolverOpenedMsg struct {
+	projectPath      string
+	provider         codexapp.Provider
+	snapshot         codexapp.Snapshot
+	reused           bool
+	restartIntentKey string
+	restartWarmup    bool
+	err              error
+}
+
+type mergeConflictResolverUpdateMsg struct {
+	projectPath string
+	snapshot    codexapp.Snapshot
+	found       bool
+	terminal    bool
+	closeErr    error
 }
 
 func (m Model) resolveMergeConflictsForSelection() (tea.Model, tea.Cmd) {
@@ -73,22 +92,8 @@ func (m Model) applyMergeConflictResolveTargetMsg(msg mergeConflictResolveTarget
 }
 
 func (m Model) launchMergeConflictResolver(project model.ProjectSummary) (tea.Model, tea.Cmd) {
-	provider := mergeConflictResolveControlProvider(m.preferredEmbeddedProviderForProject(project))
-	resolvedProvider, err := m.resolveControlEngineerProvider(provider, project)
-	if err == nil {
-		if m.mergeConflictResolveSessionBlocked(project, resolvedProvider, "project") {
-			return m.openMergeConflictResolveBlockedDialog(project)
-		}
-	}
-	outcome := m.executeEngineerSendPromptControlWithOutcome(control.EngineerSendPromptInput{
-		ProjectPath: project.Path,
-		ProjectName: projectNameForPicker(project, project.Path),
-		Provider:    provider,
-		SessionMode: control.SessionModeNew,
-		Prompt:      mergeConflictResolvePrompt(project),
-		Reveal:      true,
-	})
-	return outcome.model, outcome.cmd
+	provider := m.preferredEmbeddedProviderForProject(project)
+	return m.launchParallelMergeConflictResolver(project, provider, mergeConflictResolvePrompt(project))
 }
 
 func (m Model) launchGitlinkConflictResolver(parent model.ProjectSummary, target service.GitlinkConflictResolveTarget) (tea.Model, tea.Cmd) {
@@ -101,36 +106,236 @@ func (m Model) launchGitlinkConflictResolver(parent model.ProjectSummary, target
 		RepoDirty:     true,
 		RepoConflict:  true,
 	}
-	if m.mergeConflictResolveSessionBlocked(project, provider, "the submodule conflict worktree") {
-		return m.openMergeConflictResolveBlockedDialog(project)
-	}
-	return m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
+	return m.launchParallelMergeConflictResolver(project, provider, gitlinkConflictResolvePrompt(parent, target))
+}
+
+func (m Model) launchParallelMergeConflictResolver(project model.ProjectSummary, provider codexapp.Provider, prompt string) (tea.Model, tea.Cmd) {
+	return m.launchParallelMergeConflictResolverWithOptions(project, provider, embeddedLaunchOptions{
 		forceNew: true,
-		prompt:   gitlinkConflictResolvePrompt(parent, target),
-		reveal:   true,
-	})
+		prompt:   strings.TrimSpace(prompt),
+		reveal:   false,
+	}, "")
 }
 
-func (m Model) mergeConflictResolveSessionBlocked(project model.ProjectSummary, provider codexapp.Provider, targetLabel string) bool {
-	if _, blocked := m.embeddedLaunchBlock(project, provider, true); blocked {
-		return true
+func (m Model) resumeParallelMergeConflictResolver(project model.ProjectSummary, choice suspendedTurnResumeChoice) (tea.Model, tea.Cmd) {
+	intent := codexapp.RestartIntent{
+		Provider:    choice.Provider,
+		ProjectPath: choice.ProjectPath,
+		SessionID:   choice.SessionID,
+		Parallel:    true,
 	}
-	_, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, targetLabel)
-	return blocked
+	return m.launchParallelMergeConflictResolverWithOptions(project, choice.Provider, embeddedLaunchOptions{
+		resumeID:                choice.SessionID,
+		prompt:                  suspendedTurnContinuationPromptForChoice(choice),
+		reveal:                  false,
+		continueInterruptedTurn: choice.CapturedOnQuit,
+		interruptedTurnID:       choice.ActiveTurnID,
+		restartWarmup:           true,
+	}, intent.Key())
 }
 
-func (m Model) openMergeConflictResolveBlockedDialog(project model.ProjectSummary) (tea.Model, tea.Cmd) {
+func (m Model) launchParallelMergeConflictResolverWithOptions(project model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions, restartIntentKey string) (tea.Model, tea.Cmd) {
+	provider = provider.Normalized()
+	if provider == "" {
+		provider = codexapp.ProviderCodex
+	}
+	options.prompt = strings.TrimSpace(options.prompt)
+	options.reveal = false
+	req := m.embeddedLaunchRequest(project, provider, options)
+	if options.forceNew {
+		req.ResumeID = ""
+	}
+	if err := req.Validate(); err != nil {
+		m.status = err.Error()
+		return m, nil
+	}
+
+	m.ensureCodexRuntime()
+	req = m.enrichEmbeddedLaunchRequest(req)
+	manager := m.codexManager
 	m.err = nil
-	m.status = "Resolve blocked: another engineer session is open"
-	projectName := projectNameForPicker(project, project.Path)
-	m.openActionNoticeDialog(
-		"Resolve blocked",
-		projectName,
-		"Another engineer session is already open, so /resolve cannot start.",
-		"Open the existing engineer session.",
-		"/resolve opens a new session, and Little Control Room will not replace an open one because idle may not mean finished. If it is busy, wait. Once idle, ask it to resolve the conflict or close it with Ctrl+C, then retry.",
-	)
-	return m, nil
+	m.rememberEmbeddedProvider(provider)
+	m.status = "Starting background " + provider.Label() + " conflict resolver..."
+	return m, func() tea.Msg {
+		if manager == nil {
+			return mergeConflictResolverOpenedMsg{
+				projectPath:      project.Path,
+				provider:         provider,
+				restartIntentKey: restartIntentKey,
+				restartWarmup:    options.restartWarmup,
+				err:              errors.New(provider.Label() + " manager unavailable"),
+			}
+		}
+		if provider == codexapp.ProviderLCAgent {
+			if err := codexapp.CheckLCAgentProviderAccess(context.Background(), req); err != nil {
+				return mergeConflictResolverOpenedMsg{
+					projectPath:      project.Path,
+					provider:         provider,
+					restartIntentKey: restartIntentKey,
+					restartWarmup:    options.restartWarmup,
+					err:              err,
+				}
+			}
+		}
+		attemptLimit := 1
+		if req.ForceNew {
+			attemptLimit = maxForceNewEmbeddedOpenAttempts
+		}
+		var (
+			session codexapp.Session
+			reused  bool
+			err     error
+		)
+		for attempt := 1; attempt <= attemptLimit; attempt++ {
+			session, reused, err = manager.OpenParallel(req)
+			if !shouldRetryFreshEmbeddedOpenError(req, err) || attempt == attemptLimit {
+				break
+			}
+		}
+		if err != nil {
+			return mergeConflictResolverOpenedMsg{
+				projectPath:      project.Path,
+				provider:         provider,
+				restartIntentKey: restartIntentKey,
+				restartWarmup:    options.restartWarmup,
+				err:              err,
+			}
+		}
+		snapshot := session.Snapshot()
+		if options.continueInterruptedTurn && snapshot.BusyExternal {
+			_ = manager.CloseParallelProject(project.Path)
+			return mergeConflictResolverOpenedMsg{
+				projectPath:      project.Path,
+				provider:         provider,
+				snapshot:         snapshot,
+				restartIntentKey: restartIntentKey,
+				restartWarmup:    options.restartWarmup,
+				err:              errors.New("saved background resolver is active in another process"),
+			}
+		}
+		return mergeConflictResolverOpenedMsg{
+			projectPath:      project.Path,
+			provider:         provider,
+			snapshot:         snapshot,
+			reused:           reused,
+			restartIntentKey: restartIntentKey,
+			restartWarmup:    options.restartWarmup,
+		}
+	}
+}
+
+func (m Model) applyMergeConflictResolverOpenedMsg(msg mergeConflictResolverOpenedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		if msg.restartWarmup {
+			m.settleParallelRestartWarmup(msg.projectPath, false)
+		}
+		m.status = "Background conflict resolver failed: " + msg.err.Error()
+		m.reportError("Background conflict resolver failed", msg.err, msg.projectPath)
+		return m, nil
+	}
+	restartAckCmd := tea.Cmd(nil)
+	if strings.TrimSpace(msg.restartIntentKey) != "" && !msg.snapshot.BusyExternal {
+		restartAckCmd = m.acknowledgeRestartIntentsCmd([]string{msg.restartIntentKey})
+	}
+	if m.codexManager != nil {
+		if _, live := m.codexManager.ParallelSession(msg.projectPath); !live {
+			// A very short resolver can finish and be detached before its open
+			// result is applied. Keep the terminal status in that race.
+			if msg.restartWarmup {
+				m.settleParallelRestartWarmup(msg.projectPath, !msg.snapshot.BusyExternal)
+			}
+			return m, restartAckCmd
+		}
+	}
+	m.err = nil
+	if msg.reused {
+		m.status = "Background " + msg.provider.Label() + " conflict resolver is already running"
+	} else {
+		m.status = "Resolving merge conflicts in the background with " + msg.provider.Label()
+	}
+	if msg.restartWarmup {
+		m.settleParallelRestartWarmup(msg.projectPath, !msg.snapshot.BusyExternal)
+	}
+	return m, batchCmds(restartAckCmd, m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath)))
+}
+
+func (m Model) waitMergeConflictResolverUpdateCmd() tea.Cmd {
+	manager := m.codexManager
+	if manager == nil || manager.ParallelUpdates() == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		projectPath, ok := <-manager.ParallelUpdates()
+		if !ok {
+			return nil
+		}
+		session, found := manager.ParallelSession(projectPath)
+		if !found {
+			return mergeConflictResolverUpdateMsg{projectPath: projectPath}
+		}
+		snapshot := session.Snapshot()
+		terminal := snapshot.Closed ||
+			snapshot.PendingApproval != nil ||
+			snapshot.PendingToolInput != nil ||
+			snapshot.PendingElicitation != nil ||
+			(snapshot.Started && !embeddedSessionBlocksProviderSwitch(snapshot))
+		var closeErr error
+		if terminal {
+			closeErr = manager.CloseParallelProject(projectPath)
+		}
+		return mergeConflictResolverUpdateMsg{
+			projectPath: projectPath,
+			snapshot:    snapshot,
+			found:       true,
+			terminal:    terminal,
+			closeErr:    closeErr,
+		}
+	}
+}
+
+func (m Model) applyMergeConflictResolverUpdateMsg(msg mergeConflictResolverUpdateMsg) (tea.Model, tea.Cmd) {
+	if m.codexManager != nil {
+		m.codexManager.AckParallelUpdate(msg.projectPath)
+	}
+	waitCmd := m.waitMergeConflictResolverUpdateCmd()
+	if msg.closeErr != nil {
+		m.reportError("Background conflict resolver cleanup failed", msg.closeErr, msg.projectPath)
+		return m, waitCmd
+	}
+	if !msg.found || !msg.terminal {
+		return m, waitCmd
+	}
+
+	provider := embeddedProvider(msg.snapshot)
+	projectName := filepath.Base(strings.TrimSpace(msg.projectPath))
+	if project, ok := m.projectSummaryByPathAllProjects(msg.projectPath); ok {
+		projectName = projectNameForPicker(project, msg.projectPath)
+	}
+	sessionID := shortID(msg.snapshot.ThreadID)
+	if msg.snapshot.PendingApproval != nil || msg.snapshot.PendingToolInput != nil || msg.snapshot.PendingElicitation != nil {
+		action := "Open the resolver from /sessions and continue it."
+		if sessionID != "" {
+			action = "Open resolver session " + sessionID + " from /sessions and continue it."
+		}
+		m.status = "Background conflict resolver needs attention"
+		m.openActionNoticeDialog(
+			"Resolver needs attention",
+			projectName,
+			"The background "+provider.Label()+" resolver paused for input and was detached safely.",
+			action,
+			"Its conversation is preserved in the normal session history. If another engineer session is open for this project, finish or close that session before reopening the resolver.",
+		)
+		return m, batchCmds(waitCmd, m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath)))
+	}
+	if lastErr := strings.TrimSpace(msg.snapshot.LastError); lastErr != "" {
+		err := errors.New(lastErr)
+		m.status = "Background conflict resolver failed: " + lastErr
+		m.reportError("Background conflict resolver failed", err, msg.projectPath)
+	} else {
+		m.err = nil
+		m.status = "Background " + provider.Label() + " conflict resolver finished"
+	}
+	return m, batchCmds(waitCmd, m.requestProjectInvalidationCmd(invalidateProjectData(msg.projectPath)))
 }
 
 func (m Model) mergeConflictResolveTargetProject() (model.ProjectSummary, bool) {
@@ -142,45 +347,17 @@ func (m Model) mergeConflictResolveTargetProject() (model.ProjectSummary, bool) 
 	return m.selectedProject()
 }
 
-func mergeConflictResolveControlProvider(provider codexapp.Provider) control.Provider {
-	switch provider.Normalized() {
-	case codexapp.ProviderOpenCode:
-		return control.ProviderOpenCode
-	case codexapp.ProviderLCAgent:
-		return control.ProviderLCAgent
-	default:
-		return control.ProviderCodex
-	}
-}
-
 func mergeConflictResolvePrompt(project model.ProjectSummary) string {
 	location := "repo"
 	if project.WorktreeKind == model.WorktreeKindLinked {
 		location = "linked worktree"
 	}
 
-	lines := []string{
+	return strings.Join([]string{
 		"Resolve the current Git merge conflicts in this " + location + ".",
-	}
-	if branch := strings.TrimSpace(project.RepoBranch); branch != "" {
-		lines = append(lines, "Current branch: "+branch)
-	}
-	if project.WorktreeKind == model.WorktreeKindLinked {
-		if target := strings.TrimSpace(project.WorktreeParentBranch); target != "" {
-			lines = append(lines, "Parent branch for merge-back: "+target)
-		}
-	}
-	lines = append(lines,
-		"",
-		"Instructions:",
-		"- Inspect `git status --short` and the conflicted files before editing.",
-		"- Resolve all unmerged files carefully, preserving the intended changes from both sides.",
-		"- Use `git add` only for files you resolved, if needed to clear unmerged state.",
-		"- Do not commit, push, abort the in-progress Git operation, or rename branches.",
-		"- Run an appropriate focused verification if one is obvious and cheap; otherwise explain what was skipped.",
-		"- Finish by reporting the conflicted files handled, verification run, and the remaining `git status --short` state.",
-	)
-	return strings.Join(lines, "\n")
+		"Preserve the intended changes from both sides and keep the current Git operation and branch intact.",
+		"If there are no major problems, run focused verification and commit the resolution. Do not push. Report any blocker instead of forcing a questionable resolution.",
+	}, "\n")
 }
 
 func gitlinkConflictResolveProjectName(target service.GitlinkConflictResolveTarget) string {
@@ -199,38 +376,16 @@ func gitlinkConflictResolvePrompt(parent model.ProjectSummary, target service.Gi
 		parentPath = strings.TrimSpace(parent.Path)
 	}
 	lines := []string{
-		"Resolve the submodule content conflicts for the current parent Git gitlink merge conflict.",
-		"",
-		"Context:",
-		"- Parent repo: " + parentPath,
-		"- Submodule path: " + strings.TrimSpace(target.SubmodulePath),
-		"- Submodule merge worktree: " + strings.TrimSpace(target.WorktreePath),
-		"- Submodule merge branch: " + strings.TrimSpace(target.Branch),
-	}
-	if branch := strings.TrimSpace(firstNonEmptyTrimmed(target.ParentBranch, parent.RepoBranch)); branch != "" {
-		lines = append(lines, "- Parent branch: "+branch)
-	}
-	if base := strings.TrimSpace(target.Base); base != "" {
-		lines = append(lines, "- Base gitlink SHA: "+base)
-	}
-	if ours := strings.TrimSpace(target.Ours); ours != "" {
-		lines = append(lines, "- Ours gitlink SHA: "+ours)
-	}
-	if theirs := strings.TrimSpace(target.Theirs); theirs != "" {
-		lines = append(lines, "- Theirs gitlink SHA: "+theirs)
+		"Resolve the Git conflicts in this submodule merge worktree.",
+		"Parent repo: " + parentPath,
+		"Submodule path: " + strings.TrimSpace(target.SubmodulePath),
+		"Submodule merge worktree: " + strings.TrimSpace(target.WorktreePath),
+		"Submodule merge branch: " + strings.TrimSpace(target.Branch),
 	}
 	lines = append(lines,
-		"",
-		"Instructions:",
-		"- Work only inside the submodule merge worktree for this resolver session.",
-		"- Inspect `git status --short` and the conflicted files before editing.",
-		"- Resolve all submodule content conflicts carefully, preserving the intended changes from both sides.",
-		"- Use `git add` only for files you resolved inside the submodule merge worktree.",
-		"- After the submodule conflicts are resolved, commit the submodule merge on its current branch and push that branch upstream.",
-		"- Stage the parent repo gitlink to the new submodule merge commit with `git -C <parent repo> update-index --add --cacheinfo 160000,<merge sha>,<submodule path>`.",
-		"- Do not commit the parent repo merge, abort either merge, remove the merge worktree, or rename branches.",
-		"- Run an appropriate focused verification if one is obvious and cheap; otherwise explain what was skipped.",
-		"- Finish by reporting the conflicted files handled, verification run, and the remaining `git status --short` state.",
+		"Preserve the intended changes from both sides and keep both Git operations and branches intact.",
+		"If there are no major problems, run focused verification, commit the submodule merge on its current branch, push that branch, and stage the parent repo gitlink at the resulting commit.",
+		"Do not commit the parent repo merge. Report any blocker instead of forcing a questionable resolution.",
 	)
 	return strings.Join(lines, "\n")
 }

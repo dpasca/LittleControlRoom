@@ -3,6 +3,7 @@ package codexapp
 import (
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -177,5 +178,80 @@ func TestManagerCloseAllForRestartPersistsInterruptsAndCloses(t *testing.T) {
 	loaded, err = ReadRestartIntents(dataDir)
 	if err != nil || len(loaded) != 0 {
 		t.Fatalf("acknowledged journal = %#v, err=%v", loaded, err)
+	}
+}
+
+func TestManagerCloseAllForRestartPreservesParallelLane(t *testing.T) {
+	dataDir := t.TempDir()
+	var created []*fakeSession
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		threadID := req.ResumeID
+		activeTurnID := "turn-interactive"
+		if strings.TrimSpace(req.Prompt) != "" {
+			threadID = "thread-resolver"
+			activeTurnID = "turn-resolver"
+		}
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Provider:     req.Provider.Normalized(),
+				ProjectPath:  req.ProjectPath,
+				ThreadID:     threadID,
+				ActiveTurnID: activeTurnID,
+				Started:      true,
+				Busy:         true,
+				Phase:        SessionPhaseRunning,
+				Preset:       req.Preset,
+			},
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	if _, _, err := manager.Open(LaunchRequest{
+		Provider:    ProviderCodex,
+		ProjectPath: "/tmp/shared",
+		ResumeID:    "thread-interactive",
+	}); err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, _, err := manager.OpenParallel(LaunchRequest{
+		Provider:    ProviderCodex,
+		ProjectPath: "/tmp/shared",
+		ForceNew:    true,
+		Prompt:      "resolve conflicts",
+	}); err != nil {
+		t.Fatalf("OpenParallel() error = %v", err)
+	}
+
+	intents, err := manager.CloseAllForRestart(dataDir)
+	if err != nil {
+		t.Fatalf("CloseAllForRestart() error = %v", err)
+	}
+	if len(intents) != 2 {
+		t.Fatalf("restart intents = %#v, want interactive and parallel lanes", intents)
+	}
+	var interactive, parallel *RestartIntent
+	for i := range intents {
+		intent := &intents[i]
+		if intent.Parallel {
+			parallel = intent
+		} else {
+			interactive = intent
+		}
+	}
+	if interactive == nil || interactive.SessionID != "thread-interactive" {
+		t.Fatalf("interactive restart intent = %#v", interactive)
+	}
+	if parallel == nil || parallel.SessionID != "thread-resolver" {
+		t.Fatalf("parallel restart intent = %#v", parallel)
+	}
+	if interactive.Key() == parallel.Key() {
+		t.Fatalf("restart lane keys collided: %q", interactive.Key())
+	}
+	for i, session := range created {
+		if !session.interrupted || !session.closed {
+			t.Fatalf("managed session %d shutdown state = interrupted %v closed %v", i, session.interrupted, session.closed)
+		}
 	}
 }

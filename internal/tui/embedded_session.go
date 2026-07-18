@@ -923,6 +923,49 @@ type embeddedLaunchOptions struct {
 	restartWarmup           bool
 }
 
+func (m Model) embeddedLaunchRequest(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) codexapp.LaunchRequest {
+	return codexapp.LaunchRequest{
+		Provider:                   provider.Normalized(),
+		ProjectPath:                p.Path,
+		ResumeID:                   firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
+		ForceNew:                   options.forceNew,
+		Prompt:                     options.prompt,
+		ContinueInterruptedTurn:    options.continueInterruptedTurn,
+		InterruptedTurnID:          options.interruptedTurnID,
+		Preset:                     m.currentCodexLaunchPreset(),
+		PlaywrightPolicy:           m.currentPlaywrightPolicy(),
+		AppDataDir:                 m.appDataDir(),
+		CodexHome:                  m.codexHome(),
+		LCAgentPath:                m.lcagentPath(),
+		LCAgentEnvFile:             m.lcagentEnvFile(),
+		LCAgentOpenAIAPIKey:        m.openAIAPIKey(),
+		LCAgentOpenRouterAPIKey:    m.openRouterAPIKey(),
+		LCAgentDeepSeekAPIKey:      m.deepSeekAPIKey(),
+		LCAgentMoonshotAPIKey:      m.moonshotAPIKey(),
+		LCAgentXiaomiAPIKey:        m.xiaomiAPIKey(),
+		LCAgentXiaomiBaseURL:       m.xiaomiBaseURL(),
+		LCAgentOllamaAPIKey:        m.ollamaAPIKey(),
+		LCAgentOllamaBaseURL:       m.ollamaBaseURL(),
+		LCAgentOllamaModel:         m.ollamaModel(),
+		LCAgentProviderAccessCheck: true,
+		LCAgentRoutePreset:         m.lcagentRoutePreset(),
+		LCAgentProvider:            m.lcagentProvider(),
+		LCAgentAuto:                m.lcagentAuto(),
+		LCAgentAdminWrite:          m.lcagentAdminWrite(),
+		LCAgentToolProfile:         m.lcagentToolProfile(),
+		LCAgentContextProfile:      m.lcagentContextProfile(),
+		LCAgentRequestTimeout:      m.lcagentRequestTimeout(),
+		LCAgentUtilityProvider:     m.lcagentUtilityProvider(),
+		LCAgentUtilityModel:        m.lcagentUtilityModel(),
+		LCAgentVisionProvider:      m.lcagentVisionProvider(),
+		LCAgentVisionModel:         m.lcagentVisionModel(),
+		LCAgentWebSearchBackend:    m.lcagentWebSearchBackend(),
+		LCAgentWebSearchAPIKey:     m.lcagentWebSearchAPIKey(),
+		LCAgentWebSearchEngineID:   m.lcagentWebSearchEngineID(),
+		LCAgentWebSearchURL:        m.lcagentWebSearchURL(),
+	}
+}
+
 func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provider codexapp.Provider, options embeddedLaunchOptions) (tea.Model, tea.Cmd) {
 	provider = provider.Normalized()
 	if !options.restartWarmup {
@@ -976,46 +1019,7 @@ func (m Model) launchEmbeddedForProjectWithOptions(p model.ProjectSummary, provi
 		}
 	}
 
-	req := codexapp.LaunchRequest{
-		Provider:                   provider,
-		ProjectPath:                p.Path,
-		ResumeID:                   firstNonEmptyTrimmed(options.resumeID, m.selectedProjectSessionID(p, provider)),
-		ForceNew:                   options.forceNew,
-		Prompt:                     options.prompt,
-		ContinueInterruptedTurn:    options.continueInterruptedTurn,
-		InterruptedTurnID:          options.interruptedTurnID,
-		Preset:                     m.currentCodexLaunchPreset(),
-		PlaywrightPolicy:           m.currentPlaywrightPolicy(),
-		AppDataDir:                 m.appDataDir(),
-		CodexHome:                  m.codexHome(),
-		LCAgentPath:                m.lcagentPath(),
-		LCAgentEnvFile:             m.lcagentEnvFile(),
-		LCAgentOpenAIAPIKey:        m.openAIAPIKey(),
-		LCAgentOpenRouterAPIKey:    m.openRouterAPIKey(),
-		LCAgentDeepSeekAPIKey:      m.deepSeekAPIKey(),
-		LCAgentMoonshotAPIKey:      m.moonshotAPIKey(),
-		LCAgentXiaomiAPIKey:        m.xiaomiAPIKey(),
-		LCAgentXiaomiBaseURL:       m.xiaomiBaseURL(),
-		LCAgentOllamaAPIKey:        m.ollamaAPIKey(),
-		LCAgentOllamaBaseURL:       m.ollamaBaseURL(),
-		LCAgentOllamaModel:         m.ollamaModel(),
-		LCAgentProviderAccessCheck: true,
-		LCAgentRoutePreset:         m.lcagentRoutePreset(),
-		LCAgentProvider:            m.lcagentProvider(),
-		LCAgentAuto:                m.lcagentAuto(),
-		LCAgentAdminWrite:          m.lcagentAdminWrite(),
-		LCAgentToolProfile:         m.lcagentToolProfile(),
-		LCAgentContextProfile:      m.lcagentContextProfile(),
-		LCAgentRequestTimeout:      m.lcagentRequestTimeout(),
-		LCAgentUtilityProvider:     m.lcagentUtilityProvider(),
-		LCAgentUtilityModel:        m.lcagentUtilityModel(),
-		LCAgentVisionProvider:      m.lcagentVisionProvider(),
-		LCAgentVisionModel:         m.lcagentVisionModel(),
-		LCAgentWebSearchBackend:    m.lcagentWebSearchBackend(),
-		LCAgentWebSearchAPIKey:     m.lcagentWebSearchAPIKey(),
-		LCAgentWebSearchEngineID:   m.lcagentWebSearchEngineID(),
-		LCAgentWebSearchURL:        m.lcagentWebSearchURL(),
-	}
+	req := m.embeddedLaunchRequest(p, provider, options)
 	if err := req.Validate(); err != nil {
 		m.status = err.Error()
 		return m, nil
