@@ -75,6 +75,7 @@ var (
 	topStatusDangerBadgeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160")).Bold(true).Padding(0, 1)
 	topStatusDangerPulseBadgeStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("88")).Bold(true).Padding(0, 1)
 	topStatusConflictBadgeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("92")).Bold(true).Padding(0, 1)
+	topStatusResolverBadgeStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true).Padding(0, 1)
 	topStatusSetupBadgeStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("214")).Bold(true).Padding(0, 1)
 	topStatusUpdateBadgeStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
 	projectListActiveTabStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("81")).Bold(true).Padding(0, 1)

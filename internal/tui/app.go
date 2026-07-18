@@ -233,6 +233,7 @@ type Model struct {
 	portsDialog                   *portsDialogState
 	processWarningLastCount       int
 	codexSnapshots                map[string]codexapp.Snapshot
+	mergeConflictResolvers        map[string]mergeConflictResolverState
 	renderCachedSessionStateOnly  bool
 	embeddedProviderOverrides     map[string]codexapp.Provider
 	lastEmbeddedProvider          codexapp.Provider
@@ -753,6 +754,7 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		pendingGitOperations:          make(map[string]pendingGitOperation),
 		pendingGitSummaries:           make(map[string]string),
 		codexSnapshots:                make(map[string]codexapp.Snapshot),
+		mergeConflictResolvers:        make(map[string]mergeConflictResolverState),
 		embeddedActivityInFlight:      make(map[string]bool),
 		embeddedActivityQueued:        make(map[string]embeddedSessionActivityRecordRequest),
 		codexTranscriptRev:            make(map[string]uint64),
@@ -1633,6 +1635,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
 		m.rebuildProjectList(selectedPath)
+		m.reconcileMergeConflictResolverProjects()
 		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
 			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)
 		}
@@ -1783,6 +1786,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.found {
 			m.loading = false
 			m.upsertProjectSummary(m.preserveRefreshingAssessmentDisplay(msg.summary))
+			m.reconcileMergeConflictResolverProject(msg.summary)
 			m.syncWorktreeMergeConfirmFromProjects(msg.path)
 		} else {
 			m.removeProjectSummary(msg.path)
@@ -1826,6 +1830,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = worktreeMergeConfirmStatus(m.worktreeMergeConfirm)
 		}
 		if msg.err != nil {
+			m.failMergeConflictResolverRefresh(msg.projectPath, msg.err)
 			m.reportError("Project status refresh failed", msg.err, msg.projectPath)
 			return m, nil
 		}

@@ -184,7 +184,7 @@ Repo and runtime actions:
 - `/commit [message]`: Preview a commit for the selected project.
 - `/push`: Push the selected project's branch.
 - `/pull`: Pull the selected project's branch.
-- `/resolve`: Resolve selected repo merge conflicts in a separate background engineer session, verifying and committing the resolution unless it finds a blocker.
+- `/resolve`: Resolve selected repo merge conflicts in a separate background engineer session, with persistent project-row progress and a fresh Git-status check after it verifies and commits the resolution or reports a blocker.
 - `/run [command]`: Start the selected project's managed runtime.
 - `/start [command]`: Alias for `/run`.
 - `/restart`: Restart the selected project's managed runtime.

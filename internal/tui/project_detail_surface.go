@@ -98,6 +98,9 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 			surface.Text("Use /remove to take this missing folder off the dashboard.", projectDetailToneMuted)
 		}
 	}
+	if resolver, ok := m.mergeConflictResolverForProject(p.Path); ok {
+		surface.WrappedField("Resolver", resolver.detailText(m.currentTime()), mergeConflictResolverDetailTone(resolver))
+	}
 
 	surface.RenderedField("Last activity", m.projectDetailLastActivityText(p), projectDetailLastActivityTone(p), m.projectDetailLastActivityRenderedText(p))
 	if p.MovedFromPath != "" && moveStatusActive(p.MovedAt, p.Path, p.LatestSessionDetectedProjectPath) {
@@ -113,7 +116,7 @@ func (m Model) buildProjectDetailSurface(p model.ProjectSummary, d model.Project
 	if projectHasGitInfo(p) {
 		surface.RenderedField("Repo", m.repoCombinedDetailText(p), m.repoCombinedDetailTone(p), m.repoCombinedDetailValue(p))
 		if p.RepoConflict {
-			surface.RenderedField("Conflict", repoConflictDetailText(p), projectDetailToneConflict, repoConflictDetailValue(p))
+			surface.WrappedField("Conflict", m.repoConflictDetailText(p), projectDetailToneConflict)
 		}
 		if projectHasSubmoduleAttention(p) {
 			surface.RenderedField("Submodules", repoSubmoduleAttentionDetailText(p), projectDetailToneWarning, repoSubmoduleAttentionDetailValue(p))
@@ -376,6 +379,11 @@ func (m Model) repoCombinedDetailText(project model.ProjectSummary) string {
 	} else {
 		parts = append(parts, "clean")
 	}
+	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok {
+		if label := resolver.repoLabel(); label != "" {
+			parts = append(parts, label)
+		}
+	}
 	if projectHasSubmoduleAttention(project) && m.pendingGitSummary(project.Path) == "" {
 		parts = append(parts, repoSubmoduleAttentionPlainText(project))
 	}
@@ -406,6 +414,14 @@ func (m Model) repoCombinedDetailText(project model.ProjectSummary) string {
 }
 
 func (m Model) repoCombinedDetailTone(project model.ProjectSummary) projectDetailSurfaceTone {
+	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok {
+		switch resolver.Phase {
+		case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+			return projectDetailToneConflict
+		case mergeConflictResolverNeedsAttention, mergeConflictResolverRefreshFailed:
+			return projectDetailToneWarning
+		}
+	}
 	if project.RepoConflict {
 		return projectDetailToneConflict
 	}
@@ -425,10 +441,39 @@ func repoSubmoduleAttentionDetailText(project model.ProjectSummary) string {
 	return repoSubmoduleAttentionPlainText(project) + ". Use /commit to resolve submodule changes or push existing submodule commits."
 }
 
-func repoConflictDetailText(project model.ProjectSummary) string {
+func mergeConflictResolverDetailTone(state mergeConflictResolverState) projectDetailSurfaceTone {
+	switch state.Phase {
+	case mergeConflictResolverStarting, mergeConflictResolverRunning, mergeConflictResolverChecking, mergeConflictResolverResolved:
+		return projectDetailToneValue
+	case mergeConflictResolverNeedsAttention, mergeConflictResolverRefreshFailed:
+		return projectDetailToneWarning
+	case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+		return projectDetailToneConflict
+	default:
+		return projectDetailToneMuted
+	}
+}
+
+func (m Model) repoConflictDetailText(project model.ProjectSummary) string {
 	location := "repo"
 	if project.WorktreeKind == model.WorktreeKindLinked {
 		location = "worktree"
+	}
+	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok {
+		switch resolver.Phase {
+		case mergeConflictResolverStarting, mergeConflictResolverRunning:
+			return "A background " + resolver.provider().Label() + " resolver is working on the unmerged files in this " + location + ". Run /resolve again to see its latest status."
+		case mergeConflictResolverChecking:
+			return "The background resolver finished and Little Control Room is refreshing this " + location + "'s Git status."
+		case mergeConflictResolverNeedsAttention:
+			return "The background resolver paused for input. Open its saved session from /sessions to continue."
+		case mergeConflictResolverRefreshFailed:
+			return "The background resolver finished, but Little Control Room could not refresh this " + location + "'s Git status. Review the Resolver field before deciding whether to retry."
+		case mergeConflictResolverFailed:
+			return "The background resolver failed. Review the Resolver field and its saved session before retrying /resolve."
+		case mergeConflictResolverConflictsRemain:
+			return "The background resolver finished, but Git still reports unmerged files in this " + location + ". Review its saved session or run /resolve to retry."
+		}
 	}
 	return "Unmerged files are present in this " + location + ". Use /resolve to start a background conflict resolver, or resolve/abort the in-progress Git operation manually."
 }
@@ -480,6 +525,17 @@ func (m Model) worktreeLaneDetailText(current, member model.ProjectSummary) (str
 	}
 	if m.projectHasLiveCodexSession(member.Path) {
 		statusParts = append(statusParts, "agent")
+	}
+	if resolver, ok := m.mergeConflictResolverForProject(member.Path); ok {
+		if label := resolver.repoLabel(); label != "" {
+			statusParts = append(statusParts, label)
+		}
+		switch resolver.Phase {
+		case mergeConflictResolverNeedsAttention, mergeConflictResolverRefreshFailed:
+			tone = projectDetailToneWarning
+		case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+			tone = projectDetailToneConflict
+		}
 	}
 	if snapshot := m.projectRuntimeSnapshot(member.Path); snapshot.Running {
 		statusParts = append(statusParts, "runtime")
