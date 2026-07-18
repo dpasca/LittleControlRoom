@@ -382,6 +382,9 @@ func (m Model) View() string {
 	if m.worktreeRemoveConfirm != nil {
 		body = m.renderWorktreeRemoveConfirmOverlay(body, layout.width, layout.height)
 	}
+	if m.repositoryIntegrityDialog != nil {
+		body = m.renderRepositoryIntegrityDialogOverlay(body, layout.width, layout.height)
+	}
 	if m.attentionDialog != nil {
 		body = m.renderAttentionDialogOverlay(body, layout.width, layout.height)
 	}
@@ -530,6 +533,16 @@ func (m Model) renderTopStatusLine(width int) string {
 	if project, ok := m.selectedProject(); ok && project.RepoConflict {
 		statusParts = append(statusParts, topStatusConflictBadgeStyle.Render("MERGE CONFLICT"))
 		statusParts = append(statusParts, detailConflictStyle.Render("selected repo has unmerged files; use /resolve"))
+	}
+	if project, ok := m.selectedProject(); ok {
+		if state, found := m.repositoryIntegrityStateForProject(project.Path); found && state.Displaced && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
+			statusParts = append(statusParts, topStatusWarningBadgeStyle.Render("ROOT CHECKOUT"))
+			message := fmt.Sprintf("root is on %s; expected %s; press I", state.ActualBranch, state.ExpectedBranch)
+			if state.Acknowledged {
+				message = fmt.Sprintf("root remains on %s; expected %s; acknowledged; press I", state.ActualBranch, state.ExpectedBranch)
+			}
+			statusParts = append(statusParts, detailWarningStyle.Render(message))
+		}
 	}
 
 	segments := []string{title}

@@ -2,19 +2,21 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"lcroom/internal/codexapp"
 	"lcroom/internal/model"
 )
 
 const (
-	runtimeRunningAttentionWeight   = 10
-	processWarningAttentionWeight   = 45
-	processPortConflictWeight       = 105
-	processHotCPUAttentionWeight    = 90
-	embeddedApprovalAttentionWeight = 120
-	embeddedBrowserAttentionWeight  = 115
-	embeddedQuestionAttentionWeight = 100
+	runtimeRunningAttentionWeight      = 10
+	processWarningAttentionWeight      = 45
+	processPortConflictWeight          = 105
+	processHotCPUAttentionWeight       = 90
+	embeddedApprovalAttentionWeight    = 120
+	embeddedBrowserAttentionWeight     = 115
+	embeddedQuestionAttentionWeight    = 100
+	repositoryIntegrityAttentionWeight = 130
 )
 
 func (m Model) projectAttentionScore(project model.ProjectSummary) int {
@@ -35,6 +37,9 @@ func (m Model) projectAttentionScore(project model.ProjectSummary) int {
 		score += embeddedBrowserAttentionWeight
 	} else if _, _, ok := m.projectPendingEmbeddedQuestion(project.Path); ok {
 		score += embeddedQuestionAttentionWeight
+	}
+	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.NeedsAttention() {
+		score += repositoryIntegrityAttentionWeight
 	}
 	return score
 }
@@ -58,7 +63,26 @@ func (m Model) projectAttentionReasons(project model.ProjectSummary, base []mode
 	} else if reason := m.projectEmbeddedQuestionAttentionReason(project.Path); reason != nil {
 		reasons = append(reasons, *reason)
 	}
+	if reason := m.projectRepositoryIntegrityAttentionReason(project.Path); reason != nil {
+		reasons = append(reasons, *reason)
+	}
 	return reasons
+}
+
+func (m Model) projectRepositoryIntegrityAttentionReason(projectPath string) *model.AttentionReason {
+	state, ok := m.repositoryIntegrityStateForProject(projectPath)
+	if !ok || !state.NeedsAttention() {
+		return nil
+	}
+	text := fmt.Sprintf("Root checkout is on %s; expected %s", state.ActualBranch, state.ExpectedBranch)
+	if strings.TrimSpace(projectPath) != strings.TrimSpace(state.RootPath) {
+		text = fmt.Sprintf("Repository root %s is on %s; expected %s", state.RootName, state.ActualBranch, state.ExpectedBranch)
+	}
+	return &model.AttentionReason{
+		Code:   "repository_root_displaced",
+		Text:   text,
+		Weight: repositoryIntegrityAttentionWeight,
+	}
 }
 
 func (m Model) projectRuntimeAttentionReason(projectPath string) *model.AttentionReason {
@@ -206,6 +230,9 @@ func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinner
 	}
 	if project.RepoConflict {
 		return projectConflictIndicatorStyle(spinnerFrame).Render("!")
+	}
+	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.Displaced && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
+		return detailWarningStyle.Render("!")
 	}
 	if project.RepoDirty {
 		return detailDangerStyle.Render("!")

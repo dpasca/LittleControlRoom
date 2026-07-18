@@ -60,17 +60,19 @@ func (e *ForceNewSessionReusedError) Error() string {
 }
 
 type appServerSession struct {
-	projectPath              string
-	preset                   codexcli.Preset
-	notify                   func()
-	rpcCallHook              func(context.Context, string, any) (json.RawMessage, error)
-	playwrightPolicy         browserctl.Policy
-	playwrightMCPExpected    bool
-	runtimeMCPExpected       bool
-	managedBrowserSessionKey string
-	dataDir                  string
-	codexHomeOverlay         string
-	runtimeManager           *projectrun.Manager
+	projectPath               string
+	preset                    codexcli.Preset
+	notify                    func()
+	rpcCallHook               func(context.Context, string, any) (json.RawMessage, error)
+	playwrightPolicy          browserctl.Policy
+	playwrightMCPExpected     bool
+	runtimeMCPExpected        bool
+	managedBrowserSessionKey  string
+	dataDir                   string
+	codexHomeOverlay          string
+	runtimeManager            *projectrun.Manager
+	workspaceContract         WorkspaceContract
+	workspaceExcursionHandler WorkspaceExcursionHandler
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -147,6 +149,8 @@ type appServerSession struct {
 	transcriptCache         transcriptExportCache
 	reconnectThreadID       string
 	reconnectTranscript     []TranscriptEntry
+	workspaceExcursionItems map[string]struct{}
+	workspaceWarningShown   bool
 }
 
 type transcriptEntry struct {

@@ -50,3 +50,35 @@ func (s *Store) ListEventsAfterIDByType(ctx context.Context, eventType string, a
 	}
 	return events, nil
 }
+
+func (s *Store) ListRecentEventsByTypeForProject(ctx context.Context, eventType, projectPath string, limit int) ([]model.StoredEvent, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, ts, project_path, event_type, payload
+		FROM events
+		WHERE event_type = ? AND project_path = ?
+		ORDER BY id DESC
+		LIMIT ?
+	`, eventType, projectPath, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	events := make([]model.StoredEvent, 0)
+	for rows.Next() {
+		var event model.StoredEvent
+		var at int64
+		if err := rows.Scan(&event.ID, &at, &event.ProjectPath, &event.Type, &event.Payload); err != nil {
+			return nil, err
+		}
+		event.At = time.Unix(at, 0)
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list recent project events by type: %w", err)
+	}
+	return events, nil
+}

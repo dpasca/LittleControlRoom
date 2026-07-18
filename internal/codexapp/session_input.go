@@ -273,7 +273,7 @@ func (s *appServerSession) startTurnWithInput(ctx context.Context, threadID stri
 	params := turnStartParams{
 		ThreadID:          threadID,
 		Input:             encodeSubmissionInput(input),
-		AdditionalContext: s.managedBrowserTurnContext(),
+		AdditionalContext: s.managedTurnContext(),
 	}
 	if pendingModel != "" {
 		params.Model = pendingModel
@@ -315,7 +315,7 @@ func (s *appServerSession) steerTurn(ctx context.Context, threadID, expectedTurn
 		ThreadID:          threadID,
 		ExpectedTurnID:    expectedTurnID,
 		Input:             encodeSubmissionInput(input),
-		AdditionalContext: s.managedBrowserTurnContext(),
+		AdditionalContext: s.managedTurnContext(),
 	})
 	if err != nil {
 		return "", err

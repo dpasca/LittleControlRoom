@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
+	"lcroom/internal/model"
 	"strings"
 	"time"
 )
@@ -1377,6 +1378,31 @@ func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.
 	}
 	if req.RuntimeManager == nil {
 		req.RuntimeManager = m.runtimeManager
+	}
+	if state, ok := m.repositoryIntegrityStateForProject(req.ProjectPath); ok && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
+		req.WorkspaceContract = codexapp.WorkspaceContract{
+			AssignedPath:       req.ProjectPath,
+			RepositoryRootPath: state.RootPath,
+			ExpectedRootBranch: state.ExpectedBranch,
+		}
+		if m.svc != nil {
+			svc := m.svc
+			req.WorkspaceExcursionHandler = func(excursion codexapp.WorkspaceExcursion) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = svc.RecordRepositoryWorkspaceExcursion(ctx, model.RepositoryWorkspaceExcursion{
+					At:             excursion.At,
+					ProjectPath:    excursion.ProjectPath,
+					RootPath:       excursion.RepositoryRootPath,
+					ExpectedBranch: excursion.ExpectedRootBranch,
+					Provider:       string(excursion.Provider),
+					SessionID:      excursion.SessionID,
+					ItemID:         excursion.ItemID,
+					Command:        excursion.Command,
+					CWD:            excursion.CWD,
+				})
+			}
+		}
 	}
 	if provider == codexapp.ProviderLCAgent {
 		req.LCAgentProviderAccessCheck = true

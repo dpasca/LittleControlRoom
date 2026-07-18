@@ -29,14 +29,15 @@ const tuiOpenAgentTaskLimit = 50
 const embeddedSessionActivityRecordTimeout = 30 * time.Second
 
 type projectsMsg struct {
-	projects                []model.ProjectSummary
-	archivedProjects        []model.ProjectSummary
-	categories              []model.ProjectCategory
-	openAgentTasks          []model.AgentTask
-	orphanedWorktreesByRoot map[string][]model.ProjectSummary
-	excludeProjectPatterns  []string
-	err                     error
-	filterErr               error
+	projects                  []model.ProjectSummary
+	archivedProjects          []model.ProjectSummary
+	categories                []model.ProjectCategory
+	openAgentTasks            []model.AgentTask
+	orphanedWorktreesByRoot   map[string][]model.ProjectSummary
+	repositoryIntegrityByRoot map[string]model.RepositoryIntegrityState
+	excludeProjectPatterns    []string
+	err                       error
+	filterErr                 error
 }
 
 type detailMsg struct {
@@ -611,20 +612,34 @@ func (m Model) loadProjectsCmd() tea.Cmd {
 		if errors.Is(agentTaskErr, context.DeadlineExceeded) {
 			agentTaskErr = fmt.Errorf("timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
 		}
-		patterns, filterErr := config.LoadExcludeProjectPatterns(m.currentConfigPath(), m.excludeProjectPatterns)
-		if filterErr == nil && agentTaskErr != nil {
-			filterErr = fmt.Errorf("agent tasks unavailable: %w", agentTaskErr)
+		integrityStates, integrityErr := m.svc.RepositoryIntegrityStates(ctx)
+		if errors.Is(integrityErr, context.DeadlineExceeded) {
+			integrityErr = fmt.Errorf("repository integrity check timed out after %s", tuiProjectsReloadTimeout.Round(time.Millisecond))
 		}
+		patterns, filterErr := config.LoadExcludeProjectPatterns(m.currentConfigPath(), m.excludeProjectPatterns)
+		filterErr = errors.Join(
+			filterErr,
+			wrapOptionalProjectLoadError("agent tasks unavailable", agentTaskErr),
+			wrapOptionalProjectLoadError("repository integrity unavailable", integrityErr),
+		)
 		return projectsMsg{
-			projects:                projects,
-			archivedProjects:        archivedProjects,
-			categories:              categories,
-			openAgentTasks:          openAgentTasks,
-			orphanedWorktreesByRoot: buildOrphanedWorktreeMap(orphanedWorktrees),
-			excludeProjectPatterns:  patterns,
-			filterErr:               filterErr,
+			projects:                  projects,
+			archivedProjects:          archivedProjects,
+			categories:                categories,
+			openAgentTasks:            openAgentTasks,
+			orphanedWorktreesByRoot:   buildOrphanedWorktreeMap(orphanedWorktrees),
+			repositoryIntegrityByRoot: integrityStates,
+			excludeProjectPatterns:    patterns,
+			filterErr:                 filterErr,
 		}
 	}
+}
+
+func wrapOptionalProjectLoadError(label string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", label, err)
 }
 
 func splitProjectArchiveSummaries(projects []model.ProjectSummary) ([]model.ProjectSummary, []model.ProjectSummary) {

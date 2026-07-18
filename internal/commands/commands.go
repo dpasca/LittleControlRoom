@@ -45,6 +45,7 @@ const (
 	KindPush            Kind = "push"
 	KindPull            Kind = "pull"
 	KindResolve         Kind = "resolve"
+	KindIntegrity       Kind = "integrity"
 	KindCodex           Kind = "codex"
 	KindCodexNew        Kind = "codex-new"
 	KindClaude          Kind = "claude"
@@ -177,6 +178,7 @@ var specs = []Spec{
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
 	{Name: "pull", Usage: "/pull", Summary: "Pull the selected project when its branch is behind"},
 	{Name: "resolve", Usage: "/resolve", Summary: "Start a fresh engineer session to resolve selected repo merge conflicts"},
+	{Name: "integrity", Usage: "/integrity", Summary: "Inspect a displaced repository root and choose a safe response"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
 	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
 	{Name: "claude", Usage: "/claude [prompt]", Summary: "Resume the selected project's latest Claude Code session, or start a new one"},
@@ -627,6 +629,11 @@ func Parse(input string) (Invocation, error) {
 			return Invocation{}, fmt.Errorf("usage: /resolve")
 		}
 		return Invocation{Kind: KindResolve, Canonical: "/resolve"}, nil
+	case "integrity":
+		if rawArgs != "" {
+			return Invocation{}, fmt.Errorf("usage: /integrity")
+		}
+		return Invocation{Kind: KindIntegrity, Canonical: "/integrity"}, nil
 	case "codex":
 		return Invocation{
 			Kind:      KindCodex,

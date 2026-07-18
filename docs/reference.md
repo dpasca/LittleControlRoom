@@ -8,6 +8,7 @@ Provider artifact and detector-footprint notes live in:
 
 - [`codex_cli_footprint.md`](codex_cli_footprint.md)
 - [`claude_code_footprint.md`](claude_code_footprint.md)
+- [`repository_root_integrity.md`](repository_root_integrity.md)
 - [`tui_design_rules.md`](tui_design_rules.md)
 
 ## CLI Commands
@@ -299,6 +300,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `a` switch between the Active and Archived project-list tabs
 - `o` toggle sort mode between `recent activity` (the default, minute-grouped with alphabetical ties) and `attention`
 - `p` pin toggle
+- `I` inspect a repository-root branch mismatch for any selected member of the repository family
 - `q` quit
 - While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it
 
@@ -370,6 +372,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/commit tighten git status parsing`
 - `/push`
 - `/pull`
+- `/integrity`
 - `/pin`
 - `/read`
 - `/read all`
@@ -412,6 +415,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/archive` moves the selected regular project to the Archived tab, or moves the selected scratch task into the scratch archive folder and out of the active task list. `/unarchive` restores an archived regular project to Active when the project is still in scope. The `a` key and `/tab [active|archived|toggle]` switch between the Active and Archived tabs.
 - `/remove` asks for confirmation, then makes the selected item go away using the safest matching action: it opens scratch-task archive/delete actions, cleans up linked worktrees, removes missing folders from the dashboard, or hides a regular project's exact path from the list. `/delete` and `/forget` are aliases.
 - Linked worktree creation hydrates Git submodules by default. Repos can use `.lcroom/worktrees.toml` to opt out or define custom preparation profiles; see [`worktree_prep.md`](worktree_prep.md).
+- LCR stores an evidence-backed expected branch for repository families and warns when the canonical checkout is found on another branch. Press `I` or run `/integrity` for incident details, a fresh investigation-first engineer handoff, exact-state acknowledgment, explicit policy update, or conservative repair. The default is warn-only; see [`repository_root_integrity.md`](repository_root_integrity.md).
 - `/ignore` hides the selected project's exact name inside Little Control Room, which is handy for Codex-generated worktrees or other old projects that share a stable folder name.
 - `/snooze [duration|off]` snoozes the selected project for a period, and `/unsnooze` clears any active snooze.
 - `f` opens a live project-name filter dialog for the whole dashboard; `/filter <text>` applies the same temporary filter from the command palette, and `/filter clear` removes it.

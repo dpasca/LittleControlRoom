@@ -2215,7 +2215,7 @@ func (s *Service) staleLinkedWorktreeOnDiskWithReader(ctx context.Context, rootP
 		return false
 	}
 	for _, worktree := range worktrees {
-		if filepath.Clean(strings.TrimSpace(worktree.Path)) == projectPath {
+		if samePath(worktree.Path, projectPath) {
 			return false
 		}
 	}

@@ -1088,6 +1088,9 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 	}
 	itemType := decodeRawString(msg.Item["type"])
 	itemID := decodeRawString(msg.Item["id"])
+	var workspaceExcursion WorkspaceExcursion
+	var workspaceExcursionHandler WorkspaceExcursionHandler
+	workspaceExcursionDetected := false
 
 	s.mu.Lock()
 	if !s.notificationMatchesThreadLocked(msg.ThreadID) {
@@ -1131,8 +1134,14 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 			s.upsertRenderedItemEntryLocked(itemID, kind, text, image)
 		}
 	}
+	if itemType == "commandExecution" {
+		workspaceExcursion, workspaceExcursionHandler, workspaceExcursionDetected = s.captureWorkspaceExcursionLocked(msg.Item)
+	}
 	s.mu.Unlock()
 	s.notify()
+	if workspaceExcursionDetected {
+		dispatchWorkspaceExcursion(workspaceExcursionHandler, workspaceExcursion)
+	}
 }
 
 func (s *appServerSession) handleItemDelta(params json.RawMessage, kind TranscriptKind) {
@@ -1164,6 +1173,9 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	itemType := decodeRawString(msg.Item["type"])
 	itemID := decodeRawString(msg.Item["id"])
 	refreshGeneratedImageThreadID := ""
+	var workspaceExcursion WorkspaceExcursion
+	var workspaceExcursionHandler WorkspaceExcursionHandler
+	workspaceExcursionDetected := false
 
 	s.mu.Lock()
 	if !s.notificationMatchesThreadLocked(msg.ThreadID) {
@@ -1206,6 +1218,7 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	switch itemType {
 	case "commandExecution":
 		s.finalizeCommandItemLocked(itemID, msg.Item)
+		workspaceExcursion, workspaceExcursionHandler, workspaceExcursionDetected = s.captureWorkspaceExcursionLocked(msg.Item)
 	case "fileChange":
 		s.finalizeFileChangeItemLocked(itemID, msg.Item)
 	default:
@@ -1220,6 +1233,9 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 	s.markItemCompletedLocked(itemID)
 	s.mu.Unlock()
 	s.notify()
+	if workspaceExcursionDetected {
+		dispatchWorkspaceExcursion(workspaceExcursionHandler, workspaceExcursion)
+	}
 	if refreshGeneratedImageThreadID != "" {
 		s.scheduleGeneratedImageArtifactRefresh(refreshGeneratedImageThreadID)
 	}

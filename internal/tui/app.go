@@ -36,27 +36,28 @@ type Model struct {
 	busCh <-chan events.Event
 	unsub func()
 
-	allProjects             []model.ProjectSummary
-	archivedProjects        []model.ProjectSummary
-	projectCategories       []model.ProjectCategory
-	openAgentTasks          []model.AgentTask
-	orphanedWorktreesByRoot map[string][]model.ProjectSummary
-	worktreeFamilies        map[string][]model.ProjectSummary
-	projectTabProjects      map[string][]model.ProjectSummary
-	projectTabAgentTasks    map[string][]model.AgentTask
-	archivedProjectTabCount int
-	projects                []model.ProjectSummary
-	projectRows             []projectListRow
-	detail                  model.ProjectDetail
-	selected                int
-	offset                  int
-	sortMode                projectSortMode
-	visibility              projectVisibilityMode
-	archiveMode             projectArchiveMode
-	selectedCategoryID      string
-	excludeProjectPatterns  []string
-	privacyMode             bool
-	privacyPatterns         []string
+	allProjects               []model.ProjectSummary
+	archivedProjects          []model.ProjectSummary
+	projectCategories         []model.ProjectCategory
+	openAgentTasks            []model.AgentTask
+	orphanedWorktreesByRoot   map[string][]model.ProjectSummary
+	worktreeFamilies          map[string][]model.ProjectSummary
+	repositoryIntegrityByRoot map[string]model.RepositoryIntegrityState
+	projectTabProjects        map[string][]model.ProjectSummary
+	projectTabAgentTasks      map[string][]model.AgentTask
+	archivedProjectTabCount   int
+	projects                  []model.ProjectSummary
+	projectRows               []projectListRow
+	detail                    model.ProjectDetail
+	selected                  int
+	offset                    int
+	sortMode                  projectSortMode
+	visibility                projectVisibilityMode
+	archiveMode               projectArchiveMode
+	selectedCategoryID        string
+	excludeProjectPatterns    []string
+	privacyMode               bool
+	privacyPatterns           []string
 
 	loading              bool
 	status               string
@@ -95,26 +96,27 @@ type Model struct {
 	homeDirFn func() (string, error)
 	homeDir   string
 
-	todoDialog              *todoDialogState
-	todoEditor              *todoEditorState
-	todoDeleteConfirm       *todoDeleteConfirmState
-	scratchTaskAction       *scratchTaskActionConfirmState
-	agentTaskAction         *agentTaskActionConfirmState
-	projectRemoveConfirm    *projectRemoveConfirmState
-	externalStopConfirm     *externalProcessStopConfirmState
-	todoLaunchDrafts        map[string]todoLaunchDraftState
-	todoPendingSave         *todoPendingSaveState
-	todoPendingLaunch       *todoPendingLaunchState
-	todoCopyDialog          *todoCopyDialogState
-	todoWorktreeEditor      *todoWorktreeEditorState
-	todoExistingWorktree    *todoExistingWorktreeDialogState
-	todoPendingLaunchDialog *todoPendingLaunchDialogState
-	todoModelPickerReturn   *todoModelPickerReturnState
-	worktreeMergeConfirm    *worktreeMergeConfirmState
-	worktreePostMerge       *worktreePostMergeState
-	worktreeRemoveConfirm   *worktreeRemoveConfirmState
-	attentionDialog         *attentionDialogState
-	suspendedTurnDialog     *suspendedTurnResumeDialogState
+	todoDialog                *todoDialogState
+	todoEditor                *todoEditorState
+	todoDeleteConfirm         *todoDeleteConfirmState
+	scratchTaskAction         *scratchTaskActionConfirmState
+	agentTaskAction           *agentTaskActionConfirmState
+	projectRemoveConfirm      *projectRemoveConfirmState
+	externalStopConfirm       *externalProcessStopConfirmState
+	todoLaunchDrafts          map[string]todoLaunchDraftState
+	todoPendingSave           *todoPendingSaveState
+	todoPendingLaunch         *todoPendingLaunchState
+	todoCopyDialog            *todoCopyDialogState
+	todoWorktreeEditor        *todoWorktreeEditorState
+	todoExistingWorktree      *todoExistingWorktreeDialogState
+	todoPendingLaunchDialog   *todoPendingLaunchDialogState
+	todoModelPickerReturn     *todoModelPickerReturnState
+	worktreeMergeConfirm      *worktreeMergeConfirmState
+	worktreePostMerge         *worktreePostMergeState
+	worktreeRemoveConfirm     *worktreeRemoveConfirmState
+	repositoryIntegrityDialog *repositoryIntegrityDialogState
+	attentionDialog           *attentionDialogState
+	suspendedTurnDialog       *suspendedTurnResumeDialogState
 
 	commandMode                         bool
 	commandInput                        textinput.Model
@@ -1517,6 +1519,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.worktreeRemoveConfirm != nil {
 			return m.updateWorktreeRemoveConfirmMode(msg)
 		}
+		if m.repositoryIntegrityDialog != nil {
+			return m.updateRepositoryIntegrityDialogMode(msg)
+		}
 		if m.scratchTaskAction != nil {
 			return m.updateScratchTaskActionConfirmMode(msg)
 		}
@@ -1598,6 +1603,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateNormalMode(msg)
 	case mergeConflictResolveTargetMsg:
 		return m.applyMergeConflictResolveTargetMsg(msg)
+	case repositoryIntegrityActionMsg:
+		return m.applyRepositoryIntegrityActionMsg(msg)
 	case projectsMsg:
 		m.flushExpiredPendingGitSummaries()
 		reloadCmd := m.finishProjectsReloadCmd()
@@ -1627,6 +1634,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ensureSelectedCategoryTab()
 		m.openAgentTasks = append([]model.AgentTask(nil), msg.openAgentTasks...)
 		m.orphanedWorktreesByRoot = msg.orphanedWorktreesByRoot
+		m.repositoryIntegrityByRoot = msg.repositoryIntegrityByRoot
 		m.rebuildProjectList(selectedPath)
 		if !startupEmptyCache && (strings.TrimSpace(m.status) == "" || m.status == initialProjectsStatus || len(m.projects) == 0) {
 			m.status = loadedProjectsStatus(len(m.projects), m.sortMode, m.visibility, m.projectFilter)

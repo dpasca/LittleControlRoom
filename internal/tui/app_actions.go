@@ -632,6 +632,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.pullCmd(p.Path)
 	case commands.KindResolve:
 		return m.resolveMergeConflictsForSelection()
+	case commands.KindIntegrity:
+		return m, m.openRepositoryIntegrityDialogForSelection()
 	case commands.KindCodex:
 		return m.launchCodexForSelection(false, inv.Prompt)
 	case commands.KindCodexNew:

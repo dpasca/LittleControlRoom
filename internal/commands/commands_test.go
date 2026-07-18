@@ -93,6 +93,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "repository integrity",
+			raw:  "/integrity",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindIntegrity || inv.Canonical != "/integrity" {
+					t.Fatalf("integrity invocation = %#v, want canonical /integrity", inv)
+				}
+			},
+		},
+		{
 			name: "error alias",
 			raw:  "/error",
 			check: func(t *testing.T, inv Invocation) {

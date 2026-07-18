@@ -1119,6 +1119,9 @@ func (m Model) worktreeFooterActions(width int) []footerAction {
 	if project.RepoConflict && width >= 80 {
 		actions = append(actions, footerPrimaryAction("/resolve", "resolve"))
 	}
+	if state, ok := m.repositoryIntegrityStateForProject(project.Path); ok && state.Displaced && width >= 80 {
+		actions = append(actions, footerPrimaryAction("I", "integrity"))
+	}
 	if row.Kind == projectListRowPendingWorktree {
 		actions = append(actions, footerPrimaryAction("Enter", "status"), footerHideAction("x", "abort"))
 		return actions

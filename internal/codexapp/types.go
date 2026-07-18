@@ -651,7 +651,29 @@ type LaunchRequest struct {
 	LCAgentWebSearchURL        string
 	RuntimeManager             *projectrun.Manager
 	CLIExecutablePath          string
+	WorkspaceContract          WorkspaceContract
+	WorkspaceExcursionHandler  WorkspaceExcursionHandler
 }
+
+type WorkspaceContract struct {
+	AssignedPath       string
+	RepositoryRootPath string
+	ExpectedRootBranch string
+}
+
+type WorkspaceExcursion struct {
+	At                 time.Time
+	ProjectPath        string
+	RepositoryRootPath string
+	ExpectedRootBranch string
+	Provider           Provider
+	SessionID          string
+	ItemID             string
+	Command            string
+	CWD                string
+}
+
+type WorkspaceExcursionHandler func(WorkspaceExcursion)
 
 func (r LaunchRequest) Validate() error {
 	if strings.TrimSpace(r.ProjectPath) == "" {
@@ -873,6 +895,9 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	}
 	if ok && !req.ForceNew {
 		m.mu.Unlock()
+		if updater, ok := existing.(workspaceContractUpdater); ok {
+			updater.SetWorkspaceContract(req.WorkspaceContract, req.WorkspaceExcursionHandler)
+		}
 		if existingState.BusyExternal {
 			if refresher, ok := existing.(busyElsewhereRefresher); ok {
 				_ = refresher.RefreshBusyElsewhere()

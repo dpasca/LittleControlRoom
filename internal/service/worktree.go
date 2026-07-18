@@ -135,6 +135,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 			parentBranch = strings.TrimSpace(status.Branch)
 		}
 	}
+	if err := s.EnsureRepositoryRootExpectedBranch(ctx, worktreeRootPath, parentBranch, repositoryExpectedBranchWorktree); err != nil {
+		return CreateTodoWorktreeResult{}, fmt.Errorf("record expected root branch for %s: %w", worktreeRootPath, err)
+	}
 	worktreePath, worktreeSuffix, branchName, err := uniqueWorktreeNames(worktreeRootPath, projectPath, worktreeSuffix, branchName)
 	if err != nil {
 		return CreateTodoWorktreeResult{}, err

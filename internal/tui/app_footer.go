@@ -100,7 +100,8 @@ func (m Model) renderFooter(width int) string {
 		assessmentSegment = m.renderFooterAssessmentSegment()
 	}
 	filterSegment := m.renderFooterProjectFilterSegment()
-	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, usageSegment)
+	integritySegment := m.renderFooterRepositoryIntegritySegment()
+	supplementSegments := footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, integritySegment, assessmentSegment, usageSegment)
 	if m.diffView != nil {
 		diffSegments := append([]string{renderDiffFooter(width, *m.diffView, usageSegment)}, footerSupplementSegments(filterSegment, runtimeSegment, processSegment, browserSegment, assessmentSegment, "")...)
 		return renderFooterLine(width, diffSegments...)
@@ -214,6 +215,12 @@ func (m Model) renderFooter(width int) string {
 			return m.renderModalFooter(width, "Remove worktree: waiting for git to finish", supplementSegments...)
 		}
 		return m.renderModalFooter(width, "Remove worktree: Enter remove, Tab switch, Esc cancel", supplementSegments...)
+	}
+	if m.repositoryIntegrityDialog != nil {
+		if m.repositoryIntegrityDialog.Busy {
+			return m.renderModalFooter(width, "Repository integrity: action in progress", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Repository integrity: Tab choose, Enter confirm, Esc leave warning active", supplementSegments...)
 	}
 	if m.projectRemoveConfirm != nil {
 		if m.projectRemoveConfirm.Submitting {

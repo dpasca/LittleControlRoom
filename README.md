@@ -185,6 +185,7 @@ Repo and runtime actions:
 - `/push`: Push the selected project's branch.
 - `/pull`: Pull the selected project's branch.
 - `/resolve`: Start a fresh engineer session to resolve selected repo merge conflicts.
+- `/integrity` (`I`): Inspect a repository-root branch mismatch, hand it to a fresh engineer, acknowledge it, update the expected branch, or apply a conservative linked-worktree repair.
 - `/run [command]`: Start the selected project's managed runtime.
 - `/start [command]`: Alias for `/run`.
 - `/restart`: Restart the selected project's managed runtime.
@@ -267,6 +268,8 @@ Most day-to-day use falls into a few buckets:
 - **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, OpenCode, or experimental LCAgent). New linked worktrees inherit the source project's saved run command and prepare Git submodules by default; repos can use [`.lcroom/worktrees.toml`](docs/worktree_prep.md) only when they need to opt out or customize preparation.
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
+
+- **Protect the canonical checkout without hard enforcement** — LCR remembers the trusted root branch before it creates linked worktrees and warns when the canonical checkout is later found on another branch. Press `I` or use `/integrity` for the evidence and response choices. The default action only acknowledges the exact state; a fresh engineer can investigate before requesting confirmation, and automatic repair is offered only when LCR can move the unexpected branch into a linked worktree without dirty state, conflicts, locks, active family sessions, or branch ambiguity. Embedded Codex turns also receive a warn-only workspace contract, and structured commands that cross from an assigned worktree into the canonical root are surfaced in the transcript. See [Repository Root Integrity](docs/repository_root_integrity.md) for behavior and limits.
 
 - **Review and organize** — Use `/diff` to inspect git changes, `/commit`, `/push`, and `/pull` when you are ready to sync or ship, and `/open` to jump to the project folder.
 

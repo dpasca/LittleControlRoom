@@ -48,6 +48,14 @@ func (s *Store) initSchema(ctx context.Context) error {
 			created_at INTEGER,
 			updated_at INTEGER NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS repository_root_policies (
+			root_path TEXT PRIMARY KEY,
+			expected_branch TEXT NOT NULL DEFAULT '',
+			expected_branch_source TEXT NOT NULL DEFAULT '',
+			mode TEXT NOT NULL DEFAULT 'warn',
+			acknowledged_fingerprint TEXT NOT NULL DEFAULT '',
+			updated_at INTEGER NOT NULL
+		);`,
 		`CREATE TABLE IF NOT EXISTS project_todos (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT NOT NULL,
@@ -415,6 +423,7 @@ func (s *Store) ensureProjectReadPerformanceIndexes(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_session_classifications_raw_session_updated ON session_classifications(raw_session_id, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_classifications_project_status_completed ON session_classifications(project_path, status, completed_at DESC, updated_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_project_id ON events(project_path, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_type_project_id ON events(event_type, project_path, id DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {

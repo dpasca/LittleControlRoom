@@ -142,3 +142,20 @@ For embedded Codex sessions, LCR performs a bounded startup preflight outside th
 This fallback does not edit `~/.codex/config.toml`. Healthy installs keep the feature enabled, older CLIs without the feature are left unchanged, and raw host-spawn failures receive an actionable diagnosis instead of only opaque stderr.
 
 The compatibility result is reused while both the resolved Codex executable and `config.toml` fingerprints remain unchanged. LCR also repairs stale `state_5.sqlite` rollout paths once after a successful pass per Codex home and per LCR runtime, rather than rescanning the complete thread table for every embedded session. Failed cleanup attempts are not cached, so transient SQLite locks can recover on a later launch.
+
+## 8. LCR-managed workspace context
+
+LCR-managed embedded Codex app-server sessions receive an application-context
+entry on every turn. The entry records the assigned workspace, canonical
+repository root, and trusted expected root branch, and asks Codex to request
+permission before crossing checkout boundaries. This context is advisory and is
+not inferred from natural-language transcript text.
+
+When a session assigned to a linked worktree emits a structured command item
+whose `cwd` is inside the canonical root but outside the assigned worktree, LCR
+adds a transcript warning and persists a repository incident event. The detector
+uses the app-server command item's structured `cwd`; it does not claim coverage
+for standalone Codex processes, direct filesystem tools, or commands whose
+working directory is not reported. See
+[`repository_root_integrity.md`](repository_root_integrity.md) for the warning and
+repair workflow.

@@ -185,6 +185,8 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openTodoDialogForSelection()
 	case "M":
 		return m, m.openWorktreeMergeConfirmForSelection()
+	case "I":
+		return m, m.openRepositoryIntegrityDialogForSelection()
 	case "x":
 		if row, _, ok := m.selectedProjectRow(); ok && row.Kind == projectListRowPendingWorktree {
 			return m.openTodoPendingLaunchDialogForSelection(todoPendingLaunchDialogFocusAbort)
