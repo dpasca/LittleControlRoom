@@ -1672,6 +1672,110 @@ func TestDispatchCommandWorktreeMergeOpensConfirm(t *testing.T) {
 	}
 }
 
+func TestDispatchCommandWorktreeUpdateQueuesGuardedAction(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreeUpdate})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("dispatchCommand(/wt update) should queue an update command")
+	}
+	if got.status != worktreeUpdatePendingSummary {
+		t.Fatalf("status = %q, want %q", got.status, worktreeUpdatePendingSummary)
+	}
+	if got.pendingGitSummary(childPath) != worktreeUpdatePendingSummary {
+		t.Fatalf("pending git summary = %q, want %q", got.pendingGitSummary(childPath), worktreeUpdatePendingSummary)
+	}
+	if op, ok := got.pendingGitOperation(childPath); !ok || op.Kind != pendingGitOperationWorktreeUpdate {
+		t.Fatalf("pending git operation = %#v, %t, want worktree update", op, ok)
+	}
+
+	repeated, repeatCmd := got.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreeUpdate})
+	repeatedModel := repeated.(Model)
+	if repeatCmd != nil {
+		t.Fatal("repeated /wt update should not queue another command")
+	}
+	if repeatedModel.status != "Another Git action is still in progress for this worktree family" {
+		t.Fatalf("repeat status = %q", repeatedModel.status)
+	}
+}
+
+func TestDispatchCommandWorktreeUpdateBlocksDirtyRoot(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--feat-parallel-lane"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+				RepoDirty:        true,
+			},
+			{
+				Name:                 "repo--feat-parallel-lane",
+				Path:                 childPath,
+				PresentOnDisk:        true,
+				WorktreeRootPath:     rootPath,
+				WorktreeKind:         model.WorktreeKindLinked,
+				WorktreeParentBranch: "master",
+				RepoBranch:           "feat/parallel-lane",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindWorktreeUpdate})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("dirty root should block /wt update")
+	}
+	if got.status != "Commit or discard root checkout changes before updating this worktree" {
+		t.Fatalf("status = %q", got.status)
+	}
+	if got.pendingGitSummary(childPath) != "" {
+		t.Fatalf("blocked update left pending summary %q", got.pendingGitSummary(childPath))
+	}
+}
+
+func TestWorktreeUpdateSnapshotBusy(t *testing.T) {
+	if !worktreeUpdateSnapshotBusy(codexapp.Snapshot{Started: true, Busy: true}) {
+		t.Fatal("busy active engineer snapshot should block worktree update")
+	}
+	if worktreeUpdateSnapshotBusy(codexapp.Snapshot{Started: true, Phase: codexapp.SessionPhaseIdle}) {
+		t.Fatal("idle engineer snapshot should not block worktree update")
+	}
+}
+
 func TestDispatchCommandWorktreeMergeBlockedWhenCommitIsInFlight(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"

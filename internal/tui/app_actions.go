@@ -652,6 +652,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.launchLCAgentForSelection(true, inv.Prompt)
 	case commands.KindTodo:
 		return m, m.openTodoDialogForSelection()
+	case commands.KindWorktreeUpdate:
+		return m, m.updateWorktreeFromParentForSelection()
 	case commands.KindWorktreeMerge:
 		return m, m.openWorktreeMergeConfirmForSelection()
 	case commands.KindWorktreeRemove:

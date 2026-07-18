@@ -582,6 +582,18 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "wt update",
+			raw:  "/wt update",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindWorktreeUpdate {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindWorktreeUpdate)
+				}
+				if inv.Canonical != "/wt update" {
+					t.Fatalf("canonical = %q, want /wt update", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "wt merge",
 			raw:  "/wt merge",
 			check: func(t *testing.T, inv Invocation) {
@@ -1099,13 +1111,23 @@ func TestSuggestionsWorktreeArguments(t *testing.T) {
 	}
 }
 
+func TestSuggestionsWorktreeUpdateArgument(t *testing.T) {
+	got := Suggestions("/wt u")
+	if len(got) != 1 {
+		t.Fatalf("Suggestions(/wt u) len = %d, want 1", len(got))
+	}
+	if got[0].Insert != "/wt update" {
+		t.Fatalf("suggestion = %q, want /wt update", got[0].Insert)
+	}
+}
+
 func TestSuggestionsWorktreeAliasArguments(t *testing.T) {
 	got := Suggestions("/worktree ")
-	if len(got) != 3 {
-		t.Fatalf("Suggestions(/worktree ) len = %d, want 3", len(got))
+	if len(got) != 4 {
+		t.Fatalf("Suggestions(/worktree ) len = %d, want 4", len(got))
 	}
-	if got[0].Insert != "/wt merge" {
-		t.Fatalf("first suggestion = %q, want /wt merge", got[0].Insert)
+	if got[0].Insert != "/wt update" {
+		t.Fatalf("first suggestion = %q, want /wt update", got[0].Insert)
 	}
 }
 

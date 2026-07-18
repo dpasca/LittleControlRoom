@@ -189,9 +189,31 @@ func CuratedTopics() []Topic {
 			},
 			Related: []string{
 				CommandTopicID(SurfaceMainTUI, "wt"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-update-from-parent"),
 				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"),
 			},
 			SourceRefs: []string{"tui.buildProjectRows", "tui.renderProjectList"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-update-from-parent"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Update a linked worktree from its parent",
+			Summary: "Select a clean linked worktree and use /wt update to merge its recorded parent branch into it without modifying the canonical checkout.",
+			Usage:   []string{"/wt update"},
+			ManualSteps: []string{
+				"Select the linked worktree row under its repo family.",
+				"Commit or discard changes, stop its runtime, and let any active engineer turn finish.",
+				"Run /wt update to merge the recorded parent branch into the linked worktree; this does not fetch or pull a remote.",
+				"If conflicts occur, resolve them in the linked worktree with /resolve or abort the merge before retrying.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "wt"),
+				CommandTopicID(SurfaceMainTUI, "resolve"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "merge-conflict-recovery"),
+			},
+			SourceRefs: []string{"tui.updateWorktreeFromParentForSelection", "service.UpdateWorktreeFromParent", "commands.Specs"},
 		},
 		{
 			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"),
@@ -244,7 +266,7 @@ func CuratedTopics() []Topic {
 				"Open /diff to inspect changed files and conflict markers when the project is dirty or conflicted.",
 				"Use /resolve if the project exposes the resolve action; otherwise resolve or abort the Git merge/rebase/cherry-pick in the repository.",
 				"Run /refresh after resolving the Git state so Little Control Room reloads repo status.",
-				"Retry /commit or /wt merge only after the project no longer shows unresolved conflicts.",
+				"Retry /commit, /wt update, or /wt merge only after the project no longer shows unresolved conflicts.",
 			},
 			Related: []string{
 				CommandTopicID(SurfaceMainTUI, "resolve"),

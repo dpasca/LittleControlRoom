@@ -49,6 +49,15 @@ type MergeWorktreeBackResult struct {
 	LinkedTodoPath  string
 }
 
+type UpdateWorktreeFromParentResult struct {
+	WorktreePath    string
+	RootProjectPath string
+	WorktreeBranch  string
+	ParentBranch    string
+	ParentCommit    string
+	AlreadyCurrent  bool
+}
+
 type FinalizeMergedWorktreeOptions struct {
 	MarkLinkedTodoDone bool
 	RemoveWorktree     bool
@@ -357,6 +366,152 @@ func (s *Service) EnsureTodoWorktreeSuggestion(ctx context.Context, projectPath 
 	return true, nil
 }
 
+// UpdateWorktreeFromParent merges the linked worktree's recorded parent branch
+// into the worktree. The canonical checkout is validated but never modified, so
+// any merge conflict remains isolated in the linked worktree.
+func (s *Service) UpdateWorktreeFromParent(ctx context.Context, projectPath string) (UpdateWorktreeFromParentResult, error) {
+	if s == nil || s.store == nil {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("service unavailable")
+	}
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	if projectPath == "" {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("project path is required")
+	}
+
+	detail, err := s.store.GetProjectDetail(ctx, projectPath, 0)
+	if err != nil {
+		return UpdateWorktreeFromParentResult{}, err
+	}
+	if detail.Summary.WorktreeKind != model.WorktreeKindLinked {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("only linked worktrees can be updated from a parent branch")
+	}
+
+	rootPath := filepath.Clean(strings.TrimSpace(detail.Summary.WorktreeRootPath))
+	if rootPath == "" {
+		rootPath, _ = s.readProjectWorktreeInfo(ctx, projectPath)
+	}
+	if rootPath == "" || rootPath == "." {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("worktree root is unavailable for %s", projectPath)
+	}
+	unlockGitWrite, err := s.lockGitWrite(ctx, rootPath)
+	if err != nil {
+		return UpdateWorktreeFromParentResult{}, err
+	}
+	defer unlockGitWrite()
+
+	parentBranch := strings.TrimSpace(detail.Summary.WorktreeParentBranch)
+	if parentBranch == "" {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("this worktree has no recorded parent branch to update from")
+	}
+	if s.gitRepoStatusReader == nil {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("git status reader unavailable")
+	}
+
+	worktreeStatus, err := s.gitRepoStatusReader(ctx, projectPath)
+	if err != nil {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("read worktree status before update: %w", err)
+	}
+	if worktreeStatus.Dirty {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("worktree is dirty; commit or discard changes before updating from %s", parentBranch)
+	}
+	worktreeBranch := strings.TrimSpace(worktreeStatus.Branch)
+	if worktreeBranch == "" {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("worktree branch is unavailable for %s", projectPath)
+	}
+	if worktreeBranch == parentBranch {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("worktree branch %s already matches its parent branch", worktreeBranch)
+	}
+
+	rootStatus, err := s.gitRepoStatusReader(ctx, rootPath)
+	if err != nil {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("read root repo status before worktree update: %w", err)
+	}
+	rootBranch := strings.TrimSpace(rootStatus.Branch)
+	if rootBranch != parentBranch {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("root worktree %s is on %s, expected %s", rootPath, rootBranch, parentBranch)
+	}
+	if rootStatus.Dirty {
+		return UpdateWorktreeFromParentResult{}, fmt.Errorf("root worktree is dirty; commit or discard changes before updating the linked worktree")
+	}
+
+	result := UpdateWorktreeFromParentResult{
+		WorktreePath:    projectPath,
+		RootProjectPath: rootPath,
+		WorktreeBranch:  worktreeBranch,
+		ParentBranch:    parentBranch,
+	}
+	parentCommit, err := gitCommitHash(ctx, rootPath, parentBranch)
+	if err != nil {
+		return result, fmt.Errorf("resolve parent branch %s before worktree update: %w", parentBranch, err)
+	}
+	result.ParentCommit = parentCommit
+
+	alreadyCurrent, err := gitBranchMergedIntoBranch(ctx, rootPath, parentCommit, worktreeBranch)
+	if err != nil {
+		return result, fmt.Errorf("check whether %s already contains %s: %w", worktreeBranch, parentBranch, err)
+	}
+	if alreadyCurrent {
+		result.AlreadyCurrent = true
+		return result, nil
+	}
+	if err := gitlock.CheckIndexAndModuleLocks(ctx, rootPath); err != nil {
+		return result, fmt.Errorf("preflight parent checkout for worktree update at %s: %w", rootPath, err)
+	}
+	if err := gitlock.CheckIndexAndModuleLocks(ctx, projectPath); err != nil {
+		return result, fmt.Errorf("preflight linked worktree update at %s: %w", projectPath, err)
+	}
+
+	mergeErr := gitMergeBranch(ctx, projectPath, parentCommit, gitMergeOptions{})
+	if mergeErr != nil {
+		refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
+		if failedStatus, statusErr := s.gitRepoStatusReader(ctx, projectPath); statusErr == nil {
+			if conflictErr := worktreeUpdateConflictError(projectPath, worktreeBranch, parentBranch, failedStatus); conflictErr != nil {
+				if refreshErr != nil {
+					return result, fmt.Errorf("%w (status refresh also failed: %v)", conflictErr, refreshErr)
+				}
+				return result, conflictErr
+			}
+		}
+		if refreshErr != nil {
+			return result, fmt.Errorf("update %s from %s at %s failed: %w (status refresh also failed: %v)", worktreeBranch, parentBranch, projectPath, mergeErr, refreshErr)
+		}
+		return result, fmt.Errorf("update %s from %s at %s failed: %w", worktreeBranch, parentBranch, projectPath, mergeErr)
+	}
+	if err := gitSubmoduleUpdateInitRecursive(ctx, projectPath); err != nil {
+		refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
+		if refreshErr != nil {
+			return result, fmt.Errorf("updated %s from %s but failed to sync linked-worktree submodules: %w (status refresh also failed: %v)", worktreeBranch, parentBranch, err, refreshErr)
+		}
+		return result, fmt.Errorf("updated %s from %s but failed to sync linked-worktree submodules: %w", worktreeBranch, parentBranch, err)
+	}
+
+	now := time.Now()
+	if s.bus != nil {
+		s.bus.Publish(events.Event{
+			Type:        events.ActionApplied,
+			At:          now,
+			ProjectPath: projectPath,
+			Payload: map[string]string{
+				"action":          "update_worktree_from_parent",
+				"root_path":       rootPath,
+				"worktree_branch": worktreeBranch,
+				"parent_branch":   parentBranch,
+				"parent_commit":   parentCommit,
+			},
+		})
+	}
+	_ = s.store.AddEvent(ctx, model.StoredEvent{
+		At:          now,
+		ProjectPath: projectPath,
+		Type:        string(events.ActionApplied),
+		Payload:     fmt.Sprintf("update_worktree_from_parent root=%s worktree_branch=%s parent_branch=%s parent_commit=%s", rootPath, worktreeBranch, parentBranch, parentCommit),
+	})
+	if err := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath); err != nil {
+		return result, fmt.Errorf("refresh updated worktree family: %w", err)
+	}
+	return result, nil
+}
+
 func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (MergeWorktreeBackResult, error) {
 	if s == nil || s.store == nil {
 		return MergeWorktreeBackResult{}, fmt.Errorf("service unavailable")
@@ -447,15 +602,21 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 	if _, err := s.ensureMergeBackSubmodulesPublished(ctx, projectPath, rootPath, targetBranch, sourceStatus); err != nil {
 		return result, err
 	}
-	mergeErr := gitMergeBranch(ctx, rootPath, sourceBranch, false)
+	forceNoFF, err := gitMergeBackNeedsNoFastForward(ctx, rootPath, sourceBranch)
+	if err != nil {
+		return result, err
+	}
+	mergeOptions := gitMergeOptions{NoFastForward: forceNoFF}
+	mergeErr := gitMergeBranch(ctx, rootPath, sourceBranch, mergeOptions)
 	var unrelatedErr gitUnrelatedHistoriesError
 	if mergeErr != nil && errors.As(mergeErr, &unrelatedErr) {
-		mergeErr = gitMergeBranch(ctx, rootPath, sourceBranch, true)
+		mergeOptions.AllowUnrelatedHistories = true
+		mergeErr = gitMergeBranch(ctx, rootPath, sourceBranch, mergeOptions)
 	}
 	if mergeErr != nil {
 		resolvedGitlinks, resolveErr := s.ResolveGitlinkConflicts(ctx, rootPath)
 		if resolveErr != nil {
-			refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+			refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
 			if refreshErr != nil {
 				return result, fmt.Errorf("merge %s back into %s at %s failed and gitlink conflict auto-resolution failed: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, resolveErr, refreshErr)
 			}
@@ -464,7 +625,7 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		if len(resolvedGitlinks) > 0 {
 			statusAfterGitlinkResolution, statusErr := s.gitRepoStatusReader(ctx, rootPath)
 			if statusErr != nil {
-				refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+				refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
 				if refreshErr != nil {
 					return result, fmt.Errorf("merge %s back into %s at %s resolved gitlink conflicts but failed to read remaining conflict status: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, statusErr, refreshErr)
 				}
@@ -472,7 +633,7 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 			}
 			if len(conflictedPaths(statusAfterGitlinkResolution)) == 0 {
 				if err := gitCommitMergeNoEdit(ctx, rootPath); err != nil {
-					refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+					refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
 					if refreshErr != nil {
 						return result, fmt.Errorf("merge %s back into %s at %s resolved gitlink conflicts but failed to commit the merge: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, err, refreshErr)
 					}
@@ -483,7 +644,7 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		}
 	}
 	if mergeErr != nil {
-		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+		refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
 		if s.gitRepoStatusReader != nil {
 			if failedRootStatus, statusErr := s.gitRepoStatusReader(ctx, rootPath); statusErr == nil {
 				if conflictErr := worktreeMergeConflictError(rootPath, sourceBranch, targetBranch, failedRootStatus); conflictErr != nil {
@@ -500,7 +661,7 @@ func (s *Service) MergeWorktreeBack(ctx context.Context, projectPath string) (Me
 		return result, fmt.Errorf("merge %s back into %s at %s failed: %w", sourceBranch, targetBranch, rootPath, mergeErr)
 	}
 	if err := gitSubmoduleUpdateInitRecursive(ctx, rootPath); err != nil {
-		refreshErr := s.refreshWorktreeMergeStatus(ctx, rootPath, projectPath)
+		refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
 		if refreshErr != nil {
 			return result, fmt.Errorf("merged %s back into %s at %s but failed to sync submodules: %w (status refresh also failed: %v)", sourceBranch, targetBranch, rootPath, err, refreshErr)
 		}
@@ -730,6 +891,51 @@ func gitBranchMergedIntoBranch(ctx context.Context, repoPath, branch, target str
 	return true, nil
 }
 
+// gitMergeBackNeedsNoFastForward detects the topology created when a linked
+// worktree has merged its parent branch into itself. In that graph the parent
+// tip is an ancestor of the worktree but not on its first-parent chain. A normal
+// merge-back would fast-forward the parent to a merge commit whose first parent
+// is the task side, so force a final merge commit to preserve canonical
+// first-parent history.
+func gitMergeBackNeedsNoFastForward(ctx context.Context, repoPath, sourceBranch string) (bool, error) {
+	parentCommit, err := gitCommitHash(ctx, repoPath, "HEAD")
+	if err != nil {
+		return false, fmt.Errorf("resolve parent HEAD before merge-back: %w", err)
+	}
+	parentIsAncestor, err := gitBranchMergedIntoBranch(ctx, repoPath, parentCommit, sourceBranch)
+	if err != nil {
+		return false, fmt.Errorf("check merge-back ancestry for %s: %w", sourceBranch, err)
+	}
+	if !parentIsAncestor {
+		return false, nil
+	}
+	onFirstParent, err := gitCommitOnFirstParent(ctx, repoPath, parentCommit, sourceBranch)
+	if err != nil {
+		return false, fmt.Errorf("check first-parent merge-back ancestry for %s: %w", sourceBranch, err)
+	}
+	return !onFirstParent, nil
+}
+
+func gitCommitOnFirstParent(ctx context.Context, repoPath, commit, descendant string) (bool, error) {
+	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
+	commit = strings.TrimSpace(commit)
+	descendant = strings.TrimSpace(descendant)
+	if repoPath == "" || commit == "" || descendant == "" {
+		return false, fmt.Errorf("repo path, commit, and descendant are required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-list", "--first-parent", descendant)
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("read first-parent history for %s in %s: %w", descendant, repoPath, err)
+	}
+	for _, hash := range strings.Fields(string(out)) {
+		if hash == commit {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func gitBranchPatchEquivalentToBranch(ctx context.Context, repoPath, branch, target string) (bool, error) {
 	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
 	branch = strings.TrimSpace(branch)
@@ -856,13 +1062,13 @@ func gitPath(ctx context.Context, repoPath, name string) (string, error) {
 	return filepath.Clean(path), nil
 }
 
-func (s *Service) refreshWorktreeMergeStatus(ctx context.Context, rootPath, projectPath string) error {
+func (s *Service) refreshWorktreeFamilyStatus(ctx context.Context, rootPath, projectPath string) error {
 	var errs []string
 	if err := s.RefreshProjectStatus(ctx, rootPath); err != nil {
-		errs = append(errs, fmt.Sprintf("refresh merged root project: %v", err))
+		errs = append(errs, fmt.Sprintf("refresh root project: %v", err))
 	}
 	if err := s.RefreshProjectStatus(ctx, projectPath); err != nil {
-		errs = append(errs, fmt.Sprintf("refresh merged worktree project: %v", err))
+		errs = append(errs, fmt.Sprintf("refresh linked worktree project: %v", err))
 	}
 	if len(errs) == 0 {
 		return nil
@@ -878,6 +1084,22 @@ func worktreeMergeConflictError(rootPath, sourceBranch, targetBranch string, sta
 	lines := []string{
 		fmt.Sprintf("merge conflict while merging %s into %s at %s", sourceBranch, targetBranch, rootPath),
 		"Resolve or abort the merge in the root checkout before retrying.",
+		"Conflicted files:",
+	}
+	for _, file := range summarizeConflictedPaths(conflicted, 6) {
+		lines = append(lines, "- "+file)
+	}
+	return errors.New(strings.Join(lines, "\n"))
+}
+
+func worktreeUpdateConflictError(worktreePath, worktreeBranch, parentBranch string, status scanner.GitRepoStatus) error {
+	conflicted := conflictedPaths(status)
+	if len(conflicted) == 0 {
+		return nil
+	}
+	lines := []string{
+		fmt.Sprintf("merge conflict while updating %s from %s at %s", worktreeBranch, parentBranch, worktreePath),
+		"Resolve or abort the merge in the linked worktree before retrying.",
 		"Conflicted files:",
 	}
 	for _, file := range summarizeConflictedPaths(conflicted, 6) {
@@ -1421,7 +1643,12 @@ func (e gitUnrelatedHistoriesError) Unwrap() error {
 	return e.err
 }
 
-func gitMergeBranch(ctx context.Context, repoPath, branchName string, allowUnrelatedHistories bool) error {
+type gitMergeOptions struct {
+	AllowUnrelatedHistories bool
+	NoFastForward           bool
+}
+
+func gitMergeBranch(ctx context.Context, repoPath, branchName string, options gitMergeOptions) error {
 	repoPath = filepath.Clean(strings.TrimSpace(repoPath))
 	branchName = strings.TrimSpace(branchName)
 	if repoPath == "" || branchName == "" {
@@ -1431,7 +1658,10 @@ func gitMergeBranch(ctx context.Context, repoPath, branchName string, allowUnrel
 		return err
 	}
 	args := []string{"-C", repoPath, "merge", "--no-edit"}
-	if allowUnrelatedHistories {
+	if options.NoFastForward {
+		args = append(args, "--no-ff")
+	}
+	if options.AllowUnrelatedHistories {
 		args = append(args, "--allow-unrelated-histories")
 	}
 	args = append(args, branchName)
@@ -1439,7 +1669,7 @@ func gitMergeBranch(ctx context.Context, repoPath, branchName string, allowUnrel
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		action := fmt.Sprintf("merge branch %s into %s", branchName, repoPath)
-		if !allowUnrelatedHistories && gitOutputShowsUnrelatedHistories(out) {
+		if !options.AllowUnrelatedHistories && gitOutputShowsUnrelatedHistories(out) {
 			return gitUnrelatedHistoriesError{
 				action: action,
 				err:    err,

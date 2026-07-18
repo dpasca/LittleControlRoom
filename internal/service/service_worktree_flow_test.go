@@ -1111,6 +1111,186 @@ func TestRemoveWorktreeHonorsContextWhileWaitingForMutationLock(t *testing.T) {
 	}
 }
 
+func TestUpdateWorktreeFromParentMergesIntoLinkedWorktreeAndPreservesMergeBackFirstParent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{
+		ParentPath: root,
+		Name:       "repo",
+	}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Keep a growing linked worktree current", "feat/update-from-parent", "feat-update-from-parent")
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "FEATURE.txt"), []byte("feature work\n"), 0o644); err != nil {
+		t.Fatalf("write worktree feature: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "FEATURE.txt")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "add worktree feature")
+	worktreeHeadBefore := strings.TrimSpace(gitOutput(t, result.WorktreePath, "git", "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(projectPath, "ROOT.txt"), []byte("parent work\n"), 0o644); err != nil {
+		t.Fatalf("write root change: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "ROOT.txt")
+	runGit(t, projectPath, "git", "commit", "-m", "advance parent branch")
+	rootHeadBefore := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	updated, err := svc.UpdateWorktreeFromParent(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("UpdateWorktreeFromParent() error = %v", err)
+	}
+	if updated.AlreadyCurrent {
+		t.Fatalf("UpdateWorktreeFromParent() unexpectedly reported already current: %#v", updated)
+	}
+	if updated.WorktreeBranch != result.BranchName || updated.ParentBranch != result.ParentBranch || updated.ParentCommit != rootHeadBefore {
+		t.Fatalf("UpdateWorktreeFromParent() result = %#v", updated)
+	}
+	if rootHeadAfterUpdate := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD")); rootHeadAfterUpdate != rootHeadBefore {
+		t.Fatalf("worktree update changed root HEAD from %s to %s", rootHeadBefore, rootHeadAfterUpdate)
+	}
+	worktreeHeadAfterUpdate := strings.TrimSpace(gitOutput(t, result.WorktreePath, "git", "rev-parse", "HEAD"))
+	updateParents := strings.Fields(gitOutput(t, result.WorktreePath, "git", "rev-list", "--parents", "-n1", "HEAD"))
+	if len(updateParents) != 3 || updateParents[1] != worktreeHeadBefore || updateParents[2] != rootHeadBefore {
+		t.Fatalf("worktree update parents = %q, want first=%s second=%s", updateParents, worktreeHeadBefore, rootHeadBefore)
+	}
+	for _, name := range []string{"FEATURE.txt", "ROOT.txt"} {
+		if _, err := os.Stat(filepath.Join(result.WorktreePath, name)); err != nil {
+			t.Fatalf("updated worktree missing %s: %v", name, err)
+		}
+	}
+	worktreeStatus, err := scanner.ReadGitRepoStatus(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("read updated worktree status: %v", err)
+	}
+	if worktreeStatus.Dirty {
+		t.Fatalf("updated worktree should be clean, got %#v", worktreeStatus)
+	}
+
+	if _, err := svc.MergeWorktreeBack(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("MergeWorktreeBack() after parent update error = %v", err)
+	}
+	rootHeadAfterMerge := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+	if rootHeadAfterMerge == worktreeHeadAfterUpdate {
+		t.Fatalf("merge-back fast-forwarded to the worktree-side merge commit %s", rootHeadAfterMerge)
+	}
+	mergeBackParents := strings.Fields(gitOutput(t, projectPath, "git", "rev-list", "--parents", "-n1", "HEAD"))
+	if len(mergeBackParents) != 3 || mergeBackParents[1] != rootHeadBefore || mergeBackParents[2] != worktreeHeadAfterUpdate {
+		t.Fatalf("merge-back parents = %q, want first=%s second=%s", mergeBackParents, rootHeadBefore, worktreeHeadAfterUpdate)
+	}
+}
+
+func TestUpdateWorktreeFromParentReportsAlreadyCurrent(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{ParentPath: root, Name: "repo"}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Check an already-current worktree", "feat/already-current", "feat-already-current")
+	headBefore := strings.TrimSpace(gitOutput(t, result.WorktreePath, "git", "rev-parse", "HEAD"))
+
+	updated, err := svc.UpdateWorktreeFromParent(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("UpdateWorktreeFromParent() error = %v", err)
+	}
+	if !updated.AlreadyCurrent {
+		t.Fatalf("UpdateWorktreeFromParent() result = %#v, want already current", updated)
+	}
+	if headAfter := strings.TrimSpace(gitOutput(t, result.WorktreePath, "git", "rev-parse", "HEAD")); headAfter != headBefore {
+		t.Fatalf("already-current update changed worktree HEAD from %s to %s", headBefore, headAfter)
+	}
+}
+
+func TestUpdateWorktreeFromParentLeavesConflictInLinkedWorktree(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	initGitRepo(t, projectPath)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{ParentPath: root, Name: "repo"}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Conflict while updating from parent", "feat/update-conflict", "feat-update-conflict")
+
+	if err := os.WriteFile(filepath.Join(projectPath, "README.md"), []byte("root version\n"), 0o644); err != nil {
+		t.Fatalf("write root README: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "README.md")
+	runGit(t, projectPath, "git", "commit", "-m", "edit README in parent")
+	rootHeadBefore := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	if err := os.WriteFile(filepath.Join(result.WorktreePath, "README.md"), []byte("worktree version\n"), 0o644); err != nil {
+		t.Fatalf("write worktree README: %v", err)
+	}
+	runGit(t, result.WorktreePath, "git", "add", "README.md")
+	runGit(t, result.WorktreePath, "git", "commit", "-m", "edit README in worktree")
+
+	_, err = svc.UpdateWorktreeFromParent(ctx, result.WorktreePath)
+	if err == nil {
+		t.Fatal("UpdateWorktreeFromParent() error = nil, want conflict")
+	}
+	if !strings.Contains(err.Error(), "merge conflict while updating") || !strings.Contains(err.Error(), "linked worktree") || !strings.Contains(err.Error(), "README.md") {
+		t.Fatalf("UpdateWorktreeFromParent() error = %q, want linked-worktree conflict guidance", err)
+	}
+	if rootHeadAfter := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD")); rootHeadAfter != rootHeadBefore {
+		t.Fatalf("conflicted update changed root HEAD from %s to %s", rootHeadBefore, rootHeadAfter)
+	}
+	rootStatus, err := scanner.ReadGitRepoStatus(ctx, projectPath)
+	if err != nil {
+		t.Fatalf("read root status after conflict: %v", err)
+	}
+	if rootStatus.Dirty {
+		t.Fatalf("root should remain clean after linked-worktree conflict, got %#v", rootStatus)
+	}
+	worktreeStatus, err := scanner.ReadGitRepoStatus(ctx, result.WorktreePath)
+	if err != nil {
+		t.Fatalf("read worktree status after conflict: %v", err)
+	}
+	if len(conflictedPaths(worktreeStatus)) == 0 {
+		t.Fatalf("linked worktree should retain conflict state, got %#v", worktreeStatus)
+	}
+	worktreeDetail, err := st.GetProjectDetail(ctx, result.WorktreePath, 0)
+	if err != nil {
+		t.Fatalf("read stored worktree detail after conflict: %v", err)
+	}
+	if !worktreeDetail.Summary.RepoConflict {
+		t.Fatalf("stored linked worktree should report conflict, got %#v", worktreeDetail.Summary)
+	}
+}
+
 func TestMergeWorktreeBackMergesIntoRecordedParentBranch(t *testing.T) {
 	t.Parallel()
 

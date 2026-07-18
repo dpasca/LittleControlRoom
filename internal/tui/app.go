@@ -641,15 +641,16 @@ type ignoredProjectActionMsg struct {
 type pendingGitOperationKind string
 
 const (
-	pendingGitOperationUnknown       pendingGitOperationKind = ""
-	pendingGitOperationCommit        pendingGitOperationKind = "commit"
-	pendingGitOperationCommitPush    pendingGitOperationKind = "commit_push"
-	pendingGitOperationPush          pendingGitOperationKind = "push"
-	pendingGitOperationPull          pendingGitOperationKind = "pull"
-	pendingGitOperationCommitMerge   pendingGitOperationKind = "commit_merge"
-	pendingGitOperationPrune         pendingGitOperationKind = "prune"
-	pendingGitOperationPrepareCommit pendingGitOperationKind = "prepare_commit"
-	pendingGitOperationPrepareDiff   pendingGitOperationKind = "prepare_diff"
+	pendingGitOperationUnknown        pendingGitOperationKind = ""
+	pendingGitOperationCommit         pendingGitOperationKind = "commit"
+	pendingGitOperationCommitPush     pendingGitOperationKind = "commit_push"
+	pendingGitOperationPush           pendingGitOperationKind = "push"
+	pendingGitOperationPull           pendingGitOperationKind = "pull"
+	pendingGitOperationWorktreeUpdate pendingGitOperationKind = "worktree_update"
+	pendingGitOperationCommitMerge    pendingGitOperationKind = "commit_merge"
+	pendingGitOperationPrune          pendingGitOperationKind = "prune"
+	pendingGitOperationPrepareCommit  pendingGitOperationKind = "prepare_commit"
+	pendingGitOperationPrepareDiff    pendingGitOperationKind = "prepare_diff"
 )
 
 type pendingGitOperation struct {
@@ -935,6 +936,8 @@ func inferPendingGitOperation(summary string) pendingGitOperation {
 		return pendingGitOperation{Kind: pendingGitOperationPush, Summary: summary}
 	case "Pulling...":
 		return pendingGitOperation{Kind: pendingGitOperationPull, Summary: summary}
+	case worktreeUpdatePendingSummary:
+		return pendingGitOperation{Kind: pendingGitOperationWorktreeUpdate, Summary: summary}
 	case "Committing and merging worktree back...":
 		return pendingGitOperation{Kind: pendingGitOperationCommitMerge, Summary: summary}
 	case "Pruning worktrees...", "Pruning stale git worktrees...":
@@ -971,6 +974,8 @@ func (op pendingGitOperation) shortLabel() string {
 		return "pushing"
 	case pendingGitOperationPull:
 		return "pulling"
+	case pendingGitOperationWorktreeUpdate:
+		return "updating worktree"
 	case pendingGitOperationCommitMerge:
 		return "commit + merge"
 	case pendingGitOperationPrune:
