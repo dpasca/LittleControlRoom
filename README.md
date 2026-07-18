@@ -235,13 +235,13 @@ Embedded providers expose LCR's local command subset, not every slash command fr
 Inside Chat:
 
 - `Enter`: Send a message or confirm a proposed action.
-- `Esc` or backtick: Hide Chat and return to the dashboard; in-flight replies keep running.
+- `Esc` or backtick: Hide Chat and return to the dashboard; in-flight replies keep running. When `/log` is open, `Esc` closes that window first.
 - `/new [prompt]`: Start a fresh Chat session, optionally with the first prompt.
-- `/log`: Show a local timestamped snapshot of recent Chat tool activity.
+- `/log`: Open a separate scrollable window of recent AI engineer events.
 - `Ctrl+L`: Start a fresh empty Chat session.
 - `Alt+Enter`: Add a newline without sending.
 
-Chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/help-chat-sessions/`. Recall searches those transcripts and continues to include legacy `boss-sessions/` history. `/log` diagnostic lines are not added to the saved or model-visible conversation. Chat can inspect the current dashboard and project/task context, propose confirmable actions, delegate work, and report completions without assigning human names to AI work sessions. Project-list organization stays separate from project work: a request to add an existing folder to a named category such as Private gets one confirmation that registers the folder if needed and assigns the category, without creating a TODO, worktree, engineer session, Git repository, or repository content. For work in an existing loaded project, the default confirmation creates a tracked TODO, prepares a dedicated worktree, and starts a fresh engineer there; press `q` in that confirmation to add the TODO without starting it. Work in a brand-new or existing untracked Git repository instead uses a repository-setup confirmation before the same tracked TODO, worktree, and engineer launch. Starting and final launch/failure receipts are kept in the Chat transcript.
+Chat sessions are saved as grep-friendly Markdown transcripts under the app data directory, for example `~/.little-control-room/help-chat-sessions/`. Recall searches those transcripts and continues to include legacy `boss-sessions/` history. AI engineer launch, progress, completion, and failure receipts are saved as `Log` entries and shown in the separate `/log` window; they stay out of the visible Chat conversation, Chat recall, and model context. Chat can inspect the current dashboard and project/task context, propose confirmable actions, delegate work, and report completions without assigning human names to AI work sessions. Project-list organization stays separate from project work: a request to add an existing folder to a named category such as Private gets one confirmation that registers the folder if needed and assigns the category, without creating a TODO, worktree, engineer session, Git repository, or repository content. For work in an existing loaded project, the default confirmation creates a tracked TODO, prepares a dedicated worktree, and starts a fresh engineer there; press `q` in that confirmation to add the TODO without starting it. Work in a brand-new or existing untracked Git repository instead uses a repository-setup confirmation before the same tracked TODO, worktree, and engineer launch.
 
 ## Core Workflows
 

@@ -71,7 +71,7 @@ func AppendAssistantNoticeToLatestSession(ctx context.Context, svc *service.Serv
 }
 
 func AppendAssistantNoticeToLatestHelpSession(ctx context.Context, svc *service.Service, content string, at time.Time) error {
-	return appendAssistantNoticeToLatestSession(ctx, newBossSessionStoreForServiceNamed(svc, helpChatSessionsDirName), content, at, ChatMessageKindChat)
+	return appendAssistantNoticeToLatestSession(ctx, newBossSessionStoreForServiceNamed(svc, helpChatSessionsDirName), content, at, ChatMessageKindLog)
 }
 
 func appendAssistantNoticeToLatestSession(ctx context.Context, store *bossSessionStore, content string, at time.Time, kind string) error {
@@ -455,6 +455,8 @@ func parseBossSessionMarkdownRole(role string) (string, string, bool) {
 		return "assistant", ChatMessageKindChat, true
 	case "flow":
 		return "assistant", ChatMessageKindFlow, true
+	case "log":
+		return "assistant", ChatMessageKindLog, true
 	default:
 		return "", "", false
 	}
@@ -498,6 +500,9 @@ func bossSessionMarkdownRole(role string) string {
 }
 
 func bossSessionMarkdownRoleForMessage(message ChatMessage) string {
+	if chatMessageIsLog(message) {
+		return "Log"
+	}
 	if chatMessageIsFlow(message) {
 		return "Flow"
 	}

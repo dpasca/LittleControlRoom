@@ -73,6 +73,9 @@ func (m Model) openHelpChatMode() (tea.Model, tea.Cmd) {
 
 func (m *Model) closeHelpChatMode(status string) {
 	m.helpChatMode = false
+	if m.helpChatModelActive {
+		m.helpChatModel = m.helpChatModel.CloseEngineerLog()
+	}
 	if status != "" {
 		m.status = status
 	}
@@ -196,7 +199,7 @@ func (m Model) renderHelpChatFooter(width int) string {
 		footerLowAction("Alt+C", "copy menu"),
 		footerNavAction("Ctrl+V", "paste"),
 		footerNavAction("Alt+Enter", "newline"),
-		footerLowAction("/log", "logs"),
+		footerLowAction("/log", "events"),
 		footerLowAction("/new", "clear"),
 		footerHideAction("Esc", "hide"),
 		footerHideAction("`", "hide"),
@@ -208,9 +211,16 @@ func (m Model) renderHelpChatFooter(width int) string {
 			footerLowAction("Alt+C", "copy menu"),
 			footerNavAction("Ctrl+V", "paste"),
 			footerNavAction("Alt+Enter", "newline"),
-			footerLowAction("/log", "logs"),
+			footerLowAction("/log", "events"),
 			footerHideAction("Esc", "hide"),
 			footerHideAction("`", "hide"),
+		}
+	}
+	if m.helpChatModel.EngineerLogVisible() {
+		actions = []footerAction{
+			footerNavAction("PgUp/PgDn", "scroll"),
+			footerNavAction("Home/End", "jump"),
+			footerExitAction("Esc", "close"),
 		}
 	}
 	if m.helpChatModel.InputSelectionActive() {

@@ -557,7 +557,7 @@ func TestEmbeddedHelpDisablesBossSlashAndFlowTabs(t *testing.T) {
 	}
 }
 
-func TestEmbeddedHelpHidesToolActivityUntilLogCommand(t *testing.T) {
+func TestEmbeddedHelpLogWindowDoesNotShowChatToolActivity(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 17, 9, 10, 11, 0, time.Local)
@@ -581,7 +581,7 @@ func TestEmbeddedHelpHidesToolActivityUntilLogCommand(t *testing.T) {
 	rendered := ansi.Strip(m.renderTranscript(112))
 	for _, hidden := range []string{"Tool calls", "project_detail /tmp/alpha"} {
 		if strings.Contains(rendered, hidden) {
-			t.Fatalf("Chat should hide live tool activity %q until /log:\n%s", hidden, rendered)
+			t.Fatalf("Chat should hide live tool activity %q:\n%s", hidden, rendered)
 		}
 	}
 
@@ -589,7 +589,7 @@ func TestEmbeddedHelpHidesToolActivityUntilLogCommand(t *testing.T) {
 	updated, cmd := m.submit()
 	got := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("/log should render local history without async work")
+		t.Fatalf("/log should open a local window without async work")
 	}
 	if !got.sending {
 		t.Fatalf("/log should not interrupt an in-flight Chat response")
@@ -597,27 +597,22 @@ func TestEmbeddedHelpHidesToolActivityUntilLogCommand(t *testing.T) {
 	if got.input.Value() != "" {
 		t.Fatalf("/log input = %q, want cleared", got.input.Value())
 	}
-	if len(got.messages) != 1 || !chatMessageIsLog(got.messages[0]) {
-		t.Fatalf("/log messages = %#v, want one local log entry", got.messages)
+	if len(got.messages) != 0 {
+		t.Fatalf("/log should not create transcript messages, got %#v", got.messages)
 	}
-	if conversational := conversationalChatMessages(got.messages); len(conversational) != 0 {
-		t.Fatalf("/log leaked into model-visible conversation: %#v", conversational)
+	if !got.EngineerLogVisible() {
+		t.Fatalf("/log should open the engineer events window")
 	}
-	if visible := modelVisibleChatMessages(got.messages); len(visible) != 0 {
-		t.Fatalf("/log leaked into assistant request messages: %#v", visible)
-	}
-
-	rendered = ansi.Strip(got.renderTranscript(112))
-	for _, want := range []string{
-		"09:10:11 tool: project_detail /tmp/alpha",
-		"09:10:13 done: project_detail /tmp/alpha",
-	} {
+	rendered = ansi.Strip(got.View())
+	for _, want := range []string{"Engineer Events", "No engineer events yet."} {
 		if !strings.Contains(rendered, want) {
-			t.Fatalf("/log output missing %q:\n%s", want, rendered)
+			t.Fatalf("/log window missing %q:\n%s", want, rendered)
 		}
 	}
-	if strings.Contains(rendered, "Tool calls") {
-		t.Fatalf("/log should keep the compact one-line format:\n%s", rendered)
+	for _, unwanted := range []string{"project_detail /tmp/alpha", "tool:", "done:"} {
+		if strings.Contains(rendered, unwanted) {
+			t.Fatalf("/log window should not show Chat tool diagnostic %q:\n%s", unwanted, rendered)
+		}
 	}
 }
 
@@ -660,28 +655,122 @@ func TestEmbeddedHelpViewOmitsBossTranscriptControls(t *testing.T) {
 	}
 }
 
-func TestEmbeddedHelpRendersHostNoticesInChatWithoutFlow(t *testing.T) {
+func TestEmbeddedHelpRoutesHostNoticesToEngineerEventsWindow(t *testing.T) {
 	t.Parallel()
 
 	m := NewEmbeddedHelp(context.Background(), nil)
 	m.width = 100
 	m.height = 20
+	m.nowFn = func() time.Time {
+		return time.Date(2026, 7, 18, 9, 30, 0, 0, time.Local)
+	}
 	updated, _ := m.Update(HostNoticeMsg{
 		Content:        "Work on Project Task is ready for review.",
 		AnnounceInChat: true,
 		Handoff:        &HandoffHighlight{ProjectLabel: "Project Task"},
 	})
 	got := updated.(Model)
-	if len(got.messages) != 1 || got.messages[0].Kind != ChatMessageKindChat {
-		t.Fatalf("help host notice messages = %#v, want one visible chat message", got.messages)
+	if len(got.messages) != 1 || got.messages[0].Kind != ChatMessageKindLog {
+		t.Fatalf("help host notice messages = %#v, want one engineer event", got.messages)
+	}
+	if conversational := conversationalChatMessages(got.messages); len(conversational) != 0 {
+		t.Fatalf("engineer event leaked into conversational history: %#v", conversational)
+	}
+	if visible := modelVisibleChatMessages(got.messages); len(visible) != 0 {
+		t.Fatalf("engineer event leaked into model-visible messages: %#v", visible)
 	}
 	got.syncLayout(true)
-	rendered := ansi.Strip(got.View())
-	if !strings.Contains(rendered, "Chat> Work on Project Task is ready for review.") {
-		t.Fatalf("help host notice missing from chat:\n%s", rendered)
+	chat := ansi.Strip(got.View())
+	if strings.Contains(chat, "Work on Project Task is ready for review.") {
+		t.Fatalf("engineer event should stay out of Chat:\n%s", chat)
 	}
-	if strings.Contains(rendered, "Flow") {
-		t.Fatalf("help host notice exposed retired Flow UI:\n%s", rendered)
+
+	got.input.SetValue("/log")
+	opened, cmd := got.submit()
+	got = opened.(Model)
+	if cmd != nil {
+		t.Fatalf("/log should open without async work")
+	}
+	rendered := ansi.Strip(got.View())
+	for _, want := range []string{
+		"Engineer Events",
+		"09:30:00 Work on Project Task is ready for review.",
+		"1 event",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("engineer events window missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Chat> Work on Project Task") || strings.Contains(rendered, "Flow>") {
+		t.Fatalf("engineer event should render as a separate event, not a Chat/Flow message:\n%s", rendered)
+	}
+}
+
+func TestEmbeddedHelpEngineerEventsWindowScrollsSeparatelyFromChat(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 80
+	m.height = 16
+	m.messages = []ChatMessage{{
+		Role:    "user",
+		Content: "Keep the conversation viewport here.",
+	}}
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.Local)
+	for i := 0; i < 30; i++ {
+		m.messages = append(m.messages, ChatMessage{
+			Role:    "assistant",
+			Content: fmt.Sprintf("Engineer event %02d with enough detail to occupy its own row.", i),
+			At:      base.Add(time.Duration(i) * time.Second),
+			Kind:    ChatMessageKindLog,
+		})
+	}
+	m.syncLayout(true)
+	chatOffset := m.chatViewport.YOffset
+	m.input.SetValue("/log")
+	updated, _ := m.submit()
+	got := updated.(Model)
+	if got.engineerLogViewport.YOffset == 0 {
+		t.Fatalf("long engineer event log should open at the bottom")
+	}
+	bottomOffset := got.engineerLogViewport.YOffset
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	got = updated.(Model)
+	if got.engineerLogViewport.YOffset >= bottomOffset {
+		t.Fatalf("Page Up did not move the engineer event viewport: before=%d after=%d", bottomOffset, got.engineerLogViewport.YOffset)
+	}
+	if got.chatViewport.YOffset != chatOffset {
+		t.Fatalf("engineer event scrolling moved Chat: before=%d after=%d", chatOffset, got.chatViewport.YOffset)
+	}
+
+	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	got = updated.(Model)
+	if got.EngineerLogVisible() {
+		t.Fatalf("Esc should close the engineer events window")
+	}
+}
+
+func TestEmbeddedHelpKeepsNonEngineerControlResultsInChat(t *testing.T) {
+	t.Parallel()
+
+	m := NewEmbeddedHelp(context.Background(), nil)
+	m.width = 100
+	m.height = 20
+	updated, _ := m.Update(ControlInvocationResultMsg{
+		Invocation:     control.Invocation{Capability: control.CapabilityProjectSetCategory},
+		Status:         "Moved Alpha to the Private category.",
+		AnnounceInChat: true,
+	})
+	got := updated.(Model)
+	if len(got.messages) != 1 || got.messages[0].Kind != ChatMessageKindChat {
+		t.Fatalf("non-engineer control result = %#v, want one Chat message", got.messages)
+	}
+	if !strings.Contains(ansi.Strip(got.renderTranscript(100)), "Chat> Moved Alpha to the Private category.") {
+		t.Fatalf("non-engineer control result should remain in Chat:\n%s", ansi.Strip(got.renderTranscript(100)))
+	}
+	if got.engineerLogEventCount() != 0 {
+		t.Fatalf("non-engineer control result should not enter /log")
 	}
 }
 
@@ -1502,7 +1591,11 @@ func TestControlResultEngineerLaunchReceiptPersistsAcrossReload(t *testing.T) {
 	}
 
 	const receipt = "Codex AI engineer launched for Alpha TODO #42 in worktree alpha--help-feedback."
-	updated, cmd := m.Update(ControlInvocationResultMsg{Status: receipt, AnnounceInChat: true})
+	updated, cmd := m.Update(ControlInvocationResultMsg{
+		Invocation:     control.Invocation{Capability: control.CapabilityTodoCreateWorktreeAndStartEngineer},
+		Status:         receipt,
+		AnnounceInChat: true,
+	})
 	got := updated.(Model)
 	if cmd == nil {
 		t.Fatalf("announced control result should return persistence command")
@@ -1513,8 +1606,18 @@ func TestControlResultEngineerLaunchReceiptPersistsAcrossReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadSession() error = %v", err)
 	}
-	if len(messages) != 1 || messages[0].Content != receipt || messages[0].Kind != ChatMessageKindChat {
-		t.Fatalf("reloaded messages = %#v, want durable engineer receipt", messages)
+	if len(messages) != 1 || messages[0].Content != receipt || messages[0].Kind != ChatMessageKindLog {
+		t.Fatalf("reloaded messages = %#v, want durable engineer event", messages)
+	}
+	if strings.Contains(ansi.Strip(got.renderTranscript(100)), receipt) {
+		t.Fatalf("engineer launch receipt should stay out of Chat")
+	}
+	data, err := os.ReadFile(filepath.Join(got.sessionStore.dir, got.sessionID+bossSessionFileExt))
+	if err != nil {
+		t.Fatalf("read persisted engineer event: %v", err)
+	}
+	if !strings.Contains(string(data), "## Log @ ") {
+		t.Fatalf("engineer event should use a Log heading:\n%s", data)
 	}
 }
 

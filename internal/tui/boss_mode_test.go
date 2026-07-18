@@ -340,13 +340,17 @@ func TestBossChatNoticesEngineerTurnCompletion(t *testing.T) {
 	updated, _ := m.update(codexUpdateMsg{projectPath: projectPath})
 	got := updated.(Model)
 	view := bossChatOnlyText(got.helpChatModel)
+	eventLog := bossEngineerLogText(got.helpChatModel)
 	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
 		"Work on Project Task is ready for review:",
 		"Killed the stale dev server on port 5173",
 	} {
-		if !bossTextContains(view, want) {
-			t.Fatalf("Chat transcript missing work outcome %q:\n%s", want, view)
+		if bossTextContains(view, want) {
+			t.Fatalf("Chat transcript should not contain engineer event %q:\n%s", want, view)
+		}
+		if !bossTextContains(eventLog, want) {
+			t.Fatalf("engineer event log missing work outcome %q:\n%s", want, eventLog)
 		}
 	}
 	for _, want := range []string{
@@ -420,13 +424,17 @@ func TestBossChatFetchesFreshEngineerReportBeforeNotice(t *testing.T) {
 	}
 
 	view := bossChatOnlyText(got.helpChatModel)
+	eventLog := bossEngineerLogText(got.helpChatModel)
 	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
 		"Work on ChatNext3 is ready for review:",
 		"The broken preview is caused by the SVG",
 	} {
-		if !bossTextContains(view, want) {
-			t.Fatalf("Chat transcript missing work outcome %q:\n%s", want, view)
+		if bossTextContains(view, want) {
+			t.Fatalf("Chat transcript should not contain engineer event %q:\n%s", want, view)
+		}
+		if !bossTextContains(eventLog, want) {
+			t.Fatalf("engineer event log missing fresh work outcome %q:\n%s", want, eventLog)
 		}
 	}
 	for _, want := range []string{
@@ -743,13 +751,17 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 		t.Fatalf("returned agent task should stay open for a close-or-continue decision: %#v", got.openAgentTasks)
 	}
 	view := bossChatOnlyText(got.helpChatModel)
+	eventLog := bossEngineerLogText(got.helpChatModel)
 	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
 		"Work on Kill stale roguellm dev server is ready for review:",
 		"No stale roguellm dev server is running now.",
 	} {
-		if !bossTextContains(view, want) {
-			t.Fatalf("Chat transcript missing work outcome %q:\n%s", want, view)
+		if bossTextContains(view, want) {
+			t.Fatalf("Chat transcript should not contain engineer event %q:\n%s", want, view)
+		}
+		if !bossTextContains(eventLog, want) {
+			t.Fatalf("engineer event log missing work outcome %q:\n%s", want, eventLog)
 		}
 	}
 	for _, want := range []string{
@@ -767,6 +779,9 @@ func TestBossEngineerCompletionLeavesAgentTaskWaitingForDecision(t *testing.T) {
 	}
 	if strings.Contains(view, "port 8127") || strings.Contains(view, "```") {
 		t.Fatalf("Chat transcript leaked raw output:\n%s", view)
+	}
+	if strings.Contains(eventLog, "port 8127") || strings.Contains(eventLog, "```") {
+		t.Fatalf("engineer event log leaked raw output:\n%s", eventLog)
 	}
 }
 
@@ -870,7 +885,7 @@ func TestHelpChatHostNoticeQueuedWhileClosedAppearsOnOpen(t *testing.T) {
 	}
 }
 
-func TestHelpChatHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *testing.T) {
+func TestHelpChatHostChatNoticeQueuedWhileClosedAppearsInEventLogOnOpen(t *testing.T) {
 	t.Parallel()
 
 	m := Model{
@@ -890,13 +905,17 @@ func TestHelpChatHostChatNoticeQueuedWhileClosedAppearsInTranscriptOnOpen(t *tes
 	reopened, _ := m.openHelpChatMode()
 	got := reopened.(Model)
 	view := bossChatOnlyText(got.helpChatModel)
+	eventLog := bossEngineerLogText(got.helpChatModel)
 	noticeText := bossOperationalNoticeText(got.helpChatModel)
 	for _, want := range []string{
 		"Work on ChatNext3 is ready for review.",
 		"No migration needed; DB/schema stayed untouched.",
 	} {
-		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Chat transcript missing queued chat notice %q:\n%s", want, view)
+		if bossTextContains(view, want) {
+			t.Fatalf("reopened Chat transcript should not contain queued engineer event %q:\n%s", want, view)
+		}
+		if !bossTextContains(eventLog, want) {
+			t.Fatalf("reopened engineer event log missing queued notice %q:\n%s", want, eventLog)
 		}
 		if !strings.Contains(noticeText, want) {
 			t.Fatalf("queued operational notice missing %q:\n%s", want, noticeText)
@@ -928,17 +947,21 @@ func TestHelpChatHostChatNoticeWhileHiddenActiveUpdatesBackgroundModel(t *testin
 		t.Fatalf("pending notices = %#v, want hidden active model to receive notice directly", got.pendingBossHostNotices)
 	}
 	view := bossChatOnlyText(got.helpChatModel)
+	eventLog := bossEngineerLogText(got.helpChatModel)
 	for _, want := range []string{
 		"Work completed while Chat was hidden.",
 		"Everything is ready to review.",
 	} {
-		if !bossTextContains(view, want) {
-			t.Fatalf("hidden active Chat transcript missing notice %q:\n%s", want, view)
+		if bossTextContains(view, want) {
+			t.Fatalf("hidden active Chat transcript should not contain engineer event %q:\n%s", want, view)
+		}
+		if !bossTextContains(eventLog, want) {
+			t.Fatalf("hidden active engineer event log missing notice %q:\n%s", want, eventLog)
 		}
 	}
 }
 
-func TestWorkCompletionWhileClosedPersistsToHelpChatTranscript(t *testing.T) {
+func TestWorkCompletionWhileClosedPersistsToHelpChatEventLog(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -987,7 +1010,7 @@ func TestWorkCompletionWhileClosedPersistsToHelpChatTranscript(t *testing.T) {
 		got = updated.(Model)
 	}
 	if !persisted {
-		t.Fatalf("hidden work completion should persist a Chat notice")
+		t.Fatalf("hidden work completion should persist an engineer event")
 	}
 	if len(got.errorLogEntries) != 0 {
 		t.Fatalf("unexpected error log entries after persisting hidden notice: %#v", got.errorLogEntries)
@@ -1011,12 +1034,16 @@ func TestWorkCompletionWhileClosedPersistsToHelpChatTranscript(t *testing.T) {
 	}
 
 	view := bossChatOnlyText(got.helpChatModel)
+	eventLog := bossEngineerLogText(got.helpChatModel)
 	for _, want := range []string{
 		"Work on Project Task is ready for review:",
 		"Killed the stale dev server on port 5173",
 	} {
-		if !bossTextContains(view, want) {
-			t.Fatalf("reopened Chat transcript missing persisted hidden completion %q:\n%s", want, view)
+		if bossTextContains(view, want) {
+			t.Fatalf("reopened Chat transcript should not contain persisted engineer event %q:\n%s", want, view)
+		}
+		if !bossTextContains(eventLog, want) {
+			t.Fatalf("reopened engineer event log missing persisted completion %q:\n%s", want, eventLog)
 		}
 	}
 }
@@ -1255,6 +1282,19 @@ func bossChatPanelText(view string) string {
 func bossChatOnlyText(model bossui.Model) string {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 70, Height: 28})
 	return bossChatPanelText(normalizeBossModel(updated).View())
+}
+
+func bossEngineerLogText(model bossui.Model) string {
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 90, Height: 28})
+	model = normalizeBossModel(updated)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/log")})
+	model = normalizeBossModel(updated)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = normalizeBossModel(updated)
+	if !model.EngineerLogVisible() {
+		return ""
+	}
+	return model.View()
 }
 
 func bossOperationalNoticeText(model bossui.Model) string {

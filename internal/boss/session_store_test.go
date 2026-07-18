@@ -192,6 +192,43 @@ func TestAppendAssistantNoticeToLatestSessionPersistsAndDedupes(t *testing.T) {
 	}
 }
 
+func TestAppendAssistantNoticeToLatestHelpSessionPersistsAsLogEvent(t *testing.T) {
+	t.Parallel()
+
+	svc := newBossSessionTestService(t)
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	content := "Work on Cursor cleanup is ready for review."
+	if err := AppendAssistantNoticeToLatestHelpSession(context.Background(), svc, content, now); err != nil {
+		t.Fatalf("AppendAssistantNoticeToLatestHelpSession() error = %v", err)
+	}
+
+	store := newBossSessionStoreNamed(svc.Config().DataDir, helpChatSessionsDirName)
+	session, messages, created, err := store.loadLatestOrCreate(context.Background(), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("loadLatestOrCreate() error = %v", err)
+	}
+	if created || len(messages) != 1 {
+		t.Fatalf("loaded help session = (%#v, %#v, created=%v), want one existing event", session, messages, created)
+	}
+	if messages[0].Kind != ChatMessageKindLog || messages[0].Content != content {
+		t.Fatalf("help event = %#v, want durable log message", messages[0])
+	}
+	data, err := os.ReadFile(session.Path)
+	if err != nil {
+		t.Fatalf("ReadFile(session) error = %v", err)
+	}
+	if !strings.Contains(string(data), "## Log @ ") {
+		t.Fatalf("help engineer event should persist with a Log heading:\n%s", data)
+	}
+	matches, err := store.searchSessions(context.Background(), "Cursor cleanup", 4)
+	if err != nil {
+		t.Fatalf("searchSessions() error = %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("engineer log event leaked into Chat recall: %#v", matches)
+	}
+}
+
 func TestBossSessionStoreSearchesMarkdownTurns(t *testing.T) {
 	t.Parallel()
 

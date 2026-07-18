@@ -128,7 +128,7 @@ func TestHelpChatFooterOffersCopyPasteAndSelectionControls(t *testing.T) {
 	help := bossui.NewEmbeddedHelp(context.Background(), nil)
 	m := Model{helpChatModel: help}
 	footer := ansi.Strip(m.renderHelpChatFooter(120))
-	for _, want := range []string{"Ctrl+V paste", "Alt+C copy menu", "/log logs"} {
+	for _, want := range []string{"Ctrl+V paste", "Alt+C copy menu", "/log events"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("Chat footer missing %q: %q", want, footer)
 		}
@@ -140,7 +140,21 @@ func TestHelpChatFooterOffersCopyPasteAndSelectionControls(t *testing.T) {
 		}
 	}
 
-	updated, _ := help.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
+	updated, _ := help.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/log")})
+	help = normalizeBossModel(updated)
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	help = normalizeBossModel(updated)
+	m.helpChatModel = help
+	footer = ansi.Strip(m.renderHelpChatFooter(120))
+	for _, want := range []string{"PgUp/PgDn scroll", "Home/End jump", "Esc close"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("engineer events footer missing %q: %q", want, footer)
+		}
+	}
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	help = normalizeBossModel(updated)
+
+	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}, Alt: true})
 	help = normalizeBossModel(updated)
 	updated, _ = help.Update(tea.KeyMsg{Type: tea.KeyTab})
 	help = normalizeBossModel(updated)

@@ -35,8 +35,6 @@ const (
 	maxOperationalNotices        = 8
 	transientEngineerActivityTTL = 2 * time.Minute
 	bossPromptChatHistoryLimit   = 18
-	maxRecentChatLogEntries      = 64
-	recentChatLogDisplayLimit    = 20
 )
 
 type bossTranscriptTab string
@@ -45,11 +43,6 @@ const (
 	bossTranscriptTabChat bossTranscriptTab = "chat"
 	bossTranscriptTabFlow bossTranscriptTab = "flow"
 )
-
-type chatLogEntry struct {
-	At   time.Time
-	Text string
-}
 
 type Model struct {
 	ctx       context.Context
@@ -108,7 +101,8 @@ type Model struct {
 	assistantStreamID      int
 	streamingAssistantText string
 	streamingToolCalls     []string
-	recentChatLogs         []chatLogEntry
+	engineerLogVisible     bool
+	engineerLogViewport    viewport.Model
 	haveLastAssistantTime  bool
 	lastAssistantTime      time.Duration
 	haveLastAssistantUsage bool
@@ -277,6 +271,7 @@ func newModelWithSessionDir(ctx context.Context, svc *service.Service, embedded 
 		transcriptTabsEnabled: true,
 		input:                 input,
 		chatViewport:          viewport.New(0, 0),
+		engineerLogViewport:   viewport.New(0, 0),
 		status:                assistant.Label(),
 		sessionStore:          sessionStore,
 		sessionLoaded:         sessionStore == nil,
@@ -868,6 +863,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingGoal != nil {
 			return m.updateGoalConfirmation(msg)
 		}
+		if m.engineerLogVisible {
+			return m.updateEngineerLog(msg)
+		}
 		if m.sessionPickerVisible {
 			return m.updateBossSessionPicker(msg)
 		}
@@ -955,6 +953,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		if m.sessionPickerVisible {
 			return m, nil
+		}
+		if m.engineerLogVisible {
+			return m.updateEngineerLogMouse(msg)
 		}
 		return m.updateMouse(msg)
 	}
@@ -1079,26 +1080,11 @@ func (m *Model) applyAssistantStreamEvent(event AssistantStreamEvent) {
 		if line == "" {
 			return
 		}
-		m.appendRecentChatLog(line)
 		m.streamingToolCalls = append(m.streamingToolCalls, line)
 		if len(m.streamingToolCalls) > 6 {
 			m.streamingToolCalls = append([]string(nil), m.streamingToolCalls[len(m.streamingToolCalls)-6:]...)
 		}
 		m.status = line
-	}
-}
-
-func (m *Model) appendRecentChatLog(text string) {
-	text = strings.Join(strings.Fields(text), " ")
-	if text == "" {
-		return
-	}
-	m.recentChatLogs = append(m.recentChatLogs, chatLogEntry{
-		At:   m.now(),
-		Text: text,
-	})
-	if len(m.recentChatLogs) > maxRecentChatLogEntries {
-		m.recentChatLogs = append([]chatLogEntry(nil), m.recentChatLogs[len(m.recentChatLogs)-maxRecentChatLogEntries:]...)
 	}
 }
 
@@ -1150,6 +1136,9 @@ func (m Model) View() string {
 }
 
 func (m Model) renderOverlays(body string, width, height int) string {
+	if m.engineerLogVisible {
+		body = m.renderEngineerLogOverlay(body, width, height)
+	}
 	if m.sessionPickerVisible {
 		body = m.renderBossSessionPickerOverlay(body, width, height)
 	}
@@ -1210,7 +1199,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 					m.status = "usage: /log"
 					return m, nil
 				}
-				return m.showRecentChatLogs()
+				return m.openEngineerLog()
 			}
 		}
 	}
@@ -1222,44 +1211,6 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		return m.runBossSlashCommand(text)
 	}
 	return m.submitChatMessage(text)
-}
-
-func (m Model) showRecentChatLogs() (tea.Model, tea.Cmd) {
-	m.input.Reset()
-	m.bossSlashSelected = 0
-	content := m.recentChatLogContent(recentChatLogDisplayLimit)
-	if content == "" {
-		content = "No recent Chat logs."
-	}
-	m.messages = append(m.messages, ChatMessage{
-		Role:    "assistant",
-		Content: content,
-		At:      m.now(),
-		Kind:    ChatMessageKindLog,
-	})
-	m.status = "Recent Chat logs"
-	m.syncLayout(true)
-	return m, nil
-}
-
-func (m Model) recentChatLogContent(limit int) string {
-	if limit <= 0 || len(m.recentChatLogs) == 0 {
-		return ""
-	}
-	start := maxInt(0, len(m.recentChatLogs)-limit)
-	lines := make([]string, 0, len(m.recentChatLogs)-start)
-	for _, entry := range m.recentChatLogs[start:] {
-		text := strings.Join(strings.Fields(entry.Text), " ")
-		if text == "" {
-			continue
-		}
-		at := entry.At
-		if at.IsZero() {
-			at = m.now()
-		}
-		lines = append(lines, at.Format("15:04:05")+" "+text)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (m Model) askAssistantCmd(messages []ChatMessage, snapshot StateSnapshot, view ViewContext) tea.Cmd {
@@ -1475,6 +1426,9 @@ func (m *Model) syncLayout(gotoBottom bool) {
 	m.chatViewport.SetContent(m.renderTranscript(layout.chatInnerWidth))
 	if gotoBottom {
 		m.chatViewport.GotoBottom()
+	}
+	if m.engineerLogVisible {
+		m.syncEngineerLogViewport(gotoBottom)
 	}
 }
 
@@ -2167,6 +2121,9 @@ func (m Model) renderTranscript(width int) string {
 	activeTab := m.normalizedTranscriptTab()
 	var lastFlowDate time.Time
 	for _, message := range m.messages {
+		if chatMessageIsLog(message) {
+			continue
+		}
 		if activeTab == bossTranscriptTabChat && chatMessageIsFlow(message) {
 			continue
 		}
@@ -2182,10 +2139,6 @@ func (m Model) renderTranscript(width int) string {
 				lastFlowDate = msgDate
 			}
 			blocks = append(blocks, renderFlowNoticeMessage(message, width, projectHighlights))
-			continue
-		}
-		if chatMessageIsLog(message) {
-			blocks = append(blocks, m.renderChatLogMessage(message.Content, width))
 			continue
 		}
 		if normalizeChatRole(message.Role) == "assistant" {
@@ -2626,22 +2579,6 @@ func (m Model) assistantMessagePrefix() string {
 		return "Chat> "
 	}
 	return "Boss> "
-}
-
-func (m Model) renderChatLogMessage(content string, width int) string {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return ""
-	}
-	style := bossToolCallStyle
-	if m.helpChat {
-		style = helpChatToolCallStyle
-	}
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		lines[i] = style.Render(fitLine(strings.TrimSpace(line), width))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (m Model) chatSurfaceLabel() string {

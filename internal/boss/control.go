@@ -859,7 +859,14 @@ func (m Model) applyControlInvocationResult(msg ControlInvocationResultMsg) (tea
 		}
 	}
 	if msg.AnnounceInChat {
-		if saved, ok := m.appendAssistantChatMessage(content); ok {
+		var saved ChatMessage
+		var ok bool
+		if m.helpChat && controlResultIsEngineerEvent(msg) {
+			saved, ok = m.appendAssistantEventMessage(content)
+		} else {
+			saved, ok = m.appendAssistantChatMessage(content)
+		}
+		if ok {
 			cmds = append(cmds, m.saveBossChatMessageCmd(saved))
 		}
 	}
@@ -879,13 +886,30 @@ func (m Model) applyHostNotice(msg HostNoticeMsg) (tea.Model, tea.Cmd) {
 	m.appendDeskEvent("host", "update", content)
 	var cmds []tea.Cmd
 	if msg.AnnounceInChat {
-		if saved, ok := m.appendAssistantNoticeMessage(content, msg.Handoff); ok {
+		if saved, ok := m.appendAssistantEventMessage(content, msg.Handoff); ok {
 			cmds = append(cmds, m.saveBossChatMessageCmd(saved))
 		}
 	}
 	m.status = operationalStatusLine(content, "Host update")
 	m.syncLayout(msg.AnnounceInChat)
 	return m, tea.Batch(cmds...)
+}
+
+func controlResultIsEngineerEvent(msg ControlInvocationResultMsg) bool {
+	if msg.Activity != nil {
+		return true
+	}
+	switch msg.Invocation.Capability {
+	case control.CapabilityEngineerSendPrompt,
+		control.CapabilityAgentTaskCreate,
+		control.CapabilityAgentTaskContinue,
+		control.CapabilityAgentTaskClose,
+		control.CapabilityProjectCreateAndStartEngineer,
+		control.CapabilityTodoCreateWorktreeAndStartEngineer:
+		return true
+	default:
+		return false
+	}
 }
 
 func operationalStatusLine(content, fallback string) string {

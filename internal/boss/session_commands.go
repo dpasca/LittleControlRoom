@@ -136,12 +136,28 @@ func (m *Model) appendAssistantNoticeMessage(content string, handoffs ...*Handof
 	return m.appendAssistantMessage(content, ChatMessageKindFlow, handoffs...)
 }
 
+func (m *Model) appendAssistantEventMessage(content string, handoffs ...*HandoffHighlight) (ChatMessage, bool) {
+	if m.helpChat {
+		return m.appendAssistantMessage(content, ChatMessageKindLog, handoffs...)
+	}
+	return m.appendAssistantMessage(content, ChatMessageKindFlow, handoffs...)
+}
+
 func (m *Model) appendAssistantMessage(content string, kind string, handoffs ...*HandoffHighlight) (ChatMessage, bool) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return ChatMessage{}, false
 	}
 	kind = normalizeChatMessageKind(kind)
+	if kind == ChatMessageKindLog {
+		for _, existing := range m.messages {
+			if normalizeChatRole(existing.Role) == "assistant" &&
+				normalizeChatMessageKind(existing.Kind) == kind &&
+				strings.TrimSpace(existing.Content) == content {
+				return ChatMessage{}, false
+			}
+		}
+	}
 	if len(m.messages) > 0 {
 		last := m.messages[len(m.messages)-1]
 		if normalizeChatRole(last.Role) == "assistant" && strings.TrimSpace(last.Content) == content && normalizeChatMessageKind(last.Kind) == kind {
