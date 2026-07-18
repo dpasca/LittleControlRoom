@@ -507,18 +507,74 @@ func (s *appServerSession) readStdout(r io.Reader) {
 }
 
 func (s *appServerSession) readStderr(r io.Reader) {
+	// Codex's tracing output emits a timestamped record header followed by the
+	// embedded error's newline-delimited context. Keep those continuation lines
+	// in one transcript block instead of presenting each as a separate notice.
+	recordIndex := -1
 	err := readLines(r, func(raw []byte) {
-		line := strings.TrimSpace(string(raw))
-		if line == "" {
+		line := strings.TrimRight(string(raw), " \t")
+		if strings.TrimSpace(line) == "" {
 			return
 		}
-		s.appendSystemNotice("codex stderr: " + line)
+		if recordIndex < 0 || startsCodexStderrRecord(line) {
+			recordIndex = -1
+			line = strings.TrimSpace(line)
+		}
+		recordIndex = s.appendCodexStderrLine(recordIndex, line)
 		s.maybeAppendCodeModeHostDiagnosis(line)
 		s.maybeAppendAuth403Diagnosis(line)
 	})
 	if err != nil {
 		s.appendSystemNotice("codex stderr stream error: " + err.Error())
 	}
+}
+
+func startsCodexStderrRecord(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return false
+	}
+	if _, err := time.Parse(time.RFC3339Nano, fields[0]); err != nil {
+		return false
+	}
+	switch fields[1] {
+	case "TRACE", "DEBUG", "INFO", "WARN", "ERROR":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *appServerSession) appendCodexStderrLine(recordIndex int, line string) int {
+	s.mu.Lock()
+	s.touchLocked()
+
+	message := ""
+	if recordIndex >= 0 &&
+		recordIndex < len(s.entries) &&
+		s.entries[recordIndex].codexStderr {
+		s.invalidateTranscriptCacheLocked()
+		s.entries[recordIndex].Text += "\n" + line
+		message = s.entries[recordIndex].Text
+	} else {
+		message = "codex stderr: " + strings.TrimSpace(line)
+		recordIndex = len(s.entries)
+		s.invalidateTranscriptCacheLocked()
+		s.entries = append(s.entries, transcriptEntry{
+			Kind:        TranscriptSystem,
+			Text:        message,
+			codexStderr: true,
+		})
+	}
+	s.lastSystemNotice = message
+	if label := compactCodexStatusLabel(message); label != "" {
+		s.status = label
+	} else {
+		s.status = message
+	}
+	s.mu.Unlock()
+	s.notify()
+	return recordIndex
 }
 
 func (s *appServerSession) waitForExit() {

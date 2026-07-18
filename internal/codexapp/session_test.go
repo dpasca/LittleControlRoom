@@ -2301,6 +2301,37 @@ func TestReadStderrUsesGenericCompactStatusForUnknownStderr(t *testing.T) {
 	}
 }
 
+func TestReadStderrGroupsMultilineDiagnostic(t *testing.T) {
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+	}
+	lines := []string{
+		"2026-07-18T11:48:07.742461Z ERROR codex_core::tools::router: error=apply_patch verification failed: Failed to find expected lines in /tmp/demo.md:",
+		"The renderer now maps total FOV to its invisible",
+		"    1,024-square collimated field and IFOV to the physical eye-relative aperture.",
+		"It deliberately leaves the steering tee gated.",
+	}
+
+	s.readStderr(strings.NewReader(strings.Join(lines, "\n") + "\n"))
+
+	snapshot := s.Snapshot()
+	if len(snapshot.Entries) != 1 {
+		t.Fatalf("entries = %#v, want one multiline stderr entry", snapshot.Entries)
+	}
+	want := "codex stderr: " + strings.Join(lines, "\n")
+	if snapshot.Entries[0].Kind != TranscriptSystem || snapshot.Entries[0].Text != want {
+		t.Fatalf("entry = %#v, want one grouped system notice %q", snapshot.Entries[0], want)
+	}
+	if snapshot.LastSystemNotice != want {
+		t.Fatalf("last system notice = %q, want grouped diagnostic %q", snapshot.LastSystemNotice, want)
+	}
+	if snapshot.Status != "Codex reported stderr" {
+		t.Fatalf("status = %q, want compact stderr status", snapshot.Status)
+	}
+}
+
 func TestReadStderrDiagnosesMissingCodeModeHostOnce(t *testing.T) {
 	s := &appServerSession{
 		projectPath: "/tmp/demo",
