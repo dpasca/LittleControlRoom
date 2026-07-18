@@ -35,6 +35,7 @@ const (
 // dirty.  See worktreeRemoveConfirmRemoveIndex / KeepIndex / FocusCount.
 
 const (
+	worktreeUpdatePendingSummary      = "Updating worktree from parent..."
 	worktreeMergePendingSummary       = "Merging worktree back..."
 	worktreeCommitMergePendingSummary = "Committing and merging worktree back..."
 	worktreeRemovePendingSummary      = "Removing worktree..."
@@ -478,7 +479,10 @@ func shouldRefreshWorktreeMergeFamilyAfterError(err error) bool {
 	}
 	text := strings.TrimSpace(err.Error())
 	return strings.Contains(text, "worktree is dirty; commit or discard changes before merging back") ||
-		strings.Contains(text, "root worktree is dirty; commit or discard changes before merging back")
+		strings.Contains(text, "root worktree is dirty; commit or discard changes before merging back") ||
+		strings.Contains(text, "worktree is dirty; commit or discard changes before updating from") ||
+		strings.Contains(text, "root worktree is dirty; commit or discard changes before updating the linked worktree") ||
+		strings.Contains(text, "merge conflict while updating")
 }
 
 func (m *Model) showSubmodulePublishBlockedMergeDialog(msg worktreeActionMsg, publishErr service.SubmodulePublishBlockedError) {
@@ -1440,6 +1444,108 @@ func (m *Model) openWorktreeMergeConfirmForSelection() tea.Cmd {
 	m.worktreeMergeConfirm.Selected = worktreeMergeConfirmApplyIndex(m.worktreeMergeConfirm)
 	m.status = worktreeMergeConfirmStatus(m.worktreeMergeConfirm)
 	return batchCmds(autoCloseCmd, m.refreshProjectStatusPathsCmd(project.Path, row.RootPath))
+}
+
+func (m *Model) updateWorktreeFromParentForSelection() tea.Cmd {
+	row, project, ok := m.selectedProjectRow()
+	if !ok {
+		m.status = "No project selected"
+		return nil
+	}
+	if row.Kind != projectListRowWorktree || project.WorktreeKind != model.WorktreeKindLinked {
+		m.status = "Select a linked worktree to update it from its parent"
+		return nil
+	}
+	parentBranch := strings.TrimSpace(project.WorktreeParentBranch)
+	if parentBranch == "" {
+		m.status = "This worktree has no recorded parent branch yet"
+		return nil
+	}
+	worktreeBranch := strings.TrimSpace(project.RepoBranch)
+	if worktreeBranch == "" {
+		m.status = "This worktree branch is unavailable right now"
+		return nil
+	}
+	if worktreeBranch == parentBranch {
+		m.status = "This worktree is already on its parent branch"
+		return nil
+	}
+	rootPath := strings.TrimSpace(row.RootPath)
+	if rootPath == "" {
+		rootPath = projectWorktreeRootPath(project)
+	}
+	if m.commitInFlightForWorktree(project, rootPath) {
+		m.status = "Another Git action is still in progress for this worktree family"
+		return nil
+	}
+	if project.RepoConflict {
+		m.status = "Resolve or abort this worktree's current Git operation before updating it"
+		return nil
+	}
+	if project.RepoDirty {
+		m.status = "Commit or discard worktree changes before updating from " + parentBranch
+		return nil
+	}
+	if snapshot := m.projectRuntimeSnapshot(project.Path); snapshot.Running {
+		m.status = "Stop the worktree runtime before updating from " + parentBranch
+		return nil
+	}
+	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok && worktreeUpdateSnapshotBusy(snapshot) {
+		m.status = "Wait for the active engineer turn to finish before updating this worktree"
+		return nil
+	}
+	if rootProject, ok := m.projectSummaryByPathAllProjects(rootPath); ok {
+		switch {
+		case rootProject.RepoConflict:
+			m.status = "Resolve or abort the root checkout's current Git operation before updating this worktree"
+			return nil
+		case rootProject.RepoDirty:
+			m.status = "Commit or discard root checkout changes before updating this worktree"
+			return nil
+		case strings.TrimSpace(rootProject.RepoBranch) != "" && strings.TrimSpace(rootProject.RepoBranch) != parentBranch:
+			m.status = fmt.Sprintf("The root checkout is on %s. Switch it to %s before updating this worktree.", strings.TrimSpace(rootProject.RepoBranch), parentBranch)
+			return nil
+		}
+	}
+
+	m.setPendingGitSummary(project.Path, worktreeUpdatePendingSummary)
+	m.status = worktreeUpdatePendingSummary
+	return m.updateWorktreeFromParentCmd(project.Path)
+}
+
+func worktreeUpdateSnapshotBusy(snapshot codexapp.Snapshot) bool {
+	if !snapshot.Started || snapshot.Closed {
+		return false
+	}
+	return snapshot.Busy || snapshot.BusyExternal || snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil
+}
+
+func (m Model) updateWorktreeFromParentCmd(projectPath string) tea.Cmd {
+	return func() tea.Msg {
+		msg := worktreeActionMsg{
+			projectPath:            projectPath,
+			selectPath:             projectPath,
+			clearPendingGitSummary: true,
+		}
+		if m.svc == nil {
+			msg.err = fmt.Errorf("service unavailable")
+			return msg
+		}
+		ctx, cancel := m.actionContext(tuiGitActionTimeout)
+		defer cancel()
+		result, err := m.svc.UpdateWorktreeFromParent(ctx, projectPath)
+		err = timeoutActionError(err, tuiGitActionTimeout, "updating the worktree from its parent branch")
+		if err != nil {
+			msg.err = err
+			return msg
+		}
+		if result.AlreadyCurrent {
+			msg.status = fmt.Sprintf("%s already contains the latest %s", result.WorktreeBranch, result.ParentBranch)
+		} else {
+			msg.status = fmt.Sprintf("Updated %s from %s", result.WorktreeBranch, result.ParentBranch)
+		}
+		return msg
+	}
 }
 
 func (m Model) updateWorktreeMergeConfirmMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
