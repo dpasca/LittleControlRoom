@@ -292,6 +292,10 @@ func (m Model) projectUnfinishedTurnLooksLive(project model.ProjectSummary, now 
 }
 
 func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) (string, string, bool) {
+	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok && resolver.active() {
+		tag := resolver.provider().SourceTag()
+		return tag + " resolve", tag, true
+	}
 	if entry, ok := m.restartWarmupForProject(project.Path); ok {
 		tag := entry.Provider.SourceTag()
 		return tag + " warmup", tag, true
@@ -330,6 +334,9 @@ func (m Model) projectAgentDisplay(project model.ProjectSummary, now time.Time) 
 }
 
 func (m Model) projectLiveEngineerAssessmentSummary(project model.ProjectSummary, now time.Time) (string, bool) {
+	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok && resolver.active() {
+		return resolver.summary(now), true
+	}
 	if snapshot, ok := m.liveCodexSnapshot(project.Path); ok {
 		startedAt, active := embeddedSnapshotActiveStartedAt(snapshot, project)
 		if !active {
@@ -857,6 +864,18 @@ func (m Model) repoCombinedDetailValue(project model.ProjectSummary) string {
 	} else {
 		parts = append(parts, detailMutedStyle.Render("clean"))
 	}
+	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok {
+		if label := resolver.repoLabel(); label != "" {
+			style := detailValueStyle
+			switch resolver.Phase {
+			case mergeConflictResolverNeedsAttention, mergeConflictResolverRefreshFailed:
+				style = detailWarningStyle
+			case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+				style = detailConflictStyle
+			}
+			parts = append(parts, style.Render(label))
+		}
+	}
 	if projectHasSubmoduleAttention(project) && m.pendingGitSummary(project.Path) == "" {
 		parts = append(parts, detailWarningStyle.Render(repoSubmoduleAttentionPlainText(project)))
 	}
@@ -912,14 +931,6 @@ func repoSubmoduleAttentionPlainText(project model.ProjectSummary) string {
 	default:
 		return fmt.Sprintf("submodules %d unpushed", unpushedCount)
 	}
-}
-
-func repoConflictDetailValue(project model.ProjectSummary) string {
-	location := "repo"
-	if project.WorktreeKind == model.WorktreeKindLinked {
-		location = "worktree"
-	}
-	return detailConflictStyle.Render("Unmerged files are present in this " + location + ". Use /resolve to start a background conflict resolver, or resolve/abort the in-progress Git operation manually.")
 }
 
 func worktreeIntegrationStatusDetailValue(project model.ProjectSummary) string {

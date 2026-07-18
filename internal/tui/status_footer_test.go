@@ -573,6 +573,29 @@ func TestDispatchResolveStartsParallelBackgroundResolverWithoutReplacingEngineer
 	if parallel, ok := manager.ParallelSession(projectPath); !ok || parallel == interactive {
 		t.Fatalf("parallel session = (%#v, %v), want a distinct resolver", parallel, ok)
 	}
+
+	applied, _ := got.applyMergeConflictResolverOpenedMsg(opened)
+	visible := applied.(Model)
+	resolver, ok := visible.mergeConflictResolverForProject(projectPath)
+	if !ok || resolver.Phase != mergeConflictResolverRunning {
+		t.Fatalf("resolver view state = (%#v, %v), want running", resolver, ok)
+	}
+	topStatus := ansi.Strip(visible.renderTopStatusLine(180))
+	if !strings.Contains(topStatus, "RESOLVING") || strings.Contains(topStatus, "use /resolve") {
+		t.Fatalf("top status should replace stale conflict guidance with resolver state: %q", topStatus)
+	}
+	projectRow := ansi.Strip(visible.renderProjectList(160, 6))
+	for _, want := range []string{"resolve", "CX resolve"} {
+		if !strings.Contains(projectRow, want) {
+			t.Fatalf("project row missing resolver signal %q:\n%s", want, projectRow)
+		}
+	}
+	detail := strings.Join(strings.Fields(ansi.Strip(renderProjectDetailSurface(visible.buildProjectDetailSurface(visible.projects[0], model.ProjectDetail{}), 100))), " ")
+	for _, want := range []string{"Resolver:", "working in the background", "Run /resolve again to see its latest status"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("project detail missing resolver feedback %q:\n%s", want, detail)
+		}
+	}
 }
 
 func TestResolveGitlinkConflictTargetStartsBackgroundResolverInSubmoduleWorktree(t *testing.T) {
@@ -646,6 +669,9 @@ func TestResolveGitlinkConflictTargetStartsBackgroundResolverInSubmoduleWorktree
 	if opened.err != nil {
 		t.Fatalf("mergeConflictResolverOpenedMsg.err = %v", opened.err)
 	}
+	if opened.ownerProjectPath != parentPath {
+		t.Fatalf("resolver owner path = %q, want parent project %q", opened.ownerProjectPath, parentPath)
+	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
 	}
@@ -667,6 +693,13 @@ func TestResolveGitlinkConflictTargetStartsBackgroundResolverInSubmoduleWorktree
 		if !strings.Contains(requests[0].Prompt, want) {
 			t.Fatalf("/resolve gitlink prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
+	}
+
+	applied, _ := got.applyMergeConflictResolverOpenedMsg(opened)
+	visible := applied.(Model)
+	resolver, ok := visible.mergeConflictResolverForProject(parentPath)
+	if !ok || normalizeProjectPath(resolver.SessionProjectPath) != normalizeProjectPath(worktreePath) {
+		t.Fatalf("parent resolver state = (%#v, %v), want submodule worktree session", resolver, ok)
 	}
 }
 
@@ -707,18 +740,26 @@ func TestDispatchResolveReusesAlreadyRunningBackgroundResolver(t *testing.T) {
 	if len(firstMsgs) != 1 {
 		t.Fatalf("first /resolve messages = %#v, want one resolver result", firstMsgs)
 	}
+	firstOpened, ok := firstMsgs[0].(mergeConflictResolverOpenedMsg)
+	if !ok {
+		t.Fatalf("first /resolve result = %#v, want resolver open", firstMsgs[0])
+	}
+	applied, _ := first.applyMergeConflictResolverOpenedMsg(firstOpened)
+	running := applied.(Model)
+	// A targeted Git refresh may clear the conflict marker while the resolver
+	// is still verifying or committing. /resolve remains a useful status query.
+	running.projects[0].RepoConflict = false
 
-	_, secondCmd := first.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
-	secondMsgs := collectCmdMsgs(secondCmd)
+	secondUpdated, secondCmd := running.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
 	if len(requests) != 1 {
 		t.Fatalf("repeated /resolve created %d sessions, want 1", len(requests))
 	}
-	if len(secondMsgs) != 1 {
-		t.Fatalf("second /resolve messages = %#v, want one resolver result", secondMsgs)
+	if secondCmd != nil {
+		t.Fatal("repeated /resolve should report cached resolver progress without another launch command")
 	}
-	opened, ok := secondMsgs[0].(mergeConflictResolverOpenedMsg)
-	if !ok || !opened.reused || opened.err != nil {
-		t.Fatalf("second /resolve result = %#v, want reused active resolver", secondMsgs[0])
+	second := secondUpdated.(Model)
+	if !strings.Contains(second.status, "still working") || strings.Contains(second.status, "already running") {
+		t.Fatalf("repeated /resolve status should report useful progress, got %q", second.status)
 	}
 }
 
@@ -742,8 +783,20 @@ func TestBackgroundResolverCompletionAndAttentionAreSurfaced(t *testing.T) {
 		},
 	})
 	got := updated.(Model)
-	if got.status != "Background Codex conflict resolver finished" {
+	if got.status != "Background Codex conflict resolver finished; refreshing Git status" {
 		t.Fatalf("completion status = %q", got.status)
+	}
+	checking, ok := got.mergeConflictResolverForProject(projectPath)
+	if !ok || checking.Phase != mergeConflictResolverChecking {
+		t.Fatalf("terminal resolver state = (%#v, %v), want checking", checking, ok)
+	}
+	got.reconcileMergeConflictResolverProject(model.ProjectSummary{Path: projectPath, RepoConflict: false})
+	resolved, ok := got.mergeConflictResolverForProject(projectPath)
+	if !ok || resolved.Phase != mergeConflictResolverResolved {
+		t.Fatalf("refreshed resolver state = (%#v, %v), want resolved", resolved, ok)
+	}
+	if rendered := ansi.Strip(got.renderTopStatusLine(160)); !strings.Contains(rendered, "RESOLVED") {
+		t.Fatalf("top status missing persistent resolver outcome: %q", rendered)
 	}
 
 	updated, _ = got.applyMergeConflictResolverUpdateMsg(mergeConflictResolverUpdateMsg{
@@ -764,6 +817,10 @@ func TestBackgroundResolverCompletionAndAttentionAreSurfaced(t *testing.T) {
 	if got.status != "Background conflict resolver needs attention" {
 		t.Fatalf("attention status = %q", got.status)
 	}
+	waiting, ok := got.mergeConflictResolverForProject(projectPath)
+	if !ok || waiting.Phase != mergeConflictResolverNeedsAttention {
+		t.Fatalf("attention resolver state = (%#v, %v), want needs attention", waiting, ok)
+	}
 	if got.actionNoticeDialog == nil {
 		t.Fatal("resolver attention did not open a notice")
 	}
@@ -778,6 +835,43 @@ func TestBackgroundResolverCompletionAndAttentionAreSurfaced(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("resolver attention notice missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestBackgroundResolverReconcilesGitConflictOutcome(t *testing.T) {
+	projectPath := "/tmp/resolve-reconcile"
+	m := Model{}
+	m.markMergeConflictResolverStarting(projectPath, projectPath, codexapp.ProviderCodex)
+	m.updateMergeConflictResolverSnapshot(projectPath, codexapp.Snapshot{
+		Provider:    codexapp.ProviderCodex,
+		ProjectPath: projectPath,
+		ThreadID:    "resolve-reconcile-session",
+		Started:     true,
+	}, true)
+	m.failMergeConflictResolverRefresh(projectPath, errors.New("refresh timed out"))
+	refreshFailed, ok := m.mergeConflictResolverForProject(projectPath)
+	if !ok || refreshFailed.Phase != mergeConflictResolverRefreshFailed || !strings.Contains(refreshFailed.summary(time.Time{}), "refresh timed out") {
+		t.Fatalf("refresh failure state = (%#v, %v), want explicit Git-status failure", refreshFailed, ok)
+	}
+
+	m.reconcileMergeConflictResolverProject(model.ProjectSummary{Path: projectPath, RepoConflict: true})
+	remaining, ok := m.mergeConflictResolverForProject(projectPath)
+	if !ok || remaining.Phase != mergeConflictResolverConflictsRemain {
+		t.Fatalf("conflicted refresh state = (%#v, %v), want conflicts remain", remaining, ok)
+	}
+	if detail := m.repoConflictDetailText(model.ProjectSummary{Path: projectPath, RepoConflict: true}); !strings.Contains(detail, "finished") || !strings.Contains(detail, "retry") {
+		t.Fatalf("remaining-conflict detail should explain the resolver outcome: %q", detail)
+	}
+
+	m.reconcileMergeConflictResolverProject(model.ProjectSummary{Path: projectPath, RepoConflict: false})
+	resolved, ok := m.mergeConflictResolverForProject(projectPath)
+	if !ok || resolved.Phase != mergeConflictResolverResolved {
+		t.Fatalf("clean refresh state = (%#v, %v), want resolved", resolved, ok)
+	}
+
+	m.reconcileMergeConflictResolverProject(model.ProjectSummary{Path: projectPath, RepoConflict: true})
+	if stale, ok := m.mergeConflictResolverForProject(projectPath); ok {
+		t.Fatalf("later conflict retained stale completed resolver state: %#v", stale)
 	}
 }
 

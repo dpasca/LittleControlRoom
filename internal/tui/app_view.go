@@ -530,9 +530,30 @@ func (m Model) renderTopStatusLine(width int) string {
 	if aiNotice := m.renderAIBackendStatusNotice(); aiNotice != "" {
 		statusParts = append(statusParts, aiNotice)
 	}
-	if project, ok := m.selectedProject(); ok && project.RepoConflict {
-		statusParts = append(statusParts, topStatusConflictBadgeStyle.Render("MERGE CONFLICT"))
-		statusParts = append(statusParts, detailConflictStyle.Render("selected repo has unmerged files; use /resolve"))
+	if project, ok := m.selectedProject(); ok {
+		if resolver, found := m.mergeConflictResolverForProject(project.Path); found {
+			switch resolver.Phase {
+			case mergeConflictResolverStarting, mergeConflictResolverRunning:
+				statusParts = append(statusParts, topStatusResolverBadgeStyle.Render("RESOLVING"))
+				statusParts = append(statusParts, detailValueStyle.Render("background "+resolver.provider().Label()+" resolver active"))
+			case mergeConflictResolverChecking:
+				statusParts = append(statusParts, topStatusResolverBadgeStyle.Render("CHECKING GIT"))
+			case mergeConflictResolverNeedsAttention:
+				statusParts = append(statusParts, topStatusWarningBadgeStyle.Render("RESOLVER WAITING"))
+				statusParts = append(statusParts, detailWarningStyle.Render("background resolver needs input; see project detail"))
+			case mergeConflictResolverRefreshFailed:
+				statusParts = append(statusParts, topStatusWarningBadgeStyle.Render("GIT STATUS UNKNOWN"))
+				statusParts = append(statusParts, detailWarningStyle.Render(resolver.summary(m.currentTime())))
+			case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+				statusParts = append(statusParts, topStatusConflictBadgeStyle.Render("RESOLVER BLOCKED"))
+				statusParts = append(statusParts, detailConflictStyle.Render(resolver.summary(m.currentTime())))
+			case mergeConflictResolverResolved:
+				statusParts = append(statusParts, topStatusResolverBadgeStyle.Render("RESOLVED"))
+			}
+		} else if project.RepoConflict {
+			statusParts = append(statusParts, topStatusConflictBadgeStyle.Render("MERGE CONFLICT"))
+			statusParts = append(statusParts, detailConflictStyle.Render("selected repo has unmerged files; use /resolve"))
+		}
 	}
 	if project, ok := m.selectedProject(); ok {
 		if state, found := m.repositoryIntegrityStateForProject(project.Path); found && state.Displaced && model.NormalizeRepositoryIntegrityMode(state.Mode) != model.RepositoryIntegrityModeOff {
@@ -1180,6 +1201,40 @@ func (m Model) renderProjectList(width, height int) string {
 			assessmentText = liveSummary
 			statusStyle = classificationCategoryStyle(model.SessionCategoryInProgress)
 			summaryStyle = detailValueStyle
+		}
+		if resolver, ok := m.mergeConflictResolverForProject(p.Path); ok && !agentTaskRow && !browserAttentionRow && !pendingLaunchRow {
+			switch resolver.Phase {
+			case mergeConflictResolverStarting, mergeConflictResolverRunning:
+				statusText = "resolve"
+				assessmentText = resolver.summary(now)
+				statusStyle = classificationCategoryStyle(model.SessionCategoryInProgress)
+				summaryStyle = detailValueStyle
+			case mergeConflictResolverChecking:
+				statusText = "checking"
+				assessmentText = resolver.summary(now)
+				statusStyle = classificationCategoryStyle(model.SessionCategoryInProgress)
+				summaryStyle = detailValueStyle
+			case mergeConflictResolverNeedsAttention:
+				statusText = "waiting"
+				assessmentText = resolver.summary(now)
+				statusStyle = detailWarningStyle
+				summaryStyle = detailWarningStyle
+			case mergeConflictResolverRefreshFailed:
+				statusText = "unknown"
+				assessmentText = resolver.summary(now)
+				statusStyle = detailWarningStyle
+				summaryStyle = detailWarningStyle
+			case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+				statusText = "blocked"
+				assessmentText = resolver.summary(now)
+				statusStyle = detailConflictStyle
+				summaryStyle = detailConflictStyle
+			case mergeConflictResolverResolved:
+				statusText = "resolved"
+				assessmentText = resolver.summary(now)
+				statusStyle = detailValueStyle
+				summaryStyle = detailValueStyle
+			}
 		}
 		todoCount := projectTODOCountLabel(p.OpenTODOCount)
 		runLabel, runState := projectRunSummary(runtimeSnapshot, p.RunCommand)

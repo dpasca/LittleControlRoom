@@ -217,12 +217,26 @@ func projectAttentionLabel(project model.ProjectSummary) string {
 }
 
 // projectRepoWarningIndicator returns a styled repo-state indicator.
-// Conflict → pulsing violet "!", in-flight git op → cyan spinner, dirty worktree → red "!",
+// Resolver/git work → cyan spinner, resolved resolver → cyan check, resolver attention → warning,
+// conflict → pulsing violet "!", dirty worktree → red "!",
 // linked worktree pending integration → orange "M", orphaned linked checkout → orange "~",
 // sync-only → orange "!", neither → space.
 func (m Model) projectRepoWarningIndicator(project model.ProjectSummary, spinnerFrame int) string {
 	if !projectUsesRepoUI(project) {
 		return " "
+	}
+	if resolver, ok := m.mergeConflictResolverForProject(project.Path); ok {
+		switch resolver.Phase {
+		case mergeConflictResolverStarting, mergeConflictResolverRunning, mergeConflictResolverChecking:
+			frame := spinnerFrames[spinnerFrame%len(spinnerFrames)]
+			return detailValueStyle.Render(frame)
+		case mergeConflictResolverResolved:
+			return detailValueStyle.Render("✓")
+		case mergeConflictResolverNeedsAttention, mergeConflictResolverRefreshFailed:
+			return detailWarningStyle.Render("?")
+		case mergeConflictResolverFailed, mergeConflictResolverConflictsRemain:
+			return detailConflictStyle.Render("!")
+		}
 	}
 	if _, ok := m.pendingGitOperation(project.Path); ok {
 		frame := spinnerFrames[spinnerFrame%len(spinnerFrames)]

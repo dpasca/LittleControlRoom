@@ -177,7 +177,7 @@ var specs = []Spec{
 	{Name: "commit", Usage: "/commit [message]", Summary: "Preview a commit; Alt+Enter also pushes when available"},
 	{Name: "push", Usage: "/push", Summary: "Push the selected project when its branch is ahead"},
 	{Name: "pull", Usage: "/pull", Summary: "Pull the selected project when its branch is behind"},
-	{Name: "resolve", Usage: "/resolve", Summary: "Resolve selected repo merge conflicts in a background engineer session"},
+	{Name: "resolve", Usage: "/resolve", Summary: "Resolve merge conflicts in the background with project-row progress"},
 	{Name: "integrity", Usage: "/integrity", Summary: "Inspect a displaced repository root and choose a safe response"},
 	{Name: "codex", Usage: "/codex [prompt]", Summary: "Resume the selected project's latest Codex session, or start a new one"},
 	{Name: "codex-new", Usage: "/codex-new [prompt]", Summary: "Start a fresh Codex session in the selected project"},
