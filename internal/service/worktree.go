@@ -182,6 +182,9 @@ func (s *Service) CreateTodoWorktree(ctx context.Context, req CreateTodoWorktree
 	if attachErr != nil {
 		return result, fmt.Errorf("created worktree at %s but failed to track it in Little Control Room: %w", worktreePath, attachErr)
 	}
+	if err := s.store.SetWorktreeInitialBranch(ctx, worktreePath, branchName); err != nil {
+		return result, fmt.Errorf("record initial branch for worktree %s: %w", worktreePath, err)
+	}
 	if sourceRunCommand != "" {
 		if err := s.store.SetRunCommand(ctx, worktreePath, sourceRunCommand); err != nil {
 			return result, fmt.Errorf("inherit run command for worktree %s: %w", worktreePath, err)

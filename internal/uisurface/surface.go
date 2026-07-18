@@ -479,6 +479,17 @@ func BuildProjectDetailOverview(project model.ProjectSummary, options BuildOptio
 		statusFields = append(statusFields, FieldValue("Activity", item.Activity.Label, item.Activity.Tone))
 	}
 	surface.FieldGroup(statusFields...)
+	if project.WorktreeBranchChanged() {
+		surface.WrappedField(
+			"Worktree warning",
+			fmt.Sprintf(
+				"Branch changed from %s to %s. The checkout may have been repurposed; its folder and origin TODO can still describe the original task.",
+				strings.TrimSpace(project.WorktreeInitialBranch),
+				strings.TrimSpace(project.RepoBranch),
+			),
+			ToneWarning,
+		)
+	}
 	return surface
 }
 

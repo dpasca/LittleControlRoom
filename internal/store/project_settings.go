@@ -112,6 +112,20 @@ func (s *Store) SetWorktreeParentBranch(ctx context.Context, path, branch string
 	return err
 }
 
+// SetWorktreeInitialBranch records the branch used for the current checkout's creation.
+func (s *Store) SetWorktreeInitialBranch(ctx context.Context, path, branch string) error {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return errors.New("worktree initial branch is required")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE projects
+		SET worktree_initial_branch = ?, updated_at = ?
+		WHERE path = ?
+	`, branch, time.Now().Unix(), path)
+	return err
+}
+
 func (s *Store) SetWorktreeOriginTodoID(ctx context.Context, path string, todoID int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET worktree_origin_todo_id = ?, updated_at = ? WHERE path = ?`, todoID, time.Now().Unix(), path)
 	return err

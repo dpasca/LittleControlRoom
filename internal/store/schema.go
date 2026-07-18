@@ -24,6 +24,7 @@ func (s *Store) initSchema(ctx context.Context) error {
 			worktree_root_path TEXT NOT NULL DEFAULT '',
 			worktree_kind TEXT NOT NULL DEFAULT '',
 			worktree_parent_branch TEXT NOT NULL DEFAULT '',
+			worktree_initial_branch TEXT NOT NULL DEFAULT '',
 			worktree_merge_status TEXT NOT NULL DEFAULT '',
 			worktree_origin_todo_id INTEGER NOT NULL DEFAULT 0,
 			repo_branch TEXT NOT NULL DEFAULT '',
@@ -821,6 +822,11 @@ func (s *Store) ensureProjectsWorktreeColumns(ctx context.Context) error {
 			return fmt.Errorf("add projects.worktree_parent_branch column: %w", err)
 		}
 	}
+	if _, ok := columns["worktree_initial_branch"]; !ok {
+		if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN worktree_initial_branch TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add projects.worktree_initial_branch column: %w", err)
+		}
+	}
 	if _, ok := columns["worktree_merge_status"]; !ok {
 		if _, err := s.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN worktree_merge_status TEXT NOT NULL DEFAULT ''`); err != nil {
 			return fmt.Errorf("add projects.worktree_merge_status column: %w", err)
@@ -831,7 +837,91 @@ func (s *Store) ensureProjectsWorktreeColumns(ctx context.Context) error {
 			return fmt.Errorf("add projects.worktree_origin_todo_id column: %w", err)
 		}
 	}
+	return s.backfillWorktreeInitialBranches(ctx)
+}
+
+type worktreeInitialBranchBackfill struct {
+	path   string
+	branch string
+}
+
+func (s *Store) backfillWorktreeInitialBranches(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.path, e.payload
+		FROM projects p
+		JOIN events e ON e.id = (
+			SELECT e2.id
+			FROM events e2
+			WHERE e2.project_path = p.path
+				AND e2.event_type = 'action_applied'
+				AND SUBSTR(e2.payload, 1, 16) = 'create_worktree '
+			ORDER BY e2.id ASC
+			LIMIT 1
+		)
+		WHERE p.worktree_kind = ?
+			AND TRIM(p.worktree_initial_branch) = ''
+	`, string(model.WorktreeKindLinked))
+	if err != nil {
+		return fmt.Errorf("load linked worktree creation branches: %w", err)
+	}
+
+	var backfills []worktreeInitialBranchBackfill
+	for rows.Next() {
+		var path, payload string
+		if err := rows.Scan(&path, &payload); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan linked worktree creation branch: %w", err)
+		}
+		if branch := worktreeInitialBranchFromCreationEvent(payload); branch != "" {
+			backfills = append(backfills, worktreeInitialBranchBackfill{path: path, branch: branch})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("read linked worktree creation branches: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close linked worktree creation branches: %w", err)
+	}
+	if len(backfills) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin linked worktree branch backfill: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, backfill := range backfills {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE projects
+			SET worktree_initial_branch = ?
+			WHERE path = ? AND TRIM(worktree_initial_branch) = ''
+		`, backfill.branch, backfill.path); err != nil {
+			return fmt.Errorf("backfill initial branch for %s: %w", backfill.path, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit linked worktree branch backfill: %w", err)
+	}
 	return nil
+}
+
+func worktreeInitialBranchFromCreationEvent(payload string) string {
+	payload = strings.TrimSpace(payload)
+	if !strings.HasPrefix(payload, "create_worktree ") {
+		return ""
+	}
+	const branchMarker = " branch="
+	markerIndex := strings.LastIndex(payload, branchMarker)
+	if markerIndex < 0 {
+		return ""
+	}
+	branch := strings.TrimSpace(payload[markerIndex+len(branchMarker):])
+	if branch == "" || strings.ContainsAny(branch, " \t\r\n") {
+		return ""
+	}
+	return branch
 }
 
 func (s *Store) ensureProjectsManualAddedColumn(ctx context.Context) error {

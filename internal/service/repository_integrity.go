@@ -287,6 +287,9 @@ func (s *Service) RepairRepositoryRoot(ctx context.Context, req RepositoryIntegr
 	if attachErr != nil {
 		return result, fmt.Errorf("repaired the root checkout and created %s, but failed to track it in Little Control Room: %w", worktreePath, attachErr)
 	}
+	if err := s.store.SetWorktreeInitialBranch(ctx, worktreePath, state.ActualBranch); err != nil {
+		return result, fmt.Errorf("repaired the root checkout but failed to record the initial branch for %s: %w", worktreePath, err)
+	}
 	if sourceRunCommand != "" {
 		if err := s.store.SetRunCommand(ctx, worktreePath, sourceRunCommand); err != nil {
 			return result, fmt.Errorf("repaired the root checkout but failed to inherit the run command for %s: %w", worktreePath, err)

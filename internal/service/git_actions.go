@@ -1043,6 +1043,7 @@ func projectStateFromDetail(detail model.ProjectDetail) model.ProjectState {
 		WorktreeRootPath:           detail.Summary.WorktreeRootPath,
 		WorktreeKind:               detail.Summary.WorktreeKind,
 		WorktreeParentBranch:       detail.Summary.WorktreeParentBranch,
+		WorktreeInitialBranch:      detail.Summary.WorktreeInitialBranch,
 		WorktreeMergeStatus:        detail.Summary.WorktreeMergeStatus,
 		WorktreeOriginTodoID:       detail.Summary.WorktreeOriginTodoID,
 		RepoBranch:                 detail.Summary.RepoBranch,

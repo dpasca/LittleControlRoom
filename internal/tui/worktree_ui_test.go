@@ -773,6 +773,45 @@ func TestRenderDetailContentShowsSessionSummaryBeforeWorktreeInfo(t *testing.T) 
 	}
 }
 
+func TestRenderDetailContentWarnsWhenLinkedWorktreeBranchChanged(t *testing.T) {
+	rootPath := "/tmp/repo"
+	childPath := "/tmp/repo--hud-radial-widgets"
+	m := Model{
+		allProjects: []model.ProjectSummary{
+			{
+				Name:             "repo",
+				Path:             rootPath,
+				Status:           model.StatusIdle,
+				PresentOnDisk:    true,
+				WorktreeRootPath: rootPath,
+				WorktreeKind:     model.WorktreeKindMain,
+				RepoBranch:       "master",
+			},
+			{
+				Name:                  "repo--hud-radial-widgets",
+				Path:                  childPath,
+				Status:                model.StatusIdle,
+				PresentOnDisk:         true,
+				WorktreeRootPath:      rootPath,
+				WorktreeKind:          model.WorktreeKindLinked,
+				WorktreeParentBranch:  "master",
+				WorktreeInitialBranch: "hud/radial-widgets",
+				RepoBranch:            "hud/aim9-format",
+			},
+		},
+		visibility: visibilityAllFolders,
+		sortMode:   sortByAttention,
+	}
+	m.rebuildProjectList(childPath)
+
+	rendered := ansi.Strip(m.renderDetailContent(100))
+	for _, fragment := range []string{"Worktree warning:", "Branch changed from hud/radial-widgets to hud/aim9-format", "been repurposed"} {
+		if !strings.Contains(rendered, fragment) {
+			t.Fatalf("renderDetailContent() missing branch-change warning fragment %q: %q", fragment, rendered)
+		}
+	}
+}
+
 func TestRenderDetailContentSkipsWorktreeLaneSectionForLinkedSelection(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"

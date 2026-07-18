@@ -149,6 +149,7 @@ func projectStateFromSummaryAndEvidence(summary model.ProjectSummary, evidence s
 		WorktreeRootPath:           summary.WorktreeRootPath,
 		WorktreeKind:               summary.WorktreeKind,
 		WorktreeParentBranch:       summary.WorktreeParentBranch,
+		WorktreeInitialBranch:      summary.WorktreeInitialBranch,
 		WorktreeMergeStatus:        summary.WorktreeMergeStatus,
 		WorktreeOriginTodoID:       summary.WorktreeOriginTodoID,
 		RepoBranch:                 summary.RepoBranch,

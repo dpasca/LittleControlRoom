@@ -312,6 +312,7 @@ func (s *Service) upsertManualProjectState(ctx context.Context, existing model.P
 		WorktreeRootPath:           worktreeRootPath,
 		WorktreeKind:               worktreeKind,
 		WorktreeParentBranch:       worktreeParentBranch,
+		WorktreeInitialBranch:      existing.WorktreeInitialBranch,
 		WorktreeMergeStatus:        worktreeMergeStatus,
 		WorktreeOriginTodoID:       existing.WorktreeOriginTodoID,
 		RepoBranch:                 repoBranch,

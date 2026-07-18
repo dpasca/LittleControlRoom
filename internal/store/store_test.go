@@ -1870,6 +1870,58 @@ func TestForceQueueTodoWorktreeSuggestionBypassesDebounce(t *testing.T) {
 	}
 }
 
+func TestOpenBackfillsWorktreeInitialBranchFromCreationEvent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	dbPath := filepath.Join(t.TempDir(), "worktree-branch-backfill.sqlite")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	projectPath := "/tmp/repo--hud-radial-widgets"
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:                 projectPath,
+		Name:                 "repo--hud-radial-widgets",
+		Status:               model.StatusIdle,
+		PresentOnDisk:        true,
+		InScope:              true,
+		WorktreeRootPath:     "/tmp/repo",
+		WorktreeKind:         model.WorktreeKindLinked,
+		WorktreeParentBranch: "master",
+		RepoBranch:           "hud/aim9-format",
+		UpdatedAt:            time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert linked worktree: %v", err)
+	}
+	if err := st.AddEvent(ctx, model.StoredEvent{
+		ProjectPath: projectPath,
+		Type:        "action_applied",
+		Payload:     "create_worktree root=/tmp/repo branch=hud/radial-widgets",
+	}); err != nil {
+		t.Fatalf("record worktree creation event: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store before migration: %v", err)
+	}
+
+	st, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	summary, err := st.GetProjectSummary(ctx, projectPath, true)
+	if err != nil {
+		t.Fatalf("load backfilled worktree: %v", err)
+	}
+	if got, want := summary.WorktreeInitialBranch, "hud/radial-widgets"; got != want {
+		t.Fatalf("backfilled initial branch = %q, want %q", got, want)
+	}
+	if !summary.WorktreeBranchChanged() {
+		t.Fatalf("expected backfilled worktree to report a branch change: %#v", summary)
+	}
+}
+
 func TestOpenMigratesProjectsInScopeColumn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

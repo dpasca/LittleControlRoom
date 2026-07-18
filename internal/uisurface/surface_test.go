@@ -284,6 +284,41 @@ func TestBuildProjectDetailStartsWithSharedOverview(t *testing.T) {
 	}
 }
 
+func TestBuildProjectDetailOverviewWarnsWhenLinkedWorktreeBranchChanged(t *testing.T) {
+	t.Parallel()
+	project := model.ProjectSummary{
+		Path:                  "/tmp/repo--hud-radial-widgets",
+		Name:                  "repo--hud-radial-widgets",
+		PresentOnDisk:         true,
+		WorktreeKind:          model.WorktreeKindLinked,
+		WorktreeInitialBranch: "hud/radial-widgets",
+		RepoBranch:            "hud/aim9-format",
+	}
+
+	overview := BuildProjectDetailOverview(project, BuildOptions{})
+	if got, want := len(overview.Blocks), 4; got != want {
+		t.Fatalf("overview block count = %d, want %d with worktree warning", got, want)
+	}
+	warning := overview.Blocks[3]
+	if got, want := warning.Label, "Worktree warning"; got != want {
+		t.Fatalf("warning label = %q, want %q", got, want)
+	}
+	if warning.Tone != ToneWarning {
+		t.Fatalf("warning tone = %q, want %q", warning.Tone, ToneWarning)
+	}
+	for _, fragment := range []string{"Branch changed", "hud/radial-widgets", "hud/aim9-format", "repurposed"} {
+		if !strings.Contains(warning.Text, fragment) {
+			t.Fatalf("warning text = %q, want fragment %q", warning.Text, fragment)
+		}
+	}
+
+	project.RepoBranch = project.WorktreeInitialBranch
+	overview = BuildProjectDetailOverview(project, BuildOptions{})
+	if got, want := len(overview.Blocks), 3; got != want {
+		t.Fatalf("overview block count = %d, want %d when branch identity matches", got, want)
+	}
+}
+
 func TestWorktreeDescriptionReportsPendingIntegrationForDirtyWorktree(t *testing.T) {
 	t.Parallel()
 	project := model.ProjectSummary{

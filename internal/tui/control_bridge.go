@@ -1672,14 +1672,16 @@ func (m Model) applyBossTodoWorktreePrepared(msg bossTodoWorktreePreparedMsg) (t
 	msg.input.WorktreePath = strings.TrimSpace(msg.result.WorktreePath)
 	msg.inv = trackedWorkInvocationFromInput(msg.inv, msg.input)
 	worktreeProject := model.ProjectSummary{
-		Path:                 msg.result.WorktreePath,
-		Name:                 filepath.Base(msg.result.WorktreePath),
-		PresentOnDisk:        true,
-		InScope:              true,
-		WorktreeRootPath:     msg.result.RootProjectPath,
-		WorktreeKind:         model.WorktreeKindLinked,
-		WorktreeParentBranch: msg.result.ParentBranch,
-		WorktreeOriginTodoID: msg.todo.ID,
+		Path:                  msg.result.WorktreePath,
+		Name:                  filepath.Base(msg.result.WorktreePath),
+		PresentOnDisk:         true,
+		InScope:               true,
+		WorktreeRootPath:      msg.result.RootProjectPath,
+		WorktreeKind:          model.WorktreeKindLinked,
+		WorktreeParentBranch:  msg.result.ParentBranch,
+		WorktreeInitialBranch: msg.result.BranchName,
+		WorktreeOriginTodoID:  msg.todo.ID,
+		RepoBranch:            msg.result.BranchName,
 	}
 	prompt := m.engineerPromptWithRuntimeContext(msg.project, msg.input.Prompt, msg.todo)
 	updated, cmd := m.launchEmbeddedForProjectWithOptions(worktreeProject, msg.provider, embeddedLaunchOptions{
