@@ -1775,9 +1775,8 @@ func (m Model) currentSettingsBaseline() config.EditableSettings {
 	if m.settingsBaseline != nil {
 		return cloneEditableSettings(*m.settingsBaseline)
 	}
-	if m.svc != nil {
-		return config.EditableSettingsFromAppConfig(m.svc.Config())
-	}
+	// This helper is used throughout Update and View. Never fall back to the
+	// service here: its config mutex may be held by background reconfiguration.
 	return config.EditableSettingsFromAppConfig(config.Default())
 }
 
@@ -1785,18 +1784,12 @@ func (m Model) currentConfigPath() string {
 	if path := strings.TrimSpace(m.settingsConfigPath); path != "" {
 		return path
 	}
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().ConfigPath)
-	}
 	return config.Default().ConfigPath
 }
 
 func (m Model) currentWritableConfigPath() string {
 	if path := strings.TrimSpace(m.settingsConfigPath); path != "" {
 		return path
-	}
-	if m.svc != nil {
-		return strings.TrimSpace(m.svc.Config().ConfigPath)
 	}
 	return ""
 }

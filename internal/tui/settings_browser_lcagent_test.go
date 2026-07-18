@@ -821,6 +821,7 @@ func TestReloadEmbeddedLCAgentAfterSettingsUsesSavedWebSearch(t *testing.T) {
 		svc:                      service.New(cfg, nil, events.NewBus(), nil),
 		codexManager:             manager,
 		settingsBaseline:         &previous,
+		appDBPath:                cfg.DBPath,
 		settingsEmbeddedProject:  "/tmp/demo",
 		settingsEmbeddedProvider: codexapp.ProviderLCAgent,
 	}

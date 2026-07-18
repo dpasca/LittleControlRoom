@@ -2,15 +2,18 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"lcroom/internal/brand"
 	"lcroom/internal/browserctl"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/codexcli"
 	"lcroom/internal/config"
 	"lcroom/internal/model"
 	"lcroom/internal/service"
+	"lcroom/internal/todocapture"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -1236,6 +1239,20 @@ func (m Model) appDataDir() string {
 		return path
 	}
 	return config.Default().DataDir
+}
+
+func (m Model) embeddedLaunchDBPath() string {
+	if path := strings.TrimSpace(m.appDBPath); path != "" {
+		return path
+	}
+	return filepath.Join(m.appDataDir(), brand.DBFileName)
+}
+
+func (m Model) embeddedLaunchTodoCaptureMode() todocapture.CaptureMode {
+	if m.settingsBaseline == nil {
+		return todocapture.ModeOff
+	}
+	return todocapture.NormalizeCaptureMode(m.settingsBaseline.EngineerTodoCaptureMode)
 }
 
 func (m Model) codexHome() string {

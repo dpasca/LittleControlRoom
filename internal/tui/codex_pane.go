@@ -1360,17 +1360,16 @@ func (m *Model) openCodexSessionCmdWithVisibility(req codexapp.LaunchRequest, re
 
 func (m Model) enrichEmbeddedLaunchRequest(req codexapp.LaunchRequest) codexapp.LaunchRequest {
 	req = m.applyEmbeddedModelPreference(req)
-	if m.svc != nil {
-		cfg := m.svc.Config()
-		if strings.TrimSpace(req.AppDBPath) == "" {
-			req.AppDBPath = cfg.DBPath
-		}
-		if req.TodoCaptureMode == "" {
-			req.TodoCaptureMode = cfg.EngineerTodoCaptureMode
-		}
-		if req.TodoCaptureHandler == nil {
-			req.TodoCaptureHandler = m.svc
-		}
+	// Launch preparation runs on Bubble Tea's Update path. Use the TUI-owned
+	// config snapshot here so a contended service lock cannot freeze input.
+	if strings.TrimSpace(req.AppDBPath) == "" {
+		req.AppDBPath = m.embeddedLaunchDBPath()
+	}
+	if req.TodoCaptureMode == "" {
+		req.TodoCaptureMode = m.embeddedLaunchTodoCaptureMode()
+	}
+	if req.TodoCaptureHandler == nil && m.svc != nil {
+		req.TodoCaptureHandler = m.svc
 	}
 	provider := req.Provider.Normalized()
 	if provider == "" {

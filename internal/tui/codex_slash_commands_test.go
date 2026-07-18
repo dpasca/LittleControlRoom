@@ -597,12 +597,15 @@ func TestReconnectPreservesTodoCaptureContextForEveryEmbeddedProvider(t *testing
 				t.Fatal(err)
 			}
 
+			settings := config.EditableSettingsFromAppConfig(cfg)
 			m := Model{
 				svc:                 svc,
 				codexManager:        manager,
 				runtimeManager:      runtimeManager,
 				codexVisibleProject: "/tmp/demo",
 				appDataDirPath:      cfg.DataDir,
+				appDBPath:           cfg.DBPath,
+				settingsBaseline:    &settings,
 			}
 			cmd := m.reconnectVisibleCodexSessionCmd()
 			if cmd == nil {
@@ -635,6 +638,35 @@ func TestReconnectPreservesTodoCaptureContextForEveryEmbeddedProvider(t *testing
 				t.Fatalf("reconnect TODO session key = %q, want existing thread", reconnect.TodoCaptureSessionKey)
 			}
 		})
+	}
+}
+
+func TestEnrichEmbeddedLaunchRequestUsesCachedTodoCaptureContext(t *testing.T) {
+	serviceCfg := config.Default()
+	serviceCfg.DBPath = "/tmp/service.sqlite"
+	serviceCfg.EngineerTodoCaptureMode = todocapture.ModeOff
+	svc := service.New(serviceCfg, nil, events.NewBus(), nil)
+
+	settings := config.EditableSettingsFromAppConfig(serviceCfg)
+	settings.EngineerTodoCaptureMode = todocapture.ModeExplicit
+	m := Model{
+		svc:              svc,
+		appDBPath:        "/tmp/cached.sqlite",
+		settingsBaseline: &settings,
+	}
+
+	got := m.enrichEmbeddedLaunchRequest(codexapp.LaunchRequest{
+		Provider:    codexapp.ProviderCodex,
+		ProjectPath: "/tmp/demo",
+	})
+	if got.AppDBPath != "/tmp/cached.sqlite" {
+		t.Fatalf("launch DB path = %q, want cached path", got.AppDBPath)
+	}
+	if got.TodoCaptureMode != todocapture.ModeExplicit {
+		t.Fatalf("launch TODO capture mode = %q, want cached mode", got.TodoCaptureMode)
+	}
+	if got.TodoCaptureHandler != svc {
+		t.Fatal("launch lost the in-process TODO capture handler")
 	}
 }
 

@@ -1363,20 +1363,18 @@ func (m Model) regenerateTodoWorktreeSuggestionCmd(projectPath string, todoID in
 			return todoActionMsg{projectPath: projectPath, err: fmt.Errorf("service unavailable")}
 		}
 	}
-	if !m.svc.HasTodoWorktreeSuggester() {
-		reason := strings.TrimSpace(m.svc.TodoWorktreeSuggesterUnavailableReason())
-		status := "Worktree suggestions are unavailable right now. Press e to enter names manually."
-		if reason != "" {
-			status = "Worktree suggestions unavailable: " + reason
-		}
-		return func() tea.Msg {
+	return func() tea.Msg {
+		if !m.svc.HasTodoWorktreeSuggester() {
+			reason := strings.TrimSpace(m.svc.TodoWorktreeSuggesterUnavailableReason())
+			status := "Worktree suggestions are unavailable right now. Press e to enter names manually."
+			if reason != "" {
+				status = "Worktree suggestions unavailable: " + reason
+			}
 			return todoActionMsg{
 				projectPath: projectPath,
 				status:      status,
 			}
 		}
-	}
-	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
 		err := m.svc.RegenerateTodoWorktreeSuggestion(ctx, projectPath, todoID)
@@ -1393,15 +1391,13 @@ func (m Model) ensureTodoWorktreeSuggestionCmd(projectPath string, todoID int64)
 	if m.svc == nil {
 		return nil
 	}
-	if !m.svc.HasTodoWorktreeSuggester() {
-		return func() tea.Msg {
+	return func() tea.Msg {
+		if !m.svc.HasTodoWorktreeSuggester() {
 			return todoActionMsg{
 				projectPath: projectPath,
 				status:      "Worktree suggestions are unavailable right now. Press e to enter names manually.",
 			}
 		}
-	}
-	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiQuickActionTimeout)
 		defer cancel()
 		changed, err := m.svc.EnsureTodoWorktreeSuggestion(ctx, projectPath, todoID)

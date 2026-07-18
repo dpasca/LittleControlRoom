@@ -84,6 +84,7 @@ func TestNewCachesStableSettingsForUI(t *testing.T) {
 	cfg := config.Default()
 	cfg.ConfigPath = filepath.Join(t.TempDir(), "config.toml")
 	cfg.DataDir = filepath.Join(t.TempDir(), "data")
+	cfg.DBPath = filepath.Join(cfg.DataDir, "custom.sqlite")
 	cfg.CodexHome = filepath.Join(t.TempDir(), "codex-home")
 	cfg.ActiveThreshold = 17 * time.Second
 	cfg.StuckThreshold = 43 * time.Second
@@ -99,6 +100,9 @@ func TestNewCachesStableSettingsForUI(t *testing.T) {
 	}
 	if got := m.appDataDir(); got != cfg.DataDir {
 		t.Fatalf("app data dir = %q, want %q", got, cfg.DataDir)
+	}
+	if got := m.embeddedLaunchDBPath(); got != cfg.DBPath {
+		t.Fatalf("app DB path = %q, want %q", got, cfg.DBPath)
 	}
 	if got := m.codexHome(); got != cfg.CodexHome {
 		t.Fatalf("codex home = %q, want %q", got, cfg.CodexHome)

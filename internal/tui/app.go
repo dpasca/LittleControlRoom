@@ -181,6 +181,7 @@ type Model struct {
 	settingsBaseline                    *config.EditableSettings
 	settingsConfigPath                  string
 	appDataDirPath                      string
+	appDBPath                           string
 	codexHomePath                       string
 	settingsRevealPrivacy               bool
 	settingsPrivacyEditor               *settingsPrivacyEditorState
@@ -779,6 +780,7 @@ func NewWithManagers(ctx context.Context, svc *service.Service, codexManager *co
 		settingsBaseline:              &settingsBaseline,
 		settingsConfigPath:            strings.TrimSpace(initialConfig.ConfigPath),
 		appDataDirPath:                strings.TrimSpace(initialConfig.DataDir),
+		appDBPath:                     strings.TrimSpace(initialConfig.DBPath),
 		codexHomePath:                 strings.TrimSpace(initialConfig.CodexHome),
 		excludeProjectPatterns:        append([]string(nil), initialSettings.ExcludeProjectPatterns...),
 		privacyMode:                   initialSettings.PrivacyMode,
