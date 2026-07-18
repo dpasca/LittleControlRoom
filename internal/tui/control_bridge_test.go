@@ -536,9 +536,18 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 			Reveal:      false,
 		}),
 	})
-	_ = updated.(Model)
+	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("executeBossControlInvocation() cmd = nil, want wrapped open command")
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want tracked TODO load command")
+	}
+	loaded, ok := cmd().(bossTrackedTodoLoadedMsg)
+	if !ok || loaded.err != nil {
+		t.Fatalf("tracked TODO load result = %#v", loaded)
+	}
+	updated, cmd = got.Update(loaded)
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("handling tracked TODO returned nil launch command")
 	}
 	msgs := collectCmdMsgs(cmd)
 	var result bossui.ControlInvocationResultMsg
@@ -574,7 +583,7 @@ func TestExecuteBossControlInvocationLinksEngineerWorkToTodo(t *testing.T) {
 			t.Fatalf("launch prompt missing %q:\n%s", want, requests[0].Prompt)
 		}
 	}
-	recorded := updated.(Model).recordBossTrackedTodoFromControlResult(result)
+	recorded := got.recordBossTrackedTodoFromControlResult(result)
 	tracked, ok := recorded.bossTrackedTodoForSnapshot(projectPath, codexapp.Snapshot{
 		Provider: codexapp.ProviderCodex,
 		ThreadID: "thread-alpha-todo",
@@ -630,7 +639,7 @@ func TestExecuteBossControlInvocationContinuesTodoInRecordedWorktree(t *testing.
 	})
 	m := Model{ctx: ctx, svc: svc, allProjects: projects, projects: projects, codexManager: manager}
 
-	_, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
 		Invocation: controlInvocationForTest(t, control.EngineerSendPromptInput{
 			ProjectPath: projectPath,
 			ProjectName: "KeyMaster",
@@ -642,7 +651,16 @@ func TestExecuteBossControlInvocationContinuesTodoInRecordedWorktree(t *testing.
 		}),
 	})
 	if cmd == nil {
-		t.Fatal("executeBossControlInvocation() cmd = nil, want worktree continuation")
+		t.Fatal("executeBossControlInvocation() cmd = nil, want tracked TODO load command")
+	}
+	got := updated.(Model)
+	loaded, ok := cmd().(bossTrackedTodoLoadedMsg)
+	if !ok || loaded.err != nil {
+		t.Fatalf("tracked TODO load result = %#v", loaded)
+	}
+	updated, cmd = got.Update(loaded)
+	if cmd == nil {
+		t.Fatal("handling tracked TODO returned nil worktree continuation")
 	}
 	msgs := collectCmdMsgs(cmd)
 	for _, msg := range msgs {
@@ -1404,9 +1422,18 @@ func TestExecuteScratchTaskArchiveControlArchivesTask(t *testing.T) {
 		ProjectPath: created.TaskPath,
 	}))
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want background archive")
 	}
+	if _, err := os.Stat(created.TaskPath); err != nil {
+		t.Fatalf("scratch task changed before background command ran: %v", err)
+	}
+	archived, ok := cmd().(bossScratchTaskArchivedMsg)
+	if !ok || archived.err != nil {
+		t.Fatalf("archive command result = %#v", archived)
+	}
+	updated, _ = got.Update(archived)
+	got = updated.(Model)
 	if !strings.Contains(got.status, "Archived scratch task") || !strings.Contains(got.status, "Hex accessibility issue") {
 		t.Fatalf("status = %q, want archive status", got.status)
 	}
@@ -1456,9 +1483,22 @@ func TestExecuteProjectArchiveControlArchivesAndUnarchivesProject(t *testing.T) 
 		Action:      control.ProjectArchiveActionArchive,
 	}))
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want background archive")
 	}
+	activeBeforeCommand, err := st.ListProjects(ctx, false)
+	if err != nil {
+		t.Fatalf("list active before archive command: %v", err)
+	}
+	if len(activeBeforeCommand) != 1 || activeBeforeCommand[0].Archived {
+		t.Fatalf("project changed during Update before archive command: %#v", activeBeforeCommand)
+	}
+	archiveMsg, ok := cmd().(bossProjectArchiveChangedMsg)
+	if !ok || archiveMsg.err != nil {
+		t.Fatalf("archive command result = %#v", archiveMsg)
+	}
+	updated, _ = got.Update(archiveMsg)
+	got = updated.(Model)
 	if got.status != `Archived "regular-project"` {
 		t.Fatalf("archive status = %q, want archive confirmation", got.status)
 	}
@@ -1485,9 +1525,15 @@ func TestExecuteProjectArchiveControlArchivesAndUnarchivesProject(t *testing.T) 
 		Action:      control.ProjectArchiveActionUnarchive,
 	}))
 	got = updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate unarchive", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want background unarchive")
 	}
+	unarchiveMsg, ok := cmd().(bossProjectArchiveChangedMsg)
+	if !ok || unarchiveMsg.err != nil {
+		t.Fatalf("unarchive command result = %#v", unarchiveMsg)
+	}
+	updated, _ = got.Update(unarchiveMsg)
+	got = updated.(Model)
 	if got.status != `Unarchived "regular-project"` {
 		t.Fatalf("unarchive status = %q, want unarchive confirmation", got.status)
 	}
@@ -1556,9 +1602,12 @@ func TestExecuteProjectArchiveControlMovesLinkedWorktreeFamilyImmediately(t *tes
 		Action:      control.ProjectArchiveActionArchive,
 	}))
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want background archive")
 	}
+	archiveMsg := cmd().(bossProjectArchiveChangedMsg)
+	updated, _ = got.Update(archiveMsg)
+	got = updated.(Model)
 	if len(got.allProjects) != 0 || len(got.archivedProjects) != 2 {
 		t.Fatalf("local project buckets after root archive = active %#v archived %#v, want whole family archived", got.allProjects, got.archivedProjects)
 	}
@@ -1573,9 +1622,12 @@ func TestExecuteProjectArchiveControlMovesLinkedWorktreeFamilyImmediately(t *tes
 		Action:      control.ProjectArchiveActionUnarchive,
 	}))
 	got = updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate unarchive", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want background unarchive")
 	}
+	unarchiveMsg := cmd().(bossProjectArchiveChangedMsg)
+	updated, _ = got.Update(unarchiveMsg)
+	got = updated.(Model)
 	if len(got.allProjects) != 2 || len(got.archivedProjects) != 0 {
 		t.Fatalf("local project buckets after root unarchive = active %#v archived %#v, want whole family active", got.allProjects, got.archivedProjects)
 	}
@@ -1685,9 +1737,12 @@ func TestExecuteProjectArchiveControlArchivesBatch(t *testing.T) {
 		},
 	}))
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate archive", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want background archive")
 	}
+	archiveMsg := cmd().(bossProjectArchiveChangedMsg)
+	updated, _ = got.Update(archiveMsg)
+	got = updated.(Model)
 	if got.status != "Archived 2 projects" {
 		t.Fatalf("status = %q, want batch archive confirmation", got.status)
 	}
@@ -2065,9 +2120,25 @@ func TestExecuteBossControlInvocationCreatesAgentTaskAndTracksSession(t *testing
 			},
 		}),
 	})
-	_ = updated.(Model)
+	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("executeBossControlInvocation() cmd = nil, want task launch command")
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want task creation command")
+	}
+	tasksBeforeCommand, err := svc.ListOpenAgentTasks(ctx, 5)
+	if err != nil {
+		t.Fatalf("ListOpenAgentTasks() before command error = %v", err)
+	}
+	if len(tasksBeforeCommand) != 0 {
+		t.Fatalf("agent task was created during Update before command ran: %#v", tasksBeforeCommand)
+	}
+	created, ok := cmd().(bossAgentTaskCreatedMsg)
+	if !ok || created.err != nil {
+		t.Fatalf("agent task creation result = %#v", created)
+	}
+	updated, cmd = got.Update(created)
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("handling agent task creation returned nil launch command")
 	}
 	msgs := collectCmdMsgs(cmd)
 	var result bossui.ControlInvocationResultMsg
@@ -2162,7 +2233,7 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 		codexManager: manager,
 	}
 
-	_, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
 		Invocation: controlInvocationRawForTest(t, control.CapabilityAgentTaskContinue, control.AgentTaskContinueInput{
 			TaskID:      task.ID,
 			Provider:    control.ProviderAuto,
@@ -2172,7 +2243,16 @@ func TestExecuteBossControlInvocationContinuesAgentTaskWithTrackedSession(t *tes
 		}),
 	})
 	if cmd == nil {
-		t.Fatalf("executeBossControlInvocation() cmd = nil, want continue command")
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want task load command")
+	}
+	got := updated.(Model)
+	loaded, ok := cmd().(bossAgentTaskContinueLoadedMsg)
+	if !ok || loaded.err != nil {
+		t.Fatalf("agent task load result = %#v", loaded)
+	}
+	updated, cmd = got.Update(loaded)
+	if cmd == nil {
+		t.Fatal("handling loaded agent task returned nil continue command")
 	}
 	msgs := collectCmdMsgs(cmd)
 	var result bossui.ControlInvocationResultMsg
@@ -2270,8 +2350,14 @@ func TestExecuteBossControlInvocationBlocksFreshAgentTaskContinueWhileTurnActive
 	})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("executeBossControlInvocation() cmd = nil, want immediate result")
+		t.Fatalf("executeBossControlInvocation() cmd = nil, want task load command")
 	}
+	loaded, ok := cmd().(bossAgentTaskContinueLoadedMsg)
+	if !ok || loaded.err != nil {
+		t.Fatalf("agent task load result = %#v", loaded)
+	}
+	updated, cmd = got.Update(loaded)
+	got = updated.(Model)
 	if !strings.Contains(got.status, "already running for agent task "+task.ID) {
 		t.Fatalf("status = %q, want active agent task refusal", got.status)
 	}
@@ -2288,6 +2374,90 @@ func TestExecuteBossControlInvocationBlocksFreshAgentTaskContinueWhileTurnActive
 	}
 	if result.Err == nil || !strings.Contains(result.Status, "current turn to finish") {
 		t.Fatalf("result = %#v, want current-turn wait guidance", result)
+	}
+}
+
+func TestExecuteBossControlInvocationClosesAgentTaskOutsideUpdate(t *testing.T) {
+	ctx := context.Background()
+	svc := newControlTestService(t)
+	task, err := svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+		Title: "Archive completed delegated work",
+		Kind:  model.AgentTaskKindAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateAgentTask() error = %v", err)
+	}
+	m := Model{
+		ctx:            ctx,
+		svc:            svc,
+		openAgentTasks: []model.AgentTask{task},
+	}
+
+	updated, cmd := m.executeBossControlInvocation(bossui.ControlInvocationConfirmedMsg{
+		Invocation: controlInvocationRawForTest(t, control.CapabilityAgentTaskClose, control.AgentTaskCloseInput{
+			TaskID:  task.ID,
+			Status:  control.AgentTaskCloseArchived,
+			Summary: "Delegated work is complete.",
+		}),
+	})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("executeBossControlInvocation() cmd = nil, want task load command")
+	}
+	beforeLoad, err := svc.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetAgentTask() before load command error = %v", err)
+	}
+	if beforeLoad.Status == model.AgentTaskStatusArchived {
+		t.Fatalf("task was archived during initial Update: %#v", beforeLoad)
+	}
+
+	loaded, ok := cmd().(bossAgentTaskCloseLoadedMsg)
+	if !ok || loaded.err != nil {
+		t.Fatalf("agent task load result = %#v", loaded)
+	}
+	updated, cmd = got.Update(loaded)
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("handling loaded task returned nil close command")
+	}
+	beforeClose, err := svc.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetAgentTask() before close command error = %v", err)
+	}
+	if beforeClose.Status == model.AgentTaskStatusArchived {
+		t.Fatalf("task was archived while applying the load message: %#v", beforeClose)
+	}
+
+	var (
+		closed bossAgentTaskClosedMsg
+		result bossui.ControlInvocationResultMsg
+	)
+	for _, msg := range collectCmdMsgs(cmd) {
+		switch typed := msg.(type) {
+		case bossAgentTaskClosedMsg:
+			closed = typed
+		case bossui.ControlInvocationResultMsg:
+			result = typed
+		}
+	}
+	if closed.err != nil {
+		t.Fatalf("agent task close result = %#v", closed)
+	}
+	updated, _ = got.Update(closed)
+	got = updated.(Model)
+	if result.Err != nil || !strings.Contains(result.Status, "is now archived") {
+		t.Fatalf("control result = %#v", result)
+	}
+	archived, err := svc.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetAgentTask() after close error = %v", err)
+	}
+	if archived.Status != model.AgentTaskStatusArchived {
+		t.Fatalf("archived task = %#v", archived)
+	}
+	if len(got.openAgentTasks) != 0 {
+		t.Fatalf("local open task state = %#v, want archived task removed", got.openAgentTasks)
 	}
 }
 
@@ -2398,9 +2568,22 @@ func TestExecuteTodoCompleteControlMarksTodoDone(t *testing.T) {
 		Evidence:    "Engineer reported the tracked flow is implemented.",
 	}))
 	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("executeControlInvocation() cmd = %#v, want immediate TODO completion", cmd)
+	if cmd == nil {
+		t.Fatal("executeControlInvocation() cmd = nil, want background TODO completion")
 	}
+	beforeCommand, err := svc.Store().GetTodo(ctx, todo.ID)
+	if err != nil {
+		t.Fatalf("GetTodo() before command error = %v", err)
+	}
+	if beforeCommand.Done {
+		t.Fatalf("TODO was completed during Update before command ran: %#v", beforeCommand)
+	}
+	completedMsg, ok := cmd().(bossTodoCompletedMsg)
+	if !ok || completedMsg.err != nil {
+		t.Fatalf("TODO completion result = %#v", completedMsg)
+	}
+	updated, _ = got.Update(completedMsg)
+	got = updated.(Model)
 	if !strings.Contains(got.status, "Marked TODO #") || !strings.Contains(got.status, "Alpha") {
 		t.Fatalf("status = %q, want TODO complete status", got.status)
 	}
@@ -2549,7 +2732,33 @@ func TestExecuteBossGoalRunStartsLCAgentTaskAndPersistsTrace(t *testing.T) {
 	updated, cmd := m.executeBossGoalRun(bossui.GoalRunConfirmedMsg{Proposal: proposal})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("executeBossGoalRun() cmd = nil, want LCAgent launch command")
+		t.Fatalf("executeBossGoalRun() cmd = nil, want LCAgent preparation command")
+	}
+	if !strings.Contains(got.status, "Preparing LCAgent goal task") {
+		t.Fatalf("status = %q, want LCAgent goal preparation status", got.status)
+	}
+	runsBeforeCommand, err := svc.Store().ListGoalRuns(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListGoalRuns() before command error = %v", err)
+	}
+	if len(runsBeforeCommand) != 0 {
+		t.Fatalf("goal run was persisted during Update before command ran: %#v", runsBeforeCommand)
+	}
+	tasksBeforeCommand, err := svc.ListOpenAgentTasks(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListOpenAgentTasks() before goal command error = %v", err)
+	}
+	if len(tasksBeforeCommand) != 0 {
+		t.Fatalf("goal task was created during Update before command ran: %#v", tasksBeforeCommand)
+	}
+	prepared, ok := cmd().(bossLCAgentGoalPreparedMsg)
+	if !ok || prepared.err != nil {
+		t.Fatalf("LCAgent goal preparation = %#v", prepared)
+	}
+	updated, cmd = got.Update(prepared)
+	got = updated.(Model)
+	if cmd == nil {
+		t.Fatal("handling prepared LCAgent goal returned nil launch command")
 	}
 	if !strings.Contains(got.status, "Starting LCAgent goal task") {
 		t.Fatalf("status = %q, want LCAgent goal launch status", got.status)

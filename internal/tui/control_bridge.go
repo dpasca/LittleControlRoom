@@ -37,6 +37,9 @@ func (m Model) executeBossControlInvocation(msg bossui.ControlInvocationConfirme
 	if outcome.cmd == nil {
 		return m, bossControlResultCmd(resultInv, m.status, outcome.err)
 	}
+	if outcome.deferBossResult {
+		return m, outcome.cmd
+	}
 	if resultInv.Capability == control.CapabilityProjectSetCategory || resultInv.Capability == control.CapabilityTodoAdd || resultInv.Capability == control.CapabilityProjectCreateAndStartEngineer || resultInv.Capability == control.CapabilityTodoCreateWorktreeAndStartEngineer {
 		return m, outcome.cmd
 	}
@@ -49,10 +52,72 @@ func (m Model) executeControlInvocation(inv control.Invocation) (tea.Model, tea.
 }
 
 type controlInvocationOutcome struct {
-	model Model
-	cmd   tea.Cmd
-	err   error
+	model           Model
+	cmd             tea.Cmd
+	err             error
+	inv             control.Invocation
+	deferBossResult bool
+}
+
+type bossTrackedTodoLoadedMsg struct {
+	inv     control.Invocation
+	input   control.EngineerSendPromptInput
+	project model.ProjectSummary
+	todo    model.TodoItem
+	err     error
+}
+
+type bossAgentTaskCreatedMsg struct {
+	inv      control.Invocation
+	input    control.AgentTaskCreateInput
+	provider codexapp.Provider
+	task     model.AgentTask
+	err      error
+}
+
+type bossAgentTaskContinueLoadedMsg struct {
 	inv   control.Invocation
+	input control.AgentTaskContinueInput
+	task  model.AgentTask
+	err   error
+}
+
+type bossAgentTaskCloseLoadedMsg struct {
+	inv   control.Invocation
+	input control.AgentTaskCloseInput
+	task  model.AgentTask
+	err   error
+}
+
+type bossAgentTaskClosedMsg struct {
+	input  control.AgentTaskCloseInput
+	task   model.AgentTask
+	status string
+	err    error
+}
+
+type bossScratchTaskArchivedMsg struct {
+	project      model.ProjectSummary
+	archivedPath string
+	status       string
+	err          error
+}
+
+type bossProjectArchiveChangedMsg struct {
+	targets []model.ProjectSummary
+	archive bool
+	single  bool
+	status  string
+	err     error
+}
+
+type bossTodoCompletedMsg struct {
+	input       control.TodoCompleteInput
+	item        model.TodoItem
+	projectPath string
+	changed     bool
+	status      string
+	err         error
 }
 
 type bossTodoWorktreeTodoCreatedMsg struct {
@@ -130,28 +195,28 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			m.status = "Control request invalid: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		}
-		return m.executeEngineerSendPromptControlWithOutcome(input)
+		return m.executeEngineerSendPromptControlWithOutcome(normalized, input)
 	case control.CapabilityAgentTaskCreate:
 		var input control.AgentTaskCreateInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
 			m.status = "Control request invalid: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		}
-		return m.executeAgentTaskCreateControlWithOutcome(input)
+		return m.executeAgentTaskCreateControlWithOutcome(normalized, input)
 	case control.CapabilityAgentTaskContinue:
 		var input control.AgentTaskContinueInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
 			m.status = "Control request invalid: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		}
-		return m.executeAgentTaskContinueControlWithOutcome(input)
+		return m.executeAgentTaskContinueControlWithOutcome(normalized, input)
 	case control.CapabilityAgentTaskClose:
 		var input control.AgentTaskCloseInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
 			m.status = "Control request invalid: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		}
-		return m.executeAgentTaskCloseControlWithOutcome(input)
+		return m.executeAgentTaskCloseControlWithOutcome(normalized, input)
 	case control.CapabilityProjectCreateAndStartEngineer:
 		var input control.ProjectCreateAndStartEngineerInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -172,14 +237,14 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			m.status = "Control request invalid: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		}
-		return m.executeProjectArchiveControlWithOutcome(input)
+		return m.executeProjectArchiveControlWithOutcome(normalized, input)
 	case control.CapabilityScratchTaskArchive:
 		var input control.ScratchTaskArchiveInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
 			m.status = "Control request invalid: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		}
-		return m.executeScratchTaskArchiveControlWithOutcome(input)
+		return m.executeScratchTaskArchiveControlWithOutcome(normalized, input)
 	case control.CapabilityTodoAdd:
 		var input control.TodoAddInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -200,7 +265,7 @@ func (m Model) executeControlInvocationWithOutcome(inv control.Invocation) contr
 			m.status = "Control request invalid: " + err.Error()
 			return controlInvocationOutcome{model: m, err: err}
 		}
-		return m.executeTodoCompleteControlWithOutcome(input)
+		return m.executeTodoCompleteControlWithOutcome(normalized, input)
 	case control.CapabilitySettingsUpdate:
 		var input control.SettingsUpdateInput
 		if err := json.Unmarshal(normalized.Args, &input); err != nil {
@@ -329,6 +394,16 @@ func bossControlExecutionStatus(inv control.Invocation, msg tea.Msg) (string, er
 	}
 	if preview, ok := msg.(commitPreviewMsg); ok && inv.Capability == control.CapabilityGitPrepareCommit {
 		return bossGitPrepareCommitStatus(inv, preview), preview.err
+	}
+	switch result := msg.(type) {
+	case bossAgentTaskClosedMsg:
+		return result.status, result.err
+	case bossScratchTaskArchivedMsg:
+		return result.status, result.err
+	case bossProjectArchiveChangedMsg:
+		return result.status, result.err
+	case bossTodoCompletedMsg:
+		return result.status, result.err
 	}
 	return "Control action completed.", nil
 }
@@ -687,26 +762,73 @@ func copyControlInvocationForBoss(inv control.Invocation) control.Invocation {
 }
 
 func (m Model) executeEngineerSendPromptControl(input control.EngineerSendPromptInput) (tea.Model, tea.Cmd) {
-	outcome := m.executeEngineerSendPromptControlWithOutcome(input)
+	outcome := m.executeEngineerSendPromptControlWithOutcome(engineerSendPromptInvocationFromInput(input), input)
 	return outcome.model, outcome.cmd
 }
 
-func (m Model) executeEngineerSendPromptControlWithOutcome(input control.EngineerSendPromptInput) controlInvocationOutcome {
+func (m Model) executeEngineerSendPromptControlWithOutcome(inv control.Invocation, input control.EngineerSendPromptInput) controlInvocationOutcome {
 	project, err := m.resolveControlProject(input)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	trackedTodo, err := m.resolveControlTrackedTodo(project, input.TodoID, input.TodoText)
+	if input.TodoID > 0 {
+		m.status = fmt.Sprintf("Loading tracked TODO #%d...", input.TodoID)
+		return controlInvocationOutcome{
+			model:           m,
+			inv:             inv,
+			cmd:             m.loadBossTrackedTodoCmd(inv, input, project),
+			deferBossResult: true,
+		}
+	}
+	trackedTodo := model.TodoItem{ProjectPath: strings.TrimSpace(project.Path), Text: strings.TrimSpace(input.TodoText)}
+	return m.executeEngineerSendPromptWithTrackedTodo(input, project, trackedTodo)
+}
+
+func (m Model) loadBossTrackedTodoCmd(inv control.Invocation, input control.EngineerSendPromptInput, project model.ProjectSummary) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossTrackedTodoLoadedMsg{inv: inv, input: input, project: project}
+		if svc == nil || svc.Store() == nil {
+			msg.err = errors.New("service unavailable for TODO tracking")
+			return msg
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiQuickActionTimeout)
+		defer cancel()
+		msg.todo, msg.err = resolveControlTrackedTodo(ctx, svc, project, input.TodoID, input.TodoText)
+		msg.err = timeoutActionError(msg.err, tuiQuickActionTimeout, "loading the tracked TODO")
+		return msg
+	}
+}
+
+func (m Model) applyBossTrackedTodoLoaded(msg bossTrackedTodoLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "Control request failed: " + msg.err.Error()
+		return m, bossControlResultCmd(msg.inv, m.status, msg.err)
+	}
+	outcome := m.executeEngineerSendPromptWithTrackedTodo(msg.input, msg.project, msg.todo)
+	m = outcome.model
+	inv := msg.inv
+	if outcome.inv.Capability != "" {
+		inv = outcome.inv
+	}
+	if outcome.cmd == nil {
+		return m, bossControlResultCmd(inv, m.status, outcome.err)
+	}
+	return m, bossControlExecutionCmd(inv, outcome.cmd)
+}
+
+func (m Model) executeEngineerSendPromptWithTrackedTodo(input control.EngineerSendPromptInput, project model.ProjectSummary, trackedTodo model.TodoItem) controlInvocationOutcome {
+	resolvedProject, err := m.resolveControlTodoWorkProject(project, trackedTodo)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	project, err = m.resolveControlTodoWorkProject(project, trackedTodo)
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
+	project = resolvedProject
 	provider, err := m.resolveControlEngineerProvider(input.Provider, project)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
@@ -858,7 +980,7 @@ func controlProviderFromCodexProvider(provider codexapp.Provider) control.Provid
 	}
 }
 
-func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskCreateInput) controlInvocationOutcome {
+func (m Model) executeAgentTaskCreateControlWithOutcome(inv control.Invocation, input control.AgentTaskCreateInput) controlInvocationOutcome {
 	if m.svc == nil {
 		err := errors.New("service unavailable")
 		m.status = "Control request failed: " + err.Error()
@@ -873,33 +995,62 @@ func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskC
 			return controlInvocationOutcome{model: m, err: err}
 		}
 	}
-	kind := modelAgentTaskKindFromControl(input.Kind)
-	task, err := m.svc.CreateAgentTask(m.ctx, model.CreateAgentTaskInput{
-		ParentTaskID: strings.TrimSpace(input.ParentTaskID),
-		Title:        input.Title,
-		Kind:         kind,
-		Capabilities: append([]string(nil), input.Capabilities...),
-		Resources:    agentTaskResourcesFromControl(input.Resources),
-	})
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+	m.status = "Creating agent task..."
+	return controlInvocationOutcome{
+		model:           m,
+		inv:             inv,
+		cmd:             m.createBossAgentTaskCmd(inv, input, provider),
+		deferBossResult: true,
 	}
+}
+
+func (m Model) createBossAgentTaskCmd(inv control.Invocation, input control.AgentTaskCreateInput, provider codexapp.Provider) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossAgentTaskCreatedMsg{inv: inv, input: input, provider: provider}
+		if svc == nil {
+			msg.err = errors.New("service unavailable")
+			return msg
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
+		defer cancel()
+		msg.task, msg.err = svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+			ParentTaskID: strings.TrimSpace(input.ParentTaskID),
+			Title:        input.Title,
+			Kind:         modelAgentTaskKindFromControl(input.Kind),
+			Capabilities: append([]string(nil), input.Capabilities...),
+			Resources:    agentTaskResourcesFromControl(input.Resources),
+		})
+		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "creating the agent task")
+		return msg
+	}
+}
+
+func (m Model) applyBossAgentTaskCreated(msg bossAgentTaskCreatedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "Control request failed: " + msg.err.Error()
+		return m, bossControlResultCmd(msg.inv, m.status, msg.err)
+	}
+	task := msg.task
 	m.upsertOpenAgentTask(task)
-	if strings.TrimSpace(input.Prompt) == "" {
+	if strings.TrimSpace(msg.input.Prompt) == "" {
 		m.status = "Created agent task " + task.ID
-		return controlInvocationOutcome{model: m}
+		return m, bossControlResultCmd(msg.inv, m.status, nil)
 	}
 	project, err := projectSummaryForAgentTask(task)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+		return m, bossControlResultCmd(msg.inv, m.status, err)
 	}
-	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, input.Prompt)
-	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, provider, embeddedLaunchOptions{
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, msg.input.Prompt)
+	updated, cmd := m.launchEmbeddedForProjectWithOptions(project, msg.provider, embeddedLaunchOptions{
 		forceNew: true,
 		prompt:   prompt,
-		reveal:   input.Reveal,
+		reveal:   msg.input.Reveal,
 	})
 	m = normalizeUpdateModel(updated)
 	if cmd == nil {
@@ -908,31 +1059,63 @@ func (m Model) executeAgentTaskCreateControlWithOutcome(input control.AgentTaskC
 			status = "agent task engineer session launch did not start"
 		}
 		err := errors.New(status)
-		return controlInvocationOutcome{model: m, err: err}
+		return m, bossControlResultCmd(msg.inv, status, err)
 	}
-	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task))}
+	m.status = "Starting agent task: " + task.Title
+	return m, bossControlExecutionCmd(msg.inv, m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task)))
 }
 
-func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTaskContinueInput) controlInvocationOutcome {
+func (m Model) executeAgentTaskContinueControlWithOutcome(inv control.Invocation, input control.AgentTaskContinueInput) controlInvocationOutcome {
 	if m.svc == nil {
 		err := errors.New("service unavailable")
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	task, err := m.svc.GetAgentTask(m.ctx, input.TaskID)
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+	m.status = "Loading agent task " + input.TaskID + "..."
+	return controlInvocationOutcome{
+		model:           m,
+		inv:             inv,
+		cmd:             m.loadBossAgentTaskContinueCmd(inv, input),
+		deferBossResult: true,
 	}
+}
+
+func (m Model) loadBossAgentTaskContinueCmd(inv control.Invocation, input control.AgentTaskContinueInput) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossAgentTaskContinueLoadedMsg{inv: inv, input: input}
+		if svc == nil {
+			msg.err = errors.New("service unavailable")
+			return msg
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiQuickActionTimeout)
+		defer cancel()
+		msg.task, msg.err = svc.GetAgentTask(ctx, input.TaskID)
+		msg.err = timeoutActionError(msg.err, tuiQuickActionTimeout, "loading the agent task")
+		return msg
+	}
+}
+
+func (m Model) applyBossAgentTaskContinueLoaded(msg bossAgentTaskContinueLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "Control request failed: " + msg.err.Error()
+		return m, bossControlResultCmd(msg.inv, m.status, msg.err)
+	}
+	task := msg.task
+	input := msg.input
 	provider, err := m.resolveAgentTaskControlProvider(input.Provider, task)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+		return m, bossControlResultCmd(msg.inv, m.status, err)
 	}
 	project, err := projectSummaryForAgentTask(task)
 	if err != nil {
 		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+		return m, bossControlResultCmd(msg.inv, m.status, err)
 	}
 	if controlPromptTargetsNonSteerableActiveEmbeddedSession(control.EngineerSendPromptInput{
 		SessionMode: input.SessionMode,
@@ -940,7 +1123,7 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 	}, m, project.Path, provider) {
 		err := fmt.Errorf("The embedded %s engineer session for agent task %s is already running, so I did not send the prompt into it. Wait for it to finish or start a fresh session.", provider.Label(), task.ID)
 		m.status = err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+		return m, bossControlResultCmd(msg.inv, m.status, err)
 	}
 	if input.SessionMode == control.SessionModeNew {
 		label := strings.TrimSpace(task.ID)
@@ -952,7 +1135,7 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 		if message, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, label); blocked {
 			err := errors.New(message)
 			m.status = message
-			return controlInvocationOutcome{model: m, err: err}
+			return m, bossControlResultCmd(msg.inv, m.status, err)
 		}
 	}
 	resumeID := taskSessionIDForProvider(task, provider)
@@ -972,57 +1155,122 @@ func (m Model) executeAgentTaskContinueControlWithOutcome(input control.AgentTas
 			status = "agent task engineer session launch did not start"
 		}
 		err := errors.New(status)
-		return controlInvocationOutcome{model: m, err: err}
+		return m, bossControlResultCmd(msg.inv, status, err)
 	}
-	return controlInvocationOutcome{model: m, cmd: m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task))}
+	m.status = "Continuing agent task: " + task.Title
+	return m, bossControlExecutionCmd(msg.inv, m.agentTaskLaunchTrackingCmd(task, cmd, bossAgentTaskHandoffStatus(task)))
 }
 
-func (m Model) executeAgentTaskCloseControlWithOutcome(input control.AgentTaskCloseInput) controlInvocationOutcome {
+func (m Model) executeAgentTaskCloseControlWithOutcome(inv control.Invocation, input control.AgentTaskCloseInput) controlInvocationOutcome {
 	if m.svc == nil {
 		err := errors.New("service unavailable")
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	task, err := m.svc.GetAgentTask(m.ctx, input.TaskID)
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+	m.status = "Loading agent task " + input.TaskID + "..."
+	return controlInvocationOutcome{
+		model:           m,
+		inv:             inv,
+		cmd:             m.loadBossAgentTaskCloseCmd(inv, input),
+		deferBossResult: true,
 	}
+}
+
+func (m Model) loadBossAgentTaskCloseCmd(inv control.Invocation, input control.AgentTaskCloseInput) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossAgentTaskCloseLoadedMsg{inv: inv, input: input}
+		if svc == nil {
+			msg.err = errors.New("service unavailable")
+			return msg
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiQuickActionTimeout)
+		defer cancel()
+		msg.task, msg.err = svc.GetAgentTask(ctx, input.TaskID)
+		msg.err = timeoutActionError(msg.err, tuiQuickActionTimeout, "loading the agent task")
+		return msg
+	}
+}
+
+func (m Model) applyBossAgentTaskCloseLoaded(msg bossAgentTaskCloseLoadedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "Control request failed: " + msg.err.Error()
+		return m, bossControlResultCmd(msg.inv, m.status, msg.err)
+	}
+	task := msg.task
+	input := msg.input
 	if input.CloseSession && strings.TrimSpace(task.WorkspacePath) != "" {
 		if snapshot, ok := m.liveAgentTaskSnapshot(task); ok && embeddedSessionBlocksProviderSwitch(snapshot) {
 			err := fmt.Errorf("agent task %s still has an active embedded %s session; wait for it to finish before closing the session", task.ID, embeddedProvider(snapshot).Label())
 			m.status = "Control request failed: " + err.Error()
-			return controlInvocationOutcome{model: m, err: err}
-		}
-		if m.codexManager != nil {
-			_ = m.codexManager.CloseProject(task.WorkspacePath)
+			return m, bossControlResultCmd(msg.inv, m.status, err)
 		}
 	}
-	switch input.Status {
-	case control.AgentTaskCloseArchived:
-		task, err = m.svc.ArchiveAgentTask(m.ctx, input.TaskID)
-	case control.AgentTaskCloseWaiting:
-		status := model.AgentTaskStatusWaiting
-		summary := strings.TrimSpace(input.Summary)
-		task, err = m.svc.Store().UpdateAgentTask(m.ctx, model.UpdateAgentTaskInput{
-			ID:      input.TaskID,
-			Status:  &status,
-			Summary: &summary,
-			Touch:   true,
-		})
-	default:
-		task, err = m.svc.CompleteAgentTask(m.ctx, input.TaskID, input.Summary)
-	}
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
-	m.upsertOpenAgentTask(task)
-	m.status = fmt.Sprintf("Agent task %s is now %s", task.ID, task.Status)
-	return controlInvocationOutcome{model: m}
+	m.status = "Closing agent task " + task.ID + "..."
+	return m, bossControlExecutionCmd(msg.inv, m.closeBossAgentTaskCmd(input, task))
 }
 
-func (m Model) executeScratchTaskArchiveControlWithOutcome(input control.ScratchTaskArchiveInput) controlInvocationOutcome {
+func (m Model) closeBossAgentTaskCmd(input control.AgentTaskCloseInput, task model.AgentTask) tea.Cmd {
+	svc := m.svc
+	manager := m.codexManager
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossAgentTaskClosedMsg{input: input, task: task}
+		if svc == nil {
+			msg.err = errors.New("service unavailable")
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		if input.CloseSession && manager != nil && strings.TrimSpace(task.WorkspacePath) != "" {
+			_ = manager.CloseProject(task.WorkspacePath)
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
+		defer cancel()
+		switch input.Status {
+		case control.AgentTaskCloseArchived:
+			msg.task, msg.err = svc.ArchiveAgentTask(ctx, input.TaskID)
+		case control.AgentTaskCloseWaiting:
+			if svc.Store() == nil {
+				msg.err = errors.New("service store unavailable")
+				break
+			}
+			status := model.AgentTaskStatusWaiting
+			summary := strings.TrimSpace(input.Summary)
+			msg.task, msg.err = svc.Store().UpdateAgentTask(ctx, model.UpdateAgentTaskInput{
+				ID:      input.TaskID,
+				Status:  &status,
+				Summary: &summary,
+				Touch:   true,
+			})
+		default:
+			msg.task, msg.err = svc.CompleteAgentTask(ctx, input.TaskID, input.Summary)
+		}
+		msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "closing the agent task")
+		if msg.err != nil {
+			msg.status = "Control request failed: " + msg.err.Error()
+		} else {
+			msg.status = fmt.Sprintf("Agent task %s is now %s", msg.task.ID, msg.task.Status)
+		}
+		return msg
+	}
+}
+
+func (m Model) applyBossAgentTaskClosed(msg bossAgentTaskClosedMsg) (tea.Model, tea.Cmd) {
+	m.status = msg.status
+	if msg.err == nil {
+		m.upsertOpenAgentTask(msg.task)
+	}
+	return m, nil
+}
+
+func (m Model) executeScratchTaskArchiveControlWithOutcome(_ control.Invocation, input control.ScratchTaskArchiveInput) controlInvocationOutcome {
 	if m.svc == nil {
 		err := errors.New("service unavailable")
 		m.status = "Control request failed: " + err.Error()
@@ -1038,21 +1286,47 @@ func (m Model) executeScratchTaskArchiveControlWithOutcome(input control.Scratch
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	archivedPath, err := m.svc.ArchiveScratchTask(m.ctx, project.Path)
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
-	m.removeProjectSummary(project.Path)
-	name := projectRemovalName(project)
-	m.status = fmt.Sprintf("Archived scratch task %q", name)
-	if strings.TrimSpace(archivedPath) != "" {
-		m.status += " to " + archivedPath
-	}
-	return controlInvocationOutcome{model: m}
+	m.status = fmt.Sprintf("Archiving scratch task %q...", projectRemovalName(project))
+	return controlInvocationOutcome{model: m, cmd: m.archiveBossScratchTaskCmd(project)}
 }
 
-func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArchiveInput) controlInvocationOutcome {
+func (m Model) archiveBossScratchTaskCmd(project model.ProjectSummary) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossScratchTaskArchivedMsg{project: project}
+		if svc == nil {
+			msg.err = errors.New("service unavailable")
+		} else {
+			ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
+			defer cancel()
+			msg.archivedPath, msg.err = svc.ArchiveScratchTask(ctx, project.Path)
+			msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "archiving the scratch task")
+		}
+		if msg.err != nil {
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		msg.status = fmt.Sprintf("Archived scratch task %q", projectRemovalName(project))
+		if strings.TrimSpace(msg.archivedPath) != "" {
+			msg.status += " to " + msg.archivedPath
+		}
+		return msg
+	}
+}
+
+func (m Model) applyBossScratchTaskArchived(msg bossScratchTaskArchivedMsg) (tea.Model, tea.Cmd) {
+	m.status = msg.status
+	if msg.err == nil {
+		m.removeProjectSummary(msg.project.Path)
+	}
+	return m, nil
+}
+
+func (m Model) executeProjectArchiveControlWithOutcome(_ control.Invocation, input control.ProjectArchiveInput) controlInvocationOutcome {
 	if m.svc == nil {
 		err := errors.New("service unavailable")
 		m.status = "Control request failed: " + err.Error()
@@ -1063,62 +1337,9 @@ func (m Model) executeProjectArchiveControlWithOutcome(input control.ProjectArch
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	if len(targets) != 1 || len(input.Resources) > 0 {
-		return m.executeProjectArchiveBatchControlWithOutcome(input, targets)
-	}
-	project := targets[0]
-	switch model.NormalizeProjectKind(project.Kind) {
-	case model.ProjectKindAgentTask:
-		err := fmt.Errorf("agent tasks use agent_task.close with archived status: %s", project.Path)
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	case model.ProjectKindScratchTask:
-		err := fmt.Errorf("scratch tasks use scratch_task.archive: %s", project.Path)
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
-
 	archive := input.Action == control.ProjectArchiveActionArchive
-	name := projectRemovalName(project)
-	if archive && project.Archived {
-		m.status = fmt.Sprintf("%q is already archived", name)
-		return controlInvocationOutcome{model: m}
-	}
-	if !archive && !project.Archived {
-		if !project.InScope {
-			m.status = fmt.Sprintf("%q is outside project scope", name)
-		} else {
-			m.status = fmt.Sprintf("%q is not archived", name)
-		}
-		return controlInvocationOutcome{model: m}
-	}
-
-	if archive {
-		err = m.svc.ArchiveProject(m.ctx, project.Path)
-	} else {
-		err = m.svc.UnarchiveProject(m.ctx, project.Path)
-	}
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
-
-	m.applyProjectArchiveStateLocally([]model.ProjectSummary{project}, archive)
-	selectPath := project.Path
-	if (archive && m.archiveMode != projectArchiveArchived) || (!archive && m.archiveMode == projectArchiveArchived) {
-		selectPath = ""
-	}
-	m.rebuildProjectList(selectPath)
-	m.syncDetailViewport(false)
-
-	if archive {
-		m.status = fmt.Sprintf("Archived %q", name)
-	} else if project.InScope {
-		m.status = fmt.Sprintf("Unarchived %q", name)
-	} else {
-		m.status = fmt.Sprintf("Unarchived %q; still outside project scope", name)
-	}
-	return controlInvocationOutcome{model: m}
+	single := len(targets) == 1 && len(input.Resources) == 0
+	return m.executeProjectArchiveBatchControlWithOutcome(input, targets, archive, single)
 }
 
 func (m Model) executeProjectSetCategoryControlWithOutcome(input control.ProjectSetCategoryInput) controlInvocationOutcome {
@@ -1231,8 +1452,7 @@ func projectSetCategoryInvocationFromInput(input control.ProjectSetCategoryInput
 	return control.Invocation{Capability: control.CapabilityProjectSetCategory, RequestID: strings.TrimSpace(normalized.RequestID), Args: payload}
 }
 
-func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.ProjectArchiveInput, targets []model.ProjectSummary) controlInvocationOutcome {
-	archive := input.Action == control.ProjectArchiveActionArchive
+func (m Model) executeProjectArchiveBatchControlWithOutcome(_ control.ProjectArchiveInput, targets []model.ProjectSummary, archive, single bool) controlInvocationOutcome {
 	for _, project := range targets {
 		switch model.NormalizeProjectKind(project.Kind) {
 		case model.ProjectKindAgentTask:
@@ -1246,7 +1466,6 @@ func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.Projec
 		}
 	}
 
-	changed := 0
 	already := 0
 	paths := make([]string, 0, len(targets))
 	for _, project := range targets {
@@ -1256,46 +1475,119 @@ func (m Model) executeProjectArchiveBatchControlWithOutcome(input control.Projec
 		}
 		paths = append(paths, project.Path)
 	}
-	if len(paths) > 0 {
-		var err error
-		if archive {
-			err = m.svc.ArchiveProjects(m.ctx, paths)
+	if len(paths) == 0 {
+		if single {
+			project := targets[0]
+			name := projectRemovalName(project)
+			switch {
+			case !archive && !project.InScope:
+				m.status = fmt.Sprintf("%q is outside project scope", name)
+			case archive:
+				m.status = fmt.Sprintf("%q is already archived", name)
+			default:
+				m.status = fmt.Sprintf("%q is not archived", name)
+			}
+			return controlInvocationOutcome{model: m}
+		}
+		m.status = projectArchiveBatchStatus(targets, archive, 0, already)
+		return controlInvocationOutcome{model: m}
+	}
+	action := "Archiving"
+	if !archive {
+		action = "Unarchiving"
+	}
+	m.status = fmt.Sprintf("%s %d project(s)...", action, len(paths))
+	return controlInvocationOutcome{
+		model: m,
+		cmd:   m.changeBossProjectArchiveCmd(targets, paths, archive, single, already),
+	}
+}
+
+func (m Model) changeBossProjectArchiveCmd(targets []model.ProjectSummary, paths []string, archive, single bool, already int) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	return func() tea.Msg {
+		msg := bossProjectArchiveChangedMsg{
+			targets: append([]model.ProjectSummary(nil), targets...),
+			archive: archive,
+			single:  single,
+		}
+		if svc == nil {
+			msg.err = errors.New("service unavailable")
 		} else {
-			err = m.svc.UnarchiveProjects(m.ctx, paths)
+			ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
+			defer cancel()
+			switch {
+			case single && archive:
+				msg.err = svc.ArchiveProject(ctx, paths[0])
+			case single:
+				msg.err = svc.UnarchiveProject(ctx, paths[0])
+			case archive:
+				msg.err = svc.ArchiveProjects(ctx, paths)
+			default:
+				msg.err = svc.UnarchiveProjects(ctx, paths)
+			}
+			msg.err = timeoutActionError(msg.err, tuiProjectActionTimeout, "updating the project archive state")
 		}
-		if err != nil {
-			m.status = "Control request failed: " + err.Error()
-			return controlInvocationOutcome{model: m, err: err}
+		if msg.err != nil {
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
 		}
+		if single {
+			project := targets[0]
+			name := projectRemovalName(project)
+			if archive {
+				msg.status = fmt.Sprintf("Archived %q", name)
+			} else if project.InScope {
+				msg.status = fmt.Sprintf("Unarchived %q", name)
+			} else {
+				msg.status = fmt.Sprintf("Unarchived %q; still outside project scope", name)
+			}
+			return msg
+		}
+		msg.status = projectArchiveBatchStatus(targets, archive, len(paths), already)
+		return msg
 	}
-	for _, project := range targets {
-		if project.Archived == archive {
-			continue
-		}
-		changed++
-	}
-	m.applyProjectArchiveStateLocally(targets, archive)
+}
 
-	m.rebuildProjectList("")
-	m.syncDetailViewport(false)
-
+func projectArchiveBatchStatus(targets []model.ProjectSummary, archive bool, changed, already int) string {
 	verb := "Archived"
 	if !archive {
 		verb = "Unarchived"
 	}
 	switch {
 	case changed > 0 && already > 0:
-		m.status = fmt.Sprintf("%s %d projects; %d already matched that state", verb, changed, already)
+		return fmt.Sprintf("%s %d projects; %d already matched that state", verb, changed, already)
 	case changed > 0:
-		m.status = fmt.Sprintf("%s %d projects", verb, changed)
+		return fmt.Sprintf("%s %d projects", verb, changed)
 	default:
 		state := "archived"
 		if !archive {
 			state = "not archived"
 		}
-		m.status = fmt.Sprintf("All %d projects were already %s", len(targets), state)
+		return fmt.Sprintf("All %d projects were already %s", len(targets), state)
 	}
-	return controlInvocationOutcome{model: m}
+}
+
+func (m Model) applyBossProjectArchiveChanged(msg bossProjectArchiveChangedMsg) (tea.Model, tea.Cmd) {
+	m.status = msg.status
+	if msg.err != nil {
+		return m, nil
+	}
+	m.applyProjectArchiveStateLocally(msg.targets, msg.archive)
+	selectPath := ""
+	if msg.single {
+		selectPath = msg.targets[0].Path
+		if (msg.archive && m.archiveMode != projectArchiveArchived) || (!msg.archive && m.archiveMode == projectArchiveArchived) {
+			selectPath = ""
+		}
+	}
+	m.rebuildProjectList(selectPath)
+	m.syncDetailViewport(false)
+	return m, nil
 }
 
 func (m Model) resolveProjectArchiveTargets(input control.ProjectArchiveInput) ([]model.ProjectSummary, error) {
@@ -1794,46 +2086,76 @@ func trackedWorkInvocationFromInput(inv control.Invocation, input control.TodoCr
 	return projectCreateAndStartEngineerInvocationFromInput(createInput)
 }
 
-func (m Model) executeTodoCompleteControlWithOutcome(input control.TodoCompleteInput) controlInvocationOutcome {
+func (m Model) executeTodoCompleteControlWithOutcome(_ control.Invocation, input control.TodoCompleteInput) controlInvocationOutcome {
 	if m.svc == nil || m.svc.Store() == nil {
 		err := errors.New("service unavailable")
 		m.status = "Control request failed: " + err.Error()
 		return controlInvocationOutcome{model: m, err: err}
 	}
-	item, err := m.svc.Store().GetTodo(m.ctx, input.TodoID)
-	if err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+	if strings.TrimSpace(input.ProjectName) == "" {
+		if project, ok := m.projectSummaryByPathAllProjects(input.ProjectPath); ok {
+			input.ProjectName = projectNameForPicker(project, project.Path)
+		}
 	}
-	projectPath := strings.TrimSpace(item.ProjectPath)
-	if projectPath == "" {
-		projectPath = strings.TrimSpace(input.ProjectPath)
+	m.status = fmt.Sprintf("Completing TODO #%d...", input.TodoID)
+	return controlInvocationOutcome{model: m, cmd: m.completeBossTodoCmd(input)}
+}
+
+func (m Model) completeBossTodoCmd(input control.TodoCompleteInput) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
 	}
-	if projectPath == "" {
-		err := fmt.Errorf("TODO #%d has no project path", input.TodoID)
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+	return func() tea.Msg {
+		msg := bossTodoCompletedMsg{input: input}
+		if svc == nil || svc.Store() == nil {
+			msg.err = errors.New("service unavailable")
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiQuickActionTimeout)
+		defer cancel()
+		msg.item, msg.err = svc.Store().GetTodo(ctx, input.TodoID)
+		if msg.err != nil {
+			msg.err = timeoutActionError(msg.err, tuiQuickActionTimeout, "loading the TODO")
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		msg.projectPath = firstNonEmptyTrimmed(msg.item.ProjectPath, input.ProjectPath)
+		if msg.projectPath == "" {
+			msg.err = fmt.Errorf("TODO #%d has no project path", input.TodoID)
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		if ref := strings.TrimSpace(input.ProjectPath); ref != "" && filepath.Clean(ref) != filepath.Clean(msg.projectPath) {
+			msg.err = fmt.Errorf("TODO #%d belongs to %s, not %s", input.TodoID, msg.projectPath, ref)
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		if msg.item.Done {
+			msg.status = fmt.Sprintf("TODO #%d was already complete", input.TodoID)
+			return msg
+		}
+		msg.err = svc.ToggleTodoDone(ctx, msg.projectPath, input.TodoID, true)
+		msg.err = timeoutActionError(msg.err, tuiQuickActionTimeout, "completing the TODO")
+		if msg.err != nil {
+			msg.status = "Control request failed: " + msg.err.Error()
+			return msg
+		}
+		msg.changed = true
+		name := firstNonEmptyTrimmed(input.ProjectName, filepath.Base(msg.projectPath))
+		msg.status = fmt.Sprintf("Marked TODO #%d complete in %s", input.TodoID, name)
+		return msg
 	}
-	if ref := strings.TrimSpace(input.ProjectPath); ref != "" && filepath.Clean(ref) != filepath.Clean(projectPath) {
-		err := fmt.Errorf("TODO #%d belongs to %s, not %s", input.TodoID, projectPath, ref)
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
+}
+
+func (m Model) applyBossTodoCompleted(msg bossTodoCompletedMsg) (tea.Model, tea.Cmd) {
+	m.status = msg.status
+	if msg.err == nil && msg.changed {
+		m = m.clearBossTrackedTodo(msg.projectPath, msg.input.TodoID)
 	}
-	if item.Done {
-		m.status = fmt.Sprintf("TODO #%d was already complete", input.TodoID)
-		return controlInvocationOutcome{model: m}
-	}
-	if err := m.svc.ToggleTodoDone(m.ctx, projectPath, input.TodoID, true); err != nil {
-		m.status = "Control request failed: " + err.Error()
-		return controlInvocationOutcome{model: m, err: err}
-	}
-	name := filepath.Base(projectPath)
-	if project, ok := m.projectSummaryByPathAllProjects(projectPath); ok {
-		name = projectNameForPicker(project, projectPath)
-	}
-	m = m.clearBossTrackedTodo(projectPath, input.TodoID)
-	m.status = fmt.Sprintf("Marked TODO #%d complete in %s", input.TodoID, name)
-	return controlInvocationOutcome{model: m}
+	return m, nil
 }
 
 func (m Model) executeGitPrepareCommitControlWithOutcome(input control.GitPrepareCommitInput) controlInvocationOutcome {
@@ -2174,14 +2496,14 @@ func settingsUpdateInvocationFromInput(input control.SettingsUpdateInput) contro
 	}
 }
 
-func (m Model) resolveControlTrackedTodo(project model.ProjectSummary, todoID int64, todoText string) (model.TodoItem, error) {
+func resolveControlTrackedTodo(ctx context.Context, svc *service.Service, project model.ProjectSummary, todoID int64, todoText string) (model.TodoItem, error) {
 	if todoID <= 0 {
 		return model.TodoItem{ProjectPath: strings.TrimSpace(project.Path), Text: strings.TrimSpace(todoText)}, nil
 	}
-	if m.svc == nil || m.svc.Store() == nil {
+	if svc == nil || svc.Store() == nil {
 		return model.TodoItem{}, errors.New("service unavailable for TODO tracking")
 	}
-	item, err := m.svc.Store().GetTodo(m.ctx, todoID)
+	item, err := svc.Store().GetTodo(ctx, todoID)
 	if err != nil {
 		return model.TodoItem{}, err
 	}
@@ -2196,7 +2518,7 @@ func (m Model) resolveControlTrackedTodo(project model.ProjectSummary, todoID in
 	if strings.TrimSpace(item.Text) == "" {
 		item.Text = strings.TrimSpace(todoText)
 	}
-	if suggestion, err := m.svc.Store().GetTodoWorktreeSuggestion(m.ctx, todoID); err == nil {
+	if suggestion, err := svc.Store().GetTodoWorktreeSuggestion(ctx, todoID); err == nil {
 		item.WorktreeSuggestion = &suggestion
 	}
 	return item, nil

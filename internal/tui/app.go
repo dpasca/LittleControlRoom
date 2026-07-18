@@ -1300,6 +1300,30 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if msg, ok := msg.(bossui.ControlInvocationConfirmedMsg); ok {
 		return m.executeBossControlInvocation(msg)
 	}
+	if msg, ok := msg.(bossTrackedTodoLoadedMsg); ok {
+		return m.applyBossTrackedTodoLoaded(msg)
+	}
+	if msg, ok := msg.(bossAgentTaskCreatedMsg); ok {
+		return m.applyBossAgentTaskCreated(msg)
+	}
+	if msg, ok := msg.(bossAgentTaskContinueLoadedMsg); ok {
+		return m.applyBossAgentTaskContinueLoaded(msg)
+	}
+	if msg, ok := msg.(bossAgentTaskCloseLoadedMsg); ok {
+		return m.applyBossAgentTaskCloseLoaded(msg)
+	}
+	if msg, ok := msg.(bossAgentTaskClosedMsg); ok {
+		return m.applyBossAgentTaskClosed(msg)
+	}
+	if msg, ok := msg.(bossScratchTaskArchivedMsg); ok {
+		return m.applyBossScratchTaskArchived(msg)
+	}
+	if msg, ok := msg.(bossProjectArchiveChangedMsg); ok {
+		return m.applyBossProjectArchiveChanged(msg)
+	}
+	if msg, ok := msg.(bossTodoCompletedMsg); ok {
+		return m.applyBossTodoCompleted(msg)
+	}
 	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "ctrl+l" {
 		return m.beginTerminalRepair(false)
 	}
@@ -1317,6 +1341,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if msg, ok := msg.(bossTodoWorktreePreparedMsg); ok {
 		return m.applyBossTodoWorktreePrepared(msg)
+	}
+	if msg, ok := msg.(bossLCAgentGoalPreparedMsg); ok {
+		return m.applyBossLCAgentGoalPrepared(msg)
 	}
 	if msg, ok := msg.(bossui.GoalRunConfirmedMsg); ok {
 		return m.executeBossGoalRun(msg)

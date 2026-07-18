@@ -17,6 +17,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+type bossLCAgentGoalPreparedMsg struct {
+	proposal bossrun.GoalProposal
+	result   bossrun.GoalResult
+	task     model.AgentTask
+	project  model.ProjectSummary
+	err      error
+}
+
 func (m Model) executeBossGoalRun(msg bossui.GoalRunConfirmedMsg) (tea.Model, tea.Cmd) {
 	proposal, err := bossrun.NormalizeGoalProposal(msg.Proposal)
 	if err != nil {
@@ -56,74 +64,105 @@ func (m Model) executeBossGoalRunCmd(proposal bossrun.GoalProposal) tea.Cmd {
 }
 
 func (m Model) executeBossLCAgentGoalRun(proposal bossrun.GoalProposal) (tea.Model, tea.Cmd) {
-	result := bossrun.GoalResult{
-		RunID: proposal.Run.ID,
-		Kind:  proposal.Run.Kind,
-	}
-	if m.svc == nil || m.svc.Store() == nil {
-		err := errors.New("service unavailable")
-		m.status = "Goal run failed: " + err.Error()
-		return m, bossGoalResultCmd(result, err)
-	}
-	ctx := m.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	record, err := m.svc.Store().CreateGoalRun(ctx, proposal)
-	if err != nil {
-		m.status = "Goal run failed: " + err.Error()
-		return m, bossGoalResultCmd(result, err)
-	}
-	proposal = record.Proposal
-	result.RunID = proposal.Run.ID
-	result.Kind = proposal.Run.Kind
-	if _, err := m.svc.Store().UpdateGoalRunStatus(ctx, proposal.Run.ID, bossrun.GoalStatusRunning); err != nil {
-		m.status = "Goal run failed: " + err.Error()
-		return m, m.completeBossGoalRunCmd(result, err)
-	}
+	m.status = "Preparing LCAgent goal task: " + proposal.Run.Title
+	return m, m.prepareBossLCAgentGoalCmd(proposal)
+}
 
-	createStep := bossGoalPlanStep(proposal.Plan, bossrun.PlanStepDelegate, control.CapabilityAgentTaskCreate)
-	task, err := m.svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
-		Title:        proposal.Run.Title,
-		Kind:         model.AgentTaskKindAgent,
-		Capabilities: lcagentGoalTaskCapabilities(proposal),
-		Resources:    agentTaskResourcesFromControl(proposal.Authority.Resources),
-	})
-	createTrace := bossrun.TraceEntry{
-		StepID:     bossGoalStepID(createStep, "create-lcagent-task"),
-		Capability: control.CapabilityAgentTaskCreate,
-		Status:     "completed",
-		Summary:    "Created LCAgent goal task.",
-		At:         time.Now(),
+func (m Model) prepareBossLCAgentGoalCmd(proposal bossrun.GoalProposal) tea.Cmd {
+	svc := m.svc
+	parent := m.ctx
+	if parent == nil {
+		parent = context.Background()
 	}
-	if err != nil {
-		createTrace.Status = "failed"
-		createTrace.Summary = err.Error()
-		result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{Error: err.Error()})
-		result.Trace = append(result.Trace, createTrace)
-		_ = m.svc.Store().AppendGoalRunTrace(ctx, proposal.Run.ID, createTrace)
-		m.status = "Goal run failed: " + err.Error()
-		return m, m.completeBossGoalRunCmd(result, err)
-	}
-	createTrace.ResourceID = task.ID
-	result.CreatedTaskIDs = append(result.CreatedTaskIDs, task.ID)
-	result.Trace = append(result.Trace, createTrace)
-	if traceErr := m.svc.Store().AppendGoalRunTrace(ctx, proposal.Run.ID, createTrace); traceErr != nil {
-		err := fmt.Errorf("record LCAgent task creation trace: %w", traceErr)
-		result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: err.Error()})
-		m.status = "Goal run failed: " + err.Error()
-		return m, m.completeBossGoalRunCmd(result, err)
-	}
+	return func() tea.Msg {
+		msg := bossLCAgentGoalPreparedMsg{
+			proposal: proposal,
+			result: bossrun.GoalResult{
+				RunID: proposal.Run.ID,
+				Kind:  proposal.Run.Kind,
+			},
+		}
+		if svc == nil || svc.Store() == nil {
+			msg.err = errors.New("service unavailable")
+			return msg
+		}
+		ctx, cancel := context.WithTimeout(parent, tuiProjectActionTimeout)
+		defer cancel()
 
-	m.upsertOpenAgentTask(task)
-	project, err := projectSummaryForAgentTask(task)
-	if err != nil {
-		result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: err.Error()})
-		m.status = "Goal run failed: " + err.Error()
-		return m, m.completeBossGoalRunCmd(result, err)
+		record, err := svc.Store().CreateGoalRun(ctx, proposal)
+		if err != nil {
+			msg.err = err
+			return msg
+		}
+		msg.proposal = record.Proposal
+		msg.result.RunID = msg.proposal.Run.ID
+		msg.result.Kind = msg.proposal.Run.Kind
+		if _, err := svc.Store().UpdateGoalRunStatus(ctx, msg.proposal.Run.ID, bossrun.GoalStatusRunning); err != nil {
+			msg.err = err
+			return completeBossLCAgentGoalPreparation(parent, svc, msg)
+		}
+
+		createStep := bossGoalPlanStep(msg.proposal.Plan, bossrun.PlanStepDelegate, control.CapabilityAgentTaskCreate)
+		msg.task, err = svc.CreateAgentTask(ctx, model.CreateAgentTaskInput{
+			Title:        msg.proposal.Run.Title,
+			Kind:         model.AgentTaskKindAgent,
+			Capabilities: lcagentGoalTaskCapabilities(msg.proposal),
+			Resources:    agentTaskResourcesFromControl(msg.proposal.Authority.Resources),
+		})
+		createTrace := bossrun.TraceEntry{
+			StepID:     bossGoalStepID(createStep, "create-lcagent-task"),
+			Capability: control.CapabilityAgentTaskCreate,
+			Status:     "completed",
+			Summary:    "Created LCAgent goal task.",
+			At:         time.Now(),
+		}
+		if err != nil {
+			createTrace.Status = "failed"
+			createTrace.Summary = err.Error()
+			msg.result.FailedTasks = append(msg.result.FailedTasks, bossrun.TaskFailure{Error: err.Error()})
+			msg.result.Trace = append(msg.result.Trace, createTrace)
+			_ = svc.Store().AppendGoalRunTrace(ctx, msg.proposal.Run.ID, createTrace)
+			msg.err = err
+			return completeBossLCAgentGoalPreparation(parent, svc, msg)
+		}
+		createTrace.ResourceID = msg.task.ID
+		msg.result.CreatedTaskIDs = append(msg.result.CreatedTaskIDs, msg.task.ID)
+		msg.result.Trace = append(msg.result.Trace, createTrace)
+		if traceErr := svc.Store().AppendGoalRunTrace(ctx, msg.proposal.Run.ID, createTrace); traceErr != nil {
+			msg.err = fmt.Errorf("record LCAgent task creation trace: %w", traceErr)
+			msg.result.FailedTasks = append(msg.result.FailedTasks, bossrun.TaskFailure{TaskID: msg.task.ID, Error: msg.err.Error()})
+			return completeBossLCAgentGoalPreparation(parent, svc, msg)
+		}
+		msg.project, msg.err = projectSummaryForAgentTask(msg.task)
+		if msg.err != nil {
+			msg.result.FailedTasks = append(msg.result.FailedTasks, bossrun.TaskFailure{TaskID: msg.task.ID, Error: msg.err.Error()})
+			return completeBossLCAgentGoalPreparation(parent, svc, msg)
+		}
+		return msg
 	}
-	prompt := m.agentTaskLaunchPromptWithRuntimeContext(task, lcagentGoalTaskPrompt(proposal))
-	updated, launchCmd := m.launchEmbeddedForProjectWithOptions(project, codexapp.ProviderLCAgent, embeddedLaunchOptions{
+}
+
+func completeBossLCAgentGoalPreparation(ctx context.Context, svc *service.Service, msg bossLCAgentGoalPreparedMsg) bossLCAgentGoalPreparedMsg {
+	if svc != nil && svc.Store() != nil && strings.TrimSpace(msg.result.RunID) != "" {
+		record, completeErr := svc.Store().CompleteGoalRun(ctx, msg.result, msg.err)
+		if completeErr != nil {
+			msg.err = errors.Join(msg.err, completeErr)
+		} else {
+			msg.result = record.Result
+		}
+	}
+	msg.result.Summary = bossrun.FormatGoalResult(msg.result)
+	return msg
+}
+
+func (m Model) applyBossLCAgentGoalPrepared(msg bossLCAgentGoalPreparedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "Goal run failed: " + msg.err.Error()
+		return m, bossGoalResultCmd(msg.result, msg.err)
+	}
+	m.upsertOpenAgentTask(msg.task)
+	prompt := m.agentTaskLaunchPromptWithRuntimeContext(msg.task, lcagentGoalTaskPrompt(msg.proposal))
+	updated, launchCmd := m.launchEmbeddedForProjectWithOptions(msg.project, codexapp.ProviderLCAgent, embeddedLaunchOptions{
 		forceNew: true,
 		prompt:   prompt,
 		reveal:   false,
@@ -131,14 +170,14 @@ func (m Model) executeBossLCAgentGoalRun(proposal bossrun.GoalProposal) (tea.Mod
 	m = normalizeUpdateModel(updated)
 	if launchCmd == nil {
 		err := errors.New(firstNonEmptyTrimmed(m.status, "LCAgent goal task launch did not start"))
-		result.FailedTasks = append(result.FailedTasks, bossrun.TaskFailure{TaskID: task.ID, Error: err.Error()})
+		msg.result.FailedTasks = append(msg.result.FailedTasks, bossrun.TaskFailure{TaskID: msg.task.ID, Error: err.Error()})
 		m.status = "Goal run failed: " + err.Error()
-		return m, m.completeBossGoalRunCmd(result, err)
+		return m, m.completeBossGoalRunCmd(msg.result, err)
 	}
-	launchStep := bossGoalPlanStep(proposal.Plan, bossrun.PlanStepAct, control.CapabilityAgentTaskCreate)
-	trackedCmd := m.agentTaskLaunchTrackingCmd(task, launchCmd, bossAgentTaskHandoffStatus(task))
-	m.status = "Starting LCAgent goal task: " + task.Title
-	return m, m.bossLCAgentGoalLaunchCmd(proposal, task, launchStep, result.Trace, trackedCmd)
+	launchStep := bossGoalPlanStep(msg.proposal.Plan, bossrun.PlanStepAct, control.CapabilityAgentTaskCreate)
+	trackedCmd := m.agentTaskLaunchTrackingCmd(msg.task, launchCmd, bossAgentTaskHandoffStatus(msg.task))
+	m.status = "Starting LCAgent goal task: " + msg.task.Title
+	return m, m.bossLCAgentGoalLaunchCmd(msg.proposal, msg.task, launchStep, msg.result.Trace, trackedCmd)
 }
 
 func (m Model) bossLCAgentGoalLaunchCmd(proposal bossrun.GoalProposal, task model.AgentTask, launchStep bossrun.PlanStep, priorTrace []bossrun.TraceEntry, launchCmd tea.Cmd) tea.Cmd {
