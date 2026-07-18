@@ -160,6 +160,7 @@ type transcriptEntry struct {
 	Text           string
 	DisplayText    string
 	GeneratedImage *GeneratedImageArtifact
+	codexStderr    bool
 }
 
 type browserToolCall struct {
