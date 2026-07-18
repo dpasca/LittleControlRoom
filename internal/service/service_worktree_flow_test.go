@@ -351,6 +351,9 @@ func TestCreateTodoWorktreeCreatesTrackedSiblingProject(t *testing.T) {
 	if strings.TrimSpace(detail.Summary.WorktreeParentBranch) != strings.TrimSpace(rootStatus.Branch) {
 		t.Fatalf("tracked worktree parent branch = %q, want %q", detail.Summary.WorktreeParentBranch, strings.TrimSpace(rootStatus.Branch))
 	}
+	if strings.TrimSpace(detail.Summary.WorktreeInitialBranch) != "feat/worktree-launch" {
+		t.Fatalf("tracked worktree initial branch = %q, want %q", detail.Summary.WorktreeInitialBranch, "feat/worktree-launch")
+	}
 }
 
 func TestCreateTodoWorktreeInheritsProjectCategory(t *testing.T) {

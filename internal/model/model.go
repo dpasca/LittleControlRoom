@@ -416,6 +416,7 @@ type ProjectState struct {
 	WorktreeRootPath           string
 	WorktreeKind               WorktreeKind
 	WorktreeParentBranch       string
+	WorktreeInitialBranch      string
 	WorktreeMergeStatus        WorktreeMergeStatus
 	WorktreeOriginTodoID       int64
 	RepoBranch                 string
@@ -457,6 +458,7 @@ type ProjectSummary struct {
 	WorktreeRootPath                              string
 	WorktreeKind                                  WorktreeKind
 	WorktreeParentBranch                          string
+	WorktreeInitialBranch                         string
 	WorktreeMergeStatus                           WorktreeMergeStatus
 	WorktreeOriginTodoID                          int64
 	RepoBranch                                    string
@@ -714,6 +716,15 @@ func ExternalSessionID(source SessionSource, format, sessionID, rawSessionID str
 
 func (summary ProjectSummary) ExternalLatestSessionID() string {
 	return ExternalSessionID(summary.LatestSessionSource, summary.LatestSessionFormat, summary.LatestSessionID, summary.LatestRawSessionID)
+}
+
+func (summary ProjectSummary) WorktreeBranchChanged() bool {
+	initialBranch := strings.TrimSpace(summary.WorktreeInitialBranch)
+	currentBranch := strings.TrimSpace(summary.RepoBranch)
+	return summary.WorktreeKind == WorktreeKindLinked &&
+		initialBranch != "" &&
+		currentBranch != "" &&
+		initialBranch != currentBranch
 }
 
 type TodoWorktreeSuggestionStatus string

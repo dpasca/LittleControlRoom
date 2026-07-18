@@ -1542,6 +1542,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 				WorktreeRootPath:           worktreeRootPath,
 				WorktreeKind:               worktreeKind,
 				WorktreeParentBranch:       old.WorktreeParentBranch,
+				WorktreeInitialBranch:      old.WorktreeInitialBranch,
 				WorktreeMergeStatus:        old.WorktreeMergeStatus,
 				WorktreeOriginTodoID:       old.WorktreeOriginTodoID,
 				RepoBranch:                 old.RepoBranch,
@@ -1745,6 +1746,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 			WorktreeRootPath:           worktreeRootPath,
 			WorktreeKind:               worktreeKind,
 			WorktreeParentBranch:       worktreeParentBranch,
+			WorktreeInitialBranch:      old.WorktreeInitialBranch,
 			WorktreeMergeStatus:        worktreeMergeStatus,
 			WorktreeOriginTodoID:       old.WorktreeOriginTodoID,
 			RepoBranch:                 repoBranch,
@@ -2491,6 +2493,7 @@ func projectStateChanged(old model.ProjectSummary, state model.ProjectState) boo
 		old.WorktreeRootPath != state.WorktreeRootPath ||
 		old.WorktreeKind != state.WorktreeKind ||
 		old.WorktreeParentBranch != state.WorktreeParentBranch ||
+		old.WorktreeInitialBranch != state.WorktreeInitialBranch ||
 		old.WorktreeMergeStatus != state.WorktreeMergeStatus ||
 		old.RepoBranch != state.RepoBranch ||
 		old.RepoDirty != state.RepoDirty ||
@@ -3192,6 +3195,7 @@ func (s *Service) persistProjectStateUpdate(ctx context.Context, detail model.Pr
 		WorktreeRootPath:           overrides.worktreeRootPath,
 		WorktreeKind:               overrides.worktreeKind,
 		WorktreeParentBranch:       overrides.worktreeParentBranch,
+		WorktreeInitialBranch:      detail.Summary.WorktreeInitialBranch,
 		WorktreeMergeStatus:        overrides.worktreeMergeStatus,
 		WorktreeOriginTodoID:       detail.Summary.WorktreeOriginTodoID,
 		RepoBranch:                 overrides.repoBranch,
