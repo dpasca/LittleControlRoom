@@ -1192,6 +1192,56 @@ func TestUpdateWorktreeFromParentMergesIntoLinkedWorktreeAndPreservesMergeBackFi
 	}
 }
 
+func TestUpdateWorktreeFromParentPreservesNestedSubmoduleRootMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	projectPath := filepath.Join(root, "repo")
+	submoduleOriginPath := filepath.Join(root, "assets-origin")
+	initGitRepoWithSubmodule(t, projectPath, submoduleOriginPath, "Assets")
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	if _, err := svc.CreateOrAttachProject(ctx, CreateOrAttachProjectRequest{ParentPath: root, Name: "repo"}); err != nil {
+		t.Fatalf("track root project: %v", err)
+	}
+	result := createSuggestedTodoWorktreeForTest(t, ctx, svc, st, projectPath, "Keep nested assets current", "feat/nested-assets", "feat-nested-assets")
+	rootSubmodulePath := filepath.Join(projectPath, "Assets")
+	worktreeSubmodulePath := filepath.Join(result.WorktreePath, "Assets")
+	rootCoreWorktree := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "config", "--local", "--get", "core.worktree"))
+	if gitDir := strings.TrimSpace(gitOutput(t, worktreeSubmodulePath, "git", "rev-parse", "--absolute-git-dir")); !strings.Contains(filepath.ToSlash(gitDir), "/.git/modules/Assets/worktrees/") {
+		t.Fatalf("worktree submodule git dir = %q, want nested linked worktree", gitDir)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectPath, "ROOT.txt"), []byte("parent work\n"), 0o644); err != nil {
+		t.Fatalf("write root change: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "ROOT.txt")
+	runGit(t, projectPath, "git", "commit", "-m", "advance parent branch")
+
+	if _, err := svc.UpdateWorktreeFromParent(ctx, result.WorktreePath); err != nil {
+		t.Fatalf("UpdateWorktreeFromParent() error = %v", err)
+	}
+	if got := strings.TrimSpace(gitOutput(t, rootSubmodulePath, "git", "config", "--local", "--get", "core.worktree")); got != rootCoreWorktree {
+		t.Fatalf("root submodule core.worktree = %q, want unchanged %q", got, rootCoreWorktree)
+	}
+	for _, repoPath := range []string{projectPath, result.WorktreePath} {
+		status, err := scanner.ReadGitRepoStatus(ctx, repoPath)
+		if err != nil {
+			t.Fatalf("read repo status for %s after update: %v", repoPath, err)
+		}
+		if status.Dirty {
+			t.Fatalf("repo %s should be clean after update, got %#v", repoPath, status)
+		}
+	}
+}
+
 func TestUpdateWorktreeFromParentReportsAlreadyCurrent(t *testing.T) {
 	t.Parallel()
 

@@ -239,6 +239,18 @@ func TestReadGitRepoStatusAllowsExistingIndexLock(t *testing.T) {
 	}
 }
 
+func TestReadGitRepoStatusIncludesGitStderr(t *testing.T) {
+	t.Parallel()
+
+	_, err := ReadGitRepoStatus(context.Background(), t.TempDir())
+	if err == nil {
+		t.Fatal("ReadGitRepoStatus() error = nil, want non-repository failure")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "not a git repository") {
+		t.Fatalf("ReadGitRepoStatus() error = %q, want Git stderr", err)
+	}
+}
+
 func scannerInitGitRepo(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {

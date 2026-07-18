@@ -477,7 +477,7 @@ func (s *Service) UpdateWorktreeFromParent(ctx context.Context, projectPath stri
 		}
 		return result, fmt.Errorf("update %s from %s at %s failed: %w", worktreeBranch, parentBranch, projectPath, mergeErr)
 	}
-	if err := gitSubmoduleUpdateInitRecursive(ctx, projectPath); err != nil {
+	if err := worktreeprep.SyncSubmodules(ctx, rootPath, projectPath); err != nil {
 		refreshErr := s.refreshWorktreeFamilyStatus(ctx, rootPath, projectPath)
 		if refreshErr != nil {
 			return result, fmt.Errorf("updated %s from %s but failed to sync linked-worktree submodules: %w (status refresh also failed: %v)", worktreeBranch, parentBranch, err, refreshErr)

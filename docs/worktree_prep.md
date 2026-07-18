@@ -75,6 +75,8 @@ Submodule paths must be relative paths that stay inside the repo. LCR fails clos
 
 Nested submodule worktrees start detached at the parent repo's pinned gitlink commit. If LCR later resolves dirty changes inside one of those detached submodules during commit-and-merge, it creates an LCR-owned branch such as `lcroom/<parent-branch>/<submodule>-<base-sha>` and pushes that branch with upstream tracking before preparing the parent gitlink commit.
 
+When `/wt update` advances a parent linked worktree, LCR updates an existing nested submodule worktree directly to the new gitlink commit. It does not run the ordinary submodule checkout path against that nested worktree, because Git would otherwise rewrite the shared submodule `core.worktree` metadata and make the canonical checkout unreadable.
+
 If a clean linked worktree already records a detached nested submodule commit that is not reachable from a remote branch or tag, merge-back publishes that commit on an LCR-owned submodule branch before merging the parent worktree. This keeps the root checkout's post-merge submodule sync from failing on a locally-created gitlink commit.
 
 If the submodule remote rejects that publication, merge-back stops before changing the root checkout and reports a submodule publish blocker. Push the submodule commit to a writable remote branch, point the parent worktree at a commit already available from the submodule remote, or configure a writable submodule remote before retrying merge-back.

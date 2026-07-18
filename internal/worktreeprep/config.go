@@ -107,6 +107,100 @@ func Prepare(ctx context.Context, rootPath, worktreePath, requestedProfile strin
 	return result, nil
 }
 
+// SyncSubmodules updates a linked parent worktree's submodules without replacing
+// the canonical checkout recorded by a shared nested-submodule repository.
+//
+// A plain `git submodule update` run from a parent linked worktree rewrites
+// core.worktree when that submodule path was prepared with `git worktree add`.
+// Because core.worktree lives in the shared submodule config, that leaves the
+// canonical parent checkout unable to run commands such as `git status`.
+func SyncSubmodules(ctx context.Context, rootPath, worktreePath string) error {
+	rootPath = filepath.Clean(strings.TrimSpace(rootPath))
+	worktreePath = filepath.Clean(strings.TrimSpace(worktreePath))
+	if rootPath == "" || rootPath == "." {
+		return fmt.Errorf("root path is required")
+	}
+	if worktreePath == "" || worktreePath == "." {
+		return fmt.Errorf("worktree path is required")
+	}
+
+	paths, err := listConfiguredSubmodulePaths(ctx, worktreePath)
+	if err != nil {
+		return err
+	}
+	for _, path := range paths {
+		if err := syncSubmodule(ctx, rootPath, worktreePath, path); err != nil {
+			return fmt.Errorf("sync submodule %s in %s: %w", path, worktreePath, err)
+		}
+	}
+	return nil
+}
+
+func syncSubmodule(ctx context.Context, rootPath, worktreePath, submodulePath string) error {
+	commit, err := resolveSubmoduleCommit(ctx, worktreePath, submodulePath)
+	if err != nil {
+		return err
+	}
+	rootSubmodulePath := filepath.Join(rootPath, filepath.FromSlash(submodulePath))
+	worktreeSubmodulePath := filepath.Join(worktreePath, filepath.FromSlash(submodulePath))
+
+	shared, err := reposShareGitCommonDir(ctx, rootSubmodulePath, worktreeSubmodulePath)
+	if err != nil {
+		return err
+	}
+	if !shared {
+		return gitSubmoduleUpdate(ctx, worktreePath, submodulePath)
+	}
+
+	if err := ensureRootSubmoduleHasCommit(ctx, rootPath, submodulePath, commit); err != nil {
+		return err
+	}
+	currentCommit, err := gitOutput(ctx, worktreeSubmodulePath, "rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("read linked submodule worktree %s HEAD: %w", submodulePath, err)
+	}
+	if strings.TrimSpace(currentCommit) != commit {
+		if err := gitlock.CheckIndexLock(ctx, worktreeSubmodulePath); err != nil {
+			return fmt.Errorf("preflight linked submodule worktree %s: %w", submodulePath, err)
+		}
+		if err := gitRun(ctx, worktreeSubmodulePath, "update linked submodule worktree "+submodulePath, "checkout", "--detach", commit); err != nil {
+			return err
+		}
+	}
+
+	return SyncSubmodules(ctx, rootSubmodulePath, worktreeSubmodulePath)
+}
+
+func reposShareGitCommonDir(ctx context.Context, firstPath, secondPath string) (bool, error) {
+	if !isGitRepo(ctx, firstPath) || !isGitRepo(ctx, secondPath) {
+		return false, nil
+	}
+	firstDir, err := gitCommonDir(ctx, firstPath)
+	if err != nil {
+		return false, err
+	}
+	secondDir, err := gitCommonDir(ctx, secondPath)
+	if err != nil {
+		return false, err
+	}
+	return sameCleanPath(firstDir, secondDir), nil
+}
+
+func gitCommonDir(ctx context.Context, repoPath string) (string, error) {
+	value, err := gitOutput(ctx, repoPath, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("git common directory is empty for %s", repoPath)
+	}
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(repoPath, value)
+	}
+	return filepath.Clean(value), nil
+}
+
 func prepareAutoSubmodules(ctx context.Context, rootPath, worktreePath string, result Result) (Result, error) {
 	result.Profile = AutoSubmodulesProfile
 	paths, err := listConfiguredSubmodulePaths(ctx, worktreePath)

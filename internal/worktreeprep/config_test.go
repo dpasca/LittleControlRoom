@@ -110,6 +110,50 @@ func TestPrepareBuiltInAutoSubmodulesWithoutConfigUsesNestedWorktree(t *testing.
 	}
 }
 
+func TestSyncSubmodulesUpdatesNestedWorktreeWithoutRewritingRootMetadata(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := t.TempDir()
+	mainPath := filepath.Join(root, "main")
+	originPath := filepath.Join(root, "asset-origin")
+	initRepoWithSubmodule(t, mainPath, originPath, "Assets")
+	worktreePath := filepath.Join(root, "main--task")
+	runGit(t, mainPath, "worktree", "add", "-b", "task", worktreePath, "HEAD")
+
+	if _, err := Prepare(ctx, mainPath, worktreePath, ""); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	rootSubmodulePath := filepath.Join(mainPath, "Assets")
+	worktreeSubmodulePath := filepath.Join(worktreePath, "Assets")
+	rootCoreWorktree := gitOutputTest(t, rootSubmodulePath, "config", "--local", "--get", "core.worktree")
+
+	newAssetCommit := commitFile(t, originPath, "asset.txt", "updated asset\n", "update asset")
+	runGit(t, rootSubmodulePath, "fetch", "origin")
+	runGit(t, rootSubmodulePath, "checkout", "--detach", newAssetCommit)
+	runGit(t, mainPath, "add", "Assets")
+	runGit(t, mainPath, "commit", "-m", "advance asset pointer")
+	runGit(t, worktreePath, "merge", "master")
+
+	if got := gitOutputTest(t, worktreeSubmodulePath, "rev-parse", "HEAD"); got == newAssetCommit {
+		t.Fatalf("nested submodule worktree already moved to %s before sync", newAssetCommit)
+	}
+	if err := SyncSubmodules(ctx, mainPath, worktreePath); err != nil {
+		t.Fatalf("SyncSubmodules() error = %v", err)
+	}
+	if got := gitOutputTest(t, worktreeSubmodulePath, "rev-parse", "HEAD"); got != newAssetCommit {
+		t.Fatalf("nested submodule HEAD = %q, want %q", got, newAssetCommit)
+	}
+	if got := gitOutputTest(t, rootSubmodulePath, "config", "--local", "--get", "core.worktree"); got != rootCoreWorktree {
+		t.Fatalf("root submodule core.worktree = %q, want unchanged %q", got, rootCoreWorktree)
+	}
+	for _, repoPath := range []string{mainPath, worktreePath} {
+		if got := gitOutputTest(t, repoPath, "status", "--porcelain=v2"); strings.TrimSpace(got) != "" {
+			t.Fatalf("repo %s status after submodule sync = %q, want clean", repoPath, got)
+		}
+	}
+}
+
 func TestPrepareBuiltInAutoSubmodulesFallsBackWhenRootSubmoduleCold(t *testing.T) {
 	t.Parallel()
 
