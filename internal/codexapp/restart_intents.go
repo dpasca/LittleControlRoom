@@ -29,6 +29,7 @@ type RestartIntent struct {
 	ProjectPath  string    `json:"project_path"`
 	SessionID    string    `json:"session_id"`
 	ActiveTurnID string    `json:"active_turn_id,omitempty"`
+	Parallel     bool      `json:"parallel,omitempty"`
 	CapturedAt   time.Time `json:"captured_at"`
 }
 
@@ -39,7 +40,11 @@ func (i RestartIntent) Key() string {
 	if provider == "" || projectPath == "" || sessionID == "" {
 		return ""
 	}
-	return projectPath + "\x00" + string(provider) + "\x00" + sessionID
+	lane := "interactive"
+	if i.Parallel {
+		lane = "parallel"
+	}
+	return projectPath + "\x00" + string(provider) + "\x00" + sessionID + "\x00" + lane
 }
 
 func (i RestartIntent) normalized() RestartIntent {
@@ -69,6 +74,10 @@ func restartIntentPath(dataDir string) (string, error) {
 // BusyExternal sessions belong to another process and must never be claimed by
 // LCR's restart flow.
 func RestartIntentsFromSnapshots(snapshots []Snapshot, capturedAt time.Time) []RestartIntent {
+	return restartIntentsFromSnapshots(snapshots, capturedAt, false)
+}
+
+func restartIntentsFromSnapshots(snapshots []Snapshot, capturedAt time.Time, parallel bool) []RestartIntent {
 	if capturedAt.IsZero() {
 		capturedAt = time.Now()
 	}
@@ -84,6 +93,7 @@ func RestartIntentsFromSnapshots(snapshots []Snapshot, capturedAt time.Time) []R
 			ProjectPath:  snapshot.ProjectPath,
 			SessionID:    snapshot.ThreadID,
 			ActiveTurnID: snapshot.ActiveTurnID,
+			Parallel:     parallel,
 			CapturedAt:   capturedAt,
 		}.normalized()
 		key := intent.Key()

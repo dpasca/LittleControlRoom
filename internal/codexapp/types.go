@@ -721,15 +721,19 @@ func sessionStateSnapshot(session Session) Snapshot {
 }
 
 type Manager struct {
-	mu              sync.Mutex
-	shutdownMu      sync.Mutex
-	sessions        map[string]Session
-	updates         chan string
-	pendingUpdates  map[string]struct{}
-	deferredUpdates map[string]struct{}
-	idleProtected   map[string]struct{}
-	opLocks         keyedmutex.Locker
-	factory         sessionFactory
+	mu                      sync.Mutex
+	shutdownMu              sync.Mutex
+	sessions                map[string]Session
+	parallelSessions        map[string]Session
+	updates                 chan string
+	parallelUpdates         chan string
+	pendingUpdates          map[string]struct{}
+	deferredUpdates         map[string]struct{}
+	pendingParallelUpdates  map[string]struct{}
+	deferredParallelUpdates map[string]struct{}
+	idleProtected           map[string]struct{}
+	opLocks                 keyedmutex.Locker
+	factory                 sessionFactory
 
 	idleTimeout  time.Duration
 	reapInterval time.Duration
@@ -747,15 +751,19 @@ func NewManagerWithFactory(factory func(req LaunchRequest, notify func()) (Sessi
 		factory = newEmbeddedSession
 	}
 	manager := &Manager{
-		sessions:           make(map[string]Session),
-		updates:            make(chan string, 256),
-		pendingUpdates:     make(map[string]struct{}),
-		deferredUpdates:    make(map[string]struct{}),
-		idleProtected:      make(map[string]struct{}),
-		factory:            factory,
-		idleTimeout:        idleShutdownAfter,
-		reapInterval:       time.Minute,
-		busyReconcileAfter: busyStateReconcileAfter,
+		sessions:                make(map[string]Session),
+		parallelSessions:        make(map[string]Session),
+		updates:                 make(chan string, 256),
+		parallelUpdates:         make(chan string, 64),
+		pendingUpdates:          make(map[string]struct{}),
+		deferredUpdates:         make(map[string]struct{}),
+		pendingParallelUpdates:  make(map[string]struct{}),
+		deferredParallelUpdates: make(map[string]struct{}),
+		idleProtected:           make(map[string]struct{}),
+		factory:                 factory,
+		idleTimeout:             idleShutdownAfter,
+		reapInterval:            time.Minute,
+		busyReconcileAfter:      busyStateReconcileAfter,
 	}
 	go manager.reapLoop()
 	return manager
@@ -766,6 +774,13 @@ func (m *Manager) Updates() <-chan string {
 		return nil
 	}
 	return m.updates
+}
+
+func (m *Manager) ParallelUpdates() <-chan string {
+	if m == nil {
+		return nil
+	}
+	return m.parallelUpdates
 }
 
 func (m *Manager) Session(projectPath string) (Session, bool) {
@@ -798,6 +813,36 @@ func (m *Manager) Snapshots() []Snapshot {
 	snapshots := make([]Snapshot, 0, len(m.sessions))
 	for _, session := range m.sessions {
 		snapshots = append(snapshots, session.Snapshot())
+	}
+	return snapshots
+}
+
+// ParallelSession returns the background session for a project, if one is
+// currently managed. Parallel sessions are deliberately separate from
+// Session: they must not replace the interactive session shown by the TUI.
+func (m *Manager) ParallelSession(projectPath string) (Session, bool) {
+	if m == nil {
+		return nil, false
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.parallelSessions[projectPath]
+	return session, ok
+}
+
+// ParallelSnapshots returns background-session state for diagnostics and
+// shutdown coordination without mixing it into the interactive project
+// snapshot registry.
+func (m *Manager) ParallelSnapshots() []Snapshot {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	snapshots := make([]Snapshot, 0, len(m.parallelSessions))
+	for _, session := range m.parallelSessions {
+		snapshots = append(snapshots, sessionStateSnapshot(session))
 	}
 	return snapshots
 }
@@ -916,6 +961,105 @@ func (m *Manager) Open(req LaunchRequest) (Session, bool, error) {
 	return session, false, nil
 }
 
+// OpenParallel opens a background session for the project without replacing
+// its interactive session. The request may start fresh work or resume a
+// journaled background turn. At most one active parallel session is kept per
+// project: a repeated request reuses active work, while an idle or closed
+// background session is replaced.
+func (m *Manager) OpenParallel(req LaunchRequest) (Session, bool, error) {
+	if m == nil {
+		return nil, false, fmt.Errorf("manager required")
+	}
+	if req.Preset == "" {
+		req.Preset = codexcli.DefaultPreset()
+	}
+	if err := req.Validate(); err != nil {
+		return nil, false, err
+	}
+
+	projectPath := strings.TrimSpace(req.ProjectPath)
+	ensureManagedPlaywrightSessionKey(&req)
+	ensureTodoCaptureSessionKey(&req)
+	unlock := m.opLocks.Lock("parallel\x00" + projectPath)
+	defer unlock()
+
+	m.mu.Lock()
+	existing, ok := m.parallelSessions[projectPath]
+	if ok {
+		state := sessionStateSnapshot(existing)
+		if parallelSessionActive(state) {
+			m.mu.Unlock()
+			m.notifyParallel(projectPath)
+			return existing, true, nil
+		}
+		delete(m.parallelSessions, projectPath)
+	}
+	m.mu.Unlock()
+
+	if ok {
+		_ = existing.Close()
+		if waiter, waitable := existing.(closeWaiter); waitable {
+			waiter.WaitClosed(5 * time.Second)
+		}
+	}
+
+	// Parallel sessions use a separate update stream so their progress cannot
+	// overwrite the foreground project's interactive snapshot cache.
+	session, err := m.factory(req, func() {
+		m.notifyParallel(projectPath)
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	m.mu.Lock()
+	m.parallelSessions[projectPath] = session
+	m.mu.Unlock()
+	m.notifyParallel(projectPath)
+	return session, false, nil
+}
+
+func parallelSessionActive(snapshot Snapshot) bool {
+	if snapshot.Closed {
+		return false
+	}
+	if snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != "" {
+		return true
+	}
+	if snapshot.PendingApproval != nil || snapshot.PendingToolInput != nil || snapshot.PendingElicitation != nil {
+		return true
+	}
+	switch snapshot.Phase {
+	case SessionPhaseRunning, SessionPhaseFinishing, SessionPhaseReconciling, SessionPhaseStalled, SessionPhaseExternal:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) CloseParallelProject(projectPath string) error {
+	if m == nil {
+		return nil
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return nil
+	}
+	unlock := m.opLocks.Lock("parallel\x00" + projectPath)
+	defer unlock()
+
+	m.mu.Lock()
+	session, ok := m.parallelSessions[projectPath]
+	if ok {
+		delete(m.parallelSessions, projectPath)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return session.Close()
+}
+
 func (m *Manager) CloseProject(projectPath string) error {
 	if m == nil {
 		return nil
@@ -945,11 +1089,15 @@ func (m *Manager) CloseAll() error {
 		return nil
 	}
 	m.mu.Lock()
-	sessions := make([]Session, 0, len(m.sessions))
+	sessions := make([]Session, 0, len(m.sessions)+len(m.parallelSessions))
 	for _, session := range m.sessions {
 		sessions = append(sessions, session)
 	}
+	for _, session := range m.parallelSessions {
+		sessions = append(sessions, session)
+	}
 	m.sessions = make(map[string]Session)
+	m.parallelSessions = make(map[string]Session)
 	clear(m.idleProtected)
 	m.mu.Unlock()
 
@@ -976,18 +1124,36 @@ func (m *Manager) CloseAllForRestart(dataDir string) ([]RestartIntent, error) {
 		return nil, m.CloseAll()
 	}
 
+	type managedSession struct {
+		session  Session
+		parallel bool
+	}
 	m.mu.Lock()
-	sessions := make([]Session, 0, len(m.sessions))
+	sessions := make([]managedSession, 0, len(m.sessions)+len(m.parallelSessions))
 	for _, session := range m.sessions {
-		sessions = append(sessions, session)
+		sessions = append(sessions, managedSession{session: session})
+	}
+	for _, session := range m.parallelSessions {
+		sessions = append(sessions, managedSession{session: session, parallel: true})
 	}
 	m.mu.Unlock()
 
-	snapshots := make([]Snapshot, 0, len(sessions))
-	for _, session := range sessions {
-		snapshots = append(snapshots, sessionStateSnapshot(session))
+	capturedAt := time.Now()
+	interactiveSnapshots := make([]Snapshot, 0, len(sessions))
+	parallelSnapshots := make([]Snapshot, 0, len(sessions))
+	for _, managed := range sessions {
+		snapshot := sessionStateSnapshot(managed.session)
+		if managed.parallel {
+			parallelSnapshots = append(parallelSnapshots, snapshot)
+		} else {
+			interactiveSnapshots = append(interactiveSnapshots, snapshot)
+		}
 	}
-	intents := RestartIntentsFromSnapshots(snapshots, time.Now())
+	intents := append(
+		RestartIntentsFromSnapshots(interactiveSnapshots, capturedAt),
+		restartIntentsFromSnapshots(parallelSnapshots, capturedAt, true)...,
+	)
+	intents = normalizeRestartIntents(intents)
 	if len(intents) > 0 {
 		if err := mergeRestartIntents(dataDir, intents); err != nil {
 			return nil, err
@@ -999,17 +1165,18 @@ func (m *Manager) CloseAllForRestart(dataDir string) ([]RestartIntent, error) {
 	for _, intent := range intents {
 		restartKeys[intent.Key()] = struct{}{}
 	}
-	for _, session := range sessions {
-		snapshot := sessionStateSnapshot(session)
+	for _, managed := range sessions {
+		snapshot := sessionStateSnapshot(managed.session)
 		intent := RestartIntent{
 			Provider:    snapshot.Provider,
 			ProjectPath: snapshot.ProjectPath,
 			SessionID:   snapshot.ThreadID,
+			Parallel:    managed.parallel,
 		}
 		if _, ok := restartKeys[intent.Key()]; ok {
 			// Best effort: provider-specific Interrupt methods make the durable
 			// artifact explicitly interrupted before the helper is terminated.
-			_ = session.Interrupt()
+			_ = managed.session.Interrupt()
 		}
 	}
 	if err := m.CloseAll(); err != nil {
@@ -1070,9 +1237,70 @@ func (m *Manager) AckUpdate(projectPath string) {
 	}
 }
 
+func (m *Manager) notifyParallel(projectPath string) {
+	if m == nil {
+		return
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	m.mu.Lock()
+	if _, ok := m.pendingParallelUpdates[projectPath]; ok {
+		m.deferredParallelUpdates[projectPath] = struct{}{}
+		m.mu.Unlock()
+		return
+	}
+	delete(m.deferredParallelUpdates, projectPath)
+	m.pendingParallelUpdates[projectPath] = struct{}{}
+	m.mu.Unlock()
+	if !m.enqueueParallelUpdate(projectPath) {
+		m.mu.Lock()
+		delete(m.pendingParallelUpdates, projectPath)
+		m.deferredParallelUpdates[projectPath] = struct{}{}
+		m.mu.Unlock()
+	}
+}
+
+func (m *Manager) AckParallelUpdate(projectPath string) {
+	if m == nil {
+		return
+	}
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
+	m.mu.Lock()
+	delete(m.pendingParallelUpdates, projectPath)
+	_, replay := m.deferredParallelUpdates[projectPath]
+	if replay {
+		delete(m.deferredParallelUpdates, projectPath)
+		m.pendingParallelUpdates[projectPath] = struct{}{}
+	}
+	m.mu.Unlock()
+	if !replay {
+		return
+	}
+	if !m.enqueueParallelUpdate(projectPath) {
+		m.mu.Lock()
+		delete(m.pendingParallelUpdates, projectPath)
+		m.deferredParallelUpdates[projectPath] = struct{}{}
+		m.mu.Unlock()
+	}
+}
+
 func (m *Manager) enqueueUpdate(projectPath string) bool {
 	select {
 	case m.updates <- projectPath:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) enqueueParallelUpdate(projectPath string) bool {
+	select {
+	case m.parallelUpdates <- projectPath:
 		return true
 	default:
 		return false
@@ -1097,9 +1325,12 @@ func (m *Manager) reconcileBusySessions(now time.Time) {
 	}
 
 	m.mu.Lock()
-	sessions := make(map[string]Session, len(m.sessions))
-	for projectPath, session := range m.sessions {
-		sessions[projectPath] = session
+	sessions := make([]Session, 0, len(m.sessions)+len(m.parallelSessions))
+	for _, session := range m.sessions {
+		sessions = append(sessions, session)
+	}
+	for _, session := range m.parallelSessions {
+		sessions = append(sessions, session)
 	}
 	m.mu.Unlock()
 
@@ -1135,10 +1366,13 @@ func (m *Manager) reapIdleSessions(now time.Time) {
 	}
 
 	m.mu.Lock()
-	sessions := make(map[string]Session, len(m.sessions))
+	sessions := make(map[string]Session, len(m.sessions)+len(m.parallelSessions))
 	idleProtected := make(map[string]struct{}, len(m.idleProtected))
 	for projectPath, session := range m.sessions {
 		sessions[projectPath] = session
+	}
+	for projectPath, session := range m.parallelSessions {
+		sessions["parallel\x00"+projectPath] = session
 	}
 	for projectPath := range m.idleProtected {
 		idleProtected[projectPath] = struct{}{}

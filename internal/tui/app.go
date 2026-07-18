@@ -1091,6 +1091,7 @@ func (m Model) Init() tea.Cmd {
 		m.loadCPUSnapshotCmd(),
 		m.waitBusCmd(),
 		m.waitCodexCmd(),
+		m.waitMergeConflictResolverUpdateCmd(),
 		spinnerTickCmd(),
 		m.checkSelfUpdateCmd(false),
 	}
@@ -1598,6 +1599,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateNormalMode(msg)
 	case mergeConflictResolveTargetMsg:
 		return m.applyMergeConflictResolveTargetMsg(msg)
+	case mergeConflictResolverOpenedMsg:
+		return m.applyMergeConflictResolverOpenedMsg(msg)
+	case mergeConflictResolverUpdateMsg:
+		return m.applyMergeConflictResolverUpdateMsg(msg)
 	case projectsMsg:
 		m.flushExpiredPendingGitSummaries()
 		reloadCmd := m.finishProjectsReloadCmd()

@@ -430,7 +430,7 @@ func repoConflictDetailText(project model.ProjectSummary) string {
 	if project.WorktreeKind == model.WorktreeKindLinked {
 		location = "worktree"
 	}
-	return "Unmerged files are present in this " + location + ". Use /resolve to ask a fresh engineer session for help, or resolve/abort the in-progress Git operation manually."
+	return "Unmerged files are present in this " + location + ". Use /resolve to start a background conflict resolver, or resolve/abort the in-progress Git operation manually."
 }
 
 func worktreeIntegrationStatusDetailText(project model.ProjectSummary) string {

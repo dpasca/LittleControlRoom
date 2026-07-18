@@ -256,6 +256,88 @@ func TestSuspendedTurnResumeDialogEnterOpensChoicesInBackground(t *testing.T) {
 	}
 }
 
+func TestSuspendedTurnRestoreKeepsInteractiveAndParallelResolverForSameProject(t *testing.T) {
+	projectPath := "/tmp/shared"
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider:     req.Provider.Normalized(),
+				ProjectPath:  req.ProjectPath,
+				ThreadID:     req.ResumeID,
+				ActiveTurnID: req.InterruptedTurnID,
+				Started:      true,
+				Busy:         true,
+				Phase:        codexapp.SessionPhaseRunning,
+			},
+		}, nil
+	})
+	t.Cleanup(func() { _ = manager.CloseAll() })
+	m := Model{
+		codexManager: manager,
+		codexInput:   newCodexTextarea(),
+	}
+
+	updated, cmd := m.resumeSuspendedTurnChoices([]suspendedTurnResumeChoice{
+		{
+			ProjectPath:    projectPath,
+			ProjectName:    "shared",
+			Provider:       codexapp.ProviderCodex,
+			SessionID:      "thread-interactive",
+			ActiveTurnID:   "turn-interactive",
+			CapturedOnQuit: true,
+		},
+		{
+			ProjectPath:    projectPath,
+			ProjectName:    "shared",
+			Provider:       codexapp.ProviderCodex,
+			SessionID:      "thread-resolver",
+			ActiveTurnID:   "turn-resolver",
+			Parallel:       true,
+			CapturedOnQuit: true,
+		},
+	})
+	got := normalizeUpdateModel(updated)
+	if got.restartWarmup == nil || got.restartWarmup.Total != 2 || len(got.restartWarmup.PendingByPath) != 2 {
+		t.Fatalf("restart warmup = %#v, want distinct interactive and parallel entries", got.restartWarmup)
+	}
+
+	msgs := collectCmdMsgs(cmd)
+	if len(msgs) != 2 {
+		t.Fatalf("resume messages = %#v, want two lanes", msgs)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want 2", len(requests))
+	}
+	if requests[0].ResumeID != "thread-interactive" || requests[1].ResumeID != "thread-resolver" {
+		t.Fatalf("resume requests = %#v", requests)
+	}
+	if !requests[0].ContinueInterruptedTurn || !requests[1].ContinueInterruptedTurn {
+		t.Fatalf("resume requests lost continuation intent: %#v", requests)
+	}
+	interactive, interactiveOK := manager.Session(projectPath)
+	parallel, parallelOK := manager.ParallelSession(projectPath)
+	if !interactiveOK || !parallelOK || interactive == parallel {
+		t.Fatalf("restored lanes = interactive (%#v, %v), parallel (%#v, %v)", interactive, interactiveOK, parallel, parallelOK)
+	}
+	if interactive.Snapshot().Closed {
+		t.Fatal("restoring the parallel resolver closed the interactive session")
+	}
+
+	for _, msg := range msgs {
+		updated, _ = got.Update(msg)
+		got = normalizeUpdateModel(updated)
+	}
+	if got.restartWarmup != nil {
+		t.Fatalf("restart warmup did not settle both lanes: %#v", got.restartWarmup)
+	}
+	if got.status != "Restart recovery complete: restored 2 engineer sessions." {
+		t.Fatalf("restart completion status = %q", got.status)
+	}
+}
+
 func TestRestartWarmupBlocksDuplicateManualOpen(t *testing.T) {
 	m := Model{}
 	m.beginRestartWarmup([]restartWarmupEntry{{

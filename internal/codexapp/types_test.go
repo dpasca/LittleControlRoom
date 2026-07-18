@@ -3,6 +3,7 @@ package codexapp
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -460,6 +461,110 @@ func TestManagerOpenForceNewReplacesExistingSession(t *testing.T) {
 	}
 	if !created[0].closed {
 		t.Fatalf("original session should be closed when replaced")
+	}
+}
+
+func TestManagerOpenParallelKeepsInteractiveSession(t *testing.T) {
+	var created []*fakeSession
+
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Busy:     strings.TrimSpace(req.Prompt) != "",
+				Preset:   req.Preset,
+			},
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	interactive, _, err := manager.Open(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+	})
+	if err != nil {
+		t.Fatalf("interactive Open() error = %v", err)
+	}
+
+	background, reused, err := manager.OpenParallel(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    ProviderCodex,
+		Preset:      codexcli.PresetYolo,
+		ForceNew:    true,
+		Prompt:      "resolve the conflicts",
+	})
+	if err != nil {
+		t.Fatalf("OpenParallel() error = %v", err)
+	}
+	if reused {
+		t.Fatal("OpenParallel() reused = true, want a fresh background session")
+	}
+	if background == interactive {
+		t.Fatal("OpenParallel() returned the interactive session")
+	}
+	if interactive.Snapshot().Closed {
+		t.Fatal("OpenParallel() closed the interactive session")
+	}
+	if got, ok := manager.Session("/tmp/demo"); !ok || got != interactive {
+		t.Fatalf("Session() = (%#v, %v), want the original interactive session", got, ok)
+	}
+	if got, ok := manager.ParallelSession("/tmp/demo"); !ok || got != background {
+		t.Fatalf("ParallelSession() = (%#v, %v), want the background session", got, ok)
+	}
+	if got := manager.Snapshots(); len(got) != 1 {
+		t.Fatalf("Snapshots() count = %d, want only the interactive snapshot", len(got))
+	}
+	if got := manager.ParallelSnapshots(); len(got) != 1 {
+		t.Fatalf("ParallelSnapshots() count = %d, want 1", len(got))
+	}
+}
+
+func TestManagerOpenParallelReusesActiveBackgroundSession(t *testing.T) {
+	var created []*fakeSession
+	manager := NewManagerWithFactory(func(req LaunchRequest, notify func()) (Session, error) {
+		session := &fakeSession{
+			projectPath: req.ProjectPath,
+			snapshot: Snapshot{
+				Provider: req.Provider.Normalized(),
+				Started:  true,
+				Busy:     true,
+				Preset:   req.Preset,
+			},
+		}
+		created = append(created, session)
+		return session, nil
+	})
+
+	first, reused, err := manager.OpenParallel(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    ProviderCodex,
+		ForceNew:    true,
+		Prompt:      "resolve the conflicts",
+	})
+	if err != nil || reused {
+		t.Fatalf("first OpenParallel() = (%#v, %v, %v), want fresh session", first, reused, err)
+	}
+	second, reused, err := manager.OpenParallel(LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    ProviderCodex,
+		ForceNew:    true,
+		Prompt:      "resolve the conflicts again",
+	})
+	if err != nil {
+		t.Fatalf("second OpenParallel() error = %v", err)
+	}
+	if !reused || second != first {
+		t.Fatalf("second OpenParallel() = (%#v, %v), want the active first session", second, reused)
+	}
+	if len(created) != 1 {
+		t.Fatalf("factory create count = %d, want 1", len(created))
+	}
+	if got := created[0].submitted; len(got) != 0 {
+		t.Fatalf("active background session received duplicate prompts: %#v", got)
 	}
 }
 

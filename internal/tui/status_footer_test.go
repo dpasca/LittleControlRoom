@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"errors"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -469,21 +468,33 @@ func TestRenderTopStatusLineShowsMergeConflictBadge(t *testing.T) {
 	}
 }
 
-func TestDispatchResolveStartsFreshEngineerForMergeConflict(t *testing.T) {
+func TestDispatchResolveStartsParallelBackgroundResolverWithoutReplacingEngineer(t *testing.T) {
 	projectPath := "/tmp/resolve-conflict"
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
+		threadID := "existing-thread"
+		if strings.TrimSpace(req.Prompt) != "" {
+			threadID = "resolve-thread"
+		}
 		return &fakeCodexSession{
 			projectPath: req.ProjectPath,
 			snapshot: codexapp.Snapshot{
 				Provider: req.Provider.Normalized(),
-				ThreadID: "resolve-thread",
+				ThreadID: threadID,
 				Started:  true,
+				Busy:     strings.TrimSpace(req.Prompt) != "",
 				Status:   "Codex session ready",
 			},
 		}, nil
 	})
+	interactive, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: projectPath,
+		Provider:    codexapp.ProviderCodex,
+	})
+	if err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
 	m := Model{
 		codexManager: manager,
 		projects: []model.ProjectSummary{{
@@ -500,49 +511,71 @@ func TestDispatchResolveStartsFreshEngineerForMergeConflict(t *testing.T) {
 	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("dispatchCommand(/resolve) cmd = nil, want fresh engineer launch")
+		t.Fatalf("dispatchCommand(/resolve) cmd = nil, want background resolver launch")
 	}
-	if got.codexPendingOpen == nil || !got.codexPendingOpen.newSession {
-		t.Fatalf("codexPendingOpen = %#v, want fresh pending open", got.codexPendingOpen)
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want no foreground session transition", got.codexPendingOpen)
 	}
 
 	msgs := collectCmdMsgs(cmd)
-	var opened codexSessionOpenedMsg
+	var (
+		opened    mergeConflictResolverOpenedMsg
+		hasOpened bool
+	)
 	for _, msg := range msgs {
-		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+		if candidate, ok := msg.(mergeConflictResolverOpenedMsg); ok {
 			opened = candidate
+			hasOpened = true
 			break
 		}
 	}
-	if opened.projectPath == "" {
-		t.Fatalf("command messages = %#v, want codexSessionOpenedMsg", msgs)
+	if !hasOpened || opened.projectPath != projectPath {
+		t.Fatalf("command messages = %#v, want mergeConflictResolverOpenedMsg for %q", msgs, projectPath)
 	}
 	if opened.err != nil {
-		t.Fatalf("codexSessionOpenedMsg.err = %v", opened.err)
+		t.Fatalf("mergeConflictResolverOpenedMsg.err = %v", opened.err)
 	}
-	if len(requests) != 1 {
-		t.Fatalf("launch requests = %d, want 1", len(requests))
+	if opened.reused {
+		t.Fatal("fresh background resolver unexpectedly reused")
 	}
-	if requests[0].Provider != codexapp.ProviderCodex {
-		t.Fatalf("request provider = %q, want Codex", requests[0].Provider)
+	if len(requests) != 2 {
+		t.Fatalf("launch requests = %d, want existing engineer plus resolver", len(requests))
 	}
-	if !requests[0].ForceNew {
+	resolveRequest := requests[1]
+	if resolveRequest.Provider != codexapp.ProviderCodex {
+		t.Fatalf("resolver provider = %q, want Codex", resolveRequest.Provider)
+	}
+	if !resolveRequest.ForceNew {
 		t.Fatalf("request ForceNew = false, want true")
 	}
 	for _, want := range []string{
 		"Resolve the current Git merge conflicts",
-		"Current branch: feat/conflict",
-		"Inspect `git status --short`",
-		"Do not commit, push, abort",
-		"remaining `git status --short` state",
+		"Preserve the intended changes from both sides",
+		"If there are no major problems",
+		"commit the resolution",
+		"Do not push",
 	} {
-		if !strings.Contains(requests[0].Prompt, want) {
-			t.Fatalf("/resolve prompt missing %q:\n%s", want, requests[0].Prompt)
+		if !strings.Contains(resolveRequest.Prompt, want) {
+			t.Fatalf("/resolve prompt missing %q:\n%s", want, resolveRequest.Prompt)
 		}
+	}
+	for _, unwanted := range []string{"Current branch:", "Instructions:", "Chat", "Do not commit"} {
+		if strings.Contains(resolveRequest.Prompt, unwanted) {
+			t.Fatalf("/resolve prompt retained %q:\n%s", unwanted, resolveRequest.Prompt)
+		}
+	}
+	if interactive.Snapshot().Closed {
+		t.Fatal("/resolve closed the existing engineer session")
+	}
+	if current, ok := manager.Session(projectPath); !ok || current != interactive {
+		t.Fatalf("interactive session = (%#v, %v), want original session", current, ok)
+	}
+	if parallel, ok := manager.ParallelSession(projectPath); !ok || parallel == interactive {
+		t.Fatalf("parallel session = (%#v, %v), want a distinct resolver", parallel, ok)
 	}
 }
 
-func TestResolveGitlinkConflictTargetStartsFreshEngineerInSubmoduleWorktree(t *testing.T) {
+func TestResolveGitlinkConflictTargetStartsBackgroundResolverInSubmoduleWorktree(t *testing.T) {
 	parentPath := "/tmp/resolve-parent"
 	worktreePath := "/tmp/lcroom-submodule-merge/assets_src"
 	var requests []codexapp.LaunchRequest
@@ -555,6 +588,7 @@ func TestResolveGitlinkConflictTargetStartsFreshEngineerInSubmoduleWorktree(t *t
 				ProjectPath: req.ProjectPath,
 				ThreadID:    "gitlink-resolve-thread",
 				Started:     true,
+				Busy:        true,
 				Status:      "Codex session ready",
 			},
 		}, nil
@@ -588,25 +622,29 @@ func TestResolveGitlinkConflictTargetStartsFreshEngineerInSubmoduleWorktree(t *t
 	})
 	got := updated.(Model)
 	if cmd == nil {
-		t.Fatalf("gitlink resolve target cmd = nil, want fresh engineer launch")
+		t.Fatalf("gitlink resolve target cmd = nil, want background resolver launch")
 	}
-	if got.codexPendingOpen == nil || got.codexPendingOpen.projectPath != worktreePath || !got.codexPendingOpen.newSession {
-		t.Fatalf("codexPendingOpen = %#v, want fresh pending open for submodule worktree", got.codexPendingOpen)
+	if got.codexPendingOpen != nil {
+		t.Fatalf("codexPendingOpen = %#v, want no foreground session transition", got.codexPendingOpen)
 	}
 
 	msgs := collectCmdMsgs(cmd)
-	var opened codexSessionOpenedMsg
+	var (
+		opened    mergeConflictResolverOpenedMsg
+		hasOpened bool
+	)
 	for _, msg := range msgs {
-		if candidate, ok := msg.(codexSessionOpenedMsg); ok {
+		if candidate, ok := msg.(mergeConflictResolverOpenedMsg); ok {
 			opened = candidate
+			hasOpened = true
 			break
 		}
 	}
-	if opened.projectPath != worktreePath {
+	if !hasOpened || opened.projectPath != worktreePath {
 		t.Fatalf("opened project path = %q, want %q (msgs %#v)", opened.projectPath, worktreePath, msgs)
 	}
 	if opened.err != nil {
-		t.Fatalf("codexSessionOpenedMsg.err = %v", opened.err)
+		t.Fatalf("mergeConflictResolverOpenedMsg.err = %v", opened.err)
 	}
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want 1", len(requests))
@@ -618,15 +656,13 @@ func TestResolveGitlinkConflictTargetStartsFreshEngineerInSubmoduleWorktree(t *t
 		t.Fatalf("request ForceNew = false, want true")
 	}
 	for _, want := range []string{
-		"Resolve the submodule content conflicts",
+		"Resolve the Git conflicts in this submodule merge worktree",
 		"Parent repo: " + parentPath,
 		"Submodule path: assets_src",
 		"Submodule merge worktree: " + worktreePath,
 		"Submodule merge branch: lcroom/master/assets_src-merge-aaaa-bbbb",
-		"commit the submodule merge on its current branch and push that branch upstream",
-		"Stage the parent repo gitlink",
+		"commit the submodule merge on its current branch, push that branch, and stage the parent repo gitlink",
 		"Do not commit the parent repo merge",
-		"remaining `git status --short` state",
 	} {
 		if !strings.Contains(requests[0].Prompt, want) {
 			t.Fatalf("/resolve gitlink prompt missing %q:\n%s", want, requests[0].Prompt)
@@ -634,34 +670,27 @@ func TestResolveGitlinkConflictTargetStartsFreshEngineerInSubmoduleWorktree(t *t
 	}
 }
 
-func TestDispatchResolveBlocksWhileSameEngineerTurnActive(t *testing.T) {
-	projectPath := "/tmp/resolve-active"
-	liveSession := &fakeCodexSession{
-		projectPath: projectPath,
-		snapshot: codexapp.Snapshot{
-			Provider: codexapp.ProviderCodex,
-			ThreadID: "active-thread",
-			Started:  true,
-			Busy:     true,
-			Status:   "Codex is working...",
-		},
-	}
+func TestDispatchResolveReusesAlreadyRunningBackgroundResolver(t *testing.T) {
+	projectPath := "/tmp/resolve-running"
 	var requests []codexapp.LaunchRequest
 	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
 		requests = append(requests, req)
-		return liveSession, nil
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "resolve-thread",
+				Started:  true,
+				Busy:     true,
+				Status:   "Codex is working...",
+			},
+		}, nil
 	})
-	if _, _, err := manager.Open(codexapp.LaunchRequest{
-		ProjectPath: projectPath,
-		Provider:    codexapp.ProviderCodex,
-	}); err != nil {
-		t.Fatalf("manager.Open() error = %v", err)
-	}
 	m := Model{
 		codexManager: manager,
 		projects: []model.ProjectSummary{{
 			Path:          projectPath,
-			Name:          "resolve-active",
+			Name:          "resolve-running",
 			PresentOnDisk: true,
 			RepoConflict:  true,
 			RepoDirty:     true,
@@ -669,131 +698,86 @@ func TestDispatchResolveBlocksWhileSameEngineerTurnActive(t *testing.T) {
 		selected: 0,
 	}
 
-	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
-	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("dispatchCommand(/resolve) cmd = %#v, want nil while active engineer turn blocks launch", cmd)
-	}
-	if got.status != "Resolve blocked: another engineer session is open" {
-		t.Fatalf("status = %q, want compact resolve refusal", got.status)
-	}
-	if got.actionNoticeDialog == nil {
-		t.Fatal("active engineer refusal should open a notice dialog")
-	}
-	if !strings.Contains(got.actionNoticeDialog.Summary, "Another engineer session is already open") {
-		t.Fatalf("notice summary = %q, want concise engineer-session explanation", got.actionNoticeDialog.Summary)
-	}
+	firstUpdated, firstCmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+	first := firstUpdated.(Model)
+	firstMsgs := collectCmdMsgs(firstCmd)
 	if len(requests) != 1 {
-		t.Fatalf("launch requests = %d, want only the existing active session request", len(requests))
+		t.Fatalf("first /resolve launch requests = %d, want 1", len(requests))
 	}
-	if len(liveSession.submitted) != 0 {
-		t.Fatalf("active session received submissions: %#v", liveSession.submitted)
+	if len(firstMsgs) != 1 {
+		t.Fatalf("first /resolve messages = %#v, want one resolver result", firstMsgs)
+	}
+
+	_, secondCmd := first.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
+	secondMsgs := collectCmdMsgs(secondCmd)
+	if len(requests) != 1 {
+		t.Fatalf("repeated /resolve created %d sessions, want 1", len(requests))
+	}
+	if len(secondMsgs) != 1 {
+		t.Fatalf("second /resolve messages = %#v, want one resolver result", secondMsgs)
+	}
+	opened, ok := secondMsgs[0].(mergeConflictResolverOpenedMsg)
+	if !ok || !opened.reused || opened.err != nil {
+		t.Fatalf("second /resolve result = %#v, want reused active resolver", secondMsgs[0])
 	}
 }
 
-func TestDispatchResolveShowsIdleSessionBlockInNoticeDialog(t *testing.T) {
-	projectPath := "/tmp/resolve-idle"
-	liveSession := &fakeCodexSession{
+func TestBackgroundResolverCompletionAndAttentionAreSurfaced(t *testing.T) {
+	projectPath := "/tmp/resolve-updates"
+	m := Model{
+		projects: []model.ProjectSummary{{
+			Path: projectPath,
+			Name: "resolve-updates",
+		}},
+	}
+
+	updated, _ := m.applyMergeConflictResolverUpdateMsg(mergeConflictResolverUpdateMsg{
 		projectPath: projectPath,
+		found:       true,
+		terminal:    true,
 		snapshot: codexapp.Snapshot{
 			Provider: codexapp.ProviderCodex,
-			ThreadID: "idle-thread",
+			ThreadID: "resolve-complete",
 			Started:  true,
-			Status:   "Codex turn completed",
 		},
-	}
-	var requests []codexapp.LaunchRequest
-	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
-		requests = append(requests, req)
-		return liveSession, nil
 	})
-	if _, _, err := manager.Open(codexapp.LaunchRequest{
-		ProjectPath: projectPath,
-		Provider:    codexapp.ProviderCodex,
-	}); err != nil {
-		t.Fatalf("manager.Open() error = %v", err)
-	}
-	m := Model{
-		codexManager: manager,
-		projects: []model.ProjectSummary{{
-			Path:          projectPath,
-			Name:          "resolve-idle",
-			PresentOnDisk: true,
-			RepoConflict:  true,
-			RepoDirty:     true,
-		}},
-		selected: 0,
+	got := updated.(Model)
+	if got.status != "Background Codex conflict resolver finished" {
+		t.Fatalf("completion status = %q", got.status)
 	}
 
-	updated, cmd := m.dispatchCommand(commands.Invocation{Kind: commands.KindResolve})
-	got := updated.(Model)
-	if cmd != nil {
-		t.Fatalf("dispatchCommand(/resolve) cmd = %#v, want nil while idle session blocks fresh launch", cmd)
-	}
-	if got.status != "Resolve blocked: another engineer session is open" {
-		t.Fatalf("status = %q, want compact resolve refusal", got.status)
-	}
-	if strings.Contains(got.status, "An idle turn") {
-		t.Fatalf("top status retained the long explanation: %q", got.status)
+	updated, _ = got.applyMergeConflictResolverUpdateMsg(mergeConflictResolverUpdateMsg{
+		projectPath: projectPath,
+		found:       true,
+		terminal:    true,
+		snapshot: codexapp.Snapshot{
+			Provider: codexapp.ProviderCodex,
+			ThreadID: "session123-needs-input",
+			Started:  true,
+			PendingApproval: &codexapp.ApprovalRequest{
+				ID:   "approval-1",
+				Kind: codexapp.ApprovalCommandExecution,
+			},
+		},
+	})
+	got = updated.(Model)
+	if got.status != "Background conflict resolver needs attention" {
+		t.Fatalf("attention status = %q", got.status)
 	}
 	if got.actionNoticeDialog == nil {
-		t.Fatal("idle engineer refusal should open a notice dialog")
+		t.Fatal("resolver attention did not open a notice")
 	}
-	rendered := ansi.Strip(got.renderActionNoticeDialogContent(72))
-	normalizedRendered := strings.Join(strings.Fields(rendered), " ")
+	rendered := strings.Join(strings.Fields(ansi.Strip(got.renderActionNoticeDialogContent(76))), " ")
 	for _, want := range []string{
-		"Resolve blocked",
-		"resolve-idle",
-		"Another engineer session is already open",
-		"Do this first",
-		"Open the existing engineer session",
-		"More detail",
-		"/resolve opens a new session",
-		"idle may not mean finished",
-		"ask it to resolve the conflict",
-		"Enter/Esc",
+		"Resolver needs attention",
+		"paused for input",
+		"Open resolver session session1",
+		"/sessions",
+		"finish or close",
 	} {
-		if !strings.Contains(normalizedRendered, want) {
-			t.Fatalf("notice dialog missing %q:\n%s", want, rendered)
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("resolver attention notice missing %q:\n%s", want, rendered)
 		}
-	}
-	summaryIndex := strings.Index(normalizedRendered, "Another engineer session is already open")
-	actionIndex := strings.Index(normalizedRendered, "Do this first")
-	detailIndex := strings.Index(normalizedRendered, "More detail")
-	if summaryIndex < 0 || actionIndex <= summaryIndex || detailIndex <= actionIndex {
-		t.Fatalf("notice hierarchy should be summary, first action, then detail:\n%s", rendered)
-	}
-	if len(requests) != 1 {
-		t.Fatalf("launch requests = %d, want only the existing idle session request", len(requests))
-	}
-	narrowOverlay := ansi.Strip(got.renderActionNoticeDialogOverlay("", 60, 20))
-	if width := lipgloss.Width(narrowOverlay); width != 60 {
-		t.Fatalf("narrow notice width = %d, want 60", width)
-	}
-	if height := lipgloss.Height(narrowOverlay); height != 20 {
-		t.Fatalf("narrow notice height = %d, want 20", height)
-	}
-	normalizedNarrowOverlay := strings.Join(strings.Fields(narrowOverlay), " ")
-	for _, want := range []string{
-		"Another engineer session is already",
-		"/resolve cannot start",
-		"Do this first",
-		"Open the existing engineer session",
-		"More detail",
-		"Enter/Esc",
-	} {
-		if !strings.Contains(normalizedNarrowOverlay, want) {
-			t.Fatalf("narrow notice dialog missing %q:\n%s", want, narrowOverlay)
-		}
-	}
-	if !strings.Contains(narrowOverlay, "Resolve blocked") {
-		t.Fatalf("narrow notice lost its title:\n%s", narrowOverlay)
-	}
-
-	updated, _ = got.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	got = updated.(Model)
-	if got.actionNoticeDialog != nil {
-		t.Fatal("Esc should close the resolve notice dialog")
 	}
 }
 
