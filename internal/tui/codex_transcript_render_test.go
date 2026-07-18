@@ -1319,6 +1319,74 @@ func TestRenderCodexTranscriptEntriesExpandsConsecutiveDuplicateAssistantMessage
 	}
 }
 
+func TestRenderCodexTranscriptEntriesCountsConsecutiveDuplicateDenseBlocks(t *testing.T) {
+	fileChange := "Applying 1 file change(s)\n[file changes completed]"
+	command := "$ git status\nclean\n[command completed, exit 0]"
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptFileChange, Text: fileChange},
+			{Kind: codexapp.TranscriptFileChange, Text: fileChange},
+			{Kind: codexapp.TranscriptFileChange, Text: fileChange},
+			{Kind: codexapp.TranscriptCommand, Text: command},
+			{Kind: codexapp.TranscriptCommand, Text: command},
+			{Kind: codexapp.TranscriptAgent, Text: "A visible boundary"},
+			{Kind: codexapp.TranscriptFileChange, Text: fileChange},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	for _, expected := range []string{"File changes ×3", "Command ×2", "A visible boundary"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("rendered transcript should contain %q:\n%s", expected, rendered)
+		}
+	}
+	if count := strings.Count(rendered, "[file changes completed]"); count != 2 {
+		t.Fatalf("file-change completion rendered %d times, want one collapsed run and one post-boundary entry:\n%s", count, rendered)
+	}
+	if count := strings.Count(rendered, "$ git status"); count != 1 {
+		t.Fatalf("duplicate command summary rendered %d times, want 1:\n%s", count, rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesExpandsConsecutiveDuplicateDenseBlocksWithDenseMode(t *testing.T) {
+	fileChange := "Applying 1 file change(s)\n[file changes completed]"
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptFileChange, Text: fileChange},
+			{Kind: codexapp.TranscriptFileChange, Text: fileChange},
+			{Kind: codexapp.TranscriptFileChange, Text: fileChange},
+		},
+	}
+
+	rendered := ansi.Strip((Model{codexDenseBlockMode: codexDenseBlockFull}).renderCodexTranscriptEntries(snapshot, 120))
+	if count := strings.Count(rendered, "[file changes completed]"); count != 3 {
+		t.Fatalf("dense-expanded transcript rendered file-change completion %d times, want 3:\n%s", count, rendered)
+	}
+	if strings.Contains(rendered, "File changes ×") {
+		t.Fatalf("dense-expanded transcript should not retain a collapsed occurrence count:\n%s", rendered)
+	}
+}
+
+func TestRenderCodexTranscriptEntriesKeepsDenseBlocksWithDifferentHiddenOutputSeparate(t *testing.T) {
+	snapshot := codexapp.Snapshot{
+		Provider: codexapp.ProviderCodex,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptCommand, Text: "$ git status\nclean\n[command completed, exit 0]"},
+			{Kind: codexapp.TranscriptCommand, Text: "$ git status\ndirty\n[command completed, exit 0]"},
+		},
+	}
+
+	rendered := ansi.Strip((Model{}).renderCodexTranscriptEntries(snapshot, 120))
+	if count := strings.Count(rendered, "$ git status"); count != 2 {
+		t.Fatalf("commands with different hidden output rendered %d times, want 2:\n%s", count, rendered)
+	}
+	if strings.Contains(rendered, "Command ×") {
+		t.Fatalf("commands with different hidden output should not be counted as identical:\n%s", rendered)
+	}
+}
+
 func TestRenderCodexTranscriptEntriesExpandsMassiveOutputWithDenseMode(t *testing.T) {
 	lines := make([]string, 250)
 	for i := range lines {

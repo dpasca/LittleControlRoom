@@ -310,7 +310,7 @@ While the embedded Codex, Claude Code, or OpenCode pane is visible:
 - `Alt+Enter` or `ctrl+j` inserts a newline
 - `ctrl+v` attaches a clipboard image when available
 - `Backspace` on an inline `[Image #n]` marker removes that attachment
-- `Alt+L` cycles dense command, file, and tool transcript blocks through hidden output, preview, and full detail
+- Consecutive identical command and file-change blocks collapse into one row with an `×N` count; `Alt+L` cycles dense command, file, and tool transcript blocks through hidden output, preview, and full detail, revealing every collapsed occurrence in full mode
 - `ctrl+c` interrupts the active turn when busy and closes the session when idle
 
 While the diff screen is visible:

@@ -126,13 +126,17 @@ func renderCodexTranscriptEntriesWithMetadataConfigured(snapshot codexapp.Snapsh
 		hasPrevious = true
 		reasoningLineCount = 0
 	}
-	for index, entry := range entries {
+	for index := 0; index < len(entries); {
+		entry := entries[index]
+		runLength := consecutiveDenseTranscriptEntryRunLength(entries, index, blockMode.full())
+		runEnd := index + runLength
 		if options.hideReasoningSections && !blockMode.full() && entry.Kind == codexapp.TranscriptReasoning {
 			// Accumulate reasoning lines for compact indicator
 			text := strings.TrimSpace(entry.Text)
 			if text != "" {
 				reasoningLineCount += len(strings.Split(text, "\n"))
 			}
+			index = runEnd
 			continue
 		}
 		// Flush any pending reasoning indicator before a non-reasoning entry
@@ -140,6 +144,7 @@ func renderCodexTranscriptEntriesWithMetadataConfigured(snapshot codexapp.Snapsh
 		block := renderCodexTranscriptEntryWithOptions(entry, contentWidth, blockMode, codexTranscriptEntryRenderOptions{
 			latestGeneratedImage: index == lastGeneratedImageIndex,
 			projectPath:          projectPath,
+			occurrenceCount:      runLength,
 		})
 		if strings.TrimSpace(block) != "" {
 			if hasPrevious {
@@ -158,15 +163,18 @@ func renderCodexTranscriptEntriesWithMetadataConfigured(snapshot codexapp.Snapsh
 					EndLine:   endLine,
 				})
 			}
-			if turnID := strings.TrimSpace(entry.TurnID); turnID != "" {
-				if _, exists := anchoredTurns[turnID]; !exists {
-					anchoredTurns[turnID] = struct{}{}
-					turnAnchors = append(turnAnchors, codexTranscriptTurnAnchor{TurnID: turnID, Line: startLine})
+			for _, runEntry := range entries[index:runEnd] {
+				if turnID := strings.TrimSpace(runEntry.TurnID); turnID != "" {
+					if _, exists := anchoredTurns[turnID]; !exists {
+						anchoredTurns[turnID] = struct{}{}
+						turnAnchors = append(turnAnchors, codexTranscriptTurnAnchor{TurnID: turnID, Line: startLine})
+					}
 				}
 			}
 			previousKind = entry.Kind
 			hasPrevious = true
 		}
+		index = runEnd
 	}
 	// Flush trailing reasoning (model still thinking)
 	flushReasoning()
@@ -249,6 +257,7 @@ func renderCodexTranscriptEntry(entry codexapp.TranscriptEntry, width int, block
 type codexTranscriptEntryRenderOptions struct {
 	latestGeneratedImage bool
 	projectPath          string
+	occurrenceCount      int
 }
 
 func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width int, blockMode codexDenseBlockMode, options codexTranscriptEntryRenderOptions) string {
@@ -275,9 +284,9 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 	case codexapp.TranscriptReasoning:
 		return renderReasoningBlockForProject(text, width, options.projectPath)
 	case codexapp.TranscriptCommand:
-		return renderCodexDenseBlock("Command", text, lipgloss.Color("111"), width, blockMode)
+		return renderCodexDenseBlock(repeatedCodexDenseBlockLabel("Command", options.occurrenceCount), text, lipgloss.Color("111"), width, blockMode)
 	case codexapp.TranscriptFileChange:
-		return renderCodexDenseBlock("File changes", text, lipgloss.Color("179"), width, blockMode)
+		return renderCodexDenseBlock(repeatedCodexDenseBlockLabel("File changes", options.occurrenceCount), text, lipgloss.Color("179"), width, blockMode)
 	case codexapp.TranscriptTool:
 		return renderCodexToolLine(text, width)
 	case codexapp.TranscriptError:
@@ -289,6 +298,13 @@ func renderCodexTranscriptEntryWithOptions(entry codexapp.TranscriptEntry, width
 	default:
 		return renderCodexMessageBlockForProject("", text, lipgloss.Color("244"), lipgloss.Color("252"), width, options.projectPath)
 	}
+}
+
+func repeatedCodexDenseBlockLabel(label string, occurrenceCount int) string {
+	if occurrenceCount < 2 {
+		return label
+	}
+	return fmt.Sprintf("%s ×%d", label, occurrenceCount)
 }
 
 func renderCodexGeneratedImageBlock(entry codexapp.TranscriptEntry, width int, latest bool) string {
@@ -732,7 +748,14 @@ func collapseConsecutiveDuplicateTranscriptEntries(entries []codexapp.Transcript
 }
 
 func duplicateTranscriptEntry(left, right codexapp.TranscriptEntry) bool {
-	if left.Kind != right.Kind || !collapsibleDuplicateTranscriptKind(left.Kind) {
+	if !collapsibleDuplicateTranscriptKind(left.Kind) {
+		return false
+	}
+	return sameRenderedTranscriptEntry(left, right)
+}
+
+func sameRenderedTranscriptEntry(left, right codexapp.TranscriptEntry) bool {
+	if left.Kind != right.Kind {
 		return false
 	}
 	if left.GeneratedImage != nil || right.GeneratedImage != nil {
@@ -744,6 +767,26 @@ func duplicateTranscriptEntry(left, right codexapp.TranscriptEntry) bool {
 		return false
 	}
 	return strings.TrimSpace(left.DisplayText) == strings.TrimSpace(right.DisplayText)
+}
+
+func consecutiveDenseTranscriptEntryRunLength(entries []codexapp.TranscriptEntry, start int, expanded bool) int {
+	if expanded || start < 0 || start >= len(entries) || !collapsibleDenseDuplicateTranscriptKind(entries[start].Kind) {
+		return 1
+	}
+	end := start + 1
+	for end < len(entries) && sameRenderedTranscriptEntry(entries[start], entries[end]) {
+		end++
+	}
+	return end - start
+}
+
+func collapsibleDenseDuplicateTranscriptKind(kind codexapp.TranscriptKind) bool {
+	switch kind {
+	case codexapp.TranscriptCommand, codexapp.TranscriptFileChange:
+		return true
+	default:
+		return false
+	}
 }
 
 func collapsibleDuplicateTranscriptKind(kind codexapp.TranscriptKind) bool {
