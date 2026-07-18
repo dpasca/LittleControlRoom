@@ -816,6 +816,23 @@ func TestProjectRepoWarningIndicator(t *testing.T) {
 		t.Fatalf("pending git op should not render dirty warning indicator, got %q", pendingIndicator)
 	}
 
+	resolvedModel := Model{
+		mergeConflictResolvers: map[string]mergeConflictResolverState{
+			"/tmp/demo": {
+				OwnerProjectPath:   "/tmp/demo",
+				SessionProjectPath: "/tmp/demo",
+				Phase:              mergeConflictResolverResolved,
+			},
+		},
+	}
+	if got := resolvedModel.projectRepoWarningIndicator(model.ProjectSummary{Path: "/tmp/demo"}, 0); got != " " {
+		t.Fatalf("resolved conflict resolver should not render a redundant repo indicator, got %q", got)
+	}
+	resolvedDirtyIndicator := resolvedModel.projectRepoWarningIndicator(model.ProjectSummary{Path: "/tmp/demo", RepoDirty: true}, 0)
+	if !strings.Contains(resolvedDirtyIndicator, "!") {
+		t.Fatalf("resolved conflict resolver should not hide a remaining repo warning, got %q", resolvedDirtyIndicator)
+	}
+
 	orphanedIndicator := (Model{
 		orphanedWorktreesByRoot: map[string][]model.ProjectSummary{
 			"/tmp/repo": {{
