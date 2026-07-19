@@ -342,6 +342,9 @@ type Model struct {
 	detailReloadQueued       map[string]bool
 	detailReloadErrors       map[string]string
 	selectedDetailRequestSeq uint64
+	selectedDetailInFlight   string
+	selectedDetailQueuedPath string
+	selectedDetailQueuedSeq  uint64
 	summaryReloadInFlight    map[string]bool
 	summaryReloadQueued      map[string]bool
 }
@@ -1804,9 +1807,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCPURemediationTaskCreatedMsg(msg)
 	case detailMsg:
 		reloadCmd := m.finishDetailReloadCmd(msg.path)
+		selectedReloadCmd := m.finishSelectedDetailReloadCmd(msg.path)
+		followUp := batchCmds(reloadCmd, selectedReloadCmd)
 		m.rememberDetailReloadResult(msg.path, msg.err)
 		if targetPath := m.currentDetailTargetPath(); targetPath != "" && normalizeProjectPath(msg.path) != targetPath {
-			return m, reloadCmd
+			return m, followUp
 		}
 		m.err = msg.err
 		if msg.err == nil {
@@ -1814,12 +1819,12 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncTodoDialogSelection()
 			m.syncDetailViewport(false)
 		}
-		return m, reloadCmd
+		return m, followUp
 	case selectedDetailReloadMsg:
 		if msg.seq != m.selectedDetailRequestSeq || normalizeProjectPath(msg.path) != m.currentDetailTargetPath() {
 			return m, nil
 		}
-		return m, m.requestProjectDetailViewCmd(msg.path)
+		return m, m.requestSelectedDetailReloadCmd(msg.path, msg.seq)
 	case projectSummaryMsg:
 		reloadCmd := m.finishProjectSummaryReloadCmd(msg.path)
 		m.clearExpiredPendingGitSummaryForPath(msg.path)

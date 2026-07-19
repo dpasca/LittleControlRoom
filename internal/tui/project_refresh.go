@@ -572,6 +572,63 @@ func (m *Model) requestSelectedProjectDetailViewCmd() tea.Cmd {
 	})
 }
 
+func (m *Model) requestSelectedDetailReloadCmd(path string, seq uint64) tea.Cmd {
+	path = normalizeProjectPath(path)
+	if path == "" || seq != m.selectedDetailRequestSeq || path != m.currentDetailTargetPath() {
+		return nil
+	}
+	if _, ok := m.todoPendingLaunchForProjectPath(path); ok {
+		return nil
+	}
+	if _, ok := m.agentTaskForProjectPath(path); ok {
+		return nil
+	}
+	if m.selectedDetailInFlight != "" {
+		m.selectedDetailQueuedPath = path
+		m.selectedDetailQueuedSeq = seq
+		return nil
+	}
+
+	m.ensureRefreshState()
+	if m.detailReloadInFlight[path] {
+		// An explicit refresh already covers the selected project. Attach to
+		// that read without queuing a duplicate per-project reload.
+		m.selectedDetailInFlight = path
+		return nil
+	}
+	cmd := m.requestDetailReloadCmd(path)
+	if cmd != nil {
+		m.selectedDetailInFlight = path
+	}
+	return cmd
+}
+
+func (m *Model) finishSelectedDetailReloadCmd(path string) tea.Cmd {
+	path = normalizeProjectPath(path)
+	if path == "" {
+		return nil
+	}
+	if path == m.selectedDetailQueuedPath {
+		// The queued selection may have been fulfilled by the active read
+		// itself or by an explicit refresh for that project.
+		m.selectedDetailQueuedPath = ""
+		m.selectedDetailQueuedSeq = 0
+	}
+	if path != m.selectedDetailInFlight {
+		return nil
+	}
+	m.selectedDetailInFlight = ""
+
+	queuedPath := m.selectedDetailQueuedPath
+	queuedSeq := m.selectedDetailQueuedSeq
+	m.selectedDetailQueuedPath = ""
+	m.selectedDetailQueuedSeq = 0
+	if queuedPath == "" || queuedSeq != m.selectedDetailRequestSeq || queuedPath != m.currentDetailTargetPath() {
+		return nil
+	}
+	return m.requestSelectedDetailReloadCmd(queuedPath, queuedSeq)
+}
+
 func (m Model) waitBusCmd() tea.Cmd {
 	return func() tea.Msg {
 		evt, ok := <-m.busCh
