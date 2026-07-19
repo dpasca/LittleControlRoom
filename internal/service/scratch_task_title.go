@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/config"
 	"lcroom/internal/llm"
 )
 
@@ -25,7 +26,7 @@ const (
 	scratchTaskAcceptedConfidence          = 0.75
 	scratchTaskProvisionalConfidence       = 0.55
 	scratchTaskGeneratedTitleLimit         = 80
-	scratchTaskTitleLocalRunnerModel       = "gpt-5.4-mini"
+	scratchTaskTitleLocalRunnerModel       = config.DefaultOpenAIProjectModel
 	scratchTaskTitleClaudeLocalRunnerModel = "haiku"
 	scratchTaskTitlePromptHistoryLimit     = 6
 	scratchTaskTitlePromptRuneLimit        = 2000

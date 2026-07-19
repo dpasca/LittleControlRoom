@@ -40,6 +40,24 @@ func EstimateLLMCostUSD(modelName string, usage LLMUsage) (float64, bool) {
 func lookupLLMPriceCard(modelName string) (llmPriceCard, bool) {
 	name := strings.ToLower(strings.TrimSpace(modelName))
 	switch {
+	case name == "gpt-5.6-luna" || name == "openai/gpt-5.6-luna" || strings.HasPrefix(name, "gpt-5.6-luna-") || strings.HasPrefix(name, "openai/gpt-5.6-luna-"):
+		return llmPriceCard{
+			InputUSDPerMTokens:       1.00,
+			CachedInputUSDPerMTokens: 0.10,
+			OutputUSDPerMTokens:      6.00,
+		}, true
+	case name == "gpt-5.6-terra" || name == "openai/gpt-5.6-terra" || strings.HasPrefix(name, "gpt-5.6-terra-") || strings.HasPrefix(name, "openai/gpt-5.6-terra-"):
+		return llmPriceCard{
+			InputUSDPerMTokens:       2.50,
+			CachedInputUSDPerMTokens: 0.25,
+			OutputUSDPerMTokens:      15.00,
+		}, true
+	case name == "gpt-5.6" || name == "openai/gpt-5.6" || name == "gpt-5.6-sol" || name == "openai/gpt-5.6-sol" || strings.HasPrefix(name, "gpt-5.6-") || strings.HasPrefix(name, "openai/gpt-5.6-"):
+		return llmPriceCard{
+			InputUSDPerMTokens:       5.00,
+			CachedInputUSDPerMTokens: 0.50,
+			OutputUSDPerMTokens:      30.00,
+		}, true
 	case name == "gpt-5.5" || name == "openai/gpt-5.5" || strings.HasPrefix(name, "gpt-5.5-") || strings.HasPrefix(name, "openai/gpt-5.5-"):
 		return llmPriceCard{
 			InputUSDPerMTokens:       5.00,

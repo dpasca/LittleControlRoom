@@ -5,8 +5,8 @@ Use this after Chat model routing, runtime handoffs, or control-proposal behavio
 ## Setup
 
 - Configure Chat with a split model setup (the `boss_*` names are retained compatibility keys):
-  - `boss_helm_model = "gpt-5.5"`
-  - `boss_utility_model = "gpt-5.4-mini"`
+  - `boss_helm_model = "gpt-5.6"`
+  - `boss_utility_model = "gpt-5.6-luna"`
 - Open the main TUI and enter `/chat` or press backtick.
 - Select at least one project with a saved or active managed runtime. If possible, test one case with a detected URL and one case with only a saved run command.
 

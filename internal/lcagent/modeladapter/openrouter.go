@@ -13,12 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 )
 
 const (
 	DefaultOpenRouterModel    = "deepseek/deepseek-v4-pro"
-	DefaultOpenAIModel        = "gpt-5.5"
+	DefaultOpenAIModel        = config.DefaultBossHelmModel
 	DefaultDeepSeekModel      = "deepseek-v4-pro"
 	DefaultMoonshotModel      = "kimi-k2.7-code"
 	DefaultXiaomiModel        = "mimo-v2.5-pro"
@@ -389,10 +390,14 @@ func ModelIsKnownForProvider(provider, model string) bool {
 	case "openai":
 		model = strings.ToLower(NormalizeModelForProvider("openai", model))
 		switch strings.ToLower(model) {
-		case strings.ToLower(DefaultOpenAIModel), "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano":
+		case strings.ToLower(DefaultOpenAIModel), "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano":
 			return true
 		default:
-			return hasVersionedOpenAIModelPrefix(model, "gpt-5.5-") ||
+			return hasVersionedOpenAIModelPrefix(model, "gpt-5.6-") ||
+				hasVersionedOpenAIModelPrefix(model, "gpt-5.6-sol-") ||
+				hasVersionedOpenAIModelPrefix(model, "gpt-5.6-terra-") ||
+				hasVersionedOpenAIModelPrefix(model, "gpt-5.6-luna-") ||
+				hasVersionedOpenAIModelPrefix(model, "gpt-5.5-") ||
 				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-") ||
 				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-mini-") ||
 				hasVersionedOpenAIModelPrefix(model, "gpt-5.4-nano-")

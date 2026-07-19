@@ -982,7 +982,7 @@ func pocketSessionInterlockScreen() string {
 	return pocketSystemStrip("WRITE ARMED") +
 		pocketConsoleHeader("Engineer channel", "Codex / LittleControlRoom", "&#8942;", "Session controls", true) +
 		`<div class="screen-content">
-<div class="session-strip"><div><div class="session-name">mobile-interface / 019f1c4d</div><div class="session-meta">gpt-5.4 / high reasoning / 4m 18s</div></div><button class="sidebar-key" type="button">Instruments</button></div>
+<div class="session-strip"><div><div class="session-name">mobile-interface / 019f1c4d</div><div class="session-meta">gpt-5.6 / high reasoning / 4m 18s</div></div><button class="sidebar-key" type="button">Instruments</button></div>
 <section class="crt-panel transcript-crt" aria-label="Engineer transcript">
 <div class="transcript-line"><div class="transcript-kind user">You</div><div class="transcript-text">Give me mockups that feel like a real Little Control Room.</div></div>
 <div class="transcript-line"><div class="transcript-kind">Engineer</div><div class="transcript-text">Using the operator, signal lamps, inset monitors, and physical control banks as the shared visual system.</div></div>

@@ -222,6 +222,8 @@ func (b AIBackend) DefaultOpenAICompatibleAPIKey() string {
 
 func (b AIBackend) DefaultProjectModel() string {
 	switch b {
+	case AIBackendOpenAIAPI:
+		return DefaultOpenAIProjectModel
 	case AIBackendOpenRouter:
 		return DefaultOpenRouterModel
 	case AIBackendDeepSeek:

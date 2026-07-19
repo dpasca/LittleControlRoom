@@ -155,7 +155,7 @@ func TestScreenshotEmbeddedCodexSnapshotRendersSidebarSessionInfo(t *testing.T) 
 	m.syncCodexComposerSize()
 
 	rendered := ansi.Strip(m.View())
-	for _, want := range []string{"Session", "Model gpt-5.4 / xhigh", "Context 6% of 200k"} {
+	for _, want := range []string{"Session", "Model gpt-5.6 / xhigh", "Context 1% of 1.1M"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("embedded screenshot render missing %q: %q", want, rendered)
 		}

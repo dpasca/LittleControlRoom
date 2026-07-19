@@ -130,6 +130,7 @@ LCR separates embedded session providers from the backend used for background wo
 
 - Embedded sessions today are Codex, OpenCode, and Claude Code.
 - Background AI can run through Codex, OpenCode, Claude Code, MLX, Ollama, or direct OpenAI API.
+- With direct OpenAI selected, Chat and the OpenAI LCAgent route default to GPT-5.6, while recurring summaries, classification, routing, titles, commit help, and TODO/worktree suggestions default to GPT-5.6 Luna. The setup status names the active project-report model so this split is inspectable.
 - Chat has its own `boss_chat_backend` compatibility setting, so interactive high-level chat can use direct API inference through OpenAI API, MLX, or Ollama without forcing summaries/classification off Codex, OpenCode, Claude Code, MLX, or Ollama. If it is not configured yet, `/chat` offers to jump straight to the Chat setup card.
 - Claude Code usage follows the local `claude` CLI authentication mode. Current Anthropic docs say Pro/Max plan terminal usage counts against plan limits when Claude Code is authenticated with Claude credentials, while `ANTHROPIC_API_KEY` or explicit usage-credit continuation can bill separately at API rates.
 - MLX uses its OpenAI-compatible local endpoint. Ollama discovery still uses its OpenAI-compatible model list, while background generation uses Ollama's native generate endpoint so thinking models can return usable JSON/text with thinking disabled.

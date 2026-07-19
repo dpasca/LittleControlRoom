@@ -36,7 +36,7 @@ const (
 	classifierRepairReasoningEffort   = "low"
 	classifierDefaultRetryBackoff     = 750 * time.Millisecond
 	classifierTransientRetryAttempts  = 3
-	localRunnerDefaultModel           = "gpt-5.4-mini"
+	localRunnerDefaultModel           = config.DefaultOpenAIProjectModel
 	localRunnerClaudeDefaultModel     = "haiku"
 )
 

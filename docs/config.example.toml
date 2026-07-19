@@ -6,8 +6,8 @@ openai_api_key = "sk-your-openai-api-key"
 # You can also use direct providers like "openrouter", "deepseek", "moonshot",
 # or "xiaomi", plus local OpenAI-compatible backends: "mlx" or "ollama".
 # boss_chat_backend = "openai_api"
-# boss_helm_model = "gpt-5.5"
-# boss_utility_model = "gpt-5.4-mini"
+# boss_helm_model = "gpt-5.6"
+# boss_utility_model = "gpt-5.6-luna"
 
 # Leave blank to use MLX defaults:
 # mlx_base_url = "http://127.0.0.1:8080/v1"
@@ -44,11 +44,11 @@ engineer_todo_capture_mode = "explicit_only"
 # sibling binary, PATH lookup, or source-checkout go run fallback. The env file can
 # contain OPENROUTER_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, XIAOMI_API_KEY, or
 # OPENAI_API_KEY; key contents are not copied into this config.
-# embedded_lcagent_model = "deepseek/deepseek-v4-pro"
+# embedded_lcagent_model = "gpt-5.6"
 # embedded_lcagent_reasoning_effort = "low"
 # lcagent_path = ""
-# lcagent_env_file = "~/path/to/openrouter.env"
-# lcagent_provider = "openrouter"
+# lcagent_env_file = "~/path/to/openai.env"
+# lcagent_provider = "openai"
 # Utility Model defaults to the same provider/model as the Main Model.
 # Set to "off" to disable utility-model search refinement, or choose
 # "openrouter", "openai", "deepseek", "moonshot", or "xiaomi" with an optional

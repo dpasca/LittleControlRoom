@@ -182,6 +182,8 @@ func AppConfigFromEditableSettings(base AppConfig, settings EditableSettings) Ap
 
 func (s EditableSettings) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
+	case AIBackendOpenAIAPI:
+		return backend.DefaultProjectModel()
 	case AIBackendOpenRouter:
 		return trimmedOrDefault(s.OpenRouterModel, backend.DefaultProjectModel())
 	case AIBackendDeepSeek:

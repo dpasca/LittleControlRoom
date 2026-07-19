@@ -17,6 +17,7 @@ import (
 
 	"lcroom/internal/appfs"
 	"lcroom/internal/browserctl"
+	"lcroom/internal/config"
 	"lcroom/internal/lcagent"
 	"lcroom/internal/lcagent/modeladapter"
 	lcrmodel "lcroom/internal/model"
@@ -846,7 +847,7 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 	case "openrouter":
 		return []ModelOption{
 			option(modeladapter.DefaultOpenRouterModel, "Balanced: DeepSeek V4 Pro", "Recommended balanced OpenRouter coding route.", "", defaultModel == modeladapter.DefaultOpenRouterModel),
-			option("openai/gpt-5.5", "Quality: GPT-5.5", "Higher-quality OpenRouter coding route.", "low", defaultModel == "openai/gpt-5.5"),
+			option("openai/gpt-5.6", "Quality: GPT-5.6", "Higher-quality OpenRouter coding route.", "low", defaultModel == "openai/gpt-5.6"),
 			option("xiaomi/mimo-v2.5-pro", "Benchmark: MiMo 2.5 Pro", "Xiaomi MiMo-V2.5-Pro benchmark route through OpenRouter.", "low", defaultModel == "xiaomi/mimo-v2.5-pro"),
 			option("deepseek/deepseek-v4-flash", "Cheap Scout: DeepSeek V4 Flash", "Lower-cost route for bounded read-first exploration.", "", defaultModel == "deepseek/deepseek-v4-flash"),
 		}
@@ -865,7 +866,8 @@ func lcagentModelOptionsForProvider(provider string) []ModelOption {
 		}
 	case "openai":
 		return []ModelOption{
-			option(modeladapter.DefaultOpenAIModel, "Quality: GPT-5.5", "Direct OpenAI coding route.", "low", true),
+			option(modeladapter.DefaultOpenAIModel, "Quality: GPT-5.6", "Direct OpenAI coding route.", "low", true),
+			option(config.DefaultOpenAIProjectModel, "Fast: GPT-5.6 Luna", "Efficient OpenAI route for bounded background work.", "low", false),
 		}
 	case "ollama":
 		return nil

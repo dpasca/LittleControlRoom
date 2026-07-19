@@ -12,13 +12,14 @@ import (
 	"sync"
 	"time"
 
+	"lcroom/internal/config"
 	"lcroom/internal/events"
 	"lcroom/internal/model"
 	"lcroom/internal/store"
 )
 
 const (
-	DefaultModel      = "gpt-5.4-nano"
+	DefaultModel      = config.DefaultOpenAIProjectModel
 	ClassifierVersion = "session-v6"
 )
 

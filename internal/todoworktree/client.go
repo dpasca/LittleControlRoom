@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	DefaultModel                  = "gpt-5.4-mini"
-	localRunnerDefaultModel       = "gpt-5.4-mini"
+	DefaultModel                  = config.DefaultOpenAIProjectModel
+	localRunnerDefaultModel       = config.DefaultOpenAIProjectModel
 	localRunnerClaudeDefaultModel = "haiku"
 	suggestionHTTPTimeout         = 45 * time.Second
 	suggestionPrimaryReasoning    = "low"
