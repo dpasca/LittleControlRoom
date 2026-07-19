@@ -746,6 +746,12 @@ func (m *Manager) refreshPorts() {
 	if m == nil {
 		return
 	}
+	// Start performs an immediate refresh after marking the runtime running.
+	// Periodic idle ticks therefore have no state to discover and can skip the
+	// global process and socket snapshots entirely.
+	if !m.anyRunningRuntime() {
+		return
+	}
 	processGroups, err := m.procGroups()
 	if err != nil {
 		return

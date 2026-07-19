@@ -394,6 +394,121 @@ func TestCloseAllIgnoresAlreadyStoppedRuntime(t *testing.T) {
 	}
 }
 
+func TestRefreshPortsSkipsProcessReadersWithoutRunningRuntime(t *testing.T) {
+	processGroupReads := 0
+	portReads := 0
+	manager := &Manager{
+		runtimes: map[string]*managedRuntime{
+			"stopped": {
+				pid:     100,
+				pgid:    100,
+				running: false,
+				ports:   []int{3000},
+			},
+		},
+		procGroups: func() (map[int]int, error) {
+			processGroupReads++
+			return map[int]int{}, nil
+		},
+		portReaders: func() (map[int][]int, error) {
+			portReads++
+			return map[int][]int{}, nil
+		},
+	}
+
+	manager.refreshPorts()
+
+	if processGroupReads != 0 {
+		t.Fatalf("process group reads = %d, want none while all runtimes are stopped", processGroupReads)
+	}
+	if portReads != 0 {
+		t.Fatalf("port reads = %d, want none while all runtimes are stopped", portReads)
+	}
+}
+
+func TestRefreshPortsReadsProcessesForRunningRuntime(t *testing.T) {
+	processGroupReads := 0
+	portReads := 0
+	runtime := &managedRuntime{
+		pid:     100,
+		pgid:    100,
+		running: true,
+	}
+	manager := &Manager{
+		runtimes: map[string]*managedRuntime{"running": runtime},
+		procGroups: func() (map[int]int, error) {
+			processGroupReads++
+			return map[int]int{100: 100, 101: 100}, nil
+		},
+		portReaders: func() (map[int][]int, error) {
+			portReads++
+			return map[int][]int{101: {5173}}, nil
+		},
+	}
+
+	manager.refreshPorts()
+
+	if processGroupReads != 1 || portReads != 1 {
+		t.Fatalf("reader calls = process groups %d ports %d, want one each", processGroupReads, portReads)
+	}
+	if len(runtime.ports) != 1 || runtime.ports[0] != 5173 {
+		t.Fatalf("runtime ports = %v, want [5173]", runtime.ports)
+	}
+}
+
+func TestStartRefreshesPortsImmediatelyAfterIdle(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager()
+	defer func() { _ = manager.CloseAll() }()
+	manager.prepare = func(projectPath, command string) error { return nil }
+
+	var readerMu sync.Mutex
+	processGroupReads := 0
+	portReads := 0
+	manager.procGroups = func() (map[int]int, error) {
+		readerMu.Lock()
+		processGroupReads++
+		readerMu.Unlock()
+		return map[int]int{}, nil
+	}
+	manager.portReaders = func() (map[int][]int, error) {
+		readerMu.Lock()
+		portReads++
+		readerMu.Unlock()
+
+		manager.mu.Lock()
+		pid := 0
+		for _, runtime := range manager.runtimes {
+			if runtime != nil && runtime.running {
+				pid = runtime.pid
+				break
+			}
+		}
+		manager.mu.Unlock()
+		if pid <= 0 {
+			return nil, errors.New("port reader invoked before runtime became visible")
+		}
+		return map[int][]int{pid: {5173}}, nil
+	}
+
+	snapshot, err := manager.Start(StartRequest{
+		ProjectPath: dir,
+		Command:     "sleep 30",
+	})
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if len(snapshot.Ports) != 1 || snapshot.Ports[0] != 5173 {
+		t.Fatalf("Start() snapshot ports = %v, want immediate [5173]", snapshot.Ports)
+	}
+
+	readerMu.Lock()
+	defer readerMu.Unlock()
+	if processGroupReads < 1 || portReads < 1 {
+		t.Fatalf("reader calls = process groups %d ports %d, want an immediate refresh", processGroupReads, portReads)
+	}
+}
+
 func TestAppendOutputPreservesFirstAnnouncedRuntimeURLs(t *testing.T) {
 	dir := t.TempDir()
 	manager := NewManager()

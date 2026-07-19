@@ -319,6 +319,39 @@ func parseSingletonLockTarget(target string) (string, int, bool) {
 	return target[:split], pid, true
 }
 
+// DetectManagedBrowserProcessFromProfileLock uses Chromium's profile ownership
+// lock as a cheap launch signal. It deliberately avoids a process-table scan so
+// callers can poll it frequently while waiting for a lazy browser launch.
+func DetectManagedBrowserProcessFromProfileLock(profileDir, browserExecutable string) (ManagedBrowserProcess, bool) {
+	target, ok := singletonLockTarget(filepath.Join(strings.TrimSpace(profileDir), "SingletonLock"))
+	if !ok {
+		return ManagedBrowserProcess{}, false
+	}
+	host, pid, ok := parseSingletonLockTarget(target)
+	if !ok || !processIsAlive(pid) {
+		return ManagedBrowserProcess{}, false
+	}
+	localHost, err := os.Hostname()
+	if err != nil || strings.TrimSpace(localHost) == "" || strings.TrimSpace(host) != strings.TrimSpace(localHost) {
+		return ManagedBrowserProcess{}, false
+	}
+
+	executable := strings.TrimSpace(browserExecutable)
+	appPath := extractMacAppPath(executable)
+	processName := ""
+	if executable != "" {
+		processName = filepath.Base(executable)
+	}
+	return ManagedBrowserProcess{
+		PID:            pid,
+		Command:        executable,
+		Args:           executable,
+		AppPath:        appPath,
+		AppName:        macAppName(appPath, processName),
+		ExecutablePath: executable,
+	}, true
+}
+
 func processIsAlive(pid int) bool {
 	if pid <= 0 {
 		return false

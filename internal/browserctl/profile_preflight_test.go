@@ -266,6 +266,58 @@ func TestPrepareManagedPlaywrightProfileKeepsLiveSingletonLock(t *testing.T) {
 	}
 }
 
+func TestDetectManagedBrowserProcessFromProfileLock(t *testing.T) {
+	profileDir := t.TempDir()
+	host, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("hostname: %v", err)
+	}
+	lockPath := filepath.Join(profileDir, "SingletonLock")
+	if err := os.WriteFile(lockPath, []byte(host+"-"+strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatalf("write SingletonLock: %v", err)
+	}
+	executable := "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+	detected, ok := DetectManagedBrowserProcessFromProfileLock(profileDir, executable)
+	if !ok {
+		t.Fatalf("DetectManagedBrowserProcessFromProfileLock() = not ok, want live browser")
+	}
+	if detected.PID != os.Getpid() {
+		t.Fatalf("detected PID = %d, want %d", detected.PID, os.Getpid())
+	}
+	if detected.AppPath != "/Applications/Google Chrome.app" {
+		t.Fatalf("detected AppPath = %q", detected.AppPath)
+	}
+	if detected.AppName != "Google Chrome" {
+		t.Fatalf("detected AppName = %q", detected.AppName)
+	}
+	if detected.ExecutablePath != executable {
+		t.Fatalf("detected ExecutablePath = %q, want %q", detected.ExecutablePath, executable)
+	}
+}
+
+func TestDetectManagedBrowserProcessFromProfileLockRejectsForeignOrDeadOwner(t *testing.T) {
+	profileDir := t.TempDir()
+	lockPath := filepath.Join(profileDir, "SingletonLock")
+	if err := os.WriteFile(lockPath, []byte("some-other-host-"+strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatalf("write foreign SingletonLock: %v", err)
+	}
+	if _, ok := DetectManagedBrowserProcessFromProfileLock(profileDir, ""); ok {
+		t.Fatalf("foreign-host profile lock was accepted")
+	}
+
+	host, err := os.Hostname()
+	if err != nil {
+		t.Fatalf("hostname: %v", err)
+	}
+	if err := os.WriteFile(lockPath, []byte(host+"-99999999"), 0o644); err != nil {
+		t.Fatalf("write dead SingletonLock: %v", err)
+	}
+	if _, ok := DetectManagedBrowserProcessFromProfileLock(profileDir, ""); ok {
+		t.Fatalf("dead-owner profile lock was accepted")
+	}
+}
+
 func writeProfileVersionFiles(t *testing.T, profileDir, createdByVersion, lastChromeVersion, lastVersion string) {
 	t.Helper()
 	defaultDir := filepath.Join(profileDir, "Default")

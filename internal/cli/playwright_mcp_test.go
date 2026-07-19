@@ -271,3 +271,213 @@ func TestReconcileManagedPlaywrightBrowserDoesNotHideDuringRevealTransition(t *t
 		t.Fatalf("stored.Hidden after reveal transition reconcile = true, want false")
 	}
 }
+
+func TestManagedBrowserForReconcileBacksOffWhenNoBrowserIsRunning(t *testing.T) {
+	originalDetector := detectManagedBrowserProcess
+	t.Cleanup(func() {
+		detectManagedBrowserProcess = originalDetector
+	})
+
+	detectCount := 0
+	detectManagedBrowserProcess = func(rootPID int) (browserctl.ManagedBrowserProcess, bool, error) {
+		detectCount++
+		return browserctl.ManagedBrowserProcess{}, false, nil
+	}
+
+	base := time.Unix(100, 0)
+	state := managedBrowserMonitorState{}
+	probes := []struct {
+		offset    time.Duration
+		wantCount int
+		wantDelay time.Duration
+	}{
+		{offset: 0, wantCount: 1, wantDelay: 250 * time.Millisecond},
+		{offset: 100 * time.Millisecond, wantCount: 1, wantDelay: 250 * time.Millisecond},
+		{offset: 250 * time.Millisecond, wantCount: 2, wantDelay: 500 * time.Millisecond},
+		{offset: 750 * time.Millisecond, wantCount: 3, wantDelay: time.Second},
+		{offset: 1750 * time.Millisecond, wantCount: 4, wantDelay: 2 * time.Second},
+		{offset: 3750 * time.Millisecond, wantCount: 5, wantDelay: 2 * time.Second},
+	}
+	for _, probe := range probes {
+		if _, ok, err := managedBrowserForReconcile("", 456, &state, base.Add(probe.offset)); err != nil || ok {
+			t.Fatalf("probe at %s = ok %v err %v, want no browser without error", probe.offset, ok, err)
+		}
+		if detectCount != probe.wantCount {
+			t.Fatalf("detectCount at %s = %d, want %d", probe.offset, detectCount, probe.wantCount)
+		}
+		if state.discoveryBackoff != probe.wantDelay {
+			t.Fatalf("discoveryBackoff at %s = %s, want %s", probe.offset, state.discoveryBackoff, probe.wantDelay)
+		}
+	}
+}
+
+func TestManagedBrowserForReconcileReusesLivePIDBetweenSafetyRefreshes(t *testing.T) {
+	originalDetector := detectManagedBrowserProcess
+	originalAlive := managedBrowserProcessAlive
+	t.Cleanup(func() {
+		detectManagedBrowserProcess = originalDetector
+		managedBrowserProcessAlive = originalAlive
+	})
+
+	detectCount := 0
+	detectManagedBrowserProcess = func(rootPID int) (browserctl.ManagedBrowserProcess, bool, error) {
+		detectCount++
+		return browserctl.ManagedBrowserProcess{PID: 123, AppName: "Google Chrome"}, true, nil
+	}
+	aliveCount := 0
+	managedBrowserProcessAlive = func(pid int) bool {
+		aliveCount++
+		if pid != 123 {
+			t.Fatalf("liveness pid = %d, want 123", pid)
+		}
+		return true
+	}
+
+	base := time.Unix(200, 0)
+	state := managedBrowserMonitorState{}
+	for _, offset := range []time.Duration{0, 5 * time.Second, managedBrowserDiscoveryRefreshInterval} {
+		detected, ok, err := managedBrowserForReconcile("", 456, &state, base.Add(offset))
+		if err != nil || !ok {
+			t.Fatalf("probe at %s = ok %v err %v, want browser", offset, ok, err)
+		}
+		if detected.PID != 123 {
+			t.Fatalf("probe at %s pid = %d, want 123", offset, detected.PID)
+		}
+	}
+	if detectCount != 2 {
+		t.Fatalf("detectCount = %d, want initial discovery plus one safety refresh", detectCount)
+	}
+	if aliveCount != 2 {
+		t.Fatalf("aliveCount = %d, want cached PID checks after initial discovery", aliveCount)
+	}
+}
+
+func TestManagedBrowserForReconcileRediscoversDeadPIDImmediately(t *testing.T) {
+	originalDetector := detectManagedBrowserProcess
+	originalAlive := managedBrowserProcessAlive
+	t.Cleanup(func() {
+		detectManagedBrowserProcess = originalDetector
+		managedBrowserProcessAlive = originalAlive
+	})
+
+	detectCount := 0
+	detectManagedBrowserProcess = func(rootPID int) (browserctl.ManagedBrowserProcess, bool, error) {
+		detectCount++
+		return browserctl.ManagedBrowserProcess{PID: 122 + detectCount}, true, nil
+	}
+	managedBrowserProcessAlive = func(pid int) bool {
+		if pid != 123 {
+			t.Fatalf("liveness pid = %d, want first detected pid 123", pid)
+		}
+		return false
+	}
+
+	base := time.Unix(300, 0)
+	state := managedBrowserMonitorState{}
+	first, ok, err := managedBrowserForReconcile("", 456, &state, base)
+	if err != nil || !ok || first.PID != 123 {
+		t.Fatalf("first discovery = %#v ok %v err %v, want pid 123", first, ok, err)
+	}
+	second, ok, err := managedBrowserForReconcile("", 456, &state, base.Add(time.Second))
+	if err != nil || !ok || second.PID != 124 {
+		t.Fatalf("rediscovery = %#v ok %v err %v, want pid 124", second, ok, err)
+	}
+	if detectCount != 2 {
+		t.Fatalf("detectCount = %d, want immediate rediscovery after cached pid died", detectCount)
+	}
+}
+
+func TestManagedBrowserStateNeedsWritePreservesHeartbeatWithoutChurning(t *testing.T) {
+	base := time.Unix(400, 0)
+	previous := browserctl.ManagedPlaywrightState{
+		SessionKey:      "session-demo",
+		ProfileKey:      "profile-demo",
+		Provider:        "codex",
+		ProjectPath:     "/tmp/demo",
+		LaunchMode:      browserctl.ManagedLaunchModeBackground,
+		Policy:          browserctl.DefaultPolicy(),
+		MCPPID:          456,
+		BrowserPID:      123,
+		BrowserAppName:  "Google Chrome",
+		Hidden:          true,
+		RevealSupported: true,
+		UpdatedAt:       base,
+	}
+	unchanged := previous
+	unchanged.UpdatedAt = base.Add(time.Second)
+
+	if managedBrowserStateNeedsWrite(previous, unchanged, base.Add(time.Second)) {
+		t.Fatalf("unchanged state requested a write before the heartbeat interval")
+	}
+	if !managedBrowserStateNeedsWrite(previous, unchanged, base.Add(managedBrowserStateHeartbeatInterval)) {
+		t.Fatalf("unchanged state did not request a heartbeat write")
+	}
+
+	changed := unchanged
+	changed.BrowserPID = 124
+	if !managedBrowserStateNeedsWrite(previous, changed, base.Add(time.Millisecond)) {
+		t.Fatalf("changed browser metadata did not request an immediate write")
+	}
+}
+
+func TestManagedBrowserForReconcileDetectsProfileLaunchDuringFullScanBackoff(t *testing.T) {
+	originalProfileDetector := detectManagedBrowserProcessFromProfileLock
+	originalDetector := detectManagedBrowserProcess
+	t.Cleanup(func() {
+		detectManagedBrowserProcessFromProfileLock = originalProfileDetector
+		detectManagedBrowserProcess = originalDetector
+	})
+
+	profileDetectCount := 0
+	detectManagedBrowserProcessFromProfileLock = func(profileDir, executable string) (browserctl.ManagedBrowserProcess, bool) {
+		profileDetectCount++
+		if profileDir != "/tmp/managed-profile" {
+			t.Fatalf("profile dir = %q", profileDir)
+		}
+		if executable != "/tmp/browser" {
+			t.Fatalf("browser executable = %q", executable)
+		}
+		if profileDetectCount == 1 {
+			return browserctl.ManagedBrowserProcess{}, false
+		}
+		return browserctl.ManagedBrowserProcess{
+			PID:            123,
+			ExecutablePath: executable,
+		}, true
+	}
+	fullDetectCount := 0
+	detectManagedBrowserProcess = func(rootPID int) (browserctl.ManagedBrowserProcess, bool, error) {
+		fullDetectCount++
+		return browserctl.ManagedBrowserProcess{}, false, nil
+	}
+
+	base := time.Unix(500, 0)
+	state := managedBrowserMonitorState{browserExecutable: "/tmp/browser"}
+	if _, ok, err := managedBrowserForReconcile("/tmp/managed-profile", 456, &state, base); err != nil || ok {
+		t.Fatalf("initial discovery = ok %v err %v, want no browser", ok, err)
+	}
+	detected, ok, err := managedBrowserForReconcile("/tmp/managed-profile", 456, &state, base.Add(managedBrowserUndetectedProbeInterval))
+	if err != nil || !ok {
+		t.Fatalf("profile-lock discovery = ok %v err %v, want browser", ok, err)
+	}
+	if detected.PID != 123 {
+		t.Fatalf("profile-lock discovery PID = %d, want 123", detected.PID)
+	}
+	if fullDetectCount != 1 {
+		t.Fatalf("full process scans = %d, want only initial scan during backoff", fullDetectCount)
+	}
+	if profileDetectCount != 2 {
+		t.Fatalf("profile-lock probes = %d, want one per discovery attempt", profileDetectCount)
+	}
+}
+
+func TestManagedBrowserMonitorDelayPreservesFastLaunchDetection(t *testing.T) {
+	state := managedBrowserMonitorState{}
+	if got := managedBrowserMonitorDelay(&state); got != managedBrowserUndetectedProbeInterval {
+		t.Fatalf("undetected monitor delay = %s, want %s", got, managedBrowserUndetectedProbeInterval)
+	}
+	state.detectedBrowser = browserctl.ManagedBrowserProcess{PID: 123}
+	if got := managedBrowserMonitorDelay(&state); got != managedBrowserDetectedProbeInterval {
+		t.Fatalf("detected monitor delay = %s, want %s", got, managedBrowserDetectedProbeInterval)
+	}
+}
