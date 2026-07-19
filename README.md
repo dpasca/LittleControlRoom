@@ -284,6 +284,26 @@ Most day-to-day use falls into a few buckets:
 
 For the full command list and detailed behavior, see [`docs/reference.md`](docs/reference.md).
 
+## Record and edit demos
+
+LCR can capture hours of TUI activity as compressed text frames instead of
+pixel video, then let you mark non-destructive clips in a Bubble Tea editor:
+
+```sh
+lcroom demo record walkthrough.lcrdemo
+lcroom demo edit walkthrough.lcrdemo
+lcroom demo play walkthrough.lcrdemo --clip 1
+lcroom demo export walkthrough.lcrdemo --clip 1 --output walkthrough.cast
+```
+
+The `.lcrdemo` source uses independently seekable gzip chunks and line deltas;
+identical views are omitted, so unchanged idle time does not generate frames.
+Exports use the standard asciicast v3 format for `asciinema play` or `agg`.
+Key values and text are not captured (only coarse interaction timestamps for
+navigation), but visible terminal content can still be sensitive. See
+[Demo recordings](docs/reference.md#demo-recordings) for editor keys, storage
+behavior, and the direct `--demo-record` TUI flag.
+
 ## Costs
 
 If Codex, OpenCode, Claude Code, MLX, or Ollama is available, LCR can use that local provider path for summaries, classification, commit help, and other background inference. MLX and Ollama run locally, so they do not create external API charges. Codex, OpenCode, and Claude Code follow whatever plan, key, or provider billing mode their own CLIs are using.

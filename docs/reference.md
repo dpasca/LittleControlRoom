@@ -20,6 +20,7 @@ Provider artifact and detector-footprint notes live in:
 - `lcroom doctor --scan` rescans first, then prints the diagnostic report
 - `lcroom screenshots` renders the curated docs screenshot set from a screenshot config
 - `lcroom mockups` renders static high-level UI mockups without scanning projects or launching the TUI
+- `lcroom demo record`, `demo edit`, `demo play`, and `demo export` capture compact text-frame sessions, select and replay clips, and export asciicast files
 - `lcroom scope` shows the effective include and exclude scope for this run
 - `lcroom serve` explicitly starts the standalone read-only REST and WebSocket server even when TUI mobile auto-start is disabled; it uses the saved address unless `--listen <host:port>` overrides it
 
@@ -231,6 +232,66 @@ playwright_isolation_scope = "task"
 interval = "60s"
 active-threshold = "20m"
 stuck-threshold = "4h"
+```
+
+## Demo recordings
+
+LCR can record the rendered Bubble Tea view as compact text frames, edit clips
+without modifying the source session, and export a selected clip as an
+[asciicast v3](https://docs.asciinema.org/manual/asciicast/v3/) file:
+
+```sh
+lcroom demo record walkthrough.lcrdemo
+lcroom demo edit walkthrough.lcrdemo
+lcroom demo play walkthrough.lcrdemo --clip 1
+lcroom demo export walkthrough.lcrdemo --clip 1 --output walkthrough.cast
+```
+
+`demo record` launches the regular TUI and accepts the same configuration flags
+after the optional output path. When the path is omitted, LCR creates a
+timestamped `.lcrdemo` directory in the current directory. Existing paths are
+never overwritten.
+
+The source recording is not a pixel video. It contains complete Bubble Tea
+views encoded as independently readable, one-minute gzip chunks. The first
+frame in each chunk is complete; subsequent frames store changed text lines.
+Identical views are omitted, so a long interval with an unchanged view takes
+essentially no frame space. Compression and file writes run outside Bubble
+Tea's update/render path.
+If the process is interrupted, completed chunks remain editable; only the
+currently open chunk may be incomplete.
+
+The editor is also a Bubble Tea TUI:
+
+- `Left`/`Right` seek by one second; `Shift+Left`/`Shift+Right` seek by ten.
+- `PageUp`/`PageDown` seek by one minute; `Ctrl+Left`/`Ctrl+Right` seek by ten minutes.
+- `[`/`]` jump to the previous/next coarse interaction marker.
+- `Space` previews the selection.
+- `i` and `o` set source-timeline in/out points.
+- `n` starts a new selection; `s` saves or updates it.
+- `Tab` cycles saved clips; `Backspace` deletes the selected clip.
+- `d` cycles idle-gap compression; `f` toggles a clean full-frame preview.
+- `e` exports the current selection to asciicast v3.
+
+Saved selections live in `edits.json` beside the recording and are only edit
+decisions; the captured chunks are unchanged. Exported `.cast` files contain
+full text frames and can be played with `asciinema play` or rendered to a GIF
+with `agg`.
+
+`demo play` shows either the whole recording or a selected clip as a clean
+full-frame playback. Press `Space` to pause/resume, `Left`/`Right` to seek by a
+second, `Home` to restart the selection, and `q` to exit.
+
+Key values and entered text are never recorded. LCR keeps at most one coarse
+interaction timestamp every two seconds to make long recordings navigable; it
+does not retain which key or mouse button produced the marker. The visible TUI
+can still contain project names, prompts, diffs, paths, or other sensitive
+output, so review every clip before sharing it.
+
+The equivalent direct TUI flag is:
+
+```sh
+lcroom tui --demo-record walkthrough.lcrdemo
 ```
 
 ## Screenshots

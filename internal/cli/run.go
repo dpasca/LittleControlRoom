@@ -21,6 +21,7 @@ import (
 	"lcroom/internal/buildinfo"
 	"lcroom/internal/codexapp"
 	"lcroom/internal/config"
+	"lcroom/internal/demorecord"
 	"lcroom/internal/detectors"
 	"lcroom/internal/detectors/claudecode"
 	"lcroom/internal/detectors/codex"
@@ -65,6 +66,9 @@ func Run(programName string, args []string) int {
 	if subcmd == "browser" {
 		return runBrowser(args[1:])
 	}
+	if subcmd == "demo" {
+		return runDemo(programName, args[1:])
+	}
 	if subcmd == "mockups" {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
@@ -96,11 +100,20 @@ func Run(programName string, args []string) int {
 		}
 	}
 	listenOverride := ""
+	demoRecordingPath := ""
 	if subcmd == "serve" || subcmd == "tui" {
 		var err error
 		commonArgs, listenOverride, err = stripPathFlagArg(commonArgs, "--listen")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s flag error: %v\n", subcmd, err)
+			return 2
+		}
+	}
+	if subcmd == "tui" {
+		var err error
+		commonArgs, demoRecordingPath, err = stripPathFlagArg(commonArgs, "--demo-record")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tui flag error: %v\n", err)
 			return 2
 		}
 	}
@@ -213,7 +226,7 @@ func Run(programName string, args []string) int {
 	case "screenshots":
 		return runScreenshots(ctx, svc, args[1:])
 	case "tui":
-		code, relaunch := runTUI(ctx, svc, serveAddr, mobileEnabled)
+		code, relaunch := runTUI(ctx, svc, serveAddr, mobileEnabled, demoRecordingPath)
 		if code != 0 || !relaunch {
 			return code
 		}
@@ -230,7 +243,17 @@ func Run(programName string, args []string) int {
 			}
 			runtimeLease = nil
 		}
-		return execUpdatedProcess(programName, args)
+		restartArgs := args
+		if strings.TrimSpace(demoRecordingPath) != "" {
+			remaining, _, stripErr := stripPathFlagArg(args[1:], "--demo-record")
+			if stripErr != nil {
+				fmt.Fprintf(os.Stderr, "prepare update restart after demo recording: %v\n", stripErr)
+				return 1
+			}
+			restartArgs = append([]string{args[0]}, remaining...)
+			fmt.Println("demo recording ended before the updated TUI restart")
+		}
+		return execUpdatedProcess(programName, restartArgs)
 	case "serve":
 		return runServe(ctx, svc, serveAddr)
 	default:
@@ -1001,8 +1024,22 @@ func resolveMobileRuntimeOptions(cfg config.AppConfig, listenOverride string) (s
 	return listenAddress, enabled, nil
 }
 
-func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool) (int, bool) {
+func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress string, mobileEnabled bool, demoRecordingPath string) (int, bool) {
 	runCtx, cancel := context.WithCancel(ctx)
+	var recorder *demorecord.Recorder
+	if strings.TrimSpace(demoRecordingPath) != "" {
+		var err error
+		recorder, err = demorecord.NewRecorder(demoRecordingPath, demorecord.RecorderOptions{})
+		if err != nil {
+			cancel()
+			fmt.Fprintf(os.Stderr, "start demo recording: %v\n", err)
+			return 1, false
+		}
+		fmt.Printf("demo recording started: %s\n", recorder.Path())
+		defer func() {
+			_ = recorder.Close()
+		}()
+	}
 	codexManager := codexapp.NewManager()
 	runtimeManager := projectrun.NewManager()
 	var mobileServer *server.RunningServer
@@ -1034,11 +1071,30 @@ func runTUI(ctx context.Context, svc *service.Service, mobileListenAddress strin
 	m := tui.NewWithManagers(runCtx, svc, codexManager, runtimeManager)
 	m.SetMobileServerStatus(mobileStatus)
 	m.EnableUIStallWatchdog()
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	var programModel tea.Model = m
+	if recorder != nil {
+		programModel = demorecord.WrapModel(programModel, recorder)
+	}
+	p := tea.NewProgram(programModel, tea.WithAltScreen())
 	finalModel, err := p.Run()
+	recordingErr := error(nil)
+	if recorder != nil {
+		recordingErr = recorder.Close()
+		if recordingErr != nil {
+			fmt.Fprintf(os.Stderr, "finalize demo recording: %v\n", recordingErr)
+		} else {
+			fmt.Printf("demo recording saved: %s\n", recorder.Path())
+		}
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tui failed: %v\n", err)
 		return 1, false
+	}
+	if recordingErr != nil {
+		return 1, false
+	}
+	if wrapped, ok := finalModel.(*demorecord.RecordingModel); ok {
+		finalModel = wrapped.Unwrap()
 	}
 	relaunch := false
 	switch final := finalModel.(type) {
@@ -1413,7 +1469,7 @@ func printUsage(programName string) {
 	}
 	fmt.Println(brand.Name)
 	fmt.Println(brand.Subtitle)
-	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|help-meta|tui|serve> [flags]\n", name)
+	fmt.Printf("Usage: %s <version|scope|scan|classify|model-eval|doctor|snapshot|sanitize-summaries|screenshots|mockups|browser|demo|help-meta|tui|serve> [flags]\n", name)
 	fmt.Println("Common flags:")
 	fmt.Println("  --config <path>")
 	fmt.Println("  --include-paths <comma-separated-paths>")
@@ -1450,6 +1506,12 @@ func printUsage(programName string) {
 	fmt.Println("  --output-dir <path>")
 	fmt.Println("TUI and serve flags:")
 	fmt.Printf("  --listen <host:port> (override saved mobile address; default %s)\n", server.DefaultListenAddress)
+	fmt.Println("  --demo-record <recording.lcrdemo> (capture a compact, editable TUI recording)")
+	fmt.Println("Demo recording:")
+	fmt.Println("  demo record [recording.lcrdemo] [TUI flags]")
+	fmt.Println("  demo edit <recording.lcrdemo>")
+	fmt.Println("  demo play <recording.lcrdemo> [--clip <id|number>]")
+	fmt.Println("  demo export <recording.lcrdemo> --clip <id|number> [--output <clip.cast>]")
 	fmt.Println("Browser flags:")
 	fmt.Println("  browser <status|reveal> --session-key <id> [--data-dir <path>]")
 	fmt.Println("Help metadata:")
