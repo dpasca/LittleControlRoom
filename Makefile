@@ -23,6 +23,8 @@ SCREENSHOT_CONFIG ?= screenshots.local.toml
 SCREENSHOT_OUTPUT_DIR ?=
 MOCKUP_OUTPUT_DIR ?= /tmp/lcroom-mockups
 CRASH_LOG_DIR ?= $(DATA_DIR)/crash-dumps
+DEMO_RECORDING_DIR ?= $(DATA_DIR)/demo-recordings
+DEMO_RECORDING_PATH ?=
 PARALLEL_DATA_DIR ?= /tmp/lcroom-parallel-$(shell id -un)
 PARALLEL_DB ?= $(PARALLEL_DATA_DIR)/little-control-room.sqlite
 PARALLEL_CONFIG ?= $(PARALLEL_DATA_DIR)/config.toml
@@ -37,7 +39,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy tidy-check fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all build-check deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-tools release-check release-verify release-snapshot screenshots mockups build-week-demo tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy tidy-check fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all build-check deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-tools release-check release-verify release-snapshot screenshots mockups build-week-demo tui tui-record tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -73,6 +75,7 @@ help:
 	@echo "  make mockups         - render static high-level UI mockups"
 	@echo "  make build-week-demo - run an isolated OpenAI-only recording profile"
 	@echo "  make tui             - run TUI dashboard"
+	@echo "  make tui-record      - run TUI from source and save a compact demo recording"
 	@echo "  make tui-parallel    - run a second TUI using isolated config/DB under /tmp"
 	@echo "  make tui-parallel-clean - remove stale /tmp TUI sandboxes not used by active runtimes"
 	@echo "  make serve           - run the read-only local web/mobile client"
@@ -93,6 +96,8 @@ help:
 	@echo "  SCREENSHOT_OUTPUT_DIR=$(SCREENSHOT_OUTPUT_DIR)"
 	@echo "  MOCKUP_OUTPUT_DIR=$(MOCKUP_OUTPUT_DIR)"
 	@echo "  CRASH_LOG_DIR=$(CRASH_LOG_DIR)"
+	@echo "  DEMO_RECORDING_DIR=$(DEMO_RECORDING_DIR)"
+	@echo "  DEMO_RECORDING_PATH=$(DEMO_RECORDING_PATH)"
 	@echo "  PARALLEL_DATA_DIR=$(PARALLEL_DATA_DIR)"
 	@echo "  PARALLEL_CONFIG=$(PARALLEL_CONFIG)"
 	@echo "  PARALLEL_DB=$(PARALLEL_DB)"
@@ -208,6 +213,20 @@ tui:
 	rc=$$?; \
 	if [ $$rc -eq 0 ] && [ ! -s "$$log" ]; then rm -f "$$log"; fi; \
 	if [ $$rc -ne 0 ]; then echo "stderr log: $$log" >&2; fi; \
+	exit $$rc
+
+tui-record:
+	@mkdir -p "$(CRASH_LOG_DIR)" "$(DEMO_RECORDING_DIR)"
+	@recording="$(DEMO_RECORDING_PATH)"; \
+	if [ -z "$$recording" ]; then recording="$(DEMO_RECORDING_DIR)/lcr-demo-$$(date +%Y%m%d-%H%M%S).lcrdemo"; fi; \
+	mkdir -p "$$(dirname "$$recording")"; \
+	log="$(CRASH_LOG_DIR)/$$(date +%Y%m%d-%H%M%S)-tui-record.stderr.log"; \
+	echo "Recording source TUI to $$recording"; \
+	$(GO) run ./cmd/$(APP) demo record "$$recording" $(COMMON_FLAGS) $(INTERVAL_FLAG) 2> >(tee "$$log" >&2); \
+	rc=$$?; \
+	if [ $$rc -eq 0 ] && [ ! -s "$$log" ]; then rm -f "$$log"; fi; \
+	if [ $$rc -ne 0 ]; then echo "stderr log: $$log" >&2; \
+	else echo "Recording finalized at $$recording"; fi; \
 	exit $$rc
 
 tui-parallel-clean:
