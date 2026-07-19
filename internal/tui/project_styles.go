@@ -90,7 +90,11 @@ func assessmentFlashStyle(style lipgloss.Style) lipgloss.Style {
 }
 
 func (m Model) projectListAssessmentStatusStyle(project model.ProjectSummary) lipgloss.Style {
-	style := statusDisplayStyle(project, m.currentTime(), m.assessmentStallThreshold())
+	return m.projectListAssessmentStatusStyleAt(project, m.currentTime(), m.assessmentStallThreshold())
+}
+
+func (m Model) projectListAssessmentStatusStyleAt(project model.ProjectSummary, now time.Time, stallThreshold time.Duration) lipgloss.Style {
+	style := statusDisplayStyle(project, now, stallThreshold)
 	if m.assessmentFlashActive(project.Path) {
 		return assessmentFlashStyle(style)
 	}
@@ -98,7 +102,11 @@ func (m Model) projectListAssessmentStatusStyle(project model.ProjectSummary) li
 }
 
 func (m Model) projectListAssessmentSummaryStyle(project model.ProjectSummary) lipgloss.Style {
-	style := projectAssessmentStyle(project, m.currentTime(), m.assessmentStallThreshold())
+	return m.projectListAssessmentSummaryStyleAt(project, m.currentTime(), m.assessmentStallThreshold())
+}
+
+func (m Model) projectListAssessmentSummaryStyleAt(project model.ProjectSummary, now time.Time, stallThreshold time.Duration) lipgloss.Style {
+	style := projectAssessmentStyle(project, now, stallThreshold)
 	if m.assessmentFlashActive(project.Path) {
 		return assessmentFlashStyle(style)
 	}

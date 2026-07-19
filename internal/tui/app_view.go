@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"lcroom/internal/brand"
 	"lcroom/internal/model"
@@ -802,6 +803,10 @@ func (m Model) selectedProject() (model.ProjectSummary, bool) {
 }
 
 func (m Model) renderProjectArchiveTabs(width int) string {
+	return m.renderProjectArchiveTabsAt(width, m.currentTime(), m.assessmentStallThreshold())
+}
+
+func (m Model) renderProjectArchiveTabsAt(width int, now time.Time, stallThreshold time.Duration) string {
 	parts := []string{}
 	currentMode := m.archiveMode
 	if currentMode == "" {
@@ -810,7 +815,7 @@ func (m Model) renderProjectArchiveTabs(width int) string {
 	for _, tab := range m.projectTabDescriptors() {
 		label := tab.label
 		marker := ""
-		if !(m.privacyMode && tab.private) && m.projectTabHasActionableAttention(tab) {
+		if !(m.privacyMode && tab.private) && m.projectTabHasActionableAttentionAt(tab, now, stallThreshold) {
 			marker = "*"
 		}
 		if m.privacyMode && tab.private {
@@ -871,6 +876,10 @@ func (m Model) projectTabCount(tab projectTabDescriptor) int {
 }
 
 func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
+	return m.projectTabHasActionableAttentionAt(tab, m.currentTime(), m.assessmentStallThreshold())
+}
+
+func (m Model) projectTabHasActionableAttentionAt(tab projectTabDescriptor, now time.Time, stallThreshold time.Duration) bool {
 	switch tab.mode {
 	case projectArchiveArchived:
 		return false
@@ -886,7 +895,7 @@ func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
 			if m.projectTabProjects == nil && strings.TrimSpace(project.CategoryID) != categoryID {
 				continue
 			}
-			if m.projectSummaryHasTabAttention(project) {
+			if m.projectSummaryHasTabAttentionAt(project, now, stallThreshold) {
 				return true
 			}
 		}
@@ -903,6 +912,10 @@ func (m Model) projectTabHasActionableAttention(tab projectTabDescriptor) bool {
 }
 
 func (m Model) projectSummaryHasTabAttention(project model.ProjectSummary) bool {
+	return m.projectSummaryHasTabAttentionAt(project, m.currentTime(), m.assessmentStallThreshold())
+}
+
+func (m Model) projectSummaryHasTabAttentionAt(project model.ProjectSummary, now time.Time, stallThreshold time.Duration) bool {
 	if snapshot, ok := m.cachedLiveCodexSnapshot(project.Path); ok {
 		if snapshot.PendingApproval != nil {
 			return true
@@ -914,7 +927,7 @@ func (m Model) projectSummaryHasTabAttention(project model.ProjectSummary) bool 
 			return true
 		}
 	}
-	_, category, ok := visibleAssessmentStatusLabelAt(project, m.currentTime(), m.assessmentStallThreshold())
+	_, category, ok := visibleAssessmentStatusLabelAt(project, now, stallThreshold)
 	return ok && sessionCategoryHasTabAttention(category)
 }
 
@@ -954,7 +967,9 @@ func renderProjectCategoryCommandHint() string {
 
 func (m Model) renderProjectList(width, height int) string {
 	m.renderCachedSessionStateOnly = true
-	tabs := m.renderProjectArchiveTabs(width)
+	now := m.currentTime()
+	stallThreshold := m.assessmentStallThreshold()
+	tabs := m.renderProjectArchiveTabsAt(width, now, stallThreshold)
 	if len(m.projects) == 0 {
 		message := ""
 		if m.loading {
@@ -1028,7 +1043,6 @@ func (m Model) renderProjectList(width, height int) string {
 		header = fitStyledWidth(header, width)
 	}
 	rows = append(rows, header)
-	now := m.currentTime()
 	showKindSections := false
 
 	selected := m.selected
@@ -1089,28 +1103,43 @@ func (m Model) renderProjectList(width, height int) string {
 		}
 		selectedRow := i == m.selected
 		selectionFlashRow := selectedRow && m.selectionFlashActive()
+		// Resolve pulse state once per row. cellStyle is applied to every
+		// column, so cache reads inside that closure multiply expensive
+		// snapshot copies across the entire visible list.
+		approvalPulseRow := false
+		browserPulseRow := false
+		questionPulseRow := false
+		if !selectionFlashRow {
+			approvalPulseRow = m.projectApprovalPulseActive(p.Path)
+			if !approvalPulseRow {
+				browserPulseRow = m.projectBrowserPulseActive(p.Path)
+			}
+			if !approvalPulseRow && !browserPulseRow {
+				questionPulseRow = m.projectQuestionPulseActive(p.Path)
+			}
+		}
 		cellStyle := func(style lipgloss.Style) lipgloss.Style {
 			style = projectListCellStyle(style, selectedRow)
 			if selectionFlashRow {
 				style = projectListSelectionFlashStyle(style)
-			} else if m.projectApprovalPulseActive(p.Path) {
+			} else if approvalPulseRow {
 				style = approvalPulseStyle(style)
-			} else if m.projectBrowserPulseActive(p.Path) {
+			} else if browserPulseRow {
 				style = browserPulseStyle(style)
-			} else if m.projectQuestionPulseActive(p.Path) {
+			} else if questionPulseRow {
 				style = questionPulseStyle(style)
 			}
 			return style
 		}
 		last := formatListActivityTime(now, p.LastActivity)
-		flagIndicators := m.projectRepoWarningIndicator(p, m.spinnerFrame) + projectUnreadIndicator(p, now, m.assessmentStallThreshold())
+		flagIndicators := m.projectRepoWarningIndicator(p, m.spinnerFrame) + projectUnreadIndicator(p, now, stallThreshold)
 		attention := projectAttentionLabelForScore(m.projectAttentionScore(p))
 		namePrefix := ""
 		nameLabel := p.Name
-		statusText := projectListStatusAt(p, now, m.assessmentStallThreshold())
-		assessmentText := m.projectAssessmentDisplayTextAt(p, now, m.assessmentStallThreshold())
-		statusStyle := m.projectListAssessmentStatusStyle(p)
-		summaryStyle := m.projectListAssessmentSummaryStyle(p)
+		statusText := projectListStatusAt(p, now, stallThreshold)
+		assessmentText := m.projectAssessmentDisplayTextAt(p, now, stallThreshold)
+		statusStyle := m.projectListAssessmentStatusStyleAt(p, now, stallThreshold)
+		summaryStyle := m.projectListAssessmentSummaryStyleAt(p, now, stallThreshold)
 		nameStyle := lipgloss.NewStyle().Width(projectW).Bold(selectedRow)
 		agentTaskRow := false
 		if task, ok := m.agentTaskForProjectPath(p.Path); ok {

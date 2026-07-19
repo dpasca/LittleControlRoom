@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 
 	"lcroom/internal/codexapp"
+	"lcroom/internal/config"
 	"lcroom/internal/model"
 )
 
@@ -39,6 +40,10 @@ func benchmarkDashboardModel() Model {
 			LastActivityAt: now,
 		}
 	}
+	settings := config.EditableSettings{
+		ActiveThreshold: 20 * time.Minute,
+		StuckThreshold:  2 * time.Hour,
+	}
 	m := Model{
 		allProjects:       projects,
 		projectCategories: []model.ProjectCategory{{ID: "one", Name: "One"}, {ID: "two", Name: "Two"}, {ID: "three", Name: "Three"}, {ID: "four", Name: "Four"}},
@@ -52,6 +57,7 @@ func benchmarkDashboardModel() Model {
 		focusedPane:       focusProjects,
 		detailViewport:    viewport.New(0, 0),
 		runtimeViewport:   viewport.New(0, 0),
+		settingsBaseline:  &settings,
 	}
 	m.rebuildProjectList("")
 	m.detail = model.ProjectDetail{Summary: projects[0]}

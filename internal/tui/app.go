@@ -826,8 +826,14 @@ func (m Model) currentTime() time.Time {
 }
 
 func (m Model) assessmentStallThreshold() time.Duration {
-	settings := m.currentSettingsBaseline()
-	return sessionclassify.EffectiveAssessmentStallThreshold(settings.ActiveThreshold, settings.StuckThreshold)
+	if m.settingsBaseline != nil {
+		return sessionclassify.EffectiveAssessmentStallThreshold(
+			m.settingsBaseline.ActiveThreshold,
+			m.settingsBaseline.StuckThreshold,
+		)
+	}
+	cfg := config.Default()
+	return sessionclassify.EffectiveAssessmentStallThreshold(cfg.ActiveThreshold, cfg.StuckThreshold)
 }
 
 func (m *Model) markAssessmentFlash(projectPath string, at time.Time) {
