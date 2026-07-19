@@ -223,6 +223,10 @@ func knownModelContextWindowTokens(provider, model string) (int64, bool) {
 			return 1000000, true
 		case strings.Contains(name, "mimo-v2.5"):
 			return 256000, true
+		case strings.Contains(name, "gpt-5.6-luna"):
+			return 400000, true
+		case strings.Contains(name, "gpt-5.6"):
+			return 1050000, true
 		case strings.Contains(name, "gpt-5.5"):
 			return 400000, true
 		case strings.Contains(name, "gpt-5.4") || strings.Contains(name, "gpt-5"):

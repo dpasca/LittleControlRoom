@@ -101,6 +101,15 @@ func TestOpenRouterContextModelAwareBudgets(t *testing.T) {
 		t.Fatalf("mimo approx token budget = %d, want 500000", got)
 	}
 
+	sol := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "openai", "gpt-5.6")
+	if sol.ModelContextWindowTokens != 1_050_000 || sol.LoopCompactionTokenBudget != 525_000 {
+		t.Fatalf("GPT-5.6 context budget = %+v, want 1.05M window with 525000 token threshold", sol)
+	}
+	luna := openRouterContextOptionsForProfileAndModel(openRouterContextProfileBalanced, "openai", "gpt-5.6-luna")
+	if luna.ModelContextWindowTokens != 400_000 || luna.LoopCompactionTokenBudget != 292_000 {
+		t.Fatalf("GPT-5.6 Luna context budget = %+v, want 400K window with 292000 token threshold", luna)
+	}
+
 	unknown := openRouterContextOptionsForProfileAndModel(openRouterContextProfileLarge, "openrouter", "custom-model")
 	if unknown.ModelContextWindowTokens != 0 || unknown.LoopCompactionCharThreshold != 600_000 {
 		t.Fatalf("unknown model budget = %+v, want large profile fallback", unknown)

@@ -1460,17 +1460,17 @@ func TestLCAgentSessionListModelsReturnsCuratedCodingRoutes(t *testing.T) {
 	}
 	want := map[string]string{
 		"deepseek/deepseek-v4-pro":   "Balanced: DeepSeek V4 Pro",
-		"openai/gpt-5.5":             "Quality: GPT-5.5",
+		"openai/gpt-5.6":             "Quality: GPT-5.6",
 		"deepseek/deepseek-v4-flash": "Cheap Scout: DeepSeek V4 Flash",
 	}
 	for _, option := range models {
 		delete(want, option.Model)
-		if option.Model == "openai/gpt-5.5" {
+		if option.Model == "openai/gpt-5.6" {
 			if option.DefaultReasoningEffort != "low" {
-				t.Fatalf("GPT-5.5 default reasoning = %q, want low", option.DefaultReasoningEffort)
+				t.Fatalf("GPT-5.6 default reasoning = %q, want low", option.DefaultReasoningEffort)
 			}
 			if !reasoningEffortOptionSet(option.SupportedReasoningEfforts)["xhigh"] {
-				t.Fatalf("GPT-5.5 reasoning options = %#v, want xhigh", option.SupportedReasoningEfforts)
+				t.Fatalf("GPT-5.6 reasoning options = %#v, want xhigh", option.SupportedReasoningEfforts)
 			}
 		}
 	}
@@ -1512,7 +1512,7 @@ func TestLCAgentAvailableModelOptionsIncludesUnconfiguredProviders(t *testing.T)
 	}
 	for _, want := range []string{
 		"openrouter:deepseek/deepseek-v4-pro",
-		"openai:gpt-5.5",
+		"openai:gpt-5.6",
 		"deepseek:deepseek-v4-pro",
 		"moonshot:kimi-k2.7-code",
 		"xiaomi:mimo-v2.5-pro",
@@ -1786,7 +1786,7 @@ printf '%s\n' '{"type":"turn_complete","summary":"route preset run"}'
 		t.Fatalf("newLCAgentSession() error = %v", err)
 	}
 	snapshot := waitForLCAgentIdleSnapshot(t, session, notify)
-	if snapshot.Model != "gpt-5.5" || snapshot.ModelProvider != "openai" {
+	if snapshot.Model != "gpt-5.6" || snapshot.ModelProvider != "openai" {
 		t.Fatalf("snapshot model/provider = %q/%q, want quality route", snapshot.Model, snapshot.ModelProvider)
 	}
 	argsBytes, err := os.ReadFile(argsPath)

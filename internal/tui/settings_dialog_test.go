@@ -1235,6 +1235,16 @@ func TestInferenceStatusCardsShowProjectAndBossChatSelections(t *testing.T) {
 	}
 }
 
+func TestProjectReportsStatusCardNamesGPT56Luna(t *testing.T) {
+	settings := config.EditableSettingsFromAppConfig(config.Default())
+	settings.AIBackend = config.AIBackendOpenAIAPI
+
+	card := (Model{}).projectReportsStatusCard(settings)
+	if got, want := card.Value, "OpenAI API / "+config.DefaultOpenAIProjectModel; got != want {
+		t.Fatalf("project reports status value = %q, want %q", got, want)
+	}
+}
+
 func TestInferenceStatusCardsTreatMissingSnapshotAsUnchecked(t *testing.T) {
 	settings := config.EditableSettingsFromAppConfig(config.Default())
 	settings.AIBackend = config.AIBackendOpenCode
@@ -1533,7 +1543,7 @@ func TestSettingsProjectAndBossDrilldownsUseSharedOpenAIConnection(t *testing.T)
 		t.Fatalf("Chat drilldown should include the same shared OpenAI connection field: %#v", bossFields)
 	}
 	bossRendered := ansi.Strip(boss.renderSettingsContent(100, 24))
-	for _, want := range []string{"Chat Setup", "Shared OpenAI Connection", "Chat Models", "Default: gpt-5.5", "Default: gpt-5.4-mini"} {
+	for _, want := range []string{"Chat Setup", "Shared OpenAI Connection", "Chat Models", "Default: gpt-5.6", "Default: gpt-5.6-luna"} {
 		if !strings.Contains(bossRendered, want) {
 			t.Fatalf("Chat drilldown missing %q: %q", want, bossRendered)
 		}

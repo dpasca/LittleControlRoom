@@ -15,7 +15,7 @@ import (
 )
 
 const defaultEvalTimeout = 90 * time.Second
-const defaultOpenAIModel = "gpt-5.4-mini"
+const defaultOpenAIModel = config.DefaultOpenAIProjectModel
 
 type Options struct {
 	Backend config.AIBackend

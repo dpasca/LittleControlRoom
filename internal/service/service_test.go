@@ -492,7 +492,7 @@ func TestBossChatRunnerKeepsBossChatModelAsLegacyHelmAlias(t *testing.T) {
 	}
 }
 
-func TestBossChatRunnerDefaultsToGPT55(t *testing.T) {
+func TestBossChatRunnerDefaultsToGPT56(t *testing.T) {
 	t.Setenv("LCROOM_BOSS_MODEL", "")
 
 	cfg := config.Default()
@@ -511,12 +511,12 @@ func TestBossChatRunnerDefaultsToGPT55(t *testing.T) {
 	if backend != config.AIBackendOpenAIAPI {
 		t.Fatalf("boss chat backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
 	}
-	if modelName != "gpt-5.5" {
-		t.Fatalf("boss chat model = %q, want gpt-5.5", modelName)
+	if modelName != config.DefaultBossHelmModel {
+		t.Fatalf("boss chat model = %q, want %s", modelName, config.DefaultBossHelmModel)
 	}
 }
 
-func TestBossUtilityRunnerDefaultsToMini(t *testing.T) {
+func TestBossUtilityRunnerDefaultsToLuna(t *testing.T) {
 	t.Setenv("LCROOM_BOSS_MODEL", "")
 
 	cfg := config.Default()
@@ -535,8 +535,8 @@ func TestBossUtilityRunnerDefaultsToMini(t *testing.T) {
 	if backend != config.AIBackendOpenAIAPI {
 		t.Fatalf("boss utility backend = %s, want %s", backend, config.AIBackendOpenAIAPI)
 	}
-	if modelName != "gpt-5.4-mini" {
-		t.Fatalf("boss utility model = %q, want gpt-5.4-mini", modelName)
+	if modelName != config.DefaultBossUtilityModel {
+		t.Fatalf("boss utility model = %q, want %s", modelName, config.DefaultBossUtilityModel)
 	}
 }
 

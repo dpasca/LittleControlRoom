@@ -37,7 +37,7 @@ SCREENSHOT_OUTPUT_FLAG := $(if $(strip $(SCREENSHOT_OUTPUT_DIR)),--output-dir "$
 COMMON_FLAGS := --config "$(CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 PARALLEL_FLAGS := --config "$(PARALLEL_CONFIG)" $(INCLUDE_PATHS_FLAG) $(EXCLUDE_PATHS_FLAG) --codex-home "$(CODEX_HOME)" --opencode-home "$(OPENCODE_HOME)" --db "$(PARALLEL_DB)" $(ACTIVE_THRESHOLD_FLAG) $(STUCK_THRESHOLD_FLAG)
 
-.PHONY: help tidy tidy-check fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all build-check deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-tools release-check release-verify release-snapshot screenshots mockups tui tui-parallel tui-parallel-clean serve
+.PHONY: help tidy tidy-check fmt vet test model-eval lcagent-eval lcagent-live-eval lcagent-live-smoke lcagent-browser-smoke build build-agent build-all build-check deploy-bins install install-agent install-all clean scope scan classify doctor doctor-scan release-tools release-check release-verify release-snapshot screenshots mockups build-week-demo tui tui-parallel tui-parallel-clean serve
 
 help:
 	@echo "$(APP_NAME) Make Targets"
@@ -71,6 +71,7 @@ help:
 	@echo "  make release-snapshot - preflight, build, and verify local release archives"
 	@echo "  make screenshots     - render curated PNG screenshots for docs"
 	@echo "  make mockups         - render static high-level UI mockups"
+	@echo "  make build-week-demo - run an isolated OpenAI-only recording profile"
 	@echo "  make tui             - run TUI dashboard"
 	@echo "  make tui-parallel    - run a second TUI using isolated config/DB under /tmp"
 	@echo "  make tui-parallel-clean - remove stale /tmp TUI sandboxes not used by active runtimes"
@@ -196,6 +197,9 @@ screenshots:
 
 mockups:
 	$(GO) run ./cmd/$(APP) mockups --output-dir "$(MOCKUP_OUTPUT_DIR)"
+
+build-week-demo:
+	./scripts/run-build-week-demo.sh
 
 tui:
 	@mkdir -p "$(CRASH_LOG_DIR)"

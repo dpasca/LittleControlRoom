@@ -751,7 +751,7 @@ func screenshotEmbeddedCodexSnapshot(project model.ProjectSummary, now time.Time
 		Started:         true,
 		Status:          "Codex turn completed",
 		LastActivityAt:  now,
-		Model:           "gpt-5.4",
+		Model:           "gpt-5.6",
 		ReasoningEffort: "xhigh",
 		TokenUsage: &codexapp.TokenUsageSnapshot{
 			Last: codexapp.TokenUsageBreakdown{
@@ -763,7 +763,7 @@ func screenshotEmbeddedCodexSnapshot(project model.ProjectSummary, now time.Time
 			Total: codexapp.TokenUsageBreakdown{
 				TotalTokens: 12345,
 			},
-			ModelContextWindow: 200000,
+			ModelContextWindow: 1050000,
 		},
 		Entries: []codexapp.TranscriptEntry{
 			{Kind: codexapp.TranscriptUser, Text: "set up reproducible screenshots for this app"},

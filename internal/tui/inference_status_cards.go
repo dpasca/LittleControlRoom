@@ -85,6 +85,9 @@ func (m Model) projectReportsStatusCard(settings config.EditableSettings) infere
 	status, known := m.inferenceBackendStatus(backend, settings)
 	state, stateStyle := inferenceStateForBackend(backend, status, known)
 	value := backend.Label()
+	if modelName := strings.TrimSpace(settings.OpenAICompatibleModel(backend)); modelName != "" {
+		value += " / " + modelName
+	}
 	detail := strings.TrimSpace(status.Detail)
 	switch {
 	case backend == config.AIBackendUnset:

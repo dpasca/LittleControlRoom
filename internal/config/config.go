@@ -110,8 +110,9 @@ type AppConfig struct {
 }
 
 const (
-	DefaultBossHelmModel       = "gpt-5.5"
-	DefaultBossUtilityModel    = "gpt-5.4-mini"
+	DefaultOpenAIProjectModel  = "gpt-5.6-luna"
+	DefaultBossHelmModel       = "gpt-5.6"
+	DefaultBossUtilityModel    = DefaultOpenAIProjectModel
 	DefaultOpenRouterModel     = "deepseek/deepseek-v4-pro"
 	DefaultDeepSeekModel       = "deepseek-v4-flash"
 	DefaultDeepSeekProModel    = "deepseek-v4-pro"
@@ -165,6 +166,8 @@ func (c AppConfig) OpenAICompatibleAPIKey(backend AIBackend) string {
 
 func (c AppConfig) OpenAICompatibleModel(backend AIBackend) string {
 	switch backend {
+	case AIBackendOpenAIAPI:
+		return backend.DefaultProjectModel()
 	case AIBackendOpenRouter:
 		return trimmedOrDefault(c.OpenRouterModel, backend.DefaultProjectModel())
 	case AIBackendDeepSeek:

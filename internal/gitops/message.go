@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	defaultCommitModel           = "gpt-5.4-mini"
+	defaultCommitModel           = config.DefaultOpenAIProjectModel
 	defaultClaudeCommitModel     = "haiku"
 	defaultCommitReasoningEffort = "low"
 	commitAssistantHTTPTimeout   = 45 * time.Second

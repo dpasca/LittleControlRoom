@@ -16,7 +16,7 @@ Useful variants:
 
 ```sh
 go run ./cmd/lcagent smoke --provider deepseek --env-file /path/to/provider.env
-go run ./cmd/lcagent smoke --provider openai --model gpt-5.5 --reasoning-effort low
+go run ./cmd/lcagent smoke --provider openai --model gpt-5.6 --reasoning-effort low
 go run ./cmd/lcagent smoke --output json --keep-temp
 ```
 

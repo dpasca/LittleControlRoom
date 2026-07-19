@@ -1518,6 +1518,12 @@ func TestModelIsKnownForProviderKeepsMoonshotK26(t *testing.T) {
 
 func TestModelIsKnownForProviderRecognizesOpenAIQualityModels(t *testing.T) {
 	for _, model := range []string{
+		"gpt-5.6",
+		"openai/gpt-5.6",
+		"gpt-5.6-sol",
+		"openai/gpt-5.6-terra",
+		"gpt-5.6-luna",
+		"gpt-5.6-luna-2026-07-13",
 		"gpt-5.5",
 		"openai/gpt-5.5",
 		"gpt-5.5-2026-04-23",

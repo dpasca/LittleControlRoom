@@ -94,6 +94,9 @@ func TestOpenAICompatibleModelUsesCloudOverrides(t *testing.T) {
 	t.Parallel()
 
 	cfg := Default()
+	if got := cfg.OpenAICompatibleModel(AIBackendOpenAIAPI); got != DefaultOpenAIProjectModel {
+		t.Fatalf("default OpenAI project model = %q, want %q", got, DefaultOpenAIProjectModel)
+	}
 	if got := cfg.OpenAICompatibleModel(AIBackendDeepSeek); got != DefaultDeepSeekModel {
 		t.Fatalf("default DeepSeek project model = %q, want %q", got, DefaultDeepSeekModel)
 	}
@@ -119,6 +122,12 @@ func TestOpenAICompatibleModelUsesCloudOverrides(t *testing.T) {
 func TestBackendDefaultBossModelsSplitFastAndPro(t *testing.T) {
 	t.Parallel()
 
+	if got := AIBackendOpenAIAPI.DefaultBossHelmModel(); got != "gpt-5.6" {
+		t.Fatalf("OpenAI helm default = %q, want gpt-5.6", got)
+	}
+	if got := AIBackendOpenAIAPI.DefaultBossUtilityModel(); got != "gpt-5.6-luna" {
+		t.Fatalf("OpenAI utility default = %q, want gpt-5.6-luna", got)
+	}
 	if got := AIBackendXiaomi.DefaultBossHelmModel(); got != DefaultXiaomiProModel {
 		t.Fatalf("Xiaomi helm default = %q, want %q", got, DefaultXiaomiProModel)
 	}

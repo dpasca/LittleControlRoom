@@ -1383,8 +1383,8 @@ func TestRunExecRoutePresetAppliesCodingDefaults(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
-		if body["model"] != "gpt-5.5" {
-			t.Fatalf("model = %q, want gpt-5.5", body["model"])
+		if body["model"] != "gpt-5.6" {
+			t.Fatalf("model = %q, want gpt-5.6", body["model"])
 		}
 		reasoning, _ := body["reasoning"].(map[string]any)
 		if reasoning["effort"] != "low" {
@@ -1396,7 +1396,7 @@ func TestRunExecRoutePresetAppliesCodingDefaults(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"id":"resp_quality",
-			"model":"gpt-5.5",
+			"model":"gpt-5.6",
 			"status":"completed",
 			"output":[{
 				"type":"message",
@@ -1430,7 +1430,7 @@ func TestRunExecRoutePresetAppliesCodingDefaults(t *testing.T) {
 	for _, want := range []string{
 		`"type":"session_meta"`,
 		`"provider":"openai"`,
-		`"model":"gpt-5.5"`,
+		`"model":"gpt-5.6"`,
 		`"type":"route_preset"`,
 		`"name":"quality"`,
 		`"context_profile":"large"`,
