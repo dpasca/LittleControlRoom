@@ -16,21 +16,24 @@ type ViewRecorder interface {
 // It caches each updated view so Bubble Tea does not have to render the
 // underlying model a second time for the same message.
 type RecordingModel struct {
-	inner    tea.Model
-	recorder ViewRecorder
-	view     string
-	width    int
-	height   int
+	inner       tea.Model
+	recorder    ViewRecorder
+	view        string
+	captureView string
+	width       int
+	height      int
 }
 
 func WrapModel(inner tea.Model, recorder ViewRecorder) *RecordingModel {
 	if inner == nil {
 		return nil
 	}
+	view := inner.View()
 	return &RecordingModel{
-		inner:    inner,
-		recorder: recorder,
-		view:     inner.View(),
+		inner:       inner,
+		recorder:    recorder,
+		view:        view,
+		captureView: demoRecordingCaptureView(inner, 0, 0, view),
 	}
 }
 
@@ -63,13 +66,15 @@ func (m *RecordingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next = m.inner
 	}
 	nextView := next.View()
-	changed := nextView != m.view ||
+	nextCaptureView := demoRecordingCaptureView(next, m.width, m.height, nextView)
+	changed := nextCaptureView != m.captureView ||
 		m.width != previousWidth ||
 		m.height != previousHeight
 	m.inner = next
 	m.view = nextView
+	m.captureView = nextCaptureView
 	if changed && m.recorder != nil && m.width > 0 && m.height > 0 {
-		m.recorder.Capture(m.width, m.height, nextView)
+		m.recorder.Capture(m.width, m.height, nextCaptureView)
 	}
 	return m, cmd
 }
@@ -112,4 +117,32 @@ func recordingWarningView(view string, width int, warning string) string {
 		return line + "\n" + rest
 	}
 	return line
+}
+
+// demoRecordingPrivacyProvider is intentionally structural so a hosted TUI can
+// expose capture-only privacy state without depending on this package. The
+// actual terminal view remains visible to its operator; only the saved frame is
+// replaced.
+type demoRecordingPrivacyProvider interface {
+	DemoRecordingPrivate() bool
+}
+
+func demoRecordingCaptureView(inner tea.Model, width, height int, view string) string {
+	privacy, ok := inner.(demoRecordingPrivacyProvider)
+	if !ok || !privacy.DemoRecordingPrivate() {
+		return view
+	}
+	return privateDemoRecordingView(width, height)
+}
+
+func privateDemoRecordingView(width, height int) string {
+	const message = "PRIVATE VIEW — NOT RECORDED"
+	if width <= 0 || height <= 0 {
+		return message
+	}
+	line := ansi.Truncate(message, width, "")
+	leftPadding := max(0, (width-ansi.StringWidth(line))/2)
+	lines := make([]string, height)
+	lines[(height-1)/2] = strings.Repeat(" ", leftPadding) + line
+	return strings.Join(lines, "\n")
 }

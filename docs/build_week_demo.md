@@ -37,6 +37,13 @@ make tui-record DEMO_RECORDING_DIR=/path/to/recordings
 make tui-record DEMO_RECORDING_PATH=/path/to/session.lcrdemo
 ```
 
+Recording is app-aware for categories marked private. Selecting a private
+category tab, or showing an embedded agent session whose project is private,
+stores a fixed `PRIVATE VIEW — NOT RECORDED` frame instead of the rendered
+content. This substitution happens before capture and does not alter the live
+TUI. It is a focused safeguard rather than a general redactor; public tabs and
+projects can still display sensitive paths, prompts, diffs, or identifiers.
+
 The GPT-5.6 Luna privacy reviewer remains a separate local prototype for now and is not automatically invoked by `make tui-record`. Promote it into a source-backed `lcroom demo audit` command before treating review as part of the durable recording workflow.
 
 The automated pass is screening, not final approval. Every clip selected for export still needs a last human check at full resolution.
