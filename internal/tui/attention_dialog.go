@@ -18,6 +18,13 @@ const (
 	attentionDialogFocusDismiss
 )
 
+type attentionDialogSeverity int
+
+const (
+	attentionDialogSeverityWarning attentionDialogSeverity = iota
+	attentionDialogSeverityError
+)
+
 type attentionDialogState struct {
 	Title           string
 	ProjectName     string
@@ -26,6 +33,8 @@ type attentionDialogState struct {
 	Hint            string
 	PrimaryLabel    string
 	PrimaryProvider codexapp.Provider
+	DismissLabel    string
+	Severity        attentionDialogSeverity
 	Selected        attentionDialogFocus
 }
 
@@ -34,6 +43,9 @@ func (m *Model) showAttentionDialog(dialog attentionDialogState) {
 		dialog.ProjectName = projectNameForPicker(model.ProjectSummary{Name: dialog.ProjectName}, dialog.ProjectPath)
 	}
 	dialog.PrimaryProvider = dialog.PrimaryProvider.Normalized()
+	if strings.TrimSpace(dialog.DismissLabel) == "" {
+		dialog.DismissLabel = "Keep"
+	}
 	dialog.Selected = attentionDialogFocusDismiss
 	if dialog.PrimaryLabel == "" || dialog.PrimaryProvider == "" {
 		dialog.Selected = attentionDialogFocusDismiss
@@ -112,10 +124,14 @@ func (m Model) renderAttentionDialogOverlay(body string, bodyW, bodyH int) strin
 func (m Model) renderAttentionDialogPanel(bodyW int) string {
 	panelW := min(bodyW, min(max(56, bodyW-18), 86))
 	panelInnerW := max(28, panelW-4)
+	borderColor := lipgloss.Color("178")
+	if m.attentionDialog != nil && m.attentionDialog.Severity == attentionDialogSeverityError {
+		borderColor = lipgloss.Color("203")
+	}
 	return lipgloss.NewStyle().
 		Width(panelW).
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("178")).
+		BorderForeground(borderColor).
 		Padding(0, 1).
 		Background(dialogPanelBackground).
 		Foreground(lipgloss.Color("252")).
@@ -134,20 +150,26 @@ func (m Model) renderAttentionDialogContent(width int) string {
 	if strings.TrimSpace(dialog.ProjectPath) != "" {
 		lines = append(lines, detailField("Path", detailMutedStyle.Render(truncateText(m.displayPathWithHomeTilde(dialog.ProjectPath), max(20, width-6)))))
 	}
-	lines = append(lines, "", detailWarningStyle.Render("Action needed"))
-	lines = append(lines, renderWrappedDialogTextLines(detailWarningStyle, width, dialog.Message)...)
+	messageStyle := detailWarningStyle
+	messageLabel := "Action needed"
+	if dialog.Severity == attentionDialogSeverityError {
+		messageStyle = detailDangerStyle
+		messageLabel = "Launch failed"
+	}
+	lines = append(lines, "", messageStyle.Render(messageLabel))
+	lines = append(lines, renderWrappedDialogTextLines(messageStyle, width, dialog.Message)...)
 	if strings.TrimSpace(dialog.Hint) != "" {
 		lines = append(lines, "")
 		lines = append(lines, renderWrappedDialogTextLines(commandPaletteHintStyle, width, dialog.Hint)...)
 	}
 
-	buttons := renderDialogButton("Keep", true)
+	buttons := renderDialogButton(dialog.DismissLabel, true)
 	if dialog.PrimaryLabel != "" && dialog.PrimaryProvider != "" {
 		buttons = lipgloss.JoinHorizontal(
 			lipgloss.Left,
 			renderDialogButton(dialog.PrimaryLabel, dialog.Selected == attentionDialogFocusPrimary),
 			" ",
-			renderDialogButton("Keep", dialog.Selected == attentionDialogFocusDismiss),
+			renderDialogButton(dialog.DismissLabel, dialog.Selected == attentionDialogFocusDismiss),
 		)
 	}
 	lines = append(lines, "", buttons)

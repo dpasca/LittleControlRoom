@@ -84,6 +84,17 @@ func (m Model) View() string {
 			}
 			return m.renderActionNoticeDialogOverlay(body, width, height)
 		}
+		if m.attentionDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderAttentionDialogOverlay(body, width, height)
+		}
 		if m.skillsDialog != nil {
 			width := m.width
 			if width <= 0 {
@@ -675,6 +686,7 @@ func topStatusNeedsAttention(status string) bool {
 	}
 
 	for _, snippet := range []string{
+		" launch blocked",
 		"Resolve or abort the in-progress Git operation before ",
 		"Commit or discard changes before ",
 		"Finish or close it before ",

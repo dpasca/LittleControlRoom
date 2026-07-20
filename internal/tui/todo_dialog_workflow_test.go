@@ -1824,8 +1824,6 @@ func TestTodoWorktreeLaunchCanceledSkipsErrorReporting(t *testing.T) {
 }
 
 func TestTodoWorktreeLaunchErrorAfterBackgroundStartLeavesDialogsClosed(t *testing.T) {
-	t.Parallel()
-
 	m := Model{
 		todoPendingLaunch: &todoPendingLaunchState{ID: 9},
 	}
@@ -1849,6 +1847,39 @@ func TestTodoWorktreeLaunchErrorAfterBackgroundStartLeavesDialogsClosed(t *testi
 	}
 	if len(got.errorLogEntries) == 0 || got.errorLogEntries[0].Message != "create worktree failed" {
 		t.Fatalf("latest error log entry = %#v, want create worktree failed", got.errorLogEntries)
+	}
+	if got.attentionDialog == nil {
+		t.Fatalf("todo worktree launch error should open an acknowledgement dialog")
+	}
+	if got.attentionDialog.Severity != attentionDialogSeverityError {
+		t.Fatalf("attention dialog severity = %d, want error", got.attentionDialog.Severity)
+	}
+	if !strings.Contains(got.attentionDialog.Hint, "Full error details are available in /errors") {
+		t.Fatalf("attention dialog hint = %q, want /errors guidance", got.attentionDialog.Hint)
+	}
+	withANSI256DarkBackground(t)
+	if colored := got.renderAttentionDialogPanel(80); !strings.Contains(colored, "38;5;203") {
+		t.Fatalf("failed-launch dialog should use the error color, got %q", colored)
+	}
+	rendered := ansi.Strip(got.renderAttentionDialogContent(72))
+	for _, want := range []string{
+		"TODO launch failed",
+		"Launch failed",
+		"create worktree failed",
+		"OK",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("attention dialog missing %q:\n%s", want, rendered)
+		}
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("acknowledging the launch error should not return a command")
+	}
+	if got.attentionDialog != nil {
+		t.Fatalf("Enter should acknowledge and close the launch error")
 	}
 }
 

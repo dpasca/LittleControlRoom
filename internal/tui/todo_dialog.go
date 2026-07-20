@@ -1603,6 +1603,30 @@ func todoWorkSessionIDMatches(provider codexapp.Provider, expected, actual strin
 	return expectedRaw != "" && expectedRaw == actualRaw
 }
 
+func (m *Model) reportTodoLaunchError(err error, projectPath string) {
+	if err == nil {
+		return
+	}
+
+	m.reportError("TODO launch failed", err, projectPath)
+	status := m.status
+	project := m.pickerProjectSummary(projectPath)
+	message := strings.Join(strings.Fields(strings.TrimSpace(err.Error())), " ")
+	if message == "" {
+		message = "The TODO could not be started."
+	}
+	m.showAttentionDialog(attentionDialogState{
+		Title:        "TODO launch failed",
+		ProjectName:  projectNameForPicker(project, projectPath),
+		ProjectPath:  projectPath,
+		Message:      truncateText(message, 480),
+		Hint:         "No engineer session was started. Full error details are available in /errors.",
+		DismissLabel: "OK",
+		Severity:     attentionDialogSeverityError,
+	})
+	m.status = status
+}
+
 func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText string, attachments []model.TodoAttachment, provider codexapp.Provider, openModelFirst bool) (tea.Model, tea.Cmd) {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
@@ -1624,7 +1648,15 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 		return m, nil
 	}
 	if message, blocked := m.controlFreshSessionBlockedByActiveEngineerTurn(project, provider, fmt.Sprintf("TODO #%d", todoID)); blocked {
-		m.status = message
+		m.showAttentionDialog(attentionDialogState{
+			Title:        "TODO launch blocked",
+			ProjectName:  projectNameForPicker(project, project.Path),
+			ProjectPath:  project.Path,
+			Message:      message,
+			Hint:         fmt.Sprintf("Choose %s in the TODO launcher, or finish or close the existing %s session before trying again.", todoCopyRunModeLabel(todoCopyModeNewWorktree), provider.Label()),
+			DismissLabel: "OK",
+		})
+		m.status = fmt.Sprintf("TODO #%d launch blocked", todoID)
 		return m, nil
 	}
 	if !project.PresentOnDisk {
@@ -1670,7 +1702,7 @@ func (m Model) startTodoInProjectPath(projectPath string, todoID int64, todoText
 	}
 	if err := req.Validate(); err != nil {
 		m.clearTodoLaunchDraft(project.Path)
-		m.status = err.Error()
+		m.reportTodoLaunchError(err, project.Path)
 		return m, nil
 	}
 	m.rememberEmbeddedProvider(provider)
