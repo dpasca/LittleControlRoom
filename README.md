@@ -301,7 +301,9 @@ The `.lcrdemo` source uses independently seekable gzip chunks and line deltas;
 identical views are omitted, so unchanged idle time does not generate frames.
 Exports use the standard asciicast v3 format for `asciinema play` or `agg`.
 Key values and text are not captured (only coarse interaction timestamps for
-navigation), but visible terminal content can still be sensitive. See
+navigation). Private category tabs and visible embedded sessions for private
+projects are replaced with a fixed mask before capture, but other visible
+terminal content can still be sensitive. See
 [Demo recordings](docs/reference.md#demo-recordings) for editor keys, storage
 behavior, and the direct `--demo-record` TUI flag.
 

@@ -284,9 +284,12 @@ second, `Home` to restart the selection, and `q` to exit.
 
 Key values and entered text are never recorded. LCR keeps at most one coarse
 interaction timestamp every two seconds to make long recordings navigable; it
-does not retain which key or mouse button produced the marker. The visible TUI
-can still contain project names, prompts, diffs, paths, or other sensitive
-output, so review every clip before sharing it.
+does not retain which key or mouse button produced the marker. When a private
+project-category tab is selected, or an embedded session for a private project
+is visible, the saved frame is replaced before capture with the fixed message
+`PRIVATE VIEW — NOT RECORDED`; the operator's live TUI remains unchanged. Other
+visible surfaces can still contain project names, prompts, diffs, paths, or
+sensitive output, so review every clip before sharing it.
 
 The equivalent direct TUI flag is:
 
