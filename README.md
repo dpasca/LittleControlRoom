@@ -300,8 +300,12 @@ lcroom demo export walkthrough.lcrdemo --clip 1 --output walkthrough.cast
 The `.lcrdemo` source uses independently seekable gzip chunks and line deltas;
 identical views are omitted, so unchanged idle time does not generate frames.
 Exports use the standard asciicast v3 format for `asciinema play` or `agg`.
-Key values and text are not captured (only coarse interaction timestamps for
-navigation). Private category tabs and visible embedded sessions for private
+Optional smart timing smooths visible text-entry cadence, accelerates quiet
+screen churn, and pauses briefly before a large post-input transition without
+modifying the source recording.
+Raw key values and input events are not captured; visible text remains part of
+the recorded screen frames, and only coarse interaction timestamps are stored
+separately for navigation. Private category tabs and visible embedded sessions for private
 projects are replaced with a fixed mask before capture, but other visible
 terminal content can still be sensitive. See
 [Demo recordings](docs/reference.md#demo-recordings) for editor keys, storage

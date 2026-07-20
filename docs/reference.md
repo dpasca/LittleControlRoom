@@ -270,13 +270,25 @@ The editor is also a Bubble Tea TUI:
 - `i` and `o` set source-timeline in/out points.
 - `n` starts a new selection; `s` saves or updates it.
 - `Tab` cycles saved clips; `Backspace` deletes the selected clip.
-- `d` cycles idle-gap compression; `f` toggles a clean full-frame preview.
+- `d` cycles the ordinary idle-gap cap; `t` toggles smart timing.
+- `f` toggles a clean full-frame preview.
 - `e` exports the current selection to asciicast v3.
+
+New selections default to smart timing. This editing-time transform leaves the
+source recording untouched. It replays localized text growth or deletion at a
+steady short cadence, accelerates low-information changes such as counters and
+marquees, and inserts a brief readability hold when recent interactive text is
+followed by a large screen transition. Bulk paste or dictation appears as one
+update and receives the same final hold; LCR does not fabricate or store
+individual pasted keystrokes. The classifier uses rendered-frame geometry plus
+the existing coarse interaction timestamps, never key identities or values.
+Saved clips retain their timing choice.
 
 Saved selections live in `edits.json` beside the recording and are only edit
 decisions; the captured chunks are unchanged. Exported `.cast` files contain
 full text frames and can be played with `asciinema play` or rendered to a GIF
-with `agg`.
+with `agg`. Smart exports write the edited event delays explicitly; ordinary
+exports retain the asciicast idle-time-limit behavior.
 
 `demo play` shows either the whole recording or a selected clip as a clean
 full-frame playback. Press `Space` to pause/resume, `Left`/`Right` to seek by a

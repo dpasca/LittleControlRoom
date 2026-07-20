@@ -211,6 +211,7 @@ func TestSaveEditsValidatesAndRoundTrips(t *testing.T) {
 			InMS:            1000,
 			OutMS:           5000,
 			IdleTimeLimitMS: 1500,
+			SmartTiming:     true,
 		}},
 	}
 	if err := SaveEdits(path, project, 10_000); err != nil {

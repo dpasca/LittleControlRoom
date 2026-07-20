@@ -66,6 +66,7 @@ func runDemoPlay(args []string) int {
 		InMS:            0,
 		OutMS:           manifest.DurationMS,
 		IdleTimeLimitMS: 2000,
+		SmartTiming:     true,
 	}
 	if strings.TrimSpace(clipSelector) != "" {
 		edits, err := demorecord.LoadEdits(reader.Path())
