@@ -371,6 +371,9 @@ func TestOpenAICommitMessageClientSuggestRetriesRetryableHTTPError(t *testing.T)
 	if len(runner.requests) != 2 {
 		t.Fatalf("requests = %d, want retry", len(runner.requests))
 	}
+	if runner.requests[0].BypassCache || !runner.requests[1].BypassCache {
+		t.Fatalf("retry cache bypass = first:%v second:%v, want false/true", runner.requests[0].BypassCache, runner.requests[1].BypassCache)
+	}
 }
 
 func TestOpenAICommitMessageClientSuggestAcceptsCommitSubjectAlias(t *testing.T) {
@@ -502,7 +505,7 @@ func TestOpenAICommitMessageClientSuggestAcceptsSubjectField(t *testing.T) {
 	}
 }
 
-func TestOpenAICommitMessageClientSelectCommitTodoEvidenceUsesFocusedModel(t *testing.T) {
+func TestOpenAICommitMessageClientSelectCommitTodoEvidenceUsesCommitModel(t *testing.T) {
 	t.Parallel()
 
 	runner := &scriptedJSONSchemaRunner{
@@ -520,23 +523,17 @@ func TestOpenAICommitMessageClientSelectCommitTodoEvidenceUsesFocusedModel(t *te
 		}},
 	}
 
-	primary := &OpenAICommitMessageClient{
-		model:     "primary-model",
+	client := &OpenAICommitMessageClient{
+		model:     "commit-model",
 		responses: runner,
 	}
-	focused := primary.WithModel("utility-model")
-	if primary.ModelName() != "primary-model" {
-		t.Fatalf("WithModel mutated original model to %q", primary.ModelName())
-	}
-	if focused.ModelName() != "utility-model" {
-		t.Fatalf("focused model = %q, want utility-model", focused.ModelName())
-	}
 
-	selection, err := focused.SelectCommitTodoEvidence(context.Background(), CommitTodoEvidenceSelectionInput{
-		ProjectName: "renderer",
-		Branch:      "master",
-		BaseHash:    "base123",
-		HeadHash:    "abc123",
+	selection, err := client.SelectCommitTodoEvidence(context.Background(), CommitTodoEvidenceSelectionInput{
+		ProjectName:      "renderer",
+		Branch:           "master",
+		BaseHash:         "base123",
+		HeadHash:         "abc123",
+		BypassModelCache: true,
 		OpenTodos: []CommitTodoRef{{
 			ID:   17,
 			Text: "Fix the startup black screen",
@@ -561,8 +558,11 @@ func TestOpenAICommitMessageClientSelectCommitTodoEvidenceUsesFocusedModel(t *te
 		t.Fatalf("requests = %d, want 1", len(runner.requests))
 	}
 	req := runner.requests[0]
-	if req.Model != "utility-model" || req.SchemaName != "git_commit_todo_evidence_selection" {
+	if req.Model != "commit-model" || req.SchemaName != "git_commit_todo_evidence_selection" {
 		t.Fatalf("request model/schema = %q/%q", req.Model, req.SchemaName)
+	}
+	if !req.BypassCache {
+		t.Fatal("evidence selection retry did not bypass the runner cache")
 	}
 	if !strings.Contains(req.SystemText, "Do not use keyword or regex matching") {
 		t.Fatalf("selection instructions omitted semantic-selection guardrail: %q", req.SystemText)

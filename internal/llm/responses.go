@@ -31,6 +31,9 @@ type JSONSchemaRequest struct {
 	SchemaName      string
 	Schema          map[string]any
 	ReasoningEffort string
+	// BypassCache forces a fresh provider call and avoids storing its result.
+	// Durable job retries use this after a cached response failed validation.
+	BypassCache bool
 }
 
 type JSONSchemaResponse struct {

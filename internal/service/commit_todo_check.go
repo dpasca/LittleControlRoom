@@ -257,15 +257,16 @@ func (s *Service) buildCommitTodoCompletionInput(ctx context.Context, check mode
 	}
 
 	input := gitops.CommitTodoCompletionInput{
-		ProjectName:   commitPreviewProjectName(projectPath, detail.Summary.Name),
-		Branch:        commitPreviewBranchName(detail.Summary.RepoBranch),
-		BaseHash:      baseHash,
-		HeadHash:      headHash,
-		CommitSubject: subject,
-		ChangedFiles:  changedFiles,
-		DiffStat:      diffStat,
-		Patch:         patch,
-		OpenTodos:     openTodos,
+		ProjectName:      commitPreviewProjectName(projectPath, detail.Summary.Name),
+		Branch:           commitPreviewBranchName(detail.Summary.RepoBranch),
+		BaseHash:         baseHash,
+		HeadHash:         headHash,
+		CommitSubject:    subject,
+		ChangedFiles:     changedFiles,
+		DiffStat:         diffStat,
+		Patch:            patch,
+		OpenTodos:        openTodos,
+		BypassModelCache: check.AttemptCount > 1,
 	}
 	if !patchTruncated {
 		input.EvidenceStrategy = "complete_patch"
@@ -286,12 +287,13 @@ func (s *Service) buildCommitTodoCompletionInput(ctx context.Context, check mode
 	}
 	selectionCtx, cancel := s.withCommitAssistantTimeout(ctx)
 	selection, err := selector.SelectCommitTodoEvidence(selectionCtx, gitops.CommitTodoEvidenceSelectionInput{
-		ProjectName: input.ProjectName,
-		Branch:      input.Branch,
-		BaseHash:    input.BaseHash,
-		HeadHash:    input.HeadHash,
-		OpenTodos:   openTodos,
-		Commits:     commits,
+		ProjectName:      input.ProjectName,
+		Branch:           input.Branch,
+		BaseHash:         input.BaseHash,
+		HeadHash:         input.HeadHash,
+		OpenTodos:        openTodos,
+		Commits:          commits,
+		BypassModelCache: input.BypassModelCache,
 	})
 	cancel()
 	if err != nil {

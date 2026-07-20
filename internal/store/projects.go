@@ -938,29 +938,28 @@ func (s *Store) ClaimNextQueuedCommitTodoCheck(ctx context.Context, staleAfter t
 	if staleAfter <= 0 {
 		staleBefore = now
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	check, err := scanCommitTodoCheck(tx.QueryRowContext(ctx, `
-		SELECT project_path, base_hash, head_hash, status, model,
+	return scanCommitTodoCheck(s.db.QueryRowContext(ctx, `
+		WITH next_check AS (
+			SELECT project_path, head_hash
+			FROM commit_todo_checks
+			WHERE status = ?
+				OR (status = ? AND updated_at <= ?)
+				OR (status = ? AND auto_retry = 1 AND next_attempt_at <= ?)
+			ORDER BY
+				CASE status WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END,
+				updated_at ASC,
+				created_at ASC
+			LIMIT 1
+		)
+		UPDATE commit_todo_checks
+		SET status = ?, attempt_count = attempt_count + 1,
+			next_attempt_at = 0, updated_at = ?
+		WHERE (project_path, head_hash) IN (
+			SELECT project_path, head_hash FROM next_check
+		)
+		RETURNING project_path, base_hash, head_hash, status, model,
 			completed_todo_ids, decision_json, evidence_json, last_error,
 			attempt_count, next_attempt_at, auto_retry, created_at, updated_at
-		FROM commit_todo_checks
-		WHERE status = ?
-			OR (status = ? AND updated_at <= ?)
-			OR (status = ? AND auto_retry = 1 AND next_attempt_at <= ?)
-		ORDER BY
-			CASE status WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END,
-			updated_at ASC,
-			created_at ASC
-		LIMIT 1
 	`,
 		string(model.CommitTodoCheckQueued),
 		string(model.CommitTodoCheckRunning),
@@ -969,51 +968,9 @@ func (s *Store) ClaimNextQueuedCommitTodoCheck(ctx context.Context, staleAfter t
 		now.Unix(),
 		string(model.CommitTodoCheckQueued),
 		string(model.CommitTodoCheckRunning),
+		string(model.CommitTodoCheckRunning),
+		now.Unix(),
 	))
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-
-	result, err := tx.ExecContext(ctx, `
-		UPDATE commit_todo_checks
-		SET status = ?, attempt_count = attempt_count + 1,
-			next_attempt_at = 0, updated_at = ?
-		WHERE project_path = ? AND head_hash = ?
-			AND (
-				status = ?
-				OR status = ?
-				OR (status = ? AND auto_retry = 1 AND next_attempt_at <= ?)
-			)
-	`,
-		string(model.CommitTodoCheckRunning),
-		now.Unix(),
-		check.ProjectPath,
-		check.HeadHash,
-		string(model.CommitTodoCheckQueued),
-		string(model.CommitTodoCheckRunning),
-		string(model.CommitTodoCheckFailed),
-		now.Unix(),
-	)
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	if affected == 0 {
-		err = sql.ErrNoRows
-		return model.CommitTodoCheck{}, err
-	}
-	check.Status = model.CommitTodoCheckRunning
-	check.AttemptCount++
-	check.NextAttemptAt = time.Time{}
-	check.UpdatedAt = now
-
-	if err = tx.Commit(); err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	return check, nil
 }
 
 func (s *Store) CompleteCommitTodoCheck(ctx context.Context, check model.CommitTodoCheck) (bool, error) {
@@ -1088,12 +1045,12 @@ func (s *Store) FailCommitTodoCheck(ctx context.Context, check model.CommitTodoC
 	return affected > 0, err
 }
 
-func (s *Store) RequeueFailedCommitTodoChecks(ctx context.Context, projectPath string) (int64, error) {
+func (s *Store) RequeueRetryableFailedCommitTodoChecks(ctx context.Context, projectPath string) (int64, error) {
 	projectPath = strings.TrimSpace(projectPath)
 	query := `
 		UPDATE commit_todo_checks
 		SET status = ?, auto_retry = 1, next_attempt_at = 0, updated_at = ?
-		WHERE status = ?
+		WHERE status = ? AND auto_retry = 1
 	`
 	args := []any{
 		string(model.CommitTodoCheckQueued),

@@ -3865,6 +3865,69 @@ func TestCommitTodoCheckAutomaticallyRetriesAfterBackoff(t *testing.T) {
 	}
 }
 
+func TestCommitTodoCheckClaimIsAtomicAcrossConcurrentWorkers(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/atomic-commit-todo-claim"
+	headHash := "only-head"
+	if queued, err := st.QueueCommitTodoCheck(ctx, model.CommitTodoCheck{
+		ProjectPath: projectPath,
+		HeadHash:    headHash,
+		UpdatedAt:   time.Now(),
+	}); err != nil || !queued {
+		t.Fatalf("queue commit TODO check = %v, %v", queued, err)
+	}
+
+	type claimResult struct {
+		check model.CommitTodoCheck
+		err   error
+	}
+	start := make(chan struct{})
+	results := make(chan claimResult, 2)
+	for range 2 {
+		go func() {
+			<-start
+			check, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Hour)
+			results <- claimResult{check: check, err: err}
+		}()
+	}
+	close(start)
+
+	claimed := 0
+	noRows := 0
+	for range 2 {
+		result := <-results
+		switch {
+		case result.err == nil:
+			claimed++
+			if result.check.HeadHash != headHash || result.check.AttemptCount != 1 {
+				t.Fatalf("claimed check = %#v", result.check)
+			}
+		case errors.Is(result.err, sql.ErrNoRows):
+			noRows++
+		default:
+			t.Fatalf("concurrent claim error = %v", result.err)
+		}
+	}
+	if claimed != 1 || noRows != 1 {
+		t.Fatalf("concurrent claims = success:%d no_rows:%d, want 1/1", claimed, noRows)
+	}
+	stored, err := st.GetCommitTodoCheck(ctx, projectPath, headHash)
+	if err != nil {
+		t.Fatalf("get claimed check: %v", err)
+	}
+	if stored.Status != model.CommitTodoCheckRunning || stored.AttemptCount != 1 {
+		t.Fatalf("stored claim = %#v, want one running attempt", stored)
+	}
+}
+
 func TestCommitTodoCheckMigrationLeavesHistoricalFailuresManual(t *testing.T) {
 	t.Parallel()
 
@@ -3944,15 +4007,15 @@ func TestCommitTodoCheckMigrationLeavesHistoricalFailuresManual(t *testing.T) {
 		t.Fatalf("historical failure claim error = %v, want sql.ErrNoRows", err)
 	}
 
-	requeued, err := st.RequeueFailedCommitTodoChecks(ctx, "/tmp/legacy-commit-todo")
-	if err != nil || requeued != 1 {
-		t.Fatalf("RequeueFailedCommitTodoChecks() = %d, %v; want 1", requeued, err)
+	requeued, err := st.RequeueRetryableFailedCommitTodoChecks(ctx, "/tmp/legacy-commit-todo")
+	if err != nil || requeued != 0 {
+		t.Fatalf("RequeueRetryableFailedCommitTodoChecks() = %d, %v; want 0 for historical failure", requeued, err)
 	}
-	manualRetry, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute)
+	legacyAfterRefresh, err := st.GetCommitTodoCheck(ctx, "/tmp/legacy-commit-todo", "legacy-head")
 	if err != nil {
-		t.Fatalf("claim explicit retry: %v", err)
+		t.Fatalf("get historical failure after refresh: %v", err)
 	}
-	if !manualRetry.AutoRetry || manualRetry.AttemptCount != 1 {
-		t.Fatalf("explicit retry = %#v, want automatic retry enabled at attempt 1", manualRetry)
+	if legacyAfterRefresh.Status != model.CommitTodoCheckFailed || legacyAfterRefresh.AutoRetry {
+		t.Fatalf("historical failure changed during future-only refresh: %#v", legacyAfterRefresh)
 	}
 }

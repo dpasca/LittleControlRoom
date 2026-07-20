@@ -114,8 +114,10 @@ func (r *CodexExecRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 		return JSONSchemaResponse{}, errors.New("codex exec runner requires a model")
 	}
 	cacheKey := cacheKeyForJSONSchemaRequest(req)
-	if cached, ok := r.cachedResponse(cacheKey); ok {
-		return cached, nil
+	if !req.BypassCache {
+		if cached, ok := r.cachedResponse(cacheKey); ok {
+			return cached, nil
+		}
 	}
 	if r.usage != nil {
 		r.usage.Start(req.Model)
@@ -130,7 +132,9 @@ func (r *CodexExecRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReque
 	if r.usage != nil {
 		r.usage.Complete(response.Model, response.Usage)
 	}
-	r.storeCachedResponse(cacheKey, response)
+	if !req.BypassCache {
+		r.storeCachedResponse(cacheKey, response)
+	}
 	return response, nil
 }
 
@@ -178,8 +182,10 @@ func (r *OpenCodeRunRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReq
 		return JSONSchemaResponse{}, errors.New("opencode runner requires a model")
 	}
 	cacheKey := cacheKeyForJSONSchemaRequest(req)
-	if cached, ok := r.cachedResponse(cacheKey); ok {
-		return cached, nil
+	if !req.BypassCache {
+		if cached, ok := r.cachedResponse(cacheKey); ok {
+			return cached, nil
+		}
 	}
 	if r.usage != nil {
 		r.usage.Start(req.Model)
@@ -194,7 +200,9 @@ func (r *OpenCodeRunRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReq
 	if r.usage != nil {
 		r.usage.Complete(response.Model, response.Usage)
 	}
-	r.storeCachedResponse(cacheKey, response)
+	if !req.BypassCache {
+		r.storeCachedResponse(cacheKey, response)
+	}
 	return response, nil
 }
 
@@ -206,8 +214,10 @@ func (r *ClaudePrintRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReq
 		return JSONSchemaResponse{}, errors.New("claude print runner requires a model")
 	}
 	cacheKey := cacheKeyForJSONSchemaRequest(req)
-	if cached, ok := r.cachedResponse(cacheKey); ok {
-		return cached, nil
+	if !req.BypassCache {
+		if cached, ok := r.cachedResponse(cacheKey); ok {
+			return cached, nil
+		}
 	}
 	if r.usage != nil {
 		r.usage.Start(req.Model)
@@ -222,7 +232,9 @@ func (r *ClaudePrintRunner) RunJSONSchema(ctx context.Context, req JSONSchemaReq
 	if r.usage != nil {
 		r.usage.Complete(response.Model, response.Usage)
 	}
-	r.storeCachedResponse(cacheKey, response)
+	if !req.BypassCache {
+		r.storeCachedResponse(cacheKey, response)
+	}
 	return response, nil
 }
 

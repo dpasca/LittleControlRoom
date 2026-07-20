@@ -1350,7 +1350,7 @@ func TestBuildCommitTodoCompletionInputSelectsFocusedEvidenceWhenPatchTruncates(
 	svc := &Service{commitTodoEvidenceSelector: selector}
 	input, err := svc.buildCommitTodoCompletionInput(
 		ctx,
-		model.CommitTodoCheck{ProjectPath: projectPath, BaseHash: baseHash, HeadHash: headHash},
+		model.CommitTodoCheck{ProjectPath: projectPath, BaseHash: baseHash, HeadHash: headHash, AttemptCount: 2},
 		model.ProjectDetail{Summary: model.ProjectSummary{Path: projectPath, Name: "renderer", RepoBranch: "master"}},
 		[]gitops.CommitTodoRef{{ID: 73, Text: "Fix the startup black screen"}},
 	)
@@ -1359,6 +1359,9 @@ func TestBuildCommitTodoCompletionInputSelectsFocusedEvidenceWhenPatchTruncates(
 	}
 	if selector.calls != 1 {
 		t.Fatalf("evidence selector calls = %d, want 1", selector.calls)
+	}
+	if !selector.lastInput.BypassModelCache || !input.BypassModelCache {
+		t.Fatalf("durable retry cache bypass = selector:%v completion:%v, want true/true", selector.lastInput.BypassModelCache, input.BypassModelCache)
 	}
 	if len(selector.lastInput.Commits) != 1 || selector.lastInput.Commits[0].Hash != headHash {
 		t.Fatalf("selector commits = %#v, want new commit", selector.lastInput.Commits)

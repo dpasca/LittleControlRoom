@@ -784,6 +784,8 @@ func TestBossChatRunnerUsesXiaomiProAndUtilityDefaults(t *testing.T) {
 func TestProjectReportsSupportDirectDeepSeekBackend(t *testing.T) {
 	cfg := config.Default()
 	cfg.AIBackend = config.AIBackendDeepSeek
+	cfg.BossChatBackend = config.AIBackendOpenAIAPI
+	cfg.BossUtilityModel = "gpt-incompatible-with-deepseek"
 	cfg.DeepSeekAPIKey = "ds-test-example"
 	svc := &Service{
 		cfg:             cfg,
@@ -799,6 +801,13 @@ func TestProjectReportsSupportDirectDeepSeekBackend(t *testing.T) {
 	}
 	if svc.commitMessageSuggester == nil {
 		t.Fatalf("commitMessageSuggester = nil, want DeepSeek-backed suggester")
+	}
+	if svc.commitTodoEvidenceSelector == nil || svc.commitTodoEvidenceSelector.ModelName() != svc.commitTodoChecker.ModelName() {
+		t.Fatalf(
+			"commit TODO evidence model = %q, want project commit model %q",
+			svc.commitTodoEvidenceSelector.ModelName(),
+			svc.commitTodoChecker.ModelName(),
+		)
 	}
 	if svc.todoSuggester == nil {
 		t.Fatalf("todoSuggester = nil, want DeepSeek-backed todo suggester")

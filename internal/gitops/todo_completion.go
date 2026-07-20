@@ -26,6 +26,7 @@ type CommitTodoCompletionInput struct {
 	EvidenceCommits   []CommitTodoEvidenceCommit        `json:"evidence_commits,omitempty"`
 	EvidenceSelection []CommitTodoEvidenceSelectionItem `json:"evidence_selection,omitempty"`
 	OpenTodos         []CommitTodoRef                   `json:"open_todos"`
+	BypassModelCache  bool                              `json:"-"`
 }
 
 type CommitTodoCompletionDecision struct {
@@ -52,12 +53,13 @@ type CommitTodoEvidenceCommit struct {
 }
 
 type CommitTodoEvidenceSelectionInput struct {
-	ProjectName string                     `json:"project_name"`
-	Branch      string                     `json:"branch,omitempty"`
-	BaseHash    string                     `json:"base_hash,omitempty"`
-	HeadHash    string                     `json:"head_hash"`
-	OpenTodos   []CommitTodoRef            `json:"open_todos"`
-	Commits     []CommitTodoEvidenceCommit `json:"commits"`
+	ProjectName      string                     `json:"project_name"`
+	Branch           string                     `json:"branch,omitempty"`
+	BaseHash         string                     `json:"base_hash,omitempty"`
+	HeadHash         string                     `json:"head_hash"`
+	OpenTodos        []CommitTodoRef            `json:"open_todos"`
+	Commits          []CommitTodoEvidenceCommit `json:"commits"`
+	BypassModelCache bool                       `json:"-"`
 }
 
 type CommitTodoEvidenceSelectionItem struct {
@@ -88,12 +90,13 @@ func (c *OpenAICommitMessageClient) SelectCommitTodoEvidence(ctx context.Context
 	if err != nil {
 		return CommitTodoEvidenceSelection{}, fmt.Errorf("marshal commit TODO evidence input: %w", err)
 	}
-	response, err := c.runJSONSchemaPrompt(
+	response, err := c.runJSONSchemaPromptWithCacheBypass(
 		ctx,
 		commitTodoEvidenceSelectionInstructions,
 		"Select commit files whose diffs should be inspected for these open TODOs:\n\n"+string(payload),
 		"git_commit_todo_evidence_selection",
 		commitTodoEvidenceSelectionSchema(input.Commits),
+		input.BypassModelCache,
 	)
 	if err != nil {
 		return CommitTodoEvidenceSelection{}, err
@@ -122,12 +125,13 @@ func (c *OpenAICommitMessageClient) CheckCompletedTodos(ctx context.Context, inp
 		return CommitTodoCompletionSuggestion{}, fmt.Errorf("marshal commit TODO completion input: %w", err)
 	}
 
-	response, err := c.runJSONSchemaPrompt(
+	response, err := c.runJSONSchemaPromptWithCacheBypass(
 		ctx,
 		commitTodoCompletionInstructions,
 		"Determine whether this git commit or commit range completes any open TODOs:\n\n"+string(payload),
 		"git_commit_todo_completion",
 		commitTodoCompletionSchema(),
+		input.BypassModelCache,
 	)
 	if err != nil {
 		return CommitTodoCompletionSuggestion{}, err
@@ -176,11 +180,6 @@ func ReadCommitRangeDiffStat(ctx context.Context, path, baseHash, headHash strin
 		return "", fmt.Errorf("read git commit range diff stat for %s..%s in %s: %w", baseHash, headHash, path, err)
 	}
 	return strings.TrimSpace(string(out)), nil
-}
-
-func ReadCommitRangePatch(ctx context.Context, path, baseHash, headHash string, maxBytes int) (string, error) {
-	patch, _, err := ReadCommitRangePatchWithStatus(ctx, path, baseHash, headHash, maxBytes)
-	return patch, err
 }
 
 func ReadCommitRangePatchWithStatus(ctx context.Context, path, baseHash, headHash string, maxBytes int) (string, bool, error) {

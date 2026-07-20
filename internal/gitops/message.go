@@ -141,17 +141,6 @@ func (c *OpenAICommitMessageClient) WithReasoningEffort(reasoningEffort string) 
 	return c
 }
 
-func (c *OpenAICommitMessageClient) WithModel(model string) *OpenAICommitMessageClient {
-	if c == nil {
-		return nil
-	}
-	clone := *c
-	if trimmed := strings.TrimSpace(model); trimmed != "" {
-		clone.model = trimmed
-	}
-	return &clone
-}
-
 func NewCodexCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
 	return NewCodexCommitMessageClientWithUsageTrackerInDataDir("", usage)
 }
@@ -233,12 +222,13 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 
 	var lastEmptyErr error
 	for attemptIndex := range commitAssistantAttemptPlan {
-		response, err := c.runJSONSchemaPrompt(
+		response, err := c.runJSONSchemaPromptWithCacheBypass(
 			ctx,
 			instructions,
 			"Draft a git commit subject for this coding task snapshot:\n\n"+string(payload),
 			"git_commit_message",
 			schema,
+			attemptIndex > 0,
 		)
 		if err != nil {
 			return CommitMessageSuggestion{}, err
@@ -273,6 +263,10 @@ func (c *OpenAICommitMessageClient) Suggest(ctx context.Context, input CommitMes
 }
 
 func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, systemText, userText, schemaName string, schema map[string]any) (llm.JSONSchemaResponse, error) {
+	return c.runJSONSchemaPromptWithCacheBypass(ctx, systemText, userText, schemaName, schema, false)
+}
+
+func (c *OpenAICommitMessageClient) runJSONSchemaPromptWithCacheBypass(ctx context.Context, systemText, userText, schemaName string, schema map[string]any, bypassCache bool) (llm.JSONSchemaResponse, error) {
 	for attemptIndex, attempt := range commitAssistantAttemptPlan {
 		response, err := c.responsesClient().RunJSONSchema(ctx, llm.JSONSchemaRequest{
 			Model:           c.model,
@@ -281,6 +275,7 @@ func (c *OpenAICommitMessageClient) runJSONSchemaPrompt(ctx context.Context, sys
 			SchemaName:      schemaName,
 			Schema:          schema,
 			ReasoningEffort: firstNonEmptyString(c.reasoningEffort, attempt.ReasoningEffort),
+			BypassCache:     bypassCache || attemptIndex > 0,
 		})
 		if err != nil {
 			if retryable := retryableCommitAssistantErrorForRun(ctx, err); retryable != nil && attemptIndex < len(commitAssistantAttemptPlan)-1 {

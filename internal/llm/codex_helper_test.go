@@ -77,6 +77,35 @@ func TestPersistentCodexRunnerReusesHelperAcrossDistinctRequests(t *testing.T) {
 	}
 }
 
+func TestPersistentCodexRunnerCanBypassCachedResponse(t *testing.T) {
+	helper := &fakeCodexPromptHelper{
+		response: codexapp.PromptHelperResponse{
+			OutputText: `{"message":"hello"}`,
+			Model:      "gpt-5.4-mini",
+		},
+	}
+	runner := NewPersistentCodexRunner(2*time.Second, nil)
+	runner.helperFactory = func() (codexPromptHelper, error) { return helper, nil }
+	runner.idleTimeout = 0
+	runner.maxRequests = 8
+
+	req := JSONSchemaRequest{Model: "gpt-5.4-mini", SystemText: "system", UserText: "user", SchemaName: "demo", Schema: map[string]any{"type": "object"}}
+	if _, err := runner.RunJSONSchema(context.Background(), req); err != nil {
+		t.Fatalf("first RunJSONSchema() error = %v", err)
+	}
+	if _, err := runner.RunJSONSchema(context.Background(), req); err != nil {
+		t.Fatalf("cached RunJSONSchema() error = %v", err)
+	}
+	freshReq := req
+	freshReq.BypassCache = true
+	if _, err := runner.RunJSONSchema(context.Background(), freshReq); err != nil {
+		t.Fatalf("cache-bypassing RunJSONSchema() error = %v", err)
+	}
+	if helper.runCount != 2 {
+		t.Fatalf("helper run count = %d, want one cached reuse plus one fresh request", helper.runCount)
+	}
+}
+
 func TestPersistentCodexRunnerRotatesHelperAfterMaxRequests(t *testing.T) {
 	helpers := []*fakeCodexPromptHelper{
 		{response: codexapp.PromptHelperResponse{OutputText: `{"message":"one"}`, Model: "gpt-5.4-mini"}},

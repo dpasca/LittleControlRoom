@@ -1089,13 +1089,9 @@ func (s *Service) configureAIClientsLocked() {
 	}
 	s.commitMessageSuggester = commitAssistant
 	s.commitTodoChecker = commitAssistant
-	if commitAssistant != nil {
-		s.commitTodoEvidenceSelector = commitAssistant.WithModel(
-			configuredBossUtilityModelForBackend(s.cfg, selectedBackend),
-		)
-	} else {
-		s.commitTodoEvidenceSelector = nil
-	}
+	// Evidence selection must use a model routed by the same provider as the
+	// commit assistant. Boss utility models may belong to a different backend.
+	s.commitTodoEvidenceSelector = commitAssistant
 	s.untrackedFileRecommender = commitAssistant
 	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
 		manager.ConfigureClientWithUnavailableReason(client, unavailableReason)
@@ -1218,7 +1214,7 @@ func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progres
 	progress.setPhase("starting project scan")
 	if opts.ForceRetryFailedCommitTodoChecks {
 		progress.setPhase("retrying failed commit TODO checks")
-		requeued, err := s.store.RequeueFailedCommitTodoChecks(ctx, "")
+		requeued, err := s.store.RequeueRetryableFailedCommitTodoChecks(ctx, "")
 		if err != nil {
 			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("retry failed commit TODO checks: %w", err))
 		}
