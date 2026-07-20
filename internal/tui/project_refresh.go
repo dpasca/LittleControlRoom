@@ -153,16 +153,16 @@ func (m *Model) finishProjectsReloadCmd() tea.Cmd {
 	return m.requestProjectsReloadCmd()
 }
 
-func (m *Model) requestScanCmd(forceRetryFailedClassifications bool) tea.Cmd {
+func (m *Model) requestScanCmd(forceRetryFailedAnalyses bool) tea.Cmd {
 	if m.scanInFlight {
 		m.scanQueued = true
-		m.scanQueuedForceRetry = m.scanQueuedForceRetry || forceRetryFailedClassifications
+		m.scanQueuedForceRetry = m.scanQueuedForceRetry || forceRetryFailedAnalyses
 		return nil
 	}
 	m.scanInFlight = true
 	m.scanQueued = false
 	m.scanQueuedForceRetry = false
-	return m.scanCmd(forceRetryFailedClassifications)
+	return m.scanCmd(forceRetryFailedAnalyses)
 }
 
 func (m *Model) finishScanCmd() tea.Cmd {
@@ -176,12 +176,13 @@ func (m *Model) finishScanCmd() tea.Cmd {
 	return m.requestScanCmd(forceRetry)
 }
 
-func (m Model) scanCmd(forceRetryFailedClassifications bool) tea.Cmd {
+func (m Model) scanCmd(forceRetryFailedAnalyses bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := m.actionContext(tuiProjectScanTimeout)
 		defer cancel()
 		report, err := m.svc.ScanWithOptions(ctx, service.ScanOptions{
-			ForceRetryFailedClassifications: forceRetryFailedClassifications,
+			ForceRetryFailedClassifications:  forceRetryFailedAnalyses,
+			ForceRetryFailedCommitTodoChecks: forceRetryFailedAnalyses,
 		})
 		if errors.Is(err, context.DeadlineExceeded) {
 			err = fmt.Errorf("timed out after %s: %w", tuiProjectScanTimeout.Round(time.Millisecond), err)

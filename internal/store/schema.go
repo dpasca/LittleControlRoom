@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"lcroom/internal/model"
 	"strings"
 	"time"
+
+	"lcroom/internal/model"
 )
 
 func (s *Store) initSchema(ctx context.Context) error {
@@ -208,7 +209,12 @@ func (s *Store) initSchema(ctx context.Context) error {
 			status TEXT NOT NULL,
 			model TEXT NOT NULL DEFAULT '',
 			completed_todo_ids TEXT NOT NULL DEFAULT '',
+			decision_json TEXT NOT NULL DEFAULT '',
+			evidence_json TEXT NOT NULL DEFAULT '',
 			last_error TEXT NOT NULL DEFAULT '',
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at INTEGER NOT NULL DEFAULT 0,
+			auto_retry INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			PRIMARY KEY(project_path, head_hash)
@@ -405,6 +411,9 @@ func (s *Store) initSchema(ctx context.Context) error {
 	if err := s.ensureProjectTodosWorkColumns(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureCommitTodoCheckRetryColumns(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureProjectsMissingLinkedWorktreeIndex(ctx); err != nil {
 		return err
 	}
@@ -413,6 +422,79 @@ func (s *Store) initSchema(ctx context.Context) error {
 	}
 	if _, err := s.ReconcileLinkedWorktreeArchiveState(ctx); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (s *Store) commitTodoCheckTableColumns(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(commit_todo_checks)`)
+	if err != nil {
+		return nil, fmt.Errorf("check commit_todo_checks schema: %w", err)
+	}
+	defer rows.Close()
+
+	columns := map[string]struct{}{}
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			typeName  string
+			notNull   int
+			defaultV  sql.NullString
+			isPrimary int
+		)
+		if err := rows.Scan(&cid, &name, &typeName, &notNull, &defaultV, &isPrimary); err != nil {
+			return nil, fmt.Errorf("scan commit_todo_checks schema: %w", err)
+		}
+		columns[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read commit_todo_checks schema: %w", err)
+	}
+	return columns, nil
+}
+
+func (s *Store) ensureCommitTodoCheckRetryColumns(ctx context.Context) error {
+	columns, err := s.commitTodoCheckTableColumns(ctx)
+	if err != nil {
+		return err
+	}
+	alterations := []struct {
+		name string
+		sql  string
+	}{
+		{name: "decision_json", sql: `ALTER TABLE commit_todo_checks ADD COLUMN decision_json TEXT NOT NULL DEFAULT ''`},
+		{name: "evidence_json", sql: `ALTER TABLE commit_todo_checks ADD COLUMN evidence_json TEXT NOT NULL DEFAULT ''`},
+		{name: "attempt_count", sql: `ALTER TABLE commit_todo_checks ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`},
+		{name: "next_attempt_at", sql: `ALTER TABLE commit_todo_checks ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0`},
+		// Existing failures intentionally remain non-retryable. New queue writes
+		// opt in explicitly, which avoids replaying historical evidence against a
+		// different set of open TODOs during migration.
+		{name: "auto_retry", sql: `ALTER TABLE commit_todo_checks ADD COLUMN auto_retry INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, alteration := range alterations {
+		if _, ok := columns[alteration.name]; ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, alteration.sql); err != nil {
+			return fmt.Errorf("add commit_todo_checks.%s column: %w", alteration.name, err)
+		}
+	}
+	// Checks that were already waiting or running at upgrade time should gain
+	// the new retry behavior if they fail later. Historical failed rows remain
+	// opted out until an explicit refresh requeues them.
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE commit_todo_checks
+		SET auto_retry = 1
+		WHERE auto_retry = 0 AND status IN (?, ?)
+	`, string(model.CommitTodoCheckQueued), string(model.CommitTodoCheckRunning)); err != nil {
+		return fmt.Errorf("enable retries for active commit TODO checks: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_commit_todo_checks_retry
+		ON commit_todo_checks(status, auto_retry, next_attempt_at, updated_at)
+	`); err != nil {
+		return fmt.Errorf("ensure commit TODO retry index: %w", err)
 	}
 	return nil
 }

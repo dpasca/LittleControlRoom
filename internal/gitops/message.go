@@ -141,6 +141,17 @@ func (c *OpenAICommitMessageClient) WithReasoningEffort(reasoningEffort string) 
 	return c
 }
 
+func (c *OpenAICommitMessageClient) WithModel(model string) *OpenAICommitMessageClient {
+	if c == nil {
+		return nil
+	}
+	clone := *c
+	if trimmed := strings.TrimSpace(model); trimmed != "" {
+		clone.model = trimmed
+	}
+	return &clone
+}
+
 func NewCodexCommitMessageClientWithUsageTracker(usage *llm.UsageTracker) *OpenAICommitMessageClient {
 	return NewCodexCommitMessageClientWithUsageTrackerInDataDir("", usage)
 }

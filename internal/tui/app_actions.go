@@ -462,7 +462,7 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m.openErrorLog()
 	case commands.KindRefresh:
 		m.loading = true
-		m.status = "Scanning and retrying failed assessments..."
+		m.status = "Scanning and retrying failed analyses..."
 		return m, batchCmds(
 			m.refreshProjectStatusCmdWithOptions(m.currentSelectedProjectPath(), service.ScanOptions{
 				ForceRetryFailedClassifications: true,

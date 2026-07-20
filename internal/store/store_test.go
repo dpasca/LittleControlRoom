@@ -3792,3 +3792,167 @@ func TestRememberRecentProjectParentPathKeepsNewestUniquePaths(t *testing.T) {
 		}
 	}
 }
+
+func TestCommitTodoCheckAutomaticallyRetriesAfterBackoff(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/retry-commit-todo"
+	headHash := "future-head"
+	queued, err := st.QueueCommitTodoCheck(ctx, model.CommitTodoCheck{
+		ProjectPath: projectPath,
+		BaseHash:    "base",
+		HeadHash:    headHash,
+		UpdatedAt:   time.Now(),
+	})
+	if err != nil || !queued {
+		t.Fatalf("QueueCommitTodoCheck() = %v, %v; want queued", queued, err)
+	}
+
+	claimed, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim first attempt: %v", err)
+	}
+	if !claimed.AutoRetry || claimed.AttemptCount != 1 {
+		t.Fatalf("first claim retry state = auto:%v attempt:%d, want true/1", claimed.AutoRetry, claimed.AttemptCount)
+	}
+	claimed.Model = "test-model"
+	claimed.CompletedTodoIDs = []int64{41}
+	claimed.DecisionJSON = `[{"id":41,"confidence":0.91}]`
+	claimed.EvidenceJSON = `{"strategy":"focused_model_selection"}`
+	if updated, err := st.FailCommitTodoCheck(ctx, claimed, "temporary model failure", time.Hour); err != nil || !updated {
+		t.Fatalf("FailCommitTodoCheck() = %v, %v; want updated", updated, err)
+	}
+
+	failed, err := st.GetCommitTodoCheck(ctx, projectPath, headHash)
+	if err != nil {
+		t.Fatalf("get failed check: %v", err)
+	}
+	if failed.Status != model.CommitTodoCheckFailed || failed.LastError != "temporary model failure" {
+		t.Fatalf("failed check = %#v", failed)
+	}
+	if !failed.NextAttemptAt.After(time.Now().Add(50 * time.Minute)) {
+		t.Fatalf("next attempt = %s, want roughly one hour in the future", failed.NextAttemptAt)
+	}
+	if failed.DecisionJSON != claimed.DecisionJSON || failed.EvidenceJSON != claimed.EvidenceJSON || !reflect.DeepEqual(failed.CompletedTodoIDs, []int64{41}) {
+		t.Fatalf("failed diagnostics were not preserved: %#v", failed)
+	}
+	if _, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("claim before retry deadline error = %v, want sql.ErrNoRows", err)
+	}
+
+	if _, err := st.db.ExecContext(ctx, `
+		UPDATE commit_todo_checks SET next_attempt_at = ?
+		WHERE project_path = ? AND head_hash = ?
+	`, time.Now().Add(-time.Minute).Unix(), projectPath, headHash); err != nil {
+		t.Fatalf("make retry due: %v", err)
+	}
+	retried, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim retry: %v", err)
+	}
+	if retried.AttemptCount != 2 || !retried.AutoRetry {
+		t.Fatalf("retry claim = %#v, want attempt 2 with automatic retry", retried)
+	}
+	if retried.DecisionJSON != claimed.DecisionJSON || retried.EvidenceJSON != claimed.EvidenceJSON || !reflect.DeepEqual(retried.CompletedTodoIDs, []int64{41}) {
+		t.Fatalf("retry lost prior progress or diagnostics: %#v", retried)
+	}
+}
+
+func TestCommitTodoCheckMigrationLeavesHistoricalFailuresManual(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "legacy-commit-todo.sqlite")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy sqlite: %v", err)
+	}
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE commit_todo_checks (
+			project_path TEXT NOT NULL,
+			head_hash TEXT NOT NULL,
+			base_hash TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			model TEXT NOT NULL DEFAULT '',
+			completed_todo_ids TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			PRIMARY KEY(project_path, head_hash)
+		);
+		INSERT INTO commit_todo_checks(
+			project_path, head_hash, base_hash, status, model,
+			completed_todo_ids, last_error, created_at, updated_at
+		) VALUES (
+			'/tmp/legacy-commit-todo', 'legacy-head', 'legacy-base', 'failed',
+			'legacy-model', '', 'old failure', 1, 1
+		);
+		INSERT INTO commit_todo_checks(
+			project_path, head_hash, base_hash, status, model,
+			completed_todo_ids, last_error, created_at, updated_at
+		) VALUES (
+			'/tmp/legacy-queued-commit-todo', 'queued-head', 'queued-base', 'queued',
+			'', '', '', 2, 2
+		);
+	`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("seed legacy commit TODO schema: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy sqlite: %v", err)
+	}
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer st.Close()
+
+	legacy, err := st.GetCommitTodoCheck(ctx, "/tmp/legacy-commit-todo", "legacy-head")
+	if err != nil {
+		t.Fatalf("get migrated check: %v", err)
+	}
+	if legacy.AutoRetry || legacy.AttemptCount != 0 || !legacy.NextAttemptAt.IsZero() {
+		t.Fatalf("historical failure unexpectedly opted into automatic retry: %#v", legacy)
+	}
+	queuedAtUpgrade, err := st.GetCommitTodoCheck(ctx, "/tmp/legacy-queued-commit-todo", "queued-head")
+	if err != nil {
+		t.Fatalf("get migrated queued check: %v", err)
+	}
+	if !queuedAtUpgrade.AutoRetry {
+		t.Fatalf("queued check did not gain future retry behavior: %#v", queuedAtUpgrade)
+	}
+	activeCheck, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim migrated queued check: %v", err)
+	}
+	if activeCheck.HeadHash != "queued-head" || !activeCheck.AutoRetry {
+		t.Fatalf("migrated active check = %#v", activeCheck)
+	}
+	if updated, err := st.CompleteCommitTodoCheck(ctx, activeCheck); err != nil || !updated {
+		t.Fatalf("complete migrated queued check = %v, %v", updated, err)
+	}
+	if _, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("historical failure claim error = %v, want sql.ErrNoRows", err)
+	}
+
+	requeued, err := st.RequeueFailedCommitTodoChecks(ctx, "/tmp/legacy-commit-todo")
+	if err != nil || requeued != 1 {
+		t.Fatalf("RequeueFailedCommitTodoChecks() = %d, %v; want 1", requeued, err)
+	}
+	manualRetry, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim explicit retry: %v", err)
+	}
+	if !manualRetry.AutoRetry || manualRetry.AttemptCount != 1 {
+		t.Fatalf("explicit retry = %#v, want automatic retry enabled at attempt 1", manualRetry)
+	}
+}
