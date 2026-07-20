@@ -345,12 +345,17 @@ func (m *Model) openTodoDialogForSelection() tea.Cmd {
 		m.status = "No project selected"
 		return nil
 	}
+	project = m.repositoryTodoProject(project)
+	return m.openTodoDialog(project)
+}
+
+func (m Model) repositoryTodoProject(project model.ProjectSummary) model.ProjectSummary {
 	if rootPath := projectWorktreeRootPath(project); rootPath != "" && filepath.Clean(rootPath) != filepath.Clean(project.Path) {
 		if rootProject, ok := m.projectSummaryByPath(rootPath); ok {
-			project = rootProject
+			return rootProject
 		}
 	}
-	return m.openTodoDialog(project)
+	return project
 }
 
 func (m *Model) openTodoDialog(project model.ProjectSummary) tea.Cmd {

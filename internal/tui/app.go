@@ -204,6 +204,7 @@ type Model struct {
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
 	runtimeActionSelected int
+	runtimeOutputCopyBusy bool
 	focusedPane           paneFocus
 	assessmentFlashUntil  map[string]time.Time
 	selectionFlashUntil   time.Time
@@ -430,6 +431,11 @@ type codexArtifactLinkScanMsg struct {
 type runtimeActionMsg struct {
 	projectPath string
 	status      string
+	err         error
+}
+
+type runtimeOutputCopyMsg struct {
+	projectPath string
 	err         error
 }
 
@@ -2140,6 +2146,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexArtifactPreviewMsg(msg)
 	case codexArtifactLinkScanMsg:
 		return m.applyCodexArtifactLinkScanMsg(msg)
+	case runtimeOutputCopyMsg:
+		return m.applyRuntimeOutputCopyMsg(msg)
 	case runtimeActionMsg:
 		if msg.err != nil {
 			m.reportError("Runtime action failed", msg.err, msg.projectPath)

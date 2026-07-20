@@ -366,7 +366,7 @@ Use `demo_data = true` when you want a reproducible sample set, or a local confi
 - `p` pin toggle
 - `I` inspect a repository-root branch mismatch for any selected member of the repository family
 - `q` quit
-- While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it
+- While the runtime pane is focused, `Left` and `Right` choose the highlighted runtime action and `Enter` runs it; `c` copies the selected process's captured output directly
 
 While the embedded Codex, Claude Code, or OpenCode pane is visible:
 
@@ -509,6 +509,6 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - While Chat is visible, `Enter` sends or confirms a proposal, `Alt+Enter` adds a newline, `/new [prompt]` starts a fresh session, `Ctrl+L` clears into a fresh session, and `Esc` or backtick hides the overlay.
 - Embedded Claude Code runs through Claude Code's `claude -p` stream flow. Prompt/response turns, session resume, and `/model` are wired, while unsupported in-pane actions fall back to the local command subset above.
 - The main list uses `RUN` for the saved or active managed runtime summary, and `!` inside `RUN` when Little Control Room detects a managed port conflict.
-- The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail.
+- The project detail pane keeps project metadata only, while the dedicated runtime pane shows runtime command, state, ports, URL, conflicts or errors, and the captured output tail. When output is available, **Copy output** places that selected process's plain-text output on the clipboard, while **Add TODO** opens a prefilled, editable failure report under the repository-scoped project; press `Ctrl+S` there to save it.
 - `codex_launch_preset` controls how Codex is launched. The default is `yolo`.
 - CLI flags override config file values.
