@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/demorecord"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type editorClock struct {
@@ -264,5 +265,29 @@ func TestPlayerStartsAtClipInPointWithCleanFullFrame(t *testing.T) {
 	model = next.(Model)
 	if got, want := model.positionMS, int64(1000); got != want {
 		t.Fatalf("player sought before clip: %d, want %d", got, want)
+	}
+}
+
+func TestFitRecordedFramePadsEveryTerminalRow(t *testing.T) {
+	t.Parallel()
+
+	view := fitRecordedFrame("short\nlonger than width", 8, 3)
+	lines := strings.Split(view, "\n")
+	if got, want := len(lines), 3; got != want {
+		t.Fatalf("line count = %d, want %d", got, want)
+	}
+	for index, line := range lines {
+		if got, want := ansi.StringWidth(line), 8; got != want {
+			t.Fatalf("line %d width = %d, want %d: %q", index, got, want, line)
+		}
+	}
+	if got, want := lines[0], "short   "; got != want {
+		t.Fatalf("first line = %q, want %q", got, want)
+	}
+	if got, want := lines[1], "longer t"; got != want {
+		t.Fatalf("second line = %q, want %q", got, want)
+	}
+	if got, want := lines[2], "        "; got != want {
+		t.Fatalf("empty line = %q, want %q", got, want)
 	}
 }

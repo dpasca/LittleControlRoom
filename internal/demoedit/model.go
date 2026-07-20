@@ -826,10 +826,14 @@ func fitRecordedFrame(view string, width, height int) string {
 	}
 	lines := make([]string, 0, height)
 	for _, line := range rawLines {
-		lines = append(lines, ansi.Truncate(line, width, ""))
+		line = ansi.Truncate(line, width, "")
+		if padding := width - ansi.StringWidth(line); padding > 0 {
+			line += strings.Repeat(" ", padding)
+		}
+		lines = append(lines, line)
 	}
 	for len(lines) < height {
-		lines = append(lines, "")
+		lines = append(lines, strings.Repeat(" ", width))
 	}
 	return strings.Join(lines, "\n")
 }
