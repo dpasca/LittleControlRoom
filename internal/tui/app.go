@@ -137,6 +137,7 @@ type Model struct {
 	ignoredPickerSelected               int
 	ignoredPickerItems                  []model.IgnoredProject
 	newProjectDialog                    *newProjectDialogState
+	cloneProjectDialog                  *cloneProjectDialogState
 	newTaskDialog                       *newTaskDialogState
 	runCommandDialog                    *runCommandDialogState
 	runCommandRequestSeq                int64
@@ -1553,6 +1554,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.suspendedTurnDialog != nil {
 			return m.updateSuspendedTurnResumeDialogMode(msg)
 		}
+		if m.cloneProjectDialog != nil {
+			return m.updateCloneProjectMode(msg)
+		}
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
 		}
@@ -1757,6 +1761,26 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.newProjectDialog.PathInput.SetSuggestions(newProjectPathSuggestionStrings(msg.result.Suggestions))
 		m.newProjectDialog.PathSuggestionsPending = false
 		return m, nil
+	case cloneProjectPreviewMsg:
+		if m.cloneProjectDialog == nil || msg.seq != m.cloneProjectDialog.PreviewSeq {
+			return m, nil
+		}
+		m.cloneProjectDialog.Preview = msg.preview
+		m.cloneProjectDialog.PreviewPending = false
+		m.cloneProjectDialog.PreviewError = ""
+		if msg.err != nil {
+			m.cloneProjectDialog.PreviewError = msg.err.Error()
+		}
+		return m, nil
+	case cloneProjectPathSuggestionsMsg:
+		if m.cloneProjectDialog == nil || msg.seq != m.cloneProjectDialog.PathSuggestionSeq {
+			return m, nil
+		}
+		m.cloneProjectDialog.PathSuggestionItems = append([]newProjectPathSuggestion(nil), msg.result.Suggestions...)
+		m.cloneProjectDialog.PathSuggestionHidden = msg.result.HiddenCount
+		m.cloneProjectDialog.PathInput.SetSuggestions(newProjectPathSuggestionStrings(msg.result.Suggestions))
+		m.cloneProjectDialog.PathSuggestionsPending = false
+		return m, nil
 	case setupSnapshotMsg:
 		m.setupChecked = true
 		m.setupLoading = false
@@ -1807,6 +1831,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status += "; Enter opens " + provider.Label()
 		}
 		return m, m.requestProjectInvalidationCmd(invalidateProjectStructure(""))
+	case cloneProjectResultMsg:
+		return m.applyCloneProjectResultMsg(msg)
 	case newTaskResultMsg:
 		return m.applyNewTaskResultMsg(msg)
 	case cpuRemediationTaskCreatedMsg:

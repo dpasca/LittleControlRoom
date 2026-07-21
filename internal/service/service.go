@@ -78,6 +78,7 @@ type Service struct {
 	gitWorktreeInfoReader     func(context.Context, string) (scanner.GitWorktreeInfo, error)
 	gitWorktreeListReader     func(context.Context, string) ([]scanner.GitWorktree, error)
 	gitRepoInitializer        func(context.Context, string) error
+	gitRepoCloner             func(context.Context, string, string) error
 	refreshProjectAttentionFn func(context.Context, string) error
 	refreshProjectStatusFn    func(context.Context, string) error
 
@@ -169,6 +170,7 @@ func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []
 		gitWorktreeInfoReader:  scanner.ReadGitWorktreeInfo,
 		gitWorktreeListReader:  scanner.ListGitWorktrees,
 		gitRepoInitializer:     runGitInit,
+		gitRepoCloner:          runGitClone,
 		scheduledScanTimeout:   defaultScheduledScanTimeout,
 	}
 	svc.cfg.EngineerTodoCaptureMode = todocapture.NormalizeCaptureMode(svc.cfg.EngineerTodoCaptureMode)

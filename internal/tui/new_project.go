@@ -22,6 +22,7 @@ const (
 	newProjectFieldName
 	newProjectFieldAssistant
 	newProjectFieldGitRepo
+	newProjectFieldCloneRepository
 )
 
 const (
@@ -192,6 +193,9 @@ func (m Model) updateNewProjectMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "up", "ctrl+p":
 		return m, m.moveNewProjectSelection(-1)
 	case "enter":
+		if dialog.Selected == newProjectFieldCloneRepository {
+			return m, m.openCloneProjectDialogFromNewProject()
+		}
 		preview := m.currentNewProjectPreview()
 		if dialog.PreviewPending && strings.TrimSpace(preview.Name) == "" {
 			m.status = "Checking project path..."
@@ -272,9 +276,9 @@ func (m *Model) moveNewProjectSelection(delta int) tea.Cmd {
 	}
 	index := dialog.Selected + delta
 	if index < newProjectFieldPath {
-		index = newProjectFieldGitRepo
+		index = newProjectFieldCloneRepository
 	}
-	if index > newProjectFieldGitRepo {
+	if index > newProjectFieldCloneRepository {
 		index = newProjectFieldPath
 	}
 	return m.setNewProjectSelection(index)
@@ -288,8 +292,8 @@ func (m *Model) setNewProjectSelection(index int) tea.Cmd {
 	if index < newProjectFieldPath {
 		index = newProjectFieldPath
 	}
-	if index > newProjectFieldGitRepo {
-		index = newProjectFieldGitRepo
+	if index > newProjectFieldCloneRepository {
+		index = newProjectFieldCloneRepository
 	}
 	dialog.Selected = index
 	dialog.PathInput.Blur()
@@ -975,6 +979,7 @@ func (m Model) renderNewProjectContent(width int) string {
 	}
 	lines = append(lines,
 		m.renderNewProjectGitRow(labelWidth, inputWidth),
+		m.renderNewProjectCloneRow(labelWidth, inputWidth),
 		"",
 		detailLabelStyle.Render("Full path:"),
 		lipgloss.NewStyle().Width(width).Render(detailValueStyle.Render(preview.FullPath)),
@@ -1005,7 +1010,7 @@ func (m Model) renderNewProjectContent(width int) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, renderNewProjectActions(preview))
+	lines = append(lines, renderNewProjectActions(preview, dialog.Selected))
 	return strings.Join(lines, "\n")
 }
 
@@ -1117,6 +1122,22 @@ func (m Model) renderNewProjectGitRow(labelWidth, inputWidth int) string {
 	return labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) + " " + truncateText(value, inputWidth)
 }
 
+func (m Model) renderNewProjectCloneRow(labelWidth, inputWidth int) string {
+	dialog := m.newProjectDialog
+	if dialog == nil {
+		return ""
+	}
+	label := "  Git clone"
+	labelStyle := detailLabelStyle
+	selected := dialog.Selected == newProjectFieldCloneRepository
+	if selected {
+		label = "> Git clone"
+		labelStyle = commandPalettePickStyle
+	}
+	value := renderDialogButton("Clone a Git repository…", selected)
+	return labelStyle.Width(labelWidth).Render(truncateText(label, labelWidth)) + " " + fitStyledWidth(value, inputWidth)
+}
+
 func (m Model) renderNewProjectAssistantRow(labelWidth, inputWidth int) string {
 	dialog := m.newProjectDialog
 	if dialog == nil {
@@ -1156,6 +1177,8 @@ func (m Model) newProjectAssistantStatusLine(width int) string {
 func (m Model) renderNewProjectStatus(preview newProjectPreview, width int) []string {
 	var lines []string
 	switch {
+	case m.newProjectDialog != nil && m.newProjectDialog.Selected == newProjectFieldCloneRepository:
+		lines = append(lines, commandPaletteHintStyle.Render("Press Enter to choose a repository and clone it into the selected path."))
 	case preview.Error != "":
 		lines = append(lines, detailWarningStyle.Render(preview.Error))
 	case m.newProjectDialog != nil && m.newProjectDialog.PreviewPending:
@@ -1184,10 +1207,13 @@ func (m Model) renderNewProjectStatus(preview newProjectPreview, width int) []st
 	return lines
 }
 
-func renderNewProjectActions(preview newProjectPreview) string {
+func renderNewProjectActions(preview newProjectPreview, selected int) string {
 	primary := "create"
 	if preview.Exists && preview.ExistingDir {
 		primary = "add"
+	}
+	if selected == newProjectFieldCloneRepository {
+		primary = "open clone"
 	}
 	actions := []string{
 		renderDialogAction("Enter", primary, commitActionKeyStyle, commitActionTextStyle),

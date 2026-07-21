@@ -342,6 +342,30 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "clone project",
+			raw:  "/clone-project",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindCloneProject {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindCloneProject)
+				}
+			},
+		},
+		{
+			name: "clone project with assistant",
+			raw:  "/clone-project --assistant claude",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindCloneProject {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindCloneProject)
+				}
+				if inv.Assistant != "claude_code" {
+					t.Fatalf("assistant = %q, want claude_code", inv.Assistant)
+				}
+				if inv.Canonical != "/clone-project --assistant claude_code" {
+					t.Fatalf("canonical = %q, want assistant canonical", inv.Canonical)
+				}
+			},
+		},
+		{
 			name: "new task",
 			raw:  "/new-task",
 			check: func(t *testing.T, inv Invocation) {

@@ -172,6 +172,7 @@ Main workflow:
 - `/todo` (`t`): Open the TODO list for the selected project. Add items, toggle done, and start a fresh embedded session from any item.
 - `/open`: Open the selected project's folder in the system browser.
 - `/new-project [--assistant codex|opencode|claude|lcagent]`: Create a project folder, or use path suggestions/paste an existing project path to add it directly. The dialog also lets you choose which assistant `Enter` should open first for the new item, defaulting to the last embedded provider you used when available.
+- `/clone-project [--assistant codex|opencode|claude|lcagent]`: Clone an HTTPS, SSH, or local Git repository into a selected parent folder and add it as a project. The repository name becomes the folder name; an existing destination is avoided with `-2`, `-3`, and later suffixes. The same workflow is available from the tab-focusable **Clone a Git repository…** action in `/new-project`.
 - `/new-task [--assistant codex|opencode|claude|lcagent] [request]`: Create a scratch task folder under the default task root. Optional request text seeds the temporary task name, and the assistant flag preselects the first embedded provider for `Enter`; without a flag, the task picker defaults to the last embedded provider you used when available.
 - `/codex [prompt]`, `/opencode [prompt]`, `/claude [prompt]`, `/lcagent [prompt]`: Resume the latest session for that provider, or start one.
 - `/codex-new [prompt]`, `/opencode-new [prompt]`, `/claude-new [prompt]`, `/lcagent-new [prompt]`: Start a fresh embedded session.

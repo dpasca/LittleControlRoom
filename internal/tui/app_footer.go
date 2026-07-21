@@ -122,9 +122,22 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, label, supplementSegments...)
 	}
+	if m.cloneProjectDialog != nil {
+		label := "Clone project: Enter clone, Tab next, Alt+1..3 recent, Esc cancel"
+		if len(m.cloneProjectDialog.PathInput.MatchedSuggestions()) > 0 {
+			label = "Clone project: Enter clone, Right complete path, Alt+1..8 pick, Esc cancel"
+		}
+		if m.cloneProjectDialog.Submitting {
+			label = "Clone project: cloning in background, Esc cancel"
+		}
+		return m.renderModalFooter(width, label, supplementSegments...)
+	}
 	if m.newProjectDialog != nil {
 		label := "New project: Enter create/add, Space toggle git, Alt+1..3 recent, Esc cancel"
-		if len(m.newProjectDialog.PathInput.MatchedSuggestions()) > 0 {
+		if m.newProjectDialog.Selected == newProjectFieldCloneRepository {
+			label = "New project: Enter open clone workflow, Tab next, Esc cancel"
+		}
+		if m.newProjectDialog.Selected != newProjectFieldCloneRepository && len(m.newProjectDialog.PathInput.MatchedSuggestions()) > 0 {
 			label = "New project: Enter create/add, Right complete path, Alt+1..8 pick, Space git, Esc cancel"
 		}
 		if m.newProjectDialog.Submitting {

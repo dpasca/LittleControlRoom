@@ -408,6 +408,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/filter`
 - `/filter clear`
 - `/new-project [--assistant codex|opencode|claude|lcagent]`
+- `/clone-project [--assistant codex|opencode|claude|lcagent]`
 - `/new-task [--assistant codex|opencode|claude|lcagent] [request]`
 - `/task-actions`
 - `/open`

@@ -511,6 +511,8 @@ func (m Model) dispatchCommand(inv commands.Invocation) (tea.Model, tea.Cmd) {
 		return m, m.openProjectFilterDialog()
 	case commands.KindNewProject:
 		return m, m.openNewProjectDialog(commandAssistantProvider(inv.Assistant))
+	case commands.KindCloneProject:
+		return m, m.openCloneProjectDialog("", commandAssistantProvider(inv.Assistant), "")
 	case commands.KindNewTask:
 		return m, m.openNewTaskDialog(inv.Prompt, commandAssistantProvider(inv.Assistant))
 	case commands.KindTaskActions:

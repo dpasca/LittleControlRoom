@@ -28,6 +28,7 @@ const (
 	KindFilter          Kind = "filter"
 	KindCategory        Kind = "category"
 	KindNewProject      Kind = "new-project"
+	KindCloneProject    Kind = "clone-project"
 	KindNewTask         Kind = "new-task"
 	KindTaskActions     Kind = "task-actions"
 	KindOpen            Kind = "open"
@@ -161,6 +162,7 @@ var specs = []Spec{
 	{Name: "filter", Usage: "/filter [text|clear]", Summary: "Temporarily show only matching project names"},
 	{Name: "category", Usage: "/category create|remove|move|clear [name]", Summary: "Create categories or move the selected item between category tabs"},
 	{Name: "new-project", Usage: "/new-project [--assistant codex|opencode|claude|lcagent]", Summary: "Create a project folder, or paste an existing path to add it"},
+	{Name: "clone-project", Usage: "/clone-project [--assistant codex|opencode|claude|lcagent]", Summary: "Clone a Git repository into a new project folder"},
 	{Name: "new-task", Usage: "/new-task [--assistant codex|opencode|claude|lcagent] [request]", Summary: "Create a scratch task folder without stopping to name it"},
 	{Name: "task-actions", Usage: "/task-actions", Summary: "Open archive/delete actions for the selected scratch task"},
 	{Name: "open", Usage: "/open", Summary: "Open the selected project's folder in the system browser"},
@@ -508,6 +510,19 @@ func Parse(input string) (Invocation, error) {
 			canonical += " --assistant " + assistant
 		}
 		return Invocation{Kind: KindNewProject, Assistant: assistant, Canonical: canonical}, nil
+	case "clone-project":
+		assistant, rest, err := parseAssistantArg(rawArgs)
+		if err != nil {
+			return Invocation{}, err
+		}
+		if rest != "" {
+			return Invocation{}, fmt.Errorf("usage: /clone-project [--assistant codex|opencode|claude|lcagent]")
+		}
+		canonical := "/clone-project"
+		if assistant != "" {
+			canonical += " --assistant " + assistant
+		}
+		return Invocation{Kind: KindCloneProject, Assistant: assistant, Canonical: canonical}, nil
 	case "new-task":
 		assistant, prompt, err := parseAssistantArg(rawArgs)
 		if err != nil {

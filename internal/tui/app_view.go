@@ -176,6 +176,17 @@ func (m Model) View() string {
 			}
 			return m.renderEmbeddedSidebarDetailOverlay(body, width, height)
 		}
+		if m.cloneProjectDialog != nil {
+			width := m.width
+			if width <= 0 {
+				width = 120
+			}
+			height := m.height
+			if height <= 0 {
+				height = 30
+			}
+			return m.renderCloneProjectOverlay(body, width, height)
+		}
 		if m.newProjectDialog != nil {
 			width := m.width
 			if width <= 0 {
@@ -262,6 +273,8 @@ func (m Model) View() string {
 		if m.codexLCAgentProviderSetup != nil {
 			body = m.renderCodexLCAgentProviderSetupOverlay(body, layout.width, layout.height)
 		}
+	} else if m.cloneProjectDialog != nil {
+		body = m.renderCloneProjectOverlay(body, layout.width, layout.height)
 	} else if m.newProjectDialog != nil {
 		body = m.renderNewProjectOverlay(body, layout.width, layout.height)
 	} else if m.newTaskDialog != nil {
