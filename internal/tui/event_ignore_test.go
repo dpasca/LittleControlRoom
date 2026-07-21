@@ -432,6 +432,56 @@ func TestBusRemoveWorktreeRefreshTargetsRootDetail(t *testing.T) {
 	}
 }
 
+func TestBusMergeWorktreeBackClearsResolvedRootResolverReceipt(t *testing.T) {
+	rootPath := "/tmp/repo"
+	otherPath := "/tmp/other-repo"
+	m := Model{
+		mergeConflictResolvers: map[string]mergeConflictResolverState{
+			rootPath:  {Phase: mergeConflictResolverResolved},
+			otherPath: {Phase: mergeConflictResolverResolved},
+		},
+	}
+
+	updated, cmd := m.Update(busMsg(events.Event{
+		Type:        events.ActionApplied,
+		ProjectPath: rootPath,
+		Payload: map[string]string{
+			"action": "merge_worktree_back",
+		},
+	}))
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("merge-back event should keep waiting on the bus and queue a root refresh")
+	}
+	if state, ok := got.mergeConflictResolverForProject(rootPath); ok {
+		t.Fatalf("root resolver receipt was not cleared: %#v", state)
+	}
+	if state, ok := got.mergeConflictResolverForProject(otherPath); !ok || state.Phase != mergeConflictResolverResolved {
+		t.Fatalf("unrelated resolver receipt = (%#v, %v), want resolved receipt preserved", state, ok)
+	}
+}
+
+func TestBusNonMergeActionPreservesResolvedResolverReceipt(t *testing.T) {
+	projectPath := "/tmp/repo"
+	m := Model{
+		mergeConflictResolvers: map[string]mergeConflictResolverState{
+			projectPath: {Phase: mergeConflictResolverResolved},
+		},
+	}
+
+	updated, _ := m.Update(busMsg(events.Event{
+		Type:        events.ActionApplied,
+		ProjectPath: projectPath,
+		Payload: map[string]string{
+			"action": "git_push",
+		},
+	}))
+	got := updated.(Model)
+	if state, ok := got.mergeConflictResolverForProject(projectPath); !ok || state.Phase != mergeConflictResolverResolved {
+		t.Fatalf("resolver receipt = (%#v, %v), want resolved receipt preserved", state, ok)
+	}
+}
+
 func TestDispatchRemoveCommandStoresIgnoredPathAndHidesOnlySelectedProject(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))

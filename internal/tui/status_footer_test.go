@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -876,6 +877,34 @@ func TestBackgroundResolverReconcilesGitConflictOutcome(t *testing.T) {
 	m.reconcileMergeConflictResolverProject(model.ProjectSummary{Path: projectPath, RepoConflict: true})
 	if stale, ok := m.mergeConflictResolverForProject(projectPath); ok {
 		t.Fatalf("later conflict retained stale completed resolver state: %#v", stale)
+	}
+}
+
+func TestClearResolvedMergeConflictResolverPreservesNonSuccessPhases(t *testing.T) {
+	projectPath := "/tmp/resolve-clear"
+	for _, phase := range []mergeConflictResolverPhase{
+		mergeConflictResolverStarting,
+		mergeConflictResolverRunning,
+		mergeConflictResolverChecking,
+		mergeConflictResolverNeedsAttention,
+		mergeConflictResolverFailed,
+		mergeConflictResolverRefreshFailed,
+		mergeConflictResolverConflictsRemain,
+	} {
+		t.Run(fmt.Sprintf("phase_%d", phase), func(t *testing.T) {
+			m := Model{
+				mergeConflictResolvers: map[string]mergeConflictResolverState{
+					projectPath: {Phase: phase},
+				},
+			}
+
+			m.clearResolvedMergeConflictResolver(projectPath)
+
+			state, ok := m.mergeConflictResolverForProject(projectPath)
+			if !ok || state.Phase != phase {
+				t.Fatalf("resolver state = (%#v, %v), want phase %d preserved", state, ok, phase)
+			}
+		})
 	}
 }
 

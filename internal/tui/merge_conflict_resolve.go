@@ -352,6 +352,17 @@ func (m *Model) failMergeConflictResolverRefresh(projectPath string, err error) 
 	m.mergeConflictResolvers[projectPath] = state
 }
 
+// clearResolvedMergeConflictResolver retires the successful resolver receipt
+// once a later repository mutation makes that historical outcome stale.
+func (m *Model) clearResolvedMergeConflictResolver(projectPath string) {
+	projectPath = normalizeProjectPath(projectPath)
+	state, ok := m.mergeConflictResolvers[projectPath]
+	if !ok || state.Phase != mergeConflictResolverResolved {
+		return
+	}
+	delete(m.mergeConflictResolvers, projectPath)
+}
+
 func (m *Model) reconcileMergeConflictResolverProject(project model.ProjectSummary) {
 	projectPath := normalizeProjectPath(project.Path)
 	state, ok := m.mergeConflictResolvers[projectPath]

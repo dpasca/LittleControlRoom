@@ -2745,10 +2745,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
 			return m, batchCmds(cmds...)
 		case events.ProjectChanged, events.ActionApplied:
-			if msg.Payload["action"] == "todo_worktree_suggestion_failed" {
+			action := msg.Payload["action"]
+			if msg.Type == events.ActionApplied && action == "merge_worktree_back" {
+				m.clearResolvedMergeConflictResolver(msg.ProjectPath)
+			}
+			if action == "todo_worktree_suggestion_failed" {
 				m.appendBackgroundErrorLogEntry("TODO worktree suggestion failed", todoSuggestionEventError(msg.Payload), msg.ProjectPath)
 			}
-			if msg.Type == events.ActionApplied && actionChangesProjectStructure(msg.Payload["action"]) {
+			if msg.Type == events.ActionApplied && actionChangesProjectStructure(action) {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectStructure(structureActionDetailPath(events.Event(msg), m.currentSelectedProjectPath()))))
 			} else if strings.TrimSpace(msg.ProjectPath) != "" {
 				cmds = append(cmds, m.requestProjectInvalidationCmd(invalidateProjectData(msg.ProjectPath)))
