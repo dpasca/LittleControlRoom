@@ -512,6 +512,8 @@ func scanCommitTodoCheck(row rowScanner) (model.CommitTodoCheck, error) {
 		check            model.CommitTodoCheck
 		status           string
 		completedTodoIDs string
+		nextAttemptAt    int64
+		autoRetry        int
 		createdAt        int64
 		updatedAt        int64
 	)
@@ -522,7 +524,12 @@ func scanCommitTodoCheck(row rowScanner) (model.CommitTodoCheck, error) {
 		&status,
 		&check.Model,
 		&completedTodoIDs,
+		&check.DecisionJSON,
+		&check.EvidenceJSON,
 		&check.LastError,
+		&check.AttemptCount,
+		&nextAttemptAt,
+		&autoRetry,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -530,6 +537,10 @@ func scanCommitTodoCheck(row rowScanner) (model.CommitTodoCheck, error) {
 	}
 	check.Status = model.CommitTodoCheckStatus(strings.TrimSpace(status))
 	check.CompletedTodoIDs = parseInt64Lines(completedTodoIDs)
+	if nextAttemptAt > 0 {
+		check.NextAttemptAt = time.Unix(nextAttemptAt, 0)
+	}
+	check.AutoRetry = autoRetry != 0
 	check.CreatedAt = time.Unix(createdAt, 0)
 	check.UpdatedAt = time.Unix(updatedAt, 0)
 	return check, nil

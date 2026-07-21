@@ -10,14 +10,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type runtimePaneActionKind string
 
 const (
-	runtimePaneActionOpenURL runtimePaneActionKind = "open-url"
-	runtimePaneActionRestart runtimePaneActionKind = "restart"
-	runtimePaneActionStop    runtimePaneActionKind = "stop"
+	runtimePaneActionOpenURL    runtimePaneActionKind = "open-url"
+	runtimePaneActionRestart    runtimePaneActionKind = "restart"
+	runtimePaneActionStop       runtimePaneActionKind = "stop"
+	runtimePaneActionCopyOutput runtimePaneActionKind = "copy-output"
+	runtimePaneActionAddTODO    runtimePaneActionKind = "add-todo"
 )
 
 type runtimePaneAction struct {
@@ -51,7 +54,8 @@ func (m *Model) syncRuntimeViewport(reset bool) {
 	m.runtimeViewport.Width = layout.runtimeContentWidth
 	innerHeight := max(1, layout.bottomPaneHeight-2)
 	summaryLines := m.renderRuntimePanelSummary(layout.runtimeContentWidth, projectPath)
-	outputHeight := max(3, innerHeight-len(summaryLines)-4)
+	actionLines := m.renderRuntimePanelActionRows(layout.runtimeContentWidth, projectPath)
+	outputHeight := max(3, innerHeight-len(summaryLines)-len(actionLines)-3)
 	m.runtimeViewport.Height = outputHeight
 	if m.codexVisible() {
 		if reset {
@@ -156,6 +160,10 @@ func (m *Model) activateRuntimePaneAction() tea.Cmd {
 		}
 		m.status = "Stopping runtime..."
 		return m.stopRuntimeProcessCmd(project.Path, snapshot.ID)
+	case runtimePaneActionCopyOutput:
+		return m.copyRuntimeOutput(project.Path, snapshot)
+	case runtimePaneActionAddTODO:
+		return m.openRuntimeOutputTodo(project, snapshot)
 	default:
 		m.status = "Runtime action unavailable"
 		return nil
@@ -173,7 +181,7 @@ func (m Model) renderRuntimePanel(width, height int) string {
 	summaryLines := m.renderRuntimePanelSummary(width, projectPath)
 	contentLines := append([]string(nil), summaryLines...)
 	contentLines = append(contentLines, "")
-	contentLines = append(contentLines, m.renderRuntimePanelActionRow(width, projectPath))
+	contentLines = append(contentLines, m.renderRuntimePanelActionRows(width, projectPath)...)
 	contentLines = append(contentLines, "")
 	contentLines = append(contentLines, detailSectionStyle.Render("Output"))
 	contentLines = append(contentLines, m.runtimeViewport.View())
@@ -283,17 +291,32 @@ func (m Model) renderRuntimePanelOutputContent(width int, projectPath string) st
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) renderRuntimePanelActionRow(width int, projectPath string) string {
+func (m Model) renderRuntimePanelActionRows(width int, projectPath string) []string {
 	actions := m.runtimePanelActions(projectPath)
 	if len(actions) == 0 {
-		return detailMutedStyle.Render("No runtime actions available")
+		return []string{detailMutedStyle.Render("No runtime actions available")}
 	}
-	parts := make([]string, 0, len(actions))
+	width = max(1, width)
+	lines := make([]string, 0, 2)
+	line := ""
 	for i, action := range actions {
 		selected := m.focusedPane == focusRuntime && i == m.runtimeActionSelected
-		parts = append(parts, renderRuntimePaneActionChip(action, selected))
+		chip := renderRuntimePaneActionChip(action, selected)
+		if line == "" {
+			line = fitStyledWidth(chip, width)
+			continue
+		}
+		if lipgloss.Width(line)+1+lipgloss.Width(chip) > width {
+			lines = append(lines, fitStyledWidth(line, width))
+			line = fitStyledWidth(chip, width)
+			continue
+		}
+		line += " " + chip
 	}
-	return fitStyledWidth(strings.Join(parts, " "), width)
+	if line != "" {
+		lines = append(lines, fitStyledWidth(line, width))
+	}
+	return lines
 }
 
 func renderRuntimePaneActionChip(action runtimePaneAction, selected bool) string {
@@ -309,7 +332,7 @@ func renderRuntimePaneActionChip(action runtimePaneAction, selected bool) string
 			Render(action.Label)
 	}
 	switch action.Kind {
-	case runtimePaneActionOpenURL:
+	case runtimePaneActionOpenURL, runtimePaneActionCopyOutput:
 		return pushActionKeyStyle.Render(action.Label)
 	case runtimePaneActionStop:
 		return cancelActionKeyStyle.Render(action.Label)
@@ -333,7 +356,7 @@ func (m Model) runtimePanelActions(projectPath string) []runtimePaneAction {
 	project, _ := m.projectSummaryByPath(projectPath)
 	snapshot, _, _ := m.selectedRuntimeProcessSnapshot(projectPath)
 	command := effectiveRuntimeCommand(project.RunCommand, snapshot)
-	return []runtimePaneAction{
+	actions := []runtimePaneAction{
 		{
 			Kind:           runtimePaneActionOpenURL,
 			Label:          "Open URL",
@@ -353,6 +376,164 @@ func (m Model) runtimePanelActions(projectPath string) []runtimePaneAction {
 			DisabledStatus: "Runtime is not running",
 		},
 	}
+	if runtimeOutputAvailable(snapshot) {
+		actions = append(actions,
+			runtimePaneAction{
+				Kind:    runtimePaneActionCopyOutput,
+				Label:   "Copy output",
+				Enabled: true,
+			},
+			runtimePaneAction{
+				Kind:    runtimePaneActionAddTODO,
+				Label:   "Add TODO",
+				Enabled: true,
+			},
+		)
+	}
+	return actions
+}
+
+func (m *Model) copySelectedRuntimeOutput() tea.Cmd {
+	project, ok := m.selectedProject()
+	if !ok {
+		m.status = "No project selected"
+		return nil
+	}
+	snapshot, _, _ := m.selectedRuntimeProcessSnapshot(project.Path)
+	return m.copyRuntimeOutput(project.Path, snapshot)
+}
+
+func (m *Model) copyRuntimeOutput(projectPath string, snapshot projectrun.Snapshot) tea.Cmd {
+	output := runtimeCapturedOutput(snapshot)
+	if output == "" {
+		m.status = "No captured runtime output to copy"
+		return nil
+	}
+	if m.runtimeOutputCopyBusy {
+		m.status = "Runtime output copy already in progress"
+		return nil
+	}
+	m.runtimeOutputCopyBusy = true
+	m.status = "Copying runtime output..."
+	return func() tea.Msg {
+		return runtimeOutputCopyMsg{
+			projectPath: projectPath,
+			err:         clipboardTextWriter(output),
+		}
+	}
+}
+
+func (m Model) applyRuntimeOutputCopyMsg(msg runtimeOutputCopyMsg) (tea.Model, tea.Cmd) {
+	m.runtimeOutputCopyBusy = false
+	if msg.err != nil {
+		m.reportError("Runtime output copy failed", msg.err, msg.projectPath)
+		return m, nil
+	}
+	m.err = nil
+	m.status = "Copied runtime output to clipboard"
+	return m, nil
+}
+
+func (m *Model) openRuntimeOutputTodo(project model.ProjectSummary, snapshot projectrun.Snapshot) tea.Cmd {
+	if m.todoPendingSave != nil {
+		m.status = "TODO save already in progress"
+		return nil
+	}
+	if runtimeCapturedOutput(snapshot) == "" {
+		m.status = "No captured runtime output to add to a TODO"
+		return nil
+	}
+	todoText := formatRuntimeOutputTodo(project, snapshot)
+	project = m.repositoryTodoProject(project)
+	loadCmd := m.openTodoDialog(project)
+	focusCmd := m.openTodoEditor(0, todoText, nil)
+	m.status = "Review the runtime output TODO, then press Ctrl+S to add it"
+	return batchCmds(loadCmd, focusCmd)
+}
+
+func runtimeOutputAvailable(snapshot projectrun.Snapshot) bool {
+	return len(snapshot.RecentOutput) > 0 || strings.TrimSpace(snapshot.LastError) != ""
+}
+
+func runtimeCapturedOutput(snapshot projectrun.Snapshot) string {
+	output := runtimeRecentOutput(snapshot)
+	if output != "" {
+		return output
+	}
+	return cleanRuntimeOutputText(snapshot.LastError)
+}
+
+func runtimeRecentOutput(snapshot projectrun.Snapshot) string {
+	lines := make([]string, 0, len(snapshot.RecentOutput))
+	for _, line := range snapshot.RecentOutput {
+		line = cleanRuntimeOutputText(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func cleanRuntimeOutputText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.TrimSpace(ansi.Strip(text))
+}
+
+func formatRuntimeOutputTodo(project model.ProjectSummary, snapshot projectrun.Snapshot) string {
+	title := "Investigate this runtime output."
+	if (snapshot.ExitCodeKnown && snapshot.ExitCode != 0) || strings.TrimSpace(snapshot.LastError) != "" {
+		title = "Investigate and fix this runtime failure."
+	}
+	lines := []string{title}
+	if command := capturedRuntimeCommand(project.RunCommand, snapshot); command != "" {
+		lines = append(lines, "", "Run command: "+truncateText(command, 2000))
+	}
+	if cwd := cleanRuntimeOutputText(runtimeRelativeCWD(snapshot.ProjectPath, snapshot.CWD)); cwd != "" {
+		lines = append(lines, "Working directory: "+truncateText(cwd, 1000))
+	}
+	if process := cleanRuntimeOutputText(runtimeProcessLabel(snapshot)); process != "" {
+		lines = append(lines, "Runtime process: "+truncateText(process, 500))
+	}
+	if snapshot.ExitCodeKnown {
+		lines = append(lines, fmt.Sprintf("Exit code: %d", snapshot.ExitCode))
+	}
+	if lastError := cleanRuntimeOutputText(snapshot.LastError); lastError != "" {
+		lines = append(lines, "Error: "+truncateText(lastError, 4000))
+	}
+
+	prefix := strings.Join(lines, "\n")
+	output := runtimeRecentOutput(snapshot)
+	if output == "" {
+		return truncateText(prefix, todoTextCharLimit)
+	}
+	prefix += "\n\nRecent run output:\n\n"
+	return prefix + runtimeTodoOutputWithinLimit(prefix, output)
+}
+
+func capturedRuntimeCommand(savedCommand string, snapshot projectrun.Snapshot) string {
+	if command := cleanRuntimeOutputText(snapshot.Command); command != "" {
+		return command
+	}
+	return cleanRuntimeOutputText(savedCommand)
+}
+
+func runtimeTodoOutputWithinLimit(prefix, output string) string {
+	remaining := todoTextCharLimit - len([]rune(prefix))
+	if remaining <= 0 {
+		return ""
+	}
+	outputRunes := []rune(output)
+	if len(outputRunes) <= remaining {
+		return output
+	}
+	const marker = "[Earlier captured runtime output omitted to fit the TODO editor.]\n"
+	markerRunes := []rune(marker)
+	if remaining <= len(markerRunes) {
+		return string(outputRunes[len(outputRunes)-remaining:])
+	}
+	tailLength := remaining - len(markerRunes)
+	return marker + string(outputRunes[len(outputRunes)-tailLength:])
 }
 
 func runtimeRestartDisabledStatus(snapshot projectrun.Snapshot, command string) string {

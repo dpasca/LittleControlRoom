@@ -16,6 +16,9 @@ import (
 	"lcroom/internal/worktreeprep"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1294,6 +1297,193 @@ func TestScanOnceQueuesAndProcessesCommitTodoCheckForExternalCommit(t *testing.T
 	if !strings.Contains(checker.lastInput.Patch, "workflow shipped") {
 		t.Fatalf("checker patch = %q, want release notes content", checker.lastInput.Patch)
 	}
+	storedCheck, err := st.GetCommitTodoCheck(ctx, projectPath, head)
+	if err != nil {
+		t.Fatalf("get completed commit TODO check: %v", err)
+	}
+	if storedCheck.AttemptCount != 1 || storedCheck.Status != model.CommitTodoCheckCompleted {
+		t.Fatalf("stored check = %#v, want completed first attempt", storedCheck)
+	}
+	if !strings.Contains(storedCheck.DecisionJSON, `"id":`+strconv.FormatInt(item.ID, 10)) {
+		t.Fatalf("stored decision JSON = %q, want TODO %d", storedCheck.DecisionJSON, item.ID)
+	}
+	if !strings.Contains(storedCheck.EvidenceJSON, `"strategy":"complete_patch"`) {
+		t.Fatalf("stored evidence JSON = %q, want complete-patch strategy", storedCheck.EvidenceJSON)
+	}
+}
+
+func TestBuildCommitTodoCompletionInputSelectsFocusedEvidenceWhenPatchTruncates(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+	if realPath, err := filepath.EvalSymlinks(projectPath); err == nil {
+		projectPath = realPath
+	}
+	baseHash := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	noise := strings.Repeat("unrelated generated payload line\n", 1400)
+	if err := os.WriteFile(filepath.Join(projectPath, "a-noise.txt"), []byte(noise), 0o644); err != nil {
+		t.Fatalf("write noise file: %v", err)
+	}
+	relevantText := "compile Vulkan shaders before presenting the startup frame\n"
+	if err := os.WriteFile(filepath.Join(projectPath, "z-startup-renderer.go"), []byte(relevantText), 0o644); err != nil {
+		t.Fatalf("write relevant file: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "a-noise.txt", "z-startup-renderer.go")
+	runGit(t, projectPath, "git", "commit", "-m", "compile Vulkan startup shaders")
+	headHash := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	selector := &fakeCommitTodoEvidenceSelector{
+		model: "utility-selector",
+		selection: gitops.CommitTodoEvidenceSelection{
+			Model: "utility-selector-actual",
+			Items: []gitops.CommitTodoEvidenceSelectionItem{{
+				TodoIDs:    []int64{73},
+				CommitHash: headHash,
+				Files:      []string{"z-startup-renderer.go"},
+				Reason:     "The startup renderer is the plausible implementation evidence.",
+			}},
+		},
+	}
+	svc := &Service{commitTodoEvidenceSelector: selector}
+	input, err := svc.buildCommitTodoCompletionInput(
+		ctx,
+		model.CommitTodoCheck{ProjectPath: projectPath, BaseHash: baseHash, HeadHash: headHash, AttemptCount: 2},
+		model.ProjectDetail{Summary: model.ProjectSummary{Path: projectPath, Name: "renderer", RepoBranch: "master"}},
+		[]gitops.CommitTodoRef{{ID: 73, Text: "Fix the startup black screen"}},
+	)
+	if err != nil {
+		t.Fatalf("buildCommitTodoCompletionInput() error = %v", err)
+	}
+	if selector.calls != 1 {
+		t.Fatalf("evidence selector calls = %d, want 1", selector.calls)
+	}
+	if !selector.lastInput.BypassModelCache || !input.BypassModelCache {
+		t.Fatalf("durable retry cache bypass = selector:%v completion:%v, want true/true", selector.lastInput.BypassModelCache, input.BypassModelCache)
+	}
+	if len(selector.lastInput.Commits) != 1 || selector.lastInput.Commits[0].Hash != headHash {
+		t.Fatalf("selector commits = %#v, want new commit", selector.lastInput.Commits)
+	}
+	if !slices.Contains(selector.lastInput.Commits[0].ChangedFiles, "z-startup-renderer.go") {
+		t.Fatalf("selector changed files = %#v, want startup renderer", selector.lastInput.Commits[0].ChangedFiles)
+	}
+	if input.EvidenceStrategy != "focused_model_selection" || input.EvidenceModel != "utility-selector-actual" {
+		t.Fatalf("focused evidence metadata = %q/%q", input.EvidenceStrategy, input.EvidenceModel)
+	}
+	if !strings.Contains(input.Patch, strings.TrimSpace(relevantText)) {
+		t.Fatalf("focused patch omitted relevant evidence: %q", input.Patch)
+	}
+	if strings.Contains(input.Patch, "unrelated generated payload") {
+		t.Fatalf("focused patch retained unrelated prefix: %q", input.Patch)
+	}
+	if len(input.Patch) > commitTodoFocusedPatchMaxBytes {
+		t.Fatalf("focused patch bytes = %d, want <= %d", len(input.Patch), commitTodoFocusedPatchMaxBytes)
+	}
+	if !reflect.DeepEqual(input.ChangedFiles, []string{"z-startup-renderer.go"}) {
+		t.Fatalf("focused changed files = %#v", input.ChangedFiles)
+	}
+}
+
+func TestProcessCommitTodoCheckSchedulesModelFailureRetry(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	projectPath := filepath.Join(t.TempDir(), "repo")
+	initGitRepo(t, projectPath)
+	if realPath, err := filepath.EvalSymlinks(projectPath); err == nil {
+		projectPath = realPath
+	}
+	baseHash := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+	if err := os.WriteFile(filepath.Join(projectPath, "startup.go"), []byte("prepare startup renderer\n"), 0o644); err != nil {
+		t.Fatalf("write startup change: %v", err)
+	}
+	runGit(t, projectPath, "git", "add", "startup.go")
+	runGit(t, projectPath, "git", "commit", "-m", "prepare startup renderer")
+	headHash := strings.TrimSpace(gitOutput(t, projectPath, "git", "rev-parse", "HEAD"))
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+	if err := st.UpsertProjectState(ctx, model.ProjectState{
+		Path:          projectPath,
+		Name:          "repo",
+		PresentOnDisk: true,
+		InScope:       true,
+		UpdatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := st.AddTodo(ctx, projectPath, "Fix the startup black screen"); err != nil {
+		t.Fatalf("seed TODO: %v", err)
+	}
+	if queued, err := st.QueueCommitTodoCheck(ctx, model.CommitTodoCheck{
+		ProjectPath: projectPath,
+		BaseHash:    baseHash,
+		HeadHash:    headHash,
+		UpdatedAt:   time.Now(),
+	}); err != nil || !queued {
+		t.Fatalf("queue check = %v, %v", queued, err)
+	}
+
+	svc := New(config.Default(), st, events.NewBus(), nil)
+	svc.commitTodoChecker = &fakeCommitTodoChecker{model: "failing-checker", err: errors.New("temporary upstream failure")}
+	svc.commitTodoEvidenceSelector = nil
+	if err := svc.processOneCommitTodoCheck(ctx); err != nil {
+		t.Fatalf("process failed check: %v", err)
+	}
+
+	failed, err := st.GetCommitTodoCheck(ctx, projectPath, headHash)
+	if err != nil {
+		t.Fatalf("get failed check: %v", err)
+	}
+	if failed.Status != model.CommitTodoCheckFailed || failed.AttemptCount != 1 || !failed.AutoRetry {
+		t.Fatalf("failed retry state = %#v", failed)
+	}
+	if !strings.Contains(failed.LastError, "temporary upstream failure") {
+		t.Fatalf("last error = %q", failed.LastError)
+	}
+	if !failed.NextAttemptAt.After(time.Now().Add(45 * time.Second)) {
+		t.Fatalf("next attempt = %s, want first backoff in the future", failed.NextAttemptAt)
+	}
+	if !strings.Contains(failed.EvidenceJSON, `"strategy":"complete_patch"`) {
+		t.Fatalf("evidence JSON = %q, want persisted diagnostic", failed.EvidenceJSON)
+	}
+	if _, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("claim before retry deadline error = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestCommitTodoCheckRetryDelayAndTodoSnapshotBoundary(t *testing.T) {
+	t.Parallel()
+
+	wantDelays := map[int]time.Duration{
+		0:  time.Minute,
+		1:  time.Minute,
+		2:  5 * time.Minute,
+		5:  6 * time.Hour,
+		20: 6 * time.Hour,
+	}
+	for attempt, want := range wantDelays {
+		if got := commitTodoCheckRetryDelay(attempt); got != want {
+			t.Fatalf("commitTodoCheckRetryDelay(%d) = %s, want %s", attempt, got, want)
+		}
+	}
+
+	queuedAt := time.Now().Add(-time.Minute)
+	svc := &Service{}
+	refs, todos := svc.commitTodoRefsForDetail(context.Background(), model.ProjectDetail{
+		Todos: []model.TodoItem{
+			{ID: 1, ProjectPath: "/tmp/repo", Text: "Existing TODO", CreatedAt: queuedAt.Add(-time.Minute)},
+			{ID: 2, ProjectPath: "/tmp/repo", Text: "Later TODO", CreatedAt: queuedAt.Add(time.Minute)},
+		},
+	}, queuedAt)
+	if len(refs) != 1 || refs[0].ID != 1 || len(todos) != 1 || todos[0].ID != 1 {
+		t.Fatalf("retry TODO snapshot = refs %#v todos %#v, want only pre-existing TODO", refs, todos)
+	}
 }
 
 func TestApplyCommitRefreshesFingerprintToAvoidPostCommitTodoCheck(t *testing.T) {
@@ -1378,7 +1568,7 @@ func TestCommitTodoRefsForDetailIncludesLinkedOriginTodo(t *testing.T) {
 			Path:                 worktreePath,
 			WorktreeOriginTodoID: item.ID,
 		},
-	})
+	}, time.Time{})
 	if len(refs) != 1 || refs[0].ID != item.ID {
 		t.Fatalf("refs = %#v, want origin TODO", refs)
 	}
@@ -1542,6 +1732,14 @@ type fakeCommitTodoChecker struct {
 	model      string
 }
 
+type fakeCommitTodoEvidenceSelector struct {
+	lastInput gitops.CommitTodoEvidenceSelectionInput
+	selection gitops.CommitTodoEvidenceSelection
+	err       error
+	model     string
+	calls     int
+}
+
 func (f *fakeUntrackedFileRecommender) RecommendUntracked(ctx context.Context, input gitops.UntrackedFileRecommendationInput) (gitops.UntrackedFileRecommendationResult, error) {
 	f.lastInput = input
 	if f.waitForContext {
@@ -1586,6 +1784,19 @@ func (f *fakeCommitTodoChecker) ModelName() string {
 		return strings.TrimSpace(f.model)
 	}
 	return "fake-commit-todo-checker"
+}
+
+func (f *fakeCommitTodoEvidenceSelector) SelectCommitTodoEvidence(_ context.Context, input gitops.CommitTodoEvidenceSelectionInput) (gitops.CommitTodoEvidenceSelection, error) {
+	f.calls++
+	f.lastInput = input
+	return f.selection, f.err
+}
+
+func (f *fakeCommitTodoEvidenceSelector) ModelName() string {
+	if strings.TrimSpace(f.model) != "" {
+		return strings.TrimSpace(f.model)
+	}
+	return "fake-commit-todo-evidence-selector"
 }
 
 func (d *fakeDetector) Name() string {

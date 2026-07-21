@@ -324,7 +324,7 @@ func TestDispatchCommandRefreshAlsoRefreshesSelectedProject(t *testing.T) {
 	if !got.scanInFlight {
 		t.Fatalf("dispatchCommand(/refresh) should mark scan in flight")
 	}
-	if got.status != "Scanning and retrying failed assessments..." {
+	if got.status != "Scanning and retrying failed analyses..." {
 		t.Fatalf("status = %q, want refresh status", got.status)
 	}
 

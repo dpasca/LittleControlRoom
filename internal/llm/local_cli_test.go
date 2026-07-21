@@ -154,6 +154,11 @@ func TestCodexExecRunnerCachesIdenticalRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second RunJSONSchema() error = %v", err)
 	}
+	freshReq := req
+	freshReq.BypassCache = true
+	if _, err := runner.RunJSONSchema(context.Background(), freshReq); err != nil {
+		t.Fatalf("cache-bypassing RunJSONSchema() error = %v", err)
+	}
 	if first.OutputText != second.OutputText {
 		t.Fatalf("cached output = %q, want %q", second.OutputText, first.OutputText)
 	}
@@ -161,8 +166,8 @@ func TestCodexExecRunnerCachesIdenticalRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read count file: %v", err)
 	}
-	if strings.TrimSpace(string(countRaw)) != "1" {
-		t.Fatalf("runner command count = %q, want 1 cached invocation", strings.TrimSpace(string(countRaw)))
+	if strings.TrimSpace(string(countRaw)) != "2" {
+		t.Fatalf("runner command count = %q, want cached reuse plus one fresh invocation", strings.TrimSpace(string(countRaw)))
 	}
 }
 
@@ -200,6 +205,11 @@ func TestOpenCodeRunRunnerCachesIdenticalRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second RunJSONSchema() error = %v", err)
 	}
+	freshReq := req
+	freshReq.BypassCache = true
+	if _, err := runner.RunJSONSchema(context.Background(), freshReq); err != nil {
+		t.Fatalf("cache-bypassing RunJSONSchema() error = %v", err)
+	}
 	if first.OutputText != second.OutputText {
 		t.Fatalf("cached output = %q, want %q", second.OutputText, first.OutputText)
 	}
@@ -207,8 +217,8 @@ func TestOpenCodeRunRunnerCachesIdenticalRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read count file: %v", err)
 	}
-	if strings.TrimSpace(string(countRaw)) != "1" {
-		t.Fatalf("runner command count = %q, want 1 cached invocation", strings.TrimSpace(string(countRaw)))
+	if strings.TrimSpace(string(countRaw)) != "2" {
+		t.Fatalf("runner command count = %q, want cached reuse plus one fresh invocation", strings.TrimSpace(string(countRaw)))
 	}
 }
 
@@ -245,6 +255,11 @@ func TestClaudePrintRunnerCachesIdenticalRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second RunJSONSchema() error = %v", err)
 	}
+	freshReq := req
+	freshReq.BypassCache = true
+	if _, err := runner.RunJSONSchema(context.Background(), freshReq); err != nil {
+		t.Fatalf("cache-bypassing RunJSONSchema() error = %v", err)
+	}
 	if first.OutputText != second.OutputText {
 		t.Fatalf("cached output = %q, want %q", second.OutputText, first.OutputText)
 	}
@@ -252,8 +267,8 @@ func TestClaudePrintRunnerCachesIdenticalRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read count file: %v", err)
 	}
-	if strings.TrimSpace(string(countRaw)) != "1" {
-		t.Fatalf("runner command count = %q, want 1 cached invocation", strings.TrimSpace(string(countRaw)))
+	if strings.TrimSpace(string(countRaw)) != "2" {
+		t.Fatalf("runner command count = %q, want cached reuse plus one fresh invocation", strings.TrimSpace(string(countRaw)))
 	}
 }
 

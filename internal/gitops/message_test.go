@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -370,6 +371,9 @@ func TestOpenAICommitMessageClientSuggestRetriesRetryableHTTPError(t *testing.T)
 	if len(runner.requests) != 2 {
 		t.Fatalf("requests = %d, want retry", len(runner.requests))
 	}
+	if runner.requests[0].BypassCache || !runner.requests[1].BypassCache {
+		t.Fatalf("retry cache bypass = first:%v second:%v, want false/true", runner.requests[0].BypassCache, runner.requests[1].BypassCache)
+	}
 }
 
 func TestOpenAICommitMessageClientSuggestAcceptsCommitSubjectAlias(t *testing.T) {
@@ -498,6 +502,90 @@ func TestOpenAICommitMessageClientSuggestAcceptsSubjectField(t *testing.T) {
 	}
 	if len(runner.requests) != 1 {
 		t.Fatalf("requests = %d, want no retry", len(runner.requests))
+	}
+}
+
+func TestOpenAICommitMessageClientSelectCommitTodoEvidenceUsesCommitModel(t *testing.T) {
+	t.Parallel()
+
+	runner := &scriptedJSONSchemaRunner{
+		results: []scriptedJSONSchemaResult{{
+			response: llm.JSONSchemaResponse{
+				Status: "completed",
+				Model:  "utility-model-actual",
+				OutputText: `{"selected_evidence":[{` +
+					`"todo_ids":[17],` +
+					`"commit_hash":"abc123",` +
+					`"files":["renderer/startup.go"],` +
+					`"reason":"This commit changes startup rendering."` +
+					`}]}`,
+			},
+		}},
+	}
+
+	client := &OpenAICommitMessageClient{
+		model:     "commit-model",
+		responses: runner,
+	}
+
+	selection, err := client.SelectCommitTodoEvidence(context.Background(), CommitTodoEvidenceSelectionInput{
+		ProjectName:      "renderer",
+		Branch:           "master",
+		BaseHash:         "base123",
+		HeadHash:         "abc123",
+		BypassModelCache: true,
+		OpenTodos: []CommitTodoRef{{
+			ID:   17,
+			Text: "Fix the startup black screen",
+		}},
+		Commits: []CommitTodoEvidenceCommit{{
+			Hash:         "abc123",
+			Parents:      []string{"base123"},
+			Subject:      "Build Vulkan startup shaders",
+			ChangedFiles: []string{"renderer/startup.go", "renderer/shaders.bin"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("SelectCommitTodoEvidence() error = %v", err)
+	}
+	if selection.Model != "utility-model-actual" || len(selection.Items) != 1 {
+		t.Fatalf("selection = %#v", selection)
+	}
+	if got := selection.Items[0]; got.CommitHash != "abc123" || !reflect.DeepEqual(got.TodoIDs, []int64{17}) || !reflect.DeepEqual(got.Files, []string{"renderer/startup.go"}) {
+		t.Fatalf("selection item = %#v", got)
+	}
+	if len(runner.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(runner.requests))
+	}
+	req := runner.requests[0]
+	if req.Model != "commit-model" || req.SchemaName != "git_commit_todo_evidence_selection" {
+		t.Fatalf("request model/schema = %q/%q", req.Model, req.SchemaName)
+	}
+	if !req.BypassCache {
+		t.Fatal("evidence selection retry did not bypass the runner cache")
+	}
+	if !strings.Contains(req.SystemText, "Do not use keyword or regex matching") {
+		t.Fatalf("selection instructions omitted semantic-selection guardrail: %q", req.SystemText)
+	}
+	properties, ok := req.Schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties = %#v", req.Schema["properties"])
+	}
+	selectedSchema, ok := properties["selected_evidence"].(map[string]any)
+	if !ok {
+		t.Fatalf("selected_evidence schema = %#v", properties["selected_evidence"])
+	}
+	itemSchema, ok := selectedSchema["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("selection item schema = %#v", selectedSchema["items"])
+	}
+	itemProperties, ok := itemSchema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("selection item properties = %#v", itemSchema["properties"])
+	}
+	hashSchema, ok := itemProperties["commit_hash"].(map[string]any)
+	if !ok || !reflect.DeepEqual(hashSchema["enum"], []any{"abc123"}) {
+		t.Fatalf("commit hash schema = %#v, want supplied hash enum", itemProperties["commit_hash"])
 	}
 }
 

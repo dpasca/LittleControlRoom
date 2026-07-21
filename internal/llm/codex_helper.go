@@ -64,15 +64,19 @@ func (r *PersistentCodexRunner) RunJSONSchema(ctx context.Context, req JSONSchem
 	}
 
 	cacheKey := cacheKeyForJSONSchemaRequest(req)
-	if cached, ok := r.cache.Get(cacheKey); ok {
-		return cached, nil
+	if !req.BypassCache {
+		if cached, ok := r.cache.Get(cacheKey); ok {
+			return cached, nil
+		}
 	}
 
 	r.runMu.Lock()
 	defer r.runMu.Unlock()
 
-	if cached, ok := r.cache.Get(cacheKey); ok {
-		return cached, nil
+	if !req.BypassCache {
+		if cached, ok := r.cache.Get(cacheKey); ok {
+			return cached, nil
+		}
 	}
 
 	helper, err := r.acquireHelper()
@@ -116,7 +120,9 @@ func (r *PersistentCodexRunner) RunJSONSchema(ctx context.Context, req JSONSchem
 	if r.usage != nil {
 		r.usage.Complete(result.Model, result.Usage)
 	}
-	r.cache.Store(cacheKey, result)
+	if !req.BypassCache {
+		r.cache.Store(cacheKey, result)
+	}
 	r.releaseHelper(helper)
 	return result, nil
 }

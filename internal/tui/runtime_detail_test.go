@@ -88,11 +88,232 @@ func TestRuntimePaneShowsRuntimeOutputAndActions(t *testing.T) {
 	if !strings.Contains(rendered, "ready on http://127.0.0.1:4310/") || !strings.Contains(rendered, "warming up") {
 		t.Fatalf("View() should show runtime output in the runtime pane: %q", rendered)
 	}
-	if !strings.Contains(rendered, "Open URL") || !strings.Contains(rendered, "Restart") || !strings.Contains(rendered, "Stop") {
+	if !strings.Contains(rendered, "Open URL") || !strings.Contains(rendered, "Restart") || !strings.Contains(rendered, "Stop") ||
+		!strings.Contains(rendered, "Copy output") || !strings.Contains(rendered, "Add TODO") {
 		t.Fatalf("View() should show runtime pane actions: %q", rendered)
 	}
 	if !strings.Contains(rendered, "Focus: runtime") {
 		t.Fatalf("View() should show runtime focus in the footer: %q", rendered)
+	}
+}
+
+func TestRuntimeOutputActionsWrapWithoutHidingCaptureChoices(t *testing.T) {
+	projectPath := "/tmp/demo"
+	project := model.ProjectSummary{
+		Name:          "demo",
+		Path:          projectPath,
+		PresentOnDisk: true,
+		RunCommand:    "pnpm dev",
+	}
+	m := Model{
+		projects:    []model.ProjectSummary{project},
+		allProjects: []model.ProjectSummary{project},
+		selected:    0,
+		focusedPane: focusRuntime,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			projectPath: {
+				ID:           "default",
+				Default:      true,
+				ProjectPath:  projectPath,
+				Command:      "pnpm dev",
+				RecentOutput: []string{"Error: build failed"},
+			},
+		},
+	}
+
+	actions := m.runtimePanelActions(projectPath)
+	if len(actions) != 5 {
+		t.Fatalf("runtime actions len = %d, want 5: %#v", len(actions), actions)
+	}
+	if actions[3].Kind != runtimePaneActionCopyOutput || actions[4].Kind != runtimePaneActionAddTODO {
+		t.Fatalf("runtime capture actions = %#v, want copy then TODO", actions[3:])
+	}
+
+	actionLines := m.renderRuntimePanelActionRows(36, projectPath)
+	if len(actionLines) < 2 {
+		t.Fatalf("narrow runtime actions should wrap, got %d line: %#v", len(actionLines), actionLines)
+	}
+	rendered := ansi.Strip(strings.Join(actionLines, "\n"))
+	for _, want := range []string{"Copy output", "Add TODO"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("wrapped runtime actions missing %q: %q", want, rendered)
+		}
+	}
+	for _, line := range actionLines {
+		if width := ansi.StringWidth(line); width > 36 {
+			t.Fatalf("runtime action line width = %d, want <= 36: %q", width, ansi.Strip(line))
+		}
+	}
+}
+
+func TestRuntimeCopyShortcutCopiesSelectedProcessOutputAsPlainText(t *testing.T) {
+	previousWriter := clipboardTextWriter
+	var copied string
+	clipboardTextWriter = func(text string) error {
+		copied = text
+		return nil
+	}
+	t.Cleanup(func() {
+		clipboardTextWriter = previousWriter
+	})
+
+	projectPath := "/tmp/demo"
+	project := model.ProjectSummary{Name: "demo", Path: projectPath, PresentOnDisk: true}
+	snapshots := []projectrun.Snapshot{
+		{
+			ID:           "frontend",
+			Name:         "frontend",
+			ProjectPath:  projectPath,
+			RecentOutput: []string{"\x1b[31mfrontend failed\x1b[0m", "stack trace"},
+		},
+		{
+			ID:           "emulator",
+			Name:         "emulator",
+			ProjectPath:  projectPath,
+			RecentOutput: []string{"emulator output"},
+		},
+	}
+	m := Model{
+		projects:                []model.ProjectSummary{project},
+		allProjects:             []model.ProjectSummary{project},
+		selected:                0,
+		focusedPane:             focusRuntime,
+		runtimeSnapshots:        cloneRuntimeSnapshots(snapshots),
+		runtimeProcessSnapshots: cloneRuntimeProcessSnapshots(snapshots),
+		runtimeProcessSelected:  map[string]string{projectPath: "frontend"},
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("runtime copy shortcut should queue clipboard work")
+	}
+	if !got.runtimeOutputCopyBusy || got.status != "Copying runtime output..." {
+		t.Fatalf("copy state = busy %t, status %q", got.runtimeOutputCopyBusy, got.status)
+	}
+	if repeat := got.copySelectedRuntimeOutput(); repeat != nil {
+		t.Fatalf("repeat runtime copy should be ignored while clipboard work is in flight")
+	}
+
+	raw := cmd()
+	if copied != "frontend failed\nstack trace" {
+		t.Fatalf("copied runtime output = %q, want selected frontend output without ANSI", copied)
+	}
+	msg, ok := raw.(runtimeOutputCopyMsg)
+	if !ok {
+		t.Fatalf("runtime copy command returned %T, want runtimeOutputCopyMsg", raw)
+	}
+	updated, followup := got.update(msg)
+	got = updated.(Model)
+	if followup != nil {
+		t.Fatalf("runtime copy result should not queue follow-up work")
+	}
+	if got.runtimeOutputCopyBusy {
+		t.Fatalf("runtime copy should clear its busy state after completion")
+	}
+	if got.status != "Copied runtime output to clipboard" {
+		t.Fatalf("copy status = %q, want clipboard confirmation", got.status)
+	}
+}
+
+func TestRuntimeTodoActionPrefillsRepositoryScopedFailureTodo(t *testing.T) {
+	rootPath := "/tmp/demo"
+	worktreePath := "/tmp/demo--runtime-fix"
+	root := model.ProjectSummary{
+		Name:          "demo",
+		Path:          rootPath,
+		PresentOnDisk: true,
+		RunCommand:    "pnpm root-command",
+	}
+	worktree := model.ProjectSummary{
+		Name:             "demo--runtime-fix",
+		Path:             worktreePath,
+		PresentOnDisk:    true,
+		RunCommand:       "pnpm worktree-command",
+		WorktreeRootPath: rootPath,
+		WorktreeKind:     model.WorktreeKindLinked,
+	}
+	m := Model{
+		projects:              []model.ProjectSummary{worktree},
+		allProjects:           []model.ProjectSummary{root, worktree},
+		selected:              0,
+		focusedPane:           focusRuntime,
+		runtimeActionSelected: 4,
+		runtimeSnapshots: map[string]projectrun.Snapshot{
+			worktreePath: {
+				ID:            "rt_frontend",
+				Name:          "frontend",
+				ProjectPath:   worktreePath,
+				Command:       "pnpm worktree-command",
+				CWD:           filepath.Join(worktreePath, "web"),
+				ExitCode:      1,
+				ExitCodeKnown: true,
+				LastError:     "exit status 1",
+				RecentOutput: []string{
+					"\x1b[31mError: build crushed\x1b[0m",
+					"at compile (src/app.ts:42:7)",
+				},
+			},
+		},
+	}
+
+	updated, cmd := m.updateNormalMode(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatalf("runtime TODO action should focus the editor and refresh project TODO data")
+	}
+	if got.todoDialog == nil || got.todoDialog.ProjectPath != rootPath {
+		t.Fatalf("TODO dialog = %#v, want repository root %q", got.todoDialog, rootPath)
+	}
+	if got.todoEditor == nil || got.todoEditor.ProjectPath != rootPath || got.todoEditor.TodoID != 0 {
+		t.Fatalf("TODO editor = %#v, want new repository-scoped TODO", got.todoEditor)
+	}
+	text := got.todoEditor.Input.Value()
+	for _, want := range []string{
+		"Investigate and fix this runtime failure.",
+		"Run command: pnpm worktree-command",
+		"Working directory: web",
+		"Runtime process: rt_frontend frontend",
+		"Exit code: 1",
+		"Error: exit status 1",
+		"Recent run output:",
+		"Error: build crushed",
+		"at compile (src/app.ts:42:7)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("runtime TODO text missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "\x1b[") {
+		t.Fatalf("runtime TODO should strip terminal styling: %q", text)
+	}
+	if strings.Contains(text, "pnpm root-command") {
+		t.Fatalf("runtime TODO should describe the selected worktree run, not the root's saved command: %q", text)
+	}
+	if got.status != "Review the runtime output TODO, then press Ctrl+S to add it" {
+		t.Fatalf("TODO status = %q, want review guidance", got.status)
+	}
+}
+
+func TestRuntimeTodoOutputKeepsRecentTailWithinEditorLimit(t *testing.T) {
+	const tail = "THE-ACTIONABLE-ERROR-AT-THE-END"
+	text := formatRuntimeOutputTodo(
+		model.ProjectSummary{Path: "/tmp/demo", RunCommand: "pnpm dev"},
+		projectrun.Snapshot{
+			ID:           "default",
+			ProjectPath:  "/tmp/demo",
+			RecentOutput: []string{strings.Repeat("old output ", todoTextCharLimit) + tail},
+		},
+	)
+
+	if got := len([]rune(text)); got > todoTextCharLimit {
+		t.Fatalf("runtime TODO length = %d, want <= %d", got, todoTextCharLimit)
+	}
+	if !strings.Contains(text, "Earlier captured runtime output omitted") {
+		t.Fatalf("runtime TODO should explain that older captured output was clipped")
+	}
+	if !strings.HasSuffix(text, tail) {
+		t.Fatalf("runtime TODO should preserve the actionable tail, got suffix %q", text[len(text)-min(len(text), 100):])
 	}
 }
 

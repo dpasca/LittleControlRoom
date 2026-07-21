@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -442,8 +443,174 @@ func TestTodoDialogHereBlocksFreshSessionWhenProviderLaneBusy(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("launch requests = %d, want only the seeded busy session", len(requests))
 	}
-	if !strings.Contains(got.status, "embedded OpenCode engineer session is already running") || !strings.Contains(got.status, "TODO #7") {
-		t.Fatalf("status = %q, want active-turn block for TODO #7", got.status)
+	if got.status != "TODO #7 launch blocked" {
+		t.Fatalf("status = %q, want concise blocked-launch status", got.status)
+	}
+	if got.attentionDialog == nil {
+		t.Fatalf("busy engineer lane should show a blocking attention dialog")
+	}
+	if got.attentionDialog.Title != "TODO launch blocked" {
+		t.Fatalf("attention dialog title = %q, want TODO launch blocked", got.attentionDialog.Title)
+	}
+	rendered := ansi.Strip(got.renderAttentionDialogContent(72))
+	for _, want := range []string{
+		"embedded OpenCode engineer session is already running",
+		"TODO #7",
+		"Choose Dedicated worktree",
+		"OK",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("attention dialog missing %q:\n%s", want, rendered)
+		}
+	}
+	if severity := topStatusSeverityForMessage(got.status, nil); severity != topStatusSeverityWarning {
+		t.Fatalf("top status severity = %d, want warning", severity)
+	}
+}
+
+func TestTodoDialogHereShowsModalWhenProviderLaneIsIdleButOpen(t *testing.T) {
+	var requests []codexapp.LaunchRequest
+	manager := codexapp.NewManagerWithFactory(func(req codexapp.LaunchRequest, notify func()) (codexapp.Session, error) {
+		requests = append(requests, req)
+		return &fakeCodexSession{
+			projectPath: req.ProjectPath,
+			snapshot: codexapp.Snapshot{
+				Provider: req.Provider.Normalized(),
+				ThreadID: "thread-open",
+				Started:  true,
+				Phase:    codexapp.SessionPhaseIdle,
+			},
+		}, nil
+	})
+	if _, _, err := manager.Open(codexapp.LaunchRequest{
+		ProjectPath: "/tmp/demo",
+		Provider:    codexapp.ProviderCodex,
+		ResumeID:    "thread-open",
+	}); err != nil {
+		t.Fatalf("manager.Open() error = %v", err)
+	}
+
+	m := Model{
+		codexManager: manager,
+		projects: []model.ProjectSummary{{
+			Path:                "/tmp/demo",
+			Name:                "demo",
+			PresentOnDisk:       true,
+			LatestSessionFormat: "codex",
+		}},
+		todoCopyDialog: &todoCopyDialogState{
+			ProjectPath: "/tmp/demo",
+			TodoID:      792,
+			RunMode:     todoCopyModeHere,
+			Provider:    codexapp.ProviderCodex,
+		},
+	}
+
+	updated, cmd := m.startTodoInProjectPath(
+		"/tmp/demo",
+		792,
+		"Do not replace an open Codex session",
+		nil,
+		codexapp.ProviderCodex,
+		false,
+	)
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("open engineer lane should block fresh TODO launch")
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("TODO launcher should remain open beneath the warning")
+	}
+	if got.status != "TODO #792 launch blocked" {
+		t.Fatalf("status = %q, want concise blocked-launch status", got.status)
+	}
+	if got.attentionDialog == nil {
+		t.Fatalf("open engineer lane should show a blocking attention dialog")
+	}
+	for _, want := range []string{
+		"embedded Codex engineer session is still open for TODO #792",
+		"An idle turn does not show that its task is finished",
+		"dedicated worktree",
+	} {
+		if !strings.Contains(got.attentionDialog.Message, want) {
+			t.Fatalf("attention dialog message missing %q: %q", want, got.attentionDialog.Message)
+		}
+	}
+	rendered := ansi.Strip(got.renderAttentionDialogContent(72))
+	for _, want := range []string{
+		"TODO launch blocked",
+		"Choose Dedicated worktree",
+		"OK",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("attention dialog missing %q:\n%s", want, rendered)
+		}
+	}
+	if severity := topStatusSeverityForMessage(got.status, nil); severity != topStatusSeverityWarning {
+		t.Fatalf("top status severity = %d, want warning", severity)
+	}
+	withANSI256DarkBackground(t)
+	if colored := got.renderAttentionDialogPanel(80); !strings.Contains(colored, "38;5;178") {
+		t.Fatalf("blocked-launch dialog should use the warning color, got %q", colored)
+	}
+	if len(requests) != 1 {
+		t.Fatalf("launch requests = %d, want only the existing Codex session", len(requests))
+	}
+
+	updated, cmd = got.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("acknowledging the warning should not start another action")
+	}
+	if got.attentionDialog != nil {
+		t.Fatalf("Enter should acknowledge and close the warning")
+	}
+	if got.todoCopyDialog == nil {
+		t.Fatalf("TODO launcher should remain available after acknowledgement")
+	}
+}
+
+func TestTodoSessionOpenFailureShowsErrorModal(t *testing.T) {
+	m := Model{
+		todoLaunchDrafts: map[string]todoLaunchDraftState{
+			"/tmp/demo": {
+				projectPath: "/tmp/demo",
+				todoID:      792,
+				provider:    codexapp.ProviderCodex,
+			},
+		},
+		codexInput:    newCodexTextarea(),
+		codexViewport: viewport.New(0, 0),
+		width:         100,
+		height:        24,
+	}
+
+	updated, cmd := m.applyCodexSessionOpenedMsg(codexSessionOpenedMsg{
+		projectPath: "/tmp/demo",
+		provider:    codexapp.ProviderCodex,
+		err:         fmt.Errorf("codex startup failed"),
+	})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("failed TODO session open should not return a follow-up command")
+	}
+	if got.status != "TODO launch failed (use /errors)" {
+		t.Fatalf("status = %q, want TODO launch failure", got.status)
+	}
+	if got.attentionDialog == nil {
+		t.Fatalf("failed TODO session open should show an error dialog")
+	}
+	if got.attentionDialog.Severity != attentionDialogSeverityError {
+		t.Fatalf("attention dialog severity = %d, want error", got.attentionDialog.Severity)
+	}
+	if got.attentionDialog.Message != "codex startup failed" {
+		t.Fatalf("attention dialog message = %q, want startup error", got.attentionDialog.Message)
+	}
+	if _, ok := got.todoLaunchDraftFor("/tmp/demo"); ok {
+		t.Fatalf("failed TODO session open should clear its launch draft")
+	}
+	if len(got.errorLogEntries) == 0 || got.errorLogEntries[0].Message != "codex startup failed" {
+		t.Fatalf("latest error log entry = %#v, want startup error", got.errorLogEntries)
 	}
 }
 

@@ -387,7 +387,7 @@ func (s *Service) PrepareCommit(ctx context.Context, projectPath string, intent 
 	}
 
 	// Collect open TODOs for the AI to evaluate.
-	openTodos, commitTodos := s.commitTodoRefsForDetail(ctx, detail)
+	openTodos, commitTodos := s.commitTodoRefsForDetail(ctx, detail, time.Time{})
 
 	messageOverride = normalizeCommitMessage(messageOverride)
 	if messageOverride != "" {

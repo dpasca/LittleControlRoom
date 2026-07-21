@@ -204,6 +204,7 @@ type Model struct {
 	detailViewport        viewport.Model
 	runtimeViewport       viewport.Model
 	runtimeActionSelected int
+	runtimeOutputCopyBusy bool
 	focusedPane           paneFocus
 	assessmentFlashUntil  map[string]time.Time
 	selectionFlashUntil   time.Time
@@ -430,6 +431,11 @@ type codexArtifactLinkScanMsg struct {
 type runtimeActionMsg struct {
 	projectPath string
 	status      string
+	err         error
+}
+
+type runtimeOutputCopyMsg struct {
+	projectPath string
 	err         error
 }
 
@@ -1478,6 +1484,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.selfUpdateDialog != nil {
 			return m.updateSelfUpdateDialogMode(msg)
 		}
+		if m.attentionDialog != nil {
+			return m.updateAttentionDialogMode(msg)
+		}
 		if m.bossSetupPrompt != nil {
 			return m.updateBossSetupPromptMode(msg)
 		}
@@ -1543,9 +1552,6 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.suspendedTurnDialog != nil {
 			return m.updateSuspendedTurnResumeDialogMode(msg)
-		}
-		if m.attentionDialog != nil {
-			return m.updateAttentionDialogMode(msg)
 		}
 		if m.newProjectDialog != nil {
 			return m.updateNewProjectMode(msg)
@@ -2140,6 +2146,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyCodexArtifactPreviewMsg(msg)
 	case codexArtifactLinkScanMsg:
 		return m.applyCodexArtifactLinkScanMsg(msg)
+	case runtimeOutputCopyMsg:
+		return m.applyRuntimeOutputCopyMsg(msg)
 	case runtimeActionMsg:
 		if msg.err != nil {
 			m.reportError("Runtime action failed", msg.err, msg.projectPath)
@@ -2393,7 +2401,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if pendingRootPath != "" {
 				m.rebuildProjectList(selectAfterPending)
 			}
-			m.reportError("TODO launch failed", msg.err, msg.projectPath)
+			m.reportTodoLaunchError(msg.err, msg.projectPath)
 			return m, nil
 		}
 		provider := msg.provider.Normalized()
@@ -2461,7 +2469,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if err := req.Validate(); err != nil {
 			m.clearTodoLaunchDraft(msg.projectPath)
-			m.reportError("Embedded session open failed", err, msg.projectPath)
+			m.reportTodoLaunchError(err, msg.projectPath)
 			return m, nil
 		}
 		m.ensureCodexRuntime()

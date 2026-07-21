@@ -63,14 +63,15 @@ type Service struct {
 
 	backendDetector func(context.Context, config.AppConfig, config.AIBackend) aibackend.Status
 
-	commitMessageSuggester   gitops.CommitMessageSuggester
-	commitTodoChecker        gitops.CommitTodoCompletionChecker
-	untrackedFileRecommender gitops.UntrackedFileRecommender
-	commitAssistantTimeout   time.Duration
-	llmUsageTracker          *llm.UsageTracker
-	bossChatUsageTracker     *llm.UsageTracker
-	opencodeDiscovery        *llm.OpenCodeDiscovery
-	sessionUsageCache        atomic.Value
+	commitMessageSuggester     gitops.CommitMessageSuggester
+	commitTodoChecker          gitops.CommitTodoCompletionChecker
+	commitTodoEvidenceSelector gitops.CommitTodoEvidenceSelector
+	untrackedFileRecommender   gitops.UntrackedFileRecommender
+	commitAssistantTimeout     time.Duration
+	llmUsageTracker            *llm.UsageTracker
+	bossChatUsageTracker       *llm.UsageTracker
+	opencodeDiscovery          *llm.OpenCodeDiscovery
+	sessionUsageCache          atomic.Value
 
 	gitFingerprintReader      func(context.Context, string) (scanner.GitFingerprint, error)
 	gitRepoStatusReader       func(context.Context, string) (scanner.GitRepoStatus, error)
@@ -145,8 +146,9 @@ type ScanReport struct {
 }
 
 type ScanOptions struct {
-	ForceRetryFailedClassifications bool
-	SkipLinkedWorktreeStatusRefresh bool
+	ForceRetryFailedClassifications  bool
+	ForceRetryFailedCommitTodoChecks bool
+	SkipLinkedWorktreeStatusRefresh  bool
 }
 
 func New(cfg config.AppConfig, st *store.Store, bus *events.Bus, detectorList []detectors.Detector) *Service {
@@ -259,6 +261,15 @@ func (s *Service) currentCommitTodoChecker() gitops.CommitTodoCompletionChecker 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.commitTodoChecker
+}
+
+func (s *Service) currentCommitTodoEvidenceSelector() gitops.CommitTodoEvidenceSelector {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.commitTodoEvidenceSelector
 }
 
 func (s *Service) currentUntrackedFileRecommender() gitops.UntrackedFileRecommender {
@@ -1078,6 +1089,9 @@ func (s *Service) configureAIClientsLocked() {
 	}
 	s.commitMessageSuggester = commitAssistant
 	s.commitTodoChecker = commitAssistant
+	// Evidence selection must use a model routed by the same provider as the
+	// commit assistant. Boss utility models may belong to a different backend.
+	s.commitTodoEvidenceSelector = commitAssistant
 	s.untrackedFileRecommender = commitAssistant
 	if manager, ok := s.classifier.(*sessionclassify.Manager); ok {
 		manager.ConfigureClientWithUnavailableReason(client, unavailableReason)
@@ -1198,6 +1212,16 @@ func (s *Service) tryScanWithOptions(ctx context.Context, opts ScanOptions) (Sca
 
 func (s *Service) scanWithOptions(ctx context.Context, opts ScanOptions, progress *scanProgressTracker) (ScanReport, error) {
 	progress.setPhase("starting project scan")
+	if opts.ForceRetryFailedCommitTodoChecks {
+		progress.setPhase("retrying failed commit TODO checks")
+		requeued, err := s.store.RequeueRetryableFailedCommitTodoChecks(ctx, "")
+		if err != nil {
+			return ScanReport{}, progress.wrapTimeout(fmt.Errorf("retry failed commit TODO checks: %w", err))
+		}
+		if requeued > 0 {
+			s.NotifyCommitTodoChecker()
+		}
+	}
 	runtime := s.runtimeSnapshot()
 	cfg := runtime.cfg
 	classifier := runtime.classifier

@@ -145,6 +145,7 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 	m.err = nil
 	renameRefreshCmd := m.scratchTaskRenameRefreshCmd(msg.projectPath, msg.renamedTask, msg.renameErr)
 	if msg.err != nil {
+		_, todoLaunch := m.todoLaunchDraftFor(msg.projectPath)
 		provider := msg.provider.Normalized()
 		if provider == "" {
 			provider = m.codexPendingOpenProvider()
@@ -164,7 +165,11 @@ func (m Model) applyCodexSessionOpenedMsg(msg codexSessionOpenedMsg) (tea.Model,
 				m.showEmbeddedOpenFailure(msg.projectPath, provider, msg.err)
 			}
 		}
-		m.reportError("Embedded session open failed", msg.err, msg.projectPath)
+		if todoLaunch {
+			m.reportTodoLaunchError(msg.err, msg.projectPath)
+		} else {
+			m.reportError("Embedded session open failed", msg.err, msg.projectPath)
+		}
 		if msg.restartWarmup {
 			m.settleRestartWarmup(msg.projectPath, false)
 		}

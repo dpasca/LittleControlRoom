@@ -897,7 +897,9 @@ func (s *Store) QueueCommitTodoCheck(ctx context.Context, check model.CommitTodo
 		}
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE commit_todo_checks
-			SET base_hash = ?, status = ?, model = '', completed_todo_ids = '', last_error = '', updated_at = ?
+			SET base_hash = ?, status = ?, model = '', completed_todo_ids = '',
+				decision_json = '', evidence_json = '', last_error = '',
+				next_attempt_at = 0, auto_retry = 1, updated_at = ?
 			WHERE project_path = ? AND head_hash = ?
 		`, baseHash, string(model.CommitTodoCheckQueued), now.Unix(), projectPath, headHash)
 		return err == nil, err
@@ -907,10 +909,27 @@ func (s *Store) QueueCommitTodoCheck(ctx context.Context, check model.CommitTodo
 	}
 
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO commit_todo_checks(project_path, head_hash, base_hash, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO commit_todo_checks(
+			project_path, head_hash, base_hash, status, auto_retry, created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, 1, ?, ?)
 	`, projectPath, headHash, baseHash, string(model.CommitTodoCheckQueued), now.Unix(), now.Unix())
 	return err == nil, err
+}
+
+func (s *Store) GetCommitTodoCheck(ctx context.Context, projectPath, headHash string) (model.CommitTodoCheck, error) {
+	projectPath = filepath.Clean(strings.TrimSpace(projectPath))
+	headHash = strings.TrimSpace(headHash)
+	if projectPath == "" || projectPath == "." || headHash == "" {
+		return model.CommitTodoCheck{}, errors.New("commit TODO check requires project_path and head_hash")
+	}
+	return scanCommitTodoCheck(s.db.QueryRowContext(ctx, `
+		SELECT project_path, base_hash, head_hash, status, model,
+			completed_todo_ids, decision_json, evidence_json, last_error,
+			attempt_count, next_attempt_at, auto_retry, created_at, updated_at
+		FROM commit_todo_checks
+		WHERE project_path = ? AND head_hash = ?
+	`, projectPath, headHash))
 }
 
 func (s *Store) ClaimNextQueuedCommitTodoCheck(ctx context.Context, staleAfter time.Duration) (model.CommitTodoCheck, error) {
@@ -919,50 +938,39 @@ func (s *Store) ClaimNextQueuedCommitTodoCheck(ctx context.Context, staleAfter t
 	if staleAfter <= 0 {
 		staleBefore = now
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
-
-	check, err := scanCommitTodoCheck(tx.QueryRowContext(ctx, `
-		SELECT project_path, base_hash, head_hash, status, model, completed_todo_ids, last_error, created_at, updated_at
-		FROM commit_todo_checks
-		WHERE status = ? OR (status = ? AND updated_at <= ?)
-		ORDER BY updated_at ASC, created_at ASC
-		LIMIT 1
-	`, string(model.CommitTodoCheckQueued), string(model.CommitTodoCheckRunning), staleBefore.Unix()))
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-
-	result, err := tx.ExecContext(ctx, `
+	return scanCommitTodoCheck(s.db.QueryRowContext(ctx, `
+		WITH next_check AS (
+			SELECT project_path, head_hash
+			FROM commit_todo_checks
+			WHERE status = ?
+				OR (status = ? AND updated_at <= ?)
+				OR (status = ? AND auto_retry = 1 AND next_attempt_at <= ?)
+			ORDER BY
+				CASE status WHEN ? THEN 0 WHEN ? THEN 1 ELSE 2 END,
+				updated_at ASC,
+				created_at ASC
+			LIMIT 1
+		)
 		UPDATE commit_todo_checks
-		SET status = ?, updated_at = ?
-		WHERE project_path = ? AND head_hash = ? AND (status = ? OR status = ?)
-	`, string(model.CommitTodoCheckRunning), now.Unix(), check.ProjectPath, check.HeadHash, string(model.CommitTodoCheckQueued), string(model.CommitTodoCheckRunning))
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	if affected == 0 {
-		err = sql.ErrNoRows
-		return model.CommitTodoCheck{}, err
-	}
-	check.Status = model.CommitTodoCheckRunning
-	check.UpdatedAt = now
-
-	if err = tx.Commit(); err != nil {
-		return model.CommitTodoCheck{}, err
-	}
-	return check, nil
+		SET status = ?, attempt_count = attempt_count + 1,
+			next_attempt_at = 0, updated_at = ?
+		WHERE (project_path, head_hash) IN (
+			SELECT project_path, head_hash FROM next_check
+		)
+		RETURNING project_path, base_hash, head_hash, status, model,
+			completed_todo_ids, decision_json, evidence_json, last_error,
+			attempt_count, next_attempt_at, auto_retry, created_at, updated_at
+	`,
+		string(model.CommitTodoCheckQueued),
+		string(model.CommitTodoCheckRunning),
+		staleBefore.Unix(),
+		string(model.CommitTodoCheckFailed),
+		now.Unix(),
+		string(model.CommitTodoCheckQueued),
+		string(model.CommitTodoCheckRunning),
+		string(model.CommitTodoCheckRunning),
+		now.Unix(),
+	))
 }
 
 func (s *Store) CompleteCommitTodoCheck(ctx context.Context, check model.CommitTodoCheck) (bool, error) {
@@ -977,9 +985,20 @@ func (s *Store) CompleteCommitTodoCheck(ctx context.Context, check model.CommitT
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE commit_todo_checks
-		SET status = ?, model = ?, completed_todo_ids = ?, last_error = '', updated_at = ?
+		SET status = ?, model = ?, completed_todo_ids = ?,
+			decision_json = ?, evidence_json = ?, last_error = '',
+			next_attempt_at = 0, updated_at = ?
 		WHERE project_path = ? AND head_hash = ?
-	`, string(model.CommitTodoCheckCompleted), strings.TrimSpace(check.Model), formatInt64Lines(check.CompletedTodoIDs), now.Unix(), projectPath, headHash)
+	`,
+		string(model.CommitTodoCheckCompleted),
+		strings.TrimSpace(check.Model),
+		formatInt64Lines(check.CompletedTodoIDs),
+		strings.TrimSpace(check.DecisionJSON),
+		strings.TrimSpace(check.EvidenceJSON),
+		now.Unix(),
+		projectPath,
+		headHash,
+	)
 	if err != nil {
 		return false, err
 	}
@@ -987,23 +1006,66 @@ func (s *Store) CompleteCommitTodoCheck(ctx context.Context, check model.CommitT
 	return affected > 0, err
 }
 
-func (s *Store) FailCommitTodoCheck(ctx context.Context, check model.CommitTodoCheck, lastError string) (bool, error) {
+func (s *Store) FailCommitTodoCheck(ctx context.Context, check model.CommitTodoCheck, lastError string, retryAfter time.Duration) (bool, error) {
 	projectPath := filepath.Clean(strings.TrimSpace(check.ProjectPath))
 	headHash := strings.TrimSpace(check.HeadHash)
 	if projectPath == "" || projectPath == "." || headHash == "" {
 		return false, errors.New("commit TODO check requires project_path and head_hash")
 	}
 	now := time.Now()
+	nextAttemptAt := int64(0)
+	if check.AutoRetry {
+		if retryAfter < 0 {
+			retryAfter = 0
+		}
+		nextAttemptAt = now.Add(retryAfter).Unix()
+	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE commit_todo_checks
-		SET status = ?, last_error = ?, updated_at = ?
+		SET status = ?, model = ?, completed_todo_ids = ?,
+			decision_json = ?, evidence_json = ?,
+			last_error = ?, next_attempt_at = ?, updated_at = ?
 		WHERE project_path = ? AND head_hash = ?
-	`, string(model.CommitTodoCheckFailed), strings.TrimSpace(lastError), now.Unix(), projectPath, headHash)
+	`,
+		string(model.CommitTodoCheckFailed),
+		strings.TrimSpace(check.Model),
+		formatInt64Lines(check.CompletedTodoIDs),
+		strings.TrimSpace(check.DecisionJSON),
+		strings.TrimSpace(check.EvidenceJSON),
+		strings.TrimSpace(lastError),
+		nextAttemptAt,
+		now.Unix(),
+		projectPath,
+		headHash,
+	)
 	if err != nil {
 		return false, err
 	}
 	affected, err := result.RowsAffected()
 	return affected > 0, err
+}
+
+func (s *Store) RequeueRetryableFailedCommitTodoChecks(ctx context.Context, projectPath string) (int64, error) {
+	projectPath = strings.TrimSpace(projectPath)
+	query := `
+		UPDATE commit_todo_checks
+		SET status = ?, auto_retry = 1, next_attempt_at = 0, updated_at = ?
+		WHERE status = ? AND auto_retry = 1
+	`
+	args := []any{
+		string(model.CommitTodoCheckQueued),
+		time.Now().Unix(),
+		string(model.CommitTodoCheckFailed),
+	}
+	if projectPath != "" {
+		query += ` AND project_path = ?`
+		args = append(args, filepath.Clean(projectPath))
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (s *Store) MoveProjectPath(ctx context.Context, oldPath, newPath string, movedAt time.Time) error {

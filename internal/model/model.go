@@ -229,7 +229,12 @@ type CommitTodoCheck struct {
 	Status           CommitTodoCheckStatus
 	Model            string
 	CompletedTodoIDs []int64
+	DecisionJSON     string
+	EvidenceJSON     string
 	LastError        string
+	AttemptCount     int
+	NextAttemptAt    time.Time
+	AutoRetry        bool
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }

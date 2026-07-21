@@ -64,6 +64,10 @@ func (m Model) updateNormalMode(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.focusedPane == focusRuntime {
 			return m, m.activateRuntimePaneAction()
 		}
+	case "c":
+		if m.focusedPane == focusRuntime {
+			return m, m.copySelectedRuntimeOutput()
+		}
 	case "up", "k":
 		if m.focusedPane == focusDetail {
 			m.detailViewport.LineUp(1)

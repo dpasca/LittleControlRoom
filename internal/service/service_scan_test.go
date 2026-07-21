@@ -534,6 +534,53 @@ func TestScanWithOptionsForceRetriesFailedClassifications(t *testing.T) {
 	}
 }
 
+func TestScanWithOptionsForceRetriesFailedCommitTodoChecks(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "little-control-room.sqlite"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	projectPath := "/tmp/force-retry-commit-todo"
+	headHash := "failed-head"
+	if queued, err := st.QueueCommitTodoCheck(ctx, model.CommitTodoCheck{
+		ProjectPath: projectPath,
+		BaseHash:    "base",
+		HeadHash:    headHash,
+		UpdatedAt:   time.Now(),
+	}); err != nil || !queued {
+		t.Fatalf("queue commit TODO check = %v, %v", queued, err)
+	}
+	check, err := st.ClaimNextQueuedCommitTodoCheck(ctx, time.Minute)
+	if err != nil {
+		t.Fatalf("claim commit TODO check: %v", err)
+	}
+	if updated, err := st.FailCommitTodoCheck(ctx, check, "temporary failure", time.Hour); err != nil || !updated {
+		t.Fatalf("fail commit TODO check = %v, %v", updated, err)
+	}
+
+	cfg := config.Default()
+	cfg.IncludePaths = nil
+	svc := New(cfg, st, events.NewBus(), nil)
+	svc.SetSessionClassifier(nil)
+	svc.gitFingerprintReader = nil
+	svc.gitRepoStatusReader = nil
+	if _, err := svc.ScanWithOptions(ctx, ScanOptions{ForceRetryFailedCommitTodoChecks: true}); err != nil {
+		t.Fatalf("scan with forced commit TODO retry: %v", err)
+	}
+
+	requeued, err := st.GetCommitTodoCheck(ctx, projectPath, headHash)
+	if err != nil {
+		t.Fatalf("get requeued check: %v", err)
+	}
+	if requeued.Status != model.CommitTodoCheckQueued || !requeued.AutoRetry || !requeued.NextAttemptAt.IsZero() {
+		t.Fatalf("forced retry state = %#v, want queued and due now", requeued)
+	}
+}
+
 func TestScanHidesManagedInternalProjects(t *testing.T) {
 	t.Parallel()
 
