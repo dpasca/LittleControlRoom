@@ -10,6 +10,7 @@ import (
 	"lcroom/internal/demorecord"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type editorClock struct {
@@ -78,6 +79,9 @@ func TestEditorMarksAndPersistsAClipWithoutBlockingUpdate(t *testing.T) {
 	if model.loading {
 		t.Fatal("editor remained loading")
 	}
+	if !model.smartTiming {
+		t.Fatal("new editor selection did not default to smart timing")
+	}
 
 	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRight})
 	model = next.(Model)
@@ -108,7 +112,7 @@ func TestEditorMarksAndPersistsAClipWithoutBlockingUpdate(t *testing.T) {
 	if model.busy || len(model.edits.Clips) != 1 {
 		t.Fatalf("saved state busy=%v clips=%#v", model.busy, model.edits.Clips)
 	}
-	if got := model.edits.Clips[0]; got.InMS != 1000 || got.OutMS != 2000 {
+	if got := model.edits.Clips[0]; got.InMS != 1000 || got.OutMS != 2000 || !got.SmartTiming {
 		t.Fatalf("saved clip = %#v", got)
 	}
 
@@ -118,6 +122,40 @@ func TestEditorMarksAndPersistsAClipWithoutBlockingUpdate(t *testing.T) {
 	}
 	if got, want := len(loaded.Clips), 1; got != want {
 		t.Fatalf("persisted clips = %d, want %d", got, want)
+	}
+	if !loaded.Clips[0].SmartTiming {
+		t.Fatalf("persisted clip lost smart timing: %#v", loaded.Clips[0])
+	}
+}
+
+func TestEditorCanToggleSmartTimingBeforeSaving(t *testing.T) {
+	t.Parallel()
+
+	model := loadInitialEditorModel(t)
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	model = next.(Model)
+	if model.smartTiming {
+		t.Fatal("smart timing remained enabled after toggle")
+	}
+	if !strings.Contains(model.status, "off") {
+		t.Fatalf("toggle status = %q", model.status)
+	}
+
+	clip := model.currentSelectionClip()
+	if clip.SmartTiming {
+		t.Fatalf("selection clip retained smart timing: %#v", clip)
+	}
+}
+
+func TestEditorNewSelectionRestoresSmartTimingDefault(t *testing.T) {
+	t.Parallel()
+
+	model := loadInitialEditorModel(t)
+	model.smartTiming = false
+	next, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model = next.(Model)
+	if !model.smartTiming {
+		t.Fatal("new selection inherited disabled smart timing")
 	}
 }
 
@@ -199,6 +237,7 @@ func TestPlayerStartsAtClipInPointWithCleanFullFrame(t *testing.T) {
 		InMS:            1000,
 		OutMS:           3000,
 		IdleTimeLimitMS: 500,
+		SmartTiming:     true,
 	}
 	model, err := NewPlayer(reader, clip)
 	if err != nil {
@@ -210,6 +249,9 @@ func TestPlayerStartsAtClipInPointWithCleanFullFrame(t *testing.T) {
 	model = next.(Model)
 	if !model.playing || tick == nil {
 		t.Fatalf("player state playing=%v tick=%v", model.playing, tick)
+	}
+	if !model.smartTiming {
+		t.Fatal("player did not restore the clip's smart timing")
 	}
 	if got, want := model.positionMS, int64(1000); got != want {
 		t.Fatalf("player position = %d, want %d", got, want)
@@ -223,5 +265,29 @@ func TestPlayerStartsAtClipInPointWithCleanFullFrame(t *testing.T) {
 	model = next.(Model)
 	if got, want := model.positionMS, int64(1000); got != want {
 		t.Fatalf("player sought before clip: %d, want %d", got, want)
+	}
+}
+
+func TestFitRecordedFramePadsEveryTerminalRow(t *testing.T) {
+	t.Parallel()
+
+	view := fitRecordedFrame("short\nlonger than width", 8, 3)
+	lines := strings.Split(view, "\n")
+	if got, want := len(lines), 3; got != want {
+		t.Fatalf("line count = %d, want %d", got, want)
+	}
+	for index, line := range lines {
+		if got, want := ansi.StringWidth(line), 8; got != want {
+			t.Fatalf("line %d width = %d, want %d: %q", index, got, want, line)
+		}
+	}
+	if got, want := lines[0], "short   "; got != want {
+		t.Fatalf("first line = %q, want %q", got, want)
+	}
+	if got, want := lines[1], "longer t"; got != want {
+		t.Fatalf("second line = %q, want %q", got, want)
+	}
+	if got, want := lines[2], "        "; got != want {
+		t.Fatalf("empty line = %q, want %q", got, want)
 	}
 }

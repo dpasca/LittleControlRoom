@@ -56,6 +56,8 @@ type Model struct {
 	inMS         int64
 	outMS        int64
 	idleLimit    time.Duration
+	smartTiming  bool
+	smartState   demorecord.SmartTimingState
 	selectedClip int
 
 	playing    bool
@@ -77,9 +79,11 @@ type chunkLoadedMsg struct {
 }
 
 type playAdvanceMsg struct {
-	token    uint64
-	targetMS int64
-	stop     bool
+	token        uint64
+	targetMS     int64
+	stop         bool
+	smartState   demorecord.SmartTimingState
+	stateUpdated bool
 }
 
 type editsSavedMsg struct {
@@ -116,6 +120,7 @@ func New(reader *demorecord.Reader, edits demorecord.EditProject) (Model, error)
 		inMS:          0,
 		outMS:         outMS,
 		idleLimit:     defaultIdleTime,
+		smartTiming:   true,
 		selectedClip:  -1,
 		status:        "Loading the first recorded frame…",
 	}
@@ -142,6 +147,7 @@ func NewPlayer(reader *demorecord.Reader, clip demorecord.Clip) (Model, error) {
 	model.playerOnly = true
 	model.playing = true
 	model.playToken = 1
+	model.smartTiming = clip.SmartTiming
 	switch {
 	case clip.IdleTimeLimitMS > 0:
 		model.idleLimit = time.Duration(clip.IdleTimeLimitMS) * time.Millisecond
@@ -170,6 +176,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case playAdvanceMsg:
 		if msg.token != m.playToken || !m.playing {
 			return m, nil
+		}
+		if msg.stateUpdated {
+			m.smartState = msg.smartState
 		}
 		if msg.stop {
 			m.playing = false
@@ -295,6 +304,8 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "n":
 		m.stopPlayback()
 		m.selectedClip = -1
+		m.smartTiming = true
+		m.smartState = demorecord.SmartTimingState{}
 		m.inMS = m.positionMS
 		m.outMS = minInt64(m.manifest.DurationMS, m.inMS+30_000)
 		if m.outMS <= m.inMS {
@@ -321,6 +332,15 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		m.cycleIdleLimit()
 		return m, nil
+	case "t":
+		m.smartTiming = !m.smartTiming
+		m.smartState = demorecord.SmartTimingState{}
+		if m.smartTiming {
+			m.status = "Smart timing on"
+		} else {
+			m.status = "Smart timing off"
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -339,6 +359,7 @@ func (m Model) togglePlayback() (tea.Model, tea.Cmd) {
 	m.err = nil
 	m.playing = true
 	m.playToken++
+	m.smartState = demorecord.SmartTimingState{}
 	if m.positionMS < m.inMS || m.positionMS >= m.outMS {
 		return m.seekTo(m.inMS, true)
 	}
@@ -350,6 +371,7 @@ func (m *Model) stopPlayback() {
 	m.playing = false
 	m.playToken++
 	m.playWhenReady = false
+	m.smartState = demorecord.SmartTimingState{}
 }
 
 func (m Model) seekTo(targetMS int64, continuePlaying bool) (tea.Model, tea.Cmd) {
@@ -415,9 +437,13 @@ func (m Model) scheduleNextFrame() tea.Cmd {
 	}
 	currentAt := m.positionMS
 	nextAt := int64(-1)
+	var nextFrame demorecord.Frame
+	haveNextFrame := false
 	for i := m.frameIndex + 1; i < len(m.frames); i++ {
 		if m.frames[i].AtMS > currentAt {
 			nextAt = m.frames[i].AtMS
+			nextFrame = m.frames[i]
+			haveNextFrame = true
 			break
 		}
 	}
@@ -430,7 +456,20 @@ func (m Model) scheduleNextFrame() tea.Cmd {
 	}
 	sourceDelay := time.Duration(maxInt64(0, nextAt-currentAt)) * time.Millisecond
 	delay := sourceDelay
-	if m.idleLimit > 0 && delay > m.idleLimit {
+	state := m.smartState
+	stateUpdated := false
+	if m.smartTiming {
+		observeLatestSmartInteraction(&state, m.manifest.InteractionMS, nextAt)
+	}
+	if m.smartTiming && stop {
+		delay = state.SmartExitDelay(nextAt, sourceDelay, m.idleLimit)
+		stateUpdated = true
+	} else if m.smartTiming && haveNextFrame {
+		if currentFrame, ok := m.currentFrame(); ok {
+			delay = state.SmartDelay(currentFrame, nextFrame, sourceDelay, m.idleLimit)
+			stateUpdated = true
+		}
+	} else if m.idleLimit > 0 && delay > m.idleLimit {
 		delay = m.idleLimit
 	}
 	if delay < 10*time.Millisecond {
@@ -438,8 +477,24 @@ func (m Model) scheduleNextFrame() tea.Cmd {
 	}
 	token := m.playToken
 	return tea.Tick(delay, func(time.Time) tea.Msg {
-		return playAdvanceMsg{token: token, targetMS: nextAt, stop: stop}
+		return playAdvanceMsg{
+			token:        token,
+			targetMS:     nextAt,
+			stop:         stop,
+			smartState:   state,
+			stateUpdated: stateUpdated,
+		}
 	})
+}
+
+func observeLatestSmartInteraction(state *demorecord.SmartTimingState, markers []int64, atMS int64) {
+	if state == nil || len(markers) == 0 {
+		return
+	}
+	index := sort.Search(len(markers), func(index int) bool { return markers[index] > atMS }) - 1
+	if index >= 0 {
+		state.ObserveInteraction(markers[index])
+	}
 }
 
 func (m Model) saveSelection() (tea.Model, tea.Cmd) {
@@ -502,6 +557,8 @@ func (m Model) selectNextClip() (tea.Model, tea.Cmd) {
 	} else {
 		m.idleLimit = defaultIdleTime
 	}
+	m.smartTiming = clip.SmartTiming
+	m.smartState = demorecord.SmartTimingState{}
 	m.status = "Selected " + clip.Name
 	return m.seekTo(clip.InMS, false)
 }
@@ -587,6 +644,7 @@ func (m Model) currentSelectionClip() demorecord.Clip {
 		InMS:            m.inMS,
 		OutMS:           m.outMS,
 		IdleTimeLimitMS: idleMS,
+		SmartTiming:     m.smartTiming,
 	}
 }
 
@@ -691,9 +749,15 @@ func (m Model) renderSelectionLine(width int) string {
 	if m.idleLimit > 0 {
 		idle = m.idleLimit.String()
 	}
+	timing := "source"
+	if m.smartTiming {
+		timing = "smart"
+	} else if m.idleLimit > 0 {
+		timing = "idle-cap"
+	}
 	left := editorInStyle.Render("IN "+formatDurationMS(m.inMS)) + "  " +
 		editorOutStyle.Render("OUT "+formatDurationMS(m.outMS)) + "  " +
-		fmt.Sprintf("length %s · idle ≤ %s", formatDurationMS(m.outMS-m.inMS), idle)
+		fmt.Sprintf("length %s · timing %s · idle ≤ %s", formatDurationMS(m.outMS-m.inMS), timing, idle)
 	bytes := int64(0)
 	for _, chunk := range m.manifest.Chunks {
 		bytes += chunk.Bytes
@@ -706,7 +770,7 @@ func (m Model) renderSelectionLine(width int) string {
 }
 
 func (m Model) renderHelpLine(width int) string {
-	help := "←/→ 1s  ⇧←/⇧→ 10s  PgUp/PgDn 1m  [/] activity  space play  i/o mark  n new  s save  tab clips  e export  f full  q"
+	help := "←/→ 1s  ⇧←/⇧→ 10s  PgUp/PgDn 1m  [/] activity  space play  i/o mark  n new  s save  tab clips  d idle  t timing  e export  f full  q"
 	return ansi.Truncate(editorHelpStyle.Render(help), width, "")
 }
 
@@ -762,10 +826,14 @@ func fitRecordedFrame(view string, width, height int) string {
 	}
 	lines := make([]string, 0, height)
 	for _, line := range rawLines {
-		lines = append(lines, ansi.Truncate(line, width, ""))
+		line = ansi.Truncate(line, width, "")
+		if padding := width - ansi.StringWidth(line); padding > 0 {
+			line += strings.Repeat(" ", padding)
+		}
+		lines = append(lines, line)
 	}
 	for len(lines) < height {
-		lines = append(lines, "")
+		lines = append(lines, strings.Repeat(" ", width))
 	}
 	return strings.Join(lines, "\n")
 }

@@ -59,6 +59,7 @@ type Clip struct {
 	InMS            int64  `json:"in_ms"`
 	OutMS           int64  `json:"out_ms"`
 	IdleTimeLimitMS int64  `json:"idle_time_limit_ms,omitempty"`
+	SmartTiming     bool   `json:"smart_timing,omitempty"`
 }
 
 func (c Clip) Validate(durationMS int64) error {

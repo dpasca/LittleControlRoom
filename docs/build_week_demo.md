@@ -44,6 +44,13 @@ content. This substitution happens before capture and does not alter the live
 TUI. It is a focused safeguard rather than a general redactor; public tabs and
 projects can still display sensitive paths, prompts, diffs, or identifiers.
 
+When selecting clips with `lcroom demo edit`, smart timing is enabled for new
+selections. It compresses hesitation during visible text entry, speeds up
+spinner/counter churn, and keeps completed input on screen briefly before a
+large transition. Press `t` to compare it with source/idle-cap timing. This is
+non-destructive and can be applied to recordings made before the feature was
+added.
+
 The GPT-5.6 Luna privacy reviewer remains a separate local prototype for now and is not automatically invoked by `make tui-record`. Promote it into a source-backed `lcroom demo audit` command before treating review as part of the durable recording workflow.
 
 The automated pass is screening, not final approval. Every clip selected for export still needs a last human check at full resolution.

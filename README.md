@@ -27,6 +27,53 @@ It is also used internally, but this is not a commercial product. It is an opini
 - Keeping common actions close at hand: refresh, pin, snooze, per-project TODO lists, managed per-project run commands with runtime/port badges, diff, commit, and push
 - Optionally letting LCR-embedded Codex, OpenCode, Claude Code, and LCAgent sessions add duplicate-checked, repository-scoped TODOs when work is explicitly deferred
 
+## OpenAI Build Week 2026
+
+Little Control Room predates Build Week. Its multi-project dashboard, embedded
+agent sessions, TODO/worktree workflow, and private project categories were
+already part of my daily development environment. The Build Week submission is
+the substantial extension made between July 13 and July 21, 2026: a
+privacy-aware way to record that real workflow and turn a long working session
+into a concise, reviewable demo.
+
+The new work includes:
+
+- Rendered-frame terminal recording with seekable, delta-compressed chunks and
+  a non-destructive clip editor.
+- Capture-time privacy masking. When a private category or an embedded session
+  for a private project is visible, the recorder stores a fixed private-view
+  frame instead of the rendered content.
+- Smart timing that accelerates low-information screen churn, evens out pauses
+  during visible input, and briefly holds completed input before a large screen
+  transition.
+- A source-based `make tui-record` workflow and an isolated OpenAI Build Week
+  profile using GPT-5.6 for primary reasoning and GPT-5.6 Luna for background
+  inference.
+
+GPT-5.6 Sol in Codex helped implement and validate the recording, privacy, and
+smart-timing workflow. The final demo shows a real Codex session working on
+that implementation. Inside LCR, GPT-5.6 Luna handles lower-cost recurring work
+such as project reports, automatic summaries, classification, titles, commit
+assistance, and TODO/worktree suggestions. It was also used for the final
+automated privacy review of the demo; that review supplements, rather than
+replaces, a human full-resolution check.
+
+Evidence from the Submission Period:
+
+| Date | Build Week extension | Commit |
+| --- | --- | --- |
+| July 19 | Rendered-frame recording and editing system | [`c36095d`](https://github.com/dpasca/LittleControlRoom/commit/c36095d) |
+| July 20 | Source-based daily recording target | [`c531e7e`](https://github.com/dpasca/LittleControlRoom/commit/c531e7e) |
+| July 20 | Capture-time masking for private views | [`8f0ef68`](https://github.com/dpasca/LittleControlRoom/commit/8f0ef68) |
+| July 20 | Smart timing for demo playback | [`71396d9`](https://github.com/dpasca/LittleControlRoom/commit/71396d9) |
+| July 20 | Full-frame clearing for reliable terminal playback | [`25483f3`](https://github.com/dpasca/LittleControlRoom/commit/25483f3) |
+
+For judging, LCR supports macOS and Linux; Windows is not currently supported.
+The installer and release archives below provide the quickest no-rebuild path.
+To exercise the Build Week recording extension directly from this branch, use
+`make tui-record`. See [the Build Week demo notes](docs/build_week_demo.md) for
+the isolated profile, privacy boundary, storage paths, and editor behavior.
+
 ## Quick Start
 
 ```bash
@@ -301,8 +348,12 @@ lcroom demo export walkthrough.lcrdemo --clip 1 --output walkthrough.cast
 The `.lcrdemo` source uses independently seekable gzip chunks and line deltas;
 identical views are omitted, so unchanged idle time does not generate frames.
 Exports use the standard asciicast v3 format for `asciinema play` or `agg`.
-Key values and text are not captured (only coarse interaction timestamps for
-navigation). Private category tabs and visible embedded sessions for private
+Optional smart timing smooths visible text-entry cadence, accelerates quiet
+screen churn, and pauses briefly before a large post-input transition without
+modifying the source recording.
+Raw key values and input events are not captured; visible text remains part of
+the recorded screen frames, and only coarse interaction timestamps are stored
+separately for navigation. Private category tabs and visible embedded sessions for private
 projects are replaced with a fixed mask before capture, but other visible
 terminal content can still be sensitive. See
 [Demo recordings](docs/reference.md#demo-recordings) for editor keys, storage

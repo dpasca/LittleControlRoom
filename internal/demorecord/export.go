@@ -80,7 +80,7 @@ func ExportAsciicast(reader *Reader, clip Clip, outputPath string) error {
 		Timestamp: manifest.StartedAt.Add(time.Duration(clip.InMS) * time.Millisecond).Unix(),
 		Title:     strings.TrimSpace(clip.Name),
 	}
-	if idleLimit > 0 {
+	if idleLimit > 0 && !clip.SmartTiming {
 		header.IdleTimeLimit = idleLimit.Seconds()
 	}
 
@@ -97,6 +97,15 @@ func ExportAsciicast(reader *Reader, clip Clip, outputPath string) error {
 	lastSourceMS := clip.InMS
 	lastWidth := initial.Width
 	lastHeight := initial.Height
+	currentFrame := initial
+	var smartTiming SmartTimingState
+	interactionIndex := 0
+	if clip.SmartTiming {
+		for interactionIndex < len(manifest.InteractionMS) && manifest.InteractionMS[interactionIndex] <= clip.InMS {
+			smartTiming.ObserveInteraction(manifest.InteractionMS[interactionIndex])
+			interactionIndex++
+		}
+	}
 	for chunkPosition := reader.ChunkIndexAt(clip.InMS); chunkPosition < len(manifest.Chunks); chunkPosition++ {
 		chunk := manifest.Chunks[chunkPosition]
 		if chunk.StartMS > clip.OutMS {
@@ -113,7 +122,16 @@ func ExportAsciicast(reader *Reader, clip Clip, outputPath string) error {
 			if frame.AtMS > clip.OutMS {
 				break
 			}
-			interval := float64(frame.AtMS-lastSourceMS) / 1000
+			sourceDelay := time.Duration(maxInt64(0, frame.AtMS-lastSourceMS)) * time.Millisecond
+			delay := sourceDelay
+			if clip.SmartTiming {
+				for interactionIndex < len(manifest.InteractionMS) && manifest.InteractionMS[interactionIndex] <= frame.AtMS {
+					smartTiming.ObserveInteraction(manifest.InteractionMS[interactionIndex])
+					interactionIndex++
+				}
+				delay = smartTiming.SmartDelay(currentFrame, frame, sourceDelay, idleLimit)
+			}
+			interval := delay.Seconds()
 			if frame.Width != lastWidth || frame.Height != lastHeight {
 				if err := writeAsciicastEvent(
 					encoder,
@@ -131,9 +149,14 @@ func ExportAsciicast(reader *Reader, clip Clip, outputPath string) error {
 				return err
 			}
 			lastSourceMS = frame.AtMS
+			currentFrame = frame
 		}
 	}
-	exitInterval := float64(maxInt64(0, clip.OutMS-lastSourceMS)) / 1000
+	exitDelay := time.Duration(maxInt64(0, clip.OutMS-lastSourceMS)) * time.Millisecond
+	if clip.SmartTiming {
+		exitDelay = smartTiming.SmartExitDelay(clip.OutMS, exitDelay, idleLimit)
+	}
+	exitInterval := exitDelay.Seconds()
 	if err := writeAsciicastEvent(encoder, exitInterval, "x", "0"); err != nil {
 		return err
 	}
