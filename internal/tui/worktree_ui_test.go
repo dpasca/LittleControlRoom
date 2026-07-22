@@ -1213,7 +1213,7 @@ func TestRenderWorktreeMergeConfirmClampsLongErrorMessage(t *testing.T) {
 	}
 }
 
-func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
+func TestOpenWorktreeMergeConfirmPreservesCompletedSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	seenAt := time.Date(2026, 4, 4, 10, 0, 0, 0, time.UTC)
@@ -1257,6 +1257,7 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 				WorktreeRootPath:                rootPath,
 				WorktreeKind:                    model.WorktreeKindLinked,
 				WorktreeParentBranch:            "master",
+				WorktreeOriginTodoID:            42,
 				RepoBranch:                      "feat/parallel-lane",
 				LatestSessionClassification:     model.ClassificationCompleted,
 				LatestSessionClassificationType: model.SessionCategoryCompleted,
@@ -1273,32 +1274,38 @@ func TestOpenWorktreeMergeConfirmAutoClosesCompletedSession(t *testing.T) {
 
 	cmd := m.openWorktreeMergeConfirmForSelection()
 	if cmd != nil {
-		t.Fatalf("auto-closing a completed session should not require background work without a service")
+		t.Fatalf("opening merge confirmation should not require background work without a service")
 	}
 	if m.attentionDialog != nil {
-		t.Fatalf("auto-close path should not show the attention dialog")
+		t.Fatalf("an open completed session should warn in the merge dialog, not show the attention dialog")
 	}
 	if m.worktreeMergeConfirm == nil {
-		t.Fatalf("merge confirmation should open after auto-closing the completed session")
+		t.Fatalf("merge confirmation should open while preserving the completed session")
 	}
 	if m.status != "Confirm worktree merge-back" {
 		t.Fatalf("status = %q, want merge confirmation", m.status)
 	}
-	if m.codexVisibleProject != "" {
-		t.Fatalf("visible project should be cleared after auto-close, got %q", m.codexVisibleProject)
+	if warning := m.worktreeMergeConfirm.OpenSessionWarning; !strings.Contains(warning, "Codex engineer session is still open") || !strings.Contains(warning, "will stay open if you keep this worktree") {
+		t.Fatalf("merge confirm completed-session warning = %q", warning)
 	}
-	if _, ok := manager.Session(childPath); ok {
-		t.Fatalf("completed session should be closed before opening merge confirm")
+	if !m.worktreeMergeConfirm.HasOpenSession || m.worktreeMergeConfirm.RemoveNow {
+		t.Fatalf("merge confirmation should keep a worktree with an open completed session by default: %#v", m.worktreeMergeConfirm)
 	}
-	if !m.allProjects[1].LastSessionSeenAt.Equal(seenAt) {
-		t.Fatalf("allProjects seen_at = %v, want %v", m.allProjects[1].LastSessionSeenAt, seenAt)
+	if !m.worktreeMergeConfirm.HasLinkedTodo || m.worktreeMergeConfirm.MarkTodoDone {
+		t.Fatalf("merge confirmation should leave the linked TODO open while its engineer session stays open: %#v", m.worktreeMergeConfirm)
 	}
-	if !m.projects[1].LastSessionSeenAt.Equal(seenAt) {
-		t.Fatalf("projects seen_at = %v, want %v", m.projects[1].LastSessionSeenAt, seenAt)
+	if m.codexVisibleProject != childPath {
+		t.Fatalf("visible project = %q, want completed session to remain visible", m.codexVisibleProject)
+	}
+	if _, ok := manager.Session(childPath); !ok {
+		t.Fatalf("completed session should remain open while merging")
+	}
+	if !m.allProjects[1].LastSessionSeenAt.IsZero() || !m.projects[1].LastSessionSeenAt.IsZero() {
+		t.Fatalf("opening merge confirmation should not mark the preserved session seen: all=%v visible=%v", m.allProjects[1].LastSessionSeenAt, m.projects[1].LastSessionSeenAt)
 	}
 }
 
-func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
+func TestOpenWorktreeMergeConfirmPreservesSettledIdleSession(t *testing.T) {
 	rootPath := "/tmp/repo"
 	childPath := "/tmp/repo--feat-parallel-lane"
 	seenAt := time.Date(2026, 4, 4, 11, 0, 0, 0, time.UTC)
@@ -1357,28 +1364,31 @@ func TestOpenWorktreeMergeConfirmAutoClosesSettledIdleSession(t *testing.T) {
 
 	cmd := m.openWorktreeMergeConfirmForSelection()
 	if cmd != nil {
-		t.Fatalf("auto-closing a settled idle session should not require background work without a service")
+		t.Fatalf("opening merge confirmation should not require background work without a service")
 	}
 	if m.attentionDialog != nil {
-		t.Fatalf("settled idle auto-close path should not show the attention dialog")
+		t.Fatalf("an open idle session should warn in the merge dialog, not show the attention dialog")
 	}
 	if m.worktreeMergeConfirm == nil {
-		t.Fatalf("merge confirmation should open after auto-closing the settled idle session")
+		t.Fatalf("merge confirmation should open while preserving the settled idle session")
 	}
 	if m.status != "Confirm worktree merge-back" {
 		t.Fatalf("status = %q, want merge confirmation", m.status)
 	}
-	if m.codexVisibleProject != "" {
-		t.Fatalf("visible project should be cleared after auto-close, got %q", m.codexVisibleProject)
+	if warning := m.worktreeMergeConfirm.OpenSessionWarning; !strings.Contains(warning, "Codex engineer session is still open") || !strings.Contains(warning, "will stay open if you keep this worktree") {
+		t.Fatalf("merge confirm idle-session warning = %q", warning)
 	}
-	if _, ok := manager.Session(childPath); ok {
-		t.Fatalf("settled idle session should be closed before opening merge confirm")
+	if !m.worktreeMergeConfirm.HasOpenSession || m.worktreeMergeConfirm.RemoveNow {
+		t.Fatalf("merge confirmation should keep a worktree with an open idle session by default: %#v", m.worktreeMergeConfirm)
 	}
-	if !m.allProjects[1].LastSessionSeenAt.Equal(seenAt) {
-		t.Fatalf("allProjects seen_at = %v, want %v", m.allProjects[1].LastSessionSeenAt, seenAt)
+	if m.codexVisibleProject != childPath {
+		t.Fatalf("visible project = %q, want idle session to remain visible", m.codexVisibleProject)
 	}
-	if !m.projects[1].LastSessionSeenAt.Equal(seenAt) {
-		t.Fatalf("projects seen_at = %v, want %v", m.projects[1].LastSessionSeenAt, seenAt)
+	if _, ok := manager.Session(childPath); !ok {
+		t.Fatalf("settled idle session should remain open while merging")
+	}
+	if !m.allProjects[1].LastSessionSeenAt.IsZero() || !m.projects[1].LastSessionSeenAt.IsZero() {
+		t.Fatalf("opening merge confirmation should not mark the preserved session seen: all=%v visible=%v", m.allProjects[1].LastSessionSeenAt, m.projects[1].LastSessionSeenAt)
 	}
 }
 
@@ -2027,22 +2037,50 @@ func TestOpenWorktreeMergeConfirmWithActiveEngineerSessionShowsWarning(t *testin
 	if m.attentionDialog != nil {
 		t.Fatalf("active engineer session should warn inside the merge dialog, not open the attention modal")
 	}
-	if warning := m.worktreeMergeConfirm.ActiveSessionWarning; !strings.Contains(warning, "Claude Code engineer session is still open") || !strings.Contains(warning, "will not be automatically committed or merged") {
+	if warning := m.worktreeMergeConfirm.OpenSessionWarning; !strings.Contains(warning, "Claude Code engineer session is still open") || !strings.Contains(warning, "will stay open if you keep this worktree") {
 		t.Fatalf("merge confirm active-session warning = %q", warning)
+	}
+	if !m.worktreeMergeConfirm.HasOpenSession || m.worktreeMergeConfirm.RemoveNow {
+		t.Fatalf("merge confirmation should keep a worktree with an open active session by default: %#v", m.worktreeMergeConfirm)
+	}
+	if !worktreeMergeConfirmReady(m.worktreeMergeConfirm) {
+		t.Fatalf("keeping the worktree should allow merge-back with an open engineer session: %s", worktreeMergeConfirmBlockReason(m.worktreeMergeConfirm))
 	}
 	if m.status != "Confirm worktree merge-back" {
 		t.Fatalf("status = %q, want merge confirmation", m.status)
 	}
 	rendered := ansi.Strip(m.renderWorktreeMergeConfirmOverlay("", 100, 24))
 	for _, want := range []string{
-		"Active engineer session",
+		"Open engineer session",
 		"Claude Code engineer session is still open",
-		"will not be automatically",
-		"committed or merged",
+		"will stay",
+		"open if you keep this worktree",
+		"later AI changes will need another merge",
+		"[ ] Remove merged worktree after merge",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("merge dialog missing %q in %q", want, rendered)
 		}
+	}
+}
+
+func TestWorktreeMergeWithOpenSessionBlocksRemovalOnly(t *testing.T) {
+	t.Parallel()
+
+	confirm := &worktreeMergeConfirmState{
+		HasOpenSession: true,
+		RemoveNow:      false,
+	}
+	if !worktreeMergeConfirmReady(confirm) {
+		t.Fatalf("keeping the worktree should allow merge-back with an open session: %s", worktreeMergeConfirmBlockReason(confirm))
+	}
+
+	confirm.RemoveNow = true
+	if worktreeMergeConfirmReady(confirm) {
+		t.Fatal("removing a worktree with an open engineer session should be blocked")
+	}
+	if reason := worktreeMergeConfirmBlockReason(confirm); !strings.Contains(reason, "Leave worktree removal unchecked") {
+		t.Fatalf("removal block reason = %q, want keep-or-close guidance", reason)
 	}
 }
 
