@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestColdResumeRecoversInterruptedTurnToolCallsFromRollout(t *testing.T) {
@@ -95,12 +96,14 @@ func TestColdResumeRecoversInterruptedTurnToolCallsFromRollout(t *testing.T) {
 
 func TestCodexRolloutReplayIgnoresLatestCompletedTurn(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "rollout-completed.jsonl")
+	startedAt := "2026-07-22T13:56:31.014Z"
+	settledAt := "2026-07-22T14:07:27.578Z"
 	writeCodexRolloutReplayTestFile(t, path, []any{
 		map[string]any{"type": "session_meta", "payload": map[string]any{"id": "thread-completed", "cwd": "/tmp/demo"}},
-		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": "turn-completed"}},
+		map[string]any{"timestamp": startedAt, "type": "event_msg", "payload": map[string]any{"type": "task_started", "turn_id": "turn-completed"}},
 		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "user_message", "message": "finished request"}},
 		map[string]any{"type": "response_item", "payload": map[string]any{"type": "custom_tool_call", "id": "ctc_exec", "call_id": "call_exec", "name": "exec", "status": "completed"}},
-		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "task_complete", "turn_id": "turn-completed"}},
+		map[string]any{"timestamp": settledAt, "type": "event_msg", "payload": map[string]any{"type": "task_complete", "turn_id": "turn-completed"}},
 	})
 
 	entries, err := readCodexInterruptedTurnTranscript(path, "thread-completed", "/tmp/demo")
@@ -109,6 +112,74 @@ func TestCodexRolloutReplayIgnoresLatestCompletedTurn(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("completed turn replay = %#v, want empty", entries)
+	}
+
+	state, err := readCodexRolloutResumeState(path, "thread-completed", "/tmp/demo")
+	if err != nil {
+		t.Fatalf("readCodexRolloutResumeState() error = %v", err)
+	}
+	wantStartedAt, _ := time.Parse(time.RFC3339Nano, startedAt)
+	wantSettledAt, _ := time.Parse(time.RFC3339Nano, settledAt)
+	if state.TurnID != "turn-completed" || !state.TurnStateKnown || !state.TurnSettled {
+		t.Fatalf("rollout state = %#v, want terminal turn-completed", state)
+	}
+	if !state.TurnStartedAt.Equal(wantStartedAt) || !state.TurnSettledAt.Equal(wantSettledAt) {
+		t.Fatalf("rollout times = started %v settled %v, want %v and %v", state.TurnStartedAt, state.TurnSettledAt, wantStartedAt, wantSettledAt)
+	}
+}
+
+func TestCompletedRolloutWinsOverStaleResumeAndReplay(t *testing.T) {
+	startedAt := time.Date(2026, 7, 22, 13, 56, 31, 14_000_000, time.UTC)
+	settledAt := time.Date(2026, 7, 22, 14, 7, 27, 578_000_000, time.UTC)
+	s := &appServerSession{
+		projectPath: "/tmp/demo",
+		entryIndex:  make(map[string]int),
+		notify:      func() {},
+		rolloutResumeState: codexRolloutResumeState{
+			TurnID:         "turn-completed",
+			TurnStartedAt:  startedAt,
+			TurnSettledAt:  settledAt,
+			TurnStateKnown: true,
+			TurnSettled:    true,
+		},
+	}
+
+	s.hydrateResumedThreadLocked(resumedThread{
+		ID:     "thread-completed",
+		Status: resumedThreadStatus{Type: "active"},
+		Turns: []resumedTurn{{
+			ID:     "turn-completed",
+			Status: "inProgress",
+		}},
+	})
+
+	snapshot := s.Snapshot()
+	if snapshot.Busy || snapshot.BusyExternal || snapshot.ActiveTurnID != "" || !snapshot.BusySince.IsZero() {
+		t.Fatalf("stale resume restarted completed turn: busy=%t external=%t turn=%q since=%v", snapshot.Busy, snapshot.BusyExternal, snapshot.ActiveTurnID, snapshot.BusySince)
+	}
+	if !snapshot.LatestTurnStateKnown || !snapshot.LatestTurnCompleted || !snapshot.LatestTurnStartedAt.Equal(startedAt) {
+		t.Fatalf("completed lifecycle was not preserved: known=%t completed=%t started=%v", snapshot.LatestTurnStateKnown, snapshot.LatestTurnCompleted, snapshot.LatestTurnStartedAt)
+	}
+	lastActivityAt := snapshot.LastActivityAt
+
+	s.handleNotification("turn/started", json.RawMessage(`{"threadId":"thread-completed","turn":{"id":"turn-completed","status":"inProgress"}}`))
+	s.handleItemStarted(json.RawMessage(`{"threadId":"thread-completed","turnId":"turn-completed","item":{"id":"browser-replay","type":"mcpToolCall","server":"playwright","tool":"browser_snapshot","status":"inProgress"}}`))
+	snapshot = s.Snapshot()
+	if snapshot.Busy || snapshot.ActiveTurnID != "" || !snapshot.BusySince.IsZero() {
+		t.Fatalf("replayed completed activity restarted timer: busy=%t turn=%q since=%v", snapshot.Busy, snapshot.ActiveTurnID, snapshot.BusySince)
+	}
+	if !snapshot.LastActivityAt.Equal(lastActivityAt) {
+		t.Fatalf("replayed completed activity advanced last activity from %v to %v", lastActivityAt, snapshot.LastActivityAt)
+	}
+
+	s.handleNotification("turn/started", json.RawMessage(`{"threadId":"thread-completed","turn":{"id":"turn-new","status":"inProgress"}}`))
+	s.handleItemStarted(json.RawMessage(`{"threadId":"thread-completed","turnId":"turn-new","item":{"id":"agent-new","type":"agentMessage","status":"inProgress"}}`))
+	snapshot = s.Snapshot()
+	if !snapshot.Busy || snapshot.ActiveTurnID != "turn-new" || snapshot.BusySince.IsZero() {
+		t.Fatalf("new turn did not start normally: busy=%t turn=%q since=%v", snapshot.Busy, snapshot.ActiveTurnID, snapshot.BusySince)
+	}
+	if !snapshot.LatestTurnStateKnown || snapshot.LatestTurnCompleted {
+		t.Fatalf("new turn lifecycle = known:%t completed:%t, want live incomplete", snapshot.LatestTurnStateKnown, snapshot.LatestTurnCompleted)
 	}
 }
 

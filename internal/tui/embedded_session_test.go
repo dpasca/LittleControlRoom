@@ -585,6 +585,36 @@ func TestEmbeddedSessionActivityFromSnapshotUsesBusyActivity(t *testing.T) {
 	}
 }
 
+func TestEmbeddedSessionActivityPreservesExplicitCompletedTurnState(t *testing.T) {
+	now := time.Date(2026, 7, 22, 14, 7, 27, 578_000_000, time.UTC)
+	startedAt := now.Add(-11 * time.Minute)
+	activity, ok := embeddedSessionActivityFromSnapshot("/tmp/demo", codexapp.Snapshot{
+		Provider:             codexapp.ProviderCodex,
+		ThreadID:             "thread-completed",
+		Started:              true,
+		Busy:                 true, // stale transport state must not erase durable completion
+		ActiveTurnID:         "turn-completed",
+		BusySince:            now,
+		LatestTurnStartedAt:  startedAt,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		LastActivityAt:       now,
+		LastBusyActivityAt:   now,
+	})
+	if !ok {
+		t.Fatal("expected completed snapshot to produce embedded activity")
+	}
+	if !activity.LatestTurnStateKnown || !activity.LatestTurnCompleted {
+		t.Fatalf("turn state = known:%t completed:%t, want durable completion", activity.LatestTurnStateKnown, activity.LatestTurnCompleted)
+	}
+	if !activity.LatestTurnStartedAt.Equal(startedAt) {
+		t.Fatalf("turn started at = %v, want %v", activity.LatestTurnStartedAt, startedAt)
+	}
+	if activity.WorkState != model.TodoWorkStateIdle {
+		t.Fatalf("work state = %q, want idle", activity.WorkState)
+	}
+}
+
 func TestTodoWorkStateTreatsApprovalAsWaiting(t *testing.T) {
 	snapshot := codexapp.Snapshot{
 		Started:         true,

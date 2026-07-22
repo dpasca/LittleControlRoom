@@ -103,6 +103,9 @@ func (s *appServerSession) start(req LaunchRequest) error {
 		}
 	}
 	if threadID == "" {
+		s.mu.Lock()
+		s.resetTurnLifecycleLocked()
+		s.mu.Unlock()
 		threadID, err = s.startThread(ctx)
 		if err != nil {
 			return err
@@ -863,8 +866,12 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			s.mu.Unlock()
 			return
 		}
-		s.touchLocked()
 		turnID := strings.TrimSpace(msg.Turn.ID)
+		if !s.markTurnStartedLocked(turnID, time.Now()) {
+			s.mu.Unlock()
+			return
+		}
+		s.touchLocked()
 		if s.busy || strings.TrimSpace(s.activeTurnID) != "" {
 			s.setBusyLocked(turnID, false)
 			s.status = "Codex is working..."
@@ -888,6 +895,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			s.mu.Unlock()
 			return
 		}
+		if s.shouldIgnoreSettledTurnReplayLocked(msg.Turn.ID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchBusyLocked()
 		status := formatTurnCompletionStatus(msg.Turn.Status, s.busySince, time.Now())
 		s.queueTurnCompletionLocked(msg.Turn.ID, status)
@@ -903,9 +914,14 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			s.mu.Unlock()
 			return
 		}
+		turnID := firstNonEmpty(msg.Turn.ID, msg.TurnID)
+		if s.shouldIgnoreSettledTurnReplayLocked(turnID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchBusyLocked()
 		status := formatTurnCompletionStatus(firstNonEmpty(msg.Turn.Status, msg.Reason, "interrupted"), s.busySince, time.Now())
-		s.queueTurnCompletionLocked(firstNonEmpty(msg.Turn.ID, msg.TurnID), status)
+		s.queueTurnCompletionLocked(turnID, status)
 		s.mu.Unlock()
 		s.notify()
 	case "item/started":
@@ -934,6 +950,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 			s.mu.Unlock()
 			return
 		}
+		if s.shouldIgnoreSettledTurnReplayLocked(msg.TurnID) {
+			s.mu.Unlock()
+			return
+		}
 		s.touchBusyLocked()
 		s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 		if msg.SummaryIndex > 0 {
@@ -950,6 +970,10 @@ func (s *appServerSession) handleNotification(method string, params json.RawMess
 		}
 		s.mu.Lock()
 		if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+			s.mu.Unlock()
+			return
+		}
+		if s.shouldIgnoreSettledTurnReplayLocked(msg.TurnID) {
 			s.mu.Unlock()
 			return
 		}
@@ -1153,6 +1177,10 @@ func (s *appServerSession) handleItemStarted(params json.RawMessage) {
 		s.mu.Unlock()
 		return
 	}
+	if s.shouldIgnoreSettledTurnReplayLocked(msg.TurnID) {
+		s.mu.Unlock()
+		return
+	}
 	s.touchBusyLocked()
 	if itemType == "contextCompaction" {
 		s.contextCompactionActive = true
@@ -1210,6 +1238,10 @@ func (s *appServerSession) handleItemDelta(params json.RawMessage, kind Transcri
 		s.mu.Unlock()
 		return
 	}
+	if s.shouldIgnoreSettledTurnReplayLocked(msg.TurnID) {
+		s.mu.Unlock()
+		return
+	}
 	s.touchBusyLocked()
 	s.markItemActiveLocked(msg.TurnID, msg.ItemID)
 	s.appendDeltaToItemLocked(msg.ItemID, kind, msg.Delta)
@@ -1235,6 +1267,10 @@ func (s *appServerSession) handleItemCompleted(params json.RawMessage) {
 
 	s.mu.Lock()
 	if !s.notificationMatchesThreadLocked(msg.ThreadID) {
+		s.mu.Unlock()
+		return
+	}
+	if s.shouldIgnoreSettledTurnReplayLocked(msg.TurnID) {
 		s.mu.Unlock()
 		return
 	}

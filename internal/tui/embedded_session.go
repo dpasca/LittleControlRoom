@@ -563,6 +563,9 @@ func codexStreamingSnapshotNeedsImmediateAck(prev, next codexapp.Snapshot) bool 
 		prev.BusyExternal != next.BusyExternal ||
 		prev.Phase != next.Phase ||
 		prev.ActiveTurnID != next.ActiveTurnID ||
+		!prev.LatestTurnStartedAt.Equal(next.LatestTurnStartedAt) ||
+		prev.LatestTurnStateKnown != next.LatestTurnStateKnown ||
+		prev.LatestTurnCompleted != next.LatestTurnCompleted ||
 		prev.Status != next.Status ||
 		prev.LastError != next.LastError ||
 		prev.LastSystemNotice != next.LastSystemNotice ||
@@ -765,7 +768,13 @@ func shouldPersistEmbeddedSessionTransitionAfterCodexSnapshot(hadPrev bool, prev
 }
 
 func embeddedSessionActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {
-	return embeddedSessionActivityFromSnapshotWithTurnState(projectPath, snapshot, snapshot.Busy, false)
+	latestTurnKnown := snapshot.LatestTurnStateKnown
+	latestTurnCompleted := snapshot.LatestTurnCompleted
+	if !latestTurnKnown {
+		latestTurnKnown = snapshot.Busy
+		latestTurnCompleted = false
+	}
+	return embeddedSessionActivityFromSnapshotWithTurnState(projectPath, snapshot, latestTurnKnown, latestTurnCompleted)
 }
 
 func embeddedSessionSettledActivityFromSnapshot(projectPath string, snapshot codexapp.Snapshot) (service.EmbeddedSessionActivity, bool) {
@@ -785,13 +794,17 @@ func embeddedSessionActivityFromSnapshotWithTurnState(projectPath string, snapsh
 	if projectPath == "" || sessionID == "" || lastActivity.IsZero() {
 		return service.EmbeddedSessionActivity{}, false
 	}
+	latestTurnStartedAt := snapshot.LatestTurnStartedAt
+	if latestTurnStartedAt.IsZero() {
+		latestTurnStartedAt = snapshot.BusySince
+	}
 	return service.EmbeddedSessionActivity{
 		ProjectPath:          projectPath,
 		Source:               embeddedSessionSource(snapshot.Provider),
 		SessionID:            sessionID,
 		Format:               embeddedSessionFormat(snapshot.Provider),
 		LastActivityAt:       lastActivity,
-		LatestTurnStartedAt:  snapshot.BusySince,
+		LatestTurnStartedAt:  latestTurnStartedAt,
 		LatestTurnStateKnown: latestTurnKnown,
 		LatestTurnCompleted:  latestTurnCompleted,
 		WorkState:            todoWorkStateFromEmbeddedSnapshot(snapshot, latestTurnCompleted),

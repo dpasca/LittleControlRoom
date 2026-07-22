@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"lcroom/internal/codexstate"
 )
@@ -19,13 +20,34 @@ const maxCodexRolloutReplayLineBytes = 32 * 1024 * 1024
 // messages while omitting its tool items, even though the rollout JSONL still
 // has the complete structured event sequence.
 func loadCodexInterruptedTurnTranscript(req LaunchRequest) ([]TranscriptEntry, error) {
+	state, err := loadCodexRolloutResumeState(req)
+	if err != nil {
+		return nil, err
+	}
+	return cloneTranscriptEntries(state.Transcript), nil
+}
+
+// codexRolloutResumeState carries the latest durable turn lifecycle alongside
+// any interrupted transcript entries. App-server can briefly replay a
+// completed turn as inProgress while a thread is being reopened; the rollout's
+// terminal task_complete/turn_aborted event is the durable tie-breaker.
+type codexRolloutResumeState struct {
+	TurnID         string
+	TurnStartedAt  time.Time
+	TurnSettledAt  time.Time
+	TurnStateKnown bool
+	TurnSettled    bool
+	Transcript     []TranscriptEntry
+}
+
+func loadCodexRolloutResumeState(req LaunchRequest) (codexRolloutResumeState, error) {
 	threadID := strings.TrimSpace(req.ResumeID)
 	if threadID == "" {
-		return nil, nil
+		return codexRolloutResumeState{}, nil
 	}
 	codexHome, err := effectiveCodexHome(req.CodexHome)
 	if err != nil {
-		return nil, err
+		return codexRolloutResumeState{}, err
 	}
 	rolloutPath, lookupErr := codexstate.ThreadRolloutPath(codexHome, threadID)
 	if strings.TrimSpace(rolloutPath) != "" {
@@ -38,11 +60,11 @@ func loadCodexInterruptedTurnTranscript(req LaunchRequest) ([]TranscriptEntry, e
 	}
 	if strings.TrimSpace(rolloutPath) == "" {
 		if lookupErr != nil {
-			return nil, lookupErr
+			return codexRolloutResumeState{}, lookupErr
 		}
-		return nil, nil
+		return codexRolloutResumeState{}, nil
 	}
-	return readCodexInterruptedTurnTranscript(rolloutPath, threadID, req.ProjectPath)
+	return readCodexRolloutResumeState(rolloutPath, threadID, req.ProjectPath)
 }
 
 func findCodexRolloutPath(codexHome, threadID string) string {
@@ -65,12 +87,20 @@ func findCodexRolloutPath(codexHome, threadID string) string {
 }
 
 func readCodexInterruptedTurnTranscript(path, expectedThreadID, expectedProjectPath string) ([]TranscriptEntry, error) {
+	state, err := readCodexRolloutResumeState(path, expectedThreadID, expectedProjectPath)
+	if err != nil {
+		return nil, err
+	}
+	return cloneTranscriptEntries(state.Transcript), nil
+}
+
+func readCodexRolloutResumeState(path, expectedThreadID, expectedProjectPath string) (codexRolloutResumeState, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return codexRolloutResumeState{}, nil
 		}
-		return nil, fmt.Errorf("open codex rollout replay: %w", err)
+		return codexRolloutResumeState{}, fmt.Errorf("open codex rollout replay: %w", err)
 	}
 	defer file.Close()
 
@@ -79,33 +109,45 @@ func readCodexInterruptedTurnTranscript(path, expectedThreadID, expectedProjectP
 	scanner.Buffer(make([]byte, 0, 64*1024), maxCodexRolloutReplayLineBytes)
 	for scanner.Scan() {
 		if err := replay.consume(scanner.Bytes(), expectedThreadID, expectedProjectPath); err != nil {
-			return nil, err
+			return codexRolloutResumeState{}, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan codex rollout replay: %w", err)
+		return codexRolloutResumeState{}, fmt.Errorf("scan codex rollout replay: %w", err)
 	}
-	if !replay.recoverable || len(replay.entries) == 0 {
-		return nil, nil
+	state := codexRolloutResumeState{
+		TurnID:         strings.TrimSpace(replay.turnID),
+		TurnStartedAt:  replay.turnStartedAt,
+		TurnSettledAt:  replay.turnSettledAt,
+		TurnStateKnown: replay.turnStateKnown,
+		TurnSettled:    replay.turnSettled,
 	}
-	return cloneTranscriptEntries(replay.entries), nil
+	if replay.recoverable && len(replay.entries) > 0 {
+		state.Transcript = cloneTranscriptEntries(replay.entries)
+	}
+	return state, nil
 }
 
 type codexInterruptedTurnReplay struct {
-	seenMeta    bool
-	turnID      string
-	active      bool
-	recoverable bool
-	entries     []TranscriptEntry
-	callIndex   map[string]int
-	callDetails map[string]codexReplayToolCall
-	callPending map[string]bool
+	seenMeta       bool
+	turnID         string
+	turnStartedAt  time.Time
+	turnSettledAt  time.Time
+	turnStateKnown bool
+	turnSettled    bool
+	active         bool
+	recoverable    bool
+	entries        []TranscriptEntry
+	callIndex      map[string]int
+	callDetails    map[string]codexReplayToolCall
+	callPending    map[string]bool
 }
 
 func (r *codexInterruptedTurnReplay) consume(line []byte, expectedThreadID, expectedProjectPath string) error {
 	var envelope struct {
-		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
+		Timestamp string          `json:"timestamp"`
+		Type      string          `json:"type"`
+		Payload   json.RawMessage `json:"payload"`
 	}
 	if err := json.Unmarshal(line, &envelope); err != nil {
 		return nil
@@ -133,11 +175,19 @@ func (r *codexInterruptedTurnReplay) consume(line []byte, expectedThreadID, expe
 			}
 		}
 	case "event_msg":
-		return r.consumeEvent(envelope.Payload)
+		return r.consumeEvent(envelope.Payload, parseCodexRolloutReplayTime(envelope.Timestamp))
 	case "response_item":
 		r.consumeResponseItem(envelope.Payload)
 	}
 	return nil
+}
+
+func parseCodexRolloutReplayTime(raw string) time.Time {
+	parsed, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw))
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 func cleanComparablePath(path string) string {
@@ -148,7 +198,7 @@ func cleanComparablePath(path string) string {
 	return filepath.Clean(path)
 }
 
-func (r *codexInterruptedTurnReplay) consumeEvent(raw json.RawMessage) error {
+func (r *codexInterruptedTurnReplay) consumeEvent(raw json.RawMessage, at time.Time) error {
 	var event struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -160,6 +210,10 @@ func (r *codexInterruptedTurnReplay) consumeEvent(raw json.RawMessage) error {
 	switch event.Type {
 	case "task_started":
 		r.turnID = strings.TrimSpace(event.TurnID)
+		r.turnStartedAt = at
+		r.turnSettledAt = time.Time{}
+		r.turnStateKnown = true
+		r.turnSettled = false
 		r.active = true
 		r.recoverable = true
 		r.entries = nil
@@ -168,6 +222,9 @@ func (r *codexInterruptedTurnReplay) consumeEvent(raw json.RawMessage) error {
 		r.callPending = make(map[string]bool)
 	case "task_complete":
 		if r.matchesTurn(event.TurnID) {
+			r.turnSettledAt = at
+			r.turnStateKnown = true
+			r.turnSettled = true
 			r.active = false
 			r.recoverable = false
 			r.entries = nil
@@ -177,6 +234,9 @@ func (r *codexInterruptedTurnReplay) consumeEvent(raw json.RawMessage) error {
 		}
 	case "turn_aborted":
 		if r.matchesTurn(event.TurnID) {
+			r.turnSettledAt = at
+			r.turnStateKnown = true
+			r.turnSettled = true
 			r.active = false
 			r.recoverable = true
 			r.markPendingCalls("interrupted")

@@ -33,6 +33,32 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	previousTurnID := strings.TrimSpace(s.activeTurnID)
 
 	activeTurnID := activeTurnIDFromThread(thread)
+	latestTurn, hasLatestTurn := latestResumedTurn(thread)
+	rolloutState := s.rolloutResumeState
+	rolloutMatchesLatest := rolloutState.TurnStateKnown && strings.TrimSpace(rolloutState.TurnID) != "" &&
+		(strings.TrimSpace(rolloutState.TurnID) == strings.TrimSpace(activeTurnID) ||
+			(hasLatestTurn && strings.TrimSpace(rolloutState.TurnID) == strings.TrimSpace(latestTurn.ID)))
+	switch {
+	case rolloutMatchesLatest && rolloutState.TurnSettled:
+		// The rollout is durable on disk. During resume, app-server can briefly
+		// report this exact completed turn as inProgress and replay its item
+		// notifications; keep the terminal state and ignore that stale activity.
+		s.applyRolloutResumeStateLocked(rolloutState)
+		activeTurnID = ""
+	case hasLatestTurn && turnStatusSettled(latestTurn.Status):
+		// A later terminal turn also proves that any older inProgress entry in
+		// the bounded response is stale.
+		s.markTurnSettledLocked(latestTurn.ID)
+		activeTurnID = ""
+	case activeTurnID != "":
+		startedAt := time.Time{}
+		if rolloutMatchesLatest && !rolloutState.TurnSettled {
+			startedAt = rolloutState.TurnStartedAt
+		}
+		if !s.markTurnStartedLocked(activeTurnID, startedAt) {
+			activeTurnID = ""
+		}
+	}
 	busy := activeTurnID != ""
 	busyExternal := busy && !s.compacting
 	s.activeItems = nil
@@ -48,6 +74,8 @@ func (s *appServerSession) hydrateResumedThreadLocked(thread resumedThread) {
 	case !previousBusySince.IsZero() && wasBusy && previousTurnID == strings.TrimSpace(activeTurnID):
 		busySince = previousBusySince
 		lastBusyActivityAt = previousBusyActivityAt
+	case strings.TrimSpace(s.latestTurnID) == strings.TrimSpace(activeTurnID) && !s.latestTurnStartedAt.IsZero():
+		busySince = s.latestTurnStartedAt
 	}
 
 	s.busy = busy
@@ -87,7 +115,7 @@ func (s *appServerSession) continueInterruptedTurn(capturedTurnID string, input 
 		return nil
 	}
 
-	activeTurnID := activeTurnIDFromThread(thread)
+	activeTurnID := strings.TrimSpace(s.StateSnapshot().ActiveTurnID)
 	if activeTurnID != "" {
 		if capturedTurnID != "" && activeTurnID != capturedTurnID {
 			return fmt.Errorf("refusing to interrupt Codex turn %s while restoring captured turn %s", shortID(activeTurnID), shortID(capturedTurnID))
@@ -128,6 +156,15 @@ func resumedTurnStatus(thread resumedThread, turnID string) (string, bool) {
 func turnStatusCompleted(status string) bool {
 	switch normalizeTurnStatus(status) {
 	case "complete", "completed":
+		return true
+	default:
+		return false
+	}
+}
+
+func turnStatusSettled(status string) bool {
+	switch normalizeTurnStatus(status) {
+	case "complete", "completed", "interrupted", "failed", "aborted", "canceled", "cancelled":
 		return true
 	default:
 		return false
@@ -641,7 +678,19 @@ func activeTurnIDFromThread(thread resumedThread) string {
 	return ""
 }
 
+func latestResumedTurn(thread resumedThread) (resumedTurn, bool) {
+	for i := len(thread.Turns) - 1; i >= 0; i-- {
+		if strings.TrimSpace(thread.Turns[i].ID) != "" {
+			return thread.Turns[i], true
+		}
+	}
+	return resumedTurn{}, false
+}
+
 func effectiveThreadStatus(thread resumedThread) resumedThreadStatus {
+	if latest, ok := latestResumedTurn(thread); ok && turnStatusSettled(latest.Status) {
+		return resumedThreadStatus{Type: "idle"}
+	}
 	if activeTurnIDFromThread(thread) == "" {
 		return resumedThreadStatus{Type: "idle"}
 	}

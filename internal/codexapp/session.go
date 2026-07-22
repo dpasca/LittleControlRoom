@@ -88,6 +88,10 @@ type appServerSession struct {
 	mu                      sync.Mutex
 	threadID                string
 	activeTurnID            string
+	latestTurnID            string
+	latestTurnStartedAt     time.Time
+	latestTurnStateKnown    bool
+	latestTurnCompleted     bool
 	activeItems             map[string]struct{}
 	activeCompactionItems   map[string]struct{}
 	pendingCompletion       *turnCompletionState
@@ -149,6 +153,7 @@ type appServerSession struct {
 	transcriptCache         transcriptExportCache
 	reconnectThreadID       string
 	reconnectTranscript     []TranscriptEntry
+	rolloutResumeState      codexRolloutResumeState
 	workspaceExcursionItems map[string]struct{}
 	workspaceWarningShown   bool
 }

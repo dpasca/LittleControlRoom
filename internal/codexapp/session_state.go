@@ -22,12 +22,16 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 	policy := req.PlaywrightPolicy.Normalize()
 	ensureManagedPlaywrightSessionKey(&req)
 	reconnectTranscript := cloneTranscriptEntries(req.ReconnectTranscript)
+	var rolloutResumeState codexRolloutResumeState
 	if strings.TrimSpace(req.ResumeID) != "" {
-		recoveredTranscript, err := loadCodexInterruptedTurnTranscript(req)
+		state, err := loadCodexRolloutResumeState(req)
 		if err != nil {
-			log.Printf("WARN codexapp: recover interrupted rollout transcript thread_id=%q err=%v", strings.TrimSpace(req.ResumeID), err)
-		} else if len(recoveredTranscript) > 0 {
-			reconnectTranscript = mergeReconnectTranscriptSnapshots(reconnectTranscript, recoveredTranscript)
+			log.Printf("WARN codexapp: recover Codex rollout state thread_id=%q err=%v", strings.TrimSpace(req.ResumeID), err)
+		} else {
+			rolloutResumeState = state
+			if len(state.Transcript) > 0 {
+				reconnectTranscript = mergeReconnectTranscriptSnapshots(reconnectTranscript, state.Transcript)
+			}
 		}
 	}
 	s := &appServerSession{
@@ -53,8 +57,10 @@ func newAppServerSession(req LaunchRequest, notify func()) (Session, error) {
 		lastActivityAt:            time.Now(),
 		reconnectThreadID:         strings.TrimSpace(req.ResumeID),
 		reconnectTranscript:       reconnectTranscript,
+		rolloutResumeState:        rolloutResumeState,
 		workspaceExcursionItems:   make(map[string]struct{}),
 	}
+	s.applyRolloutResumeStateLocked(rolloutResumeState)
 	if err := s.start(req); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -127,6 +133,9 @@ func (s *appServerSession) stateSnapshotLocked() Snapshot {
 		LastBusyActivityAt:       s.lastBusyActivityAt,
 		Closed:                   s.closed,
 		ActiveTurnID:             s.activeTurnID,
+		LatestTurnStartedAt:      s.latestTurnStartedAt,
+		LatestTurnStateKnown:     s.latestTurnStateKnown,
+		LatestTurnCompleted:      s.latestTurnCompleted,
 		HistoryHasMore:           s.historyHasMore,
 		HistoryLoading:           s.historyLoading,
 		HistoryLoadError:         s.historyLoadError,
@@ -211,6 +220,10 @@ func (s *appServerSession) restoreBusyLocked(turnID string, external bool) {
 
 func (s *appServerSession) updateBusyLocked(turnID string, external, refreshActivity bool) {
 	turnID = strings.TrimSpace(turnID)
+	now := time.Now()
+	if !s.markTurnStartedLocked(turnID, now) {
+		return
+	}
 	turnChanged := turnID != "" && s.activeTurnID != "" && s.activeTurnID != turnID
 	if turnChanged {
 		s.activeItems = nil
@@ -231,7 +244,6 @@ func (s *appServerSession) updateBusyLocked(turnID string, external, refreshActi
 	if turnID != "" {
 		s.activeTurnID = turnID
 	}
-	now := time.Now()
 	if s.busySince.IsZero() {
 		s.busySince = now
 	}
@@ -347,6 +359,9 @@ func (s *appServerSession) clearBusyLocked(turnID string) {
 }
 
 func (s *appServerSession) markItemActiveLocked(turnID, itemID string) {
+	if s.shouldIgnoreSettledTurnReplayLocked(turnID) {
+		return
+	}
 	s.reconciling = false
 	if itemID = strings.TrimSpace(itemID); itemID != "" {
 		if s.activeItems == nil {
@@ -392,11 +407,72 @@ func (s *appServerSession) finishPendingCompletionLocked() {
 		return
 	}
 	completion := *s.pendingCompletion
+	s.markTurnSettledLocked(completion.TurnID)
 	s.clearBusyLocked(completion.TurnID)
 	if completion.Status != "" {
 		s.status = completion.Status
 		s.lastSystemNotice = completion.Status
 	}
+}
+
+func (s *appServerSession) applyRolloutResumeStateLocked(state codexRolloutResumeState) {
+	if !state.TurnStateKnown {
+		return
+	}
+	turnID := strings.TrimSpace(state.TurnID)
+	s.latestTurnID = turnID
+	s.latestTurnStartedAt = state.TurnStartedAt
+	s.latestTurnStateKnown = true
+	s.latestTurnCompleted = state.TurnSettled
+}
+
+func (s *appServerSession) resetTurnLifecycleLocked() {
+	s.latestTurnID = ""
+	s.latestTurnStartedAt = time.Time{}
+	s.latestTurnStateKnown = false
+	s.latestTurnCompleted = false
+	s.rolloutResumeState = codexRolloutResumeState{}
+}
+
+func (s *appServerSession) markTurnStartedLocked(turnID string, startedAt time.Time) bool {
+	turnID = strings.TrimSpace(turnID)
+	if s.shouldIgnoreSettledTurnReplayLocked(turnID) {
+		return false
+	}
+	if turnID != "" && turnID != strings.TrimSpace(s.latestTurnID) {
+		s.latestTurnID = turnID
+		s.latestTurnStartedAt = time.Time{}
+		if stateTurnID := strings.TrimSpace(s.rolloutResumeState.TurnID); stateTurnID != "" && stateTurnID != turnID {
+			s.rolloutResumeState = codexRolloutResumeState{}
+		}
+	}
+	if !startedAt.IsZero() && s.latestTurnStartedAt.IsZero() {
+		s.latestTurnStartedAt = startedAt
+	}
+	s.latestTurnStateKnown = true
+	s.latestTurnCompleted = false
+	return true
+}
+
+func (s *appServerSession) markTurnSettledLocked(turnID string) {
+	turnID = firstNonEmpty(turnID, s.activeTurnID, s.latestTurnID)
+	if turnID != "" && turnID != strings.TrimSpace(s.latestTurnID) {
+		s.latestTurnID = turnID
+		s.latestTurnStartedAt = time.Time{}
+	}
+	if s.latestTurnStartedAt.IsZero() && !s.busySince.IsZero() {
+		s.latestTurnStartedAt = s.busySince
+	}
+	s.latestTurnStateKnown = true
+	s.latestTurnCompleted = true
+}
+
+func (s *appServerSession) shouldIgnoreSettledTurnReplayLocked(turnID string) bool {
+	turnID = strings.TrimSpace(turnID)
+	return turnID != "" &&
+		s.latestTurnStateKnown &&
+		s.latestTurnCompleted &&
+		turnID == strings.TrimSpace(s.latestTurnID)
 }
 
 func tracksBusyItemLifecycle(itemType string) bool {

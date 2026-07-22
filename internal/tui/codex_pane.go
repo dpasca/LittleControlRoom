@@ -564,6 +564,9 @@ func overlayCodexSnapshotState(cached, state codexapp.Snapshot) codexapp.Snapsho
 	cached.LastBusyActivityAt = state.LastBusyActivityAt
 	cached.Phase = state.Phase
 	cached.ActiveTurnID = state.ActiveTurnID
+	cached.LatestTurnStartedAt = state.LatestTurnStartedAt
+	cached.LatestTurnStateKnown = state.LatestTurnStateKnown
+	cached.LatestTurnCompleted = state.LatestTurnCompleted
 	cached.PendingApproval = state.PendingApproval
 	cached.PendingToolInput = state.PendingToolInput
 	cached.PendingElicitation = state.PendingElicitation

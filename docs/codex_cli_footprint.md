@@ -53,6 +53,12 @@ Observed structured turn lifecycle markers under `event_msg.payload.type`:
 
 These are usable as a best-effort "latest turn completed" signal without parsing natural-language content. In particular, interrupted turns may end with `turn_aborted` and no later `task_complete`.
 
+Embedded cold-resume also treats the latest matching `task_complete` or
+`turn_aborted` marker as the durable lifecycle state for that turn. This keeps
+a resumed app-server response or notification replay from temporarily
+reclassifying the same settled turn as active; a different turn id still starts
+a new lifecycle normally.
+
 Observed recent conversational text usable for model-based "where was work left off?" classification:
 
 - `response_item.payload.type == "message"` with assistant text parts

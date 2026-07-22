@@ -518,6 +518,9 @@ type Snapshot struct {
 	LastBusyActivityAt          time.Time
 	Closed                      bool
 	ActiveTurnID                string
+	LatestTurnStartedAt         time.Time
+	LatestTurnStateKnown        bool
+	LatestTurnCompleted         bool
 	HistoryHasMore              bool
 	HistoryLoading              bool
 	HistoryLoadError            string

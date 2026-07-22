@@ -408,6 +408,9 @@ func (s *appServerSession) syncThreadStatusLocked(threadID string, status resume
 			statusText = "Codex session ready"
 		}
 
+		if hadActiveTurn {
+			s.markTurnSettledLocked(s.activeTurnID)
+		}
 		s.clearActiveStateLocked()
 		if statusText != "" {
 			s.status = statusText

@@ -525,6 +525,24 @@ func TestProjectAgentDisplayUsesLiveBusyTimer(t *testing.T) {
 	}
 }
 
+func TestCompletedTurnStateSuppressesStaleLiveTimer(t *testing.T) {
+	startedAt := time.Date(2026, 7, 22, 13, 56, 31, 14_000_000, time.UTC)
+	snapshot := codexapp.Snapshot{
+		Busy:                 true,
+		BusyExternal:         true,
+		ActiveTurnID:         "turn-completed",
+		BusySince:            startedAt.Add(30 * time.Minute),
+		LatestTurnStartedAt:  startedAt,
+		LatestTurnStateKnown: true,
+		LatestTurnCompleted:  true,
+		Phase:                codexapp.SessionPhaseExternal,
+	}
+
+	if gotStartedAt, active := embeddedSnapshotActiveStartedAt(snapshot, model.ProjectSummary{}); active || !gotStartedAt.IsZero() {
+		t.Fatalf("completed snapshot reported active timer: active=%t started=%v", active, gotStartedAt)
+	}
+}
+
 func TestProjectAgentDisplayUsesConflictResolverTimer(t *testing.T) {
 	projectPath := "/tmp/demo"
 	startedAt := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)

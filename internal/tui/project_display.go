@@ -482,6 +482,9 @@ func liveEngineerGenericStatus(status string) bool {
 }
 
 func embeddedSnapshotActiveStartedAt(snapshot codexapp.Snapshot, project model.ProjectSummary) (time.Time, bool) {
+	if snapshot.LatestTurnStateKnown && snapshot.LatestTurnCompleted {
+		return time.Time{}, false
+	}
 	active := snapshot.Busy || snapshot.BusyExternal || strings.TrimSpace(snapshot.ActiveTurnID) != ""
 	switch snapshot.Phase {
 	case codexapp.SessionPhaseRunning, codexapp.SessionPhaseFinishing, codexapp.SessionPhaseExternal:
@@ -490,7 +493,10 @@ func embeddedSnapshotActiveStartedAt(snapshot codexapp.Snapshot, project model.P
 	if !active {
 		return time.Time{}, false
 	}
-	startedAt := snapshot.BusySince
+	startedAt := snapshot.LatestTurnStartedAt
+	if startedAt.IsZero() {
+		startedAt = snapshot.BusySince
+	}
 	if startedAt.IsZero() {
 		startedAt = project.LatestTurnStartedAt
 	}

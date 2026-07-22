@@ -377,6 +377,11 @@ func (s *appServerSession) recoverSteerTarget(ctx context.Context, threadID stri
 
 	s.mu.Lock()
 	s.touchLocked()
+	if s.shouldIgnoreSettledTurnReplayLocked(recoveredTurnID) {
+		recoveredTurnID = ""
+		threadIdle = true
+		status = resumedThreadStatus{Type: "idle"}
+	}
 	switch {
 	case threadIdle:
 		s.syncThreadStatusLocked(thread.ID, status, true)
