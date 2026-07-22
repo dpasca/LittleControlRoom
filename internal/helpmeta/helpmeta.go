@@ -189,10 +189,30 @@ func CuratedTopics() []Topic {
 			},
 			Related: []string{
 				CommandTopicID(SurfaceMainTUI, "wt"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-restore-deleted-session"),
 				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-update-from-parent"),
 				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-merge-back"),
 			},
 			SourceRefs: []string{"tui.buildProjectRows", "tui.renderProjectList"},
+		},
+		{
+			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-restore-deleted-session"),
+			Kind:    TopicKindWorkflow,
+			Surface: SurfaceMainTUI,
+			Title:   "Restore a deleted Codex worktree session",
+			Summary: "Use /wt restore on a repository family to recreate a missing linked worktree from safe Git evidence and resume its globally stored Codex conversation.",
+			Usage:   []string{"/wt restore", "/wt undelete"},
+			ManualSteps: []string{
+				"Select the repository root or any linked worktree in the same family.",
+				"Run /wt restore and select a recorded Codex session whose former checkout is missing.",
+				"Review any blocked reason; LCR will not overwrite a path, steal a branch checked out elsewhere, or guess a missing commit.",
+				"Press Enter to recreate the exact worktree path, run its preparation profile, and resume the original Codex thread.",
+			},
+			Related: []string{
+				CommandTopicID(SurfaceMainTUI, "wt"),
+				TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-lanes"),
+			},
+			SourceRefs: []string{"tui.openWorktreeRestoreForSelection", "service.ListRestorableWorktreeSessions", "service.RestoreWorktreeSession", "commands.Specs"},
 		},
 		{
 			ID:      TopicID(SurfaceMainTUI, TopicKindWorkflow, "worktree-update-from-parent"),

@@ -207,6 +207,15 @@ func (m Model) renderFooter(width int) string {
 		}
 		return m.renderModalFooter(width, "Preparing worktree: Enter OK, Esc close", supplementSegments...)
 	}
+	if m.worktreeRestore != nil {
+		if m.worktreeRestore.Busy {
+			return m.renderModalFooter(width, "Restore worktree: recreating checkout and reopening Codex", supplementSegments...)
+		}
+		if m.worktreeRestore.Loading {
+			return m.renderModalFooter(width, "Restore worktree: loading saved sessions, Esc cancel", supplementSegments...)
+		}
+		return m.renderModalFooter(width, "Restore worktree: ↑↓ choose, Enter restore and resume, Esc cancel", supplementSegments...)
+	}
 	if m.worktreeMergeConfirm != nil {
 		if m.worktreeMergeConfirm.Busy {
 			return m.renderModalFooter(width, "Merge worktree: waiting for actions to finish", supplementSegments...)

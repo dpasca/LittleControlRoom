@@ -450,6 +450,11 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/push`
 - `/pull`
 - `/integrity`
+- `/wt restore` (`/wt undelete`)
+- `/wt update`
+- `/wt merge`
+- `/wt remove`
+- `/wt prune`
 - `/pin`
 - `/read`
 - `/read all`
@@ -491,6 +496,7 @@ The TUI command palette opens with `/` and supports autocomplete with `Tab`.
 - `/open` opens the selected project's folder in the system browser.
 - `/archive` moves the selected regular project to the Archived tab, or moves the selected scratch task into the scratch archive folder and out of the active task list. `/unarchive` restores an archived regular project to Active when the project is still in scope. The `a` key and `/tab [active|archived|toggle]` switch between the Active and Archived tabs.
 - `/remove` asks for confirmation, then makes the selected item go away using the safest matching action: it opens scratch-task archive/delete actions, cleans up linked worktrees, removes missing folders from the dashboard, or hides a regular project's exact path from the list. `/delete` and `/forget` are aliases.
+- `/wt restore` opens a repository-family recovery dialog for Codex conversations whose recorded linked-worktree path is missing. Candidates come from retained LCR worktree/session evidence and Codex's global `state_5.sqlite` thread index. A restore recreates the exact old path from its local branch, or recreates a missing branch at the thread's recorded Git commit, then applies normal worktree preparation, reconnects an open origin TODO when known, and resumes that Codex thread. Existing paths, branches checked out elsewhere, locked or mismatched stale registrations, invalid branch names, and unavailable fallback commits are shown as blocked instead of being modified. Recovery reconstructs committed Git state; it cannot restore uncommitted files that existed only in the deleted checkout. `/wt undelete` is an alias.
 - Linked worktree creation hydrates Git submodules by default. Repos can use `.lcroom/worktrees.toml` to opt out or define custom preparation profiles; see [`worktree_prep.md`](worktree_prep.md).
 - LCR stores an evidence-backed expected branch for repository families and warns when the canonical checkout is found on another branch. Press `I` or run `/integrity` for incident details, a fresh investigation-first engineer handoff, exact-state acknowledgment, explicit policy update, or conservative repair. The default is warn-only; see [`repository_root_integrity.md`](repository_root_integrity.md).
 - `/ignore` hides the selected project's exact name inside Little Control Room, which is handy for Codex-generated worktrees or other old projects that share a stable folder name.

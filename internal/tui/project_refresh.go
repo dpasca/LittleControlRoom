@@ -530,7 +530,7 @@ func (m *Model) requestProjectInvalidationCmd(intent projectInvalidationIntent) 
 
 func actionChangesProjectStructure(action string) bool {
 	switch strings.TrimSpace(action) {
-	case "archive_project", "unarchive_project", "forget_project", "remove_worktree", "scratch_task_archived", "scratch_task_deleted", "scratch_task_renamed", "project_category_created", "project_category_deleted", "project_category_changed", "agent_task_category_changed":
+	case "archive_project", "unarchive_project", "forget_project", "remove_worktree", "restore_worktree_session", "scratch_task_archived", "scratch_task_deleted", "scratch_task_renamed", "project_category_created", "project_category_deleted", "project_category_changed", "agent_task_category_changed":
 		return true
 	default:
 		return false

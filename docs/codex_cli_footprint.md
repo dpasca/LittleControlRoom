@@ -101,6 +101,9 @@ Observed *not* to update for every tool call in this run:
   - `state_5.sqlite` contains a `threads` table with:
     - `id` (thread/session id)
     - `cwd`
+    - `rollout_path`
+    - `title`
+    - `git_sha`, `git_branch`, and `git_origin_url`
     - `updated_at`
     - `cli_version`
     - additional metadata columns
@@ -127,7 +130,7 @@ Primary (filesystem-first):
 
 Optional secondary accelerator:
 
-- Read `~/.codex/state_5.sqlite` `threads` rows for quick latest `cwd` activity snapshots.
+- Read `~/.codex/state_5.sqlite` `threads` rows for quick latest `cwd` activity snapshots and recovery-oriented Git identity. LCR inspects the table schema before selecting optional columns so older Codex databases remain compatible.
 
 ## 6. Notes
 
@@ -165,3 +168,35 @@ for standalone Codex processes, direct filesystem tools, or commands whose
 working directory is not reported. See
 [`repository_root_integrity.md`](repository_root_integrity.md) for the warning and
 repair workflow.
+
+## 9. Deleted-worktree session recovery
+
+Codex's global artifacts can outlive the checkout recorded in a thread's `cwd`.
+LCR uses that fact for `/wt restore` without treating the SQLite index as the
+conversation itself:
+
+1. Retain missing linked-worktree rows that still have recorded project-session
+   evidence instead of expiring those recovery tombstones.
+2. Join those rows with Codex `threads` metadata by thread id. Also admit a
+   missing `root-name--suffix` sibling when its path has no retained LCR row,
+   keeping recovery scoped to the selected repository family.
+3. Exclude rollout metadata that identifies a forked or sub-agent thread. Older
+   or unavailable rollout metadata falls back conservatively to the indexed
+   direct thread.
+4. Require the exact recorded path to be absent. Reuse an existing local branch,
+   or recreate a missing branch only when `git_sha` is a valid commit still
+   present in the repository.
+5. Refuse recovery when the branch is checked out elsewhere or a stale Git
+   worktree registration is locked or names a different branch. A stale
+   registration for the same path and branch may be repaired by Git's forced
+   `worktree add` path.
+
+After checkout creation, LCR runs its standard worktree-preparation profile,
+restores retained branch/parent/TODO metadata, and asks embedded Codex to resume
+the original thread id. The rollout JSONL remains the durable conversation
+source of truth; `state_5.sqlite` supplies the path, recency, title, and Git
+identity needed for recovery discovery and reconstruction.
+
+Recovery cannot reconstruct uncommitted files that existed only in the deleted
+checkout. The resumed conversation may still contain enough context to recreate
+that work, but LCR does not present conversation context as a filesystem backup.

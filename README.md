@@ -235,6 +235,8 @@ Repo and runtime actions:
 - `/pull`: Pull the selected project's branch.
 - `/resolve`: Resolve selected repo merge conflicts in a separate background engineer session, with persistent project-row progress and a fresh Git-status check after it verifies and commits the resolution or reports a blocker.
 - `/integrity` (`I`): Inspect a repository-root branch mismatch, hand it to a fresh engineer, acknowledge it, update the expected branch, or apply a conservative linked-worktree repair.
+- `/wt restore` (`/wt undelete`): List Codex sessions whose recorded LCR worktree is gone, recreate the original checkout when Git evidence makes that safe, and resume the selected conversation.
+- `/wt update`, `/wt merge`, `/wt remove`, `/wt prune`: Update, integrate, remove, or prune linked worktrees in the selected repository family.
 - `/run [command]`: Start the selected project's managed runtime.
 - `/start [command]`: Alias for `/run`.
 - `/restart`: Restart the selected project's managed runtime.
@@ -317,6 +319,8 @@ Most day-to-day use falls into a few buckets:
 - **TODO-driven sessions** — Press `t` or use `/todo` to open a per-project TODO list. Add items you want an agent to work on, then press `Enter` on any item to start a fresh embedded session with that task as the prompt. The dialog shows the model that will be used and lets you pick the provider (Codex, Claude Code, OpenCode, or experimental LCAgent). New linked worktrees inherit the source project's saved run command and prepare Git submodules by default; repos can use [`.lcroom/worktrees.toml`](docs/worktree_prep.md) only when they need to opt out or customize preparation.
 
   [![TODO dialog with per-project task list](docs/screenshots/todo-dialog.png)](docs/screenshots/todo-dialog.png)
+
+- **Recover an accidentally deleted Codex worktree** — Select any row in the repository family and run `/wt restore` (or `/wt undelete`). LCR reads its retained worktree history together with Codex's global thread index, shows conversations whose recorded checkout no longer exists, and explains candidates it cannot safely rebuild. Restoring recreates the exact former path from the existing branch—or from the session's recorded Git commit when the branch itself was deleted—runs normal worktree preparation, restores the TODO link when available, and immediately resumes that Codex session. It will not overwrite an existing path, steal a branch checked out elsewhere, or bypass a locked or mismatched Git worktree registration. This reconstructs committed Git state; uncommitted files that existed only in the deleted checkout are not recoverable.
 
 - **Keep longer worktree tasks current** — Select a clean linked worktree and run `/wt update` to merge its recorded parent branch into the linked checkout without modifying the canonical checkout. The command does not fetch or pull remotes; `/wt merge`, `/wt remove`, and `/wt prune` retain their existing roles. Merge-back preserves an open embedded engineer session and defaults to keeping both its worktree and linked TODO, so you can continue the same session and merge again later; removing that checkout remains blocked until the session is closed. LCR also remembers the branch used to create a linked worktree and shows a project-summary warning if that checkout is later switched to another branch; it does not rename or repair the checkout automatically.
 

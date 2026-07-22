@@ -114,6 +114,7 @@ type Model struct {
 	worktreeMergeConfirm      *worktreeMergeConfirmState
 	worktreePostMerge         *worktreePostMergeState
 	worktreeRemoveConfirm     *worktreeRemoveConfirmState
+	worktreeRestore           *worktreeRestoreDialogState
 	repositoryIntegrityDialog *repositoryIntegrityDialogState
 	attentionDialog           *attentionDialogState
 	suspendedTurnDialog       *suspendedTurnResumeDialogState
@@ -541,6 +542,18 @@ type worktreeActionMsg struct {
 	postMergeTodoText      string
 	postMergeTodoPath      string
 	err                    error
+}
+
+type worktreeRestoreCandidatesMsg struct {
+	rootPath   string
+	candidates []service.RestorableWorktreeSession
+	err        error
+}
+
+type worktreeRestoreActionMsg struct {
+	rootPath string
+	result   service.RestoreWorktreeSessionResult
+	err      error
 }
 
 type commitTodoItem struct {
@@ -1566,6 +1579,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.runCommandDialog != nil {
 			return m.updateRunCommandDialogMode(msg)
 		}
+		if m.worktreeRestore != nil {
+			return m.updateWorktreeRestoreMode(msg)
+		}
 		if m.worktreeMergeConfirm != nil {
 			return m.updateWorktreeMergeConfirmMode(msg)
 		}
@@ -2512,6 +2528,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.requestProjectInvalidationCmd(invalidateProjectStructure(msg.projectPath)),
 			m.openCodexSessionCmdWithVisibility(req, msg.openModelFirst),
 		)
+	case worktreeRestoreCandidatesMsg:
+		return m.applyWorktreeRestoreCandidates(msg)
+	case worktreeRestoreActionMsg:
+		return m.applyWorktreeRestoreAction(msg)
 	case worktreeActionMsg:
 		if msg.clearPendingGitSummary {
 			if msg.err != nil {

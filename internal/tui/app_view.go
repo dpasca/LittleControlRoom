@@ -398,6 +398,9 @@ func (m Model) View() string {
 	if m.todoWorktreeEditor != nil {
 		body = m.renderTodoWorktreeEditorOverlay(body, layout.width, layout.height)
 	}
+	if m.worktreeRestore != nil {
+		body = m.renderWorktreeRestoreOverlay(body, layout.width, layout.height)
+	}
 	if m.worktreeMergeConfirm != nil {
 		body = m.renderWorktreeMergeConfirmOverlay(body, layout.width, layout.height)
 	}

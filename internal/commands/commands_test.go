@@ -606,6 +606,27 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name: "wt restore",
+			raw:  "/wt restore",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindWorktreeRestore {
+					t.Fatalf("kind = %s, want %s", inv.Kind, KindWorktreeRestore)
+				}
+				if inv.Canonical != "/wt restore" {
+					t.Fatalf("canonical = %q, want /wt restore", inv.Canonical)
+				}
+			},
+		},
+		{
+			name: "wt undelete alias",
+			raw:  "/wt undelete",
+			check: func(t *testing.T, inv Invocation) {
+				if inv.Kind != KindWorktreeRestore || inv.Canonical != "/wt restore" {
+					t.Fatalf("invocation = %#v, want canonical worktree restore", inv)
+				}
+			},
+		},
+		{
 			name: "wt update",
 			raw:  "/wt update",
 			check: func(t *testing.T, inv Invocation) {
@@ -1147,8 +1168,8 @@ func TestSuggestionsWorktreeUpdateArgument(t *testing.T) {
 
 func TestSuggestionsWorktreeAliasArguments(t *testing.T) {
 	got := Suggestions("/worktree ")
-	if len(got) != 4 {
-		t.Fatalf("Suggestions(/worktree ) len = %d, want 4", len(got))
+	if len(got) != 5 {
+		t.Fatalf("Suggestions(/worktree ) len = %d, want 5", len(got))
 	}
 	if got[0].Insert != "/wt update" {
 		t.Fatalf("first suggestion = %q, want /wt update", got[0].Insert)

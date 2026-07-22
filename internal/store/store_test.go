@@ -432,9 +432,9 @@ func TestDeleteExpiredMissingLinkedWorktreesKeepsProtectedRows(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	expiredAt := now.Add(-8 * 24 * time.Hour)
 	recentAt := now.Add(-3 * 24 * time.Hour)
-	seed := func(path string, updatedAt time.Time, pinned bool) {
+	seed := func(path string, updatedAt time.Time, pinned, withSession bool) {
 		t.Helper()
-		if err := st.UpsertProjectState(ctx, model.ProjectState{
+		state := model.ProjectState{
 			Path:             path,
 			Name:             filepath.Base(path),
 			Status:           model.StatusIdle,
@@ -445,7 +445,9 @@ func TestDeleteExpiredMissingLinkedWorktreesKeepsProtectedRows(t *testing.T) {
 			InScope:          true,
 			Pinned:           pinned,
 			UpdatedAt:        updatedAt,
-			Sessions: []model.SessionEvidence{{
+		}
+		if withSession {
+			state.Sessions = []model.SessionEvidence{{
 				SessionID:           "session-" + filepath.Base(path),
 				ProjectPath:         path,
 				DetectedProjectPath: path,
@@ -453,8 +455,9 @@ func TestDeleteExpiredMissingLinkedWorktreesKeepsProtectedRows(t *testing.T) {
 				Format:              "modern",
 				StartedAt:           updatedAt,
 				LastEventAt:         updatedAt,
-			}},
-		}); err != nil {
+			}}
+		}
+		if err := st.UpsertProjectState(ctx, state); err != nil {
 			t.Fatalf("seed %s: %v", path, err)
 		}
 	}
@@ -463,10 +466,12 @@ func TestDeleteExpiredMissingLinkedWorktreesKeepsProtectedRows(t *testing.T) {
 	recentPath := "/tmp/repo--recent"
 	pinnedPath := "/tmp/repo--pinned"
 	openTodoPath := "/tmp/repo--open-todo"
-	seed(expiredPath, expiredAt, false)
-	seed(recentPath, recentAt, false)
-	seed(pinnedPath, expiredAt, true)
-	seed(openTodoPath, expiredAt, false)
+	resumablePath := "/tmp/repo--resumable-session"
+	seed(expiredPath, expiredAt, false, false)
+	seed(recentPath, recentAt, false, false)
+	seed(pinnedPath, expiredAt, true, false)
+	seed(openTodoPath, expiredAt, false, false)
+	seed(resumablePath, expiredAt, false, true)
 	if _, err := st.AddTodo(ctx, openTodoPath, "Keep the tombstone while work is open"); err != nil {
 		t.Fatalf("add open todo: %v", err)
 	}
@@ -494,7 +499,7 @@ func TestDeleteExpiredMissingLinkedWorktreesKeepsProtectedRows(t *testing.T) {
 	if _, err := st.GetProjectDetail(ctx, expiredPath, 5); err == nil || !strings.Contains(err.Error(), "project not found") {
 		t.Fatalf("expired project lookup error = %v, want project not found", err)
 	}
-	for _, path := range []string{recentPath, pinnedPath, openTodoPath} {
+	for _, path := range []string{recentPath, pinnedPath, openTodoPath, resumablePath} {
 		if _, err := st.GetProjectDetail(ctx, path, 5); err != nil {
 			t.Fatalf("protected project %s should remain: %v", path, err)
 		}

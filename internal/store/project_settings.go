@@ -45,6 +45,11 @@ func (s *Store) DeleteExpiredMissingLinkedWorktrees(ctx context.Context, now tim
 				FROM project_todos pt
 				WHERE pt.project_path = p.path AND pt.done = 0
 			)
+			AND NOT EXISTS (
+				SELECT 1
+				FROM project_sessions ps
+				WHERE ps.project_path = p.path
+			)
 	`, string(model.WorktreeKindLinked), cutoff)
 	if err != nil {
 		return 0, err
