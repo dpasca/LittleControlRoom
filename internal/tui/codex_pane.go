@@ -800,7 +800,12 @@ func (m *Model) storeCodexSnapshot(projectPath string, snapshot codexapp.Snapsho
 	}
 	if prev, ok := m.codexSnapshots[projectPath]; !ok || codexTranscriptStateChanged(prev, snapshot) {
 		m.codexTranscriptRev[projectPath]++
-		m.invalidateCodexTranscriptDerivedCaches(projectPath)
+		m.invalidateCodexTranscriptRenderCache(projectPath)
+		if ok {
+			m.advanceCodexArtifactLinkScanRevision(projectPath, prev, snapshot, m.codexTranscriptRev[projectPath])
+		} else {
+			delete(m.codexArtifactLinkScans, projectPath)
+		}
 	}
 	m.codexSnapshots[projectPath] = snapshot
 	m.maybeApplyCodexSuggestedInputDraft(projectPath, snapshot)
@@ -925,10 +930,18 @@ func (m *Model) invalidateCodexTranscriptDerivedCaches(projectPath string) {
 	if projectPath == "" {
 		return
 	}
+	m.invalidateCodexTranscriptRenderCache(projectPath)
+	delete(m.codexArtifactLinkScans, projectPath)
+}
+
+func (m *Model) invalidateCodexTranscriptRenderCache(projectPath string) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return
+	}
 	if m.codexTranscriptCache.projectPath == projectPath {
 		m.codexTranscriptCache = codexTranscriptRenderCache{}
 	}
-	delete(m.codexArtifactLinkScans, projectPath)
 }
 
 func codexTranscriptStateChanged(prev, next codexapp.Snapshot) bool {
@@ -961,16 +974,20 @@ func codexTranscriptEntriesEqual(left, right []codexapp.TranscriptEntry) bool {
 		return false
 	}
 	for i := range left {
-		if left[i].ItemID != right[i].ItemID ||
-			left[i].TurnID != right[i].TurnID ||
-			left[i].Kind != right[i].Kind ||
-			left[i].Text != right[i].Text ||
-			left[i].DisplayText != right[i].DisplayText ||
-			!codexGeneratedImageArtifactsEqual(left[i].GeneratedImage, right[i].GeneratedImage) {
+		if !codexTranscriptEntryEqual(left[i], right[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+func codexTranscriptEntryEqual(left, right codexapp.TranscriptEntry) bool {
+	return left.ItemID == right.ItemID &&
+		left.TurnID == right.TurnID &&
+		left.Kind == right.Kind &&
+		left.Text == right.Text &&
+		left.DisplayText == right.DisplayText &&
+		codexGeneratedImageArtifactsEqual(left.GeneratedImage, right.GeneratedImage)
 }
 
 func codexGeneratedImageArtifactsEqual(left, right *codexapp.GeneratedImageArtifact) bool {

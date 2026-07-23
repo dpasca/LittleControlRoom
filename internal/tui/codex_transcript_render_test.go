@@ -1551,6 +1551,112 @@ func TestCodexProgressiveLinkScanFindsHiddenDenseCommandOutput(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactPickerProgressivelyAppendsAcrossStreamingRevisions(t *testing.T) {
+	projectPath := t.TempDir()
+	paths := []string{
+		filepath.Join(projectPath, "first.png"),
+		filepath.Join(projectPath, "second.png"),
+		filepath.Join(projectPath, "third.png"),
+	}
+	entries := []codexapp.TranscriptEntry{
+		{Kind: codexapp.TranscriptAgent, Text: "[first](" + paths[0] + ")"},
+		{Kind: codexapp.TranscriptAgent, Text: "[second](" + paths[1] + ")"},
+	}
+	first := codexapp.Snapshot{
+		ProjectPath:        projectPath,
+		TranscriptRevision: 1,
+		Entries:            entries,
+	}
+	m := Model{
+		codexVisibleProject: projectPath,
+		codexViewport:       viewport.New(100, 20),
+	}
+	m.storeCodexSnapshot(projectPath, first)
+	cmd := m.maybeStartCodexArtifactLinkScan(projectPath, first)
+	if cmd == nil {
+		t.Fatalf("initial progressive scan should start")
+	}
+	got := drainCmdMsgs(m, cmd)
+	updated, cmd := got.openCodexArtifactPicker(first)
+	if cmd == nil {
+		t.Fatalf("opening on the latest image should queue its preview")
+	}
+	got = normalizeUpdateModel(updated)
+	if target, ok := got.currentCodexArtifactTarget(); !ok || target.Path != paths[1] {
+		t.Fatalf("selected target before streaming update = %#v, ok=%t", target, ok)
+	}
+
+	second := first
+	second.TranscriptRevision = 2
+	second.Entries = append(append([]codexapp.TranscriptEntry(nil), entries...), codexapp.TranscriptEntry{
+		Kind: codexapp.TranscriptAgent,
+		Text: "[third](" + paths[2] + ")",
+	})
+	got.storeCodexSnapshot(projectPath, second)
+	state, ok := got.codexArtifactLinkScans[projectPath]
+	if !ok || len(state.targets) != 2 || state.nextEntry != 2 || state.complete {
+		t.Fatalf("streaming scan state = %#v, want two retained targets resuming at entry 2", state)
+	}
+	cmd = got.maybeStartCodexArtifactLinkScan(projectPath, second)
+	if cmd == nil {
+		t.Fatalf("streaming revision should scan only its appended tail")
+	}
+	got = drainCmdMsgs(got, cmd)
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 3 {
+		t.Fatalf("progressive picker targets = %#v, want exactly three", got.codexArtifactPicker)
+	}
+	for i, target := range got.codexArtifactPicker.Targets {
+		if target.Path != paths[i] {
+			t.Fatalf("progressive picker target %d = %#v, want %q", i, target, paths[i])
+		}
+	}
+	if target, ok := got.currentCodexArtifactTarget(); !ok || target.Path != paths[1] {
+		t.Fatalf("selected target after streaming update = %#v, ok=%t; want second image retained", target, ok)
+	}
+}
+
+func TestCodexArtifactPickerReplacesOnlyChangedStreamingTail(t *testing.T) {
+	projectPath := t.TempDir()
+	stablePath := filepath.Join(projectPath, "stable.png")
+	oldPath := filepath.Join(projectPath, "old.png")
+	newPath := filepath.Join(projectPath, "new.png")
+	first := codexapp.Snapshot{
+		ProjectPath:        projectPath,
+		TranscriptRevision: 1,
+		Entries: []codexapp.TranscriptEntry{
+			{Kind: codexapp.TranscriptAgent, Text: "[stable](" + stablePath + ")"},
+			{Kind: codexapp.TranscriptAgent, Text: "[changing](" + oldPath + ")"},
+		},
+	}
+	m := Model{codexVisibleProject: projectPath, codexViewport: viewport.New(100, 20)}
+	m.storeCodexSnapshot(projectPath, first)
+	got := drainCmdMsgs(m, m.maybeStartCodexArtifactLinkScan(projectPath, first))
+	updated, _ := got.openCodexArtifactPicker(first)
+	got = normalizeUpdateModel(updated)
+	updated, _ = got.updateCodexArtifactPickerMode(tea.KeyMsg{Type: tea.KeyUp})
+	got = normalizeUpdateModel(updated)
+
+	second := first
+	second.TranscriptRevision = 2
+	second.Entries = append([]codexapp.TranscriptEntry(nil), first.Entries...)
+	second.Entries[1].Text = "[changing](" + newPath + ")"
+	got.storeCodexSnapshot(projectPath, second)
+	state := got.codexArtifactLinkScans[projectPath]
+	if len(state.targets) != 2 || state.targets[1].Path != oldPath || state.nextEntry != 2 || state.complete {
+		t.Fatalf("pending changed-tail scan state = %#v, want the prior stable listing retained until background rebase", state)
+	}
+	got = drainCmdMsgs(got, got.maybeStartCodexArtifactLinkScan(projectPath, second))
+	if got.codexArtifactPicker == nil || len(got.codexArtifactPicker.Targets) != 2 {
+		t.Fatalf("changed-tail picker = %#v, want two targets", got.codexArtifactPicker)
+	}
+	if got.codexArtifactPicker.Targets[0].Path != stablePath || got.codexArtifactPicker.Targets[1].Path != newPath {
+		t.Fatalf("changed-tail picker targets = %#v, want stable then new", got.codexArtifactPicker.Targets)
+	}
+	if target, ok := got.currentCodexArtifactTarget(); !ok || target.Path != stablePath {
+		t.Fatalf("changed-tail selection = %#v, ok=%t; want stable target retained", target, ok)
+	}
+}
+
 func TestCodexProgressiveLinkScanDefersPassiveBusyStreamingScan(t *testing.T) {
 	projectPath := "/tmp/demo"
 	snapshot := codexapp.Snapshot{
@@ -1664,6 +1770,16 @@ func TestCodexMarkdownLinkParserBoundsMalformedBrackets(t *testing.T) {
 	}
 	if label != "docs" || target != "https://example.com/docs" || consumed != len("[docs](https://example.com/docs)") {
 		t.Fatalf("parsed link = (%q, %q, %d), want docs/example/full length", label, target, consumed)
+	}
+}
+
+func TestCodexArtifactTargetsIgnoreFilesystemRoot(t *testing.T) {
+	targets := codexArtifactOpenTargetsFromMarkdown("Root [`/`](/) and a real [image](/tmp/evidence.png).")
+	if len(targets) != 1 {
+		t.Fatalf("artifact targets = %#v, want only the real image", targets)
+	}
+	if targets[0].Kind != "image" || targets[0].Path != "/tmp/evidence.png" {
+		t.Fatalf("artifact target = %#v, want image /tmp/evidence.png", targets[0])
 	}
 }
 

@@ -374,11 +374,13 @@ type codexViewportContentState struct {
 type codexArtifactLinkScanState struct {
 	scanSeq        int64
 	transcriptRev  uint64
+	sourceRev      uint64
 	inFlight       bool
 	complete       bool
 	nextEntry      int
 	nextTextOffset int
 	targets        []codexArtifactOpenTarget
+	sourceEntries  []codexapp.TranscriptEntry
 }
 
 type actionMsg struct {
@@ -427,7 +429,10 @@ type codexArtifactLinkScanMsg struct {
 	nextEntry      int
 	nextTextOffset int
 	complete       bool
+	rebased        bool
+	baseTargets    []codexArtifactOpenTarget
 	targets        []codexArtifactOpenTarget
+	sourceEntries  []codexapp.TranscriptEntry
 }
 
 type runtimeActionMsg struct {

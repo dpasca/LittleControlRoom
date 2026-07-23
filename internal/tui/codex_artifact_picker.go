@@ -19,6 +19,8 @@ type codexArtifactOpenTarget struct {
 	Path                    string
 	PreviewData             []byte
 	order                   int
+	sourceEntry             int
+	sourceLocated           bool
 	implicitProjectRelative bool
 	resolvedProjectRelative bool
 }
@@ -306,8 +308,50 @@ func (m *Model) maybeStartCodexArtifactLinkScanWithPolicy(projectPath string, sn
 	state.scanSeq = m.codexArtifactLinkScanSeq
 	startEntry := max(0, state.nextEntry)
 	startOffset := max(0, state.nextTextOffset)
+	sourceRev := state.sourceRev
+	sourceEntries := state.sourceEntries
+	existingTargets := state.targets
 	m.codexArtifactLinkScans[projectPath] = state
-	return codexArtifactLinkScanCmd(projectPath, state.scanSeq, transcriptRev, entries, startEntry, startOffset)
+	return codexArtifactLinkScanCmd(
+		projectPath,
+		state.scanSeq,
+		transcriptRev,
+		entries,
+		sourceRev,
+		sourceEntries,
+		existingTargets,
+		startEntry,
+		startOffset,
+	)
+}
+
+func (m *Model) advanceCodexArtifactLinkScanRevision(projectPath string, previous, next codexapp.Snapshot, transcriptRev uint64) {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" || m.codexArtifactLinkScans == nil {
+		return
+	}
+	state, ok := m.codexArtifactLinkScans[projectPath]
+	if !ok {
+		return
+	}
+	if len(previous.Entries) == 0 || len(next.Entries) == 0 {
+		delete(m.codexArtifactLinkScans, projectPath)
+		return
+	}
+	state.transcriptRev = transcriptRev
+	state.inFlight = false
+	state.complete = false
+	m.codexArtifactLinkScans[projectPath] = state
+}
+
+func codexTranscriptEntryCommonPrefix(left, right []codexapp.TranscriptEntry) int {
+	limit := min(len(left), len(right))
+	for index := 0; index < limit; index++ {
+		if !codexTranscriptEntryEqual(left[index], right[index]) {
+			return index
+		}
+	}
+	return limit
 }
 
 func (m Model) codexArtifactPickerOpenForProject(projectPath string) bool {
@@ -315,13 +359,35 @@ func (m Model) codexArtifactPickerOpenForProject(projectPath string) bool {
 	return projectPath != "" && m.codexArtifactPicker != nil && strings.TrimSpace(m.codexArtifactPicker.ProjectPath) == projectPath
 }
 
-func codexArtifactLinkScanCmd(projectPath string, scanSeq int64, transcriptRev uint64, entries []codexapp.TranscriptEntry, startEntry, startTextOffset int) tea.Cmd {
+func codexArtifactLinkScanCmd(
+	projectPath string,
+	scanSeq int64,
+	transcriptRev uint64,
+	entries []codexapp.TranscriptEntry,
+	sourceRev uint64,
+	sourceEntries []codexapp.TranscriptEntry,
+	existingTargets []codexArtifactOpenTarget,
+	startEntry, startTextOffset int,
+) tea.Cmd {
 	projectPath = strings.TrimSpace(projectPath)
 	if projectPath == "" {
 		return nil
 	}
 	entries = append([]codexapp.TranscriptEntry(nil), entries...)
+	sourceEntries = append([]codexapp.TranscriptEntry(nil), sourceEntries...)
+	existingTargets = append([]codexArtifactOpenTarget(nil), existingTargets...)
 	return func() tea.Msg {
+		rebased := sourceRev > 0 && sourceRev != transcriptRev
+		baseTargets := existingTargets
+		if rebased {
+			baseTargets, startEntry, startTextOffset = rebaseCodexArtifactLinkScan(
+				sourceEntries,
+				entries,
+				existingTargets,
+				startEntry,
+				startTextOffset,
+			)
+		}
 		targets, nextEntry, nextTextOffset, complete := scanCodexArtifactLinksChunk(projectPath, entries, startEntry, startTextOffset)
 		return codexArtifactLinkScanMsg{
 			projectPath:    projectPath,
@@ -330,9 +396,34 @@ func codexArtifactLinkScanCmd(projectPath string, scanSeq int64, transcriptRev u
 			nextEntry:      nextEntry,
 			nextTextOffset: nextTextOffset,
 			complete:       complete,
+			rebased:        rebased,
+			baseTargets:    baseTargets,
 			targets:        targets,
+			sourceEntries:  entries,
 		}
 	}
+}
+
+func rebaseCodexArtifactLinkScan(
+	previousEntries, nextEntries []codexapp.TranscriptEntry,
+	targets []codexArtifactOpenTarget,
+	nextEntry, nextTextOffset int,
+) ([]codexArtifactOpenTarget, int, int) {
+	commonPrefix := codexTranscriptEntryCommonPrefix(previousEntries, nextEntries)
+	preserved := make([]codexArtifactOpenTarget, 0, len(targets))
+	for _, target := range targets {
+		if !target.sourceLocated {
+			return nil, 0, 0
+		}
+		if target.sourceEntry < commonPrefix {
+			preserved = append(preserved, target)
+		}
+	}
+	if nextEntry >= commonPrefix {
+		nextEntry = commonPrefix
+		nextTextOffset = 0
+	}
+	return preserved, max(0, nextEntry), max(0, nextTextOffset)
 }
 
 func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.TranscriptEntry, startEntry, startTextOffset int) ([]codexArtifactOpenTarget, int, int, bool) {
@@ -350,12 +441,14 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 	for entryIndex < len(entries) && entriesScanned < codexArtifactLinkScanEntryBudget && bytesScanned < codexArtifactLinkScanByteBudget {
 		entry := entries[entryIndex]
 		if textOffset == 0 {
+			entryTargets := make([]codexArtifactOpenTarget, 0, 2)
 			if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
-				targets = append(targets, target)
+				entryTargets = append(entryTargets, target)
 			}
 			if target, ok := codexViewedImageOpenTarget(entry, projectPath); ok {
-				targets = append(targets, target)
+				entryTargets = append(entryTargets, target)
 			}
+			targets = append(targets, locateCodexArtifactOpenTargets(entryTargets, entryIndex)...)
 		}
 		text := codexFullTranscriptEntryLinkScanText(entry)
 		if textOffset >= len(text) {
@@ -370,7 +463,8 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 		}
 		scanLen := min(len(text)-textOffset, remainingBudget)
 		parseEnd := min(len(text), textOffset+scanLen+codexMarkdownLinkLabelScanLimit+max(codexMarkdownLinkTargetScanLimit, codexInlineCodePathScanLimit)+4)
-		targets = append(targets, codexArtifactOpenTargetsFromMarkdownPrefixInProject(text[textOffset:parseEnd], scanLen, projectPath)...)
+		chunkTargets := codexArtifactOpenTargetsFromMarkdownPrefixInProject(text[textOffset:parseEnd], scanLen, projectPath)
+		targets = append(targets, locateCodexArtifactOpenTargets(chunkTargets, entryIndex)...)
 		bytesScanned += scanLen
 		if textOffset+scanLen < len(text) {
 			textOffset += scanLen
@@ -382,6 +476,18 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 	}
 	complete := entryIndex >= len(entries)
 	return normalizeCodexArtifactOpenTargetsForProject(targets, projectPath), entryIndex, textOffset, complete
+}
+
+func locateCodexArtifactOpenTargets(targets []codexArtifactOpenTarget, entryIndex int) []codexArtifactOpenTarget {
+	if len(targets) == 0 {
+		return nil
+	}
+	located := append([]codexArtifactOpenTarget(nil), targets...)
+	for i := range located {
+		located[i].sourceEntry = max(0, entryIndex)
+		located[i].sourceLocated = true
+	}
+	return located
 }
 
 func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.Model, tea.Cmd) {
@@ -396,28 +502,37 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 	if state.transcriptRev != msg.transcriptRev || state.scanSeq != msg.scanSeq || !state.inFlight {
 		return m, nil
 	}
+	if msg.rebased {
+		state.targets = normalizeCodexArtifactOpenTargetsForProject(msg.baseTargets, projectPath)
+	}
 	state.targets = normalizeCodexArtifactOpenTargetsForProject(append(state.targets, msg.targets...), projectPath)
 	state.nextEntry = max(0, msg.nextEntry)
 	state.nextTextOffset = max(0, msg.nextTextOffset)
 	state.complete = msg.complete
 	state.inFlight = false
+	state.sourceRev = msg.transcriptRev
+	state.sourceEntries = msg.sourceEntries
 	m.codexArtifactLinkScans[projectPath] = state
 
 	previewCmd := tea.Cmd(nil)
 	if picker := m.codexArtifactPicker; picker != nil && strings.TrimSpace(picker.ProjectPath) == projectPath {
 		previousCount := len(picker.Targets)
 		previousFilteredCount := codexArtifactPickerFilteredCount(picker)
-		wasAtLatest := previousFilteredCount == 0 || picker.Selected >= previousFilteredCount-1
-		picker.Targets = normalizeCodexArtifactOpenTargetsForProject(append(picker.Targets, msg.targets...), projectPath)
+		selectionAnchor := codexArtifactPickerSelectionAnchorForCurrent(picker)
+		picker.Targets = reconcileCodexArtifactPickerTargets(state.targets, picker.Targets, state.complete, projectPath)
 		filteredCount := codexArtifactPickerFilteredCount(picker)
-		if wasAtLatest && filteredCount > 0 {
+		if selected, ok := codexArtifactPickerSelectionForAnchor(picker, selectionAnchor); ok {
+			picker.Selected = selected
+		} else if previousFilteredCount == 0 && filteredCount > 0 {
 			picker.Selected = filteredCount - 1
+		} else {
+			m.normalizeCodexArtifactPickerSelection()
 		}
 		if previousCount == 0 && len(picker.Targets) > 0 {
 			picker.Hint = "Links found in this embedded transcript. Type to filter by name."
 			m.status = "Link picker open"
 			previewCmd = m.codexArtifactPickerPreviewCmd()
-		} else if wasAtLatest && filteredCount > previousFilteredCount {
+		} else if filteredCount != previousFilteredCount || len(msg.targets) > 0 {
 			previewCmd = m.codexArtifactPickerPreviewCmd()
 		}
 		if len(picker.Targets) == 0 && state.complete {
@@ -432,6 +547,73 @@ func (m Model) applyCodexArtifactLinkScanMsg(msg codexArtifactLinkScanMsg) (tea.
 		}
 	}
 	return m, batchCmds(previewCmd, nextScanCmd)
+}
+
+func reconcileCodexArtifactPickerTargets(scanned, existing []codexArtifactOpenTarget, complete bool, projectPath string) []codexArtifactOpenTarget {
+	scanned = normalizeCodexArtifactOpenTargetsForProject(scanned, projectPath)
+	if complete || len(existing) == 0 {
+		return scanned
+	}
+	out := append([]codexArtifactOpenTarget(nil), scanned...)
+	covered := make(map[string]int, len(scanned))
+	for _, target := range scanned {
+		covered[codexArtifactOccurrenceKey(target)]++
+	}
+	for _, target := range existing {
+		key := codexArtifactOccurrenceKey(target)
+		if covered[key] > 0 {
+			covered[key]--
+			continue
+		}
+		out = append(out, target)
+	}
+	return normalizeCodexArtifactOpenTargetsForProject(out, projectPath)
+}
+
+type codexArtifactPickerSelectionAnchor struct {
+	key        string
+	occurrence int
+	valid      bool
+}
+
+func codexArtifactPickerSelectionAnchorForCurrent(picker *codexArtifactPickerState) codexArtifactPickerSelectionAnchor {
+	indexes := codexArtifactPickerFilteredIndexes(picker)
+	if len(indexes) == 0 {
+		return codexArtifactPickerSelectionAnchor{}
+	}
+	selected := max(0, min(picker.Selected, len(indexes)-1))
+	targetIndex := indexes[selected]
+	key := codexArtifactOccurrenceKey(picker.Targets[targetIndex])
+	occurrence := 0
+	for _, index := range indexes[:selected] {
+		if codexArtifactOccurrenceKey(picker.Targets[index]) == key {
+			occurrence++
+		}
+	}
+	return codexArtifactPickerSelectionAnchor{key: key, occurrence: occurrence, valid: true}
+}
+
+func codexArtifactPickerSelectionForAnchor(picker *codexArtifactPickerState, anchor codexArtifactPickerSelectionAnchor) (int, bool) {
+	if !anchor.valid {
+		return 0, false
+	}
+	occurrence := 0
+	for selected, index := range codexArtifactPickerFilteredIndexes(picker) {
+		if codexArtifactOccurrenceKey(picker.Targets[index]) != anchor.key {
+			continue
+		}
+		if occurrence == anchor.occurrence {
+			return selected, true
+		}
+		occurrence++
+	}
+	return 0, false
+}
+
+func codexArtifactOccurrenceKey(target codexArtifactOpenTarget) string {
+	return strings.TrimSpace(target.Kind) + "\x00" +
+		filepath.Clean(strings.TrimSpace(target.Path)) + "\x00" +
+		strings.TrimSpace(target.Label)
 }
 
 func (m *Model) closeCodexArtifactPicker(status string) {
@@ -1289,7 +1471,7 @@ func normalizeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []code
 	out := make([]codexArtifactOpenTarget, 0, len(targets))
 	for inputIndex, target := range targets {
 		path := strings.TrimSpace(target.Path)
-		if path == "" {
+		if path == "" || codexArtifactPathIsFilesystemRoot(path) {
 			continue
 		}
 		order := target.order
@@ -1306,6 +1488,14 @@ func normalizeCodexArtifactOpenTargets(targets []codexArtifactOpenTarget) []code
 		out = append(out, target)
 	}
 	return out
+}
+
+func codexArtifactPathIsFilesystemRoot(path string) bool {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." {
+		return false
+	}
+	return path == filepath.VolumeName(path)+string(filepath.Separator)
 }
 
 func normalizeCodexArtifactOpenTargetsForProject(targets []codexArtifactOpenTarget, projectPath string) []codexArtifactOpenTarget {
@@ -1441,6 +1631,12 @@ func mergeCodexArtifactOpenTarget(existing, next codexArtifactOpenTarget) codexA
 	}
 	if existing.order <= 0 || (next.order > 0 && next.order < existing.order) {
 		existing.order = next.order
+	}
+	if !existing.sourceLocated && next.sourceLocated {
+		existing.sourceEntry = next.sourceEntry
+		existing.sourceLocated = true
+	} else if existing.sourceLocated && next.sourceLocated && next.sourceEntry < existing.sourceEntry {
+		existing.sourceEntry = next.sourceEntry
 	}
 	existing.implicitProjectRelative = existing.implicitProjectRelative && next.implicitProjectRelative
 	return existing
