@@ -2501,6 +2501,94 @@ func TestCodexArtifactPickerOpensSelectedImageTargets(t *testing.T) {
 	}
 }
 
+func TestCodexArtifactPickerListsViewedImageToolTargets(t *testing.T) {
+	dir := t.TempDir()
+	imageBytes := mustTestPNG(color.RGBA{R: 40, G: 180, B: 220, A: 255})
+	paths := []string{
+		filepath.Join(dir, "cockpit-left-side-by-side.png"),
+		filepath.Join(dir, "cockpit-left-diff-auto.png"),
+		filepath.Join(dir, "chase-side-by-side.png"),
+		filepath.Join(dir, "chase-diff-auto.png"),
+	}
+	entries := make([]codexapp.TranscriptEntry, 0, len(paths))
+	for _, path := range paths {
+		if err := os.WriteFile(path, imageBytes, 0o600); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+		entries = append(entries, codexapp.TranscriptEntry{
+			Kind: codexapp.TranscriptTool,
+			Text: "Viewed image: " + path,
+		})
+	}
+	snapshot := codexapp.Snapshot{
+		ProjectPath: dir,
+		Entries:     entries,
+	}
+	progressiveTargets, _, _, complete := scanCodexArtifactLinksChunk(dir, entries, 0, 0)
+	if !complete || len(progressiveTargets) != len(paths) {
+		t.Fatalf("progressive viewed image targets = %#v, complete=%t; want %d images", progressiveTargets, complete, len(paths))
+	}
+
+	m := Model{
+		codexVisibleProject: dir,
+		codexSnapshots: map[string]codexapp.Snapshot{
+			dir: snapshot,
+		},
+		codexViewport: viewport.New(100, 20),
+	}
+	rendered := m.renderAndCacheCodexTranscript(dir, snapshot, 100)
+	m.codexViewport.SetContent(rendered)
+
+	updated, cmd := m.updateCodexMode(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}, Alt: true})
+	if cmd == nil {
+		t.Fatalf("Alt+O should queue a preview load for the latest viewed image")
+	}
+	got := normalizeUpdateModel(updated)
+	if got.codexArtifactPicker == nil {
+		t.Fatalf("Alt+O should open the artifact picker")
+	}
+	if len(got.codexArtifactPicker.Targets) != len(paths) {
+		t.Fatalf("viewed image targets = %#v, want %d images", got.codexArtifactPicker.Targets, len(paths))
+	}
+	for i, target := range got.codexArtifactPicker.Targets {
+		if target.Kind != "image" || target.Path != paths[i] {
+			t.Fatalf("viewed image target %d = %#v, want image %q", i, target, paths[i])
+		}
+	}
+}
+
+func TestCodexArtifactPickerUsesExpandedDialogAndPreview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large-preview.png")
+	imageBytes := mustTestPNG(color.RGBA{R: 40, G: 180, B: 220, A: 255})
+	if err := os.WriteFile(path, imageBytes, 0o600); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	m := Model{
+		codexArtifactPicker: &codexArtifactPickerState{
+			Title:    "Open Links",
+			Targets:  []codexArtifactOpenTarget{{Kind: "image", Label: "Viewed image", Path: path, PreviewData: imageBytes}},
+			Selected: 0,
+		},
+	}
+
+	panel := m.renderCodexArtifactPicker(220, 50)
+	if width := lipgloss.Width(panel); width < 160 {
+		t.Fatalf("expanded artifact picker width = %d, want at least 160", width)
+	}
+	previewRows := 0
+	for _, line := range strings.Split(ansi.Strip(panel), "\n") {
+		if strings.Contains(line, "▀") {
+			previewRows++
+		}
+	}
+	if previewRows < 12 {
+		t.Fatalf("expanded artifact preview rows = %d, want at least 12", previewRows)
+	}
+	if height := lipgloss.Height(panel); height > 50 {
+		t.Fatalf("expanded artifact picker height = %d, want no more than body height 50", height)
+	}
+}
+
 func TestCodexArtifactPickerKeepsTranscriptOrderAndRepetitions(t *testing.T) {
 	dir := t.TempDir()
 	alphaPath := filepath.Join(dir, "alpha.txt")

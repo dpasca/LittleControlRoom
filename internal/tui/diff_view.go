@@ -1612,6 +1612,10 @@ func renderDiffImageVariant(title string, data []byte, width int) string {
 }
 
 func renderANSIImagePreview(data []byte, width, maxRows int) string {
+	return renderANSIImagePreviewWithMaxCols(data, width, maxRows, 40)
+}
+
+func renderANSIImagePreviewWithMaxCols(data []byte, width, maxRows, maxCols int) string {
 	if len(data) == 0 || width <= 0 || maxRows <= 0 {
 		return ""
 	}
@@ -1623,7 +1627,7 @@ func renderANSIImagePreview(data []byte, width, maxRows int) string {
 	bounds := img.Bounds()
 	imgWidth := max(1, bounds.Dx())
 	imgHeight := max(1, bounds.Dy())
-	cols := min(max(4, width), 40)
+	cols := min(max(4, width), max(4, maxCols))
 	rows := int(float64(imgHeight) * float64(cols) / float64(imgWidth) / 2.0)
 	rows = max(3, min(maxRows, rows))
 

@@ -353,6 +353,9 @@ func scanCodexArtifactLinksChunk(projectPath string, entries []codexapp.Transcri
 			if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
 				targets = append(targets, target)
 			}
+			if target, ok := codexViewedImageOpenTarget(entry, projectPath); ok {
+				targets = append(targets, target)
+			}
 		}
 		text := codexFullTranscriptEntryLinkScanText(entry)
 		if textOffset >= len(text) {
@@ -642,7 +645,7 @@ func (m Model) renderCodexArtifactPickerOverlay(body string, bodyW, bodyH int) s
 }
 
 func (m Model) renderCodexArtifactPicker(bodyW, bodyH int) string {
-	panelWidth := min(bodyW, min(max(72, bodyW-8), 120))
+	panelWidth := min(bodyW, min(max(72, bodyW-8), 172))
 	panelInnerWidth := max(28, panelWidth-4)
 	return renderDialogPanel(panelWidth, panelInnerWidth, m.renderCodexArtifactPickerContent(panelInnerWidth, bodyH))
 }
@@ -688,7 +691,12 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	if selected >= len(indexes) {
 		selected = len(indexes) - 1
 	}
-	start, end := codexArtifactPickerWindow(selected, len(indexes), bodyH)
+	selectedTarget, hasSelectedTarget := m.currentCodexArtifactTarget()
+	previewRows := 0
+	if hasSelectedTarget && strings.TrimSpace(selectedTarget.Kind) == "image" {
+		previewRows = codexArtifactPickerPreviewMaxRows(bodyH)
+	}
+	start, end := codexArtifactPickerWindow(selected, len(indexes), bodyH, previewRows)
 	layout := newCodexArtifactPickerRowLayout(width)
 	lines = append(lines, renderCodexArtifactPickerHeader(layout, width))
 	if start > 0 {
@@ -700,11 +708,11 @@ func (m Model) renderCodexArtifactPickerContent(width, bodyH int) string {
 	if end < len(indexes) {
 		lines = append(lines, commandPaletteHintStyle.Render(fmt.Sprintf("↓ %d more", len(indexes)-end)))
 	}
-	if selected, ok := m.currentCodexArtifactTarget(); ok {
+	if hasSelectedTarget {
 		lines = append(lines, "")
 		lines = append(lines, commandPaletteTitleStyle.Render("Selected"))
-		lines = append(lines, renderCodexArtifactSelectedDetails(selected, width)...)
-		if preview := strings.TrimSpace(m.renderCodexArtifactPreview(selected, width, bodyH)); preview != "" {
+		lines = append(lines, renderCodexArtifactSelectedDetails(selectedTarget, width)...)
+		if preview := strings.TrimSpace(m.renderCodexArtifactPreview(selectedTarget, width, bodyH)); preview != "" {
 			lines = append(lines, "")
 			lines = append(lines, commandPaletteTitleStyle.Render("Preview"))
 			lines = append(lines, preview)
@@ -723,9 +731,9 @@ func (m Model) renderCodexArtifactPreview(target codexArtifactOpenTarget, width,
 	if len(data) == 0 && picker != nil && path != "" {
 		data = picker.PreviewData[path]
 	}
-	maxRows := max(3, min(8, bodyH/4))
+	maxRows := codexArtifactPickerPreviewMaxRows(bodyH)
 	if len(data) > 0 {
-		return renderANSIImagePreview(data, max(12, width), maxRows)
+		return renderANSIImagePreviewWithMaxCols(data, max(12, width), maxRows, 72)
 	}
 	if picker != nil && path != "" {
 		if errText := strings.TrimSpace(picker.PreviewErrors[path]); errText != "" {
@@ -738,14 +746,21 @@ func (m Model) renderCodexArtifactPreview(target codexArtifactOpenTarget, width,
 	return commandPaletteHintStyle.Render("Preview unavailable.")
 }
 
-func codexArtifactPickerWindow(selected, total, bodyH int) (int, int) {
+func codexArtifactPickerPreviewMaxRows(bodyH int) int {
+	if bodyH <= 0 {
+		bodyH = 30
+	}
+	return max(3, min(16, bodyH/3))
+}
+
+func codexArtifactPickerWindow(selected, total, bodyH, previewRows int) (int, int) {
 	if total <= 0 {
 		return 0, 0
 	}
 	if bodyH <= 0 {
 		bodyH = 30
 	}
-	limit := min(total, max(3, min(8, bodyH-20)))
+	limit := min(total, max(3, min(10, bodyH-max(0, previewRows)-22)))
 	start := 0
 	if selected >= limit {
 		start = selected - limit + 1
@@ -976,6 +991,9 @@ func codexOpenTargetsFromTranscriptEntryForBlockModeInProject(entry codexapp.Tra
 			PreviewData: append([]byte(nil), target.PreviewData...),
 		}}
 	}
+	if target, ok := codexViewedImageOpenTarget(entry, projectPath); ok {
+		return []codexArtifactOpenTarget{target}
+	}
 	text, ok := codexTranscriptEntryLinkScanText(entry, blockMode)
 	if !ok {
 		return nil
@@ -990,6 +1008,9 @@ func codexOpenTargetsFromTranscriptEntryFull(entry codexapp.TranscriptEntry) []c
 func codexOpenTargetsFromTranscriptEntryFullInProject(entry codexapp.TranscriptEntry, projectPath string) []codexArtifactOpenTarget {
 	targets := make([]codexArtifactOpenTarget, 0, 1)
 	if target, ok := codexGeneratedImageOpenTarget(entry.GeneratedImage); ok {
+		targets = append(targets, target)
+	}
+	if target, ok := codexViewedImageOpenTarget(entry, projectPath); ok {
 		targets = append(targets, target)
 	}
 	if text := codexFullTranscriptEntryLinkScanText(entry); strings.TrimSpace(text) != "" {
@@ -1014,6 +1035,35 @@ func codexGeneratedImageOpenTarget(image *codexapp.GeneratedImageArtifact) (code
 		Label:       "Generated image",
 		Path:        path,
 		PreviewData: append([]byte(nil), image.PreviewData...),
+	}, true
+}
+
+func codexViewedImageOpenTarget(entry codexapp.TranscriptEntry, projectPath string) (codexArtifactOpenTarget, bool) {
+	if entry.Kind != codexapp.TranscriptTool {
+		return codexArtifactOpenTarget{}, false
+	}
+	const prefix = "Viewed image: "
+	text := strings.TrimSpace(entry.Text)
+	if !strings.HasPrefix(text, prefix) {
+		return codexArtifactOpenTarget{}, false
+	}
+	rawPath := strings.TrimSpace(strings.TrimPrefix(text, prefix))
+	if rawPath == "" || strings.ContainsAny(rawPath, "\r\n") {
+		return codexArtifactOpenTarget{}, false
+	}
+	localPath, resolution, ok := codexLocalLinkTextForProjectResolution(rawPath, projectPath)
+	if !ok {
+		return codexArtifactOpenTarget{}, false
+	}
+	path, kind, ok := codexLocalArtifactOpenTarget("", localPath)
+	if !ok || kind != "image" {
+		return codexArtifactOpenTarget{}, false
+	}
+	return codexArtifactOpenTarget{
+		Kind:                    "image",
+		Label:                   "Viewed image",
+		Path:                    path,
+		implicitProjectRelative: resolution.implicitProjectRelative,
 	}, true
 }
 
