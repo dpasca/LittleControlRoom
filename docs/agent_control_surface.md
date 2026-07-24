@@ -56,6 +56,11 @@ shows the capability-specific target and effects. Only `Enter` moves it to
 `running`; cancellation and the final execution result are written back for the
 originating session to inspect.
 
+A canceled or failed operation ends the originating agent's current write-side
+workflow. The runtime result tells the agent to stop rather than retry the
+operation or continue later mutations or external actions through shell or
+another tool. A fresh proposal can be created on a later user turn.
+
 Waiting confirmations are returned to `proposed` when a new TUI host starts, so
 a restart does not strand the request. The standalone web server does not claim
 operations because it has no equivalent operator-confirmation surface.

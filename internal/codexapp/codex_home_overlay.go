@@ -96,7 +96,9 @@ For an LCR action beyond the direct runtime and repository-scoped TODO tools:
 4. A successful proposal does not mean the action ran. It is waiting for explicit operator confirmation in Little Control Room. Stop the turn, tell the user what needs confirmation, and do not poll.
 5. On a later user turn, call ` + "`get_control_operation`" + ` with the returned operation id to read the confirmed result.
 
-Never claim that a proposed action completed until ` + "`get_control_operation`" + ` reports a terminal result. Do not bypass this confirmation path with shell commands or direct database edits.
+Never claim that a proposed action completed until ` + "`get_control_operation`" + ` reports a terminal result. Do not bypass this confirmation path with shell commands, direct database edits, or another tool.
+
+If ` + "`get_control_operation`" + ` reports that an operation was canceled or failed, stop that turn and report the result. Do not retry it or continue with later write or external-action steps from the same requested workflow, even if those steps appear separately authorized. Wait for a new user turn before creating a fresh proposal.
 `
 
 const shadowRuntimeBrowserAttentionMarkdown = `

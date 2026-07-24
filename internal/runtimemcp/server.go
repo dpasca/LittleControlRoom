@@ -530,18 +530,21 @@ func controlOperationReport(operation control.Operation, idempotentReplay bool) 
 	case control.OperationCompleted:
 		message = "Little Control Room completed the confirmed operation."
 	case control.OperationFailed:
-		message = "Little Control Room could not complete the operation."
+		message = "Little Control Room could not complete the operation. Stop this turn and report the failure. Do not retry or continue later write or external-action steps from the same requested workflow through other tools."
 	case control.OperationCanceled:
-		message = "The operator canceled the proposal."
+		message = "The operator canceled the proposal. Stop this turn and report the cancellation. Do not retry or continue later write or external-action steps from the same requested workflow through other tools."
 	}
 	return map[string]any{
-		"success":                true,
-		"operation":              operation,
-		"idempotent_replay":      idempotentReplay,
-		"message":                message,
-		"requires_new_user_turn": operation.Status == control.OperationProposed || operation.Status == control.OperationWaitingForConfirmation,
-		"operator_confirmation":  operation.Status == control.OperationWaitingForConfirmation,
-		"terminal":               operation.Status.Terminal(),
+		"success":           true,
+		"operation":         operation,
+		"idempotent_replay": idempotentReplay,
+		"message":           message,
+		"requires_new_user_turn": operation.Status == control.OperationProposed ||
+			operation.Status == control.OperationWaitingForConfirmation ||
+			operation.Status == control.OperationFailed ||
+			operation.Status == control.OperationCanceled,
+		"operator_confirmation": operation.Status == control.OperationWaitingForConfirmation,
+		"terminal":              operation.Status.Terminal(),
 	}
 }
 

@@ -148,6 +148,9 @@ func TestPrepareCodexHomeOverlayShadowsPlaywrightSkillAndSymlinksRest(t *testing
 			t.Fatalf("overlay runtime skill = %q, want progressive control guidance for %s", runtimeText, want)
 		}
 	}
+	if !strings.Contains(runtimeText, "later write or external-action steps from the same requested workflow") {
+		t.Fatalf("overlay runtime skill = %q, want canceled-workflow stop guidance", runtimeText)
+	}
 	if strings.Contains(runtimeText, "original runtime skill") {
 		t.Fatalf("overlay runtime skill should not mirror original contents: %q", runtimeText)
 	}

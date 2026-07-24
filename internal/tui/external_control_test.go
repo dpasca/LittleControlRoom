@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lcroom/internal/config"
@@ -80,5 +81,68 @@ func TestExternalControlProposalOpensConfirmationAndRecordsCancellation(t *testi
 	}
 	if stored.Status != control.OperationCanceled {
 		t.Fatalf("stored status = %q, want canceled", stored.Status)
+	}
+}
+
+func TestExternalControlProposalHidesVisibleEmbeddedSessionBeforeConfirmation(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "control.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	svc := service.New(config.Default(), st, events.NewBus(), nil)
+	ctx := context.Background()
+	projectPath := t.TempDir()
+	m := New(ctx, svc)
+	m.codexVisibleProject = projectPath
+	m.width = 120
+	m.height = 40
+
+	operationID := "lcrop_tui_visible_codex"
+	args, err := json.Marshal(control.TodoAddInput{
+		RequestID:   operationID,
+		ProjectPath: projectPath,
+		Text:        "Confirm above the embedded session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := st.CreateControlOperation(ctx, control.Operation{
+		ID:         operationID,
+		Capability: control.CapabilityTodoAdd,
+		Invocation: control.Invocation{
+			RequestID:  operationID,
+			Capability: control.CapabilityTodoAdd,
+			Args:       args,
+		},
+		Status:      control.OperationProposed,
+		Source:      "test",
+		Provider:    "codex",
+		SessionKey:  "session",
+		ProjectPath: projectPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting, err := st.UpdateControlOperationStatus(ctx, created.ID, control.OperationWaitingForConfirmation, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, _ := m.applyExternalControlProposalLoaded(externalControlProposalLoadedMsg{operation: waiting})
+	got := normalizeUpdateModel(updated)
+	if got.codexVisible() {
+		t.Fatalf("external confirmation left embedded session visible: %q", got.codexVisibleProject)
+	}
+	if got.codexHiddenProject != projectPath {
+		t.Fatalf("hidden embedded project = %q, want %q", got.codexHiddenProject, projectPath)
+	}
+	if !got.helpChatMode || !got.helpChatModel.ControlConfirmationActive() {
+		t.Fatalf("external proposal did not replace embedded pane with confirmation: mode=%t confirmation=%t", got.helpChatMode, got.helpChatModel.ControlConfirmationActive())
+	}
+	rendered := got.View()
+	if !strings.Contains(rendered, "Confirm Control Action") ||
+		!strings.Contains(rendered, "Confirm above the embedded session") {
+		t.Fatalf("rendered frame does not show external confirmation: %q", rendered)
 	}
 }

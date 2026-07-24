@@ -133,6 +133,25 @@ func TestRuntimeMCPProgressiveControlProposal(t *testing.T) {
 	}
 }
 
+func TestControlOperationReportStopsCanceledOrFailedWorkflow(t *testing.T) {
+	for _, status := range []control.OperationStatus{
+		control.OperationCanceled,
+		control.OperationFailed,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			report := controlOperationReport(control.Operation{Status: status}, false)
+			if report["requires_new_user_turn"] != true {
+				t.Fatalf("requires_new_user_turn = %#v, want true", report["requires_new_user_turn"])
+			}
+			message, _ := report["message"].(string)
+			if !strings.Contains(message, "Stop this turn") ||
+				!strings.Contains(message, "same requested workflow") {
+				t.Fatalf("message = %q, want whole-workflow stop guidance", message)
+			}
+		})
+	}
+}
+
 func TestRuntimeMCPRequestBrowserAttentionValidatesAttachedBrowser(t *testing.T) {
 	for _, tc := range []struct {
 		name              string

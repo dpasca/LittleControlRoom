@@ -57,6 +57,12 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 	if msg.operation.Status != control.OperationWaitingForConfirmation {
 		return m, nil
 	}
+	// External proposals can arrive while an embedded engineer pane is visible.
+	// Prepare the shared host surface before opening Chat so the confirmation is
+	// not rendered behind Codex/OpenCode/Claude while keyboard input is already
+	// being routed to the hidden Chat dialog.
+	prepared, prepareCmd := m.prepareHelpChatHostSurface()
+	m = prepared
 	opened, openCmd := m.openHelpChatMode()
 	m = normalizeUpdateModel(opened)
 	preview := fmt.Sprintf(
@@ -67,17 +73,17 @@ func (m Model) applyExternalControlProposalLoaded(msg externalControlProposalLoa
 	presented, err := m.helpChatModel.PresentExternalControlProposal(msg.operation.Invocation, preview)
 	if errors.Is(err, bossui.ErrControlConfirmationPending) {
 		m.status = "Agent control proposal queued behind the current confirmation"
-		return m, batchCmds(openCmd, m.retryExternalControlProposalCmd(msg.operation))
+		return m, batchCmds(prepareCmd, openCmd, m.retryExternalControlProposalCmd(msg.operation))
 	}
 	if err != nil {
 		m.status = "Agent control proposal could not be presented: " + err.Error()
-		return m, batchCmds(openCmd, m.failExternalControlOperationCmd(msg.operation.ID, err))
+		return m, batchCmds(prepareCmd, openCmd, m.failExternalControlOperationCmd(msg.operation.ID, err))
 	}
 	m.helpChatModel = presented
 	m.helpChatModelActive = true
 	m.helpChatMode = true
 	m.status = "Confirm or cancel the embedded agent's control proposal"
-	return m, openCmd
+	return m, batchCmds(prepareCmd, openCmd)
 }
 
 func (m Model) retryExternalControlProposalCmd(operation control.Operation) tea.Cmd {
